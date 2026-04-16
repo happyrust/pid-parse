@@ -1,6 +1,7 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{ClusterInfo, ClusterKind, PidDocument, SheetStream};
+use crate::parsers::cluster_header;
 use std::io::Read;
 
 pub fn parse_clusters<R: Read + std::io::Seek>(
@@ -20,6 +21,22 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
         if let Ok(mut s) = cfb.open_stream(&path) {
             let mut data = Vec::new();
             s.read_to_end(&mut data)?;
+
+            let header = cluster_header::parse_header(&data);
+
+            let string_table = if name == "PSMcluster0" && data.len() > 32 {
+                // String table starts after header + initial zero padding (~offset 0x22)
+                let table_start = find_string_table_start(&data);
+                let (table, _end) = cluster_header::parse_string_table(&data, table_start);
+                if table.is_empty() {
+                    None
+                } else {
+                    Some(table)
+                }
+            } else {
+                None
+            };
+
             doc.clusters.push(ClusterInfo {
                 name: name.to_string(),
                 path: path.clone(),
@@ -33,6 +50,8 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
                     vec![]
                 },
                 kind: classify_cluster(name),
+                header,
+                string_table,
             });
         }
     }
@@ -50,6 +69,74 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
     }
 
     Ok(())
+}
+
+/// Heuristic: find where the indexed string table starts in PSMcluster0.
+/// Scans for a [u32 byte_len (even, 4..512)] followed by valid UTF-16LE text,
+/// then backs up 4 bytes to include the preceding u32 index field.
+fn find_string_table_start(data: &[u8]) -> usize {
+    // First try to find index=2 entry (reliably u32-aligned) and back-derive entry 1
+    for i in 20..data.len().saturating_sub(12) {
+        let val = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if val == 2 {
+            let blen = u32::from_le_bytes([
+                data[i + 4],
+                data[i + 5],
+                data[i + 6],
+                data[i + 7],
+            ]) as usize;
+            if blen >= 4 && blen < 512 && blen % 2 == 0 && i + 8 + blen <= data.len() {
+                let first_char = u16::from_le_bytes([data[i + 8], data[i + 9]]);
+                if (0x20..=0x7e).contains(&first_char) {
+                    // Walk back to find entry 1: look for a valid byte_len before this
+                    if let Some(entry1_start) = find_entry1_before(data, i) {
+                        return entry1_start;
+                    }
+                    return i;
+                }
+            }
+        }
+    }
+    32
+}
+
+/// Given the start of entry 2, walk backwards to find entry 1's index field.
+fn find_entry1_before(data: &[u8], entry2_pos: usize) -> Option<usize> {
+    // Entry 1 ends right before entry2_pos. The string of entry 1 ends at entry2_pos.
+    // Entry format: [u32 index] [u32 byte_len] [UTF-16LE string of byte_len bytes]
+    // So byte_len is at (entry2_pos - string_bytes - 4), index is at (entry2_pos - string_bytes - 8).
+    // We scan backwards from entry2_pos trying plausible byte_lens.
+    for blen in (4..=256).step_by(2) {
+        let str_start = entry2_pos.checked_sub(blen)?;
+        let blen_pos = str_start.checked_sub(4)?;
+        let idx_pos = blen_pos.checked_sub(4)?;
+        if idx_pos < 16 {
+            continue;
+        }
+        let stored_blen =
+            u32::from_le_bytes([data[blen_pos], data[blen_pos + 1], data[blen_pos + 2], data[blen_pos + 3]])
+                as usize;
+        if stored_blen != blen {
+            continue;
+        }
+        let first_char = u16::from_le_bytes([data[str_start], data[str_start + 1]]);
+        if (0x20..=0x7e).contains(&first_char) {
+            let idx_val =
+                u32::from_le_bytes([data[idx_pos], data[idx_pos + 1], data[idx_pos + 2], data[idx_pos + 3]]);
+            if idx_val <= 10 {
+                return Some(idx_pos);
+            }
+            // Sometimes the first entry has a different prefix layout;
+            // try including extra prefix bytes
+            for extra in 1..=4 {
+                let alt_start = idx_pos.checked_sub(extra)?;
+                if alt_start >= 16 {
+                    return Some(alt_start);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn classify_cluster(name: &str) -> ClusterKind {

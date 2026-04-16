@@ -132,6 +132,26 @@ pub struct ClusterInfo {
     pub magic_u32_le: Option<u32>,
     pub extracted_strings: Vec<String>,
     pub kind: ClusterKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<ClusterHeader>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub string_table: Option<Vec<IndexedString>>,
+}
+
+/// Common header shared by all streams with magic 0x6C90F544.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterHeader {
+    pub magic: u32,
+    pub record_count: u32,
+    pub stream_type: u16,
+    pub body_len: u32,
+    pub flags: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexedString {
+    pub index: u32,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +173,33 @@ pub struct DynamicAttributesBlob {
     pub relationships: Vec<String>,
     pub class_names: Vec<String>,
     pub raw_preview_hex: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<ClusterHeader>,
+    /// Structured attribute records parsed from the binary stream.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub attribute_records: Vec<AttributeRecord>,
+}
+
+/// A single attribute class record from Unclustered Dynamic Attributes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttributeRecord {
+    pub class_name: String,
+    pub attributes: Vec<AttributeField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttributeField {
+    pub name: String,
+    pub value: AttributeValue,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AttributeValue {
+    Text(String),
+    Integer(i64),
+    Float(f64),
+    Empty,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

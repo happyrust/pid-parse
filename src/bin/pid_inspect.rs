@@ -1,20 +1,34 @@
 use pid_parse::PidParser;
 
 fn main() {
-    let path = match std::env::args().nth(1) {
-        Some(v) => v,
-        None => return,
-    };
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: pid_inspect <file.pid> [--json]");
+        std::process::exit(1);
+    }
+
+    let path = &args[1];
+    let json_mode = args.iter().any(|a| a == "--json");
 
     let parser = PidParser::new();
-    let result = parser.parse_file(&path);
-
-    match result {
-        Ok(doc) => {
-            println!("{}", doc.streams.len());
-            println!("{}", doc.jsites.len());
-            println!("{}", doc.clusters.len());
+    let doc = match parser.parse_file(path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Parse error: {}", e);
+            std::process::exit(1);
         }
-        Err(_) => {}
+    };
+
+    if json_mode {
+        match serde_json::to_string_pretty(&doc) {
+            Ok(json) => println!("{}", json),
+            Err(e) => {
+                eprintln!("JSON serialization error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        let report = pid_parse::inspect::report::generate_report(&doc);
+        print!("{}", report);
     }
 }

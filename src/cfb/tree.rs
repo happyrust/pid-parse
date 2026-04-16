@@ -27,7 +27,7 @@ pub fn build_tree<R: Read + Seek>(
         children: vec![],
     };
 
-    if entry.is_storage() {
+    if entry.is_storage() || entry.is_root() {
         for child in cfb.read_storage(path)? {
             let child_path = child.path().to_string_lossy().replace('\\', "/");
             node.children.push(build_tree(cfb, &child_path)?);

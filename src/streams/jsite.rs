@@ -5,6 +5,22 @@ use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::PathBuf;
 
+/// Strip garbage prefix before a UNC path (`\\`) or drive letter path (`X:\`).
+fn extract_unc_or_path(s: &str) -> String {
+    if let Some(pos) = s.find("\\\\") {
+        return s[pos..].to_string();
+    }
+    if let Some(pos) = s.find(":\\") {
+        if pos > 0 {
+            let drive_start = pos - 1;
+            if s.as_bytes().get(drive_start).map_or(false, |b| b.is_ascii_alphabetic()) {
+                return s[drive_start..].to_string();
+            }
+        }
+    }
+    s.to_string()
+}
+
 pub fn parse_jsites<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     doc: &mut PidDocument,
@@ -34,8 +50,9 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
             site.properties = crate::parsers::jproperties::parse_jproperties(&data);
             for value in &site.properties.strings {
                 if value.ends_with(".sym") && site.symbol_path.is_none() {
-                    site.symbol_path = Some(value.clone());
-                    site.symbol_name = std::path::Path::new(value)
+                    let clean = extract_unc_or_path(value);
+                    site.symbol_path = Some(clean.clone());
+                    site.symbol_name = std::path::Path::new(&clean)
                         .file_name()
                         .map(|v| v.to_string_lossy().to_string());
                 }

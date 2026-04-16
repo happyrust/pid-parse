@@ -21,10 +21,12 @@ pub fn parse_jproperties(data: &[u8]) -> JProperties {
         i += 1;
     }
 
+    let guids = crate::parsers::string_scan::scan_guids(data, 64);
+
     JProperties {
         strings,
         key_values,
-        guids: Vec::new(),
+        guids,
         raw_len: data.len(),
     }
 }

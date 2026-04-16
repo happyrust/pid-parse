@@ -13,25 +13,31 @@ pub fn parse_dynamic_attrs<R: Read + std::io::Seek>(
         let mut data = Vec::new();
         s.read_to_end(&mut data)?;
 
-        let mut strings = if options.scan_strings {
-            crate::parsers::string_scan::scan_ascii_strings(&data, 256)
-        } else {
-            vec![]
-        };
+        let mut seen = std::collections::HashSet::new();
+        let mut strings = Vec::new();
 
-        for value in crate::parsers::string_scan::scan_utf16le_strings(&data, 4, 256) {
-            if !strings.contains(&value) {
-                strings.push(value);
+        if options.scan_strings {
+            for s in crate::parsers::string_scan::scan_ascii_strings(&data, 256) {
+                if seen.insert(s.clone()) {
+                    strings.push(s);
+                }
             }
         }
 
-        let relationships = strings
+        for s in crate::parsers::string_scan::scan_utf16le_strings(&data, 4, 256) {
+            if seen.insert(s.clone()) {
+                strings.push(s);
+            }
+        }
+
+        let relationships: Vec<String> = strings
             .iter()
             .filter(|s| s.starts_with("Relationship."))
             .cloned()
             .collect();
 
-        let class_names = strings
+        let mut class_seen = std::collections::HashSet::new();
+        let class_names: Vec<String> = strings
             .iter()
             .filter(|s| {
                 matches!(
@@ -47,8 +53,13 @@ pub fn parse_dynamic_attrs<R: Read + std::io::Seek>(
                         | "OPC"
                 )
             })
+            .filter(|s| class_seen.insert((*s).clone()))
             .cloned()
             .collect();
+
+        let header = crate::parsers::cluster_header::parse_header(&data);
+        let attribute_records =
+            crate::parsers::dynamic_attr_records::parse_attribute_records(&data);
 
         doc.dynamic_attributes = Some(DynamicAttributesBlob {
             path: path.to_string(),
@@ -60,6 +71,8 @@ pub fn parse_dynamic_attrs<R: Read + std::io::Seek>(
             relationships,
             class_names,
             raw_preview_hex: hex_preview(&data, 128),
+            header,
+            attribute_records,
         });
     }
 

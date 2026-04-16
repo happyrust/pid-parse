@@ -35,19 +35,19 @@ fn collect_streams<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     options: &ParseOptions,
 ) -> Result<Vec<StreamEntry>, PidError> {
-    let mut out = Vec::new();
+    let paths: Vec<_> = cfb
+        .walk()
+        .filter(|e| e.is_stream())
+        .map(|e| e.path().to_path_buf())
+        .collect();
 
-    for entry in cfb.walk() {
-        let entry = entry;
-        if !entry.is_stream() {
-            continue;
-        }
-
-        let path = entry.path().to_string_lossy().replace('\\', "/");
-        let mut stream = cfb.open_stream(entry.path())?;
+    let mut out = Vec::with_capacity(paths.len());
+    for p in paths {
+        let mut stream = cfb.open_stream(&p)?;
         let mut data = Vec::new();
         stream.read_to_end(&mut data)?;
 
+        let path_str = p.to_string_lossy().replace('\\', "/");
         let preview_ascii = if options.scan_strings {
             crate::parsers::string_scan::scan_ascii_strings(&data, options.max_preview_strings)
         } else {
@@ -59,7 +59,7 @@ fn collect_streams<R: Read + std::io::Seek>(
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
 
         out.push(StreamEntry {
-            path,
+            path: path_str,
             size: data.len() as u64,
             preview_ascii,
             magic_u32_le,

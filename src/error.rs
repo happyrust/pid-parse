@@ -5,9 +5,6 @@ pub enum PidError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("cfb error: {0}")]
-    Cfb(#[from] cfb::Error),
-
     #[error("xml error: {0}")]
     Xml(#[from] quick_xml::Error),
 
