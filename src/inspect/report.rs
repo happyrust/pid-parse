@@ -106,6 +106,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
             writeln!(out).ok();
 
+            if let Some(ref pi) = c.probe_info {
+                writeln!(out, "    [PROBE] table_offset=0x{:04X}, method={}, entries={}, end=0x{:04X}",
+                    pi.string_table_offset, pi.detection_method, pi.entries_parsed, pi.end_offset).ok();
+            }
             if let Some(ref table) = c.string_table {
                 writeln!(out, "    String table ({} entries):", table.len()).ok();
                 for entry in table.iter().take(10) {
@@ -132,19 +136,24 @@ pub fn generate_report(doc: &PidDocument) -> String {
         writeln!(out, "  Strings: {}", da.strings.len()).ok();
         writeln!(out, "  Relationships: {}", da.relationships.len()).ok();
         writeln!(out, "  Class names: {:?}", da.class_names).ok();
+        if let Some(ref ps) = da.probe_summary {
+            writeln!(out, "  [PROBE] body_start=0x{:04X}, markers={}, records={}, bytes_scanned={}",
+                ps.body_start_offset, ps.marker_count, ps.records_extracted, ps.bytes_scanned).ok();
+        }
         if !da.attribute_records.is_empty() {
             writeln!(
                 out,
-                "  Attribute records: {} classes",
+                "  Attribute records: {} classes [EXPERIMENTAL/heuristic]",
                 da.attribute_records.len()
             )
             .ok();
             for rec in &da.attribute_records {
                 writeln!(
                     out,
-                    "    {} ({} attrs)",
+                    "    {} ({} attrs) [{}]",
                     rec.class_name,
-                    rec.attributes.len()
+                    rec.attributes.len(),
+                    rec.confidence
                 )
                 .ok();
                 for attr in rec.attributes.iter().take(5) {

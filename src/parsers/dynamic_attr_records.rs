@@ -1,4 +1,4 @@
-use crate::model::{AttributeField, AttributeRecord, AttributeValue};
+use crate::model::{AttributeField, AttributeRecord, AttributeValue, ProbeSummary};
 
 /// Parse structured attribute records from the Unclustered Dynamic Attributes stream body.
 ///
@@ -10,9 +10,11 @@ use crate::model::{AttributeField, AttributeRecord, AttributeValue};
 ///
 /// This parser uses a tolerant, heuristic approach suitable for reverse-engineering:
 /// it scans for recognizable class-name markers and extracts name/value pairs.
-pub fn parse_attribute_records(data: &[u8]) -> Vec<AttributeRecord> {
+pub fn parse_attribute_records(data: &[u8]) -> (Vec<AttributeRecord>, ProbeSummary) {
+    let body_start = find_body_start(data);
+    let marker_count = count_markers(data, body_start);
     let mut records = Vec::new();
-    let mut pos = find_body_start(data);
+    let mut pos = body_start;
 
     while pos < data.len() {
         if let Some((rec, next_pos)) = try_parse_record(data, pos) {
@@ -23,7 +25,25 @@ pub fn parse_attribute_records(data: &[u8]) -> Vec<AttributeRecord> {
         }
     }
 
-    records
+    let summary = ProbeSummary {
+        body_start_offset: body_start,
+        marker_count,
+        records_extracted: records.len(),
+        bytes_scanned: pos.saturating_sub(body_start),
+    };
+
+    (records, summary)
+}
+
+/// Count 0x89 0x00 markers in the stream body (probe-level info).
+fn count_markers(data: &[u8], start: usize) -> usize {
+    let mut count = 0;
+    for i in start..data.len().saturating_sub(1) {
+        if data[i] == 0x89 && data[i + 1] == 0x00 {
+            count += 1;
+        }
+    }
+    count
 }
 
 fn find_body_start(data: &[u8]) -> usize {
@@ -125,6 +145,7 @@ fn try_parse_record(data: &[u8], pos: usize) -> Option<(AttributeRecord, usize)>
         AttributeRecord {
             class_name,
             attributes,
+            confidence: "heuristic".to_string(),
         },
         section_end,
     ))

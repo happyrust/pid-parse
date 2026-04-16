@@ -1,0 +1,20 @@
+flowchart TD
+    A["PidParser::parse_file()"] --> B["cfb::reader::parse_pid_file()"]
+    B --> C["cfb::open(path)"]
+    C --> D["build_tree(cfb, '/')"]
+    C --> E["collect_streams(cfb)"]
+
+    D --> F["PidDocument"]
+    E --> F
+
+    F --> G["summary::parse_summary_streams"]
+    G --> H["tagged_text::parse_tagged_text_streams"]
+    H --> I["jsite::parse_jsites"]
+    I --> J["cluster::parse_clusters"]
+    J --> K["dynamic_attrs::parse_dynamic_attrs"]
+    K --> L["build_object_inventory"]
+    L --> M["PidDocument (enriched)"]
+
+    style A fill:#4a9eff,color:#fff
+    style M fill:#2ecc71,color:#fff
+    style F fill:#f39c12,color:#fff

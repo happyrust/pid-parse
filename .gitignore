@@ -1,2 +1,5 @@
 /target/
 test-file/
+.ace-tool/
+.cursor/
+.cursorignore

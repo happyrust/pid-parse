@@ -1,290 +1,278 @@
-# pid-parse Architecture
+# pid-parse 架构文档
 
-## Goal
+`pid-parse` 是一个 Rust 编写的 SmartPlant / Smart P&ID `.pid` 文件解析器。
 
-`pid-parse` is a layered Rust parser for SmartPlant / Smart P&ID `.pid` files.
-
-The project is intentionally organized as a **reverse-engineering friendly parser**, not a one-shot graphical decoder. The first objective is to make every internal stream visible, indexable, and attributable. Only after that do we deepen the binary decoding for objects, styles, geometry, and page layout.
+项目定位为**逆向工程友好型解析器**——先让每条内部流可见、可索引、可归因，再逐步深化二进制解码。
 
 ---
 
-## Design Principles
+## 设计原则
 
-1. **Container first, semantics second**  
-   We first parse the OLE/CFBF container and enumerate storages and streams. Semantic interpretation is added on top of that index.
-
-2. **Retain raw provenance**  
-   Parsed results should always be traceable back to their original stream path.
-
-3. **Progressive decoding**  
-   Unknown blocks are preserved as structured placeholders instead of being discarded.
-
-4. **Stable public API, evolving internals**  
-   The public entry point should remain small and predictable even while internal decoders are still being refined.
+1. **容器优先，语义其次** — 先解析 OLE/CFBF 容器枚举流，再叠加语义解释
+2. **保留原始来源** — 解析结果始终可追溯到原始流路径
+3. **渐进式解码** — 未知块以结构化占位符保留，不丢弃
+4. **Probe / Decode 分层** — 启发式探测结果标记为 `heuristic`，与确定性解码明确区分
+5. **稳定公开 API，内部持续演进** — 公开入口保持简洁可预测
 
 ---
 
-## High-Level Layering
+## 分层架构
 
-The crate is split into six layers.
+```mermaid
+flowchart TB
+    subgraph L1["Layer 1: API"]
+        api["api.rs\nPidParser / ParseOptions"]
+    end
 
-### 1. API Layer
+    subgraph L2["Layer 2: Container (CFB)"]
+        reader["cfb/reader.rs\nparse_pid_file()"]
+        tree["cfb/tree.rs\nbuild_tree()"]
+    end
 
-Files:
+    subgraph L3["Layer 3: Model"]
+        model["model.rs\nPidDocument / StorageNode\nClusterInfo / JSite\nDynamicAttributesBlob\nAttributeRecord"]
+    end
 
-- `src/api.rs`
+    subgraph L4["Layer 4: Parser Utilities"]
+        xml_util["xml_util.rs\ncollect_simple_tags()"]
+        drawing["drawing_xml.rs"]
+        general["general_xml.rs"]
+        jprops["jproperties.rs"]
+        strscan["string_scan.rs"]
+        cluster_hdr["cluster_header.rs\nparse_header() / parse_string_table()"]
+        da_records["dynamic_attr_records.rs\nparse_attribute_records()"]
+    end
 
-Responsibilities:
+    subgraph L5["Layer 5: Stream Semantics"]
+        summary["summary.rs"]
+        tagged["tagged_text.rs"]
+        jsite["jsite.rs"]
+        cluster["cluster.rs"]
+        dynattr["dynamic_attrs.rs"]
+    end
 
-- expose `PidParser`
-- expose `ParseOptions`
-- define the single public parse entrypoint
+    subgraph L6["Layer 6: Reporting / CLI"]
+        report["inspect/report.rs"]
+        cli["bin/pid_inspect.rs\n--json / --probe-cluster / --probe-dynamic"]
+    end
 
-This is the only layer application code should call directly.
+    api --> reader
+    reader --> tree
+    reader --> L5
+    L5 --> L4
+    L4 --> model
+    L5 --> model
+    model --> report
+    model --> cli
+```
 
-### 2. Container Layer
-
-Files:
-
-- `src/cfb/mod.rs`
-- `src/cfb/tree.rs`
-- `src/cfb/reader.rs`
-
-Responsibilities:
-
-- open `.pid` as OLE/CFBF compound file
-- build a storage tree
-- enumerate stream paths
-- collect raw stream metadata such as size and leading magic bytes
-
-This layer does **not** assign domain meaning. It only establishes the file system view of the document.
-
-### 3. Model Layer
-
-Files:
-
-- `src/model.rs`
-
-Responsibilities:
-
-- define `PidDocument`
-- define `StorageNode`, `StreamEntry`, `JSite`, `ClusterInfo`, `DynamicAttributesBlob`
-- define the stable in-memory representation shared by all parsers
-
-This layer is the contract between the parser internals and downstream tools.
-
-### 4. Parser Utilities Layer
-
-Files:
-
-- `src/parsers/string_scan.rs`
-- `src/parsers/drawing_xml.rs`
-- `src/parsers/general_xml.rs`
-- `src/parsers/jproperties.rs`
-
-Responsibilities:
-
-- scan ASCII and UTF-16LE strings from binary payloads
-- parse tagged XML-like metadata blocks
-- derive lightweight key-value views from `JProperties`
-
-These utilities are intentionally conservative. They prefer robust extraction over premature precision.
-
-### 5. Stream Semantics Layer
-
-Files:
-
-- `src/streams.rs`
-- `src/streams/tagged_text.rs`
-- `src/streams/summary.rs`
-- `src/streams/jsite.rs`
-- `src/streams/cluster.rs`
-- `src/streams/dynamic_attrs.rs`
-
-Responsibilities:
-
-- map named streams to semantic handlers
-- read drawing/general metadata from `TaggedTxtData`
-- index `JSite*` storages and their symbol references
-- index cluster streams
-- extract dynamic-attribute strings and relationship-like names
-
-This is where raw streams begin to become document concepts.
-
-### 6. Reporting / Inspection Layer
-
-Files:
-
-- `src/inspect.rs`
-
-Responsibilities:
-
-- summarize the parsed document
-- provide a quick report for reverse-engineering and debugging
-
-This layer is for humans, not for core parsing.
+| 层 | 文件 | 职责 |
+|---|---|---|
+| **L1: API** | `src/api.rs` | 暴露 `PidParser` / `ParseOptions`，唯一公开入口 |
+| **L2: Container** | `src/cfb/reader.rs`, `src/cfb/tree.rs` | 打开 OLE/CFBF 容器、构建存储树、枚举流路径 |
+| **L3: Model** | `src/model.rs` | `PidDocument` 及所有结构类型（`StorageNode`, `JSite`, `ClusterInfo`, `DynamicAttributesBlob`, `AttributeRecord`, `ProbeSummary`, `ClusterProbeInfo` 等） |
+| **L4: Parsers** | `src/parsers/*.rs` | 字符串扫描、XML 标签提取、Cluster 公共头解析、DA 记录解码 |
+| **L5: Streams** | `src/streams/*.rs` | 将命名流映射到语义处理器（Summary、TaggedText、JSite、Cluster、DynamicAttrs） |
+| **L6: Report/CLI** | `src/inspect/report.rs`, `src/bin/pid_inspect.rs` | 人类可读报告、JSON 导出、Probe 探测输出 |
 
 ---
 
-## Core Data Flow
+## .pid 文件内部结构
 
-The parsing flow is:
+```mermaid
+flowchart LR
+    subgraph PID[".pid File (OLE/CFBF Container)"]
+        direction TB
+        root["Root Entry"]
+        root --> sum1["&#x2705;SummaryInformation"]
+        root --> sum2["&#x2705;DocumentSummaryInformation"]
+        root --> ttd["TaggedTxtData/"]
+        ttd --> draw["Drawing (XML)"]
+        ttd --> gen["General (XML)"]
+        root --> js1["JSite0/"]
+        root --> js2["JSite1/"]
+        root --> jsN["JSiteN/"]
+        js1 --> jp["JProperties"]
+        js1 --> ole["&#x0001;Ole"]
+        root --> psm["PSMcluster0"]
+        root --> sty["StyleCluster"]
+        root --> dam["Dynamic Attributes Metadata"]
+        root --> uda["Unclustered Dynamic Attributes"]
+        root --> sh1["Sheet0"]
+        root --> sh2["Sheet1"]
+    end
 
-1. `PidParser::parse_file()` receives a path.
-2. `cfb::reader::parse_pid_file()` opens the compound file.
-3. `cfb::tree::build_tree()` builds the storage tree.
-4. `collect_streams()` enumerates streams and produces `StreamEntry` values.
-5. Stream handlers enrich `PidDocument` in stages:
-   - `summary`
-   - `tagged_text`
-   - `jsite`
-   - `cluster`
-   - `dynamic_attrs`
-6. The fully assembled `PidDocument` is returned.
+    subgraph Decode["Decode Targets"]
+        direction TB
+        d1["SummaryInfo\n(app, title, dates)"]
+        d2["DrawingMeta\n(number, template, UIDs)"]
+        d3["JSite[]\n(symbols, GUIDs, OLE)"]
+        d4["ClusterInfo[]\n(header, string_table)"]
+        d5["DynamicAttributesBlob\n(attribute_records)"]
+        d6["ObjectInventory\n(items, counts)"]
+    end
 
-This staged enrichment model keeps the parser easy to extend. New semantic decoders can attach additional information to the same document without rewriting the whole pipeline.
-
----
-
-## Why the Parser Is Not Centered on Geometry Yet
-
-A `.pid` file contains multiple information classes:
-
-- file-level metadata
-- drawing/business metadata
-- symbol/object instance metadata
-- style and cluster information
-- page-level graphical payloads
-- dynamic attributes and relationships
-
-The current implementation deliberately focuses on the first five steps needed for reliable reverse engineering:
-
-1. open the container
-2. enumerate streams
-3. identify important stream families
-4. extract visible text and keys
-5. build stable object indexes
-
-Only after those are dependable should we attempt full geometry reconstruction from streams such as `Sheet*` and `PSMcluster0`.
-
----
-
-## Current Capability Boundary
-
-The current version (v0.2) is expected to do these things well:
-
-- read the compound-file structure
-- build a storage/stream tree
-- collect stream previews
-- parse `TaggedTxtData/Drawing` and `TaggedTxtData/General`
-- detect `JSite*` storages with symbol paths and GUID extraction
-- extract OLE-linked paths and OLE Summary metadata (application, author, dates)
-- detect cluster streams with common header parsing (magic `0x6C90F544`)
-- parse `PSMcluster0` string table (SiteObjects, PreferenceSet, Sheets)
-- parse `Unclustered Dynamic Attributes` into structured attribute records
-- build P&ID object inventory (instruments, pipes, equipment, relationships)
-
-The current version is **not yet** expected to do these things fully:
-
-- full PSMcluster0 / StyleCluster binary record decoding
-- exact object graph reconstruction (JSite ↔ DA ↔ PSM cross-references)
-- exact page geometry reconstruction from Sheet streams
-- round-trip serialization
+    sum1 --> d1
+    draw --> d2
+    js1 --> d3
+    psm --> d4
+    uda --> d5
+    d5 --> d6
+```
 
 ---
 
-## Important Internal Types
+## 核心数据流
 
-### `PidDocument`
+```mermaid
+flowchart TD
+    A["PidParser::parse_file()"] --> B["cfb::reader::parse_pid_file()"]
+    B --> C["cfb::open(path)"]
+    C --> D["build_tree(cfb, '/')"]
+    C --> E["collect_streams(cfb)"]
 
-Top-level aggregate for everything currently known about a file.
+    D --> F["PidDocument"]
+    E --> F
 
-### `StorageNode`
+    F --> G["summary::parse_summary_streams"]
+    G --> H["tagged_text::parse_tagged_text_streams"]
+    H --> I["jsite::parse_jsites"]
+    I --> J["cluster::parse_clusters"]
+    J --> K["dynamic_attrs::parse_dynamic_attrs"]
+    K --> L["build_object_inventory"]
+    L --> M["PidDocument (enriched)"]
+```
 
-Recursive representation of the OLE/CFBF directory tree.
-
-### `StreamEntry`
-
-Flat stream index entry used for lightweight discovery and later semantic dispatch.
-
-### `JSite`
-
-Represents one `JSite*` storage and its immediate known semantics:
-
-- property strings
-- candidate symbol path
-- OLE links
-- additional embedded streams
-
-### `ClusterInfo`
-
-Represents a known cluster stream and basic facts about it:
-
-- path
-- size
-- leading magic
-- extracted strings
-- inferred cluster kind
-
-### `DynamicAttributesBlob`
-
-Represents the current best-effort interpretation of the dynamic-attribute stream.
+**阶段式富化模型**：每个流处理器向同一个 `PidDocument` 追加信息，新增解码器无需重写管线。
 
 ---
 
-## Extensibility Strategy
+## Probe / Decode 分层
 
-The intended evolution path is:
+```mermaid
+flowchart LR
+    subgraph Probe["Probe Layer (Heuristic)"]
+        direction TB
+        p1["find_body_start()\n0x89 marker scan"]
+        p2["find_string_table_start()\nentry2 backtrack"]
+        p3["count_markers()"]
+        p1 --> ps["ProbeSummary\nbody_start / markers / bytes"]
+        p2 --> pi["ClusterProbeInfo\noffset / method / entries"]
+        p3 --> ps
+    end
 
-### Phase 1: stable document indexing
+    subgraph Decode["Decode Layer (Structured)"]
+        direction TB
+        d1["parse_header()\nClusterHeader"]
+        d2["parse_string_table()\nVec&lt;IndexedString&gt;"]
+        d3["try_parse_record()\nAttributeRecord\n(confidence=heuristic)"]
+    end
 
-- complete compile-closure
-- add example binaries
-- improve `inspect` output
-- validate against multiple `.pid` samples
+    subgraph Output["Output"]
+        direction TB
+        o1["report.rs\n[PROBE] / [EXPERIMENTAL]"]
+        o2["--probe-cluster\n--probe-dynamic"]
+        o3["--json\n(full PidDocument)"]
+    end
 
-### Phase 2: stronger semantic extraction
+    Probe --> Decode
+    Decode --> Output
+```
 
-- parse summary property sets more accurately
-- improve XML metadata matching
-- improve `JProperties` key/value extraction
-- identify record boundaries in `Unclustered Dynamic Attributes`
-
-### Phase 3: binary structure decoding
-
-- decode `PSMclustertable`
-- decode `PSMsegmenttable`
-- decode `StyleCluster`
-- classify `Sheet*` payload sections
-
-### Phase 4: page/object reconstruction
-
-- map page records to object instances
-- recover text placement and object references
-- build an analyzable page graph
+- **Probe 层**：启发式探测（0x89 标记扫描、entry2 回溯定位），输出 `ProbeSummary` / `ClusterProbeInfo`
+- **Decode 层**：结构化解码（公共头、字符串表、属性记录），每条记录携带 `confidence` 字段
+- **输出层**：报告中标注 `[PROBE]` / `[EXPERIMENTAL/heuristic]`，CLI 提供 `--probe-*` 模式
 
 ---
 
-## Public API Intention
+## 关键类型
 
-The long-term public API should remain small.
+| 类型 | 说明 |
+|---|---|
+| `PidDocument` | 顶层聚合体，包含文件所有已知信息 |
+| `StorageNode` | OLE/CFBF 目录树的递归表示 |
+| `StreamEntry` | 扁平流索引条目（路径、大小、magic、预览） |
+| `SummaryInfo` | OLE Summary 元数据（应用名、标题、日期） |
+| `DrawingMeta` | 图纸元数据（图号、模板、UIDs），兼容 `SP_` 前缀 |
+| `JSite` | JSite 存储语义（符号路径、GUID、OLE 链接） |
+| `ClusterInfo` | Cluster 流信息（header + string_table + probe_info） |
+| `ClusterHeader` | 公共头：magic `0x6C90F544` + type/records/body_len/flags |
+| `ClusterProbeInfo` | string table 启发式定位元数据 |
+| `DynamicAttributesBlob` | DA 流解析结果（strings + records + probe_summary） |
+| `AttributeRecord` | 属性记录：class_name + attributes + confidence |
+| `ProbeSummary` | 启发式扫描统计（body_start/markers/records/bytes） |
+| `ObjectInventory` | P&ID 对象清单（设备、管道、仪表统计） |
+
+---
+
+## 当前能力边界 (v0.2.1)
+
+**已实现**：
+
+- OLE/CFBF 容器遍历与流索引
+- `SummaryInformation` / `DocumentSummaryInformation` 二进制解码
+- `TaggedTxtData/Drawing` 和 `General` XML 元数据提取（含 `SP_` 前缀兼容）
+- `JSite*` 存储索引 + 符号路径提取 + GUID 扫描
+- Cluster 公共头解析 (magic `0x6C90F544`)
+- `PSMcluster0` 字符串表解析（启发式定位 + sentinel 正确处理）
+- `Unclustered Dynamic Attributes` 记录解码（231 条记录 / 10 个类）
+- P&ID 对象清单构建
+- 文本报告 + JSON 导出 + Probe 探测输出
+
+**尚未实现**：
+
+- PSMcluster0 / StyleCluster 完整二进制记录解码
+- JSite ↔ DA ↔ PSM 交叉引用对象图
+- Sheet 流页面几何重建
+- 往返序列化
+
+---
+
+## 演进路线
+
+| 阶段 | 目标 | 状态 |
+|---|---|---|
+| Phase 1 | 稳定文档索引 + 编译闭合 | ✅ 完成 |
+| Phase 2 | 语义提取（Summary/XML/JProperties/DA 记录） | ✅ 完成 |
+| Phase 3 | 二进制结构解码 + Probe/Decode 分层 | ✅ 完成 |
+| Phase 4 | Sheet 流专项探测 + 页面对象重建 | 🔜 下一步 |
+
+---
+
+## 公开 API
 
 ```rust
 let parser = pid_parse::PidParser::new();
 let doc = parser.parse_file("drawing.pid")?;
 ```
 
-Everything else should build on top of `PidDocument`.
-
-This keeps downstream usage stable while we continue upgrading the internal decoders.
+所有下游使用都建立在 `PidDocument` 之上，保持稳定。
 
 ---
 
-## Recommended Immediate Next Steps
+## CLI 用法
 
-1. add `src/inspect.rs`
-2. tighten `cfb::reader` to avoid borrow conflicts while iterating streams
-3. add `examples/inspect.rs`
-4. run `cargo check`
-5. validate against real `.pid` samples
-6. improve `summary` and `dynamic_attrs` decoding after the first compile-stable run
+```bash
+# 文本报告
+cargo run --bin pid_inspect -- drawing.pid
+
+# JSON 完整导出
+cargo run --bin pid_inspect -- drawing.pid --json
+
+# Cluster 流探测（偏移量、检测方法、字符串表）
+cargo run --bin pid_inspect -- drawing.pid --probe-cluster
+
+# 动态属性探测（0x89 标记数、记录统计、属性详情）
+cargo run --bin pid_inspect -- drawing.pid --probe-dynamic
+```
+
+---
+
+## 测试
+
+```bash
+cargo test
+```
+
+- 集成测试 11 个（真实 `.pid` 样本）
+- 单元测试 14 个（`collect_simple_tags` / `parse_header` / `parse_string_table`）

@@ -1,6 +1,6 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
-use crate::model::{ClusterInfo, ClusterKind, PidDocument, SheetStream};
+use crate::model::{ClusterInfo, ClusterKind, ClusterProbeInfo, PidDocument, SheetStream};
 use crate::parsers::cluster_header;
 use std::io::Read;
 
@@ -24,17 +24,22 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
 
             let header = cluster_header::parse_header(&data);
 
-            let string_table = if name == "PSMcluster0" && data.len() > 32 {
-                // String table starts after header + initial zero padding (~offset 0x22)
-                let table_start = find_string_table_start(&data);
-                let (table, _end) = cluster_header::parse_string_table(&data, table_start);
+            let (string_table, probe_info) = if name == "PSMcluster0" && data.len() > 32 {
+                let (table_start, method) = find_string_table_start(&data);
+                let (table, end_offset) = cluster_header::parse_string_table(&data, table_start);
+                let pi = ClusterProbeInfo {
+                    string_table_offset: table_start,
+                    detection_method: method,
+                    entries_parsed: table.len(),
+                    end_offset,
+                };
                 if table.is_empty() {
-                    None
+                    (None, Some(pi))
                 } else {
-                    Some(table)
+                    (Some(table), Some(pi))
                 }
             } else {
-                None
+                (None, None)
             };
 
             doc.clusters.push(ClusterInfo {
@@ -52,6 +57,7 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
                 kind: classify_cluster(name),
                 header,
                 string_table,
+                probe_info,
             });
         }
     }
@@ -74,7 +80,8 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
 /// Heuristic: find where the indexed string table starts in PSMcluster0.
 /// Scans for a [u32 byte_len (even, 4..512)] followed by valid UTF-16LE text,
 /// then backs up 4 bytes to include the preceding u32 index field.
-fn find_string_table_start(data: &[u8]) -> usize {
+/// Returns (offset, detection_method) for the string table start.
+fn find_string_table_start(data: &[u8]) -> (usize, String) {
     // First try to find index=2 entry (reliably u32-aligned) and back-derive entry 1
     for i in 20..data.len().saturating_sub(12) {
         let val = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
@@ -90,14 +97,14 @@ fn find_string_table_start(data: &[u8]) -> usize {
                 if (0x20..=0x7e).contains(&first_char) {
                     // Walk back to find entry 1: look for a valid byte_len before this
                     if let Some(entry1_start) = find_entry1_before(data, i) {
-                        return entry1_start;
+                        return (entry1_start, "entry2_backtrack".to_string());
                     }
-                    return i;
+                    return (i, "entry2_direct".to_string());
                 }
             }
         }
     }
-    32
+    (32, "fallback".to_string())
 }
 
 /// Given the start of entry 2, walk backwards to find entry 1's index field.

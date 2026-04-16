@@ -5,7 +5,7 @@ pub const CLUSTER_MAGIC: u32 = 0x6C90_F544;
 /// Parse the common header shared by all cluster-family streams.
 /// Returns None if the data is too short or the magic doesn't match.
 pub fn parse_header(data: &[u8]) -> Option<ClusterHeader> {
-    if data.len() < 14 {
+    if data.len() < 16 {
         return None;
     }
     let magic = u32_le(data, 0);
@@ -34,11 +34,16 @@ pub fn parse_string_table(data: &[u8], start: usize) -> (Vec<IndexedString>, usi
         pos += 8;
 
         if byte_len == 0 {
+            // Sentinel: index==0 with zero-length payload signals end of table.
+            // Non-zero index with zero-length is a legitimate empty string entry.
+            if index == 0 {
+                break;
+            }
             out.push(IndexedString {
                 index,
                 value: String::new(),
             });
-            break;
+            continue;
         }
 
         if pos + byte_len > data.len() {

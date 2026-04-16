@@ -1,0 +1,52 @@
+flowchart TB
+    subgraph L1["Layer 1: API"]
+        api["api.rs\nPidParser / ParseOptions"]
+    end
+
+    subgraph L2["Layer 2: Container (CFB)"]
+        reader["cfb/reader.rs\nparse_pid_file()"]
+        tree["cfb/tree.rs\nbuild_tree()"]
+    end
+
+    subgraph L3["Layer 3: Model"]
+        model["model.rs\nPidDocument / StorageNode\nClusterInfo / JSite\nDynamicAttributesBlob\nAttributeRecord"]
+    end
+
+    subgraph L4["Layer 4: Parser Utilities"]
+        xml_util["xml_util.rs\ncollect_simple_tags()"]
+        drawing["drawing_xml.rs"]
+        general["general_xml.rs"]
+        jprops["jproperties.rs"]
+        strscan["string_scan.rs"]
+        cluster_hdr["cluster_header.rs\nparse_header() / parse_string_table()"]
+        da_records["dynamic_attr_records.rs\nparse_attribute_records()"]
+    end
+
+    subgraph L5["Layer 5: Stream Semantics"]
+        summary["summary.rs"]
+        tagged["tagged_text.rs"]
+        jsite["jsite.rs"]
+        cluster["cluster.rs"]
+        dynattr["dynamic_attrs.rs"]
+    end
+
+    subgraph L6["Layer 6: Reporting / CLI"]
+        report["inspect/report.rs"]
+        cli["bin/pid_inspect.rs\n--json / --probe-cluster / --probe-dynamic"]
+    end
+
+    api --> reader
+    reader --> tree
+    reader --> L5
+    L5 --> L4
+    L4 --> model
+    L5 --> model
+    model --> report
+    model --> cli
+
+    style L1 fill:#4a9eff22,stroke:#4a9eff
+    style L2 fill:#9b59b622,stroke:#9b59b6
+    style L3 fill:#f39c1222,stroke:#f39c12
+    style L4 fill:#1abc9c22,stroke:#1abc9c
+    style L5 fill:#e74c3c22,stroke:#e74c3c
+    style L6 fill:#2ecc7122,stroke:#2ecc71

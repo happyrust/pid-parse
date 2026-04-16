@@ -1,0 +1,31 @@
+flowchart LR
+    subgraph Probe["Probe Layer (Heuristic)"]
+        direction TB
+        p1["find_body_start()\n0x89 marker scan"]
+        p2["find_string_table_start()\nentry2 backtrack"]
+        p3["count_markers()"]
+        p1 --> ps["ProbeSummary\nbody_start / markers / bytes"]
+        p2 --> pi["ClusterProbeInfo\noffset / method / entries"]
+        p3 --> ps
+    end
+
+    subgraph Decode["Decode Layer (Structured)"]
+        direction TB
+        d1["parse_header()\nClusterHeader"]
+        d2["parse_string_table()\nVec&lt;IndexedString&gt;"]
+        d3["try_parse_record()\nAttributeRecord\n(confidence=heuristic)"]
+    end
+
+    subgraph Output["Output"]
+        direction TB
+        o1["report.rs\n[PROBE] / [EXPERIMENTAL]"]
+        o2["--probe-cluster\n--probe-dynamic"]
+        o3["--json\n(full PidDocument)"]
+    end
+
+    Probe --> Decode
+    Decode --> Output
+
+    style Probe fill:#e74c3c11,stroke:#e74c3c
+    style Decode fill:#3498db11,stroke:#3498db
+    style Output fill:#2ecc7111,stroke:#2ecc71

@@ -1,0 +1,41 @@
+flowchart LR
+    subgraph PID[".pid File (OLE/CFBF Container)"]
+        direction TB
+        root["Root Entry"]
+        root --> sum1["&#x2705;SummaryInformation"]
+        root --> sum2["&#x2705;DocumentSummaryInformation"]
+        root --> ttd["TaggedTxtData/"]
+        ttd --> draw["Drawing (XML)"]
+        ttd --> gen["General (XML)"]
+        root --> js1["JSite0/"]
+        root --> js2["JSite1/"]
+        root --> jsN["JSiteN/"]
+        js1 --> jp["JProperties"]
+        js1 --> ole["&#x0001;Ole"]
+        root --> psm["PSMcluster0"]
+        root --> sty["StyleCluster"]
+        root --> dam["Dynamic Attributes Metadata"]
+        root --> uda["Unclustered Dynamic Attributes"]
+        root --> sh1["Sheet0"]
+        root --> sh2["Sheet1"]
+    end
+
+    subgraph Decode["Decode Targets"]
+        direction TB
+        d1["SummaryInfo\n(app, title, dates)"]
+        d2["DrawingMeta\n(number, template, UIDs)"]
+        d3["JSite[]\n(symbols, GUIDs, OLE)"]
+        d4["ClusterInfo[]\n(header, string_table)"]
+        d5["DynamicAttributesBlob\n(attribute_records)"]
+        d6["ObjectInventory\n(items, counts)"]
+    end
+
+    sum1 --> d1
+    draw --> d2
+    js1 --> d3
+    psm --> d4
+    uda --> d5
+    d5 --> d6
+
+    style PID fill:#34495e11,stroke:#34495e
+    style Decode fill:#2ecc7111,stroke:#2ecc71

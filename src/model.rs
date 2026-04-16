@@ -158,6 +158,9 @@ pub struct ClusterInfo {
     pub header: Option<ClusterHeader>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub string_table: Option<Vec<IndexedString>>,
+    /// Probe metadata for string-table detection heuristic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe_info: Option<ClusterProbeInfo>,
 }
 
 /// Common header shared by all streams with magic 0x6C90F544.
@@ -200,6 +203,9 @@ pub struct DynamicAttributesBlob {
     /// Structured attribute records parsed from the binary stream.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub attribute_records: Vec<AttributeRecord>,
+    /// Probe summary: heuristic scan metadata (offsets, chunk counts, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe_summary: Option<ProbeSummary>,
 }
 
 /// A single attribute class record from Unclustered Dynamic Attributes.
@@ -207,6 +213,13 @@ pub struct DynamicAttributesBlob {
 pub struct AttributeRecord {
     pub class_name: String,
     pub attributes: Vec<AttributeField>,
+    /// Confidence level: "heuristic" for probe-derived, "decoded" for verified.
+    #[serde(default = "default_confidence")]
+    pub confidence: String,
+}
+
+fn default_confidence() -> String {
+    "heuristic".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +235,32 @@ pub enum AttributeValue {
     Integer(i64),
     Float(f64),
     Empty,
+}
+
+/// Probe metadata for PSMcluster0 string-table heuristic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterProbeInfo {
+    /// Byte offset where the string table was detected.
+    pub string_table_offset: usize,
+    /// Method used to locate the start: "entry2_backtrack" or "fallback".
+    pub detection_method: String,
+    /// Number of entries parsed.
+    pub entries_parsed: usize,
+    /// Byte offset where parsing ended.
+    pub end_offset: usize,
+}
+
+/// Probe summary for heuristic scanning of binary streams.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProbeSummary {
+    /// Byte offset where body scanning began.
+    pub body_start_offset: usize,
+    /// Number of 0x89 markers found.
+    pub marker_count: usize,
+    /// Total records extracted (heuristic).
+    pub records_extracted: usize,
+    /// Byte coverage: how many bytes were interpreted vs total stream size.
+    pub bytes_scanned: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

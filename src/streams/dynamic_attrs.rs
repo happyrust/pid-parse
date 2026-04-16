@@ -58,7 +58,7 @@ pub fn parse_dynamic_attrs<R: Read + std::io::Seek>(
             .collect();
 
         let header = crate::parsers::cluster_header::parse_header(&data);
-        let attribute_records =
+        let (attribute_records, probe_summary) =
             crate::parsers::dynamic_attr_records::parse_attribute_records(&data);
 
         doc.dynamic_attributes = Some(DynamicAttributesBlob {
@@ -73,6 +73,7 @@ pub fn parse_dynamic_attrs<R: Read + std::io::Seek>(
             raw_preview_hex: hex_preview(&data, 128),
             header,
             attribute_records,
+            probe_summary: Some(probe_summary),
         });
     }
 
