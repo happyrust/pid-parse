@@ -28,7 +28,91 @@ pub fn parse_pid_file(path: &Path, options: &ParseOptions) -> Result<PidDocument
     crate::streams::cluster::parse_clusters(&mut cfb, &mut doc, options)?;
     crate::streams::dynamic_attrs::parse_dynamic_attrs(&mut cfb, &mut doc, options)?;
 
+    build_object_inventory(&mut doc);
+
     Ok(doc)
+}
+
+fn build_object_inventory(doc: &mut PidDocument) {
+    use crate::model::{ObjectInventory, PidItem};
+    use std::collections::BTreeMap;
+
+    let da = match doc.dynamic_attributes.as_ref() {
+        Some(da) if !da.attribute_records.is_empty() => da,
+        _ => return,
+    };
+
+    let mut inv = ObjectInventory::default();
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+
+    for rec in &da.attribute_records {
+        if rec.class_name != "P&IDAttributes" {
+            continue;
+        }
+
+        let mut item_type = None;
+        let mut drawing_id = None;
+        let mut model_id = None;
+
+        for attr in &rec.attributes {
+            match attr.name.as_str() {
+                "ModelItemType" => {
+                    if let crate::model::AttributeValue::Text(v) = &attr.value {
+                        if !v.is_empty() {
+                            item_type = Some(v.clone());
+                        }
+                    }
+                }
+                "DrawingID" => {
+                    if let crate::model::AttributeValue::Text(v) = &attr.value {
+                        if !v.is_empty() {
+                            drawing_id = Some(v.clone());
+                        }
+                    }
+                }
+                "ModelID" => {
+                    if let crate::model::AttributeValue::Text(v) = &attr.value {
+                        if !v.is_empty() {
+                            model_id = Some(v.clone());
+                        }
+                    }
+                }
+                "ProjectNumber" => {
+                    if inv.project.is_none() {
+                        if let crate::model::AttributeValue::Text(v) = &attr.value {
+                            if !v.is_empty() {
+                                inv.project = Some(v.clone());
+                            }
+                        }
+                    }
+                }
+                "DrawingNo" => {
+                    if inv.drawing_id.is_none() {
+                        if let crate::model::AttributeValue::Text(v) = &attr.value {
+                            if !v.is_empty() {
+                                inv.drawing_id = Some(v.clone());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(ref t) = item_type {
+            *counts.entry(t.clone()).or_default() += 1;
+            inv.items.push(PidItem {
+                item_type: t.clone(),
+                drawing_id,
+                model_id,
+            });
+        }
+    }
+
+    inv.item_counts = counts;
+    if !inv.items.is_empty() {
+        doc.object_inventory = Some(inv);
+    }
 }
 
 fn collect_streams<R: Read + std::io::Seek>(

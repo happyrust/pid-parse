@@ -17,6 +17,27 @@ pub struct PidDocument {
     pub sheet_streams: Vec<SheetStream>,
 
     pub unknown_streams: Vec<UnknownStream>,
+
+    /// P&ID object inventory derived from Dynamic Attributes records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_inventory: Option<ObjectInventory>,
+}
+
+/// Summary inventory of P&ID objects in the drawing.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ObjectInventory {
+    pub drawing_id: Option<String>,
+    pub project: Option<String>,
+    pub item_counts: BTreeMap<String, usize>,
+    pub items: Vec<PidItem>,
+}
+
+/// A single identifiable P&ID item (instrument, pipe, equipment, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PidItem {
+    pub item_type: String,
+    pub drawing_id: Option<String>,
+    pub model_id: Option<String>,
 }
 
 impl Default for PidDocument {
@@ -37,6 +58,7 @@ impl Default for PidDocument {
             dynamic_attributes: None,
             sheet_streams: vec![],
             unknown_streams: vec![],
+            object_inventory: None,
         }
     }
 }

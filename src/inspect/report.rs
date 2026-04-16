@@ -157,5 +157,19 @@ pub fn generate_report(doc: &PidDocument) -> String {
         }
     }
 
+    if let Some(ref inv) = doc.object_inventory {
+        writeln!(out, "\n--- P&ID Object Inventory ---").ok();
+        if let Some(ref proj) = inv.project {
+            writeln!(out, "  Project: {}", proj).ok();
+        }
+        if let Some(ref did) = inv.drawing_id {
+            writeln!(out, "  Drawing: {}", did).ok();
+        }
+        writeln!(out, "  Total items: {}", inv.items.len()).ok();
+        for (item_type, count) in &inv.item_counts {
+            writeln!(out, "    {}: {}", item_type, count).ok();
+        }
+    }
+
     out
 }

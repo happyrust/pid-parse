@@ -171,25 +171,24 @@ Only after those are dependable should we attempt full geometry reconstruction f
 
 ## Current Capability Boundary
 
-The current first version is expected to do these things well:
+The current version (v0.2) is expected to do these things well:
 
 - read the compound-file structure
 - build a storage/stream tree
 - collect stream previews
-- parse `TaggedTxtData/Drawing`
-- parse `TaggedTxtData/General`
-- detect `JSite*` storages
-- extract symbol file references such as `.sym`
-- extract OLE-linked paths such as embedded template references
-- detect cluster streams
-- scan `Unclustered Dynamic Attributes`
+- parse `TaggedTxtData/Drawing` and `TaggedTxtData/General`
+- detect `JSite*` storages with symbol paths and GUID extraction
+- extract OLE-linked paths and OLE Summary metadata (application, author, dates)
+- detect cluster streams with common header parsing (magic `0x6C90F544`)
+- parse `PSMcluster0` string table (SiteObjects, PreferenceSet, Sheets)
+- parse `Unclustered Dynamic Attributes` into structured attribute records
+- build P&ID object inventory (instruments, pipes, equipment, relationships)
 
-The current first version is **not yet** expected to do these things fully:
+The current version is **not yet** expected to do these things fully:
 
-- exact OLE property set decoding for summary streams
-- binary record-boundary decoding for cluster streams
-- exact object graph reconstruction
-- exact page geometry reconstruction
+- full PSMcluster0 / StyleCluster binary record decoding
+- exact object graph reconstruction (JSite ↔ DA ↔ PSM cross-references)
+- exact page geometry reconstruction from Sheet streams
 - round-trip serialization
 
 ---
