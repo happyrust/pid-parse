@@ -1,5 +1,51 @@
 # 变更日志
 
+## [0.3.0] - 2026-04-18
+
+### Phase 6: 关系端点解码（`source`/`target` 可用！）
+
+- **核心突破**：破译 `/Unclustered Dynamic Attributes` 的**每条 P&IDAttributes 记录统一 31 字节 trailer**：
+  ```
+  89 00 <u32 size> <u32 record_id> [0x00 × 8] <u32 field_x> FF FF <u32 class_id> 14 00 00
+  ```
+  - `class_id=0xF6` 为关系记录，`0x109` 为 Symbol/Nozzle，`0xEA` 为 Drawing 等
+  - 关系的 `field_x` **单调 +2 递增**，暗示为端点对表索引
+- **Sheet 端点记录结构破译**（Sheet6 流里）：
+  ```
+  +0 u32 rel_field_x   +4 u32=0x06   +8 [u8;6]=0  +14 u16=0x0002
+  +16 u32 endpoint_a    +20 u16=0x01  +22 u32 endpoint_b
+  ```
+  每条关系在 Sheet 流里有恰好 1 条此类记录，`endpoint_a/b` 指向对象的 `field_x`
+- **端到端端点解析**：`PidRelationship` 新增 `source_drawing_id` / `target_drawing_id`，样本 1 实测 55/64 完全解析、9 partial（跨图 OPC）、0 未解析
+- **证伪假设**：之前的推测"端点是相邻 GUID"被 `probe_sheet_endpoints` 证伪——对象 GUID 在全 CFB（69 流 × raw+Windows 布局）只以 ASCII 形式出现一次，证明端点采用**紧凑 field_x 索引间接引用**
+
+### 模型扩展
+
+- `DaRecordTrailer`：新结构（record_id / field_x / class_id / drawing_id / relationship_guid）
+- `SheetEndpointRecord`：新结构（rel_field_x / endpoint_a / endpoint_b）
+- `PidRelationship` / `PidObject` 新增 `record_id` / `field_x`；`PidRelationship` 新增 `source_drawing_id` / `target_drawing_id`
+- `DynamicAttributesBlob.record_trailers` / `SheetStream.endpoint_records` 新字段
+- `DocVersion2Raw`：DocVersion2 流原始保留（size / magic / hex_preview）
+- `AttributeField.raw_value`：值审计链，保存 `strip_value_prefix` 剥离前的原始值
+
+### 新模块
+
+- `parsers/sheet_endpoint_records.rs`：Sheet 端点记录解析器 + 6 个单元测试
+- `parsers/relationship_probe.rs`：关系记录邻近字节探针 + 4 个单元测试
+- `examples/probe_*`（5 个）：RE 过程探针工具，保留为文档
+
+### 报告与 CLI
+
+- 报告 `--- Object Graph ---` 新增 "Endpoint resolution" 统计行和端点对显示
+- `pid_inspect --probe-endpoints` 打印每条关系的 source/target drawing_id 与对象类型
+- `pid_inspect --probe-relationships` 打印 `Relationship.<GUID>` 邻近字节证据
+
+### 测试
+
+- 单元测试：`sheet_endpoint_records` 6 个、`dynamic_attr_records` 新增 trailer 提取测试
+- 集成测试新增：`record_trailers_cover_every_pidattributes_record` / `relationship_endpoints_resolve_via_sheet_record` / `sheet_endpoint_records_one_per_relationship` / `doc_version2_preserved_raw` / `object_graph_has_objects_and_relationships` 等
+- **总计 91 个测试通过**（47 单元 + 26 集成 + 18 模块内）
+
 ## [0.2.4] - 2026-04-17
 
 ### Phase 5b: 文档注册表类流解析

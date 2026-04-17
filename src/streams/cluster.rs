@@ -110,6 +110,7 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
             header,
             attribute_records,
             probe_summary,
+            endpoint_records: Vec::new(),
         });
     }
 

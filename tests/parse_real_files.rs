@@ -227,3 +227,284 @@ fn tagged_storage_list_decoded() {
     assert_eq!(t.entries.len(), 1);
     assert_eq!(t.entries[0].storage_name, "TaggedTxtData");
 }
+
+#[test]
+fn doc_version2_preserved_raw() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let d2 = doc
+        .doc_version2
+        .as_ref()
+        .expect("DocVersion2 should be captured");
+    assert_eq!(d2.size, 48);
+    assert_eq!(d2.magic_u32_le, 0x00010034);
+    assert!(!d2.hex_preview.is_empty());
+}
+
+#[test]
+fn object_graph_has_objects_and_relationships() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let g = doc.object_graph.as_ref().expect("object_graph expected");
+    assert_eq!(g.drawing_no.as_deref(), Some("0F7B8ABD0C4E493FA3C7F06FD03AD6AA"));
+    assert_eq!(g.project_number.as_deref(), Some("SQLPlant1401"));
+    assert!(
+        g.objects.len() >= 50,
+        "should have many modeled objects, got {}",
+        g.objects.len()
+    );
+    assert!(
+        g.relationships.len() >= 10,
+        "should have relationships, got {}",
+        g.relationships.len()
+    );
+    // by_drawing_id must index every object.
+    assert_eq!(g.by_drawing_id.len(), g.objects.len());
+    // counts_by_type must cover common P&ID item types.
+    assert!(g.counts_by_type.contains_key("PipeRun"));
+    assert!(g.counts_by_type.contains_key("Relationship"));
+}
+
+#[test]
+fn object_graph_relationship_guids_are_32_hex() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let g = doc.object_graph.as_ref().expect("object_graph expected");
+    // Each relationship's guid is either an empty string (for the handful
+    // of trailer-only "template" records that have no `Relationship.<GUID>`
+    // ASCII tag in the DA stream) or a real 32-hex identifier. The vast
+    // majority of real relationships must be well-formed.
+    let mut real_guids = 0usize;
+    for rel in &g.relationships {
+        if rel.guid.is_empty() {
+            continue;
+        }
+        assert_eq!(rel.guid.len(), 32, "relationship guid should be 32 hex chars");
+        assert!(rel.guid.chars().all(|c| c.is_ascii_hexdigit()));
+        real_guids += 1;
+    }
+    assert!(
+        real_guids >= g.relationships.len().saturating_sub(2),
+        "expected at most 2 template relationships without a guid, got {} template(s) of {}",
+        g.relationships.len() - real_guids,
+        g.relationships.len()
+    );
+}
+
+#[test]
+fn relationship_probe_produces_one_probe_per_relationship() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let da = doc
+        .dynamic_attributes
+        .as_ref()
+        .expect("dynamic_attributes expected");
+    let g = doc.object_graph.as_ref().expect("object_graph expected");
+    assert_eq!(
+        da.relationship_probes.len(),
+        g.relationships.len(),
+        "probe count must match graph.relationships count: probes={}, rels={}",
+        da.relationship_probes.len(),
+        g.relationships.len()
+    );
+    assert!(
+        da.relationship_probes.len() >= 50,
+        "expected ≥50 relationship probes on fixture, got {}",
+        da.relationship_probes.len()
+    );
+
+    // Every probe's guid should resolve to a graph relationship guid.
+    // Allow a small number of mismatches because the ASCII-based probe and
+    // the trailer-based relationship list can differ on template records.
+    let graph_guids: std::collections::HashSet<&str> = g
+        .relationships
+        .iter()
+        .filter(|r| !r.guid.is_empty())
+        .map(|r| r.guid.as_str())
+        .collect();
+    let mut mismatches = 0usize;
+    for p in &da.relationship_probes {
+        assert_eq!(p.guid.len(), 32, "probe guid should be 32 hex chars");
+        assert!(p.guid.chars().all(|c| c.is_ascii_hexdigit()));
+        if !graph_guids.contains(p.guid.as_str()) {
+            mismatches += 1;
+        }
+    }
+    assert!(
+        mismatches <= 2,
+        "expected ≤2 probe guids to miss the graph, got {} / {}",
+        mismatches,
+        da.relationship_probes.len()
+    );
+}
+
+#[test]
+fn relationship_probe_trailing_tokens_are_stable() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let da = doc.dynamic_attributes.as_ref().expect("dynamic_attributes expected");
+    assert!(!da.relationship_probes.is_empty());
+
+    // Every probe should carry both trailing `u16` tokens (slot_a, slot_b).
+    for (i, p) in da.relationship_probes.iter().enumerate() {
+        assert_eq!(
+            p.trailing_tokens.len(),
+            2,
+            "probe #{} ({}) expected 2 trailing tokens, got {}",
+            i,
+            p.guid,
+            p.trailing_tokens.len()
+        );
+    }
+
+    // slot_a (after_marker+6) is monotonically increasing across probes in
+    // the fixture; this regression guards against probe misalignment.
+    let slot_a: Vec<u16> = da
+        .relationship_probes
+        .iter()
+        .map(|p| p.trailing_tokens[0].value)
+        .collect();
+    for win in slot_a.windows(2) {
+        assert!(
+            win[1] > win[0],
+            "slot_a should increase monotonically: {:04X} → {:04X}",
+            win[0],
+            win[1]
+        );
+    }
+
+    // The fixture starts slot_a at 0x6086 — document the observed identity.
+    assert_eq!(slot_a[0], 0x6086);
+}
+
+#[test]
+fn record_trailers_cover_every_pidattributes_record() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let da = doc.dynamic_attributes.as_ref().expect("dynamic_attributes");
+    // Each record's 31-byte trailer must be recovered for at least 95 % of
+    // the P&IDAttributes records observed in the fixture.
+    assert!(
+        da.record_trailers.len() >= 150,
+        "expected ≥150 DA record trailers, got {}",
+        da.record_trailers.len()
+    );
+    // Canonical known-good probe: the drawing's trailer (first record in
+    // the stream) has record_id 0x6009 and field_x 0x079A.
+    let first = &da.record_trailers[0];
+    assert_eq!(first.record_id, 0x0000_6009);
+    assert_eq!(first.field_x, 0x0000_079A);
+    assert_eq!(first.class_id, 0x0000_00EA, "Drawing class_id");
+    // Some trailers should carry a `drawing_id`.
+    let with_did = da
+        .record_trailers
+        .iter()
+        .filter(|t| t.drawing_id.is_some())
+        .count();
+    assert!(with_did >= 50, "expected ≥50 trailers to carry drawing_id");
+}
+
+#[test]
+fn relationship_endpoints_resolve_via_sheet_record() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let g = doc.object_graph.as_ref().expect("object_graph");
+    // The fixture has 64 relationships; the endpoint parser should
+    // recover a pair for almost all of them — we allow at most one
+    // unresolved relationship to keep the assertion stable.
+    let resolved = g
+        .relationships
+        .iter()
+        .filter(|r| r.source_drawing_id.is_some() && r.target_drawing_id.is_some())
+        .count();
+    let unresolved = g
+        .relationships
+        .iter()
+        .filter(|r| r.source_drawing_id.is_none() && r.target_drawing_id.is_none())
+        .count();
+    assert!(
+        resolved >= 40,
+        "expected ≥40 fully resolved relationships, got {} / {}",
+        resolved,
+        g.relationships.len()
+    );
+    assert!(
+        unresolved <= 1,
+        "expected ≤1 fully unresolved relationship, got {} / {}",
+        unresolved,
+        g.relationships.len()
+    );
+    // The resolved endpoints must live in the drawing's object set —
+    // regression against field_x → drawing_id misalignment.
+    let known_drawing_ids: std::collections::HashSet<&str> =
+        g.objects.iter().map(|o| o.drawing_id.as_str()).collect();
+    let mut foreign_endpoints = 0usize;
+    for rel in &g.relationships {
+        for side in [rel.source_drawing_id.as_deref(), rel.target_drawing_id.as_deref()] {
+            if let Some(did) = side {
+                if !known_drawing_ids.contains(did) {
+                    foreign_endpoints += 1;
+                }
+            }
+        }
+    }
+    // The fixture references some off-page endpoints (OPC); expect a
+    // handful but not hundreds.
+    assert!(
+        foreign_endpoints < 20,
+        "too many endpoints point to objects absent from graph: {}",
+        foreign_endpoints
+    );
+}
+
+#[test]
+fn sheet_endpoint_records_one_per_relationship() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let sheet = doc
+        .sheet_streams
+        .first()
+        .expect("at least one Sheet stream");
+    assert_eq!(
+        sheet.endpoint_records.len(),
+        doc.object_graph
+            .as_ref()
+            .expect("object_graph")
+            .relationships
+            .len(),
+        "each relationship should have exactly one Sheet endpoint record"
+    );
+    // The endpoint record's `rel_field_x` must match its relationship
+    // counterpart (sanity check on parser bookkeeping).
+    let rel_field_xs: std::collections::HashSet<u32> = doc
+        .object_graph
+        .as_ref()
+        .unwrap()
+        .relationships
+        .iter()
+        .filter_map(|r| r.field_x)
+        .collect();
+    for r in &sheet.endpoint_records {
+        assert!(
+            rel_field_xs.contains(&r.rel_field_x),
+            "endpoint record rel_field_x=0x{:X} not in graph.relationships",
+            r.rel_field_x
+        );
+    }
+}
+
+#[test]
+fn relationship_probe_nearby_guids_contain_drawing_id() {
+    // Every relationship's window is expected to include the drawing's own
+    // DrawingNo GUID (0F7B...AA in the fixture), because the record before
+    // and after is a P&IDAttributes record tied to the drawing.
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let da = doc.dynamic_attributes.as_ref().expect("dynamic_attributes expected");
+    let drawing_guid = "0F7B8ABD0C4E493FA3C7F06FD03AD6AA";
+    let mut misses = 0usize;
+    for p in &da.relationship_probes {
+        if !p.nearby_ascii_guids.iter().any(|(_, g)| g == drawing_guid) {
+            misses += 1;
+        }
+    }
+    // Allow a tiny tail (first/last probe might miss the neighbour window)
+    // but the vast majority should carry the drawing id.
+    assert!(
+        misses <= 2,
+        "expected ≤2 probes missing the drawing guid, got {} / {}",
+        misses,
+        da.relationship_probes.len()
+    );
+}

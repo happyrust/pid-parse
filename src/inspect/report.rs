@@ -322,6 +322,82 @@ pub fn generate_report(doc: &PidDocument) -> String {
         }
     }
 
+    if let Some(ref d2) = doc.doc_version2 {
+        writeln!(
+            out,
+            "\n--- DocVersion2 ({} bytes, magic=0x{:08X}, raw) ---",
+            d2.size, d2.magic_u32_le
+        )
+        .ok();
+        writeln!(out, "  hex: {}", d2.hex_preview).ok();
+    }
+
+    if let Some(ref g) = doc.object_graph {
+        writeln!(out, "\n--- Object Graph ---").ok();
+        if let Some(ref p) = g.project_number {
+            writeln!(out, "  Project: {}", p).ok();
+        }
+        if let Some(ref d) = g.drawing_no {
+            writeln!(out, "  Drawing: {}", d).ok();
+        }
+        writeln!(
+            out,
+            "  Objects: {}  Relationships: {}",
+            g.objects.len(),
+            g.relationships.len()
+        )
+        .ok();
+        writeln!(out, "  By type:").ok();
+        for (ty, n) in &g.counts_by_type {
+            writeln!(out, "    {}: {}", ty, n).ok();
+        }
+        writeln!(out, "  Sample objects:").ok();
+        for obj in g.objects.iter().take(6) {
+            let sub = obj
+                .drawing_item_type
+                .as_deref()
+                .map(|s| format!(" [{}]", s))
+                .unwrap_or_default();
+            writeln!(out, "    {} {}{}", obj.item_type, obj.drawing_id, sub).ok();
+        }
+        if g.objects.len() > 6 {
+            writeln!(out, "    ... ({} more)", g.objects.len() - 6).ok();
+        }
+        if !g.relationships.is_empty() {
+            let fully = g
+                .relationships
+                .iter()
+                .filter(|r| r.source_drawing_id.is_some() && r.target_drawing_id.is_some())
+                .count();
+            let partial = g
+                .relationships
+                .iter()
+                .filter(|r| r.source_drawing_id.is_some() ^ r.target_drawing_id.is_some())
+                .count();
+            let unresolved = g.relationships.len() - fully - partial;
+            writeln!(
+                out,
+                "  Endpoint resolution: {} fully / {} partial / {} unresolved",
+                fully, partial, unresolved
+            )
+            .ok();
+            writeln!(out, "  Sample relationships:").ok();
+            for rel in g.relationships.iter().take(4) {
+                let src = rel.source_drawing_id.as_deref().unwrap_or("?");
+                let tgt = rel.target_drawing_id.as_deref().unwrap_or("?");
+                let guid = if rel.guid.is_empty() {
+                    "(template)".to_string()
+                } else {
+                    rel.guid.clone()
+                };
+                writeln!(out, "    {}  {} -> {}", guid, src, tgt).ok();
+            }
+            if g.relationships.len() > 4 {
+                writeln!(out, "    ... ({} more)", g.relationships.len() - 4).ok();
+            }
+        }
+    }
+
     let top_level_unidentified: Vec<_> = doc
         .streams
         .iter()
@@ -339,6 +415,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                         | "PSMroots"
                         | "PSMclustertable"
                         | "PSMsegmenttable"
+                        | "DocVersion2"
                         | "DocVersion3"
                         | "AppObject"
                         | "JTaggedTxtStgList"

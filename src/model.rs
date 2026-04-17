@@ -30,11 +30,20 @@ pub struct PidDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tagged_storages: Option<TaggedTextStorageList>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_version2: Option<DocVersion2Raw>,
+
     pub unknown_streams: Vec<UnknownStream>,
 
     /// P&ID object inventory derived from Dynamic Attributes records.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub object_inventory: Option<ObjectInventory>,
+
+    /// Structured P&ID object graph (objects + relationships), derived from
+    /// the same `P&IDAttributes` records as `object_inventory` but indexed
+    /// for cross-stream lookup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_graph: Option<ObjectGraph>,
 }
 
 /// Summary inventory of P&ID objects in the drawing.
@@ -77,8 +86,10 @@ impl Default for PidDocument {
             version_history: None,
             app_object_registry: None,
             tagged_storages: None,
+            doc_version2: None,
             unknown_streams: vec![],
             object_inventory: None,
+            object_graph: None,
         }
     }
 }
@@ -226,6 +237,62 @@ pub struct DynamicAttributesBlob {
     /// Probe summary: heuristic scan metadata (offsets, chunk counts, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub probe_summary: Option<ProbeSummary>,
+    /// Byte-level probe output for every `Relationship.<GUID>` record found
+    /// in this stream. See `RelationshipProbe` for scope and caveats.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub relationship_probes: Vec<RelationshipProbe>,
+    /// Decoded per-record trailer (31-byte footer ending in `0x14 0x00 0x00`)
+    /// for every P&IDAttributes record. Exposes `record_id`, `field_x`, and
+    /// `class_id` so downstream code can cross-reference records against
+    /// Sheet-level endpoint pair records.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub record_trailers: Vec<DaRecordTrailer>,
+}
+
+/// Footer of a single P&IDAttributes record inside
+/// `/Unclustered Dynamic Attributes`. Bytes layout (verified against two
+/// real-world samples) :
+///
+/// ```text
+/// +0   u16   marker = 0x0089
+/// +2   u32   size         (record-local length counter)
+/// +6   u32   record_id    (e.g. 0x00006009, 0x00006086, monotonic-ish)
+/// +10  [u8;8] padding (all zero in observed samples)
+/// +18  u32   field_x      (monotonic +2 across relationships, index into
+///                          the Sheet endpoint-pair table)
+/// +22  u16   separator = 0xFFFF
+/// +24  u32   class_id     (0xF6 = Relationship, 0xEA = Drawing, 0x109 =
+///                          Symbol/Nozzle, 0x10D/0x10B/… = other class)
+/// +28  [u8;3] tail = 0x14 0x00 0x00
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaRecordTrailer {
+    /// Stream offset of the record's first byte (usually `P&IDAttributes`).
+    pub record_start: usize,
+    /// Stream offset of the `0x89 0x00` trailer marker.
+    pub trailer_offset: usize,
+    /// `size` u32 from the trailer.
+    pub size: u32,
+    /// `record_id` u32 from the trailer — the record's canonical identifier.
+    pub record_id: u32,
+    /// `field_x` u32 from the trailer — indexes into the Sheet
+    /// endpoint-pair table for relationships; appears to be a hash-like
+    /// local sequence number for other record classes.
+    pub field_x: u32,
+    /// `class_id` u32 from the trailer — see struct doc for known values.
+    pub class_id: u32,
+    /// 32-character hex `DrawingID` of the record, resolved by scanning
+    /// backwards from the trailer for the `DrawingID\0<32hex>` sequence.
+    /// `None` for relationships (which don't carry a DrawingID) and for
+    /// records where the marker couldn't be located.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub drawing_id: Option<String>,
+    /// `Relationship.<GUID>` tag captured by scanning backwards from the
+    /// trailer. Only populated when `class_id == 0x000000F6`. The hex GUID
+    /// (without the leading `Relationship.` prefix) is extracted from the
+    /// stream as-is.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub relationship_guid: Option<String>,
 }
 
 /// A single attribute class record from Unclustered Dynamic Attributes.
@@ -246,6 +313,12 @@ fn default_confidence() -> String {
 pub struct AttributeField {
     pub name: String,
     pub value: AttributeValue,
+    /// Audit trail: when the heuristic value decoder strips a leading
+    /// prefix byte (see `dynamic_attr_records::strip_value_prefix`), the
+    /// pre-strip string is recorded here so callers can detect and
+    /// override the heuristic. `None` means no stripping occurred.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub raw_value: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,6 +356,43 @@ pub struct ProbeSummary {
     pub bytes_scanned: usize,
 }
 
+/// Per-record probe output for a single `Relationship.<GUID>` occurrence
+/// inside `Unclustered Dynamic Attributes`. This deliberately does **not**
+/// report source/target endpoints — experiments across the full CFB
+/// (all streams, both raw and Windows GUID byte layouts) show the
+/// Relationship GUID only occurs once, in ASCII, so the endpoints are not
+/// stored adjacent to this record. The probe instead records byte-level
+/// evidence that later Sheet-level decoders can correlate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationshipProbe {
+    /// 32-char hex relationship identifier, matching `Relationship.<GUID>`.
+    pub guid: String,
+    /// Offset of the `Relationship.` ASCII tag inside the stream.
+    pub ascii_offset: usize,
+    /// Inclusive start of the byte window the probe scanned.
+    pub window_start: usize,
+    /// Exclusive end of the byte window the probe scanned.
+    pub window_end: usize,
+    /// Other 32-char hex GUIDs the probe found inside the window
+    /// (`offset`, `guid`). Typically includes the enclosing record's
+    /// `DrawingNo` value, NOT endpoints.
+    pub nearby_ascii_guids: Vec<(usize, String)>,
+    /// Short `u16` tokens following the record separator. Labelled by
+    /// their position relative to the `0x89 0x00` marker so callers can
+    /// reason about record identity without interpreting the value.
+    pub trailing_tokens: Vec<RelationshipTrailingToken>,
+}
+
+/// A single `u16` token extracted from the Relationship trailing bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationshipTrailingToken {
+    pub offset: usize,
+    /// Human label indicating *where* the token lives, e.g.
+    /// `"after_marker+6"`.
+    pub label: String,
+    pub value: u16,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SheetStream {
     pub name: String,
@@ -302,6 +412,11 @@ pub struct SheetStream {
     /// Probe summary: heuristic scan metadata (body_start_offset, marker_count, etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub probe_summary: Option<ProbeSummary>,
+    /// Endpoint-pair records decoded from the sheet. Each entry maps a
+    /// Relationship's `field_x` to the `(endpoint_a, endpoint_b)` field_x
+    /// pair of the two objects it connects.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub endpoint_records: Vec<SheetEndpointRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -423,4 +538,122 @@ pub struct TaggedTextStorageList {
 pub struct TaggedTextStorageEntry {
     /// Storage directory name (e.g. "TaggedTxtData").
     pub storage_name: String,
+}
+
+/// Raw preservation of the `DocVersion2` stream. The 48-byte binary payload
+/// is not yet structurally decoded; we record its magic and hex preview so
+/// that downstream tooling can round-trip or inspect without losing data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocVersion2Raw {
+    pub size: u64,
+    pub magic_u32_le: u32,
+    /// Lowercase hex dump of the full payload (up to 128 bytes).
+    pub hex_preview: String,
+}
+
+/// Structured P&ID object graph — the core deliverable that ties together
+/// the `P&IDAttributes` DA records into a queryable view of the drawing's
+/// modeled objects and their relationships.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ObjectGraph {
+    /// Drawing-level identifier (`DrawingNo` from P&IDAttributes).
+    pub drawing_no: Option<String>,
+    /// Project number that owns this drawing.
+    pub project_number: Option<String>,
+    /// Non-relationship domain objects (equipment, pipe, nozzle, label, …).
+    pub objects: Vec<PidObject>,
+    /// Relationship records (`ModelItemType == "Relationship"`).
+    pub relationships: Vec<PidRelationship>,
+    /// `drawing_id -> index in objects` for O(log N) lookup.
+    pub by_drawing_id: BTreeMap<String, usize>,
+    /// `ModelItemType -> counts`. Matches `ObjectInventory.item_counts` but
+    /// split across objects vs relationships.
+    pub counts_by_type: BTreeMap<String, usize>,
+}
+
+/// A single modeled object on the drawing. Mostly sourced from a single
+/// `P&IDAttributes` DA record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PidObject {
+    /// 32-character hex unique identifier (e.g. "D8FAB6ED48684E799CDFF0396E213773").
+    pub drawing_id: String,
+    /// `ModelItemType`: "PipeRun", "Nozzle", "Instrument", "Drawing", …
+    pub item_type: String,
+    /// `DrawingItemType`: "Symbol", "LabelPersist", "ItemNote", …
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drawing_item_type: Option<String>,
+    /// `ModelID` if present (rare in our samples).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    /// Any remaining non-core attributes (including heuristically-decoded
+    /// name=value extras).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub extra: BTreeMap<String, String>,
+    /// Per-record trailer fields from the DA stream. Populated when the
+    /// trailer for this object's record could be located and linked via
+    /// `DrawingID` lookback. `None` indicates the trailer was not
+    /// successfully matched.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub record_id: Option<u32>,
+    /// `field_x` from the DA trailer — for relationships this is the index
+    /// into the Sheet endpoint-pair table; here it is used to resolve
+    /// endpoint references back to the owning object.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub field_x: Option<u32>,
+}
+
+/// A Relationship record from `P&IDAttributes` (`ModelItemType="Relationship"`).
+/// Endpoints are resolved via Sheet-level endpoint-pair records that index
+/// into the DA `field_x` space.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PidRelationship {
+    /// `ModelID`, e.g. "Relationship.C5CF946710BF4EBDB02808EBD6879B62".
+    pub model_id: String,
+    /// The 32-character hex GUID portion of `model_id`, for cross-referencing.
+    pub guid: String,
+    /// Canonical DA record id for this relationship.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub record_id: Option<u32>,
+    /// `field_x` from the DA trailer — the key used to locate this
+    /// relationship's endpoint pair in Sheet streams.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub field_x: Option<u32>,
+    /// `drawing_id` of the source endpoint, if it could be resolved through
+    /// the Sheet endpoint-pair record and the DA `field_x → drawing_id`
+    /// mapping.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub source_drawing_id: Option<String>,
+    /// `drawing_id` of the target endpoint, if it could be resolved.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub target_drawing_id: Option<String>,
+}
+
+/// A single endpoint-pair record parsed out of a Sheet stream. Each
+/// `Relationship` in the DA stream is expected to have exactly one such
+/// record in one of the `/Sheet*` streams; its `endpoint_a` / `endpoint_b`
+/// fields are `field_x` values that reference back to the object records.
+///
+/// Record signature (74-byte span starting at `rel_field_x`):
+///
+/// ```text
+///   +0  u32  rel_field_x       ← matches relationship's DA trailer field_x
+///   +4  u32  0x00000006        ← constant discriminator
+///   +8  [u8;8] zero padding
+///   +16 u16  type = 0x0002     ← endpoint-record marker
+///   +18 u32  endpoint_a        ← source field_x
+///   +22 u16  0x0001
+///   +24 u32  endpoint_b        ← target field_x
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SheetEndpointRecord {
+    /// Sheet stream path (e.g. `/Sheet6`).
+    pub sheet_path: String,
+    /// Byte offset in the Sheet stream where this record starts.
+    pub offset: usize,
+    /// Relationship's `field_x` value.
+    pub rel_field_x: u32,
+    /// Source endpoint `field_x` (references the source object's DA record).
+    pub endpoint_a: u32,
+    /// Target endpoint `field_x` (references the target object's DA record).
+    pub endpoint_b: u32,
 }

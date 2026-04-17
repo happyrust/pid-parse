@@ -4,7 +4,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic] [--probe-sheet]"
+            "Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic] [--probe-sheet] [--probe-relationships] [--probe-endpoints]"
         );
         std::process::exit(1);
     }
@@ -14,6 +14,8 @@ fn main() {
     let probe_cluster = args.iter().any(|a| a == "--probe-cluster");
     let probe_dynamic = args.iter().any(|a| a == "--probe-dynamic");
     let probe_sheet = args.iter().any(|a| a == "--probe-sheet");
+    let probe_relationships = args.iter().any(|a| a == "--probe-relationships");
+    let probe_endpoints = args.iter().any(|a| a == "--probe-endpoints");
 
     let parser = PidParser::new();
     let doc = match parser.parse_file(path) {
@@ -47,9 +49,90 @@ fn main() {
         print_probe_sheet(&doc);
     }
 
-    if !probe_cluster && !probe_dynamic && !probe_sheet {
+    if probe_relationships {
+        print_probe_relationships(&doc);
+    }
+
+    if probe_endpoints {
+        print_probe_endpoints(&doc);
+    }
+
+    if !probe_cluster
+        && !probe_dynamic
+        && !probe_sheet
+        && !probe_relationships
+        && !probe_endpoints
+    {
         let report = pid_parse::inspect::report::generate_report(&doc);
         print!("{}", report);
+    }
+}
+
+fn print_probe_endpoints(doc: &pid_parse::PidDocument) {
+    println!("=== Relationship Endpoint Resolution ===\n");
+    let Some(ref graph) = doc.object_graph else {
+        println!("(no object graph available)");
+        return;
+    };
+    if graph.relationships.is_empty() {
+        println!("(no relationships in graph)");
+        return;
+    }
+
+    let fully = graph
+        .relationships
+        .iter()
+        .filter(|r| r.source_drawing_id.is_some() && r.target_drawing_id.is_some())
+        .count();
+    let partial = graph
+        .relationships
+        .iter()
+        .filter(|r| r.source_drawing_id.is_some() ^ r.target_drawing_id.is_some())
+        .count();
+    let unresolved = graph.relationships.len() - fully - partial;
+
+    let total_eps: usize = doc
+        .sheet_streams
+        .iter()
+        .map(|s| s.endpoint_records.len())
+        .sum();
+    println!(
+        "relationships = {}   sheet endpoint records = {}",
+        graph.relationships.len(),
+        total_eps
+    );
+    println!(
+        "resolution   : {} fully / {} partial / {} unresolved\n",
+        fully, partial, unresolved
+    );
+
+    let item_type_by_did: std::collections::HashMap<&str, &str> = graph
+        .objects
+        .iter()
+        .map(|o| (o.drawing_id.as_str(), o.item_type.as_str()))
+        .collect();
+    let render = |did: Option<&str>| -> String {
+        match did {
+            Some(d) => {
+                let ty = item_type_by_did.get(d).copied().unwrap_or("?");
+                format!("{} [{}]", d, ty)
+            }
+            None => "(off-drawing)".to_string(),
+        }
+    };
+
+    for (i, rel) in graph.relationships.iter().enumerate() {
+        let id = if rel.guid.is_empty() {
+            format!("(template rec={:?})", rel.record_id)
+        } else {
+            rel.guid.clone()
+        };
+        let src = render(rel.source_drawing_id.as_deref());
+        let tgt = render(rel.target_drawing_id.as_deref());
+        println!(
+            "[{:>3}]  {}   field_x={:?}\n         {}  ->  {}",
+            i, id, rel.field_x, src, tgt
+        );
     }
 }
 
@@ -149,6 +232,52 @@ fn print_probe_sheet(doc: &pid_parse::PidDocument) {
             }
         }
         println!();
+    }
+}
+
+fn print_probe_relationships(doc: &pid_parse::PidDocument) {
+    println!("=== Relationship Probe ===\n");
+    println!("Scope note: this probe only inspects bytes adjacent to each");
+    println!("  Relationship.<GUID> record inside /Unclustered Dynamic");
+    println!("  Attributes. Endpoint (source/target) decoding is NOT performed");
+    println!("  because the Relationship GUIDs occur nowhere else in the CFB");
+    println!("  container (neither raw nor Windows GUID layouts).\n");
+
+    let Some(ref da) = doc.dynamic_attributes else {
+        println!("(no dynamic attributes stream found)");
+        return;
+    };
+    if da.relationship_probes.is_empty() {
+        println!("(no Relationship.<GUID> records detected in the stream)");
+        return;
+    }
+
+    println!(
+        "probed {} relationship records in {}\n",
+        da.relationship_probes.len(),
+        da.path
+    );
+    for (i, p) in da.relationship_probes.iter().enumerate() {
+        println!(
+            "[{:>3}] guid={} @0x{:06X}  window=[0x{:06X}..0x{:06X})",
+            i, p.guid, p.ascii_offset, p.window_start, p.window_end
+        );
+        if p.nearby_ascii_guids.is_empty() {
+            println!("      nearby GUIDs: (none)");
+        } else {
+            for (off, g) in &p.nearby_ascii_guids {
+                let annotation = if *g == p.guid { " (this record)" } else { "" };
+                println!("      nearby GUID @0x{:06X}  {}{}", off, g, annotation);
+            }
+        }
+        if !p.trailing_tokens.is_empty() {
+            let summary: Vec<String> = p
+                .trailing_tokens
+                .iter()
+                .map(|t| format!("{}=0x{:04X}@0x{:06X}", t.label, t.value, t.offset))
+                .collect();
+            println!("      trailing tokens: {}", summary.join(", "));
+        }
     }
 }
 
