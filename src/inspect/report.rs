@@ -227,6 +227,53 @@ pub fn generate_report(doc: &PidDocument) -> String {
         }
     }
 
+    if let Some(ref r) = doc.psm_roots {
+        writeln!(out, "\n--- PSMroots ({} bytes) ---", r.size).ok();
+        for e in &r.entries {
+            writeln!(
+                out,
+                "  [@+{:04X}] id=0x{:08X}  {}",
+                e.offset, e.id, e.name
+            )
+            .ok();
+        }
+        if r.trailing_bytes > 0 {
+            writeln!(out, "  ({} trailing bytes)", r.trailing_bytes).ok();
+        }
+    }
+
+    if let Some(ref t) = doc.psm_cluster_table {
+        writeln!(
+            out,
+            "\n--- PSMclustertable ({} bytes, declared count={}) ---",
+            t.size, t.count
+        )
+        .ok();
+        for e in &t.entries {
+            writeln!(out, "  [@+{:04X}] {}", e.name_offset, e.name).ok();
+        }
+        if t.entries.len() as u32 != t.count {
+            writeln!(
+                out,
+                "  [WARN] extracted {} names but declared count {}",
+                t.entries.len(),
+                t.count
+            )
+            .ok();
+        }
+    }
+
+    if let Some(ref t) = doc.psm_segment_table {
+        writeln!(
+            out,
+            "\n--- PSMsegmenttable ({} bytes, count={}) ---",
+            t.size, t.count
+        )
+        .ok();
+        let flags_hex: Vec<String> = t.flags.iter().map(|b| format!("0x{:02X}", b)).collect();
+        writeln!(out, "  flags: [{}]", flags_hex.join(", ")).ok();
+    }
+
     let top_level_unidentified: Vec<_> = doc
         .streams
         .iter()
@@ -241,6 +288,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
                         | "StyleCluster"
                         | "Dynamic Attributes Metadata"
                         | "Unclustered Dynamic Attributes"
+                        | "PSMroots"
+                        | "PSMclustertable"
+                        | "PSMsegmenttable"
                 )
                 && !path.starts_with("Sheet")
                 && !path.starts_with("TaggedTxtData")

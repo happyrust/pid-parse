@@ -27,6 +27,7 @@ pub fn parse_pid_file(path: &Path, options: &ParseOptions) -> Result<PidDocument
 
     crate::streams::cluster::parse_clusters(&mut cfb, &mut doc, options)?;
     crate::streams::dynamic_attrs::parse_dynamic_attrs(&mut cfb, &mut doc, options)?;
+    crate::streams::psm_tables::parse_psm_tables(&mut cfb, &mut doc, options)?;
 
     build_object_inventory(&mut doc);
 

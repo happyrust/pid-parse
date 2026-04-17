@@ -8,8 +8,9 @@
 - **元数据提取**：OLE Summary (应用名/作者/创建时间) + TaggedTxtData XML (图号/模板/项目)
 - **对象索引**：JSite 存储解析、符号路径提取、GUID 扫描
 - **二进制记录解码**：Cluster 公共头、PSMcluster0 字符串表、动态属性结构化记录
-- **Sheet 流探测**：复用 Cluster 公共头 + 0x89 标记扫描（v0.2.2 新增）
-- **Magic 识别**：自动识别 PSMroots / PSMclustertable / PSMsegmenttable / DocVersion 等顶层结构化流（v0.2.2 新增）
+- **Sheet 流探测**：复用 Cluster 公共头 + 0x89 标记扫描（v0.2.2）
+- **PSM 索引表**：`PSMroots` / `PSMclustertable` / `PSMsegmenttable` 解码，得到 cluster 权威清单（v0.2.3）
+- **Magic 识别**：自动识别 PSMroots / PSMclustertable / PSMsegmenttable / DocVersion 等顶层结构化流（v0.2.2）
 - **P&ID 对象清单**：从动态属性记录中提取设备/管道/仪表统计
 - **Probe / Decode 分层**：启发式标记与确定性解码明确分离
 - **报告输出**：人类可读文本报告 + JSON 完整导出
@@ -68,11 +69,24 @@ Sheet streams: 1
   Sheet6 (29594 bytes, magic=0x6C90F544)
     header: type=0x00CE, records=354, body=121
 
---- Top-level Unidentified Streams ---
-  /PSMroots (278 bytes, magic=0x746F6F72 'root' [PSMroots root table])
-  /PSMclustertable (265 bytes, magic=0x74736C63 'clst' [PSMclustertable index])
-  /PSMsegmenttable (12 bytes, magic=0x62617473 'stab' [PSMsegmenttable index])
-  /DocVersion3 (192 bytes, magic=0x72616D53 'Smar' [DocVersion (SmartPlant)])
+--- PSMroots (278 bytes) ---
+  [@+0004] id=0x0000018C  Imagineer Document
+  [@+0030] id=0x00000149  Server Document
+  [@+0056] id=0x00000019  _SupportOnlyList
+  [@+007E] id=0x00000014  TopVFSet
+  [@+0096] id=0x00004000  Dynamic Attributes Set Table
+  [@+00D6] id=0x00002000  StyleLibrarian
+  [@+00FA] id=0x00000001  DocStore
+
+--- PSMclustertable (265 bytes, declared count=5) ---
+  [@+001B] PSMcluster0
+  [@+0042] StyleCluster
+  [@+006B] Dynamic Attributes Metadata
+  [@+00AE] Sheet6
+  [@+00CB] Unclustered Dynamic Attributes
+
+--- PSMsegmenttable (12 bytes, count=4) ---
+  flags: [0x01, 0x01, 0x01, 0x01]
 
 --- P&ID Object Inventory ---
   Project: SQLPlant1401

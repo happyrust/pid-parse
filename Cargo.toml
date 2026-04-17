@@ -1,6 +1,6 @@
 [package]
 name = "pid-parse"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "Layered parser for SmartPlant / Smart P&ID .pid files"
 license = "MIT OR Apache-2.0"

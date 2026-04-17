@@ -42,6 +42,7 @@ flowchart TB
         cluster_hdr["cluster_header.rs\nparse_header() / parse_string_table()"]
         da_records["dynamic_attr_records.rs\nparse_attribute_records()"]
         mg["magic.rs\nmagic_tag() / describe_magic()"]
+        psm["psm_tables.rs\nparse_psm_roots/clstbl/segtbl()"]
     end
 
     subgraph L5["Layer 5: Stream Semantics"]
@@ -50,6 +51,7 @@ flowchart TB
         jsite["jsite.rs"]
         cluster["cluster.rs"]
         dynattr["dynamic_attrs.rs"]
+        psm_s["psm_tables.rs"]
     end
 
     subgraph L6["Layer 6: Reporting / CLI"]
@@ -203,11 +205,14 @@ flowchart LR
 | `AttributeRecord` | 属性记录：class_name + attributes + confidence |
 | `ProbeSummary` | 启发式扫描统计（body_start/markers/records/bytes），DA 与 Sheet 共用 |
 | `SheetStream` | Sheet 流（header + probe + attribute_records + magic_tag） |
+| `PsmRoots` / `PsmRootEntry` | PSMroots 解码结果（根名列表） |
+| `PsmClusterTable` / `PsmClusterEntry` | PSMclustertable 解码结果（cluster 权威名单） |
+| `PsmSegmentTable` | PSMsegmenttable 解码结果（段 flag 数组） |
 | `ObjectInventory` | P&ID 对象清单（设备、管道、仪表统计） |
 
 ---
 
-## 当前能力边界 (v0.2.2)
+## 当前能力边界 (v0.2.3)
 
 **已实现**：
 
@@ -219,6 +224,7 @@ flowchart LR
 - `PSMcluster0` 字符串表解析（启发式定位 + sentinel 正确处理）
 - `Unclustered Dynamic Attributes` 记录解码（231 条记录 / 10 个类）
 - **Sheet 流公共头解析** + 0x89 标记探测（证实 Sheet 非 DA 记录格式）
+- **PSM 索引表解析**（`PSMroots` / `PSMclustertable` / `PSMsegmenttable`）—— 可得到 cluster 权威清单
 - **Magic tag 工具**（root / clst / stab / Smar / OLES）+ 顶层未识别流可视化
 - P&ID 对象清单构建
 - 文本报告 + JSON 导出 + Probe 探测输出（cluster / dynamic / sheet）
@@ -227,7 +233,8 @@ flowchart LR
 
 - Sheet 流页面图元/几何解码（type=0x00CE 格式待逆向）
 - PSMcluster0 / StyleCluster 完整二进制记录解码
-- `PSMroots` / `PSMclustertable` / `PSMsegmenttable` 索引表解析
+- `PSMclustertable` 记录内的 cluster-index / flags 精确字段映射
+- `AppObject` / `DocVersion2` / `DocVersion3` / `JTaggedTxtStgList` 解码
 - JSite ↔ DA ↔ PSM ↔ Sheet 交叉引用对象图
 - 往返序列化
 
@@ -241,7 +248,8 @@ flowchart LR
 | Phase 2 | 语义提取（Summary/XML/JProperties/DA 记录） | ✅ 完成 |
 | Phase 3 | 二进制结构解码 + Probe/Decode 分层 | ✅ 完成 |
 | Phase 4 | Sheet 流 header 复用 + magic 识别 + 未识别流可视化 | ✅ 完成 |
-| Phase 5 | Sheet 页面图元解码 + PSM 索引表解析 | 🔜 下一步 |
+| Phase 5a | PSM 索引表（root / clst / stab）解析 | ✅ 完成 |
+| Phase 5b | Sheet type=0x00CE 二进制格式逆向 + AppObject / DocVersion 解码 | 🔜 下一步 |
 
 ---
 
@@ -283,7 +291,7 @@ cargo run --bin pid_inspect -- drawing.pid --probe-sheet
 cargo test
 ```
 
-- 集成测试 11 个（真实 `.pid` 样本）
-- 单元测试 21 个（`collect_simple_tags` / `parse_header` / `parse_string_table` / `magic_tag` / `describe_magic` / `sheet_stream_reuses_cluster_header`）
-- 模块内测试 3 个（`parsers::magic`）
-- **总计 32 个测试**
+- 集成测试 14 个（真实 `.pid` 样本，含 PSM 三表验证）
+- 单元测试 18 个（`collect_simple_tags` / `parse_header` / `parse_string_table` / `magic_tag` / `describe_magic` / `sheet_stream_reuses_cluster_header`）
+- 模块内测试 10 个（`parsers::magic` 3 + `parsers::psm_tables` 6 + 其他）
+- **总计 42 个测试**

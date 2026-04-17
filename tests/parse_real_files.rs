@@ -122,3 +122,60 @@ fn json_serialization_roundtrip() {
     let _: pid_parse::PidDocument =
         serde_json::from_str(&json).expect("should deserialize from JSON");
 }
+
+#[test]
+fn psm_roots_extracts_known_entries() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let r = doc.psm_roots.as_ref().expect("PSMroots should be decoded");
+    let names: Vec<&str> = r.entries.iter().map(|e| e.name.as_str()).collect();
+    for expected in [
+        "Imagineer Document",
+        "Server Document",
+        "_SupportOnlyList",
+        "TopVFSet",
+        "Dynamic Attributes Set Table",
+        "StyleLibrarian",
+        "DocStore",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "missing expected PSMroots entry: {}",
+            expected
+        );
+    }
+}
+
+#[test]
+fn psm_cluster_table_matches_actual_clusters() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let t = doc
+        .psm_cluster_table
+        .as_ref()
+        .expect("PSMclustertable should be decoded");
+    assert_eq!(t.count, 5, "declared cluster count should be 5");
+    let names: Vec<&str> = t.entries.iter().map(|e| e.name.as_str()).collect();
+    for expected in [
+        "PSMcluster0",
+        "StyleCluster",
+        "Dynamic Attributes Metadata",
+        "Sheet6",
+        "Unclustered Dynamic Attributes",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "PSMclustertable should list {}",
+            expected
+        );
+    }
+}
+
+#[test]
+fn psm_segment_table_decoded() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let t = doc
+        .psm_segment_table
+        .as_ref()
+        .expect("PSMsegmenttable should be decoded");
+    assert_eq!(t.count as usize, t.flags.len());
+    assert!(t.flags.iter().all(|&b| b == 0x01));
+}

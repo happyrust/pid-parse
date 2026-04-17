@@ -16,6 +16,13 @@ pub struct PidDocument {
     pub dynamic_attributes: Option<DynamicAttributesBlob>,
     pub sheet_streams: Vec<SheetStream>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub psm_roots: Option<PsmRoots>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub psm_cluster_table: Option<PsmClusterTable>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub psm_segment_table: Option<PsmSegmentTable>,
+
     pub unknown_streams: Vec<UnknownStream>,
 
     /// P&ID object inventory derived from Dynamic Attributes records.
@@ -57,6 +64,9 @@ impl Default for PidDocument {
             clusters: vec![],
             dynamic_attributes: None,
             sheet_streams: vec![],
+            psm_roots: None,
+            psm_cluster_table: None,
+            psm_segment_table: None,
             unknown_streams: vec![],
             object_inventory: None,
         }
@@ -292,4 +302,54 @@ pub struct UnknownStream {
     /// Four-character ASCII rendering of `magic_u32_le` (e.g. "toor", "tseg").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub magic_tag: Option<String>,
+}
+
+/// Decoded `PSMroots` stream: list of root-level named entries.
+///
+/// Byte layout (observed): `[u32 magic='root']` followed by N records of
+/// `[u32 id][u32 char_count][UTF-16LE name]`. There is no explicit count;
+/// parsing runs until the stream is exhausted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PsmRoots {
+    pub size: u64,
+    pub entries: Vec<PsmRootEntry>,
+    /// Bytes that could not be interpreted as `[id][char_count][utf16]` records.
+    pub trailing_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PsmRootEntry {
+    /// Opaque 32-bit identifier (type tag). Seen values: 0x018C, 0x0149, 0x0019,
+    /// 0x0014, 0x4000, 0x2000, 0x0001, ...
+    pub id: u32,
+    /// Offset inside the stream where this record starts (for debugging).
+    pub offset: usize,
+    /// Decoded UTF-16LE name.
+    pub name: String,
+}
+
+/// Decoded `PSMclustertable` stream: canonical list of cluster stream names.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PsmClusterTable {
+    pub size: u64,
+    pub count: u32,
+    pub entries: Vec<PsmClusterEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PsmClusterEntry {
+    /// Decoded UTF-16LE cluster name, e.g. "PSMcluster0", "Sheet6".
+    pub name: String,
+    /// Offset inside the stream where the UTF-16LE name begins.
+    pub name_offset: usize,
+}
+
+/// Decoded `PSMsegmenttable` stream. In sampled file it is a fixed 12 bytes:
+/// `[magic 'stab'][u32 count=4][4 × 0x01]`. Schema is likely a per-segment
+/// flag array; we expose the raw payload until semantics are confirmed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PsmSegmentTable {
+    pub size: u64,
+    pub count: u32,
+    pub flags: Vec<u8>,
 }

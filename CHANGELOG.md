@@ -1,5 +1,36 @@
 # 变更日志
 
+## [0.2.3] - 2026-04-17
+
+### Phase 5a: PSM 索引表解析
+
+- **`PSMroots` 完整解码**：确认格式 `[u32 magic='root']` + N 条 `[u32 id][u32 char_count][UTF-16LE name]` 记录；样本文件 7 条记录全部解出（`Imagineer Document` / `Server Document` / `_SupportOnlyList` / `TopVFSet` / `Dynamic Attributes Set Table` / `StyleLibrarian` / `DocStore`）
+- **`PSMclustertable` 名称提取**：声明计数 `count=5`，样本 5 个 cluster 名称全部识别（`PSMcluster0` / `StyleCluster` / `Dynamic Attributes Metadata` / `Sheet6` / `Unclustered Dynamic Attributes`）——这是 P&ID 文件中所有 cluster 风格流的**权威清单**
+- **`PSMsegmenttable` 解码**：固定 12 字节格式 `[magic='stab'][u32 count][u8×count flags]`
+- **揭示 Sheet 归属**：PSMclustertable 将 `Sheet6` 与其他 cluster 并列，证实 Sheet 流属于 cluster 体系（和 magic `0x6C90F544` 的推测一致）
+
+### 模型扩展
+
+- 新增类型：`PsmRoots` / `PsmRootEntry` / `PsmClusterTable` / `PsmClusterEntry` / `PsmSegmentTable`
+- `PidDocument` 新增三个可选字段：`psm_roots` / `psm_cluster_table` / `psm_segment_table`
+
+### 新模块
+
+- `parsers/psm_tables.rs`：`parse_psm_roots` / `parse_psm_cluster_table` / `parse_psm_segment_table`，含 6 个内置单元测试
+- `streams/psm_tables.rs`：接入主解析 pipeline（容错：流缺失时跳过）
+- `examples/psm_dump.rs`：PSM 流 hex dump + 结构化 walk 开发工具
+
+### 报告
+
+- 主报告新增三段：`--- PSMroots ---`、`--- PSMclustertable ---`、`--- PSMsegmenttable ---`
+- 顶层未识别流数从 7 降到 4（剩 `AppObject` / `DocVersion2` / `DocVersion3` / `JTaggedTxtStgList`）
+
+### 测试
+
+- 单元测试：`parsers::psm_tables` 6 个（roots/cluster/segment 各含正/负用例）
+- 集成测试 +3：`psm_roots_extracts_known_entries` / `psm_cluster_table_matches_actual_clusters` / `psm_segment_table_decoded`
+- **总计 42 个测试通过**（14 集成 + 18 `unit_parsers` + 10 模块内）
+
 ## [0.2.2] - 2026-04-17
 
 ### Phase 4: Sheet 流专项 + Magic 识别
