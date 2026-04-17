@@ -23,6 +23,13 @@ pub struct PidDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub psm_segment_table: Option<PsmSegmentTable>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_history: Option<VersionHistory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_object_registry: Option<AppObjectRegistry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tagged_storages: Option<TaggedTextStorageList>,
+
     pub unknown_streams: Vec<UnknownStream>,
 
     /// P&ID object inventory derived from Dynamic Attributes records.
@@ -67,6 +74,9 @@ impl Default for PidDocument {
             psm_roots: None,
             psm_cluster_table: None,
             psm_segment_table: None,
+            version_history: None,
+            app_object_registry: None,
+            tagged_storages: None,
             unknown_streams: vec![],
             object_inventory: None,
         }
@@ -352,4 +362,65 @@ pub struct PsmSegmentTable {
     pub size: u64,
     pub count: u32,
     pub flags: Vec<u8>,
+}
+
+/// Decoded `DocVersion3` stream: fixed-size (48 bytes per record) version
+/// log entries that record a document's save history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionHistory {
+    pub size: u64,
+    pub records: Vec<VersionRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionRecord {
+    /// Null-terminated ASCII product identifier, e.g. "SmartPlantPID.a".
+    pub product: String,
+    /// Null-terminated ASCII version string, e.g. "090000.0144".
+    pub version: String,
+    /// Operation code: observed values "SA" (save-as / create) and
+    /// "SV" (save / modify).
+    pub operation: String,
+    /// Null-terminated ASCII timestamp, e.g. "12/29/25 10:45".
+    pub timestamp: String,
+}
+
+/// Decoded `AppObject` stream: registry of external COM / DLL plugins the
+/// source application linked to this drawing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppObjectRegistry {
+    pub size: u64,
+    /// `u32` at offset 0; observed value `5` on the sampled file (likely
+    /// entry count or registry version).
+    pub leading_u32: u32,
+    pub entries: Vec<AppObjectEntry>,
+    /// Any bytes that could not be attributed to a full entry (e.g. trailing
+    /// class-id-only record).
+    pub trailing_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppObjectEntry {
+    /// Offset in stream where this record begins (for debugging).
+    pub offset: usize,
+    /// 16-byte COM class identifier rendered in GUID form.
+    pub clsid: String,
+    /// UTF-16LE file path, typically a DLL location.
+    pub path: String,
+}
+
+/// Decoded `JTaggedTxtStgList`: small index mapping a storage list name
+/// (e.g. "TaggedTxtStorages") to the actual storage directory name
+/// (e.g. "TaggedTxtData").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaggedTextStorageList {
+    pub size: u64,
+    pub list_name: String,
+    pub entries: Vec<TaggedTextStorageEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaggedTextStorageEntry {
+    /// Storage directory name (e.g. "TaggedTxtData").
+    pub storage_name: String,
 }

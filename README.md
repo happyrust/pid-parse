@@ -10,6 +10,7 @@
 - **二进制记录解码**：Cluster 公共头、PSMcluster0 字符串表、动态属性结构化记录
 - **Sheet 流探测**：复用 Cluster 公共头 + 0x89 标记扫描（v0.2.2）
 - **PSM 索引表**：`PSMroots` / `PSMclustertable` / `PSMsegmenttable` 解码，得到 cluster 权威清单（v0.2.3）
+- **文档注册表**：`DocVersion3` 版本日志 / `AppObject` COM 插件注册表 / `JTaggedTxtStgList` 解码（v0.2.4）
 - **Magic 识别**：自动识别 PSMroots / PSMclustertable / PSMsegmenttable / DocVersion 等顶层结构化流（v0.2.2）
 - **P&ID 对象清单**：从动态属性记录中提取设备/管道/仪表统计
 - **Probe / Decode 分层**：启发式标记与确定性解码明确分离
@@ -87,6 +88,22 @@ Sheet streams: 1
 
 --- PSMsegmenttable (12 bytes, count=4) ---
   flags: [0x01, 0x01, 0x01, 0x01]
+
+--- Version History (192 bytes, 4 records) ---
+  [SA 12/29/25 10:45] SmartPlantPID.a 090000.0144
+  [SV 03/10/26 15:17] SmartPlantPID.a 090000.0077
+  [SV 03/10/26 19:10] SmartPlantPID.a 090000.0144
+  [SV 03/16/26 11:24] SmartPlantPID.a 090000.0077
+
+--- App Object Registry (673 bytes, leading=0x00000005, 5 entries) ---
+  {D69F42DF-7717-11D1-9790-08003655F302} -> C:\...\igrSmartLabel.dll
+  {3660253E-6763-11D2-A359-08003636E802} -> C:\...\igrGluePnt.dll
+  {D1E93B31-1A68-11D1-A222-080036C1C902} -> C:\...\igrConnector.dll
+  ...
+
+--- Tagged Text Storage List (70 bytes) ---
+  list: TaggedTxtStorages
+    -> TaggedTxtData
 
 --- P&ID Object Inventory ---
   Project: SQLPlant1401

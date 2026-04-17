@@ -179,3 +179,51 @@ fn psm_segment_table_decoded() {
     assert_eq!(t.count as usize, t.flags.len());
     assert!(t.flags.iter().all(|&b| b == 0x01));
 }
+
+#[test]
+fn version_history_decoded() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let vh = doc
+        .version_history
+        .as_ref()
+        .expect("DocVersion3 should be decoded");
+    assert_eq!(vh.records.len(), 4, "expected 4 version records");
+    assert!(vh.records.iter().all(|r| r.product == "SmartPlantPID.a"));
+    assert_eq!(vh.records[0].operation, "SA", "first record is SaveAs");
+    assert!(
+        vh.records[3].operation == "SV",
+        "last record should be a Save operation"
+    );
+    // Timestamps follow MM/DD/YY HH:MM format
+    assert!(vh.records[0].timestamp.contains('/'));
+    assert!(vh.records[0].timestamp.contains(':'));
+}
+
+#[test]
+fn app_object_registry_decoded() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let reg = doc
+        .app_object_registry
+        .as_ref()
+        .expect("AppObject should be decoded");
+    assert_eq!(reg.leading_u32, 5);
+    assert!(reg.entries.len() >= 4, "should decode at least 4 entries");
+    for e in &reg.entries {
+        assert!(e.clsid.starts_with('{') && e.clsid.ends_with('}'));
+    }
+    // At least one known DLL name should appear in the extracted paths.
+    let any_dll = reg.entries.iter().any(|e| e.path.ends_with(".dll"));
+    assert!(any_dll, "registry should reference at least one .dll path");
+}
+
+#[test]
+fn tagged_storage_list_decoded() {
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let t = doc
+        .tagged_storages
+        .as_ref()
+        .expect("JTaggedTxtStgList should be decoded");
+    assert_eq!(t.list_name, "TaggedTxtStorages");
+    assert_eq!(t.entries.len(), 1);
+    assert_eq!(t.entries[0].storage_name, "TaggedTxtData");
+}

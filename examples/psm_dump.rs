@@ -1,5 +1,6 @@
-//! Hex-dump the PSM index streams (PSMroots / PSMclustertable / PSMsegmenttable).
-//! Used for Phase 5 reverse-engineering.
+//! Hex-dump arbitrary top-level streams of a `.pid` file.
+//! Usage: `cargo run --example psm_dump -- file.pid [stream_name...]`
+//! If no stream names are given, dumps PSM index streams by default.
 
 use std::io::Read;
 
@@ -15,9 +16,16 @@ fn dump_all(data: &[u8]) {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: psm_dump <file.pid>");
-    let mut cfb = cfb::open(&path).expect("open cfb");
-    for name in ["PSMroots", "PSMclustertable", "PSMsegmenttable"] {
+    let args: Vec<String> = std::env::args().collect();
+    let path = args.get(1).expect("usage: psm_dump <file.pid> [stream...]");
+    let extra: Vec<&str> = args.iter().skip(2).map(String::as_str).collect();
+    let names: Vec<&str> = if extra.is_empty() {
+        vec!["PSMroots", "PSMclustertable", "PSMsegmenttable"]
+    } else {
+        extra
+    };
+    let mut cfb = cfb::open(path).expect("open cfb");
+    for name in names {
         let stream_path = format!("/{}", name);
         let mut stream = match cfb.open_stream(&stream_path) {
             Ok(s) => s,

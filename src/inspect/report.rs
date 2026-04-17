@@ -274,6 +274,54 @@ pub fn generate_report(doc: &PidDocument) -> String {
         writeln!(out, "  flags: [{}]", flags_hex.join(", ")).ok();
     }
 
+    if let Some(ref vh) = doc.version_history {
+        writeln!(
+            out,
+            "\n--- Version History ({} bytes, {} records) ---",
+            vh.size,
+            vh.records.len()
+        )
+        .ok();
+        for r in &vh.records {
+            writeln!(
+                out,
+                "  [{} {}] {} {}",
+                r.operation, r.timestamp, r.product, r.version
+            )
+            .ok();
+        }
+    }
+
+    if let Some(ref reg) = doc.app_object_registry {
+        writeln!(
+            out,
+            "\n--- App Object Registry ({} bytes, leading=0x{:08X}, {} entries) ---",
+            reg.size,
+            reg.leading_u32,
+            reg.entries.len()
+        )
+        .ok();
+        for e in &reg.entries {
+            writeln!(out, "  {} -> {}", e.clsid, e.path).ok();
+        }
+        if reg.trailing_bytes > 0 {
+            writeln!(out, "  ({} trailing bytes)", reg.trailing_bytes).ok();
+        }
+    }
+
+    if let Some(ref t) = doc.tagged_storages {
+        writeln!(
+            out,
+            "\n--- Tagged Text Storage List ({} bytes) ---",
+            t.size
+        )
+        .ok();
+        writeln!(out, "  list: {}", t.list_name).ok();
+        for e in &t.entries {
+            writeln!(out, "    -> {}", e.storage_name).ok();
+        }
+    }
+
     let top_level_unidentified: Vec<_> = doc
         .streams
         .iter()
@@ -291,6 +339,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
                         | "PSMroots"
                         | "PSMclustertable"
                         | "PSMsegmenttable"
+                        | "DocVersion3"
+                        | "AppObject"
+                        | "JTaggedTxtStgList"
                 )
                 && !path.starts_with("Sheet")
                 && !path.starts_with("TaggedTxtData")

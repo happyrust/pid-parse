@@ -1,5 +1,39 @@
 # 变更日志
 
+## [0.2.4] - 2026-04-17
+
+### Phase 5b: 文档注册表类流解析
+
+- **`DocVersion3` 版本日志**：固定 48 字节/记录格式 `[product 16B][version 12B][op 4B][timestamp 16B]` 完全解出，样本 4 条版本历史（SA→SV→SV→SV，时间戳 12/29/25 → 03/16/26，版本 0144 ↔ 0077 来回切换）
+- **`AppObject` COM 注册表**：每条 `[CLSID 16B][u32 char_count][UTF-16LE path]` + 3B filler；5 个 COM 插件 CLSID/路径完整解出（`igrSmartLabel.dll` / `igrGluePnt.dll` / `igrConnector.dll` / `LineRn.dll` 等）
+- **`JTaggedTxtStgList`**：格式 `[list_name utf16-ascii run][u32 count][记录×count]`，每记录 `[u32 char_count][UTF-16LE storage_name]`；揭示 `TaggedTxtStorages → TaggedTxtData` 的映射
+- **关键细节**：
+  - `AppObject` 的长度字段是**字符数**（含 L'\0'）而非字节数
+  - `JTaggedTxtStgList` 的 `list_name` 无 L'\0' 终止符，靠 u32 count 低字节 `0x01` 天然分界
+  - CLSID 按 Microsoft 经典 COM 二进制布局解析（前三段 LE，后两段 BE），渲染为 `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}` 标准形式
+
+### 模型扩展
+
+- 新类型：`VersionHistory` / `VersionRecord` / `AppObjectRegistry` / `AppObjectEntry` / `TaggedTextStorageList` / `TaggedTextStorageEntry`
+- `PidDocument` 新增三个可选字段：`version_history` / `app_object_registry` / `tagged_storages`
+
+### 新模块
+
+- `parsers/doc_version.rs`（DocVersion3 解析器 + 4 个单元测试）
+- `parsers/app_object.rs`（AppObject 解析器 + 4 个单元测试，含 GUID 格式化校验）
+- `parsers/tagged_stg_list.rs`（JTaggedTxtStgList 解析器 + 3 个单元测试）
+- `streams/doc_registry.rs`（统一接入上述三种流到 pipeline）
+
+### 报告
+
+- 主报告新增三段：`--- Version History ---` / `--- App Object Registry ---` / `--- Tagged Text Storage List ---`
+- 顶层未识别流仅剩 1 个：`DocVersion2` (48B, magic=0x00010034, 二进制非文本)
+
+### 测试
+
+- 集成测试 +4：`version_history_decoded` / `app_object_registry_decoded` / `tagged_storage_list_decoded` + 之前已有的 PSM 三项
+- **总计 56 个测试通过**（17 集成 + 18 `unit_parsers` + 21 模块内）
+
 ## [0.2.3] - 2026-04-17
 
 ### Phase 5a: PSM 索引表解析
