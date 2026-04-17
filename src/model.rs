@@ -269,6 +269,19 @@ pub struct SheetStream {
     pub path: String,
     pub size: u64,
     pub extracted_texts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magic_u32_le: Option<u32>,
+    /// Four-character ASCII rendering of `magic_u32_le` (e.g. "DF90", "tseg").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magic_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<ClusterHeader>,
+    /// Structured attribute records extracted from the sheet stream (heuristic).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub attribute_records: Vec<AttributeRecord>,
+    /// Probe summary: heuristic scan metadata (body_start_offset, marker_count, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe_summary: Option<ProbeSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,4 +289,7 @@ pub struct UnknownStream {
     pub path: String,
     pub size: u64,
     pub magic_u32_le: Option<u32>,
+    /// Four-character ASCII rendering of `magic_u32_le` (e.g. "toor", "tseg").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magic_tag: Option<String>,
 }

@@ -1,4 +1,5 @@
 use pid_parse::parsers::cluster_header::{self, CLUSTER_MAGIC};
+use pid_parse::parsers::magic;
 use pid_parse::parsers::xml_util;
 
 // ─── xml_util::collect_simple_tags ───
@@ -160,4 +161,67 @@ fn parse_string_table_truncated() {
 
     let (table, _end) = cluster_header::parse_string_table(&data, 0);
     assert!(table.is_empty(), "truncated entry should not parse");
+}
+
+// ─── magic::magic_tag / describe_magic ───
+
+#[test]
+fn magic_tag_renders_known_streams() {
+    // PSMroots: 'root'   (on-disk bytes: 72 6F 6F 74 -> u32 LE = 0x746F6F72)
+    assert_eq!(magic::magic_tag(0x746F6F72).as_deref(), Some("root"));
+    // PSMclustertable: 'clst'
+    assert_eq!(magic::magic_tag(0x74736C63).as_deref(), Some("clst"));
+    // PSMsegmenttable: 'stab'
+    assert_eq!(magic::magic_tag(0x62617473).as_deref(), Some("stab"));
+    // DocVersion3: 'Smar'
+    assert_eq!(magic::magic_tag(0x72616D53).as_deref(), Some("Smar"));
+}
+
+#[test]
+fn magic_tag_rejects_non_printable() {
+    // Cluster header magic contains 0xF5 0x90 — not printable ASCII
+    assert!(magic::magic_tag(0x6C90F544).is_none());
+    assert!(magic::magic_tag(0x00000005).is_none());
+}
+
+#[test]
+fn describe_magic_for_known_and_unknown() {
+    assert!(magic::describe_magic(0x6C90F544).contains("cluster"));
+    assert!(magic::describe_magic(0x746F6F72).contains("root"));
+    assert!(magic::describe_magic(0x72616D53).contains("SmartPlant"));
+    assert_eq!(magic::describe_magic(0x12345678), "");
+}
+
+// ─── Sheet probe integration (real file) ───
+
+#[test]
+fn sheet_stream_reuses_cluster_header() {
+    let parser = pid_parse::PidParser::new();
+    let doc = parser
+        .parse_file("test-file/DWG-0201GP06-01.pid")
+        .expect("parse fixture");
+    assert!(!doc.sheet_streams.is_empty(), "expected at least one sheet");
+    let sheet = &doc.sheet_streams[0];
+    let magic = sheet.magic_u32_le.expect("sheet stream must have magic");
+    assert_eq!(
+        magic, CLUSTER_MAGIC,
+        "sheet stream shares cluster magic 0x{:08X}, got 0x{:08X}",
+        CLUSTER_MAGIC, magic
+    );
+    let hdr = sheet.header.as_ref().expect("sheet header must parse");
+    assert_eq!(hdr.magic, CLUSTER_MAGIC);
+    assert!(hdr.record_count > 0, "sheet header should report records");
+    let ps = sheet.probe_summary.as_ref().expect("probe summary exists");
+    // Sheet streams do not use the 0x89 marker format of DA, so marker_count
+    // should be zero; we only verify the probe produced a plausible start/scan.
+    assert_eq!(
+        ps.marker_count, 0,
+        "sheet streams are not expected to use 0x89 DA markers"
+    );
+    assert!(
+        ps.body_start_offset >= 8 && ps.body_start_offset < sheet.size as usize,
+        "body_start={} should be within stream",
+        ps.body_start_offset
+    );
+    assert!(ps.bytes_scanned > 0);
 }

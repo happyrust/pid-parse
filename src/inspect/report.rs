@@ -1,4 +1,5 @@
 use crate::model::PidDocument;
+use crate::parsers::magic;
 use std::fmt::Write;
 
 pub fn generate_report(doc: &PidDocument) -> String {
@@ -163,6 +164,104 @@ pub fn generate_report(doc: &PidDocument) -> String {
                     writeln!(out, "      ... ({} more)", rec.attributes.len() - 5).ok();
                 }
             }
+        }
+    }
+
+    if !doc.sheet_streams.is_empty() {
+        writeln!(out, "\n--- Sheets ---").ok();
+        for sh in &doc.sheet_streams {
+            write!(out, "  {} ({} bytes", sh.name, sh.size).ok();
+            if let Some(m) = sh.magic_u32_le {
+                if let Some(ref tag) = sh.magic_tag {
+                    write!(out, ", magic=0x{:08X} '{}'", m, tag).ok();
+                } else {
+                    write!(out, ", magic=0x{:08X}", m).ok();
+                }
+            }
+            writeln!(out, ")").ok();
+
+            if let Some(ref hdr) = sh.header {
+                writeln!(
+                    out,
+                    "    header: type=0x{:04X}, records={}, body={}",
+                    hdr.stream_type, hdr.record_count, hdr.body_len
+                )
+                .ok();
+            }
+            if let Some(ref ps) = sh.probe_summary {
+                writeln!(
+                    out,
+                    "    [PROBE] body_start=0x{:04X}, markers={}, records={}, bytes_scanned={}",
+                    ps.body_start_offset,
+                    ps.marker_count,
+                    ps.records_extracted,
+                    ps.bytes_scanned
+                )
+                .ok();
+            }
+            if !sh.attribute_records.is_empty() {
+                writeln!(
+                    out,
+                    "    Attribute records: {} [EXPERIMENTAL/heuristic]",
+                    sh.attribute_records.len()
+                )
+                .ok();
+                for rec in sh.attribute_records.iter().take(5) {
+                    writeln!(
+                        out,
+                        "      {} ({} attrs)",
+                        rec.class_name,
+                        rec.attributes.len()
+                    )
+                    .ok();
+                }
+                if sh.attribute_records.len() > 5 {
+                    writeln!(
+                        out,
+                        "      ... ({} more)",
+                        sh.attribute_records.len() - 5
+                    )
+                    .ok();
+                }
+            }
+        }
+    }
+
+    let top_level_unidentified: Vec<_> = doc
+        .streams
+        .iter()
+        .filter(|s| {
+            let path = s.path.trim_start_matches('/');
+            !path.contains('/')
+                && !matches!(
+                    path,
+                    "\u{5}SummaryInformation"
+                        | "\u{5}DocumentSummaryInformation"
+                        | "PSMcluster0"
+                        | "StyleCluster"
+                        | "Dynamic Attributes Metadata"
+                        | "Unclustered Dynamic Attributes"
+                )
+                && !path.starts_with("Sheet")
+                && !path.starts_with("TaggedTxtData")
+                && !path.starts_with("JSite")
+        })
+        .collect();
+    if !top_level_unidentified.is_empty() {
+        writeln!(out, "\n--- Top-level Unidentified Streams ---").ok();
+        for s in top_level_unidentified {
+            write!(out, "  {} ({} bytes", s.path, s.size).ok();
+            if let Some(m) = s.magic_u32_le {
+                write!(out, ", magic=0x{:08X}", m).ok();
+                if let Some(tag) = magic::magic_tag(m) {
+                    write!(out, " '{}'", tag).ok();
+                }
+                let desc = magic::describe_magic(m);
+                if !desc.is_empty() {
+                    write!(out, " [{}]", desc).ok();
+                }
+            }
+            writeln!(out, ")").ok();
         }
     }
 

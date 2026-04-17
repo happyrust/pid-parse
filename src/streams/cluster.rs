@@ -1,7 +1,7 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{ClusterInfo, ClusterKind, ClusterProbeInfo, PidDocument, SheetStream};
-use crate::parsers::cluster_header;
+use crate::parsers::{cluster_header, dynamic_attr_records, magic};
 use std::io::Read;
 
 pub fn parse_clusters<R: Read + std::io::Seek>(
@@ -62,16 +62,55 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
         }
     }
 
-    for s in &doc.streams {
-        let leaf = s.path.rsplit('/').next().unwrap_or("");
-        if leaf.starts_with("Sheet") {
-            doc.sheet_streams.push(SheetStream {
-                name: leaf.to_string(),
-                path: s.path.clone(),
-                size: s.size,
-                extracted_texts: s.preview_ascii.clone(),
-            });
-        }
+    // Sheet streams share the same magic 0x6C90F544 as clusters: reuse the
+    // cluster header parser and the DA attribute-record probe on them.
+    let sheet_paths: Vec<(String, String, u64, Vec<String>)> = doc
+        .streams
+        .iter()
+        .filter_map(|s| {
+            let leaf = s.path.rsplit('/').next().unwrap_or("");
+            if leaf.starts_with("Sheet") {
+                Some((
+                    leaf.to_string(),
+                    s.path.clone(),
+                    s.size,
+                    s.preview_ascii.clone(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (name, path, size, preview) in sheet_paths {
+        let (magic_u32_le, magic_tag, header, attribute_records, probe_summary) =
+            if let Ok(mut stream) = cfb.open_stream(&path) {
+                let mut data = Vec::new();
+                stream.read_to_end(&mut data)?;
+
+                let m = data
+                    .get(0..4)
+                    .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+                let tag = m.and_then(magic::magic_tag);
+                let hdr = cluster_header::parse_header(&data);
+                let (records, summary) = dynamic_attr_records::parse_attribute_records(&data);
+
+                (m, tag, hdr, records, Some(summary))
+            } else {
+                (None, None, None, Vec::new(), None)
+            };
+
+        doc.sheet_streams.push(SheetStream {
+            name,
+            path,
+            size,
+            extracted_texts: preview,
+            magic_u32_le,
+            magic_tag,
+            header,
+            attribute_records,
+            probe_summary,
+        });
     }
 
     Ok(())

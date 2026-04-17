@@ -41,6 +41,7 @@ flowchart TB
         strscan["string_scan.rs"]
         cluster_hdr["cluster_header.rs\nparse_header() / parse_string_table()"]
         da_records["dynamic_attr_records.rs\nparse_attribute_records()"]
+        mg["magic.rs\nmagic_tag() / describe_magic()"]
     end
 
     subgraph L5["Layer 5: Stream Semantics"]
@@ -200,12 +201,13 @@ flowchart LR
 | `ClusterProbeInfo` | string table 启发式定位元数据 |
 | `DynamicAttributesBlob` | DA 流解析结果（strings + records + probe_summary） |
 | `AttributeRecord` | 属性记录：class_name + attributes + confidence |
-| `ProbeSummary` | 启发式扫描统计（body_start/markers/records/bytes） |
+| `ProbeSummary` | 启发式扫描统计（body_start/markers/records/bytes），DA 与 Sheet 共用 |
+| `SheetStream` | Sheet 流（header + probe + attribute_records + magic_tag） |
 | `ObjectInventory` | P&ID 对象清单（设备、管道、仪表统计） |
 
 ---
 
-## 当前能力边界 (v0.2.1)
+## 当前能力边界 (v0.2.2)
 
 **已实现**：
 
@@ -216,14 +218,17 @@ flowchart LR
 - Cluster 公共头解析 (magic `0x6C90F544`)
 - `PSMcluster0` 字符串表解析（启发式定位 + sentinel 正确处理）
 - `Unclustered Dynamic Attributes` 记录解码（231 条记录 / 10 个类）
+- **Sheet 流公共头解析** + 0x89 标记探测（证实 Sheet 非 DA 记录格式）
+- **Magic tag 工具**（root / clst / stab / Smar / OLES）+ 顶层未识别流可视化
 - P&ID 对象清单构建
-- 文本报告 + JSON 导出 + Probe 探测输出
+- 文本报告 + JSON 导出 + Probe 探测输出（cluster / dynamic / sheet）
 
 **尚未实现**：
 
+- Sheet 流页面图元/几何解码（type=0x00CE 格式待逆向）
 - PSMcluster0 / StyleCluster 完整二进制记录解码
-- JSite ↔ DA ↔ PSM 交叉引用对象图
-- Sheet 流页面几何重建
+- `PSMroots` / `PSMclustertable` / `PSMsegmenttable` 索引表解析
+- JSite ↔ DA ↔ PSM ↔ Sheet 交叉引用对象图
 - 往返序列化
 
 ---
@@ -235,7 +240,8 @@ flowchart LR
 | Phase 1 | 稳定文档索引 + 编译闭合 | ✅ 完成 |
 | Phase 2 | 语义提取（Summary/XML/JProperties/DA 记录） | ✅ 完成 |
 | Phase 3 | 二进制结构解码 + Probe/Decode 分层 | ✅ 完成 |
-| Phase 4 | Sheet 流专项探测 + 页面对象重建 | 🔜 下一步 |
+| Phase 4 | Sheet 流 header 复用 + magic 识别 + 未识别流可视化 | ✅ 完成 |
+| Phase 5 | Sheet 页面图元解码 + PSM 索引表解析 | 🔜 下一步 |
 
 ---
 
@@ -264,6 +270,9 @@ cargo run --bin pid_inspect -- drawing.pid --probe-cluster
 
 # 动态属性探测（0x89 标记数、记录统计、属性详情）
 cargo run --bin pid_inspect -- drawing.pid --probe-dynamic
+
+# Sheet 流探测（header / probe / magic / ASCII 预览）
+cargo run --bin pid_inspect -- drawing.pid --probe-sheet
 ```
 
 ---
@@ -275,4 +284,6 @@ cargo test
 ```
 
 - 集成测试 11 个（真实 `.pid` 样本）
-- 单元测试 14 个（`collect_simple_tags` / `parse_header` / `parse_string_table`）
+- 单元测试 21 个（`collect_simple_tags` / `parse_header` / `parse_string_table` / `magic_tag` / `describe_magic` / `sheet_stream_reuses_cluster_header`）
+- 模块内测试 3 个（`parsers::magic`）
+- **总计 32 个测试**

@@ -3,7 +3,9 @@ use pid_parse::PidParser;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic]");
+        eprintln!(
+            "Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic] [--probe-sheet]"
+        );
         std::process::exit(1);
     }
 
@@ -11,6 +13,7 @@ fn main() {
     let json_mode = args.iter().any(|a| a == "--json");
     let probe_cluster = args.iter().any(|a| a == "--probe-cluster");
     let probe_dynamic = args.iter().any(|a| a == "--probe-dynamic");
+    let probe_sheet = args.iter().any(|a| a == "--probe-sheet");
 
     let parser = PidParser::new();
     let doc = match parser.parse_file(path) {
@@ -40,7 +43,11 @@ fn main() {
         print_probe_dynamic(&doc);
     }
 
-    if !probe_cluster && !probe_dynamic {
+    if probe_sheet {
+        print_probe_sheet(&doc);
+    }
+
+    if !probe_cluster && !probe_dynamic && !probe_sheet {
         let report = pid_parse::inspect::report::generate_report(&doc);
         print!("{}", report);
     }
@@ -71,6 +78,74 @@ fn print_probe_cluster(doc: &pid_parse::PidDocument) {
             println!("  string_table: {} entries", table.len());
             for entry in table {
                 println!("    [{:>4}] \"{}\"", entry.index, entry.value);
+            }
+        }
+        println!();
+    }
+}
+
+fn print_probe_sheet(doc: &pid_parse::PidDocument) {
+    println!("=== Sheet Probe ===\n");
+    if doc.sheet_streams.is_empty() {
+        println!("(no sheet streams found)");
+        return;
+    }
+    for sh in &doc.sheet_streams {
+        println!("--- {} ---", sh.name);
+        println!("  path: {}", sh.path);
+        println!("  size: {} bytes (0x{:X})", sh.size, sh.size);
+        if let Some(m) = sh.magic_u32_le {
+            print!("  magic: 0x{:08X}", m);
+            if let Some(ref tag) = sh.magic_tag {
+                print!(" '{}'", tag);
+            }
+            println!();
+        }
+        if let Some(ref hdr) = sh.header {
+            println!(
+                "  header: magic=0x{:08X} type=0x{:04X} records={} body_len={} flags=0x{:04X}",
+                hdr.magic, hdr.stream_type, hdr.record_count, hdr.body_len, hdr.flags
+            );
+        } else {
+            println!("  header: (not detected / wrong magic)");
+        }
+        if let Some(ref ps) = sh.probe_summary {
+            println!(
+                "  [PROBE] body_start_offset=0x{:04X} ({} decimal)",
+                ps.body_start_offset, ps.body_start_offset
+            );
+            println!("  [PROBE] 0x89 markers found: {}", ps.marker_count);
+            println!("  [PROBE] records extracted: {}", ps.records_extracted);
+            println!(
+                "  [PROBE] bytes scanned: {} / {} total",
+                ps.bytes_scanned, sh.size
+            );
+        }
+        if !sh.attribute_records.is_empty() {
+            println!(
+                "\n  records: {} [EXPERIMENTAL/heuristic]",
+                sh.attribute_records.len()
+            );
+            for (i, rec) in sh.attribute_records.iter().enumerate() {
+                println!(
+                    "    [{}] class=\"{}\" attrs={} confidence={}",
+                    i,
+                    rec.class_name,
+                    rec.attributes.len(),
+                    rec.confidence
+                );
+                for attr in &rec.attributes {
+                    println!("         {}: {:?}", attr.name, attr.value);
+                }
+            }
+        }
+        if !sh.extracted_texts.is_empty() {
+            println!(
+                "\n  ASCII preview ({} strings, first 10):",
+                sh.extracted_texts.len()
+            );
+            for t in sh.extracted_texts.iter().take(10) {
+                println!("    {}", t);
             }
         }
         println!();
