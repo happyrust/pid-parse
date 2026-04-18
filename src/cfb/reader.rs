@@ -35,6 +35,8 @@ pub fn parse_pid_file(path: &Path, options: &ParseOptions) -> Result<PidDocument
     build_object_inventory(&mut doc);
     build_object_graph(&mut doc);
 
+    doc.cross_reference = Some(crate::crossref::build_graph(&doc));
+
     Ok(doc)
 }
 

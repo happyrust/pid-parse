@@ -13,6 +13,8 @@
 - **文档注册表**：`DocVersion3` 版本日志 / `AppObject` COM 插件注册表 / `JTaggedTxtStgList` 解码（v0.2.4）
 - **Magic 识别**：自动识别 PSMroots / PSMclustertable / PSMsegmenttable / DocVersion 等顶层结构化流（v0.2.2）
 - **P&ID 对象清单**：从动态属性记录中提取设备/管道/仪表统计
+- **关系端点解码**（v0.3.0）：DA 31 字节 trailer（record_id/field_x/class_id）+ Sheet 端点对记录 → 关系 source/target 端到端可解
+- **跨引用对象图**（v0.3.0-rc2）：PSM 声明 vs. 实际 cluster 对齐 / 符号 ↔ JSite 反向索引 / DA 属性类摘要 / PSMroots 解析状态
 - **Probe / Decode 分层**：启发式标记与确定性解码明确分离
 - **报告输出**：人类可读文本报告 + JSON 完整导出
 
@@ -29,6 +31,13 @@ cargo run --bin pid_inspect -- drawing.pid --json
 cargo run --bin pid_inspect -- drawing.pid --probe-cluster
 cargo run --bin pid_inspect -- drawing.pid --probe-dynamic
 cargo run --bin pid_inspect -- drawing.pid --probe-sheet
+
+# 关系探测 / 端点解析
+cargo run --bin pid_inspect -- drawing.pid --probe-relationships
+cargo run --bin pid_inspect -- drawing.pid --probe-endpoints
+
+# 跨引用对象图
+cargo run --bin pid_inspect -- drawing.pid --crossref
 ```
 
 ## 库调用
@@ -112,4 +121,19 @@ Sheet streams: 1
     Relationship: 64
     Nozzle: 6
     Instrument: 3
+
+--- Cross Reference ---
+  Clusters: declared=5 found=5 matched=5
+  Symbols: 8 unique (21 total JSite refs)
+    [4x] Valve (JSite0,JSite3,JSite5 ...)
+    [3x] Instrument (JSite1,JSite7,JSite9 ...)
+    ...
+  Attribute classes: 10
+    P&IDAttributes (records=140, attr_names=35, drawings=1, models=140)
+    PipeRun (records=53, attr_names=12, drawings=0, models=0)
+    ...
+  PSMroots: 7 entries, 4 resolved in CFB tree
+    [STORAGE] id=0x0000018C  Imagineer Document
+    [MISSING] id=0x00000019  _SupportOnlyList
+    ...
 ```

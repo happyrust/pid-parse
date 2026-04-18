@@ -4,7 +4,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic] [--probe-sheet] [--probe-relationships] [--probe-endpoints]"
+            "Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic] [--probe-sheet] [--probe-relationships] [--probe-endpoints] [--crossref]"
         );
         std::process::exit(1);
     }
@@ -16,6 +16,7 @@ fn main() {
     let probe_sheet = args.iter().any(|a| a == "--probe-sheet");
     let probe_relationships = args.iter().any(|a| a == "--probe-relationships");
     let probe_endpoints = args.iter().any(|a| a == "--probe-endpoints");
+    let crossref = args.iter().any(|a| a == "--crossref");
 
     let parser = PidParser::new();
     let doc = match parser.parse_file(path) {
@@ -57,11 +58,16 @@ fn main() {
         print_probe_endpoints(&doc);
     }
 
+    if crossref {
+        print_crossref(&doc);
+    }
+
     if !probe_cluster
         && !probe_dynamic
         && !probe_sheet
         && !probe_relationships
         && !probe_endpoints
+        && !crossref
     {
         let report = pid_parse::inspect::report::generate_report(&doc);
         print!("{}", report);
@@ -132,6 +138,79 @@ fn print_probe_endpoints(doc: &pid_parse::PidDocument) {
         println!(
             "[{:>3}]  {}   field_x={:?}\n         {}  ->  {}",
             i, id, rel.field_x, src, tgt
+        );
+    }
+}
+
+fn print_crossref(doc: &pid_parse::PidDocument) {
+    println!("=== Cross Reference ===\n");
+    let Some(ref xr) = doc.cross_reference else {
+        println!("(no cross-reference graph)");
+        return;
+    };
+
+    println!("--- Cluster Coverage ---");
+    let cov = &xr.cluster_coverage;
+    println!("  declared: {:?}", cov.declared);
+    println!("  found:    {:?}", cov.found);
+    println!("  matched:  {:?}", cov.matched);
+    if !cov.declared_missing.is_empty() {
+        println!("  declared_missing: {:?}", cov.declared_missing);
+    }
+    if !cov.found_extra.is_empty() {
+        println!("  found_extra: {:?}", cov.found_extra);
+    }
+
+    println!("\n--- Symbol Usage ({} unique) ---", xr.symbol_usage.len());
+    for u in &xr.symbol_usage {
+        println!(
+            "  [{}x] {}",
+            u.usage_count,
+            u.symbol_name.clone().unwrap_or_else(|| u.symbol_path.clone())
+        );
+        println!("      path: {}", u.symbol_path);
+        println!("      jsites: {:?}", u.jsite_names);
+    }
+
+    println!(
+        "\n--- Attribute Classes ({}) ---",
+        xr.attribute_classes.len()
+    );
+    for c in &xr.attribute_classes {
+        println!(
+            "  {} (records={}, attr_names={}, drawings={}, models={})",
+            c.class_name,
+            c.record_count,
+            c.unique_attribute_names.len(),
+            c.drawing_ids.len(),
+            c.model_ids.len()
+        );
+        if !c.drawing_ids.is_empty() {
+            println!("    drawings: {:?}", c.drawing_ids);
+        }
+        if !c.model_ids.is_empty() {
+            let preview: Vec<_> = c.model_ids.iter().take(8).cloned().collect();
+            println!(
+                "    models (first {}): {:?}",
+                preview.len().min(c.model_ids.len()),
+                preview
+            );
+        }
+        if !c.unique_attribute_names.is_empty() {
+            println!("    attr names: {:?}", c.unique_attribute_names);
+        }
+    }
+
+    println!("\n--- Root Presence ---");
+    for r in &xr.root_presence {
+        let where_ = match (r.found_as_storage, r.found_as_stream) {
+            (true, _) => "STORAGE",
+            (_, true) => "STREAM",
+            _ => "MISSING",
+        };
+        println!(
+            "  [{}] id=0x{:08X}  {}",
+            where_, r.id, r.name
         );
     }
 }

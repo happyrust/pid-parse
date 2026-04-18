@@ -457,5 +457,111 @@ pub fn generate_report(doc: &PidDocument) -> String {
         }
     }
 
+    if let Some(ref xr) = doc.cross_reference {
+        writeln!(out, "\n--- Cross Reference ---").ok();
+
+        let cov = &xr.cluster_coverage;
+        writeln!(
+            out,
+            "  Clusters: declared={} found={} matched={}",
+            cov.declared.len(),
+            cov.found.len(),
+            cov.matched.len()
+        )
+        .ok();
+        if !cov.declared_missing.is_empty() {
+            writeln!(
+                out,
+                "    [WARN] declared but missing: {}",
+                cov.declared_missing.join(", ")
+            )
+            .ok();
+        }
+        if !cov.found_extra.is_empty() {
+            writeln!(
+                out,
+                "    [INFO] found but not declared: {}",
+                cov.found_extra.join(", ")
+            )
+            .ok();
+        }
+
+        if !xr.symbol_usage.is_empty() {
+            writeln!(
+                out,
+                "  Symbols: {} unique ({} total JSite refs)",
+                xr.symbol_usage.len(),
+                xr.symbol_usage
+                    .iter()
+                    .map(|u| u.usage_count)
+                    .sum::<usize>()
+            )
+            .ok();
+            for u in xr.symbol_usage.iter().take(5) {
+                let basename = u
+                    .symbol_name
+                    .clone()
+                    .unwrap_or_else(|| u.symbol_path.clone());
+                writeln!(
+                    out,
+                    "    [{}x] {} ({} ...)",
+                    u.usage_count,
+                    basename,
+                    u.jsite_names
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+                .ok();
+            }
+            if xr.symbol_usage.len() > 5 {
+                writeln!(out, "    ... ({} more)", xr.symbol_usage.len() - 5).ok();
+            }
+        }
+
+        if !xr.attribute_classes.is_empty() {
+            writeln!(out, "  Attribute classes: {}", xr.attribute_classes.len()).ok();
+            for c in &xr.attribute_classes {
+                writeln!(
+                    out,
+                    "    {} (records={}, attr_names={}, drawings={}, models={})",
+                    c.class_name,
+                    c.record_count,
+                    c.unique_attribute_names.len(),
+                    c.drawing_ids.len(),
+                    c.model_ids.len()
+                )
+                .ok();
+            }
+        }
+
+        if !xr.root_presence.is_empty() {
+            let resolved = xr
+                .root_presence
+                .iter()
+                .filter(|r| r.found_as_storage || r.found_as_stream)
+                .count();
+            writeln!(
+                out,
+                "  PSMroots: {} entries, {} resolved in CFB tree",
+                xr.root_presence.len(),
+                resolved
+            )
+            .ok();
+            for r in &xr.root_presence {
+                let marker = if r.found_as_storage {
+                    "STORAGE"
+                } else if r.found_as_stream {
+                    "STREAM "
+                } else {
+                    "MISSING"
+                };
+                writeln!(out, "    [{}] id=0x{:08X}  {}", marker, r.id, r.name).ok();
+            }
+        }
+    }
+
     out
 }

@@ -58,9 +58,13 @@ flowchart TB
         dr["doc_registry.rs"]
     end
 
-    subgraph L6["Layer 6: Reporting / CLI"]
+    subgraph L6["Layer 6: Derivation"]
+        crossref["crossref.rs\nbuild_graph()"]
+    end
+
+    subgraph L7["Layer 7: Reporting / CLI"]
         report["inspect/report.rs"]
-        cli["bin/pid_inspect.rs\n--json / --probe-cluster / --probe-dynamic"]
+        cli["bin/pid_inspect.rs\n--json / --probe-cluster / --probe-dynamic / --probe-sheet / --crossref"]
     end
 
     api --> reader
@@ -69,6 +73,8 @@ flowchart TB
     L5 --> L4
     L4 --> model
     L5 --> model
+    model --> crossref
+    crossref --> model
     model --> report
     model --> cli
 ```
@@ -80,7 +86,8 @@ flowchart TB
 | **L3: Model** | `src/model.rs` | `PidDocument` 及所有结构类型（`StorageNode`, `JSite`, `ClusterInfo`, `DynamicAttributesBlob`, `AttributeRecord`, `ProbeSummary`, `ClusterProbeInfo` 等） |
 | **L4: Parsers** | `src/parsers/*.rs` | 字符串扫描、XML 标签提取、Cluster 公共头解析、DA 记录解码 |
 | **L5: Streams** | `src/streams/*.rs` | 将命名流映射到语义处理器（Summary、TaggedText、JSite、Cluster、DynamicAttrs） |
-| **L6: Report/CLI** | `src/inspect/report.rs`, `src/bin/pid_inspect.rs` | 人类可读报告、JSON 导出、Probe 探测输出 |
+| **L6: Derivation** | `src/crossref.rs` | 从已解出的 `PidDocument` 派生跨引用对象图（cluster 覆盖率、符号用量、属性类摘要、PSMroots 解析状态） |
+| **L7: Report/CLI** | `src/inspect/report.rs`, `src/bin/pid_inspect.rs` | 人类可读报告、JSON 导出、Probe 探测输出、Cross Reference 专项 |
 
 ---
 
@@ -216,10 +223,15 @@ flowchart LR
 | `AppObjectRegistry` / `AppObjectEntry` | AppObject COM 插件列表（CLSID + DLL 路径） |
 | `TaggedTextStorageList` | JTaggedTxtStgList 映射表 |
 | `ObjectInventory` | P&ID 对象清单（设备、管道、仪表统计） |
+| `CrossReferenceGraph` | 派生层：把已解出的所有对象串起来 |
+| `ClusterCoverage` | PSM 声明 vs. 实际 cluster/sheet 流对齐结果 |
+| `SymbolUsage` | `symbol_path → [JSite]` 反向索引 |
+| `AttributeClassSummary` | 每个 DA 属性类的记录数、出现过的属性名、涉及的图号/模型号 |
+| `RootPresence` | `PSMroots` 每条根名与 CFB 顶层目录项的对齐状态（STORAGE/STREAM/MISSING） |
 
 ---
 
-## 当前能力边界 (v0.2.4)
+## 当前能力边界 (v0.3.0-rc2)
 
 **已实现**：
 
@@ -235,15 +247,17 @@ flowchart LR
 - **文档注册表类流解析**：`DocVersion3` 版本日志 / `AppObject` COM 插件注册表 / `JTaggedTxtStgList`
 - **Magic tag 工具**（root / clst / stab / Smar / OLES）+ 顶层未识别流可视化
 - P&ID 对象清单构建
-- 文本报告 + JSON 导出 + Probe 探测输出（cluster / dynamic / sheet）
+- **关系端点解码** (v0.3.0)：DA 记录 31B trailer（record_id / field_x / class_id）+ Sheet 端点对记录 →`PidRelationship.source_drawing_id` / `target_drawing_id` 端到端可用
+- **DocVersion2 原始保留**（`DocVersion2Raw`：size / magic / hex_preview，结构化解码待定）
+- **跨引用对象图** (v0.3.0-rc2)：cluster 覆盖率检查 / 符号 ↔ JSite 反向索引 / DA 属性类摘要 / PSMroots 解析状态
+- 文本报告 + JSON 导出 + Probe 探测输出（cluster / dynamic / sheet / relationships / endpoints / **crossref**）
 
 **尚未实现**：
 
-- Sheet 流页面图元/几何解码（type=0x00CE 格式待逆向）
+- Sheet 流页面图元/几何解码（type=0x00CE 其他结构，除端点对记录外）
+- `DocVersion2` 48B 结构化解码
 - PSMcluster0 / StyleCluster 完整二进制记录解码
 - `PSMclustertable` 记录内的 cluster-index / flags 精确字段映射
-- `DocVersion2` (48B 二进制非文本) 格式识别
-- JSite ↔ DA ↔ PSM ↔ Sheet 交叉引用对象图
 - 往返序列化
 
 ---
@@ -258,7 +272,9 @@ flowchart LR
 | Phase 4 | Sheet 流 header 复用 + magic 识别 + 未识别流可视化 | ✅ 完成 |
 | Phase 5a | PSM 索引表（root / clst / stab）解析 | ✅ 完成 |
 | Phase 5b | 文档注册表类流（DocVersion3 / AppObject / JTaggedTxtStgList）解析 | ✅ 完成 |
-| Phase 6 | Sheet type=0x00CE 二进制格式逆向 + 对象图交叉引用 | 🔜 下一步 |
+| Phase 6  | 关系端点解码（DA 31B trailer + Sheet 端点对记录 + DocVersion2 原始保留）| ✅ 完成 (v0.3.0) |
+| Phase 6c | 跨引用对象图（cluster 覆盖率 / 符号用量 / 属性类 / PSMroots 解析状态） | ✅ 完成 (v0.3.0-rc2) |
+| Phase 7  | Sheet 其他图元 / DocVersion2 结构化 / PSMcluster0 / StyleCluster 完整记录 | 🔜 下一步 |
 
 ---
 
@@ -290,6 +306,9 @@ cargo run --bin pid_inspect -- drawing.pid --probe-dynamic
 
 # Sheet 流探测（header / probe / magic / ASCII 预览）
 cargo run --bin pid_inspect -- drawing.pid --probe-sheet
+
+# 跨引用对象图（cluster 覆盖率 / 符号用量 / 属性类 / PSMroots 状态）
+cargo run --bin pid_inspect -- drawing.pid --crossref
 ```
 
 ---
@@ -300,7 +319,7 @@ cargo run --bin pid_inspect -- drawing.pid --probe-sheet
 cargo test
 ```
 
-- 集成测试 17 个（真实 `.pid` 样本，含 PSM 三表 + 版本日志 + COM 注册表 + 存储映射）
+- 集成测试 26 个（真实 `.pid` 样本，含 PSM 三表 + 版本日志 + COM 注册表 + 关系端点 + 存储映射）
 - 单元测试 18 个（`collect_simple_tags` / `parse_header` / `parse_string_table` / `magic_tag` / `describe_magic` / `sheet_stream_reuses_cluster_header`）
-- 模块内测试 21 个（`magic` 3 + `psm_tables` 7 + `doc_version` 4 + `app_object` 4 + `tagged_stg_list` 3）
-- **总计 56 个测试**
+- 模块内测试 53 个（rc1：`sheet_endpoint_records` 6 / `relationship_probe` 4 / `dynamic_attr_records` trailer ~15 / ... + rc2 新增 `crossref` 6）
+- **总计 97 个测试**（无样本时可跑 71 个：18 unit + 53 模块内）

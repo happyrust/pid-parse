@@ -44,6 +44,12 @@ pub struct PidDocument {
     /// for cross-stream lookup.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub object_graph: Option<ObjectGraph>,
+
+    /// Cross-reference graph that stitches decoded data together
+    /// (PSM declarations ↔ actual clusters, JSite ↔ symbols, DA class ↔ records,
+    /// PSMroots ↔ cfb tree). Derived from `PidDocument` in a second pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cross_reference: Option<CrossReferenceGraph>,
 }
 
 /// Summary inventory of P&ID objects in the drawing.
@@ -90,6 +96,7 @@ impl Default for PidDocument {
             unknown_streams: vec![],
             object_inventory: None,
             object_graph: None,
+            cross_reference: None,
         }
     }
 }
@@ -656,4 +663,73 @@ pub struct SheetEndpointRecord {
     pub endpoint_a: u32,
     /// Target endpoint `field_x` (references the target object's DA record).
     pub endpoint_b: u32,
+}
+
+// ---- Cross-reference graph ---------------------------------------------------
+
+/// Stitches already-decoded pieces of the document into a small relational
+/// view. Pure derivation — requires no extra I/O.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CrossReferenceGraph {
+    /// PSM-declared clusters vs. clusters actually present in the file.
+    pub cluster_coverage: ClusterCoverage,
+    /// JSite instances grouped by the symbol they reference.
+    pub symbol_usage: Vec<SymbolUsage>,
+    /// One summary per attribute class found in Unclustered Dynamic Attributes.
+    pub attribute_classes: Vec<AttributeClassSummary>,
+    /// Each PSMroots entry correlated with its existence in the CFB tree.
+    pub root_presence: Vec<RootPresence>,
+}
+
+/// Comparison between `PSMclustertable` (declared) and the cluster / sheet
+/// streams actually parsed from the file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClusterCoverage {
+    /// Names declared by `PSMclustertable`.
+    pub declared: Vec<String>,
+    /// Names found on-disk (cluster streams + sheet streams).
+    pub found: Vec<String>,
+    /// Names present in both sets.
+    pub matched: Vec<String>,
+    /// Declared but not found on-disk (data-integrity warning).
+    pub declared_missing: Vec<String>,
+    /// Found on-disk but not declared (typically only when PSM is absent).
+    pub found_extra: Vec<String>,
+}
+
+/// Symbol → JSite reverse index. One entry per unique `symbol_path`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SymbolUsage {
+    /// Absolute symbol path (e.g. `\\server\share\symbols\Valve.sym`).
+    pub symbol_path: String,
+    /// Basename of the symbol (e.g. `Valve`). `None` when unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    /// JSite storage names that reference this symbol (sorted, unique).
+    pub jsite_names: Vec<String>,
+    /// Number of references. Always equal to `jsite_names.len()`.
+    pub usage_count: usize,
+}
+
+/// Per-class aggregation of Dynamic Attributes records.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttributeClassSummary {
+    pub class_name: String,
+    pub record_count: usize,
+    /// Distinct `DrawingID` / `DrawingNo` values encountered (sorted, unique).
+    pub drawing_ids: Vec<String>,
+    /// Distinct `ModelID` values encountered (sorted, unique, capped at 32).
+    pub model_ids: Vec<String>,
+    /// Distinct attribute names encountered under this class (sorted, unique).
+    pub unique_attribute_names: Vec<String>,
+}
+
+/// Describes whether a name published in `PSMroots` actually maps to a
+/// storage or stream in the CFB tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RootPresence {
+    pub name: String,
+    pub id: u32,
+    pub found_as_storage: bool,
+    pub found_as_stream: bool,
 }

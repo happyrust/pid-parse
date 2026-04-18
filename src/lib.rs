@@ -1,5 +1,6 @@
 pub mod api;
 pub mod cfb;
+pub mod crossref;
 pub mod error;
 pub mod inspect;
 pub mod model;
