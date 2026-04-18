@@ -4,7 +4,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic] [--probe-sheet] [--probe-relationships] [--probe-endpoints] [--crossref]"
+            "Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic] [--probe-sheet] [--probe-relationships] [--probe-endpoints] [--crossref] [--graph-mermaid] [--crossref-mermaid]"
         );
         std::process::exit(1);
     }
@@ -17,6 +17,8 @@ fn main() {
     let probe_relationships = args.iter().any(|a| a == "--probe-relationships");
     let probe_endpoints = args.iter().any(|a| a == "--probe-endpoints");
     let crossref = args.iter().any(|a| a == "--crossref");
+    let graph_mermaid = args.iter().any(|a| a == "--graph-mermaid");
+    let crossref_mermaid = args.iter().any(|a| a == "--crossref-mermaid");
 
     let parser = PidParser::new();
     let doc = match parser.parse_file(path) {
@@ -62,12 +64,32 @@ fn main() {
         print_crossref(&doc);
     }
 
+    if graph_mermaid {
+        let out = pid_parse::inspect::mermaid::object_graph_mermaid(&doc);
+        if out.is_empty() {
+            eprintln!("(no object graph available — nothing to render)");
+        } else {
+            print!("{}", out);
+        }
+    }
+
+    if crossref_mermaid {
+        let out = pid_parse::inspect::mermaid::crossref_mermaid(&doc);
+        if out.is_empty() {
+            eprintln!("(no cross-reference graph — nothing to render)");
+        } else {
+            print!("{}", out);
+        }
+    }
+
     if !probe_cluster
         && !probe_dynamic
         && !probe_sheet
         && !probe_relationships
         && !probe_endpoints
         && !crossref
+        && !graph_mermaid
+        && !crossref_mermaid
     {
         let report = pid_parse::inspect::report::generate_report(&doc);
         print!("{}", report);

@@ -64,7 +64,8 @@ flowchart TB
 
     subgraph L7["Layer 7: Reporting / CLI"]
         report["inspect/report.rs"]
-        cli["bin/pid_inspect.rs\n--json / --probe-cluster / --probe-dynamic / --probe-sheet / --crossref"]
+        merm["inspect/mermaid.rs\nobject_graph_mermaid / crossref_mermaid"]
+        cli["bin/pid_inspect.rs\n--json / --probe-* / --crossref / --graph-mermaid / --crossref-mermaid"]
     end
 
     api --> reader
@@ -87,7 +88,7 @@ flowchart TB
 | **L4: Parsers** | `src/parsers/*.rs` | 字符串扫描、XML 标签提取、Cluster 公共头解析、DA 记录解码 |
 | **L5: Streams** | `src/streams/*.rs` | 将命名流映射到语义处理器（Summary、TaggedText、JSite、Cluster、DynamicAttrs） |
 | **L6: Derivation** | `src/crossref.rs` | 从已解出的 `PidDocument` 派生跨引用对象图（cluster 覆盖率、符号用量、属性类摘要、PSMroots 解析状态） |
-| **L7: Report/CLI** | `src/inspect/report.rs`, `src/bin/pid_inspect.rs` | 人类可读报告、JSON 导出、Probe 探测输出、Cross Reference 专项 |
+| **L7: Report/CLI** | `src/inspect/report.rs`, `src/inspect/mermaid.rs`, `src/bin/pid_inspect.rs` | 人类可读报告、JSON 导出、Probe 探测输出、Cross Reference 专项、Mermaid 图导出 |
 
 ---
 
@@ -231,7 +232,7 @@ flowchart LR
 
 ---
 
-## 当前能力边界 (v0.3.0-rc2)
+## 当前能力边界 (v0.3.0)
 
 **已实现**：
 
@@ -250,7 +251,8 @@ flowchart LR
 - **关系端点解码** (v0.3.0)：DA 记录 31B trailer（record_id / field_x / class_id）+ Sheet 端点对记录 →`PidRelationship.source_drawing_id` / `target_drawing_id` 端到端可用
 - **DocVersion2 原始保留**（`DocVersion2Raw`：size / magic / hex_preview，结构化解码待定）
 - **跨引用对象图** (v0.3.0-rc2)：cluster 覆盖率检查 / 符号 ↔ JSite 反向索引 / DA 属性类摘要 / PSMroots 解析状态
-- 文本报告 + JSON 导出 + Probe 探测输出（cluster / dynamic / sheet / relationships / endpoints / **crossref**）
+- **Mermaid 可视化导出** (v0.3.0)：`ObjectGraph` / `CrossReferenceGraph` 直接渲染为 mermaid 文本，无需外部工具
+- 文本报告 + JSON 导出 + Probe 探测输出（cluster / dynamic / sheet / relationships / endpoints / **crossref**）+ Mermaid 图 (`--graph-mermaid` / `--crossref-mermaid`)
 
 **尚未实现**：
 
@@ -274,7 +276,8 @@ flowchart LR
 | Phase 5b | 文档注册表类流（DocVersion3 / AppObject / JTaggedTxtStgList）解析 | ✅ 完成 |
 | Phase 6  | 关系端点解码（DA 31B trailer + Sheet 端点对记录 + DocVersion2 原始保留）| ✅ 完成 (v0.3.0) |
 | Phase 6c | 跨引用对象图（cluster 覆盖率 / 符号用量 / 属性类 / PSMroots 解析状态） | ✅ 完成 (v0.3.0-rc2) |
-| Phase 7  | Sheet 其他图元 / DocVersion2 结构化 / PSMcluster0 / StyleCluster 完整记录 | 🔜 下一步 |
+| Phase 7a | Mermaid 可视化导出（ObjectGraph / CrossReferenceGraph） | ✅ 完成 (v0.3.0) |
+| Phase 7  | DocVersion2 结构化 / PSMcluster0 / StyleCluster 完整记录 / JSON Schema / 往返序列化 | 🔜 下一步 |
 
 ---
 
@@ -309,6 +312,10 @@ cargo run --bin pid_inspect -- drawing.pid --probe-sheet
 
 # 跨引用对象图（cluster 覆盖率 / 符号用量 / 属性类 / PSMroots 状态）
 cargo run --bin pid_inspect -- drawing.pid --crossref
+
+# Mermaid 图导出
+cargo run --bin pid_inspect -- drawing.pid --graph-mermaid > object_graph.mmd
+cargo run --bin pid_inspect -- drawing.pid --crossref-mermaid > crossref.mmd
 ```
 
 ---
@@ -321,5 +328,5 @@ cargo test
 
 - 集成测试 26 个（真实 `.pid` 样本，含 PSM 三表 + 版本日志 + COM 注册表 + 关系端点 + 存储映射）
 - 单元测试 18 个（`collect_simple_tags` / `parse_header` / `parse_string_table` / `magic_tag` / `describe_magic` / `sheet_stream_reuses_cluster_header`）
-- 模块内测试 53 个（rc1：`sheet_endpoint_records` 6 / `relationship_probe` 4 / `dynamic_attr_records` trailer ~15 / ... + rc2 新增 `crossref` 6）
-- **总计 97 个测试**（无样本时可跑 71 个：18 unit + 53 模块内）
+- 模块内测试 62 个（rc1：`sheet_endpoint_records` 6 / `relationship_probe` 4 / `dynamic_attr_records` trailer ~15 / ... + rc2：`crossref` 6 + v0.3.0：`inspect::mermaid` 8）
+- **总计 106 个测试**（无样本时可跑 80 个：18 unit + 62 模块内）

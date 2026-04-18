@@ -15,6 +15,7 @@
 - **P&ID 对象清单**：从动态属性记录中提取设备/管道/仪表统计
 - **关系端点解码**（v0.3.0）：DA 31 字节 trailer（record_id/field_x/class_id）+ Sheet 端点对记录 → 关系 source/target 端到端可解
 - **跨引用对象图**（v0.3.0-rc2）：PSM 声明 vs. 实际 cluster 对齐 / 符号 ↔ JSite 反向索引 / DA 属性类摘要 / PSMroots 解析状态
+- **Mermaid 可视化**（v0.3.0）：`ObjectGraph` / `CrossReferenceGraph` 一键导出 mermaid 文本，直接贴到 Mermaid Live Editor / Obsidian / Notion
 - **Probe / Decode 分层**：启发式标记与确定性解码明确分离
 - **报告输出**：人类可读文本报告 + JSON 完整导出
 
@@ -38,6 +39,10 @@ cargo run --bin pid_inspect -- drawing.pid --probe-endpoints
 
 # 跨引用对象图
 cargo run --bin pid_inspect -- drawing.pid --crossref
+
+# Mermaid 图导出
+cargo run --bin pid_inspect -- drawing.pid --graph-mermaid > object_graph.mmd
+cargo run --bin pid_inspect -- drawing.pid --crossref-mermaid > crossref.mmd
 ```
 
 ## 库调用
