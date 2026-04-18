@@ -19,6 +19,15 @@
 - **不做**：不跑 `cargo fmt --check` 作为 hard-fail（examples/ drift 需要单独 Phase 处理）
 - **不做**：不加 `cargo doc` / codecov / MSRV 多版本矩阵（等真有需求再加）
 
+### CI 绿化（v0.3.10 首发后的 2 轮 fix）
+
+CI 工作流首次上线（commit `ef5e108`）后揭示了一个此前未暴露的隐藏 bug：CI 环境下没有真实样本 `test-file/*.pid`，但以下测试在 fixture 缺失时 `panic` 而非优雅跳过：
+
+- **`tests/parse_real_files.rs`**（27 个测试，commit `8da0281`）：`parse_test_file` helper 改为返回 `Option<PidDocument>`，缺失时 `eprintln! skip` + 返回 `None`；27 处调用改 `let Some(doc) = parse_test_file(...) else { return };`；对齐到 `writer_real_files.rs` 已有的 `fixture.exists()` 模式
+- **`tests/unit_parsers.rs::sheet_stream_reuses_cluster_header`**（1 个测试，commit `c136494`）：同 pattern 处理
+
+最终 CI run (`c136494`) 全绿（38s，Ubuntu latest + Rust stable，build + test + clippy --all-targets -Dwarnings 全通过）。两轮修复都只动测试，不影响公开 API 行为；本地有 `test-file/` 时测试仍全跑（172 个）、CI 环境下自动跳过真实样本类别。
+
 ## [0.3.9] - 2026-04-19
 
 ### Phase 9g: Report 层展示 Phase 9e/9f 新字段 + CLI 默认走 package 路径
