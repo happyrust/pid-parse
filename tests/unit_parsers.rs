@@ -196,10 +196,17 @@ fn describe_magic_for_known_and_unknown() {
 
 #[test]
 fn sheet_stream_reuses_cluster_header() {
+    // `test-file/` is gitignored; the sample is available to contributors
+    // with SmartPlant access but not in CI. Skip cleanly when the fixture
+    // is missing, matching the pattern in writer_real_files.rs /
+    // parse_real_files.rs.
+    let fixture = "test-file/DWG-0201GP06-01.pid";
+    if !std::path::Path::new(fixture).exists() {
+        eprintln!("skipping: fixture {} not found", fixture);
+        return;
+    }
     let parser = pid_parse::PidParser::new();
-    let doc = parser
-        .parse_file("test-file/DWG-0201GP06-01.pid")
-        .expect("parse fixture");
+    let doc = parser.parse_file(fixture).expect("parse fixture");
     assert!(!doc.sheet_streams.is_empty(), "expected at least one sheet");
     let sheet = &doc.sheet_streams[0];
     let magic = sheet.magic_u32_le.expect("sheet stream must have magic");
