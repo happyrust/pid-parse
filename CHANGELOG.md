@@ -1,5 +1,22 @@
 # 变更日志
 
+## [0.3.1] - 2026-04-19
+
+### Phase 7b: JSON Schema 导出
+
+- **`schemars` 依赖**（`v1.2.1`，`preserve_order` feature）：为 `PidDocument` 及其所有子类型添加 `#[derive(JsonSchema)]`，覆盖 model 中全部 `Serialize/Deserialize` 结构体与枚举
+- **`src/schema.rs` 新模块**：
+  - `pid_document_schema() -> Schema`：返回 `PidDocument` 的 JSON Schema 对象
+  - `pid_document_schema_pretty() -> Result<String, _>`：便捷包装，直接产出 pretty-printed JSON Schema 文本
+  - 3 个单元测试：序列化合法性 / 核心类型名出现 / `AttributeValue` 变体定义
+- **CLI `--schema` 出口**（复用已有 `pid_inspect` 入口）：下游消费方可通过 `pid_inspect --schema` 获取 JSON Schema，用于 TypeScript / Python / C# 代码生成（quicktype / json-schema-to-typescript / NJsonSchema）
+- **`docs/writer-layer-plan.md`**：新增 Package / Writer 层落地计划文档（不含代码实现，仅规划）
+
+### 测试
+
+- schema 模块 3 个单元测试全通过
+- 所有既有 lib 测试继续通过
+
 ## [0.3.0] - 2026-04-18
 
 ### Phase 7a: Mermaid 可视化导出

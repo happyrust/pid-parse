@@ -1,7 +1,8 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PidDocument {
     pub cfb_tree: StorageNode,
     pub streams: Vec<StreamEntry>,
@@ -53,7 +54,7 @@ pub struct PidDocument {
 }
 
 /// Summary inventory of P&ID objects in the drawing.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ObjectInventory {
     pub drawing_id: Option<String>,
     pub project: Option<String>,
@@ -62,7 +63,7 @@ pub struct ObjectInventory {
 }
 
 /// A single identifiable P&ID item (instrument, pipe, equipment, etc.)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PidItem {
     pub item_type: String,
     pub drawing_id: Option<String>,
@@ -101,7 +102,7 @@ impl Default for PidDocument {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StorageNode {
     pub name: String,
     pub path: String,
@@ -109,14 +110,14 @@ pub struct StorageNode {
     pub children: Vec<StorageNode>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub enum EntryKind {
     Root,
     Storage,
     Stream,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StreamEntry {
     pub path: String,
     pub size: u64,
@@ -124,7 +125,7 @@ pub struct StreamEntry {
     pub magic_u32_le: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct SummaryInfo {
     pub creating_application: Option<String>,
     pub template: Option<String>,
@@ -134,7 +135,7 @@ pub struct SummaryInfo {
     pub raw: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct DrawingMeta {
     pub drawing_number: Option<String>,
     pub document_category: Option<String>,
@@ -148,7 +149,7 @@ pub struct DrawingMeta {
     pub tags: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct GeneralMeta {
     pub file_path: Option<String>,
     pub file_size: Option<String>,
@@ -156,7 +157,7 @@ pub struct GeneralMeta {
     pub tags: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct JSite {
     pub name: String,
     pub path: String,
@@ -169,7 +170,7 @@ pub struct JSite {
     pub raw_streams: Vec<EmbeddedStream>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct JProperties {
     pub strings: Vec<String>,
     pub key_values: BTreeMap<String, String>,
@@ -177,14 +178,14 @@ pub struct JProperties {
     pub raw_len: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EmbeddedStream {
     pub name: String,
     pub size: u64,
     pub preview_ascii: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClusterInfo {
     pub name: String,
     pub path: String,
@@ -202,7 +203,7 @@ pub struct ClusterInfo {
 }
 
 /// Common header shared by all streams with magic 0x6C90F544.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClusterHeader {
     pub magic: u32,
     pub record_count: u32,
@@ -211,13 +212,13 @@ pub struct ClusterHeader {
     pub flags: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IndexedString {
     pub index: u32,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum ClusterKind {
     PsmCluster,
     StyleCluster,
@@ -227,7 +228,7 @@ pub enum ClusterKind {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DynamicAttributesBlob {
     pub path: String,
     pub size: u64,
@@ -272,7 +273,7 @@ pub struct DynamicAttributesBlob {
 ///                          Symbol/Nozzle, 0x10D/0x10B/… = other class)
 /// +28  [u8;3] tail = 0x14 0x00 0x00
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DaRecordTrailer {
     /// Stream offset of the record's first byte (usually `P&IDAttributes`).
     pub record_start: usize,
@@ -303,7 +304,7 @@ pub struct DaRecordTrailer {
 }
 
 /// A single attribute class record from Unclustered Dynamic Attributes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AttributeRecord {
     pub class_name: String,
     pub attributes: Vec<AttributeField>,
@@ -316,7 +317,7 @@ fn default_confidence() -> String {
     "heuristic".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AttributeField {
     pub name: String,
     pub value: AttributeValue,
@@ -328,7 +329,7 @@ pub struct AttributeField {
     pub raw_value: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum AttributeValue {
     Text(String),
@@ -338,7 +339,7 @@ pub enum AttributeValue {
 }
 
 /// Probe metadata for PSMcluster0 string-table heuristic.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClusterProbeInfo {
     /// Byte offset where the string table was detected.
     pub string_table_offset: usize,
@@ -351,7 +352,7 @@ pub struct ClusterProbeInfo {
 }
 
 /// Probe summary for heuristic scanning of binary streams.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProbeSummary {
     /// Byte offset where body scanning began.
     pub body_start_offset: usize,
@@ -370,7 +371,7 @@ pub struct ProbeSummary {
 /// Relationship GUID only occurs once, in ASCII, so the endpoints are not
 /// stored adjacent to this record. The probe instead records byte-level
 /// evidence that later Sheet-level decoders can correlate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RelationshipProbe {
     /// 32-char hex relationship identifier, matching `Relationship.<GUID>`.
     pub guid: String,
@@ -391,7 +392,7 @@ pub struct RelationshipProbe {
 }
 
 /// A single `u16` token extracted from the Relationship trailing bytes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RelationshipTrailingToken {
     pub offset: usize,
     /// Human label indicating *where* the token lives, e.g.
@@ -400,7 +401,7 @@ pub struct RelationshipTrailingToken {
     pub value: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SheetStream {
     pub name: String,
     pub path: String,
@@ -426,7 +427,7 @@ pub struct SheetStream {
     pub endpoint_records: Vec<SheetEndpointRecord>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnknownStream {
     pub path: String,
     pub size: u64,
@@ -441,7 +442,7 @@ pub struct UnknownStream {
 /// Byte layout (observed): `[u32 magic='root']` followed by N records of
 /// `[u32 id][u32 char_count][UTF-16LE name]`. There is no explicit count;
 /// parsing runs until the stream is exhausted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmRoots {
     pub size: u64,
     pub entries: Vec<PsmRootEntry>,
@@ -449,7 +450,7 @@ pub struct PsmRoots {
     pub trailing_bytes: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmRootEntry {
     /// Opaque 32-bit identifier (type tag). Seen values: 0x018C, 0x0149, 0x0019,
     /// 0x0014, 0x4000, 0x2000, 0x0001, ...
@@ -461,14 +462,14 @@ pub struct PsmRootEntry {
 }
 
 /// Decoded `PSMclustertable` stream: canonical list of cluster stream names.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmClusterTable {
     pub size: u64,
     pub count: u32,
     pub entries: Vec<PsmClusterEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmClusterEntry {
     /// Decoded UTF-16LE cluster name, e.g. "PSMcluster0", "Sheet6".
     pub name: String,
@@ -479,7 +480,7 @@ pub struct PsmClusterEntry {
 /// Decoded `PSMsegmenttable` stream. In sampled file it is a fixed 12 bytes:
 /// `[magic 'stab'][u32 count=4][4 × 0x01]`. Schema is likely a per-segment
 /// flag array; we expose the raw payload until semantics are confirmed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmSegmentTable {
     pub size: u64,
     pub count: u32,
@@ -488,13 +489,13 @@ pub struct PsmSegmentTable {
 
 /// Decoded `DocVersion3` stream: fixed-size (48 bytes per record) version
 /// log entries that record a document's save history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VersionHistory {
     pub size: u64,
     pub records: Vec<VersionRecord>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VersionRecord {
     /// Null-terminated ASCII product identifier, e.g. "SmartPlantPID.a".
     pub product: String,
@@ -509,7 +510,7 @@ pub struct VersionRecord {
 
 /// Decoded `AppObject` stream: registry of external COM / DLL plugins the
 /// source application linked to this drawing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AppObjectRegistry {
     pub size: u64,
     /// `u32` at offset 0; observed value `5` on the sampled file (likely
@@ -521,7 +522,7 @@ pub struct AppObjectRegistry {
     pub trailing_bytes: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AppObjectEntry {
     /// Offset in stream where this record begins (for debugging).
     pub offset: usize,
@@ -534,14 +535,14 @@ pub struct AppObjectEntry {
 /// Decoded `JTaggedTxtStgList`: small index mapping a storage list name
 /// (e.g. "TaggedTxtStorages") to the actual storage directory name
 /// (e.g. "TaggedTxtData").
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaggedTextStorageList {
     pub size: u64,
     pub list_name: String,
     pub entries: Vec<TaggedTextStorageEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaggedTextStorageEntry {
     /// Storage directory name (e.g. "TaggedTxtData").
     pub storage_name: String,
@@ -550,7 +551,7 @@ pub struct TaggedTextStorageEntry {
 /// Raw preservation of the `DocVersion2` stream. The 48-byte binary payload
 /// is not yet structurally decoded; we record its magic and hex preview so
 /// that downstream tooling can round-trip or inspect without losing data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DocVersion2Raw {
     pub size: u64,
     pub magic_u32_le: u32,
@@ -561,7 +562,7 @@ pub struct DocVersion2Raw {
 /// Structured P&ID object graph — the core deliverable that ties together
 /// the `P&IDAttributes` DA records into a queryable view of the drawing's
 /// modeled objects and their relationships.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ObjectGraph {
     /// Drawing-level identifier (`DrawingNo` from P&IDAttributes).
     pub drawing_no: Option<String>,
@@ -580,7 +581,7 @@ pub struct ObjectGraph {
 
 /// A single modeled object on the drawing. Mostly sourced from a single
 /// `P&IDAttributes` DA record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PidObject {
     /// 32-character hex unique identifier (e.g. "D8FAB6ED48684E799CDFF0396E213773").
     pub drawing_id: String,
@@ -612,7 +613,7 @@ pub struct PidObject {
 /// A Relationship record from `P&IDAttributes` (`ModelItemType="Relationship"`).
 /// Endpoints are resolved via Sheet-level endpoint-pair records that index
 /// into the DA `field_x` space.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PidRelationship {
     /// `ModelID`, e.g. "Relationship.C5CF946710BF4EBDB02808EBD6879B62".
     pub model_id: String,
@@ -651,7 +652,7 @@ pub struct PidRelationship {
 ///   +22 u16  0x0001
 ///   +24 u32  endpoint_b        ← target field_x
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SheetEndpointRecord {
     /// Sheet stream path (e.g. `/Sheet6`).
     pub sheet_path: String,
@@ -669,7 +670,7 @@ pub struct SheetEndpointRecord {
 
 /// Stitches already-decoded pieces of the document into a small relational
 /// view. Pure derivation — requires no extra I/O.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct CrossReferenceGraph {
     /// PSM-declared clusters vs. clusters actually present in the file.
     pub cluster_coverage: ClusterCoverage,
@@ -683,7 +684,7 @@ pub struct CrossReferenceGraph {
 
 /// Comparison between `PSMclustertable` (declared) and the cluster / sheet
 /// streams actually parsed from the file.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ClusterCoverage {
     /// Names declared by `PSMclustertable`.
     pub declared: Vec<String>,
@@ -698,7 +699,7 @@ pub struct ClusterCoverage {
 }
 
 /// Symbol → JSite reverse index. One entry per unique `symbol_path`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SymbolUsage {
     /// Absolute symbol path (e.g. `\\server\share\symbols\Valve.sym`).
     pub symbol_path: String,
@@ -712,7 +713,7 @@ pub struct SymbolUsage {
 }
 
 /// Per-class aggregation of Dynamic Attributes records.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AttributeClassSummary {
     pub class_name: String,
     pub record_count: usize,
@@ -726,7 +727,7 @@ pub struct AttributeClassSummary {
 
 /// Describes whether a name published in `PSMroots` actually maps to a
 /// storage or stream in the CFB tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RootPresence {
     pub name: String,
     pub id: u32,
