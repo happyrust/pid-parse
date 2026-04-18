@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  # Fast feedback: build + unit/module tests with no real `.pid` fixtures.
+  # `test-file/` is gitignored, so these jobs run the full offline suite
+  # (unit tests + integration tests with memory CFB fixtures).
+  test:
+    name: test (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo build (lib + bins)
+        run: cargo build --locked --all-targets
+
+      - name: cargo test (offline suite)
+        # Real `.pid` fixtures live in `test-file/` and are gitignored,
+        # so the real-file tests gracefully skip when the directory is
+        # absent — see `writer_real_files.rs` / `parse_real_files.rs`.
+        run: cargo test --locked --all-targets
+
+      - name: cargo clippy (fail on any warning)
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo fmt (check)
+        # Non-blocking: the repo doesn't enforce rustfmt on merged commits
+        # yet, but we track drift so a future Phase can turn this into a
+        # blocking step.
+        run: cargo fmt --all -- --check
+        continue-on-error: true

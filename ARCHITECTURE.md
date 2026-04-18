@@ -290,7 +290,7 @@ flowchart LR
 
 ---
 
-## 当前能力边界 (v0.3.9)
+## 当前能力边界 (v0.3.10)
 
 **已实现**：
 
@@ -349,7 +349,8 @@ flowchart LR
 | Phase 9e | 非 root storage CLSID 保留（`PidPackage.storage_clsids` + diff 观察 + 真实样本修复 3 个丢失 CLSID） | ✅ 完成 (v0.3.7) |
 | Phase 9f | DocVersion2 结构化解码（12B header + N×9B records，与 DocVersion3 cross-check 通过） | ✅ 完成 (v0.3.8) |
 | Phase 9g | Report 展示 Container CLSIDs + DocVersion2 decoded（CLI 默认走 parse_package）| ✅ 完成 (v0.3.9) |
-| Phase 9h | SummaryInformation property set 回写 / PSMcluster0 / StyleCluster 完整记录 / 时间戳保真（cfb upstream 依赖）| 🔜 下一步 |
+| Phase 9h | CI 工作流（GitHub Actions：build + test + clippy -Dwarnings）+ README badge | ✅ 完成 (v0.3.10) |
+| Phase 9i | SummaryInformation property set 回写 / PSMcluster0 / StyleCluster 完整记录 / 时间戳保真（cfb upstream 依赖）/ `cargo fmt` drift 清理 | 🔜 下一步 |
 
 ---
 

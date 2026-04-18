@@ -1,5 +1,7 @@
 # pid-parse
 
+[![CI](https://github.com/happyrust/pid-parse/actions/workflows/ci.yml/badge.svg)](https://github.com/happyrust/pid-parse/actions/workflows/ci.yml)
+
 `pid-parse` 是一个 Rust 编写的 SmartPlant / Smart P&ID `.pid` 文件解析器。
 
 ## 功能

@@ -1,5 +1,24 @@
 # 变更日志
 
+## [0.3.10] - 2026-04-19
+
+### Phase 9h: CI 工作流 + README badge
+
+给项目加 GitHub Actions CI，自动在 push / pull_request 上跑 build + test + clippy，巩固 Phase 9d 起清零 warnings / 172 tests 的质量水位。
+
+- **`.github/workflows/ci.yml` 新增**：
+  - `test` job（Ubuntu latest, Rust stable）：`cargo build --all-targets` + `cargo test --all-targets` + `cargo clippy --all-targets -- -D warnings`
+  - 使用 `Swatinem/rust-cache@v2` 缓存 cargo registry / target，加速迭代
+  - 集成测试里 `test-file/*.pid` 是 gitignored 的真实样本，`writer_real_files.rs` / `parse_real_files.rs` 在 CI 环境下会优雅跳过（`fixture.exists()` 判空）
+  - `RUSTFLAGS=-Dwarnings` 让所有 compiler warning 都阻断构建
+  - `cargo fmt --all -- --check` 设为 non-blocking（`continue-on-error: true`）— examples/ 目录有 pre-existing fmt drift，由后续 Phase 单独清理
+- **`README.md` 顶部加 CI badge**（`github.com/happyrust/pid-parse/actions/workflows/ci.yml/badge.svg`）
+
+### 范围
+
+- **不做**：不跑 `cargo fmt --check` 作为 hard-fail（examples/ drift 需要单独 Phase 处理）
+- **不做**：不加 `cargo doc` / codecov / MSRV 多版本矩阵（等真有需求再加）
+
 ## [0.3.9] - 2026-04-19
 
 ### Phase 9g: Report 层展示 Phase 9e/9f 新字段 + CLI 默认走 package 路径
