@@ -43,6 +43,9 @@ cargo run --bin pid_inspect -- drawing.pid --crossref
 # Mermaid 图导出
 cargo run --bin pid_inspect -- drawing.pid --graph-mermaid > object_graph.mmd
 cargo run --bin pid_inspect -- drawing.pid --crossref-mermaid > crossref.mmd
+
+# Mermaid 导出演示（无需 .pid 样本，使用合成数据）
+cargo run --example mermaid_demo
 ```
 
 ## 库调用

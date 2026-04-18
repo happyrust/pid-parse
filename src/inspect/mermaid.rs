@@ -206,7 +206,12 @@ fn node_id_for_drawing(drawing_id: &str) -> String {
 
 fn node_label_for_object(obj: &PidObject) -> String {
     let short_id: String = obj.drawing_id.chars().take(8).collect();
-    escape_mermaid(&format!("{}\\n{}", obj.item_type, short_id))
+    // Mermaid renders `<br/>` as a line break inside `"..."` labels.
+    format!(
+        "{}<br/>{}",
+        escape_mermaid(&obj.item_type),
+        escape_mermaid(&short_id)
+    )
 }
 
 fn write_graph_classes(out: &mut String) {
