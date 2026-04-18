@@ -1,13 +1,51 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{PidDocument, StreamEntry};
+use crate::package::{PidPackage, RawStream};
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
+/// Thin wrapper over [`parse_pid_package`] that returns only the decoded
+/// model, preserving pre-0.3.2 behavior.
 pub fn parse_pid_file(path: &Path, options: &ParseOptions) -> Result<PidDocument, PidError> {
+    Ok(parse_pid_package(path, options)?.parsed)
+}
+
+/// Parse a `.pid` file into a [`PidPackage`], keeping every stream's raw
+/// bytes alongside the decoded [`PidDocument`]. This is the input format
+/// consumed by [`crate::writer::PidWriter`] for round-trip writes.
+pub fn parse_pid_package(
+    path: &Path,
+    options: &ParseOptions,
+) -> Result<PidPackage, PidError> {
     let mut cfb = ::cfb::open(path)?;
     let tree = crate::cfb::tree::build_tree(&cfb, "/")?;
-    let streams = collect_streams(&mut cfb, options)?;
+    // Capture the root CLSID + all non-root storage CLSIDs before we hand
+    // the cfb off to the collectors — `walk()` / `root_entry()` borrow the
+    // compound-file, so they must run before the `&mut cfb` borrows below.
+    let root_clsid_raw = *cfb.root_entry().clsid();
+    let root_clsid = if root_clsid_raw.is_nil() {
+        None
+    } else {
+        Some(root_clsid_raw)
+    };
+    let storage_clsids: BTreeMap<String, ::uuid::Uuid> = cfb
+        .walk()
+        .filter(|e| e.is_storage() && e.path() != std::path::Path::new("/"))
+        .filter_map(|e| {
+            let c = *e.clsid();
+            if c.is_nil() {
+                None
+            } else {
+                Some((
+                    e.path().to_string_lossy().replace('\\', "/"),
+                    c,
+                ))
+            }
+        })
+        .collect();
+    let (streams, raw_streams) = collect_streams_and_bytes(&mut cfb, options)?;
 
     let mut doc = PidDocument {
         cfb_tree: tree,
@@ -37,7 +75,11 @@ pub fn parse_pid_file(path: &Path, options: &ParseOptions) -> Result<PidDocument
 
     doc.cross_reference = Some(crate::crossref::build_graph(&doc));
 
-    Ok(doc)
+    Ok(
+        PidPackage::new(Some(path.to_path_buf()), raw_streams, doc)
+            .with_root_clsid(root_clsid)
+            .with_storage_clsids(storage_clsids),
+    )
 }
 
 /// After both `parse_clusters` and `parse_dynamic_attrs` have run, scan each
@@ -106,6 +148,10 @@ fn capture_doc_version2<R: Read + std::io::Seek>(
             magic_u32_le,
             hex_preview,
         });
+        // Try structured decode (v0.3.8+). The raw field above is always
+        // populated for audit / fallback even when the structured decode
+        // succeeds, because it's the source of truth for round-trip.
+        doc.doc_version2_decoded = crate::parsers::doc_version2::parse_doc_version2(&data);
     }
     Ok(())
 }
@@ -203,9 +249,11 @@ fn build_object_graph(doc: &mut PidDocument) {
         (item_type, drawing_item_type, model_id, extra)
     };
 
-    let mut graph = ObjectGraph::default();
-    graph.project_number = project_number_global;
-    graph.drawing_no = drawing_no_global;
+    let mut graph = ObjectGraph {
+        project_number: project_number_global,
+        drawing_no: drawing_no_global,
+        ..ObjectGraph::default()
+    };
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
 
     // Build field_x / record_id → drawing_id maps straight from trailers.
@@ -354,20 +402,16 @@ fn build_object_inventory(doc: &mut PidDocument) {
                     }
                 }
                 "ProjectNumber" => {
-                    if inv.project.is_none() {
-                        if let crate::model::AttributeValue::Text(v) = &attr.value {
-                            if !v.is_empty() {
-                                inv.project = Some(v.clone());
-                            }
+                    if let crate::model::AttributeValue::Text(v) = &attr.value {
+                        if inv.project.is_none() && !v.is_empty() {
+                            inv.project = Some(v.clone());
                         }
                     }
                 }
                 "DrawingNo" => {
-                    if inv.drawing_id.is_none() {
-                        if let crate::model::AttributeValue::Text(v) = &attr.value {
-                            if !v.is_empty() {
-                                inv.drawing_id = Some(v.clone());
-                            }
+                    if let crate::model::AttributeValue::Text(v) = &attr.value {
+                        if inv.drawing_id.is_none() && !v.is_empty() {
+                            inv.drawing_id = Some(v.clone());
                         }
                     }
                 }
@@ -391,17 +435,22 @@ fn build_object_inventory(doc: &mut PidDocument) {
     }
 }
 
-fn collect_streams<R: Read + std::io::Seek>(
+/// Single walk of the CFB directory that produces both the flat
+/// [`StreamEntry`] index (preview + magic) and the raw-byte map used by
+/// the writer layer. Returning both from one pass avoids re-reading every
+/// stream just to keep the bytes around.
+fn collect_streams_and_bytes<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     options: &ParseOptions,
-) -> Result<Vec<StreamEntry>, PidError> {
+) -> Result<(Vec<StreamEntry>, BTreeMap<String, RawStream>), PidError> {
     let paths: Vec<_> = cfb
         .walk()
         .filter(|e| e.is_stream())
         .map(|e| e.path().to_path_buf())
         .collect();
 
-    let mut out = Vec::with_capacity(paths.len());
+    let mut entries = Vec::with_capacity(paths.len());
+    let mut raw_map: BTreeMap<String, RawStream> = BTreeMap::new();
     for p in paths {
         let mut stream = cfb.open_stream(&p)?;
         let mut data = Vec::new();
@@ -418,13 +467,22 @@ fn collect_streams<R: Read + std::io::Seek>(
             .get(0..4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
 
-        out.push(StreamEntry {
-            path: path_str,
+        entries.push(StreamEntry {
+            path: path_str.clone(),
             size: data.len() as u64,
             preview_ascii,
             magic_u32_le,
         });
+
+        raw_map.insert(
+            path_str.clone(),
+            RawStream {
+                path: path_str,
+                data,
+                modified: false,
+            },
+        );
     }
 
-    Ok(out)
+    Ok((entries, raw_map))
 }

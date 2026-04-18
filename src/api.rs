@@ -1,5 +1,6 @@
 use crate::error::PidError;
 use crate::model::PidDocument;
+use crate::package::PidPackage;
 use std::path::Path;
 
 pub struct PidParser {
@@ -40,6 +41,13 @@ impl PidParser {
 
     pub fn parse_file<P: AsRef<Path>>(&self, path: P) -> Result<PidDocument, PidError> {
         crate::cfb::reader::parse_pid_file(path.as_ref(), &self.options)
+    }
+
+    /// Parse a `.pid` file into a [`PidPackage`], preserving every stream's
+    /// raw bytes alongside the decoded model. Use this when you intend to
+    /// modify and write the file back via [`crate::writer::PidWriter`].
+    pub fn parse_package<P: AsRef<Path>>(&self, path: P) -> Result<PidPackage, PidError> {
+        crate::cfb::reader::parse_pid_package(path.as_ref(), &self.options)
     }
 }
 

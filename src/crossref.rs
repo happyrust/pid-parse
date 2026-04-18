@@ -247,24 +247,27 @@ mod tests {
     #[test]
     fn cluster_coverage_matches_declared_and_found() {
         let mut doc = PidDocument::default();
-        doc.psm_cluster_table = Some(PsmClusterTable {
-            size: 0,
-            count: 3,
-            entries: vec![
-                PsmClusterEntry {
-                    name: "PSMcluster0".into(),
-                    name_offset: 0,
-                },
-                PsmClusterEntry {
-                    name: "MissingCluster".into(),
-                    name_offset: 0,
-                },
-                PsmClusterEntry {
-                    name: "Sheet6".into(),
-                    name_offset: 0,
-                },
-            ],
-        });
+        #[allow(clippy::field_reassign_with_default)]
+        {
+            doc.psm_cluster_table = Some(PsmClusterTable {
+                size: 0,
+                count: 3,
+                entries: vec![
+                    PsmClusterEntry {
+                        name: "PSMcluster0".into(),
+                        name_offset: 0,
+                    },
+                    PsmClusterEntry {
+                        name: "MissingCluster".into(),
+                        name_offset: 0,
+                    },
+                    PsmClusterEntry {
+                        name: "Sheet6".into(),
+                        name_offset: 0,
+                    },
+                ],
+            });
+        }
         doc.clusters.push(ClusterInfo {
             name: "PSMcluster0".into(),
             path: "/PSMcluster0".into(),

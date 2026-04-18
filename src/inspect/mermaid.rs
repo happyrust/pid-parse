@@ -455,7 +455,7 @@ fn escape_mermaid(s: &str) -> String {
 }
 
 fn basename_of(path: &str) -> String {
-    path.rsplit(|c: char| c == '/' || c == '\\')
+    path.rsplit(['/', '\\'])
         .next()
         .unwrap_or(path)
         .to_string()
@@ -575,13 +575,15 @@ mod tests {
     #[test]
     fn crossref_emits_all_four_subgraphs() {
         let mut doc = PidDocument::default();
-        let mut xr = CrossReferenceGraph::default();
-        xr.cluster_coverage = ClusterCoverage {
-            declared: vec!["A".into(), "Missing".into()],
-            found: vec!["A".into(), "Extra".into()],
-            matched: vec!["A".into()],
-            declared_missing: vec!["Missing".into()],
-            found_extra: vec!["Extra".into()],
+        let mut xr = CrossReferenceGraph {
+            cluster_coverage: ClusterCoverage {
+                declared: vec!["A".into(), "Missing".into()],
+                found: vec!["A".into(), "Extra".into()],
+                matched: vec!["A".into()],
+                declared_missing: vec!["Missing".into()],
+                found_extra: vec!["Extra".into()],
+            },
+            ..CrossReferenceGraph::default()
         };
         xr.symbol_usage.push(SymbolUsage {
             symbol_path: "C:\\sym\\Valve.sym".into(),

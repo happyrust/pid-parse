@@ -1,6 +1,37 @@
 use crate::model::PidDocument;
+use crate::package::PidPackage;
 use crate::parsers::magic;
 use std::fmt::Write;
+
+/// Package-aware report. Starts with [`generate_report`] and appends
+/// container-level metadata (root CLSID + non-root storage CLSIDs) that
+/// only [`PidPackage`] carries. Prefer this over [`generate_report`]
+/// when you already have a [`PidPackage`] at hand.
+pub fn generate_package_report(pkg: &PidPackage) -> String {
+    let mut out = generate_report(&pkg.parsed);
+    if pkg.root_clsid.is_some() || !pkg.storage_clsids.is_empty() {
+        writeln!(out, "\n--- Container CLSIDs ---").ok();
+        if let Some(c) = pkg.root_clsid {
+            writeln!(out, "  root: {{{}}}", c).ok();
+        } else {
+            writeln!(out, "  root: (nil — source container had no CLSID)").ok();
+        }
+        if pkg.storage_clsids.is_empty() {
+            writeln!(out, "  non-root storages: (none carry a CLSID)").ok();
+        } else {
+            writeln!(
+                out,
+                "  non-root storages ({}):",
+                pkg.storage_clsids.len()
+            )
+            .ok();
+            for (path, clsid) in &pkg.storage_clsids {
+                writeln!(out, "    {}  {{{}}}", path, clsid).ok();
+            }
+        }
+    }
+    out
+}
 
 pub fn generate_report(doc: &PidDocument) -> String {
     let mut out = String::new();
@@ -289,6 +320,23 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 r.operation, r.timestamp, r.product, r.version
             )
             .ok();
+        }
+    }
+
+    if let Some(ref dv2) = doc.doc_version2_decoded {
+        writeln!(
+            out,
+            "\n--- DocVersion2 (decoded, magic=0x{:08X}, {} records) ---",
+            dv2.magic_u32_le,
+            dv2.records.len()
+        )
+        .ok();
+        if !dv2.reserved_all_zero {
+            writeln!(out, "  (!) reserved header bytes are not all zero").ok();
+        }
+        for r in &dv2.records {
+            let label = crate::parsers::doc_version2::op_type_label(r.op_type);
+            writeln!(out, "  [{}] version={} (0x{:X})", label, r.version, r.version).ok();
         }
     }
 

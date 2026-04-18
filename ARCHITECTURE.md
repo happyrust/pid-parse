@@ -65,7 +65,19 @@ flowchart TB
     subgraph L7["Layer 7: Reporting / CLI"]
         report["inspect/report.rs"]
         merm["inspect/mermaid.rs\nobject_graph_mermaid / crossref_mermaid"]
-        cli["bin/pid_inspect.rs\n--json / --probe-* / --crossref / --graph-mermaid / --crossref-mermaid"]
+        diff_render["inspect/diff.rs\nrender(PackageDiff)"]
+        schema_mod["schema.rs\npid_document_schema_pretty"]
+        cli["bin/pid_inspect.rs\n--json / --schema\n--probe-* / --crossref\n--graph-mermaid / --crossref-mermaid\n--round-trip [--verify]\n--set-drawing-number / --set-xml-tag\n--diff"]
+    end
+
+    subgraph L8["Layer 8: Package / Writer / Diff"]
+        package["package.rs\nPidPackage { streams, parsed, root_clsid }\nRawStream / PackageDiff / StreamDiff\nset_xml_tag / diff_packages"]
+        wplan["writer/plan.rs\nWritePlan / MetadataUpdates\nStreamReplacement / SheetPatch"]
+        wxml["writer/xml_edit.rs\nreplace_simple_tag_text"]
+        wmeta["writer/metadata_write.rs"]
+        wsheet["writer/sheet_patch.rs"]
+        wcfb["writer/cfb_write.rs\nwrite_package (+ root CLSID)"]
+        writer_mod["writer/mod.rs\nPidWriter::write_to"]
     end
 
     api --> reader
@@ -77,7 +89,18 @@ flowchart TB
     model --> crossref
     crossref --> model
     model --> report
+    model --> merm
+    model --> schema_mod
     model --> cli
+    reader --> package
+    package --> writer_mod
+    wplan --> writer_mod
+    wmeta --> writer_mod
+    wsheet --> writer_mod
+    wxml --> package
+    writer_mod --> wcfb
+    package --> diff_render
+    diff_render --> cli
 ```
 
 | 层 | 文件 | 职责 |
@@ -88,7 +111,8 @@ flowchart TB
 | **L4: Parsers** | `src/parsers/*.rs` | 字符串扫描、XML 标签提取、Cluster 公共头解析、DA 记录解码 |
 | **L5: Streams** | `src/streams/*.rs` | 将命名流映射到语义处理器（Summary、TaggedText、JSite、Cluster、DynamicAttrs） |
 | **L6: Derivation** | `src/crossref.rs` | 从已解出的 `PidDocument` 派生跨引用对象图（cluster 覆盖率、符号用量、属性类摘要、PSMroots 解析状态） |
-| **L7: Report/CLI** | `src/inspect/report.rs`, `src/inspect/mermaid.rs`, `src/bin/pid_inspect.rs` | 人类可读报告、JSON 导出、Probe 探测输出、Cross Reference 专项、Mermaid 图导出 |
+| **L7: Report/CLI** | `src/inspect/{report,mermaid,diff}.rs`, `src/schema.rs`, `src/bin/pid_inspect.rs` | 人类可读报告、JSON 导出、JSON Schema、Probe 输出、Cross Reference、Mermaid 图、Package diff 渲染 |
+| **L8: Package/Writer/Diff** | `src/package.rs`, `src/writer/*` | `PidPackage` 保留原始字节 + 解析结果 + root CLSID；`PidWriter` 按 `WritePlan` 回写（passthrough / metadata / SheetPatch / xml_edit）；`diff_packages` 产出 stream-level `PackageDiff` 用于 round-trip verify 与两文件对比 |
 
 ---
 
@@ -162,6 +186,40 @@ flowchart TD
 
 ---
 
+## Writer 数据流 (v0.3.2+)
+
+```mermaid
+flowchart TD
+    A["PidParser::parse_package()"] --> B["parse_pid_package()"]
+    B --> B1["read root CLSID"]
+    B --> B2["collect_streams_and_bytes()"]
+    B --> B3["streams pipeline (summary/tagged_text/jsite/...)"]
+    B1 --> C["PidPackage { source_path,\nstreams, parsed, root_clsid }"]
+    B2 --> C
+    B3 --> C
+
+    C --> D1["PidPackage::set_xml_tag"]
+    C --> D2["WritePlan { metadata_updates,\nstream_replacements,\nsheet_patches }"]
+
+    D1 --> D2
+    D2 --> E["PidWriter::write_to(&pkg, &plan, out)"]
+    E --> E1["clone package"]
+    E1 --> E2["apply_metadata_updates"]
+    E2 --> E3["apply stream_replacements"]
+    E3 --> E4["apply_sheet_patch_to_package"]
+    E4 --> E5["cfb::CompoundFile::create"]
+    E5 --> E6["create_storage_all + create_stream"]
+    E6 --> E7["set_storage_clsid(\"/\", root_clsid)"]
+    E7 --> F[".pid file"]
+
+    F --> V["PidParser::parse_package(out)"]
+    C --> DIFF["diff_packages(&a, &b)"]
+    V --> DIFF
+    DIFF --> REPORT["inspect::diff::render\n--diff / --verify"]
+```
+
+---
+
 ## Probe / Decode 分层
 
 ```mermaid
@@ -232,7 +290,7 @@ flowchart LR
 
 ---
 
-## 当前能力边界 (v0.3.0)
+## 当前能力边界 (v0.3.9)
 
 **已实现**：
 
@@ -249,18 +307,23 @@ flowchart LR
 - **Magic tag 工具**（root / clst / stab / Smar / OLES）+ 顶层未识别流可视化
 - P&ID 对象清单构建
 - **关系端点解码** (v0.3.0)：DA 记录 31B trailer（record_id / field_x / class_id）+ Sheet 端点对记录 →`PidRelationship.source_drawing_id` / `target_drawing_id` 端到端可用
-- **DocVersion2 原始保留**（`DocVersion2Raw`：size / magic / hex_preview，结构化解码待定）
+- **DocVersion2 结构化解码** (v0.3.8)：12B header + N×9B records；op_type 0x82/0x81（SaveAs/Save）+ u32 version；与 DocVersion3 一对一对齐；raw `DocVersion2Raw` 仍作为 round-trip ground truth 保留
 - **跨引用对象图** (v0.3.0-rc2)：cluster 覆盖率检查 / 符号 ↔ JSite 反向索引 / DA 属性类摘要 / PSMroots 解析状态
 - **Mermaid 可视化导出** (v0.3.0)：`ObjectGraph` / `CrossReferenceGraph` 直接渲染为 mermaid 文本，无需外部工具
 - 文本报告 + JSON 导出 + Probe 探测输出（cluster / dynamic / sheet / relationships / endpoints / **crossref**）+ Mermaid 图 (`--graph-mermaid` / `--crossref-mermaid`)
+- **JSON Schema 导出** (v0.3.1)：`PidDocument` 及所有子类型 `#[derive(JsonSchema)]`；`pid_parse::schema::pid_document_schema()` + `pid_inspect --schema`
+- **Package / Writer 层** (v0.3.2)：`PidParser::parse_package` 保留每个流的原始字节；`PidWriter::write_to(&pkg, &plan, out)` 按 `WritePlan` 回写。已验证：真实 `.pid` passthrough 所有 stream 零字节差；`MetadataUpdates { drawing_xml, general_xml }` 声明式元数据回写；`SheetPatch` 字节范围 splice（experimental）
+- **Writer CLI + Root CLSID 保留** (v0.3.3) / **非 root storage CLSID 保留** (v0.3.7)：`pid_inspect --round-trip` / `--set-drawing-number` / `--schema`；`PidPackage.root_clsid` + `storage_clsids` 读写；`writer::xml_edit::replace_simple_tag_text` 精确 XML 字段更新。详见 `docs/writer-clsid-and-timestamps.md`
+- **通用 XML metadata editor** (v0.3.4)：`PidPackage::set_xml_tag(stream, tag, value)` / `set_drawing_xml_tag` / `set_general_xml_tag` 便捷方法；CLI `--set-xml-tag <stream> <tag> <value> --output <pid>`；编辑任意 `/TaggedTxtData/*` 里任意简单 tag，返回旧值可供 diff 日志
+- **Package diff + verify** (v0.3.5)：`diff_packages` 纯函数产出 `PackageDiff`（含 only-in-a / only-in-b / modified + 每个 modified stream 的 first_mismatch_offset + hex context + root CLSID 等价）；`inspect::diff::render` 人类可读；CLI `--diff <other.pid>` 和 `--round-trip <out> --verify`（CI 友好 exit code）
 
 **尚未实现**：
 
 - Sheet 流页面图元/几何解码（type=0x00CE 其他结构，除端点对记录外）
-- `DocVersion2` 48B 结构化解码
 - PSMcluster0 / StyleCluster 完整二进制记录解码
 - `PSMclustertable` 记录内的 cluster-index / flags 精确字段映射
-- 往返序列化
+- `SummaryInformation` property set 回写（writer 第一版仅预留 `summary_updates` 字段）
+- 时间戳保真（`cfb` 0.10 只支持 `touch(path)=now`）
 
 ---
 
@@ -277,11 +340,22 @@ flowchart LR
 | Phase 6  | 关系端点解码（DA 31B trailer + Sheet 端点对记录 + DocVersion2 原始保留）| ✅ 完成 (v0.3.0) |
 | Phase 6c | 跨引用对象图（cluster 覆盖率 / 符号用量 / 属性类 / PSMroots 解析状态） | ✅ 完成 (v0.3.0-rc2) |
 | Phase 7a | Mermaid 可视化导出（ObjectGraph / CrossReferenceGraph） | ✅ 完成 (v0.3.0) |
-| Phase 7  | DocVersion2 结构化 / PSMcluster0 / StyleCluster 完整记录 / JSON Schema / 往返序列化 | 🔜 下一步 |
+| Phase 7b | JSON Schema 导出 (`schemars` 派生 + `pid_inspect --schema`) | ✅ 完成 (v0.3.1) |
+| Phase 8  | Package / Writer 层（`PidPackage` / `PidWriter` / 元数据回写 / passthrough round-trip / experimental SheetPatch） | ✅ 完成 (v0.3.2) |
+| Phase 9a | Writer CLI 接入（`--round-trip` / `--set-drawing-number` / `--schema`）+ Root CLSID 保留 + `xml_edit` | ✅ 完成 (v0.3.3) |
+| Phase 9b | 通用 XML metadata editor（`set_xml_tag` + `--set-xml-tag`，泛化 drawing-number） | ✅ 完成 (v0.3.4) |
+| Phase 9c | Package diff + round-trip verify（`diff_packages` / `--diff` / `--round-trip --verify`）| ✅ 完成 (v0.3.5) |
+| Phase 9d | 卫生 pass：clippy 清零 + ARCHITECTURE mermaid 刷新 + writer-quickstart.md | ✅ 完成 (v0.3.6) |
+| Phase 9e | 非 root storage CLSID 保留（`PidPackage.storage_clsids` + diff 观察 + 真实样本修复 3 个丢失 CLSID） | ✅ 完成 (v0.3.7) |
+| Phase 9f | DocVersion2 结构化解码（12B header + N×9B records，与 DocVersion3 cross-check 通过） | ✅ 完成 (v0.3.8) |
+| Phase 9g | Report 展示 Container CLSIDs + DocVersion2 decoded（CLI 默认走 parse_package）| ✅ 完成 (v0.3.9) |
+| Phase 9h | SummaryInformation property set 回写 / PSMcluster0 / StyleCluster 完整记录 / 时间戳保真（cfb upstream 依赖）| 🔜 下一步 |
 
 ---
 
 ## 公开 API
+
+### 只读解析
 
 ```rust
 let parser = pid_parse::PidParser::new();
@@ -289,6 +363,25 @@ let doc = parser.parse_file("drawing.pid")?;
 ```
 
 所有下游使用都建立在 `PidDocument` 之上，保持稳定。
+
+### 读+写（v0.3.2+）
+
+```rust
+use pid_parse::{PidParser, PidWriter, WritePlan, MetadataUpdates};
+
+let parser = PidParser::new();
+let pkg = parser.parse_package("drawing.pid")?;
+
+let plan = WritePlan::metadata_only(
+    Some("<Drawing><DrawingNumber>NEW-001</DrawingNumber></Drawing>".into()),
+    None,
+);
+PidWriter::write_to(&pkg, &plan, std::path::Path::new("drawing.out.pid"))?;
+```
+
+`parse_package` 返回 `PidPackage { source_path, streams, parsed }`：
+- `streams: BTreeMap<String, RawStream>` 保留每个流的原始字节
+- `parsed: PidDocument` 是结构化解析结果（同 `parse_file`）
 
 ---
 
@@ -326,7 +419,7 @@ cargo run --bin pid_inspect -- drawing.pid --crossref-mermaid > crossref.mmd
 cargo test
 ```
 
-- 集成测试 26 个（真实 `.pid` 样本，含 PSM 三表 + 版本日志 + COM 注册表 + 关系端点 + 存储映射）
+- 集成测试 26 + 8 个（真实 `.pid` 样本，含 PSM 三表 + 版本日志 + COM 注册表 + 关系端点 + 存储映射 + writer roundtrip 6 个内存 fixture + writer 2 个真实文件 smoke）
 - 单元测试 18 个（`collect_simple_tags` / `parse_header` / `parse_string_table` / `magic_tag` / `describe_magic` / `sheet_stream_reuses_cluster_header`）
-- 模块内测试 62 个（rc1：`sheet_endpoint_records` 6 / `relationship_probe` 4 / `dynamic_attr_records` trailer ~15 / ... + rc2：`crossref` 6 + v0.3.0：`inspect::mermaid` 8）
-- **总计 106 个测试**（无样本时可跑 80 个：18 unit + 62 模块内）
+- 模块内测试 83 个（含 v0.3.2 新增 15 个：`package` 3 / `writer::plan` 2 / `writer::metadata_write` 4 / `writer::sheet_patch` 6 / `writer::cfb_write` 2 / `writer::mod` 1 端到端 passthrough）
+- **总计 135 个测试**（无样本时可跑 107 个：18 unit + 83 模块内 + 6 writer_roundtrip 内存 fixture）

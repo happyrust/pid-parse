@@ -17,7 +17,7 @@ fn collect_simple_tags_skips_nested() {
     let xml = "<Outer><Inner><Deep>x</Deep></Inner></Outer>";
     let tags = xml_util::collect_simple_tags(xml);
     // "Inner" has value containing '<', should be skipped
-    assert!(tags.get("Inner").is_none());
+    assert!(!tags.contains_key("Inner"));
     // "Deep" is a simple tag
     assert_eq!(tags.get("Deep").map(String::as_str), Some("x"));
 }

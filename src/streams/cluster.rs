@@ -132,7 +132,7 @@ fn find_string_table_start(data: &[u8]) -> (usize, String) {
                 data[i + 6],
                 data[i + 7],
             ]) as usize;
-            if blen >= 4 && blen < 512 && blen % 2 == 0 && i + 8 + blen <= data.len() {
+            if (4..512).contains(&blen) && blen.is_multiple_of(2) && i + 8 + blen <= data.len() {
                 let first_char = u16::from_le_bytes([data[i + 8], data[i + 9]]);
                 if (0x20..=0x7e).contains(&first_char) {
                     // Walk back to find entry 1: look for a valid byte_len before this

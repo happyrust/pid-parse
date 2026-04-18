@@ -114,7 +114,6 @@ pub fn scan_utf16le_strings(data: &[u8], min_chars: usize, limit: usize) -> Vec<
     let mut i = 0;
 
     while i + 1 < data.len() && out.len() < limit {
-        let start = i;
         let mut words = Vec::new();
 
         while i + 1 < data.len() {
@@ -135,7 +134,9 @@ pub fn scan_utf16le_strings(data: &[u8], min_chars: usize, limit: usize) -> Vec<
             out.push(String::from_utf16_lossy(&words));
         }
 
-        i = if i == start { i + 2 } else { i + 2 };
+        // Advance by 2 bytes (one UTF-16 unit) whether or not we found a
+        // string, so we don't get stuck on non-text regions.
+        i += 2;
     }
 
     out

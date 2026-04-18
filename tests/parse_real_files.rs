@@ -200,6 +200,54 @@ fn version_history_decoded() {
 }
 
 #[test]
+fn doc_version2_decoded_matches_version_history() {
+    // DocVersion2 is the binary sibling of DocVersion3: same SaveAs+Save
+    // sequence, with u8 op code and u32 version number.
+    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let dv2 = doc
+        .doc_version2_decoded
+        .as_ref()
+        .expect("DocVersion2 structured decode expected");
+    let dv3 = doc
+        .version_history
+        .as_ref()
+        .expect("DocVersion3 (version_history) expected");
+
+    assert_eq!(
+        dv2.records.len(),
+        dv3.records.len(),
+        "DocVersion2 and DocVersion3 record counts must match"
+    );
+    assert_eq!(dv2.magic_u32_le, 0x0001_0034);
+    assert!(dv2.reserved_all_zero);
+
+    // op_type mapping (0x82 SaveAs, 0x81 Save) must match the DocVersion3
+    // "SA" / "SV" strings one-to-one.
+    for (v2, v3) in dv2.records.iter().zip(dv3.records.iter()) {
+        let label = pid_parse::parsers::doc_version2::op_type_label(v2.op_type);
+        let expected = match v3.operation.as_str() {
+            "SA" => "SaveAs",
+            "SV" => "Save",
+            other => panic!("unexpected DocVersion3 op {other}"),
+        };
+        assert_eq!(label, expected, "op_type mismatch for v3 op {}", v3.operation);
+    }
+
+    // Version numbers: DocVersion3 stores them as decimal strings like
+    // "090000.0144"; DocVersion2 stores the u32 equivalent of the build
+    // suffix ("0144" → 144 → 0x90).
+    for (v2, v3) in dv2.records.iter().zip(dv3.records.iter()) {
+        let build_str = v3.version.rsplit('.').next().expect("version suffix");
+        let build: u32 = build_str.parse().expect("u32");
+        assert_eq!(
+            v2.version, build,
+            "DocVersion2 version 0x{:X} must equal DocVersion3 build {}",
+            v2.version, build
+        );
+    }
+}
+
+#[test]
 fn app_object_registry_decoded() {
     let doc = parse_test_file("DWG-0201GP06-01.pid");
     let reg = doc
@@ -433,11 +481,12 @@ fn relationship_endpoints_resolve_via_sheet_record() {
         g.objects.iter().map(|o| o.drawing_id.as_str()).collect();
     let mut foreign_endpoints = 0usize;
     for rel in &g.relationships {
-        for side in [rel.source_drawing_id.as_deref(), rel.target_drawing_id.as_deref()] {
-            if let Some(did) = side {
-                if !known_drawing_ids.contains(did) {
-                    foreign_endpoints += 1;
-                }
+        for did in [rel.source_drawing_id.as_deref(), rel.target_drawing_id.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            if !known_drawing_ids.contains(did) {
+                foreign_endpoints += 1;
             }
         }
     }

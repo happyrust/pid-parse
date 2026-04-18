@@ -13,7 +13,7 @@ fn extract_unc_or_path(s: &str) -> String {
     if let Some(pos) = s.find(":\\") {
         if pos > 0 {
             let drive_start = pos - 1;
-            if s.as_bytes().get(drive_start).map_or(false, |b| b.is_ascii_alphabetic()) {
+            if s.as_bytes().get(drive_start).is_some_and(|b| b.is_ascii_alphabetic()) {
                 return s[drive_start..].to_string();
             }
         }
@@ -28,7 +28,7 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
 ) -> Result<(), PidError> {
     let mut names = BTreeSet::new();
     for s in &doc.streams {
-        if let Some(first) = s.path.split('/').filter(|v| !v.is_empty()).next() {
+        if let Some(first) = s.path.split('/').find(|v| !v.is_empty()) {
             if first.starts_with("JSite") {
                 names.insert(first.to_string());
             }

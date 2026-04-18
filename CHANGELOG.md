@@ -1,5 +1,313 @@
 # 变更日志
 
+## [0.3.9] - 2026-04-19
+
+### Phase 9g: Report 层展示 Phase 9e/9f 新字段 + CLI 默认走 package 路径
+
+Phase 9e（非 root CLSID 保留）和 9f（DocVersion2 解码）把新能力加到了 `PidPackage` / `PidDocument` 里，但 `inspect::report::generate_report` 从 v0.2.4 起没更新，用户跑 `pid_inspect drawing.pid` 看不到这些数据。本轮补齐。
+
+- **`inspect::report::generate_package_report(&PidPackage) -> String`** 新增：调用 `generate_report(&pkg.parsed)` 后追加 `--- Container CLSIDs ---` 段（root CLSID + 非 root storage CLSIDs）
+- **`generate_report` 扩展**：在 `--- Version History ---` 后加 `--- DocVersion2 (decoded, magic, records) ---` 段；展示 SaveAs/Save 标签 + 每条 version u32（十进制 + hex）
+- **CLI 默认走 `parse_package`**：`pid_inspect drawing.pid` 默认报告现在包含 Container CLSIDs + DocVersion2 decoded；不破坏 `generate_report(&doc)` 公共 API，调用方若只持有 `PidDocument` 仍可直接调用
+
+### 典型输出增量（真实样本）
+
+```
+--- DocVersion2 (decoded, magic=0x00010034, 4 records) ---
+  [SaveAs] version=144 (0x90)
+  [Save] version=77 (0x4D)
+  [Save] version=144 (0x90)
+  [Save] version=77 (0x4D)
+
+--- Container CLSIDs ---
+  root: {16ce6023-5f5b-11d1-9777-08003655f302}
+  non-root storages (3):
+    /JSite329  {0a1cf23d-6dca-11d2-bda6-0800369bd002}
+    /JSite396  {0a1cf23d-6dca-11d2-bda6-0800369bd002}
+    /JSite948  {7effbe60-44f5-11ce-83c5-08003601a74e}
+```
+
+### 测试
+
+- 无新增测试（非行为性变更；既有 report 段落仍在）
+- **仍然 172 个测试通过**
+
+### 累计 8 轮统计（Phase 8 → 9g）
+
+| 维度 | v0.3.1 | v0.3.9 | Δ |
+|---|---|---|---|
+| 测试 | 106 | 172 | **+66** |
+| 模块 | — | +9 | package, writer×5/xml_edit, inspect/diff, parsers/doc_version2 |
+| CLI 命令 | — | +5 | round-trip / set-drawing-number / set-xml-tag / diff / schema |
+| Clippy warnings | 9 | 0 | 清零 |
+| 容器保真 | stream only | stream + root CLSID + 非 root CLSID | 3 层 |
+| 已识别顶层流 | —（DocVersion2 黑盒） | **全部识别** | 无残留 |
+| 默认 report 展示 | v0.2.4 状态 | 含 Container CLSIDs + DocVersion2 decoded | 最新 |
+
+## [0.3.8] - 2026-04-19
+
+### Phase 9f: DocVersion2 结构化解码
+
+从 v0.2.1 起 `/DocVersion2` 一直是"48B 黑盒"，只保留 `magic + hex_preview`。逆向解码这次成功，全部靠两个真实样本 + 与 DocVersion3 交叉验证。
+
+**格式**（`src/parsers/doc_version2.rs`）：
+
+```
+Header (12 B):
+   0x00  u32 LE   magic = 0x0001_0034
+   0x04  u64 LE   reserved (observed all zero)
+
+Records (9 B each × count):
+   +0   u8    op_type       (0x82 = SaveAs, 0x81 = Save)
+   +1   3 B   fixed         (0x00 0x00 0x09)
+   +4   u8    separator     (0x00)
+   +5   u32 LE  version     (u8-sized value like 0x90=144, 0x4D=77)
+```
+
+**交叉验证关键**（`tests/parse_real_files.rs::doc_version2_decoded_matches_version_history`）：
+- 真实样本 `DWG-0201GP06-01.pid` 的 DocVersion3 记录是 `[SA 090000.0144, SV 0077, SV 0144, SV 0077]`
+- DocVersion2 byte 对应 `[0x82 version=0x90 (144), 0x81 0x4D (77), 0x81 0x90, 0x81 0x4D]`
+- `op_type 0x82/0x81 ↔ "SA"/"SV"` 完全对齐；`version` u32 低字节 ↔ DocVersion3 版本字符串最后 4 位转 decimal
+
+### 模型扩展
+
+- 新类型：`DocVersion2 { magic_u32_le, reserved_all_zero, records }` / `DocVersion2Record { op_type, fixed[3], separator, version }`（`#[derive(JsonSchema)]`）
+- `PidDocument` 新字段 `doc_version2_decoded: Option<DocVersion2>`（与 raw `doc_version2: Option<DocVersion2Raw>` 并存，raw 仍然是 round-trip 的 ground truth；decoded 失败时为 `None`）
+- `parsers::doc_version2::op_type_label(u8) -> String`：`0x82 → "SaveAs"`、`0x81 → "Save"`、unknown → `"0xNN"`
+
+### 测试
+
+- 模块内单元测试 +5：`parsers::doc_version2::tests::*` 覆盖 sample1 4 记录 / sample2 3 记录 / 错误 magic / 9-byte 非倍数 / label 映射
+- `tests/parse_real_files.rs` +1：`doc_version2_decoded_matches_version_history` — 真实样本上的双流交叉验证
+- **总计 172 个测试通过**（从 166 → 172，新增 6 个）
+
+### 影响
+
+- **完全消除 P&ID 文件中最后一个未识别的顶层结构化流**（`/DocVersion2`）
+- 后续 `--schema` 输出能看到 `DocVersion2` / `DocVersion2Record` 的 JSON Schema 定义
+- DocVersion3（文本版本日志）+ DocVersion2（二进制版本日志）两条冗余路径全部解出，可做一致性校验
+
+## [0.3.7] - 2026-04-19
+
+### Phase 9e: 非 root storage CLSID 保留
+
+Phase 9a（Root CLSID 保留）的自然延续。**真实样本验证发现 3 个此前被丢失的 CLSID**：`DWG-0201GP06-01.pid` 的 `/JSite329` / `/JSite396` 携带 `{0a1cf23d-6dca-11d2-bda6-0800369bd002}`，`/JSite948` 携带 `{7effbe60-44f5-11ce-83c5-08003601a74e}` — 之前的 passthrough 虽然流字节零差异，但这 3 个 storage CLSID **悄无声息地丢失**。
+
+- **`PidPackage.storage_clsids: BTreeMap<String, Uuid>`** 新字段：非 root + 非 nil 的 storage CLSID 映射；真实样本里稀疏（典型为空或 1-3 条），nil 条目被过滤以保持 map 简洁
+- **`with_storage_clsids(...)`** builder 方法
+- **`parse_pid_package` 在 CFB 打开后 `walk` 遍历所有 entries**：对 `is_storage() && path != "/"` 捕获非 nil CLSID；路径规范化为 `/` 分隔
+- **`writer::cfb_write::write_package`** 新增 step 4：对每个 `storage_clsids` 条目调 `cfb.set_storage_clsid(path, clsid)`
+- **`PackageDiff.storage_clsid_diffs: Vec<StorageClsidDiff>`**：diff 模型扩展；`is_empty()` / `diff_count()` 纳入该维度；`inspect::diff::render` 新增 `--- Non-root Storage CLSID Diffs ---` 段
+- **re-export**：`pid_parse::{StorageClsidDiff}`
+
+### 修复：passthrough 此前的隐藏 bug
+
+在 Phase 9e 之前，`--round-trip` 即便报告 "verified: 0 diffs" 也可能遗失非 root storage CLSIDs —— 因为旧版的 `diff_packages` 只看 stream 字节 + root CLSID，不看非 root storage CLSID。Phase 9e 同时修复能力（写回）和观察（diff），让"0 diffs" 真正意味着 "容器级元数据完全一致"。
+
+### 测试
+
+- 模块内单元测试 +3：`package::with_storage_clsids_round_trips_map` / `package::diff_flags_non_root_storage_clsid_mismatch` / `package::diff_reports_missing_non_root_clsid_on_one_side`
+- `tests/writer_roundtrip.rs` +1：`non_root_storage_clsid_round_trips`（内存 fixture 给 `/UnknownStorage` 烧一个 `F29F85E0-4FF9-1068-AB91-08002B27B3D9`，round-trip 保持）
+- `tests/writer_real_files.rs` +1：`real_file_reports_non_root_storage_clsids_deterministically`（passthrough 保持条数与值、非 nil 约束）
+- **总计 166 个测试通过**（从 161 → 166，新增 5 个）
+
+### 文档
+
+- `ARCHITECTURE.md`：v0.3.7 + Phase 9e
+- `docs/writer-clsid-and-timestamps.md`：能力矩阵更新 —— 非 root storage CLSID 从 "第一版未保留" 升级为 "保留"
+
+## [0.3.6] - 2026-04-19
+
+### Phase 9d: 卫生 pass + 文档刷新
+
+连续 4 轮（Phase 8/9a/9b/9c）新功能迭代后的巩固回合：清零所有 clippy warnings、刷新 ARCHITECTURE mermaid 图、补 writer quickstart 文档，让代码库和文档回到对齐状态。
+
+- **Clippy 清零**：从 13 个 pre-existing warnings（9 lib + 2 example + 1 unit_parsers + 1 parse_real_files）→ **0 warnings**
+  - `src/cfb/reader.rs`：`ObjectGraph` struct literal 替代 field assignment；折叠内嵌 `if` 到外层 `match` arm（ProjectNumber / DrawingNo）
+  - `src/inspect/mermaid.rs`：`path.rsplit(|c| c == '/' || c == '\\')` → `path.rsplit(['/', '\\'])`；crossref 测试 struct literal 化
+  - `src/parsers/string_scan.rs`：移除 `if x { a } else { a }` 同值分支；清理 unused `start` 变量
+  - `src/streams/cluster.rs`：`blen >= 4 && blen < 512` → `(4..512).contains(&blen)`；`blen % 2 == 0` → `blen.is_multiple_of(2)`
+  - `src/streams/jsite.rs`：`.map_or(false, …)` → `.is_some_and(…)`；`.filter(…).next()` → `.find(…)`
+  - `examples/mermaid_demo.rs`：`ObjectGraph` / `CrossReferenceGraph` 测试数据 struct literal 化
+  - `tests/unit_parsers.rs`：`tags.get(k).is_none()` → `!tags.contains_key(k)`
+  - `tests/parse_real_files.rs`：嵌套 `if let Some` + iter → `.into_iter().flatten()`
+  - `src/crossref.rs` 测试：单点用 `#[allow(clippy::field_reassign_with_default)]` + block 隔离
+- **`cargo clippy --all-targets -- -D warnings` 退出 0**（Phase 8 起第一次）
+- **ARCHITECTURE mermaid 更新**：
+  - 分层架构图的 L7 Report/CLI 加入 `inspect/diff.rs` + `schema.rs`；CLI 节点展开 5 个 writer 命令
+  - L8 Package/Writer 重命名为 "Package / Writer / Diff" 并加入 `xml_edit.rs` + `PackageDiff` / `diff_packages`
+  - 新增 "Writer 数据流" 专用 mermaid flowchart：parse_package → WritePlan → PidWriter::write_to → cfb::create → set_storage_clsid → 写出 → parse → diff_packages → inspect::diff::render 全链路可视化
+  - 类型表新增 `PidPackage` / `PidWriter` / `WritePlan` / `PackageDiff` 对应描述
+- **`docs/writer-quickstart.md`**（新文档）：从 parse → edit → write → verify 完整入门，6 个场景（passthrough / metadata 更新 / WritePlan 混用 / diff / SheetPatch / 能力矩阵）+ 完整可粘贴代码片段
+
+### 测试
+
+- **仍然 161 个测试通过**（无回归，本轮无功能新增）
+
+## [0.3.5] - 2026-04-19
+
+### Phase 9c: Package diff + round-trip verify
+
+给 Writer 能力补上"**对比验证**"这一关键闭环。Phase 8/9a/9b 解决了"能写"，本轮解决"能验"。
+
+- **`PackageDiff` / `StreamDiff`**（`src/package.rs`）：stream-level 差异模型
+  - `only_in_a` / `only_in_b`：单侧独有路径
+  - `modified: Vec<StreamDiff>`：双方都有但字节不等；携带 `len_a / len_b / first_mismatch_offset` + 16 字节 hex 前后文
+  - `root_clsid_match`：root CLSID 等价检查
+  - `is_empty()` / `diff_count()` 便捷方法
+- **`diff_packages(&PidPackage, &PidPackage) -> PackageDiff`** 纯函数
+- **`inspect::diff::render(&PackageDiff) -> String`** 人类可读渲染
+  - `(no differences)` 快捷路径（空 diff 一行）
+  - `--- Only in A ---` / `--- Only in B ---` / `--- Modified Streams ---` 三段报告
+  - 每个 modified stream：`path  len=a vs b  first_diff@0xNN` + 两行 hex context
+- **CLI 扩展**（`pid_inspect`）：
+  - `--diff <other.pid>`：对比两个 `.pid` 包；空 diff 退出码 0，非空退出码 1（CI 友好）
+  - `--round-trip <out> --verify`：写完后自动 diff，`verified: 0 diffs` 或打印具体差异并以 1 退出
+- **re-export**：`pid_parse::{diff_packages, PackageDiff, StreamDiff}`
+
+### 典型输出（真实样本）
+
+```
+$ pid_inspect a.pid --round-trip out.pid --verify
+round-trip ok: a.pid -> out.pid
+  streams written: 69
+  root CLSID preserved: {16ce6023-5f5b-11d1-9777-08003655f302}
+  verified: 0 diffs
+
+$ pid_inspect a.pid --set-drawing-number NEW --output out.pid
+$ pid_inspect a.pid --diff out.pid
+summary:     1 diff(s) — 0 only-in-a / 0 only-in-b / 1 modified
+--- Modified Streams ---
+  /TaggedTxtData/Drawing  len=3619 vs 3611  first_diff@0x4D0
+    a: 44 57 47 2d 30 32 30 31 47 50 30 36 2d 30 31 3c    # "DWG-0201GP06-01<"
+    b: 4e 55 4d 2d 4e 45 57 3c 2f 44 72 61 77 69 6e 67    # "NUM-NEW</Drawing"
+```
+
+### 测试
+
+- 模块内单元测试 +8：`package::diff_*` 5 个（空 / only-in / byte-level / CLSID / 长度不等时 first_mismatch 位置）+ `inspect::diff::render_*` 3 个
+- `tests/writer_real_files.rs` +2：`real_file_passthrough_produces_empty_diff` / `real_file_set_drawing_number_diff_is_localized_to_one_stream`（真实样本上断言编辑后只有 1 处 modified）
+- **总计 161 个测试通过**（从 151 → 161，新增 10 个）
+
+### 文档
+
+- `ARCHITECTURE.md`：v0.3.5 + Phase 9c
+- `README.md`：新增 `--diff` / `--round-trip --verify` 示例
+
+## [0.3.4] - 2026-04-19
+
+### Phase 9b: 通用 XML metadata editor
+
+把 v0.3.3 的 `--set-drawing-number` 泛化：用户可编辑 `/TaggedTxtData/*` 任意 stream 里任意简单 tag，不再限定到图号。
+
+- **`PidPackage::set_xml_tag(stream_path, tag, new_value)`**：通用 API。返回替换前的旧值；`MissingStream` / `ParseFailure` 覆盖所有错误路径；内部复用 `writer::xml_edit::replace_simple_tag_text`
+- **便捷方法**：`set_drawing_xml_tag(tag, value)` / `set_general_xml_tag(tag, value)`（分别定向到 `/TaggedTxtData/Drawing` / `/TaggedTxtData/General`）
+- **`extract_simple_tag_text`** 私有辅助：读取 `<tag>...</tag>` 内容，用于返回旧值以便调用方 diff / 日志
+- **CLI 扩展**：
+  - `--set-xml-tag <stream> <tag> <value> --output <pid>`：通用编辑，例 `--set-xml-tag /TaggedTxtData/Drawing Template NEW.pid`
+  - `--set-drawing-number` 重构走 `PidPackage::set_xml_tag`（DRY），保留独立 log 消息 `set-drawing-number ok:`
+  - `flag_triple` helper 解析 3 个连续位置参数
+
+### 测试
+
+- 模块内单元测试 +4：`package::set_xml_tag_returns_old_value_and_updates_bytes` / `package::set_xml_tag_missing_stream_returns_missing_stream` / `package::set_xml_tag_rejects_non_utf8_stream` / `package::set_drawing_xml_tag_shortcut_delegates_to_set_xml_tag`
+- `tests/writer_real_files.rs` +1：`real_file_set_xml_tag_edits_template_only` — 真实样本上把 `<Template>XIONGANA2.pid</Template>` 改为 `<Template>REPLACED.pid</Template>`，断言 drawing_meta 解析结果同步、其他标签不变
+- **总计 151 个测试通过**（从 146 → 151，新增 5 个）
+
+### 文档
+
+- `ARCHITECTURE.md`：v0.3.4 + Phase 9b 完成
+- `README.md`：新增 `--set-xml-tag` 使用示例
+
+## [0.3.3] - 2026-04-19
+
+### Phase 9a: Writer CLI 接入 + Root CLSID 保留
+
+把 Phase 8 的 writer API 下沉到 `pid_inspect` CLI；在 `cfb = "0.10"` 能力范围内尽可能多保留容器级身份信息。
+
+- **Root CLSID 保留**：
+  - `PidPackage.root_clsid: Option<Uuid>`（新字段，`serde` skip-if-none）
+  - `parse_pid_package` 在 CFB 打开后立即 `cfb.root_entry().clsid()` 读取；nil UUID 归一化为 `None`
+  - `writer/cfb_write::write_package` 在写完流后 `cfb.set_storage_clsid("/", clsid)` 还原
+  - 真实 `.pid` 样本 `DWG-0201GP06-01.pid` 的 CLSID `{16ce6023-5f5b-11d1-9777-08003655f302}` 经 passthrough 保留
+- **`src/writer/xml_edit.rs` 新模块**：
+  - `replace_simple_tag_text(xml, tag, new_value)`：文本级 `<tag>old</tag> → <tag>new</tag>` 精确替换；nested 同名 tag / 缺失 open/close / 自闭合拒收；`&`/`<`/`>` 自动 XML 转义
+  - 6 个单元测试覆盖正常替换 / 转义 / 缺 tag / 缺 close / nested 拒收 / 保留周围空白
+- **CLI 扩展**（`src/bin/pid_inspect.rs`）：
+  - `--round-trip <output.pid>`：passthrough 回写；打印 streams 写入数、CLSID 保留状态
+  - `--set-drawing-number <NEW> --output <output.pid>`：改 `<DrawingNumber>` + 其他所有流字节保持；真实样本验证 `<DrawingSite.DrawingNumber>` / `<DrawingSite.Name>` 等相似 tag 不受影响
+  - `--schema`：JSON Schema 导出（v0.3.1 CHANGELOG 提到但漏接，本次补上）
+- **依赖**：新增 `uuid = "1"`（与 `cfb` 0.10 已传递依赖的同一版本）；`pid_parse::Uuid` re-export 供集成测试 / 下游直接使用
+
+### 范围边界（与 writer-clsid-and-timestamps.md 对齐）
+
+`cfb` 0.10 无公开 API 写 stream CLSID / state_bits，也不能写任意时间戳（只有 `touch(path)` = now）。第一版：
+- ✅ 保留 Root CLSID
+- ❌ 不保留非 root storage / stream CLSID（真实样本几乎都是 nil，投入产出低）
+- ❌ 不保留时间戳（新容器刷新）
+- ❌ 不保留 stream state_bits / CFB 目录物理顺序（BTreeMap 字典序）
+
+### 测试
+
+- 模块内单元测试 +6：`writer::xml_edit` 6 个
+- `tests/writer_roundtrip.rs` +2：`root_clsid_round_trips_when_source_has_one` / `fixture_without_clsid_reports_none`
+- `tests/writer_real_files.rs` +2：`real_file_passthrough_preserves_root_clsid` / `real_file_set_drawing_number_rewrites_only_the_target_tag`（+ 字节级非改动流保持断言）
+- **总计 146 个测试通过**（从 135 → 146，新增 11 个）
+
+### 文档
+
+- `docs/writer-clsid-and-timestamps.md`（新）：完整能力矩阵 + 选择理由 + 下一步候选
+- `ARCHITECTURE.md`：v0.3.3 能力边界 + Phase 9a 完成
+- `README.md`：新增 CLI `--round-trip` / `--set-drawing-number` / `--schema` 使用示例
+
+## [0.3.2] - 2026-04-19
+
+### Phase 8: Writer 层（passthrough round-trip + metadata 回写）
+
+从 parser-only 升级为 parser + writer。第一版交付目标：真实 `.pid` 文件 passthrough 零字节差、元数据流可声明式回写。
+
+- **`src/package.rs` 新模块**：
+  - `PidPackage { source_path, streams, parsed }`：把每个 CFB 流的**原始字节**（`BTreeMap<path, RawStream>`）与解析结果 `PidDocument` 打包在一起
+  - `RawStream { path, data, modified }`：路径已规范化（`/` 分隔、前导 `/`），`modified` 标识 writer 是否改动过
+  - 方法：`new` / `get_stream` / `get_stream_mut` / `replace_stream`（自动规范化路径 + 标脏）/ `mark_unmodified`
+- **`PidParser::parse_package`**：与 `parse_file` 平行的新入口，返回 `PidPackage`。内部 `cfb::reader` 重构：`parse_pid_package` 一次性产出解析结果 + 原始字节 map，`parse_pid_file` 降级为薄包装（公开行为不变）
+- **`src/writer/*` 5 个新模块**：
+  - `writer/plan.rs`：`WritePlan { metadata_updates, stream_replacements, sheet_patches }`、`MetadataUpdates { drawing_xml, general_xml, summary_updates }`、`StreamReplacement { path, new_data }`、`SheetPatch { sheet_path, chunk_patches, experimental }`、`SheetChunkPatch { start, end, replacement }`；便捷构造 `WritePlan::metadata_only` / `is_passthrough`
+  - `writer/metadata_write.rs`：`apply_metadata_updates` 把 `drawing_xml` / `general_xml` 写回 `/TaggedTxtData/Drawing` / `/TaggedTxtData/General`；空 XML 拒收（`PidError::ParseFailure`）；`summary_updates` 暂为 no-op 占位
+  - `writer/sheet_patch.rs`：`apply_sheet_patch` 字节级 `[start, end)` splice，多补丁按 `start` 倒序执行保持偏移稳定；越界返回 `PidError::ParseFailure`；`apply_sheet_patch_to_package` 高层 API，缺失流返回 `PidError::MissingStream`
+  - `writer/cfb_write.rs`：`write_package` 用 `::cfb::CompoundFile::create` 新建容器，`collect_storage_paths` 推导所有父 storage，按 `BTreeMap` 顺序写入每个 stream
+  - `writer/mod.rs`：`PidWriter::write_to(&package, &plan, output)`，在 `package.clone()` 上依次应用 metadata / replacements / patches 后落盘；不改动调用方的 package
+
+### 公开 API 面
+
+- `pid_parse::{PidPackage, RawStream, PidWriter, WritePlan, MetadataUpdates, StreamReplacement, SheetPatch, SheetChunkPatch}` 全部在 crate 根重新导出
+- `PidParser::parse_package(path) -> Result<PidPackage, PidError>` 新增
+- `PidDocument` / `PidParser::parse_file` 行为与字段不变
+
+### 范围边界（第一版明确不做）
+
+- `SummaryInformation` property set 不写（`summary_updates` 字段保留为 API 占位）
+- 不保留原容器的 CLSID / 创建 + 修改时间戳（`cfb::create` 新容器）
+- `/TaggedTxtData/*` 字节替换，不做 BOM / UTF-16 编码嗅探，调用方自备字节
+- SheetPatch 仅 API 层开放，CLI 暂不接（仍依赖后续 Sheet 几何解码）
+
+### 测试
+
+- 模块内单元测试 +15：`package` 3 / `writer::plan` 2 / `writer::metadata_write` 4 / `writer::sheet_patch` 6 / `writer::cfb_write` 2 / `writer::mod` 1（端到端 passthrough）
+- 集成测试 `tests/writer_roundtrip.rs` +6：内存 CFB fixture（`::cfb::CompoundFile::create` + `create_storage_all` + `create_stream`）
+  - `passthrough_roundtrip_preserves_every_stream`：全部 stream key & 字节一一相等
+  - `metadata_only_update_replaces_tagged_streams_and_keeps_others`：只改 Drawing XML，其它不变
+  - `unknown_streams_are_preserved_through_passthrough_with_metadata`：未知 blob 字节保持
+  - `sheet_patch_replaces_byte_range_and_preserves_length` / `sheet_patch_out_of_range_is_rejected`
+  - `original_package_is_not_mutated_by_write`：writer 在 clone 上工作
+- 集成测试 `tests/writer_real_files.rs` +2（条件性）：真实 `DWG-0201GP06-01.pid` passthrough → 每个 stream 字节相等 + drawing_meta 复现
+- **总计 135 个测试通过**（从 106 → 135，新增 29 个）
+
+### 文档
+
+- `ARCHITECTURE.md`：分层架构图新增 `Package` (L2.5) / `Writer` (L8) 层，演进路线更新 Phase 8 完成
+- `README.md`：新增"写回"使用示例与 API 介绍
+
 ## [0.3.1] - 2026-04-19
 
 ### Phase 7b: JSON Schema 导出

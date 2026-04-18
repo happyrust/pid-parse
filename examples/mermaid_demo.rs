@@ -22,9 +22,11 @@ fn synth_document() -> PidDocument {
     let mut doc = PidDocument::default();
 
     // -- ObjectGraph -----------------------------------------------------
-    let mut g = ObjectGraph::default();
-    g.drawing_no = Some("DWG-0201GP06-01".into());
-    g.project_number = Some("SQLPlant1401".into());
+    let mut g = ObjectGraph {
+        drawing_no: Some("DWG-0201GP06-01".into()),
+        project_number: Some("SQLPlant1401".into()),
+        ..ObjectGraph::default()
+    };
 
     // A tiny connected component: Valve ──connects──▶ PipeRun ──connects──▶ Nozzle
     g.objects.push(PidObject {
@@ -88,31 +90,33 @@ fn synth_document() -> PidDocument {
     doc.object_graph = Some(g);
 
     // -- CrossReferenceGraph --------------------------------------------
-    let mut xr = CrossReferenceGraph::default();
-    xr.cluster_coverage = ClusterCoverage {
-        declared: vec![
-            "PSMcluster0".into(),
-            "StyleCluster".into(),
-            "Sheet6".into(),
-            "Dynamic Attributes Metadata".into(),
-            "Unclustered Dynamic Attributes".into(),
-        ],
-        found: vec![
-            "PSMcluster0".into(),
-            "StyleCluster".into(),
-            "Sheet6".into(),
-            "Dynamic Attributes Metadata".into(),
-            "Unclustered Dynamic Attributes".into(),
-        ],
-        matched: vec![
-            "PSMcluster0".into(),
-            "StyleCluster".into(),
-            "Sheet6".into(),
-            "Dynamic Attributes Metadata".into(),
-            "Unclustered Dynamic Attributes".into(),
-        ],
-        declared_missing: vec![],
-        found_extra: vec![],
+    let mut xr = CrossReferenceGraph {
+        cluster_coverage: ClusterCoverage {
+            declared: vec![
+                "PSMcluster0".into(),
+                "StyleCluster".into(),
+                "Sheet6".into(),
+                "Dynamic Attributes Metadata".into(),
+                "Unclustered Dynamic Attributes".into(),
+            ],
+            found: vec![
+                "PSMcluster0".into(),
+                "StyleCluster".into(),
+                "Sheet6".into(),
+                "Dynamic Attributes Metadata".into(),
+                "Unclustered Dynamic Attributes".into(),
+            ],
+            matched: vec![
+                "PSMcluster0".into(),
+                "StyleCluster".into(),
+                "Sheet6".into(),
+                "Dynamic Attributes Metadata".into(),
+                "Unclustered Dynamic Attributes".into(),
+            ],
+            declared_missing: vec![],
+            found_extra: vec![],
+        },
+        ..CrossReferenceGraph::default()
     };
     xr.symbol_usage.push(SymbolUsage {
         symbol_path: "\\\\server\\share\\Symbols\\Valve.sym".into(),

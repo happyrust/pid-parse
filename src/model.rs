@@ -34,6 +34,13 @@ pub struct PidDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc_version2: Option<DocVersion2Raw>,
 
+    /// Structured decoding of `/DocVersion2` (v0.3.8+). Present only when
+    /// the stream matches the known layout (magic `0x0001_0034` + N ×
+    /// 9-byte records); `doc_version2` raw is always populated in
+    /// parallel for audit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_version2_decoded: Option<DocVersion2>,
+
     pub unknown_streams: Vec<UnknownStream>,
 
     /// P&ID object inventory derived from Dynamic Attributes records.
@@ -94,6 +101,7 @@ impl Default for PidDocument {
             app_object_registry: None,
             tagged_storages: None,
             doc_version2: None,
+            doc_version2_decoded: None,
             unknown_streams: vec![],
             object_inventory: None,
             object_graph: None,
@@ -557,6 +565,39 @@ pub struct DocVersion2Raw {
     pub magic_u32_le: u32,
     /// Lowercase hex dump of the full payload (up to 128 bytes).
     pub hex_preview: String,
+}
+
+/// Structured decoding of the `/DocVersion2` stream (v0.3.8+).
+///
+/// `/DocVersion2` is a compact per-save version log, matching `/DocVersion3`
+/// one-to-one (a SaveAs + N Saves). Format:
+///
+/// - 12-byte header: `u32 LE magic = 0x0001_0034` + 8 reserved bytes
+/// - N × 9-byte records: `op_type | fixed=[0,0,9] | separator | u32 LE version`
+///
+/// See `src/parsers/doc_version2.rs` for the full analysis and tests.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocVersion2 {
+    /// First u32 LE of the stream (always `0x0001_0034` for decoded files).
+    pub magic_u32_le: u32,
+    /// `true` when the 8 reserved header bytes are all zero (observed on
+    /// every real sample). `false` surfaces a potential layout surprise
+    /// without rejecting the record set.
+    pub reserved_all_zero: bool,
+    /// Per-save records in stream order.
+    pub records: Vec<DocVersion2Record>,
+}
+
+/// One record inside a [`DocVersion2`] log. The `op_type` byte (0x82 =
+/// SaveAs, 0x81 = Save) and `version` (u32 LE) are the semantic fields;
+/// the other bytes are carried through so round-trippers can still
+/// reproduce the original byte stream.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocVersion2Record {
+    pub op_type: u8,
+    pub fixed: [u8; 3],
+    pub separator: u8,
+    pub version: u32,
 }
 
 /// Structured P&ID object graph — the core deliverable that ties together
