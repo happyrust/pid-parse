@@ -1,5 +1,20 @@
 # 变更日志
 
+## [0.3.12] - 2026-04-19
+
+### Phase 9j: CONTRIBUTING.md（贡献指南）
+
+本周期 CI 绿化实战（Phase 9h → 9i）学到的流程要求写入 `CONTRIBUTING.md`，让未来贡献者直接避坑：
+
+- push 前 3 件事：`cargo fmt --all` / `cargo clippy --all-targets -- -D warnings` / `cargo test`
+- 版本升级必须同步 Cargo.lock（Phase 9i 血泪教训：bump Cargo.toml 后必须 `cargo build` 更新 Cargo.lock 再一起 commit，否则 `--locked` CI fail）
+- 真实样本测试的 `fixture.exists()` skip 模式（Phase 9h 血泪教训：CI 环境无 `test-file/`）
+- Probe / Decode 分层原则（`confidence = "heuristic"` vs `"decoded"`）
+- Writer 层约定（不写语义未知的二进制，SheetPatch 必须 `experimental = true`）
+- 逆向工作的 cross-check 要求（至少 2 个独立对齐点，引 Phase 9f DocVersion2 为教科书案例）
+- 提交信息规范（Conventional Commits + 中文 body）
+- 相关文档索引
+
 ## [0.3.11] - 2026-04-19
 
 ### Phase 9i: `cargo fmt` drift 清理 + CI hard-fail

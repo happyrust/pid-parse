@@ -290,7 +290,7 @@ flowchart LR
 
 ---
 
-## 当前能力边界 (v0.3.11)
+## 当前能力边界 (v0.3.12)
 
 **已实现**：
 
@@ -352,7 +352,8 @@ flowchart LR
 | Phase 9h | CI 工作流（GitHub Actions：build + test + clippy -Dwarnings）+ README badge | ✅ 完成 (v0.3.10) |
 | — | [Phase 8-9h 汇总文档](./docs/phase8-9h-summary.md) — 9 轮 Writer 建设周期的方法论 + 决策 + 统计 | 📖 文档 |
 | Phase 9i | `cargo fmt --all` drift 清理（26 files, +445/-310）+ CI `fmt --check` 改 hard-fail | ✅ 完成 (v0.3.11) |
-| Phase 9j | SummaryInformation property set 回写 / PSMcluster0 / StyleCluster 完整记录 / 时间戳保真（cfb upstream 依赖）| 🔜 下一步 |
+| Phase 9j | `CONTRIBUTING.md`：push 流程 / 版本 bump 必须同步 Cargo.lock / fixture.exists() skip / Conventional Commits 规范 | ✅ 完成 (v0.3.12) |
+| Phase 9k | SummaryInformation property set 回写 / PSMcluster0 / StyleCluster 完整记录 / 时间戳保真（cfb upstream 依赖）| 🔜 下一步 |
 
 ---
 
