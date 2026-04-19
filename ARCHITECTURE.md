@@ -350,6 +350,7 @@ flowchart LR
 | Phase 9f | DocVersion2 结构化解码（12B header + N×9B records，与 DocVersion3 cross-check 通过） | ✅ 完成 (v0.3.8) |
 | Phase 9g | Report 展示 Container CLSIDs + DocVersion2 decoded（CLI 默认走 parse_package）| ✅ 完成 (v0.3.9) |
 | Phase 9h | CI 工作流（GitHub Actions：build + test + clippy -Dwarnings）+ README badge | ✅ 完成 (v0.3.10) |
+| — | [Phase 8-9h 汇总文档](./docs/phase8-9h-summary.md) — 9 轮 Writer 建设周期的方法论 + 决策 + 统计 | 📖 文档 |
 | Phase 9i | SummaryInformation property set 回写 / PSMcluster0 / StyleCluster 完整记录 / 时间戳保真（cfb upstream 依赖）/ `cargo fmt` drift 清理 | 🔜 下一步 |
 
 ---
