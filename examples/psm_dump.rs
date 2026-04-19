@@ -9,7 +9,13 @@ fn dump_all(data: &[u8]) {
         let hex: Vec<String> = chunk.iter().map(|b| format!("{:02X}", b)).collect();
         let ascii: String = chunk
             .iter()
-            .map(|&b| if (0x20..=0x7e).contains(&b) { b as char } else { '.' })
+            .map(|&b| {
+                if (0x20..=0x7e).contains(&b) {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         println!("  {:04X}: {:<48}  {}", row * 16, hex.join(" "), ascii);
     }
@@ -42,9 +48,19 @@ fn main() {
         let tag: Vec<char> = magic
             .to_le_bytes()
             .iter()
-            .map(|&b| if (0x20..=0x7e).contains(&b) { b as char } else { '.' })
+            .map(|&b| {
+                if (0x20..=0x7e).contains(&b) {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
-        println!("magic=0x{:08X} tag=\"{}\"", magic, tag.iter().collect::<String>());
+        println!(
+            "magic=0x{:08X} tag=\"{}\"",
+            magic,
+            tag.iter().collect::<String>()
+        );
 
         dump_all(&data);
 
@@ -55,12 +71,9 @@ fn main() {
         let mut idx = 0;
         while pos + 8 <= data.len() {
             let id = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
-            let cc = u32::from_le_bytes([
-                data[pos + 4],
-                data[pos + 5],
-                data[pos + 6],
-                data[pos + 7],
-            ]) as usize;
+            let cc =
+                u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+                    as usize;
             let byte_len = cc * 2;
             let name_start = pos + 8;
             if name_start + byte_len > data.len() || cc > 512 {
@@ -84,7 +97,11 @@ fn main() {
             idx += 1;
         }
         if pos < data.len() {
-            println!("    ... {} trailing bytes from +{:04X}", data.len() - pos, pos);
+            println!(
+                "    ... {} trailing bytes from +{:04X}",
+                data.len() - pos,
+                pos
+            );
         }
     }
 }

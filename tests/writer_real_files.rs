@@ -246,7 +246,11 @@ fn real_file_set_xml_tag_edits_template_only() {
 
     let pkg_out = parser.parse_package(&dst).expect("reparse");
     assert_eq!(
-        pkg_out.parsed.drawing_meta.as_ref().and_then(|m| m.template_name.as_deref()),
+        pkg_out
+            .parsed
+            .drawing_meta
+            .as_ref()
+            .and_then(|m| m.template_name.as_deref()),
         Some("REPLACED.pid"),
         "parsed Template should match the new value"
     );
@@ -291,7 +295,9 @@ fn real_file_set_drawing_number_rewrites_only_the_target_tag() {
         .expect("drawing xml")
         .data
         .clone();
-    let xml_in = std::str::from_utf8(&drawing_bytes_in).expect("utf-8").to_string();
+    let xml_in = std::str::from_utf8(&drawing_bytes_in)
+        .expect("utf-8")
+        .to_string();
     let new_xml =
         replace_simple_tag_text(&xml_in, "DrawingNumber", "ROUND-TRIP-9999").expect("edit");
 
@@ -315,7 +321,10 @@ fn real_file_set_drawing_number_rewrites_only_the_target_tag() {
     // DrawingSite.DrawingNumber (different tag name) should keep the
     // original drawing number.
     assert_eq!(
-        drawing_out.tags.get("DrawingSite.DrawingNumber").map(|s| s.as_str()),
+        drawing_out
+            .tags
+            .get("DrawingSite.DrawingNumber")
+            .map(|s| s.as_str()),
         Some("DWG-0201GP06-01"),
         "DrawingSite.DrawingNumber must be untouched"
     );

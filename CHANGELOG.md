@@ -1,5 +1,17 @@
 # 变更日志
 
+## [0.3.11] - 2026-04-19
+
+### Phase 9i: `cargo fmt` drift 清理 + CI hard-fail
+
+Phase 9h 的 CI 把 `cargo fmt --all -- --check` 设为 `continue-on-error: true`（non-blocking），因为 `examples/` 自第一轮起就有 fmt drift。Phase 9i 收尾处理。
+
+- 跑 `cargo fmt --all` 一键清理 26 个文件的 pre-existing drift（+445 / -310 行，纯空白/换行，无语义改动）
+- `.github/workflows/ci.yml` 移除 `continue-on-error: true` —— CI 从此对 fmt drift 硬失败
+- 测试 172 passed, clippy 0 warnings, fmt 0 drift 三项全绿
+
+自本次起新贡献者 push 前需要跑 `cargo fmt --all`（或让编辑器 format-on-save）。
+
 ## [0.3.10] - 2026-04-19
 
 ### Phase 9h: CI 工作流 + README badge

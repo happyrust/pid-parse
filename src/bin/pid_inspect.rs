@@ -189,8 +189,7 @@ fn run_round_trip(input: &str, output: &str, verify: bool) {
             std::process::exit(1);
         }
     };
-    if let Err(e) = PidWriter::write_to(&pkg, &WritePlan::default(), std::path::Path::new(output))
-    {
+    if let Err(e) = PidWriter::write_to(&pkg, &WritePlan::default(), std::path::Path::new(output)) {
         eprintln!("Write error: {}", e);
         std::process::exit(1);
     }
@@ -300,9 +299,7 @@ fn perform_xml_tag_write(
             std::process::exit(1);
         }
     };
-    if let Err(e) =
-        PidWriter::write_to(&pkg, &WritePlan::default(), std::path::Path::new(output))
-    {
+    if let Err(e) = PidWriter::write_to(&pkg, &WritePlan::default(), std::path::Path::new(output)) {
         eprintln!("Write error: {}", e);
         std::process::exit(1);
     }
@@ -401,7 +398,9 @@ fn print_crossref(doc: &pid_parse::PidDocument) {
         println!(
             "  [{}x] {}",
             u.usage_count,
-            u.symbol_name.clone().unwrap_or_else(|| u.symbol_path.clone())
+            u.symbol_name
+                .clone()
+                .unwrap_or_else(|| u.symbol_path.clone())
         );
         println!("      path: {}", u.symbol_path);
         println!("      jsites: {:?}", u.jsite_names);
@@ -443,10 +442,7 @@ fn print_crossref(doc: &pid_parse::PidDocument) {
             (_, true) => "STREAM",
             _ => "MISSING",
         };
-        println!(
-            "  [{}] id=0x{:08X}  {}",
-            where_, r.id, r.name
-        );
+        println!("  [{}] id=0x{:08X}  {}", where_, r.id, r.name);
     }
 }
 
@@ -460,16 +456,24 @@ fn print_probe_cluster(doc: &pid_parse::PidDocument) {
             println!("  magic: 0x{:08X}", m);
         }
         if let Some(ref hdr) = c.header {
-            println!("  header: magic=0x{:08X} type=0x{:04X} records={} body_len={} flags=0x{:04X}",
-                hdr.magic, hdr.stream_type, hdr.record_count, hdr.body_len, hdr.flags);
+            println!(
+                "  header: magic=0x{:08X} type=0x{:04X} records={} body_len={} flags=0x{:04X}",
+                hdr.magic, hdr.stream_type, hdr.record_count, hdr.body_len, hdr.flags
+            );
         } else {
             println!("  header: (not detected / wrong magic)");
         }
         if let Some(ref pi) = c.probe_info {
-            println!("  [PROBE] string_table_offset=0x{:04X} ({} decimal)", pi.string_table_offset, pi.string_table_offset);
+            println!(
+                "  [PROBE] string_table_offset=0x{:04X} ({} decimal)",
+                pi.string_table_offset, pi.string_table_offset
+            );
             println!("  [PROBE] detection_method={}", pi.detection_method);
             println!("  [PROBE] entries_parsed={}", pi.entries_parsed);
-            println!("  [PROBE] end_offset=0x{:04X} ({} decimal)", pi.end_offset, pi.end_offset);
+            println!(
+                "  [PROBE] end_offset=0x{:04X} ({} decimal)",
+                pi.end_offset, pi.end_offset
+            );
         }
         if let Some(ref table) = c.string_table {
             println!("  string_table: {} entries", table.len());
@@ -604,19 +608,35 @@ fn print_probe_dynamic(doc: &pid_parse::PidDocument) {
             println!("magic: 0x{:08X}", m);
         }
         if let Some(ref hdr) = da.header {
-            println!("header: type=0x{:04X} records={} body_len={} flags=0x{:04X}",
-                hdr.stream_type, hdr.record_count, hdr.body_len, hdr.flags);
+            println!(
+                "header: type=0x{:04X} records={} body_len={} flags=0x{:04X}",
+                hdr.stream_type, hdr.record_count, hdr.body_len, hdr.flags
+            );
         }
         if let Some(ref ps) = da.probe_summary {
-            println!("\n[PROBE] body_start_offset=0x{:04X} ({} decimal)", ps.body_start_offset, ps.body_start_offset);
+            println!(
+                "\n[PROBE] body_start_offset=0x{:04X} ({} decimal)",
+                ps.body_start_offset, ps.body_start_offset
+            );
             println!("[PROBE] 0x89 markers found: {}", ps.marker_count);
             println!("[PROBE] records extracted: {}", ps.records_extracted);
-            println!("[PROBE] bytes scanned: {} / {} total", ps.bytes_scanned, da.size);
+            println!(
+                "[PROBE] bytes scanned: {} / {} total",
+                ps.bytes_scanned, da.size
+            );
         }
-        println!("\nrecords: {} [EXPERIMENTAL/heuristic]", da.attribute_records.len());
+        println!(
+            "\nrecords: {} [EXPERIMENTAL/heuristic]",
+            da.attribute_records.len()
+        );
         for (i, rec) in da.attribute_records.iter().enumerate() {
-            println!("  [{}] class=\"{}\" attrs={} confidence={}",
-                i, rec.class_name, rec.attributes.len(), rec.confidence);
+            println!(
+                "  [{}] class=\"{}\" attrs={} confidence={}",
+                i,
+                rec.class_name,
+                rec.attributes.len(),
+                rec.confidence
+            );
             for attr in &rec.attributes {
                 println!("       {}: {:?}", attr.name, attr.value);
             }

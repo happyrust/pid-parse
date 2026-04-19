@@ -135,11 +135,7 @@ fn synth_document() -> PidDocument {
         record_count: 140,
         drawing_ids: vec!["DWG-0201GP06-01".into()],
         model_ids: vec!["V-001".into(), "PR-12".into(), "N-200".into()],
-        unique_attribute_names: vec![
-            "DrawingID".into(),
-            "ModelID".into(),
-            "ModelItemType".into(),
-        ],
+        unique_attribute_names: vec!["DrawingID".into(), "ModelID".into(), "ModelItemType".into()],
     });
     xr.attribute_classes.push(AttributeClassSummary {
         class_name: "PipeRun".into(),

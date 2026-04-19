@@ -201,7 +201,7 @@ mod tests {
     use super::*;
     use crate::model::{
         AttributeField, AttributeRecord, ClusterInfo, ClusterKind, DynamicAttributesBlob,
-        IndexedString, JSite, JProperties, PidDocument, PsmClusterEntry, PsmClusterTable,
+        IndexedString, JProperties, JSite, PidDocument, PsmClusterEntry, PsmClusterTable,
         PsmRootEntry, PsmRoots, SheetStream, StorageNode,
     };
 
@@ -312,19 +312,31 @@ mod tests {
     #[test]
     fn symbol_usage_groups_jsites_by_path() {
         let mut doc = PidDocument::default();
-        doc.jsites.push(mk_jsite("JSite0", Some("C:\\sym\\A.sym"), Some("A")));
-        doc.jsites.push(mk_jsite("JSite1", Some("C:\\sym\\A.sym"), Some("A")));
-        doc.jsites.push(mk_jsite("JSite2", Some("C:\\sym\\B.sym"), Some("B")));
+        doc.jsites
+            .push(mk_jsite("JSite0", Some("C:\\sym\\A.sym"), Some("A")));
+        doc.jsites
+            .push(mk_jsite("JSite1", Some("C:\\sym\\A.sym"), Some("A")));
+        doc.jsites
+            .push(mk_jsite("JSite2", Some("C:\\sym\\B.sym"), Some("B")));
         doc.jsites.push(mk_jsite("JSite3", None, None));
 
         let usage = build_symbol_usage(&doc);
         assert_eq!(usage.len(), 2, "two distinct symbols in use");
 
-        let a = usage.iter().find(|u| u.symbol_path.ends_with("A.sym")).unwrap();
+        let a = usage
+            .iter()
+            .find(|u| u.symbol_path.ends_with("A.sym"))
+            .unwrap();
         assert_eq!(a.usage_count, 2);
-        assert_eq!(a.jsite_names, vec!["JSite0".to_string(), "JSite1".to_string()]);
+        assert_eq!(
+            a.jsite_names,
+            vec!["JSite0".to_string(), "JSite1".to_string()]
+        );
 
-        let b = usage.iter().find(|u| u.symbol_path.ends_with("B.sym")).unwrap();
+        let b = usage
+            .iter()
+            .find(|u| u.symbol_path.ends_with("B.sym"))
+            .unwrap();
         assert_eq!(b.usage_count, 1);
     }
 
@@ -371,23 +383,39 @@ mod tests {
         let classes = build_attribute_classes(&doc);
         assert_eq!(classes.len(), 2);
 
-        let pid = classes.iter().find(|c| c.class_name == "P&IDAttributes").unwrap();
+        let pid = classes
+            .iter()
+            .find(|c| c.class_name == "P&IDAttributes")
+            .unwrap();
         assert_eq!(pid.record_count, 2);
         assert_eq!(pid.drawing_ids, vec!["D-001".to_string()]);
-        assert_eq!(pid.model_ids, vec!["M-100".to_string(), "M-101".to_string()]);
+        assert_eq!(
+            pid.model_ids,
+            vec!["M-100".to_string(), "M-101".to_string()]
+        );
         assert!(pid.unique_attribute_names.iter().any(|n| n == "Service"));
-        assert!(pid.unique_attribute_names.iter().any(|n| n == "ModelItemType"));
+        assert!(pid
+            .unique_attribute_names
+            .iter()
+            .any(|n| n == "ModelItemType"));
 
         let pr = classes.iter().find(|c| c.class_name == "PipeRun").unwrap();
         assert!(pr.drawing_ids.is_empty(), "PipeRun has no DrawingID attrs");
-        assert_eq!(pr.unique_attribute_names, vec!["Service".to_string(), "Size".to_string()]);
+        assert_eq!(
+            pr.unique_attribute_names,
+            vec!["Service".to_string(), "Size".to_string()]
+        );
     }
 
     #[test]
     fn root_presence_marks_tree_entries() {
         let mut doc = PidDocument::default();
-        doc.cfb_tree.children.push(mk_storage("JSite0", EntryKind::Storage));
-        doc.cfb_tree.children.push(mk_storage("PSMcluster0", EntryKind::Stream));
+        doc.cfb_tree
+            .children
+            .push(mk_storage("JSite0", EntryKind::Storage));
+        doc.cfb_tree
+            .children
+            .push(mk_storage("PSMcluster0", EntryKind::Stream));
 
         doc.psm_roots = Some(PsmRoots {
             size: 0,

@@ -46,8 +46,6 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: cargo fmt (check)
-        # Non-blocking: the repo doesn't enforce rustfmt on merged commits
-        # yet, but we track drift so a future Phase can turn this into a
-        # blocking step.
+        # Phase 9i onwards: hard-fail on any drift. Run `cargo fmt --all`
+        # locally before pushing, or let your editor handle it.
         run: cargo fmt --all -- --check
-        continue-on-error: true

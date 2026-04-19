@@ -22,11 +22,7 @@ use crate::error::PidError;
 ///
 /// `new_value` is XML-escaped (`&`, `<`, `>` only — sufficient for text
 /// nodes per the XML spec).
-pub fn replace_simple_tag_text(
-    xml: &str,
-    tag: &str,
-    new_value: &str,
-) -> Result<String, PidError> {
+pub fn replace_simple_tag_text(xml: &str, tag: &str, new_value: &str) -> Result<String, PidError> {
     let open = format!("<{}>", tag);
     let close = format!("</{}>", tag);
 

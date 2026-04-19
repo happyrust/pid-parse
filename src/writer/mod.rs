@@ -31,11 +31,7 @@ impl PidWriter {
     /// Apply `plan` to a **clone** of `package` and write the result to
     /// `output`. The caller's package is not mutated, matching the
     /// "immutable parse result, declarative plan" model.
-    pub fn write_to(
-        package: &PidPackage,
-        plan: &WritePlan,
-        output: &Path,
-    ) -> Result<(), PidError> {
+    pub fn write_to(package: &PidPackage, plan: &WritePlan, output: &Path) -> Result<(), PidError> {
         let mut working = package.clone();
 
         metadata_write::apply_metadata_updates(&mut working, &plan.metadata_updates)?;

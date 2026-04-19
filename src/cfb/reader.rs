@@ -15,10 +15,7 @@ pub fn parse_pid_file(path: &Path, options: &ParseOptions) -> Result<PidDocument
 /// Parse a `.pid` file into a [`PidPackage`], keeping every stream's raw
 /// bytes alongside the decoded [`PidDocument`]. This is the input format
 /// consumed by [`crate::writer::PidWriter`] for round-trip writes.
-pub fn parse_pid_package(
-    path: &Path,
-    options: &ParseOptions,
-) -> Result<PidPackage, PidError> {
+pub fn parse_pid_package(path: &Path, options: &ParseOptions) -> Result<PidPackage, PidError> {
     let mut cfb = ::cfb::open(path)?;
     let tree = crate::cfb::tree::build_tree(&cfb, "/")?;
     // Capture the root CLSID + all non-root storage CLSIDs before we hand
@@ -38,10 +35,7 @@ pub fn parse_pid_package(
             if c.is_nil() {
                 None
             } else {
-                Some((
-                    e.path().to_string_lossy().replace('\\', "/"),
-                    c,
-                ))
+                Some((e.path().to_string_lossy().replace('\\', "/"), c))
             }
         })
         .collect();
@@ -75,11 +69,9 @@ pub fn parse_pid_package(
 
     doc.cross_reference = Some(crate::crossref::build_graph(&doc));
 
-    Ok(
-        PidPackage::new(Some(path.to_path_buf()), raw_streams, doc)
-            .with_root_clsid(root_clsid)
-            .with_storage_clsids(storage_clsids),
-    )
+    Ok(PidPackage::new(Some(path.to_path_buf()), raw_streams, doc)
+        .with_root_clsid(root_clsid)
+        .with_storage_clsids(storage_clsids))
 }
 
 /// After both `parse_clusters` and `parse_dynamic_attrs` have run, scan each
@@ -114,12 +106,11 @@ fn populate_sheet_endpoints<R: Read + std::io::Seek>(
         if let Ok(mut s) = cfb.open_stream(&sheet.path) {
             let mut data = Vec::new();
             s.read_to_end(&mut data)?;
-            sheet.endpoint_records =
-                crate::parsers::sheet_endpoint_records::parse_endpoint_records(
-                    &sheet.path,
-                    &data,
-                    &rel_field_xs,
-                );
+            sheet.endpoint_records = crate::parsers::sheet_endpoint_records::parse_endpoint_records(
+                &sheet.path,
+                &data,
+                &rel_field_xs,
+            );
         }
     }
     Ok(())
@@ -135,8 +126,7 @@ fn capture_doc_version2<R: Read + std::io::Seek>(
         if data.len() < 4 {
             return Ok(());
         }
-        let magic_u32_le =
-            u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        let magic_u32_le = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let hex_preview = data
             .iter()
             .take(128)
@@ -207,7 +197,12 @@ fn build_object_graph(doc: &mut PidDocument) {
     // same DrawingID. Records sharing a DrawingID are uncommon but the
     // parser sometimes emits more than one; we keep the first non-empty
     // value we see for each field.
-    let enrich = |did: &str| -> (Option<String>, Option<String>, Option<String>, BTreeMap<String, String>) {
+    let enrich = |did: &str| -> (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        BTreeMap<String, String>,
+    ) {
         let mut item_type: Option<String> = None;
         let mut drawing_item_type: Option<String> = None;
         let mut model_id: Option<String> = None;
@@ -309,9 +304,7 @@ fn build_object_graph(doc: &mut PidDocument) {
         let (item_type, drawing_item_type, model_id, extra) = enrich(&did);
         let Some(ty) = item_type else { continue };
         *counts.entry(ty.clone()).or_default() += 1;
-        graph
-            .by_drawing_id
-            .insert(did.clone(), graph.objects.len());
+        graph.by_drawing_id.insert(did.clone(), graph.objects.len());
         graph.objects.push(PidObject {
             drawing_id: did,
             item_type: ty,
@@ -355,7 +348,6 @@ fn build_object_graph(doc: &mut PidDocument) {
         doc.object_graph = Some(graph);
     }
 }
-
 
 fn build_object_inventory(doc: &mut PidDocument) {
     use crate::model::{ObjectInventory, PidItem};

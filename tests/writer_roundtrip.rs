@@ -167,7 +167,10 @@ fn unknown_streams_are_preserved_through_passthrough_with_metadata() {
         .expect("blob")
         .data
         .clone();
-    assert_eq!(blob_before, blob_after, "unknown blob must be byte-identical");
+    assert_eq!(
+        blob_before, blob_after,
+        "unknown blob must be byte-identical"
+    );
 
     let _ = std::fs::remove_file(&src);
     let _ = std::fs::remove_file(&dst);
@@ -261,7 +264,8 @@ fn non_root_storage_clsid_round_trips() {
             .expect("open rw");
         let mut cfb = ::cfb::CompoundFile::open(file).expect("open cfb");
         let clsid = Uuid::parse_str("F29F85E0-4FF9-1068-AB91-08002B27B3D9").unwrap();
-        cfb.set_storage_clsid("/UnknownStorage", clsid).expect("set");
+        cfb.set_storage_clsid("/UnknownStorage", clsid)
+            .expect("set");
         cfb.flush().expect("flush");
     }
 

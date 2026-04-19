@@ -46,7 +46,13 @@ fn collect_simple_tags_sp_prefixed() {
 
 // ─── cluster_header::parse_header ───
 
-fn make_header_bytes(magic: u32, rec_count: u32, stream_type: u16, body_len: u32, flags: u16) -> Vec<u8> {
+fn make_header_bytes(
+    magic: u32,
+    rec_count: u32,
+    stream_type: u16,
+    body_len: u32,
+    flags: u16,
+) -> Vec<u8> {
     let mut buf = Vec::with_capacity(16);
     buf.extend_from_slice(&magic.to_le_bytes());
     buf.extend_from_slice(&rec_count.to_le_bytes());
@@ -137,7 +143,11 @@ fn parse_string_table_empty_string_not_sentinel() {
     data.extend(make_sentinel());
 
     let (table, _end) = cluster_header::parse_string_table(&data, 0);
-    assert_eq!(table.len(), 3, "should parse 3 entries (empty string not sentinel)");
+    assert_eq!(
+        table.len(),
+        3,
+        "should parse 3 entries (empty string not sentinel)"
+    );
     assert_eq!(table[0].value, "First");
     assert_eq!(table[1].index, 5);
     assert_eq!(table[1].value, "");

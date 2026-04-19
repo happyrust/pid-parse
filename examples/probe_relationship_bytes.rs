@@ -11,7 +11,9 @@ use std::io::Read;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).expect("usage: probe_relationship_bytes <file.pid>");
+    let path = args
+        .get(1)
+        .expect("usage: probe_relationship_bytes <file.pid>");
 
     let mut cfb = cfb::open(path).expect("open cfb");
     let mut stream = cfb
@@ -137,9 +139,7 @@ fn main() {
         }
     }
 
-    println!(
-        "\n== per-hit windows in /Unclustered Dynamic Attributes (first 4 hits) =="
-    );
+    println!("\n== per-hit windows in /Unclustered Dynamic Attributes (first 4 hits) ==");
 
     let window = 160usize;
     for (n, &hit) in hits.iter().take(4).enumerate() {
@@ -171,7 +171,10 @@ fn main() {
     }
 
     let all_guids = find_hex_guids(&data);
-    println!("\nTotal 32-char hex GUID substrings in full stream: {}", all_guids.len());
+    println!(
+        "\nTotal 32-char hex GUID substrings in full stream: {}",
+        all_guids.len()
+    );
 }
 
 fn hex_dump_range(chunk: &[u8], base: usize) {
@@ -180,7 +183,13 @@ fn hex_dump_range(chunk: &[u8], base: usize) {
         let hex: Vec<String> = line.iter().map(|b| format!("{:02X}", b)).collect();
         let ascii: String = line
             .iter()
-            .map(|&b| if (0x20..=0x7e).contains(&b) { b as char } else { '.' })
+            .map(|&b| {
+                if (0x20..=0x7e).contains(&b) {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         println!("  0x{:05X}: {:<48}  {}", off, hex.join(" "), ascii);
     }
@@ -201,9 +210,7 @@ fn find_hex_guids(data: &[u8]) -> Vec<(usize, String)> {
     out
 }
 
-fn list_all_stream_paths<R: Read + std::io::Seek>(
-    cfb: &mut cfb::CompoundFile<R>,
-) -> Vec<String> {
+fn list_all_stream_paths<R: Read + std::io::Seek>(cfb: &mut cfb::CompoundFile<R>) -> Vec<String> {
     cfb.walk()
         .filter(|e| e.is_stream())
         .map(|e| e.path().to_string_lossy().replace('\\', "/"))
@@ -226,9 +233,7 @@ fn hex_to_bytes(hex: &str) -> [u8; 16] {
 /// last 8 bytes big-endian (unchanged).
 fn windows_guid_layout(raw: &[u8; 16]) -> [u8; 16] {
     [
-        raw[3], raw[2], raw[1], raw[0],
-        raw[5], raw[4],
-        raw[7], raw[6],
-        raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15],
+        raw[3], raw[2], raw[1], raw[0], raw[5], raw[4], raw[7], raw[6], raw[8], raw[9], raw[10],
+        raw[11], raw[12], raw[13], raw[14], raw[15],
     ]
 }

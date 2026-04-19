@@ -138,11 +138,10 @@ impl PidPackage {
         let raw = self
             .get_stream(stream_path)
             .ok_or_else(|| PidError::MissingStream(stream_path.to_string()))?;
-        let old_xml =
-            std::str::from_utf8(&raw.data).map_err(|e| PidError::ParseFailure {
-                context: format!("set_xml_tag:{}", stream_path),
-                message: format!("stream is not UTF-8: {}", e),
-            })?;
+        let old_xml = std::str::from_utf8(&raw.data).map_err(|e| PidError::ParseFailure {
+            context: format!("set_xml_tag:{}", stream_path),
+            message: format!("stream is not UTF-8: {}", e),
+        })?;
         // Capture the old text before we rewrite so callers can report
         // what they replaced.
         let old_value = extract_simple_tag_text(old_xml, tag).unwrap_or_default();
@@ -254,14 +253,8 @@ pub fn diff_packages(a: &PidPackage, b: &PidPackage) -> PackageDiff {
     let paths_a: BTreeSet<&String> = a.streams.keys().collect();
     let paths_b: BTreeSet<&String> = b.streams.keys().collect();
 
-    let only_in_a: Vec<String> = paths_a
-        .difference(&paths_b)
-        .map(|s| (*s).clone())
-        .collect();
-    let only_in_b: Vec<String> = paths_b
-        .difference(&paths_a)
-        .map(|s| (*s).clone())
-        .collect();
+    let only_in_a: Vec<String> = paths_a.difference(&paths_b).map(|s| (*s).clone()).collect();
+    let only_in_b: Vec<String> = paths_b.difference(&paths_a).map(|s| (*s).clone()).collect();
 
     let mut modified: Vec<StreamDiff> = Vec::new();
     for path in paths_a.intersection(&paths_b) {
@@ -359,8 +352,14 @@ mod tests {
 
     #[test]
     fn normalize_path_adds_leading_slash() {
-        assert_eq!(normalize_path("TaggedTxtData/Drawing"), "/TaggedTxtData/Drawing");
-        assert_eq!(normalize_path("/TaggedTxtData/Drawing"), "/TaggedTxtData/Drawing");
+        assert_eq!(
+            normalize_path("TaggedTxtData/Drawing"),
+            "/TaggedTxtData/Drawing"
+        );
+        assert_eq!(
+            normalize_path("/TaggedTxtData/Drawing"),
+            "/TaggedTxtData/Drawing"
+        );
         assert_eq!(normalize_path("\\foo\\bar"), "/foo/bar");
     }
 
@@ -386,8 +385,7 @@ mod tests {
     #[test]
     fn with_root_clsid_round_trips_value() {
         let clsid = Uuid::parse_str("00020906-0000-0000-C000-000000000046").expect("uuid");
-        let pkg = PidPackage::new(None, BTreeMap::new(), sample_doc())
-            .with_root_clsid(Some(clsid));
+        let pkg = PidPackage::new(None, BTreeMap::new(), sample_doc()).with_root_clsid(Some(clsid));
         assert_eq!(pkg.root_clsid, Some(clsid));
     }
 
@@ -489,8 +487,8 @@ mod tests {
         let mut map = BTreeMap::new();
         let clsid = Uuid::parse_str("00020906-0000-0000-C000-000000000046").unwrap();
         map.insert("/JSite0".to_string(), clsid);
-        let pkg = PidPackage::new(None, BTreeMap::new(), sample_doc())
-            .with_storage_clsids(map.clone());
+        let pkg =
+            PidPackage::new(None, BTreeMap::new(), sample_doc()).with_storage_clsids(map.clone());
         assert_eq!(pkg.storage_clsids, map);
     }
 
@@ -501,20 +499,21 @@ mod tests {
 
         let mut a_map = BTreeMap::new();
         a_map.insert("/JSite0".to_string(), clsid_a);
-        let a = PidPackage::new(None, BTreeMap::new(), sample_doc())
-            .with_storage_clsids(a_map);
+        let a = PidPackage::new(None, BTreeMap::new(), sample_doc()).with_storage_clsids(a_map);
 
         let mut b_map = BTreeMap::new();
         b_map.insert("/JSite0".to_string(), clsid_b);
-        let b = PidPackage::new(None, BTreeMap::new(), sample_doc())
-            .with_storage_clsids(b_map);
+        let b = PidPackage::new(None, BTreeMap::new(), sample_doc()).with_storage_clsids(b_map);
 
         let d = diff_packages(&a, &b);
         assert_eq!(d.storage_clsid_diffs.len(), 1);
         assert_eq!(d.storage_clsid_diffs[0].path, "/JSite0");
         assert_eq!(d.storage_clsid_diffs[0].a, Some(clsid_a));
         assert_eq!(d.storage_clsid_diffs[0].b, Some(clsid_b));
-        assert!(!d.is_empty(), "storage CLSID mismatch should make diff non-empty");
+        assert!(
+            !d.is_empty(),
+            "storage CLSID mismatch should make diff non-empty"
+        );
         assert_eq!(d.diff_count(), 1);
     }
 
@@ -523,8 +522,7 @@ mod tests {
         let clsid = Uuid::parse_str("00020906-0000-0000-C000-000000000046").unwrap();
         let mut a_map = BTreeMap::new();
         a_map.insert("/JSite0".to_string(), clsid);
-        let a = PidPackage::new(None, BTreeMap::new(), sample_doc())
-            .with_storage_clsids(a_map);
+        let a = PidPackage::new(None, BTreeMap::new(), sample_doc()).with_storage_clsids(a_map);
         let b = PidPackage::new(None, BTreeMap::new(), sample_doc());
 
         let d = diff_packages(&a, &b);

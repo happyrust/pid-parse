@@ -19,12 +19,7 @@ pub fn generate_package_report(pkg: &PidPackage) -> String {
         if pkg.storage_clsids.is_empty() {
             writeln!(out, "  non-root storages: (none carry a CLSID)").ok();
         } else {
-            writeln!(
-                out,
-                "  non-root storages ({}):",
-                pkg.storage_clsids.len()
-            )
-            .ok();
+            writeln!(out, "  non-root storages ({}):", pkg.storage_clsids.len()).ok();
             for (path, clsid) in &pkg.storage_clsids {
                 writeln!(out, "    {}  {{{}}}", path, clsid).ok();
             }
@@ -41,18 +36,8 @@ pub fn generate_report(doc: &PidDocument) -> String {
     writeln!(out, "Streams: {}", doc.streams.len()).ok();
     writeln!(out, "JSites:  {}", doc.jsites.len()).ok();
     writeln!(out, "Clusters: {}", doc.clusters.len()).ok();
-    writeln!(
-        out,
-        "Sheet streams: {}",
-        doc.sheet_streams.len()
-    )
-    .ok();
-    writeln!(
-        out,
-        "Unknown streams: {}",
-        doc.unknown_streams.len()
-    )
-    .ok();
+    writeln!(out, "Sheet streams: {}", doc.sheet_streams.len()).ok();
+    writeln!(out, "Unknown streams: {}", doc.unknown_streams.len()).ok();
 
     if let Some(ref si) = doc.summary {
         writeln!(out, "\n--- Summary ---").ok();
@@ -139,8 +124,12 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out).ok();
 
             if let Some(ref pi) = c.probe_info {
-                writeln!(out, "    [PROBE] table_offset=0x{:04X}, method={}, entries={}, end=0x{:04X}",
-                    pi.string_table_offset, pi.detection_method, pi.entries_parsed, pi.end_offset).ok();
+                writeln!(
+                    out,
+                    "    [PROBE] table_offset=0x{:04X}, method={}, entries={}, end=0x{:04X}",
+                    pi.string_table_offset, pi.detection_method, pi.entries_parsed, pi.end_offset
+                )
+                .ok();
             }
             if let Some(ref table) = c.string_table {
                 writeln!(out, "    String table ({} entries):", table.len()).ok();
@@ -169,8 +158,12 @@ pub fn generate_report(doc: &PidDocument) -> String {
         writeln!(out, "  Relationships: {}", da.relationships.len()).ok();
         writeln!(out, "  Class names: {:?}", da.class_names).ok();
         if let Some(ref ps) = da.probe_summary {
-            writeln!(out, "  [PROBE] body_start=0x{:04X}, markers={}, records={}, bytes_scanned={}",
-                ps.body_start_offset, ps.marker_count, ps.records_extracted, ps.bytes_scanned).ok();
+            writeln!(
+                out,
+                "  [PROBE] body_start=0x{:04X}, markers={}, records={}, bytes_scanned={}",
+                ps.body_start_offset, ps.marker_count, ps.records_extracted, ps.bytes_scanned
+            )
+            .ok();
         }
         if !da.attribute_records.is_empty() {
             writeln!(
@@ -223,10 +216,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 writeln!(
                     out,
                     "    [PROBE] body_start=0x{:04X}, markers={}, records={}, bytes_scanned={}",
-                    ps.body_start_offset,
-                    ps.marker_count,
-                    ps.records_extracted,
-                    ps.bytes_scanned
+                    ps.body_start_offset, ps.marker_count, ps.records_extracted, ps.bytes_scanned
                 )
                 .ok();
             }
@@ -247,12 +237,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                     .ok();
                 }
                 if sh.attribute_records.len() > 5 {
-                    writeln!(
-                        out,
-                        "      ... ({} more)",
-                        sh.attribute_records.len() - 5
-                    )
-                    .ok();
+                    writeln!(out, "      ... ({} more)", sh.attribute_records.len() - 5).ok();
                 }
             }
         }
@@ -261,12 +246,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
     if let Some(ref r) = doc.psm_roots {
         writeln!(out, "\n--- PSMroots ({} bytes) ---", r.size).ok();
         for e in &r.entries {
-            writeln!(
-                out,
-                "  [@+{:04X}] id=0x{:08X}  {}",
-                e.offset, e.id, e.name
-            )
-            .ok();
+            writeln!(out, "  [@+{:04X}] id=0x{:08X}  {}", e.offset, e.id, e.name).ok();
         }
         if r.trailing_bytes > 0 {
             writeln!(out, "  ({} trailing bytes)", r.trailing_bytes).ok();
@@ -336,7 +316,12 @@ pub fn generate_report(doc: &PidDocument) -> String {
         }
         for r in &dv2.records {
             let label = crate::parsers::doc_version2::op_type_label(r.op_type);
-            writeln!(out, "  [{}] version={} (0x{:X})", label, r.version, r.version).ok();
+            writeln!(
+                out,
+                "  [{}] version={} (0x{:X})",
+                label, r.version, r.version
+            )
+            .ok();
         }
     }
 
@@ -358,12 +343,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
     }
 
     if let Some(ref t) = doc.tagged_storages {
-        writeln!(
-            out,
-            "\n--- Tagged Text Storage List ({} bytes) ---",
-            t.size
-        )
-        .ok();
+        writeln!(out, "\n--- Tagged Text Storage List ({} bytes) ---", t.size).ok();
         writeln!(out, "  list: {}", t.list_name).ok();
         for e in &t.entries {
             writeln!(out, "    -> {}", e.storage_name).ok();
@@ -539,10 +519,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 out,
                 "  Symbols: {} unique ({} total JSite refs)",
                 xr.symbol_usage.len(),
-                xr.symbol_usage
-                    .iter()
-                    .map(|u| u.usage_count)
-                    .sum::<usize>()
+                xr.symbol_usage.iter().map(|u| u.usage_count).sum::<usize>()
             )
             .ok();
             for u in xr.symbol_usage.iter().take(5) {

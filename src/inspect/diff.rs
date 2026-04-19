@@ -25,7 +25,11 @@ pub fn render(diff: &PackageDiff) -> String {
         return out;
     }
 
-    let clsid_status = if diff.root_clsid_match { "match" } else { "DIFFER" };
+    let clsid_status = if diff.root_clsid_match {
+        "match"
+    } else {
+        "DIFFER"
+    };
     writeln!(
         out,
         "root CLSID:  {}  (a={}, b={})",

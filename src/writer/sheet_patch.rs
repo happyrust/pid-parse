@@ -35,11 +35,7 @@ pub fn apply_sheet_patch(
         if p.end > data.len() {
             return Err(PidError::ParseFailure {
                 context: format!("sheet_patch:{}", context),
-                message: format!(
-                    "end {} exceeds stream length {}",
-                    p.end,
-                    data.len()
-                ),
+                message: format!("end {} exceeds stream length {}", p.end, data.len()),
             });
         }
     }
@@ -66,8 +62,7 @@ pub fn apply_sheet_patch_to_package(
     let raw = package
         .get_stream(&patch.sheet_path)
         .ok_or_else(|| PidError::MissingStream(patch.sheet_path.clone()))?;
-    let new_bytes =
-        apply_sheet_patch(&raw.data, &patch.chunk_patches, &patch.sheet_path)?;
+    let new_bytes = apply_sheet_patch(&raw.data, &patch.chunk_patches, &patch.sheet_path)?;
     package.replace_stream(patch.sheet_path.clone(), new_bytes);
     Ok(())
 }

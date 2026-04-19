@@ -13,7 +13,10 @@ fn extract_unc_or_path(s: &str) -> String {
     if let Some(pos) = s.find(":\\") {
         if pos > 0 {
             let drive_start = pos - 1;
-            if s.as_bytes().get(drive_start).is_some_and(|b| b.is_ascii_alphabetic()) {
+            if s.as_bytes()
+                .get(drive_start)
+                .is_some_and(|b| b.is_ascii_alphabetic())
+            {
                 return s[drive_start..].to_string();
             }
         }

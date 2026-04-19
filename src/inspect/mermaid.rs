@@ -147,9 +147,7 @@ fn render_relationship_edges(
         if opts.skip_template_relationships && rel.guid.is_empty() {
             continue;
         }
-        let Some((src, tgt, src_is_off, tgt_is_off)) =
-            endpoint_nodes(rel, rendered_objects)
-        else {
+        let Some((src, tgt, src_is_off, tgt_is_off)) = endpoint_nodes(rel, rendered_objects) else {
             continue;
         };
         if src_is_off || tgt_is_off {
@@ -161,11 +159,7 @@ fn render_relationship_edges(
         edges_drawn += 1;
     }
     if off_drawing_needed {
-        writeln!(
-            out,
-            "  off_drawing[\"(off-drawing)\"]:::offdrawing"
-        )
-        .ok();
+        writeln!(out, "  off_drawing[\"(off-drawing)\"]:::offdrawing").ok();
     }
     edges_drawn
 }
@@ -215,8 +209,16 @@ fn node_label_for_object(obj: &PidObject) -> String {
 }
 
 fn write_graph_classes(out: &mut String) {
-    writeln!(out, "  classDef obj fill:#e0f2ff,stroke:#0b7285,color:#0b3b5a;").ok();
-    writeln!(out, "  classDef rel fill:#fff4e6,stroke:#b85c00,color:#5a2a00;").ok();
+    writeln!(
+        out,
+        "  classDef obj fill:#e0f2ff,stroke:#0b7285,color:#0b3b5a;"
+    )
+    .ok();
+    writeln!(
+        out,
+        "  classDef rel fill:#fff4e6,stroke:#b85c00,color:#5a2a00;"
+    )
+    .ok();
     writeln!(
         out,
         "  classDef offdrawing fill:#f3f4f6,stroke:#6b7280,color:#1f2937,stroke-dasharray: 4 2;"
@@ -322,7 +324,12 @@ fn write_symbol_usage_subgraph(out: &mut String, usages: &[SymbolUsage], opts: &
     if usages.is_empty() {
         return;
     }
-    writeln!(out, "  subgraph SU[\"Symbol Usage (top {})\"]", opts.max_symbols).ok();
+    writeln!(
+        out,
+        "  subgraph SU[\"Symbol Usage (top {})\"]",
+        opts.max_symbols
+    )
+    .ok();
     for (i, u) in usages.iter().take(opts.max_symbols).enumerate() {
         let sym_node = format!("sym_{}", i);
         let label = u
@@ -337,26 +344,20 @@ fn write_symbol_usage_subgraph(out: &mut String, usages: &[SymbolUsage], opts: &
             u.usage_count
         )
         .ok();
-        for (j, js) in u.jsite_names.iter().take(opts.max_jsites_per_symbol).enumerate() {
+        for (j, js) in u
+            .jsite_names
+            .iter()
+            .take(opts.max_jsites_per_symbol)
+            .enumerate()
+        {
             let js_node = format!("js_{}_{}", i, j);
-            writeln!(
-                out,
-                "    {}[\"{}\"]:::jsite",
-                js_node,
-                escape_mermaid(js)
-            )
-            .ok();
+            writeln!(out, "    {}[\"{}\"]:::jsite", js_node, escape_mermaid(js)).ok();
             writeln!(out, "    {} --> {}", sym_node, js_node).ok();
         }
         if u.jsite_names.len() > opts.max_jsites_per_symbol {
             let extra = u.jsite_names.len() - opts.max_jsites_per_symbol;
             let ov = format!("js_{}_ov", i);
-            writeln!(
-                out,
-                "    {}[\"... ({} more)\"]:::jsite",
-                ov, extra
-            )
-            .ok();
+            writeln!(out, "    {}[\"... ({} more)\"]:::jsite", ov, extra).ok();
             writeln!(out, "    {} --> {}", sym_node, ov).ok();
         }
     }
@@ -403,7 +404,11 @@ fn write_root_presence_subgraph(out: &mut String, roots: &[RootPresence]) {
         } else {
             "MISSING"
         };
-        let class_ = if state == "MISSING" { "missing" } else { "root" };
+        let class_ = if state == "MISSING" {
+            "missing"
+        } else {
+            "root"
+        };
         writeln!(
             out,
             "    rp_{}[\"{}<br/>id=0x{:08X} {}\"]:::{}",
@@ -439,7 +444,12 @@ fn sanitize(s: &str) -> String {
         out.push('_');
     }
     // Mermaid ids cannot start with a digit in some dialects — prefix.
-    if out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+    if out
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+    {
         out.insert(0, 'x');
     }
     out
@@ -455,10 +465,7 @@ fn escape_mermaid(s: &str) -> String {
 }
 
 fn basename_of(path: &str) -> String {
-    path.rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(path)
-        .to_string()
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 
 // Silence unused-import warning from BTreeMap in `crossref_mermaid_with`
@@ -508,8 +515,10 @@ mod tests {
     fn object_graph_emits_nodes_and_edges() {
         let mut doc = PidDocument::default();
         let mut g = ObjectGraph::default();
-        g.objects.push(obj("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "PipeRun"));
-        g.objects.push(obj("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "Nozzle"));
+        g.objects
+            .push(obj("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "PipeRun"));
+        g.objects
+            .push(obj("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "Nozzle"));
         g.relationships.push(rel(
             "DEADBEEF",
             Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -531,7 +540,8 @@ mod tests {
     fn object_graph_off_drawing_endpoint_creates_placeholder() {
         let mut doc = PidDocument::default();
         let mut g = ObjectGraph::default();
-        g.objects.push(obj("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "PipeRun"));
+        g.objects
+            .push(obj("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "PipeRun"));
         g.relationships.push(rel(
             "F00DF00D",
             Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -551,7 +561,8 @@ mod tests {
     fn object_graph_skips_template_relationships_by_default() {
         let mut doc = PidDocument::default();
         let mut g = ObjectGraph::default();
-        g.objects.push(obj("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "PipeRun"));
+        g.objects
+            .push(obj("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "PipeRun"));
         g.relationships.push(rel(
             "",
             Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),

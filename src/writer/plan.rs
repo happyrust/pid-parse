@@ -112,7 +112,10 @@ mod tests {
     fn metadata_only_sets_only_xml_fields() {
         let plan = WritePlan::metadata_only(Some("<Drawing/>".into()), None);
         assert!(!plan.is_passthrough());
-        assert_eq!(plan.metadata_updates.drawing_xml.as_deref(), Some("<Drawing/>"));
+        assert_eq!(
+            plan.metadata_updates.drawing_xml.as_deref(),
+            Some("<Drawing/>")
+        );
         assert!(plan.metadata_updates.general_xml.is_none());
         assert!(plan.stream_replacements.is_empty());
         assert!(plan.sheet_patches.is_empty());

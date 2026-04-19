@@ -16,7 +16,9 @@ pub use model::*;
 pub use package::{
     diff_packages, PackageDiff, PidPackage, RawStream, StorageClsidDiff, StreamDiff,
 };
-pub use writer::{MetadataUpdates, PidWriter, SheetChunkPatch, SheetPatch, StreamReplacement, WritePlan};
+pub use writer::{
+    MetadataUpdates, PidWriter, SheetChunkPatch, SheetPatch, StreamReplacement, WritePlan,
+};
 
 /// Re-export of [`uuid::Uuid`] for ergonomic access to the root CLSID
 /// carried by [`PidPackage::root_clsid`] without forcing consumers to
