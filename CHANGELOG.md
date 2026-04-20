@@ -2,6 +2,101 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-21
+
+### Phase 10h: session 成果归档 + 下一步 roadmap 落地（docs-only，无行为变化）
+
+本 session（2026-04-21）连续 ship 了 v0.4.2 → v0.7.0 共 12 轮
+（Phase 9k → 10g），跨两个大周期（Writer 建设 + SPPID full-parse
+coverage 系列）。按 Phase 9d 方法论"连续新功能后强制插入卫生 pass"，
+本轮不加 feature，只做归档 + 下一步 roadmap 规划。零代码改动，
+仅文档落盘。
+
+### Added — 归档文档（v0.4.2 → v0.7.0 的 session 封存）
+
+- `docs/phase10-coverage-series-summary.md`：对齐
+  `phase8-9h-summary.md` 风格，归档 Phase 9k-9o + 10a-10g 共
+  12 个 commit 里程碑。含起点/终点对照表（test count 260→332、
+  Phase 数 12、新增 CLI flag 4、CHANGELOG 行数 ~100→~550）、阶段
+  轨迹（每 Phase 动机/产出/方法论点评）、方法论沉淀 5 条
+  （feature+卫生 pass 节奏、coverage 是 parser 对偶面、SemVer
+  minor/patch 判定、doc-first plan 文化、交叉验证锚点复用）、
+  版本↔Phase↔commit 索引表。
+- `docs/sppid/v0.7.x-status.md`：SPPID 解析能力一页纸快照，含
+  15 个顶层流/存储的 coverage 状态表、Writer 层 6 项能力矩阵、
+  保真度维度表、roadmap Phase 1-5 完成度、CLI 入口索引、332 测试
+  分布统计、Consumer quick-start 3 个代码样例（parse / edit via
+  plan / inspect coverage programmatically）。
+
+### Added — 下一步 roadmap plan 文件（8 份，覆盖 v0.7.1 → 验收全链路）
+
+对齐既有 `phase-9l/9m/9n/10b-10h` 的 dev plan 模板（动机 / 非目标
+/ 范围 / 具体设计 / W1-W7 实施步骤 / 预计工时 / 验证清单 / 风险
+缓解 / SemVer 判定 / Next 候选 / 交叉引用）。
+
+- `docs/plans/2026-04-21-next-steps-roadmap-v0.7.1-onward.md`
+  （16.3KB）— 总导航：TL;DR + 5 阶段（A-E）优先级矩阵 + 现状详
+  细快照（coverage/writer/tests）+ 起步节奏建议 + 风险登记。
+- `docs/plans/2026-04-21-phase-10h-session-archive.md`（本 Phase
+  的 dev plan，3.3KB）。
+- `docs/plans/2026-04-21-phase-10i-vtlpstr-codepage.md`（10.9KB）—
+  VT_LPSTR 多 code page 回退（CP1252/GBK/Shift-JIS），`SummaryValue`
+  枚举向后兼容设计，~3-5hr，minor bump 0.8.0。
+- `docs/plans/2026-04-21-phase-10j-docsummary-section2.md`（11.9KB）—
+  DocumentSummaryInformation section 2（user-defined dict）CRUD
+  编辑，`UserDefinedDictionary` + `PropertyValue` 类型设计，
+  ~4-6hr，minor bump 0.9.0。
+- `docs/plans/2026-04-21-phase-11a-psmclustertable-records.md`
+  （14.9KB）— PSMclustertable per-record 结构化（roadmap Phase 2.2），
+  含 hex walk 策略 + type_tag↔ClusterKind 映射 + segment count
+  对账，~6-8hr，minor bump 0.10.0。
+- `docs/plans/2026-04-21-phase-11b-psmsegmenttable.md`（12.6KB）—
+  PSMsegmenttable 结构化（roadmap Phase 2.3），`SegmentKind` enum
+  + owner_cluster 反推 + Sheet endpoint 三向对账，~4-6hr，minor
+  bump 0.11.0。
+- `docs/plans/2026-04-21-phase-11c-sheet-geometry.md`（13.4KB）—
+  Sheet 深层几何/图元解码（roadmap Phase 2.5），分 4 sub-phase
+  （频次探针 / object+label / line+reference / layout 融合），
+  ~10-14hr，minor 0.12.0 + patches；明确标注"逆向不确定性最高，
+  强烈建议单独 session 设计"。
+- `docs/plans/2026-04-21-phase-12a-normalization-layer.md`（8.7KB）
+  — 规范化语义图层（roadmap Phase 3，大 Phase 骨架），含
+  `NormalizedObject/Relationship/Endpoint/SymbolRef/ClusterRef` +
+  `Provenance { source_layer: Raw/Decoded/Inferred }` 类型设计，
+  ~20-30hr，先发 RFC 再实施。
+- `docs/plans/2026-04-21-phase-12b-byte-audit-framework.md`
+  （11.4KB）— consumed/leftover 字节验证框架（roadmap Phase 4），
+  `ParserTrace` + `ByteRange` + `ParserTraceBuilder` 侧信道设计，
+  `pid_inspect --byte-audit` CLI + CI regression baseline，
+  ~12-18hr，minor 0.14.0 + patches。
+
+### Changed
+
+- `Cargo.toml` version 0.7.0 → 0.7.1。
+- `Cargo.lock` 同步 bump。
+
+### Verification
+
+- `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings`
+  → 双 0
+- `cargo test --all-targets` → **332 passed** / 0 failed（无增减；
+  本版本零代码改动）
+
+### Session 闭环指标
+
+- **本 session 总产出**：12 个 version ship（v0.4.2 → v0.7.0）+
+  本轮 v0.7.1 归档 + v0.7.1→验收的 8 份 plan 文件 ≈ 100KB 规划文档
+- **覆盖时间跨度**：从 Writer 建设收官到 SPPID full-parse 完成
+  的 60-85hr 全路径
+- **测试**：332 tests 全绿，clippy/fmt 双零
+- **下一步明确入口**：Phase 10i (VT_LPSTR code page) 或 Phase 11a
+  (PSMclustertable per-record) 任选其一
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-10h-session-archive.md`：本 Phase
+  起稿 plan。
+
 ## [0.7.0] - 2026-04-21
 
 ### Phase 10g: VT_LPSTR UTF-8 编码（解除 Phase 9l ASCII-only 限制）
