@@ -2,6 +2,71 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-21
+
+### Phase 10g: VT_LPSTR UTF-8 编码（解除 Phase 9l ASCII-only 限制）
+
+Phase 9l (v0.5.0) 为 `SummaryInformation` property-set writer 设了一
+条 ASCII-only 门：非 ASCII 字符写入 `VT_LPSTR` 属性会被 reject。
+当时明确说这条限制"tracked for Phase 9m UTF-8 support"，Phase 9m/9n
+都没动到它。Phase 10g 兑现该 roadmap：`VT_LPSTR` 字段现在按 UTF-8
+编码字节（[MS-OLEPS] §2.11 允许单字节字符串采用操作系统 code page；
+我们选 UTF-8 因为现代 SmartPlant 实测使用 UTF-8）。
+
+### Changed (behavior; minor bump)
+
+- `writer::summary_write::encode_string` 的 `VT_LPSTR` 分支去掉
+  `value.is_ascii()` 门；现在任何 UTF-8 字符串都被接受。char_count
+  字段照例存储 **byte count**（含 NUL 终止符），与 reader 侧保持
+  一致。
+- 对既有 0.5.x/0.6.x consumer 的影响：
+  - 之前被 reject 返回
+    `PidError::ParseFailure { context: "summary writer", message:
+    "...value contains non-ASCII bytes..." }` 的调用路径现在会**成功**。
+  - 对所有 ASCII-only 输入行为完全不变（UTF-8 是 ASCII 的超集）。
+  - 因为语义放宽（原错变正确），按 SemVer 走 **minor bump**（0.6.5
+    → 0.7.0）而非 patch。
+- `writer::plan::MetadataUpdates.summary_updates` 的 doc 去掉 "VT_LPSTR
+  non-ASCII rejected" 提示。
+
+### Tests (332 → 332，行为替换而非新增)
+
+`writer::summary_write::tests::encode_lpstr_rejects_non_ascii` 重命名并
+重写为 `encode_lpstr_accepts_utf8_non_ascii`（仍是单个测试函数，test
+count 不变）。新 test 验证：
+
+1. `encode_string(VT_LPSTR, "中文 title", 2)` 成功，char_count ==
+   UTF-8 byte length + 1。
+2. bytes body 在 `from_utf8` 下仍是原字符串。
+3. 端到端 round-trip：构造 LPSTR fixture → `apply_summary_updates(
+   {"title": "公司 Co. 中文"})` → parse 回来 `title_prop.vt ==
+   VT_LPSTR`、bytes 解为原字符串。
+
+### Known limitations
+
+- 仅 UTF-8。如 fixture 下游 consumer 需要 CP1252 / GBK / Shift-JIS
+  等传统 code page，本版本不自动识别/转换。方案：
+  - 要求下游把 fixture 迁到 UTF-8（SmartPlant 2020+ 默认已是）
+  - 在 `summary_updates` 外部自行转码，传入已经是目标 code page 的
+    `String`（UTF-8 表示法，字节一致）
+  - 切到 `VT_LPWSTR` 对应的 prop（目前 `summary_updates` 会保留源
+    VT；若要强制 LPWSTR 可先用 `summary_deletions` 删掉 LPSTR 条目，
+    新 add 会默认 LPWSTR）
+- DocumentSummaryInformation user-defined section 2 仍未支持（Phase
+  9n 已做 issue，Phase 10i 排队）。
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-10g-lpstr-utf8.md`。
+
+### Verification
+
+- `cargo fmt --check` / `cargo clippy -D warnings` → 双 0
+- `cargo test --all-targets` → **332 passed** / 0 failed
+  （lib 238 + inspect_cli 4 + parse_real_files 28 + unit_parsers 18
+   + writer_real_files 10 + writer_roundtrip 13 + writer_validate_cli
+   21 = 332；Phase 10g 的变化是 test body 替换，count 未净增）
+
 ## [0.6.5] - 2026-04-21
 
 ### Phase 10f: coverage 加 bytes 维度

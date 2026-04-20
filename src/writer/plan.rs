@@ -72,8 +72,9 @@ pub struct MetadataUpdates {
     /// `"category"`, `"manager"`, `"company"`). Values are plain Rust
     /// strings; encoding (`VT_LPSTR` vs `VT_LPWSTR`) is preserved from the
     /// source property or defaulted to `VT_LPWSTR` for newly added ones.
-    /// See [`crate::writer::summary_write`] for the full key table and
-    /// error semantics. Empty map = free no-op.
+    /// Phase 10g (v0.7.0+): `VT_LPSTR` values are encoded as UTF-8 bytes,
+    /// so non-ASCII is accepted. See [`crate::writer::summary_write`] for
+    /// the full key table and error semantics. Empty map = free no-op.
     #[serde(default)]
     pub summary_updates: BTreeMap<String, String>,
 

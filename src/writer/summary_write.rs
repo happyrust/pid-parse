@@ -288,17 +288,18 @@ impl SummarySection {
 fn encode_string(vt: u16, value: &str, prop_id_for_err: u32) -> Result<Vec<u8>, PidError> {
     match vt {
         VT_LPSTR => {
-            if !value.is_ascii() {
-                return Err(enc_err(
-                    prop_id_for_err,
-                    vt,
-                    "value contains non-ASCII bytes; writing into a VT_LPSTR \
-                     property is restricted to ASCII in Phase 9l (tracked \
-                     for Phase 9m UTF-8 support)",
-                ));
-            }
-            // VT_LPSTR: 4-byte VT tag, 4-byte char count (incl NUL), bytes,
-            // then 4-byte alignment padding.
+            // VT_LPSTR: 4-byte VT tag, 4-byte **byte** count (incl NUL
+            // terminator), bytes, then 4-byte alignment padding.
+            //
+            // [MS-OLEPS] §2.11 defines VT_LPSTR as a NUL-terminated
+            // single-byte string in the code page of the creating
+            // platform. Phase 10g (v0.7.0+): write `value.as_bytes()`
+            // directly, which is UTF-8. Modern SmartPlant hosts read
+            // UTF-8 correctly; if a consumer strictly requires CP1252
+            // or another legacy code page, the caller should either
+            // pre-encode externally or target a VT_LPWSTR property
+            // (see `set_string` which preserves the source prop's VT
+            // when present).
             let mut bytes = value.as_bytes().to_vec();
             bytes.push(0);
             let char_count = bytes.len() as u32;
@@ -309,6 +310,11 @@ fn encode_string(vt: u16, value: &str, prop_id_for_err: u32) -> Result<Vec<u8>, 
             while !out.len().is_multiple_of(4) {
                 out.push(0);
             }
+            // `prop_id_for_err` is retained in the signature for symmetry
+            // with VT_LPWSTR + future VTs that may need per-prop
+            // diagnostics; silence the unused-variable lint by
+            // referencing it explicitly when no error path remains.
+            let _ = prop_id_for_err;
             Ok(out)
         }
         VT_LPWSTR => {
@@ -821,10 +827,42 @@ mod tests {
     }
 
     #[test]
-    fn encode_lpstr_rejects_non_ascii() {
-        let err = encode_string(VT_LPSTR, "中文 title", 2).expect_err("should reject");
-        let msg = format!("{err}");
-        assert!(msg.contains("non-ASCII"), "got: {msg}");
+    fn encode_lpstr_accepts_utf8_non_ascii() {
+        // Phase 10g (v0.7.0+): VT_LPSTR now accepts arbitrary UTF-8.
+        // The raw encoding is just `value.as_bytes()` plus a NUL
+        // terminator and 4-byte alignment padding, so the char_count
+        // field counts bytes (not code points).
+        let encoded = encode_string(VT_LPSTR, "中文 title", 2).expect("accept utf-8");
+        assert!(encoded.len().is_multiple_of(4), "must be 4-byte aligned");
+        let vt = u32_le(&encoded, 0);
+        assert_eq!(vt, VT_LPSTR as u32);
+        // char_count = UTF-8 byte length + 1 (NUL).
+        let count = u32_le(&encoded, 4) as usize;
+        assert_eq!(count, "中文 title".len() + 1);
+        // Bytes after the char_count + VT tag should be the UTF-8
+        // encoding followed by a NUL.
+        let body = &encoded[8..8 + count - 1];
+        assert_eq!(std::str::from_utf8(body).unwrap(), "中文 title");
+        // Phase 10g guarantees round-trippability through the
+        // property-set parser at the byte level too: patch the title
+        // (PROPID 2, LPSTR) to a UTF-8 Chinese string, re-parse, and
+        // assert the source VT_LPSTR was preserved AND the bytes
+        // decode back to the same UTF-8 string.
+        let mut updates = BTreeMap::new();
+        updates.insert("title".to_string(), "公司 Co. 中文".to_string());
+        let mut pkg = package_with_summary(sample_summary_bytes());
+        apply_summary_updates(&mut pkg, &updates).expect("utf-8 LPSTR write");
+        let after = pkg.get_stream(SUMMARY_INFO_PATH).unwrap().data.clone();
+        let reparsed = SummaryPropertySet::parse(&after).expect("reparse");
+        let title_prop = reparsed.sections[0]
+            .props
+            .iter()
+            .find(|p| p.prop_id == 2)
+            .expect("title prop present");
+        assert_eq!(title_prop.vt, VT_LPSTR, "source VT_LPSTR preserved");
+        let count = u32_le(&title_prop.raw_value, 4) as usize;
+        let text_bytes = &title_prop.raw_value[8..8 + count - 1];
+        assert_eq!(std::str::from_utf8(text_bytes).unwrap(), "公司 Co. 中文");
     }
 
     #[test]
