@@ -20,6 +20,13 @@
 //! have understood, and the coverage report will stop pretending
 //! otherwise.
 //!
+//! **v0.6.2 (Phase 10c)**: cluster & dynamic-attrs probes wired. The
+//! four names parked in v0.6.1 (`PSMcluster0`, `StyleCluster`, `Dynamic
+//! Attributes Metadata`, `Unclustered Dynamic Attributes`) now consult
+//! `doc.clusters` (by `ClusterKind`) and `doc.dynamic_attributes` for
+//! downgrade decisions, completing dynamic coverage for every current
+//! `KNOWN_TOP_LEVEL_STREAM_NAMES` entry.
+//!
 //! See:
 //! - `docs/sppid/2026-04-21-sppid-full-parse-roadmap.md` (strategy)
 //! - `docs/plans/2026-04-21-sppid-coverage-inventory-implementation-plan.md`
@@ -200,13 +207,39 @@ fn stream_is_populated(name: &str, doc: &PidDocument) -> Option<bool> {
         ),
         "AppObject" => Some(doc.app_object_registry.is_some()),
         "JTaggedTxtStgList" => Some(doc.tagged_storages.is_some()),
-        // Cluster / dynamic attrs names share complex multi-stream model
-        // shapes; Phase 10b scope explicitly parks them as static-only.
-        // Phase 10c will grow individual probes.
-        "PSMcluster0"
-        | "StyleCluster"
-        | "Dynamic Attributes Metadata"
-        | "Unclustered Dynamic Attributes" => None,
+        // Phase 10c: cluster & dynamic-attrs probes. These streams
+        // feed into the shared `doc.clusters` vector (tagged by
+        // `ClusterKind`) instead of individual `Option<...>` fields,
+        // so the probe filters by kind.
+        "PSMcluster0" => Some(
+            doc.clusters
+                .iter()
+                .any(|c| matches!(c.kind, crate::model::ClusterKind::PsmCluster)),
+        ),
+        "StyleCluster" => Some(
+            doc.clusters
+                .iter()
+                .any(|c| matches!(c.kind, crate::model::ClusterKind::StyleCluster)),
+        ),
+        "Dynamic Attributes Metadata" => Some(
+            doc.clusters
+                .iter()
+                .any(|c| matches!(c.kind, crate::model::ClusterKind::DynamicAttributesMetadata)),
+        ),
+        // Unclustered Dynamic Attributes flows through two possible
+        // surfaces: a dedicated `doc.dynamic_attributes` blob (when the
+        // stream was parsed by the DAB reader) or a cluster entry with
+        // `UnclusteredDynamicAttributes` kind. Either one populated
+        // means the stream has been read.
+        "Unclustered Dynamic Attributes" => Some(
+            doc.dynamic_attributes.is_some()
+                || doc.clusters.iter().any(|c| {
+                    matches!(
+                        c.kind,
+                        crate::model::ClusterKind::UnclusteredDynamicAttributes
+                    )
+                }),
+        ),
         _ => None,
     }
 }
@@ -224,6 +257,15 @@ fn document_field_for_known_stream(name: &str) -> Option<&'static str> {
         "DocVersion3" => Some("version_history"),
         "AppObject" => Some("app_object_registry"),
         "JTaggedTxtStgList" => Some("tagged_storages"),
+        // Phase 10c: cluster / dynamic-attrs. The field names reference
+        // the `ClusterKind` discriminator used by the dynamic probe so
+        // downgrade notes stay actionable.
+        "PSMcluster0" => Some("clusters (kind=PsmCluster)"),
+        "StyleCluster" => Some("clusters (kind=StyleCluster)"),
+        "Dynamic Attributes Metadata" => Some("clusters (kind=DynamicAttributesMetadata)"),
+        "Unclustered Dynamic Attributes" => {
+            Some("clusters (kind=UnclusteredDynamicAttributes) / dynamic_attributes")
+        }
         _ => None,
     }
 }
@@ -650,6 +692,120 @@ mod tests {
         assert_eq!(
             find(&report, "PSMroots").status,
             ParseCoverageStatus::IdentifiedOnly,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 10c: cluster & dynamic-attrs dynamic probes.
+    // ------------------------------------------------------------------
+
+    use crate::model::{ClusterInfo, ClusterKind, DynamicAttributesBlob};
+
+    /// Build a minimally-populated `ClusterInfo` with the requested
+    /// `ClusterKind`. Every field other than `kind` and `name` is a
+    /// harmless zero-ish default — the Phase 10c probe only looks at
+    /// `kind`, so these placeholder values stay invisible to the
+    /// coverage classifier.
+    fn cluster_of(kind: ClusterKind, name: &str) -> ClusterInfo {
+        ClusterInfo {
+            name: name.into(),
+            path: format!("/{name}"),
+            size: 0,
+            magic_u32_le: None,
+            extracted_strings: vec![],
+            kind,
+            header: None,
+            string_table: None,
+            probe_info: None,
+        }
+    }
+
+    #[test]
+    fn coverage_downgrades_psm_cluster0_when_no_cluster_kind_psmcluster() {
+        // Phase 10c: stream present, but no ClusterInfo with
+        // `kind=PsmCluster` in doc.clusters — parser didn't claim it.
+        let doc = doc_with_paths(&["/PSMcluster0"]);
+        let report = coverage_report(&doc);
+        let entry = find(&report, "PSMcluster0");
+        assert_eq!(entry.status, ParseCoverageStatus::IdentifiedOnly);
+        let note = entry.note.as_deref().unwrap_or("");
+        assert!(
+            note.contains("clusters (kind=PsmCluster)"),
+            "downgrade note should name the cluster kind; got: {note}",
+        );
+    }
+
+    #[test]
+    fn coverage_keeps_psm_cluster0_partial_when_cluster_kind_psmcluster_populated() {
+        let mut doc = doc_with_paths(&["/PSMcluster0"]);
+        doc.clusters
+            .push(cluster_of(ClusterKind::PsmCluster, "PSMcluster0"));
+        let report = coverage_report(&doc);
+        assert_eq!(
+            find(&report, "PSMcluster0").status,
+            ParseCoverageStatus::PartiallyDecoded,
+            "populated cluster keeps the static PartiallyDecoded verdict"
+        );
+    }
+
+    #[test]
+    fn coverage_downgrades_style_cluster_when_no_cluster_kind_style() {
+        let doc = doc_with_paths(&["/StyleCluster"]);
+        let report = coverage_report(&doc);
+        assert_eq!(
+            find(&report, "StyleCluster").status,
+            ParseCoverageStatus::IdentifiedOnly,
+        );
+    }
+
+    #[test]
+    fn coverage_downgrades_dynamic_attrs_metadata_when_no_cluster_kind_dam() {
+        let doc = doc_with_paths(&["/Dynamic Attributes Metadata"]);
+        let report = coverage_report(&doc);
+        assert_eq!(
+            find(&report, "Dynamic Attributes Metadata").status,
+            ParseCoverageStatus::IdentifiedOnly,
+        );
+    }
+
+    #[test]
+    fn coverage_keeps_unclustered_dynamic_attrs_when_blob_populated() {
+        // UnclusteredDynamicAttributes has TWO surfaces: the blob field
+        // or a cluster kind. Either one present should keep the static
+        // PartiallyDecoded verdict.
+        let mut doc = doc_with_paths(&["/Unclustered Dynamic Attributes"]);
+        doc.dynamic_attributes = Some(DynamicAttributesBlob {
+            path: "/Unclustered Dynamic Attributes".into(),
+            size: 0,
+            magic_u32_le: None,
+            strings: vec![],
+            relationships: vec![],
+            class_names: vec![],
+            raw_preview_hex: String::new(),
+            header: None,
+            attribute_records: vec![],
+            probe_summary: None,
+            relationship_probes: vec![],
+            record_trailers: vec![],
+        });
+        let report = coverage_report(&doc);
+        assert_eq!(
+            find(&report, "Unclustered Dynamic Attributes").status,
+            ParseCoverageStatus::PartiallyDecoded,
+        );
+    }
+
+    #[test]
+    fn coverage_keeps_unclustered_dynamic_attrs_when_cluster_kind_populated() {
+        let mut doc = doc_with_paths(&["/Unclustered Dynamic Attributes"]);
+        doc.clusters.push(cluster_of(
+            ClusterKind::UnclusteredDynamicAttributes,
+            "Unclustered Dynamic Attributes",
+        ));
+        let report = coverage_report(&doc);
+        assert_eq!(
+            find(&report, "Unclustered Dynamic Attributes").status,
+            ParseCoverageStatus::PartiallyDecoded,
         );
     }
 }

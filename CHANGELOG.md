@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-04-21
+
+### Phase 10c: cluster & dynamic-attrs 动态 probe（完成 v0.6.1 parking）
+
+v0.6.1 把 4 个 cluster / dynamic-attrs 顶层流从动态分类里显式排除
+（`stream_is_populated` 返回 `None`，走静态 pass-through），理由是
+它们对应多流合并聚合的 `doc.clusters: Vec<ClusterInfo>` /
+`doc.dynamic_attributes: Option<DynamicAttributesBlob>`，探针写法
+和单一流字段不同。本轮为这 4 个流都配齐动态 probe，完成 v0.6.1 的
+parking list。
+
+### 新 probe 规则
+
+| 流名 | probe |
+|---|---|
+| `PSMcluster0` | `doc.clusters.any(kind == PsmCluster)` |
+| `StyleCluster` | `doc.clusters.any(kind == StyleCluster)` |
+| `Dynamic Attributes Metadata` | `doc.clusters.any(kind == DynamicAttributesMetadata)` |
+| `Unclustered Dynamic Attributes` | `doc.dynamic_attributes.is_some() \|\| doc.clusters.any(kind == UnclusteredDynamicAttributes)` |
+
+`Unclustered Dynamic Attributes` 有两条 surface：DAB blob 或
+cluster 里的 `UnclusteredDynamicAttributes` kind，任一填充都算
+parser 已识别，避免误降级。
+
+### Changed
+
+- `inspect::coverage::stream_is_populated` 4 个 cluster/dynamic-attrs
+  arm 从 `None` 改为具体 probe 表达式。
+- `inspect::coverage::document_field_for_known_stream` 4 个对应 arm
+  返回具体字段引用（`"clusters (kind=PsmCluster)"` 等），让降级
+  note 可操作。
+- `src/inspect/coverage.rs` module doc 追加 "v0.6.2 (Phase 10c)" 段。
+
+### Tests (312 → 318)
+
+lib 单元 +6：
+- `coverage_downgrades_psm_cluster0_when_no_cluster_kind_psmcluster`
+- `coverage_keeps_psm_cluster0_partial_when_cluster_kind_psmcluster_populated`
+- `coverage_downgrades_style_cluster_when_no_cluster_kind_style`
+- `coverage_downgrades_dynamic_attrs_metadata_when_no_cluster_kind_dam`
+- `coverage_keeps_unclustered_dynamic_attrs_when_blob_populated`
+- `coverage_keeps_unclustered_dynamic_attrs_when_cluster_kind_populated`
+
+每个都通过 `cluster_of(ClusterKind, name)` test helper 构造
+`ClusterInfo`；`UnclusteredDynamicAttributes` 两个 surface 各有一
+专门测试。
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-10c-cluster-dynamic-probes.md`。
+
+### Verification
+
+- `cargo fmt --check` / `cargo clippy -D warnings` → 双 0
+- `cargo test --all-targets` → **318 passed** / 0 failed
+
 ## [0.6.1] - 2026-04-21
 
 ### Phase 10b: coverage 动态分类
