@@ -85,6 +85,20 @@ fn main() {
     let doc = &pkg.parsed;
 
     if json_mode {
+        if coverage_flag {
+            // Phase 10e (v0.6.4+): --coverage + --json emits just the
+            // CoverageReport as JSON, not the entire PidDocument.
+            // Lets CI / automation consume coverage metrics without
+            // paying to serialize (or skip past) every decoded field.
+            match pid_parse::inspect::coverage::coverage_report(doc).to_json_pretty() {
+                Ok(json) => println!("{}", json),
+                Err(e) => {
+                    eprintln!("Coverage JSON serialization error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
         match serde_json::to_string_pretty(doc) {
             Ok(json) => println!("{}", json),
             Err(e) => {

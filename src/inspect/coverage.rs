@@ -808,4 +808,61 @@ mod tests {
             ParseCoverageStatus::PartiallyDecoded,
         );
     }
+
+    // ------------------------------------------------------------------
+    // Phase 10e: JSON helpers on CoverageReport.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn coverage_report_json_round_trip_default() {
+        let original = CoverageReport::default();
+        let json = original.to_json().expect("to_json default");
+        let restored = CoverageReport::from_json(&json).expect("from_json default");
+        assert!(restored.entries.is_empty());
+        assert_eq!(restored.status_counts(), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn coverage_report_json_round_trip_preserves_entries() {
+        // Build a non-trivial report via the classifier, round-trip
+        // through pretty-printed JSON, and assert the bucket counts
+        // survive byte-for-byte.
+        let mut doc = doc_with_paths(&[
+            "/DocVersion3",
+            "/Sheet1/x",
+            "/GhostStream",
+            "/PSMclustertable",
+        ]);
+        populate_all_known_fields(&mut doc);
+        let report_before = coverage_report(&doc);
+        let json = report_before.to_json_pretty().expect("to_json_pretty");
+        let report_after = CoverageReport::from_json(&json).expect("from_json");
+        assert_eq!(report_before.entries.len(), report_after.entries.len());
+        assert_eq!(report_before.status_counts(), report_after.status_counts());
+    }
+
+    #[test]
+    fn coverage_report_from_json_rejects_invalid_syntax_with_pid_error() {
+        let err = CoverageReport::from_json("this is not json").expect_err("must reject");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("coverage report JSON"),
+            "expected PidError context 'coverage report JSON'; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn coverage_report_to_json_pretty_is_multiline_and_indented() {
+        let mut doc = doc_with_paths(&["/DocVersion3"]);
+        populate_all_known_fields(&mut doc);
+        let pretty = coverage_report(&doc).to_json_pretty().expect("pretty");
+        assert!(
+            pretty.contains('\n'),
+            "pretty output must be multi-line; got: {pretty}"
+        );
+        assert!(
+            pretty.contains("  \""),
+            "pretty output must be indented; got: {pretty}"
+        );
+    }
 }

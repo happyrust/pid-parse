@@ -182,6 +182,69 @@ fn coverage_flag_downgrades_docversion3_when_record_is_illegal() {
 }
 
 #[test]
+fn coverage_json_flag_emits_parseable_coverage_report() {
+    // Phase 10e: `--coverage --json` must emit a machine-parseable
+    // JSON representation of `CoverageReport` — distinct from plain
+    // `--json` (which dumps the entire PidDocument). This test
+    // spawns the binary, parses stdout with `serde_json`, and asserts
+    // the expected shape + values.
+    let fixture = unique_tmp("coverage-json");
+    build_mixed_coverage_fixture(&fixture);
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--coverage")
+        .arg("--json")
+        .output()
+        .expect("spawn pid_inspect --coverage --json");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+
+    // The JSON must have the top-level shape `{"entries": [...]}`.
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout must be valid JSON");
+    let entries = parsed
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("missing/non-array 'entries' in JSON: {parsed}"));
+    assert!(
+        !entries.is_empty(),
+        "CoverageReport.entries must be non-empty for our mixed fixture"
+    );
+
+    // At least one entry should have status "FullyDecoded" (DocVersion3
+    // with a legal record) and one "Unknown" (MysteryStream).
+    let statuses: Vec<String> = entries
+        .iter()
+        .filter_map(|e| e.get("status").and_then(|s| s.as_str()).map(str::to_string))
+        .collect();
+    assert!(
+        statuses.iter().any(|s| s == "FullyDecoded"),
+        "expected a FullyDecoded entry; got statuses: {statuses:?}",
+    );
+    assert!(
+        statuses.iter().any(|s| s == "Unknown"),
+        "expected an Unknown entry; got statuses: {statuses:?}",
+    );
+
+    // Regression guard: the output must NOT look like the full
+    // PidDocument dump. The coverage JSON shape has `entries` at the
+    // top level — if `--json` without `--coverage` accidentally
+    // hijacks, we'd see `streams` / `summary` / other doc keys.
+    assert!(
+        parsed.get("streams").is_none(),
+        "coverage-only JSON must not include full-doc keys like 'streams'"
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
 fn no_flags_still_produces_full_report_including_coverage_section() {
     // Regression guard: Phase 10a embeds the coverage section into
     // `generate_report`, so running `pid_inspect fixture.pid` (no

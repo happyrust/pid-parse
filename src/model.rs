@@ -551,6 +551,38 @@ impl CoverageReport {
         }
         counts
     }
+
+    /// Phase 10e (v0.6.4+): serialize to a compact JSON string.
+    /// Errors are wrapped into [`crate::error::PidError::ParseFailure`]
+    /// so callers can stay on the project's uniform error surface
+    /// without pulling in `serde_json::Error`.
+    pub fn to_json(&self) -> Result<String, crate::error::PidError> {
+        serde_json::to_string(self).map_err(|e| crate::error::PidError::ParseFailure {
+            context: "coverage report JSON".into(),
+            message: e.to_string(),
+        })
+    }
+
+    /// Phase 10e (v0.6.4+): pretty-printed variant of [`Self::to_json`]
+    /// (2-space indent, one field per line). Convenient for hand-
+    /// reviewable CI artifacts.
+    pub fn to_json_pretty(&self) -> Result<String, crate::error::PidError> {
+        serde_json::to_string_pretty(self).map_err(|e| crate::error::PidError::ParseFailure {
+            context: "coverage report JSON".into(),
+            message: e.to_string(),
+        })
+    }
+
+    /// Phase 10e (v0.6.4+): parse a JSON string back into a
+    /// [`CoverageReport`]. The JSON shape must match what
+    /// [`Self::to_json`] / [`Self::to_json_pretty`] produce; missing
+    /// fields or unknown variants return `PidError::ParseFailure`.
+    pub fn from_json(json: &str) -> Result<Self, crate::error::PidError> {
+        serde_json::from_str(json).map_err(|e| crate::error::PidError::ParseFailure {
+            context: "coverage report JSON".into(),
+            message: e.to_string(),
+        })
+    }
 }
 
 /// Decoded `PSMroots` stream: list of root-level named entries.

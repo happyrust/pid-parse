@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-04-21
+
+### Phase 10e: coverage JSON 导出
+
+为 `CoverageReport` 补齐与 `WritePlan`（Phase 9o）对称的 JSON
+round-trip helpers + CLI `--coverage --json` 组合输出。让 CI 脚本 /
+外部 dashboard / 未来 Phase 10f 字节级验证框架可以直接消费结构化
+coverage 数据，不用再 grep 人类文本。
+
+### Added
+
+- `CoverageReport::to_json(&self) -> Result<String, PidError>`
+- `CoverageReport::to_json_pretty(&self) -> Result<String, PidError>`
+- `CoverageReport::from_json(&str) -> Result<Self, PidError>`
+- `pid_inspect --coverage --json`：专门输出 `CoverageReport` 的
+  pretty JSON（与 `--json` 单独使用时的 full-document dump 分开）。
+
+错误统一包装为 `PidError::ParseFailure { context: "coverage report
+JSON", ... }`，caller 无需 pull serde_json::Error。
+
+### Changed
+
+- `pid_inspect` 的 `--json` 分支现在 short-circuit 到 coverage-only
+  JSON 当且仅当同时传了 `--coverage`。其他组合（`--json` 单独 /
+  `--coverage` 单独）行为不变。
+
+### Tests (324 → 329)
+
+lib unit (+4)：
+- `coverage_report_json_round_trip_default`
+- `coverage_report_json_round_trip_preserves_entries`（通过实际
+  classifier 构造 4 个 bucket 混合 report，pretty → parse → assert
+  bucket counts 字节对齐）
+- `coverage_report_from_json_rejects_invalid_syntax_with_pid_error`
+- `coverage_report_to_json_pretty_is_multiline_and_indented`
+
+CLI 集成 (+1)：
+- `coverage_json_flag_emits_parseable_coverage_report`：CLI 跑
+  `--coverage --json`，用 `serde_json::from_str` 解 stdout，断言
+  `entries` 数组非空、出现 `FullyDecoded` + `Unknown` 状态、且 JSON
+  不含 `streams` 字段（分支污染 regression guard）。
+
+### Verification
+
+- `cargo fmt --check` / `cargo clippy -D warnings` → 双 0
+- `cargo test --all-targets` → **329 passed** / 0 failed
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-10e-coverage-json.md`
+
 ## [0.6.3] - 2026-04-21
 
 ### Phase 10d: DocVersion3 operation 语义化 + report 渲染升级
