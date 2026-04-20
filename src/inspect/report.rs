@@ -398,33 +398,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
         }
     }
 
-    let top_level_unidentified: Vec<_> = doc
-        .streams
-        .iter()
-        .filter(|s| {
-            let path = s.path.trim_start_matches('/');
-            !path.contains('/')
-                && !matches!(
-                    path,
-                    "\u{5}SummaryInformation"
-                        | "\u{5}DocumentSummaryInformation"
-                        | "PSMcluster0"
-                        | "StyleCluster"
-                        | "Dynamic Attributes Metadata"
-                        | "Unclustered Dynamic Attributes"
-                        | "PSMroots"
-                        | "PSMclustertable"
-                        | "PSMsegmenttable"
-                        | "DocVersion2"
-                        | "DocVersion3"
-                        | "AppObject"
-                        | "JTaggedTxtStgList"
-                )
-                && !path.starts_with("Sheet")
-                && !path.starts_with("TaggedTxtData")
-                && !path.starts_with("JSite")
-        })
-        .collect();
+    let top_level_unidentified = crate::inspect::unidentified_top_level_streams(doc);
     if !top_level_unidentified.is_empty() {
         writeln!(out, "\n--- Top-level Unidentified Streams ---").ok();
         for s in top_level_unidentified {

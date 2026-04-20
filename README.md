@@ -16,6 +16,8 @@
 - **关系端点解码**（v0.3.0）：DA 31 字节 trailer（record_id/field_x/class_id）+ Sheet 端点对记录 → 关系 source/target 端到端可解
 - **跨引用对象图**（v0.3.0-rc2）：PSM 声明 vs. 实际 cluster 对齐 / 符号 ↔ JSite 反向索引 / DA 属性类摘要 / PSMroots 解析状态
 - **Mermaid 可视化**（v0.3.0）：`ObjectGraph` / `CrossReferenceGraph` 一键导出 mermaid 文本，直接贴到 Mermaid Live Editor / Obsidian / Notion
+- **JSON Schema 导出**（v0.3.1）：`pid_inspect --schema` 输出 `PidDocument` 的 JSON Schema，可喂给 quicktype / json-schema-to-typescript 生成下游类型
+- **Package + Writer 层**（v0.4.0）：`PidParser::parse_package` 读出原始 stream 字节，`PidWriter::write_to(pkg, &WritePlan, out)` 实现 passthrough round-trip 与 metadata-only 更新；Sheet `byte-range` 修补以 `experimental` 入模
 - **Probe / Decode 分层**：启发式标记与确定性解码明确分离
 - **报告输出**：人类可读文本报告 + JSON 完整导出
 

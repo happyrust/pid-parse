@@ -95,12 +95,12 @@
 - **cfb 0.10 API 细节**：`create_storage` / `create_stream` 对已存在路径、路径分隔、根 storage 等行为需实现时按 crate 源码最终对齐；计划中的写出骨架属于结构草案，落地时可能微调。
 
 ## 交付物检查清单
-- [ ] `src/package.rs`
-- [ ] `src/writer/{mod,plan,metadata_write,sheet_patch,cfb_write}.rs`
-- [ ] `src/cfb/reader.rs` 重构 + `parse_pid_package`
-- [ ] `src/api.rs` 新增 `parse_package`
-- [ ] `src/lib.rs` 追加 `pub mod package; pub mod writer;`
-- [ ] `tests/writer_roundtrip.rs`（内存 fixture 全量用例）
-- [ ] `tests/writer_real_files.rs` 或 `parse_real_files.rs` 追加条件性 smoke
-- [ ] `cargo build` / `cargo test` 通过
-- [ ] 最终回报：改动文件、运行命令、测试结果、遗留风险
+- [x] `src/package.rs`
+- [x] `src/writer/{mod,plan,metadata_write,sheet_patch,cfb_write}.rs`
+- [x] `src/cfb/reader.rs` 重构 + `parse_pid_package`
+- [x] `src/api.rs` 新增 `parse_package`
+- [x] `src/lib.rs` 追加 `pub mod package; pub mod writer;`（顺带补 `pub mod schema;`）
+- [x] `tests/writer_roundtrip.rs`（内存 fixture 全量用例 + `explicit_stream_replacement_overrides_metadata_layer` 加固）
+- [x] `tests/writer_real_files.rs`（条件性真实文件 smoke）
+- [x] `cargo build` / `cargo test --lib --test writer_roundtrip --test writer_real_files` 全绿（75 + 7 + 1）
+- [x] 落地报告归档于 `CHANGELOG.md` v0.4.0 段

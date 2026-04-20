@@ -51,6 +51,13 @@ pub struct PidDocument {
     /// PSMroots ↔ cfb tree). Derived from `PidDocument` in a second pass.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cross_reference: Option<CrossReferenceGraph>,
+
+    /// Readable whole-drawing layout derived from semantic graph topology,
+    /// representation hints, and known symbol categories. This is a
+    /// visualization-oriented layout model, not a byte-for-byte SmartPlant
+    /// geometry decode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<PidLayoutModel>,
 }
 
 /// Summary inventory of P&ID objects in the drawing.
@@ -98,6 +105,7 @@ impl Default for PidDocument {
             object_inventory: None,
             object_graph: None,
             cross_reference: None,
+            layout: None,
         }
     }
 }
@@ -579,6 +587,235 @@ pub struct ObjectGraph {
     pub counts_by_type: BTreeMap<String, usize>,
 }
 
+/// Aggregate health view over [`ObjectGraph::relationships`]: how many
+/// have both / one / zero of their endpoints resolved to a known
+/// `drawing_id`. Useful as a one-line summary in reports and as a CI
+/// invariant for fixture drift.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default,
+)]
+pub struct EndpointResolutionStats {
+    pub total: usize,
+    /// Both `source_drawing_id` and `target_drawing_id` are `Some`.
+    pub fully_resolved: usize,
+    /// Exactly one of source/target is `Some`.
+    pub partially_resolved: usize,
+    /// Neither endpoint resolved (both `None`).
+    pub unresolved: usize,
+}
+
+impl ObjectGraph {
+    /// O(log N) lookup: returns the [`PidObject`] with `drawing_id`, or
+    /// `None` if no such object lives in this graph.
+    pub fn object_by_drawing_id(&self, drawing_id: &str) -> Option<&PidObject> {
+        self.by_drawing_id
+            .get(drawing_id)
+            .and_then(|idx| self.objects.get(*idx))
+    }
+
+    /// Every relationship whose `source_drawing_id` or
+    /// `target_drawing_id` matches `drawing_id`. O(R) — callers that
+    /// hammer this in a hot loop should build a reverse index of their
+    /// own.
+    pub fn relationships_touching(&self, drawing_id: &str) -> Vec<&PidRelationship> {
+        self.relationships
+            .iter()
+            .filter(|r| {
+                r.source_drawing_id.as_deref() == Some(drawing_id)
+                    || r.target_drawing_id.as_deref() == Some(drawing_id)
+            })
+            .collect()
+    }
+
+    /// Distinct [`PidObject`]s that share at least one resolved
+    /// relationship endpoint with `drawing_id`. Self-loops and
+    /// unresolved (`None`) endpoints are silently skipped. Output is
+    /// sorted by `drawing_id` for deterministic iteration.
+    pub fn neighbors_of(&self, drawing_id: &str) -> Vec<&PidObject> {
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        let mut out: Vec<&PidObject> = Vec::new();
+        for rel in self.relationships_touching(drawing_id) {
+            for endpoint in [rel.source_drawing_id.as_deref(), rel.target_drawing_id.as_deref()]
+            {
+                let Some(other) = endpoint else { continue };
+                if other == drawing_id {
+                    continue; // self-loop
+                }
+                if !seen.insert(other) {
+                    continue;
+                }
+                if let Some(obj) = self.object_by_drawing_id(other) {
+                    out.push(obj);
+                }
+            }
+        }
+        out
+    }
+
+    /// Linear scan: every object whose `item_type` exactly equals
+    /// `item_type` (case-sensitive). Returned in source order.
+    /// O(N) — for hot loops with few item_types, callers can build a
+    /// `BTreeMap<&str, Vec<&PidObject>>` themselves once.
+    pub fn find_objects_by_item_type(&self, item_type: &str) -> Vec<&PidObject> {
+        self.objects
+            .iter()
+            .filter(|o| o.item_type == item_type)
+            .collect()
+    }
+
+    /// Linear scan: every object whose `extra` BTreeMap contains
+    /// `key`=`value` (both case-sensitive, exact match). Returned in
+    /// source order.
+    pub fn find_objects_by_extra(&self, key: &str, value: &str) -> Vec<&PidObject> {
+        self.objects
+            .iter()
+            .filter(|o| o.extra.get(key).map(String::as_str) == Some(value))
+            .collect()
+    }
+
+    /// Shortest-path BFS in the relationship graph from `from_id` to
+    /// `to_id`. Returns `Some(path)` where `path[0] == from_id`,
+    /// `path.last() == to_id`, and adjacent entries share a resolved
+    /// relationship endpoint. Returns `None` if no path exists or
+    /// either endpoint is unknown to this graph.
+    ///
+    /// `from_id == to_id` returns `Some(vec![from_id])` (zero-hop
+    /// path). Cycles are safe; each `drawing_id` is enqueued at most
+    /// once. Time O(V+E), space O(V).
+    pub fn shortest_path<'a>(
+        &'a self,
+        from_id: &'a str,
+        to_id: &'a str,
+    ) -> Option<Vec<&'a str>> {
+        // Both endpoints must be known objects.
+        let from_key = self.by_drawing_id.get_key_value(from_id)?.0.as_str();
+        let to_key = self.by_drawing_id.get_key_value(to_id)?.0.as_str();
+        if from_key == to_key {
+            return Some(vec![from_key]);
+        }
+
+        // BFS with predecessor map.
+        let mut predecessor: std::collections::BTreeMap<&'a str, &'a str> =
+            std::collections::BTreeMap::new();
+        let mut frontier: std::collections::VecDeque<&'a str> =
+            std::collections::VecDeque::new();
+        let mut visited: std::collections::BTreeSet<&'a str> =
+            std::collections::BTreeSet::new();
+        frontier.push_back(from_key);
+        visited.insert(from_key);
+
+        let mut found = false;
+        while let Some(current) = frontier.pop_front() {
+            if current == to_key {
+                found = true;
+                break;
+            }
+            for neighbor in self.neighbors_of(current) {
+                let nid = self
+                    .by_drawing_id
+                    .get_key_value(neighbor.drawing_id.as_str())
+                    .map(|(k, _)| k.as_str())?;
+                if visited.insert(nid) {
+                    predecessor.insert(nid, current);
+                    frontier.push_back(nid);
+                }
+            }
+        }
+
+        if !found {
+            return None;
+        }
+
+        // Reconstruct: walk predecessor map backward from to_key.
+        let mut path: Vec<&'a str> = Vec::new();
+        let mut cursor: &'a str = to_key;
+        path.push(cursor);
+        while cursor != from_key {
+            cursor = *predecessor.get(cursor)?;
+            path.push(cursor);
+        }
+        path.reverse();
+        Some(path)
+    }
+
+    /// BFS-walk: every object reachable from `drawing_id` within
+    /// `depth` hops via resolved relationship endpoints. The starting
+    /// object itself is **not** included in the result. Self-loops and
+    /// unresolved (`None`) endpoints are silently skipped (matches
+    /// [`Self::neighbors_of`] semantics).
+    ///
+    /// `depth=0` → empty `Vec` (no hops taken).
+    /// `depth=1` → identical contents to [`Self::neighbors_of`]
+    /// (level-by-level vs. single-level happen to match here).
+    /// `depth=N` → all objects 1..=N hops away, distinct, in BFS
+    /// visitation order (level-by-level; within a level by visitation
+    /// order from the predecessor frontier).
+    ///
+    /// Cycles are safe: each `drawing_id` is visited at most once.
+    pub fn neighbors_within(&self, drawing_id: &str, depth: usize) -> Vec<&PidObject> {
+        if depth == 0 {
+            return Vec::new();
+        }
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        seen.insert(drawing_id.to_string());
+        let mut out: Vec<&PidObject> = Vec::new();
+        let mut frontier: Vec<String> = vec![drawing_id.to_string()];
+        for _hop in 0..depth {
+            let mut next_frontier: Vec<String> = Vec::new();
+            for current in &frontier {
+                for neighbor in self.neighbors_of(current) {
+                    let nid = neighbor.drawing_id.clone();
+                    if seen.insert(nid.clone()) {
+                        out.push(neighbor);
+                        next_frontier.push(nid);
+                    }
+                }
+            }
+            if next_frontier.is_empty() {
+                break;
+            }
+            frontier = next_frontier;
+        }
+        out
+    }
+
+    /// All `drawing_id`s that start with `prefix`, in ascending sorted
+    /// order. Empty `prefix` returns every id (≡ all object
+    /// drawing_ids). Case-sensitive — `drawing_id`s are uppercase
+    /// 32-hex by SmartPlant convention.
+    ///
+    /// `BTreeMap::range`-backed: O(log N + K) where K is the result
+    /// length; faster than scanning `objects` linearly when only a
+    /// short prefix is given.
+    pub fn find_drawing_ids_by_prefix(&self, prefix: &str) -> Vec<&str> {
+        if prefix.is_empty() {
+            return self.by_drawing_id.keys().map(|s| s.as_str()).collect();
+        }
+        self.by_drawing_id
+            .range(prefix.to_string()..)
+            .take_while(|(k, _)| k.starts_with(prefix))
+            .map(|(k, _)| k.as_str())
+            .collect()
+    }
+
+    /// Compute [`EndpointResolutionStats`] over `relationships`. Pure
+    /// derived view; cheap (O(R)) and lossless.
+    pub fn endpoint_resolution_stats(&self) -> EndpointResolutionStats {
+        let mut stats = EndpointResolutionStats {
+            total: self.relationships.len(),
+            ..Default::default()
+        };
+        for rel in &self.relationships {
+            match (rel.source_drawing_id.is_some(), rel.target_drawing_id.is_some()) {
+                (true, true) => stats.fully_resolved += 1,
+                (true, false) | (false, true) => stats.partially_resolved += 1,
+                (false, false) => stats.unresolved += 1,
+            }
+        }
+        stats
+    }
+}
+
 /// A single modeled object on the drawing. Mostly sourced from a single
 /// `P&IDAttributes` DA record.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -666,6 +903,71 @@ pub struct SheetEndpointRecord {
     pub endpoint_b: u32,
 }
 
+// ---- Readable layout model ---------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct PidLayoutModel {
+    pub items: Vec<PidLayoutItem>,
+    pub segments: Vec<PidLayoutSegment>,
+    pub texts: Vec<PidLayoutText>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub unplaced: Vec<PidLayoutUnplaced>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PidLayoutItem {
+    pub layout_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub drawing_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub graphic_oid: Option<u32>,
+    pub kind: String,
+    pub anchor: [f64; 2],
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub bounds: Option<[f64; 4]>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub symbol_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub symbol_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PidLayoutSegment {
+    pub layout_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub owner_drawing_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub graphic_oid: Option<u32>,
+    pub start: [f64; 2],
+    pub end: [f64; 2],
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PidLayoutText {
+    pub layout_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub drawing_id: Option<String>,
+    pub text: String,
+    pub anchor: [f64; 2],
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub bounds: Option<[f64; 4]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PidLayoutUnplaced {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub drawing_id: Option<String>,
+    pub kind: String,
+    pub label: String,
+}
+
 // ---- Cross-reference graph ---------------------------------------------------
 
 /// Stitches already-decoded pieces of the document into a small relational
@@ -733,4 +1035,431 @@ pub struct RootPresence {
     pub id: u32,
     pub found_as_storage: bool,
     pub found_as_stream: bool,
+}
+
+#[cfg(test)]
+mod object_graph_impl_tests {
+    use super::*;
+
+    /// Tiny synthetic graph with three objects and three relationships:
+    ///   A — B  (fully resolved)
+    ///   A — ?  (partially resolved; target unknown)
+    ///   ? — C  (partially resolved; source unknown)
+    ///
+    /// `D` is a 4th object that has no relationships, used to verify
+    /// `neighbors_of("D")` returns empty.
+    fn sample_graph() -> ObjectGraph {
+        fn obj(id: &str, item_type: &str, fx: u32) -> PidObject {
+            PidObject {
+                drawing_id: id.into(),
+                item_type: item_type.into(),
+                drawing_item_type: None,
+                model_id: None,
+                extra: BTreeMap::new(),
+                record_id: None,
+                field_x: Some(fx),
+            }
+        }
+        fn rel(
+            guid: &str,
+            src: Option<&str>,
+            dst: Option<&str>,
+        ) -> PidRelationship {
+            PidRelationship {
+                model_id: format!("Relationship.{guid}"),
+                guid: guid.into(),
+                record_id: None,
+                field_x: None,
+                source_drawing_id: src.map(String::from),
+                target_drawing_id: dst.map(String::from),
+            }
+        }
+        let objects = vec![
+            obj("A", "Equipment", 1),
+            obj("B", "PipeRun", 2),
+            obj("C", "Instrument", 3),
+            obj("D", "PipeRun", 4),
+        ];
+        let mut by_drawing_id = BTreeMap::new();
+        for (i, o) in objects.iter().enumerate() {
+            by_drawing_id.insert(o.drawing_id.clone(), i);
+        }
+        ObjectGraph {
+            drawing_no: None,
+            project_number: None,
+            objects,
+            relationships: vec![
+                rel("R1", Some("A"), Some("B")),
+                rel("R2", Some("A"), None),
+                rel("R3", None, Some("C")),
+            ],
+            by_drawing_id,
+            counts_by_type: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn object_by_drawing_id_returns_existing_and_none_for_unknown() {
+        let g = sample_graph();
+        assert_eq!(g.object_by_drawing_id("A").map(|o| o.item_type.as_str()), Some("Equipment"));
+        assert_eq!(g.object_by_drawing_id("B").map(|o| o.item_type.as_str()), Some("PipeRun"));
+        assert!(g.object_by_drawing_id("Z").is_none());
+        assert!(g.object_by_drawing_id("").is_none());
+    }
+
+    #[test]
+    fn relationships_touching_filters_by_either_endpoint() {
+        let g = sample_graph();
+        // A appears as source in R1 and R2 → 2 hits.
+        let touch_a: Vec<&str> = g
+            .relationships_touching("A")
+            .iter()
+            .map(|r| r.guid.as_str())
+            .collect();
+        assert_eq!(touch_a, vec!["R1", "R2"]);
+        // B appears as target in R1 only.
+        let touch_b: Vec<&str> = g
+            .relationships_touching("B")
+            .iter()
+            .map(|r| r.guid.as_str())
+            .collect();
+        assert_eq!(touch_b, vec!["R1"]);
+        // C appears as target in R3 only.
+        let touch_c: Vec<&str> = g
+            .relationships_touching("C")
+            .iter()
+            .map(|r| r.guid.as_str())
+            .collect();
+        assert_eq!(touch_c, vec!["R3"]);
+        // D is islanded.
+        assert!(g.relationships_touching("D").is_empty());
+    }
+
+    #[test]
+    fn neighbors_of_dedupes_resolves_and_skips_self_loops() {
+        let g = sample_graph();
+        // A's neighbors: B (via R1; R2's target is None, skipped).
+        let na: Vec<&str> = g
+            .neighbors_of("A")
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert_eq!(na, vec!["B"]);
+        // C's neighbors: nothing (R3's source is None).
+        assert!(g.neighbors_of("C").is_empty());
+        // D's neighbors: nothing.
+        assert!(g.neighbors_of("D").is_empty());
+    }
+
+    #[test]
+    fn neighbors_of_skips_self_loop() {
+        let mut g = sample_graph();
+        g.relationships.push(PidRelationship {
+            model_id: "Relationship.SELF".into(),
+            guid: "SELF".into(),
+            record_id: None,
+            field_x: None,
+            source_drawing_id: Some("D".into()),
+            target_drawing_id: Some("D".into()),
+        });
+        // D ↔ D — neighbors_of("D") still empty (we filter self-loops).
+        assert!(g.neighbors_of("D").is_empty());
+    }
+
+    #[test]
+    fn endpoint_resolution_stats_counts_three_buckets() {
+        let g = sample_graph();
+        let s = g.endpoint_resolution_stats();
+        assert_eq!(s.total, 3);
+        assert_eq!(s.fully_resolved, 1, "R1 only");
+        assert_eq!(s.partially_resolved, 2, "R2 and R3");
+        assert_eq!(s.unresolved, 0);
+        // Sums must round-trip.
+        assert_eq!(
+            s.fully_resolved + s.partially_resolved + s.unresolved,
+            s.total
+        );
+    }
+
+    #[test]
+    fn shortest_path_returns_zero_hop_for_same_endpoint() {
+        let g = sample_graph();
+        let path = g.shortest_path("A", "A");
+        assert_eq!(path, Some(vec!["A"]));
+    }
+
+    #[test]
+    fn shortest_path_finds_direct_neighbor() {
+        let g = sample_graph();
+        // A↔B in sample_graph.
+        let path = g.shortest_path("A", "B");
+        assert_eq!(path, Some(vec!["A", "B"]));
+    }
+
+    #[test]
+    fn shortest_path_finds_multi_hop() {
+        let mut g = sample_graph();
+        // Add B↔C↔E chain extending from sample.
+        g.relationships.push(PidRelationship {
+            model_id: "Relationship.BC".into(),
+            guid: "BC".into(),
+            record_id: None,
+            field_x: None,
+            source_drawing_id: Some("B".into()),
+            target_drawing_id: Some("C".into()),
+        });
+        // A→B→C: A connects to B (R1), B connects to C (BC).
+        let path = g.shortest_path("A", "C");
+        assert_eq!(path, Some(vec!["A", "B", "C"]));
+    }
+
+    #[test]
+    fn shortest_path_returns_none_when_unreachable() {
+        let g = sample_graph();
+        // D is islanded in sample_graph (no relationships touching D).
+        assert_eq!(g.shortest_path("A", "D"), None);
+    }
+
+    #[test]
+    fn shortest_path_returns_none_for_unknown_endpoint() {
+        let g = sample_graph();
+        assert_eq!(g.shortest_path("A", "ZZZZ"), None);
+        assert_eq!(g.shortest_path("ZZZZ", "A"), None);
+    }
+
+    #[test]
+    fn neighbors_within_zero_returns_empty() {
+        let g = sample_graph();
+        assert!(g.neighbors_within("A", 0).is_empty());
+    }
+
+    #[test]
+    fn neighbors_within_one_equals_neighbors_of() {
+        let g = sample_graph();
+        let one_hop: Vec<&str> = g
+            .neighbors_within("A", 1)
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        let neighbors: Vec<&str> = g
+            .neighbors_of("A")
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert_eq!(one_hop, neighbors);
+    }
+
+    #[test]
+    fn neighbors_within_two_walks_two_hops() {
+        // Build A↔B↔C↔E chain (D islanded).
+        // sample_graph has A↔B, A↔?(unresolved), ?↔C — so reachable
+        // from A at depth 2 stays just B (C's source is None so it's
+        // not actually neighbor of B). Expand the graph.
+        let mut g = sample_graph();
+        g.relationships.push(PidRelationship {
+            model_id: "Relationship.BC".into(),
+            guid: "BC".into(),
+            record_id: None,
+            field_x: None,
+            source_drawing_id: Some("B".into()),
+            target_drawing_id: Some("C".into()),
+        });
+        g.relationships.push(PidRelationship {
+            model_id: "Relationship.CD".into(),
+            guid: "CD".into(),
+            record_id: None,
+            field_x: None,
+            source_drawing_id: Some("C".into()),
+            target_drawing_id: Some("D".into()),
+        });
+        // Now A→B (1), B→C (2), C→D (3).
+        let one: Vec<&str> = g
+            .neighbors_within("A", 1)
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert_eq!(one, vec!["B"], "depth=1 reaches only direct neighbor");
+
+        let two: Vec<&str> = g
+            .neighbors_within("A", 2)
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert_eq!(
+            two,
+            vec!["B", "C"],
+            "depth=2 reaches B (1 hop) and C (2 hops)"
+        );
+
+        let three: Vec<&str> = g
+            .neighbors_within("A", 3)
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert_eq!(three, vec!["B", "C", "D"]);
+    }
+
+    #[test]
+    fn neighbors_within_skips_unreachable() {
+        let g = sample_graph();
+        // D has no relationships → unreachable from A even at huge depth.
+        let many: Vec<&str> = g
+            .neighbors_within("A", 100)
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert!(
+            !many.contains(&"D"),
+            "D is islanded; should not appear at any depth"
+        );
+    }
+
+    #[test]
+    fn neighbors_within_handles_cycle_without_infinite_loop() {
+        let mut g = sample_graph();
+        // Add a cycle: A↔B↔C↔A
+        g.relationships.push(PidRelationship {
+            model_id: "Relationship.BC".into(),
+            guid: "BC".into(),
+            record_id: None,
+            field_x: None,
+            source_drawing_id: Some("B".into()),
+            target_drawing_id: Some("C".into()),
+        });
+        g.relationships.push(PidRelationship {
+            model_id: "Relationship.CA".into(),
+            guid: "CA".into(),
+            record_id: None,
+            field_x: None,
+            source_drawing_id: Some("C".into()),
+            target_drawing_id: Some("A".into()),
+        });
+        // depth=10 must terminate (no infinite loop) and report each
+        // distinct object at most once.
+        let result: Vec<&str> = g
+            .neighbors_within("A", 10)
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert_eq!(result, vec!["B", "C"]);
+        // No duplicates.
+        let mut sorted = result.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 2);
+    }
+
+    #[test]
+    fn find_by_item_type_returns_matches_in_source_order() {
+        let g = sample_graph();
+        // sample has A=Equipment, B=PipeRun, C=Instrument, D=PipeRun.
+        let pipe_runs: Vec<&str> = g
+            .find_objects_by_item_type("PipeRun")
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert_eq!(pipe_runs, vec!["B", "D"]);
+        let equip: Vec<&str> = g
+            .find_objects_by_item_type("Equipment")
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert_eq!(equip, vec!["A"]);
+    }
+
+    #[test]
+    fn find_by_item_type_returns_empty_for_unknown_type() {
+        let g = sample_graph();
+        assert!(g.find_objects_by_item_type("NoSuchType").is_empty());
+        assert!(g.find_objects_by_item_type("").is_empty());
+    }
+
+    #[test]
+    fn find_by_extra_returns_matching_value() {
+        let mut g = sample_graph();
+        g.objects[0].extra.insert("Tag".into(), "FIT-001".into());
+        g.objects[1].extra.insert("Tag".into(), "FIT-002".into());
+        g.objects[2].extra.insert("Tag".into(), "FIT-001".into());
+
+        let hits: Vec<&str> = g
+            .find_objects_by_extra("Tag", "FIT-001")
+            .iter()
+            .map(|o| o.drawing_id.as_str())
+            .collect();
+        assert_eq!(hits, vec!["A", "C"]);
+    }
+
+    #[test]
+    fn find_by_extra_returns_empty_when_key_or_value_missing() {
+        let mut g = sample_graph();
+        g.objects[0].extra.insert("Tag".into(), "FIT-001".into());
+        // Key absent → empty.
+        assert!(g.find_objects_by_extra("NoSuchKey", "x").is_empty());
+        // Key present but value mismatch → empty.
+        assert!(g.find_objects_by_extra("Tag", "OTHER-VALUE").is_empty());
+        // No object has the key at all.
+        assert!(g.find_objects_by_extra("UnusedKey", "FIT-001").is_empty());
+    }
+
+    #[test]
+    fn find_by_prefix_returns_sorted_matches() {
+        let g = sample_graph();
+        // sample has A B C D — query "B" → only B; query "" → all 4.
+        assert_eq!(g.find_drawing_ids_by_prefix("B"), vec!["B"]);
+        assert_eq!(
+            g.find_drawing_ids_by_prefix(""),
+            vec!["A", "B", "C", "D"],
+            "empty prefix returns all sorted"
+        );
+    }
+
+    #[test]
+    fn find_by_prefix_returns_empty_when_no_match() {
+        let g = sample_graph();
+        assert!(g.find_drawing_ids_by_prefix("Z").is_empty());
+        assert!(g.find_drawing_ids_by_prefix("AAA").is_empty());
+    }
+
+    #[test]
+    fn find_by_prefix_returns_multiple_when_unique_share_prefix() {
+        // Add two ids sharing prefix "X".
+        let mut g = sample_graph();
+        g.objects.push(PidObject {
+            drawing_id: "X1".into(),
+            item_type: "Equipment".into(),
+            drawing_item_type: None,
+            model_id: None,
+            extra: BTreeMap::new(),
+            record_id: None,
+            field_x: None,
+        });
+        g.objects.push(PidObject {
+            drawing_id: "X2".into(),
+            item_type: "PipeRun".into(),
+            drawing_item_type: None,
+            model_id: None,
+            extra: BTreeMap::new(),
+            record_id: None,
+            field_x: None,
+        });
+        g.by_drawing_id.insert("X1".into(), g.objects.len() - 2);
+        g.by_drawing_id.insert("X2".into(), g.objects.len() - 1);
+
+        assert_eq!(g.find_drawing_ids_by_prefix("X"), vec!["X1", "X2"]);
+    }
+
+    #[test]
+    fn find_by_long_prefix_acts_as_exact_match() {
+        let g = sample_graph();
+        // "A" is a full id in the sample; longer prefix finds none.
+        assert_eq!(g.find_drawing_ids_by_prefix("A"), vec!["A"]);
+        assert!(g.find_drawing_ids_by_prefix("ABCDEF").is_empty());
+    }
+
+    #[test]
+    fn endpoint_resolution_stats_handles_empty_graph() {
+        let g = ObjectGraph::default();
+        let s = g.endpoint_resolution_stats();
+        assert_eq!(s, EndpointResolutionStats::default());
+    }
 }

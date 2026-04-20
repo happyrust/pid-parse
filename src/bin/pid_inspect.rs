@@ -4,7 +4,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic] [--probe-sheet] [--probe-relationships] [--probe-endpoints] [--crossref] [--graph-mermaid] [--crossref-mermaid]"
+            "Usage: pid_inspect <file.pid> [--json] [--probe-cluster] [--probe-dynamic] [--probe-sheet] [--probe-sheet-chunks [Sheet<N>]] [--probe-relationships] [--probe-endpoints] [--crossref] [--graph-mermaid] [--crossref-mermaid]"
         );
         std::process::exit(1);
     }
@@ -14,11 +14,17 @@ fn main() {
     let probe_cluster = args.iter().any(|a| a == "--probe-cluster");
     let probe_dynamic = args.iter().any(|a| a == "--probe-dynamic");
     let probe_sheet = args.iter().any(|a| a == "--probe-sheet");
+    let (probe_sheet_chunks, chunk_target) = parse_probe_sheet_chunks(&args);
     let probe_relationships = args.iter().any(|a| a == "--probe-relationships");
     let probe_endpoints = args.iter().any(|a| a == "--probe-endpoints");
     let crossref = args.iter().any(|a| a == "--crossref");
     let graph_mermaid = args.iter().any(|a| a == "--graph-mermaid");
     let crossref_mermaid = args.iter().any(|a| a == "--crossref-mermaid");
+
+    if probe_sheet_chunks {
+        run_probe_sheet_chunks(path, chunk_target.as_deref(), json_mode);
+        return;
+    }
 
     let parser = PidParser::new();
     let doc = match parser.parse_file(path) {
@@ -85,6 +91,7 @@ fn main() {
     if !probe_cluster
         && !probe_dynamic
         && !probe_sheet
+        && !probe_sheet_chunks
         && !probe_relationships
         && !probe_endpoints
         && !crossref
@@ -93,6 +100,113 @@ fn main() {
     {
         let report = pid_parse::inspect::report::generate_report(&doc);
         print!("{}", report);
+    }
+}
+
+fn parse_probe_sheet_chunks(args: &[String]) -> (bool, Option<String>) {
+    let Some(idx) = args.iter().position(|a| a == "--probe-sheet-chunks") else {
+        return (false, None);
+    };
+    let target = args
+        .get(idx + 1)
+        .filter(|a| !a.starts_with("--"))
+        .cloned();
+    (true, target)
+}
+
+fn run_probe_sheet_chunks(path: &str, target: Option<&str>, json_mode: bool) {
+    use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
+
+    let parser = PidParser::new();
+    let package = match parser.parse_package(path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Parse error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let opts = SheetProbeOptions::default();
+    let mut reports = Vec::new();
+    for stream in package.streams.values() {
+        let Some(leaf) = stream.path.rsplit('/').next() else {
+            continue;
+        };
+        if !leaf.starts_with("Sheet") {
+            continue;
+        }
+        if let Some(t) = target {
+            if leaf != t {
+                continue;
+            }
+        }
+        reports.push(probe_sheet_stream(leaf, &stream.path, &stream.data, &opts));
+    }
+
+    if reports.is_empty() {
+        if let Some(t) = target {
+            eprintln!("(no Sheet stream named '{}' found)", t);
+        } else {
+            eprintln!("(no Sheet* streams found)");
+        }
+        return;
+    }
+
+    if json_mode {
+        match serde_json::to_string_pretty(&reports) {
+            Ok(json) => println!("{}", json),
+            Err(e) => {
+                eprintln!("JSON serialization error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    print_sheet_chunk_reports(&reports);
+}
+
+fn print_sheet_chunk_reports(reports: &[pid_parse::parsers::sheet_probe::SheetProbeReport]) {
+    println!("=== Sheet Chunk Probe [EXPERIMENTAL] ===\n");
+    for rep in reports {
+        println!("--- {} ---", rep.sheet_name);
+        println!("  path: {}", rep.path);
+        println!("  size: {} bytes (0x{:X})", rep.size, rep.size);
+        println!(
+            "  boundaries: {}   chunks: {}",
+            rep.candidate_boundaries.len(),
+            rep.chunks.len()
+        );
+        for (i, chunk) in rep.chunks.iter().enumerate() {
+            let ascii = if chunk.ascii_preview.is_empty() {
+                String::from("[]")
+            } else {
+                format!("{:?}", chunk.ascii_preview)
+            };
+            let utf16 = if chunk.utf16_preview.is_empty() {
+                String::from("[]")
+            } else {
+                format!("{:?}", chunk.utf16_preview)
+            };
+            println!(
+                "  [{:>3}] 0x{:06X}..0x{:06X} len={} kind={:?} zero={:.2} u32_dens={:.2} rep={}",
+                i,
+                chunk.start,
+                chunk.end,
+                chunk.len,
+                chunk.kind_hint,
+                chunk.zero_ratio,
+                chunk.aligned_u32_density,
+                chunk.repeated_u32_hits,
+            );
+            if !chunk.ascii_preview.is_empty() {
+                println!("         ascii: {}", ascii);
+            }
+            if !chunk.utf16_preview.is_empty() {
+                println!("         utf16: {}", utf16);
+            }
+        }
+        println!();
     }
 }
 

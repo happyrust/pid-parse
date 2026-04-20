@@ -1,13 +1,26 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{PidDocument, StreamEntry};
+use crate::package::{PidPackage, RawStream};
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
+/// Thin wrapper kept for backwards compatibility — internally drives
+/// [`parse_pid_package`] and discards the raw byte map.
 pub fn parse_pid_file(path: &Path, options: &ParseOptions) -> Result<PidDocument, PidError> {
+    Ok(parse_pid_package(path, options)?.parsed)
+}
+
+/// Parse a `.pid` file into a [`PidPackage`] (raw stream bytes + structured
+/// `PidDocument`). The structured parsing pipeline is identical to
+/// [`parse_pid_file`]; this entry point additionally captures every CFB
+/// stream's bytes so callers can re-emit (or surgically edit) the file via
+/// [`crate::writer`].
+pub fn parse_pid_package(path: &Path, options: &ParseOptions) -> Result<PidPackage, PidError> {
     let mut cfb = ::cfb::open(path)?;
     let tree = crate::cfb::tree::build_tree(&cfb, "/")?;
-    let streams = collect_streams(&mut cfb, options)?;
+    let (streams, raw_streams) = collect_streams_and_bytes(&mut cfb, options)?;
 
     let mut doc = PidDocument {
         cfb_tree: tree,
@@ -36,8 +49,13 @@ pub fn parse_pid_file(path: &Path, options: &ParseOptions) -> Result<PidDocument
     build_object_graph(&mut doc);
 
     doc.cross_reference = Some(crate::crossref::build_graph(&doc));
+    crate::layout::derive_layout(&mut doc);
 
-    Ok(doc)
+    Ok(PidPackage {
+        source_path: Some(path.to_path_buf()),
+        streams: raw_streams,
+        parsed: doc,
+    })
 }
 
 /// After both `parse_clusters` and `parse_dynamic_attrs` have run, scan each
@@ -391,17 +409,22 @@ fn build_object_inventory(doc: &mut PidDocument) {
     }
 }
 
-fn collect_streams<R: Read + std::io::Seek>(
+/// Walk every CFB stream once, returning both the legacy [`StreamEntry`]
+/// summary list (`preview_ascii` / `magic_u32_le`) and a path-keyed raw byte
+/// map suitable for [`PidPackage`]. Doing both in a single walk avoids
+/// re-opening every stream during package parsing.
+fn collect_streams_and_bytes<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     options: &ParseOptions,
-) -> Result<Vec<StreamEntry>, PidError> {
+) -> Result<(Vec<StreamEntry>, BTreeMap<String, RawStream>), PidError> {
     let paths: Vec<_> = cfb
         .walk()
         .filter(|e| e.is_stream())
         .map(|e| e.path().to_path_buf())
         .collect();
 
-    let mut out = Vec::with_capacity(paths.len());
+    let mut entries = Vec::with_capacity(paths.len());
+    let mut raws: BTreeMap<String, RawStream> = BTreeMap::new();
     for p in paths {
         let mut stream = cfb.open_stream(&p)?;
         let mut data = Vec::new();
@@ -418,13 +441,21 @@ fn collect_streams<R: Read + std::io::Seek>(
             .get(0..4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
 
-        out.push(StreamEntry {
-            path: path_str,
+        entries.push(StreamEntry {
+            path: path_str.clone(),
             size: data.len() as u64,
             preview_ascii,
             magic_u32_le,
         });
+        raws.insert(
+            path_str.clone(),
+            RawStream {
+                path: path_str,
+                data,
+                modified: false,
+            },
+        );
     }
 
-    Ok(out)
+    Ok((entries, raws))
 }

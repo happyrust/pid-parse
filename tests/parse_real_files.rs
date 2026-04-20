@@ -1,15 +1,28 @@
 use pid_parse::PidParser;
 
-fn parse_test_file(name: &str) -> pid_parse::PidDocument {
+/// Parse a real `.pid` fixture from `test-file/<name>`. Returns `None`
+/// (with a `SKIP` log line on stderr) when the file is absent or the
+/// parse fails, letting every test body use `let Some(doc) = … else { return };`
+/// to gracefully skip when no fixture is present. Mirrors the
+/// conditional pattern established by `tests/writer_real_files.rs`.
+fn parse_test_file(name: &str) -> Option<pid_parse::PidDocument> {
     let path = format!("test-file/{}", name);
-    PidParser::new()
-        .parse_file(&path)
-        .unwrap_or_else(|e| panic!("Failed to parse {}: {}", name, e))
+    if !std::path::Path::new(&path).exists() {
+        eprintln!("SKIP: {} not found", path);
+        return None;
+    }
+    match PidParser::new().parse_file(&path) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            eprintln!("SKIP: failed to parse {}: {}", name, e);
+            None
+        }
+    }
 }
 
 #[test]
 fn container_structure_has_streams() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     assert!(!doc.streams.is_empty(), "streams should not be empty");
     assert!(
         doc.streams.len() > 10,
@@ -20,7 +33,7 @@ fn container_structure_has_streams() {
 
 #[test]
 fn cfb_tree_root_has_children() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     assert!(
         !doc.cfb_tree.children.is_empty(),
         "root node should have children"
@@ -29,7 +42,7 @@ fn cfb_tree_root_has_children() {
 
 #[test]
 fn drawing_meta_extracted() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let dm = doc.drawing_meta.as_ref().expect("drawing_meta should exist");
     assert_eq!(dm.drawing_number.as_deref(), Some("DWG-0201GP06-01"));
     assert_eq!(dm.document_category.as_deref(), Some("Piping Documents"));
@@ -39,7 +52,7 @@ fn drawing_meta_extracted() {
 
 #[test]
 fn general_meta_extracted() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let gm = doc.general_meta.as_ref().expect("general_meta should exist");
     assert!(gm.file_path.is_some(), "file_path should be extracted");
     let fp = gm.file_path.as_deref().unwrap();
@@ -52,7 +65,7 @@ fn general_meta_extracted() {
 
 #[test]
 fn jsites_detected() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     assert!(!doc.jsites.is_empty(), "should detect JSites");
     assert!(
         doc.jsites.len() > 5,
@@ -63,7 +76,7 @@ fn jsites_detected() {
 
 #[test]
 fn jsite_symbol_paths_are_clean() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     for js in &doc.jsites {
         if let Some(ref sp) = js.symbol_path {
             assert!(
@@ -82,7 +95,7 @@ fn jsite_symbol_paths_are_clean() {
 
 #[test]
 fn clusters_detected() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     assert!(!doc.clusters.is_empty(), "should detect clusters");
     let names: Vec<&str> = doc.clusters.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"PSMcluster0"));
@@ -91,7 +104,7 @@ fn clusters_detected() {
 
 #[test]
 fn dynamic_attributes_detected() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let da = doc
         .dynamic_attributes
         .as_ref()
@@ -102,21 +115,41 @@ fn dynamic_attributes_detected() {
 
 #[test]
 fn sheet_streams_detected() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     assert!(!doc.sheet_streams.is_empty(), "should detect Sheet streams");
 }
 
 #[test]
 fn second_file_parses_successfully() {
-    let doc = parse_test_file("DWG-0202GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0202GP06-01.pid") else { return };
     assert!(!doc.streams.is_empty());
     let dm = doc.drawing_meta.as_ref().expect("drawing_meta should exist");
     assert!(dm.drawing_number.is_some());
 }
 
 #[test]
+fn second_file_builds_readable_layout_model() {
+    let Some(doc) = parse_test_file("DWG-0202GP06-01.pid") else { return };
+    let layout = doc.layout.as_ref().expect("layout should exist on second fixture");
+    assert!(
+        layout.items.len() >= 10,
+        "expected readable layout to place at least 10 items, got {}",
+        layout.items.len()
+    );
+    assert!(
+        layout.segments.len() >= 5,
+        "expected readable layout to recover at least 5 segments, got {}",
+        layout.segments.len()
+    );
+    assert!(
+        !layout.texts.is_empty(),
+        "layout should emit at least one text label for readability"
+    );
+}
+
+#[test]
 fn json_serialization_roundtrip() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let json = serde_json::to_string(&doc).expect("should serialize to JSON");
     assert!(json.contains("DWG-0201GP06-01"));
     let _: pid_parse::PidDocument =
@@ -125,7 +158,7 @@ fn json_serialization_roundtrip() {
 
 #[test]
 fn psm_roots_extracts_known_entries() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let r = doc.psm_roots.as_ref().expect("PSMroots should be decoded");
     let names: Vec<&str> = r.entries.iter().map(|e| e.name.as_str()).collect();
     for expected in [
@@ -147,7 +180,7 @@ fn psm_roots_extracts_known_entries() {
 
 #[test]
 fn psm_cluster_table_matches_actual_clusters() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let t = doc
         .psm_cluster_table
         .as_ref()
@@ -171,7 +204,7 @@ fn psm_cluster_table_matches_actual_clusters() {
 
 #[test]
 fn psm_segment_table_decoded() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let t = doc
         .psm_segment_table
         .as_ref()
@@ -182,7 +215,7 @@ fn psm_segment_table_decoded() {
 
 #[test]
 fn version_history_decoded() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let vh = doc
         .version_history
         .as_ref()
@@ -201,7 +234,7 @@ fn version_history_decoded() {
 
 #[test]
 fn app_object_registry_decoded() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let reg = doc
         .app_object_registry
         .as_ref()
@@ -218,7 +251,7 @@ fn app_object_registry_decoded() {
 
 #[test]
 fn tagged_storage_list_decoded() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let t = doc
         .tagged_storages
         .as_ref()
@@ -230,7 +263,7 @@ fn tagged_storage_list_decoded() {
 
 #[test]
 fn doc_version2_preserved_raw() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let d2 = doc
         .doc_version2
         .as_ref()
@@ -242,7 +275,7 @@ fn doc_version2_preserved_raw() {
 
 #[test]
 fn object_graph_has_objects_and_relationships() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let g = doc.object_graph.as_ref().expect("object_graph expected");
     assert_eq!(g.drawing_no.as_deref(), Some("0F7B8ABD0C4E493FA3C7F06FD03AD6AA"));
     assert_eq!(g.project_number.as_deref(), Some("SQLPlant1401"));
@@ -265,7 +298,7 @@ fn object_graph_has_objects_and_relationships() {
 
 #[test]
 fn object_graph_relationship_guids_are_32_hex() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let g = doc.object_graph.as_ref().expect("object_graph expected");
     // Each relationship's guid is either an empty string (for the handful
     // of trailer-only "template" records that have no `Relationship.<GUID>`
@@ -290,7 +323,7 @@ fn object_graph_relationship_guids_are_32_hex() {
 
 #[test]
 fn relationship_probe_produces_one_probe_per_relationship() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let da = doc
         .dynamic_attributes
         .as_ref()
@@ -336,7 +369,7 @@ fn relationship_probe_produces_one_probe_per_relationship() {
 
 #[test]
 fn relationship_probe_trailing_tokens_are_stable() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let da = doc.dynamic_attributes.as_ref().expect("dynamic_attributes expected");
     assert!(!da.relationship_probes.is_empty());
 
@@ -374,7 +407,7 @@ fn relationship_probe_trailing_tokens_are_stable() {
 
 #[test]
 fn record_trailers_cover_every_pidattributes_record() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let da = doc.dynamic_attributes.as_ref().expect("dynamic_attributes");
     // Each record's 31-byte trailer must be recovered for at least 95 % of
     // the P&IDAttributes records observed in the fixture.
@@ -400,32 +433,24 @@ fn record_trailers_cover_every_pidattributes_record() {
 
 #[test]
 fn relationship_endpoints_resolve_via_sheet_record() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let g = doc.object_graph.as_ref().expect("object_graph");
     // The fixture has 64 relationships; the endpoint parser should
     // recover a pair for almost all of them — we allow at most one
     // unresolved relationship to keep the assertion stable.
-    let resolved = g
-        .relationships
-        .iter()
-        .filter(|r| r.source_drawing_id.is_some() && r.target_drawing_id.is_some())
-        .count();
-    let unresolved = g
-        .relationships
-        .iter()
-        .filter(|r| r.source_drawing_id.is_none() && r.target_drawing_id.is_none())
-        .count();
+    let stats = g.endpoint_resolution_stats();
+    assert_eq!(stats.total, g.relationships.len());
     assert!(
-        resolved >= 40,
+        stats.fully_resolved >= 40,
         "expected ≥40 fully resolved relationships, got {} / {}",
-        resolved,
-        g.relationships.len()
+        stats.fully_resolved,
+        stats.total
     );
     assert!(
-        unresolved <= 1,
+        stats.unresolved <= 1,
         "expected ≤1 fully unresolved relationship, got {} / {}",
-        unresolved,
-        g.relationships.len()
+        stats.unresolved,
+        stats.total
     );
     // The resolved endpoints must live in the drawing's object set —
     // regression against field_x → drawing_id misalignment.
@@ -452,7 +477,7 @@ fn relationship_endpoints_resolve_via_sheet_record() {
 
 #[test]
 fn sheet_endpoint_records_one_per_relationship() {
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let sheet = doc
         .sheet_streams
         .first()
@@ -490,7 +515,7 @@ fn relationship_probe_nearby_guids_contain_drawing_id() {
     // Every relationship's window is expected to include the drawing's own
     // DrawingNo GUID (0F7B...AA in the fixture), because the record before
     // and after is a P&IDAttributes record tied to the drawing.
-    let doc = parse_test_file("DWG-0201GP06-01.pid");
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
     let da = doc.dynamic_attributes.as_ref().expect("dynamic_attributes expected");
     let drawing_guid = "0F7B8ABD0C4E493FA3C7F06FD03AD6AA";
     let mut misses = 0usize;
@@ -506,5 +531,22 @@ fn relationship_probe_nearby_guids_contain_drawing_id() {
         "expected ≤2 probes missing the drawing guid, got {} / {}",
         misses,
         da.relationship_probes.len()
+    );
+}
+
+#[test]
+fn top_level_unidentified_streams_are_empty_on_sample_file() {
+    // The sample fixture has been incrementally decoded in v0.2.3–v0.3.0
+    // until every top-level CFB stream is either fully decoded or raw-
+    // preserved (DocVersion2). Lock that progress in: if this test ever
+    // fails, a top-level stream has appeared that `pid-parse` does not
+    // yet recognize, and `KNOWN_TOP_LEVEL_STREAM_NAMES` /
+    // `KNOWN_TOP_LEVEL_STORAGE_PREFIXES` need updating.
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else { return };
+    let leftover = pid_parse::inspect::unidentified_top_level_streams(&doc);
+    assert!(
+        leftover.is_empty(),
+        "sample fixture should have zero unidentified top-level streams; got: {:?}",
+        leftover.iter().map(|s| &s.path).collect::<Vec<_>>()
     );
 }

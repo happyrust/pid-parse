@@ -1,5 +1,123 @@
 # 变更日志
 
+## [0.4.1] - 2026-04-19
+
+### Phase 8b: Metadata 编辑 helper（为 H7CAD UI 编辑桥铺路）
+
+在 v0.4.0 Writer 层之上新增 `src/writer/metadata_helpers.rs` 纯函数模块，让上层不再需要自己拼/改 XML 字节即可对 `/TaggedTxtData/Drawing` 与 `/TaggedTxtData/General` 做"改一点点"式编辑。所有 helper 都是 byte-level splice — 除被替换的属性值/元素文本外，其它字节（注释、空白、引号风格、兄弟属性顺序）逐字节保留，最大化 SmartPlant 兼容性。
+
+### 公共 API
+
+- `set_drawing_attribute(xml, attr, value) -> Result<String, MetadataEditError>`：替换 `<Tag attr="value"/>` 风格的属性值；要求左侧是空白或开头、右侧是 `=` 或空白后 `=`，从而 `MY_ATTR` 不会误匹配 `EXTRA_MY_ATTR`
+- `set_drawing_number(xml, value)`：`set_drawing_attribute(xml, "SP_DRAWINGNUMBER", value)` 的便利别名
+- `set_element_text(xml, element, value)`：替换 `<E>text</E>` 形式的元素文本内容；自闭合标签 `<E/>` 直接报 `MalformedElement`
+- `set_general_file_path(xml, value)`：先试 `<FilePath>` 后退回 `<Path>`，与 `parsers/general_xml.rs` 的接受面对齐
+
+### `MetadataEditError`（`thiserror::Error + PartialEq`）
+
+- `AttributeNotFound { attr }` / `ElementNotFound { element }`：找不到目标
+- `DuplicateAttribute { attr, count }` / `DuplicateElement { element, count }`：拒绝二义编辑（调用方需先把范围缩到唯一的位置）
+- `UnterminatedAttribute { attr }`：属性值起始 `"` 后找不到结束 `"`
+- `MalformedElement { element }`：自闭合或缺闭合标签
+
+### XML 转义
+
+- 属性值：`& < > " '` 全部转 entity；调用方传裸字符串
+- 元素文本：`& < >` 转 entity（属性专用的 `" '` 不转，避免误伤合法文本）
+
+### 测试
+
+- `writer::metadata_helpers::tests` **18 个全绿**：
+  - 简单替换 / 保留兄弟属性 + 空白 / 不匹配长名后缀 / 未找到 / 重复 / XML 转义 / 空字符串 / Unicode（中文 + №）
+  - 元素文本：基本替换 / 带属性 / 自闭合拒绝 / 未找到 / 转义 / 不匹配长元素名后缀
+  - `set_general_file_path` FilePath 优先 + Path 回退
+  - 空 XML 双类返回各自的 NotFound
+- `cargo test --lib`：**100/100 通过**（93 → 100，新增 18 - 11 个之前没数到的，无 regression）
+- `cargo test --test writer_roundtrip` 7/7、`--test writer_real_files` 1/1 全绿
+- 已知失败：`tests/parse_real_files.rs` 26 个 + `tests/unit_parsers.rs::sheet_stream_reuses_cluster_header` 都依赖未提交的 `test-file/DWG-0201GP06-01.pid`，与本次无关
+
+### 设计取舍
+
+- **byte-level vs XML re-emit**：选 byte 级是为了兼容性。`quick_xml::Reader` → `Writer` 的 round-trip 会归一化引号风格 / 属性顺序 / 空白；对 SmartPlant 这种 picky reader 容易引入"我没改这里它怎么也变了"的视觉 diff
+- **不处理 BOM / UTF-16**：跟 v0.4.0 risk note 一致；helper 假设输入是 UTF-8 文本。下一迭代如发现真实 `/TaggedTxtData/*` 是 UTF-16，可在 `metadata_write::apply_metadata_updates` 一处统一做编码 round-trip
+- **重复匹配显式拒绝**：与其 silently 替换"第一个"或"最后一个"，不如让调用方知道范围太宽并先 narrow（例如 SmartPlant 模板里有多张 sheet 的标题块共享 SP_DRAWINGNUMBER 时，应分别编辑每个 sheet 流的 Drawing XML）
+
+### 公共 API 增量
+
+- 新类型：`MetadataEditError`
+- 新函数：`set_drawing_attribute` / `set_drawing_number` / `set_element_text` / `set_general_file_path`
+- 配套读取器（v0.4.1 同段补丁）：`get_drawing_attribute(xml, attr) -> Option<String>` 与 `get_general_element_text(xml, element) -> Option<String>` —— "exactly once" 语义与 set 端的"重复拒绝"对偶；duplicates / not-found / 自闭合（element 版本）都返回 `None`
+- `writer` 模块直接 re-export 全部新 API；`PidWriter` / `WritePlan` / `MetadataUpdates` 行为不变
+- bulk 读取器（v0.4.1 同段补丁）：`list_drawing_attributes(xml) -> Vec<(String, String)>` 列出所有 `<TagName attr="value"…/>` 属性对、`list_general_elements(xml) -> Vec<(String, String)>` 列出所有 `<element>text</element>` leaf 对（自闭合 / 含子元素跳过）；都按源序返回，跳过 PI/comment/CDATA 前缀
+- **新 binary `pid_writer_validate`**（v0.4.1 同段补丁）：CLI 工具，对真实 `.pid` 文件做 `parse_package → PidWriter::write_to (passthrough) → re-parse_package` 完整 round-trip，按 path 列出 stream byte 级 diff，支持 `--out` / `--keep` / `--json` / `--quiet` / `--max-diff-bytes`；exit 0=PASS / 1=mismatch / 2=parse-IO/edit 错；公共 helper `run_validate(input, output, max_diff_bytes, edits) -> Result<ValidateReport, ValidateError>` 与 `ValidateReport`/`StreamMismatch`/`EditOp`/`EditKind`（带 `serde::Serialize`）暴露给测试与下游集成。`tests/writer_validate_cli.rs` 8 个端到端测试通过 `env!("CARGO_BIN_EXE_pid_writer_validate")` 驱动 CLI（不引新依赖，无 assert_cmd / escargot）
+- **`--edit ATTR=VALUE` / `--general-edit ELEMENT=VALUE`**（v0.4.1 同段补丁）：让 CLI 支持"编辑后再验证"模式。任意条数 edit 在 round-trip 之前应用到 source 包；roundtrip 用 **edited** 包作对照基准，被 edit 触碰的流标 `EDITED`、未触碰的流仍要字节级匹配。报告新增 `edited` 计数与 `edits_applied` 数组；新错误变体 `ValidateError::Edit` 透传 `MetadataEditError`；CLI 用 `splitn(2, '=')` 切 ATTR/VALUE 让 value 含 `=` 也安全
+- **`inspect::unidentified_top_level_streams` 可发现性 API**（v0.4.1 同段补丁）：新 pub 函数 `pid_parse::inspect::unidentified_top_level_streams(&PidDocument) -> Vec<&StreamEntry>` 返回 pid-parse 尚未识别的顶层 CFB 流（解码工作的待办清单）；配套 pub 常量 `KNOWN_TOP_LEVEL_STREAM_NAMES` + `KNOWN_TOP_LEVEL_STORAGE_PREFIXES` 作为识别白名单；`inspect/report.rs` 内部的 "Top-level Unidentified Streams" 段改用此 API，人类输出一致
+- **条件测试降级**（v0.4.1 同段补丁）：`tests/parse_real_files.rs`（26 测试）+ `tests/unit_parsers.rs::sheet_stream_reuses_cluster_header` 改为"fixture 缺失 eprintln! + return"，与 `tests/writer_real_files.rs` 同风格；消除 `cargo test` 在缺 `test-file/DWG-0201GP06-01.pid` 时的噪音失败。新增条件测试 `top_level_unidentified_streams_are_empty_on_sample_file` 把"样本文件顶层流全部已识别"锁为不变量，回归警报
+- **`ObjectGraph` 图遍历便利方法**（v0.4.1 同段补丁）：`impl ObjectGraph` 加 4 个 ergonomic 查询方法 + 1 个新结构体：
+  - `pub fn object_by_drawing_id(&self, drawing_id: &str) -> Option<&PidObject>`：O(log N) 索引化查找
+  - `pub fn relationships_touching(&self, drawing_id: &str) -> Vec<&PidRelationship>`：返回 source/target 任一为该 id 的关系
+  - `pub fn neighbors_of(&self, drawing_id: &str) -> Vec<&PidObject>`：通过关系边解析的对端对象，去重 + 跳过自环
+  - `pub fn endpoint_resolution_stats(&self) -> EndpointResolutionStats`：fully/partially/unresolved 三态汇总
+  - `pub struct EndpointResolutionStats { total, fully_resolved, partially_resolved, unresolved }` (Serialize/Deserialize/JsonSchema/Default)
+  - 6 个新单元测试 (`model::object_graph_impl_tests`) 覆盖空图/已知/未知/自环/三态计数
+  - 配套增量：`pub fn find_drawing_ids_by_prefix(&self, prefix: &str) -> Vec<&str>`，`BTreeMap::range`-backed O(log N + K)；空 prefix 返回所有 id；4 个新单测覆盖排序/未匹配/多匹配/长 prefix 等价精确
+  - 搜索增量：`pub fn find_objects_by_item_type(&self, &str) -> Vec<&PidObject>` 与 `pub fn find_objects_by_extra(&self, key, value) -> Vec<&PidObject>`，O(N) 线性扫；4 个新单测覆盖匹配/未匹配/extra key 缺失/value 不匹配。`object_graph_impl_tests` 共 14/14 全绿
+  - BFS 多跳遍历增量：`pub fn neighbors_within(&self, drawing_id, depth) -> Vec<&PidObject>`，level-by-level BFS、`BTreeSet` 去重、自环跳过、`depth=0`→空、`depth=1`≡`neighbors_of`、循环安全（每对象至多访问一次）；5 个新单测覆盖 zero/one/two-hops/unreachable/cycle。`object_graph_impl_tests` 共 19/19 全绿
+  - 最短路径增量：`pub fn shortest_path<'a>(&'a self, from_id, to_id) -> Option<Vec<&'a str>>`，BFS + predecessor map + 反推路径；`from_id == to_id` 返回单元素 path、未知 endpoint 或不连通返回 None、循环安全。5 个新单测覆盖 zero-hop/direct/multi-hop/unreachable/unknown_endpoint。`object_graph_impl_tests` 共 24/24 全绿
+  - `tests/parse_real_files.rs::relationship_endpoints_resolve_via_sheet_record` 重构：从手写 `.iter().filter().count()` 双段改为 `endpoint_resolution_stats()` 一次调用，减少噪音
+- 测试：`writer::metadata_helpers::tests` 由 18 个增至 **29 个**全绿（新增 11 个：3 个 `get_drawing_attribute_*` + 3 个 `get_general_element_text_*` + 5 个 `list_*`）
+
+## [0.4.0] - 2026-04-19
+
+### Phase 8: Writer 层落地（Package + WritePlan + CFB 回写）
+
+在 parser-only 结构之上引入 **package 层**（保留原始 stream 字节）和 **writer 层**（按写计划重发 CFB），实现 passthrough round-trip 与 metadata-only 更新；Sheet 字节级修补以 `experimental` 形式入模。
+
+- **`src/package.rs` 新模块**：
+  - `PidPackage { source_path, streams: BTreeMap<String, RawStream>, parsed: PidDocument }`
+  - `RawStream { path, data, modified }`
+  - 方法：`get_stream` / `get_stream_mut` / `replace_stream` / `mark_unmodified`
+- **`PidParser::parse_package(path)` 新入口**：复用全部解析流水线，额外捕获每条 CFB 流的原始字节；`parse_file` 改为薄包装 `Ok(parse_pid_package(...).parsed)`，行为完全等价。
+- **`src/cfb/reader.rs` 重构**：`collect_streams` → `collect_streams_and_bytes`，单次 walk 同时产出 `Vec<StreamEntry>` 和 `BTreeMap<String, RawStream>`，避免双重读取。
+- **`src/writer/` 新模块**（`mod.rs` / `plan.rs` / `metadata_write.rs` / `sheet_patch.rs` / `cfb_write.rs`）：
+  - `WritePlan { metadata_updates, stream_replacements, sheet_patches }` 三层组合，按序应用
+  - `MetadataUpdates`：`drawing_xml` / `general_xml` 替换 `/TaggedTxtData/Drawing` 与 `/TaggedTxtData/General`；`summary_updates` 字段已就位但本期不实现 `SummaryInformation` 重写
+  - `StreamReplacement`：低层 path → bytes 直替
+  - `SheetPatch + SheetChunkPatch`：byte-range 倒序 splice，越界返回 `PidError::ParseFailure { context: "sheet_patch", ... }`
+  - `cfb_write::write_package`：`::cfb::create` 起新容器，`collect_storage_paths` 按升序自动建立中间 storage，再按 `BTreeMap` 顺序写出每个 stream
+- **`PidWriter::write_to(package, plan, output)`**：克隆 package → metadata_write → stream_replacements → sheet_patches → cfb_write，源 package 不变。
+- **`lib.rs`**：补上 `pub mod package; pub mod schema; pub mod writer;`（schema 模块 v0.3.1 已实现但未在 lib.rs 暴露，本次顺手挂上）。
+
+### 测试
+
+- **lib 单元测试 75 通过**（62→75）：
+  - `package`：3 个（insert/overwrite/mark_unmodified）
+  - `writer::sheet_patch`：5 个（同长度 splice / 倒序多 patch / 增长型 patch / 越界 / 区间反转）
+  - `writer::cfb_write`：2 个（父 storage 收集 / 根流无 storage）
+  - `schema`：3 个（v0.3.1 既有，正式登记）
+- **集成测试 `tests/writer_roundtrip.rs` 7 通过**：
+  - `passthrough_roundtrip_preserves_streams`
+  - `metadata_only_update_replaces_tagged_streams`
+  - `stream_preservation_of_unknown_streams`
+  - `explicit_stream_replacement_overrides_metadata_layer`（新增：验证 stream_replacements 在 metadata 之后生效）
+  - `sheet_patch_byte_range`
+  - `sheet_patch_out_of_range_errors`
+  - `missing_sheet_yields_missing_stream_error`
+- **`tests/writer_real_files.rs`** 条件性 smoke：本地有 `test-file/DWG-0201GP06-01.pid` 时 round-trip 真实文件并按流逐字节比较；缺失时 `eprintln!` + return（与 `parse_real_files.rs` 同约定）。
+- 所有既有 lib 测试与 release 构建通过。
+
+### 公共 API 新增面
+
+- 新增类型：`PidPackage` / `RawStream` / `WritePlan` / `MetadataUpdates` / `StreamReplacement` / `SheetPatch` / `SheetChunkPatch` / `PidWriter`
+- 新增方法：`PidParser::parse_package(path) -> Result<PidPackage>`
+- `PidDocument`、`PidParser::parse_file` 行为不变；`PidError` 不变（继续复用 `Io` / `MissingStream` / `ParseFailure`）。
+
+### 已知限制
+
+- CFB 重建不复刻原文件 CLSID、storage 创建/修改时间和物理 sector 顺序；内容视图可保真（每条流字节按 path 一致），字节级整文件 diff 不会一致。
+- `MetadataUpdates::drawing_xml/general_xml` 直接 `String::into_bytes()`，不嗅探 BOM / UTF-16；调用方需自行准备字节等价内容。
+- Sheet patch 仅 byte-range，不对接语义 probe；未在 CLI 接线。
+
 ## [0.3.1] - 2026-04-19
 
 ### Phase 7b: JSON Schema 导出
