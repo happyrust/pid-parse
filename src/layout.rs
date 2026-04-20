@@ -468,6 +468,25 @@ fn extract_symbol_path(value: &str) -> Option<String> {
     Some(trimmed.replace('/', "\\"))
 }
 
+/// Decide whether a new `(usage_count, symbol_path)` candidate should replace
+/// the current representative for a semantic tag.
+///
+/// Rules, applied in order:
+/// 1. Larger `usage_count` wins (more jsite instances ≈ more representative).
+/// 2. On ties, the lexicographically smaller `symbol_path` wins — a stable
+///    tiebreaker so identical inputs produce identical representatives across
+///    runs, platforms and test suites.
+/// 3. Otherwise the existing representative is kept.
+fn should_replace_representative(
+    existing_count: usize,
+    existing_path: &str,
+    candidate_count: usize,
+    candidate_path: &str,
+) -> bool {
+    candidate_count > existing_count
+        || (candidate_count == existing_count && candidate_path < existing_path)
+}
+
 fn representative_symbol_hints(doc: &PidDocument) -> BTreeMap<String, String> {
     let mut candidates: BTreeMap<String, (usize, String)> = BTreeMap::new();
 
@@ -481,7 +500,9 @@ fn representative_symbol_hints(doc: &PidDocument) -> BTreeMap<String, String> {
             let candidate = (usage.usage_count, usage.symbol_path.clone());
             let replace = candidates
                 .get(semantic)
-                .map(|existing| candidate.0 > existing.0 || (candidate.0 == existing.0 && candidate.1 < existing.1))
+                .map(|existing| {
+                    should_replace_representative(existing.0, &existing.1, candidate.0, &candidate.1)
+                })
                 .unwrap_or(true);
             if replace {
                 candidates.insert(semantic.to_string(), candidate);
@@ -511,7 +532,49 @@ fn representative_symbol_hints(doc: &PidDocument) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn infer_semantic_from_symbol_hint(symbol_name: Option<&str>, symbol_path: &str) -> Option<&'static str> {
+/// Keyword table driving [`infer_semantic_from_symbol_hint`].
+///
+/// Entries are evaluated in declaration order — earlier tags win on overlap.
+/// That matters for e.g. `"OPC-valve.sym"`, where `"opc"` should hit
+/// `OffPageConnector` before `"valve"` hits `PipingComponent`.
+///
+/// Each row pairs a semantic tag with a list of keyword substrings. Keywords
+/// are matched case-insensitively against the haystack built in
+/// [`infer_semantic_from_symbol_hint`]. Chinese keywords remain case-identical
+/// after `to_ascii_lowercase` (it is a no-op on non-ASCII) so they still
+/// match as expected.
+///
+/// Add new synonyms here (PR welcome) to support localized symbol libraries.
+const SEMANTIC_KEYWORDS: &[(&str, &[&str])] = &[
+    ("OffPageConnector", &["off-drawing", "off drawing", "opc", "接续符", "页间连接", "跨页"]),
+    ("Nozzle", &["nozzle", "喷嘴", "管嘴"]),
+    (
+        "Instrument",
+        &[
+            "field mounted",
+            "instrument",
+            "system function",
+            "dcs",
+            "仪表",
+            "现场仪表",
+            "控制",
+        ],
+    ),
+    ("Vessel", &["vessel", "tank", "drum", "容器", "罐", "储罐", "塔"]),
+    ("Note", &["note", "annotation", "标注", "注释"]),
+    (
+        "PipingComponent",
+        &[
+            "cap", "valve", "fitting", "reducer", "elbow", "tee", "flange", "阀", "管件", "法兰",
+            "弯头", "三通", "异径", "封头",
+        ],
+    ),
+];
+
+fn infer_semantic_from_symbol_hint(
+    symbol_name: Option<&str>,
+    symbol_path: &str,
+) -> Option<&'static str> {
     let mut haystack = symbol_path.to_ascii_lowercase();
     if let Some(name) = symbol_name {
         haystack.push(' ');
@@ -521,32 +584,12 @@ fn infer_semantic_from_symbol_hint(symbol_name: Option<&str>, symbol_path: &str)
         haystack.push_str(&stem.to_string_lossy().to_ascii_lowercase());
     }
 
-    if haystack.contains("off-drawing") || haystack.contains("off drawing") || haystack.contains("opc") {
-        Some("OffPageConnector")
-    } else if haystack.contains("nozzle") {
-        Some("Nozzle")
-    } else if haystack.contains("field mounted")
-        || haystack.contains("instrument")
-        || haystack.contains("system function")
-        || haystack.contains("dcs")
-    {
-        Some("Instrument")
-    } else if haystack.contains("vessel") || haystack.contains("tank") || haystack.contains("drum") {
-        Some("Vessel")
-    } else if haystack.contains("note") || haystack.contains("annotation") {
-        Some("Note")
-    } else if haystack.contains("cap")
-        || haystack.contains("valve")
-        || haystack.contains("fitting")
-        || haystack.contains("reducer")
-        || haystack.contains("elbow")
-        || haystack.contains("tee")
-        || haystack.contains("flange")
-    {
-        Some("PipingComponent")
-    } else {
-        None
+    for (tag, keywords) in SEMANTIC_KEYWORDS {
+        if keywords.iter().any(|kw| haystack.contains(kw)) {
+            return Some(*tag);
+        }
     }
+    None
 }
 
 fn bounds_for_item(anchor: &[f64; 2], kind: &str, symbol_name: Option<&str>) -> [f64; 4] {
@@ -871,5 +914,42 @@ mod tests {
             Some(r"\\srv\sym\Piping\Fittings\End Components\Cap2.sym"),
             "pid-only PipingComp item should inherit a representative fitting symbol path"
         );
+    }
+
+    #[test]
+    fn infer_semantic_maps_chinese_symbol_path_to_piping_component() {
+        // Localized symbol libraries (Chinese OEM deployments) previously fell
+        // through to `None` because the keyword table only had English tokens.
+        let semantic = super::infer_semantic_from_symbol_hint(None, r"\\srv\sym\管件\球阀.sym");
+        assert_eq!(semantic, Some("PipingComponent"));
+
+        let vessel = super::infer_semantic_from_symbol_hint(Some("储罐.sym"), r"\\srv\sym\容器\V-100.sym");
+        assert_eq!(vessel, Some("Vessel"));
+
+        let nozzle = super::infer_semantic_from_symbol_hint(None, r"\\srv\sym\管嘴\SN-01.sym");
+        assert_eq!(nozzle, Some("Nozzle"));
+    }
+
+    #[test]
+    fn infer_semantic_keyword_ordering_keeps_opc_before_piping() {
+        // Regression guard: if the table is reordered, "OPC-valve.sym" must
+        // still resolve to OffPageConnector (OPC) rather than PipingComponent
+        // (valve). The order of `SEMANTIC_KEYWORDS` encodes this priority.
+        let tag = super::infer_semantic_from_symbol_hint(None, r"\\srv\sym\Piping\OPC-valve.sym");
+        assert_eq!(tag, Some("OffPageConnector"));
+    }
+
+    #[test]
+    fn should_replace_representative_covers_all_three_rules() {
+        // Rule 1: higher usage_count replaces.
+        assert!(super::should_replace_representative(2, "A", 5, "Z"));
+        assert!(!super::should_replace_representative(5, "A", 2, "Z"));
+
+        // Rule 2: equal count, lexicographically smaller path replaces.
+        assert!(super::should_replace_representative(3, "B", 3, "A"));
+        assert!(!super::should_replace_representative(3, "A", 3, "B"));
+
+        // Rule 3: fully equal → no replacement.
+        assert!(!super::should_replace_representative(3, "A", 3, "A"));
     }
 }

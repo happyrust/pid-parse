@@ -1,5 +1,34 @@
 # 变更日志
 
+## [Unreleased]
+
+### Changed
+
+- `src/layout.rs`: 语义关键词推断改为数据驱动。新增 `SEMANTIC_KEYWORDS` 常量表
+  （`OffPageConnector` / `Nozzle` / `Instrument` / `Vessel` / `Note` /
+  `PipingComponent`），以及每个 tag 的英文 + 中文同义词列表，取代原先 if/else
+  链。行为对既有 fixture 保持等价，新增中文 symbol 路径（例如 `\\srv\sym\管件\球阀.sym`）
+  的语义命中。顺序依赖显式保留（`OPC` 先于 `valve`）。
+- `src/layout.rs`: `representative_symbol_hints` 的 tiebreaker 抽成
+  `should_replace_representative(existing_count, existing_path, candidate_count,
+  candidate_path)` helper，带 doc comment 说明 "higher usage_count wins; ties
+  break on lexicographically smaller path" 规则，替代原 inline 表达式。
+
+### Tests
+
+- `layout::tests::infer_semantic_maps_chinese_symbol_path_to_piping_component`
+- `layout::tests::infer_semantic_keyword_ordering_keeps_opc_before_piping`
+- `layout::tests::should_replace_representative_covers_all_three_rules`
+
+lib layout::tests 由 5 增至 8，全 252 tests pass。
+
+### Docs
+
+- `docs/plans/2026-04-19-layout-symbol-hint-p2-fixes.md`：本轮 dev plan，包含
+  "审核自纠" 一节说明 P2-1 撤回的理由（恢复 `file_stem()` 回退反而会让
+  `bounds_for_item` fall through 到默认尺寸，丢失 `PipingComponent` 的 18×18
+  命中；4c1cb80 的"坍塌到语义 tag"是正向设计）。
+
 ## [0.4.1] - 2026-04-19
 
 ### Phase 8c: Layout-first 可读整图模型（供 H7CAD PID 工作台消费）
