@@ -2,6 +2,59 @@
 
 ## [0.4.1] - 2026-04-19
 
+### Phase 8c: Layout-first 可读整图模型（供 H7CAD PID 工作台消费）
+
+在既有 `PidDocument + ObjectGraph + CrossReferenceGraph` 之上新增面向显示的 `layout` 真值层，让下游不必再把 `.pid` 对象简单摆成网格圆点，而能生成一份**可读整图**所需的布局摘要。此层仍是 visualization model，不追求 SmartPlant 原始几何逐字节/逐像素复刻。
+
+### 公共 API
+
+- `PidDocument` 新增可选字段 `layout: Option<PidLayoutModel>`
+- 新增类型：
+  - `PidLayoutModel { items, segments, texts, unplaced, warnings }`
+  - `PidLayoutItem { layout_id, drawing_id, graphic_oid, kind, anchor, bounds, symbol_name, symbol_path, label, model_id }`
+  - `PidLayoutSegment { layout_id, owner_drawing_id, graphic_oid, start, end, role }`
+  - `PidLayoutText { layout_id, drawing_id, text, anchor, bounds }`
+  - `PidLayoutUnplaced { drawing_id, kind, label }`
+- 新增导出函数：
+  - `derive_layout(doc: &mut PidDocument)`
+  - `build_layout_model(doc: &PidDocument) -> Option<PidLayoutModel>`
+
+### 布局推导规则
+
+- 统一支持两类输入证据：
+  - `bundle mode`：消费 sidecar `_Data.xml` 带入的 `PIDRepresentation / DwgRepresentationComposition / DefUID` 关系
+  - `pid-only mode`：消费 `.pid` 内已解出的对象图与关系图
+- `PIDRepresentation` 的 `GraphicOID` 会通过 `DwgRepresentationComposition` 转移到被表示对象上，供图形层选择/联动使用
+- layout 的连线只消费已证实的物理关系角色：`PipingEnd1Conn` / `PipingEnd2Conn` / `PipingTapOrFitting` / `ProcessPointCollection`；无证据时不伪造线
+- 未能放进主图的对象进入 `unplaced`，由下游单独做 fallback rail，不再混排到主图
+
+### 符号语义增强
+
+- `infer_symbol_identity` 不再只覆盖 `Pipeline / Branch / Connector / Instrument / Equipment`
+- 新增 bundle/真实样例驱动的语义类别：
+  - `ProcessPoint`
+  - `Note`
+  - `Nozzle`
+  - `OffPageConnector`
+  - `PipingComponent`
+  - `Vessel`
+  - `PipingPort / SignalPort`
+- 若对象 extra 中可见 `.sym` 路径，现会保留到 `symbol_path`，并尽量从 basename 回填 `symbol_name`
+
+### 测试
+
+- 新增 `layout::tests::build_layout_model_classifies_bundle_specific_symbol_kinds`
+- 真实样例护栏保持：
+  - `tests/parse_real_files.rs::second_file_builds_readable_layout_model`
+- 验证：
+  - `cargo test --manifest-path D:/work/plant-code/cad/pid-parse/Cargo.toml`
+  - 结果：`137` lib tests + `28` parse_real_files + `18` unit_parsers + `1` writer_real_files + `7` writer_roundtrip + `8` writer_validate_cli 全绿
+
+### 设计边界
+
+- `layout` 是**可读整图布局模型**，不是 `.sym` 原始几何解码
+- 不做 SmartPlant 原始线型、标注、字高、版式的像素级复刻
+- `symbol_name/symbol_path` 目前仍是 best-effort 语义证据；后续若把 `JSite` 真正挂接到对象级，可继续细化
 ### Phase 8b: Metadata 编辑 helper（为 H7CAD UI 编辑桥铺路）
 
 在 v0.4.0 Writer 层之上新增 `src/writer/metadata_helpers.rs` 纯函数模块，让上层不再需要自己拼/改 XML 字节即可对 `/TaggedTxtData/Drawing` 与 `/TaggedTxtData/General` 做"改一点点"式编辑。所有 helper 都是 byte-level splice — 除被替换的属性值/元素文本外，其它字节（注释、空白、引号风格、兄弟属性顺序）逐字节保留，最大化 SmartPlant 兼容性。
