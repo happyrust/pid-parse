@@ -21,7 +21,8 @@ pub use package::{
     diff_packages, PackageDiff, PidPackage, RawStream, StorageClsidDiff, StreamDiff,
 };
 pub use writer::{
-    MetadataUpdates, PidWriter, SheetChunkPatch, SheetPatch, StreamReplacement, WritePlan,
+    EncodedString, MetadataUpdates, PidWriter, SheetChunkPatch, SheetPatch, StreamReplacement,
+    WritePlan,
 };
 
 /// Re-export of [`uuid::Uuid`] for ergonomic access to the root CLSID

@@ -1,27 +1,33 @@
 //! Apply [`MetadataUpdates`] to an in-memory [`PidPackage`] by overwriting
 //! the targeted streams' raw bytes.
 //!
-//! Handles four update channels:
+//! Handles five update channels:
 //!
 //! 1. `/TaggedTxtData/Drawing` XML body (`drawing_xml`)
 //! 2. `/TaggedTxtData/General` XML body (`general_xml`)
 //! 3. Phase 9l (v0.5.0+): `SummaryInformation` /
 //!    `DocumentSummaryInformation` property-set edits via
-//!    `summary_updates` — string properties only.
+//!    `summary_updates` — string properties only. Values are UTF-8 by
+//!    default (Phase 10g).
 //! 4. Phase 9n (v0.5.2+): property deletions via `summary_deletions`
 //!    (same symbolic key table; silent no-op on keys not present in
 //!    the source property-set).
+//! 5. Phase 10i (v0.8.0+): code-page-aware property updates via
+//!    `summary_updates_encoded` — same symbolic keys, each value carries
+//!    an explicit `encoding_rs` label for `VT_LPSTR` targets
+//!    (CP1252 / GBK / Shift_JIS / …).
 //!
 //! Ordering within one call is deterministic:
 //!
 //! - Drawing XML write
 //! - General XML write
 //! - summary deletions (remove props before re-inserting any)
-//! - summary updates
+//! - summary updates (UTF-8)
+//! - summary updates encoded (explicit code page)
 //!
-//! A key appearing in both `summary_deletions` and `summary_updates` is
-//! rejected up-front with a clear error — the intent is ambiguous (do
-//! we keep the new value, or remove the prop?).
+//! A key appearing in both `summary_deletions` and `summary_updates`,
+//! or in both `summary_updates` and `summary_updates_encoded`, is
+//! rejected up-front with a clear error — the intent is ambiguous.
 use crate::error::PidError;
 use crate::package::PidPackage;
 use crate::writer::plan::MetadataUpdates;
@@ -59,9 +65,37 @@ pub fn apply_metadata_updates(
                 ),
             });
         }
+        if updates.summary_updates_encoded.contains_key(del_key) {
+            return Err(PidError::ParseFailure {
+                context: "summary writer".into(),
+                message: format!(
+                    "summary_updates_encoded and summary_deletions both target \
+                     key '{del_key}'; at most one must be specified per key"
+                ),
+            });
+        }
     }
+
+    // Phase 10i: updates vs updates_encoded on the same key is also
+    // ambiguous — the two channels disagree on what encoding to use.
+    for enc_key in updates.summary_updates_encoded.keys() {
+        if updates.summary_updates.contains_key(enc_key) {
+            return Err(PidError::ParseFailure {
+                context: "summary writer".into(),
+                message: format!(
+                    "summary_updates and summary_updates_encoded both target \
+                     key '{enc_key}'; use one or the other, not both"
+                ),
+            });
+        }
+    }
+
     summary_write::apply_summary_deletions(package, &updates.summary_deletions)?;
     summary_write::apply_summary_updates(package, &updates.summary_updates)?;
+    summary_write::apply_summary_updates_encoded(
+        package,
+        &updates.summary_updates_encoded,
+    )?;
     Ok(())
 }
 
@@ -163,6 +197,64 @@ mod tests {
         let msg = format!("{err}");
         assert!(
             msg.contains("summary_updates and summary_deletions both target key 'title'"),
+            "got: {msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 10i: summary_updates_encoded conflict guards
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn summary_updates_and_updates_encoded_on_same_key_return_error() {
+        // Phase 10i: two channels disagree on encoding for the same key
+        // → ambiguous, fail fast before any side effect.
+        use crate::writer::plan::EncodedString;
+        let mut pkg = empty_package();
+        let mut summary_updates = std::collections::BTreeMap::new();
+        summary_updates.insert("title".to_string(), "utf8".to_string());
+        let mut summary_updates_encoded = std::collections::BTreeMap::new();
+        summary_updates_encoded.insert(
+            "title".to_string(),
+            EncodedString::new("cp1252", "windows-1252"),
+        );
+        let updates = MetadataUpdates {
+            summary_updates,
+            summary_updates_encoded,
+            ..Default::default()
+        };
+        let err = apply_metadata_updates(&mut pkg, &updates).expect_err("conflict");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains(
+                "summary_updates and summary_updates_encoded both target key 'title'"
+            ),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn summary_deletions_and_updates_encoded_on_same_key_return_error() {
+        // Phase 10i: deletion intent + encoded update intent on same key
+        // is equivalent ambiguity to deletion + plain update.
+        use crate::writer::plan::EncodedString;
+        let mut pkg = empty_package();
+        let mut summary_updates_encoded = std::collections::BTreeMap::new();
+        summary_updates_encoded.insert(
+            "title".to_string(),
+            EncodedString::new("x", "windows-1252"),
+        );
+        let updates = MetadataUpdates {
+            summary_updates_encoded,
+            summary_deletions: vec!["title".to_string()],
+            ..Default::default()
+        };
+        let err = apply_metadata_updates(&mut pkg, &updates).expect_err("conflict");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains(
+                "summary_updates_encoded and summary_deletions both target key 'title'"
+            ),
             "got: {msg}"
         );
     }

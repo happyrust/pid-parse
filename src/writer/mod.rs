@@ -32,7 +32,9 @@ pub use metadata_helpers::{
     list_general_elements, set_drawing_attribute, set_drawing_number, set_element_text,
     set_general_file_path, MetadataEditError,
 };
-pub use plan::{MetadataUpdates, SheetChunkPatch, SheetPatch, StreamReplacement, WritePlan};
+pub use plan::{
+    EncodedString, MetadataUpdates, SheetChunkPatch, SheetPatch, StreamReplacement, WritePlan,
+};
 
 /// High-level writer entry point. See [`Self::write_to`].
 pub struct PidWriter;

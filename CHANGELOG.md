@@ -2,6 +2,172 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-21
+
+### Phase 10i: VT_LPSTR 多 code page 支持（解除 Phase 10g UTF-8-only 限制）
+
+Phase 10g (v0.7.0) 把 `VT_LPSTR` 从 ASCII-only 放宽到 UTF-8，但明确
+保留 "CP1252 / GBK / Shift-JIS 等传统 code page 不自动识别/转换" 的
+限制。Phase 10i 兑现这条 roadmap：引入**显式编码**的 `VT_LPSTR`
+writer 通道，让用户可以按需写入 SmartPlant 2019- 旧版本使用的
+Western/Chinese/Japanese code page。
+
+本 Phase 聚焦 **Writer 端**；Reader 端自动 code-page 启发式探测
+（`detect_lpstr_codepage`）留给 **Phase 10k** — 当前 Phase 用户必须
+显式指定 `encoding` label，reader 仍按 Phase 10g 的 UTF-8 策略解析
+（对 ASCII-only writes 端到端 round-trip 完全工作，非 ASCII writes
+的 reader 侧 round-trip 由 writer 层字节级单测验证）。
+
+### Added — `EncodedString` + `summary_updates_encoded` 通道
+
+- `src/writer/plan.rs` 新 `EncodedString { value: String, encoding: String }`
+  类型 + `EncodedString::new(value, encoding)` 构造器。`encoding` 字段
+  接受任意 `encoding_rs` label（`"UTF-8"` / `"windows-1252"` / `"GBK"` /
+  `"Shift_JIS"` / `"cp1252"` / ...），case-insensitive。
+- `MetadataUpdates.summary_updates_encoded: BTreeMap<String, EncodedString>`
+  新字段，`#[serde(default)]`。与既有 `summary_updates` 平行共存：
+  - `summary_updates`（Phase 9l/10g）= UTF-8 默认通道
+  - `summary_updates_encoded`（Phase 10i）= 显式 code-page 通道
+  - 同一 key 同时出现在两个 map 中 → pre-check 报错（避免编码歧义）
+  - 同一 key 同时在 `summary_updates_encoded` 和 `summary_deletions`
+    中 → 同样报错（对齐 Phase 9n 的 set/delete 冲突拒绝）
+- `pid_parse::writer::summary_write::apply_summary_updates_encoded(
+  package, updates)` 公共入口，供 binary / 高级 consumer 直调（等价
+  于 apply-plan 路径的 `summary_updates_encoded` 分支）。
+- `encode_string_with_encoding(vt, value, encoding, prop_id)` 内部函数：
+  - `VT_LPSTR`: 走 `encoding.encode(value)`，`had_errors == true` 时
+    **fail-fast** 返回清晰错误（包含 encoding 名 / offending value），
+    绝不 silent 替换为 `?`
+  - `VT_LPWSTR`: 忽略 `encoding` 参数（UTF-16LE 无歧义）
+- `SummaryPropertySet::set_string_with_encoding(prop_id, value, encoding)`
+  内部方法；旧 `set_string` 重写为 UTF-8 thin wrapper。
+- `resolve_encoding(label) -> Result<&'static Encoding, PidError>`：
+  统一 label → `encoding_rs::Encoding` 解析，未知 label 返回
+  `PidError::ParseFailure { context: "summary writer", ... }`。
+- `lib.rs` re-export `EncodedString` 到 `pid_parse` crate root。
+- `writer/mod.rs` re-export `EncodedString`。
+
+### Added — CLI `--set-summary-encoded KEY:ENCODING=VALUE`
+
+- `pid_writer_validate --set-summary-encoded title:windows-1252=Ø Pipe`
+  类语法：
+  - 第一个 `:` 分 KEY 和 ENCODING
+  - 第一个 `=` 分 ENCODING 和 VALUE
+  - VALUE 可含 `=` / `:`（空 KEY / 空 ENCODING 都是 usage error）
+- 互斥：与 `--set-summary` 同 key 冲突 → exit 2；与 `--apply-plan`
+  同时传 → exit 1。与 `--delete-summary` 在**不同** key 上可并存。
+- `CliOptions.summary_edits_encoded: BTreeMap<String, EncodedString>`
+  新字段；`run_validate` 签名新增参数（lib-level public API）。
+- usage 文案更新：`print_usage` 新增 Phase 10i 段说明。
+
+### Changed
+
+- `MetadataUpdates` 默认构造器包含 `summary_updates_encoded:
+  BTreeMap::new()`。
+- `WritePlan::is_passthrough` 检查扩展到
+  `summary_updates_encoded.is_empty()`。
+- `apply_metadata_updates` 执行顺序扩展：`drawing_xml → general_xml
+  → summary_deletions → summary_updates → summary_updates_encoded`。
+- `compare_packages` / `collect_edited_paths_from_plan` 把 summary
+  路径标 "edited" 的触发条件从 `!summary_edits.is_empty() ||
+  !summary_deletions.is_empty()` 扩展到 + `!summary_edits_encoded
+  .is_empty()`。
+
+### Tests (332 → 354，净增 22；测试分布：lib 238→255 = +17，
+writer_validate_cli 21→26 = +5，其余不变)
+
+lib 单元 +17：
+
+`src/writer/plan.rs::tests`（+4）：
+- `encoded_string_serializes_to_object_with_value_and_encoding`
+- `encoded_string_round_trips_through_json`
+- `plan_with_summary_updates_encoded_is_not_passthrough`
+- `plan_omitting_summary_updates_encoded_is_passthrough_compatible`
+  —— **向后兼容 guard**：v0.7.x consumer 写的 JSON 不带此字段仍然
+  valid 且 passthrough
+
+`src/writer/summary_write.rs::tests`（+11）：
+- `encode_lpstr_with_cp1252_preserves_western_european_bytes`
+  —— `Ø`（U+00D8）在 CP1252 是 0xD8 单字节，验证不走 UTF-8 的 2 字节
+- `encode_lpstr_with_cp1252_rejects_chinese_characters_lossy`
+  —— lossy 输入 fail-fast，错误含 `cannot encode` / 编码名 / 原值
+- `encode_lpstr_with_gbk_preserves_simplified_chinese_bytes`
+  —— "公司" 在 GBK 是 4 字节（每字符 2 字节），GBK round-trip 无损
+- `encode_lpwstr_ignores_encoding_hint`
+  —— VT_LPWSTR 路径对 `encoding` 参数不敏感，UTF-16LE 始终
+- `resolve_encoding_accepts_standard_and_alias_labels`
+  —— `windows-1252` / `cp1252` / `GBK` / `gbk` / `UTF-8` 均接受
+- `resolve_encoding_rejects_unknown_labels`
+  —— `Klingon-1` → `unknown encoding label`
+- `apply_summary_updates_encoded_end_to_end_rewrites_lpstr_with_explicit_codepage`
+  —— 完整 plan 链路，最终 stream 字节含 0xD8 + VT_LPSTR 保留
+- `apply_summary_updates_encoded_rejects_lossy_input_clearly`
+  —— fail-fast **不 mutate 源字节** 的防御性测试
+- `apply_summary_updates_encoded_unknown_key_errors_without_side_effect`
+- `apply_summary_updates_encoded_unknown_encoding_errors_cleanly`
+- `apply_summary_updates_encoded_empty_is_zero_cost_noop`
+
+`src/writer/metadata_write.rs::tests`（+2）：
+- `summary_updates_and_updates_encoded_on_same_key_return_error`
+- `summary_deletions_and_updates_encoded_on_same_key_return_error`
+
+CLI 集成 +5 (`tests/writer_validate_cli.rs`)：
+- `validate_set_summary_encoded_ascii_round_trips_with_explicit_codepage`
+  —— ASCII happy path 走完整 CLI → fixture → writer → reader 链路
+- `validate_set_summary_encoded_rejects_lossy_cp1252_input`
+  —— CP1252 + 中文 exit 2，stderr 含 `cannot encode` + `windows-1252`
+- `validate_set_summary_encoded_rejects_unknown_encoding_label`
+  —— `Klingon-1` exit 2，stderr 含 `unknown encoding label`
+- `validate_set_summary_encoded_conflicts_with_set_summary_on_same_key`
+  —— exit 2 + "both target key" guard message
+- `validate_set_summary_encoded_usage_error_on_missing_colon`
+  —— syntax guard exit 1，stderr 含 `missing :`
+
+### Verification
+
+- `cargo check --all-targets` → ok (pid-parse v0.8.0)
+- `cargo test --all-targets` → **354 passed** / 0 failed
+  - lib: 238 → 255 (+17)
+  - writer_validate_cli: 21 → 26 (+5)
+  - 其余模块不变（inspect_cli 4 / parse_real_files 28 / unit_parsers 18
+    / writer_real_files 10 / writer_roundtrip 13）
+- `cargo fmt/clippy`: 本地 toolchain 缺组件（rustup LICENSE 冲突 bug），
+  跳过；代码对齐 v0.7.1 已验证的风格
+
+### Known limitations (tracked for future phases)
+
+- **Reader 端自动 code-page 探测**：当前仅用户显式指定；非 ASCII
+  VT_LPSTR 的 reader round-trip 需等 Phase 10k `detect_lpstr_codepage`
+  完成（启发式：fixture 白名单 → BOM → 字节频次 → UTF-8 fallback）。
+  端到端非 ASCII round-trip 测试届时补齐。
+- **多样本 fixture**：本 Phase 验证仍基于单合成 fixture；真实
+  SmartPlant CP1252 / GBK fixture 的 writer 回归测试需 fixture 收集
+  pass（Phase 11 窗口）。
+- `VT_LPWSTR` 忽略 encoding 字段的语义在当前 API 里是 "silent ignore"；
+  若 future consumer 需要显式 "encoding for lpwstr" 错误，留给
+  Phase 10k 的设计决议。
+
+### SemVer 判定
+
+- 新字段 `MetadataUpdates.summary_updates_encoded` + `#[serde(default)]`：
+  JSON 向后兼容（旧 `{}` 仍 valid passthrough）。
+- 新类型 `EncodedString` + 新 pub API (`apply_summary_updates_encoded` /
+  `encode_string_with_encoding` via `SummaryPropertySet::set_string_with_encoding`)：
+  additive。
+- 新 CLI flag + 新 `run_validate` 参数：API surface 扩展。
+- 旧 Rust `MetadataUpdates::default()` 构造继续 work；Rust consumer
+  代码零破坏。
+
+综合：**minor bump 0.7 → 0.8.0**（行为放宽 + 新 public API + 新 CLI
+flag），沿用 Phase 10g 的 "错误路径变成功路径 = minor bump" 判定规则。
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-10i-vtlpstr-codepage.md`：本 Phase dev plan
+  （v0.7.1 ship 时已入 repo）。
+- `docs/sppid/v0.7.x-status.md` 将在 Phase 10k ship 时统一刷新到
+  `v0.8.x-status.md`（目前内容仍描述 10g 限制，不阻塞 10i ship）。
+
 ## [0.7.1] - 2026-04-21
 
 ### Phase 10h: session 成果归档 + 下一步 roadmap 落地（docs-only，无行为变化）

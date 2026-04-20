@@ -17,7 +17,7 @@
 //! Exit codes: 0 = all streams match, 1 = mismatch, 2 = parse / IO failure.
 
 use pid_parse::package::PidPackage;
-use pid_parse::writer::{PidWriter, WritePlan};
+use pid_parse::writer::{EncodedString, PidWriter, WritePlan};
 use pid_parse::PidParser;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -57,6 +57,11 @@ struct CliOptions {
     /// writer's `MetadataUpdates.summary_deletions` vec. Empty = no
     /// deletions requested.
     summary_deletions: Vec<String>,
+    /// Phase 10i: `--set-summary-encoded KEY:ENCODING=VALUE` edits,
+    /// accumulated into the writer's
+    /// `MetadataUpdates.summary_updates_encoded` map. Empty = no
+    /// encoded edits requested.
+    summary_edits_encoded: BTreeMap<String, EncodedString>,
     plan_path: Option<PathBuf>,
 }
 
@@ -165,6 +170,7 @@ fn main() {
             &options.edits,
             &options.summary_edits,
             &options.summary_deletions,
+            &options.summary_edits_encoded,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -199,6 +205,7 @@ fn print_usage() {
          \x20                       [--max-diff-bytes N]\n\
          \x20                       [--edit ATTR=VALUE]+ [--general-edit ELEMENT=VALUE]+\n\
          \x20                       [--set-summary KEY=VALUE]+ [--delete-summary KEY]+\n\
+         \x20                       [--set-summary-encoded KEY:ENCODING=VALUE]+\n\
          \x20                       [--apply-plan <plan.json>]\n\n\
          --set-summary / --delete-summary edit `/\\x05SummaryInformation` or\n\
          `/\\x05DocumentSummaryInformation` properties by symbolic key (title / author /\n\
@@ -206,9 +213,14 @@ fn print_usage() {
          category / manager / company). --set-summary creates or overwrites a property;\n\
          --delete-summary removes one (silent no-op if the property was not present).\n\
          A key cannot appear in both at once.\n\n\
+         --set-summary-encoded (Phase 10i) is like --set-summary but encodes VT_LPSTR\n\
+         values with an explicit code page via `encoding_rs` label (UTF-8 / windows-1252\n\
+         / GBK / Shift_JIS / ...). Lossy inputs fail fast instead of silently emitting\n\
+         replacement characters. VT_LPWSTR targets ignore the encoding hint (UTF-16LE is\n\
+         unambiguous). A key cannot appear in both --set-summary and --set-summary-encoded.\n\n\
          --apply-plan reads a serialized WritePlan (see pid_parse::writer::plan) and\n\
          applies it in a single pass. Cannot be combined with --edit / --general-edit /\n\
-         --set-summary / --delete-summary."
+         --set-summary / --delete-summary / --set-summary-encoded."
     );
 }
 
@@ -223,6 +235,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut edits: Vec<EditOp> = Vec::new();
     let mut summary_edits: BTreeMap<String, String> = BTreeMap::new();
     let mut summary_deletions: Vec<String> = Vec::new();
+    let mut summary_edits_encoded: BTreeMap<String, EncodedString> = BTreeMap::new();
     let mut plan_path: Option<PathBuf> = None;
 
     let mut i = 2;
@@ -301,6 +314,34 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 summary_deletions.push(value.clone());
                 i += 2;
             }
+            "--set-summary-encoded" => {
+                // Phase 10i: syntax is `KEY:ENCODING=VALUE`.
+                // - first `:` separates KEY from ENCODING
+                // - first `=` (after the `:`) separates ENCODING from VALUE
+                // - VALUE may contain further `=` or `:` unchanged
+                let raw = args.get(i + 1).ok_or_else(|| {
+                    "--set-summary-encoded requires KEY:ENCODING=VALUE".to_string()
+                })?;
+                let (key, rest) = raw.split_once(':').ok_or_else(|| {
+                    format!(
+                        "--set-summary-encoded must be KEY:ENCODING=VALUE; missing `:`; got `{raw}`"
+                    )
+                })?;
+                let (encoding, val) = rest.split_once('=').ok_or_else(|| {
+                    format!(
+                        "--set-summary-encoded must be KEY:ENCODING=VALUE; missing `=`; got `{raw}`"
+                    )
+                })?;
+                if key.is_empty() {
+                    return Err("--set-summary-encoded KEY must be non-empty".to_string());
+                }
+                if encoding.is_empty() {
+                    return Err("--set-summary-encoded ENCODING must be non-empty".to_string());
+                }
+                summary_edits_encoded
+                    .insert(key.to_string(), EncodedString::new(val, encoding));
+                i += 2;
+            }
             "--apply-plan" => {
                 let value = args
                     .get(i + 1)
@@ -313,10 +354,13 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     }
 
     if plan_path.is_some()
-        && (!edits.is_empty() || !summary_edits.is_empty() || !summary_deletions.is_empty())
+        && (!edits.is_empty()
+            || !summary_edits.is_empty()
+            || !summary_deletions.is_empty()
+            || !summary_edits_encoded.is_empty())
     {
         return Err(
-            "--apply-plan cannot be combined with --edit / --general-edit / --set-summary / --delete-summary (they describe mutually exclusive edit semantics)"
+            "--apply-plan cannot be combined with --edit / --general-edit / --set-summary / --delete-summary / --set-summary-encoded (they describe mutually exclusive edit semantics)"
                 .to_string(),
         );
     }
@@ -344,6 +388,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         edits,
         summary_edits,
         summary_deletions,
+        summary_edits_encoded,
         plan_path,
     })
 }
@@ -390,6 +435,7 @@ fn cleanup_output(spec: &OutputSpec) {
 ///
 /// Public so integration tests can drive the same code path without
 /// spawning the binary every time.
+#[allow(clippy::too_many_arguments)]
 pub fn run_validate(
     input: &Path,
     output: &Path,
@@ -397,14 +443,29 @@ pub fn run_validate(
     edits: &[EditOp],
     summary_edits: &BTreeMap<String, String>,
     summary_deletions: &[String],
+    summary_edits_encoded: &BTreeMap<String, EncodedString>,
 ) -> Result<ValidateReport, ValidateError> {
-    // Phase 9n: mirror the lib-layer conflict check so the CLI surfaces a
-    // clean single error rather than crashing mid-write.
+    // Phase 9n / 10i: mirror the lib-layer conflict checks so the CLI
+    // surfaces a clean single error rather than crashing mid-write.
     for del_key in summary_deletions {
         if summary_edits.contains_key(del_key) {
             return Err(ValidateError::Edit(format!(
                 "--set-summary and --delete-summary both target key '{del_key}'; \
                  at most one must be specified per key"
+            )));
+        }
+        if summary_edits_encoded.contains_key(del_key) {
+            return Err(ValidateError::Edit(format!(
+                "--set-summary-encoded and --delete-summary both target key '{del_key}'; \
+                 at most one must be specified per key"
+            )));
+        }
+    }
+    for enc_key in summary_edits_encoded.keys() {
+        if summary_edits.contains_key(enc_key) {
+            return Err(ValidateError::Edit(format!(
+                "--set-summary and --set-summary-encoded both target key '{enc_key}'; \
+                 use one or the other, not both"
             )));
         }
     }
@@ -422,6 +483,13 @@ pub fn run_validate(
         pid_parse::writer::summary_write::apply_summary_updates(&mut edited, summary_edits)
             .map_err(|e| ValidateError::Edit(format!("--set-summary: {e}")))?;
     }
+    if !summary_edits_encoded.is_empty() {
+        pid_parse::writer::summary_write::apply_summary_updates_encoded(
+            &mut edited,
+            summary_edits_encoded,
+        )
+        .map_err(|e| ValidateError::Edit(format!("--set-summary-encoded: {e}")))?;
+    }
 
     PidWriter::write_to(&edited, &WritePlan::default(), output)
         .map_err(|e| ValidateError::Write(e.to_string()))?;
@@ -438,6 +506,7 @@ pub fn run_validate(
         edits,
         summary_edits,
         summary_deletions,
+        summary_edits_encoded,
         max_diff_bytes,
     );
     Ok(report)
@@ -480,10 +549,11 @@ pub fn apply_edits_to_package(
 }
 
 // This helper has grown one parameter per Writer-layer edit channel
-// (XML edits / summary updates / summary deletions). Grouping them into
-// a struct would require plumbing a `CompareContext` through both
-// `run_validate` and `run_validate_with_plan`, without much semantic
-// gain — each parameter is orthogonal. Keep as-is and silence clippy.
+// (XML edits / summary updates / summary deletions / encoded summary
+// updates). Grouping them into a struct would require plumbing a
+// `CompareContext` through both `run_validate` and `run_validate_with_plan`,
+// without much semantic gain — each parameter is orthogonal. Keep as-is
+// and silence clippy.
 #[allow(clippy::too_many_arguments)]
 fn compare_packages(
     source_path: &Path,
@@ -493,6 +563,7 @@ fn compare_packages(
     edits: &[EditOp],
     summary_edits: &BTreeMap<String, String>,
     summary_deletions: &[String],
+    summary_edits_encoded: &BTreeMap<String, EncodedString>,
     max_diff_bytes: usize,
 ) -> ValidateReport {
     let src_keys: BTreeSet<&String> = expected.streams.keys().collect();
@@ -522,7 +593,10 @@ fn compare_packages(
             EditKind::General => GENERAL_PATH,
         })
         .collect();
-    if !summary_edits.is_empty() || !summary_deletions.is_empty() {
+    if !summary_edits.is_empty()
+        || !summary_deletions.is_empty()
+        || !summary_edits_encoded.is_empty()
+    {
         edited_paths.insert(pid_parse::writer::summary_write::SUMMARY_INFO_PATH);
         edited_paths.insert(pid_parse::writer::summary_write::DOC_SUMMARY_PATH);
     }

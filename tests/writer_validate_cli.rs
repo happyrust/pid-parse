@@ -856,3 +856,172 @@ fn validate_delete_summary_unknown_key_exits_two() {
     let _ = std::fs::remove_file(&src);
     let _ = std::fs::remove_file(&dst);
 }
+
+// ---------------------------------------------------------------------
+// Phase 10i: --set-summary-encoded integration tests.
+// ---------------------------------------------------------------------
+
+#[test]
+fn validate_set_summary_encoded_ascii_round_trips_with_explicit_codepage() {
+    // For ASCII-only strings, CP1252 and UTF-8 byte layouts coincide, so
+    // the end-to-end title read-back works even before Phase 10k (reader
+    // code-page detection). Full non-ASCII CP1252 / GBK round-trip is
+    // already covered by the byte-level writer unit tests
+    // (`encode_lpstr_with_cp1252_preserves_western_european_bytes` etc.).
+    let src = unique_temp("set-summary-enc-ascii-src");
+    let dst = unique_temp("set-summary-enc-ascii-dst");
+    build_fixture_with_summary(&src, "OldTitle");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args([
+            "--set-summary-encoded",
+            "title:windows-1252=Encoded-ASCII-Title",
+        ])
+        .output()
+        .expect("spawn --set-summary-encoded");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "expected exit 0; got {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+    assert_eq!(
+        read_title_from_pid(&dst).as_deref(),
+        Some("Encoded-ASCII-Title"),
+        "CP1252-encoded ASCII title must round-trip through the reader",
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn validate_set_summary_encoded_rejects_lossy_cp1252_input() {
+    // CP1252 cannot represent Chinese; writer must fail fast so the CLI
+    // exits 2 rather than silently mojibake'ing the property.
+    let src = unique_temp("set-summary-enc-lossy-src");
+    let dst = unique_temp("set-summary-enc-lossy-dst");
+    build_fixture_with_summary(&src, "Orig");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--set-summary-encoded", "title:windows-1252=公司"])
+        .output()
+        .expect("spawn --set-summary-encoded lossy");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "lossy encoding should exit 2; got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot encode"), "got: {stderr}");
+    assert!(stderr.contains("windows-1252"), "got: {stderr}");
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn validate_set_summary_encoded_rejects_unknown_encoding_label() {
+    let src = unique_temp("set-summary-enc-unknown-src");
+    let dst = unique_temp("set-summary-enc-unknown-dst");
+    build_fixture_with_summary(&src, "Orig");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--set-summary-encoded", "title:Klingon-1=whatever"])
+        .output()
+        .expect("spawn --set-summary-encoded unknown enc");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "unknown encoding label should exit 2; got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown encoding label"),
+        "stderr must explain unknown encoding; got: {stderr}"
+    );
+    assert!(stderr.contains("Klingon-1"), "offending label: {stderr}");
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn validate_set_summary_encoded_conflicts_with_set_summary_on_same_key() {
+    // Phase 10i: two encoding semantics on the same key is ambiguous.
+    let src = unique_temp("set-enc-conflict-src");
+    let dst = unique_temp("set-enc-conflict-dst");
+    build_fixture_with_summary(&src, "Orig");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--set-summary", "title=plain"])
+        .args(["--set-summary-encoded", "title:UTF-8=encoded"])
+        .output()
+        .expect("spawn conflict");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "lib-layer conflict should exit 2; got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr
+            .contains("--set-summary and --set-summary-encoded both target key 'title'"),
+        "stderr must explain the conflict; got: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn validate_set_summary_encoded_usage_error_on_missing_colon() {
+    // Syntax guard: missing `:` between KEY and ENCODING should be a
+    // usage error (exit 1), not a cryptic "unknown encoding".
+    let src = unique_temp("set-enc-syntax-src");
+    let dst = unique_temp("set-enc-syntax-dst");
+    build_fixture_with_summary(&src, "Orig");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--set-summary-encoded", "title=plain"])
+        .output()
+        .expect("spawn bad syntax");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "usage/syntax error should exit 1; got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("missing `:`"),
+        "stderr must cite missing colon; got: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}

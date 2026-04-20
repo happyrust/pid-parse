@@ -87,6 +87,43 @@ pub struct MetadataUpdates {
     /// `summary_updates` is rejected (ambiguous intent). Empty vec = no-op.
     #[serde(default)]
     pub summary_deletions: Vec<String>,
+
+    /// Phase 10i (v0.8.0+): code-page-aware OLE property updates. Same
+    /// symbolic-key table as `summary_updates`; each value carries an
+    /// explicit `encoding_rs` label applied to `VT_LPSTR` properties.
+    /// `VT_LPWSTR` targets ignore the encoding hint (UTF-16LE is
+    /// unambiguous). A key appearing in both `summary_updates` and
+    /// `summary_updates_encoded` is rejected (ambiguous intent). See
+    /// [`EncodedString`] for the JSON shape. Empty map = no-op.
+    #[serde(default)]
+    pub summary_updates_encoded: BTreeMap<String, EncodedString>,
+}
+
+/// Phase 10i (v0.8.0+): explicit code-page-aware string value used by
+/// [`MetadataUpdates::summary_updates_encoded`].
+///
+/// `encoding` is a label understood by the `encoding_rs` crate
+/// (e.g. `"UTF-8"`, `"windows-1252"`, `"GBK"`, `"Shift_JIS"`). At apply
+/// time, encoding an unrepresentable character fails fast with
+/// [`crate::error::PidError::ParseFailure`] rather than silently
+/// producing replacement characters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EncodedString {
+    /// Raw Unicode value (what the caller wants the user to see).
+    pub value: String,
+    /// `encoding_rs` label. Case-insensitive; `"windows-1252"` / `"WINDOWS-1252"`
+    /// / `"CP1252"` all work. Invalid labels fail at apply time.
+    pub encoding: String,
+}
+
+impl EncodedString {
+    /// Convenience constructor: `EncodedString::new("X", "windows-1252")`.
+    pub fn new(value: impl Into<String>, encoding: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            encoding: encoding.into(),
+        }
+    }
 }
 
 /// Replace (or insert) a single CFB stream with the provided bytes.
@@ -136,6 +173,7 @@ impl WritePlan {
                 general_xml,
                 summary_updates: BTreeMap::new(),
                 summary_deletions: Vec::new(),
+                summary_updates_encoded: BTreeMap::new(),
             },
             ..Self::default()
         }
@@ -147,6 +185,7 @@ impl WritePlan {
             && self.metadata_updates.general_xml.is_none()
             && self.metadata_updates.summary_updates.is_empty()
             && self.metadata_updates.summary_deletions.is_empty()
+            && self.metadata_updates.summary_updates_encoded.is_empty()
             && self.stream_replacements.is_empty()
             && self.sheet_patches.is_empty()
     }
@@ -287,5 +326,56 @@ mod tests {
             plan.is_passthrough(),
             "all #[serde(default)] fields should yield passthrough"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 10i: EncodedString + summary_updates_encoded
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn encoded_string_serializes_to_object_with_value_and_encoding() {
+        let es = EncodedString::new("Ø Pipe", "windows-1252");
+        let json = serde_json::to_string(&es).expect("serialize");
+        assert!(
+            json.contains("\"value\":\"Ø Pipe\""),
+            "expected value field: {json}"
+        );
+        assert!(
+            json.contains("\"encoding\":\"windows-1252\""),
+            "expected encoding field: {json}"
+        );
+    }
+
+    #[test]
+    fn encoded_string_round_trips_through_json() {
+        let es = EncodedString::new("中文 标题", "GBK");
+        let json = serde_json::to_string(&es).expect("serialize");
+        let back: EncodedString = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, es);
+    }
+
+    #[test]
+    fn plan_with_summary_updates_encoded_is_not_passthrough() {
+        let plan = WritePlan::from_json(
+            r#"{"metadata_updates":{"summary_updates_encoded":
+               {"title":{"value":"X","encoding":"windows-1252"}}}}"#,
+        )
+        .expect("parse");
+        assert!(!plan.is_passthrough());
+        assert_eq!(
+            plan.metadata_updates.summary_updates_encoded.get("title"),
+            Some(&EncodedString::new("X", "windows-1252"))
+        );
+    }
+
+    #[test]
+    fn plan_omitting_summary_updates_encoded_is_passthrough_compatible() {
+        // JSON from v0.7.x consumer that never heard of 10i stays valid
+        // and still passes through is_passthrough checks.
+        let json = r#"{"metadata_updates":{"drawing_xml":null,"general_xml":null,
+                     "summary_updates":{},"summary_deletions":[]}}"#;
+        let plan = WritePlan::from_json(json).expect("backward compat");
+        assert!(plan.is_passthrough());
+        assert!(plan.metadata_updates.summary_updates_encoded.is_empty());
     }
 }
