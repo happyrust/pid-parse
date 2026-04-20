@@ -230,6 +230,95 @@ std::fs::write("my-edits.json", &json)?;
 
 `new_data` 虽然在 Rust 侧是 `Vec<u8>`，序列化到 JSON 时**自动 encode 成 base64 字符串**；反序列化也会自动 decode，对 Rust consumer 透明。
 
+## 5.6 编辑 `SummaryInformation` / `DocumentSummaryInformation`（v0.5.0+）
+
+Smart P&ID `.pid` 里的 `/\u{5}SummaryInformation` 和
+`/\u{5}DocumentSummaryInformation` 是 **OLE 属性流**，携带 Title /
+Author / Subject / Template 等标准 Office 元数据。v0.5.0 起 `WritePlan`
+的 `metadata_updates.summary_updates` 字段真正生效。
+
+### 可编辑 key（v0.5.0 起）
+
+| key 符号名      | 目标 stream               | PROPID |
+|-----------------|---------------------------|--------|
+| `title`         | SummaryInformation        | 2      |
+| `subject`       | SummaryInformation        | 3      |
+| `author`        | SummaryInformation        | 4      |
+| `keywords`      | SummaryInformation        | 5      |
+| `comments`      | SummaryInformation        | 6      |
+| `template`      | SummaryInformation        | 7      |
+| `last_author`   | SummaryInformation        | 8      |
+| `rev_number`    | SummaryInformation        | 9      |
+| `app_name`      | SummaryInformation        | 18     |
+| `category`      | DocumentSummaryInformation | 2      |
+| `manager`       | DocumentSummaryInformation | 14     |
+| `company`       | DocumentSummaryInformation | 15     |
+
+不在表里的 key 会立刻返回错误（列出已知 key 表作为 help 文本）。
+
+### JSON 示例
+
+```json
+{
+  "metadata_updates": {
+    "summary_updates": {
+      "title": "Q4 Pipeline Review",
+      "author": "Jane Engineer",
+      "company": "ACME Inc."
+    }
+  }
+}
+```
+
+### Rust 侧示例
+
+```rust
+use pid_parse::{MetadataUpdates, PidParser, PidWriter, WritePlan};
+use std::collections::BTreeMap;
+
+let parser = PidParser::new();
+let pkg = parser.parse_package("input.pid")?;
+
+let mut summary = BTreeMap::new();
+summary.insert("title".into(), "Q4 Pipeline Review".into());
+summary.insert("author".into(), "Jane Engineer".into());
+
+let plan = WritePlan {
+    metadata_updates: MetadataUpdates {
+        summary_updates: summary,
+        ..Default::default()
+    },
+    ..Default::default()
+};
+
+PidWriter::write_to(&pkg, &plan, "output.pid")?;
+```
+
+### 规则与约束
+
+- **只改 string 类型**：source property 必须已经是 `VT_LPSTR` (0x001E)
+  或 `VT_LPWSTR` (0x001F)。FILETIME / I4 等非字符串字段**拒绝写入**
+  （error: `read-only VT type`），其原字节在输出里保持 byte-for-byte
+  不变。
+- **encoding 保持**：如果源 prop 是 `VT_LPSTR`，新值会以 ASCII 回写；
+  **非 ASCII 值会被拒绝**（Phase 9m 计划扩展到 UTF-8 / CP1252）。
+  源 prop 是 `VT_LPWSTR` 的话，任何 Unicode 都 OK。
+- **新增 prop**：若源 section 里没有该 PROPID，会追加一条，默认用
+  `VT_LPWSTR`（UTF-16LE）保证 Unicode 安全。
+- **stream 必须已存在**：源 `.pid` 没有 `/\u{5}SummaryInformation` 流
+  的话，会返回 `stream '/\x05SummaryInformation' does not exist` 错误；
+  用户需要先走 `stream_replacements` 塞入一份基线 property-set。
+- **未触的 prop 零 drift**：写回时非目标 prop 的 typed-value 原字节逐
+  字节复制（含 alignment padding），因此 `diff_packages` 只会在被编辑
+  的 prop 位置报差异。
+
+### 已知局限（跟踪 Phase 9m+）
+
+- `VT_LPSTR` 非 ASCII 不支持；
+- DocumentSummaryInformation 第二个 section（user-defined dictionary）
+  只做原字节透传；
+- 不支持 prop 删除（未来挂 `summary_deletions` 字段）。
+
 ## 6. 保真能力矩阵
 
 Root CLSID 保留 ✅ ；非 root storage CLSID / 时间戳 / state_bits / 目录物理顺序 ❌。详见 `writer-clsid-and-timestamps.md`。

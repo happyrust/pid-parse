@@ -1,22 +1,25 @@
 //! Writer layer: apply a [`WritePlan`] to a [`PidPackage`] and emit a new
-//! CFB file. The first release supports:
+//! CFB file. Supports:
 //!
 //! - **Passthrough round-trip**: `PidWriter::write_to(&pkg, &WritePlan::default(), out)`
 //!   rebuilds the container with identical stream bytes (order by
 //!   lexicographic path).
 //! - **Metadata-only updates**: replace `/TaggedTxtData/Drawing` and
 //!   `/TaggedTxtData/General` XML bodies.
+//! - **SummaryInformation / DocumentSummaryInformation** string-property
+//!   edits via `MetadataUpdates.summary_updates` (see [`summary_write`]).
 //! - **Stream replacements**: verbatim byte replacement of any stream.
 //! - **Experimental Sheet byte-range patches** (see [`sheet_patch`]).
 //!
-//! See `docs/writer-layer-plan.md` for the intentional constraints (no
-//! `SummaryInformation` property-set writer; no CLSID / timestamp
-//! preservation; BOM / UTF-16 encoding is the caller's responsibility).
+//! See `docs/writer-layer-plan.md` for remaining constraints (no CLSID /
+//! timestamp preservation; BOM / UTF-16 encoding is the caller's
+//! responsibility; property-set writing is scoped to string types only).
 pub mod cfb_write;
 pub mod metadata_helpers;
 pub mod metadata_write;
 pub mod plan;
 pub mod sheet_patch;
+pub mod summary_write;
 pub mod xml_edit;
 
 use crate::error::PidError;

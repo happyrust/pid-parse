@@ -369,3 +369,152 @@ fn original_package_is_not_mutated_by_write() {
     let _ = std::fs::remove_file(&src);
     let _ = std::fs::remove_file(&dst);
 }
+
+/// Build a minimal but valid `/\u{5}SummaryInformation` property-set stream
+/// with a single VT_LPSTR title property. Mirrors the fixture helper in
+/// `writer::summary_write::tests` but lives here so the integration layer
+/// stays self-contained.
+fn minimal_summary_info_bytes(title_ascii: &str) -> Vec<u8> {
+    const FMTID_SUMMARY: [u8; 16] = [
+        0xE0, 0x85, 0x9F, 0xF2, 0xF9, 0x4F, 0x68, 0x10, 0xAB, 0x91, 0x08, 0x00, 0x2B, 0x27, 0xB3,
+        0xD9,
+    ];
+    const VT_LPSTR: u16 = 0x001E;
+    // title value: NUL-terminated ASCII bytes.
+    let mut title_bytes: Vec<u8> = title_ascii.as_bytes().to_vec();
+    title_bytes.push(0);
+    // Typed-value bytes: VT tag (4) + char count (4) + bytes + 4-byte pad.
+    let mut typed_value = Vec::new();
+    typed_value.extend_from_slice(&(VT_LPSTR as u32).to_le_bytes());
+    typed_value.extend_from_slice(&(title_bytes.len() as u32).to_le_bytes());
+    typed_value.extend_from_slice(&title_bytes);
+    while !typed_value.len().is_multiple_of(4) {
+        typed_value.push(0);
+    }
+
+    // Section layout: 8-byte header + 1 prop id/offset entry (8 bytes) + data.
+    let table_size: usize = 8 + 8;
+    let prop_offset = table_size as u32;
+    let section_size = (table_size + typed_value.len()) as u32;
+    let mut section = Vec::new();
+    section.extend_from_slice(&section_size.to_le_bytes());
+    section.extend_from_slice(&1u32.to_le_bytes()); // num_props
+    section.extend_from_slice(&2u32.to_le_bytes()); // PID_TITLE = 2
+    section.extend_from_slice(&prop_offset.to_le_bytes());
+    section.extend_from_slice(&typed_value);
+
+    // Stream wrapper: 28-byte header + 1 section entry (20 bytes) + section.
+    let mut stream = Vec::new();
+    stream.extend_from_slice(&0xFFFEu16.to_le_bytes()); // byte order
+    stream.extend_from_slice(&0u16.to_le_bytes()); // version
+    stream.extend_from_slice(&0u32.to_le_bytes()); // system_id
+    stream.extend_from_slice(&[0u8; 16]); // class_id (nil)
+    stream.extend_from_slice(&1u32.to_le_bytes()); // num_sections
+    stream.extend_from_slice(&FMTID_SUMMARY);
+    stream.extend_from_slice(&48u32.to_le_bytes()); // section offset = 28 + 1*20
+    stream.extend_from_slice(&section);
+    stream
+}
+
+#[test]
+fn summary_updates_rewrite_title_end_to_end_through_pid_writer() {
+    // Add a /\x05SummaryInformation stream to the fixture, then round-trip
+    // through PidWriter with a `summary_updates` plan and assert the new
+    // title is visible in the reparsed document.
+    let src = unique_tmp("summary-src");
+    let dst = unique_tmp("summary-dst");
+    build_fixture_cfb(&src);
+
+    {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&src)
+            .expect("open rw");
+        let mut cfb = ::cfb::CompoundFile::open(file).expect("open cfb");
+        let mut s = cfb
+            .create_stream("/\u{5}SummaryInformation")
+            .expect("create summary stream");
+        s.write_all(&minimal_summary_info_bytes("Original Title"))
+            .expect("write summary");
+        drop(s);
+        cfb.flush().expect("flush");
+    }
+
+    let parser = PidParser::new();
+    let pkg = parser.parse_package(&src).expect("parse");
+    assert_eq!(
+        pkg.parsed.summary.as_ref().and_then(|s| s.title.clone()),
+        Some("Original Title".into()),
+        "reader should pick up the pre-write title",
+    );
+
+    let mut summary_updates = BTreeMap::new();
+    summary_updates.insert("title".to_string(), "Rewritten by Phase 9l".to_string());
+    let plan = WritePlan {
+        metadata_updates: MetadataUpdates {
+            summary_updates,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    PidWriter::write_to(&pkg, &plan, &dst).expect("write");
+
+    let pkg_after = parser.parse_package(&dst).expect("reparse");
+    assert_eq!(
+        pkg_after
+            .parsed
+            .summary
+            .as_ref()
+            .and_then(|s| s.title.clone()),
+        Some("Rewritten by Phase 9l".into()),
+        "writer should have updated the property-set title",
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn summary_updates_unknown_key_fails_writer_with_clear_error() {
+    let src = unique_tmp("summary-bad-src");
+    let dst = unique_tmp("summary-bad-dst");
+    build_fixture_cfb(&src);
+    {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&src)
+            .expect("open rw");
+        let mut cfb = ::cfb::CompoundFile::open(file).expect("open cfb");
+        let mut s = cfb
+            .create_stream("/\u{5}SummaryInformation")
+            .expect("create summary stream");
+        s.write_all(&minimal_summary_info_bytes("whatever"))
+            .expect("write summary");
+        drop(s);
+        cfb.flush().expect("flush");
+    }
+
+    let parser = PidParser::new();
+    let pkg = parser.parse_package(&src).expect("parse");
+
+    let mut summary_updates = BTreeMap::new();
+    summary_updates.insert("made_up_key".to_string(), "x".to_string());
+    let plan = WritePlan {
+        metadata_updates: MetadataUpdates {
+            summary_updates,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let err = PidWriter::write_to(&pkg, &plan, &dst).expect_err("must reject");
+    let msg = format!("{err}");
+    assert!(msg.contains("unknown key"), "got: {msg}");
+    assert!(msg.contains("made_up_key"), "got: {msg}");
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}

@@ -2,6 +2,92 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-21
+
+### Phase 9l: SummaryInformation / DocumentSummaryInformation property-set writer
+
+`MetadataUpdates.summary_updates` 从 **parked placeholder** 变为**真正可
+编辑的 OLE 属性流接口**，补全 Writer 层最后一个"骗用户"的 API。
+
+从 v0.4.2 起，apply-plan JSON 里填 `summary_updates` 字段会被静默吞掉；
+从 v0.5.0 起，会真实写入 `/\x05SummaryInformation` /
+`/\x05DocumentSummaryInformation` 的 OLE property-set。这是**对外语义
+变化**（向后兼容的 Rust API，但 JSON plan consumer 的行为改变），因此
+走 **minor bump**（0.4.x → 0.5.x 开启新周期："Writer 全功能可编辑"）。
+
+### Added
+
+- `src/writer/summary_write.rs` **新模块**：
+  - `SummaryPropertySet` 内部类型，parse + serialize OLE property-set
+    stream（[MS-OLEPS] 规范），支持 byte-level round-trip。
+  - `apply_summary_updates(pkg, updates)` 公共入口，按符号名 key 定位
+    PROPID + 目标 stream，仅编辑 `VT_LPSTR` / `VT_LPWSTR` 字符串型
+    property；未触及的 property（含 `VT_FILETIME` / `VT_I4`）字节级
+    保留。
+  - 支持 key 列表（11 条）：
+    - SummaryInformation 段：`title`, `subject`, `author`,
+      `keywords`, `comments`, `template`, `last_author`,
+      `rev_number`, `app_name`
+    - DocumentSummaryInformation 段：`category`, `manager`, `company`
+  - 清晰的错误分类（全部包装为 `PidError::ParseFailure { context:
+    "summary writer", ... }` 不破坏 public error surface）：
+    - unknown key（列出已知 key 表）
+    - 目标 stream 不存在（提示用 `stream_replacements` 塞）
+    - 未支持的 source VT 类型（避开 FILETIME / I4 写入）
+    - 非 ASCII 写入 `VT_LPSTR` 字段（提示 Phase 9m 会支持 UTF-8）
+  - 常量 `SUMMARY_INFO_PATH` / `DOC_SUMMARY_PATH` 和标准 FMTID
+    (`F29F85E0-4FF9-1068-AB91-08002B27B3D9` /
+    `D5CDD502-2E9C-101B-9397-08002B2CF9AE`) 内联定义。
+
+### Changed
+
+- `writer::plan::MetadataUpdates.summary_updates` 文档从 "Placeholder —
+  silently ignored" 更新为"实际生效"，列出 11 个可用 key 和 encoding
+  规则。字段签名（`BTreeMap<String, String>`）不变，现有 Rust consumer
+  零破坏。
+- `writer::metadata_write::apply_metadata_updates` 在 drawing / general
+  XML 写入之后调用 `apply_summary_updates`。空 map = 0 开销。
+- `writer/mod.rs` 模块 doc 去掉"no SummaryInformation property-set
+  writer"的 caveat。
+
+### Tests
+
+lib (unit)：
+- `writer::summary_write::tests::parse_then_serialize_is_byte_identical_for_untouched_stream`
+- `writer::summary_write::tests::apply_summary_updates_passthrough_empty_map_touches_nothing`
+- `writer::summary_write::tests::apply_summary_updates_edits_title_and_preserves_filetime`
+  （关键断言：FILETIME prop 改写其他 prop 后 byte-for-byte 不动）
+- `writer::summary_write::tests::apply_summary_updates_rejects_unknown_key`
+- `writer::summary_write::tests::apply_summary_updates_adds_new_string_prop_when_absent`
+  （新 prop 默认 `VT_LPWSTR`）
+- `writer::summary_write::tests::apply_summary_updates_returns_stream_not_found_when_missing`
+- `writer::summary_write::tests::encode_lpstr_rejects_non_ascii`
+- `writer::summary_write::tests::encode_lpwstr_accepts_unicode`
+
+集成（`tests/writer_roundtrip.rs`）：
+- `summary_updates_rewrite_title_end_to_end_through_pid_writer`：完整
+  链路 `PidWriter::write_to → CFB → parse → SummaryInfo.title`。
+- `summary_updates_unknown_key_fails_writer_with_clear_error`：错误传
+  播到 Writer top-level。
+
+全套 261 → **271 tests pass**（lib 185 → 193 +8；writer_roundtrip 9 → 11 +2）。
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-9l-summary-info-writer.md`：本轮 dev plan
+  （scope / 关键设计决策 / 5-7 hr W1-W6 步骤 / 风险缓解表 / 回滚策略 /
+  Next 候选）。
+
+### Known limitations (tracked for future phases)
+
+- `VT_LPSTR` 字段不接受非 ASCII 值（Phase 9m 计划支持 UTF-8 / CP1252）。
+- DocumentSummaryInformation 第二个 section（user-defined dictionary）
+  不编辑；section 2..N 的原字节 verbatim 透传（Phase 9n）。
+- 不支持删除 property（`summary_deletions` 字段挂位，future minor bump）。
+- 不支持从零新建 `/\x05SummaryInformation` stream；源 package 必须
+  已有此 stream，否则返回 `stream does not exist` 错误（由用户先走
+  `stream_replacements` seed）。
+
 ## [0.4.2] - 2026-04-21
 
 ### Phase 9k: Ship `--apply-plan` + P3 cleanups + lint/fmt restore

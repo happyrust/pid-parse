@@ -1,21 +1,27 @@
 //! Apply [`MetadataUpdates`] to an in-memory [`PidPackage`] by overwriting
 //! the targeted streams' raw bytes.
 //!
-//! The first release only handles `/TaggedTxtData/Drawing` and
-//! `/TaggedTxtData/General` — i.e. the XML metadata streams parsed by
-//! `streams::tagged_text`. `summary_updates` is intentionally a no-op until
-//! we commit to a full `SummaryInformation` property-set writer.
+//! Handles three update channels:
+//!
+//! 1. `/TaggedTxtData/Drawing` XML body (`drawing_xml`)
+//! 2. `/TaggedTxtData/General` XML body (`general_xml`)
+//! 3. Phase 9l (v0.5.0+): `SummaryInformation` and
+//!    `DocumentSummaryInformation` OLE property-set edits via
+//!    `summary_updates` — string properties only. See
+//!    [`crate::writer::summary_write`] for the key table.
 use crate::error::PidError;
 use crate::package::PidPackage;
 use crate::writer::plan::MetadataUpdates;
+use crate::writer::summary_write;
 
 const DRAWING_PATH: &str = "/TaggedTxtData/Drawing";
 const GENERAL_PATH: &str = "/TaggedTxtData/General";
 
-/// Overwrite `/TaggedTxtData/Drawing` and `/TaggedTxtData/General` with the
-/// byte content of the provided XML strings. Returns an error if the caller
-/// provided an empty XML body (guarded because an empty XML would silently
-/// break downstream `quick-xml` parsing).
+/// Overwrite `/TaggedTxtData/Drawing` / `/TaggedTxtData/General` with the
+/// provided XML bodies and apply `summary_updates` to the OLE property-set
+/// streams. Empty XML bodies are rejected to avoid producing a
+/// `quick-xml`-unparseable stream. An empty `summary_updates` map is a
+/// free no-op.
 pub fn apply_metadata_updates(
     package: &mut PidPackage,
     updates: &MetadataUpdates,
@@ -28,9 +34,7 @@ pub fn apply_metadata_updates(
         validate_xml_not_empty(xml, GENERAL_PATH)?;
         package.replace_stream(GENERAL_PATH, xml.as_bytes().to_vec());
     }
-    // `summary_updates` is parked until we ship a dedicated property-set
-    // writer. Silently ignored by design; the field is kept so callers can
-    // start building plans now without breaking API later.
+    summary_write::apply_summary_updates(package, &updates.summary_updates)?;
     Ok(())
 }
 

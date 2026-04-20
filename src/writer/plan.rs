@@ -65,9 +65,15 @@ pub struct MetadataUpdates {
     /// New XML body for `/TaggedTxtData/General`. `None` = untouched.
     #[serde(default)]
     pub general_xml: Option<String>,
-    /// Placeholder for future `SummaryInformation` property-set updates.
-    /// **Not implemented in the current release** — any value given here
-    /// is silently ignored.
+    /// OLE property-set edits for `/\x05SummaryInformation` and
+    /// `/\x05DocumentSummaryInformation`. Keys are symbolic property names
+    /// (`"title"`, `"author"`, `"subject"`, `"keywords"`, `"comments"`,
+    /// `"template"`, `"last_author"`, `"rev_number"`, `"app_name"`,
+    /// `"category"`, `"manager"`, `"company"`). Values are plain Rust
+    /// strings; encoding (`VT_LPSTR` vs `VT_LPWSTR`) is preserved from the
+    /// source property or defaulted to `VT_LPWSTR` for newly added ones.
+    /// See [`crate::writer::summary_write`] for the full key table and
+    /// error semantics. Empty map = free no-op.
     #[serde(default)]
     pub summary_updates: BTreeMap<String, String>,
 }
