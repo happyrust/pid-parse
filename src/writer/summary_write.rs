@@ -25,8 +25,8 @@ use crate::error::PidError;
 use crate::package::PidPackage;
 use std::collections::BTreeMap;
 
-pub(crate) const SUMMARY_INFO_PATH: &str = "/\u{5}SummaryInformation";
-pub(crate) const DOC_SUMMARY_PATH: &str = "/\u{5}DocumentSummaryInformation";
+pub const SUMMARY_INFO_PATH: &str = "/\u{5}SummaryInformation";
+pub const DOC_SUMMARY_PATH: &str = "/\u{5}DocumentSummaryInformation";
 
 /// Symbolic key → PROPID mapping for `/\x05SummaryInformation` section.
 ///

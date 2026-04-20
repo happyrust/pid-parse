@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-21
+
+### Phase 9m: `--set-summary` CLI flag + real-file integration
+
+Corner-case convenience pass on top of Phase 9l (v0.5.0) — turns the
+SummaryInformation writer from "编辑需要手写 plan.json" into "可用单个
+命令行 flag 直接改"。
+
+### Added
+
+- `pid_writer_validate --set-summary KEY=VALUE`：特化便捷 flag，对称于
+  `--edit` (drawing XML) / `--general-edit` (general XML)。多次 `--set-summary`
+  会累加到同一个 summary map；后传覆盖先传。支持所有 Phase 9l
+  KEY_TO_*_PROPID 表里的 11 个 key。
+- `run_validate` 函数签名新增 `summary_edits: &BTreeMap<String, String>`
+  参数（binary 专用 public API；CLI 集成测试可直接传；lib consumer 不受
+  影响）。
+- `tests/writer_validate_cli.rs` 4 条新集成测试：
+  - `validate_set_summary_single_key_rewrites_title`
+  - `validate_set_summary_multiple_keys_accumulate`（title / author /
+    subject 一次调用累加）
+  - `validate_set_summary_conflicts_with_apply_plan_exits_one`
+  - `validate_set_summary_unknown_key_exits_two_with_clear_error`
+- `tests/writer_real_files.rs` 1 条 conditional 测试
+  `real_file_set_summary_title_preserves_other_streams`：当
+  `test-file/DWG-0201GP06-01.pid` 存在并含 `/\x05SummaryInformation` 时
+  验证真实 `.pid` 端到端 → 写 title → parse → 断言只有 summary 流变，
+  其他所有流 byte-identical；fixture 缺失或无 summary stream 时 skip。
+
+### Changed
+
+- `--apply-plan` 与 `--set-summary` 互斥：同时传返回 usage error（exit 1），
+  stderr 含 `--set-summary` 字样。延续 Phase 9b 的"declarative plan 与
+  特化 flag 互斥"设计。
+- `compare_packages` / `collect_edited_paths_from_plan` 都扩展到把
+  `/\x05SummaryInformation` 和 `/\x05DocumentSummaryInformation` 纳入
+  "可能被编辑"的 stream 集合，保证 `edited` vs `matched` 计数在
+  summary 改动时不误报 `mismatched`。
+- `docs/writer-quickstart.md` 5.6 节追加 CLI 用法示例。
+
+### API surface
+
+- `pid_parse::writer::summary_write::SUMMARY_INFO_PATH` /
+  `DOC_SUMMARY_PATH` 从 `pub(crate)` 提升为 `pub`，让 binary 和外部
+  consumer 能引用同一组常量而不用硬编码字节。
+
+### Tests
+
+全套 271 → **276 tests pass**（writer_real_files 8 → 9 +1；
+writer_validate_cli 13 → 17 +4）。`cargo fmt --check` / `cargo clippy
+--all-targets -D warnings` 双零。
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-9m-summary-cli-integration.md`：本轮 dev plan。
+- `docs/writer-quickstart.md` 5.6 节："编辑 SummaryInformation"新增
+  `--set-summary` CLI 用例块。
+
 ## [0.5.0] - 2026-04-21
 
 ### Phase 9l: SummaryInformation / DocumentSummaryInformation property-set writer

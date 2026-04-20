@@ -503,3 +503,226 @@ fn validate_apply_plan_conflicts_with_edit_exits_one() {
     let _ = std::fs::remove_file(&src);
     let _ = std::fs::remove_file(&plan);
 }
+
+// ---------------------------------------------------------------------
+// Phase 9m: --set-summary integration tests.
+// ---------------------------------------------------------------------
+
+const SUMMARY_PATH: &str = "/\u{5}SummaryInformation";
+
+/// Build a minimal valid `/\u{5}SummaryInformation` property-set stream
+/// carrying a single VT_LPSTR `title` property. Mirrors the helper in
+/// `writer_roundtrip.rs`; kept local to this file so the integration
+/// layer does not take a test-fixture dependency on another test file.
+fn minimal_summary_info_bytes(title_ascii: &str) -> Vec<u8> {
+    const FMTID_SUMMARY: [u8; 16] = [
+        0xE0, 0x85, 0x9F, 0xF2, 0xF9, 0x4F, 0x68, 0x10, 0xAB, 0x91, 0x08, 0x00, 0x2B, 0x27, 0xB3,
+        0xD9,
+    ];
+    const VT_LPSTR: u16 = 0x001E;
+    let mut title_bytes = title_ascii.as_bytes().to_vec();
+    title_bytes.push(0);
+    let mut typed_value = Vec::new();
+    typed_value.extend_from_slice(&(VT_LPSTR as u32).to_le_bytes());
+    typed_value.extend_from_slice(&(title_bytes.len() as u32).to_le_bytes());
+    typed_value.extend_from_slice(&title_bytes);
+    while !typed_value.len().is_multiple_of(4) {
+        typed_value.push(0);
+    }
+    let table_size: usize = 8 + 8;
+    let prop_offset = table_size as u32;
+    let section_size = (table_size + typed_value.len()) as u32;
+    let mut section = Vec::new();
+    section.extend_from_slice(&section_size.to_le_bytes());
+    section.extend_from_slice(&1u32.to_le_bytes());
+    section.extend_from_slice(&2u32.to_le_bytes()); // PID_TITLE
+    section.extend_from_slice(&prop_offset.to_le_bytes());
+    section.extend_from_slice(&typed_value);
+
+    let mut stream = Vec::new();
+    stream.extend_from_slice(&0xFFFEu16.to_le_bytes());
+    stream.extend_from_slice(&0u16.to_le_bytes());
+    stream.extend_from_slice(&0u32.to_le_bytes());
+    stream.extend_from_slice(&[0u8; 16]);
+    stream.extend_from_slice(&1u32.to_le_bytes());
+    stream.extend_from_slice(&FMTID_SUMMARY);
+    stream.extend_from_slice(&48u32.to_le_bytes());
+    stream.extend_from_slice(&section);
+    stream
+}
+
+/// Same as [`build_fixture`] but additionally inserts a
+/// `/\u{5}SummaryInformation` stream with the given ASCII title.
+fn build_fixture_with_summary(path: &PathBuf, title: &str) {
+    build_fixture(path);
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .expect("open rw");
+    let mut cfb = ::cfb::CompoundFile::open(file).expect("open cfb");
+    let mut s = cfb.create_stream(SUMMARY_PATH).expect("create summary");
+    s.write_all(&minimal_summary_info_bytes(title))
+        .expect("write summary");
+    drop(s);
+    cfb.flush().expect("flush");
+}
+
+/// Given a path to a round-trip output .pid, open and return the parsed
+/// `SummaryInfo.title` (or `None` if the stream is missing).
+fn read_title_from_pid(pid_path: &std::path::Path) -> Option<String> {
+    let parser = pid_parse::PidParser::new();
+    let pkg = parser.parse_package(pid_path).expect("reparse dst");
+    pkg.parsed.summary.as_ref().and_then(|s| s.title.clone())
+}
+
+#[test]
+fn validate_set_summary_single_key_rewrites_title() {
+    let src = unique_temp("set-summary-src");
+    let dst = unique_temp("set-summary-dst");
+    build_fixture_with_summary(&src, "Original Title");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--set-summary", "title=CLI-Rewritten"])
+        .output()
+        .expect("spawn --set-summary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "expected exit 0; got {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+    assert_eq!(
+        read_title_from_pid(&dst).as_deref(),
+        Some("CLI-Rewritten"),
+        "output .pid's title must reflect the --set-summary edit",
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn validate_set_summary_multiple_keys_accumulate() {
+    let src = unique_temp("set-summary-multi-src");
+    let dst = unique_temp("set-summary-multi-dst");
+    build_fixture_with_summary(&src, "OldTitle");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--set-summary", "title=T1"])
+        .args(["--set-summary", "author=Alice"])
+        .args(["--set-summary", "subject=Review"])
+        .output()
+        .expect("spawn --set-summary x3");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "expected exit 0; got {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+    // Title must be "T1" (the source title was "OldTitle" — rewrite
+    // happened through our CLI).
+    assert_eq!(
+        read_title_from_pid(&dst).as_deref(),
+        Some("T1"),
+        "title should have been replaced to T1",
+    );
+    // The reader folds author/subject/title into `SummaryInfo.raw` under
+    // short symbolic names (e.g. "Author", "Subject", "Title" — see
+    // `src/streams/summary.rs::summary_prop_name`). Probe via that
+    // back-door so we don't have to re-parse the property-set manually.
+    let parser = pid_parse::PidParser::new();
+    let pkg = parser.parse_package(&dst).expect("reparse");
+    let raw = &pkg.parsed.summary.as_ref().expect("summary").raw;
+    assert_eq!(
+        raw.get("Author").map(String::as_str),
+        Some("Alice"),
+        "author should have been appended; raw map: {raw:?}",
+    );
+    assert_eq!(
+        raw.get("Subject").map(String::as_str),
+        Some("Review"),
+        "subject should have been appended; raw map: {raw:?}",
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn validate_set_summary_conflicts_with_apply_plan_exits_one() {
+    let src = unique_temp("set-summary-conflict-src");
+    let plan = plan_path("conflict-set-summary");
+    build_fixture_with_summary(&src, "OldTitle");
+    write_plan(&plan, "{}");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--apply-plan".as_ref(), plan.as_os_str()])
+        .args(["--set-summary", "title=X"])
+        .output()
+        .expect("spawn --apply-plan+--set-summary");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "conflicting flags should be a usage error (exit 1); got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot be combined"),
+        "stderr must explain the conflict; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--set-summary"),
+        "conflict message should mention --set-summary; got: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&plan);
+}
+
+#[test]
+fn validate_set_summary_unknown_key_exits_two_with_clear_error() {
+    let src = unique_temp("set-summary-unknown-src");
+    let dst = unique_temp("set-summary-unknown-dst");
+    build_fixture_with_summary(&src, "OldTitle");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--set-summary", "not_a_real_key=whatever"])
+        .output()
+        .expect("spawn --set-summary unknown");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "writer-layer error should exit 2; got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown key"),
+        "stderr must mention the unknown-key error; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("not_a_real_key"),
+        "stderr must quote the offending key; got: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}

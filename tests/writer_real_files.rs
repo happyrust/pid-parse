@@ -340,3 +340,75 @@ fn real_file_set_drawing_number_rewrites_only_the_target_tag() {
 
     let _ = std::fs::remove_file(&dst);
 }
+
+#[test]
+fn real_file_set_summary_title_preserves_other_streams() {
+    // Phase 9m: verify that a summary_updates plan against a real
+    // SmartPlant `.pid` fixture (when available) rewrites only the
+    // `/\u{5}SummaryInformation` stream, with every other stream
+    // byte-identical and the new title readable from the round-tripped
+    // file.
+    let fixture = fixture_path("DWG-0201GP06-01.pid");
+    if !fixture.exists() {
+        eprintln!("skipping: test fixture not found at {}", fixture.display());
+        return;
+    }
+
+    let parser = PidParser::new();
+    let pkg_in = parser.parse_package(&fixture).expect("parse");
+
+    // The fixture may or may not already have a `/\u{5}SummaryInformation`
+    // stream. If it doesn't, we can't exercise the writer here — seeding
+    // a fresh property-set from scratch is out of scope for Phase 9m (see
+    // plan Non-Goals / Known Limitations). Skip quietly so the real-file
+    // suite stays opt-in rather than flake-based.
+    if pkg_in.get_stream("/\u{5}SummaryInformation").is_none() {
+        eprintln!(
+            "skipping: fixture lacks /\\u0005SummaryInformation stream \
+             (Phase 9n will grow the seed-from-empty path)"
+        );
+        return;
+    }
+
+    let dst = tmp_output("set-summary-real");
+    let mut summary = std::collections::BTreeMap::new();
+    summary.insert("title".to_string(), "ROUND-TRIP-PHASE-9M".to_string());
+    let plan = WritePlan {
+        metadata_updates: MetadataUpdates {
+            summary_updates: summary,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    PidWriter::write_to(&pkg_in, &plan, &dst).expect("write");
+
+    let pkg_out = parser.parse_package(&dst).expect("reparse");
+    assert_eq!(
+        pkg_out
+            .parsed
+            .summary
+            .as_ref()
+            .and_then(|s| s.title.clone())
+            .as_deref(),
+        Some("ROUND-TRIP-PHASE-9M"),
+        "real-file title should reflect the summary_updates edit"
+    );
+
+    // Every stream other than /\u{5}SummaryInformation must be
+    // byte-identical (this is the Phase 9l byte-level fidelity contract
+    // exercised end-to-end on a real fixture).
+    for (path, raw_in) in pkg_in.streams.iter() {
+        if path == "/\u{5}SummaryInformation" {
+            continue;
+        }
+        let raw_out = pkg_out
+            .get_stream(path)
+            .unwrap_or_else(|| panic!("stream {path} missing in dst"));
+        assert_eq!(
+            raw_in.data, raw_out.data,
+            "stream {path} must be byte-identical after a summary-only edit"
+        );
+    }
+
+    let _ = std::fs::remove_file(&dst);
+}

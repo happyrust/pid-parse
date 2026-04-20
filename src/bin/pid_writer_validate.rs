@@ -20,7 +20,7 @@ use pid_parse::package::PidPackage;
 use pid_parse::writer::{PidWriter, WritePlan};
 use pid_parse::PidParser;
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -49,6 +49,10 @@ struct CliOptions {
     quiet: bool,
     max_diff_bytes: usize,
     edits: Vec<EditOp>,
+    /// Phase 9m: `--set-summary KEY=VALUE` edits, accumulated into the
+    /// writer's `MetadataUpdates.summary_updates` map. Empty = no summary
+    /// edits requested.
+    summary_edits: BTreeMap<String, String>,
     plan_path: Option<PathBuf>,
 }
 
@@ -155,6 +159,7 @@ fn main() {
             &options.out_spec.path,
             options.max_diff_bytes,
             &options.edits,
+            &options.summary_edits,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -188,9 +193,15 @@ fn print_usage() {
         "Usage: pid_writer_validate <input.pid> [--out <path>] [--keep] [--json] [--quiet]\n\
          \x20                       [--max-diff-bytes N]\n\
          \x20                       [--edit ATTR=VALUE]+ [--general-edit ELEMENT=VALUE]+\n\
+         \x20                       [--set-summary KEY=VALUE]+\n\
          \x20                       [--apply-plan <plan.json>]\n\n\
+         --set-summary edits `/\\x05SummaryInformation` or `/\\x05DocumentSummaryInformation`\n\
+         properties by symbolic key (title / author / subject / keywords / comments / template /\n\
+         last_author / rev_number / app_name / category / manager / company). Multiple\n\
+         occurrences accumulate; later keys override earlier ones.\n\n\
          --apply-plan reads a serialized WritePlan (see pid_parse::writer::plan) and\n\
-         applies it in a single pass. Cannot be combined with --edit / --general-edit."
+         applies it in a single pass. Cannot be combined with --edit / --general-edit /\n\
+         --set-summary."
     );
 }
 
@@ -203,6 +214,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut quiet = false;
     let mut max_diff_bytes = DEFAULT_MAX_DIFF_BYTES;
     let mut edits: Vec<EditOp> = Vec::new();
+    let mut summary_edits: BTreeMap<String, String> = BTreeMap::new();
     let mut plan_path: Option<PathBuf> = None;
 
     let mut i = 2;
@@ -250,6 +262,24 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 edits.push(parse_edit_op(value, EditKind::General)?);
                 i += 2;
             }
+            "--set-summary" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--set-summary requires KEY=VALUE".to_string())?;
+                let (key, val) = value
+                    .split_once('=')
+                    .ok_or_else(|| format!("--set-summary must be KEY=VALUE; got `{value}`"))?;
+                if key.is_empty() {
+                    return Err("--set-summary KEY must be non-empty".to_string());
+                }
+                // Note: we intentionally do NOT validate the key set here —
+                // the writer's `apply_summary_updates` maintains the canonical
+                // known-keys table and produces a uniform error listing all
+                // supported keys. Keeping CLI in sync with lib would be an
+                // untracked maintenance cost.
+                summary_edits.insert(key.to_string(), val.to_string());
+                i += 2;
+            }
             "--apply-plan" => {
                 let value = args
                     .get(i + 1)
@@ -261,9 +291,9 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         }
     }
 
-    if plan_path.is_some() && !edits.is_empty() {
+    if plan_path.is_some() && (!edits.is_empty() || !summary_edits.is_empty()) {
         return Err(
-            "--apply-plan cannot be combined with --edit / --general-edit (they describe mutually exclusive edit semantics)"
+            "--apply-plan cannot be combined with --edit / --general-edit / --set-summary (they describe mutually exclusive edit semantics)"
                 .to_string(),
         );
     }
@@ -289,6 +319,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         quiet,
         max_diff_bytes,
         edits,
+        summary_edits,
         plan_path,
     })
 }
@@ -340,13 +371,18 @@ pub fn run_validate(
     output: &Path,
     max_diff_bytes: usize,
     edits: &[EditOp],
+    summary_edits: &BTreeMap<String, String>,
 ) -> Result<ValidateReport, ValidateError> {
     let parser = PidParser::new();
     let original = parser
         .parse_package(input)
         .map_err(|e| ValidateError::SourceParse(e.to_string()))?;
 
-    let edited = apply_edits_to_package(&original, edits)?;
+    let mut edited = apply_edits_to_package(&original, edits)?;
+    if !summary_edits.is_empty() {
+        pid_parse::writer::summary_write::apply_summary_updates(&mut edited, summary_edits)
+            .map_err(|e| ValidateError::Edit(format!("--set-summary: {e}")))?;
+    }
 
     PidWriter::write_to(&edited, &WritePlan::default(), output)
         .map_err(|e| ValidateError::Write(e.to_string()))?;
@@ -355,7 +391,15 @@ pub fn run_validate(
         .parse_package(output)
         .map_err(|e| ValidateError::RoundtripParse(e.to_string()))?;
 
-    let report = compare_packages(input, output, &edited, &roundtrip, edits, max_diff_bytes);
+    let report = compare_packages(
+        input,
+        output,
+        &edited,
+        &roundtrip,
+        edits,
+        summary_edits,
+        max_diff_bytes,
+    );
     Ok(report)
 }
 
@@ -401,6 +445,7 @@ fn compare_packages(
     expected: &PidPackage,
     roundtrip: &PidPackage,
     edits: &[EditOp],
+    summary_edits: &BTreeMap<String, String>,
     max_diff_bytes: usize,
 ) -> ValidateReport {
     let src_keys: BTreeSet<&String> = expected.streams.keys().collect();
@@ -415,14 +460,25 @@ fn compare_packages(
         .map(|s| (*s).clone())
         .collect();
 
-    // A stream is "edited" if it's the target of at least one EditOp.
-    let edited_paths: BTreeSet<&str> = edits
+    // A stream is "edited" if it's the target of at least one EditOp or
+    // any `--set-summary` update. Phase 9m: we cannot tell statically
+    // which of the two summary streams (SummaryInformation /
+    // DocumentSummaryInformation) was touched, so conservatively mark
+    // both as edited whenever `summary_edits` is non-empty. Streams that
+    // were not actually rewritten will still round-trip byte-identically
+    // and thus fall into the `matched` bucket via the equality branch
+    // below — only ones really touched end up in `edited_count`.
+    let mut edited_paths: BTreeSet<&str> = edits
         .iter()
         .map(|op| match op.kind {
             EditKind::Drawing => DRAWING_PATH,
             EditKind::General => GENERAL_PATH,
         })
         .collect();
+    if !summary_edits.is_empty() {
+        edited_paths.insert(pid_parse::writer::summary_write::SUMMARY_INFO_PATH);
+        edited_paths.insert(pid_parse::writer::summary_write::DOC_SUMMARY_PATH);
+    }
 
     let mut matched = 0usize;
     let mut edited_count = 0usize;
@@ -545,6 +601,14 @@ fn collect_edited_paths_from_plan(plan: &WritePlan) -> BTreeSet<String> {
     }
     if plan.metadata_updates.general_xml.is_some() {
         set.insert(GENERAL_PATH.to_string());
+    }
+    if !plan.metadata_updates.summary_updates.is_empty() {
+        // Phase 9m: any summary_updates key could target either the
+        // SummaryInformation or DocumentSummaryInformation section. We
+        // conservatively mark both; streams not actually rewritten will
+        // still fall into the `matched` bucket on byte equality.
+        set.insert(pid_parse::writer::summary_write::SUMMARY_INFO_PATH.to_string());
+        set.insert(pid_parse::writer::summary_write::DOC_SUMMARY_PATH.to_string());
     }
     for repl in &plan.stream_replacements {
         set.insert(repl.path.clone());

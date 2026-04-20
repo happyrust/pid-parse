@@ -312,7 +312,26 @@ PidWriter::write_to(&pkg, &plan, "output.pid")?;
   字节复制（含 alignment padding），因此 `diff_packages` 只会在被编辑
   的 prop 位置报差异。
 
-### 已知局限（跟踪 Phase 9m+）
+### CLI 快捷方式（v0.5.1+）
+
+v0.5.1 起 `pid_writer_validate` 提供与 `--edit` / `--general-edit` 对称
+的 `--set-summary KEY=VALUE` 便利 flag。不用手写 plan.json 就能改一
+两个 summary 字段：
+
+```powershell
+pid_writer_validate input.pid --out output.pid `
+    --set-summary title="Q4 Pipeline Review" `
+    --set-summary author="Jane Engineer" `
+    --set-summary company="ACME Inc."
+```
+
+与 Rust API / apply-plan JSON 走完全相同的 `apply_summary_updates`
+路径 —— key 列表、类型规则、错误消息都一致。`--set-summary` 与
+`--edit` / `--general-edit` 可以在一次调用里混用（作用于不同流），
+但与 `--apply-plan` 互斥（declarative plan 自己带 summary_updates
+字段）。
+
+### 已知局限（跟踪 Phase 9n+）
 
 - `VT_LPSTR` 非 ASCII 不支持；
 - DocumentSummaryInformation 第二个 section（user-defined dictionary）
