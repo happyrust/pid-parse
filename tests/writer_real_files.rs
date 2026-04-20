@@ -1,7 +1,8 @@
 //! Smoke tests that round-trip a real `.pid` fixture through the writer.
 //! These tests only run when `test-file/<fixture>.pid` is present — the
 //! fixtures are gitignored so the rest of CI stays green without them.
-use pid_parse::{diff_packages, PidParser, PidWriter, WritePlan};
+use pid_parse::writer::xml_edit::replace_simple_tag_text;
+use pid_parse::{diff_packages, MetadataUpdates, PidParser, PidWriter, WritePlan};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -279,9 +280,6 @@ fn real_file_set_xml_tag_edits_template_only() {
 
 #[test]
 fn real_file_set_drawing_number_rewrites_only_the_target_tag() {
-    use pid_parse::writer::xml_edit::replace_simple_tag_text;
-    use pid_parse::{MetadataUpdates, WritePlan};
-
     let fixture = fixture_path("DWG-0201GP06-01.pid");
     if !fixture.exists() {
         eprintln!("skipping: test fixture not found at {}", fixture.display());

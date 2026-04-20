@@ -385,14 +385,10 @@ pub fn apply_edits_to_package(
             ))
         })?;
         let new_xml = match op.kind {
-            EditKind::Drawing => {
-                pid_parse::writer::set_drawing_attribute(xml, &op.key, &op.value)
-                    .map_err(|e| ValidateError::Edit(format!("--edit {}: {e}", op.key)))?
-            }
-            EditKind::General => {
-                pid_parse::writer::set_element_text(xml, &op.key, &op.value)
-                    .map_err(|e| ValidateError::Edit(format!("--general-edit {}: {e}", op.key)))?
-            }
+            EditKind::Drawing => pid_parse::writer::set_drawing_attribute(xml, &op.key, &op.value)
+                .map_err(|e| ValidateError::Edit(format!("--edit {}: {e}", op.key)))?,
+            EditKind::General => pid_parse::writer::set_element_text(xml, &op.key, &op.value)
+                .map_err(|e| ValidateError::Edit(format!("--general-edit {}: {e}", op.key)))?,
         };
         working.replace_stream(path, new_xml.into_bytes());
     }
@@ -457,9 +453,7 @@ fn compare_packages(
     }
     let mismatched = mismatches.len();
 
-    let ok = only_in_source.is_empty()
-        && only_in_roundtrip.is_empty()
-        && mismatches.is_empty();
+    let ok = only_in_source.is_empty() && only_in_roundtrip.is_empty() && mismatches.is_empty();
 
     ValidateReport {
         source_path: source_path.to_path_buf(),
@@ -481,9 +475,8 @@ fn compare_packages(
 /// Load and deserialize a JSON [`WritePlan`] from disk. Errors map to
 /// [`ValidateError::PlanLoad`] with a human-readable reason.
 pub fn load_plan(path: &Path) -> Result<WritePlan, ValidateError> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        ValidateError::PlanLoad(format!("reading {}: {e}", path.display()))
-    })?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| ValidateError::PlanLoad(format!("reading {}: {e}", path.display())))?;
     serde_json::from_str::<WritePlan>(&content).map_err(|e| {
         ValidateError::PlanLoad(format!("parsing {} as WritePlan JSON: {e}", path.display()))
     })
@@ -510,8 +503,11 @@ pub fn run_validate_with_plan(
     // then stream replacements, then sheet patches. Keep these in sync with
     // `pid_parse::writer::PidWriter::write_to` if that pipeline changes.
     let mut expected = original.clone();
-    pid_parse::writer::metadata_write::apply_metadata_updates(&mut expected, &plan.metadata_updates)
-        .map_err(|e| ValidateError::Edit(format!("metadata_updates: {e}")))?;
+    pid_parse::writer::metadata_write::apply_metadata_updates(
+        &mut expected,
+        &plan.metadata_updates,
+    )
+    .map_err(|e| ValidateError::Edit(format!("metadata_updates: {e}")))?;
     for repl in &plan.stream_replacements {
         expected.replace_stream(repl.path.clone(), repl.new_data.clone());
     }
@@ -570,9 +566,14 @@ fn compare_with_edited_paths(
     let src_keys: BTreeSet<&String> = expected.streams.keys().collect();
     let dst_keys: BTreeSet<&String> = roundtrip.streams.keys().collect();
 
-    let only_in_source: Vec<String> = src_keys.difference(&dst_keys).map(|s| (*s).clone()).collect();
-    let only_in_roundtrip: Vec<String> =
-        dst_keys.difference(&src_keys).map(|s| (*s).clone()).collect();
+    let only_in_source: Vec<String> = src_keys
+        .difference(&dst_keys)
+        .map(|s| (*s).clone())
+        .collect();
+    let only_in_roundtrip: Vec<String> = dst_keys
+        .difference(&src_keys)
+        .map(|s| (*s).clone())
+        .collect();
 
     let mut matched = 0usize;
     let mut edited_count = 0usize;
@@ -603,9 +604,7 @@ fn compare_with_edited_paths(
     }
     let mismatched = mismatches.len();
 
-    let ok = only_in_source.is_empty()
-        && only_in_roundtrip.is_empty()
-        && mismatches.is_empty();
+    let ok = only_in_source.is_empty() && only_in_roundtrip.is_empty() && mismatches.is_empty();
 
     ValidateReport {
         source_path: source_path.to_path_buf(),

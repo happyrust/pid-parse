@@ -60,7 +60,11 @@ pub fn build_layout_model(doc: &PidDocument) -> Option<PidLayoutModel> {
         .drawing_meta
         .as_ref()
         .and_then(|meta| meta.drawing_number.clone())
-        .or_else(|| doc.summary.as_ref().and_then(|summary| summary.title.clone()))
+        .or_else(|| {
+            doc.summary
+                .as_ref()
+                .and_then(|summary| summary.title.clone())
+        })
         .unwrap_or_else(|| "Smart P&ID Import".to_string());
     layout.texts.push(PidLayoutText {
         layout_id: "title".into(),
@@ -75,7 +79,11 @@ pub fn build_layout_model(doc: &PidDocument) -> Option<PidLayoutModel> {
         if let Some(anchor) = positions.get(&object.drawing_id) {
             let graphic_oid = graphic_oid_by_drawing.get(&object.drawing_id).copied();
             let (symbol_name, symbol_path) = infer_symbol_identity(object, &symbol_hints);
-            let bounds = Some(bounds_for_item(anchor, object.item_type.as_str(), symbol_name.as_deref()));
+            let bounds = Some(bounds_for_item(
+                anchor,
+                object.item_type.as_str(),
+                symbol_name.as_deref(),
+            ));
             layout.items.push(PidLayoutItem {
                 layout_id: format!("item:{}", object.drawing_id),
                 drawing_id: Some(object.drawing_id.clone()),
@@ -116,7 +124,8 @@ pub fn build_layout_model(doc: &PidDocument) -> Option<PidLayoutModel> {
         let Some(target_id) = relation.target_drawing_id.as_ref() else {
             continue;
         };
-        let (Some(source), Some(target)) = (positions.get(source_id), positions.get(target_id)) else {
+        let (Some(source), Some(target)) = (positions.get(source_id), positions.get(target_id))
+        else {
             continue;
         };
         layout.segments.push(PidLayoutSegment {
@@ -195,10 +204,11 @@ fn representation_graphic_oids(graph: &ObjectGraph) -> BTreeMap<String, u32> {
 
 fn parse_u32(value: &str) -> Option<u32> {
     let trimmed = value.trim();
-    trimmed
-        .parse::<u32>()
-        .ok()
-        .or_else(|| trimmed.strip_prefix("0x").and_then(|hex| u32::from_str_radix(hex, 16).ok()))
+    trimmed.parse::<u32>().ok().or_else(|| {
+        trimmed
+            .strip_prefix("0x")
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+    })
 }
 
 fn is_primary_layout_object(object: &PidObject) -> bool {
@@ -208,8 +218,12 @@ fn is_primary_layout_object(object: &PidObject) -> bool {
     )
 }
 
-fn collect_physical_edges(graph: &ObjectGraph, primary_ids: &BTreeSet<String>) -> Vec<PidRelationship> {
-    graph.relationships
+fn collect_physical_edges(
+    graph: &ObjectGraph,
+    primary_ids: &BTreeSet<String>,
+) -> Vec<PidRelationship> {
+    graph
+        .relationships
         .iter()
         .filter(|relationship| {
             let source = relationship.source_drawing_id.as_ref();
@@ -244,8 +258,14 @@ fn build_adjacency(edges: &[PidRelationship]) -> BTreeMap<String, Vec<String>> {
         ) else {
             continue;
         };
-        adjacency.entry(source.clone()).or_default().push(target.clone());
-        adjacency.entry(target.clone()).or_default().push(source.clone());
+        adjacency
+            .entry(source.clone())
+            .or_default()
+            .push(target.clone());
+        adjacency
+            .entry(target.clone())
+            .or_default()
+            .push(source.clone());
     }
     for neighbours in adjacency.values_mut() {
         neighbours.sort();
@@ -266,8 +286,14 @@ fn sorted_primary_roots(
         .map(|object| object.drawing_id.clone())
         .collect();
     roots.sort_by(|left, right| {
-        let left_object = graph.by_drawing_id.get(left).and_then(|index| graph.objects.get(*index));
-        let right_object = graph.by_drawing_id.get(right).and_then(|index| graph.objects.get(*index));
+        let left_object = graph
+            .by_drawing_id
+            .get(left)
+            .and_then(|index| graph.objects.get(*index));
+        let right_object = graph
+            .by_drawing_id
+            .get(right)
+            .and_then(|index| graph.objects.get(*index));
         object_priority(left_object)
             .cmp(&object_priority(right_object))
             .then_with(|| {
@@ -373,7 +399,11 @@ fn object_priority(object: Option<&PidObject>) -> usize {
         "PIDPipeline" | "PipeRun" => 0,
         "PIDPipingConnector" | "PIDNozzle" | "Nozzle" | "PIDPipingPort" | "PIDSignalPort" => 1,
         "PIDPipingBranchPoint" | "PIDBranchPoint" | "PIDProcessPoint" => 2,
-        "PIDSignalConnector" | "OPC" | "Instrument" | "PIDInstrument" | "PIDControlSystemFunction" => 3,
+        "PIDSignalConnector"
+        | "OPC"
+        | "Instrument"
+        | "PIDInstrument"
+        | "PIDControlSystemFunction" => 3,
         "PIDProcessVessel" | "Equipment" | "PIDEquipment" => 4,
         _ => 5,
     }
@@ -409,11 +439,19 @@ fn choose_object_label(object: &PidObject) -> String {
         "DisplayedText",
     ];
     for key in keys {
-        if let Some(value) = object.extra.get(key).filter(|value| !value.trim().is_empty()) {
+        if let Some(value) = object
+            .extra
+            .get(key)
+            .filter(|value| !value.trim().is_empty())
+        {
             return value.clone();
         }
     }
-    if let Some(model_id) = object.model_id.as_ref().filter(|value| !value.trim().is_empty()) {
+    if let Some(model_id) = object
+        .model_id
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
         return model_id.clone();
     }
     object.item_type.clone()
@@ -428,9 +466,9 @@ fn infer_symbol_identity(
         .values()
         .find_map(|value| extract_symbol_path(value));
     let symbol_name = symbol_name_for_type(object.item_type.as_str()).or_else(|| {
-        direct_symbol_path
-            .as_ref()
-            .and_then(|path| infer_semantic_from_symbol_hint(None, path).map(|semantic| semantic.to_string()))
+        direct_symbol_path.as_ref().and_then(|path| {
+            infer_semantic_from_symbol_hint(None, path).map(|semantic| semantic.to_string())
+        })
     });
     let symbol_path = direct_symbol_path.or_else(|| {
         symbol_name
@@ -501,7 +539,12 @@ fn representative_symbol_hints(doc: &PidDocument) -> BTreeMap<String, String> {
             let replace = candidates
                 .get(semantic)
                 .map(|existing| {
-                    should_replace_representative(existing.0, &existing.1, candidate.0, &candidate.1)
+                    should_replace_representative(
+                        existing.0,
+                        &existing.1,
+                        candidate.0,
+                        &candidate.1,
+                    )
                 })
                 .unwrap_or(true);
             if replace {
@@ -515,8 +558,7 @@ fn representative_symbol_hints(doc: &PidDocument) -> BTreeMap<String, String> {
             let Some(path) = site.symbol_path.as_ref() else {
                 continue;
             };
-            let Some(semantic) =
-                infer_semantic_from_symbol_hint(site.symbol_name.as_deref(), path)
+            let Some(semantic) = infer_semantic_from_symbol_hint(site.symbol_name.as_deref(), path)
             else {
                 continue;
             };
@@ -546,7 +588,17 @@ fn representative_symbol_hints(doc: &PidDocument) -> BTreeMap<String, String> {
 ///
 /// Add new synonyms here (PR welcome) to support localized symbol libraries.
 const SEMANTIC_KEYWORDS: &[(&str, &[&str])] = &[
-    ("OffPageConnector", &["off-drawing", "off drawing", "opc", "接续符", "页间连接", "跨页"]),
+    (
+        "OffPageConnector",
+        &[
+            "off-drawing",
+            "off drawing",
+            "opc",
+            "接续符",
+            "页间连接",
+            "跨页",
+        ],
+    ),
     ("Nozzle", &["nozzle", "喷嘴", "管嘴"]),
     (
         "Instrument",
@@ -560,7 +612,10 @@ const SEMANTIC_KEYWORDS: &[(&str, &[&str])] = &[
             "控制",
         ],
     ),
-    ("Vessel", &["vessel", "tank", "drum", "容器", "罐", "储罐", "塔"]),
+    (
+        "Vessel",
+        &["vessel", "tank", "drum", "容器", "罐", "储罐", "塔"],
+    ),
     ("Note", &["note", "annotation", "标注", "注释"]),
     (
         "PipingComponent",
@@ -579,9 +634,9 @@ fn infer_semantic_from_symbol_hint(
     if let Some(name) = symbol_name {
         haystack.push(' ');
         haystack.push_str(&name.to_ascii_lowercase());
-    } else if let Some(stem) = Path::new(symbol_path).file_stem() {
+    } else if let Some(stem) = file_stem_cross_platform(symbol_path) {
         haystack.push(' ');
-        haystack.push_str(&stem.to_string_lossy().to_ascii_lowercase());
+        haystack.push_str(&stem.to_ascii_lowercase());
     }
 
     for (tag, keywords) in SEMANTIC_KEYWORDS {
@@ -590,6 +645,28 @@ fn infer_semantic_from_symbol_hint(
         }
     }
     None
+}
+
+/// Extract the file-stem component of a symbol path in a platform-independent
+/// way. SmartPlant symbol paths are usually Windows UNC strings (e.g.
+/// `\\srv\sym\管件\球阀.sym`); on Linux `Path::new` does not recognize `\\`
+/// as a separator and would return the full path as a single "file name".
+/// Normalizing `\\` to `/` before feeding `Path` restores parity.
+///
+/// Returns the stem as an owned `String` because `Path::file_stem`'s lifetime
+/// is tied to an intermediate normalized buffer when any backslash was
+/// rewritten.
+fn file_stem_cross_platform(symbol_path: &str) -> Option<String> {
+    if symbol_path.contains('\\') {
+        let normalized = symbol_path.replace('\\', "/");
+        Path::new(&normalized)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+    } else {
+        Path::new(symbol_path)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+    }
 }
 
 fn bounds_for_item(anchor: &[f64; 2], kind: &str, symbol_name: Option<&str>) -> [f64; 4] {
@@ -624,103 +701,114 @@ mod tests {
 
     #[test]
     fn build_layout_model_places_connected_objects_and_falls_back_auxiliary_records() {
-        let mut doc = PidDocument::default();
-        doc.object_graph = Some(ObjectGraph {
-            drawing_no: Some("DWG-TEST".into()),
-            project_number: Some("P-01".into()),
-            objects: vec![
-                PidObject {
-                    drawing_id: "PIPE".into(),
-                    item_type: "PIDPipeline".into(),
-                    drawing_item_type: Some("IDrawingItem".into()),
-                    model_id: Some("LINE-001".into()),
-                    extra: BTreeMap::from([("PipelineName".into(), "LINE-001".into())]),
-                    record_id: Some(1),
-                    field_x: Some(11),
-                },
-                PidObject {
-                    drawing_id: "BRANCH".into(),
-                    item_type: "PIDBranchPoint".into(),
-                    drawing_item_type: Some("IDrawingItem".into()),
-                    model_id: Some("BRAN-1".into()),
-                    extra: BTreeMap::new(),
-                    record_id: Some(2),
-                    field_x: Some(12),
-                },
-                PidObject {
-                    drawing_id: "INST".into(),
-                    item_type: "Instrument".into(),
-                    drawing_item_type: Some("Symbol".into()),
-                    model_id: Some("FIT-001".into()),
-                    extra: BTreeMap::from([("Tag".into(), "FIT-001".into())]),
-                    record_id: Some(3),
-                    field_x: Some(13),
-                },
-                PidObject {
-                    drawing_id: "REP".into(),
-                    item_type: "PIDRepresentation".into(),
-                    drawing_item_type: Some("IDrawingItem".into()),
-                    model_id: Some("REP-1".into()),
-                    extra: BTreeMap::from([(
-                        "IDrawingRepresentation.GraphicOID".into(),
-                        "582".into(),
-                    )]),
-                    record_id: None,
-                    field_x: None,
-                },
-                PidObject {
-                    drawing_id: "DRAW".into(),
-                    item_type: "PIDDrawing".into(),
-                    drawing_item_type: Some("IDrawingItem".into()),
-                    model_id: Some("DWG-TEST".into()),
-                    extra: BTreeMap::new(),
-                    record_id: None,
-                    field_x: None,
-                },
-            ],
-            relationships: vec![
-                PidRelationship {
-                    model_id: "Relationship.ProcessPointCollection.00000000000000000000000000000001"
-                        .into(),
-                    guid: "00000000000000000000000000000001".into(),
-                    record_id: Some(10),
-                    field_x: Some(20),
-                    source_drawing_id: Some("BRANCH".into()),
-                    target_drawing_id: Some("PIPE".into()),
-                },
-                PidRelationship {
-                    model_id: "Relationship.PipingEnd1Conn.00000000000000000000000000000002"
-                        .into(),
-                    guid: "00000000000000000000000000000002".into(),
-                    record_id: Some(11),
-                    field_x: Some(21),
-                    source_drawing_id: Some("INST".into()),
-                    target_drawing_id: Some("BRANCH".into()),
-                },
-                PidRelationship {
-                    model_id:
-                        "Relationship.DwgRepresentationComposition.00000000000000000000000000000003"
+        let doc = PidDocument {
+            object_graph: Some(ObjectGraph {
+                drawing_no: Some("DWG-TEST".into()),
+                project_number: Some("P-01".into()),
+                objects: vec![
+                    PidObject {
+                        drawing_id: "PIPE".into(),
+                        item_type: "PIDPipeline".into(),
+                        drawing_item_type: Some("IDrawingItem".into()),
+                        model_id: Some("LINE-001".into()),
+                        extra: BTreeMap::from([("PipelineName".into(), "LINE-001".into())]),
+                        record_id: Some(1),
+                        field_x: Some(11),
+                    },
+                    PidObject {
+                        drawing_id: "BRANCH".into(),
+                        item_type: "PIDBranchPoint".into(),
+                        drawing_item_type: Some("IDrawingItem".into()),
+                        model_id: Some("BRAN-1".into()),
+                        extra: BTreeMap::new(),
+                        record_id: Some(2),
+                        field_x: Some(12),
+                    },
+                    PidObject {
+                        drawing_id: "INST".into(),
+                        item_type: "Instrument".into(),
+                        drawing_item_type: Some("Symbol".into()),
+                        model_id: Some("FIT-001".into()),
+                        extra: BTreeMap::from([("Tag".into(), "FIT-001".into())]),
+                        record_id: Some(3),
+                        field_x: Some(13),
+                    },
+                    PidObject {
+                        drawing_id: "REP".into(),
+                        item_type: "PIDRepresentation".into(),
+                        drawing_item_type: Some("IDrawingItem".into()),
+                        model_id: Some("REP-1".into()),
+                        extra: BTreeMap::from([(
+                            "IDrawingRepresentation.GraphicOID".into(),
+                            "582".into(),
+                        )]),
+                        record_id: None,
+                        field_x: None,
+                    },
+                    PidObject {
+                        drawing_id: "DRAW".into(),
+                        item_type: "PIDDrawing".into(),
+                        drawing_item_type: Some("IDrawingItem".into()),
+                        model_id: Some("DWG-TEST".into()),
+                        extra: BTreeMap::new(),
+                        record_id: None,
+                        field_x: None,
+                    },
+                ],
+                relationships: vec![
+                    PidRelationship {
+                        model_id:
+                            "Relationship.ProcessPointCollection.00000000000000000000000000000001"
+                                .into(),
+                        guid: "00000000000000000000000000000001".into(),
+                        record_id: Some(10),
+                        field_x: Some(20),
+                        source_drawing_id: Some("BRANCH".into()),
+                        target_drawing_id: Some("PIPE".into()),
+                    },
+                    PidRelationship {
+                        model_id: "Relationship.PipingEnd1Conn.00000000000000000000000000000002"
                             .into(),
-                    guid: "00000000000000000000000000000003".into(),
-                    record_id: None,
-                    field_x: None,
-                    source_drawing_id: Some("REP".into()),
-                    target_drawing_id: Some("BRANCH".into()),
-                },
-            ],
-            by_drawing_id: BTreeMap::from([
-                ("PIPE".into(), 0),
-                ("BRANCH".into(), 1),
-                ("INST".into(), 2),
-                ("REP".into(), 3),
-                ("DRAW".into(), 4),
-            ]),
-            counts_by_type: BTreeMap::new(),
-        });
+                        guid: "00000000000000000000000000000002".into(),
+                        record_id: Some(11),
+                        field_x: Some(21),
+                        source_drawing_id: Some("INST".into()),
+                        target_drawing_id: Some("BRANCH".into()),
+                    },
+                    PidRelationship {
+                        model_id:
+                            "Relationship.DwgRepresentationComposition.00000000000000000000000000000003"
+                                .into(),
+                        guid: "00000000000000000000000000000003".into(),
+                        record_id: None,
+                        field_x: None,
+                        source_drawing_id: Some("REP".into()),
+                        target_drawing_id: Some("BRANCH".into()),
+                    },
+                ],
+                by_drawing_id: BTreeMap::from([
+                    ("PIPE".into(), 0),
+                    ("BRANCH".into(), 1),
+                    ("INST".into(), 2),
+                    ("REP".into(), 3),
+                    ("DRAW".into(), 4),
+                ]),
+                counts_by_type: BTreeMap::new(),
+            }),
+            ..Default::default()
+        };
 
         let layout = build_layout_model(&doc).expect("layout should be built");
-        assert_eq!(layout.items.len(), 3, "only primary objects should be placed");
-        assert_eq!(layout.segments.len(), 2, "two physical edges should render as segments");
+        assert_eq!(
+            layout.items.len(),
+            3,
+            "only primary objects should be placed"
+        );
+        assert_eq!(
+            layout.segments.len(),
+            2,
+            "two physical edges should render as segments"
+        );
         assert!(layout.texts.iter().any(|text| text.text == "LINE-001"));
         assert!(layout.texts.iter().any(|text| text.text == "FIT-001"));
         assert!(
@@ -732,87 +820,98 @@ mod tests {
                 == Some(582),
             "representation graphic oid should be transferred onto the represented object"
         );
-        assert_eq!(layout.unplaced.len(), 2, "drawing + representation stay in fallback");
+        assert_eq!(
+            layout.unplaced.len(),
+            2,
+            "drawing + representation stay in fallback"
+        );
     }
 
     #[test]
     fn derive_layout_stores_layout_on_document() {
-        let mut doc = PidDocument::default();
-        doc.object_graph = Some(ObjectGraph {
-            drawing_no: None,
-            project_number: None,
-            objects: vec![PidObject {
-                drawing_id: "PIPE".into(),
-                item_type: "PipeRun".into(),
-                drawing_item_type: None,
-                model_id: Some("PIPE-01".into()),
-                extra: BTreeMap::new(),
-                record_id: Some(1),
-                field_x: Some(1),
-            }],
-            relationships: vec![],
-            by_drawing_id: BTreeMap::from([("PIPE".into(), 0)]),
-            counts_by_type: BTreeMap::new(),
-        });
+        let mut doc = PidDocument {
+            object_graph: Some(ObjectGraph {
+                drawing_no: None,
+                project_number: None,
+                objects: vec![PidObject {
+                    drawing_id: "PIPE".into(),
+                    item_type: "PipeRun".into(),
+                    drawing_item_type: None,
+                    model_id: Some("PIPE-01".into()),
+                    extra: BTreeMap::new(),
+                    record_id: Some(1),
+                    field_x: Some(1),
+                }],
+                relationships: vec![],
+                by_drawing_id: BTreeMap::from([("PIPE".into(), 0)]),
+                counts_by_type: BTreeMap::new(),
+            }),
+            ..Default::default()
+        };
 
         derive_layout(&mut doc);
-        assert!(doc.layout.is_some(), "derive_layout should populate doc.layout");
+        assert!(
+            doc.layout.is_some(),
+            "derive_layout should populate doc.layout"
+        );
         assert_eq!(doc.layout.as_ref().unwrap().items.len(), 1);
     }
 
     #[test]
     fn build_layout_model_classifies_bundle_specific_symbol_kinds() {
-        let mut doc = PidDocument::default();
-        doc.object_graph = Some(ObjectGraph {
-            drawing_no: Some("DWG-BUNDLE".into()),
-            project_number: None,
-            objects: vec![
-                PidObject {
-                    drawing_id: "NOTE".into(),
-                    item_type: "PIDNote".into(),
-                    drawing_item_type: Some("IDrawingItem".into()),
-                    model_id: Some("NOTE-1".into()),
-                    extra: BTreeMap::from([("Text".into(), "Check valve branch".into())]),
-                    record_id: Some(1),
-                    field_x: Some(1),
-                },
-                PidObject {
-                    drawing_id: "NOZZLE".into(),
-                    item_type: "PIDNozzle".into(),
-                    drawing_item_type: Some("IDrawingItem".into()),
-                    model_id: Some("NZ-1".into()),
-                    extra: BTreeMap::new(),
-                    record_id: Some(2),
-                    field_x: Some(2),
-                },
-                PidObject {
-                    drawing_id: "OFFPAGE".into(),
-                    item_type: "PIDSignalConnector".into(),
-                    drawing_item_type: Some("IDrawingItem".into()),
-                    model_id: Some("OPC-1".into()),
-                    extra: BTreeMap::new(),
-                    record_id: Some(3),
-                    field_x: Some(3),
-                },
-                PidObject {
-                    drawing_id: "VESSEL".into(),
-                    item_type: "PIDProcessVessel".into(),
-                    drawing_item_type: Some("IDrawingItem".into()),
-                    model_id: Some("V-100".into()),
-                    extra: BTreeMap::new(),
-                    record_id: Some(4),
-                    field_x: Some(4),
-                },
-            ],
-            relationships: vec![],
-            by_drawing_id: BTreeMap::from([
-                ("NOTE".into(), 0),
-                ("NOZZLE".into(), 1),
-                ("OFFPAGE".into(), 2),
-                ("VESSEL".into(), 3),
-            ]),
-            counts_by_type: BTreeMap::new(),
-        });
+        let doc = PidDocument {
+            object_graph: Some(ObjectGraph {
+                drawing_no: Some("DWG-BUNDLE".into()),
+                project_number: None,
+                objects: vec![
+                    PidObject {
+                        drawing_id: "NOTE".into(),
+                        item_type: "PIDNote".into(),
+                        drawing_item_type: Some("IDrawingItem".into()),
+                        model_id: Some("NOTE-1".into()),
+                        extra: BTreeMap::from([("Text".into(), "Check valve branch".into())]),
+                        record_id: Some(1),
+                        field_x: Some(1),
+                    },
+                    PidObject {
+                        drawing_id: "NOZZLE".into(),
+                        item_type: "PIDNozzle".into(),
+                        drawing_item_type: Some("IDrawingItem".into()),
+                        model_id: Some("NZ-1".into()),
+                        extra: BTreeMap::new(),
+                        record_id: Some(2),
+                        field_x: Some(2),
+                    },
+                    PidObject {
+                        drawing_id: "OFFPAGE".into(),
+                        item_type: "PIDSignalConnector".into(),
+                        drawing_item_type: Some("IDrawingItem".into()),
+                        model_id: Some("OPC-1".into()),
+                        extra: BTreeMap::new(),
+                        record_id: Some(3),
+                        field_x: Some(3),
+                    },
+                    PidObject {
+                        drawing_id: "VESSEL".into(),
+                        item_type: "PIDProcessVessel".into(),
+                        drawing_item_type: Some("IDrawingItem".into()),
+                        model_id: Some("V-100".into()),
+                        extra: BTreeMap::new(),
+                        record_id: Some(4),
+                        field_x: Some(4),
+                    },
+                ],
+                relationships: vec![],
+                by_drawing_id: BTreeMap::from([
+                    ("NOTE".into(), 0),
+                    ("NOZZLE".into(), 1),
+                    ("OFFPAGE".into(), 2),
+                    ("VESSEL".into(), 3),
+                ]),
+                counts_by_type: BTreeMap::new(),
+            }),
+            ..Default::default()
+        };
 
         let layout = build_layout_model(&doc).expect("bundle-like graph should build layout");
         let mut symbol_names = BTreeMap::new();
@@ -844,53 +943,53 @@ mod tests {
 
     #[test]
     fn build_layout_model_uses_symbol_usage_as_pid_only_hint() {
-        let mut doc = PidDocument::default();
-        doc.object_graph = Some(ObjectGraph {
-            drawing_no: Some("DWG-PIDONLY".into()),
-            project_number: None,
-            objects: vec![
-                PidObject {
-                    drawing_id: "OPC-1".into(),
-                    item_type: "OPC".into(),
-                    drawing_item_type: Some("Symbol".into()),
-                    model_id: Some("OPC-1".into()),
-                    extra: BTreeMap::new(),
-                    record_id: Some(1),
-                    field_x: Some(1),
-                },
-                PidObject {
-                    drawing_id: "PC-1".into(),
-                    item_type: "PipingComp".into(),
-                    drawing_item_type: Some("Symbol".into()),
-                    model_id: Some("PC-1".into()),
-                    extra: BTreeMap::new(),
-                    record_id: Some(2),
-                    field_x: Some(2),
-                },
-            ],
-            relationships: vec![],
-            by_drawing_id: BTreeMap::from([("OPC-1".into(), 0), ("PC-1".into(), 1)]),
-            counts_by_type: BTreeMap::new(),
-        });
-        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
-            symbol_usage: vec![
-                crate::model::SymbolUsage {
-                    symbol_path:
-                        r"\\srv\sym\Piping\Piping OPC's\Off-Drawing.sym".into(),
-                    symbol_name: Some("Off-Drawing.sym".into()),
-                    jsite_names: vec!["JSite1".into()],
-                    usage_count: 1,
-                },
-                crate::model::SymbolUsage {
-                    symbol_path:
-                        r"\\srv\sym\Piping\Fittings\End Components\Cap2.sym".into(),
-                    symbol_name: Some("Cap2.sym".into()),
-                    jsite_names: vec!["JSite2".into()],
-                    usage_count: 1,
-                },
-            ],
+        let doc = PidDocument {
+            object_graph: Some(ObjectGraph {
+                drawing_no: Some("DWG-PIDONLY".into()),
+                project_number: None,
+                objects: vec![
+                    PidObject {
+                        drawing_id: "OPC-1".into(),
+                        item_type: "OPC".into(),
+                        drawing_item_type: Some("Symbol".into()),
+                        model_id: Some("OPC-1".into()),
+                        extra: BTreeMap::new(),
+                        record_id: Some(1),
+                        field_x: Some(1),
+                    },
+                    PidObject {
+                        drawing_id: "PC-1".into(),
+                        item_type: "PipingComp".into(),
+                        drawing_item_type: Some("Symbol".into()),
+                        model_id: Some("PC-1".into()),
+                        extra: BTreeMap::new(),
+                        record_id: Some(2),
+                        field_x: Some(2),
+                    },
+                ],
+                relationships: vec![],
+                by_drawing_id: BTreeMap::from([("OPC-1".into(), 0), ("PC-1".into(), 1)]),
+                counts_by_type: BTreeMap::new(),
+            }),
+            cross_reference: Some(crate::model::CrossReferenceGraph {
+                symbol_usage: vec![
+                    crate::model::SymbolUsage {
+                        symbol_path: r"\\srv\sym\Piping\Piping OPC's\Off-Drawing.sym".into(),
+                        symbol_name: Some("Off-Drawing.sym".into()),
+                        jsite_names: vec!["JSite1".into()],
+                        usage_count: 1,
+                    },
+                    crate::model::SymbolUsage {
+                        symbol_path: r"\\srv\sym\Piping\Fittings\End Components\Cap2.sym".into(),
+                        symbol_name: Some("Cap2.sym".into()),
+                        jsite_names: vec!["JSite2".into()],
+                        usage_count: 1,
+                    },
+                ],
+                ..Default::default()
+            }),
             ..Default::default()
-        });
+        };
 
         let layout = build_layout_model(&doc).expect("pid-only graph should build layout");
         let opc = layout
@@ -923,7 +1022,8 @@ mod tests {
         let semantic = super::infer_semantic_from_symbol_hint(None, r"\\srv\sym\管件\球阀.sym");
         assert_eq!(semantic, Some("PipingComponent"));
 
-        let vessel = super::infer_semantic_from_symbol_hint(Some("储罐.sym"), r"\\srv\sym\容器\V-100.sym");
+        let vessel =
+            super::infer_semantic_from_symbol_hint(Some("储罐.sym"), r"\\srv\sym\容器\V-100.sym");
         assert_eq!(vessel, Some("Vessel"));
 
         let nozzle = super::infer_semantic_from_symbol_hint(None, r"\\srv\sym\管嘴\SN-01.sym");
@@ -937,6 +1037,37 @@ mod tests {
         // (valve). The order of `SEMANTIC_KEYWORDS` encodes this priority.
         let tag = super::infer_semantic_from_symbol_hint(None, r"\\srv\sym\Piping\OPC-valve.sym");
         assert_eq!(tag, Some("OffPageConnector"));
+    }
+
+    #[test]
+    fn infer_semantic_normalizes_backslash_path_across_platforms() {
+        // Phase 9k P3-1: on Linux CI `Path::new("\\\\srv\\sym\\valve.sym")`
+        // does not recognize `\\` as a separator, so the bare `file_stem()`
+        // call used to return the entire string instead of `"valve"`. The
+        // `file_stem_cross_platform` helper normalizes `\\` → `/` first so
+        // both platforms land on the same stem.
+        //
+        // Note: the full path is also lowercased into the haystack, so the
+        // keyword hit for `"valve"` happens regardless. We assert both
+        // separator conventions return the same tag to guard against any
+        // future refactor that drops the path-level fallback in the haystack.
+        let windows_style =
+            super::infer_semantic_from_symbol_hint(None, r"\\srv\sym\piping\valve.sym");
+        let posix_style =
+            super::infer_semantic_from_symbol_hint(None, "//srv/sym/piping/valve.sym");
+        assert_eq!(windows_style, Some("PipingComponent"));
+        assert_eq!(posix_style, Some("PipingComponent"));
+        assert_eq!(windows_style, posix_style);
+
+        // The helper itself returns the same bare stem for both styles.
+        assert_eq!(
+            super::file_stem_cross_platform(r"\\srv\sym\piping\valve.sym"),
+            Some("valve".to_string()),
+        );
+        assert_eq!(
+            super::file_stem_cross_platform("//srv/sym/piping/valve.sym"),
+            Some("valve".to_string()),
+        );
     }
 
     #[test]

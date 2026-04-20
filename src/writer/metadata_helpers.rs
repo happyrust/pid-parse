@@ -157,7 +157,11 @@ pub fn list_drawing_attributes(xml: &str) -> Vec<(String, String)> {
         }
         // Open tag: skip the tag name, then scan attributes until `>` or `/>`.
         i += 1;
-        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' && bytes[i] != b'/' {
+        while i < bytes.len()
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i] != b'>'
+            && bytes[i] != b'/'
+        {
             i += 1;
         }
         // Now i is at whitespace, '>', or '/'. Scan attributes.
@@ -340,7 +344,11 @@ fn skip_special_tag(bytes: &[u8], i: usize) -> Option<usize> {
         while j + 1 < bytes.len() && !(bytes[j] == b'?' && bytes[j + 1] == b'>') {
             j += 1;
         }
-        return Some(if j + 2 <= bytes.len() { j + 2 } else { bytes.len() });
+        return Some(if j + 2 <= bytes.len() {
+            j + 2
+        } else {
+            bytes.len()
+        });
     }
     if next == b'!' {
         // <!-- … --> or <![CDATA[…]]> or <!DOCTYPE …>
@@ -349,14 +357,22 @@ fn skip_special_tag(bytes: &[u8], i: usize) -> Option<usize> {
             while j + 2 < bytes.len() && &bytes[j..j + 3] != b"-->" {
                 j += 1;
             }
-            return Some(if j + 3 <= bytes.len() { j + 3 } else { bytes.len() });
+            return Some(if j + 3 <= bytes.len() {
+                j + 3
+            } else {
+                bytes.len()
+            });
         }
         if bytes[i..].starts_with(b"<![CDATA[") {
             let mut j = i + 9;
             while j + 2 < bytes.len() && &bytes[j..j + 3] != b"]]>" {
                 j += 1;
             }
-            return Some(if j + 3 <= bytes.len() { j + 3 } else { bytes.len() });
+            return Some(if j + 3 <= bytes.len() {
+                j + 3
+            } else {
+                bytes.len()
+            });
         }
         // Generic <! … > (DOCTYPE etc.)
         let mut j = i + 2;
@@ -436,7 +452,8 @@ fn find_attribute_value_ranges(xml: &str, attr: &str) -> Vec<(usize, usize)> {
             let after = i + attr_bytes.len();
             let right_ok = after < bytes.len()
                 && (bytes[after] == b'='
-                    || (bytes[after].is_ascii_whitespace() && find_next_equals(bytes, after).is_some()));
+                    || (bytes[after].is_ascii_whitespace()
+                        && find_next_equals(bytes, after).is_some()));
             if left_ok && right_ok {
                 if let Some(eq) = find_next_equals(bytes, after) {
                     if let Some(quote) = find_next_quote(bytes, eq + 1) {
@@ -519,11 +536,12 @@ fn find_element_text_ranges(
             let next = bytes[after];
             if next == b'>' {
                 let text_start = after + 1;
-                let close_at = find_subsequence(bytes, close_bytes, text_start).ok_or_else(|| {
-                    MetadataEditError::MalformedElement {
-                        element: element.into(),
-                    }
-                })?;
+                let close_at =
+                    find_subsequence(bytes, close_bytes, text_start).ok_or_else(|| {
+                        MetadataEditError::MalformedElement {
+                            element: element.into(),
+                        }
+                    })?;
                 out.push((text_start, close_at));
                 i = close_at + close_bytes.len();
                 continue;
@@ -531,7 +549,10 @@ fn find_element_text_ranges(
             if next.is_ascii_whitespace() {
                 // Skip attributes until `>` or `/>`.
                 let mut j = after;
-                while j < bytes.len() && bytes[j] != b'>' && !(bytes[j] == b'/' && j + 1 < bytes.len() && bytes[j + 1] == b'>') {
+                while j < bytes.len()
+                    && bytes[j] != b'>'
+                    && !(bytes[j] == b'/' && j + 1 < bytes.len() && bytes[j + 1] == b'>')
+                {
                     j += 1;
                 }
                 if j >= bytes.len() {
@@ -670,10 +691,7 @@ mod tests {
     fn set_drawing_attribute_xml_escapes_special_chars_in_value() {
         let xml = r#"<Tag SP_NAME="OLD"/>"#;
         let out = set_drawing_attribute(xml, "SP_NAME", r#"A&B<C>"D'"#).unwrap();
-        assert_eq!(
-            out,
-            r#"<Tag SP_NAME="A&amp;B&lt;C&gt;&quot;D&apos;"/>"#
-        );
+        assert_eq!(out, r#"<Tag SP_NAME="A&amp;B&lt;C&gt;&quot;D&apos;"/>"#);
     }
 
     #[test]
@@ -694,10 +712,7 @@ mod tests {
     fn set_element_text_replaces_simple_text_content() {
         let xml = r#"<General><FilePath>C:/old.pid</FilePath></General>"#;
         let out = set_element_text(xml, "FilePath", "D:/new.pid").unwrap();
-        assert_eq!(
-            out,
-            r#"<General><FilePath>D:/new.pid</FilePath></General>"#
-        );
+        assert_eq!(out, r#"<General><FilePath>D:/new.pid</FilePath></General>"#);
     }
 
     #[test]
@@ -899,7 +914,9 @@ mod tests {
         let err = set_drawing_attribute("", "SP_X", "v").unwrap_err();
         assert_eq!(
             err,
-            MetadataEditError::AttributeNotFound { attr: "SP_X".into() }
+            MetadataEditError::AttributeNotFound {
+                attr: "SP_X".into()
+            }
         );
     }
 

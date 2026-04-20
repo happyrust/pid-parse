@@ -30,8 +30,7 @@ pub const KNOWN_TOP_LEVEL_STREAM_NAMES: &[&str] = &[
 /// Top-level storage-name prefixes whose members are considered
 /// "identified" as a group — the storage itself is recognized even if
 /// individual stream contents are still being probed.
-pub const KNOWN_TOP_LEVEL_STORAGE_PREFIXES: &[&str] =
-    &["Sheet", "TaggedTxtData", "JSite"];
+pub const KNOWN_TOP_LEVEL_STORAGE_PREFIXES: &[&str] = &["Sheet", "TaggedTxtData", "JSite"];
 
 /// Returns every top-level stream (`/Foo`, not `/Foo/Bar`) that does not
 /// appear in [`KNOWN_TOP_LEVEL_STREAM_NAMES`] nor whose containing
@@ -60,17 +59,18 @@ mod tests {
     use crate::model::{PidDocument, StreamEntry};
 
     fn doc_with_streams(paths: &[&str]) -> PidDocument {
-        let mut doc = PidDocument::default();
-        doc.streams = paths
-            .iter()
-            .map(|p| StreamEntry {
-                path: (*p).to_string(),
-                size: 0,
-                preview_ascii: vec![],
-                magic_u32_le: None,
-            })
-            .collect();
-        doc
+        PidDocument {
+            streams: paths
+                .iter()
+                .map(|p| StreamEntry {
+                    path: (*p).to_string(),
+                    size: 0,
+                    preview_ascii: vec![],
+                    magic_u32_le: None,
+                })
+                .collect(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -81,10 +81,7 @@ mod tests {
 
     #[test]
     fn unidentified_filters_all_known_top_level_names() {
-        let mut paths: Vec<&str> = KNOWN_TOP_LEVEL_STREAM_NAMES
-            .iter()
-            .map(|s| *s)
-            .collect();
+        let mut paths: Vec<&str> = KNOWN_TOP_LEVEL_STREAM_NAMES.to_vec();
         // Add nested paths to prove the filter only looks at top-level.
         paths.push("Sheet1/Payload");
         paths.push("TaggedTxtData/Drawing");

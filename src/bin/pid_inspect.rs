@@ -155,10 +155,7 @@ fn parse_probe_sheet_chunks(args: &[String]) -> (bool, Option<String>) {
     let Some(idx) = args.iter().position(|a| a == "--probe-sheet-chunks") else {
         return (false, None);
     };
-    let target = args
-        .get(idx + 1)
-        .filter(|a| !a.starts_with("--"))
-        .cloned();
+    let target = args.get(idx + 1).filter(|a| !a.starts_with("--")).cloned();
     (true, target)
 }
 

@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-04-21
+
+### Phase 9k: Ship `--apply-plan` + P3 cleanups + lint/fmt restore
+
+从 [0.4.1] 合并：layout 语义关键词数据驱动重构（`48135a8`）+ Writer 层
+`--apply-plan` CLI（`3a2ecde`）。同时扫清 Phase 9i 之后悄悄堆积的 **7 条
+clippy warning**（lib-test 代码里 6 条 `field_reassign_with_default` +
+1 条 `map_clone` / `iter_cloned_collect`）与 10 文件的 `cargo fmt`
+漂移，执行 `phase8-9h-summary.md` 里列的 P3 cleanups 中 3 条低风险项
+（#1 `file_stem` 跨平台、#3 `diff.rs` `writeln!().unwrap()`、#4 tests
+use 散落；#2 `representative_symbol_hints` 缓存留给下一轮性能 Phase）。
+
+全套从 260 增至 **261 tests pass**（lib 185 + parse_real_files 28 +
+unit_parsers 18 + writer_real_files 8 + writer_roundtrip 9 +
+writer_validate_cli 13 = 261）。`cargo clippy --all-targets -- -D warnings`
+和 `cargo fmt --all -- --check` 均返回 0 退出码。
+
 ### Added
 
 - `pid_writer_validate --apply-plan <plan.json>`：一次性施加完整 `WritePlan`
@@ -10,6 +27,9 @@
   扩展 `plan_applied` 字段。
 - `Cargo.toml`：`base64 = "0.22"` 依赖（WASM / no_std 友好，为批量 CLI
   及未来跨语言 binding 共用）。
+- `src/layout.rs::file_stem_cross_platform`：内部 helper，先把 Windows
+  反斜杠 UNC 路径归一化为正斜杠再喂 `Path::file_stem`，消除 Linux CI 上
+  `\\srv\sym\piping\valve.sym` 被当成单一文件名返回整串的怪行为。
 
 ### Changed
 
@@ -30,12 +50,35 @@
   `should_replace_representative(existing_count, existing_path, candidate_count,
   candidate_path)` helper，带 doc comment 说明 "higher usage_count wins; ties
   break on lexicographically smaller path" 规则，替代原 inline 表达式。
+- `src/inspect/diff.rs::render`：11 处 `writeln!(&mut out, ...).unwrap()` 改为
+  `String::push_str` / `push_str(&format!(..))`。`writeln!` 对 `String`
+  的 `fmt::Write` impl 技术上不会 fail，但 `.unwrap()` 让读者每次都要
+  自己重新确认这一点；改成 `push_str` 直接消除这个认知负担，也顺带去掉
+  `use std::fmt::Write` import。
+
+### Fixed (lint / fmt restore)
+
+- `src/import_view.rs` / `src/inspect/mod.rs` / `src/layout.rs` 6 处
+  `field_reassign_with_default` clippy lint（均在 lib-test 代码里），
+  改成 struct-literal + `..Default::default()` 形式。
+- `src/inspect/mod.rs::tests::unidentified_filters_all_known_top_level_names`
+  里 `.iter().map(|s| *s).collect::<Vec<&str>>()` → `.to_vec()`
+  （clippy `iter_cloned_collect`）。
+- `cargo fmt --all` 应用 10 文件的 whitespace / line-break 漂移：
+  `src/bin/pid_inspect.rs`, `src/bin/pid_writer_validate.rs`,
+  `src/import_view.rs`, `src/inspect/mod.rs`, `src/layout.rs`,
+  `src/model.rs`, `src/parsers/sheet_probe.rs`,
+  `src/writer/metadata_helpers.rs`, `src/writer/plan.rs`,
+  `tests/writer_validate_cli.rs`。
 
 ### Tests
 
 - `layout::tests::infer_semantic_maps_chinese_symbol_path_to_piping_component`
 - `layout::tests::infer_semantic_keyword_ordering_keeps_opc_before_piping`
 - `layout::tests::should_replace_representative_covers_all_three_rules`
+- `layout::tests::infer_semantic_normalizes_backslash_path_across_platforms`
+  （Phase 9k 新增；回归守 P3-1 `file_stem_cross_platform` helper 对
+  `\\srv\...` 和 `//srv/...` 两种风格返回相同 stem，且关键词匹配等价）
 - `writer::plan::tests::stream_replacement_round_trips_through_json_with_base64_payload`
 - `writer::plan::tests::sheet_chunk_patch_round_trips_through_json_with_base64_payload`
 - `writer::plan::tests::deserialize_rejects_invalid_base64`
@@ -43,18 +86,15 @@
   （passthrough `{}` / drawing 元数据整体替换 / base64 stream 替换 /
   非法 JSON exit 2 / 与 `--edit` 冲突 exit 1）。
 
-全套从 252 增至 **260 tests pass**（lib 184 + parse_real_files 28 +
-unit_parsers 18 + writer_real_files 8 + writer_roundtrip 9 +
-writer_validate_cli 13 = 260）。
-
 ### Docs
 
 - `docs/plans/2026-04-19-layout-symbol-hint-p2-fixes.md`：layout P2 dev plan，包含
   "审核自纠" 一节说明 P2-1 撤回的理由（恢复 `file_stem()` 回退反而会让
   `bounds_for_item` fall through 到默认尺寸，丢失 `PipingComponent` 的 18×18
   命中；4c1cb80 的"坍塌到语义 tag"是正向设计）。
-- `docs/plans/2026-04-19-apply-plan-cli.md`：本轮 dev plan（`--apply-plan`
-  批处理 CLI）。
+- `docs/plans/2026-04-19-apply-plan-cli.md`：`--apply-plan` 的 dev plan。
+- `docs/plans/2026-04-21-phase-9k-ship-and-p3.md`：本轮 Phase 9k 的 dev plan
+  （ship v0.4.2 + P3 cleanups + lint/fmt restore）。
 - `docs/writer-quickstart.md` 新 5.5 节"批处理 via `--apply-plan <plan.json>`"：
   JSON schema 说明 + CLI 调用样例 + Rust 侧构造 plan 并 serialize 示例。
 

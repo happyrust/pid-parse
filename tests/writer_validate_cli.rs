@@ -5,7 +5,7 @@
 //! verifies exit codes + the human / JSON outputs against an in-memory
 //! synthetic CFB fixture.
 
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -33,14 +33,12 @@ fn build_fixture(path: &PathBuf) {
     cfb.create_storage("/TaggedTxtData").unwrap();
     cfb.create_storage("/PlainSheet").unwrap();
 
-    let drawing =
-        b"<?xml version=\"1.0\"?><Drawing><Tag SP_DRAWINGNUMBER=\"FX-001\"/></Drawing>";
+    let drawing = b"<?xml version=\"1.0\"?><Drawing><Tag SP_DRAWINGNUMBER=\"FX-001\"/></Drawing>";
     let mut s = cfb.create_stream(DRAWING_PATH).unwrap();
     s.write_all(drawing).unwrap();
     drop(s);
 
-    let general =
-        b"<?xml version=\"1.0\"?><General><FilePath>C:/fixture.pid</FilePath></General>";
+    let general = b"<?xml version=\"1.0\"?><General><FilePath>C:/fixture.pid</FilePath></General>";
     let mut s = cfb.create_stream(GENERAL_PATH).unwrap();
     s.write_all(general).unwrap();
     drop(s);
@@ -77,7 +75,10 @@ fn validate_passes_on_synthetic_fixture_human_format() {
         "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
         output.status.code()
     );
-    assert!(stdout.contains("Result: PASS"), "expected PASS in stdout: {stdout}");
+    assert!(
+        stdout.contains("Result: PASS"),
+        "expected PASS in stdout: {stdout}"
+    );
     assert!(
         stdout.contains("0 mismatched"),
         "expected '0 mismatched' summary in stdout: {stdout}"
@@ -172,8 +173,16 @@ fn validate_with_edit_drawing_attribute_passes_and_marks_edited() {
         serde_json::from_str(&stdout).expect("stdout must be valid JSON");
     assert_eq!(parsed["ok"], serde_json::json!(true));
     assert_eq!(parsed["mismatched"], serde_json::json!(0));
-    assert_eq!(parsed["edited"], serde_json::json!(1), "Drawing stream edited");
-    assert_eq!(parsed["matched"], serde_json::json!(2), "General + Sheet untouched");
+    assert_eq!(
+        parsed["edited"],
+        serde_json::json!(1),
+        "Drawing stream edited"
+    );
+    assert_eq!(
+        parsed["matched"],
+        serde_json::json!(2),
+        "General + Sheet untouched"
+    );
     let edits = parsed["edits_applied"].as_array().expect("edits array");
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0]["key"], serde_json::json!("SP_DRAWINGNUMBER"));
@@ -208,8 +217,7 @@ fn validate_with_general_edit_passes() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "exit failed: {stdout}");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&stdout).expect("valid JSON");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     assert_eq!(parsed["ok"], serde_json::json!(true));
     assert_eq!(parsed["edited"], serde_json::json!(1));
     assert_eq!(parsed["matched"], serde_json::json!(2));
@@ -319,7 +327,10 @@ fn validate_apply_plan_passthrough_empty_plan_passes() {
     assert_eq!(parsed["mismatched"], serde_json::json!(0));
     assert_eq!(parsed["edited"], serde_json::json!(0));
     assert_eq!(parsed["matched"], serde_json::json!(3));
-    assert!(parsed.get("plan_applied").is_some(), "plan_applied populated");
+    assert!(
+        parsed.get("plan_applied").is_some(),
+        "plan_applied populated"
+    );
 
     let _ = std::fs::remove_file(&src);
     let _ = std::fs::remove_file(&dst);
@@ -333,7 +344,8 @@ fn validate_apply_plan_drawing_metadata_update_rewrites_stream() {
     let plan = plan_path("meta");
     build_fixture(&src);
     // Replace the Drawing XML body wholesale — plan-level metadata update.
-    let new_drawing = r#"<?xml version="1.0"?><Drawing><Tag SP_DRAWINGNUMBER="PLAN-777"/></Drawing>"#;
+    let new_drawing =
+        r#"<?xml version="1.0"?><Drawing><Tag SP_DRAWINGNUMBER="PLAN-777"/></Drawing>"#;
     // Escape for JSON string literal (quotes only; no newlines).
     let escaped = new_drawing.replace('"', "\\\"");
     let body = format!(
@@ -359,8 +371,16 @@ fn validate_apply_plan_drawing_metadata_update_rewrites_stream() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(parsed["ok"], serde_json::json!(true));
-    assert_eq!(parsed["edited"], serde_json::json!(1), "Drawing stream edited");
-    assert_eq!(parsed["matched"], serde_json::json!(2), "General + Sheet untouched");
+    assert_eq!(
+        parsed["edited"],
+        serde_json::json!(1),
+        "Drawing stream edited"
+    );
+    assert_eq!(
+        parsed["matched"],
+        serde_json::json!(2),
+        "General + Sheet untouched"
+    );
 
     // On-disk verification: the new value must appear in bytes.
     let bytes = std::fs::read(&dst).expect("read out");
@@ -414,7 +434,6 @@ fn validate_apply_plan_replaces_sheet_stream_via_base64_payload() {
     // The Sheet stream in the output file should now contain exactly "ABC".
     let mut cfb = ::cfb::open(&dst).expect("reopen");
     let mut buf = Vec::new();
-    use std::io::Read as _;
     cfb.open_stream("/PlainSheet/Sheet1")
         .expect("open Sheet1")
         .read_to_end(&mut buf)

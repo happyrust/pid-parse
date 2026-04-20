@@ -1,6 +1,6 @@
 use crate::model::{
-    ClusterCoverage, ObjectGraph, PidDocument, PidObject, PidRelationship, RootPresence, SheetStream,
-    SymbolUsage,
+    ClusterCoverage, ObjectGraph, PidDocument, PidObject, PidRelationship, RootPresence,
+    SheetStream, SymbolUsage,
 };
 use std::collections::BTreeMap;
 
@@ -56,7 +56,13 @@ pub fn build_import_view(doc: &PidDocument) -> PidImportView {
         .map(|graph| graph.objects.iter().map(visual_object_from).collect())
         .unwrap_or_default();
     let relationships = object_graph
-        .map(|graph| graph.relationships.iter().map(visual_relationship_from).collect())
+        .map(|graph| {
+            graph
+                .relationships
+                .iter()
+                .map(visual_relationship_from)
+                .collect()
+        })
         .unwrap_or_default();
     let symbols = cross
         .map(|cross| cross.symbol_usage.iter().map(symbol_summary_from).collect())
@@ -73,7 +79,11 @@ pub fn build_import_view(doc: &PidDocument) -> PidImportView {
             .unwrap_or_else(|| "Smart P&ID Import".into()),
         project_number: object_graph
             .and_then(|g| g.project_number.clone())
-            .or_else(|| doc.general_meta.as_ref().and_then(|g| g.tags.get("ProjectNumber").cloned())),
+            .or_else(|| {
+                doc.general_meta
+                    .as_ref()
+                    .and_then(|g| g.tags.get("ProjectNumber").cloned())
+            }),
         objects,
         relationships,
         symbols,
@@ -120,13 +130,17 @@ fn symbol_summary_from(symbol: &SymbolUsage) -> PidSymbolSummary {
 fn fallback_symbols(doc: &PidDocument) -> Vec<PidSymbolSummary> {
     let mut grouped: BTreeMap<String, PidSymbolSummary> = BTreeMap::new();
     for site in &doc.jsites {
-        let Some(path) = &site.symbol_path else { continue; };
-        let entry = grouped.entry(path.clone()).or_insert_with(|| PidSymbolSummary {
-            symbol_name: site.symbol_name.clone(),
-            symbol_path: path.clone(),
-            usage_count: 0,
-            jsite_names: Vec::new(),
-        });
+        let Some(path) = &site.symbol_path else {
+            continue;
+        };
+        let entry = grouped
+            .entry(path.clone())
+            .or_insert_with(|| PidSymbolSummary {
+                symbol_name: site.symbol_name.clone(),
+                symbol_path: path.clone(),
+                usage_count: 0,
+                jsite_names: Vec::new(),
+            });
         entry.usage_count += 1;
         entry.jsite_names.push(site.name.clone());
     }
@@ -174,11 +188,20 @@ fn sheet_summary_from(sheet: &SheetStream) -> PidClusterSummary {
     PidClusterSummary {
         name: sheet.name.clone(),
         kind: "Sheet".into(),
-        record_count: sheet.endpoint_records.len().max(sheet.attribute_records.len()),
+        record_count: sheet
+            .endpoint_records
+            .len()
+            .max(sheet.attribute_records.len()),
         note: sheet
             .header
             .as_ref()
-            .map(|h| format!("type=0x{:04X} endpoints={}", h.stream_type, sheet.endpoint_records.len()))
+            .map(|h| {
+                format!(
+                    "type=0x{:04X} endpoints={}",
+                    h.stream_type,
+                    sheet.endpoint_records.len()
+                )
+            })
             .unwrap_or_else(|| format!("endpoints={}", sheet.endpoint_records.len())),
     }
 }
@@ -191,10 +214,13 @@ fn build_unresolved(
     let mut out = Vec::new();
     if let Some(graph) = object_graph {
         for relationship in &graph.relationships {
-            if relationship.source_drawing_id.is_none() || relationship.target_drawing_id.is_none() {
+            if relationship.source_drawing_id.is_none() || relationship.target_drawing_id.is_none()
+            {
                 out.push(format!(
                     "relationship {} unresolved: {:?} -> {:?}",
-                    relationship.guid, relationship.source_drawing_id, relationship.target_drawing_id
+                    relationship.guid,
+                    relationship.source_drawing_id,
+                    relationship.target_drawing_id
                 ));
             }
         }
@@ -219,46 +245,48 @@ mod tests {
 
     #[test]
     fn build_import_view_collects_objects_symbols_and_unresolved() {
-        let mut doc = PidDocument::default();
-        doc.object_graph = Some(ObjectGraph {
-            drawing_no: Some("D-100".into()),
-            project_number: Some("P-01".into()),
-            objects: vec![PidObject {
-                drawing_id: "OBJ-1".into(),
-                item_type: "Instrument".into(),
-                drawing_item_type: Some("Symbol".into()),
-                model_id: Some("MID-1".into()),
-                extra: BTreeMap::from([("Tag".into(), "FIT-001".into())]),
-                record_id: None,
-                field_x: None,
-            }],
-            relationships: vec![PidRelationship {
-                model_id: "Relationship.R1".into(),
-                guid: "R1".into(),
-                record_id: None,
-                field_x: None,
-                source_drawing_id: Some("OBJ-1".into()),
-                target_drawing_id: None,
-            }],
-            by_drawing_id: BTreeMap::new(),
-            counts_by_type: BTreeMap::new(),
-        });
-        doc.cross_reference = Some(CrossReferenceGraph {
-            cluster_coverage: ClusterCoverage::default(),
-            symbol_usage: vec![SymbolUsage {
-                symbol_path: r"\\srv\sym\Valve.sym".into(),
-                symbol_name: Some("Valve".into()),
-                jsite_names: vec!["JSite0".into()],
-                usage_count: 1,
-            }],
-            attribute_classes: vec![],
-            root_presence: vec![RootPresence {
-                name: "MissingRoot".into(),
-                id: 0x10,
-                found_as_storage: false,
-                found_as_stream: false,
-            }],
-        });
+        let doc = PidDocument {
+            object_graph: Some(ObjectGraph {
+                drawing_no: Some("D-100".into()),
+                project_number: Some("P-01".into()),
+                objects: vec![PidObject {
+                    drawing_id: "OBJ-1".into(),
+                    item_type: "Instrument".into(),
+                    drawing_item_type: Some("Symbol".into()),
+                    model_id: Some("MID-1".into()),
+                    extra: BTreeMap::from([("Tag".into(), "FIT-001".into())]),
+                    record_id: None,
+                    field_x: None,
+                }],
+                relationships: vec![PidRelationship {
+                    model_id: "Relationship.R1".into(),
+                    guid: "R1".into(),
+                    record_id: None,
+                    field_x: None,
+                    source_drawing_id: Some("OBJ-1".into()),
+                    target_drawing_id: None,
+                }],
+                by_drawing_id: BTreeMap::new(),
+                counts_by_type: BTreeMap::new(),
+            }),
+            cross_reference: Some(CrossReferenceGraph {
+                cluster_coverage: ClusterCoverage::default(),
+                symbol_usage: vec![SymbolUsage {
+                    symbol_path: r"\\srv\sym\Valve.sym".into(),
+                    symbol_name: Some("Valve".into()),
+                    jsite_names: vec!["JSite0".into()],
+                    usage_count: 1,
+                }],
+                attribute_classes: vec![],
+                root_presence: vec![RootPresence {
+                    name: "MissingRoot".into(),
+                    id: 0x10,
+                    found_as_storage: false,
+                    found_as_stream: false,
+                }],
+            }),
+            ..Default::default()
+        };
 
         let view = build_import_view(&doc);
         assert_eq!(view.project_number.as_deref(), Some("P-01"));

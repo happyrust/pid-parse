@@ -122,10 +122,7 @@ pub fn probe_sheet_stream(
 /// Collect every candidate boundary offset along with the heuristics that
 /// voted for it. Same-offset hits are merged (scores summed, reasons
 /// deduped).
-pub fn find_candidate_boundaries(
-    data: &[u8],
-    opts: &SheetProbeOptions,
-) -> Vec<CandidateBoundary> {
+pub fn find_candidate_boundaries(data: &[u8], opts: &SheetProbeOptions) -> Vec<CandidateBoundary> {
     let mut map: BTreeMap<usize, CandidateBoundary> = BTreeMap::new();
 
     add_boundary(&mut map, 0, 5, BoundaryReason::Alignment4);
@@ -250,10 +247,7 @@ fn add_utf16_burst_boundaries(
     }
 }
 
-fn add_repeated_u32_boundaries(
-    data: &[u8],
-    map: &mut BTreeMap<usize, CandidateBoundary>,
-) {
+fn add_repeated_u32_boundaries(data: &[u8], map: &mut BTreeMap<usize, CandidateBoundary>) {
     if data.len() < 16 {
         return;
     }
@@ -277,10 +271,7 @@ fn add_repeated_u32_boundaries(
     }
 }
 
-fn add_offset_like_boundaries(
-    data: &[u8],
-    map: &mut BTreeMap<usize, CandidateBoundary>,
-) {
+fn add_offset_like_boundaries(data: &[u8], map: &mut BTreeMap<usize, CandidateBoundary>) {
     if data.len() < 16 {
         return;
     }
@@ -297,8 +288,7 @@ fn add_offset_like_boundaries(
         let d = u32_le(data, i + 12) as usize;
 
         let monotonic = a < b && b < c && c < d;
-        let plausible =
-            a < data.len() && b < data.len() && c < data.len() && d < data.len();
+        let plausible = a < data.len() && b < data.len() && c < data.len() && d < data.len();
 
         if monotonic && plausible {
             add_boundary(map, i, 3, BoundaryReason::OffsetLikeSequence);

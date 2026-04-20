@@ -10,18 +10,23 @@
 //! round-trips ("no diffs") and scales with the number of modified
 //! streams otherwise.
 use crate::package::PackageDiff;
-use std::fmt::Write;
 
 /// Render a [`PackageDiff`] as a human-readable report. Always ends with
 /// a trailing newline.
+///
+/// Output is assembled via [`String::push_str`] (and `push_str(&format!(..))`
+/// for interpolated lines). We deliberately avoid `write!` / `writeln!` into
+/// `&mut String` here because those trait-based writes return `fmt::Result`
+/// that can never fail for `String` — the extra `.unwrap()` noise obscures
+/// the actual rendering logic without any value.
 pub fn render(diff: &PackageDiff) -> String {
     let mut out = String::new();
-    writeln!(out, "=== Package Diff ===").unwrap();
+    out.push_str("=== Package Diff ===\n");
 
     if diff.is_empty() {
-        writeln!(out, "(no differences)").unwrap();
-        writeln!(out, "  streams match:  yes").unwrap();
-        writeln!(out, "  root CLSID:     match").unwrap();
+        out.push_str("(no differences)\n");
+        out.push_str("  streams match:  yes\n");
+        out.push_str("  root CLSID:     match\n");
         return out;
     }
 
@@ -30,64 +35,56 @@ pub fn render(diff: &PackageDiff) -> String {
     } else {
         "DIFFER"
     };
-    writeln!(
-        out,
-        "root CLSID:  {}  (a={}, b={})",
+    out.push_str(&format!(
+        "root CLSID:  {}  (a={}, b={})\n",
         clsid_status,
         render_clsid(diff.root_clsid_a),
         render_clsid(diff.root_clsid_b),
-    )
-    .unwrap();
+    ));
 
-    writeln!(
-        out,
-        "summary:     {} diff(s) — {} only-in-a / {} only-in-b / {} modified",
+    out.push_str(&format!(
+        "summary:     {} diff(s) — {} only-in-a / {} only-in-b / {} modified\n",
         diff.diff_count(),
         diff.only_in_a.len(),
         diff.only_in_b.len(),
         diff.modified.len(),
-    )
-    .unwrap();
+    ));
 
     if !diff.only_in_a.is_empty() {
-        writeln!(out, "\n--- Only in A ---").unwrap();
+        out.push_str("\n--- Only in A ---\n");
         for p in &diff.only_in_a {
-            writeln!(out, "  {}", p).unwrap();
+            out.push_str(&format!("  {}\n", p));
         }
     }
 
     if !diff.only_in_b.is_empty() {
-        writeln!(out, "\n--- Only in B ---").unwrap();
+        out.push_str("\n--- Only in B ---\n");
         for p in &diff.only_in_b {
-            writeln!(out, "  {}", p).unwrap();
+            out.push_str(&format!("  {}\n", p));
         }
     }
 
     if !diff.modified.is_empty() {
-        writeln!(out, "\n--- Modified Streams ---").unwrap();
+        out.push_str("\n--- Modified Streams ---\n");
         for m in &diff.modified {
-            writeln!(
-                out,
-                "  {}  len={} vs {}  first_diff@0x{:X}",
+            out.push_str(&format!(
+                "  {}  len={} vs {}  first_diff@0x{:X}\n",
                 m.path, m.len_a, m.len_b, m.first_mismatch_offset,
-            )
-            .unwrap();
-            writeln!(out, "    a: {}", m.context_before).unwrap();
-            writeln!(out, "    b: {}", m.context_after).unwrap();
+            ));
+            out.push_str(&format!("    a: {}\n", m.context_before));
+            out.push_str(&format!("    b: {}\n", m.context_after));
         }
     }
 
     if !diff.storage_clsid_diffs.is_empty() {
-        writeln!(out, "\n--- Non-root Storage CLSID Diffs ---").unwrap();
+        out.push_str("\n--- Non-root Storage CLSID Diffs ---\n");
         for s in &diff.storage_clsid_diffs {
-            writeln!(
-                out,
-                "  {}  a={}  b={}",
+            out.push_str(&format!(
+                "  {}  a={}  b={}\n",
                 s.path,
                 render_clsid(s.a),
                 render_clsid(s.b),
-            )
-            .unwrap();
+            ));
         }
     }
 

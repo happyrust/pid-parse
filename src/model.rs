@@ -632,9 +632,7 @@ pub struct ObjectGraph {
 /// have both / one / zero of their endpoints resolved to a known
 /// `drawing_id`. Useful as a one-line summary in reports and as a CI
 /// invariant for fixture drift.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct EndpointResolutionStats {
     pub total: usize,
     /// Both `source_drawing_id` and `target_drawing_id` are `Some`.
@@ -676,8 +674,10 @@ impl ObjectGraph {
         let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
         let mut out: Vec<&PidObject> = Vec::new();
         for rel in self.relationships_touching(drawing_id) {
-            for endpoint in [rel.source_drawing_id.as_deref(), rel.target_drawing_id.as_deref()]
-            {
+            for endpoint in [
+                rel.source_drawing_id.as_deref(),
+                rel.target_drawing_id.as_deref(),
+            ] {
                 let Some(other) = endpoint else { continue };
                 if other == drawing_id {
                     continue; // self-loop
@@ -723,11 +723,7 @@ impl ObjectGraph {
     /// `from_id == to_id` returns `Some(vec![from_id])` (zero-hop
     /// path). Cycles are safe; each `drawing_id` is enqueued at most
     /// once. Time O(V+E), space O(V).
-    pub fn shortest_path<'a>(
-        &'a self,
-        from_id: &'a str,
-        to_id: &'a str,
-    ) -> Option<Vec<&'a str>> {
+    pub fn shortest_path<'a>(&'a self, from_id: &'a str, to_id: &'a str) -> Option<Vec<&'a str>> {
         // Both endpoints must be known objects.
         let from_key = self.by_drawing_id.get_key_value(from_id)?.0.as_str();
         let to_key = self.by_drawing_id.get_key_value(to_id)?.0.as_str();
@@ -738,10 +734,8 @@ impl ObjectGraph {
         // BFS with predecessor map.
         let mut predecessor: std::collections::BTreeMap<&'a str, &'a str> =
             std::collections::BTreeMap::new();
-        let mut frontier: std::collections::VecDeque<&'a str> =
-            std::collections::VecDeque::new();
-        let mut visited: std::collections::BTreeSet<&'a str> =
-            std::collections::BTreeSet::new();
+        let mut frontier: std::collections::VecDeque<&'a str> = std::collections::VecDeque::new();
+        let mut visited: std::collections::BTreeSet<&'a str> = std::collections::BTreeSet::new();
         frontier.push_back(from_key);
         visited.insert(from_key);
 
@@ -847,7 +841,10 @@ impl ObjectGraph {
             ..Default::default()
         };
         for rel in &self.relationships {
-            match (rel.source_drawing_id.is_some(), rel.target_drawing_id.is_some()) {
+            match (
+                rel.source_drawing_id.is_some(),
+                rel.target_drawing_id.is_some(),
+            ) {
                 (true, true) => stats.fully_resolved += 1,
                 (true, false) | (false, true) => stats.partially_resolved += 1,
                 (false, false) => stats.unresolved += 1,
@@ -1101,11 +1098,7 @@ mod object_graph_impl_tests {
                 field_x: Some(fx),
             }
         }
-        fn rel(
-            guid: &str,
-            src: Option<&str>,
-            dst: Option<&str>,
-        ) -> PidRelationship {
+        fn rel(guid: &str, src: Option<&str>, dst: Option<&str>) -> PidRelationship {
             PidRelationship {
                 model_id: format!("Relationship.{guid}"),
                 guid: guid.into(),
@@ -1142,8 +1135,14 @@ mod object_graph_impl_tests {
     #[test]
     fn object_by_drawing_id_returns_existing_and_none_for_unknown() {
         let g = sample_graph();
-        assert_eq!(g.object_by_drawing_id("A").map(|o| o.item_type.as_str()), Some("Equipment"));
-        assert_eq!(g.object_by_drawing_id("B").map(|o| o.item_type.as_str()), Some("PipeRun"));
+        assert_eq!(
+            g.object_by_drawing_id("A").map(|o| o.item_type.as_str()),
+            Some("Equipment")
+        );
+        assert_eq!(
+            g.object_by_drawing_id("B").map(|o| o.item_type.as_str()),
+            Some("PipeRun")
+        );
         assert!(g.object_by_drawing_id("Z").is_none());
         assert!(g.object_by_drawing_id("").is_none());
     }
