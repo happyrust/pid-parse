@@ -412,3 +412,92 @@ fn real_file_set_summary_title_preserves_other_streams() {
 
     let _ = std::fs::remove_file(&dst);
 }
+
+#[test]
+fn real_file_delete_summary_prop_when_present() {
+    // Phase 9n: end-to-end delete flow on a real SmartPlant fixture.
+    // Runs only when the fixture is locally available AND it carries a
+    // summary stream with a prop we can safely remove.
+    let fixture = fixture_path("DWG-0201GP06-01.pid");
+    if !fixture.exists() {
+        eprintln!("skipping: test fixture not found at {}", fixture.display());
+        return;
+    }
+
+    let parser = PidParser::new();
+    let pkg_in = parser.parse_package(&fixture).expect("parse");
+    if pkg_in.get_stream("/\u{5}SummaryInformation").is_none() {
+        eprintln!(
+            "skipping: fixture lacks /\\u0005SummaryInformation stream \
+             (Phase 9o will grow the seed-from-empty path)"
+        );
+        return;
+    }
+
+    // Pick a prop to delete that is present in the fixture: prefer
+    // `keywords`, fall back to `title` (one of them is practically
+    // always present in SmartPlant-generated drawings).
+    let summary = pkg_in
+        .parsed
+        .summary
+        .as_ref()
+        .expect("summary reader should have populated this");
+    let candidate = if summary.raw.contains_key("Keywords") {
+        "keywords"
+    } else if summary.title.is_some() {
+        "title"
+    } else {
+        eprintln!(
+            "skipping: fixture summary has neither `keywords` nor `title` to delete; \
+             add more probes if your fixture is different"
+        );
+        return;
+    };
+
+    let dst = tmp_output("delete-summary-real");
+    let plan = WritePlan {
+        metadata_updates: MetadataUpdates {
+            summary_deletions: vec![candidate.to_string()],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    PidWriter::write_to(&pkg_in, &plan, &dst).expect("write");
+
+    let pkg_out = parser.parse_package(&dst).expect("reparse");
+    // Non-summary streams must remain byte-identical.
+    for (path, raw_in) in pkg_in.streams.iter() {
+        if path == "/\u{5}SummaryInformation" {
+            continue;
+        }
+        let raw_out = pkg_out
+            .get_stream(path)
+            .unwrap_or_else(|| panic!("stream {path} missing in dst"));
+        assert_eq!(
+            raw_in.data, raw_out.data,
+            "stream {path} must be byte-identical after a summary deletion"
+        );
+    }
+
+    // The deleted prop must be gone from the reader's view.
+    let summary_after = pkg_out
+        .parsed
+        .summary
+        .as_ref()
+        .expect("summary still present (prop deletion, not stream deletion)");
+    match candidate {
+        "keywords" => assert!(
+            !summary_after.raw.contains_key("Keywords"),
+            "Keywords prop should be gone; raw map: {:?}",
+            summary_after.raw
+        ),
+        "title" => assert!(
+            summary_after.title.is_none(),
+            "title should be gone; got: {:?}",
+            summary_after.title
+        ),
+        _ => unreachable!(),
+    }
+
+    let _ = std::fs::remove_file(&dst);
+}

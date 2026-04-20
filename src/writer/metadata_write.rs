@@ -1,14 +1,27 @@
 //! Apply [`MetadataUpdates`] to an in-memory [`PidPackage`] by overwriting
 //! the targeted streams' raw bytes.
 //!
-//! Handles three update channels:
+//! Handles four update channels:
 //!
 //! 1. `/TaggedTxtData/Drawing` XML body (`drawing_xml`)
 //! 2. `/TaggedTxtData/General` XML body (`general_xml`)
-//! 3. Phase 9l (v0.5.0+): `SummaryInformation` and
-//!    `DocumentSummaryInformation` OLE property-set edits via
-//!    `summary_updates` — string properties only. See
-//!    [`crate::writer::summary_write`] for the key table.
+//! 3. Phase 9l (v0.5.0+): `SummaryInformation` /
+//!    `DocumentSummaryInformation` property-set edits via
+//!    `summary_updates` — string properties only.
+//! 4. Phase 9n (v0.5.2+): property deletions via `summary_deletions`
+//!    (same symbolic key table; silent no-op on keys not present in
+//!    the source property-set).
+//!
+//! Ordering within one call is deterministic:
+//!
+//! - Drawing XML write
+//! - General XML write
+//! - summary deletions (remove props before re-inserting any)
+//! - summary updates
+//!
+//! A key appearing in both `summary_deletions` and `summary_updates` is
+//! rejected up-front with a clear error — the intent is ambiguous (do
+//! we keep the new value, or remove the prop?).
 use crate::error::PidError;
 use crate::package::PidPackage;
 use crate::writer::plan::MetadataUpdates;
@@ -18,10 +31,10 @@ const DRAWING_PATH: &str = "/TaggedTxtData/Drawing";
 const GENERAL_PATH: &str = "/TaggedTxtData/General";
 
 /// Overwrite `/TaggedTxtData/Drawing` / `/TaggedTxtData/General` with the
-/// provided XML bodies and apply `summary_updates` to the OLE property-set
-/// streams. Empty XML bodies are rejected to avoid producing a
-/// `quick-xml`-unparseable stream. An empty `summary_updates` map is a
-/// free no-op.
+/// provided XML bodies and apply `summary_updates` / `summary_deletions`
+/// to the OLE property-set streams. Empty XML bodies are rejected to
+/// avoid producing a `quick-xml`-unparseable stream. Empty
+/// summary_updates / summary_deletions are free no-ops.
 pub fn apply_metadata_updates(
     package: &mut PidPackage,
     updates: &MetadataUpdates,
@@ -34,6 +47,20 @@ pub fn apply_metadata_updates(
         validate_xml_not_empty(xml, GENERAL_PATH)?;
         package.replace_stream(GENERAL_PATH, xml.as_bytes().to_vec());
     }
+
+    // Phase 9n: reject ambiguous intent before any side effect.
+    for del_key in &updates.summary_deletions {
+        if updates.summary_updates.contains_key(del_key) {
+            return Err(PidError::ParseFailure {
+                context: "summary writer".into(),
+                message: format!(
+                    "summary_updates and summary_deletions both target key \
+                     '{del_key}'; at most one must be specified per key"
+                ),
+            });
+        }
+    }
+    summary_write::apply_summary_deletions(package, &updates.summary_deletions)?;
     summary_write::apply_summary_updates(package, &updates.summary_updates)?;
     Ok(())
 }
@@ -118,5 +145,25 @@ mod tests {
         let s = pkg.get_stream(DRAWING_PATH).expect("stream");
         assert_eq!(s.data, b"<Keep/>");
         assert!(!s.modified);
+    }
+
+    #[test]
+    fn summary_updates_and_deletions_on_same_key_return_error() {
+        // Phase 9n: conflict check runs before any side effect and surfaces
+        // the offending key so the caller can self-correct.
+        let mut pkg = empty_package();
+        let mut summary_updates = std::collections::BTreeMap::new();
+        summary_updates.insert("title".to_string(), "new".to_string());
+        let updates = MetadataUpdates {
+            summary_updates,
+            summary_deletions: vec!["title".to_string()],
+            ..Default::default()
+        };
+        let err = apply_metadata_updates(&mut pkg, &updates).expect_err("conflict");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("summary_updates and summary_deletions both target key 'title'"),
+            "got: {msg}"
+        );
     }
 }

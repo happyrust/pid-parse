@@ -2,6 +2,88 @@
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-04-21
+
+### Phase 9n: `summary_deletions` — SummaryInformation CRUD 收尾
+
+Phase 9l/9m 铺的 Writer 层字符串 property 编辑只有 CREATE（新增）/
+UPDATE（覆写）两条语义。本轮补上 **DELETE**，让 SummaryInformation
+与 DocumentSummaryInformation 的 property-set 写路径真正支持 CRUD。
+
+### Added
+
+- `WritePlan.MetadataUpdates.summary_deletions: Vec<String>`
+  （`#[serde(default)]`，JSON plan 向后兼容）。语义等价于
+  `summary_updates` 的逆操作：按符号 key（title / author / subject /
+  keywords / comments / template / last_author / rev_number / app_name /
+  category / manager / company）定位到 PROPID 并从 section 移除。
+  - 空 vec = free no-op
+  - key 在 section 里不存在 = 静默 no-op（遵循 stream_replacements
+    "删不存在的不 fail" 传统）
+  - key 不在符号表 = `UnknownKey` 错误
+- `pid_parse::writer::summary_write::apply_summary_deletions` 公共入口。
+- `SummarySection::remove(prop_id)` 内部方法（Phase 9l 的
+  `SummaryPropertySet` 只多一个方法，其他基础设施复用）。
+- `pid_writer_validate --delete-summary KEY` 便利 CLI flag，对称于
+  `--set-summary KEY=VALUE`。可多次传入累加；与 `--set-summary` 在
+  *不同* key 上可共存，同 key 则报冲突错。与 `--apply-plan` 互斥。
+- `ValidateError::Edit("summary_updates and summary_deletions both target
+  key '{k}'")`：同 key 同时出现在 set/delete 两个字段时的明确拒绝，
+  在 lib 层 (`apply_metadata_updates`) 和 CLI 层 (`run_validate`) 都有
+  pre-check。
+
+### Changed
+
+- `apply_metadata_updates` 执行顺序正式定义：`drawing_xml` →
+  `general_xml` → `summary_deletions` → `summary_updates`。先删再增
+  保证 edge case "删 A、加 A" 的最终态一致（与冲突拒绝共存只是防御性
+  guard；即便 guard 放过也不会产生 inconsistent state）。
+- `pid_writer_validate`：
+  - `print_usage` 更新列出 `--delete-summary` 段与 "cannot be combined
+    with … --delete-summary" 的精确错误消息。
+  - `run_validate` / `compare_packages` 签名新增 `summary_deletions`
+    参数，`edited_paths` 自动扩展到 summary 两流（保证删除后字节级
+    变化归入 `edited` 而非 `mismatched`）。
+  - `collect_edited_paths_from_plan` 亦同步识别 `summary_deletions`。
+- `WritePlan::is_passthrough` 扩展：`summary_deletions.is_empty()` 加入
+  判空链。
+- `WritePlan::metadata_only` 构造函数新增 `summary_deletions:
+  Vec::new()` 初始化。
+
+### Tests
+
+lib 单元测试（`src/writer/summary_write.rs::tests`，+5 条）：
+- `apply_summary_deletions_removes_existing_prop`
+- `apply_summary_deletions_nonexistent_key_is_silent_noop`（断言静默
+  no-op 且**流字节保持不变**，避免 `modified: true` 误染 diff）
+- `apply_summary_deletions_unknown_key_returns_error`
+- `apply_summary_deletions_empty_is_zero_cost_noop`
+- `apply_summary_deletions_preserves_filetime_byte_for_byte`（非目标
+  prop 字节级保留的 Phase 9l 契约，在 delete 路径上再验证一次）
+
+lib 单元测试（`src/writer/metadata_write.rs::tests`，+1 条）：
+- `summary_updates_and_deletions_on_same_key_return_error`
+
+CLI 集成测试（`tests/writer_validate_cli.rs`，+4 条）：
+- `validate_delete_summary_removes_target_prop`
+- `validate_delete_and_set_summary_combine_legally`
+- `validate_delete_summary_conflicts_with_set_summary_on_same_key`
+- `validate_delete_summary_unknown_key_exits_two`
+
+Real-file 集成测试（`tests/writer_real_files.rs`，+1 条件性条）：
+- `real_file_delete_summary_prop_when_present`：fixture 存在且有
+  summary 流时删除 `keywords`（或 fallback 到 `title`），verify 非
+  summary 流全字节等价 + 目标 prop 在 reader 视角消失。
+
+全套 276 → **287 tests pass**（lib 193 → 199 +6；writer_real_files
+9 → 10 +1；writer_validate_cli 17 → 21 +4）。
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-9n-summary-deletions.md`：本轮 dev plan。
+- `docs/writer-quickstart.md` 5.6 节已在 Phase 9m 的 "CLI 快捷方式"
+  块里把 `--delete-summary` 作为第 9n 版延伸注解。
+
 ## [0.5.1] - 2026-04-21
 
 ### Phase 9m: `--set-summary` CLI flag + real-file integration

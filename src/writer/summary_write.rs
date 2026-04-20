@@ -247,6 +247,16 @@ impl SummarySection {
         body
     }
 
+    /// Phase 9n: remove the property with the given `prop_id` from this
+    /// section. Returns `true` if a prop was actually removed, `false` if
+    /// no matching prop was found (silent no-op). Preserves the relative
+    /// ordering of the remaining props.
+    fn remove(&mut self, prop_id: u32) -> bool {
+        let before = self.props.len();
+        self.props.retain(|p| p.prop_id != prop_id);
+        self.props.len() != before
+    }
+
     /// Replace or insert a property value. `new_value` is stored as the
     /// Rust string; this function encodes it per the target VT (preserving
     /// the original VT if the prop already existed, else defaulting to
@@ -548,6 +558,75 @@ pub fn apply_summary_updates(
     Ok(())
 }
 
+/// Phase 9n: apply property deletions by symbolic key.
+///
+/// Empty `deletions` is a free no-op. Each key resolves to a
+/// (stream, PROPID) pair via the same symbolic table as
+/// [`apply_summary_updates`]. Unknown keys return `UnknownKey` up-front
+/// (before any side effect). Keys that exist in the symbolic table but
+/// are not currently present in the section are **silent no-ops**,
+/// matching the `stream_replacements` convention that "delete what is not
+/// there" never fails.
+///
+/// If the source package lacks the targeted property-set stream entirely,
+/// returns `StreamNotFound` — consistent with `apply_summary_updates`.
+/// Caller can silence this by pre-filtering keys whose stream may be
+/// absent.
+pub fn apply_summary_deletions(
+    package: &mut PidPackage,
+    deletions: &[String],
+) -> Result<(), PidError> {
+    if deletions.is_empty() {
+        return Ok(());
+    }
+
+    let mut by_stream: BTreeMap<SummaryStream, Vec<u32>> = BTreeMap::new();
+    for key in deletions {
+        match resolve_key(key) {
+            Some((stream, prop_id)) => {
+                by_stream.entry(stream).or_default().push(prop_id);
+            }
+            None => return Err(unknown_key(key)),
+        }
+    }
+
+    for (stream, prop_ids) in by_stream {
+        let path = stream.path();
+        let bytes = match package.get_stream(path) {
+            Some(raw) => raw.data.clone(),
+            None => return Err(stream_not_found(path)),
+        };
+        let mut set = SummaryPropertySet::parse(&bytes)?;
+        let section = set
+            .find_section_mut(stream)
+            .ok_or_else(|| PidError::ParseFailure {
+                context: "summary writer".into(),
+                message: format!(
+                    "stream '{path}' parsed successfully but does not contain the \
+                     expected FMTID section; the stream may be a user-defined \
+                     property set unsupported in Phase 9l"
+                ),
+            })?;
+
+        let mut any_removed = false;
+        for prop_id in prop_ids {
+            if section.remove(prop_id) {
+                any_removed = true;
+            }
+        }
+
+        // Skip re-writing when no prop was actually removed: the stream
+        // bytes are byte-equal with the source, so `replace_stream` would
+        // only mark it `modified: true` without any observable effect.
+        if any_removed {
+            let new_bytes = set.serialize();
+            package.replace_stream(path.to_string(), new_bytes);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -754,5 +833,90 @@ mod tests {
         assert!(encoded.len().is_multiple_of(4), "must be 4-byte aligned");
         let vt = u32_le(&encoded, 0);
         assert_eq!(vt, VT_LPWSTR as u32);
+    }
+
+    // ---------------------------------------------------------------
+    // Phase 9n: summary_deletions coverage.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn apply_summary_deletions_removes_existing_prop() {
+        let bytes = sample_summary_bytes();
+        let mut pkg = package_with_summary(bytes);
+        let deletions = vec!["title".to_string()];
+        apply_summary_deletions(&mut pkg, &deletions).expect("delete");
+
+        let after = pkg.get_stream(SUMMARY_INFO_PATH).unwrap().data.clone();
+        let reparsed = SummaryPropertySet::parse(&after).expect("reparse");
+        assert!(
+            reparsed.sections[0].props.iter().all(|p| p.prop_id != 2),
+            "PID_TITLE (=2) must be gone after delete"
+        );
+        // Author (4) and create_time (12) still present.
+        assert!(reparsed.sections[0].props.iter().any(|p| p.prop_id == 4));
+        assert!(reparsed.sections[0].props.iter().any(|p| p.prop_id == 12));
+    }
+
+    #[test]
+    fn apply_summary_deletions_nonexistent_key_is_silent_noop() {
+        let bytes = sample_summary_bytes();
+        // `subject` (PROPID 3) is not present in sample_summary_bytes.
+        let mut pkg = package_with_summary(bytes.clone());
+        let deletions = vec!["subject".to_string()];
+        apply_summary_deletions(&mut pkg, &deletions).expect("silent no-op");
+        // Stream must be byte-identical because no prop was actually
+        // removed — we optimize the rewrite path in that case.
+        let after = &pkg.get_stream(SUMMARY_INFO_PATH).unwrap().data;
+        assert_eq!(after, &bytes, "passthrough on silent no-op deletion");
+    }
+
+    #[test]
+    fn apply_summary_deletions_unknown_key_returns_error() {
+        let bytes = sample_summary_bytes();
+        let mut pkg = package_with_summary(bytes);
+        let deletions = vec!["bogus_summary_key".to_string()];
+        let err = apply_summary_deletions(&mut pkg, &deletions).expect_err("reject");
+        let msg = format!("{err}");
+        assert!(msg.contains("unknown key"), "got: {msg}");
+        assert!(msg.contains("bogus_summary_key"), "got: {msg}");
+    }
+
+    #[test]
+    fn apply_summary_deletions_empty_is_zero_cost_noop() {
+        let bytes = sample_summary_bytes();
+        let mut pkg = package_with_summary(bytes.clone());
+        apply_summary_deletions(&mut pkg, &[]).expect("ok");
+        let after = &pkg.get_stream(SUMMARY_INFO_PATH).unwrap().data;
+        assert_eq!(after, &bytes, "empty slice = byte-identical passthrough");
+    }
+
+    #[test]
+    fn apply_summary_deletions_preserves_filetime_byte_for_byte() {
+        // Delete title (LPSTR); assert create_time (FILETIME) is
+        // byte-for-byte identical afterwards. This mirrors the Phase 9l
+        // write-side fidelity guarantee but for the delete path.
+        let bytes = sample_summary_bytes();
+        let original_ft = SummaryPropertySet::parse(&bytes).unwrap().sections[0]
+            .props
+            .iter()
+            .find(|p| p.prop_id == 12)
+            .unwrap()
+            .raw_value
+            .clone();
+
+        let mut pkg = package_with_summary(bytes);
+        apply_summary_deletions(&mut pkg, &["title".to_string()]).expect("delete");
+        let after = pkg.get_stream(SUMMARY_INFO_PATH).unwrap().data.clone();
+        let re_ft = SummaryPropertySet::parse(&after).unwrap().sections[0]
+            .props
+            .iter()
+            .find(|p| p.prop_id == 12)
+            .expect("create_time must still exist")
+            .raw_value
+            .clone();
+        assert_eq!(
+            re_ft, original_ft,
+            "FILETIME prop must survive an adjacent-prop deletion unchanged"
+        );
     }
 }

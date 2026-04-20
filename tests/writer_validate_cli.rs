@@ -726,3 +726,133 @@ fn validate_set_summary_unknown_key_exits_two_with_clear_error() {
     let _ = std::fs::remove_file(&src);
     let _ = std::fs::remove_file(&dst);
 }
+
+// ---------------------------------------------------------------------
+// Phase 9n: --delete-summary integration tests.
+// ---------------------------------------------------------------------
+
+#[test]
+fn validate_delete_summary_removes_target_prop() {
+    let src = unique_temp("del-summary-src");
+    let dst = unique_temp("del-summary-dst");
+    build_fixture_with_summary(&src, "To-Be-Deleted");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--delete-summary", "title"])
+        .output()
+        .expect("spawn --delete-summary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "expected exit 0; got {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+    // After delete, the reader's title field must be None.
+    assert_eq!(
+        read_title_from_pid(&dst),
+        None,
+        "title must be gone after --delete-summary title",
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn validate_delete_and_set_summary_combine_legally() {
+    // Combine: set a new title + delete author (author is not in the
+    // fixture, so it's a silent no-op deletion; we care that the command
+    // does not spuriously fail).
+    let src = unique_temp("del-set-summary-src");
+    let dst = unique_temp("del-set-summary-dst");
+    build_fixture_with_summary(&src, "OldTitle");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--set-summary", "title=FreshTitle"])
+        .args(["--delete-summary", "author"])
+        .output()
+        .expect("spawn --set --delete combined");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "expected exit 0; got {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+    assert_eq!(
+        read_title_from_pid(&dst).as_deref(),
+        Some("FreshTitle"),
+        "title should have been replaced",
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn validate_delete_summary_conflicts_with_set_summary_on_same_key() {
+    let src = unique_temp("del-set-conflict-src");
+    let dst = unique_temp("del-set-conflict-dst");
+    build_fixture_with_summary(&src, "OldTitle");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--set-summary", "title=X"])
+        .args(["--delete-summary", "title"])
+        .output()
+        .expect("spawn conflict");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "writer-layer conflict should exit 2; got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--set-summary and --delete-summary both target key 'title'"),
+        "stderr must explain the key conflict; got: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn validate_delete_summary_unknown_key_exits_two() {
+    let src = unique_temp("del-unknown-src");
+    let dst = unique_temp("del-unknown-dst");
+    build_fixture_with_summary(&src, "Orig");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .args(["--delete-summary", "nonexistent_key"])
+        .output()
+        .expect("spawn unknown delete");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "unknown key on delete should exit 2; got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown key"), "got: {stderr}");
+    assert!(stderr.contains("nonexistent_key"), "got: {stderr}");
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}

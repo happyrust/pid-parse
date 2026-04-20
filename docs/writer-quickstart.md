@@ -331,6 +331,40 @@ pid_writer_validate input.pid --out output.pid `
 但与 `--apply-plan` 互斥（declarative plan 自己带 summary_updates
 字段）。
 
+### 删除 property（v0.5.2+）
+
+v0.5.2 起补齐 SummaryInformation 写路径的 D（CRUD）：
+
+```powershell
+pid_writer_validate input.pid --out output.pid `
+    --set-summary title="Kept+Updated" `
+    --delete-summary comments `
+    --delete-summary keywords
+```
+
+或者 JSON plan：
+
+```json
+{
+  "metadata_updates": {
+    "summary_updates": { "title": "Kept+Updated" },
+    "summary_deletions": ["comments", "keywords"]
+  }
+}
+```
+
+规则：
+
+- `--delete-summary KEY` 可以多次指定累加。
+- 同一个 key 同时出现在 `--set-summary` 与 `--delete-summary` 里会
+  被拒绝（ambiguous 意图，exit 2 + 明确错误消息）。
+- 删除一个**表里有但源文件里当前没有**的 key 是静默 no-op（
+  stream 字节保持不变，不会误染 `modified`）。
+- 删除一个**表里不认识**的 key（e.g. `bogus_key`）会立刻报
+  `unknown key`，列出所有 11 个已知 key。
+- 顺序执行定义：先删除，再新增/覆写（对 conflict 拒绝的边缘场景
+  无影响，但保证最终态可预测）。
+
 ### 已知局限（跟踪 Phase 9n+）
 
 - `VT_LPSTR` 非 ASCII 不支持；

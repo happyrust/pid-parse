@@ -76,6 +76,16 @@ pub struct MetadataUpdates {
     /// error semantics. Empty map = free no-op.
     #[serde(default)]
     pub summary_updates: BTreeMap<String, String>,
+
+    /// Phase 9n (v0.5.2+): symbolic-keyed OLE property deletions. Each
+    /// entry names a property (same symbolic table as `summary_updates`)
+    /// that will be removed from its section before any updates are
+    /// applied. Deleting a key that does not currently exist in the
+    /// source property-set is a silent no-op — only unknown symbolic keys
+    /// return an error. A key appearing in both `summary_deletions` and
+    /// `summary_updates` is rejected (ambiguous intent). Empty vec = no-op.
+    #[serde(default)]
+    pub summary_deletions: Vec<String>,
 }
 
 /// Replace (or insert) a single CFB stream with the provided bytes.
@@ -124,6 +134,7 @@ impl WritePlan {
                 drawing_xml,
                 general_xml,
                 summary_updates: BTreeMap::new(),
+                summary_deletions: Vec::new(),
             },
             ..Self::default()
         }
@@ -134,6 +145,7 @@ impl WritePlan {
         self.metadata_updates.drawing_xml.is_none()
             && self.metadata_updates.general_xml.is_none()
             && self.metadata_updates.summary_updates.is_empty()
+            && self.metadata_updates.summary_deletions.is_empty()
             && self.stream_replacements.is_empty()
             && self.sheet_patches.is_empty()
     }

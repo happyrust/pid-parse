@@ -111,8 +111,7 @@ fn metadata_only_update_replaces_tagged_streams_and_keeps_others() {
     let plan = WritePlan {
         metadata_updates: MetadataUpdates {
             drawing_xml: Some(new_drawing.to_string()),
-            general_xml: None,
-            summary_updates: BTreeMap::new(),
+            ..Default::default()
         },
         ..WritePlan::default()
     };
