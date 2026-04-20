@@ -43,9 +43,9 @@ impl PidParser {
         crate::cfb::reader::parse_pid_file(path.as_ref(), &self.options)
     }
 
-    /// Parse the file and additionally retain every CFB stream's raw bytes,
-    /// returning a [`PidPackage`] suitable for round-tripping or feeding
-    /// into [`crate::writer::PidWriter`].
+    /// Parse a `.pid` file into a [`PidPackage`], preserving every stream's
+    /// raw bytes alongside the decoded model. Use this when you intend to
+    /// modify and write the file back via [`crate::writer::PidWriter`].
     pub fn parse_package<P: AsRef<Path>>(&self, path: P) -> Result<PidPackage, PidError> {
         crate::cfb::reader::parse_pid_package(path.as_ref(), &self.options)
     }

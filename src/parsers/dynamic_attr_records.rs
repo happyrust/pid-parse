@@ -298,13 +298,10 @@ pub(crate) fn strip_value_prefix(raw: &str) -> (&str, bool) {
         let second = bytes[1];
         let first_is_prefix = first.is_ascii_digit()
             || (first.is_ascii_punctuation() && first != b'\\' && first != b'/');
-        let rest_starts_valid = second.is_ascii_uppercase()
-            || second == b'\\'
-            || second == b'/';
+        let rest_starts_valid = second.is_ascii_uppercase() || second == b'\\' || second == b'/';
         if first_is_prefix && rest_starts_valid {
             let rest = &raw[1..];
-            let looks_like_guid = rest.len() >= 16
-                && rest.bytes().all(|b| b.is_ascii_hexdigit());
+            let looks_like_guid = rest.len() >= 16 && rest.bytes().all(|b| b.is_ascii_hexdigit());
             if !looks_like_guid {
                 return (rest, true);
             }
@@ -321,7 +318,9 @@ fn is_printable_run(data: &[u8], pos: usize, min_len: usize) -> bool {
     if pos + min_len > data.len() {
         return false;
     }
-    data[pos..pos + min_len].iter().all(|&b| is_printable_byte(b))
+    data[pos..pos + min_len]
+        .iter()
+        .all(|&b| is_printable_byte(b))
 }
 
 fn u32_le(data: &[u8], off: usize) -> u32 {
@@ -349,10 +348,7 @@ pub fn extract_record_trailers(data: &[u8]) -> Vec<DaRecordTrailer> {
         if boundary < start + 31 {
             continue;
         }
-        if data[boundary - 3] != 0x14
-            || data[boundary - 2] != 0x00
-            || data[boundary - 1] != 0x00
-        {
+        if data[boundary - 3] != 0x14 || data[boundary - 2] != 0x00 || data[boundary - 1] != 0x00 {
             continue;
         }
         let trailer_start = boundary - 31;
@@ -443,9 +439,7 @@ pub(crate) fn find_pidattributes_record_starts(data: &[u8]) -> Vec<usize> {
             continue;
         }
         let prev = data[i - 1];
-        if matches!(prev, 0x00 | 0x01)
-            && out.last().map(|&l| i - l > 32).unwrap_or(true)
-        {
+        if matches!(prev, 0x00 | 0x01) && out.last().map(|&l| i - l > 32).unwrap_or(true) {
             out.push(i);
         }
     }
@@ -603,7 +597,10 @@ mod tests {
             }
             other => panic!("expected Text, got {:?}", other),
         }
-        assert!(raw_value.is_none(), "GUID body must not be audited as stripped");
+        assert!(
+            raw_value.is_none(),
+            "GUID body must not be audited as stripped"
+        );
     }
 
     #[test]

@@ -161,9 +161,7 @@ mod tests {
     use super::*;
 
     fn utf16_bytes(s: &str) -> Vec<u8> {
-        s.encode_utf16()
-            .flat_map(|w| w.to_le_bytes())
-            .collect()
+        s.encode_utf16().flat_map(|w| w.to_le_bytes()).collect()
     }
 
     fn make_root_entry(id: u32, name: &str) -> Vec<u8> {

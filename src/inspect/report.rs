@@ -1,6 +1,32 @@
 use crate::model::PidDocument;
+use crate::package::PidPackage;
 use crate::parsers::magic;
 use std::fmt::Write;
+
+/// Package-aware report. Starts with [`generate_report`] and appends
+/// container-level metadata (root CLSID + non-root storage CLSIDs) that
+/// only [`PidPackage`] carries. Prefer this over [`generate_report`]
+/// when you already have a [`PidPackage`] at hand.
+pub fn generate_package_report(pkg: &PidPackage) -> String {
+    let mut out = generate_report(&pkg.parsed);
+    if pkg.root_clsid.is_some() || !pkg.storage_clsids.is_empty() {
+        writeln!(out, "\n--- Container CLSIDs ---").ok();
+        if let Some(c) = pkg.root_clsid {
+            writeln!(out, "  root: {{{}}}", c).ok();
+        } else {
+            writeln!(out, "  root: (nil — source container had no CLSID)").ok();
+        }
+        if pkg.storage_clsids.is_empty() {
+            writeln!(out, "  non-root storages: (none carry a CLSID)").ok();
+        } else {
+            writeln!(out, "  non-root storages ({}):", pkg.storage_clsids.len()).ok();
+            for (path, clsid) in &pkg.storage_clsids {
+                writeln!(out, "    {}  {{{}}}", path, clsid).ok();
+            }
+        }
+    }
+    out
+}
 
 pub fn generate_report(doc: &PidDocument) -> String {
     let mut out = String::new();
@@ -10,18 +36,8 @@ pub fn generate_report(doc: &PidDocument) -> String {
     writeln!(out, "Streams: {}", doc.streams.len()).ok();
     writeln!(out, "JSites:  {}", doc.jsites.len()).ok();
     writeln!(out, "Clusters: {}", doc.clusters.len()).ok();
-    writeln!(
-        out,
-        "Sheet streams: {}",
-        doc.sheet_streams.len()
-    )
-    .ok();
-    writeln!(
-        out,
-        "Unknown streams: {}",
-        doc.unknown_streams.len()
-    )
-    .ok();
+    writeln!(out, "Sheet streams: {}", doc.sheet_streams.len()).ok();
+    writeln!(out, "Unknown streams: {}", doc.unknown_streams.len()).ok();
 
     if let Some(ref si) = doc.summary {
         writeln!(out, "\n--- Summary ---").ok();
@@ -108,8 +124,12 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out).ok();
 
             if let Some(ref pi) = c.probe_info {
-                writeln!(out, "    [PROBE] table_offset=0x{:04X}, method={}, entries={}, end=0x{:04X}",
-                    pi.string_table_offset, pi.detection_method, pi.entries_parsed, pi.end_offset).ok();
+                writeln!(
+                    out,
+                    "    [PROBE] table_offset=0x{:04X}, method={}, entries={}, end=0x{:04X}",
+                    pi.string_table_offset, pi.detection_method, pi.entries_parsed, pi.end_offset
+                )
+                .ok();
             }
             if let Some(ref table) = c.string_table {
                 writeln!(out, "    String table ({} entries):", table.len()).ok();
@@ -138,8 +158,12 @@ pub fn generate_report(doc: &PidDocument) -> String {
         writeln!(out, "  Relationships: {}", da.relationships.len()).ok();
         writeln!(out, "  Class names: {:?}", da.class_names).ok();
         if let Some(ref ps) = da.probe_summary {
-            writeln!(out, "  [PROBE] body_start=0x{:04X}, markers={}, records={}, bytes_scanned={}",
-                ps.body_start_offset, ps.marker_count, ps.records_extracted, ps.bytes_scanned).ok();
+            writeln!(
+                out,
+                "  [PROBE] body_start=0x{:04X}, markers={}, records={}, bytes_scanned={}",
+                ps.body_start_offset, ps.marker_count, ps.records_extracted, ps.bytes_scanned
+            )
+            .ok();
         }
         if !da.attribute_records.is_empty() {
             writeln!(
@@ -192,10 +216,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 writeln!(
                     out,
                     "    [PROBE] body_start=0x{:04X}, markers={}, records={}, bytes_scanned={}",
-                    ps.body_start_offset,
-                    ps.marker_count,
-                    ps.records_extracted,
-                    ps.bytes_scanned
+                    ps.body_start_offset, ps.marker_count, ps.records_extracted, ps.bytes_scanned
                 )
                 .ok();
             }
@@ -216,12 +237,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                     .ok();
                 }
                 if sh.attribute_records.len() > 5 {
-                    writeln!(
-                        out,
-                        "      ... ({} more)",
-                        sh.attribute_records.len() - 5
-                    )
-                    .ok();
+                    writeln!(out, "      ... ({} more)", sh.attribute_records.len() - 5).ok();
                 }
             }
         }
@@ -230,12 +246,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
     if let Some(ref r) = doc.psm_roots {
         writeln!(out, "\n--- PSMroots ({} bytes) ---", r.size).ok();
         for e in &r.entries {
-            writeln!(
-                out,
-                "  [@+{:04X}] id=0x{:08X}  {}",
-                e.offset, e.id, e.name
-            )
-            .ok();
+            writeln!(out, "  [@+{:04X}] id=0x{:08X}  {}", e.offset, e.id, e.name).ok();
         }
         if r.trailing_bytes > 0 {
             writeln!(out, "  ({} trailing bytes)", r.trailing_bytes).ok();
@@ -292,6 +303,28 @@ pub fn generate_report(doc: &PidDocument) -> String {
         }
     }
 
+    if let Some(ref dv2) = doc.doc_version2_decoded {
+        writeln!(
+            out,
+            "\n--- DocVersion2 (decoded, magic=0x{:08X}, {} records) ---",
+            dv2.magic_u32_le,
+            dv2.records.len()
+        )
+        .ok();
+        if !dv2.reserved_all_zero {
+            writeln!(out, "  (!) reserved header bytes are not all zero").ok();
+        }
+        for r in &dv2.records {
+            let label = crate::parsers::doc_version2::op_type_label(r.op_type);
+            writeln!(
+                out,
+                "  [{}] version={} (0x{:X})",
+                label, r.version, r.version
+            )
+            .ok();
+        }
+    }
+
     if let Some(ref reg) = doc.app_object_registry {
         writeln!(
             out,
@@ -310,12 +343,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
     }
 
     if let Some(ref t) = doc.tagged_storages {
-        writeln!(
-            out,
-            "\n--- Tagged Text Storage List ({} bytes) ---",
-            t.size
-        )
-        .ok();
+        writeln!(out, "\n--- Tagged Text Storage List ({} bytes) ---", t.size).ok();
         writeln!(out, "  list: {}", t.list_name).ok();
         for e in &t.entries {
             writeln!(out, "    -> {}", e.storage_name).ok();
@@ -465,10 +493,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 out,
                 "  Symbols: {} unique ({} total JSite refs)",
                 xr.symbol_usage.len(),
-                xr.symbol_usage
-                    .iter()
-                    .map(|u| u.usage_count)
-                    .sum::<usize>()
+                xr.symbol_usage.iter().map(|u| u.usage_count).sum::<usize>()
             )
             .ok();
             for u in xr.symbol_usage.iter().take(5) {

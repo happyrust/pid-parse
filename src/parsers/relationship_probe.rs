@@ -96,10 +96,7 @@ fn find_nearby_guids(
         }
         if data[i..i + 32].iter().all(|b| b.is_ascii_hexdigit()) {
             if seen.insert(i) {
-                out.push((
-                    i,
-                    String::from_utf8_lossy(&data[i..i + 32]).to_string(),
-                ));
+                out.push((i, String::from_utf8_lossy(&data[i..i + 32]).to_string()));
             }
             i += 32;
         } else {
@@ -181,11 +178,7 @@ mod tests {
     #[test]
     fn probe_finds_single_relationship() {
         let mut buf = vec![0u8; 32];
-        let rec = relationship_record(
-            "C5CF946710BF4EBDB02808EBD6879B62",
-            0x0086,
-            0x03B7,
-        );
+        let rec = relationship_record("C5CF946710BF4EBDB02808EBD6879B62", 0x0086, 0x03B7);
         let offset = buf.len();
         buf.extend_from_slice(&rec);
 
@@ -226,9 +219,7 @@ mod tests {
         assert_eq!(probes.len(), 1);
         let p = &probes[0];
         assert!(
-            p.nearby_ascii_guids
-                .iter()
-                .any(|(_, g)| g == drawing_guid),
+            p.nearby_ascii_guids.iter().any(|(_, g)| g == drawing_guid),
             "probe should capture the DrawingNo GUID in its window, got {:?}",
             p.nearby_ascii_guids
         );

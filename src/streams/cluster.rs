@@ -126,13 +126,9 @@ fn find_string_table_start(data: &[u8]) -> (usize, String) {
     for i in 20..data.len().saturating_sub(12) {
         let val = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         if val == 2 {
-            let blen = u32::from_le_bytes([
-                data[i + 4],
-                data[i + 5],
-                data[i + 6],
-                data[i + 7],
-            ]) as usize;
-            if blen >= 4 && blen < 512 && blen % 2 == 0 && i + 8 + blen <= data.len() {
+            let blen =
+                u32::from_le_bytes([data[i + 4], data[i + 5], data[i + 6], data[i + 7]]) as usize;
+            if (4..512).contains(&blen) && blen.is_multiple_of(2) && i + 8 + blen <= data.len() {
                 let first_char = u16::from_le_bytes([data[i + 8], data[i + 9]]);
                 if (0x20..=0x7e).contains(&first_char) {
                     // Walk back to find entry 1: look for a valid byte_len before this
@@ -160,16 +156,23 @@ fn find_entry1_before(data: &[u8], entry2_pos: usize) -> Option<usize> {
         if idx_pos < 16 {
             continue;
         }
-        let stored_blen =
-            u32::from_le_bytes([data[blen_pos], data[blen_pos + 1], data[blen_pos + 2], data[blen_pos + 3]])
-                as usize;
+        let stored_blen = u32::from_le_bytes([
+            data[blen_pos],
+            data[blen_pos + 1],
+            data[blen_pos + 2],
+            data[blen_pos + 3],
+        ]) as usize;
         if stored_blen != blen {
             continue;
         }
         let first_char = u16::from_le_bytes([data[str_start], data[str_start + 1]]);
         if (0x20..=0x7e).contains(&first_char) {
-            let idx_val =
-                u32::from_le_bytes([data[idx_pos], data[idx_pos + 1], data[idx_pos + 2], data[idx_pos + 3]]);
+            let idx_val = u32::from_le_bytes([
+                data[idx_pos],
+                data[idx_pos + 1],
+                data[idx_pos + 2],
+                data[idx_pos + 3],
+            ]);
             if idx_val <= 10 {
                 return Some(idx_pos);
             }

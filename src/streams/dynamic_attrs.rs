@@ -60,10 +60,8 @@ pub fn parse_dynamic_attrs<R: Read + std::io::Seek>(
         let header = crate::parsers::cluster_header::parse_header(&data);
         let (attribute_records, probe_summary) =
             crate::parsers::dynamic_attr_records::parse_attribute_records(&data);
-        let relationship_probes =
-            crate::parsers::relationship_probe::probe_relationships(&data);
-        let record_trailers =
-            crate::parsers::dynamic_attr_records::extract_record_trailers(&data);
+        let relationship_probes = crate::parsers::relationship_probe::probe_relationships(&data);
+        let record_trailers = crate::parsers::dynamic_attr_records::extract_record_trailers(&data);
 
         doc.dynamic_attributes = Some(DynamicAttributesBlob {
             path: path.to_string(),

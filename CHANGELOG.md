@@ -56,6 +56,7 @@
 - 不做 SmartPlant 原始线型、标注、字高、版式的像素级复刻
 - `symbol_name/symbol_path` 目前仍是 best-effort 语义证据；后续若把 `JSite` 真正挂接到对象级，可继续细化
 - v0.4.1 同段后续补丁：`layout` 现会从 `cross_reference.symbol_usage` / `jsites` 提取代表性 `.sym` 路径作为 pid-only 的对象级 symbol hint。典型受益对象包括 `OPC`、`PipingComp`、`Nozzle` 等粗类型；即便没有 sidecar XML，也能把 `Off-Drawing.sym` / `Cap2.sym` / `Flanged Nozzle.sym` 一类证据下沉到 `PidLayoutItem.symbol_path`
+
 ### Phase 8b: Metadata 编辑 helper（为 H7CAD UI 编辑桥铺路）
 
 在 v0.4.0 Writer 层之上新增 `src/writer/metadata_helpers.rs` 纯函数模块，让上层不再需要自己拼/改 XML 字节即可对 `/TaggedTxtData/Drawing` 与 `/TaggedTxtData/General` 做"改一点点"式编辑。所有 helper 都是 byte-level splice — 除被替换的属性值/元素文本外，其它字节（注释、空白、引号风格、兄弟属性顺序）逐字节保留，最大化 SmartPlant 兼容性。

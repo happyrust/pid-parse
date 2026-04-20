@@ -17,7 +17,7 @@ fn collect_simple_tags_skips_nested() {
     let xml = "<Outer><Inner><Deep>x</Deep></Inner></Outer>";
     let tags = xml_util::collect_simple_tags(xml);
     // "Inner" has value containing '<', should be skipped
-    assert!(tags.get("Inner").is_none());
+    assert!(!tags.contains_key("Inner"));
     // "Deep" is a simple tag
     assert_eq!(tags.get("Deep").map(String::as_str), Some("x"));
 }
@@ -46,7 +46,13 @@ fn collect_simple_tags_sp_prefixed() {
 
 // ─── cluster_header::parse_header ───
 
-fn make_header_bytes(magic: u32, rec_count: u32, stream_type: u16, body_len: u32, flags: u16) -> Vec<u8> {
+fn make_header_bytes(
+    magic: u32,
+    rec_count: u32,
+    stream_type: u16,
+    body_len: u32,
+    flags: u16,
+) -> Vec<u8> {
     let mut buf = Vec::with_capacity(16);
     buf.extend_from_slice(&magic.to_le_bytes());
     buf.extend_from_slice(&rec_count.to_le_bytes());
@@ -137,7 +143,11 @@ fn parse_string_table_empty_string_not_sentinel() {
     data.extend(make_sentinel());
 
     let (table, _end) = cluster_header::parse_string_table(&data, 0);
-    assert_eq!(table.len(), 3, "should parse 3 entries (empty string not sentinel)");
+    assert_eq!(
+        table.len(),
+        3,
+        "should parse 3 entries (empty string not sentinel)"
+    );
     assert_eq!(table[0].value, "First");
     assert_eq!(table[1].index, 5);
     assert_eq!(table[1].value, "");
@@ -196,23 +206,17 @@ fn describe_magic_for_known_and_unknown() {
 
 #[test]
 fn sheet_stream_reuses_cluster_header() {
-    // Conditional on a real fixture file — mirrors
-    // `tests/parse_real_files.rs::parse_test_file` behaviour: skip
-    // gracefully when no fixture is available so `cargo test` stays
-    // green on machines without the sample `.pid`.
-    let path = "test-file/DWG-0201GP06-01.pid";
-    if !std::path::Path::new(path).exists() {
-        eprintln!("SKIP: {} not found", path);
+    // `test-file/` is gitignored; the sample is available to contributors
+    // with SmartPlant access but not in CI. Skip cleanly when the fixture
+    // is missing, matching the pattern in writer_real_files.rs /
+    // parse_real_files.rs.
+    let fixture = "test-file/DWG-0201GP06-01.pid";
+    if !std::path::Path::new(fixture).exists() {
+        eprintln!("skipping: fixture {} not found", fixture);
         return;
     }
     let parser = pid_parse::PidParser::new();
-    let doc = match parser.parse_file(path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("SKIP: parse {} failed: {}", path, e);
-            return;
-        }
-    };
+    let doc = parser.parse_file(fixture).expect("parse fixture");
     assert!(!doc.sheet_streams.is_empty(), "expected at least one sheet");
     let sheet = &doc.sheet_streams[0];
     let magic = sheet.magic_u32_le.expect("sheet stream must have magic");

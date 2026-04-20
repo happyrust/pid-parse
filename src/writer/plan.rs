@@ -1,75 +1,123 @@
-//! Declarative description of edits to apply when re-emitting a
-//! [`crate::package::PidPackage`] via [`super::PidWriter`].
+//! Declarative write plan consumed by [`crate::writer::PidWriter::write_to`].
 //!
-//! A [`WritePlan`] is composed of three orthogonal layers:
-//! 1. **`metadata_updates`** — high-level intent (replace `Drawing` /
-//!    `General` XML, future: tweak `SummaryInformation`). Resolved by
-//!    [`super::metadata_write`].
-//! 2. **`stream_replacements`** — low-level path → bytes substitutions.
-//!    Applied verbatim; the writer does no validation.
-//! 3. **`sheet_patches`** — surgical byte-range edits inside an existing
-//!    sheet stream. Marked `experimental` because semantic re-encoding is
-//!    not yet in scope.
+//! A [`WritePlan`] describes **what** should change in a [`PidPackage`]
+//! before it gets serialized back to CFB. The writer pipeline is:
 //!
-//! Order of application (see [`super::PidWriter::write_to`]):
-//! `metadata_updates` → `stream_replacements` → `sheet_patches`.
-//! Later layers can therefore overwrite earlier ones; the writer does not
-//! reject conflicts (callers compose plans with knowledge of intent).
-
+//! 1. Apply [`MetadataUpdates`] (drawing XML / general XML / future summary)
+//! 2. Apply every [`StreamReplacement`] verbatim
+//! 3. Apply every [`SheetPatch`] byte-range (experimental, no semantic checks)
+//! 4. Write the resulting stream map to a new CFB container
+//!
+//! Each field is optional / may be empty; a `WritePlan::default()` is a
+//! pure passthrough that re-serializes the package unchanged.
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Top-level write description. Construct with `WritePlan::default()` for a
-/// pure passthrough (no edits, just re-emit the package as-is).
-#[derive(Debug, Clone, Default)]
+/// Top-level write plan. An empty plan (`WritePlan::default()`) is a valid
+/// passthrough request.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WritePlan {
+    /// Targeted metadata edits. See [`MetadataUpdates`] for supported
+    /// streams.
     pub metadata_updates: MetadataUpdates,
+    /// Verbatim stream replacements applied after metadata updates. Paths
+    /// are normalized (leading `/`, `/` separator) by the writer.
     pub stream_replacements: Vec<StreamReplacement>,
+    /// Experimental byte-range patches for Sheet streams. No semantic
+    /// validation — the caller is responsible for producing a byte-valid
+    /// Sheet body.
     pub sheet_patches: Vec<SheetPatch>,
 }
 
-/// High-level metadata edits. First version supports the two
-/// `/TaggedTxtData` XML streams that SmartPlant uses to store drawing-level
-/// metadata; `summary_updates` is reserved for a future
-/// `SummaryInformation` property-set rewrite (currently ignored by the
-/// writer).
-#[derive(Debug, Clone, Default)]
+/// Narrow metadata channel for the common "edit drawing number / project"
+/// flow without hand-crafting byte replacements.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetadataUpdates {
-    /// Replacement bytes for `/TaggedTxtData/Drawing` (encoded UTF-8 / UTF-16
-    /// per caller's responsibility — see writer-layer-plan risk note).
+    /// New XML body for `/TaggedTxtData/Drawing`. `None` = untouched.
     pub drawing_xml: Option<String>,
-    /// Replacement bytes for `/TaggedTxtData/General`.
+    /// New XML body for `/TaggedTxtData/General`. `None` = untouched.
     pub general_xml: Option<String>,
-    /// Reserved for future `SummaryInformation` support. Currently
-    /// preserved across writes but **not applied**.
+    /// Placeholder for future `SummaryInformation` property-set updates.
+    /// **Not implemented in the current release** — any value given here
+    /// is silently ignored.
     pub summary_updates: BTreeMap<String, String>,
 }
 
-/// Replace one stream wholesale with the supplied bytes. The writer will
-/// insert the entry if it didn't previously exist.
-#[derive(Debug, Clone)]
+/// Replace (or insert) a single CFB stream with the provided bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamReplacement {
+    /// Absolute path inside the CFB (e.g. `/TaggedTxtData/Drawing`).
     pub path: String,
     pub new_data: Vec<u8>,
 }
 
-/// Apply a list of byte-range patches to an existing sheet stream.
-///
-/// `experimental: true` is a soft flag — the writer will still execute the
-/// patch — but downstream tooling can use it to decide whether to surface
-/// the result to end users.
-#[derive(Debug, Clone)]
+/// Experimental byte-range patch for a Sheet stream. Not semantically
+/// validated; callers opt into risk via `experimental = true`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SheetPatch {
+    /// Absolute sheet stream path, e.g. `/Sheet6`.
     pub sheet_path: String,
+    /// Ordered list of byte-range edits. Patches may overlap across calls,
+    /// but the writer applies them in descending-`start` order within a
+    /// single patch to keep earlier offsets stable.
     pub chunk_patches: Vec<SheetChunkPatch>,
+    /// Must be `true` in the current release. Present for future
+    /// validation hooks.
     pub experimental: bool,
 }
 
-/// Splice `[start..end)` of the target stream with `replacement`.
-/// `replacement.len()` may differ from `end - start`; the writer adjusts
-/// the surrounding bytes accordingly.
-#[derive(Debug, Clone)]
+/// Half-open byte range `[start, end)` replaced by `replacement`. A
+/// `start == end` patch is a pure insertion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SheetChunkPatch {
     pub start: usize,
     pub end: usize,
     pub replacement: Vec<u8>,
+}
+
+impl WritePlan {
+    /// Convenience constructor for the metadata-only flow: only the two
+    /// `/TaggedTxtData/*` XML streams are touched.
+    pub fn metadata_only(drawing_xml: Option<String>, general_xml: Option<String>) -> Self {
+        Self {
+            metadata_updates: MetadataUpdates {
+                drawing_xml,
+                general_xml,
+                summary_updates: BTreeMap::new(),
+            },
+            ..Self::default()
+        }
+    }
+
+    /// `true` iff the plan would not change any stream (a passthrough).
+    pub fn is_passthrough(&self) -> bool {
+        self.metadata_updates.drawing_xml.is_none()
+            && self.metadata_updates.general_xml.is_none()
+            && self.metadata_updates.summary_updates.is_empty()
+            && self.stream_replacements.is_empty()
+            && self.sheet_patches.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_plan_is_passthrough() {
+        assert!(WritePlan::default().is_passthrough());
+    }
+
+    #[test]
+    fn metadata_only_sets_only_xml_fields() {
+        let plan = WritePlan::metadata_only(Some("<Drawing/>".into()), None);
+        assert!(!plan.is_passthrough());
+        assert_eq!(
+            plan.metadata_updates.drawing_xml.as_deref(),
+            Some("<Drawing/>")
+        );
+        assert!(plan.metadata_updates.general_xml.is_none());
+        assert!(plan.stream_replacements.is_empty());
+        assert!(plan.sheet_patches.is_empty());
+    }
 }

@@ -1,6 +1,7 @@
 pub mod app_object;
 pub mod cluster_header;
 pub mod doc_version;
+pub mod doc_version2;
 pub mod drawing_xml;
 pub mod dynamic_attr_records;
 pub mod general_xml;
@@ -13,4 +14,3 @@ pub mod sheet_probe;
 pub mod string_scan;
 pub mod tagged_stg_list;
 pub mod xml_util;
-

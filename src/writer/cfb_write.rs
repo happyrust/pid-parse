@@ -1,110 +1,132 @@
-//! Re-emit a [`PidPackage`] as a CFB file on disk.
+//! Serialize a [`PidPackage`] back to a new CFB container.
 //!
-//! First-version semantics:
-//! - Brand-new container created via `::cfb::create`; original CLSID,
-//!   storage timestamps, and sector size hints are **not** copied.
-//! - All intermediate storage paths are auto-created in lexicographic
-//!   order before any stream is written, so deeply nested streams like
-//!   `/A/B/C/D` work without the caller pre-declaring parents.
-//! - Streams are written in `BTreeMap` key order for reproducibility — the
-//!   physical layout will not match the source file byte-for-byte even on
-//!   passthrough, but the *content view* (every stream's bytes accessible
-//!   by path) is preserved.
-
+//! The writer is intentionally minimal: we rebuild the container from
+//! scratch via [`cfb::create`] / [`cfb::CompoundFile::create`] and write
+//! every stream in [`PidPackage::streams`] (deterministic `BTreeMap` order).
+//!
+//! Trade-offs that are **not** addressed in v0.3.2:
+//!
+//! - The original root CLSID / creation + modified timestamps are **not**
+//!   preserved. Any SPPID host that depends on them will see a "fresh"
+//!   container.
+//! - Stream directory order differs from the source because we serialize
+//!   in lexicographic path order, not CFB directory-sector order.
+//! - Stream-level CLSIDs / state flags / colors are not preserved.
 use crate::error::PidError;
 use crate::package::PidPackage;
 use std::collections::BTreeSet;
+use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-/// Write `package` to `output`. Overwrites any existing file at the path.
+/// Write `package` to a new CFB file at `output`. Overwrites existing files.
 pub fn write_package(package: &PidPackage, output: &Path) -> Result<(), PidError> {
-    // `::cfb::create` opens-or-truncates the destination path itself; we
-    // don't pre-create the file (cfb-0.10's `create` takes a path, not a
-    // `File` handle).
-    let mut cfb = ::cfb::create(output)?;
+    let file = File::create(output)?;
+    let mut cfb = ::cfb::CompoundFile::create(file)?;
 
-    // 1. Materialize every parent storage path. We sort ascending so a
-    //    parent like "/A" is always created before "/A/B".
-    for storage in collect_storage_paths(package).into_iter() {
-        // `::cfb::create` already provides the root storage; skip "/".
-        if storage == "/" || storage.is_empty() {
+    // 1. Create every intermediate storage (directory) required by the
+    //    stream paths. `create_storage_all` handles nested paths in one
+    //    call; sorting by path keeps the call order deterministic.
+    let storages = collect_storage_paths(package);
+    for dir in &storages {
+        // Skip the implicit root.
+        if dir == "/" {
             continue;
         }
-        cfb.create_storage(&storage)?;
+        cfb.create_storage_all(dir)?;
     }
 
-    // 2. Write every stream. BTreeMap iteration is sorted by key.
-    for raw in package.streams.values() {
-        let mut stream = cfb.create_stream(&raw.path)?;
+    // 2. Write every stream. BTreeMap iteration is ascending by key, which
+    //    also gives reproducible output.
+    for (path, raw) in &package.streams {
+        let mut stream = cfb.create_stream(path)?;
         stream.write_all(&raw.data)?;
     }
 
-    // 3. cfb 0.10 flushes on drop, but explicit flush makes write errors
-    //    surface here rather than at end-of-scope.
+    // 3. Restore the root CLSID if the package carried one. `cfb` 0.10
+    //    defaults the root CLSID to the nil UUID when we call `create`,
+    //    which loses SPPID host identity; forwarding the original CLSID
+    //    is the one piece of container identity we *can* preserve on this
+    //    crate version.
+    if let Some(clsid) = package.root_clsid {
+        cfb.set_storage_clsid("/", clsid)?;
+    }
+
+    // 4. Restore non-root storage CLSIDs. Real SmartPlant samples keep
+    //    these at the nil UUID so the map is typically empty; we still
+    //    handle it to keep parity across round-trips for callers that
+    //    happen to have non-nil values (e.g. synthetic fixtures).
+    for (path, clsid) in &package.storage_clsids {
+        cfb.set_storage_clsid(path, *clsid)?;
+    }
+
     cfb.flush()?;
     Ok(())
 }
 
-/// Walk every stream path and collect the unique set of parent storage
-/// paths, sorted ascending so callers can create them top-down without
-/// hitting "parent missing" errors.
-fn collect_storage_paths(package: &PidPackage) -> Vec<String> {
-    let mut storages: BTreeSet<String> = BTreeSet::new();
+/// Extract the unique set of storage (directory) paths needed to host every
+/// stream in the package. E.g. `["/TaggedTxtData/Drawing", "/JSite0/Ole"]`
+/// yields `["/", "/JSite0", "/TaggedTxtData"]`.
+pub(crate) fn collect_storage_paths(package: &PidPackage) -> Vec<String> {
+    let mut set: BTreeSet<String> = BTreeSet::new();
+    set.insert("/".to_string());
     for path in package.streams.keys() {
-        // Split forward-slash path into parent components and accumulate
-        // every prefix. `/A/B/C` → "/A", "/A/B".
-        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
-        if parts.len() <= 1 {
-            continue;
-        }
-        let mut current = String::new();
-        for component in &parts[..parts.len() - 1] {
-            current.push('/');
-            current.push_str(component);
-            storages.insert(current.clone());
+        // Strip trailing segment (the stream name) and walk up.
+        let mut current = path.as_str();
+        while let Some(idx) = current.rfind('/') {
+            let parent = if idx == 0 { "/" } else { &current[..idx] };
+            if !set.insert(parent.to_string()) {
+                // Already visited this ancestor; further ancestors are
+                // already in the set from an earlier path.
+                break;
+            }
+            current = parent;
         }
     }
-    storages.into_iter().collect()
+    set.into_iter().collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::package::{PidPackage, RawStream};
+    use crate::model::PidDocument;
+    use crate::package::RawStream;
     use std::collections::BTreeMap;
 
-    fn pkg_with_paths(paths: &[&str]) -> PidPackage {
-        let mut streams = BTreeMap::new();
+    fn pkg_from(paths: &[&str]) -> PidPackage {
+        let mut map = BTreeMap::new();
         for p in paths {
-            streams.insert(
-                (*p).to_string(),
+            map.insert(
+                p.to_string(),
                 RawStream {
-                    path: (*p).to_string(),
+                    path: p.to_string(),
                     data: vec![],
                     modified: false,
                 },
             );
         }
-        PidPackage {
-            source_path: None,
-            streams,
-            parsed: Default::default(),
-        }
+        PidPackage::new(None, map, PidDocument::default())
     }
 
     #[test]
-    fn collects_parent_storages_topdown() {
-        let pkg = pkg_with_paths(&["/A/B/C", "/A/D", "/X"]);
-        assert_eq!(
-            collect_storage_paths(&pkg),
-            vec!["/A".to_string(), "/A/B".to_string()]
-        );
+    fn collect_storage_paths_handles_nested_and_root_streams() {
+        let pkg = pkg_from(&[
+            "/TopLevel",
+            "/TaggedTxtData/Drawing",
+            "/JSite0/Ole",
+            "/JSite0/JProperties",
+        ]);
+        let dirs = collect_storage_paths(&pkg);
+        assert!(dirs.contains(&"/".to_string()));
+        assert!(dirs.contains(&"/TaggedTxtData".to_string()));
+        assert!(dirs.contains(&"/JSite0".to_string()));
+        assert!(!dirs.contains(&"/TopLevel".to_string()));
     }
 
     #[test]
-    fn root_streams_yield_no_storages() {
-        let pkg = pkg_with_paths(&["/Foo", "/Bar"]);
-        assert!(collect_storage_paths(&pkg).is_empty());
+    fn collect_storage_paths_skips_empty_package() {
+        let pkg = pkg_from(&[]);
+        let dirs = collect_storage_paths(&pkg);
+        assert_eq!(dirs, vec!["/".to_string()]);
     }
 }
