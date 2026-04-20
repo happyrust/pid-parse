@@ -273,3 +273,214 @@ fn validate_edit_argument_malformed_exits_with_argument_error() {
 
     let _ = std::fs::remove_file(&src);
 }
+
+// --- --apply-plan tests (W3) ---------------------------------------------
+
+fn write_plan(path: &PathBuf, body: &str) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("ensure plan parent");
+    }
+    std::fs::write(path, body).expect("write plan.json");
+}
+
+fn plan_path(name: &str) -> PathBuf {
+    let n = FIXTURE_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let pid = std::process::id();
+    std::env::temp_dir().join(format!("pid-validate-plan-{pid}-{n}-{name}.json"))
+}
+
+#[test]
+fn validate_apply_plan_passthrough_empty_plan_passes() {
+    let src = unique_temp("plan-empty-src");
+    let dst = unique_temp("plan-empty-dst");
+    let plan = plan_path("empty");
+    build_fixture(&src);
+    write_plan(&plan, "{}");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .arg("--json")
+        .args(["--apply-plan".as_ref(), plan.as_os_str()])
+        .output()
+        .expect("spawn --apply-plan (empty)");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit {:?}; stderr={stderr}; stdout={stdout}",
+        output.status.code()
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout must be valid JSON");
+    assert_eq!(parsed["ok"], serde_json::json!(true));
+    assert_eq!(parsed["mismatched"], serde_json::json!(0));
+    assert_eq!(parsed["edited"], serde_json::json!(0));
+    assert_eq!(parsed["matched"], serde_json::json!(3));
+    assert!(parsed.get("plan_applied").is_some(), "plan_applied populated");
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+    let _ = std::fs::remove_file(&plan);
+}
+
+#[test]
+fn validate_apply_plan_drawing_metadata_update_rewrites_stream() {
+    let src = unique_temp("plan-meta-src");
+    let dst = unique_temp("plan-meta-dst");
+    let plan = plan_path("meta");
+    build_fixture(&src);
+    // Replace the Drawing XML body wholesale — plan-level metadata update.
+    let new_drawing = r#"<?xml version="1.0"?><Drawing><Tag SP_DRAWINGNUMBER="PLAN-777"/></Drawing>"#;
+    // Escape for JSON string literal (quotes only; no newlines).
+    let escaped = new_drawing.replace('"', "\\\"");
+    let body = format!(
+        r#"{{"metadata_updates":{{"drawing_xml":"{escaped}","general_xml":null,"summary_updates":{{}}}},"stream_replacements":[],"sheet_patches":[]}}"#
+    );
+    write_plan(&plan, &body);
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .arg("--json")
+        .args(["--apply-plan".as_ref(), plan.as_os_str()])
+        .output()
+        .expect("spawn --apply-plan meta");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit {:?}; stderr={stderr}; stdout={stdout}",
+        output.status.code()
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed["ok"], serde_json::json!(true));
+    assert_eq!(parsed["edited"], serde_json::json!(1), "Drawing stream edited");
+    assert_eq!(parsed["matched"], serde_json::json!(2), "General + Sheet untouched");
+
+    // On-disk verification: the new value must appear in bytes.
+    let bytes = std::fs::read(&dst).expect("read out");
+    assert!(
+        bytes.windows(b"PLAN-777".len()).any(|w| w == b"PLAN-777"),
+        "expected PLAN-777 in output file"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+    let _ = std::fs::remove_file(&plan);
+}
+
+#[test]
+fn validate_apply_plan_replaces_sheet_stream_via_base64_payload() {
+    let src = unique_temp("plan-repl-src");
+    let dst = unique_temp("plan-repl-dst");
+    let plan = plan_path("repl");
+    build_fixture(&src);
+    // base64("ABC") = "QUJD" — payload is the exact ASCII bytes of the string.
+    let body = r#"{
+        "metadata_updates": {"drawing_xml": null, "general_xml": null, "summary_updates": {}},
+        "stream_replacements": [
+            {"path": "/PlainSheet/Sheet1", "new_data": "QUJD"}
+        ],
+        "sheet_patches": []
+    }"#;
+    write_plan(&plan, body);
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .arg("--json")
+        .args(["--apply-plan".as_ref(), plan.as_os_str()])
+        .output()
+        .expect("spawn --apply-plan repl");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit {:?}; stderr={stderr}; stdout={stdout}",
+        output.status.code()
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed["ok"], serde_json::json!(true));
+    assert_eq!(parsed["edited"], serde_json::json!(1), "Sheet replaced");
+    assert_eq!(parsed["matched"], serde_json::json!(2));
+
+    // The Sheet stream in the output file should now contain exactly "ABC".
+    let mut cfb = ::cfb::open(&dst).expect("reopen");
+    let mut buf = Vec::new();
+    use std::io::Read as _;
+    cfb.open_stream("/PlainSheet/Sheet1")
+        .expect("open Sheet1")
+        .read_to_end(&mut buf)
+        .unwrap();
+    assert_eq!(buf, b"ABC", "Sheet1 should be exactly the replaced payload");
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+    let _ = std::fs::remove_file(&plan);
+}
+
+#[test]
+fn validate_apply_plan_invalid_json_exits_two() {
+    let src = unique_temp("plan-bad-src");
+    let plan = plan_path("bad");
+    build_fixture(&src);
+    write_plan(&plan, "this is not json at all");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--apply-plan".as_ref(), plan.as_os_str()])
+        .output()
+        .expect("spawn --apply-plan bad-json");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "invalid plan.json should exit 2 (source/plan load error); got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to load --apply-plan") || stderr.contains("WritePlan JSON"),
+        "stderr must mention the plan-load failure; got: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&plan);
+}
+
+#[test]
+fn validate_apply_plan_conflicts_with_edit_exits_one() {
+    let src = unique_temp("plan-conflict-src");
+    let plan = plan_path("conflict");
+    build_fixture(&src);
+    write_plan(&plan, "{}");
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--apply-plan".as_ref(), plan.as_os_str()])
+        .args(["--edit", "SP_DRAWINGNUMBER=X"])
+        .output()
+        .expect("spawn --apply-plan+--edit");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "conflicting flags should be a usage error (exit 1); got {:?}",
+        output.status.code()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot be combined"),
+        "stderr must explain the conflict; got: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&plan);
+}

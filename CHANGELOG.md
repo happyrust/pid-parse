@@ -2,8 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- `pid_writer_validate --apply-plan <plan.json>`：一次性施加完整 `WritePlan`
+  （metadata XML / stream replacements / sheet patches）并走 round-trip +
+  byte-diff verify。与 `--edit` / `--general-edit` 互斥；`--json` 输出
+  扩展 `plan_applied` 字段。
+- `Cargo.toml`：`base64 = "0.22"` 依赖（WASM / no_std 友好，为批量 CLI
+  及未来跨语言 binding 共用）。
+
 ### Changed
 
+- `WritePlan`、`MetadataUpdates` 字段追加 `#[serde(default)]`，让 `{}`
+  成为合法 JSON passthrough，`{"metadata_updates":{"drawing_xml":"..."}}`
+  也无需显式写 `general_xml: null` / `summary_updates: {}`。保留 Rust
+  侧 `WritePlan::default()` 行为不变。
+- `StreamReplacement.new_data` / `SheetChunkPatch.replacement` 的 JSON
+  序列化由 `Vec<u8> = [int array]` 改为**标准 base64 字符串**（`A-Z a-z
+  0-9 + / =`）。Rust consumer 透明，JSON 大小约缩减 6x。内部 `#[serde(with
+  = "bytes_base64")]` 自定义 adaptor，反序列化失败走 serde error。
 - `src/layout.rs`: 语义关键词推断改为数据驱动。新增 `SEMANTIC_KEYWORDS` 常量表
   （`OffPageConnector` / `Nozzle` / `Instrument` / `Vessel` / `Note` /
   `PipingComponent`），以及每个 tag 的英文 + 中文同义词列表，取代原先 if/else
@@ -19,15 +36,27 @@
 - `layout::tests::infer_semantic_maps_chinese_symbol_path_to_piping_component`
 - `layout::tests::infer_semantic_keyword_ordering_keeps_opc_before_piping`
 - `layout::tests::should_replace_representative_covers_all_three_rules`
+- `writer::plan::tests::stream_replacement_round_trips_through_json_with_base64_payload`
+- `writer::plan::tests::sheet_chunk_patch_round_trips_through_json_with_base64_payload`
+- `writer::plan::tests::deserialize_rejects_invalid_base64`
+- `tests/writer_validate_cli.rs`：5 条新集成测试覆盖 `--apply-plan`
+  （passthrough `{}` / drawing 元数据整体替换 / base64 stream 替换 /
+  非法 JSON exit 2 / 与 `--edit` 冲突 exit 1）。
 
-lib layout::tests 由 5 增至 8，全 252 tests pass。
+全套从 252 增至 **260 tests pass**（lib 184 + parse_real_files 28 +
+unit_parsers 18 + writer_real_files 8 + writer_roundtrip 9 +
+writer_validate_cli 13 = 260）。
 
 ### Docs
 
-- `docs/plans/2026-04-19-layout-symbol-hint-p2-fixes.md`：本轮 dev plan，包含
+- `docs/plans/2026-04-19-layout-symbol-hint-p2-fixes.md`：layout P2 dev plan，包含
   "审核自纠" 一节说明 P2-1 撤回的理由（恢复 `file_stem()` 回退反而会让
   `bounds_for_item` fall through 到默认尺寸，丢失 `PipingComponent` 的 18×18
   命中；4c1cb80 的"坍塌到语义 tag"是正向设计）。
+- `docs/plans/2026-04-19-apply-plan-cli.md`：本轮 dev plan（`--apply-plan`
+  批处理 CLI）。
+- `docs/writer-quickstart.md` 新 5.5 节"批处理 via `--apply-plan <plan.json>`"：
+  JSON schema 说明 + CLI 调用样例 + Rust 侧构造 plan 并 serialize 示例。
 
 ## [0.4.1] - 2026-04-19
 

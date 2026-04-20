@@ -169,6 +169,67 @@ PidWriter::write_to(&pkg, &plan, out)?;
 
 详细语义和多补丁的顺序保障见 `src/writer/sheet_patch.rs`。
 
+## 5.5 批处理 via `--apply-plan <plan.json>`
+
+当脚本化场景需要在一次调用里施加多条编辑（metadata XML + 任意 stream 替换 + 可选 sheet 补丁），把 `WritePlan` 序列化到 JSON 再交给 `pid_writer_validate --apply-plan` 最直接。
+
+### JSON schema（关键字段）
+
+```json
+{
+  "metadata_updates": {
+    "drawing_xml": "<?xml version=\"1.0\"?><Drawing>...</Drawing>",
+    "general_xml": null,
+    "summary_updates": {}
+  },
+  "stream_replacements": [
+    { "path": "/PlainSheet/Sheet1", "new_data": "QUJD" }
+  ],
+  "sheet_patches": []
+}
+```
+
+要点：
+- 省略字段会走默认（`{}` 是合法的 passthrough plan）
+- `new_data` 和 `sheet_patches[*].chunk_patches[*].replacement` 用**标准 base64** 编码（`A-Za-z0-9+/=`），与 WebCrypto / Python `base64.b64encode` / Rust `base64::general_purpose::STANDARD` 兼容
+- `metadata_updates.drawing_xml` / `general_xml` 是**整个 XML 流**的替换；如果只想改一个属性，先 parse → set_drawing_attribute → 把结果放进 plan
+
+### CLI 调用
+
+```bash
+pid_writer_validate drawing.pid \
+    --apply-plan my-edits.json \
+    --out out.pid \
+    --keep \
+    --json
+```
+
+- `--apply-plan` 与 `--edit` / `--general-edit` **互斥**（二者语义不同，混用会 exit 1）
+- `--json` 下输出结构化 `ValidateReport`，包含 `plan_applied` 字段和 `edited` / `matched` / `mismatched` 计数，适合 CI 消费
+
+### Rust 侧：手工构造 plan 并 to_string
+
+```rust
+use pid_parse::writer::{MetadataUpdates, StreamReplacement, WritePlan};
+
+let plan = WritePlan {
+    metadata_updates: MetadataUpdates {
+        drawing_xml: Some(new_drawing_xml),
+        ..Default::default()
+    },
+    stream_replacements: vec![StreamReplacement {
+        path: "/PlainSheet/Sheet1".into(),
+        new_data: b"ABC".to_vec(),
+    }],
+    ..Default::default()
+};
+
+let json = serde_json::to_string_pretty(&plan)?;
+std::fs::write("my-edits.json", &json)?;
+```
+
+`new_data` 虽然在 Rust 侧是 `Vec<u8>`，序列化到 JSON 时**自动 encode 成 base64 字符串**；反序列化也会自动 decode，对 Rust consumer 透明。
+
 ## 6. 保真能力矩阵
 
 Root CLSID 保留 ✅ ；非 root storage CLSID / 时间戳 / state_bits / 目录物理顺序 ❌。详见 `writer-clsid-and-timestamps.md`。

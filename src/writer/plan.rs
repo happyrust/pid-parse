@@ -13,33 +13,64 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Transparent serde adaptor that encodes `Vec<u8>` as a base64 string in
+/// JSON (and any other human-readable format) while leaving the Rust-side
+/// type untouched. Used on fields that otherwise explode to multi-MB arrays
+/// when written out of a JSON plan (e.g. [`StreamReplacement::new_data`]).
+mod bytes_base64 {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error> {
+        STANDARD.encode(bytes).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let encoded = String::deserialize(deserializer)?;
+        STANDARD
+            .decode(&encoded)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// Top-level write plan. An empty plan (`WritePlan::default()`) is a valid
 /// passthrough request.
+///
+/// Deserialization is tolerant of missing fields: `{}` in JSON is the
+/// passthrough plan, `{"metadata_updates": {"drawing_xml": "..."}}` is a
+/// metadata-only update. This keeps hand-written plan.json files short.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WritePlan {
     /// Targeted metadata edits. See [`MetadataUpdates`] for supported
     /// streams.
+    #[serde(default)]
     pub metadata_updates: MetadataUpdates,
     /// Verbatim stream replacements applied after metadata updates. Paths
     /// are normalized (leading `/`, `/` separator) by the writer.
+    #[serde(default)]
     pub stream_replacements: Vec<StreamReplacement>,
     /// Experimental byte-range patches for Sheet streams. No semantic
     /// validation — the caller is responsible for producing a byte-valid
     /// Sheet body.
+    #[serde(default)]
     pub sheet_patches: Vec<SheetPatch>,
 }
 
 /// Narrow metadata channel for the common "edit drawing number / project"
-/// flow without hand-crafting byte replacements.
+/// flow without hand-crafting byte replacements. Missing fields default to
+/// "untouched" / "empty" so JSON plans can omit them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetadataUpdates {
     /// New XML body for `/TaggedTxtData/Drawing`. `None` = untouched.
+    #[serde(default)]
     pub drawing_xml: Option<String>,
     /// New XML body for `/TaggedTxtData/General`. `None` = untouched.
+    #[serde(default)]
     pub general_xml: Option<String>,
     /// Placeholder for future `SummaryInformation` property-set updates.
     /// **Not implemented in the current release** — any value given here
     /// is silently ignored.
+    #[serde(default)]
     pub summary_updates: BTreeMap<String, String>,
 }
 
@@ -48,6 +79,9 @@ pub struct MetadataUpdates {
 pub struct StreamReplacement {
     /// Absolute path inside the CFB (e.g. `/TaggedTxtData/Drawing`).
     pub path: String,
+    /// Raw bytes to write. Serialized as a standard base64 string in JSON
+    /// plans; round-trips losslessly.
+    #[serde(with = "bytes_base64")]
     pub new_data: Vec<u8>,
 }
 
@@ -72,6 +106,8 @@ pub struct SheetPatch {
 pub struct SheetChunkPatch {
     pub start: usize,
     pub end: usize,
+    /// Patch bytes. Serialized as standard base64 in JSON plans.
+    #[serde(with = "bytes_base64")]
     pub replacement: Vec<u8>,
 }
 
@@ -119,5 +155,50 @@ mod tests {
         assert!(plan.metadata_updates.general_xml.is_none());
         assert!(plan.stream_replacements.is_empty());
         assert!(plan.sheet_patches.is_empty());
+    }
+
+    #[test]
+    fn stream_replacement_round_trips_through_json_with_base64_payload() {
+        let original = StreamReplacement {
+            path: "/TaggedTxtData/Drawing".into(),
+            new_data: vec![0x00, 0x01, 0x02, 0xFF, b'A', b'B', b'C'],
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        // Base64 of [0x00, 0x01, 0x02, 0xFF, 'A', 'B', 'C'] = "AAEC/0FCQw=="
+        assert!(
+            json.contains("\"AAEC/0FCQw==\""),
+            "expected base64 payload in JSON; got: {json}"
+        );
+        let decoded: StreamReplacement =
+            serde_json::from_str(&json).expect("deserialize base64 back to bytes");
+        assert_eq!(decoded.path, original.path);
+        assert_eq!(decoded.new_data, original.new_data);
+    }
+
+    #[test]
+    fn sheet_chunk_patch_round_trips_through_json_with_base64_payload() {
+        let original = SheetChunkPatch {
+            start: 16,
+            end: 20,
+            replacement: b"wxyz".to_vec(),
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        assert!(json.contains("\"d3h5eg==\""), "JSON = {json}");
+        let decoded: SheetChunkPatch = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.start, 16);
+        assert_eq!(decoded.end, 20);
+        assert_eq!(decoded.replacement, b"wxyz".to_vec());
+    }
+
+    #[test]
+    fn deserialize_rejects_invalid_base64() {
+        let json = r#"{"path":"/x","new_data":"!!!not-valid-base64!!!"}"#;
+        let err =
+            serde_json::from_str::<StreamReplacement>(json).expect_err("must reject bad base64");
+        assert!(
+            err.to_string().to_lowercase().contains("invalid")
+                || err.to_string().to_lowercase().contains("symbol"),
+            "unexpected err: {err}"
+        );
     }
 }

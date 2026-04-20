@@ -49,6 +49,7 @@ struct CliOptions {
     quiet: bool,
     max_diff_bytes: usize,
     edits: Vec<EditOp>,
+    plan_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +74,9 @@ pub struct ValidateReport {
     pub only_in_roundtrip: Vec<String>,
     pub mismatches: Vec<StreamMismatch>,
     pub edits_applied: Vec<EditOp>,
+    /// Populated when the round-trip was driven by `--apply-plan`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_applied: Option<WritePlan>,
     pub ok: bool,
 }
 
@@ -92,6 +96,7 @@ pub enum ValidateError {
     Edit(String),
     Write(String),
     RoundtripParse(String),
+    PlanLoad(String),
 }
 
 impl std::fmt::Display for ValidateError {
@@ -101,6 +106,7 @@ impl std::fmt::Display for ValidateError {
             ValidateError::Edit(e) => write!(f, "failed to apply edit: {e}"),
             ValidateError::Write(e) => write!(f, "failed to write round-trip: {e}"),
             ValidateError::RoundtripParse(e) => write!(f, "failed to re-parse round-trip: {e}"),
+            ValidateError::PlanLoad(e) => write!(f, "failed to load --apply-plan file: {e}"),
         }
     }
 }
@@ -121,17 +127,41 @@ fn main() {
         }
     };
 
-    let report = match run_validate(
-        &options.input,
-        &options.out_spec.path,
-        options.max_diff_bytes,
-        &options.edits,
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("{e}");
-            cleanup_output(&options.out_spec);
-            std::process::exit(2);
+    let report = if let Some(ref plan_path) = options.plan_path {
+        let plan = match load_plan(plan_path) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("{e}");
+                cleanup_output(&options.out_spec);
+                std::process::exit(2);
+            }
+        };
+        match run_validate_with_plan(
+            &options.input,
+            &options.out_spec.path,
+            options.max_diff_bytes,
+            &plan,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("{e}");
+                cleanup_output(&options.out_spec);
+                std::process::exit(2);
+            }
+        }
+    } else {
+        match run_validate(
+            &options.input,
+            &options.out_spec.path,
+            options.max_diff_bytes,
+            &options.edits,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("{e}");
+                cleanup_output(&options.out_spec);
+                std::process::exit(2);
+            }
         }
     };
 
@@ -156,7 +186,11 @@ fn main() {
 fn print_usage() {
     eprintln!(
         "Usage: pid_writer_validate <input.pid> [--out <path>] [--keep] [--json] [--quiet]\n\
-         \x20                       [--max-diff-bytes N] [--edit ATTR=VALUE]+ [--general-edit ELEMENT=VALUE]+"
+         \x20                       [--max-diff-bytes N]\n\
+         \x20                       [--edit ATTR=VALUE]+ [--general-edit ELEMENT=VALUE]+\n\
+         \x20                       [--apply-plan <plan.json>]\n\n\
+         --apply-plan reads a serialized WritePlan (see pid_parse::writer::plan) and\n\
+         applies it in a single pass. Cannot be combined with --edit / --general-edit."
     );
 }
 
@@ -169,6 +203,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut quiet = false;
     let mut max_diff_bytes = DEFAULT_MAX_DIFF_BYTES;
     let mut edits: Vec<EditOp> = Vec::new();
+    let mut plan_path: Option<PathBuf> = None;
 
     let mut i = 2;
     while i < args.len() {
@@ -215,8 +250,22 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 edits.push(parse_edit_op(value, EditKind::General)?);
                 i += 2;
             }
+            "--apply-plan" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--apply-plan requires a path to a plan.json".to_string())?;
+                plan_path = Some(PathBuf::from(value));
+                i += 2;
+            }
             other => return Err(format!("unknown flag: {other}")),
         }
+    }
+
+    if plan_path.is_some() && !edits.is_empty() {
+        return Err(
+            "--apply-plan cannot be combined with --edit / --general-edit (they describe mutually exclusive edit semantics)"
+                .to_string(),
+        );
     }
 
     let user_provided = out_path.is_some();
@@ -240,6 +289,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         quiet,
         max_diff_bytes,
         edits,
+        plan_path,
     })
 }
 
@@ -423,6 +473,153 @@ fn compare_packages(
         only_in_roundtrip,
         mismatches,
         edits_applied: edits.to_vec(),
+        plan_applied: None,
+        ok,
+    }
+}
+
+/// Load and deserialize a JSON [`WritePlan`] from disk. Errors map to
+/// [`ValidateError::PlanLoad`] with a human-readable reason.
+pub fn load_plan(path: &Path) -> Result<WritePlan, ValidateError> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        ValidateError::PlanLoad(format!("reading {}: {e}", path.display()))
+    })?;
+    serde_json::from_str::<WritePlan>(&content).map_err(|e| {
+        ValidateError::PlanLoad(format!("parsing {} as WritePlan JSON: {e}", path.display()))
+    })
+}
+
+/// Like [`run_validate`] but drives the round-trip from a [`WritePlan`]
+/// instead of a list of CLI [`EditOp`]s. The writer applies the plan
+/// natively (metadata updates / stream replacements / sheet patches);
+/// the verification step diffs the round-trip against the post-plan
+/// expected package.
+pub fn run_validate_with_plan(
+    input: &Path,
+    output: &Path,
+    max_diff_bytes: usize,
+    plan: &WritePlan,
+) -> Result<ValidateReport, ValidateError> {
+    let parser = PidParser::new();
+    let original = parser
+        .parse_package(input)
+        .map_err(|e| ValidateError::SourceParse(e.to_string()))?;
+
+    // Build the "expected" package by applying the plan in-memory. We mirror
+    // `PidWriter::write_to`'s internal ordering: metadata updates first,
+    // then stream replacements, then sheet patches. Keep these in sync with
+    // `pid_parse::writer::PidWriter::write_to` if that pipeline changes.
+    let mut expected = original.clone();
+    pid_parse::writer::metadata_write::apply_metadata_updates(&mut expected, &plan.metadata_updates)
+        .map_err(|e| ValidateError::Edit(format!("metadata_updates: {e}")))?;
+    for repl in &plan.stream_replacements {
+        expected.replace_stream(repl.path.clone(), repl.new_data.clone());
+    }
+    for patch in &plan.sheet_patches {
+        pid_parse::writer::sheet_patch::apply_sheet_patch_to_package(&mut expected, patch)
+            .map_err(|e| ValidateError::Edit(format!("sheet_patch {}: {e}", patch.sheet_path)))?;
+    }
+
+    PidWriter::write_to(&original, plan, output)
+        .map_err(|e| ValidateError::Write(e.to_string()))?;
+
+    let roundtrip = parser
+        .parse_package(output)
+        .map_err(|e| ValidateError::RoundtripParse(e.to_string()))?;
+
+    let edited_paths = collect_edited_paths_from_plan(plan);
+    let mut report = compare_with_edited_paths(
+        input,
+        output,
+        &expected,
+        &roundtrip,
+        &edited_paths,
+        max_diff_bytes,
+    );
+    report.plan_applied = Some(plan.clone());
+    Ok(report)
+}
+
+/// Set of stream paths touched by a [`WritePlan`]. Used by the comparison
+/// step to classify each diff as "expected edit" vs "unexpected mismatch".
+fn collect_edited_paths_from_plan(plan: &WritePlan) -> BTreeSet<String> {
+    let mut set: BTreeSet<String> = BTreeSet::new();
+    if plan.metadata_updates.drawing_xml.is_some() {
+        set.insert(DRAWING_PATH.to_string());
+    }
+    if plan.metadata_updates.general_xml.is_some() {
+        set.insert(GENERAL_PATH.to_string());
+    }
+    for repl in &plan.stream_replacements {
+        set.insert(repl.path.clone());
+    }
+    for patch in &plan.sheet_patches {
+        set.insert(patch.sheet_path.clone());
+    }
+    set
+}
+
+fn compare_with_edited_paths(
+    source_path: &Path,
+    output_path: &Path,
+    expected: &PidPackage,
+    roundtrip: &PidPackage,
+    edited_paths: &BTreeSet<String>,
+    max_diff_bytes: usize,
+) -> ValidateReport {
+    let src_keys: BTreeSet<&String> = expected.streams.keys().collect();
+    let dst_keys: BTreeSet<&String> = roundtrip.streams.keys().collect();
+
+    let only_in_source: Vec<String> = src_keys.difference(&dst_keys).map(|s| (*s).clone()).collect();
+    let only_in_roundtrip: Vec<String> =
+        dst_keys.difference(&src_keys).map(|s| (*s).clone()).collect();
+
+    let mut matched = 0usize;
+    let mut edited_count = 0usize;
+    let mut mismatches: Vec<StreamMismatch> = Vec::new();
+    for path in src_keys.intersection(&dst_keys) {
+        let exp = &expected.streams[*path];
+        let dst = &roundtrip.streams[*path];
+        let was_edited = edited_paths.contains(path.as_str());
+        if exp.data == dst.data {
+            if was_edited {
+                edited_count += 1;
+            } else {
+                matched += 1;
+            }
+        } else {
+            let first_diff_offset = first_diff_offset(&exp.data, &dst.data);
+            let (source_window, roundtrip_window) =
+                diff_windows(&exp.data, &dst.data, first_diff_offset, max_diff_bytes);
+            mismatches.push(StreamMismatch {
+                path: (*path).to_string(),
+                source_len: exp.data.len(),
+                roundtrip_len: dst.data.len(),
+                first_diff_offset,
+                source_window,
+                roundtrip_window,
+            });
+        }
+    }
+    let mismatched = mismatches.len();
+
+    let ok = only_in_source.is_empty()
+        && only_in_roundtrip.is_empty()
+        && mismatches.is_empty();
+
+    ValidateReport {
+        source_path: source_path.to_path_buf(),
+        output_path: output_path.to_path_buf(),
+        source_stream_count: expected.streams.len(),
+        roundtrip_stream_count: roundtrip.streams.len(),
+        matched,
+        edited: edited_count,
+        mismatched,
+        only_in_source,
+        only_in_roundtrip,
+        mismatches,
+        edits_applied: Vec::new(),
+        plan_applied: None,
         ok,
     }
 }
@@ -496,6 +693,33 @@ fn print_human(report: &ValidateReport, quiet: bool) {
                 EditKind::General => "general-elem",
             };
             println!("    {kind}  {} = {}", op.key, op.value);
+        }
+    }
+
+    if let Some(plan) = &report.plan_applied {
+        println!();
+        println!("== Plan applied (via --apply-plan) ==");
+        if plan.metadata_updates.drawing_xml.is_some() {
+            println!("    metadata     /TaggedTxtData/Drawing  (XML body replaced)");
+        }
+        if plan.metadata_updates.general_xml.is_some() {
+            println!("    metadata     /TaggedTxtData/General  (XML body replaced)");
+        }
+        for repl in &plan.stream_replacements {
+            println!(
+                "    replacement  {}  ({} B)",
+                repl.path,
+                repl.new_data.len()
+            );
+        }
+        for patch in &plan.sheet_patches {
+            let chunks: usize = patch.chunk_patches.len();
+            println!(
+                "    sheet-patch  {}  ({} chunk patch{})",
+                patch.sheet_path,
+                chunks,
+                if chunks == 1 { "" } else { "es" }
+            );
         }
     }
 

@@ -6,6 +6,7 @@ description = "Layered parser for SmartPlant / Smart P&ID .pid files"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+base64 = "0.22"
 cfb = "0.10"
 quick-xml = { version = "0.38", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
