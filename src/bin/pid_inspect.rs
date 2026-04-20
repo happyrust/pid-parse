@@ -4,7 +4,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]"
+            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]"
         );
         std::process::exit(1);
     }
@@ -21,6 +21,7 @@ fn main() {
     let crossref = args.iter().any(|a| a == "--crossref");
     let graph_mermaid = args.iter().any(|a| a == "--graph-mermaid");
     let crossref_mermaid = args.iter().any(|a| a == "--crossref-mermaid");
+    let coverage_flag = args.iter().any(|a| a == "--coverage");
 
     let round_trip = flag_value(&args, "--round-trip");
     let set_drawing_number = flag_value(&args, "--set-drawing-number");
@@ -136,6 +137,10 @@ fn main() {
         }
     }
 
+    if coverage_flag {
+        print_coverage(doc);
+    }
+
     if !probe_cluster
         && !probe_dynamic
         && !probe_sheet
@@ -145,9 +150,47 @@ fn main() {
         && !crossref
         && !graph_mermaid
         && !crossref_mermaid
+        && !coverage_flag
     {
         let report = pid_parse::inspect::report::generate_package_report(&pkg);
         print!("{}", report);
+    }
+}
+
+/// Phase 10a (v0.6.0): print a standalone coverage inventory for `--coverage`
+/// invocations. Mirrors the section embedded in `generate_report` but lets
+/// CI / scripts grab it without paying for the rest of the report.
+fn print_coverage(doc: &pid_parse::PidDocument) {
+    let report = pid_parse::inspect::coverage::coverage_report(doc);
+    if report.entries.is_empty() {
+        println!("--- Coverage ---");
+        println!("(no top-level entries found; document may be empty)");
+        return;
+    }
+    let [full, partial, ident, unk] = report.status_counts();
+    println!("--- Coverage ---");
+    println!("  Fully decoded:     {full}");
+    println!("  Partially decoded: {partial}");
+    println!("  Identified only:   {ident}");
+    println!("  Unknown:           {unk}");
+    for entry in &report.entries {
+        let tag = match entry.status {
+            pid_parse::model::ParseCoverageStatus::FullyDecoded => "[FULL]",
+            pid_parse::model::ParseCoverageStatus::PartiallyDecoded => "[PART]",
+            pid_parse::model::ParseCoverageStatus::IdentifiedOnly => "[ID]  ",
+            pid_parse::model::ParseCoverageStatus::Unknown => "[UNK] ",
+        };
+        let field = entry
+            .document_field
+            .as_deref()
+            .map(|f| format!(" -> {f}"))
+            .unwrap_or_default();
+        let note = entry
+            .note
+            .as_deref()
+            .map(|n| format!("  ({n})"))
+            .unwrap_or_default();
+        println!("  {tag} {}{}{}", entry.name, field, note);
     }
 }
 

@@ -426,6 +426,39 @@ pub fn generate_report(doc: &PidDocument) -> String {
         }
     }
 
+    // Phase 10a (v0.6.0): structured coverage inventory. Written BEFORE
+    // the legacy "Top-level Unidentified Streams" section so readers see
+    // the new categorical view first, and the two remain cross-linked
+    // for backward compatibility.
+    let coverage = crate::inspect::coverage::coverage_report(doc);
+    if !coverage.entries.is_empty() {
+        writeln!(out, "\n--- Coverage ---").ok();
+        let [full, partial, ident, unk] = coverage.status_counts();
+        writeln!(out, "  Fully decoded:     {full}").ok();
+        writeln!(out, "  Partially decoded: {partial}").ok();
+        writeln!(out, "  Identified only:   {ident}").ok();
+        writeln!(out, "  Unknown:           {unk}").ok();
+        for entry in &coverage.entries {
+            let tag = match entry.status {
+                crate::model::ParseCoverageStatus::FullyDecoded => "[FULL]",
+                crate::model::ParseCoverageStatus::PartiallyDecoded => "[PART]",
+                crate::model::ParseCoverageStatus::IdentifiedOnly => "[ID]  ",
+                crate::model::ParseCoverageStatus::Unknown => "[UNK] ",
+            };
+            let field = entry
+                .document_field
+                .as_deref()
+                .map(|f| format!(" -> {f}"))
+                .unwrap_or_default();
+            let note = entry
+                .note
+                .as_deref()
+                .map(|n| format!("  ({n})"))
+                .unwrap_or_default();
+            writeln!(out, "  {tag} {}{}{}", entry.name, field, note).ok();
+        }
+    }
+
     let top_level_unidentified = crate::inspect::unidentified_top_level_streams(doc);
     if !top_level_unidentified.is_empty() {
         writeln!(out, "\n--- Top-level Unidentified Streams ---").ok();
@@ -563,4 +596,76 @@ pub fn generate_report(doc: &PidDocument) -> String {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{PidDocument, StreamEntry};
+
+    fn doc_with_paths(paths: &[&str]) -> PidDocument {
+        PidDocument {
+            streams: paths
+                .iter()
+                .map(|p| StreamEntry {
+                    path: (*p).to_string(),
+                    size: 42,
+                    preview_ascii: vec![],
+                    magic_u32_le: None,
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn report_includes_coverage_section_with_bucket_counts_and_per_entry_tags() {
+        // Phase 10a: `generate_report` must surface the coverage
+        // inventory ahead of the legacy "Top-level Unidentified
+        // Streams" section. We assert the section heading, bucket
+        // summary lines, and at least one entry from each bucket.
+        let doc = doc_with_paths(&[
+            "/DocVersion3",     // Fully decoded
+            "/PSMsegmenttable", // Partially decoded
+            "/Sheet1/Payload",  // Identified only (via Sheet storage prefix)
+            "/GhostStream",     // Unknown
+        ]);
+        let report = generate_report(&doc);
+        assert!(
+            report.contains("--- Coverage ---"),
+            "coverage section heading missing; full report:\n{report}"
+        );
+        assert!(report.contains("Fully decoded:     1"), "{report}");
+        assert!(report.contains("Partially decoded: 1"), "{report}");
+        assert!(report.contains("Identified only:   1"), "{report}");
+        assert!(report.contains("Unknown:           1"), "{report}");
+        assert!(report.contains("[FULL] DocVersion3"), "{report}");
+        assert!(report.contains("[PART] PSMsegmenttable"), "{report}");
+        assert!(report.contains("[ID]   Sheet1"), "{report}");
+        assert!(report.contains("[UNK]  GhostStream"), "{report}");
+    }
+
+    #[test]
+    fn report_omits_coverage_section_when_document_has_no_streams() {
+        let doc = PidDocument::default();
+        let report = generate_report(&doc);
+        assert!(
+            !report.contains("--- Coverage ---"),
+            "empty doc should not render coverage section; got:\n{report}"
+        );
+    }
+
+    #[test]
+    fn report_coverage_section_precedes_top_level_unidentified_when_both_present() {
+        let doc = doc_with_paths(&["/GhostStream"]);
+        let report = generate_report(&doc);
+        let cov_pos = report.find("--- Coverage ---").expect("Coverage section");
+        let unk_pos = report
+            .find("--- Top-level Unidentified Streams ---")
+            .expect("Unidentified section");
+        assert!(
+            cov_pos < unk_pos,
+            "Coverage must render before the legacy Unidentified section"
+        );
+    }
 }

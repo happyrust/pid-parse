@@ -2,6 +2,116 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-21
+
+### Phase 10a: SPPID 解析覆盖清单（SPPID full-parse roadmap 的 Phase 1）
+
+开启 SPPID 完全解析的新大周期。v0.5.x "Writer 全功能可编辑" 系列收
+束于 v0.5.3 之后，本版本建立 **结构化覆盖清单（coverage inventory）**
+作为后续 parser 升级工作的主线驱动。
+
+本 Phase 的核心论点来自 `docs/sppid/2026-04-21-sppid-full-parse-roadmap.md`：
+
+> 当前项目对 SPPID 的解析虽然"入口识别"基本完成，但"完全解码"仍有
+> 明显缺口（`PSMclustertable` per-record、`DocVersion3` header 稳定
+> 模型、`Sheet*` 深层结构、字节级验证框架）。下一阶段不应直接做零
+> 散 parser 修补，而应建立一个**覆盖清单驱动**的持续推进机制。
+
+v0.6.0 交付该清单的**静态版本**，把"已识别"和"已完全解析"从之前
+的布尔过滤升级为四态分类（`FullyDecoded` / `PartiallyDecoded` /
+`IdentifiedOnly` / `Unknown`），配套 inspect 报告段和 CLI flag。
+后续 Phase 10b+ 会把静态映射逐步升级为基于字节消费率的动态分类。
+
+### Added — 覆盖清单基础设施（public API，minor bump）
+
+- `model::ParseCoverageStatus`：四态枚举
+  （`FullyDecoded` / `PartiallyDecoded` / `IdentifiedOnly` / `Unknown`），
+  按 "覆盖度从高到低" 排序。
+- `model::CoverageNodeKind`：`TopLevelStream` vs `TopLevelStorage` 区分。
+- `model::CoverageEntry`：单条覆盖记录（`name` / `kind` / `status` /
+  `parser` / `document_field` / `note`）。
+- `model::CoverageReport`：完整报告（`entries: Vec<CoverageEntry>` +
+  `status_counts() -> [usize; 4]` helper）。
+- `inspect::coverage`：新模块，提供：
+  - `coverage_report(&PidDocument) -> CoverageReport` 公共入口
+  - `top_level_coverage_entries(&PidDocument) -> Vec<CoverageEntry>`
+    低层切片
+- `pid_inspect --coverage` CLI flag：只打 coverage section，不打
+  full report；作为 CI / diagnostic 脚本单独消费的入口。
+
+### Added — 静态映射（v0.6.0 初版，Phase 10b+ 会动态化）
+
+硬编码 11 个 `KNOWN_TOP_LEVEL_STREAM_NAMES` 条目到其覆盖状态：
+
+| 流名 | 状态 | 理由 |
+|---|---|---|
+| `\x05SummaryInformation` | FullyDecoded | Phase 9l Writer 层全 CRUD |
+| `\x05DocumentSummaryInformation` | FullyDecoded | 同上 |
+| `PSMroots` | FullyDecoded | parser 稳定 |
+| `DocVersion2` | FullyDecoded | Phase 9f 逆向成功 |
+| `DocVersion3` | FullyDecoded | version_history 稳定 |
+| `AppObject` | FullyDecoded | registry parser 稳定 |
+| `JTaggedTxtStgList` | FullyDecoded | 稳定 |
+| `PSMclustertable` | PartiallyDecoded | 头已知，per-record audit-only |
+| `PSMsegmenttable` | PartiallyDecoded | 记录形状部分映射 |
+| `PSMcluster0` / `StyleCluster` | PartiallyDecoded | 记录边界已知 |
+| `Dynamic Attributes Metadata` / `Unclustered Dynamic Attributes` | PartiallyDecoded | 类/属性表提取、绑定推断 |
+
+`KNOWN_TOP_LEVEL_STORAGE_PREFIXES`（`Sheet*` / `TaggedTxtData` /
+`JSite*`）统一 `IdentifiedOnly`；其他顶层名 `Unknown`。
+
+### Changed
+
+- `inspect::report::generate_report` 在 "Top-level Unidentified
+  Streams" 段之前新增 `--- Coverage ---` 段，输出 4 个 bucket 计数 +
+  逐项 tag（`[FULL]` / `[PART]` / `[ID]` / `[UNK]`）+ 解析器 /
+  `PidDocument` 字段 / 备注。
+- 旧 `unidentified_top_level_streams` 函数 + 对应 report 段保留，保
+  持 backward compat；新旧视角可并存（Phase 10b+ 再决定是否下线
+  旧视角）。
+
+### Tests (296 → 307)
+
+lib 单元（+9）：
+- `inspect::coverage::tests::coverage_marks_known_top_level_streams_with_expected_status`
+- `inspect::coverage::tests::coverage_marks_known_storage_prefixes_as_identified`
+- `inspect::coverage::tests::coverage_marks_unknown_top_level_entries_as_unknown`
+- `inspect::coverage::tests::coverage_entries_sorted_by_name_deterministic_across_input_orders`
+- `inspect::coverage::tests::coverage_report_empty_for_default_document`
+- `inspect::coverage::tests::coverage_status_counts_matches_entries`
+- `inspect::report::tests::report_includes_coverage_section_with_bucket_counts_and_per_entry_tags`
+- `inspect::report::tests::report_omits_coverage_section_when_document_has_no_streams`
+- `inspect::report::tests::report_coverage_section_precedes_top_level_unidentified_when_both_present`
+
+CLI 集成（+2，`tests/inspect_cli.rs` 新增）：
+- `coverage_flag_prints_section_and_all_four_buckets`
+- `no_flags_still_produces_full_report_including_coverage_section`
+
+`cargo fmt --check` / `cargo clippy -D warnings` 双零。
+
+### Docs
+
+- `docs/sppid/2026-04-21-sppid-full-parse-roadmap.md`：SPPID 完全
+  解析战略路线图（4 个阶段 + 具体任务 + 风险应对）。正式入 repo 作为
+  后续 Phase 10b/10c/... 的导航文档。
+- `docs/plans/2026-04-21-sppid-coverage-inventory-implementation-plan.md`：
+  Phase 10a Task 1..6 的战术实施 plan，本 ship 的代码即其完成品。
+  入 repo 供未来类似 Phase 的 pattern 参考。
+
+### Version rationale
+
+0.5.3 → 0.6.0 走 **minor bump**，不走 patch：
+
+- 新增 public API 类型（`ParseCoverageStatus` / `CoverageNodeKind` /
+  `CoverageEntry` / `CoverageReport` / `coverage_report` / `top_level_coverage_entries`）
+- 新增 CLI flag (`--coverage`)
+- 新增 `CoverageReport` serde/JsonSchema surface
+- 这些是 additive 的新周期起点，与 0.5.x "Writer 建设" 的定位区分
+  开；未来 10a/10b/... 共用 0.6.x 系列。
+
+Rust API 本身无破坏性改动；既有 0.5.x consumer 代码直接在 0.6.0 下
+编译通过。
+
 ## [0.5.3] - 2026-04-21
 
 ### Phase 9o: Writer API ergonomics patches

@@ -453,6 +453,106 @@ pub struct UnknownStream {
     pub magic_tag: Option<String>,
 }
 
+// -----------------------------------------------------------------------
+// Phase 10a: SPPID parse coverage inventory
+//
+// Types below support the `inspect::coverage` module introduced in
+// v0.6.0 (Phase 10a Task 1 of the SPPID full-parse roadmap). They carry
+// the current "how much of a SPPID file has been decoded" state as a
+// structured report, replacing the earlier binary "known vs unidentified"
+// view.
+// -----------------------------------------------------------------------
+
+/// Decoding state of a single top-level stream or storage, as classified
+/// by [`crate::inspect::coverage::coverage_report`].
+///
+/// The states are ordered from "most complete" to "least complete", which
+/// matches the order downstream renderers use to print coverage buckets.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+pub enum ParseCoverageStatus {
+    /// The stream has a dedicated parser AND a structured decoded model;
+    /// bytes are interpreted end-to-end and the result lands on a typed
+    /// field of [`PidDocument`]. Example: `DocVersion3`, `PSMroots`.
+    FullyDecoded,
+    /// The stream has a parser but the decoded model covers only part of
+    /// the bytes (e.g. header known, record fields partially named).
+    /// Example: `PSMclustertable`, `PSMsegmenttable`.
+    PartiallyDecoded,
+    /// The stream (or storage prefix) is recognized as "this is SPPID
+    /// data of kind X" but no decoder beyond that claim exists yet.
+    /// Example: `Sheet1` storage prefix; raw bytes preserved for writer
+    /// passthrough but not interpreted.
+    IdentifiedOnly,
+    /// The top-level name is not in any known list. Usually either a
+    /// sample-specific artifact or an upstream schema addition we have
+    /// not caught up with.
+    Unknown,
+}
+
+/// Kind of node a [`CoverageEntry`] refers to — distinguishes a bare
+/// top-level stream from a top-level storage (i.e. a "directory" whose
+/// members carry most of the data).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum CoverageNodeKind {
+    TopLevelStream,
+    TopLevelStorage,
+}
+
+/// One row in the coverage inventory table.
+///
+/// `parser` and `document_field` are human-facing strings (not typed
+/// references) because the coverage report is a diagnostic artifact;
+/// tying it to `fn` pointers or field selectors would force coupling to
+/// every parser's internal layout.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CoverageEntry {
+    /// Top-level name (e.g. `"DocVersion3"` or `"Sheet1"`), already
+    /// stripped of leading `/` and of anything after the first `/`.
+    pub name: String,
+    pub kind: CoverageNodeKind,
+    pub status: ParseCoverageStatus,
+    /// Name of the parser responsible for decoding this node, if any.
+    /// `None` for `Unknown` entries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parser: Option<String>,
+    /// Human-readable pointer to the [`PidDocument`] field that holds
+    /// the decoded result (e.g. `"version_history"`, `"psm_cluster_table"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_field: Option<String>,
+    /// Short free-form note, typically used to explain why an entry is
+    /// `PartiallyDecoded` (e.g. `"header known; per-record fields audit-only"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Full SPPID coverage inventory for a single [`PidDocument`]. Entries
+/// are sorted ascending by `name` so diffs against previous runs are
+/// reviewable.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct CoverageReport {
+    pub entries: Vec<CoverageEntry>,
+}
+
+impl CoverageReport {
+    /// Count entries in each status bucket, in declaration order of
+    /// [`ParseCoverageStatus`]. Useful for rendering summary lines.
+    pub fn status_counts(&self) -> [usize; 4] {
+        let mut counts = [0usize; 4];
+        for entry in &self.entries {
+            let idx = match entry.status {
+                ParseCoverageStatus::FullyDecoded => 0,
+                ParseCoverageStatus::PartiallyDecoded => 1,
+                ParseCoverageStatus::IdentifiedOnly => 2,
+                ParseCoverageStatus::Unknown => 3,
+            };
+            counts[idx] += 1;
+        }
+        counts
+    }
+}
+
 /// Decoded `PSMroots` stream: list of root-level named entries.
 ///
 /// Byte layout (observed): `[u32 magic='root']` followed by N records of
