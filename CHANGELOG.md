@@ -2,6 +2,87 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-04-21
+
+### Phase 10b: coverage 动态分类
+
+兑现 Phase 10a 明确承诺的"Phase 10b+ 会动态化"。v0.6.0 的 coverage
+是**纯静态**映射（name → bucket），无法区分"流存在 + parser 解出了
+模型"vs"流存在但 parser silent-failure"。v0.6.1 让 `classify` 咨询
+`&PidDocument` 本身，在对应模型字段为 `None` / 空集合时**降级**到
+`IdentifiedOnly` 并附注原因。
+
+降级表（FullyDecoded / PartiallyDecoded → IdentifiedOnly）：
+
+| 流名 | 检查的字段 |
+|---|---|
+| `\x05SummaryInformation` / `\x05DocumentSummaryInformation` | `summary` |
+| `PSMroots` | `psm_roots` + `!entries.is_empty()` |
+| `PSMclustertable` | `psm_cluster_table` |
+| `PSMsegmenttable` | `psm_segment_table` |
+| `DocVersion2` | `doc_version2_decoded` |
+| `DocVersion3` | `version_history` + `!records.is_empty()` |
+| `AppObject` | `app_object_registry` |
+| `JTaggedTxtStgList` | `tagged_storages` |
+
+`PSMcluster0` / `StyleCluster` / `Dynamic Attributes Metadata` /
+`Unclustered Dynamic Attributes` 的动态探针暂留静态 —— 它们对应的
+model shape 是多流合并聚合（`clusters`, `dynamic_attrs`），结构更
+复杂，留给 Phase 10c 系统处理。
+
+### Changed
+
+- `inspect::coverage::classify` 内部签名从 `classify(name)` 改为
+  `classify(name, doc)`（仍为 private，公共入口
+  `coverage_report(&PidDocument)` 签名不变）。
+- 新增内部 helper：
+  - `apply_dynamic_downgrade(name, static_status, note, doc) -> (status, note)`
+    —— 把静态结果 + doc 状态组合成最终结果
+  - `stream_is_populated(name, doc) -> Option<bool>` —— 每个流的
+    populate probe（`None` = 本版本无探针，静态结果透传）
+  - `document_field_for_known_stream(name) -> Option<&'static str>`
+    —— 复用 `known_stream_state` 的字段名，避免在 note 生成时重复
+    写 mapping 表
+- 降级条目的 `note` 被替换为诊断字符串，例如：
+  `stream present but parser did not populate the expected 'version_history' field — downgraded from FullyDecoded`
+
+### Added / Changed tests (307 → 312)
+
+lib 单元测试（新 4 条 Phase 10b，更新 3 条 Phase 10a）：
+- 新：`coverage_downgrades_docversion3_when_parser_did_not_populate`
+- 新：`coverage_downgrades_psm_cluster_table_when_empty_model`
+- 新：`coverage_keeps_fully_decoded_when_model_populated`
+- 新：`coverage_unknown_and_identified_unaffected_by_model_state`
+- 更新：3 条 Phase 10a `coverage_marks_*` 测试现在通过新 helper
+  `populate_all_known_fields(doc)` 填充对应 model，保持静态
+  `FullyDecoded` / `PartiallyDecoded` 的 baseline 断言稳定。
+- `inspect::report::tests::report_includes_coverage_section_*` 同理：
+  fixture 填充 `version_history` + `psm_segment_table`。
+
+CLI 集成测试（+1 + 1 existing fixture 升级，`tests/inspect_cli.rs`）：
+- 新：`coverage_flag_downgrades_docversion3_when_record_is_illegal`
+  —— 真实 CLI 端到端验证降级路径：fixture 写一段非 printable bytes
+  到 `/DocVersion3`，parser 静默失败 → CLI `--coverage` 输出
+  `[ID]   DocVersion3` 并带 `stream present` 降级 note。
+- 升级：`build_mixed_coverage_fixture` 中 `/DocVersion3` 现在写
+  合法 48-byte record（helper `legal_doc_version3_record`）让
+  `[FULL]` 断言在 Phase 10b 下继续成立；`/PSMsegmenttable` 换成
+  `/PSMcluster0`（PSMcluster0 在 Phase 10b 中没有动态探针，静态
+  `PartiallyDecoded` 不受降级影响），避免 fixture 构造难度的
+  footgun。
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-10b-dynamic-coverage.md`：本轮 dev plan。
+
+### Verification
+
+- `cargo fmt --all -- --check` → 0
+- `cargo clippy --all-targets -- -D warnings` → 0
+- `cargo test --all-targets` → **312 passed** / 0 failed（lib 219 +
+  inspect_cli 3 + parse_real_files 28 + unit_parsers 18 +
+  writer_real_files 10 + writer_roundtrip 13 + writer_validate_cli 21）
+
 ## [0.6.0] - 2026-04-21
 
 ### Phase 10a: SPPID 解析覆盖清单（SPPID full-parse roadmap 的 Phase 1）

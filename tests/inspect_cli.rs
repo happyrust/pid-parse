@@ -27,23 +27,53 @@ fn unique_tmp(label: &str) -> PathBuf {
     p
 }
 
+/// Produce a single legal 48-byte `DocVersion3` record so the parser's
+/// `parse_doc_version3` heuristic accepts it and populates
+/// `doc.version_history`. Without a valid record the Phase 10b dynamic
+/// classifier would downgrade `DocVersion3` from `FullyDecoded` to
+/// `IdentifiedOnly`, which is correct behavior but would prevent this
+/// fixture from asserting the `[FULL]` path.
+fn legal_doc_version3_record() -> Vec<u8> {
+    let mut record = Vec::with_capacity(48);
+    // product[16], zero-padded
+    record.extend_from_slice(b"TestProduct");
+    record.resize(16, 0);
+    // version[12], zero-padded
+    record.extend_from_slice(b"1.0.0");
+    record.resize(16 + 12, 0);
+    // operation[4], zero-padded ("SA" = SaveAs)
+    record.extend_from_slice(b"SA");
+    record.resize(16 + 12 + 4, 0);
+    // timestamp[16], zero-padded
+    record.extend_from_slice(b"01/01/26 00:00");
+    record.resize(48, 0);
+    record
+}
+
 /// Build a tiny valid CFB fixture with a mixture of coverage classes:
-/// a fully-decoded stream (`DocVersion3`), a partially-decoded stream
-/// (`PSMsegmenttable`), a storage-prefix stream (`Sheet1/Foo`), and an
-/// unknown top-level stream (`MysteryStream`).
+/// a fully-decoded stream (`DocVersion3` with a real record so the
+/// dynamic classifier keeps it as `FullyDecoded`), a partially-decoded
+/// stream (`PSMsegmenttable`), a storage-prefix stream (`Sheet1/Foo`),
+/// and an unknown top-level stream (`MysteryStream`).
 fn build_mixed_coverage_fixture(path: &std::path::Path) {
     let file = std::fs::File::create(path).expect("create fixture");
     let mut cfb = ::cfb::CompoundFile::create(file).expect("cfb create");
     cfb.create_storage_all("/Sheet1").expect("storage");
 
     let mut s = cfb.create_stream("/DocVersion3").unwrap();
-    // Any non-empty bytes — the reader's heuristics will accept or skip;
-    // we care only about the top-level name being present.
-    s.write_all(b"DocVersion3-bytes").unwrap();
+    s.write_all(&legal_doc_version3_record()).unwrap();
     drop(s);
 
-    let mut s = cfb.create_stream("/PSMsegmenttable").unwrap();
-    s.write_all(b"psm-seg-bytes").unwrap();
+    // Use `/PSMcluster0` to hit the `[PART]` bucket. Phase 10b
+    // intentionally does NOT wire a dynamic probe for it (cluster
+    // streams share complex multi-stream model shapes parked for
+    // Phase 10c), so the static `PartiallyDecoded` classification
+    // stands regardless of parser-side population. `/PSMsegmenttable`
+    // *does* have a dynamic probe and our bytes don't satisfy it, so
+    // it would be downgraded to `IdentifiedOnly`; we avoid that
+    // fixture-quality footgun here by using the un-probed name.
+    let mut s = cfb.create_stream("/PSMcluster0").unwrap();
+    s.write_all(b"any-bytes").unwrap();
     drop(s);
 
     let mut s = cfb.create_stream("/Sheet1/Foo").unwrap();
@@ -85,7 +115,7 @@ fn coverage_flag_prints_section_and_all_four_buckets() {
         "expected fully-decoded entry; stdout:\n{stdout}"
     );
     assert!(
-        stdout.contains("[PART] PSMsegmenttable"),
+        stdout.contains("[PART] PSMcluster0"),
         "expected partially-decoded entry; stdout:\n{stdout}"
     );
     assert!(
@@ -105,6 +135,47 @@ fn coverage_flag_prints_section_and_all_four_buckets() {
     assert!(
         !stdout.contains("--- Summary ---"),
         "--coverage alone should suppress the full report; stdout:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn coverage_flag_downgrades_docversion3_when_record_is_illegal() {
+    // Phase 10b end-to-end: a fixture that ships `/DocVersion3` with
+    // unparseable bytes must be classified as `[ID]` and the note
+    // must point at the missing model field. This mirrors the
+    // `coverage_downgrades_docversion3_when_parser_did_not_populate`
+    // lib-unit test at the CLI boundary so we catch any regression
+    // between the classifier and the report renderer.
+    let fixture = unique_tmp("coverage-downgrade");
+    let file = std::fs::File::create(&fixture).expect("create");
+    let mut cfb = ::cfb::CompoundFile::create(file).expect("cfb create");
+    let mut s = cfb.create_stream("/DocVersion3").unwrap();
+    // Non-printable bytes: the parser rejects the "first byte must be
+    // ASCII printable" heuristic, so `doc.version_history` stays None.
+    s.write_all(&[0x01u8, 0x02, 0x03, 0x04]).unwrap();
+    drop(s);
+    cfb.flush().unwrap();
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--coverage")
+        .output()
+        .expect("spawn pid_inspect --coverage");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "stdout:\n{stdout}");
+    assert!(
+        stdout.contains("[ID]   DocVersion3"),
+        "expected DocVersion3 downgraded to [ID]; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("stream present"),
+        "downgrade note should mention the silent-failure reason; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("version_history"),
+        "downgrade note should quote the missing field; stdout:\n{stdout}"
     );
 
     let _ = std::fs::remove_file(&fixture);

@@ -601,7 +601,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{PidDocument, StreamEntry};
+    use crate::model::{PidDocument, PsmSegmentTable, StreamEntry, VersionHistory, VersionRecord};
 
     fn doc_with_paths(paths: &[&str]) -> PidDocument {
         PidDocument {
@@ -622,14 +622,31 @@ mod tests {
     fn report_includes_coverage_section_with_bucket_counts_and_per_entry_tags() {
         // Phase 10a: `generate_report` must surface the coverage
         // inventory ahead of the legacy "Top-level Unidentified
-        // Streams" section. We assert the section heading, bucket
-        // summary lines, and at least one entry from each bucket.
-        let doc = doc_with_paths(&[
-            "/DocVersion3",     // Fully decoded
-            "/PSMsegmenttable", // Partially decoded
+        // Streams" section. Phase 10b: the dynamic classifier needs
+        // the corresponding model fields populated for the static
+        // FullyDecoded / PartiallyDecoded verdict to stand — otherwise
+        // the entry gets downgraded to IdentifiedOnly (that's by
+        // design; see `coverage_downgrades_docversion3_when_parser_did_not_populate`).
+        let mut doc = doc_with_paths(&[
+            "/DocVersion3",     // Fully decoded (requires version_history)
+            "/PSMsegmenttable", // Partially decoded (requires psm_segment_table)
             "/Sheet1/Payload",  // Identified only (via Sheet storage prefix)
             "/GhostStream",     // Unknown
         ]);
+        doc.version_history = Some(VersionHistory {
+            size: 48,
+            records: vec![VersionRecord {
+                product: "TestProduct".into(),
+                version: "0.0.1".into(),
+                operation: "SA".into(),
+                timestamp: "01/01/26 00:00".into(),
+            }],
+        });
+        doc.psm_segment_table = Some(PsmSegmentTable {
+            size: 0,
+            count: 0,
+            flags: vec![],
+        });
         let report = generate_report(&doc);
         assert!(
             report.contains("--- Coverage ---"),

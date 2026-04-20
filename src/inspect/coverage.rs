@@ -1,4 +1,5 @@
-//! Phase 10a (v0.6.0) — SPPID parse coverage inventory.
+//! SPPID parse coverage inventory (Phase 10a foundation + Phase 10b
+//! dynamic classification).
 //!
 //! This module answers the "how much of this `.pid` file has pid-parse
 //! actually decoded?" question as a structured [`CoverageReport`]
@@ -6,20 +7,25 @@
 //! [`super::unidentified_top_level_streams`], which stays in place for
 //! backward compatibility).
 //!
-//! The v0.6.0 classification is **static**: each top-level stream or
-//! storage name in [`KNOWN_TOP_LEVEL_STREAM_NAMES`] /
-//! [`KNOWN_TOP_LEVEL_STORAGE_PREFIXES`] is hard-coded to a
-//! [`ParseCoverageStatus`] based on the current parser implementation
-//! state. A future iteration (Phase 10b+) can upgrade the classifier to
-//! consult the `PidDocument` itself (e.g. "model field non-None implies
-//! decoded", "byte consumption ratio implies partial") once a byte-
-//! consumption framework lands. For now, a stable static mapping is
-//! sufficient to drive the roadmap's next priority calls.
+//! **v0.6.0 (Phase 10a)**: each top-level stream or storage name in
+//! [`KNOWN_TOP_LEVEL_STREAM_NAMES`] / [`KNOWN_TOP_LEVEL_STORAGE_PREFIXES`]
+//! mapped to a static [`ParseCoverageStatus`].
+//!
+//! **v0.6.1 (Phase 10b)**: the classifier now additionally consults the
+//! [`PidDocument`] itself. A stream that is statically declared
+//! "FullyDecoded" but whose corresponding model field is `None` or empty
+//! is **downgraded** to `IdentifiedOnly` with a note explaining why.
+//! This surfaces silent parser failures — if the stream is present but
+//! the model field is empty, the parser tolerated an input it should
+//! have understood, and the coverage report will stop pretending
+//! otherwise.
 //!
 //! See:
 //! - `docs/sppid/2026-04-21-sppid-full-parse-roadmap.md` (strategy)
 //! - `docs/plans/2026-04-21-sppid-coverage-inventory-implementation-plan.md`
-//!   (tactical Task 1..6 breakdown this file implements).
+//!   (Phase 10a tactical plan)
+//! - `docs/plans/2026-04-21-phase-10b-dynamic-coverage.md`
+//!   (Phase 10b tactical plan)
 
 use super::{KNOWN_TOP_LEVEL_STORAGE_PREFIXES, KNOWN_TOP_LEVEL_STREAM_NAMES};
 use crate::model::{
@@ -58,14 +64,22 @@ pub fn top_level_coverage_entries(doc: &PidDocument) -> Vec<CoverageEntry> {
     // 2. Classify each. `BTreeSet` iteration is already name-sorted.
     top_level_names
         .into_iter()
-        .map(|name| classify(&name))
+        .map(|name| classify(&name, doc))
         .collect()
 }
 
-/// Map a bare top-level name to a full [`CoverageEntry`]. Visible under
-/// `pub(super)` so Phase 10b's future classifier can slide in next to
-/// us without disturbing the public API.
-fn classify(name: &str) -> CoverageEntry {
+/// Map a bare top-level name to a full [`CoverageEntry`], considering
+/// both the static stream-name table (Phase 10a) and the actual
+/// [`PidDocument`] field population (Phase 10b).
+///
+/// The static tier decides the **ceiling**: if a name is not known at
+/// all, we can only ever report `Unknown`; if a storage prefix matches,
+/// we report `IdentifiedOnly`. For statically `FullyDecoded` /
+/// `PartiallyDecoded` names, the dynamic tier can *downgrade* to
+/// `IdentifiedOnly` when the corresponding model field is `None` /
+/// empty, revealing parser silent-failures or fixtures the decoder has
+/// not yet grown to handle.
+fn classify(name: &str, doc: &PidDocument) -> CoverageEntry {
     // Known storage prefix check first: a stream like "Sheet1" that
     // matches a storage prefix should be classified as storage even if
     // it coincidentally appears in `KNOWN_TOP_LEVEL_STREAM_NAMES`.
@@ -81,7 +95,9 @@ fn classify(name: &str) -> CoverageEntry {
     }
 
     if KNOWN_TOP_LEVEL_STREAM_NAMES.contains(&name) {
-        let (status, parser, field, note) = known_stream_state(name);
+        let (static_status, parser, field, note) = known_stream_state(name);
+        // Phase 10b: apply dynamic downgrade based on doc population.
+        let (status, note) = apply_dynamic_downgrade(name, static_status, note, doc);
         return CoverageEntry {
             name: name.to_string(),
             kind: CoverageNodeKind::TopLevelStream,
@@ -99,6 +115,116 @@ fn classify(name: &str) -> CoverageEntry {
         parser: None,
         document_field: None,
         note: Some("no decoder; not in KNOWN_TOP_LEVEL_STREAM_NAMES".into()),
+    }
+}
+
+/// Phase 10b: decide whether `static_status` should be downgraded in
+/// light of `doc`'s actual decoded state.
+///
+/// Rules:
+///
+/// - `FullyDecoded` stays `FullyDecoded` **only if** the corresponding
+///   model field is populated (and non-empty where "empty" is
+///   meaningful, e.g. a `VersionHistory` with zero records is a parser
+///   silent-failure).
+/// - `PartiallyDecoded` stays as is if the corresponding field is
+///   populated; otherwise downgrades to `IdentifiedOnly`.
+/// - Any other status is returned unchanged (the downgrade rule only
+///   targets the static Full/Partial tier).
+///
+/// When a downgrade happens the note is replaced with a diagnostic
+/// string pointing at the missing / empty field so users immediately
+/// see the gap.
+fn apply_dynamic_downgrade(
+    name: &str,
+    static_status: ParseCoverageStatus,
+    static_note: Option<String>,
+    doc: &PidDocument,
+) -> (ParseCoverageStatus, Option<String>) {
+    use ParseCoverageStatus::*;
+    let populated = stream_is_populated(name, doc);
+    match (static_status, populated) {
+        (FullyDecoded, Some(true)) | (PartiallyDecoded, Some(true)) => (static_status, static_note),
+        (FullyDecoded, Some(false)) => (
+            IdentifiedOnly,
+            Some(format!(
+                "stream present but parser did not populate the expected \
+                 `{}` field — downgraded from FullyDecoded",
+                document_field_for_known_stream(name).unwrap_or("(field)")
+            )),
+        ),
+        (PartiallyDecoded, Some(false)) => (
+            IdentifiedOnly,
+            Some(format!(
+                "stream present but parser produced no `{}` decoding — \
+                 downgraded from PartiallyDecoded",
+                document_field_for_known_stream(name).unwrap_or("(field)")
+            )),
+        ),
+        // Either the name has no dynamic probe wired up yet, or the
+        // static tier was already at/below IdentifiedOnly. Pass through.
+        _ => (static_status, static_note),
+    }
+}
+
+/// Phase 10b probe: given a known top-level stream name, determine
+/// whether the corresponding `PidDocument` field is populated to a
+/// degree that backs up the static classification.
+///
+/// Returns:
+///
+/// - `Some(true)` — field populated (and non-empty where that matters)
+/// - `Some(false)` — parser *should have* populated this but did not;
+///   downgrade candidate
+/// - `None` — no dynamic probe for this name yet (covered by static
+///   classification only; Phase 10c will add more)
+fn stream_is_populated(name: &str, doc: &PidDocument) -> Option<bool> {
+    match name {
+        "\u{5}SummaryInformation" | "\u{5}DocumentSummaryInformation" => {
+            Some(doc.summary.is_some())
+        }
+        "PSMroots" => Some(
+            doc.psm_roots
+                .as_ref()
+                .map(|r| !r.entries.is_empty())
+                .unwrap_or(false),
+        ),
+        "PSMclustertable" => Some(doc.psm_cluster_table.is_some()),
+        "PSMsegmenttable" => Some(doc.psm_segment_table.is_some()),
+        "DocVersion2" => Some(doc.doc_version2_decoded.is_some()),
+        "DocVersion3" => Some(
+            doc.version_history
+                .as_ref()
+                .map(|v| !v.records.is_empty())
+                .unwrap_or(false),
+        ),
+        "AppObject" => Some(doc.app_object_registry.is_some()),
+        "JTaggedTxtStgList" => Some(doc.tagged_storages.is_some()),
+        // Cluster / dynamic attrs names share complex multi-stream model
+        // shapes; Phase 10b scope explicitly parks them as static-only.
+        // Phase 10c will grow individual probes.
+        "PSMcluster0"
+        | "StyleCluster"
+        | "Dynamic Attributes Metadata"
+        | "Unclustered Dynamic Attributes" => None,
+        _ => None,
+    }
+}
+
+/// Mirror of [`known_stream_state`]'s `document_field` output, provided
+/// separately so the downgrade path can quote it without allocating
+/// a full tuple. Returns the raw canonical field name (no `"` quoting).
+fn document_field_for_known_stream(name: &str) -> Option<&'static str> {
+    match name {
+        "\u{5}SummaryInformation" | "\u{5}DocumentSummaryInformation" => Some("summary"),
+        "PSMroots" => Some("psm_roots"),
+        "PSMclustertable" => Some("psm_cluster_table"),
+        "PSMsegmenttable" => Some("psm_segment_table"),
+        "DocVersion2" => Some("doc_version2_decoded"),
+        "DocVersion3" => Some("version_history"),
+        "AppObject" => Some("app_object_registry"),
+        "JTaggedTxtStgList" => Some("tagged_storages"),
+        _ => None,
     }
 }
 
@@ -233,7 +359,12 @@ fn known_stream_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{PidDocument, StreamEntry};
+    use crate::model::{
+        AppObjectRegistry, DocVersion2, PidDocument, PsmClusterTable, PsmRootEntry, PsmRoots,
+        PsmSegmentTable, StreamEntry, SummaryInfo, TaggedTextStorageList, VersionHistory,
+        VersionRecord,
+    };
+    use std::collections::BTreeMap;
 
     fn doc_with_paths(paths: &[&str]) -> PidDocument {
         PidDocument {
@@ -250,6 +381,66 @@ mod tests {
         }
     }
 
+    /// Phase 10b: attach populated model fields to `doc` for every
+    /// known top-level stream so dynamic classification keeps the
+    /// static `FullyDecoded` / `PartiallyDecoded` verdict. Used by
+    /// tests that want to pin the **static** behavior without having
+    /// the dynamic tier downgrade under them.
+    fn populate_all_known_fields(doc: &mut PidDocument) {
+        doc.summary = Some(SummaryInfo {
+            creating_application: None,
+            template: None,
+            title: Some("T".into()),
+            created_time: None,
+            modified_time: None,
+            raw: BTreeMap::new(),
+        });
+        doc.psm_roots = Some(PsmRoots {
+            size: 16,
+            entries: vec![PsmRootEntry {
+                id: 1,
+                offset: 0,
+                name: "root".into(),
+            }],
+            trailing_bytes: 0,
+        });
+        doc.psm_cluster_table = Some(PsmClusterTable {
+            size: 0,
+            count: 0,
+            entries: vec![],
+        });
+        doc.psm_segment_table = Some(PsmSegmentTable {
+            size: 0,
+            count: 0,
+            flags: vec![],
+        });
+        doc.doc_version2_decoded = Some(DocVersion2 {
+            magic_u32_le: 0x0001_0034,
+            reserved_all_zero: true,
+            records: vec![],
+        });
+        doc.version_history = Some(VersionHistory {
+            size: 48,
+            records: vec![VersionRecord {
+                product: "TestProduct".into(),
+                version: "0.0.1".into(),
+                operation: "SA".into(),
+                timestamp: "01/01/26 00:00".into(),
+            }],
+        });
+        doc.app_object_registry = Some(AppObjectRegistry {
+            size: 0,
+            leading_u32: 0,
+            entries: vec![],
+            trailing_bytes: 0,
+        });
+        doc.tagged_storages = Some(TaggedTextStorageList {
+            size: 0,
+            list_name: "TaggedTxtStorages".into(),
+            entries: vec![],
+        });
+    }
+
     fn find<'a>(report: &'a CoverageReport, name: &str) -> &'a CoverageEntry {
         report
             .entries
@@ -260,12 +451,13 @@ mod tests {
 
     #[test]
     fn coverage_marks_known_top_level_streams_with_expected_status() {
-        let doc = doc_with_paths(&[
+        let mut doc = doc_with_paths(&[
             "/DocVersion3",
             "/PSMsegmenttable",
             "/AppObject",
             "/PSMclustertable",
         ]);
+        populate_all_known_fields(&mut doc);
         let report = coverage_report(&doc);
         assert_eq!(
             find(&report, "DocVersion3").status,
@@ -308,12 +500,13 @@ mod tests {
 
     #[test]
     fn coverage_marks_unknown_top_level_entries_as_unknown() {
-        let doc = doc_with_paths(&[
-            "/PSMroots",      // FullyDecoded
+        let mut doc = doc_with_paths(&[
+            "/PSMroots",      // FullyDecoded (with model)
             "/GhostStream",   // Unknown
             "/Sheet1/Nested", // Sheet storage
             "/Random42",      // Unknown
         ]);
+        populate_all_known_fields(&mut doc);
         let report = coverage_report(&doc);
         assert_eq!(
             find(&report, "PSMroots").status,
@@ -361,7 +554,7 @@ mod tests {
 
     #[test]
     fn coverage_status_counts_matches_entries() {
-        let doc = doc_with_paths(&[
+        let mut doc = doc_with_paths(&[
             "/DocVersion3",     // Full
             "/AppObject",       // Full
             "/PSMsegmenttable", // Partial
@@ -369,8 +562,94 @@ mod tests {
             "/Sheet2/y",        // Identified
             "/GhostStream",     // Unknown
         ]);
+        populate_all_known_fields(&mut doc);
         let report = coverage_report(&doc);
         let [full, partial, ident, unk] = report.status_counts();
         assert_eq!((full, partial, ident, unk), (2, 1, 2, 1));
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 10b dynamic-classification tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn coverage_downgrades_docversion3_when_parser_did_not_populate() {
+        // /DocVersion3 stream is present but doc.version_history is None.
+        // That models the "parser silent-failure" case Phase 10b exists
+        // to expose: the stream looks FullyDecoded by the static table
+        // but in reality we have zero decoded records.
+        let doc = doc_with_paths(&["/DocVersion3"]);
+        let report = coverage_report(&doc);
+        let entry = find(&report, "DocVersion3");
+        assert_eq!(
+            entry.status,
+            ParseCoverageStatus::IdentifiedOnly,
+            "empty model field must downgrade FullyDecoded -> IdentifiedOnly",
+        );
+        let note = entry.note.as_deref().unwrap_or("");
+        assert!(
+            note.contains("stream present") && note.contains("version_history"),
+            "downgrade note should name the empty field; got: {note}",
+        );
+    }
+
+    #[test]
+    fn coverage_downgrades_psm_cluster_table_when_empty_model() {
+        let doc = doc_with_paths(&["/PSMclustertable"]);
+        let report = coverage_report(&doc);
+        let entry = find(&report, "PSMclustertable");
+        assert_eq!(
+            entry.status,
+            ParseCoverageStatus::IdentifiedOnly,
+            "empty psm_cluster_table must downgrade PartiallyDecoded -> IdentifiedOnly",
+        );
+        let note = entry.note.as_deref().unwrap_or("");
+        assert!(
+            note.contains("psm_cluster_table"),
+            "downgrade note should name the empty field; got: {note}",
+        );
+    }
+
+    #[test]
+    fn coverage_keeps_fully_decoded_when_model_populated() {
+        let mut doc = doc_with_paths(&["/DocVersion3"]);
+        doc.version_history = Some(VersionHistory {
+            size: 48,
+            records: vec![VersionRecord {
+                product: "TestProduct".into(),
+                version: "0.0.1".into(),
+                operation: "SA".into(),
+                timestamp: "01/01/26 00:00".into(),
+            }],
+        });
+        let report = coverage_report(&doc);
+        assert_eq!(
+            find(&report, "DocVersion3").status,
+            ParseCoverageStatus::FullyDecoded,
+            "stream + non-empty records must stay FullyDecoded",
+        );
+    }
+
+    #[test]
+    fn coverage_unknown_and_identified_unaffected_by_model_state() {
+        // Phase 10b only downgrades Full/Partial. Unknown and
+        // IdentifiedOnly are pass-through regardless of doc state.
+        let doc = doc_with_paths(&["/GhostStream", "/Sheet1/x", "/PSMroots"]);
+        let report = coverage_report(&doc);
+        assert_eq!(
+            find(&report, "GhostStream").status,
+            ParseCoverageStatus::Unknown,
+        );
+        assert_eq!(
+            find(&report, "Sheet1").status,
+            ParseCoverageStatus::IdentifiedOnly,
+        );
+        // PSMroots is a known stream; with no psm_roots field it SHOULD
+        // get downgraded to IdentifiedOnly — assert that explicitly so
+        // the test also guards the "downgrade applies to PSMroots" path.
+        assert_eq!(
+            find(&report, "PSMroots").status,
+            ParseCoverageStatus::IdentifiedOnly,
+        );
     }
 }
