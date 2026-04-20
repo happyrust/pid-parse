@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-04-21
+
+### Phase 10f: coverage 加 bytes 维度
+
+`CoverageEntry` 获得 `stream_size: Option<u64>` 字段，让 coverage
+报告能回答"哪些流占了多少字节"，为 roadmap Phase 4 "暴露未解释
+字节集中区" 铺第一块基础。本轮仍是纯声明式（来源是 `StreamEntry.size`，
+没有 parser 内部的 consumed bytes tracking —— 那是 Phase 10g/10h
+的范围）。
+
+### Added
+
+- `model::CoverageEntry.stream_size: Option<u64>`（`#[serde(skip_serializing_if = "Option::is_none")]`）。
+- `CoverageReport::total_bytes_by_status() -> [u64; 4]`：status-bucket
+  byte 总和（`saturating_add`，unknown=None 的 entry 贡献 0）。
+- `inspect::coverage::size_for_top_level(doc, name)`：aggregating
+  probe — 顶层 stream 取自己，storage 取 children 总和，无匹配返回
+  `None`。
+
+### Changed
+
+- `inspect::report::generate_report` 的 `--- Coverage ---` 段每条
+  bucket 摘要追加字节总和（`"Fully decoded:     3 (4.5 KB)"`），每
+  条 entry 行追加字节 `(24 B)` / `(1.2 KB)` 等后缀。单位按 1024 进
+  制转 B/KB/MB/GB，保留 1 位小数（`< 1 KB` 时用纯整数 `"42 B"` 形
+  式避开小数点噪音）。
+- `inspect::coverage::top_level_coverage_entries` 构造每个
+  `CoverageEntry` 后都会填充 `stream_size`，确保 JSON / 文本两种
+  输出都能访问到大小信息。
+
+### Tests (329 → 332)
+
+lib 单元 +3：
+
+- `coverage_entry_carries_stream_size_for_single_top_level_stream`
+  —— 单流大小直接 attachment。
+- `coverage_entry_aggregates_sizes_across_storage_children`
+  —— 存储前缀（`Sheet1`）正确 aggregate 3 个 children 的大小。
+- `coverage_report_total_bytes_by_status_matches_entries`
+  —— Full=128, Partial=220, Ident=1000, Unknown=18 的混合样本验证
+  `total_bytes_by_status`。
+
+既有测试更新：
+
+- `report_includes_coverage_section_with_bucket_counts_and_per_entry_tags`
+  新断言 bucket 行含 `"(42 B)"` 后缀 + entry 行含 `(42 B)` 子串。
+- `coverage_json_flag_emits_parseable_coverage_report` 断言 JSON
+  entries 里至少一条携带 `stream_size` 数值字段。
+
+### Verification
+
+- `cargo fmt --check` / `cargo clippy -D warnings` → 双 0
+- `cargo test --all-targets` → **332 passed** / 0 failed
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-10f-coverage-bytes.md`。
+
 ## [0.6.4] - 2026-04-21
 
 ### Phase 10e: coverage JSON 导出

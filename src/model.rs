@@ -525,6 +525,14 @@ pub struct CoverageEntry {
     /// `PartiallyDecoded` (e.g. `"header known; per-record fields audit-only"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Phase 10f (v0.6.5+): total size in bytes of the stream(s) this
+    /// entry covers. For a `TopLevelStream` it's the stream's own size;
+    /// for a `TopLevelStorage` it's the sum of every member stream's
+    /// size. `None` when the coverage entry was produced without a
+    /// backing `StreamEntry` lookup (shouldn't happen in normal parser
+    /// runs but is tolerated so diagnostic code paths never panic).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_size: Option<u64>,
 }
 
 /// Full SPPID coverage inventory for a single [`PidDocument`]. Entries
@@ -550,6 +558,27 @@ impl CoverageReport {
             counts[idx] += 1;
         }
         counts
+    }
+
+    /// Phase 10f (v0.6.5+): sum of `stream_size` per status bucket, in
+    /// the same declaration order as [`Self::status_counts`]. Entries
+    /// with `stream_size == None` contribute zero. Useful for weighting
+    /// the coverage report by bytes (e.g. "how many bytes are still
+    /// Unknown?") rather than just counting streams.
+    pub fn total_bytes_by_status(&self) -> [u64; 4] {
+        let mut totals = [0u64; 4];
+        for entry in &self.entries {
+            if let Some(size) = entry.stream_size {
+                let idx = match entry.status {
+                    ParseCoverageStatus::FullyDecoded => 0,
+                    ParseCoverageStatus::PartiallyDecoded => 1,
+                    ParseCoverageStatus::IdentifiedOnly => 2,
+                    ParseCoverageStatus::Unknown => 3,
+                };
+                totals[idx] = totals[idx].saturating_add(size);
+            }
+        }
+        totals
     }
 
     /// Phase 10e (v0.6.4+): serialize to a compact JSON string.

@@ -71,8 +71,36 @@ pub fn top_level_coverage_entries(doc: &PidDocument) -> Vec<CoverageEntry> {
     // 2. Classify each. `BTreeSet` iteration is already name-sorted.
     top_level_names
         .into_iter()
-        .map(|name| classify(&name, doc))
+        .map(|name| {
+            let mut entry = classify(&name, doc);
+            entry.stream_size = size_for_top_level(doc, &name);
+            entry
+        })
         .collect()
+}
+
+/// Phase 10f (v0.6.5+): aggregate stream sizes across every
+/// `doc.streams` entry whose top-level name matches `top_level_name`.
+/// A top-level stream (`"/DocVersion3"`) contributes its own size; a
+/// storage prefix (`"Sheet1"`) sums every child (`"/Sheet1/Foo"`,
+/// `"/Sheet1/Bar"`, …). Returns `None` when no matching stream exists
+/// — indicating `doc.streams` became inconsistent with the name
+/// derivation pipeline.
+fn size_for_top_level(doc: &PidDocument, top_level_name: &str) -> Option<u64> {
+    let mut total: u64 = 0;
+    let mut found_any = false;
+    for stream in &doc.streams {
+        let trimmed = stream.path.trim_start_matches('/');
+        let head = match trimmed.find('/') {
+            Some(idx) => &trimmed[..idx],
+            None => trimmed,
+        };
+        if head == top_level_name {
+            total = total.saturating_add(stream.size);
+            found_any = true;
+        }
+    }
+    found_any.then_some(total)
 }
 
 /// Map a bare top-level name to a full [`CoverageEntry`], considering
@@ -98,6 +126,8 @@ fn classify(name: &str, doc: &PidDocument) -> CoverageEntry {
             parser: parser_for_storage(name),
             document_field: document_field_for_storage(name),
             note: Some("storage prefix recognized; member streams carry the data".into()),
+            // Filled in by `top_level_coverage_entries` after classify.
+            stream_size: None,
         };
     }
 
@@ -112,6 +142,7 @@ fn classify(name: &str, doc: &PidDocument) -> CoverageEntry {
             parser,
             document_field: field,
             note,
+            stream_size: None,
         };
     }
 
@@ -122,6 +153,7 @@ fn classify(name: &str, doc: &PidDocument) -> CoverageEntry {
         parser: None,
         document_field: None,
         note: Some("no decoder; not in KNOWN_TOP_LEVEL_STREAM_NAMES".into()),
+        stream_size: None,
     }
 }
 
@@ -848,6 +880,67 @@ mod tests {
         assert!(
             msg.contains("coverage report JSON"),
             "expected PidError context 'coverage report JSON'; got: {msg}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 10f: coverage bytes / stream_size aggregation.
+    // ------------------------------------------------------------------
+
+    fn doc_with_paths_and_sizes(paths_and_sizes: &[(&str, u64)]) -> PidDocument {
+        PidDocument {
+            streams: paths_and_sizes
+                .iter()
+                .map(|(p, sz)| StreamEntry {
+                    path: (*p).to_string(),
+                    size: *sz,
+                    preview_ascii: vec![],
+                    magic_u32_le: None,
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn coverage_entry_carries_stream_size_for_single_top_level_stream() {
+        let doc = doc_with_paths_and_sizes(&[("/DocVersion3", 48)]);
+        let report = coverage_report(&doc);
+        let entry = find(&report, "DocVersion3");
+        assert_eq!(entry.stream_size, Some(48));
+    }
+
+    #[test]
+    fn coverage_entry_aggregates_sizes_across_storage_children() {
+        // `Sheet1` is a storage prefix; its `stream_size` must be the
+        // sum of every `/Sheet1/*` member, not the size of any single
+        // child alone.
+        let doc = doc_with_paths_and_sizes(&[
+            ("/Sheet1/Foo", 100),
+            ("/Sheet1/Bar", 250),
+            ("/Sheet1/Baz", 50),
+        ]);
+        let report = coverage_report(&doc);
+        assert_eq!(find(&report, "Sheet1").stream_size, Some(400));
+    }
+
+    #[test]
+    fn coverage_report_total_bytes_by_status_matches_entries() {
+        let mut doc = doc_with_paths_and_sizes(&[
+            ("/DocVersion3", 96),      // FullyDecoded (once model populated)
+            ("/AppObject", 32),        // FullyDecoded
+            ("/PSMsegmenttable", 220), // PartiallyDecoded
+            ("/Sheet1/x", 500),        // IdentifiedOnly
+            ("/Sheet2/y", 500),        // IdentifiedOnly
+            ("/GhostStream", 18),      // Unknown
+        ]);
+        populate_all_known_fields(&mut doc);
+        let report = coverage_report(&doc);
+        let [full, partial, ident, unk] = report.total_bytes_by_status();
+        assert_eq!(
+            (full, partial, ident, unk),
+            (128, 220, 1000, 18),
+            "byte totals per status bucket",
         );
     }
 

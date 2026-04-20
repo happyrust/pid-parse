@@ -241,6 +241,15 @@ fn coverage_json_flag_emits_parseable_coverage_report() {
         "coverage-only JSON must not include full-doc keys like 'streams'"
     );
 
+    // Phase 10f: every entry produced from a real doc should carry a
+    // `stream_size` (JSON number). Spot-check any entry has it.
+    assert!(
+        entries
+            .iter()
+            .any(|e| e.get("stream_size").and_then(|v| v.as_u64()).is_some()),
+        "at least one entry should report stream_size; entries: {entries:?}",
+    );
+
     let _ = std::fs::remove_file(&fixture);
 }
 

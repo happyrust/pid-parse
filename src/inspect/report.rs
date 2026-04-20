@@ -3,6 +3,25 @@ use crate::package::PidPackage;
 use crate::parsers::magic;
 use std::fmt::Write;
 
+/// Phase 10f (v0.6.5+): render a byte count with a K/M/G suffix using
+/// a 1024-binary progression, kept to one decimal place. Pure integer
+/// math below 1 KB to keep the common "< 1 KB" case clean; anything
+/// larger reports e.g. `"1.5 KB"` / `"3.2 MB"`.
+fn format_bytes(n: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * 1024;
+    const GB: u64 = 1024 * 1024 * 1024;
+    if n < KB {
+        format!("{n} B")
+    } else if n < MB {
+        format!("{:.1} KB", n as f64 / KB as f64)
+    } else if n < GB {
+        format!("{:.1} MB", n as f64 / MB as f64)
+    } else {
+        format!("{:.1} GB", n as f64 / GB as f64)
+    }
+}
+
 /// Package-aware report. Starts with [`generate_report`] and appends
 /// container-level metadata (root CLSID + non-root storage CLSIDs) that
 /// only [`PidPackage`] carries. Prefer this over [`generate_report`]
@@ -444,14 +463,32 @@ pub fn generate_report(doc: &PidDocument) -> String {
     // the legacy "Top-level Unidentified Streams" section so readers see
     // the new categorical view first, and the two remain cross-linked
     // for backward compatibility.
+    // Phase 10f (v0.6.5+): each entry shows its byte footprint so users
+    // can prioritize "large + unknown" streams first.
     let coverage = crate::inspect::coverage::coverage_report(doc);
     if !coverage.entries.is_empty() {
         writeln!(out, "\n--- Coverage ---").ok();
         let [full, partial, ident, unk] = coverage.status_counts();
-        writeln!(out, "  Fully decoded:     {full}").ok();
-        writeln!(out, "  Partially decoded: {partial}").ok();
-        writeln!(out, "  Identified only:   {ident}").ok();
-        writeln!(out, "  Unknown:           {unk}").ok();
+        let [full_b, partial_b, ident_b, unk_b] = coverage.total_bytes_by_status();
+        writeln!(
+            out,
+            "  Fully decoded:     {full} ({})",
+            format_bytes(full_b)
+        )
+        .ok();
+        writeln!(
+            out,
+            "  Partially decoded: {partial} ({})",
+            format_bytes(partial_b)
+        )
+        .ok();
+        writeln!(
+            out,
+            "  Identified only:   {ident} ({})",
+            format_bytes(ident_b)
+        )
+        .ok();
+        writeln!(out, "  Unknown:           {unk} ({})", format_bytes(unk_b)).ok();
         for entry in &coverage.entries {
             let tag = match entry.status {
                 crate::model::ParseCoverageStatus::FullyDecoded => "[FULL]",
@@ -464,12 +501,16 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 .as_deref()
                 .map(|f| format!(" -> {f}"))
                 .unwrap_or_default();
+            let size = entry
+                .stream_size
+                .map(|sz| format!(" ({})", format_bytes(sz)))
+                .unwrap_or_default();
             let note = entry
                 .note
                 .as_deref()
                 .map(|n| format!("  ({n})"))
                 .unwrap_or_default();
-            writeln!(out, "  {tag} {}{}{}", entry.name, field, note).ok();
+            writeln!(out, "  {tag} {}{}{}{}", entry.name, field, size, note).ok();
         }
     }
 
@@ -666,14 +707,23 @@ mod tests {
             report.contains("--- Coverage ---"),
             "coverage section heading missing; full report:\n{report}"
         );
-        assert!(report.contains("Fully decoded:     1"), "{report}");
-        assert!(report.contains("Partially decoded: 1"), "{report}");
-        assert!(report.contains("Identified only:   1"), "{report}");
-        assert!(report.contains("Unknown:           1"), "{report}");
+        // Phase 10f: bucket summary lines now carry a byte total in
+        // parens; fixture uses StreamEntry.size = 42 per stream, so
+        // every single-stream bucket reports "(42 B)". Sheet storage
+        // sums one child of 42 B as well.
+        assert!(report.contains("Fully decoded:     1 (42 B)"), "{report}");
+        assert!(report.contains("Partially decoded: 1 (42 B)"), "{report}");
+        assert!(report.contains("Identified only:   1 (42 B)"), "{report}");
+        assert!(report.contains("Unknown:           1 (42 B)"), "{report}");
         assert!(report.contains("[FULL] DocVersion3"), "{report}");
         assert!(report.contains("[PART] PSMsegmenttable"), "{report}");
         assert!(report.contains("[ID]   Sheet1"), "{report}");
         assert!(report.contains("[UNK]  GhostStream"), "{report}");
+        // Phase 10f: per-entry byte tag is present inline.
+        assert!(
+            report.contains("[UNK]  GhostStream (42 B)"),
+            "entry-level byte tag missing; {report}"
+        );
     }
 
     #[test]
