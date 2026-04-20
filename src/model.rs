@@ -149,6 +149,43 @@ pub struct SummaryInfo {
     pub created_time: Option<String>,
     pub modified_time: Option<String>,
     pub raw: BTreeMap<String, String>,
+    /// Phase 10j (v0.9.0+): `/\x05DocumentSummaryInformation` section 2
+    /// user-defined property dictionary. Keys are the dictionary names
+    /// (e.g. `"SP_ProjectID"`), values are typed property values. An
+    /// empty map means either the stream has no section 2 or the section
+    /// has no named entries. Always `#[serde(default)]`-compatible so
+    /// v0.7.x / v0.8.x JSON input deserializes cleanly.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub user_properties: BTreeMap<String, SummaryPropertyValue>,
+}
+
+/// Phase 10j (v0.9.0+): typed property value from the user-defined
+/// dictionary in DocumentSummaryInformation section 2.
+///
+/// Covers the VT codes SmartPlant practically emits in section 2;
+/// unknown VTs fall through to [`SummaryPropertyValue::Raw`] so the
+/// round-trip remains safe (writer passes them through verbatim).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SummaryPropertyValue {
+    /// VT_LPSTR (0x001E) — single-byte string. Writer encodes by
+    /// `MetadataUpdates.summary_user_updates_encoded` or UTF-8 default.
+    Lpstr(String),
+    /// VT_LPWSTR (0x001F) — UTF-16LE string.
+    Lpwstr(String),
+    /// VT_I4 (0x0003).
+    I4(i32),
+    /// VT_BOOL (0x000B) — property-set representation is u16 0x0000 /
+    /// 0xFFFF.
+    Bool(bool),
+    /// VT_FILETIME (0x0040) — raw 64-bit 100ns-since-1601 value.
+    Filetime(u64),
+    /// Any other VT the parser recognizes structurally but does not
+    /// model explicitly; writer passes bytes through verbatim.
+    /// Serialized as a plain JSON array of ints. If the size becomes
+    /// a JSON-bloat concern in practice, a future Phase can swap to a
+    /// base64 adaptor under a new wire version.
+    Raw { vt: u16, bytes: Vec<u8> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

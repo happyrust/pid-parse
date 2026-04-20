@@ -468,6 +468,7 @@ mod tests {
             created_time: None,
             modified_time: None,
             raw: BTreeMap::new(),
+            user_properties: BTreeMap::new(),
         });
         doc.psm_roots = Some(PsmRoots {
             size: 16,

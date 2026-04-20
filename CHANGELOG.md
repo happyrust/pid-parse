@@ -2,6 +2,115 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-21
+
+### Phase 10j (MVP): DocumentSummaryInformation section 2 reader
+
+暴露 `/\x05DocumentSummaryInformation` stream 的 **section 2**
+（user-defined property dictionary，FMTID
+`D5CDD505-2E9C-101B-9397-08002B2CF9AE`）到 Rust 模型里。此前
+reader 只读 section 0；section 2 的 SmartPlant 自定义属性
+（`SP_ProjectID` / `SP_DrawingRevision` / `SP_Discipline` 等）对
+consumer 不可见，只能手工解析 raw stream。
+
+本轮是 Phase 10j 的 **MVP (reader-only scope)**：
+- ✅ Reader 端 section 2 解码完整
+- ✅ 新 `SummaryPropertyValue` typed enum 接入模型
+- ✅ 配套合成 fixture + 5 轮单测覆盖
+- ⏳ **Writer CRUD defer 到 Phase 10m**（需先扩展
+  `writer::summary_write::parse_section` 支持 Dictionary 特殊
+  record + 未知 VT 的 verbatim 保留，scope 超出本 Phase）
+- ⏳ CLI `--set-user-summary` / `--delete-user-summary` 同步 defer
+
+### Added — 新 public 类型
+
+- `model::SummaryPropertyValue` enum：typed 表示 user dict 里一个
+  property 的值。覆盖 SmartPlant 实测最常见的 VT：
+  - `Lpstr(String)` — VT_LPSTR (0x001E)
+  - `Lpwstr(String)` — VT_LPWSTR (0x001F)
+  - `I4(i32)` — VT_I4 (0x0003)
+  - `Bool(bool)` — VT_BOOL (0x000B)，wire format 0x0000/0xFFFF
+  - `Filetime(u64)` — VT_FILETIME (0x0040)
+  - `Raw { vt: u16, bytes: Vec<u8> }` — 未模型化 VT 的保底，writer
+    层未来做 verbatim 透传时能用上
+- `SummaryInfo.user_properties: BTreeMap<String, SummaryPropertyValue>`
+  新字段，`#[serde(default, skip_serializing_if = "BTreeMap::is_empty")]`。
+  v0.7.x / v0.8.x 的 JSON 输入保持向后兼容。
+
+### Added — Reader 侧 section 2 decoder
+
+`src/streams/summary.rs` 新增 `parse_doc_summary_section_2`：
+
+- 遍历 PropertySetStream header 验证 `num_sections >= 2`
+- 验证 section 2 FMTID 是 user-defined dict FMTID
+- 解析 Dictionary property（PROPID 0）的 LPSTR 条目表（SmartPlant
+  默认 variant），建立 `propid → name` 映射
+- 遍历剩余 props，按 VT 解码到 `SummaryPropertyValue`
+- 未知 VT 落 `Raw` 分支（grab 最多 64B 负载，避免吞掉整流）
+- 所有 defensive 边界检查失败都 silent 返回空 map（reader 不 fail
+  整个 pipeline）
+
+Phase 10j MVP 假设 Dictionary 是 LPSTR variant（SmartPlant 实测
+统一如此）。Dictionary 是 LPWSTR variant 的 code page 处理延后到
+Phase 10k（与 reader-side code page detection 一起做）。
+
+### Changed
+
+- `streams::summary::parse_summary_streams` 在解 section 0 之后
+  调 `parse_doc_summary_section_2(&data)`，把结果挂到
+  `info.user_properties`。section 2 缺失 / 格式错误 / FMTID 错都是
+  silent no-op（field 保持空 map）。
+- `Cargo.toml` 0.8.0 → 0.9.0；`Cargo.lock` 同步。
+- `inspect::coverage::tests::populate_all_known_fields` 的
+  `SummaryInfo` struct literal 补 `user_properties: BTreeMap::new()`。
+
+### Tests (354 → 359，净增 5)
+
+lib `streams::summary::section2_tests` +5：
+
+- `section_2_decodes_user_defined_lpwstr_property` —— 合成
+  fixture：2 个 section，section 2 里 1 条 `SP_ProjectID =
+  "PROJ-001"`，验证 map 出的 key / value 匹配
+- `single_section_stream_yields_empty_user_properties` —— 同
+  fixture 但手工 patch `num_sections = 1`，section 2 不应被扫描
+- `section_2_with_wrong_fmtid_is_ignored` —— 故意 corrupt section 2
+  FMTID 首字节，decoder 返回空 map
+- `unknown_vt_in_section_2_falls_through_to_raw_variant` —— 塞 VT_UI8
+  (0x0015) 这个 decoder 未显式处理的 VT，验证 `Raw { vt, bytes }`
+  分支命中且 `bytes.len() >= 8`
+- `malformed_header_yields_empty_map` —— 10B 垃圾输入不 panic
+
+### Known limitations
+
+- **Writer CRUD 不可用**：`MetadataUpdates.summary_user_updates /
+  summary_user_deletions` 本次不加。尝试在 Writer 层编辑 section 2
+  属性当前只能走 `stream_replacements`（full-stream byte replace，
+  不保结构）。完整 dictionary + Writer CRUD scope 跟 Phase 10m /
+  10n 一起规划。
+- **LPSTR Dictionary 假设**：SmartPlant fixture 实测 Dictionary
+  为 LPSTR variant。若出现 LPWSTR Dictionary，当前 decoder 空
+  返回 — 留给 Phase 10k 扩展（LPWSTR dict 读取 + CodePage property
+  尊重）。
+- **未识别 VT 的 `Raw.bytes.len()` 上限 64B**：避免流尾异常吞过度
+  字节；真实值长度超过 64B 的未识别 VT 不会完整保留。Phase 10m 重
+  新 design 时会精确算 size（或从下一 prop 的 offset 反推）。
+
+### SemVer
+
+新 public type `SummaryPropertyValue` + 新 `SummaryInfo` 字段
+（向后兼容 via `#[serde(default)]`）+ 无 API 破坏。按本项目规则
+"新 public API type = minor bump"，选 **minor 0.8 → 0.9.0**。0.8.x
+consumer 的代码在 0.9.0 下编译通过（唯一变化是 `SummaryInfo` 构造
+字面量需要补一个 `..Default::default()` 或显式写 `user_properties:
+BTreeMap::new()`；同理于 Phase 9l/9n 新增字段时）。
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-10j-docsummary-section2.md`：
+  本 Phase dev plan（v0.7.1 ship 时已入 repo）。本 MVP ship 的
+  scope 较 plan 初稿缩小到 Reader-only，Writer CRUD 显式 defer；
+  Plan 里对 Writer 的设计仍然有效，只是落地推到 Phase 10m。
+
 ## [0.8.0] - 2026-04-21
 
 ### Phase 10i: VT_LPSTR 多 code page 支持（解除 Phase 10g UTF-8-only 限制）
