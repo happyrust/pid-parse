@@ -149,6 +149,37 @@ impl WritePlan {
             && self.stream_replacements.is_empty()
             && self.sheet_patches.is_empty()
     }
+
+    /// Phase 9o (v0.5.3+): parse a JSON string into a [`WritePlan`].
+    /// Errors are wrapped into [`PidError::ParseFailure`] so callers
+    /// don't have to deal with `serde_json::Error` directly.
+    pub fn from_json(json: &str) -> Result<Self, crate::error::PidError> {
+        serde_json::from_str(json).map_err(|e| crate::error::PidError::ParseFailure {
+            context: "WritePlan JSON".into(),
+            message: e.to_string(),
+        })
+    }
+
+    /// Phase 9o (v0.5.3+): serialize the plan to a compact JSON string.
+    /// Uses the base64-encoded wire format for `Vec<u8>` payloads
+    /// (`stream_replacements[*].new_data`,
+    /// `sheet_patches[*].chunk_patches[*].replacement`) as of Phase 9k.
+    pub fn to_json(&self) -> Result<String, crate::error::PidError> {
+        serde_json::to_string(self).map_err(|e| crate::error::PidError::ParseFailure {
+            context: "WritePlan serialization".into(),
+            message: e.to_string(),
+        })
+    }
+
+    /// Phase 9o (v0.5.3+): same as [`to_json`] but with pretty-printed
+    /// output (2-space indent, one field per line) — convenient for
+    /// hand-authored plan.json files under version control.
+    pub fn to_json_pretty(&self) -> Result<String, crate::error::PidError> {
+        serde_json::to_string_pretty(self).map_err(|e| crate::error::PidError::ParseFailure {
+            context: "WritePlan serialization".into(),
+            message: e.to_string(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -215,6 +246,45 @@ mod tests {
             err.to_string().to_lowercase().contains("invalid")
                 || err.to_string().to_lowercase().contains("symbol"),
             "unexpected err: {err}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 9o: WritePlan::from_json / to_json / to_json_pretty
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn plan_json_round_trip_default_is_passthrough() {
+        let original = WritePlan::default();
+        let json = original.to_json().expect("to_json");
+        let restored = WritePlan::from_json(&json).expect("from_json");
+        assert!(restored.is_passthrough(), "round-trip default → default");
+    }
+
+    #[test]
+    fn plan_from_json_rejects_invalid_syntax_with_pid_error() {
+        let err = WritePlan::from_json("not json at all").expect_err("reject");
+        let msg = format!("{err}");
+        assert!(msg.contains("WritePlan JSON"), "context in error: {msg}");
+    }
+
+    #[test]
+    fn plan_to_json_pretty_contains_newlines_and_indent() {
+        let plan = WritePlan::metadata_only(
+            Some("<Drawing><DrawingNumber>X</DrawingNumber></Drawing>".into()),
+            None,
+        );
+        let pretty = plan.to_json_pretty().expect("pretty");
+        assert!(pretty.contains('\n'), "pretty output should be multi-line");
+        assert!(pretty.contains("  \""), "pretty output should be indented");
+    }
+
+    #[test]
+    fn plan_from_json_empty_object_is_valid_passthrough() {
+        let plan = WritePlan::from_json("{}").expect("{} is valid");
+        assert!(
+            plan.is_passthrough(),
+            "all #[serde(default)] fields should yield passthrough"
         );
     }
 }

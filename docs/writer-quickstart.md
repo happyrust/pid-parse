@@ -4,9 +4,35 @@
 
 ## 0. 前提
 
-- `pid-parse = "0.3.5"`（writer 链路稳定）
+- `pid-parse = "0.5.3"`（v0.5.x Writer 全功能 + consumer ergonomics 到位）
 - 输入是 SmartPlant / Smart P&ID 产出的 `.pid` 文件
 - 下游消费者（SPPID 加载器、SPPIDReader 等）能接受 "相同 stream 字节 + 相同 root CLSID" 的文件（时间戳会刷新，详见 `writer-clsid-and-timestamps.md`）
+
+## 0.5 Consumer 入门模板（v0.5.3+）
+
+5 行代码的完整 read-edit-write，无论输入来自磁盘还是内存：
+
+```rust
+use pid_parse::{PidPackage, PidWriter, WritePlan};
+
+// 选一种输入方式
+let pkg = PidPackage::from_path("input.pid")?;
+// let pkg = PidPackage::from_bytes(&http_response_body)?;
+
+// 选一种 plan 构造方式
+let plan = WritePlan::from_json(
+    r#"{"metadata_updates":{"summary_updates":{"title":"Q4 Review"}}}"#,
+)?;
+// 或 Rust 侧：WritePlan { ... }.to_json_pretty()? 存盘也行
+
+// 选一种输出方式
+let bytes = PidWriter::write_to_bytes(&pkg, &plan)?;
+// 或 PidWriter::write_to(&pkg, &plan, Path::new("output.pid"))?;
+```
+
+`PidPackage::from_bytes` / `PidWriter::write_to_bytes` 是 v0.5.3 新加的
+内存 API，HTTP service / 压缩包 / 嵌入资源等场景不用再落盘。完整的
+文档见后续各章。
 
 ## 1. Passthrough round-trip：不改任何内容，零差异写回
 

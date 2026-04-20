@@ -24,6 +24,7 @@ pub mod xml_edit;
 
 use crate::error::PidError;
 use crate::package::PidPackage;
+use std::io::Cursor;
 use std::path::Path;
 
 pub use metadata_helpers::{
@@ -42,19 +43,41 @@ impl PidWriter {
     /// "immutable parse result, declarative plan" model.
     pub fn write_to(package: &PidPackage, plan: &WritePlan, output: &Path) -> Result<(), PidError> {
         let mut working = package.clone();
-
-        metadata_write::apply_metadata_updates(&mut working, &plan.metadata_updates)?;
-
-        for repl in &plan.stream_replacements {
-            working.replace_stream(repl.path.clone(), repl.new_data.clone());
-        }
-
-        for patch in &plan.sheet_patches {
-            sheet_patch::apply_sheet_patch_to_package(&mut working, patch)?;
-        }
-
+        apply_plan_to_package(&mut working, plan)?;
         cfb_write::write_package(&working, output)
     }
+
+    /// Phase 9o (v0.5.3+): apply `plan` to a clone of `package` and
+    /// return the resulting CFB as an in-memory byte buffer. Functionally
+    /// equivalent to [`write_to`] followed by reading the file back, but
+    /// skips the disk round-trip (useful for HTTP service paths, tests,
+    /// or any caller that already has a `Vec<u8>` workflow).
+    ///
+    /// Overhead note: peak memory is ~2× the final CFB size because we
+    /// clone `package` first, then materialize the output in a separate
+    /// `Vec`. For multi-MB `.pid` files where memory matters, prefer
+    /// [`write_to`].
+    pub fn write_to_bytes(package: &PidPackage, plan: &WritePlan) -> Result<Vec<u8>, PidError> {
+        let mut working = package.clone();
+        apply_plan_to_package(&mut working, plan)?;
+        let cursor = cfb_write::write_package_to_writer(&working, Cursor::new(Vec::new()))?;
+        Ok(cursor.into_inner())
+    }
+}
+
+/// Internal: mutate `package` in-place according to `plan`. Shared by
+/// [`PidWriter::write_to`] and [`PidWriter::write_to_bytes`] so any
+/// future pipeline change (metadata → stream_replacements → sheet_patches)
+/// lands in both paths automatically.
+fn apply_plan_to_package(package: &mut PidPackage, plan: &WritePlan) -> Result<(), PidError> {
+    metadata_write::apply_metadata_updates(package, &plan.metadata_updates)?;
+    for repl in &plan.stream_replacements {
+        package.replace_stream(repl.path.clone(), repl.new_data.clone());
+    }
+    for patch in &plan.sheet_patches {
+        sheet_patch::apply_sheet_patch_to_package(package, patch)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

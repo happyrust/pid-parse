@@ -2,6 +2,87 @@
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-04-21
+
+### Phase 9o: Writer API ergonomics patches
+
+四轮 Writer 内部能力扩展（Phase 9k/9l/9m/9n）完成后，本轮回头收拾
+下游 consumer 侧的入门样板。全部改动都是 **additive**（新 public
+方法），不破坏任何 v0.5.x 已有 API 签名。
+
+### Added
+
+- `PidPackage::from_path<P: AsRef<Path>>(path)` — 简写
+  `PidParser::new().parse_package(path)`，两步变一步。
+- `PidPackage::from_bytes(&[u8]) -> Result<Self, PidError>` — 从
+  内存字节流解析。v0.5.3 内部实现走 tempfile 兜底（HTTP service /
+  压缩包 / 嵌入资源都可直接喂字节）；真正的零磁盘纯内存路径依赖
+  parser 内部 reader 泛型化，留给 Phase 10a。
+- `PidWriter::write_to_bytes(pkg, plan) -> Result<Vec<u8>, PidError>` —
+  镜像 `write_to`，直接返回 CFB 字节数组。内部复用新的
+  `cfb_write::write_package_to_writer<F: Read + Write + Seek>` 泛型
+  backend，避免磁盘往返。
+- `cfb_write::write_package_to_writer` 公共泛型入口（Phase 10a 以后
+  可能用作 zero-disk 测试基础设施）。
+- `WritePlan::from_json(&str)` / `to_json()` / `to_json_pretty()` —
+  JSON round-trip helpers，错误一律包装成
+  `PidError::ParseFailure { context: "WritePlan JSON", ... }`，
+  consumer 不用自行 handle `serde_json::Error`。
+
+### Changed
+
+- `PidWriter::write_to` 内部提取 `apply_plan_to_package` helper，与
+  `write_to_bytes` 共用流水线。未来添加新 plan 字段（比如
+  `post_write_clsid_set`）只需要改一次。行为完全等价。
+
+### Tests
+
+lib 单元（+7）：
+- `api::tests::from_bytes_parses_a_minimal_synthetic_pid`（构造内存
+  CFB fixture → `from_bytes` → verify stream 存在）
+- `api::tests::from_bytes_on_invalid_data_returns_error`
+- `api::tests::from_path_matches_parse_package_behavior`（两个入口
+  行为一致）
+- `writer::plan::tests::plan_json_round_trip_default_is_passthrough`
+- `writer::plan::tests::plan_from_json_rejects_invalid_syntax_with_pid_error`
+- `writer::plan::tests::plan_to_json_pretty_contains_newlines_and_indent`
+- `writer::plan::tests::plan_from_json_empty_object_is_valid_passthrough`
+
+集成（+2，`tests/writer_roundtrip.rs`）：
+- `write_to_bytes_produces_bytes_parseable_by_from_bytes` — 全在线
+  round-trip：`from_path` → plan → `write_to_bytes` → `from_bytes`
+  → verify edit 落地。
+- `write_plan_json_round_trip_preserves_metadata_and_payload_bytes` —
+  包含 `summary_updates` + `summary_deletions` + `stream_replacements`
+  + `sheet_patches` 完整 plan 的 JSON 往返无损（特别断言 base64
+  payload 字节级等价）。
+
+全套 287 → **296 tests pass**（lib 199 → 206 +7；writer_roundtrip
+11 → 13 +2）。`cargo fmt --check` / `cargo clippy -D warnings` 双零。
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-9o-api-ergonomics.md`：本轮 dev plan
+  含 "不做 parser 泛型化 / tempfile 兜底" 的 trade-off 说明 + Phase
+  10a roadmap 衔接。
+
+### Consumer quick-start
+
+```rust
+use pid_parse::{PidPackage, PidWriter, WritePlan};
+
+// 从字节流或路径二选一
+let pkg = PidPackage::from_path("input.pid")?;
+// let pkg = PidPackage::from_bytes(&http_response_body)?;
+
+// 用 JSON 声明式 plan 或直接构造
+let plan = WritePlan::from_json(r#"{"metadata_updates":{"summary_updates":{"title":"Q4"}}}"#)?;
+
+// 输出到内存或磁盘
+let bytes = PidWriter::write_to_bytes(&pkg, &plan)?;
+// PidWriter::write_to(&pkg, &plan, Path::new("output.pid"))?;
+```
+
 ## [0.5.2] - 2026-04-21
 
 ### Phase 9n: `summary_deletions` — SummaryInformation CRUD 收尾

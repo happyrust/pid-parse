@@ -16,13 +16,22 @@ use crate::error::PidError;
 use crate::package::PidPackage;
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Seek, Write};
 use std::path::Path;
 
-/// Write `package` to a new CFB file at `output`. Overwrites existing files.
-pub fn write_package(package: &PidPackage, output: &Path) -> Result<(), PidError> {
-    let file = File::create(output)?;
-    let mut cfb = ::cfb::CompoundFile::create(file)?;
+/// Write `package` into an arbitrary seekable Read+Write sink, returning
+/// the sink (so callers can `into_inner()` a `Cursor<Vec<u8>>` etc.).
+///
+/// Phase 9o (v0.5.3+): this is the generic backend shared by
+/// [`write_package`] (file path sink) and
+/// [`crate::writer::PidWriter::write_to_bytes`] (in-memory sink). The
+/// sink must be initially empty (otherwise `cfb::CompoundFile::create`
+/// returns an error).
+pub fn write_package_to_writer<F: Read + Write + Seek>(
+    package: &PidPackage,
+    sink: F,
+) -> Result<F, PidError> {
+    let mut cfb = ::cfb::CompoundFile::create(sink)?;
 
     // 1. Create every intermediate storage (directory) required by the
     //    stream paths. `create_storage_all` handles nested paths in one
@@ -61,7 +70,13 @@ pub fn write_package(package: &PidPackage, output: &Path) -> Result<(), PidError
     }
 
     cfb.flush()?;
-    Ok(())
+    Ok(cfb.into_inner())
+}
+
+/// Write `package` to a new CFB file at `output`. Overwrites existing files.
+pub fn write_package(package: &PidPackage, output: &Path) -> Result<(), PidError> {
+    let file = File::create(output)?;
+    write_package_to_writer(package, file).map(|_| ())
 }
 
 /// Extract the unique set of storage (directory) paths needed to host every

@@ -476,6 +476,103 @@ fn summary_updates_rewrite_title_end_to_end_through_pid_writer() {
 }
 
 #[test]
+fn write_to_bytes_produces_bytes_parseable_by_from_bytes() {
+    // Phase 9o end-to-end: demonstrate the pure in-memory round-trip
+    // path. Build a package from disk, apply a metadata edit via
+    // `write_to_bytes`, then parse the resulting `Vec<u8>` via
+    // `PidPackage::from_bytes` and verify the edit survived.
+    let src = unique_tmp("w2bytes-src");
+    build_fixture_cfb(&src);
+
+    let pkg = pid_parse::PidPackage::from_path(&src).expect("from_path");
+    let plan = WritePlan::metadata_only(
+        Some("<Drawing><DrawingNumber>BYTES-ONLY</DrawingNumber></Drawing>".into()),
+        None,
+    );
+    let bytes = pid_parse::PidWriter::write_to_bytes(&pkg, &plan).expect("write_to_bytes");
+    assert!(
+        bytes.len() > 512,
+        "CFB output must be at least one sector (~512 B); got {}",
+        bytes.len()
+    );
+
+    let pkg_out = pid_parse::PidPackage::from_bytes(&bytes).expect("from_bytes");
+    let drawing = pkg_out
+        .get_stream("/TaggedTxtData/Drawing")
+        .expect("drawing stream in bytes output");
+    assert!(
+        std::str::from_utf8(&drawing.data)
+            .unwrap()
+            .contains("BYTES-ONLY"),
+        "edit must survive the pure-bytes round-trip"
+    );
+
+    let _ = std::fs::remove_file(&src);
+}
+
+#[test]
+fn write_plan_json_round_trip_preserves_metadata_and_payload_bytes() {
+    // Phase 9o: WritePlan JSON helpers must round-trip losslessly —
+    // specifically, the base64-encoded Vec<u8> payloads used by
+    // stream_replacements and sheet_patches.
+    use pid_parse::writer::{SheetPatch, StreamReplacement};
+
+    let original = WritePlan {
+        metadata_updates: MetadataUpdates {
+            drawing_xml: Some("<Drawing><Note>JSON</Note></Drawing>".into()),
+            summary_updates: {
+                let mut m = BTreeMap::new();
+                m.insert("title".into(), "Hello".into());
+                m
+            },
+            summary_deletions: vec!["author".into()],
+            ..Default::default()
+        },
+        stream_replacements: vec![StreamReplacement {
+            path: "/X".into(),
+            new_data: vec![0x00, 0xFF, b'X', b'Y', b'Z'],
+        }],
+        sheet_patches: vec![SheetPatch {
+            sheet_path: "/Sheet1".into(),
+            chunk_patches: vec![SheetChunkPatch {
+                start: 0,
+                end: 4,
+                replacement: b"ABCD".to_vec(),
+            }],
+            experimental: true,
+        }],
+    };
+    let json = original.to_json_pretty().expect("to_json_pretty");
+    let restored = WritePlan::from_json(&json).expect("from_json");
+    assert_eq!(
+        restored.metadata_updates.drawing_xml,
+        original.metadata_updates.drawing_xml
+    );
+    assert_eq!(
+        restored.metadata_updates.summary_updates.get("title"),
+        Some(&"Hello".to_string()),
+    );
+    assert_eq!(
+        restored.metadata_updates.summary_deletions,
+        original.metadata_updates.summary_deletions,
+    );
+    assert_eq!(
+        restored.stream_replacements.len(),
+        1,
+        "stream_replacements count preserved"
+    );
+    assert_eq!(
+        restored.stream_replacements[0].new_data, original.stream_replacements[0].new_data,
+        "Vec<u8> survives base64 round-trip"
+    );
+    assert_eq!(
+        restored.sheet_patches[0].chunk_patches[0].replacement,
+        b"ABCD".to_vec(),
+        "sheet chunk replacement bytes preserved"
+    );
+}
+
+#[test]
 fn summary_updates_unknown_key_fails_writer_with_clear_error() {
     let src = unique_tmp("summary-bad-src");
     let dst = unique_tmp("summary-bad-dst");
