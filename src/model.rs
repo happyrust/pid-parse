@@ -618,10 +618,132 @@ pub struct VersionRecord {
     /// Null-terminated ASCII version string, e.g. "090000.0144".
     pub version: String,
     /// Operation code: observed values "SA" (save-as / create) and
-    /// "SV" (save / modify).
+    /// "SV" (save / modify). Use [`Self::operation_label`] for a
+    /// human-readable form that mirrors
+    /// [`crate::parsers::doc_version2::op_type_label`].
     pub operation: String,
-    /// Null-terminated ASCII timestamp, e.g. "12/29/25 10:45".
+    /// Null-terminated ASCII timestamp, e.g. "12/29/25 10:45". Use
+    /// [`Self::parsed_timestamp`] to destructure it.
     pub timestamp: String,
+}
+
+impl VersionRecord {
+    /// True iff `operation == "SA"`, mirroring DocVersion2 op_type
+    /// `0x82` (SaveAs / create) observed in Phase 9f sample analysis.
+    pub fn is_save_as(&self) -> bool {
+        self.operation == "SA"
+    }
+
+    /// True iff `operation == "SV"`, mirroring DocVersion2 op_type
+    /// `0x81` (Save / modify).
+    pub fn is_save(&self) -> bool {
+        self.operation == "SV"
+    }
+
+    /// True iff `operation` is one of the codes SmartPlant is known to
+    /// produce. When `false`, the raw string is still available via
+    /// [`Self::operation`] for diagnostic logging.
+    pub fn is_recognized_operation(&self) -> bool {
+        self.is_save_as() || self.is_save()
+    }
+
+    /// Human label for [`Self::operation`]. Returns `"SaveAs"` for
+    /// `"SA"`, `"Save"` for `"SV"`, and `"unknown"` otherwise. The
+    /// unknown case is intentionally a flat string rather than a full
+    /// enum variant so callers stay decoupled from future code
+    /// additions — pair with [`Self::operation`] when the raw value
+    /// matters.
+    pub fn operation_label(&self) -> &'static str {
+        if self.is_save_as() {
+            "SaveAs"
+        } else if self.is_save() {
+            "Save"
+        } else {
+            "unknown"
+        }
+    }
+
+    /// Decompose [`Self::timestamp`] (format `MM/DD/YY HH:MM`) into
+    /// `(month, day, year, hour, minute)`. Returns `None` if the raw
+    /// string does not match the observed shape exactly — we do not
+    /// interpret a two-digit year (e.g. `"26"`), so the caller picks
+    /// the century convention.
+    pub fn parsed_timestamp(&self) -> Option<(u32, u32, u32, u32, u32)> {
+        let (date_part, time_part) = self.timestamp.split_once(' ')?;
+        let date: Vec<&str> = date_part.split('/').collect();
+        let time: Vec<&str> = time_part.split(':').collect();
+        if date.len() != 3 || time.len() != 2 {
+            return None;
+        }
+        let month = date[0].parse::<u32>().ok()?;
+        let day = date[1].parse::<u32>().ok()?;
+        let year = date[2].parse::<u32>().ok()?;
+        let hour = time[0].parse::<u32>().ok()?;
+        let minute = time[1].parse::<u32>().ok()?;
+        if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour >= 24 || minute >= 60 {
+            return None;
+        }
+        Some((month, day, year, hour, minute))
+    }
+}
+
+#[cfg(test)]
+mod version_record_tests {
+    use super::VersionRecord;
+
+    fn record(op: &str, ts: &str) -> VersionRecord {
+        VersionRecord {
+            product: "SmartPlantPID.a".into(),
+            version: "090000.0144".into(),
+            operation: op.into(),
+            timestamp: ts.into(),
+        }
+    }
+
+    #[test]
+    fn version_record_is_save_as_matches_sa_literal() {
+        let r = record("SA", "12/29/25 10:45");
+        assert!(r.is_save_as());
+        assert!(!r.is_save());
+        assert!(r.is_recognized_operation());
+        assert_eq!(r.operation_label(), "SaveAs");
+    }
+
+    #[test]
+    fn version_record_is_save_matches_sv_literal() {
+        let r = record("SV", "12/30/25 09:12");
+        assert!(r.is_save());
+        assert!(!r.is_save_as());
+        assert!(r.is_recognized_operation());
+        assert_eq!(r.operation_label(), "Save");
+    }
+
+    #[test]
+    fn version_record_operation_label_echoes_unknown_to_flat_string() {
+        let r = record("XY", "01/01/26 00:00");
+        assert!(!r.is_recognized_operation());
+        assert_eq!(r.operation_label(), "unknown");
+    }
+
+    #[test]
+    fn version_record_parsed_timestamp_happy_path() {
+        let r = record("SA", "12/29/25 10:45");
+        assert_eq!(r.parsed_timestamp(), Some((12, 29, 25, 10, 45)));
+    }
+
+    #[test]
+    fn version_record_parsed_timestamp_returns_none_for_malformed() {
+        // Wrong separator
+        assert_eq!(record("SA", "12-29-25 10:45").parsed_timestamp(), None);
+        // Missing time part
+        assert_eq!(record("SA", "12/29/25").parsed_timestamp(), None);
+        // Out-of-range month
+        assert_eq!(record("SA", "13/29/25 10:45").parsed_timestamp(), None);
+        // Non-numeric
+        assert_eq!(record("SA", "ab/cd/ef gh:ij").parsed_timestamp(), None);
+        // Empty
+        assert_eq!(record("SA", "").parsed_timestamp(), None);
+    }
 }
 
 /// Decoded `AppObject` stream: registry of external COM / DLL plugins the

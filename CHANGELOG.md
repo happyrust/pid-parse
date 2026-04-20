@@ -2,6 +2,61 @@
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-04-21
+
+### Phase 10d: DocVersion3 operation 语义化 + report 渲染升级
+
+`VersionRecord.operation` 长期保留 raw 2-char 形式（`"SA"` / `"SV"`），
+与 Phase 9f 逆向完成的 DocVersion2 `op_type_label(0x82) = "SaveAs"`
+不对称。本轮补齐 helper 方法 + 报告层渲染升级，**保持 serde / JSON
+schema 向后兼容**（字段类型不变）。
+
+### Added
+
+- `VersionRecord::is_save_as() -> bool` — `operation == "SA"`。
+- `VersionRecord::is_save() -> bool` — `operation == "SV"`。
+- `VersionRecord::is_recognized_operation() -> bool` — 已知 op code
+  命中检查。
+- `VersionRecord::operation_label() -> &'static str` — 人类标签
+  `"SaveAs"` / `"Save"` / `"unknown"`，对齐 DV2 `op_type_label`。
+- `VersionRecord::parsed_timestamp() -> Option<(u32,u32,u32,u32,u32)>`
+  — `MM/DD/YY HH:MM` → `(month, day, year, hour, minute)` 分解；
+  非法格式 / 越界返回 `None`。两位年份不做世纪推断，交由 caller。
+
+### Changed
+
+- `inspect::report::generate_report` 的 `--- Version History ---` 段
+  现在输出人类标签 + raw code（若非已知）：
+  - `[SaveAs 12/29/25 10:45] SmartPlantPID.a 090000.0144`
+  - `[Save 12/30/25 09:12] SmartPlantPID.a 090000.0144`
+  - `[unknown (XY) 01/01/26 00:00] SmartPlantPID.a 090000.0144`
+- `tests/parse_real_files.rs::doc_version2_decoded_matches_version_history`
+  改用 `VersionRecord::operation_label()` 替代内联 match，让 DV2
+  `op_type_label` 与 DV3 helper 的任何 silent drift 立即 fail。
+
+### Tests (318 → 324)
+
+lib 单元测试 +5（`version_record_tests` 模块）：
+- `version_record_is_save_as_matches_sa_literal`
+- `version_record_is_save_matches_sv_literal`
+- `version_record_operation_label_echoes_unknown_to_flat_string`
+- `version_record_parsed_timestamp_happy_path`
+- `version_record_parsed_timestamp_returns_none_for_malformed`
+
+report 单元测试 +1：
+- `report_version_history_uses_operation_label_instead_of_raw_code`
+  —— 同时 assert "SaveAs"/"Save"/"unknown (XY)" 三种格式 + 保护
+  "raw [SA ...]" 旧格式不再出现的 regression。
+
+### Verification
+
+- `cargo fmt --check` / `cargo clippy -D warnings` → 双 0
+- `cargo test --all-targets` → **324 passed** / 0 failed
+
+### Docs
+
+- `docs/plans/2026-04-21-phase-10d-docversion3-operation-helpers.md`
+
 ## [0.6.2] - 2026-04-21
 
 ### Phase 10c: cluster & dynamic-attrs 动态 probe（完成 v0.6.1 parking）

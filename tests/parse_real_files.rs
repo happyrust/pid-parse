@@ -298,17 +298,22 @@ fn doc_version2_decoded_matches_version_history() {
     assert!(dv2.reserved_all_zero);
 
     // op_type mapping (0x82 SaveAs, 0x81 Save) must match the DocVersion3
-    // "SA" / "SV" strings one-to-one.
+    // "SA" / "SV" strings one-to-one. Phase 10d: use
+    // `VersionRecord::operation_label` on the DV3 side instead of an
+    // inline match so the cross-validation exercises both the static
+    // DV2 `op_type_label` and the new DV3 helper — a silent drift
+    // between the two mappings would fail this assertion.
     for (v2, v3) in dv2.records.iter().zip(dv3.records.iter()) {
         let label = pid_parse::parsers::doc_version2::op_type_label(v2.op_type);
-        let expected = match v3.operation.as_str() {
-            "SA" => "SaveAs",
-            "SV" => "Save",
-            other => panic!("unexpected DocVersion3 op {other}"),
-        };
+        assert!(
+            v3.is_recognized_operation(),
+            "DocVersion3 op {} not recognized by VersionRecord helpers",
+            v3.operation
+        );
         assert_eq!(
-            label, expected,
-            "op_type mismatch for v3 op {}",
+            label,
+            v3.operation_label(),
+            "DV2 op_type_label disagrees with DV3 operation_label for op {}",
             v3.operation
         );
     }

@@ -294,10 +294,24 @@ pub fn generate_report(doc: &PidDocument) -> String {
         )
         .ok();
         for r in &vh.records {
+            // Phase 10d: render the human label (SaveAs / Save /
+            // unknown) instead of the raw 2-char code; keep the raw
+            // code visible in parentheses when it does not match a
+            // recognized label so callers can audit SmartPlant samples
+            // that introduce new op codes.
+            let raw_suffix = if r.is_recognized_operation() {
+                String::new()
+            } else {
+                format!(" ({})", r.operation)
+            };
             writeln!(
                 out,
-                "  [{} {}] {} {}",
-                r.operation, r.timestamp, r.product, r.version
+                "  [{}{} {}] {} {}",
+                r.operation_label(),
+                raw_suffix,
+                r.timestamp,
+                r.product,
+                r.version,
             )
             .ok();
         }
@@ -669,6 +683,59 @@ mod tests {
         assert!(
             !report.contains("--- Coverage ---"),
             "empty doc should not render coverage section; got:\n{report}"
+        );
+    }
+
+    #[test]
+    fn report_version_history_uses_operation_label_instead_of_raw_code() {
+        // Phase 10d: the Version History section must render the human
+        // label produced by `VersionRecord::operation_label`
+        // ("SaveAs"/"Save"/"unknown") instead of the raw 2-char code
+        // ("SA"/"SV"). Unknown codes keep the raw value in parens.
+        let doc = PidDocument {
+            version_history: Some(VersionHistory {
+                size: 48 * 3,
+                records: vec![
+                    VersionRecord {
+                        product: "SmartPlantPID.a".into(),
+                        version: "090000.0144".into(),
+                        operation: "SA".into(),
+                        timestamp: "12/29/25 10:45".into(),
+                    },
+                    VersionRecord {
+                        product: "SmartPlantPID.a".into(),
+                        version: "090000.0144".into(),
+                        operation: "SV".into(),
+                        timestamp: "12/30/25 09:12".into(),
+                    },
+                    VersionRecord {
+                        product: "SmartPlantPID.a".into(),
+                        version: "090000.0144".into(),
+                        operation: "XY".into(),
+                        timestamp: "01/01/26 00:00".into(),
+                    },
+                ],
+            }),
+            ..Default::default()
+        };
+        let report = generate_report(&doc);
+        assert!(
+            report.contains("[SaveAs 12/29/25 10:45]"),
+            "SaveAs label missing; report:\n{report}"
+        );
+        assert!(
+            report.contains("[Save 12/30/25 09:12]"),
+            "Save label missing; report:\n{report}"
+        );
+        assert!(
+            report.contains("[unknown (XY) 01/01/26 00:00]"),
+            "unknown + raw-code suffix missing; report:\n{report}"
+        );
+        // Regression guard: we must NOT still be emitting the old raw
+        // 2-char form as the leading tag.
+        assert!(
+            !report.contains("[SA 12/29/25"),
+            "raw 'SA' form still appears; report:\n{report}"
         );
     }
 
