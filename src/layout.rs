@@ -22,6 +22,7 @@ pub fn build_layout_model(doc: &PidDocument) -> Option<PidLayoutModel> {
     }
 
     let graphic_oid_by_drawing = representation_graphic_oids(graph);
+    let symbol_hints = representative_symbol_hints(doc);
     let primary_ids: BTreeSet<String> = graph
         .objects
         .iter()
@@ -73,7 +74,7 @@ pub fn build_layout_model(doc: &PidDocument) -> Option<PidLayoutModel> {
         let label = choose_object_label(object);
         if let Some(anchor) = positions.get(&object.drawing_id) {
             let graphic_oid = graphic_oid_by_drawing.get(&object.drawing_id).copied();
-            let (symbol_name, symbol_path) = infer_symbol_identity(object);
+            let (symbol_name, symbol_path) = infer_symbol_identity(object, &symbol_hints);
             let bounds = Some(bounds_for_item(anchor, object.item_type.as_str(), symbol_name.as_deref()));
             layout.items.push(PidLayoutItem {
                 layout_id: format!("item:{}", object.drawing_id),
@@ -418,17 +419,23 @@ fn choose_object_label(object: &PidObject) -> String {
     object.item_type.clone()
 }
 
-fn infer_symbol_identity(object: &PidObject) -> (Option<String>, Option<String>) {
-    let symbol_path = object
+fn infer_symbol_identity(
+    object: &PidObject,
+    symbol_hints: &BTreeMap<String, String>,
+) -> (Option<String>, Option<String>) {
+    let direct_symbol_path = object
         .extra
         .values()
         .find_map(|value| extract_symbol_path(value));
     let symbol_name = symbol_name_for_type(object.item_type.as_str()).or_else(|| {
-        symbol_path.as_ref().and_then(|path| {
-            Path::new(path)
-                .file_stem()
-                .map(|name| name.to_string_lossy().to_string())
-        })
+        direct_symbol_path
+            .as_ref()
+            .and_then(|path| infer_semantic_from_symbol_hint(None, path).map(|semantic| semantic.to_string()))
+    });
+    let symbol_path = direct_symbol_path.or_else(|| {
+        symbol_name
+            .as_ref()
+            .and_then(|semantic| symbol_hints.get(semantic).cloned())
     });
     (symbol_name, symbol_path)
 }
@@ -459,6 +466,87 @@ fn extract_symbol_path(value: &str) -> Option<String> {
         return None;
     }
     Some(trimmed.replace('/', "\\"))
+}
+
+fn representative_symbol_hints(doc: &PidDocument) -> BTreeMap<String, String> {
+    let mut candidates: BTreeMap<String, (usize, String)> = BTreeMap::new();
+
+    if let Some(cross) = doc.cross_reference.as_ref() {
+        for usage in &cross.symbol_usage {
+            let Some(semantic) =
+                infer_semantic_from_symbol_hint(usage.symbol_name.as_deref(), &usage.symbol_path)
+            else {
+                continue;
+            };
+            let candidate = (usage.usage_count, usage.symbol_path.clone());
+            let replace = candidates
+                .get(semantic)
+                .map(|existing| candidate.0 > existing.0 || (candidate.0 == existing.0 && candidate.1 < existing.1))
+                .unwrap_or(true);
+            if replace {
+                candidates.insert(semantic.to_string(), candidate);
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        for site in &doc.jsites {
+            let Some(path) = site.symbol_path.as_ref() else {
+                continue;
+            };
+            let Some(semantic) =
+                infer_semantic_from_symbol_hint(site.symbol_name.as_deref(), path)
+            else {
+                continue;
+            };
+            candidates
+                .entry(semantic.to_string())
+                .or_insert_with(|| (1usize, path.clone()));
+        }
+    }
+
+    candidates
+        .into_iter()
+        .map(|(semantic, (_count, path))| (semantic, path))
+        .collect()
+}
+
+fn infer_semantic_from_symbol_hint(symbol_name: Option<&str>, symbol_path: &str) -> Option<&'static str> {
+    let mut haystack = symbol_path.to_ascii_lowercase();
+    if let Some(name) = symbol_name {
+        haystack.push(' ');
+        haystack.push_str(&name.to_ascii_lowercase());
+    } else if let Some(stem) = Path::new(symbol_path).file_stem() {
+        haystack.push(' ');
+        haystack.push_str(&stem.to_string_lossy().to_ascii_lowercase());
+    }
+
+    if haystack.contains("off-drawing") || haystack.contains("off drawing") || haystack.contains("opc") {
+        Some("OffPageConnector")
+    } else if haystack.contains("nozzle") {
+        Some("Nozzle")
+    } else if haystack.contains("field mounted")
+        || haystack.contains("instrument")
+        || haystack.contains("system function")
+        || haystack.contains("dcs")
+    {
+        Some("Instrument")
+    } else if haystack.contains("vessel") || haystack.contains("tank") || haystack.contains("drum") {
+        Some("Vessel")
+    } else if haystack.contains("note") || haystack.contains("annotation") {
+        Some("Note")
+    } else if haystack.contains("cap")
+        || haystack.contains("valve")
+        || haystack.contains("fitting")
+        || haystack.contains("reducer")
+        || haystack.contains("elbow")
+        || haystack.contains("tee")
+        || haystack.contains("flange")
+    {
+        Some("PipingComponent")
+    } else {
+        None
+    }
 }
 
 fn bounds_for_item(anchor: &[f64; 2], kind: &str, symbol_name: Option<&str>) -> [f64; 4] {
@@ -708,6 +796,80 @@ mod tests {
             symbol_names.get("VESSEL").cloned().flatten().as_deref(),
             Some("Vessel"),
             "bundle PIDProcessVessel objects should retain a vessel semantic"
+        );
+    }
+
+    #[test]
+    fn build_layout_model_uses_symbol_usage_as_pid_only_hint() {
+        let mut doc = PidDocument::default();
+        doc.object_graph = Some(ObjectGraph {
+            drawing_no: Some("DWG-PIDONLY".into()),
+            project_number: None,
+            objects: vec![
+                PidObject {
+                    drawing_id: "OPC-1".into(),
+                    item_type: "OPC".into(),
+                    drawing_item_type: Some("Symbol".into()),
+                    model_id: Some("OPC-1".into()),
+                    extra: BTreeMap::new(),
+                    record_id: Some(1),
+                    field_x: Some(1),
+                },
+                PidObject {
+                    drawing_id: "PC-1".into(),
+                    item_type: "PipingComp".into(),
+                    drawing_item_type: Some("Symbol".into()),
+                    model_id: Some("PC-1".into()),
+                    extra: BTreeMap::new(),
+                    record_id: Some(2),
+                    field_x: Some(2),
+                },
+            ],
+            relationships: vec![],
+            by_drawing_id: BTreeMap::from([("OPC-1".into(), 0), ("PC-1".into(), 1)]),
+            counts_by_type: BTreeMap::new(),
+        });
+        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
+            symbol_usage: vec![
+                crate::model::SymbolUsage {
+                    symbol_path:
+                        r"\\srv\sym\Piping\Piping OPC's\Off-Drawing.sym".into(),
+                    symbol_name: Some("Off-Drawing.sym".into()),
+                    jsite_names: vec!["JSite1".into()],
+                    usage_count: 1,
+                },
+                crate::model::SymbolUsage {
+                    symbol_path:
+                        r"\\srv\sym\Piping\Fittings\End Components\Cap2.sym".into(),
+                    symbol_name: Some("Cap2.sym".into()),
+                    jsite_names: vec!["JSite2".into()],
+                    usage_count: 1,
+                },
+            ],
+            ..Default::default()
+        });
+
+        let layout = build_layout_model(&doc).expect("pid-only graph should build layout");
+        let opc = layout
+            .items
+            .iter()
+            .find(|item| item.drawing_id.as_deref() == Some("OPC-1"))
+            .expect("OPC item");
+        let piping_comp = layout
+            .items
+            .iter()
+            .find(|item| item.drawing_id.as_deref() == Some("PC-1"))
+            .expect("PipingComp item");
+
+        assert_eq!(
+            opc.symbol_path.as_deref(),
+            Some(r"\\srv\sym\Piping\Piping OPC's\Off-Drawing.sym"),
+            "pid-only OPC item should inherit a representative Off-Drawing symbol path"
+        );
+        assert_eq!(
+            piping_comp.symbol_path.as_deref(),
+            Some(r"\\srv\sym\Piping\Fittings\End Components\Cap2.sym"),
+            "pid-only PipingComp item should inherit a representative fitting symbol path"
         );
     }
 }
