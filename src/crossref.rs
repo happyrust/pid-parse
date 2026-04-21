@@ -710,6 +710,7 @@ mod tests {
                         record_offset: 0,
                         record_len: 0,
                         prefix_bytes: vec![],
+                        probe: None,
                     },
                     PsmClusterEntry {
                         name: "MissingCluster".into(),
@@ -717,6 +718,7 @@ mod tests {
                         record_offset: 0,
                         record_len: 0,
                         prefix_bytes: vec![],
+                        probe: None,
                     },
                     PsmClusterEntry {
                         name: "Sheet6".into(),
@@ -724,6 +726,7 @@ mod tests {
                         record_offset: 0,
                         record_len: 0,
                         prefix_bytes: vec![],
+                        probe: None,
                     },
                 ],
                 trailing_bytes: 0,
@@ -794,6 +797,7 @@ mod tests {
                 record_offset: 0x08,
                 record_len: 0x20,
                 prefix_bytes: vec![0xAA, 0xBB],
+                probe: None,
             }],
             trailing_bytes: 0,
         });
@@ -820,6 +824,7 @@ mod tests {
                     record_offset: 0,
                     record_len: 0,
                     prefix_bytes: vec![],
+                    probe: None,
                 },
                 PsmClusterEntry {
                     name: "Sheet6".into(),
@@ -827,6 +832,7 @@ mod tests {
                     record_offset: 0,
                     record_len: 0,
                     prefix_bytes: vec![],
+                    probe: None,
                 },
             ],
             trailing_bytes: 0,
@@ -1595,6 +1601,7 @@ mod tests {
                     record_offset: 0,
                     record_len: 0,
                     prefix_bytes: vec![],
+                    probe: None,
                 },
                 PsmClusterEntry {
                     name: "Sheet7".into(),
@@ -1602,6 +1609,7 @@ mod tests {
                     record_offset: 0,
                     record_len: 0,
                     prefix_bytes: vec![],
+                    probe: None,
                 },
             ],
             trailing_bytes: 0,

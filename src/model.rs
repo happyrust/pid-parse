@@ -702,6 +702,39 @@ pub struct PsmClusterEntry {
     /// header fields whose semantics are not yet fully understood.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefix_bytes: Vec<u8>,
+    /// Phase 11a-probe: byte-level probe summary for this record. Purely
+    /// derived from `prefix_bytes` + the record slice and carries no
+    /// semantic claims (e.g. does not name `cluster_id` / `flags`).
+    /// Present so reverse-engineering against a second fixture can hint
+    /// at field layouts without forcing premature decoding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<PsmClusterRecordProbe>,
+}
+
+/// Phase 11a-probe — byte-level summary of a single PSMclustertable record.
+/// All fields are computed purely from the raw bytes; none of them claim
+/// semantic meaning. Use for visual inspection and fixture-drift detection;
+/// do not consume from `layout` / `import_view`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+pub struct PsmClusterRecordProbe {
+    /// First 4 bytes of `prefix_bytes` interpreted as little-endian u32.
+    /// `None` when the prefix is shorter than 4 bytes.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub first_u32_le: Option<u32>,
+    /// Last 4 bytes of the full record (prefix + name run + optional null
+    /// terminator) interpreted as little-endian u32. `None` when the
+    /// record is shorter than 4 bytes.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_u32_le: Option<u32>,
+    /// Space-separated uppercase hex of `prefix_bytes` (empty when prefix
+    /// is empty).
+    pub prefix_hex: String,
+    /// Space-separated uppercase hex of the last up-to-8 bytes of the
+    /// record (shorter than 8 when the record itself is shorter).
+    pub trailer_hex: String,
+    /// Number of Unicode scalar values in `name` (== 1 byte-per-char for
+    /// ASCII cluster names, but kept as char count for clarity).
+    pub name_char_count: usize,
 }
 
 /// Decoded `PSMsegmenttable` stream. In sampled file it is a fixed 12 bytes:

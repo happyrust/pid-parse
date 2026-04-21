@@ -23,7 +23,8 @@
 //!   - `[u8 × count]` per-segment flag bytes (observed: all `0x01`).
 
 use crate::model::{
-    PsmClusterEntry, PsmClusterTable, PsmRootEntry, PsmRoots, PsmSegmentEntry, PsmSegmentTable,
+    PsmClusterEntry, PsmClusterRecordProbe, PsmClusterTable, PsmRootEntry, PsmRoots,
+    PsmSegmentEntry, PsmSegmentTable,
 };
 
 pub const ROOT_MAGIC: u32 = 0x746F_6F72; // 'root' (LE bytes: 72 6F 6F 74)
@@ -124,12 +125,14 @@ pub fn parse_psm_cluster_table(data: &[u8]) -> Option<PsmClusterTable> {
             if name.len() >= 4 {
                 let prefix = data[record_start..name_start].to_vec();
                 let record_len = i - record_start;
+                let probe = build_cluster_record_probe(&data[record_start..i], &prefix, &name);
                 entries.push(PsmClusterEntry {
                     name,
                     name_offset: name_start,
                     record_offset: record_start,
                     record_len,
                     prefix_bytes: prefix,
+                    probe: Some(probe),
                 });
                 record_start = i;
             }
@@ -184,6 +187,39 @@ pub fn parse_psm_segment_table(data: &[u8]) -> Option<PsmSegmentTable> {
 /// Detect a 2-byte UTF-16LE code unit encoding a printable ASCII character.
 fn is_ascii_utf16le(data: &[u8], i: usize) -> bool {
     i + 1 < data.len() && (0x20..=0x7e).contains(&data[i]) && data[i + 1] == 0
+}
+
+/// Phase 11a-probe: derive a [`PsmClusterRecordProbe`] from a cluster
+/// record's raw bytes. Pure computation, no semantic claims.
+fn build_cluster_record_probe(record: &[u8], prefix: &[u8], name: &str) -> PsmClusterRecordProbe {
+    let first_u32_le = if prefix.len() >= 4 {
+        read_u32_le(prefix, 0)
+    } else {
+        None
+    };
+    let last_u32_le = if record.len() >= 4 {
+        read_u32_le(record, record.len() - 4)
+    } else {
+        None
+    };
+    let prefix_hex = prefix
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let trailer_start = record.len().saturating_sub(8);
+    let trailer_hex = record[trailer_start..]
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    PsmClusterRecordProbe {
+        first_u32_le,
+        last_u32_le,
+        prefix_hex,
+        trailer_hex,
+        name_char_count: name.chars().count(),
+    }
 }
 
 #[cfg(test)]
@@ -364,5 +400,48 @@ mod tests {
         let t = parse_psm_segment_table(&data).expect("valid");
         assert_eq!(t.entries.len(), 2);
         assert_eq!(t.trailing_bytes, 2);
+    }
+
+    #[test]
+    fn cluster_table_entry_probes_expose_byte_level_summary() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        let prefix = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        data.extend_from_slice(&prefix);
+        data.extend(utf16_bytes("TestCluster"));
+        data.extend_from_slice(&[0, 0]); // null terminator
+
+        let t = parse_psm_cluster_table(&data).expect("valid");
+        assert_eq!(t.entries.len(), 1);
+        let probe = t.entries[0].probe.as_ref().expect("probe populated");
+        assert_eq!(probe.first_u32_le, Some(0x4433_2211));
+        assert_eq!(probe.name_char_count, "TestCluster".chars().count());
+        assert_eq!(probe.prefix_hex, "11 22 33 44 55 66");
+        // Record length = 6 prefix + 22 UTF-16 chars + 2 null = 30 bytes.
+        // Last 4 bytes should be two trailing chars + null (2 'r' bytes + 00 00).
+        assert!(probe.last_u32_le.is_some());
+        // Trailer hex should contain the last 8 bytes — verify length is
+        // shaped as 23 chars = 8 tokens joined by single spaces.
+        assert_eq!(probe.trailer_hex.split_whitespace().count(), 8);
+    }
+
+    #[test]
+    fn cluster_table_probe_handles_short_prefix() {
+        // Construct a cluster whose prefix is only 2 bytes — outside the
+        // realistic SmartPlant layout but useful as a defensive check.
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        // 2-byte prefix
+        data.extend_from_slice(&[0xAA, 0xBB]);
+        data.extend(utf16_bytes("AB12"));
+        data.extend_from_slice(&[0, 0]);
+
+        let t = parse_psm_cluster_table(&data).expect("valid");
+        let probe = t.entries[0].probe.as_ref().expect("probe populated");
+        assert_eq!(probe.first_u32_le, None);
+        assert_eq!(probe.prefix_hex, "AA BB");
+        assert_eq!(probe.name_char_count, 4);
     }
 }
