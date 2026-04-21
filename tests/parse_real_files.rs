@@ -956,6 +956,54 @@ fn object_sources_align_with_attribute_records() {
 }
 
 #[test]
+fn sheet_provenance_matches_sheet_streams() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let cross = doc
+        .cross_reference
+        .as_ref()
+        .expect("cross reference graph should be built");
+
+    assert_eq!(cross.sheet_provenance.len(), doc.sheet_streams.len());
+    assert_eq!(
+        cross.sheet_provenance_coverage.total_sheets,
+        doc.sheet_streams.len()
+    );
+
+    for (i, entry) in cross.sheet_provenance.iter().enumerate() {
+        let source_sheet = &doc.sheet_streams[i];
+        assert_eq!(entry.sheet_path, source_sheet.path);
+        assert_eq!(
+            entry.endpoint_record_count,
+            source_sheet.endpoint_records.len()
+        );
+
+        let expected_linked = cross
+            .relationship_endpoint_links
+            .iter()
+            .filter(|l| l.sheet_path.as_deref() == Some(entry.sheet_path.as_str()))
+            .count();
+        assert_eq!(entry.linked_relationship_count, expected_linked);
+        assert!(entry.fully_traced_relationship_count <= entry.linked_relationship_count);
+
+        if entry.declared_in_psm {
+            assert!(entry.matched_declared_index.is_some());
+        } else {
+            assert!(entry.matched_declared_index.is_none());
+        }
+    }
+
+    let cov = &cross.sheet_provenance_coverage;
+    assert_eq!(
+        cov.declared_sheets + cov.orphan_sheets,
+        cov.total_sheets,
+        "declared + orphan must cover every sheet"
+    );
+    assert!(cov.empty_declared_sheets <= cov.declared_sheets);
+}
+
+#[test]
 fn provenance_chain_matches_relationship_and_object_counts() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;

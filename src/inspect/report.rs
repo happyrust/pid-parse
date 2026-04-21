@@ -798,6 +798,42 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
 
+        let sheet_cov = &xr.sheet_provenance_coverage;
+        if sheet_cov.total_sheets > 0 {
+            writeln!(
+                out,
+                "  Sheet provenance: total={} declared={} orphan={} with_endpoints={} empty_declared={}",
+                sheet_cov.total_sheets,
+                sheet_cov.declared_sheets,
+                sheet_cov.orphan_sheets,
+                sheet_cov.sheets_with_endpoint_records,
+                sheet_cov.empty_declared_sheets
+            )
+            .ok();
+            if !xr.sheet_provenance.is_empty() {
+                writeln!(out, "  Sheet provenance refs:").ok();
+                for entry in xr.sheet_provenance.iter().take(5) {
+                    writeln!(
+                        out,
+                        "    {} endpoint_records={} declared={} match_index={} relationships={} fully_traced={}",
+                        entry.sheet_path,
+                        entry.endpoint_record_count,
+                        entry.declared_in_psm,
+                        entry
+                            .matched_declared_index
+                            .map(|i| i.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        entry.linked_relationship_count,
+                        entry.fully_traced_relationship_count
+                    )
+                    .ok();
+                }
+                if xr.sheet_provenance.len() > 5 {
+                    writeln!(out, "    ... ({} more)", xr.sheet_provenance.len() - 5).ok();
+                }
+            }
+        }
+
         let chain_cov = &xr.provenance_chain_coverage;
         if chain_cov.total_relationships > 0 {
             writeln!(
@@ -1248,6 +1284,56 @@ mod tests {
         assert!(report.contains("Provenance chain breaks:"), "{report}");
         assert!(
             report.contains("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA stage=MissingFieldX reason=relationship trailer has no field_x"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_shows_sheet_provenance_summary() {
+        let mut doc = PidDocument::default();
+        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
+            sheet_provenance: vec![
+                crate::model::SheetProvenanceRef {
+                    sheet_path: "/Sheet6".into(),
+                    endpoint_record_count: 12,
+                    declared_in_psm: true,
+                    matched_declared_index: Some(3),
+                    linked_relationship_count: 10,
+                    fully_traced_relationship_count: 9,
+                },
+                crate::model::SheetProvenanceRef {
+                    sheet_path: "/SheetOrphan".into(),
+                    endpoint_record_count: 1,
+                    declared_in_psm: false,
+                    matched_declared_index: None,
+                    linked_relationship_count: 0,
+                    fully_traced_relationship_count: 0,
+                },
+            ],
+            sheet_provenance_coverage: crate::model::SheetProvenanceCoverage {
+                total_sheets: 2,
+                declared_sheets: 1,
+                orphan_sheets: 1,
+                sheets_with_endpoint_records: 2,
+                empty_declared_sheets: 0,
+            },
+            ..Default::default()
+        });
+
+        let report = generate_report(&doc);
+        assert!(
+            report.contains(
+                "Sheet provenance: total=2 declared=1 orphan=1 with_endpoints=2 empty_declared=0"
+            ),
+            "{report}"
+        );
+        assert!(report.contains("Sheet provenance refs:"), "{report}");
+        assert!(
+            report.contains("/Sheet6 endpoint_records=12 declared=true match_index=3 relationships=10 fully_traced=9"),
+            "{report}"
+        );
+        assert!(
+            report.contains("/SheetOrphan endpoint_records=1 declared=false match_index=- relationships=0 fully_traced=0"),
             "{report}"
         );
     }
