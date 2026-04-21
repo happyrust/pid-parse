@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-04-21
+
+### Phase 2: 三条核心流的结构化解码升级
+
+把 `DocVersion3`、`PSMclustertable`、`PSMsegmenttable` 从"可用但部分
+语义化"升级为具备 record 级结构元数据和字节审计能力的解码层。
+
+### Added — 新 model 字段
+
+- `VersionHistory.record_size: usize` — 固定记录大小（48），方便下游对账
+- `VersionHistory.trailing_bytes: usize` — 末尾未解释字节数
+- `VersionRecord.offset: usize` — 记录在流内的字节偏移
+- `PsmClusterEntry.record_offset: usize` — 记录起始偏移（含前缀）
+- `PsmClusterEntry.record_len: usize` — 记录总字节长度
+- `PsmClusterEntry.prefix_bytes: Vec<u8>` — 记录名称前的原始字节（审计用）
+- `PsmClusterTable.trailing_bytes: usize` — 末尾未解释字节数
+- `PsmSegmentEntry` 新类型 — 每条 segment 的 `index`、`offset`、`flag`
+- `PsmSegmentTable.entries: Vec<PsmSegmentEntry>` — 结构化视图
+- `PsmSegmentTable.trailing_bytes: usize` — 末尾未解释字节数
+
+所有新字段均 `#[serde(default)]`，与 v0.9.0 JSON 输入向后兼容。
+
+### Changed
+
+- **DocVersion3 parser**：增加 `product.trim().is_empty()` 校验，拒绝空白
+  product 记录（更强的边界保护）；填充 `offset` / `record_size` /
+  `trailing_bytes`
+- **PSMclustertable parser**：从"UTF-16LE ASCII 名称扫描"升级为"记录遍历"，
+  以名称为锚点向前回溯截出完整记录 slice，记录 `record_offset` /
+  `record_len` / `prefix_bytes`；识别尾部 null 终止符
+- **PSMsegmenttable parser**：在保留 `flags: Vec<u8>` 的基础上，同步生成
+  `entries: Vec<PsmSegmentEntry>`，每条 entry 带 `index` + `offset`
+- **inspect report**：
+  - Version History 段标题显示 `record_size=`
+  - 每条记录前缀 `[@+offset]`
+  - 显示 trailing bytes（当 > 0）
+  - PSMclustertable 每项显示 `rec_len=` / `name@offset` / `prefix=[hex]`
+  - PSMsegmenttable 切换到 per-entry 显示 `[index] @+offset flag=0x..`
+
+### Tests (359 → 366+，净增 7+)
+
+- `doc_version3_records_expose_record_offset_and_trailing_bytes` — 3 条记录 + 4 字节尾随
+- `doc_version3_rejects_record_with_empty_product` — 空白 product 停止解析
+- `doc_version3_zero_trailing_when_exact_fit` — 精确对齐零残余
+- `cluster_table_entry_records_offsets_and_prefix_bytes` — record 级结构化
+- `cluster_table_reports_trailing_bytes` — 尾部字节审计
+- `segment_table_exposes_indexed_entries` — entry 化验证
+- `segment_table_reports_trailing_bytes` — 尾部字节审计
+
+### SemVer
+
+Patch（新字段 additive + 行为加强；旧 consumer 无感）。
+
 ## [0.9.0] - 2026-04-21
 
 ### Phase 10j (MVP): DocumentSummaryInformation section 2 reader
