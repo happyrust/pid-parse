@@ -14,7 +14,8 @@ use crate::model::{
     AttributeClassRecordRef, AttributeClassSummary, AttributeValue, ClusterCoverage,
     ClusterCoverageMatch, ClusterCoverageSourceKind, CrossReferenceGraph, DeclaredClusterRef,
     EndpointLinkCoverage, EntryKind, FoundClusterRef, ObjectSourceCoverage, ObjectSourceRef,
-    PidDocument, RelationshipEndpointLink, RootPresence, StorageNode, SymbolReference, SymbolUsage,
+    PidDocument, ProvenanceChainBreak, ProvenanceChainCoverage, ProvenanceChainStage,
+    RelationshipEndpointLink, RootPresence, StorageNode, SymbolReference, SymbolUsage,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,7 +24,7 @@ pub fn build_graph(doc: &PidDocument) -> CrossReferenceGraph {
     let (relationship_endpoint_links, relationship_endpoint_coverage) =
         build_relationship_endpoint_links(doc);
     let (object_sources, object_source_coverage) = build_object_sources(doc);
-    CrossReferenceGraph {
+    let mut graph = CrossReferenceGraph {
         cluster_coverage: build_cluster_coverage(doc),
         symbol_usage: build_symbol_usage(doc),
         attribute_classes: build_attribute_classes(doc),
@@ -32,7 +33,12 @@ pub fn build_graph(doc: &PidDocument) -> CrossReferenceGraph {
         relationship_endpoint_coverage,
         object_sources,
         object_source_coverage,
-    }
+        ..Default::default()
+    };
+    let (coverage, breaks) = build_provenance_chain(&graph);
+    graph.provenance_chain_coverage = coverage;
+    graph.provenance_chain_breaks = breaks;
+    graph
 }
 
 fn build_cluster_coverage(doc: &PidDocument) -> ClusterCoverage {
@@ -432,6 +438,121 @@ fn build_object_sources(doc: &PidDocument) -> (Vec<ObjectSourceRef>, ObjectSourc
     }
 
     (sources, coverage)
+}
+
+/// Upper bound on the number of broken-chain samples retained for debug.
+/// Keeps report output bounded without losing the "first few" evidence.
+const PROVENANCE_CHAIN_BREAK_SAMPLE_CAP: usize = 10;
+
+/// Phase 3 Step 3 — walk every [`RelationshipEndpointLink`] alongside the
+/// already-populated [`ObjectSourceRef`] index and tally hop-by-hop
+/// progress. Returns coverage counts plus up to
+/// [`PROVENANCE_CHAIN_BREAK_SAMPLE_CAP`] break samples ordered by the
+/// stage at which each chain first failed.
+fn build_provenance_chain(
+    graph: &CrossReferenceGraph,
+) -> (ProvenanceChainCoverage, Vec<ProvenanceChainBreak>) {
+    let mut coverage = ProvenanceChainCoverage {
+        total_relationships: graph.relationship_endpoint_links.len(),
+        ..Default::default()
+    };
+    let mut breaks: Vec<ProvenanceChainBreak> = Vec::new();
+
+    if graph.relationship_endpoint_links.is_empty() {
+        return (coverage, breaks);
+    }
+
+    let object_by_drawing_id: BTreeMap<&str, &ObjectSourceRef> = graph
+        .object_sources
+        .iter()
+        .filter(|s| !s.missing_da_record)
+        .map(|s| (s.drawing_id.as_str(), s))
+        .collect();
+
+    for link in &graph.relationship_endpoint_links {
+        let mut failure: Option<(ProvenanceChainStage, String)> = None;
+
+        if link.rel_field_x.is_some() {
+            coverage.has_field_x += 1;
+        } else {
+            failure = Some((
+                ProvenanceChainStage::MissingFieldX,
+                "relationship trailer has no field_x; sheet lookup cannot start".into(),
+            ));
+        }
+
+        let sheet_ok = if failure.is_none() {
+            if link.sheet_path.is_some() {
+                coverage.sheet_linked += 1;
+                true
+            } else {
+                failure = Some((
+                    ProvenanceChainStage::MissingSheetRecord,
+                    format!(
+                        "rel_field_x={:?} had no matching SheetEndpointRecord",
+                        link.rel_field_x
+                    ),
+                ));
+                false
+            }
+        } else {
+            false
+        };
+
+        let source_ok = match link.source_drawing_id.as_deref() {
+            Some(id) if object_by_drawing_id.contains_key(id) => {
+                coverage.source_object_linked += 1;
+                true
+            }
+            other => {
+                if sheet_ok && failure.is_none() {
+                    failure = Some((
+                        ProvenanceChainStage::SourceObjectUnlinked,
+                        match other {
+                            Some(id) => format!("source drawing_id {id} not linked to DA record"),
+                            None => "relationship has no source_drawing_id".into(),
+                        },
+                    ));
+                }
+                false
+            }
+        };
+
+        let target_ok = match link.target_drawing_id.as_deref() {
+            Some(id) if object_by_drawing_id.contains_key(id) => {
+                coverage.target_object_linked += 1;
+                true
+            }
+            other => {
+                if sheet_ok && source_ok && failure.is_none() {
+                    failure = Some((
+                        ProvenanceChainStage::TargetObjectUnlinked,
+                        match other {
+                            Some(id) => format!("target drawing_id {id} not linked to DA record"),
+                            None => "relationship has no target_drawing_id".into(),
+                        },
+                    ));
+                }
+                false
+            }
+        };
+
+        if failure.is_none() && sheet_ok && source_ok && target_ok {
+            coverage.fully_traced += 1;
+        }
+
+        if let Some((stage, reason)) = failure {
+            if breaks.len() < PROVENANCE_CHAIN_BREAK_SAMPLE_CAP {
+                breaks.push(ProvenanceChainBreak {
+                    relationship_guid: link.relationship_guid.clone(),
+                    stage,
+                    reason,
+                });
+            }
+        }
+    }
+
+    (coverage, breaks)
 }
 
 #[cfg(test)]
@@ -1239,5 +1360,134 @@ mod tests {
         assert_eq!(g.object_sources[0].class_name.as_deref(), Some("Drawing"));
         assert_eq!(g.object_source_coverage.linked, 1);
         assert_eq!(g.object_source_coverage.with_trailer_record_id, 1);
+    }
+
+    #[test]
+    fn provenance_chain_coverage_counts_each_hop() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams
+            .push(mk_sheet_with_endpoint("Sheet6", 100, 42, 77, 0x100));
+        doc.sheet_streams
+            .push(mk_sheet_with_endpoint("Sheet6", 200, 51, 99, 0x200));
+        doc.dynamic_attributes = Some(mk_da_blob(vec![
+            mk_attribute_record("Instrument", Some("SRC1"), "decoded"),
+            mk_attribute_record("Drawing", Some("TGT1"), "decoded"),
+            mk_attribute_record("Drawing", Some("SRC2"), "decoded"),
+        ]));
+
+        let mut graph = ObjectGraph::default();
+        graph.objects.push(mk_object("SRC1", "Instrument", Some(1)));
+        graph.objects.push(mk_object("TGT1", "Drawing", Some(2)));
+        graph.objects.push(mk_object("SRC2", "Drawing", Some(3)));
+        graph.relationships.push(mk_relationship(
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            Some(100),
+            Some("SRC1"),
+            Some("TGT1"),
+        ));
+        graph.relationships.push(mk_relationship(
+            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            Some(200),
+            Some("SRC2"),
+            Some("TGT-GHOST"),
+        ));
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+        let cov = &g.provenance_chain_coverage;
+        assert_eq!(cov.total_relationships, 2);
+        assert_eq!(cov.has_field_x, 2);
+        assert_eq!(cov.sheet_linked, 2);
+        assert_eq!(cov.source_object_linked, 2);
+        assert_eq!(cov.target_object_linked, 1);
+        assert_eq!(cov.fully_traced, 1);
+    }
+
+    #[test]
+    fn provenance_chain_breaks_point_at_first_failed_hop() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams
+            .push(mk_sheet_with_endpoint("Sheet6", 100, 42, 77, 0x100));
+        doc.dynamic_attributes = Some(mk_da_blob(vec![mk_attribute_record(
+            "Instrument",
+            Some("SRC1"),
+            "decoded",
+        )]));
+
+        let mut graph = ObjectGraph::default();
+        graph.objects.push(mk_object("SRC1", "Instrument", Some(1)));
+        graph.relationships.push(mk_relationship(
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            None,
+            Some("SRC1"),
+            Some("TGT1"),
+        ));
+        graph.relationships.push(mk_relationship(
+            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            Some(999),
+            Some("SRC1"),
+            Some("TGT1"),
+        ));
+        graph.relationships.push(mk_relationship(
+            "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+            Some(100),
+            Some("SRC-GHOST"),
+            Some("TGT1"),
+        ));
+        graph.relationships.push(mk_relationship(
+            "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+            Some(100),
+            Some("SRC1"),
+            Some("TGT-GHOST"),
+        ));
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+        let breaks = &g.provenance_chain_breaks;
+        assert_eq!(breaks.len(), 4);
+        assert_eq!(breaks[0].stage, ProvenanceChainStage::MissingFieldX);
+        assert_eq!(breaks[1].stage, ProvenanceChainStage::MissingSheetRecord);
+        assert_eq!(breaks[2].stage, ProvenanceChainStage::SourceObjectUnlinked);
+        assert_eq!(breaks[3].stage, ProvenanceChainStage::TargetObjectUnlinked);
+        assert!(breaks[0].reason.contains("field_x"));
+        assert!(breaks[1].reason.contains("SheetEndpointRecord"));
+        assert!(breaks[2].reason.contains("SRC-GHOST"));
+        assert!(breaks[3].reason.contains("TGT-GHOST"));
+        assert_eq!(g.provenance_chain_coverage.fully_traced, 0);
+    }
+
+    #[test]
+    fn provenance_chain_empty_without_object_graph() {
+        let doc = PidDocument::default();
+        let g = build_graph(&doc);
+        let cov = &g.provenance_chain_coverage;
+        assert_eq!(cov.total_relationships, 0);
+        assert_eq!(cov.fully_traced, 0);
+        assert!(g.provenance_chain_breaks.is_empty());
+    }
+
+    #[test]
+    fn provenance_chain_sample_cap_holds() {
+        let mut doc = PidDocument::default();
+        let mut graph = ObjectGraph::default();
+        for i in 0..(PROVENANCE_CHAIN_BREAK_SAMPLE_CAP + 5) {
+            graph.relationships.push(mk_relationship(
+                &format!("{:032X}", i),
+                None,
+                Some("UNLINKED"),
+                Some("UNLINKED"),
+            ));
+        }
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+        assert_eq!(
+            g.provenance_chain_coverage.total_relationships,
+            PROVENANCE_CHAIN_BREAK_SAMPLE_CAP + 5
+        );
+        assert_eq!(
+            g.provenance_chain_breaks.len(),
+            PROVENANCE_CHAIN_BREAK_SAMPLE_CAP
+        );
     }
 }

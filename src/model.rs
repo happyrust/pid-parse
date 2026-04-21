@@ -1404,6 +1404,15 @@ pub struct CrossReferenceGraph {
     /// resolved back to a DA record by `DrawingID`, and how many did not.
     #[serde(default)]
     pub object_source_coverage: ObjectSourceCoverage,
+    /// Phase 3 Step 3: per-relationship provenance chain diagnostic —
+    /// counts how many relationships clear each hop of the chain
+    /// (`cluster → sheet → endpoint_record → DA record → object`).
+    #[serde(default)]
+    pub provenance_chain_coverage: ProvenanceChainCoverage,
+    /// Sample list of the first broken chains (capped at 10) to aid
+    /// debugging without dumping the full relationship vector.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provenance_chain_breaks: Vec<ProvenanceChainBreak>,
 }
 
 /// Comparison between `PSMclustertable` (declared) and the cluster / sheet
@@ -1580,6 +1589,54 @@ pub struct ObjectSourceCoverage {
     /// Linked objects whose matching `PidObject` also surfaced a DA
     /// `record_id` (trailer was successfully aligned to the record).
     pub with_trailer_record_id: usize,
+}
+
+/// Phase 3 Step 3 — end-to-end "cluster → sheet → endpoint → DA record →
+/// PidObject" provenance chain diagnostic. Each field counts how many
+/// relationships passed a given hop; `fully_traced` is the subset that
+/// passed all 4 hops. Computed strictly from the other `CrossReferenceGraph`
+/// sections, so no extra parser state is required.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+pub struct ProvenanceChainCoverage {
+    /// Total relationships inspected (= `object_graph.relationships.len()`).
+    pub total_relationships: usize,
+    /// Relationships that exposed a `rel_field_x` (trailer was decoded).
+    pub has_field_x: usize,
+    /// Relationships linked to a [`SheetEndpointRecord`] by `rel_field_x`.
+    pub sheet_linked: usize,
+    /// Relationships whose `source_drawing_id` resolved to a linked
+    /// [`ObjectSourceRef`] (i.e. a DA record was matched).
+    pub source_object_linked: usize,
+    /// Relationships whose `target_drawing_id` resolved to a linked
+    /// [`ObjectSourceRef`].
+    pub target_object_linked: usize,
+    /// Relationships that passed every hop: `has_field_x && sheet_linked &&
+    /// source_object_linked && target_object_linked`.
+    pub fully_traced: usize,
+}
+
+/// Stage at which a given relationship's provenance chain first broke.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub enum ProvenanceChainStage {
+    /// Relationship has no `rel_field_x` — the trailer was never decoded,
+    /// so the sheet lookup cannot even start.
+    MissingFieldX,
+    /// `rel_field_x` present but no matching [`SheetEndpointRecord`].
+    MissingSheetRecord,
+    /// `source_drawing_id` absent or not in [`ObjectSourceRef`] index.
+    SourceObjectUnlinked,
+    /// `target_drawing_id` absent or not in [`ObjectSourceRef`] index.
+    TargetObjectUnlinked,
+}
+
+/// A single broken-chain sample — used to surface debug material in reports
+/// without dumping the entire relationship list. `reason` is a short
+/// human-readable hint; do not parse it programmatically.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ProvenanceChainBreak {
+    pub relationship_guid: String,
+    pub stage: ProvenanceChainStage,
+    pub reason: String,
 }
 
 /// Symbol → JSite reverse index. One entry per unique `symbol_path`.
