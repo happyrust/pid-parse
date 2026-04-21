@@ -956,6 +956,55 @@ fn object_sources_align_with_attribute_records() {
 }
 
 #[test]
+fn provenance_chain_matches_relationship_and_object_counts() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let graph = doc.object_graph.as_ref().expect("object_graph");
+    let cross = doc
+        .cross_reference
+        .as_ref()
+        .expect("cross reference graph should be built");
+
+    let cov = &cross.provenance_chain_coverage;
+    assert_eq!(cov.total_relationships, graph.relationships.len());
+    assert_eq!(
+        cov.total_relationships,
+        cross.relationship_endpoint_links.len()
+    );
+    assert_eq!(
+        cov.has_field_x,
+        graph
+            .relationships
+            .iter()
+            .filter(|r| r.field_x.is_some())
+            .count()
+    );
+    assert_eq!(
+        cov.sheet_linked,
+        cross
+            .relationship_endpoint_links
+            .iter()
+            .filter(|l| l.sheet_path.is_some())
+            .count()
+    );
+    assert!(cov.fully_traced <= cov.sheet_linked);
+    assert!(cov.fully_traced <= cov.source_object_linked);
+    assert!(cov.fully_traced <= cov.target_object_linked);
+
+    assert!(cross.provenance_chain_breaks.len() <= 10);
+    for br in &cross.provenance_chain_breaks {
+        assert!(
+            cross
+                .relationship_endpoint_links
+                .iter()
+                .any(|l| l.relationship_guid == br.relationship_guid),
+            "chain break should reference an existing relationship link"
+        );
+    }
+}
+
+#[test]
 fn relationship_probe_nearby_guids_contain_drawing_id() {
     // Every relationship's window is expected to include the drawing's own
     // DrawingNo GUID (0F7B...AA in the fixture), because the record before

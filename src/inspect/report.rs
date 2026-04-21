@@ -798,6 +798,40 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
 
+        let chain_cov = &xr.provenance_chain_coverage;
+        if chain_cov.total_relationships > 0 {
+            writeln!(
+                out,
+                "  Provenance chain: total={} has_field_x={} sheet_linked={} source_object_linked={} target_object_linked={} fully_traced={}",
+                chain_cov.total_relationships,
+                chain_cov.has_field_x,
+                chain_cov.sheet_linked,
+                chain_cov.source_object_linked,
+                chain_cov.target_object_linked,
+                chain_cov.fully_traced
+            )
+            .ok();
+            if !xr.provenance_chain_breaks.is_empty() {
+                writeln!(out, "  Provenance chain breaks:").ok();
+                for br in xr.provenance_chain_breaks.iter().take(5) {
+                    writeln!(
+                        out,
+                        "    {} stage={:?} reason={}",
+                        br.relationship_guid, br.stage, br.reason
+                    )
+                    .ok();
+                }
+                if xr.provenance_chain_breaks.len() > 5 {
+                    writeln!(
+                        out,
+                        "    ... ({} more)",
+                        xr.provenance_chain_breaks.len() - 5
+                    )
+                    .ok();
+                }
+            }
+        }
+
         if !xr.root_presence.is_empty() {
             let resolved = xr
                 .root_presence
@@ -1182,6 +1216,38 @@ mod tests {
         );
         assert!(
             report.contains("OBJ-GHOST class=(none) rec#- conf=(none) trailer_record_id=false missing_da_record=true"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_shows_provenance_chain_summary_and_breaks() {
+        let mut doc = PidDocument::default();
+        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
+            provenance_chain_coverage: crate::model::ProvenanceChainCoverage {
+                total_relationships: 4,
+                has_field_x: 3,
+                sheet_linked: 2,
+                source_object_linked: 2,
+                target_object_linked: 1,
+                fully_traced: 1,
+            },
+            provenance_chain_breaks: vec![crate::model::ProvenanceChainBreak {
+                relationship_guid: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+                stage: crate::model::ProvenanceChainStage::MissingFieldX,
+                reason: "relationship trailer has no field_x".into(),
+            }],
+            ..Default::default()
+        });
+
+        let report = generate_report(&doc);
+        assert!(
+            report.contains("Provenance chain: total=4 has_field_x=3 sheet_linked=2 source_object_linked=2 target_object_linked=1 fully_traced=1"),
+            "{report}"
+        );
+        assert!(report.contains("Provenance chain breaks:"), "{report}");
+        assert!(
+            report.contains("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA stage=MissingFieldX reason=relationship trailer has no field_x"),
             "{report}"
         );
     }
