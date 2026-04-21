@@ -875,6 +875,87 @@ fn relationship_endpoint_provenance_matches_sheet_records() {
 }
 
 #[test]
+fn object_sources_align_with_attribute_records() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let graph = doc.object_graph.as_ref().expect("object_graph");
+    let cross = doc
+        .cross_reference
+        .as_ref()
+        .expect("cross reference graph should be built");
+    let da = doc
+        .dynamic_attributes
+        .as_ref()
+        .expect("dynamic_attributes expected");
+
+    assert_eq!(
+        cross.object_sources.len(),
+        graph.objects.len(),
+        "object_sources must stay 1:1 with object_graph.objects"
+    );
+    assert_eq!(
+        cross.object_source_coverage.total_objects,
+        graph.objects.len()
+    );
+
+    let mut linked = 0usize;
+    let mut missing = 0usize;
+    let mut with_trailer = 0usize;
+    for (source, obj) in cross.object_sources.iter().zip(graph.objects.iter()) {
+        assert_eq!(
+            source.drawing_id, obj.drawing_id,
+            "object_sources order should mirror object_graph.objects"
+        );
+        assert_eq!(source.has_trailer_record_id, obj.record_id.is_some());
+
+        if source.missing_da_record {
+            assert!(source.class_name.is_none());
+            assert!(source.attribute_record_index.is_none());
+            assert!(source.confidence.is_none());
+            missing += 1;
+            continue;
+        }
+
+        linked += 1;
+        let idx = source
+            .attribute_record_index
+            .expect("linked source must carry an attribute_record_index");
+        let record = da
+            .attribute_records
+            .get(idx)
+            .expect("attribute_record_index must be a valid DA index");
+        assert_eq!(
+            Some(record.class_name.as_str()),
+            source.class_name.as_deref()
+        );
+        assert_eq!(
+            Some(record.confidence.as_str()),
+            source.confidence.as_deref()
+        );
+        let advertised_id = record
+            .attributes
+            .iter()
+            .find(|f| matches!(f.name.as_str(), "DrawingID" | "DrawingNo"))
+            .and_then(|f| match &f.value {
+                pid_parse::model::AttributeValue::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .expect("linked record must advertise a DrawingID/No");
+        assert_eq!(advertised_id, source.drawing_id);
+
+        if source.has_trailer_record_id {
+            with_trailer += 1;
+        }
+    }
+
+    let cov = &cross.object_source_coverage;
+    assert_eq!(cov.linked, linked);
+    assert_eq!(cov.missing_da_record, missing);
+    assert_eq!(cov.with_trailer_record_id, with_trailer);
+}
+
+#[test]
 fn relationship_probe_nearby_guids_contain_drawing_id() {
     // Every relationship's window is expected to include the drawing's own
     // DrawingNo GUID (0F7B...AA in the fixture), because the record before

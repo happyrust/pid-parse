@@ -766,6 +766,38 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
 
+        let object_cov = &xr.object_source_coverage;
+        if object_cov.total_objects > 0 {
+            writeln!(
+                out,
+                "  Object sources: total={} linked={} missing_da_record={} with_trailer_record_id={}",
+                object_cov.total_objects,
+                object_cov.linked,
+                object_cov.missing_da_record,
+                object_cov.with_trailer_record_id
+            )
+            .ok();
+            if !xr.object_sources.is_empty() {
+                writeln!(out, "  Object source refs:").ok();
+                for source in xr.object_sources.iter().take(5) {
+                    writeln!(
+                        out,
+                        "    {} class={} rec#{} conf={} trailer_record_id={} missing_da_record={}",
+                        source.drawing_id,
+                        source.class_name.as_deref().unwrap_or("(none)"),
+                        source
+                            .attribute_record_index
+                            .map(|i| i.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        source.confidence.as_deref().unwrap_or("(none)"),
+                        source.has_trailer_record_id,
+                        source.missing_da_record
+                    )
+                    .ok();
+                }
+            }
+        }
+
         if !xr.root_presence.is_empty() {
             let resolved = xr
                 .root_presence
@@ -1101,6 +1133,55 @@ mod tests {
         assert!(report.contains("sheet=/Sheet6 @+01A0"), "{report}");
         assert!(
             report.contains("drawings=Some(\"SRC1\")->Some(\"TGT1\")"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_cross_reference_shows_object_source_provenance() {
+        let mut doc = PidDocument::default();
+        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
+            object_sources: vec![
+                crate::model::ObjectSourceRef {
+                    drawing_id: "OBJ-1".into(),
+                    class_name: Some("Instrument".into()),
+                    attribute_record_index: Some(0),
+                    confidence: Some("decoded".into()),
+                    has_trailer_record_id: true,
+                    missing_da_record: false,
+                },
+                crate::model::ObjectSourceRef {
+                    drawing_id: "OBJ-GHOST".into(),
+                    class_name: None,
+                    attribute_record_index: None,
+                    confidence: None,
+                    has_trailer_record_id: false,
+                    missing_da_record: true,
+                },
+            ],
+            object_source_coverage: crate::model::ObjectSourceCoverage {
+                total_objects: 2,
+                linked: 1,
+                missing_da_record: 1,
+                with_trailer_record_id: 1,
+            },
+            ..Default::default()
+        });
+
+        let report = generate_report(&doc);
+        assert!(
+            report.contains(
+                "Object sources: total=2 linked=1 missing_da_record=1 with_trailer_record_id=1"
+            ),
+            "{report}"
+        );
+        assert!(report.contains("Object source refs:"), "{report}");
+        assert!(
+            report.contains("OBJ-1 class=Instrument rec#0 conf=decoded trailer_record_id=true missing_da_record=false"),
+            "{report}"
+        );
+        assert!(
+            report.contains("OBJ-GHOST class=(none) rec#- conf=(none) trailer_record_id=false missing_da_record=true"),
             "{report}"
         );
     }
