@@ -322,7 +322,10 @@ fn psm_segment_table_decoded() {
             .all(|(i, e)| e.index == i && e.offset == 8 + i && e.flag == 0x01),
         "entries should mirror the legacy flat flags payload"
     );
-    assert_eq!(t.trailing_bytes, 0, "fixture should have no segment trailer");
+    assert_eq!(
+        t.trailing_bytes, 0,
+        "fixture should have no segment trailer"
+    );
 }
 
 #[test]
@@ -800,6 +803,74 @@ fn sheet_endpoint_records_one_per_relationship() {
             "endpoint record rel_field_x=0x{:X} not in graph.relationships",
             r.rel_field_x
         );
+    }
+}
+
+#[test]
+fn relationship_endpoint_provenance_matches_sheet_records() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let graph = doc.object_graph.as_ref().expect("object_graph");
+    let cross = doc
+        .cross_reference
+        .as_ref()
+        .expect("cross reference graph should be built");
+
+    assert_eq!(
+        cross.relationship_endpoint_links.len(),
+        graph.relationships.len(),
+        "crossref should preserve 1:1 relationship link coverage"
+    );
+
+    let linked = cross
+        .relationship_endpoint_links
+        .iter()
+        .filter(|l| l.sheet_path.is_some())
+        .count();
+    assert_eq!(linked, cross.relationship_endpoint_coverage.linked);
+    assert_eq!(
+        cross.relationship_endpoint_coverage.total,
+        graph.relationships.len()
+    );
+
+    for link in &cross.relationship_endpoint_links {
+        let rel = graph
+            .relationships
+            .iter()
+            .find(|r| r.guid == link.relationship_guid)
+            .expect("link should point to existing relationship");
+        assert_eq!(rel.record_id, link.relationship_record_id);
+        assert_eq!(rel.field_x, link.rel_field_x);
+        assert_eq!(rel.source_drawing_id, link.source_drawing_id);
+        assert_eq!(rel.target_drawing_id, link.target_drawing_id);
+
+        match link.rel_field_x {
+            None => {
+                assert!(link.sheet_path.is_none());
+                assert!(!link.missing_sheet_record);
+            }
+            Some(field_x) => {
+                let sheet_record = doc
+                    .sheet_streams
+                    .iter()
+                    .flat_map(|s| s.endpoint_records.iter())
+                    .find(|r| r.rel_field_x == field_x);
+                match sheet_record {
+                    Some(record) => {
+                        assert_eq!(link.sheet_path.as_deref(), Some(record.sheet_path.as_str()));
+                        assert_eq!(link.sheet_offset, Some(record.offset));
+                        assert_eq!(link.source_field_x, Some(record.endpoint_a));
+                        assert_eq!(link.target_field_x, Some(record.endpoint_b));
+                        assert!(!link.missing_sheet_record);
+                    }
+                    None => {
+                        assert!(link.sheet_path.is_none());
+                        assert!(link.missing_sheet_record);
+                    }
+                }
+            }
+        }
     }
 }
 

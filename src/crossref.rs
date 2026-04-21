@@ -11,19 +11,24 @@
 //! Pure derivation: no I/O, no CFB access. Runs in memory on the decoded model.
 
 use crate::model::{
-    AttributeClassRecordRef, AttributeClassSummary, AttributeValue, ClusterCoverage, ClusterCoverageMatch,
-    ClusterCoverageSourceKind, CrossReferenceGraph, DeclaredClusterRef, EntryKind, FoundClusterRef,
-    PidDocument, RootPresence, StorageNode, SymbolReference, SymbolUsage,
+    AttributeClassRecordRef, AttributeClassSummary, AttributeValue, ClusterCoverage,
+    ClusterCoverageMatch, ClusterCoverageSourceKind, CrossReferenceGraph, DeclaredClusterRef,
+    EndpointLinkCoverage, EntryKind, FoundClusterRef, PidDocument, RelationshipEndpointLink,
+    RootPresence, StorageNode, SymbolReference, SymbolUsage,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Build the cross-reference graph from an already-decoded document.
 pub fn build_graph(doc: &PidDocument) -> CrossReferenceGraph {
+    let (relationship_endpoint_links, relationship_endpoint_coverage) =
+        build_relationship_endpoint_links(doc);
     CrossReferenceGraph {
         cluster_coverage: build_cluster_coverage(doc),
         symbol_usage: build_symbol_usage(doc),
         attribute_classes: build_attribute_classes(doc),
         root_presence: build_root_presence(doc),
+        relationship_endpoint_links,
+        relationship_endpoint_coverage,
     }
 }
 
@@ -117,9 +122,9 @@ fn build_symbol_usage(doc: &PidDocument) -> Vec<SymbolUsage> {
         let Some(ref path) = js.symbol_path else {
             continue;
         };
-        let entry = by_path.entry(path.clone()).or_insert_with(|| {
-            (js.symbol_name.clone(), BTreeSet::new(), Vec::new())
-        });
+        let entry = by_path
+            .entry(path.clone())
+            .or_insert_with(|| (js.symbol_name.clone(), BTreeSet::new(), Vec::new()));
         if entry.0.is_none() {
             entry.0 = js.symbol_name.clone();
         }
@@ -258,13 +263,96 @@ fn walk_one_level<'a>(node: &'a StorageNode, out: &mut BTreeMap<&'a str, (bool, 
     }
 }
 
+/// Derive `(links, coverage)` that connect `ObjectGraph.relationships` to
+/// their backing `SheetEndpointRecord` entries.
+///
+/// Matching is keyed by `PidRelationship.field_x == SheetEndpointRecord.rel_field_x`.
+/// The sheet index is built once per `build_graph` invocation; if the same
+/// `rel_field_x` appears in multiple sheet streams, the first encountered
+/// record wins (source order across `doc.sheet_streams`, then
+/// `endpoint_records`).
+fn build_relationship_endpoint_links(
+    doc: &PidDocument,
+) -> (Vec<RelationshipEndpointLink>, EndpointLinkCoverage) {
+    let Some(graph) = doc.object_graph.as_ref() else {
+        return (Vec::new(), EndpointLinkCoverage::default());
+    };
+
+    let mut sheet_index: BTreeMap<u32, (&str, usize, u32, u32)> = BTreeMap::new();
+    for sheet in &doc.sheet_streams {
+        for record in &sheet.endpoint_records {
+            sheet_index.entry(record.rel_field_x).or_insert((
+                record.sheet_path.as_str(),
+                record.offset,
+                record.endpoint_a,
+                record.endpoint_b,
+            ));
+        }
+    }
+
+    let mut links = Vec::with_capacity(graph.relationships.len());
+    let mut coverage = EndpointLinkCoverage {
+        total: graph.relationships.len(),
+        ..Default::default()
+    };
+
+    for rel in &graph.relationships {
+        let mut link = RelationshipEndpointLink {
+            relationship_guid: rel.guid.clone(),
+            relationship_record_id: rel.record_id,
+            rel_field_x: rel.field_x,
+            source_field_x: None,
+            target_field_x: None,
+            source_drawing_id: rel.source_drawing_id.clone(),
+            target_drawing_id: rel.target_drawing_id.clone(),
+            sheet_path: None,
+            sheet_offset: None,
+            missing_sheet_record: false,
+        };
+
+        match rel.field_x {
+            None => {
+                coverage.missing_field_x += 1;
+            }
+            Some(field_x) => {
+                if let Some((sheet_path, offset, endpoint_a, endpoint_b)) =
+                    sheet_index.get(&field_x).copied()
+                {
+                    link.sheet_path = Some(sheet_path.to_string());
+                    link.sheet_offset = Some(offset);
+                    link.source_field_x = Some(endpoint_a);
+                    link.target_field_x = Some(endpoint_b);
+                    coverage.linked += 1;
+                } else {
+                    link.missing_sheet_record = true;
+                    coverage.missing_sheet_record += 1;
+                }
+            }
+        }
+
+        match (
+            rel.source_drawing_id.is_some(),
+            rel.target_drawing_id.is_some(),
+        ) {
+            (true, true) => coverage.fully_resolved += 1,
+            (true, false) | (false, true) => coverage.partially_resolved += 1,
+            (false, false) => {}
+        }
+
+        links.push(link);
+    }
+
+    (links, coverage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{
         AttributeField, AttributeRecord, ClusterInfo, ClusterKind, DynamicAttributesBlob,
-        IndexedString, JProperties, JSite, PidDocument, PsmClusterEntry, PsmClusterTable,
-        PsmRootEntry, PsmRoots, SheetStream, StorageNode,
+        IndexedString, JProperties, JSite, ObjectGraph, PidDocument, PidRelationship,
+        PsmClusterEntry, PsmClusterTable, PsmRootEntry, PsmRoots, SheetEndpointRecord, SheetStream,
+        StorageNode,
     };
 
     fn mk_storage(name: &str, kind: EntryKind) -> StorageNode {
@@ -714,5 +802,152 @@ mod tests {
             index: 0,
             value: String::new(),
         };
+    }
+
+    fn mk_relationship(
+        guid: &str,
+        field_x: Option<u32>,
+        src: Option<&str>,
+        tgt: Option<&str>,
+    ) -> PidRelationship {
+        PidRelationship {
+            model_id: format!("Relationship.{guid}"),
+            guid: guid.into(),
+            record_id: Some(0x1000),
+            field_x,
+            source_drawing_id: src.map(str::to_string),
+            target_drawing_id: tgt.map(str::to_string),
+        }
+    }
+
+    fn mk_sheet_with_endpoint(
+        name: &str,
+        rel_field_x: u32,
+        endpoint_a: u32,
+        endpoint_b: u32,
+        offset: usize,
+    ) -> SheetStream {
+        SheetStream {
+            name: name.into(),
+            path: format!("/{name}"),
+            size: 0,
+            extracted_texts: vec![],
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: vec![],
+            probe_summary: None,
+            endpoint_records: vec![SheetEndpointRecord {
+                sheet_path: format!("/{name}"),
+                offset,
+                rel_field_x,
+                endpoint_a,
+                endpoint_b,
+            }],
+        }
+    }
+
+    #[test]
+    fn relationship_endpoint_links_record_sheet_provenance() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams
+            .push(mk_sheet_with_endpoint("Sheet6", 100, 42, 77, 0x1A0));
+        doc.sheet_streams
+            .push(mk_sheet_with_endpoint("Sheet7", 200, 51, 88, 0x240));
+
+        let mut graph = ObjectGraph::default();
+        graph.relationships.push(mk_relationship(
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            Some(100),
+            Some("SRC1"),
+            Some("TGT1"),
+        ));
+        graph.relationships.push(mk_relationship(
+            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            Some(999),
+            Some("SRC2"),
+            None,
+        ));
+        graph.relationships.push(mk_relationship(
+            "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+            None,
+            None,
+            None,
+        ));
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+
+        assert_eq!(g.relationship_endpoint_links.len(), 3);
+
+        let a = &g.relationship_endpoint_links[0];
+        assert_eq!(a.relationship_guid, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        assert_eq!(a.rel_field_x, Some(100));
+        assert_eq!(a.sheet_path.as_deref(), Some("/Sheet6"));
+        assert_eq!(a.sheet_offset, Some(0x1A0));
+        assert_eq!(a.source_field_x, Some(42));
+        assert_eq!(a.target_field_x, Some(77));
+        assert_eq!(a.source_drawing_id.as_deref(), Some("SRC1"));
+        assert_eq!(a.target_drawing_id.as_deref(), Some("TGT1"));
+        assert!(!a.missing_sheet_record);
+
+        let b = &g.relationship_endpoint_links[1];
+        assert_eq!(b.rel_field_x, Some(999));
+        assert!(b.sheet_path.is_none());
+        assert!(b.sheet_offset.is_none());
+        assert!(b.missing_sheet_record);
+
+        let c = &g.relationship_endpoint_links[2];
+        assert_eq!(c.rel_field_x, None);
+        assert!(c.sheet_path.is_none());
+        assert!(
+            !c.missing_sheet_record,
+            "rel without field_x should not be flagged as missing sheet record"
+        );
+
+        let cov = &g.relationship_endpoint_coverage;
+        assert_eq!(cov.total, 3);
+        assert_eq!(cov.linked, 1);
+        assert_eq!(cov.missing_sheet_record, 1);
+        assert_eq!(cov.missing_field_x, 1);
+        assert_eq!(cov.fully_resolved, 1);
+        assert_eq!(cov.partially_resolved, 1);
+    }
+
+    #[test]
+    fn relationship_endpoint_links_empty_without_object_graph() {
+        let doc = PidDocument::default();
+        let g = build_graph(&doc);
+        assert!(g.relationship_endpoint_links.is_empty());
+        assert_eq!(g.relationship_endpoint_coverage.total, 0);
+        assert_eq!(g.relationship_endpoint_coverage.linked, 0);
+    }
+
+    #[test]
+    fn relationship_endpoint_links_skip_field_x_without_sheet_records() {
+        let mut doc = PidDocument::default();
+        let mut graph = ObjectGraph::default();
+        graph.relationships.push(mk_relationship(
+            "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+            Some(5),
+            None,
+            None,
+        ));
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+        assert_eq!(g.relationship_endpoint_links.len(), 1);
+        let d = &g.relationship_endpoint_links[0];
+        assert_eq!(d.rel_field_x, Some(5));
+        assert!(d.sheet_path.is_none());
+        assert!(d.missing_sheet_record);
+
+        let cov = &g.relationship_endpoint_coverage;
+        assert_eq!(cov.total, 1);
+        assert_eq!(cov.linked, 0);
+        assert_eq!(cov.missing_sheet_record, 1);
+        assert_eq!(cov.missing_field_x, 0);
+        assert_eq!(cov.fully_resolved, 0);
+        assert_eq!(cov.partially_resolved, 0);
     }
 }

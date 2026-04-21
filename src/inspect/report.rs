@@ -287,7 +287,11 @@ pub fn generate_report(doc: &PidDocument) -> String {
             )
             .ok();
             if !e.prefix_bytes.is_empty() {
-                let hex: Vec<String> = e.prefix_bytes.iter().map(|b| format!("{:02X}", b)).collect();
+                let hex: Vec<String> = e
+                    .prefix_bytes
+                    .iter()
+                    .map(|b| format!("{:02X}", b))
+                    .collect();
                 write!(out, ", prefix=[{}]", hex.join(" ")).ok();
             }
             writeln!(out, ")").ok();
@@ -326,8 +330,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 writeln!(out, "  ... ({} more)", t.entries.len() - 20).ok();
             }
         } else {
-            let flags_hex: Vec<String> =
-                t.flags.iter().map(|b| format!("0x{:02X}", b)).collect();
+            let flags_hex: Vec<String> = t.flags.iter().map(|b| format!("0x{:02X}", b)).collect();
             writeln!(out, "  flags: [{}]", flags_hex.join(", ")).ok();
         }
         if t.trailing_bytes > 0 {
@@ -729,6 +732,40 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
 
+        let endpoint_cov = &xr.relationship_endpoint_coverage;
+        if endpoint_cov.total > 0 {
+            writeln!(
+                out,
+                "  Relationship endpoints: total={} linked={} missing_field_x={} missing_sheet_record={} fully_resolved={} partially_resolved={}",
+                endpoint_cov.total,
+                endpoint_cov.linked,
+                endpoint_cov.missing_field_x,
+                endpoint_cov.missing_sheet_record,
+                endpoint_cov.fully_resolved,
+                endpoint_cov.partially_resolved
+            )
+            .ok();
+            if !xr.relationship_endpoint_links.is_empty() {
+                writeln!(out, "  Relationship endpoint refs:").ok();
+                for link in xr.relationship_endpoint_links.iter().take(5) {
+                    writeln!(
+                        out,
+                        "    {} field_x={:?} sheet={} @+{:04X} endpoints={:?}->{:?} drawings={:?}->{:?} missing_sheet_record={}",
+                        link.relationship_guid,
+                        link.rel_field_x,
+                        link.sheet_path.as_deref().unwrap_or("(none)"),
+                        link.sheet_offset.unwrap_or(0),
+                        link.source_field_x,
+                        link.target_field_x,
+                        link.source_drawing_id,
+                        link.target_drawing_id,
+                        link.missing_sheet_record
+                    )
+                    .ok();
+                }
+            }
+        }
+
         if !xr.root_presence.is_empty() {
             let resolved = xr
                 .root_presence
@@ -957,8 +994,14 @@ mod tests {
         let report = generate_report(&doc);
         assert!(report.contains("Cluster refs:"), "{report}");
         assert!(report.contains("declared entries: 1"), "{report}");
-        assert!(report.contains("found Sheet6 [SheetStream] /Sheet6"), "{report}");
-        assert!(report.contains("match Sheet6 decl#0 -> found#0"), "{report}");
+        assert!(
+            report.contains("found Sheet6 [SheetStream] /Sheet6"),
+            "{report}"
+        );
+        assert!(
+            report.contains("match Sheet6 decl#0 -> found#0"),
+            "{report}"
+        );
     }
 
     #[test]
@@ -982,7 +1025,10 @@ mod tests {
 
         let report = generate_report(&doc);
         assert!(report.contains("Symbol refs:"), "{report}");
-        assert!(report.contains(r"\\srv\sym\Valve.sym <- JSite0"), "{report}");
+        assert!(
+            report.contains(r"\\srv\sym\Valve.sym <- JSite0"),
+            "{report}"
+        );
         assert!(report.contains(r"local=D:\cache\Valve.sym"), "{report}");
         assert!(report.contains("[OLE]"), "{report}");
     }
@@ -1013,5 +1059,49 @@ mod tests {
         assert!(report.contains("Instrument: 1 records"), "{report}");
         assert!(report.contains("attrs=3"), "{report}");
         assert!(report.contains("drawing_ids=[\"DWG-01\"]"), "{report}");
+    }
+
+    #[test]
+    fn report_cross_reference_shows_relationship_endpoint_provenance() {
+        let mut doc = PidDocument::default();
+        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
+            relationship_endpoint_links: vec![crate::model::RelationshipEndpointLink {
+                relationship_guid: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+                relationship_record_id: Some(0x6009),
+                rel_field_x: Some(0x079A),
+                source_field_x: Some(0x0100),
+                target_field_x: Some(0x0102),
+                source_drawing_id: Some("SRC1".into()),
+                target_drawing_id: Some("TGT1".into()),
+                sheet_path: Some("/Sheet6".into()),
+                sheet_offset: Some(0x01A0),
+                missing_sheet_record: false,
+            }],
+            relationship_endpoint_coverage: crate::model::EndpointLinkCoverage {
+                total: 1,
+                linked: 1,
+                missing_field_x: 0,
+                missing_sheet_record: 0,
+                fully_resolved: 1,
+                partially_resolved: 0,
+            },
+            ..Default::default()
+        });
+
+        let report = generate_report(&doc);
+        assert!(
+            report.contains("Relationship endpoints: total=1 linked=1"),
+            "{report}"
+        );
+        assert!(report.contains("Relationship endpoint refs:"), "{report}");
+        assert!(
+            report.contains("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            "{report}"
+        );
+        assert!(report.contains("sheet=/Sheet6 @+01A0"), "{report}");
+        assert!(
+            report.contains("drawings=Some(\"SRC1\")->Some(\"TGT1\")"),
+            "{report}"
+        );
     }
 }

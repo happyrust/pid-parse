@@ -285,6 +285,7 @@ mod tests {
                     found_as_storage: false,
                     found_as_stream: false,
                 }],
+                ..Default::default()
             }),
             ..Default::default()
         };
