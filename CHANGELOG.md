@@ -2,6 +2,93 @@
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-04-21
+
+### Phase 3: Provenance-aware cross-reference (Step 1–4)
+
+把 `CrossReferenceGraph` 从"名字集合 + 小摘要"升级为"字段级 provenance
+记录 + 端到端诊断"，一次覆盖四条正交视角（cluster/symbol/attribute、
+relationship、object、sheet），并且为 Phase 12a 的统一规范化层做好数据
+基础。所有变更纯 additive + `#[serde(default)]`，旧 consumer 字节级
+兼容。
+
+### Added — Step 1：cluster / symbol / attribute provenance records
+
+- `ClusterCoverage.declared_entries: Vec<DeclaredClusterRef>` — 带
+  `record_offset` / `name_offset` / `record_len` 的 PSM 表行级溯源
+- `ClusterCoverage.found_entries: Vec<FoundClusterRef>` — 带 `source_kind`
+  (`PsmCluster` / `SheetStream`) 与 `path` 的发现源
+- `ClusterCoverage.matches_detailed: Vec<ClusterCoverageMatch>` —
+  declared ↔ found 的 index 级映射
+- `SymbolUsage.references: Vec<SymbolReference>` — 每个 JSite 的 `path` /
+  `local_symbol_path` / `has_ole_stream`，取代旧 BTreeSet 去重
+- `AttributeClassSummary.records: Vec<AttributeClassRecordRef>` — 每条
+  DA 记录带 `attribute_count` / `confidence` / 局部 drawing/model ids
+
+### Added — Step 2：relationship + object provenance links
+
+- `RelationshipEndpointLink` — 每条 `PidRelationship` 连回
+  `SheetEndpointRecord` 的 `sheet_path` / `sheet_offset` / source/target
+  `field_x`；`missing_sheet_record` 区分"lookup 失败"与"没 field_x"
+- `EndpointLinkCoverage` — `total` / `linked` / `missing_field_x` /
+  `missing_sheet_record` / `fully_resolved` / `partially_resolved`
+- `ObjectSourceRef` — 每条 `PidObject.drawing_id` 连回
+  `DynamicAttributesBlob.attribute_records` 索引（`class_name`、
+  `attribute_record_index`、`confidence`、`has_trailer_record_id`、
+  `missing_da_record`）
+- `ObjectSourceCoverage` — `total_objects` / `linked` / `missing_da_record` /
+  `with_trailer_record_id`
+
+### Added — Step 3：end-to-end provenance chain diagnostic
+
+- `ProvenanceChainCoverage` — 逐跳通过数：`has_field_x` / `sheet_linked` /
+  `source_object_linked` / `target_object_linked` / `fully_traced`
+- `ProvenanceChainStage` 枚举 — `MissingFieldX` / `MissingSheetRecord` /
+  `SourceObjectUnlinked` / `TargetObjectUnlinked`
+- `ProvenanceChainBreak` + `PROVENANCE_CHAIN_BREAK_SAMPLE_CAP = 10`，
+  first-fail 规则：一条链在最前断裂处记一次，不污染后续 hop
+
+### Added — Step 4：sheet-level provenance aggregation
+
+- `SheetProvenanceRef` — per-`SheetStream` 聚合：`endpoint_record_count` /
+  `declared_in_psm` / `matched_declared_index` / `linked_relationship_count` /
+  `fully_traced_relationship_count`，1:1 对应 `doc.sheet_streams`
+- `SheetProvenanceCoverage` — `total_sheets` / `declared_sheets` /
+  `orphan_sheets` / `sheets_with_endpoint_records` / `empty_declared_sheets`
+
+### Added — inspect report
+
+`Cross Reference` section 新增 5 个小节，均默认取前 5 条样例、超额用
+`... (N more)` 提示：
+
+- `Cluster refs:` — declared/found/match 样例
+- `Symbol refs:` / `Attribute class refs:` — Step 1 extensions
+- `Relationship endpoints:` — Step 2 relationship link coverage + 样例
+- `Object sources:` — Step 2 object link coverage + 样例
+- `Sheet provenance:` — Step 4 per-sheet 聚合 + 样例
+- `Provenance chain:` — Step 3 诊断 + 前 5 条 breaks（超额提示 more）
+
+### Tests — 332 → 400（净增 68）
+
+- Step 1 新增 3 条单测 + 3 条 fixture 回归
+- Step 2 新增 8 条单测 + 2 条 fixture 回归
+- Step 3 新增 4 条单测 + 1 条 fixture 回归
+- Step 4 新增 2 条单测 + 1 条 fixture 回归
+- 其余增量来自既有测试对新字段的扩断言
+
+### Changed
+
+- `crossref::build_graph` 内部改为两遍填装：先构造前四子图，再基于已
+  构造图派生 provenance chain 与 sheet aggregation；外部 API / 输出
+  顺序不变
+- 多处 test site（`mermaid`、`layout`、`import_view`、`mermaid_demo`）
+  使用 `..Default::default()` 吸收新字段，零行为改动
+
+### SemVer
+
+Patch（additive + `#[serde(default)]`；旧 JSON 输入字节级兼容，调用旧
+字段语义未变）。
+
 ## [0.9.1] - 2026-04-21
 
 ### Phase 2: 三条核心流的结构化解码升级
