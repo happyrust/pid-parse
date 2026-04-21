@@ -13,8 +13,9 @@
 use crate::model::{
     AttributeClassRecordRef, AttributeClassSummary, AttributeValue, ClusterCoverage,
     ClusterCoverageMatch, ClusterCoverageSourceKind, CrossReferenceGraph, DeclaredClusterRef,
-    EndpointLinkCoverage, EntryKind, FoundClusterRef, PidDocument, RelationshipEndpointLink,
-    RootPresence, StorageNode, SymbolReference, SymbolUsage,
+    EndpointLinkCoverage, EntryKind, FoundClusterRef, ObjectSourceCoverage, ObjectSourceRef,
+    PidDocument, RelationshipEndpointLink, RootPresence, StorageNode, SymbolReference,
+    SymbolUsage,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub fn build_graph(doc: &PidDocument) -> CrossReferenceGraph {
     let (relationship_endpoint_links, relationship_endpoint_coverage) =
         build_relationship_endpoint_links(doc);
+    let (object_sources, object_source_coverage) = build_object_sources(doc);
     CrossReferenceGraph {
         cluster_coverage: build_cluster_coverage(doc),
         symbol_usage: build_symbol_usage(doc),
@@ -29,6 +31,8 @@ pub fn build_graph(doc: &PidDocument) -> CrossReferenceGraph {
         root_presence: build_root_presence(doc),
         relationship_endpoint_links,
         relationship_endpoint_coverage,
+        object_sources,
+        object_source_coverage,
     }
 }
 
@@ -345,12 +349,95 @@ fn build_relationship_endpoint_links(
     (links, coverage)
 }
 
+/// Derive `(sources, coverage)` that link each `PidObject` to the
+/// `AttributeRecord` inside `Unclustered Dynamic Attributes` carrying its
+/// `DrawingID`. Produces exactly one [`ObjectSourceRef`] per object and
+/// preserves `ObjectGraph.objects` source order; unlinked objects still
+/// emit a ref with `missing_da_record = true` so downstream code can
+/// index into the vector 1:1 without rebuilding the mapping.
+///
+/// Returns `(Vec::new(), ObjectSourceCoverage::default())` when
+/// `object_graph` is absent. When only `dynamic_attributes` is missing
+/// every object is flagged as `missing_da_record = true`.
+///
+/// The drawing-id index is built once by walking `attribute_records` in
+/// order and keeping the first record that advertises a given drawing id
+/// via an `AttributeField { name = "DrawingID" | "DrawingNo", Text(..) }`.
+fn build_object_sources(doc: &PidDocument) -> (Vec<ObjectSourceRef>, ObjectSourceCoverage) {
+    let Some(graph) = doc.object_graph.as_ref() else {
+        return (Vec::new(), ObjectSourceCoverage::default());
+    };
+    let total_objects = graph.objects.len();
+
+    let by_drawing_id: BTreeMap<&str, (usize, &str, &str)> = match doc.dynamic_attributes.as_ref() {
+        Some(da) => {
+            let mut idx: BTreeMap<&str, (usize, &str, &str)> = BTreeMap::new();
+            for (i, rec) in da.attribute_records.iter().enumerate() {
+                for field in &rec.attributes {
+                    if !matches!(field.name.as_str(), "DrawingID" | "DrawingNo") {
+                        continue;
+                    }
+                    let AttributeValue::Text(ref v) = field.value else {
+                        continue;
+                    };
+                    if v.is_empty() {
+                        continue;
+                    }
+                    idx.entry(v.as_str())
+                        .or_insert((i, rec.class_name.as_str(), rec.confidence.as_str()));
+                }
+            }
+            idx
+        }
+        None => BTreeMap::new(),
+    };
+
+    let mut sources = Vec::with_capacity(total_objects);
+    let mut coverage = ObjectSourceCoverage {
+        total_objects,
+        ..Default::default()
+    };
+
+    for obj in &graph.objects {
+        let has_trailer_record_id = obj.record_id.is_some();
+        match by_drawing_id.get(obj.drawing_id.as_str()).copied() {
+            Some((record_index, class_name, confidence)) => {
+                sources.push(ObjectSourceRef {
+                    drawing_id: obj.drawing_id.clone(),
+                    class_name: Some(class_name.to_string()),
+                    attribute_record_index: Some(record_index),
+                    confidence: Some(confidence.to_string()),
+                    has_trailer_record_id,
+                    missing_da_record: false,
+                });
+                coverage.linked += 1;
+                if has_trailer_record_id {
+                    coverage.with_trailer_record_id += 1;
+                }
+            }
+            None => {
+                sources.push(ObjectSourceRef {
+                    drawing_id: obj.drawing_id.clone(),
+                    class_name: None,
+                    attribute_record_index: None,
+                    confidence: None,
+                    has_trailer_record_id,
+                    missing_da_record: true,
+                });
+                coverage.missing_da_record += 1;
+            }
+        }
+    }
+
+    (sources, coverage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{
         AttributeField, AttributeRecord, ClusterInfo, ClusterKind, DynamicAttributesBlob,
-        IndexedString, JProperties, JSite, ObjectGraph, PidDocument, PidRelationship,
+        IndexedString, JProperties, JSite, ObjectGraph, PidDocument, PidObject, PidRelationship,
         PsmClusterEntry, PsmClusterTable, PsmRootEntry, PsmRoots, SheetEndpointRecord, SheetStream,
         StorageNode,
     };
@@ -949,5 +1036,197 @@ mod tests {
         assert_eq!(cov.missing_field_x, 0);
         assert_eq!(cov.fully_resolved, 0);
         assert_eq!(cov.partially_resolved, 0);
+    }
+
+    fn mk_object(drawing_id: &str, item_type: &str, record_id: Option<u32>) -> PidObject {
+        PidObject {
+            drawing_id: drawing_id.into(),
+            item_type: item_type.into(),
+            drawing_item_type: None,
+            model_id: None,
+            extra: std::collections::BTreeMap::new(),
+            record_id,
+            field_x: None,
+        }
+    }
+
+    fn mk_attribute_record(
+        class_name: &str,
+        drawing_id: Option<&str>,
+        confidence: &str,
+    ) -> AttributeRecord {
+        let attributes = match drawing_id {
+            Some(id) => vec![AttributeField {
+                name: "DrawingID".into(),
+                value: AttributeValue::Text(id.into()),
+                raw_value: None,
+            }],
+            None => vec![],
+        };
+        AttributeRecord {
+            class_name: class_name.into(),
+            attributes,
+            confidence: confidence.into(),
+        }
+    }
+
+    fn mk_da_blob(records: Vec<AttributeRecord>) -> DynamicAttributesBlob {
+        DynamicAttributesBlob {
+            path: "/Unclustered Dynamic Attributes".into(),
+            size: 0,
+            magic_u32_le: None,
+            strings: vec![],
+            relationships: vec![],
+            class_names: vec![],
+            raw_preview_hex: String::new(),
+            header: None,
+            attribute_records: records,
+            probe_summary: None,
+            relationship_probes: vec![],
+            record_trailers: vec![],
+        }
+    }
+
+    #[test]
+    fn object_sources_record_da_provenance() {
+        let mut doc = PidDocument::default();
+        doc.dynamic_attributes = Some(mk_da_blob(vec![
+            mk_attribute_record("Instrument", Some("OBJ-1"), "decoded"),
+            mk_attribute_record("Drawing", Some("OBJ-2"), "heuristic"),
+            mk_attribute_record("Nozzle", None, "heuristic"),
+        ]));
+
+        let mut graph = ObjectGraph::default();
+        graph
+            .objects
+            .push(mk_object("OBJ-1", "Instrument", Some(0x6009)));
+        graph.objects.push(mk_object("OBJ-2", "Drawing", None));
+        graph.objects.push(mk_object("OBJ-GHOST", "Symbol", None));
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+        assert_eq!(
+            g.object_sources.len(),
+            3,
+            "every object should produce exactly one source ref"
+        );
+
+        let first = &g.object_sources[0];
+        assert_eq!(first.drawing_id, "OBJ-1");
+        assert_eq!(first.class_name.as_deref(), Some("Instrument"));
+        assert_eq!(first.attribute_record_index, Some(0));
+        assert_eq!(first.confidence.as_deref(), Some("decoded"));
+        assert!(first.has_trailer_record_id);
+        assert!(!first.missing_da_record);
+
+        let second = &g.object_sources[1];
+        assert_eq!(second.drawing_id, "OBJ-2");
+        assert_eq!(second.class_name.as_deref(), Some("Drawing"));
+        assert_eq!(second.attribute_record_index, Some(1));
+        assert_eq!(second.confidence.as_deref(), Some("heuristic"));
+        assert!(
+            !second.has_trailer_record_id,
+            "object without record_id must not claim a trailer"
+        );
+        assert!(!second.missing_da_record);
+
+        let ghost = &g.object_sources[2];
+        assert_eq!(ghost.drawing_id, "OBJ-GHOST");
+        assert!(ghost.class_name.is_none());
+        assert!(ghost.attribute_record_index.is_none());
+        assert!(ghost.confidence.is_none());
+        assert!(!ghost.has_trailer_record_id);
+        assert!(
+            ghost.missing_da_record,
+            "unlinked object must set missing_da_record"
+        );
+
+        let cov = &g.object_source_coverage;
+        assert_eq!(cov.total_objects, 3);
+        assert_eq!(cov.linked, 2);
+        assert_eq!(cov.missing_da_record, 1);
+        assert_eq!(cov.with_trailer_record_id, 1);
+    }
+
+    #[test]
+    fn object_sources_first_da_record_wins_on_duplicate_drawing_id() {
+        let mut doc = PidDocument::default();
+        doc.dynamic_attributes = Some(mk_da_blob(vec![
+            mk_attribute_record("Instrument", Some("OBJ-1"), "heuristic"),
+            mk_attribute_record("Drawing", Some("OBJ-1"), "decoded"),
+        ]));
+
+        let mut graph = ObjectGraph::default();
+        graph.objects.push(mk_object("OBJ-1", "Instrument", Some(0x1)));
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+        assert_eq!(g.object_sources.len(), 1);
+        assert_eq!(g.object_sources[0].class_name.as_deref(), Some("Instrument"));
+        assert_eq!(g.object_sources[0].attribute_record_index, Some(0));
+        assert_eq!(g.object_sources[0].confidence.as_deref(), Some("heuristic"));
+    }
+
+    #[test]
+    fn object_sources_empty_without_object_graph() {
+        let doc = PidDocument::default();
+        let g = build_graph(&doc);
+        assert!(g.object_sources.is_empty());
+        assert_eq!(g.object_source_coverage.total_objects, 0);
+        assert_eq!(g.object_source_coverage.linked, 0);
+        assert_eq!(g.object_source_coverage.missing_da_record, 0);
+        assert_eq!(g.object_source_coverage.with_trailer_record_id, 0);
+    }
+
+    #[test]
+    fn object_sources_flag_missing_da_records_when_da_absent() {
+        let mut doc = PidDocument::default();
+
+        let mut graph = ObjectGraph::default();
+        graph.objects.push(mk_object("OBJ-X", "Drawing", Some(0x10)));
+        graph.objects.push(mk_object("OBJ-Y", "Nozzle", None));
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+        assert_eq!(g.object_sources.len(), 2);
+        assert!(g.object_sources.iter().all(|r| r.missing_da_record));
+        let cov = &g.object_source_coverage;
+        assert_eq!(cov.total_objects, 2);
+        assert_eq!(cov.linked, 0);
+        assert_eq!(cov.missing_da_record, 2);
+        assert_eq!(cov.with_trailer_record_id, 0);
+    }
+
+    #[test]
+    fn object_sources_also_match_drawing_no_alias() {
+        let mut doc = PidDocument::default();
+        let rec = AttributeRecord {
+            class_name: "Drawing".into(),
+            attributes: vec![
+                AttributeField {
+                    name: "DrawingNo".into(),
+                    value: AttributeValue::Text("OBJ-AL".into()),
+                    raw_value: None,
+                },
+                AttributeField {
+                    name: "Tag".into(),
+                    value: AttributeValue::Text("unused".into()),
+                    raw_value: None,
+                },
+            ],
+            confidence: "decoded".into(),
+        };
+        doc.dynamic_attributes = Some(mk_da_blob(vec![rec]));
+
+        let mut graph = ObjectGraph::default();
+        graph.objects.push(mk_object("OBJ-AL", "Drawing", Some(0x77)));
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+        assert_eq!(g.object_sources.len(), 1);
+        assert_eq!(g.object_sources[0].attribute_record_index, Some(0));
+        assert_eq!(g.object_sources[0].class_name.as_deref(), Some("Drawing"));
+        assert_eq!(g.object_source_coverage.linked, 1);
+        assert_eq!(g.object_source_coverage.with_trailer_record_id, 1);
     }
 }
