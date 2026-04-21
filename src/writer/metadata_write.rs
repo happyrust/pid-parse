@@ -92,10 +92,7 @@ pub fn apply_metadata_updates(
 
     summary_write::apply_summary_deletions(package, &updates.summary_deletions)?;
     summary_write::apply_summary_updates(package, &updates.summary_updates)?;
-    summary_write::apply_summary_updates_encoded(
-        package,
-        &updates.summary_updates_encoded,
-    )?;
+    summary_write::apply_summary_updates_encoded(package, &updates.summary_updates_encoded)?;
     Ok(())
 }
 
@@ -226,9 +223,7 @@ mod tests {
         let err = apply_metadata_updates(&mut pkg, &updates).expect_err("conflict");
         let msg = format!("{err}");
         assert!(
-            msg.contains(
-                "summary_updates and summary_updates_encoded both target key 'title'"
-            ),
+            msg.contains("summary_updates and summary_updates_encoded both target key 'title'"),
             "got: {msg}"
         );
     }
@@ -240,10 +235,8 @@ mod tests {
         use crate::writer::plan::EncodedString;
         let mut pkg = empty_package();
         let mut summary_updates_encoded = std::collections::BTreeMap::new();
-        summary_updates_encoded.insert(
-            "title".to_string(),
-            EncodedString::new("x", "windows-1252"),
-        );
+        summary_updates_encoded
+            .insert("title".to_string(), EncodedString::new("x", "windows-1252"));
         let updates = MetadataUpdates {
             summary_updates_encoded,
             summary_deletions: vec!["title".to_string()],
@@ -252,9 +245,7 @@ mod tests {
         let err = apply_metadata_updates(&mut pkg, &updates).expect_err("conflict");
         let msg = format!("{err}");
         assert!(
-            msg.contains(
-                "summary_updates_encoded and summary_deletions both target key 'title'"
-            ),
+            msg.contains("summary_updates_encoded and summary_deletions both target key 'title'"),
             "got: {msg}"
         );
     }

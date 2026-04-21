@@ -338,8 +338,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 if encoding.is_empty() {
                     return Err("--set-summary-encoded ENCODING must be non-empty".to_string());
                 }
-                summary_edits_encoded
-                    .insert(key.to_string(), EncodedString::new(val, encoding));
+                summary_edits_encoded.insert(key.to_string(), EncodedString::new(val, encoding));
                 i += 2;
             }
             "--apply-plan" => {

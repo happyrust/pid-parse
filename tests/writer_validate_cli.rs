@@ -985,8 +985,7 @@ fn validate_set_summary_encoded_conflicts_with_set_summary_on_same_key() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr
-            .contains("--set-summary and --set-summary-encoded both target key 'title'"),
+        stderr.contains("--set-summary and --set-summary-encoded both target key 'title'"),
         "stderr must explain the conflict; got: {stderr}"
     );
 

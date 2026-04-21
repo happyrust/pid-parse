@@ -280,8 +280,7 @@ impl SummarySection {
     ) -> Result<(), PidError> {
         if let Some(idx) = self.props.iter().position(|p| p.prop_id == prop_id) {
             let existing_vt = self.props[idx].vt;
-            let encoded =
-                encode_string_with_encoding(existing_vt, new_value, encoding, prop_id)?;
+            let encoded = encode_string_with_encoding(existing_vt, new_value, encoding, prop_id)?;
             self.props[idx] = SummaryProp {
                 prop_id,
                 vt: existing_vt,
@@ -292,8 +291,7 @@ impl SummarySection {
             // Unicode input losslessly and most SmartPlant consumers read
             // both VT tags. For VT_LPWSTR the `encoding` argument is
             // ignored (UTF-16LE is unambiguous).
-            let encoded =
-                encode_string_with_encoding(VT_LPWSTR, new_value, encoding, prop_id)?;
+            let encoded = encode_string_with_encoding(VT_LPWSTR, new_value, encoding, prop_id)?;
             self.props.push(SummaryProp {
                 prop_id,
                 vt: VT_LPWSTR,
@@ -345,11 +343,7 @@ fn encode_string_with_encoding(
             // (UTF-8 / windows-1252 / GBK / Shift_JIS / …).
             let (encoded_bytes, _used_encoding, had_errors) = encoding.encode(value);
             if had_errors {
-                return Err(lossy_encode_err(
-                    prop_id_for_err,
-                    encoding.name(),
-                    value,
-                ));
+                return Err(lossy_encode_err(prop_id_for_err, encoding.name(), value));
             }
             let mut bytes: Vec<u8> = encoded_bytes.into_owned();
             bytes.push(0);
@@ -732,10 +726,12 @@ pub fn apply_summary_updates_encoded(
     for (key, es) in updates {
         let (stream, prop_id) = resolve_key(key).ok_or_else(|| unknown_key(key))?;
         let encoding = resolve_encoding(&es.encoding)?;
-        by_stream
-            .entry(stream)
-            .or_default()
-            .push((prop_id, key.clone(), es.value.clone(), encoding));
+        by_stream.entry(stream).or_default().push((
+            prop_id,
+            key.clone(),
+            es.value.clone(),
+            encoding,
+        ));
     }
 
     for (stream, edits) in by_stream {
@@ -1107,13 +1103,9 @@ mod tests {
         // "Øresund" contains Ø (U+00D8) which in CP1252 is 0xD8 (single
         // byte), vs UTF-8's two bytes (0xC3, 0x98). Verify the single-byte
         // layout is what writer emits when encoding=windows-1252.
-        let encoded = encode_string_with_encoding(
-            VT_LPSTR,
-            "Øresund",
-            encoding_rs::WINDOWS_1252,
-            2,
-        )
-        .expect("CP1252 accepts Ø");
+        let encoded =
+            encode_string_with_encoding(VT_LPSTR, "Øresund", encoding_rs::WINDOWS_1252, 2)
+                .expect("CP1252 accepts Ø");
         assert!(encoded.len().is_multiple_of(4));
         let vt = u32_le(&encoded, 0);
         assert_eq!(vt, VT_LPSTR as u32);
@@ -1127,16 +1119,14 @@ mod tests {
     fn encode_lpstr_with_cp1252_rejects_chinese_characters_lossy() {
         // CP1252 cannot represent Chinese; writer must fail fast, not
         // silently emit "?" characters.
-        let err = encode_string_with_encoding(
-            VT_LPSTR,
-            "公司",
-            encoding_rs::WINDOWS_1252,
-            2,
-        )
-        .expect_err("CP1252 should reject Chinese");
+        let err = encode_string_with_encoding(VT_LPSTR, "公司", encoding_rs::WINDOWS_1252, 2)
+            .expect_err("CP1252 should reject Chinese");
         let msg = format!("{err}");
         assert!(msg.contains("cannot encode"), "got: {msg}");
-        assert!(msg.contains("windows-1252"), "encoding name in error: {msg}");
+        assert!(
+            msg.contains("windows-1252"),
+            "encoding name in error: {msg}"
+        );
         // Value repr helps debug which prop failed.
         assert!(msg.contains("公司"), "offending value in error: {msg}");
     }
@@ -1144,13 +1134,8 @@ mod tests {
     #[test]
     fn encode_lpstr_with_gbk_preserves_simplified_chinese_bytes() {
         // "公司" in GBK is 4 bytes (2 per character).
-        let encoded = encode_string_with_encoding(
-            VT_LPSTR,
-            "公司",
-            encoding_rs::GBK,
-            2,
-        )
-        .expect("GBK accepts Simplified Chinese");
+        let encoded = encode_string_with_encoding(VT_LPSTR, "公司", encoding_rs::GBK, 2)
+            .expect("GBK accepts Simplified Chinese");
         let char_count = u32_le(&encoded, 4) as usize;
         let payload = &encoded[8..8 + char_count - 1];
         assert_eq!(
@@ -1169,13 +1154,8 @@ mod tests {
         // VT_LPWSTR is UTF-16LE regardless of the `encoding` argument.
         // Pass windows-1252 and assert the body is still UTF-16LE of the
         // full Unicode string (no code-page narrowing).
-        let encoded = encode_string_with_encoding(
-            VT_LPWSTR,
-            "公司",
-            encoding_rs::WINDOWS_1252,
-            15,
-        )
-        .expect("VT_LPWSTR ignores encoding");
+        let encoded = encode_string_with_encoding(VT_LPWSTR, "公司", encoding_rs::WINDOWS_1252, 15)
+            .expect("VT_LPWSTR ignores encoding");
         let vt = u32_le(&encoded, 0);
         assert_eq!(vt, VT_LPWSTR as u32);
         let char_count = u32_le(&encoded, 4) as usize;
@@ -1272,10 +1252,7 @@ mod tests {
     fn apply_summary_updates_encoded_unknown_encoding_errors_cleanly() {
         let mut pkg = package_with_summary(sample_summary_bytes());
         let mut updates: BTreeMap<String, EncodedString> = BTreeMap::new();
-        updates.insert(
-            "title".to_string(),
-            EncodedString::new("x", "Klingon-1"),
-        );
+        updates.insert("title".to_string(), EncodedString::new("x", "Klingon-1"));
         let err = apply_summary_updates_encoded(&mut pkg, &updates).expect_err("unknown enc");
         let msg = format!("{err}");
         assert!(msg.contains("unknown encoding label"), "got: {msg}");
