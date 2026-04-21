@@ -280,7 +280,17 @@ pub fn generate_report(doc: &PidDocument) -> String {
         )
         .ok();
         for e in &t.entries {
-            writeln!(out, "  [@+{:04X}] {}", e.name_offset, e.name).ok();
+            write!(
+                out,
+                "  [@+{:04X}] {} (rec_len={}, name@{:04X}",
+                e.record_offset, e.name, e.record_len, e.name_offset
+            )
+            .ok();
+            if !e.prefix_bytes.is_empty() {
+                let hex: Vec<String> = e.prefix_bytes.iter().map(|b| format!("{:02X}", b)).collect();
+                write!(out, ", prefix=[{}]", hex.join(" ")).ok();
+            }
+            writeln!(out, ")").ok();
         }
         if t.entries.len() as u32 != t.count {
             writeln!(
@@ -291,6 +301,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             )
             .ok();
         }
+        if t.trailing_bytes > 0 {
+            writeln!(out, "  ({} trailing bytes)", t.trailing_bytes).ok();
+        }
     }
 
     if let Some(ref t) = doc.psm_segment_table {
@@ -300,24 +313,38 @@ pub fn generate_report(doc: &PidDocument) -> String {
             t.size, t.count
         )
         .ok();
-        let flags_hex: Vec<String> = t.flags.iter().map(|b| format!("0x{:02X}", b)).collect();
-        writeln!(out, "  flags: [{}]", flags_hex.join(", ")).ok();
+        if !t.entries.is_empty() {
+            for e in t.entries.iter().take(20) {
+                writeln!(
+                    out,
+                    "  [{}] @+{:04X} flag=0x{:02X}",
+                    e.index, e.offset, e.flag
+                )
+                .ok();
+            }
+            if t.entries.len() > 20 {
+                writeln!(out, "  ... ({} more)", t.entries.len() - 20).ok();
+            }
+        } else {
+            let flags_hex: Vec<String> =
+                t.flags.iter().map(|b| format!("0x{:02X}", b)).collect();
+            writeln!(out, "  flags: [{}]", flags_hex.join(", ")).ok();
+        }
+        if t.trailing_bytes > 0 {
+            writeln!(out, "  ({} trailing bytes)", t.trailing_bytes).ok();
+        }
     }
 
     if let Some(ref vh) = doc.version_history {
         writeln!(
             out,
-            "\n--- Version History ({} bytes, {} records) ---",
+            "\n--- Version History ({} bytes, {} records, record_size={}) ---",
             vh.size,
-            vh.records.len()
+            vh.records.len(),
+            vh.record_size,
         )
         .ok();
         for r in &vh.records {
-            // Phase 10d: render the human label (SaveAs / Save /
-            // unknown) instead of the raw 2-char code; keep the raw
-            // code visible in parentheses when it does not match a
-            // recognized label so callers can audit SmartPlant samples
-            // that introduce new op codes.
             let raw_suffix = if r.is_recognized_operation() {
                 String::new()
             } else {
@@ -325,7 +352,8 @@ pub fn generate_report(doc: &PidDocument) -> String {
             };
             writeln!(
                 out,
-                "  [{}{} {}] {} {}",
+                "  [@+{:04X}] [{}{} {}] {} {}",
+                r.offset,
                 r.operation_label(),
                 raw_suffix,
                 r.timestamp,
@@ -333,6 +361,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 r.version,
             )
             .ok();
+        }
+        if vh.trailing_bytes > 0 {
+            writeln!(out, "  ({} trailing bytes)", vh.trailing_bytes).ok();
         }
     }
 
@@ -695,12 +726,17 @@ mod tests {
                 version: "0.0.1".into(),
                 operation: "SA".into(),
                 timestamp: "01/01/26 00:00".into(),
+                offset: 0,
             }],
+            record_size: 48,
+            trailing_bytes: 0,
         });
         doc.psm_segment_table = Some(PsmSegmentTable {
             size: 0,
             count: 0,
             flags: vec![],
+            entries: vec![],
+            trailing_bytes: 0,
         });
         let report = generate_report(&doc);
         assert!(
@@ -751,20 +787,25 @@ mod tests {
                         version: "090000.0144".into(),
                         operation: "SA".into(),
                         timestamp: "12/29/25 10:45".into(),
+                        offset: 0,
                     },
                     VersionRecord {
                         product: "SmartPlantPID.a".into(),
                         version: "090000.0144".into(),
                         operation: "SV".into(),
                         timestamp: "12/30/25 09:12".into(),
+                        offset: 48,
                     },
                     VersionRecord {
                         product: "SmartPlantPID.a".into(),
                         version: "090000.0144".into(),
                         operation: "XY".into(),
                         timestamp: "01/01/26 00:00".into(),
+                        offset: 96,
                     },
                 ],
+                record_size: 48,
+                trailing_bytes: 0,
             }),
             ..Default::default()
         };
@@ -781,11 +822,17 @@ mod tests {
             report.contains("[unknown (XY) 01/01/26 00:00]"),
             "unknown + raw-code suffix missing; report:\n{report}"
         );
-        // Regression guard: we must NOT still be emitting the old raw
-        // 2-char form as the leading tag.
         assert!(
             !report.contains("[SA 12/29/25"),
             "raw 'SA' form still appears; report:\n{report}"
+        );
+        assert!(
+            report.contains("record_size=48"),
+            "record_size missing from heading; report:\n{report}"
+        );
+        assert!(
+            report.contains("[@+0000]"),
+            "record offset missing; report:\n{report}"
         );
     }
 

@@ -22,7 +22,9 @@
 //!   - `[u32 count]`
 //!   - `[u8 × count]` per-segment flag bytes (observed: all `0x01`).
 
-use crate::model::{PsmClusterEntry, PsmClusterTable, PsmRootEntry, PsmRoots, PsmSegmentTable};
+use crate::model::{
+    PsmClusterEntry, PsmClusterTable, PsmRootEntry, PsmRoots, PsmSegmentEntry, PsmSegmentTable,
+};
 
 pub const ROOT_MAGIC: u32 = 0x746F_6F72; // 'root' (LE bytes: 72 6F 6F 74)
 pub const CLST_MAGIC: u32 = 0x7473_6C63; // 'clst'
@@ -90,12 +92,14 @@ pub fn parse_psm_roots(data: &[u8]) -> Option<PsmRoots> {
     })
 }
 
-/// Parse `PSMclustertable`. Extracts the canonical list of cluster names.
+/// Parse `PSMclustertable`. Extracts the canonical list of cluster names
+/// with per-record structural metadata.
 ///
-/// The per-record header layout (length / flags / cluster index) is still
-/// being reverse-engineered, so this parser only extracts the UTF-16LE ASCII
-/// names (runs of ≥ 4 printable ASCII chars encoded as UTF-16LE). In the
-/// sampled file this recovers 5/5 cluster names cleanly.
+/// Strategy: walk byte-by-byte from offset 8 (after magic + count header).
+/// Each record is bounded by finding a UTF-16LE ASCII name run (≥ 4 chars).
+/// Bytes between the previous record end and the name start are captured
+/// as `prefix_bytes` for audit. The name run plus any trailing null
+/// terminator complete the record.
 pub fn parse_psm_cluster_table(data: &[u8]) -> Option<PsmClusterTable> {
     let magic = read_u32_le(data, 0)?;
     if magic != CLST_MAGIC {
@@ -103,29 +107,42 @@ pub fn parse_psm_cluster_table(data: &[u8]) -> Option<PsmClusterTable> {
     }
     let count = read_u32_le(data, 4)?;
     let mut entries = Vec::new();
-    let mut i = 8;
+    let mut i = 8usize;
+    let mut record_start = i;
     while i + 2 <= data.len() {
         if is_ascii_utf16le(data, i) {
-            let start = i;
+            let name_start = i;
             let mut name = String::new();
             while i + 2 <= data.len() && is_ascii_utf16le(data, i) {
                 name.push(data[i] as char);
                 i += 2;
             }
+            // Skip trailing null terminator if present
+            if i + 2 <= data.len() && data[i] == 0 && data[i + 1] == 0 {
+                i += 2;
+            }
             if name.len() >= 4 {
+                let prefix = data[record_start..name_start].to_vec();
+                let record_len = i - record_start;
                 entries.push(PsmClusterEntry {
                     name,
-                    name_offset: start,
+                    name_offset: name_start,
+                    record_offset: record_start,
+                    record_len,
+                    prefix_bytes: prefix,
                 });
+                record_start = i;
             }
         } else {
             i += 1;
         }
     }
+    let trailing_bytes = data.len().saturating_sub(record_start);
     Some(PsmClusterTable {
         size: data.len() as u64,
         count,
         entries,
+        trailing_bytes,
     })
 }
 
@@ -144,10 +161,23 @@ pub fn parse_psm_segment_table(data: &[u8]) -> Option<PsmSegmentTable> {
     if flags_end > data.len() {
         return None;
     }
+    let flags: Vec<u8> = data[flags_start..flags_end].to_vec();
+    let entries: Vec<PsmSegmentEntry> = flags
+        .iter()
+        .enumerate()
+        .map(|(i, &flag)| PsmSegmentEntry {
+            index: i,
+            offset: flags_start + i,
+            flag,
+        })
+        .collect();
+    let trailing_bytes = data.len().saturating_sub(flags_end);
     Some(PsmSegmentTable {
         size: data.len() as u64,
         count,
-        flags: data[flags_start..flags_end].to_vec(),
+        flags,
+        entries,
+        trailing_bytes,
     })
 }
 
@@ -216,20 +246,29 @@ mod tests {
         let mut data = Vec::new();
         data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
         data.extend_from_slice(&2u32.to_le_bytes()); // count
-        data.extend_from_slice(&[0x01, 0x00, 0x00, 0x01, 0, 0]); // filler
+        let prefix1 = [0x01, 0x00, 0x00, 0x01, 0x00, 0x00];
+        data.extend_from_slice(&prefix1); // filler before name
+        let name1_offset = data.len();
         data.extend(utf16_bytes("PSMcluster0"));
-        data.extend_from_slice(&[0, 0, 0, 0]); // separator
+        data.extend_from_slice(&[0, 0]); // null terminator
+        let sep = [0x00, 0x00]; // separator between records
+        data.extend_from_slice(&sep);
+        let name2_offset = data.len();
         data.extend(utf16_bytes("StyleCluster"));
         let t = parse_psm_cluster_table(&data).expect("valid");
         assert_eq!(t.count, 2);
         assert_eq!(t.entries.len(), 2);
         assert_eq!(t.entries[0].name, "PSMcluster0");
+        assert_eq!(t.entries[0].name_offset, name1_offset);
+        assert_eq!(t.entries[0].record_offset, 8);
+        assert!(t.entries[0].record_len > 0);
+        assert_eq!(t.entries[0].prefix_bytes, prefix1.to_vec());
         assert_eq!(t.entries[1].name, "StyleCluster");
+        assert_eq!(t.entries[1].name_offset, name2_offset);
     }
 
     #[test]
     fn cluster_table_ignores_short_runs() {
-        // Single-char UTF-16LE 'A' should not be reported as a name.
         let mut data = Vec::new();
         data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
         data.extend_from_slice(&1u32.to_le_bytes());
@@ -241,6 +280,39 @@ mod tests {
     }
 
     #[test]
+    fn cluster_table_entry_records_offsets_and_prefix_bytes() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        let prefix = [0xAB, 0xCD, 0xEF, 0x12];
+        data.extend_from_slice(&prefix);
+        let name_off = data.len();
+        data.extend(utf16_bytes("TestCluster"));
+        data.extend_from_slice(&[0, 0]); // null terminator
+        let t = parse_psm_cluster_table(&data).expect("valid");
+        assert_eq!(t.entries.len(), 1);
+        let e = &t.entries[0];
+        assert_eq!(e.record_offset, 8);
+        assert_eq!(e.name_offset, name_off);
+        assert_eq!(e.prefix_bytes, prefix.to_vec());
+        assert!(e.record_len > 0);
+        assert_eq!(t.trailing_bytes, 0);
+    }
+
+    #[test]
+    fn cluster_table_reports_trailing_bytes() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend(utf16_bytes("TestName"));
+        data.extend_from_slice(&[0, 0]); // null terminator
+        data.extend_from_slice(&[0xDE, 0xAD, 0xBE]); // trailing
+        let t = parse_psm_cluster_table(&data).expect("valid");
+        assert_eq!(t.entries.len(), 1);
+        assert_eq!(t.trailing_bytes, 3);
+    }
+
+    #[test]
     fn segment_table_basic() {
         let mut data = Vec::new();
         data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
@@ -249,14 +321,48 @@ mod tests {
         let t = parse_psm_segment_table(&data).expect("valid");
         assert_eq!(t.count, 4);
         assert_eq!(t.flags, vec![0x01, 0x01, 0x01, 0x01]);
+        assert_eq!(t.entries.len(), 4);
+        assert_eq!(t.entries[0].index, 0);
+        assert_eq!(t.entries[0].offset, 8);
+        assert_eq!(t.entries[0].flag, 0x01);
+        assert_eq!(t.entries[3].index, 3);
+        assert_eq!(t.entries[3].offset, 11);
+        assert_eq!(t.trailing_bytes, 0);
     }
 
     #[test]
     fn segment_table_truncated_returns_none() {
         let mut data = Vec::new();
         data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
-        data.extend_from_slice(&10u32.to_le_bytes()); // claims 10 flags
-        data.extend_from_slice(&[0x01; 3]); // only 3 present
+        data.extend_from_slice(&10u32.to_le_bytes());
+        data.extend_from_slice(&[0x01; 3]);
         assert!(parse_psm_segment_table(&data).is_none());
+    }
+
+    #[test]
+    fn segment_table_exposes_indexed_entries() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        data.extend_from_slice(&3u32.to_le_bytes());
+        data.extend_from_slice(&[0x01, 0x02, 0x03]);
+        let t = parse_psm_segment_table(&data).expect("valid");
+        assert_eq!(t.entries.len(), 3);
+        for (i, e) in t.entries.iter().enumerate() {
+            assert_eq!(e.index, i);
+            assert_eq!(e.offset, 8 + i);
+        }
+        assert_eq!(t.entries[1].flag, 0x02);
+    }
+
+    #[test]
+    fn segment_table_reports_trailing_bytes() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        data.extend_from_slice(&2u32.to_le_bytes());
+        data.extend_from_slice(&[0x01, 0x01]);
+        data.extend_from_slice(&[0xAA, 0xBB]);
+        let t = parse_psm_segment_table(&data).expect("valid");
+        assert_eq!(t.entries.len(), 2);
+        assert_eq!(t.trailing_bytes, 2);
     }
 }

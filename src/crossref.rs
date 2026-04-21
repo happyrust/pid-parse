@@ -256,16 +256,26 @@ mod tests {
                     PsmClusterEntry {
                         name: "PSMcluster0".into(),
                         name_offset: 0,
+                        record_offset: 0,
+                        record_len: 0,
+                        prefix_bytes: vec![],
                     },
                     PsmClusterEntry {
                         name: "MissingCluster".into(),
                         name_offset: 0,
+                        record_offset: 0,
+                        record_len: 0,
+                        prefix_bytes: vec![],
                     },
                     PsmClusterEntry {
                         name: "Sheet6".into(),
                         name_offset: 0,
+                        record_offset: 0,
+                        record_len: 0,
+                        prefix_bytes: vec![],
                     },
                 ],
+                trailing_bytes: 0,
             });
         }
         doc.clusters.push(ClusterInfo {

@@ -681,6 +681,9 @@ pub struct PsmClusterTable {
     pub size: u64,
     pub count: u32,
     pub entries: Vec<PsmClusterEntry>,
+    /// Bytes after the last record that could not be attributed to any entry.
+    #[serde(default)]
+    pub trailing_bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -689,6 +692,16 @@ pub struct PsmClusterEntry {
     pub name: String,
     /// Offset inside the stream where the UTF-16LE name begins.
     pub name_offset: usize,
+    /// Offset inside the stream where this record starts (including prefix).
+    #[serde(default)]
+    pub record_offset: usize,
+    /// Total byte length of this record (prefix + name bytes).
+    #[serde(default)]
+    pub record_len: usize,
+    /// Raw bytes between record start and the name. Contains per-record
+    /// header fields whose semantics are not yet fully understood.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prefix_bytes: Vec<u8>,
 }
 
 /// Decoded `PSMsegmenttable` stream. In sampled file it is a fixed 12 bytes:
@@ -698,7 +711,25 @@ pub struct PsmClusterEntry {
 pub struct PsmSegmentTable {
     pub size: u64,
     pub count: u32,
+    /// Legacy flat flags array, kept for backward compatibility.
     pub flags: Vec<u8>,
+    /// Per-segment structured entries (index + offset + flag).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entries: Vec<PsmSegmentEntry>,
+    /// Bytes after the last flag that could not be attributed.
+    #[serde(default)]
+    pub trailing_bytes: usize,
+}
+
+/// A single segment entry from `PSMsegmenttable`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PsmSegmentEntry {
+    /// Zero-based index within the table.
+    pub index: usize,
+    /// Byte offset within the stream (relative to stream start).
+    pub offset: usize,
+    /// The raw flag byte for this segment.
+    pub flag: u8,
 }
 
 /// Decoded `DocVersion3` stream: fixed-size (48 bytes per record) version
@@ -707,6 +738,16 @@ pub struct PsmSegmentTable {
 pub struct VersionHistory {
     pub size: u64,
     pub records: Vec<VersionRecord>,
+    /// Fixed record size in bytes (always 48 for known samples).
+    #[serde(default = "default_record_size")]
+    pub record_size: usize,
+    /// Bytes after the last complete record that could not be interpreted.
+    #[serde(default)]
+    pub trailing_bytes: usize,
+}
+
+fn default_record_size() -> usize {
+    48
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -723,6 +764,9 @@ pub struct VersionRecord {
     /// Null-terminated ASCII timestamp, e.g. "12/29/25 10:45". Use
     /// [`Self::parsed_timestamp`] to destructure it.
     pub timestamp: String,
+    /// Byte offset of this record within the stream.
+    #[serde(default)]
+    pub offset: usize,
 }
 
 impl VersionRecord {
@@ -795,6 +839,7 @@ mod version_record_tests {
             version: "090000.0144".into(),
             operation: op.into(),
             timestamp: ts.into(),
+            offset: 0,
         }
     }
 

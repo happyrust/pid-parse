@@ -35,11 +35,15 @@ pub fn parse_doc_version3(data: &[u8]) -> Option<VersionHistory> {
         let version = zero_terminated_ascii(&chunk[16..28]);
         let operation = zero_terminated_ascii(&chunk[28..32]);
         let timestamp = zero_terminated_ascii(&chunk[32..48]);
+        if product.trim().is_empty() {
+            break;
+        }
         records.push(VersionRecord {
             product,
             version,
             operation,
             timestamp,
+            offset: pos,
         });
         pos += RECORD_SIZE;
     }
@@ -48,6 +52,8 @@ pub fn parse_doc_version3(data: &[u8]) -> Option<VersionHistory> {
     } else {
         Some(VersionHistory {
             size: data.len() as u64,
+            record_size: RECORD_SIZE,
+            trailing_bytes: data.len().saturating_sub(pos),
             records,
         })
     }
@@ -119,5 +125,51 @@ mod tests {
         data.extend(vec![0xFF; RECORD_SIZE]);
         let h = parse_doc_version3(&data).expect("valid");
         assert_eq!(h.records.len(), 1);
+    }
+
+    #[test]
+    fn doc_version3_records_expose_record_offset_and_trailing_bytes() {
+        let mut data = Vec::new();
+        for _ in 0..3 {
+            data.extend(fixed_field("SmartPlantPID.a", 16));
+            data.extend(fixed_field("090000.0144", 12));
+            data.extend(fixed_field("SV", 4));
+            data.extend(fixed_field("01/01/26 00:00", 16));
+        }
+        data.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let h = parse_doc_version3(&data).expect("valid");
+        assert_eq!(h.records.len(), 3);
+        assert_eq!(h.record_size, 48);
+        assert_eq!(h.trailing_bytes, 4);
+        assert_eq!(h.records[0].offset, 0);
+        assert_eq!(h.records[1].offset, 48);
+        assert_eq!(h.records[2].offset, 96);
+    }
+
+    #[test]
+    fn doc_version3_rejects_record_with_empty_product() {
+        let mut data = Vec::new();
+        data.extend(fixed_field("SmartPlantPID.a", 16));
+        data.extend(fixed_field("090000.0144", 12));
+        data.extend(fixed_field("SA", 4));
+        data.extend(fixed_field("12/29/25 10:45", 16));
+        // Second record: product starts with space (0x20) but is otherwise empty
+        let mut bad = vec![0x20u8];
+        bad.resize(RECORD_SIZE, 0);
+        data.extend(bad);
+        let h = parse_doc_version3(&data).expect("valid");
+        assert_eq!(h.records.len(), 1, "empty product stops parsing");
+    }
+
+    #[test]
+    fn doc_version3_zero_trailing_when_exact_fit() {
+        let mut data = Vec::new();
+        data.extend(fixed_field("SmartPlantPID.a", 16));
+        data.extend(fixed_field("090000.0144", 12));
+        data.extend(fixed_field("SA", 4));
+        data.extend(fixed_field("12/29/25 10:45", 16));
+        let h = parse_doc_version3(&data).expect("valid");
+        assert_eq!(h.trailing_bytes, 0);
     }
 }

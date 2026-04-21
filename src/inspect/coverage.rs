@@ -483,11 +483,14 @@ mod tests {
             size: 0,
             count: 0,
             entries: vec![],
+            trailing_bytes: 0,
         });
         doc.psm_segment_table = Some(PsmSegmentTable {
             size: 0,
             count: 0,
             flags: vec![],
+            entries: vec![],
+            trailing_bytes: 0,
         });
         doc.doc_version2_decoded = Some(DocVersion2 {
             magic_u32_le: 0x0001_0034,
@@ -501,7 +504,10 @@ mod tests {
                 version: "0.0.1".into(),
                 operation: "SA".into(),
                 timestamp: "01/01/26 00:00".into(),
+                offset: 0,
             }],
+            record_size: 48,
+            trailing_bytes: 0,
         });
         doc.app_object_registry = Some(AppObjectRegistry {
             size: 0,
@@ -695,7 +701,10 @@ mod tests {
                 version: "0.0.1".into(),
                 operation: "SA".into(),
                 timestamp: "01/01/26 00:00".into(),
+                offset: 0,
             }],
+            record_size: 48,
+            trailing_bytes: 0,
         });
         let report = coverage_report(&doc);
         assert_eq!(
