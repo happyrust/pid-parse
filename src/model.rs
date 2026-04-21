@@ -1413,6 +1413,13 @@ pub struct CrossReferenceGraph {
     /// debugging without dumping the full relationship vector.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provenance_chain_breaks: Vec<ProvenanceChainBreak>,
+    /// Phase 3 Step 4: per-`SheetStream` aggregation of the Step 1–3
+    /// provenance signals (1:1 with `doc.sheet_streams`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sheet_provenance: Vec<SheetProvenanceRef>,
+    /// Aggregate health of [`Self::sheet_provenance`].
+    #[serde(default)]
+    pub sheet_provenance_coverage: SheetProvenanceCoverage,
 }
 
 /// Comparison between `PSMclustertable` (declared) and the cluster / sheet
@@ -1637,6 +1644,44 @@ pub struct ProvenanceChainBreak {
     pub relationship_guid: String,
     pub stage: ProvenanceChainStage,
     pub reason: String,
+}
+
+/// Phase 3 Step 4 — per-`SheetStream` aggregation of the provenance signals
+/// collected by Step 1–3. One entry per `doc.sheet_streams[i]`, in source
+/// order. Flags:
+/// - `declared_in_psm = true` iff the sheet's storage path matched a
+///   `PSMclustertable` declared entry (see `ClusterCoverage.matches_detailed`).
+/// - `matched_declared_index` is the `declared_entries` index of the hit,
+///   or `None` if `declared_in_psm == false`.
+/// - `linked_relationship_count` counts how many
+///   [`RelationshipEndpointLink`]s point at this sheet path.
+/// - `fully_traced_relationship_count` counts the subset whose source and
+///   target drawing ids both resolved to a linked [`ObjectSourceRef`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SheetProvenanceRef {
+    pub sheet_path: String,
+    pub endpoint_record_count: usize,
+    pub declared_in_psm: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub matched_declared_index: Option<usize>,
+    pub linked_relationship_count: usize,
+    pub fully_traced_relationship_count: usize,
+}
+
+/// Aggregate health view for [`SheetProvenanceRef`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+pub struct SheetProvenanceCoverage {
+    /// Total sheets inspected (= `doc.sheet_streams.len()`).
+    pub total_sheets: usize,
+    /// Sheets declared in `PSMclustertable`.
+    pub declared_sheets: usize,
+    /// Sheets present on disk but not declared in `PSMclustertable`.
+    pub orphan_sheets: usize,
+    /// Sheets that carry at least one `SheetEndpointRecord`.
+    pub sheets_with_endpoint_records: usize,
+    /// Sheets declared in `PSMclustertable` but carrying no endpoint
+    /// records (empty-shell warning).
+    pub empty_declared_sheets: usize,
 }
 
 /// Symbol → JSite reverse index. One entry per unique `symbol_path`.

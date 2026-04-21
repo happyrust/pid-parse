@@ -15,7 +15,8 @@ use crate::model::{
     ClusterCoverageMatch, ClusterCoverageSourceKind, CrossReferenceGraph, DeclaredClusterRef,
     EndpointLinkCoverage, EntryKind, FoundClusterRef, ObjectSourceCoverage, ObjectSourceRef,
     PidDocument, ProvenanceChainBreak, ProvenanceChainCoverage, ProvenanceChainStage,
-    RelationshipEndpointLink, RootPresence, StorageNode, SymbolReference, SymbolUsage,
+    RelationshipEndpointLink, RootPresence, SheetProvenanceCoverage, SheetProvenanceRef,
+    StorageNode, SymbolReference, SymbolUsage,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,6 +39,9 @@ pub fn build_graph(doc: &PidDocument) -> CrossReferenceGraph {
     let (coverage, breaks) = build_provenance_chain(&graph);
     graph.provenance_chain_coverage = coverage;
     graph.provenance_chain_breaks = breaks;
+    let (sheet_provenance, sheet_provenance_coverage) = build_sheet_provenance(doc, &graph);
+    graph.sheet_provenance = sheet_provenance;
+    graph.sheet_provenance_coverage = sheet_provenance_coverage;
     graph
 }
 
@@ -553,6 +557,93 @@ fn build_provenance_chain(
     }
 
     (coverage, breaks)
+}
+
+/// Phase 3 Step 4 — aggregate the already-built provenance signals per
+/// `SheetStream`. Returns a ref per sheet (in source order) plus a
+/// coverage summary. Does not re-walk the binary stream.
+fn build_sheet_provenance(
+    doc: &PidDocument,
+    graph: &CrossReferenceGraph,
+) -> (Vec<SheetProvenanceRef>, SheetProvenanceCoverage) {
+    if doc.sheet_streams.is_empty() {
+        return (Vec::new(), SheetProvenanceCoverage::default());
+    }
+
+    let mut sheet_match_by_path: BTreeMap<&str, usize> = BTreeMap::new();
+    for m in &graph.cluster_coverage.matches_detailed {
+        if let Some(found) = graph.cluster_coverage.found_entries.get(m.found_index) {
+            if matches!(found.source_kind, ClusterCoverageSourceKind::SheetStream) {
+                sheet_match_by_path.insert(found.path.as_str(), m.declared_index);
+            }
+        }
+    }
+
+    let linked_ids: BTreeSet<&str> = graph
+        .object_sources
+        .iter()
+        .filter(|s| !s.missing_da_record)
+        .map(|s| s.drawing_id.as_str())
+        .collect();
+
+    let mut links_by_sheet: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for link in &graph.relationship_endpoint_links {
+        let Some(path) = link.sheet_path.as_deref() else {
+            continue;
+        };
+        let entry = links_by_sheet.entry(path).or_insert((0, 0));
+        entry.0 += 1;
+        let src_ok = link
+            .source_drawing_id
+            .as_deref()
+            .is_some_and(|id| linked_ids.contains(id));
+        let tgt_ok = link
+            .target_drawing_id
+            .as_deref()
+            .is_some_and(|id| linked_ids.contains(id));
+        if src_ok && tgt_ok {
+            entry.1 += 1;
+        }
+    }
+
+    let mut refs = Vec::with_capacity(doc.sheet_streams.len());
+    let mut coverage = SheetProvenanceCoverage {
+        total_sheets: doc.sheet_streams.len(),
+        ..Default::default()
+    };
+
+    for sheet in &doc.sheet_streams {
+        let endpoint_record_count = sheet.endpoint_records.len();
+        let matched_declared_index = sheet_match_by_path.get(sheet.path.as_str()).copied();
+        let declared_in_psm = matched_declared_index.is_some();
+        let (linked_relationship_count, fully_traced_relationship_count) = links_by_sheet
+            .get(sheet.path.as_str())
+            .copied()
+            .unwrap_or((0, 0));
+
+        if declared_in_psm {
+            coverage.declared_sheets += 1;
+        } else {
+            coverage.orphan_sheets += 1;
+        }
+        if endpoint_record_count > 0 {
+            coverage.sheets_with_endpoint_records += 1;
+        }
+        if declared_in_psm && endpoint_record_count == 0 {
+            coverage.empty_declared_sheets += 1;
+        }
+
+        refs.push(SheetProvenanceRef {
+            sheet_path: sheet.path.clone(),
+            endpoint_record_count,
+            declared_in_psm,
+            matched_declared_index,
+            linked_relationship_count,
+            fully_traced_relationship_count,
+        });
+    }
+
+    (refs, coverage)
 }
 
 #[cfg(test)]
@@ -1489,5 +1580,134 @@ mod tests {
             g.provenance_chain_breaks.len(),
             PROVENANCE_CHAIN_BREAK_SAMPLE_CAP
         );
+    }
+
+    #[test]
+    fn sheet_provenance_aggregates_endpoint_and_relationship_counts() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(PsmClusterTable {
+            size: 0,
+            count: 2,
+            entries: vec![
+                PsmClusterEntry {
+                    name: "Sheet6".into(),
+                    name_offset: 0,
+                    record_offset: 0,
+                    record_len: 0,
+                    prefix_bytes: vec![],
+                },
+                PsmClusterEntry {
+                    name: "Sheet7".into(),
+                    name_offset: 0,
+                    record_offset: 0,
+                    record_len: 0,
+                    prefix_bytes: vec![],
+                },
+            ],
+            trailing_bytes: 0,
+        });
+        doc.sheet_streams
+            .push(mk_sheet_with_endpoint("Sheet6", 100, 42, 77, 0x100));
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet7".into(),
+            path: "/Sheet7".into(),
+            size: 0,
+            extracted_texts: vec![],
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: vec![],
+            probe_summary: None,
+            endpoint_records: vec![],
+        });
+        doc.sheet_streams.push(SheetStream {
+            name: "SheetOrphan".into(),
+            path: "/SheetOrphan".into(),
+            size: 0,
+            extracted_texts: vec![],
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: vec![],
+            probe_summary: None,
+            endpoint_records: vec![SheetEndpointRecord {
+                sheet_path: "/SheetOrphan".into(),
+                offset: 0x200,
+                rel_field_x: 500,
+                endpoint_a: 10,
+                endpoint_b: 20,
+            }],
+        });
+        doc.dynamic_attributes = Some(mk_da_blob(vec![
+            mk_attribute_record("Instrument", Some("SRC1"), "decoded"),
+            mk_attribute_record("Drawing", Some("TGT1"), "decoded"),
+        ]));
+
+        let mut graph = ObjectGraph::default();
+        graph.objects.push(mk_object("SRC1", "Instrument", Some(1)));
+        graph.objects.push(mk_object("TGT1", "Drawing", Some(2)));
+        graph.relationships.push(mk_relationship(
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            Some(100),
+            Some("SRC1"),
+            Some("TGT1"),
+        ));
+        graph.relationships.push(mk_relationship(
+            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            Some(500),
+            Some("SRC-GHOST"),
+            Some("TGT1"),
+        ));
+        doc.object_graph = Some(graph);
+
+        let g = build_graph(&doc);
+        assert_eq!(g.sheet_provenance.len(), 3);
+
+        let sheet6 = g
+            .sheet_provenance
+            .iter()
+            .find(|s| s.sheet_path == "/Sheet6")
+            .expect("Sheet6 ref");
+        assert_eq!(sheet6.endpoint_record_count, 1);
+        assert!(sheet6.declared_in_psm);
+        assert_eq!(sheet6.linked_relationship_count, 1);
+        assert_eq!(sheet6.fully_traced_relationship_count, 1);
+
+        let sheet7 = g
+            .sheet_provenance
+            .iter()
+            .find(|s| s.sheet_path == "/Sheet7")
+            .expect("Sheet7 ref");
+        assert_eq!(sheet7.endpoint_record_count, 0);
+        assert!(sheet7.declared_in_psm);
+        assert_eq!(sheet7.linked_relationship_count, 0);
+
+        let orphan = g
+            .sheet_provenance
+            .iter()
+            .find(|s| s.sheet_path == "/SheetOrphan")
+            .expect("orphan sheet ref");
+        assert!(!orphan.declared_in_psm);
+        assert_eq!(orphan.endpoint_record_count, 1);
+        assert_eq!(orphan.linked_relationship_count, 1);
+        assert_eq!(orphan.fully_traced_relationship_count, 0);
+
+        let cov = &g.sheet_provenance_coverage;
+        assert_eq!(cov.total_sheets, 3);
+        assert_eq!(cov.declared_sheets, 2);
+        assert_eq!(cov.orphan_sheets, 1);
+        assert_eq!(cov.sheets_with_endpoint_records, 2);
+        assert_eq!(cov.empty_declared_sheets, 1);
+    }
+
+    #[test]
+    fn sheet_provenance_empty_without_sheet_streams() {
+        let doc = PidDocument::default();
+        let g = build_graph(&doc);
+        assert!(g.sheet_provenance.is_empty());
+        let cov = &g.sheet_provenance_coverage;
+        assert_eq!(cov.total_sheets, 0);
+        assert_eq!(cov.declared_sheets, 0);
+        assert_eq!(cov.orphan_sheets, 0);
     }
 }
