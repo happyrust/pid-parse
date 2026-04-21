@@ -14,8 +14,7 @@ use crate::model::{
     AttributeClassRecordRef, AttributeClassSummary, AttributeValue, ClusterCoverage,
     ClusterCoverageMatch, ClusterCoverageSourceKind, CrossReferenceGraph, DeclaredClusterRef,
     EndpointLinkCoverage, EntryKind, FoundClusterRef, ObjectSourceCoverage, ObjectSourceRef,
-    PidDocument, RelationshipEndpointLink, RootPresence, StorageNode, SymbolReference,
-    SymbolUsage,
+    PidDocument, RelationshipEndpointLink, RootPresence, StorageNode, SymbolReference, SymbolUsage,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -383,8 +382,11 @@ fn build_object_sources(doc: &PidDocument) -> (Vec<ObjectSourceRef>, ObjectSourc
                     if v.is_empty() {
                         continue;
                     }
-                    idx.entry(v.as_str())
-                        .or_insert((i, rec.class_name.as_str(), rec.confidence.as_str()));
+                    idx.entry(v.as_str()).or_insert((
+                        i,
+                        rec.class_name.as_str(),
+                        rec.confidence.as_str(),
+                    ));
                 }
             }
             idx
@@ -1157,12 +1159,17 @@ mod tests {
         ]));
 
         let mut graph = ObjectGraph::default();
-        graph.objects.push(mk_object("OBJ-1", "Instrument", Some(0x1)));
+        graph
+            .objects
+            .push(mk_object("OBJ-1", "Instrument", Some(0x1)));
         doc.object_graph = Some(graph);
 
         let g = build_graph(&doc);
         assert_eq!(g.object_sources.len(), 1);
-        assert_eq!(g.object_sources[0].class_name.as_deref(), Some("Instrument"));
+        assert_eq!(
+            g.object_sources[0].class_name.as_deref(),
+            Some("Instrument")
+        );
         assert_eq!(g.object_sources[0].attribute_record_index, Some(0));
         assert_eq!(g.object_sources[0].confidence.as_deref(), Some("heuristic"));
     }
@@ -1183,7 +1190,9 @@ mod tests {
         let mut doc = PidDocument::default();
 
         let mut graph = ObjectGraph::default();
-        graph.objects.push(mk_object("OBJ-X", "Drawing", Some(0x10)));
+        graph
+            .objects
+            .push(mk_object("OBJ-X", "Drawing", Some(0x10)));
         graph.objects.push(mk_object("OBJ-Y", "Nozzle", None));
         doc.object_graph = Some(graph);
 
@@ -1219,7 +1228,9 @@ mod tests {
         doc.dynamic_attributes = Some(mk_da_blob(vec![rec]));
 
         let mut graph = ObjectGraph::default();
-        graph.objects.push(mk_object("OBJ-AL", "Drawing", Some(0x77)));
+        graph
+            .objects
+            .push(mk_object("OBJ-AL", "Drawing", Some(0x77)));
         doc.object_graph = Some(graph);
 
         let g = build_graph(&doc);
