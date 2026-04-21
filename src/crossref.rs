@@ -11,8 +11,9 @@
 //! Pure derivation: no I/O, no CFB access. Runs in memory on the decoded model.
 
 use crate::model::{
-    AttributeClassSummary, AttributeValue, ClusterCoverage, CrossReferenceGraph, EntryKind,
-    PidDocument, RootPresence, StorageNode, SymbolUsage,
+    AttributeClassRecordRef, AttributeClassSummary, AttributeValue, ClusterCoverage, ClusterCoverageMatch,
+    ClusterCoverageSourceKind, CrossReferenceGraph, DeclaredClusterRef, EntryKind, FoundClusterRef,
+    PidDocument, RootPresence, StorageNode, SymbolReference, SymbolUsage,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,18 +28,41 @@ pub fn build_graph(doc: &PidDocument) -> CrossReferenceGraph {
 }
 
 fn build_cluster_coverage(doc: &PidDocument) -> ClusterCoverage {
-    let declared: Vec<String> = doc
+    let declared_entries: Vec<DeclaredClusterRef> = doc
         .psm_cluster_table
         .as_ref()
-        .map(|t| t.entries.iter().map(|e| e.name.clone()).collect())
+        .map(|t| {
+            t.entries
+                .iter()
+                .map(|e| DeclaredClusterRef {
+                    name: e.name.clone(),
+                    record_offset: e.record_offset,
+                    name_offset: e.name_offset,
+                    record_len: e.record_len,
+                })
+                .collect()
+        })
         .unwrap_or_default();
+    let declared: Vec<String> = declared_entries.iter().map(|e| e.name.clone()).collect();
 
-    let mut found_set: BTreeSet<String> = BTreeSet::new();
+    let mut found_entries = Vec::new();
     for c in &doc.clusters {
-        found_set.insert(c.name.clone());
+        found_entries.push(FoundClusterRef {
+            name: c.name.clone(),
+            source_kind: ClusterCoverageSourceKind::PsmCluster,
+            path: c.path.clone(),
+        });
     }
     for s in &doc.sheet_streams {
-        found_set.insert(s.name.clone());
+        found_entries.push(FoundClusterRef {
+            name: s.name.clone(),
+            source_kind: ClusterCoverageSourceKind::SheetStream,
+            path: s.path.clone(),
+        });
+    }
+    let mut found_set: BTreeSet<String> = BTreeSet::new();
+    for entry in &found_entries {
+        found_set.insert(entry.name.clone());
     }
     let found: Vec<String> = found_set.iter().cloned().collect();
 
@@ -58,35 +82,59 @@ fn build_cluster_coverage(doc: &PidDocument) -> ClusterCoverage {
         .filter(|n| !declared_set.contains(n))
         .cloned()
         .collect();
+    let matches_detailed: Vec<ClusterCoverageMatch> = declared_entries
+        .iter()
+        .enumerate()
+        .filter_map(|(declared_index, declared_entry)| {
+            found_entries
+                .iter()
+                .position(|found_entry| found_entry.name == declared_entry.name)
+                .map(|found_index| ClusterCoverageMatch {
+                    name: declared_entry.name.clone(),
+                    declared_index,
+                    found_index,
+                })
+        })
+        .collect();
 
     ClusterCoverage {
         declared,
+        declared_entries,
         found,
+        found_entries,
         matched,
+        matches_detailed,
         declared_missing,
         found_extra,
     }
 }
 
 fn build_symbol_usage(doc: &PidDocument) -> Vec<SymbolUsage> {
-    let mut by_path: BTreeMap<String, (Option<String>, BTreeSet<String>)> = BTreeMap::new();
+    let mut by_path: BTreeMap<String, (Option<String>, BTreeSet<String>, Vec<SymbolReference>)> =
+        BTreeMap::new();
 
     for js in &doc.jsites {
         let Some(ref path) = js.symbol_path else {
             continue;
         };
-        let entry = by_path
-            .entry(path.clone())
-            .or_insert_with(|| (js.symbol_name.clone(), BTreeSet::new()));
+        let entry = by_path.entry(path.clone()).or_insert_with(|| {
+            (js.symbol_name.clone(), BTreeSet::new(), Vec::new())
+        });
         if entry.0.is_none() {
             entry.0 = js.symbol_name.clone();
         }
         entry.1.insert(js.name.clone());
+        entry.2.push(SymbolReference {
+            jsite_name: js.name.clone(),
+            jsite_path: js.path.clone(),
+            local_symbol_path: js.local_symbol_path.clone(),
+            has_ole_stream: js.has_ole_stream,
+        });
     }
 
     by_path
         .into_iter()
-        .map(|(symbol_path, (symbol_name, names))| {
+        .map(|(symbol_path, (symbol_name, names, references))| {
             let jsite_names: Vec<String> = names.into_iter().collect();
             let usage_count = jsite_names.len();
             SymbolUsage {
@@ -94,6 +142,7 @@ fn build_symbol_usage(doc: &PidDocument) -> Vec<SymbolUsage> {
                 symbol_name,
                 jsite_names,
                 usage_count,
+                references,
             }
         })
         .collect()
@@ -112,6 +161,8 @@ fn build_attribute_classes(doc: &PidDocument) -> Vec<AttributeClassSummary> {
     for rec in &da.attribute_records {
         let bucket = agg.entry(rec.class_name.clone()).or_default();
         bucket.record_count += 1;
+        let mut record_drawing_ids = BTreeSet::new();
+        let mut record_model_ids = BTreeSet::new();
 
         for field in &rec.attributes {
             bucket.names.insert(field.name.clone());
@@ -122,14 +173,23 @@ fn build_attribute_classes(doc: &PidDocument) -> Vec<AttributeClassSummary> {
                 match field.name.as_str() {
                     "DrawingID" | "DrawingNo" => {
                         bucket.drawing_ids.insert(v.clone());
+                        record_drawing_ids.insert(v.clone());
                     }
                     "ModelID" => {
                         bucket.model_ids.insert(v.clone());
+                        record_model_ids.insert(v.clone());
                     }
                     _ => {}
                 }
             }
         }
+        bucket.records.push(AttributeClassRecordRef {
+            class_name: rec.class_name.clone(),
+            attribute_count: rec.attributes.len(),
+            confidence: rec.confidence.clone(),
+            drawing_ids: record_drawing_ids.into_iter().collect(),
+            model_ids: record_model_ids.into_iter().collect(),
+        });
     }
 
     agg.into_iter()
@@ -144,6 +204,7 @@ fn build_attribute_classes(doc: &PidDocument) -> Vec<AttributeClassSummary> {
                 drawing_ids: a.drawing_ids.into_iter().collect(),
                 model_ids,
                 unique_attribute_names: a.names.into_iter().collect(),
+                records: a.records,
             }
         })
         .collect()
@@ -155,6 +216,7 @@ struct AttrAgg {
     drawing_ids: BTreeSet<String>,
     model_ids: BTreeSet<String>,
     names: BTreeSet<String>,
+    records: Vec<AttributeClassRecordRef>,
 }
 
 fn build_root_presence(doc: &PidDocument) -> Vec<RootPresence> {
@@ -317,6 +379,106 @@ mod tests {
         assert_eq!(cov.matched, vec!["PSMcluster0", "Sheet6"]);
         assert_eq!(cov.declared_missing, vec!["MissingCluster"]);
         assert_eq!(cov.found_extra, vec!["UnexpectedCluster"]);
+        assert_eq!(cov.declared_entries.len(), 3);
+        assert_eq!(cov.found_entries.len(), 3);
+        assert_eq!(cov.matches_detailed.len(), 2);
+        assert_eq!(cov.declared_entries[0].name, "PSMcluster0");
+        assert_eq!(
+            cov.found_entries[0].source_kind,
+            ClusterCoverageSourceKind::PsmCluster
+        );
+        assert_eq!(
+            cov.found_entries[2].source_kind,
+            ClusterCoverageSourceKind::SheetStream
+        );
+    }
+
+    #[test]
+    fn cluster_coverage_records_declared_entry_provenance() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(PsmClusterTable {
+            size: 0,
+            count: 1,
+            entries: vec![PsmClusterEntry {
+                name: "PSMcluster0".into(),
+                name_offset: 0x14,
+                record_offset: 0x08,
+                record_len: 0x20,
+                prefix_bytes: vec![0xAA, 0xBB],
+            }],
+            trailing_bytes: 0,
+        });
+
+        let cov = build_cluster_coverage(&doc);
+        assert_eq!(cov.declared_entries.len(), 1);
+        let entry = &cov.declared_entries[0];
+        assert_eq!(entry.name, "PSMcluster0");
+        assert_eq!(entry.record_offset, 0x08);
+        assert_eq!(entry.name_offset, 0x14);
+        assert_eq!(entry.record_len, 0x20);
+    }
+
+    #[test]
+    fn cluster_coverage_records_found_entry_provenance() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(PsmClusterTable {
+            size: 0,
+            count: 2,
+            entries: vec![
+                PsmClusterEntry {
+                    name: "PSMcluster0".into(),
+                    name_offset: 0,
+                    record_offset: 0,
+                    record_len: 0,
+                    prefix_bytes: vec![],
+                },
+                PsmClusterEntry {
+                    name: "Sheet6".into(),
+                    name_offset: 0,
+                    record_offset: 0,
+                    record_len: 0,
+                    prefix_bytes: vec![],
+                },
+            ],
+            trailing_bytes: 0,
+        });
+        doc.clusters.push(ClusterInfo {
+            name: "PSMcluster0".into(),
+            path: "/PSMcluster0".into(),
+            size: 0,
+            magic_u32_le: None,
+            extracted_strings: vec![],
+            kind: ClusterKind::PsmCluster,
+            header: None,
+            string_table: None,
+            probe_info: None,
+        });
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 0,
+            extracted_texts: vec![],
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: vec![],
+            probe_summary: None,
+            endpoint_records: vec![],
+        });
+
+        let cov = build_cluster_coverage(&doc);
+        assert_eq!(cov.found_entries.len(), 2);
+        assert_eq!(cov.matches_detailed.len(), 2);
+        assert_eq!(cov.found_entries[0].path, "/PSMcluster0");
+        assert_eq!(cov.found_entries[1].path, "/Sheet6");
+        assert_eq!(
+            cov.matches_detailed[0],
+            ClusterCoverageMatch {
+                name: "PSMcluster0".into(),
+                declared_index: 0,
+                found_index: 0,
+            }
+        );
     }
 
     #[test]
@@ -342,12 +504,36 @@ mod tests {
             a.jsite_names,
             vec!["JSite0".to_string(), "JSite1".to_string()]
         );
+        assert_eq!(a.references.len(), 2);
+        assert_eq!(a.references[0].jsite_name, "JSite0");
+        assert_eq!(a.references[0].jsite_path, "/JSite0");
 
         let b = usage
             .iter()
             .find(|u| u.symbol_path.ends_with("B.sym"))
             .unwrap();
         assert_eq!(b.usage_count, 1);
+    }
+
+    #[test]
+    fn symbol_usage_records_reference_provenance() {
+        let mut doc = PidDocument::default();
+        let mut js = mk_jsite("JSite0", Some("C:\\sym\\Valve.sym"), Some("Valve"));
+        js.local_symbol_path = Some("D:\\cache\\Valve.sym".into());
+        js.has_ole_stream = true;
+        doc.jsites.push(js);
+
+        let usage = build_symbol_usage(&doc);
+        assert_eq!(usage.len(), 1);
+        assert_eq!(
+            usage[0].references[0],
+            SymbolReference {
+                jsite_name: "JSite0".into(),
+                jsite_path: "/JSite0".into(),
+                local_symbol_path: Some("D:\\cache\\Valve.sym".into()),
+                has_ole_stream: true,
+            }
+        );
     }
 
     #[test]
@@ -408,12 +594,54 @@ mod tests {
             .unique_attribute_names
             .iter()
             .any(|n| n == "ModelItemType"));
+        assert_eq!(pid.records.len(), 2);
+        assert_eq!(pid.records[0].class_name, "P&IDAttributes");
+        assert_eq!(pid.records[0].confidence, "heuristic");
 
         let pr = classes.iter().find(|c| c.class_name == "PipeRun").unwrap();
         assert!(pr.drawing_ids.is_empty(), "PipeRun has no DrawingID attrs");
         assert_eq!(
             pr.unique_attribute_names,
             vec!["Service".to_string(), "Size".to_string()]
+        );
+    }
+
+    #[test]
+    fn attribute_classes_record_provenance_per_record() {
+        let mut doc = PidDocument::default();
+        doc.dynamic_attributes = Some(DynamicAttributesBlob {
+            path: "/Unclustered Dynamic Attributes".into(),
+            size: 0,
+            magic_u32_le: None,
+            strings: vec![],
+            relationships: vec![],
+            class_names: vec![],
+            raw_preview_hex: String::new(),
+            header: None,
+            attribute_records: vec![mk_record(
+                "Instrument",
+                vec![
+                    text_attr("DrawingID", "DWG-01"),
+                    text_attr("ModelID", "M-100"),
+                    text_attr("Tag", "FIT-001"),
+                ],
+            )],
+            probe_summary: None,
+            relationship_probes: vec![],
+            record_trailers: vec![],
+        });
+
+        let classes = build_attribute_classes(&doc);
+        assert_eq!(classes.len(), 1);
+        assert_eq!(
+            classes[0].records[0],
+            AttributeClassRecordRef {
+                class_name: "Instrument".into(),
+                attribute_count: 3,
+                confidence: "heuristic".into(),
+                drawing_ids: vec!["DWG-01".into()],
+                model_ids: vec!["M-100".into()],
+            }
         );
     }
 

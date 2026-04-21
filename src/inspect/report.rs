@@ -606,6 +606,39 @@ pub fn generate_report(doc: &PidDocument) -> String {
             )
             .ok();
         }
+        if !cov.declared_entries.is_empty()
+            || !cov.found_entries.is_empty()
+            || !cov.matches_detailed.is_empty()
+        {
+            writeln!(out, "  Cluster refs:").ok();
+            writeln!(out, "    declared entries: {}", cov.declared_entries.len()).ok();
+            writeln!(out, "    found entries: {}", cov.found_entries.len()).ok();
+            writeln!(out, "    matched detailed: {}", cov.matches_detailed.len()).ok();
+            for entry in cov.declared_entries.iter().take(3) {
+                writeln!(
+                    out,
+                    "    decl {} @+{:04X} len={} name@{:04X}",
+                    entry.name, entry.record_offset, entry.record_len, entry.name_offset
+                )
+                .ok();
+            }
+            for entry in cov.found_entries.iter().take(3) {
+                writeln!(
+                    out,
+                    "    found {} [{:?}] {}",
+                    entry.name, entry.source_kind, entry.path
+                )
+                .ok();
+            }
+            for entry in cov.matches_detailed.iter().take(3) {
+                writeln!(
+                    out,
+                    "    match {} decl#{} -> found#{}",
+                    entry.name, entry.declared_index, entry.found_index
+                )
+                .ok();
+            }
+        }
 
         if !xr.symbol_usage.is_empty() {
             writeln!(
@@ -636,6 +669,47 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
             if xr.symbol_usage.len() > 5 {
                 writeln!(out, "    ... ({} more)", xr.symbol_usage.len() - 5).ok();
+            }
+            writeln!(out, "  Symbol refs:").ok();
+            for u in xr.symbol_usage.iter().take(3) {
+                for r in u.references.iter().take(3) {
+                    let local = r
+                        .local_symbol_path
+                        .as_deref()
+                        .map(|p| format!(" local={p}"))
+                        .unwrap_or_default();
+                    let ole = if r.has_ole_stream { " [OLE]" } else { "" };
+                    writeln!(
+                        out,
+                        "    {} <- {}{}{}",
+                        u.symbol_path, r.jsite_name, local, ole
+                    )
+                    .ok();
+                }
+            }
+        }
+        if !xr.attribute_classes.is_empty() {
+            writeln!(out, "  Attribute class refs:").ok();
+            for class in xr.attribute_classes.iter().take(3) {
+                writeln!(
+                    out,
+                    "    {}: {} records",
+                    class.class_name,
+                    class.records.len()
+                )
+                .ok();
+                for record in class.records.iter().take(2) {
+                    writeln!(
+                        out,
+                        "      rec class={} attrs={} conf={} drawing_ids={:?} model_ids={:?}",
+                        record.class_name,
+                        record.attribute_count,
+                        record.confidence,
+                        record.drawing_ids,
+                        record.model_ids
+                    )
+                    .ok();
+                }
             }
         }
 
@@ -848,5 +922,96 @@ mod tests {
             cov_pos < unk_pos,
             "Coverage must render before the legacy Unidentified section"
         );
+    }
+
+    #[test]
+    fn report_cross_reference_shows_cluster_provenance_details() {
+        let mut doc = PidDocument::default();
+        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
+            cluster_coverage: crate::model::ClusterCoverage {
+                declared: vec!["Sheet6".into()],
+                declared_entries: vec![crate::model::DeclaredClusterRef {
+                    name: "Sheet6".into(),
+                    record_offset: 8,
+                    name_offset: 16,
+                    record_len: 24,
+                }],
+                found: vec!["Sheet6".into()],
+                found_entries: vec![crate::model::FoundClusterRef {
+                    name: "Sheet6".into(),
+                    source_kind: crate::model::ClusterCoverageSourceKind::SheetStream,
+                    path: "/Sheet6".into(),
+                }],
+                matched: vec!["Sheet6".into()],
+                matches_detailed: vec![crate::model::ClusterCoverageMatch {
+                    name: "Sheet6".into(),
+                    declared_index: 0,
+                    found_index: 0,
+                }],
+                declared_missing: vec![],
+                found_extra: vec![],
+            },
+            ..Default::default()
+        });
+
+        let report = generate_report(&doc);
+        assert!(report.contains("Cluster refs:"), "{report}");
+        assert!(report.contains("declared entries: 1"), "{report}");
+        assert!(report.contains("found Sheet6 [SheetStream] /Sheet6"), "{report}");
+        assert!(report.contains("match Sheet6 decl#0 -> found#0"), "{report}");
+    }
+
+    #[test]
+    fn report_cross_reference_shows_symbol_reference_provenance() {
+        let mut doc = PidDocument::default();
+        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
+            symbol_usage: vec![crate::model::SymbolUsage {
+                symbol_path: r"\\srv\sym\Valve.sym".into(),
+                symbol_name: Some("Valve".into()),
+                jsite_names: vec!["JSite0".into()],
+                usage_count: 1,
+                references: vec![crate::model::SymbolReference {
+                    jsite_name: "JSite0".into(),
+                    jsite_path: "/JSite0".into(),
+                    local_symbol_path: Some(r"D:\cache\Valve.sym".into()),
+                    has_ole_stream: true,
+                }],
+            }],
+            ..Default::default()
+        });
+
+        let report = generate_report(&doc);
+        assert!(report.contains("Symbol refs:"), "{report}");
+        assert!(report.contains(r"\\srv\sym\Valve.sym <- JSite0"), "{report}");
+        assert!(report.contains(r"local=D:\cache\Valve.sym"), "{report}");
+        assert!(report.contains("[OLE]"), "{report}");
+    }
+
+    #[test]
+    fn report_cross_reference_shows_attribute_record_provenance() {
+        let mut doc = PidDocument::default();
+        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
+            attribute_classes: vec![crate::model::AttributeClassSummary {
+                class_name: "Instrument".into(),
+                record_count: 1,
+                drawing_ids: vec!["DWG-01".into()],
+                model_ids: vec!["M-100".into()],
+                unique_attribute_names: vec!["DrawingID".into(), "ModelID".into()],
+                records: vec![crate::model::AttributeClassRecordRef {
+                    class_name: "Instrument".into(),
+                    attribute_count: 3,
+                    confidence: "heuristic".into(),
+                    drawing_ids: vec!["DWG-01".into()],
+                    model_ids: vec!["M-100".into()],
+                }],
+            }],
+            ..Default::default()
+        });
+
+        let report = generate_report(&doc);
+        assert!(report.contains("Attribute class refs:"), "{report}");
+        assert!(report.contains("Instrument: 1 records"), "{report}");
+        assert!(report.contains("attrs=3"), "{report}");
+        assert!(report.contains("drawing_ids=[\"DWG-01\"]"), "{report}");
     }
 }

@@ -109,6 +109,64 @@ fn jsite_symbol_paths_are_clean() {
 }
 
 #[test]
+fn symbol_usage_provenance_matches_jsite_references() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let cross = doc
+        .cross_reference
+        .as_ref()
+        .expect("cross reference graph should be built");
+    for usage in &cross.symbol_usage {
+        assert_eq!(usage.references.len(), usage.usage_count);
+        for reference in &usage.references {
+            let js = doc
+                .jsites
+                .iter()
+                .find(|j| j.name == reference.jsite_name)
+                .expect("referenced JSite should exist");
+            assert_eq!(js.path, reference.jsite_path);
+            assert_eq!(js.local_symbol_path, reference.local_symbol_path);
+            assert_eq!(js.has_ole_stream, reference.has_ole_stream);
+            assert_eq!(
+                js.symbol_path.as_deref(),
+                Some(usage.symbol_path.as_str()),
+                "reference should point back to the grouped symbol path"
+            );
+        }
+    }
+}
+
+#[test]
+fn attribute_class_provenance_matches_dynamic_attribute_records() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let cross = doc
+        .cross_reference
+        .as_ref()
+        .expect("cross reference graph should be built");
+    let da = doc
+        .dynamic_attributes
+        .as_ref()
+        .expect("dynamic attributes should be decoded");
+
+    for class in &cross.attribute_classes {
+        let source_records: Vec<_> = da
+            .attribute_records
+            .iter()
+            .filter(|r| r.class_name == class.class_name)
+            .collect();
+        assert_eq!(class.records.len(), source_records.len());
+        for (record_ref, source) in class.records.iter().zip(source_records.iter()) {
+            assert_eq!(record_ref.class_name, source.class_name);
+            assert_eq!(record_ref.attribute_count, source.attributes.len());
+            assert_eq!(record_ref.confidence, source.confidence);
+        }
+    }
+}
+
+#[test]
 fn clusters_detected() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;
@@ -249,7 +307,22 @@ fn psm_segment_table_decoded() {
         .as_ref()
         .expect("PSMsegmenttable should be decoded");
     assert_eq!(t.count as usize, t.flags.len());
+    assert_eq!(t.entries.len(), t.count as usize);
     assert!(t.flags.iter().all(|&b| b == 0x01));
+    assert!(
+        t.entries
+            .windows(2)
+            .all(|pair| pair[0].offset < pair[1].offset),
+        "segment entry offsets should increase monotonically"
+    );
+    assert!(
+        t.entries
+            .iter()
+            .enumerate()
+            .all(|(i, e)| e.index == i && e.offset == 8 + i && e.flag == 0x01),
+        "entries should mirror the legacy flat flags payload"
+    );
+    assert_eq!(t.trailing_bytes, 0, "fixture should have no segment trailer");
 }
 
 #[test]
@@ -330,6 +403,84 @@ fn doc_version2_decoded_matches_version_history() {
             v2.version, build
         );
     }
+}
+
+#[test]
+fn psm_cluster_table_aligns_with_cross_reference_declared_clusters() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let table = doc
+        .psm_cluster_table
+        .as_ref()
+        .expect("PSMclustertable should be decoded");
+    let cross = doc
+        .cross_reference
+        .as_ref()
+        .expect("cross reference graph should be built");
+    let declared = &cross.cluster_coverage.declared;
+
+    assert_eq!(
+        table.entries.len(),
+        declared.len(),
+        "cross-reference declared set should mirror parsed cluster table entries"
+    );
+
+    let table_names: Vec<&str> = table.entries.iter().map(|e| e.name.as_str()).collect();
+    let declared_names: Vec<&str> = declared.iter().map(|s| s.as_str()).collect();
+    assert_eq!(
+        table_names, declared_names,
+        "cluster coverage declared names should preserve the parsed PSMclustertable order"
+    );
+    assert!(
+        cross.cluster_coverage.declared_missing.is_empty(),
+        "fixture should not declare missing cluster names"
+    );
+}
+
+#[test]
+fn cluster_coverage_provenance_matches_psm_cluster_table_offsets() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let table = doc
+        .psm_cluster_table
+        .as_ref()
+        .expect("PSMclustertable should be decoded");
+    let cross = doc
+        .cross_reference
+        .as_ref()
+        .expect("cross reference graph should be built");
+    let declared = &cross.cluster_coverage.declared_entries;
+
+    assert_eq!(declared.len(), table.entries.len());
+    for (declared_entry, table_entry) in declared.iter().zip(table.entries.iter()) {
+        assert_eq!(declared_entry.name, table_entry.name);
+        assert_eq!(declared_entry.record_offset, table_entry.record_offset);
+        assert_eq!(declared_entry.name_offset, table_entry.name_offset);
+        assert_eq!(declared_entry.record_len, table_entry.record_len);
+    }
+    assert_eq!(
+        cross.cluster_coverage.matches_detailed.len(),
+        cross.cluster_coverage.matched.len(),
+        "detailed matches should stay in sync with legacy matched summary"
+    );
+}
+
+#[test]
+fn psm_segment_table_entry_count_matches_declared_count() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let t = doc
+        .psm_segment_table
+        .as_ref()
+        .expect("PSMsegmenttable should be decoded");
+    assert_eq!(
+        t.entries.len(),
+        t.count as usize,
+        "segment table entries should match the declared segment count"
+    );
 }
 
 #[test]

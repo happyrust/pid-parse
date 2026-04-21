@@ -99,6 +99,7 @@ fn synth_document() -> PidDocument {
                 "Dynamic Attributes Metadata".into(),
                 "Unclustered Dynamic Attributes".into(),
             ],
+            declared_entries: vec![],
             found: vec![
                 "PSMcluster0".into(),
                 "StyleCluster".into(),
@@ -106,6 +107,7 @@ fn synth_document() -> PidDocument {
                 "Dynamic Attributes Metadata".into(),
                 "Unclustered Dynamic Attributes".into(),
             ],
+            found_entries: vec![],
             matched: vec![
                 "PSMcluster0".into(),
                 "StyleCluster".into(),
@@ -113,6 +115,7 @@ fn synth_document() -> PidDocument {
                 "Dynamic Attributes Metadata".into(),
                 "Unclustered Dynamic Attributes".into(),
             ],
+            matches_detailed: vec![],
             declared_missing: vec![],
             found_extra: vec![],
         },
@@ -123,12 +126,14 @@ fn synth_document() -> PidDocument {
         symbol_name: Some("Valve".into()),
         jsite_names: vec!["JSite0".into(), "JSite4".into(), "JSite7".into()],
         usage_count: 3,
+        references: vec![],
     });
     xr.symbol_usage.push(SymbolUsage {
         symbol_path: "\\\\server\\share\\Symbols\\Nozzle.sym".into(),
         symbol_name: Some("Nozzle".into()),
         jsite_names: vec!["JSite2".into()],
         usage_count: 1,
+        references: vec![],
     });
     xr.attribute_classes.push(AttributeClassSummary {
         class_name: "P&IDAttributes".into(),
@@ -136,6 +141,7 @@ fn synth_document() -> PidDocument {
         drawing_ids: vec!["DWG-0201GP06-01".into()],
         model_ids: vec!["V-001".into(), "PR-12".into(), "N-200".into()],
         unique_attribute_names: vec!["DrawingID".into(), "ModelID".into(), "ModelItemType".into()],
+        records: vec![],
     });
     xr.attribute_classes.push(AttributeClassSummary {
         class_name: "PipeRun".into(),
@@ -143,6 +149,7 @@ fn synth_document() -> PidDocument {
         drawing_ids: vec![],
         model_ids: vec![],
         unique_attribute_names: vec!["Service".into(), "Size".into()],
+        records: vec![],
     });
     xr.root_presence.push(RootPresence {
         name: "Imagineer Document".into(),

@@ -1393,14 +1393,51 @@ pub struct CrossReferenceGraph {
 pub struct ClusterCoverage {
     /// Names declared by `PSMclustertable`.
     pub declared: Vec<String>,
+    /// Provenance-preserving declared entries in original table order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declared_entries: Vec<DeclaredClusterRef>,
     /// Names found on-disk (cluster streams + sheet streams).
     pub found: Vec<String>,
+    /// Provenance-preserving found entries, including source kind and path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub found_entries: Vec<FoundClusterRef>,
     /// Names present in both sets.
     pub matched: Vec<String>,
+    /// Entry-level mapping between a declared item and its resolved found entry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matches_detailed: Vec<ClusterCoverageMatch>,
     /// Declared but not found on-disk (data-integrity warning).
     pub declared_missing: Vec<String>,
     /// Found on-disk but not declared (typically only when PSM is absent).
     pub found_extra: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub enum ClusterCoverageSourceKind {
+    PsmCluster,
+    SheetStream,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DeclaredClusterRef {
+    pub name: String,
+    pub record_offset: usize,
+    pub name_offset: usize,
+    pub record_len: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct FoundClusterRef {
+    pub name: String,
+    pub source_kind: ClusterCoverageSourceKind,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ClusterCoverageMatch {
+    pub name: String,
+    pub declared_index: usize,
+    pub found_index: usize,
 }
 
 /// Symbol → JSite reverse index. One entry per unique `symbol_path`.
@@ -1415,6 +1452,18 @@ pub struct SymbolUsage {
     pub jsite_names: Vec<String>,
     /// Number of references. Always equal to `jsite_names.len()`.
     pub usage_count: usize,
+    /// Provenance-preserving per-JSite references that contributed to this usage entry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<SymbolReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SymbolReference {
+    pub jsite_name: String,
+    pub jsite_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_symbol_path: Option<String>,
+    pub has_ole_stream: bool,
 }
 
 /// Per-class aggregation of Dynamic Attributes records.
@@ -1428,6 +1477,20 @@ pub struct AttributeClassSummary {
     pub model_ids: Vec<String>,
     /// Distinct attribute names encountered under this class (sorted, unique).
     pub unique_attribute_names: Vec<String>,
+    /// Provenance-preserving references to the contributing attribute records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub records: Vec<AttributeClassRecordRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct AttributeClassRecordRef {
+    pub class_name: String,
+    pub attribute_count: usize,
+    pub confidence: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drawing_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_ids: Vec<String>,
 }
 
 /// Describes whether a name published in `PSMroots` actually maps to a

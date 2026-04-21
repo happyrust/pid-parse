@@ -589,8 +589,11 @@ mod tests {
         let mut xr = CrossReferenceGraph {
             cluster_coverage: ClusterCoverage {
                 declared: vec!["A".into(), "Missing".into()],
+                declared_entries: vec![],
                 found: vec!["A".into(), "Extra".into()],
+                found_entries: vec![],
                 matched: vec!["A".into()],
+                matches_detailed: vec![],
                 declared_missing: vec!["Missing".into()],
                 found_extra: vec!["Extra".into()],
             },
@@ -601,6 +604,7 @@ mod tests {
             symbol_name: Some("Valve".into()),
             jsite_names: vec!["JSite0".into(), "JSite1".into()],
             usage_count: 2,
+            references: vec![],
         });
         xr.attribute_classes.push(AttributeClassSummary {
             class_name: "P&IDAttributes".into(),
@@ -608,6 +612,7 @@ mod tests {
             drawing_ids: vec![],
             model_ids: vec![],
             unique_attribute_names: vec!["DrawingID".into(), "ModelID".into()],
+            records: vec![],
         });
         xr.root_presence.push(RootPresence {
             name: "DocStore".into(),

@@ -978,12 +978,14 @@ mod tests {
                         symbol_name: Some("Off-Drawing.sym".into()),
                         jsite_names: vec!["JSite1".into()],
                         usage_count: 1,
+                        references: vec![],
                     },
                     crate::model::SymbolUsage {
                         symbol_path: r"\\srv\sym\Piping\Fittings\End Components\Cap2.sym".into(),
                         symbol_name: Some("Cap2.sym".into()),
                         jsite_names: vec!["JSite2".into()],
                         usage_count: 1,
+                        references: vec![],
                     },
                 ],
                 ..Default::default()

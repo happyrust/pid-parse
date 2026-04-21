@@ -276,6 +276,7 @@ mod tests {
                     symbol_name: Some("Valve".into()),
                     jsite_names: vec!["JSite0".into()],
                     usage_count: 1,
+                    references: vec![],
                 }],
                 attribute_classes: vec![],
                 root_presence: vec![RootPresence {
