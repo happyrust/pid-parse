@@ -22,6 +22,7 @@
 //!   - `[u32 count]`
 //!   - `[u8 × count]` per-segment flag bytes (observed: all `0x01`).
 
+use crate::byte_audit::{ByteRange, ParserTraceBuilder, TraceConfidence};
 use crate::model::{
     PsmClusterEntry, PsmClusterRecordProbe, PsmClusterTable, PsmRootEntry, PsmRoots,
     PsmSegmentEntry, PsmSegmentRecordProbe, PsmSegmentTable,
@@ -153,12 +154,39 @@ pub fn parse_psm_cluster_table(data: &[u8]) -> Option<PsmClusterTable> {
 ///
 /// Layout: `[u32 magic 'stab'][u32 count][u8 × count flags]`. Returns `None`
 /// if the magic/size are inconsistent.
+///
+/// This is a thin back-compat wrapper around
+/// [`parse_psm_segment_table_with_trace`] — callers that do not need
+/// byte-level coverage tracing can keep using this entry point
+/// unchanged. The trace is silently discarded.
 pub fn parse_psm_segment_table(data: &[u8]) -> Option<PsmSegmentTable> {
+    let mut trace = ParserTraceBuilder::new("parse_psm_segment_table");
+    parse_psm_segment_table_with_trace(data, &mut trace)
+}
+
+/// Phase 12b-1 trace-aware variant of [`parse_psm_segment_table`].
+///
+/// Every byte this parser consumes is reported to `trace`:
+/// - `[0..4]` — `stab` magic — `TraceConfidence::Decoded`
+/// - `[4..8]` — `count` u32 LE — `TraceConfidence::Decoded`
+/// - `[8 + i .. 8 + i + 1]` for `i ∈ 0..count` — individual flag bytes,
+///   marked `TraceConfidence::Probed` since their field semantics are
+///   still being reverse-engineered (see Phase 11b-probe).
+///
+/// `trailing_bytes` past the flag table are **not** consumed — they
+/// surface in the resulting `ParserTrace::leftover_ranges`.
+pub fn parse_psm_segment_table_with_trace(
+    data: &[u8],
+    trace: &mut ParserTraceBuilder,
+) -> Option<PsmSegmentTable> {
     let magic = read_u32_le(data, 0)?;
     if magic != STAB_MAGIC {
         return None;
     }
+    trace.consume(ByteRange::new(0, 4), TraceConfidence::Decoded);
     let count = read_u32_le(data, 4)?;
+    trace.consume(ByteRange::new(4, 8), TraceConfidence::Decoded);
+
     let flags_start = 8usize;
     let flags_end = flags_start.checked_add(count as usize)?;
     if flags_end > data.len() {
@@ -170,6 +198,11 @@ pub fn parse_psm_segment_table(data: &[u8]) -> Option<PsmSegmentTable> {
         .enumerate()
         .map(|(i, &flag)| {
             let offset = flags_start + i;
+            let off64 = offset as u64;
+            trace.consume(
+                ByteRange::new(off64, off64 + 1),
+                TraceConfidence::Probed,
+            );
             PsmSegmentEntry {
                 index: i,
                 offset,
@@ -626,6 +659,128 @@ mod tests {
         );
         assert_eq!(tail.flag_hex, "BB");
         assert_eq!(tail.stream_offset, 9);
+    }
+
+    #[test]
+    fn trace_aware_segment_parser_reports_complete_coverage_for_header_and_flags() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        data.extend_from_slice(&3u32.to_le_bytes());
+        data.extend_from_slice(&[0x01, 0x02, 0x03]);
+
+        let mut b = ParserTraceBuilder::new("parse_psm_segment_table");
+        let table = parse_psm_segment_table_with_trace(&data, &mut b)
+            .expect("trace-aware parser succeeds on valid input");
+        assert_eq!(table.entries.len(), 3);
+
+        let trace = b.build("/PSMsegmenttable", data.len() as u64);
+        assert_eq!(
+            trace.consumed_bytes(),
+            data.len() as u64,
+            "header (8) + flags (3) should total 11 consumed bytes"
+        );
+        assert!(
+            trace.leftover_ranges.is_empty(),
+            "no trailing bytes expected for this fixture; got {:?}",
+            trace.leftover_ranges
+        );
+        assert_eq!(trace.parser_name, "parse_psm_segment_table");
+    }
+
+    #[test]
+    fn trace_aware_segment_parser_marks_header_decoded_and_flags_probed() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        data.extend_from_slice(&2u32.to_le_bytes());
+        data.extend_from_slice(&[0x01, 0x01]);
+
+        let mut b = ParserTraceBuilder::new("parse_psm_segment_table");
+        parse_psm_segment_table_with_trace(&data, &mut b).expect("valid");
+        let trace = b.build("/PSMsegmenttable", data.len() as u64);
+
+        // Decoded bucket should include [0..8] (magic + count). Builder
+        // merges adjacent same-confidence ranges, so there's one entry.
+        assert_eq!(
+            trace.ranges_by_confidence.get(&TraceConfidence::Decoded),
+            Some(&vec![ByteRange::new(0, 8)])
+        );
+        // Probed bucket: one range per flag byte at offsets 8, 9 —
+        // builder merges them into one [8..10] because the code
+        // emits them consecutively with the same confidence.
+        assert_eq!(
+            trace.ranges_by_confidence.get(&TraceConfidence::Probed),
+            Some(&vec![ByteRange::new(8, 10)])
+        );
+        // No Raw ranges at all.
+        assert!(!trace
+            .ranges_by_confidence
+            .contains_key(&TraceConfidence::Raw));
+    }
+
+    #[test]
+    fn trace_aware_segment_parser_leaves_trailing_bytes_in_leftover() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        data.extend_from_slice(&2u32.to_le_bytes());
+        data.extend_from_slice(&[0x01, 0x01]);
+        data.extend_from_slice(&[0xDE, 0xAD, 0xBE]); // trailing bytes
+
+        let mut b = ParserTraceBuilder::new("parse_psm_segment_table");
+        let table = parse_psm_segment_table_with_trace(&data, &mut b).expect("valid");
+        assert_eq!(table.trailing_bytes, 3);
+
+        let trace = b.build("/PSMsegmenttable", data.len() as u64);
+        assert_eq!(trace.consumed_bytes(), 10); // 8 header + 2 flags
+        assert_eq!(trace.leftover_bytes(), 3);
+        assert_eq!(
+            trace.leftover_ranges,
+            vec![ByteRange::new(10, 13)],
+            "3 trailing bytes should surface as a single leftover range"
+        );
+    }
+
+    #[test]
+    fn trace_aware_segment_parser_emits_no_events_on_bad_magic() {
+        let data = [0u8; 16]; // magic is all-zero, not 'stab'
+        let mut b = ParserTraceBuilder::new("parse_psm_segment_table");
+        let out = parse_psm_segment_table_with_trace(&data, &mut b);
+        assert!(out.is_none());
+        let trace = b.build("/PSMsegmenttable", data.len() as u64);
+        assert_eq!(
+            trace.consumed_bytes(),
+            0,
+            "magic mismatch must short-circuit before any consume() call"
+        );
+    }
+
+    #[test]
+    fn back_compat_parse_psm_segment_table_matches_trace_variant_byte_for_byte() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        data.extend_from_slice(&4u32.to_le_bytes());
+        data.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+        data.extend_from_slice(&[0xAA, 0xBB]); // trailing
+
+        let without_trace = parse_psm_segment_table(&data).expect("old API works");
+
+        let mut b = ParserTraceBuilder::new("parse_psm_segment_table");
+        let with_trace =
+            parse_psm_segment_table_with_trace(&data, &mut b).expect("new API works");
+
+        // The thin wrapper around `_with_trace` must produce an
+        // identical table — down to entry probes — even though the
+        // wrapper throws the builder away.
+        assert_eq!(without_trace.size, with_trace.size);
+        assert_eq!(without_trace.count, with_trace.count);
+        assert_eq!(without_trace.flags, with_trace.flags);
+        assert_eq!(without_trace.trailing_bytes, with_trace.trailing_bytes);
+        assert_eq!(without_trace.entries.len(), with_trace.entries.len());
+        for (a, b_entry) in without_trace.entries.iter().zip(with_trace.entries.iter()) {
+            assert_eq!(a.index, b_entry.index);
+            assert_eq!(a.offset, b_entry.offset);
+            assert_eq!(a.flag, b_entry.flag);
+            assert_eq!(a.probe, b_entry.probe);
+        }
     }
 
     #[test]

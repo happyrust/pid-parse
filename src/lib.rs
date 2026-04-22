@@ -14,6 +14,7 @@ pub mod streams;
 pub mod writer;
 
 pub use api::{ParseOptions, PidParser};
+pub use byte_audit::{ByteRange, ParserTrace, ParserTraceBuilder, TraceConfidence};
 pub use error::PidError;
 pub use import_view::*;
 pub use layout::*;
