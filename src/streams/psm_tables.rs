@@ -22,7 +22,12 @@ pub fn parse_psm_tables<R: Read + std::io::Seek>(
         }
     }
     if let Some(data) = open_optional(cfb, "/PSMsegmenttable")? {
-        if let Some(t) = psm_tables::parse_psm_segment_table(&data) {
+        if let Some(mut t) = psm_tables::parse_psm_segment_table(&data) {
+            // Phase 11b-probe: backfill owner-cluster hints on each segment
+            // probe using the cluster table parsed just above (guaranteed
+            // to be the same fixture). Conservative fallback — hints are
+            // only filled when lengths agree.
+            psm_tables::apply_segment_owner_hints(&mut t, doc.psm_cluster_table.as_ref());
             doc.psm_segment_table = Some(t);
         }
     }

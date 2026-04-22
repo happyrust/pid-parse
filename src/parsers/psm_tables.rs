@@ -193,6 +193,35 @@ fn is_ascii_utf16le(data: &[u8], i: usize) -> bool {
     i + 1 < data.len() && (0x20..=0x7e).contains(&data[i]) && data[i + 1] == 0
 }
 
+/// Phase 11b-probe: **post-parse** step that backfills
+/// [`PsmSegmentRecordProbe::owner_cluster_hint`] on every entry of
+/// `segment_table` when a positional 1:1 mapping with `cluster_table` is
+/// the most natural guess (`segment_table.entries.len() ==
+/// cluster_table.entries.len()`).
+///
+/// When the counts disagree (or the cluster table is missing), all hints
+/// stay `None` — deliberately conservative to avoid over-claiming
+/// semantics before a second fixture arrives.
+///
+/// This helper lives here rather than in `streams::psm_tables` so it is
+/// unit-testable without needing a full CFB fixture.
+pub fn apply_segment_owner_hints(
+    segment_table: &mut PsmSegmentTable,
+    cluster_table: Option<&PsmClusterTable>,
+) {
+    let Some(ct) = cluster_table else {
+        return;
+    };
+    if segment_table.entries.len() != ct.entries.len() {
+        return;
+    }
+    for (segment, cluster) in segment_table.entries.iter_mut().zip(ct.entries.iter()) {
+        if let Some(probe) = segment.probe.as_mut() {
+            probe.owner_cluster_hint = Some(cluster.name.clone());
+        }
+    }
+}
+
 /// Phase 11b-probe: derive a [`PsmSegmentRecordProbe`] from a single flag
 /// byte plus the raw `PSMsegmenttable` stream. Pure computation — the
 /// `owner_cluster_hint` slot is left as `None` here; the dispatcher in
@@ -482,6 +511,98 @@ mod tests {
         let probe_last = t.entries[3].probe.as_ref().expect("probe populated");
         assert_eq!(probe_last.flag_hex, "04");
         assert_eq!(probe_last.stream_offset, 11);
+    }
+
+    #[test]
+    fn apply_segment_owner_hints_backfills_matching_lengths() {
+        // Build a 2-flag segment table with probes in place.
+        let mut seg_bytes = Vec::new();
+        seg_bytes.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        seg_bytes.extend_from_slice(&2u32.to_le_bytes());
+        seg_bytes.extend_from_slice(&[0x01, 0x01]);
+        let mut seg = parse_psm_segment_table(&seg_bytes).expect("valid");
+
+        // Build a 2-entry cluster table.
+        let mut cluster_bytes = Vec::new();
+        cluster_bytes.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        cluster_bytes.extend_from_slice(&2u32.to_le_bytes());
+        cluster_bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        cluster_bytes.extend(utf16_bytes("PSMcluster0"));
+        cluster_bytes.extend_from_slice(&[0, 0]);
+        cluster_bytes.extend(utf16_bytes("StyleCluster"));
+        cluster_bytes.extend_from_slice(&[0, 0]);
+        let cluster = parse_psm_cluster_table(&cluster_bytes).expect("valid");
+        assert_eq!(cluster.entries.len(), 2, "cluster fixture precondition");
+
+        apply_segment_owner_hints(&mut seg, Some(&cluster));
+
+        let hints: Vec<_> = seg
+            .entries
+            .iter()
+            .map(|e| {
+                e.probe
+                    .as_ref()
+                    .and_then(|p| p.owner_cluster_hint.clone())
+            })
+            .collect();
+        assert_eq!(
+            hints,
+            vec![
+                Some("PSMcluster0".to_string()),
+                Some("StyleCluster".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn apply_segment_owner_hints_skips_when_lengths_mismatch() {
+        let mut seg_bytes = Vec::new();
+        seg_bytes.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        seg_bytes.extend_from_slice(&3u32.to_le_bytes());
+        seg_bytes.extend_from_slice(&[0x01, 0x01, 0x01]);
+        let mut seg = parse_psm_segment_table(&seg_bytes).expect("valid");
+
+        let mut cluster_bytes = Vec::new();
+        cluster_bytes.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        cluster_bytes.extend_from_slice(&2u32.to_le_bytes());
+        cluster_bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        cluster_bytes.extend(utf16_bytes("OnlyOne"));
+        cluster_bytes.extend_from_slice(&[0, 0]);
+        cluster_bytes.extend(utf16_bytes("OnlyTwo"));
+        cluster_bytes.extend_from_slice(&[0, 0]);
+        let cluster = parse_psm_cluster_table(&cluster_bytes).expect("valid");
+        assert_eq!(cluster.entries.len(), 2);
+
+        apply_segment_owner_hints(&mut seg, Some(&cluster));
+
+        for entry in &seg.entries {
+            assert_eq!(
+                entry
+                    .probe
+                    .as_ref()
+                    .and_then(|p| p.owner_cluster_hint.clone()),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn apply_segment_owner_hints_noops_when_cluster_table_missing() {
+        let mut seg_bytes = Vec::new();
+        seg_bytes.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        seg_bytes.extend_from_slice(&1u32.to_le_bytes());
+        seg_bytes.extend_from_slice(&[0xAA]);
+        let mut seg = parse_psm_segment_table(&seg_bytes).expect("valid");
+
+        apply_segment_owner_hints(&mut seg, None);
+
+        assert_eq!(
+            seg.entries[0]
+                .probe
+                .as_ref()
+                .and_then(|p| p.owner_cluster_hint.clone()),
+            None
+        );
     }
 
     #[test]
