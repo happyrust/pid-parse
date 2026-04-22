@@ -1,4 +1,5 @@
 pub mod api;
+pub mod byte_audit;
 pub mod cfb;
 pub mod crossref;
 pub mod error;
