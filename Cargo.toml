@@ -9,6 +9,11 @@ license = "MIT OR Apache-2.0"
 base64 = "0.22"
 cfb = "0.10"
 quick-xml = { version = "0.38", features = ["serialize"] }
+# rusqlite with the `bundled` feature compiles a vendored sqlite3
+# so the crate has no host dependency on a system `sqlite3.dll` or
+# `libsqlite3`. Required for `publish::sqlite_load` which consumes
+# the SQLite file produced by the C# OrcaMdfProbe wrapper.
+rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

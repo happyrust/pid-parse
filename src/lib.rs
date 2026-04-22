@@ -10,6 +10,7 @@ pub mod layout;
 pub mod model;
 pub mod package;
 pub mod parsers;
+pub mod publish;
 pub mod schema;
 pub mod streams;
 pub mod writer;

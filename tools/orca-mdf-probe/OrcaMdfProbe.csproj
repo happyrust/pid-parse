@@ -1,0 +1,44 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OrcaMDF wrapper: reads MDF files via the locally-built fork of
+    OrcaMDF (sibling checkout at D:\work\plant-code\cad\OrcaMDF)
+    and exports tables to JSON or SQLite.
+
+    The local fork adds SqlFloat / SqlReal parsers that the stock
+    1.0 NuGet is missing — without these, every SmartPlant T_*
+    table with a float column fails to load.
+
+    We target net48 because OrcaMDF.Core still uses System.Data
+    APIs that .NET Core / .NET 5+ removed. Microsoft.Data.Sqlite
+    exposes a net48-compatible build so the SQLite export path
+    keeps working on this framework.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>10</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- `top-level statements` shipped in C# 9, keep enabled. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      System.Data.SQLite.Core bundles the native sqlite3 binary for
+      Windows x64 under net48 out of the box; no extra runtime
+      provisioning needed (unlike Microsoft.Data.Sqlite which
+      requires an e_sqlite3 bundle package).
+    -->
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
+    <!-- net48 does not ship System.Text.Json inbox; pull it in
+         explicitly for the JSON export mode. -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\OrcaMDF\src\OrcaMDF.Core\OrcaMDF.Core.csproj" />
+  </ItemGroup>
+
+</Project>
