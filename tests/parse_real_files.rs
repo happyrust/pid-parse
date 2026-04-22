@@ -1010,6 +1010,100 @@ fn psm_cluster_record_probes_match_entry_slice() {
 }
 
 #[test]
+fn psm_segment_record_probes_align_with_flags() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let table = doc
+        .psm_segment_table
+        .as_ref()
+        .expect("PSMsegmenttable decoded");
+
+    assert!(!table.entries.is_empty(), "fixture has segment entries");
+    assert_eq!(
+        table.entries.len(),
+        table.flags.len(),
+        "entries and flags should stay in sync (legacy flags array keeps \
+         parallel shape to the structured entries)"
+    );
+
+    for entry in &table.entries {
+        let probe = entry
+            .probe
+            .as_ref()
+            .expect("every segment entry should carry a probe");
+
+        assert_eq!(
+            probe.flag_hex,
+            format!("{:02X}", entry.flag),
+            "flag_hex should echo the raw flag byte",
+        );
+        assert_eq!(
+            probe.stream_offset, entry.offset,
+            "stream_offset must match entry.offset",
+        );
+
+        let window_tokens: Vec<_> = probe.neighbor_window_hex.split_whitespace().collect();
+        assert!(
+            (1..=7).contains(&window_tokens.len()),
+            "±3-byte window should yield 1..=7 tokens, got {}: {:?}",
+            window_tokens.len(),
+            window_tokens,
+        );
+    }
+
+    // Hint coverage: depending on fixture shape, either every probe has a
+    // hint (1:1 lengths) or none do. The code path is *never* allowed to
+    // emit partial hints.
+    let cluster_count = doc
+        .psm_cluster_table
+        .as_ref()
+        .map(|c| c.entries.len())
+        .unwrap_or(0);
+    let hint_count = table
+        .entries
+        .iter()
+        .filter_map(|e| e.probe.as_ref()?.owner_cluster_hint.as_ref())
+        .count();
+
+    if cluster_count == table.entries.len() && cluster_count > 0 {
+        assert_eq!(
+            hint_count,
+            table.entries.len(),
+            "when cluster and segment counts match, every segment probe \
+             must carry an owner_cluster_hint"
+        );
+        let expected_hints: Vec<_> = doc
+            .psm_cluster_table
+            .as_ref()
+            .expect("precondition")
+            .entries
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        let actual_hints: Vec<_> = table
+            .entries
+            .iter()
+            .map(|e| {
+                e.probe
+                    .as_ref()
+                    .and_then(|p| p.owner_cluster_hint.clone())
+                    .expect("hint populated per precondition above")
+            })
+            .collect();
+        assert_eq!(
+            actual_hints, expected_hints,
+            "1:1 positional hint mapping broken",
+        );
+    } else {
+        assert_eq!(
+            hint_count, 0,
+            "when counts disagree, all owner_cluster_hint slots must be None",
+        );
+    }
+}
+
+#[test]
 fn sheet_provenance_matches_sheet_streams() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;

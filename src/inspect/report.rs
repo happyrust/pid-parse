@@ -337,13 +337,25 @@ pub fn generate_report(doc: &PidDocument) -> String {
         )
         .ok();
         if !t.entries.is_empty() {
-            for e in t.entries.iter().take(20) {
+            for (entry_idx, e) in t.entries.iter().take(20).enumerate() {
                 writeln!(
                     out,
                     "  [{}] @+{:04X} flag=0x{:02X}",
                     e.index, e.offset, e.flag
                 )
                 .ok();
+                if entry_idx < 3 {
+                    if let Some(probe) = e.probe.as_ref() {
+                        writeln!(
+                            out,
+                            "    probe: flag={} window=[{}] owner_hint={}",
+                            probe.flag_hex,
+                            probe.neighbor_window_hex,
+                            probe.owner_cluster_hint.as_deref().unwrap_or("-"),
+                        )
+                        .ok();
+                    }
+                }
             }
             if t.entries.len() > 20 {
                 writeln!(out, "  ... ({} more)", t.entries.len() - 20).ok();
@@ -1384,6 +1396,87 @@ mod tests {
         assert!(
             report.contains("probe: first_u32_le=0x44332211 last_u32_le=0xDEADBEEF chars=11 trailer=[AA BB CC DD EE FF 00 00]"),
             "{report}"
+        );
+    }
+
+    #[test]
+    fn report_shows_psm_segment_record_probe_sample() {
+        let mut doc = PidDocument::default();
+        doc.psm_segment_table = Some(crate::model::PsmSegmentTable {
+            size: 12,
+            count: 4,
+            flags: vec![0x01, 0x01, 0x01, 0x01],
+            entries: vec![
+                crate::model::PsmSegmentEntry {
+                    index: 0,
+                    offset: 8,
+                    flag: 0x01,
+                    probe: Some(crate::model::PsmSegmentRecordProbe {
+                        flag_hex: "01".into(),
+                        neighbor_window_hex: "04 00 00 00 01 01 01".into(),
+                        stream_offset: 8,
+                        owner_cluster_hint: Some("PSMcluster0".into()),
+                    }),
+                },
+                crate::model::PsmSegmentEntry {
+                    index: 1,
+                    offset: 9,
+                    flag: 0x01,
+                    probe: Some(crate::model::PsmSegmentRecordProbe {
+                        flag_hex: "01".into(),
+                        neighbor_window_hex: "00 00 00 01 01 01".into(),
+                        stream_offset: 9,
+                        owner_cluster_hint: Some("StyleCluster".into()),
+                    }),
+                },
+                crate::model::PsmSegmentEntry {
+                    index: 2,
+                    offset: 10,
+                    flag: 0x01,
+                    probe: Some(crate::model::PsmSegmentRecordProbe {
+                        flag_hex: "01".into(),
+                        neighbor_window_hex: "00 00 01 01 01".into(),
+                        stream_offset: 10,
+                        owner_cluster_hint: None,
+                    }),
+                },
+                crate::model::PsmSegmentEntry {
+                    index: 3,
+                    offset: 11,
+                    flag: 0x01,
+                    probe: Some(crate::model::PsmSegmentRecordProbe {
+                        flag_hex: "01".into(),
+                        neighbor_window_hex: "00 01 01 01".into(),
+                        stream_offset: 11,
+                        owner_cluster_hint: None,
+                    }),
+                },
+            ],
+            trailing_bytes: 0,
+        });
+
+        let report = generate_report(&doc);
+
+        assert!(
+            report.contains("probe: flag=01 window=[04 00 00 00 01 01 01] owner_hint=PSMcluster0"),
+            "first entry probe missing/malformed in report:\n{report}"
+        );
+        assert!(
+            report.contains("probe: flag=01 window=[00 00 00 01 01 01] owner_hint=StyleCluster"),
+            "second entry probe missing/malformed:\n{report}"
+        );
+        assert!(
+            report.contains("probe: flag=01 window=[00 00 01 01 01] owner_hint=-"),
+            "third entry should render hint fallback '-':\n{report}"
+        );
+        // Entries beyond the 3-sample cap must not print a probe line.
+        let fourth_probe_line_count = report
+            .lines()
+            .filter(|l| l.contains("probe: flag=01 window=[00 01 01 01]"))
+            .count();
+        assert_eq!(
+            fourth_probe_line_count, 0,
+            "only the first 3 entries should emit a probe line; report:\n{report}"
         );
     }
 }
