@@ -24,7 +24,7 @@
 
 use crate::model::{
     PsmClusterEntry, PsmClusterRecordProbe, PsmClusterTable, PsmRootEntry, PsmRoots,
-    PsmSegmentEntry, PsmSegmentTable,
+    PsmSegmentEntry, PsmSegmentRecordProbe, PsmSegmentTable,
 };
 
 pub const ROOT_MAGIC: u32 = 0x746F_6F72; // 'root' (LE bytes: 72 6F 6F 74)
@@ -168,10 +168,14 @@ pub fn parse_psm_segment_table(data: &[u8]) -> Option<PsmSegmentTable> {
     let entries: Vec<PsmSegmentEntry> = flags
         .iter()
         .enumerate()
-        .map(|(i, &flag)| PsmSegmentEntry {
-            index: i,
-            offset: flags_start + i,
-            flag,
+        .map(|(i, &flag)| {
+            let offset = flags_start + i;
+            PsmSegmentEntry {
+                index: i,
+                offset,
+                flag,
+                probe: Some(build_segment_record_probe(data, offset, flag)),
+            }
         })
         .collect();
     let trailing_bytes = data.len().saturating_sub(flags_end);
@@ -187,6 +191,32 @@ pub fn parse_psm_segment_table(data: &[u8]) -> Option<PsmSegmentTable> {
 /// Detect a 2-byte UTF-16LE code unit encoding a printable ASCII character.
 fn is_ascii_utf16le(data: &[u8], i: usize) -> bool {
     i + 1 < data.len() && (0x20..=0x7e).contains(&data[i]) && data[i + 1] == 0
+}
+
+/// Phase 11b-probe: derive a [`PsmSegmentRecordProbe`] from a single flag
+/// byte plus the raw `PSMsegmenttable` stream. Pure computation — the
+/// `owner_cluster_hint` slot is left as `None` here; the dispatcher in
+/// `streams::psm_tables` fills it once the cluster table context is in
+/// scope.
+fn build_segment_record_probe(stream: &[u8], offset: usize, flag: u8) -> PsmSegmentRecordProbe {
+    let flag_hex = format!("{flag:02X}");
+    let window_lo = offset.saturating_sub(3);
+    let window_hi = stream.len().min(offset.saturating_add(4)); // +4 = inclusive-3 exclusive
+    let neighbor_window_hex = if window_lo < window_hi {
+        stream[window_lo..window_hi]
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        String::new()
+    };
+    PsmSegmentRecordProbe {
+        flag_hex,
+        neighbor_window_hex,
+        stream_offset: offset,
+        owner_cluster_hint: None,
+    }
 }
 
 /// Phase 11a-probe: derive a [`PsmClusterRecordProbe`] from a cluster
@@ -424,6 +454,57 @@ mod tests {
         // Trailer hex should contain the last 8 bytes — verify length is
         // shaped as 23 chars = 8 tokens joined by single spaces.
         assert_eq!(probe.trailer_hex.split_whitespace().count(), 8);
+    }
+
+    #[test]
+    fn segment_table_entries_expose_byte_level_probe() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        data.extend_from_slice(&4u32.to_le_bytes());
+        data.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+
+        let t = parse_psm_segment_table(&data).expect("valid");
+        assert_eq!(t.entries.len(), 4);
+
+        let probe0 = t.entries[0]
+            .probe
+            .as_ref()
+            .expect("probe populated for first segment");
+        assert_eq!(probe0.flag_hex, "01");
+        assert_eq!(probe0.stream_offset, 8);
+        assert_eq!(probe0.owner_cluster_hint, None);
+        let tokens0: Vec<_> = probe0.neighbor_window_hex.split_whitespace().collect();
+        assert!(
+            (1..=7).contains(&tokens0.len()),
+            "window token count out of range: {tokens0:?}"
+        );
+
+        let probe_last = t.entries[3].probe.as_ref().expect("probe populated");
+        assert_eq!(probe_last.flag_hex, "04");
+        assert_eq!(probe_last.stream_offset, 11);
+    }
+
+    #[test]
+    fn segment_table_probe_window_clips_near_stream_tail() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&STAB_MAGIC.to_le_bytes());
+        data.extend_from_slice(&2u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA, 0xBB]);
+        // `flags_start = 8`, segment 1 sits at offset 9 which is also the
+        // last byte of the stream — the probe window must clip to stop
+        // before an out-of-range index.
+        let t = parse_psm_segment_table(&data).expect("valid");
+        let tail = t.entries[1]
+            .probe
+            .as_ref()
+            .expect("probe populated for tail segment");
+        let tokens: Vec<_> = tail.neighbor_window_hex.split_whitespace().collect();
+        assert!(
+            tokens.len() <= 4,
+            "tail probe window should be clipped, got {tokens:?}"
+        );
+        assert_eq!(tail.flag_hex, "BB");
+        assert_eq!(tail.stream_offset, 9);
     }
 
     #[test]

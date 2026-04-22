@@ -763,6 +763,37 @@ pub struct PsmSegmentEntry {
     pub offset: usize,
     /// The raw flag byte for this segment.
     pub flag: u8,
+    /// Phase 11b-probe: byte-level probe summary for this segment. Purely
+    /// derived from the raw stream and carries no semantic claims (e.g.
+    /// does not name `kind` / `role`). Present so reverse-engineering
+    /// against a second fixture can hint at field layouts without forcing
+    /// premature decoding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<PsmSegmentRecordProbe>,
+}
+
+/// Phase 11b-probe — byte-level summary of a single PSMsegmenttable entry.
+/// All fields are computed purely from the raw stream + surrounding bytes;
+/// none of them claim semantic meaning. Use for visual inspection and
+/// fixture-drift detection; do not consume from `layout` / `import_view`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+pub struct PsmSegmentRecordProbe {
+    /// Two-digit uppercase hex of the flag byte (e.g. `"01"`).
+    pub flag_hex: String,
+    /// Space-separated uppercase hex of the `±3`-byte window around this
+    /// segment's flag inside the raw stream (1..=7 tokens depending on
+    /// proximity to the stream boundaries).
+    pub neighbor_window_hex: String,
+    /// Absolute byte offset inside the `PSMsegmenttable` stream where the
+    /// flag byte lives (equal to `PsmSegmentEntry.offset`, kept for
+    /// self-contained probe consumers).
+    pub stream_offset: usize,
+    /// **Hint**, not a claim — populated only when the number of segment
+    /// entries equals the number of `PSMclustertable` entries (so a 1:1
+    /// positional mapping is the most natural guess). `None` whenever the
+    /// two counts disagree, or the cluster table is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_cluster_hint: Option<String>,
 }
 
 /// Decoded `DocVersion3` stream: fixed-size (48 bytes per record) version
