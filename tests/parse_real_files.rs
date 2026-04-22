@@ -956,6 +956,60 @@ fn object_sources_align_with_attribute_records() {
 }
 
 #[test]
+fn psm_cluster_record_probes_match_entry_slice() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let table = doc
+        .psm_cluster_table
+        .as_ref()
+        .expect("PSMclustertable decoded");
+
+    assert!(!table.entries.is_empty(), "fixture has cluster records");
+
+    for entry in &table.entries {
+        let probe = entry
+            .probe
+            .as_ref()
+            .expect("every cluster record should carry a probe");
+
+        if entry.prefix_bytes.len() >= 4 {
+            let expected = u32::from_le_bytes([
+                entry.prefix_bytes[0],
+                entry.prefix_bytes[1],
+                entry.prefix_bytes[2],
+                entry.prefix_bytes[3],
+            ]);
+            assert_eq!(probe.first_u32_le, Some(expected));
+        } else {
+            assert!(probe.first_u32_le.is_none());
+        }
+
+        assert_eq!(probe.name_char_count, entry.name.chars().count());
+
+        let expected_prefix_hex = entry
+            .prefix_bytes
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(probe.prefix_hex, expected_prefix_hex);
+
+        let trailer_tokens: Vec<_> = probe.trailer_hex.split_whitespace().collect();
+        assert!(
+            trailer_tokens.len() <= 8,
+            "trailer_hex should cap at 8 tokens, got {}",
+            trailer_tokens.len()
+        );
+        if entry.record_len >= 8 {
+            assert_eq!(trailer_tokens.len(), 8);
+        } else {
+            assert_eq!(trailer_tokens.len(), entry.record_len);
+        }
+    }
+}
+
+#[test]
 fn sheet_provenance_matches_sheet_streams() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;

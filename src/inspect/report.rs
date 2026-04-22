@@ -279,7 +279,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
             t.size, t.count
         )
         .ok();
-        for e in &t.entries {
+        for (entry_idx, e) in t.entries.iter().enumerate() {
             write!(
                 out,
                 "  [@+{:04X}] {} (rec_len={}, name@{:04X}",
@@ -295,6 +295,25 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 write!(out, ", prefix=[{}]", hex.join(" ")).ok();
             }
             writeln!(out, ")").ok();
+            if entry_idx < 3 {
+                if let Some(probe) = e.probe.as_ref() {
+                    writeln!(
+                        out,
+                        "    probe: first_u32_le={} last_u32_le={} chars={} trailer=[{}]",
+                        probe
+                            .first_u32_le
+                            .map(|v| format!("0x{v:08X}"))
+                            .unwrap_or_else(|| "-".into()),
+                        probe
+                            .last_u32_le
+                            .map(|v| format!("0x{v:08X}"))
+                            .unwrap_or_else(|| "-".into()),
+                        probe.name_char_count,
+                        probe.trailer_hex
+                    )
+                    .ok();
+                }
+            }
         }
         if t.entries.len() as u32 != t.count {
             writeln!(
@@ -1334,6 +1353,36 @@ mod tests {
         );
         assert!(
             report.contains("/SheetOrphan endpoint_records=1 declared=false match_index=- relationships=0 fully_traced=0"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_shows_psm_cluster_record_probe_sample() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(crate::model::PsmClusterTable {
+            size: 40,
+            count: 1,
+            entries: vec![crate::model::PsmClusterEntry {
+                name: "PSMcluster0".into(),
+                name_offset: 0x14,
+                record_offset: 0x08,
+                record_len: 0x20,
+                prefix_bytes: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+                probe: Some(crate::model::PsmClusterRecordProbe {
+                    first_u32_le: Some(0x4433_2211),
+                    last_u32_le: Some(0xDEAD_BEEF),
+                    prefix_hex: "11 22 33 44 55 66".into(),
+                    trailer_hex: "AA BB CC DD EE FF 00 00".into(),
+                    name_char_count: 11,
+                }),
+            }],
+            trailing_bytes: 0,
+        });
+
+        let report = generate_report(&doc);
+        assert!(
+            report.contains("probe: first_u32_le=0x44332211 last_u32_le=0xDEADBEEF chars=11 trailer=[AA BB CC DD EE FF 00 00]"),
             "{report}"
         );
     }
