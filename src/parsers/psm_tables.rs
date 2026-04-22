@@ -154,12 +154,46 @@ pub fn parse_psm_roots_with_trace(
 /// Bytes between the previous record end and the name start are captured
 /// as `prefix_bytes` for audit. The name run plus any trailing null
 /// terminator complete the record.
+///
+/// Thin back-compat wrapper around [`parse_psm_cluster_table_with_trace`];
+/// discards the trace output for callers that do not opt into byte
+/// auditing.
 pub fn parse_psm_cluster_table(data: &[u8]) -> Option<PsmClusterTable> {
+    let mut trace = ParserTraceBuilder::new("parse_psm_cluster_table");
+    parse_psm_cluster_table_with_trace(data, &mut trace)
+}
+
+/// Phase 12b-1b trace-aware variant of [`parse_psm_cluster_table`].
+///
+/// Unlike the fixed-layout `PSMsegmenttable` / `PSMroots`, this parser
+/// scans for UTF-16LE ASCII name runs and classifies surrounding bytes
+/// into prefix / name / null-terminator / trailing zones. Confidence
+/// follows how well-understood each zone is:
+///
+/// - `[0..4]` — `clst` magic — `Decoded`
+/// - `[4..8]` — declared record count — `Decoded`
+/// - per accepted record (name length ≥ 4):
+///   - `[record_start..name_start]` — prefix bytes — `Probed`
+///     (semantics pending, already surfaced via `PsmClusterEntry.prefix_bytes`
+///     and `PsmClusterRecordProbe`)
+///   - `[name_start..name_start + name_bytes]` — UTF-16LE name run —
+///     `Decoded`
+///   - optional null terminator (2 bytes) — `Decoded`
+/// - bytes the scanner skipped (short ASCII runs of length < 4,
+///   non-ASCII regions) plus the unaccounted tail past the last
+///   accepted record are **not** consumed; they surface as leftover.
+pub fn parse_psm_cluster_table_with_trace(
+    data: &[u8],
+    trace: &mut ParserTraceBuilder,
+) -> Option<PsmClusterTable> {
     let magic = read_u32_le(data, 0)?;
     if magic != CLST_MAGIC {
         return None;
     }
+    trace.consume(ByteRange::new(0, 4), TraceConfidence::Decoded);
     let count = read_u32_le(data, 4)?;
+    trace.consume(ByteRange::new(4, 8), TraceConfidence::Decoded);
+
     let mut entries = Vec::new();
     let mut i = 8usize;
     let mut record_start = i;
@@ -171,14 +205,36 @@ pub fn parse_psm_cluster_table(data: &[u8]) -> Option<PsmClusterTable> {
                 name.push(data[i] as char);
                 i += 2;
             }
+            let name_bytes_end = i;
             // Skip trailing null terminator if present
+            let mut record_end = name_bytes_end;
             if i + 2 <= data.len() && data[i] == 0 && data[i + 1] == 0 {
                 i += 2;
+                record_end = i;
             }
             if name.len() >= 4 {
                 let prefix = data[record_start..name_start].to_vec();
-                let record_len = i - record_start;
-                let probe = build_cluster_record_probe(&data[record_start..i], &prefix, &name);
+                let record_len = record_end - record_start;
+                let probe = build_cluster_record_probe(
+                    &data[record_start..record_end],
+                    &prefix,
+                    &name,
+                );
+                // Trace: prefix is Probed (inner field semantics
+                // unknown); name + optional null terminator are
+                // Decoded. Emitting as separate ranges keeps the
+                // prefix/name confidence split visible to audit
+                // consumers.
+                if record_start < name_start {
+                    trace.consume(
+                        ByteRange::new(record_start as u64, name_start as u64),
+                        TraceConfidence::Probed,
+                    );
+                }
+                trace.consume(
+                    ByteRange::new(name_start as u64, record_end as u64),
+                    TraceConfidence::Decoded,
+                );
                 entries.push(PsmClusterEntry {
                     name,
                     name_offset: name_start,
@@ -189,6 +245,10 @@ pub fn parse_psm_cluster_table(data: &[u8]) -> Option<PsmClusterTable> {
                 });
                 record_start = i;
             }
+            // Note: short runs (name.len() < 4) are rejected and their
+            // bytes are NOT consumed — they flow into the next
+            // iteration's potential prefix range if another ASCII run
+            // follows, or into leftover_bytes otherwise.
         } else {
             i += 1;
         }
@@ -711,6 +771,157 @@ mod tests {
         );
         assert_eq!(tail.flag_hex, "BB");
         assert_eq!(tail.stream_offset, 9);
+    }
+
+    #[test]
+    fn trace_aware_cluster_parser_covers_header_prefix_name_per_record() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        data.extend_from_slice(&2u32.to_le_bytes());
+        let prefix1 = [0x01, 0x00, 0x00, 0x01, 0x00, 0x00];
+        data.extend_from_slice(&prefix1);
+        data.extend(utf16_bytes("PSMcluster0"));
+        data.extend_from_slice(&[0, 0]); // null terminator
+        let sep = [0x00, 0x00];
+        data.extend_from_slice(&sep);
+        data.extend(utf16_bytes("StyleCluster"));
+
+        let mut b = ParserTraceBuilder::new("parse_psm_cluster_table");
+        let table =
+            parse_psm_cluster_table_with_trace(&data, &mut b).expect("valid");
+        assert_eq!(table.entries.len(), 2);
+
+        let trace = b.build("/PSMclustertable", data.len() as u64);
+        // Header (8 bytes) + 2 records (prefix + name runs + optional
+        // terminators) must be consumed. The separator bytes between
+        // the first record end and the second record prefix count as
+        // the second record's prefix, so they are also Probed-consumed.
+        let prefix_ranges = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Probed)
+            .cloned()
+            .unwrap_or_default();
+        let decoded_ranges = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Decoded)
+            .cloned()
+            .unwrap_or_default();
+
+        assert!(
+            !prefix_ranges.is_empty(),
+            "at least one Probed prefix range expected; got {:?}",
+            prefix_ranges
+        );
+        assert!(
+            decoded_ranges.len() >= 2, // header + at least one name range
+            "expected header + name decoded ranges; got {:?}",
+            decoded_ranges
+        );
+        // Header must be the first Decoded range.
+        assert_eq!(decoded_ranges[0], ByteRange::new(0, 8));
+    }
+
+    #[test]
+    fn trace_aware_cluster_parser_marks_prefix_probed_and_name_decoded() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        let prefix = [0xAB, 0xCD, 0xEF, 0x12];
+        data.extend_from_slice(&prefix);
+        let name_off = data.len();
+        data.extend(utf16_bytes("TestCluster"));
+        let null_off = data.len();
+        data.extend_from_slice(&[0, 0]);
+
+        let mut b = ParserTraceBuilder::new("parse_psm_cluster_table");
+        let table =
+            parse_psm_cluster_table_with_trace(&data, &mut b).expect("valid");
+        assert_eq!(table.entries.len(), 1);
+
+        let trace = b.build("/PSMclustertable", data.len() as u64);
+        // Prefix is 4 bytes at offset 8..12 — must be Probed.
+        let probed = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Probed)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(probed, vec![ByteRange::new(8, 12)]);
+
+        // Decoded ranges: header [0..8], and name + null terminator
+        // [name_off .. null_off + 2]. Builder merges adjacent same
+        // confidence; since [0..8] and [name_off..] are not adjacent
+        // (there's a 4-byte prefix between them), they stay split.
+        let decoded = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Decoded)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(
+            decoded,
+            vec![
+                ByteRange::new(0, 8),
+                ByteRange::new(name_off as u64, (null_off + 2) as u64),
+            ]
+        );
+        assert!(trace.leftover_ranges.is_empty());
+    }
+
+    #[test]
+    fn trace_aware_cluster_parser_leaves_trailing_bytes_as_leftover() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend(utf16_bytes("TestName"));
+        data.extend_from_slice(&[0, 0]); // null terminator
+        data.extend_from_slice(&[0xDE, 0xAD, 0xBE]); // 3 trailing bytes
+
+        let mut b = ParserTraceBuilder::new("parse_psm_cluster_table");
+        let table =
+            parse_psm_cluster_table_with_trace(&data, &mut b).expect("valid");
+        assert_eq!(table.entries.len(), 1);
+        assert_eq!(table.trailing_bytes, 3);
+
+        let trace = b.build("/PSMclustertable", data.len() as u64);
+        // Trailing bytes that land past the last accepted record must
+        // surface as leftover since the parser never consumed them.
+        assert!(
+            trace.leftover_bytes() >= 3,
+            "expected >=3 leftover bytes from the trailing garbage; got {} ({:?})",
+            trace.leftover_bytes(),
+            trace.leftover_ranges,
+        );
+    }
+
+    #[test]
+    fn back_compat_parse_psm_cluster_table_matches_trace_variant_byte_for_byte() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        data.extend_from_slice(&2u32.to_le_bytes());
+        let prefix1 = [0x01, 0x00, 0x00, 0x01, 0x00, 0x00];
+        data.extend_from_slice(&prefix1);
+        data.extend(utf16_bytes("PSMcluster0"));
+        data.extend_from_slice(&[0, 0]);
+        data.extend_from_slice(&[0x00, 0x00]);
+        data.extend(utf16_bytes("StyleCluster"));
+        data.extend_from_slice(&[0xAA, 0xBB]); // trailing
+
+        let without_trace = parse_psm_cluster_table(&data).expect("old API works");
+
+        let mut b = ParserTraceBuilder::new("parse_psm_cluster_table");
+        let with_trace = parse_psm_cluster_table_with_trace(&data, &mut b).expect("new API works");
+
+        assert_eq!(without_trace.size, with_trace.size);
+        assert_eq!(without_trace.count, with_trace.count);
+        assert_eq!(without_trace.trailing_bytes, with_trace.trailing_bytes);
+        assert_eq!(without_trace.entries.len(), with_trace.entries.len());
+        for (a, b_entry) in without_trace.entries.iter().zip(with_trace.entries.iter()) {
+            assert_eq!(a.name, b_entry.name);
+            assert_eq!(a.name_offset, b_entry.name_offset);
+            assert_eq!(a.record_offset, b_entry.record_offset);
+            assert_eq!(a.record_len, b_entry.record_len);
+            assert_eq!(a.prefix_bytes, b_entry.prefix_bytes);
+            assert_eq!(a.probe, b_entry.probe);
+        }
     }
 
     #[test]
