@@ -20,9 +20,10 @@
 //!   (`Description=""`) — matches how SPPID itself emits
 //!   blank-but-present attributes.
 
+use std::collections::HashMap;
 use std::fmt::Write;
 
-use super::model::{PublishDrawing, PublishError, PublishObject};
+use super::model::{PublishDrawing, PublishError, PublishObject, PublishRelationship};
 
 /// Software-version / schema-version / tooling constants that the
 /// SmartPlant reference implementation stamps onto every Publish
@@ -437,31 +438,145 @@ fn write_representations(buf: &mut String, drawing: &PublishDrawing) -> Result<(
 }
 
 fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
-    // DefUID classification for stage-1 `<Rel>` nodes. Without the
-    // business-subtable tie-ins we don't yet know what each rel
-    // really represents, so we fall back to `Relationship` — a
-    // generic marker SPPID accepts without raising validation
-    // errors, per the reference file's schema.
+    // Emit the three classes of `<Rel>` nodes in the order SPPID
+    // uses: (1) ModelItem → Representation, (2) Drawing →
+    // Representation, (3) T_Relationship rows (semantically
+    // classified). That ordering matches the reference
+    // DWG-0202GP06-01_Data.xml layout.
+
+    // Build a lookup from UID → ItemTypeName so we can infer
+    // DefUID for T_Relationship rows. Covers both model items
+    // and representations (representations do not carry a SPPID
+    // item type, but surfacing them as "Representation" lets
+    // the classifier still pick a reasonable DefUID).
+    let mut type_by_uid: HashMap<&str, &str> = HashMap::new();
+    for obj in &drawing.objects {
+        type_by_uid.insert(obj.uid.as_str(), obj.item_type_name.as_str());
+    }
+    for rep in &drawing.representations {
+        type_by_uid.insert(rep.uid.as_str(), "Representation");
+    }
+
+    // --- Derived: ModelItem → Representation (DwgRepresentationComposition)
+    for rep in &drawing.representations {
+        let Some(model_item_uid) = rep.model_item_uid.as_deref() else {
+            continue;
+        };
+        if model_item_uid.is_empty() {
+            continue;
+        }
+        write_rel(
+            buf,
+            &format!("DRC-{}-{}", model_item_uid, rep.uid),
+            model_item_uid,
+            &rep.uid,
+            "DwgRepresentationComposition",
+        )?;
+    }
+
+    // --- Derived: Drawing → Representation (DrawingItems)
+    for rep in &drawing.representations {
+        write_rel(
+            buf,
+            &format!("DRI-{}-{}", drawing.drawing_uid, rep.uid),
+            &drawing.drawing_uid,
+            &rep.uid,
+            "DrawingItems",
+        )?;
+    }
+
+    // --- From T_Relationship, classified by endpoint item types
     for rel in &drawing.relationships {
         let uid1 = rel.source_uid.as_deref().unwrap_or("");
         let uid2 = rel.target_uid.as_deref().unwrap_or("");
-        writeln!(buf, "   <Rel>").map_err(fmt_err)?;
-        writeln!(
-            buf,
-            r#"      <IObject UID="{}"/>"#,
-            escape_attr(&rel.uid)
-        )
-        .map_err(fmt_err)?;
-        writeln!(
-            buf,
-            r#"      <IRel UID1="{}" UID2="{}" DefUID="Relationship"/>"#,
-            escape_attr(uid1),
-            escape_attr(uid2),
-        )
-        .map_err(fmt_err)?;
-        writeln!(buf, "   </Rel>").map_err(fmt_err)?;
+        let def_uid = classify_relationship(rel, &type_by_uid);
+        let prefix = defuid_prefix(&def_uid);
+        let rel_uid = format!("{prefix}-{uid1}-{uid2}");
+        write_rel(buf, &rel_uid, uid1, uid2, &def_uid)?;
     }
     Ok(())
+}
+
+/// Emit a single `<Rel>` node with the given pre-composed UIDs.
+fn write_rel(
+    buf: &mut String,
+    rel_uid: &str,
+    uid1: &str,
+    uid2: &str,
+    def_uid: &str,
+) -> Result<(), PublishError> {
+    writeln!(buf, "   <Rel>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}"/>"#,
+        escape_attr(rel_uid)
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IRel UID1="{}" UID2="{}" DefUID="{}"/>"#,
+        escape_attr(uid1),
+        escape_attr(uid2),
+        escape_attr(def_uid),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "   </Rel>").map_err(fmt_err)
+}
+
+/// Pick the SPPID DefUID for a T_Relationship row given a lookup
+/// of endpoint ItemTypeNames. Stage-1 covers the combinations
+/// observed in TEST02 A01; anything unknown falls back to the
+/// generic `"Relationship"` so the writer stays total.
+fn classify_relationship(
+    rel: &PublishRelationship,
+    type_by_uid: &HashMap<&str, &str>,
+) -> String {
+    let src_type = rel
+        .source_uid
+        .as_deref()
+        .and_then(|u| type_by_uid.get(u).copied())
+        .unwrap_or("");
+    let tgt_type = rel
+        .target_uid
+        .as_deref()
+        .and_then(|u| type_by_uid.get(u).copied())
+        .unwrap_or("");
+    match (src_type, tgt_type) {
+        // Nozzle attached to a vessel → equipment-component composition.
+        ("Nozzle", "Vessel") | ("Vessel", "Nozzle") => "EquipmentComponentComposition".into(),
+        // Piping endpoint tying a connector / pipe to an equipment
+        // face. When the rel already targets a Representation, we
+        // leave it classified by the model layer that produced it.
+        ("PipeRun", "Nozzle") | ("Nozzle", "PipeRun") => "PipingEnd1Conn".into(),
+        // Connector → Pipeline composition.
+        ("PipeRun", "Pipeline") | ("Pipeline", "PipeRun") => "PipingConnectors".into(),
+        // Two representations related at the drawing level — treat
+        // as a generic DwgRepresentationComposition.
+        ("Representation", "Representation") => "DwgRepresentationComposition".into(),
+        // Any other combination keeps the generic marker. Higher
+        // layers can override once they ship richer item types.
+        _ => "Relationship".into(),
+    }
+}
+
+/// Prefix used when composing the `<Rel><IObject UID="...">`
+/// value from UID1 / UID2. Matches the SPPID reference convention:
+/// `DRC-` / `DRI-` / `EQC-` / `PCN-` / `PE1-` / `PE2-` /
+/// `PPC-` / `PTF-` / `SPC-` / `PRP-`.
+fn defuid_prefix(def_uid: &str) -> &'static str {
+    match def_uid {
+        "DwgRepresentationComposition" => "DRC",
+        "DrawingItems" => "DRI",
+        "EquipmentComponentComposition" => "EQC",
+        "PipingConnectors" => "PCN",
+        "PipingEnd1Conn" => "PE1",
+        "PipingEnd2Conn" => "PE2",
+        "PipingPortComposition" => "PPC",
+        "PipingTapOrFitting" => "PTF",
+        "SignalPortComposition" => "SPC",
+        "ProcessPointCollection" => "PRP",
+        _ => "REL",
+    }
 }
 
 /// XML attribute-value escape. SmartPlant uses double-quote
@@ -576,12 +691,38 @@ mod tests {
     }
 
     #[test]
-    fn xml_renders_relationships_with_generic_defuid() {
+    fn xml_emits_derived_drawing_and_model_item_rels() {
         let out = write_data_xml(&example_drawing(), "TEST02").expect("write");
-        assert!(out.contains(r#"<IObject UID="50B7DAA7B182478D8EE5D1F4E6CD3FA5"/>"#));
+        // DwgRepresentationComposition — ModelItem → Rep
+        assert!(
+            out.contains(r#"<IObject UID="DRC-C57494A1B154442C9DF0F4BA713E88EC-CA8A0A9DD1784E3BB6913445CE3F6375"/>"#),
+            "expected a DRC- prefixed rel for Vessel model item → its representation; full output:\n{out}"
+        );
         assert!(out.contains(
-            r#"<IRel UID1="C33E5BD9B9CC4287B244A925A7A1F29B" UID2="CA8A0A9DD1784E3BB6913445CE3F6375" DefUID="Relationship"/>"#
+            r#"<IRel UID1="C57494A1B154442C9DF0F4BA713E88EC" UID2="CA8A0A9DD1784E3BB6913445CE3F6375" DefUID="DwgRepresentationComposition"/>"#
         ));
+        // DrawingItems — Drawing → Rep
+        assert!(
+            out.contains(r#"<IObject UID="DRI-D9635C3C898840D1990B7E8BEE1D55DA-CA8A0A9DD1784E3BB6913445CE3F6375"/>"#),
+            "expected a DRI- prefixed rel for Drawing → Vessel rep"
+        );
+        assert!(out.contains(
+            r#"<IRel UID1="D9635C3C898840D1990B7E8BEE1D55DA" UID2="CA8A0A9DD1784E3BB6913445CE3F6375" DefUID="DrawingItems"/>"#
+        ));
+    }
+
+    #[test]
+    fn xml_classifies_rel_endpoints_to_concrete_defuid() {
+        // The example drawing's T_Relationship row ties the
+        // Nozzle representation to the Vessel representation —
+        // two Representations on the same drawing. The writer
+        // classifies that pair as `DwgRepresentationComposition`
+        // and uses the DRC- prefix on the composite UID.
+        let out = write_data_xml(&example_drawing(), "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="DRC-C33E5BD9B9CC4287B244A925A7A1F29B-CA8A0A9DD1784E3BB6913445CE3F6375"/>"#),
+            "expected a DRC- prefixed rel from the T_Relationship row (Rep→Rep); out:\n{out}"
+        );
     }
 
     #[test]
