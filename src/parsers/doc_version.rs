@@ -14,12 +14,40 @@
 //! The parser is tolerant: it stops on the first record that does not start
 //! with a printable ASCII byte.
 
+use crate::byte_audit::{ByteRange, ParserTraceBuilder, TraceConfidence};
 use crate::model::{VersionHistory, VersionRecord};
 
 pub const RECORD_SIZE: usize = 48;
 
 /// Parse `DocVersion3`. Returns `None` if no records can be recovered.
+///
+/// Thin back-compat wrapper around [`parse_doc_version3_with_trace`];
+/// discards the trace output for callers that do not opt into byte
+/// auditing.
 pub fn parse_doc_version3(data: &[u8]) -> Option<VersionHistory> {
+    let mut trace = ParserTraceBuilder::new("parse_doc_version3");
+    parse_doc_version3_with_trace(data, &mut trace)
+}
+
+/// Phase 12b-1c trace-aware variant of [`parse_doc_version3`].
+///
+/// Every 48-byte record is split into its four named sub-fields
+/// (`product[16]`, `version[12]`, `operation[4]`, `timestamp[16]`) and
+/// each sub-field is consumed as `TraceConfidence::Decoded`. The
+/// builder will merge them into a single contiguous range per record
+/// because they are adjacent same-confidence bytes — that's fine; the
+/// merging keeps `consumed_ranges` compact while `ranges_by_confidence`
+/// still records every byte as Decoded.
+///
+/// Records that the parser rejects (non-printable leading byte or
+/// empty `product` field) cause the loop to break without consuming
+/// those 48 bytes — they surface as leftover instead, which is
+/// deliberately how byte-audit flags "bytes we saw but declined to
+/// interpret".
+pub fn parse_doc_version3_with_trace(
+    data: &[u8],
+    trace: &mut ParserTraceBuilder,
+) -> Option<VersionHistory> {
     if data.len() < RECORD_SIZE {
         return None;
     }
@@ -38,6 +66,11 @@ pub fn parse_doc_version3(data: &[u8]) -> Option<VersionHistory> {
         if product.trim().is_empty() {
             break;
         }
+        let p = pos as u64;
+        trace.consume(ByteRange::new(p, p + 16), TraceConfidence::Decoded);
+        trace.consume(ByteRange::new(p + 16, p + 28), TraceConfidence::Decoded);
+        trace.consume(ByteRange::new(p + 28, p + 32), TraceConfidence::Decoded);
+        trace.consume(ByteRange::new(p + 32, p + 48), TraceConfidence::Decoded);
         records.push(VersionRecord {
             product,
             version,
@@ -160,6 +193,94 @@ mod tests {
         data.extend(bad);
         let h = parse_doc_version3(&data).expect("valid");
         assert_eq!(h.records.len(), 1, "empty product stops parsing");
+    }
+
+    #[test]
+    fn trace_aware_doc_version3_consumes_every_byte_of_each_record() {
+        let mut data = Vec::new();
+        for ts in ["12/29/25 10:45", "03/10/26 15:17"] {
+            data.extend(fixed_field("SmartPlantPID.a", 16));
+            data.extend(fixed_field("090000.0144", 12));
+            data.extend(fixed_field("SV", 4));
+            data.extend(fixed_field(ts, 16));
+        }
+
+        let mut b = ParserTraceBuilder::new("parse_doc_version3");
+        let h = parse_doc_version3_with_trace(&data, &mut b).expect("valid");
+        assert_eq!(h.records.len(), 2);
+
+        let trace = b.build("/DocVersion3", data.len() as u64);
+        assert_eq!(trace.consumed_bytes(), data.len() as u64);
+        assert!(trace.leftover_ranges.is_empty());
+        // Builder merges the 4 sub-field ranges per record into one
+        // contiguous Decoded range, and then merges consecutive records
+        // because they are also adjacent same-confidence → single range.
+        let decoded = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Decoded)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(decoded, vec![ByteRange::new(0, data.len() as u64)]);
+    }
+
+    #[test]
+    fn trace_aware_doc_version3_leaves_rejected_records_as_leftover() {
+        let mut data = Vec::new();
+        // One valid record, then a rejected one (leading 0xFF).
+        data.extend(fixed_field("SmartPlantPID.a", 16));
+        data.extend(fixed_field("090000.0144", 12));
+        data.extend(fixed_field("SA", 4));
+        data.extend(fixed_field("12/29/25 10:45", 16));
+        data.extend(vec![0xFF; RECORD_SIZE]);
+
+        let mut b = ParserTraceBuilder::new("parse_doc_version3");
+        let h = parse_doc_version3_with_trace(&data, &mut b).expect("valid");
+        assert_eq!(h.records.len(), 1);
+        // Legacy trailing_bytes counts every byte past the last accepted
+        // record, so 48 here.
+        assert_eq!(h.trailing_bytes, 48);
+
+        let trace = b.build("/DocVersion3", data.len() as u64);
+        // The 48-byte rejected record surfaces in leftover because the
+        // parser never consumed it.
+        assert_eq!(trace.consumed_bytes(), RECORD_SIZE as u64);
+        assert_eq!(trace.leftover_bytes(), RECORD_SIZE as u64);
+        assert_eq!(
+            trace.leftover_ranges,
+            vec![ByteRange::new(
+                RECORD_SIZE as u64,
+                (RECORD_SIZE * 2) as u64
+            )],
+        );
+    }
+
+    #[test]
+    fn back_compat_parse_doc_version3_matches_trace_variant_byte_for_byte() {
+        let mut data = Vec::new();
+        for ts in ["12/29/25 10:45", "03/10/26 15:17", "03/16/26 11:24"] {
+            data.extend(fixed_field("SmartPlantPID.a", 16));
+            data.extend(fixed_field("090000.0144", 12));
+            data.extend(fixed_field("SV", 4));
+            data.extend(fixed_field(ts, 16));
+        }
+        data.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // trailing
+
+        let without_trace = parse_doc_version3(&data).expect("old API works");
+
+        let mut b = ParserTraceBuilder::new("parse_doc_version3");
+        let with_trace = parse_doc_version3_with_trace(&data, &mut b).expect("new API works");
+
+        assert_eq!(without_trace.size, with_trace.size);
+        assert_eq!(without_trace.record_size, with_trace.record_size);
+        assert_eq!(without_trace.trailing_bytes, with_trace.trailing_bytes);
+        assert_eq!(without_trace.records.len(), with_trace.records.len());
+        for (a, b_rec) in without_trace.records.iter().zip(with_trace.records.iter()) {
+            assert_eq!(a.product, b_rec.product);
+            assert_eq!(a.version, b_rec.version);
+            assert_eq!(a.operation, b_rec.operation);
+            assert_eq!(a.timestamp, b_rec.timestamp);
+            assert_eq!(a.offset, b_rec.offset);
+        }
     }
 
     #[test]
