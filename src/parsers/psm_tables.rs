@@ -58,28 +58,80 @@ fn read_utf16le_name(data: &[u8], start: usize, char_count: usize) -> Option<Str
 }
 
 /// Parse `PSMroots`. Returns `None` if the magic does not match.
+///
+/// Thin back-compat wrapper around [`parse_psm_roots_with_trace`];
+/// discards the trace output for callers that do not opt into byte
+/// auditing.
 pub fn parse_psm_roots(data: &[u8]) -> Option<PsmRoots> {
+    let mut trace = ParserTraceBuilder::new("parse_psm_roots");
+    parse_psm_roots_with_trace(data, &mut trace)
+}
+
+/// Phase 12b-1b trace-aware variant of [`parse_psm_roots`].
+///
+/// Consumes bytes into `trace` according to the observed `PSMroots`
+/// layout:
+/// - `[0..4]` — `root` magic — `TraceConfidence::Decoded`
+/// - per entry at byte offset `pos`:
+///   - `[pos..pos+4]` — entry id — `Decoded`
+///   - `[pos+4..pos+8]` — UTF-16 char count — `Decoded`
+///   - `[pos+8..pos+8+cc*2]` — UTF-16LE name — `Decoded`
+/// - `[pos..pos+8]` with `id=0, cc=0` — end-of-list sentinel — `Decoded`
+/// - any bytes past the sentinel (or the last entry when no sentinel is
+///   present) — reported as `leftover_ranges` via
+///   `ParserTraceBuilder::build`.
+///
+/// Defensive branches (`cc > 512`, `read_utf16le_name` failure) break
+/// out of the loop **without** consuming the half-read entry header so
+/// the uninterpreted bytes surface as leftover.
+pub fn parse_psm_roots_with_trace(
+    data: &[u8],
+    trace: &mut ParserTraceBuilder,
+) -> Option<PsmRoots> {
     let magic = read_u32_le(data, 0)?;
     if magic != ROOT_MAGIC {
         return None;
     }
+    trace.consume(ByteRange::new(0, 4), TraceConfidence::Decoded);
+
     let mut entries = Vec::new();
     let mut pos = 4usize;
     while pos + 8 <= data.len() {
         let id = read_u32_le(data, pos)?;
         let cc = read_u32_le(data, pos + 4)? as usize;
         if cc == 0 && id == 0 {
-            // likely sentinel
+            // Explicit end-of-list sentinel — consume the 8 bytes so
+            // callers can distinguish "trailing garbage" from "clean
+            // terminator" in the leftover view. Intentionally leave
+            // `pos` unchanged so the legacy `trailing_bytes = data.len()
+            // - pos` calculation keeps its byte-for-byte compatibility
+            // (sentinel stays counted as part of `trailing_bytes`).
+            trace.consume(
+                ByteRange::new(pos as u64, (pos + 8) as u64),
+                TraceConfidence::Decoded,
+            );
             break;
         }
         if cc > 512 {
-            // implausible — stop to avoid infinite loops
+            // implausible — stop to avoid infinite loops; do NOT
+            // consume because we cannot vouch for the bytes.
             break;
         }
         let name_start = pos + 8;
         let Some(name) = read_utf16le_name(data, name_start, cc) else {
             break;
         };
+        // Consume the header (id + cc) and the UTF-16 name in one merged
+        // decoded range; the builder will collapse them since they are
+        // contiguous same-confidence.
+        trace.consume(
+            ByteRange::new(pos as u64, name_start as u64),
+            TraceConfidence::Decoded,
+        );
+        trace.consume(
+            ByteRange::new(name_start as u64, (name_start + cc * 2) as u64),
+            TraceConfidence::Decoded,
+        );
         entries.push(PsmRootEntry {
             id,
             offset: pos,
@@ -659,6 +711,96 @@ mod tests {
         );
         assert_eq!(tail.flag_hex, "BB");
         assert_eq!(tail.stream_offset, 9);
+    }
+
+    #[test]
+    fn trace_aware_roots_parser_covers_header_and_all_entries() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&ROOT_MAGIC.to_le_bytes());
+        data.extend(make_root_entry(0x18C, "Imagineer Document"));
+        data.extend(make_root_entry(0x149, "Server Document"));
+
+        let mut b = ParserTraceBuilder::new("parse_psm_roots");
+        let roots = parse_psm_roots_with_trace(&data, &mut b).expect("valid");
+        assert_eq!(roots.entries.len(), 2);
+
+        let trace = b.build("/PSMroots", data.len() as u64);
+        assert_eq!(
+            trace.consumed_bytes(),
+            data.len() as u64,
+            "every byte of this fixture should be attributed to the parser",
+        );
+        assert!(
+            trace.leftover_ranges.is_empty(),
+            "no trailing bytes expected; got {:?}",
+            trace.leftover_ranges,
+        );
+        // Only Decoded confidence is emitted by this parser.
+        assert!(trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Decoded)
+            .is_some());
+        assert!(!trace
+            .ranges_by_confidence
+            .contains_key(&TraceConfidence::Probed));
+    }
+
+    #[test]
+    fn trace_aware_roots_parser_consumes_sentinel_and_leaves_trailing_garbage_as_leftover() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&ROOT_MAGIC.to_le_bytes());
+        data.extend(make_root_entry(1, "Test"));
+        // sentinel id=0 cc=0
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
+        // 2 bytes of real trailing garbage past the sentinel
+        data.extend_from_slice(&[0xDE, 0xAD]);
+
+        let mut b = ParserTraceBuilder::new("parse_psm_roots");
+        let roots = parse_psm_roots_with_trace(&data, &mut b).expect("valid");
+        assert_eq!(roots.entries.len(), 1);
+        // Legacy invariant (see `roots_stops_on_sentinel`): the raw
+        // `trailing_bytes` field counts sentinel + garbage.
+        assert_eq!(roots.trailing_bytes, 10);
+
+        let trace = b.build("/PSMroots", data.len() as u64);
+        // The sentinel (8 bytes) is Decoded even though it is inside
+        // the trailing_bytes span — trace consumers must see it as
+        // consumed, not leftover.
+        assert_eq!(
+            trace.leftover_bytes(),
+            2,
+            "only the 2 bytes past the sentinel should be leftover",
+        );
+        assert_eq!(
+            trace.leftover_ranges,
+            vec![ByteRange::new((data.len() - 2) as u64, data.len() as u64)],
+        );
+    }
+
+    #[test]
+    fn back_compat_parse_psm_roots_matches_trace_variant_byte_for_byte() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&ROOT_MAGIC.to_le_bytes());
+        data.extend(make_root_entry(0x100, "Foo"));
+        data.extend(make_root_entry(0x200, "Bar Quux"));
+        data.extend_from_slice(&0u32.to_le_bytes()); // sentinel id
+        data.extend_from_slice(&0u32.to_le_bytes()); // sentinel cc
+        data.extend_from_slice(&[0xCA, 0xFE, 0xBA, 0xBE]); // real trailing
+
+        let without_trace = parse_psm_roots(&data).expect("old API works");
+
+        let mut b = ParserTraceBuilder::new("parse_psm_roots");
+        let with_trace = parse_psm_roots_with_trace(&data, &mut b).expect("new API works");
+
+        assert_eq!(without_trace.size, with_trace.size);
+        assert_eq!(without_trace.trailing_bytes, with_trace.trailing_bytes);
+        assert_eq!(without_trace.entries.len(), with_trace.entries.len());
+        for (a, b_entry) in without_trace.entries.iter().zip(with_trace.entries.iter()) {
+            assert_eq!(a.id, b_entry.id);
+            assert_eq!(a.offset, b_entry.offset);
+            assert_eq!(a.name, b_entry.name);
+        }
     }
 
     #[test]
