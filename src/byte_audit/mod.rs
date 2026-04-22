@@ -13,6 +13,10 @@
 //! (`docs/plans/2026-04-21-phase-12b-byte-audit-framework.md`) covers
 //! full-fleet migration, aggregate reporting, and CI regression guarding.
 
+pub mod aggregate;
+
+pub use aggregate::{byte_audit_report, ByteAuditReport, StreamAuditSummary};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
