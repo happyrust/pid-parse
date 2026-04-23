@@ -298,6 +298,21 @@ fn resolve_codelist_field(
 /// Optional attributes render as empty / bare when absent,
 /// preserving A01 byte-shape compatibility; render populated
 /// when loader-side fields arrive.
+///
+/// A25 closes the "tank variant" shape gap A24 discovered:
+/// DWG-style "Open top tank" vessel variants (EqType1="@EE793"
+/// / EqType0="@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}") emit
+/// two extra interfaces between `IPIDProcessVessel` and
+/// `ISpecifiedMatlItem` — `ILowPressureTankOcc` then
+/// `ILowPressureTank` — while "Horizontal Drum" / non-tank
+/// variants do not. The writer routes a loader-side
+/// `obj.fields["IsLowPressureTank"]` boolean-ish signal into
+/// this conditional emission so the same writer produces the
+/// 15-interface A01 shape AND the 17-interface DWG-tank
+/// shape, bit-for-bit. The loader side (inferring the flag
+/// from T_ProcessEquipment's EqType columns) is deferred to
+/// A25b — until then, callers synthesising PublishObjects
+/// manually can set the field directly.
 fn write_process_vessel(
     buf: &mut String,
     obj: &PublishObject,
@@ -354,6 +369,17 @@ fn write_process_vessel(
         .get("LongMaterialDescription")
         .cloned()
         .unwrap_or_default();
+    // A25 · Low-pressure-tank variant flag. The writer uses
+    // `map_bool` (shared with other boolean-ish passthrough
+    // attributes like `IsFlowDirectional` / `IsTypical`) so
+    // that explicit "False" / "0" / "" stays in the non-tank
+    // branch, keeping the default behavior stable for callers
+    // that pre-populate the field unconditionally.
+    let is_low_pressure_tank = obj
+        .fields
+        .get("IsLowPressureTank")
+        .map(|v| map_bool(v) == "True")
+        .unwrap_or(false);
     writeln!(buf, "   <PIDProcessVessel>").map_err(fmt_err)?;
     writeln!(
         buf,
@@ -433,6 +459,10 @@ fn write_process_vessel(
     }
     writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPIDProcessVessel/>").map_err(fmt_err)?;
+    if is_low_pressure_tank {
+        writeln!(buf, "      <ILowPressureTankOcc/>").map_err(fmt_err)?;
+        writeln!(buf, "      <ILowPressureTank/>").map_err(fmt_err)?;
+    }
     if long_material_description.is_empty() {
         writeln!(buf, "      <ISpecifiedMatlItem/>").map_err(fmt_err)?;
     } else {
@@ -4468,6 +4498,184 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
             last_pos += pos + needle.len();
         }
+    }
+
+    // -----------------------------------------------------------------
+    // A25 — PIDProcessVessel low-pressure-tank variant emission.
+    // DWG-style "Open top tank" vessel variants emit two extra
+    // interfaces (ILowPressureTankOcc + ILowPressureTank) between
+    // IPIDProcessVessel and ISpecifiedMatlItem. The writer routes
+    // the conditional emission off `obj.fields["IsLowPressureTank"]`
+    // using `map_bool` for truthy evaluation so explicit False / 0
+    // / empty stays in the non-tank branch.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn process_vessel_omits_tank_interfaces_by_default() {
+        // Pre-A25 contract must hold: with no IsLowPressureTank
+        // signal, the writer emits the 15-interface A01 shape and
+        // NEVER inserts ILowPressureTank[Occ] (regression guard).
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "V-NONTANK".into(),
+            item_type_name: "Vessel".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            !out.contains("<ILowPressureTank"),
+            "default vessel should not emit any ILowPressureTank-prefixed interface, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn process_vessel_omits_tank_interfaces_when_flag_is_explicit_false() {
+        // Explicit "False" / "0" / "" must behave the same as
+        // the absent case — no tank interfaces.
+        for falsey in ["False", "false", "0", ""] {
+            let mut d = PublishDrawing::new("UID-D", "A01");
+            d.objects = vec![PublishObject {
+                uid: "V-FLAG".into(),
+                item_type_name: "Vessel".into(),
+                fields: std::collections::BTreeMap::from([(
+                    "IsLowPressureTank".to_string(),
+                    falsey.to_string(),
+                )]),
+                ..PublishObject::default()
+            }];
+            let out = write_data_xml(&d, "TEST02").expect("write");
+            assert!(
+                !out.contains("<ILowPressureTank"),
+                "falsey flag `{falsey}` must not emit tank interfaces, got:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn process_vessel_emits_tank_interfaces_when_flag_is_true() {
+        // Truthy signals must trigger both interfaces in
+        // canonical (ILowPressureTankOcc before ILowPressureTank)
+        // order, inserted AFTER IPIDProcessVessel and BEFORE
+        // ISpecifiedMatlItem to match the DWG byte shape.
+        for truthy in ["True", "true", "1"] {
+            let mut d = PublishDrawing::new("UID-D", "DWG");
+            d.objects = vec![PublishObject {
+                uid: "V-TANK".into(),
+                item_type_name: "Vessel".into(),
+                fields: std::collections::BTreeMap::from([(
+                    "IsLowPressureTank".to_string(),
+                    truthy.to_string(),
+                )]),
+                ..PublishObject::default()
+            }];
+            let out = write_data_xml(&d, "TEST02").expect("write");
+            assert!(
+                out.contains("<ILowPressureTankOcc/>"),
+                "truthy flag `{truthy}` must emit ILowPressureTankOcc, got:\n{out}"
+            );
+            assert!(
+                out.contains("<ILowPressureTank/>"),
+                "truthy flag `{truthy}` must emit ILowPressureTank, got:\n{out}"
+            );
+            let occ_pos = out.find("<ILowPressureTankOcc/>").unwrap();
+            let tank_pos = out.find("<ILowPressureTank/>").unwrap();
+            assert!(
+                occ_pos < tank_pos,
+                "flag `{truthy}`: ILowPressureTankOcc must come before ILowPressureTank, got Occ@{occ_pos} vs Tank@{tank_pos}",
+            );
+            let pidv_pos = out.find("<IPIDProcessVessel/>").unwrap();
+            let spec_pos = out.find("<ISpecifiedMatlItem").unwrap();
+            assert!(
+                pidv_pos < occ_pos && tank_pos < spec_pos,
+                "flag `{truthy}`: tank interfaces must slot between IPIDProcessVessel and ISpecifiedMatlItem, got PIDv@{pidv_pos} Occ@{occ_pos} Tank@{tank_pos} Spec@{spec_pos}",
+            );
+        }
+    }
+
+    #[test]
+    fn process_vessel_tank_variant_emits_seventeen_interface_block() {
+        // Pin the tank variant's full 17-interface canonical
+        // order via find() cursor, mirroring the DWG fixture
+        // sample at lines 1429–1447.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "V-TANK-ORD".into(),
+            item_type_name: "Vessel".into(),
+            description: Some("污水池".into()),
+            fields: std::collections::BTreeMap::from([
+                ("IsLowPressureTank".to_string(), "True".to_string()),
+                ("EqType0".to_string(), "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}".to_string()),
+                ("EqType1".to_string(), "@EE793".to_string()),
+                ("EqType2".to_string(), "@EE7A6".to_string()),
+                ("EqType3".to_string(), "@{9B3ED983-16AE-4AD7-A19F-A337149DF437}".to_string()),
+                ("EquipmentTrimSpec".to_string(), "1.6AR12".to_string()),
+                ("HeightRelativeToGrade".to_string(), "3 m".to_string()),
+                ("VesselVolumetricCapacity".to_string(), "27 m^3".to_string()),
+                ("LongMaterialDescription".to_string(), "新建".to_string()),
+            ]),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        let positions = [
+            "<PIDProcessVessel>",
+            "<IObject UID=",
+            "<IPIDProcessVesselOcc/>",
+            "<IProcessVesselOcc/>",
+            "<IEquipment ",
+            "<IEquipmentOcc/>",
+            "<IPBSItem ",
+            "<IPBSItemCollection/>",
+            "<IPlannedMatl/>",
+            "<IProcessEquipment/>",
+            "<IProcessEquipmentOcc/>",
+            "<IProcessVessel ",
+            "<IDrawingItem/>",
+            "<IPIDProcessVessel/>",
+            "<ILowPressureTankOcc/>",
+            "<ILowPressureTank/>",
+            "<ISpecifiedMatlItem ",
+            "<IPIDTypical ",
+            "</PIDProcessVessel>",
+        ];
+        let mut last_pos = 0usize;
+        for needle in positions {
+            let pos = out[last_pos..]
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            last_pos += pos + needle.len();
+        }
+    }
+
+    #[test]
+    fn process_vessel_tank_variant_preserves_all_other_attributes() {
+        // A25 must be strictly additive: enabling the flag
+        // must not change any other interface's attribute
+        // content. Compare the non-tank and tank shapes for
+        // the same inputs and assert the tank version is the
+        // non-tank version with exactly two new lines inserted
+        // (ILowPressureTankOcc + ILowPressureTank).
+        let mk = |is_tank: &str| -> String {
+            let mut d = PublishDrawing::new("UID-D", "DWG");
+            d.objects = vec![PublishObject {
+                uid: "V-CMP".into(),
+                item_type_name: "Vessel".into(),
+                fields: std::collections::BTreeMap::from([(
+                    "IsLowPressureTank".to_string(),
+                    is_tank.to_string(),
+                )]),
+                ..PublishObject::default()
+            }];
+            write_data_xml(&d, "TEST02").expect("write")
+        };
+        let non_tank = mk("False");
+        let tank = mk("True");
+        let tank_without_extras = tank
+            .replace("      <ILowPressureTankOcc/>\n", "")
+            .replace("      <ILowPressureTank/>\n", "");
+        assert_eq!(
+            non_tank, tank_without_extras,
+            "A25 tank variant should differ from non-tank ONLY by the two inserted interfaces, not by any other byte change.\nnon_tank:\n{non_tank}\ntank_without_extras:\n{tank_without_extras}"
+        );
     }
 
     // -----------------------------------------------------------------
