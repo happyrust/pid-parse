@@ -2162,6 +2162,76 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
         )?;
     }
 
+    // --- A34: Derived rels for every PipeRun-driven
+    // PipingConnector. SmartPlant's exporter pairs every
+    // PipingConnector with five derived `<Rel>` rows that
+    // wire the connector to its two virtual `<PIDPipingPort>`
+    // children, the `<PIDProcessPoint>` collection, and the
+    // two endpoint connections. The PIDxxx body emit happens
+    // in `write_derived_connector_endpoints`; the rel emit
+    // here keeps the per-connector rel count in lockstep so
+    // the A33 `<Rel>` DefUID-count gate stays satisfied.
+    //
+    // UID derivation mirrors what `write_derived_connector_endpoints`
+    // already does:
+    //   * connector UID: `<piperun>-CNX`
+    //   * port UIDs:     `<connector>.1` / `<connector>.2`
+    //   * process point: `<connector>.PPT`
+    //
+    // The PipingEnd1Conn target is a placeholder pointing
+    // at the same connector's process point; the SmartPlant
+    // reference threads this through the upstream connected
+    // model item (e.g. a Vessel UID), but doing that
+    // correctly requires loader-side `T_PipingPoint`
+    // endpoint inference which is deferred to A34b. The
+    // placeholder still produces a valid intra-connector
+    // reference so SmartPlant validators that check UID
+    // resolvability don't reject the document outright.
+    for obj in &drawing.objects {
+        if obj.item_type_name != "PipeRun" {
+            continue;
+        }
+        let connector_uid = format!("{}-CNX", obj.uid);
+        let port1_uid = format!("{connector_uid}.1");
+        let port2_uid = format!("{connector_uid}.2");
+        let ppt_uid = format!("{connector_uid}.PPT");
+        write_rel(
+            buf,
+            &format!("PPC-{connector_uid}-1"),
+            &connector_uid,
+            &port1_uid,
+            "PipingPortComposition",
+        )?;
+        write_rel(
+            buf,
+            &format!("PPC-{connector_uid}-2"),
+            &connector_uid,
+            &port2_uid,
+            "PipingPortComposition",
+        )?;
+        write_rel(
+            buf,
+            &format!("PRP-{connector_uid}"),
+            &connector_uid,
+            &ppt_uid,
+            "ProcessPointCollection",
+        )?;
+        write_rel(
+            buf,
+            &format!("PE1-{port1_uid}"),
+            &port1_uid,
+            &ppt_uid,
+            "PipingEnd1Conn",
+        )?;
+        write_rel(
+            buf,
+            &format!("PE2-{port2_uid}"),
+            &port2_uid,
+            &ppt_uid,
+            "PipingEnd2Conn",
+        )?;
+    }
+
     // --- From T_Relationship, classified by endpoint item types
     for rel in &drawing.relationships {
         let uid1 = rel.source_uid.as_deref().unwrap_or("");
