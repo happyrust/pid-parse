@@ -10,6 +10,7 @@ use crate::model::PidDocument;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::SystemTime;
 use uuid::Uuid;
 
 /// Raw bytes of one CFB stream plus a dirty flag.
@@ -52,6 +53,29 @@ pub struct PidPackage {
     /// typical real-file map is empty.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub storage_clsids: BTreeMap<String, Uuid>,
+    /// Created + modified timestamps of every storage (including root).
+    /// Preserved across round-trips via `cfb::set_created_time` /
+    /// `set_modified_time` (v0.3.13+, powered by cfb 0.14 upstream APIs).
+    /// Streams don't carry their own timestamps per the CFB spec, so
+    /// this map only has entries for storages.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub storage_timestamps: BTreeMap<String, StorageTimestamps>,
+    /// User-defined state bits for storages and streams with a non-zero
+    /// value (the spec-default zero is omitted to keep the map sparse).
+    /// Preserved across round-trips via `cfb::set_state_bits` (v0.3.13+).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub state_bits: BTreeMap<String, u32>,
+}
+
+/// Per-storage created + modified timestamps. Either field may be `None`
+/// when the source CFB didn't set the corresponding time (treated as the
+/// CFB epoch 1601-01-01 by `cfb`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageTimestamps {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<SystemTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified: Option<SystemTime>,
 }
 
 impl PidPackage {
@@ -69,6 +93,8 @@ impl PidPackage {
             parsed,
             root_clsid: None,
             storage_clsids: BTreeMap::new(),
+            storage_timestamps: BTreeMap::new(),
+            state_bits: BTreeMap::new(),
         }
     }
 
@@ -82,6 +108,21 @@ impl PidPackage {
     /// Attach the non-root storage CLSIDs map, builder-style.
     pub fn with_storage_clsids(mut self, clsids: BTreeMap<String, Uuid>) -> Self {
         self.storage_clsids = clsids;
+        self
+    }
+
+    /// Attach the storage timestamps map, builder-style.
+    pub fn with_storage_timestamps(
+        mut self,
+        timestamps: BTreeMap<String, StorageTimestamps>,
+    ) -> Self {
+        self.storage_timestamps = timestamps;
+        self
+    }
+
+    /// Attach the state bits map, builder-style.
+    pub fn with_state_bits(mut self, bits: BTreeMap<String, u32>) -> Self {
+        self.state_bits = bits;
         self
     }
 
@@ -200,6 +241,13 @@ pub struct PackageDiff {
     /// each path, carries the two values (either side may be `None` when
     /// the storage wasn't CLSID-stamped on one side).
     pub storage_clsid_diffs: Vec<StorageClsidDiff>,
+    /// Storage paths whose created / modified timestamps differ between
+    /// A and B (Phase 9k, v0.3.13+). Only the storages present in at least
+    /// one side's `storage_timestamps` map appear here.
+    pub storage_timestamp_diffs: Vec<StorageTimestampDiff>,
+    /// Paths (storages or streams) whose non-zero `state_bits` differ
+    /// between A and B (Phase 9k, v0.3.13+).
+    pub state_bits_diffs: Vec<StateBitsDiff>,
 }
 
 /// One-entry diff for a non-root storage CLSID.
@@ -210,25 +258,44 @@ pub struct StorageClsidDiff {
     pub b: Option<Uuid>,
 }
 
+/// One-entry diff for a storage's created + modified timestamps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageTimestampDiff {
+    pub path: String,
+    pub a: Option<StorageTimestamps>,
+    pub b: Option<StorageTimestamps>,
+}
+
+/// One-entry diff for a path's non-zero `state_bits`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateBitsDiff {
+    pub path: String,
+    pub a: Option<u32>,
+    pub b: Option<u32>,
+}
+
 impl PackageDiff {
-    /// `true` iff the two packages are stream-identical at the byte level,
-    /// share the same root CLSID, and carry identical non-root storage
-    /// CLSIDs.
+    /// `true` iff the two packages are container-identical: same streams
+    /// byte-for-byte, same root / non-root CLSIDs, same storage
+    /// timestamps, same state_bits.
     pub fn is_empty(&self) -> bool {
         self.only_in_a.is_empty()
             && self.only_in_b.is_empty()
             && self.modified.is_empty()
             && self.root_clsid_match
             && self.storage_clsid_diffs.is_empty()
+            && self.storage_timestamp_diffs.is_empty()
+            && self.state_bits_diffs.is_empty()
     }
 
-    /// Total number of differences (streams + non-root CLSID deltas).
-    /// Useful for one-line "N diffs" summaries.
+    /// Total number of differences across every observed dimension.
     pub fn diff_count(&self) -> usize {
         self.only_in_a.len()
             + self.only_in_b.len()
             + self.modified.len()
             + self.storage_clsid_diffs.len()
+            + self.storage_timestamp_diffs.len()
+            + self.state_bits_diffs.len()
     }
 }
 
@@ -295,6 +362,40 @@ pub fn diff_packages(a: &PidPackage, b: &PidPackage) -> PackageDiff {
         }
     }
 
+    // Storage timestamp diffs: union of keys + Option-wise comparison.
+    let mut storage_timestamp_diffs: Vec<StorageTimestampDiff> = Vec::new();
+    let ts_paths: BTreeSet<&String> = a
+        .storage_timestamps
+        .keys()
+        .chain(b.storage_timestamps.keys())
+        .collect();
+    for path in ts_paths {
+        let va = a.storage_timestamps.get(path).cloned();
+        let vb = b.storage_timestamps.get(path).cloned();
+        if !timestamps_equal(va.as_ref(), vb.as_ref()) {
+            storage_timestamp_diffs.push(StorageTimestampDiff {
+                path: path.clone(),
+                a: va,
+                b: vb,
+            });
+        }
+    }
+
+    // State bits diffs: union of keys + Option<u32> comparison.
+    let mut state_bits_diffs: Vec<StateBitsDiff> = Vec::new();
+    let sb_paths: BTreeSet<&String> = a.state_bits.keys().chain(b.state_bits.keys()).collect();
+    for path in sb_paths {
+        let va = a.state_bits.get(path).copied();
+        let vb = b.state_bits.get(path).copied();
+        if va != vb {
+            state_bits_diffs.push(StateBitsDiff {
+                path: path.clone(),
+                a: va,
+                b: vb,
+            });
+        }
+    }
+
     PackageDiff {
         only_in_a,
         only_in_b,
@@ -303,6 +404,16 @@ pub fn diff_packages(a: &PidPackage, b: &PidPackage) -> PackageDiff {
         root_clsid_a: a.root_clsid,
         root_clsid_b: b.root_clsid,
         storage_clsid_diffs,
+        storage_timestamp_diffs,
+        state_bits_diffs,
+    }
+}
+
+fn timestamps_equal(a: Option<&StorageTimestamps>, b: Option<&StorageTimestamps>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.created == y.created && x.modified == y.modified,
+        _ => false,
     }
 }
 
@@ -530,6 +641,55 @@ mod tests {
         let only = &d.storage_clsid_diffs[0];
         assert_eq!(only.a, Some(clsid));
         assert_eq!(only.b, None);
+    }
+
+    #[test]
+    fn diff_flags_storage_timestamp_mismatch() {
+        let t1 = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let t2 = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+
+        let mut a_map: BTreeMap<String, StorageTimestamps> = BTreeMap::new();
+        a_map.insert(
+            "/JSite0".to_string(),
+            StorageTimestamps {
+                created: Some(t1),
+                modified: Some(t1),
+            },
+        );
+        let a = PidPackage::new(None, BTreeMap::new(), sample_doc()).with_storage_timestamps(a_map);
+
+        let mut b_map: BTreeMap<String, StorageTimestamps> = BTreeMap::new();
+        b_map.insert(
+            "/JSite0".to_string(),
+            StorageTimestamps {
+                created: Some(t1),
+                modified: Some(t2),
+            },
+        );
+        let b = PidPackage::new(None, BTreeMap::new(), sample_doc()).with_storage_timestamps(b_map);
+
+        let d = diff_packages(&a, &b);
+        assert_eq!(d.storage_timestamp_diffs.len(), 1);
+        assert_eq!(d.storage_timestamp_diffs[0].path, "/JSite0");
+        assert!(!d.is_empty());
+        assert_eq!(d.diff_count(), 1);
+    }
+
+    #[test]
+    fn diff_flags_state_bits_mismatch() {
+        let mut a_map: BTreeMap<String, u32> = BTreeMap::new();
+        a_map.insert("/JSite0".to_string(), 0x0000_0123);
+        let a = PidPackage::new(None, BTreeMap::new(), sample_doc()).with_state_bits(a_map);
+
+        let mut b_map: BTreeMap<String, u32> = BTreeMap::new();
+        b_map.insert("/JSite0".to_string(), 0x0000_0456);
+        let b = PidPackage::new(None, BTreeMap::new(), sample_doc()).with_state_bits(b_map);
+
+        let d = diff_packages(&a, &b);
+        assert_eq!(d.state_bits_diffs.len(), 1);
+        assert_eq!(d.state_bits_diffs[0].a, Some(0x0000_0123));
+        assert_eq!(d.state_bits_diffs[0].b, Some(0x0000_0456));
+        assert!(!d.is_empty());
     }
 
     #[test]

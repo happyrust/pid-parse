@@ -248,6 +248,66 @@ fn sheet_patch_out_of_range_is_rejected() {
 }
 
 #[test]
+fn storage_timestamps_and_state_bits_round_trip() {
+    // Phase 9k (v0.3.13+): cfb 0.14 unlocks set_{created,modified}_time +
+    // set_state_bits. Stamp a fixture, parse+write+reparse, assert
+    // timestamps + state_bits survive.
+    let src = unique_tmp("ts-sb-src");
+    let dst = unique_tmp("ts-sb-dst");
+    build_fixture_cfb(&src);
+
+    let t_created = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    let t_modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+
+    {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&src)
+            .expect("open rw");
+        let mut cfb = ::cfb::CompoundFile::open(file).expect("open cfb");
+        cfb.set_created_time("/UnknownStorage", t_created)
+            .expect("set_created_time");
+        cfb.set_modified_time("/UnknownStorage", t_modified)
+            .expect("set_modified_time");
+        cfb.set_state_bits("/PlainSheet/Sheet1", 0x0000_0123)
+            .expect("set_state_bits");
+        cfb.flush().expect("flush");
+    }
+
+    let parser = PidParser::new();
+    let pkg_in = parser.parse_package(&src).expect("parse");
+    let ts_in = pkg_in
+        .storage_timestamps
+        .get("/UnknownStorage")
+        .expect("UnknownStorage ts captured");
+    assert_eq!(ts_in.created, Some(t_created));
+    assert_eq!(ts_in.modified, Some(t_modified));
+    assert_eq!(
+        pkg_in.state_bits.get("/PlainSheet/Sheet1"),
+        Some(&0x0000_0123),
+        "state_bits captured"
+    );
+
+    PidWriter::write_to(&pkg_in, &WritePlan::default(), &dst).expect("write");
+    let pkg_out = parser.parse_package(&dst).expect("reparse");
+    let ts_out = pkg_out
+        .storage_timestamps
+        .get("/UnknownStorage")
+        .expect("timestamps survive");
+    assert_eq!(ts_out.created, Some(t_created));
+    assert_eq!(ts_out.modified, Some(t_modified));
+    assert_eq!(
+        pkg_out.state_bits.get("/PlainSheet/Sheet1"),
+        Some(&0x0000_0123),
+        "state_bits survive"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
 fn non_root_storage_clsid_round_trips() {
     // Build a fixture, stamp a non-root storage CLSID, parse+write+reparse,
     // and assert the CLSID survives.

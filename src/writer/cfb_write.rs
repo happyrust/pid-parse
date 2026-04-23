@@ -61,12 +61,31 @@ pub fn write_package_to_writer<F: Read + Write + Seek>(
         cfb.set_storage_clsid("/", clsid)?;
     }
 
-    // 4. Restore non-root storage CLSIDs. Real SmartPlant samples keep
-    //    these at the nil UUID so the map is typically empty; we still
-    //    handle it to keep parity across round-trips for callers that
-    //    happen to have non-nil values (e.g. synthetic fixtures).
+    // 4. Restore non-root storage CLSIDs. Real SmartPlant samples have
+    //    a handful of non-nil values (see Phase 9e) so this map is
+    //    usually small but non-empty.
     for (path, clsid) in &package.storage_clsids {
         cfb.set_storage_clsid(path, *clsid)?;
+    }
+
+    // 5. Restore storage timestamps (v0.3.13+, cfb 0.14 upstream APIs).
+    //    Streams don't carry their own timestamps per CFB spec; the map
+    //    only has entries for storages. Note `set_modified_time` /
+    //    `set_created_time` are no-ops on streams in the upstream crate,
+    //    but we only store storage-level timestamps in the first place.
+    for (path, ts) in &package.storage_timestamps {
+        if let Some(created) = ts.created {
+            cfb.set_created_time(path, created)?;
+        }
+        if let Some(modified) = ts.modified {
+            cfb.set_modified_time(path, modified)?;
+        }
+    }
+
+    // 6. Restore non-zero state_bits (v0.3.13+). The map is sparse —
+    //    zero is the CFB default and is omitted at parse time.
+    for (path, bits) in &package.state_bits {
+        cfb.set_state_bits(path, *bits)?;
     }
 
     cfb.flush()?;

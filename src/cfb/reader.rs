@@ -1,10 +1,20 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{PidDocument, StreamEntry};
-use crate::package::{PidPackage, RawStream};
+use crate::package::{PidPackage, RawStream, StorageTimestamps};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// CFB-spec epoch: 1601-01-01 UTC. `cfb` returns this value for storages
+/// whose timestamp field was never set by the producer; we treat it as
+/// "absent" in [`StorageTimestamps`] so writer round-trips don't accidentally
+/// materialize a bogus 1601 date into the output container.
+fn cfb_epoch_1601() -> SystemTime {
+    // 1601-01-01 UTC is 11_644_473_600 seconds before UNIX_EPOCH (1970-01-01).
+    UNIX_EPOCH - std::time::Duration::from_secs(11_644_473_600)
+}
 
 /// Thin wrapper over [`parse_pid_package`] that returns only the decoded
 /// model, preserving pre-0.3.2 behavior.
@@ -27,18 +37,41 @@ pub fn parse_pid_package(path: &Path, options: &ParseOptions) -> Result<PidPacka
     } else {
         Some(root_clsid_raw)
     };
-    let storage_clsids: BTreeMap<String, ::uuid::Uuid> = cfb
-        .walk()
-        .filter(|e| e.is_storage() && e.path() != std::path::Path::new("/"))
-        .filter_map(|e| {
-            let c = *e.clsid();
-            if c.is_nil() {
-                None
-            } else {
-                Some((e.path().to_string_lossy().replace('\\', "/"), c))
+    // Walk entries once to capture non-root CLSIDs, storage timestamps,
+    // and non-zero state_bits. We run this pass before handing the cfb
+    // off to `collect_streams_and_bytes` because `walk()` borrows `&cfb`
+    // and shares scope with the later `&mut cfb`.
+    let cfb_epoch = cfb_epoch_1601();
+    let mut storage_clsids: BTreeMap<String, ::uuid::Uuid> = BTreeMap::new();
+    let mut storage_timestamps: BTreeMap<String, StorageTimestamps> = BTreeMap::new();
+    let mut state_bits: BTreeMap<String, u32> = BTreeMap::new();
+    for e in cfb.walk() {
+        let path_str = e.path().to_string_lossy().replace('\\', "/");
+        if e.is_storage() {
+            // CLSID: non-root + non-nil only (matches v0.3.7 semantics).
+            if e.path() != std::path::Path::new("/") {
+                let c = *e.clsid();
+                if !c.is_nil() {
+                    storage_clsids.insert(path_str.clone(), c);
+                }
             }
-        })
-        .collect();
+            // Timestamps: record both created + modified when non-epoch.
+            // We include the root here — its timestamps are meaningful for
+            // SmartPlant / SPPID host audit.
+            let created = Some(e.created()).filter(|&t| t != cfb_epoch);
+            let modified = Some(e.modified()).filter(|&t| t != cfb_epoch);
+            if created.is_some() || modified.is_some() {
+                storage_timestamps
+                    .insert(path_str.clone(), StorageTimestamps { created, modified });
+            }
+        }
+        // State bits apply to both storages and streams; record non-zero
+        // values. Keep this map sparse — zeros are the CFB default.
+        let sb = e.state_bits();
+        if sb != 0 {
+            state_bits.insert(path_str, sb);
+        }
+    }
     let (streams, raw_streams) = collect_streams_and_bytes(&mut cfb, options)?;
 
     let mut doc = PidDocument {
@@ -72,7 +105,9 @@ pub fn parse_pid_package(path: &Path, options: &ParseOptions) -> Result<PidPacka
 
     Ok(PidPackage::new(Some(path.to_path_buf()), raw_streams, doc)
         .with_root_clsid(root_clsid)
-        .with_storage_clsids(storage_clsids))
+        .with_storage_clsids(storage_clsids)
+        .with_storage_timestamps(storage_timestamps)
+        .with_state_bits(state_bits))
 }
 
 /// After both `parse_clusters` and `parse_dynamic_attrs` have run, scan each

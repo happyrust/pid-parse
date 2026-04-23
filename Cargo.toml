@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 base64 = "0.22"
-cfb = "0.10"
+cfb = "0.14"
 quick-xml = { version = "0.38", features = ["serialize"] }
 # rusqlite with the `bundled` feature compiles a vendored sqlite3
 # so the crate has no host dependency on a system `sqlite3.dll` or

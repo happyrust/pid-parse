@@ -88,7 +88,69 @@ pub fn render(diff: &PackageDiff) -> String {
         }
     }
 
+    if !diff.storage_timestamp_diffs.is_empty() {
+        writeln!(out, "\n--- Storage Timestamp Diffs ---").unwrap();
+        for t in &diff.storage_timestamp_diffs {
+            let a_c = t.a.as_ref().and_then(|ts| ts.created);
+            let a_m = t.a.as_ref().and_then(|ts| ts.modified);
+            let b_c = t.b.as_ref().and_then(|ts| ts.created);
+            let b_m = t.b.as_ref().and_then(|ts| ts.modified);
+            writeln!(
+                out,
+                "  {}  created  a={}  b={}",
+                t.path,
+                render_time(a_c),
+                render_time(b_c)
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {}  modified a={}  b={}",
+                t.path,
+                render_time(a_m),
+                render_time(b_m)
+            )
+            .unwrap();
+        }
+    }
+
+    if !diff.state_bits_diffs.is_empty() {
+        writeln!(out, "\n--- State Bits Diffs ---").unwrap();
+        for s in &diff.state_bits_diffs {
+            writeln!(
+                out,
+                "  {}  a={}  b={}",
+                s.path,
+                render_state_bits(s.a),
+                render_state_bits(s.b),
+            )
+            .unwrap();
+        }
+    }
+
     out
+}
+
+fn render_time(t: Option<std::time::SystemTime>) -> String {
+    match t {
+        None => "(none)".to_string(),
+        Some(st) => {
+            // Render as seconds-since-UNIX_EPOCH so the output is both
+            // stable and human-comparable without pulling a formatting
+            // crate. Negative values (pre-1970) fall back to `Debug`.
+            match st.duration_since(std::time::UNIX_EPOCH) {
+                Ok(d) => format!("unix+{}s", d.as_secs()),
+                Err(_) => format!("{:?}", st),
+            }
+        }
+    }
+}
+
+fn render_state_bits(b: Option<u32>) -> String {
+    match b {
+        None => "(none)".to_string(),
+        Some(v) => format!("0x{:08X}", v),
+    }
 }
 
 fn render_clsid(c: Option<uuid::Uuid>) -> String {

@@ -44,6 +44,33 @@ pub fn generate_package_report(pkg: &PidPackage) -> String {
             }
         }
     }
+    if !pkg.storage_timestamps.is_empty() {
+        writeln!(
+            out,
+            "\n--- Storage Timestamps ({}) ---",
+            pkg.storage_timestamps.len()
+        )
+        .ok();
+        for (path, ts) in &pkg.storage_timestamps {
+            let c = ts
+                .created
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| format!("unix+{}s", d.as_secs()))
+                .unwrap_or_else(|| "(none)".to_string());
+            let m = ts
+                .modified
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| format!("unix+{}s", d.as_secs()))
+                .unwrap_or_else(|| "(none)".to_string());
+            writeln!(out, "  {}  created={}  modified={}", path, c, m).ok();
+        }
+    }
+    if !pkg.state_bits.is_empty() {
+        writeln!(out, "\n--- State Bits ({}) ---", pkg.state_bits.len()).ok();
+        for (path, bits) in &pkg.state_bits {
+            writeln!(out, "  {}  0x{:08X}", path, bits).ok();
+        }
+    }
     out
 }
 

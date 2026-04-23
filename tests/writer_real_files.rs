@@ -138,6 +138,89 @@ fn real_file_reports_non_root_storage_clsids_deterministically() {
 }
 
 #[test]
+fn real_file_passthrough_preserves_storage_timestamps() {
+    // Phase 9k (v0.3.13+): the real sample carries ~25 non-epoch storage
+    // timestamps that were silently dropped by Phase 9a-9g round-trip.
+    // cfb 0.14 unlocks set_{created,modified}_time so we can now preserve
+    // them across round-trip.
+    let fixture = fixture_path("DWG-0201GP06-01.pid");
+    if !fixture.exists() {
+        eprintln!("skipping: test fixture not found at {}", fixture.display());
+        return;
+    }
+
+    let parser = PidParser::new();
+    let pkg_in = parser.parse_package(&fixture).expect("parse");
+    assert!(
+        !pkg_in.storage_timestamps.is_empty(),
+        "real sample should carry non-epoch storage timestamps, got 0"
+    );
+    assert!(
+        pkg_in.storage_timestamps.len() >= 20,
+        "expected ≥20 storages with timestamps, got {}",
+        pkg_in.storage_timestamps.len()
+    );
+
+    let dst = tmp_output("timestamps-real");
+    PidWriter::write_to(&pkg_in, &WritePlan::default(), &dst).expect("write");
+    let pkg_out = parser.parse_package(&dst).expect("reparse");
+
+    assert_eq!(
+        pkg_out.storage_timestamps.len(),
+        pkg_in.storage_timestamps.len(),
+        "storage_timestamps count must match after round-trip"
+    );
+    for (path, ts_in) in &pkg_in.storage_timestamps {
+        let ts_out = pkg_out
+            .storage_timestamps
+            .get(path)
+            .unwrap_or_else(|| panic!("missing timestamp for {} after round-trip", path));
+        assert_eq!(
+            ts_in.created, ts_out.created,
+            "created time mismatch at {}",
+            path
+        );
+        assert_eq!(
+            ts_in.modified, ts_out.modified,
+            "modified time mismatch at {}",
+            path
+        );
+    }
+
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
+fn real_file_passthrough_produces_empty_diff_full() {
+    // v0.3.13+: passthrough diff should now also see 0 timestamp /
+    // state_bits diffs, not just streams + CLSIDs.
+    let fixture = fixture_path("DWG-0201GP06-01.pid");
+    if !fixture.exists() {
+        eprintln!("skipping: test fixture not found at {}", fixture.display());
+        return;
+    }
+
+    let parser = PidParser::new();
+    let pkg_in = parser.parse_package(&fixture).expect("parse");
+    let dst = tmp_output("empty-diff-full");
+    PidWriter::write_to(&pkg_in, &WritePlan::default(), &dst).expect("write");
+    let pkg_out = parser.parse_package(&dst).expect("reparse");
+
+    let diff = diff_packages(&pkg_in, &pkg_out);
+    assert!(
+        diff.is_empty(),
+        "real-file passthrough must produce empty diff across ALL dimensions, got {} diff(s): streams.mod={} clsid={} ts={} sb={}",
+        diff.diff_count(),
+        diff.modified.len(),
+        diff.storage_clsid_diffs.len(),
+        diff.storage_timestamp_diffs.len(),
+        diff.state_bits_diffs.len(),
+    );
+
+    let _ = std::fs::remove_file(&dst);
+}
+
+#[test]
 fn real_file_passthrough_preserves_root_clsid() {
     let fixture = fixture_path("DWG-0201GP06-01.pid");
     if !fixture.exists() {

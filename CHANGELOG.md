@@ -1393,6 +1393,67 @@ writer_validate_cli 13 = 261）。`cargo clippy --all-targets -- -D warnings`
 
 ## [0.4.1] - 2026-04-19
 
+### Phase 9k: cfb 0.10 → 0.14 升级 + 时间戳 + state_bits 保真
+
+`cfb` 在 2026-02-13 发布 0.14.0，新增 `set_created_time` / `set_modified_time` / `set_state_bits` 三个关键 API —— **直接解锁 Phase 9e 文档里标记"cfb upstream 依赖" 的全部遗留限制**。升级零 breaking changes 直接编译通过。
+
+真实样本 `DWG-0201GP06-01.pid` 承载 **25 个非 epoch storage timestamps**（root / 19 × JSite / PSMspacemap / TaggedTxtData），从 Phase 9a (v0.3.3) 起的 passthrough round-trip 一直在**悄无声息地丢失**这些时间戳（旧 cfb 0.10 只能 `touch(path) = now`）。Phase 9k 一并修复。
+
+### 升级依赖
+
+- `cfb = "0.10"` → `cfb = "0.14"`（零 breaking，无代码改动即可编译）
+- 新增 cfb 的传递依赖 `web-time = "1"`
+
+### 模型扩展
+
+- `PidPackage.storage_timestamps: BTreeMap<String, StorageTimestamps>` 新字段
+  - `StorageTimestamps { created: Option<SystemTime>, modified: Option<SystemTime> }`
+  - CFB-spec epoch (1601-01-01) 被 parser 归一化为 `None`（避免把"未设置" 误报为"1601年")
+- `PidPackage.state_bits: BTreeMap<String, u32>` 新字段
+  - 仅记录非零值（零是 CFB 默认，sparse map）
+- `PidPackage::with_storage_timestamps(...)` / `with_state_bits(...)` builder 方法
+
+### Parser / Writer 改动
+
+- `parse_pid_package`：单次 `cfb.walk()` 一并采集 CLSID / timestamps / state_bits（避免多次 walk）
+- `writer::cfb_write::write_package`：新增 step 5（`set_created_time` / `set_modified_time`）+ step 6（`set_state_bits`）
+
+### Diff 扩展
+
+- `PackageDiff.storage_timestamp_diffs: Vec<StorageTimestampDiff>` 新字段
+- `PackageDiff.state_bits_diffs: Vec<StateBitsDiff>` 新字段
+- `is_empty()` / `diff_count()` 纳入新维度
+- `inspect::diff::render` 新增 `--- Storage Timestamp Diffs ---` / `--- State Bits Diffs ---` 段，`render_time` 用 `unix+Ns` 稳定格式（无需 chrono 依赖）
+
+### Report 扩展
+
+- `generate_package_report` 新增 `--- Storage Timestamps (N) ---` / `--- State Bits (N) ---` 段展示
+- 真实样本运行 `pid_inspect drawing.pid` 默认可以看到全部 25 个 storage 的 created/modified 时间戳
+
+### re-export
+
+- `pid_parse::{StorageTimestamps, StorageTimestampDiff, StateBitsDiff}` 新导出
+
+### 测试
+
+- 模块内单元测试 +2：`diff_flags_storage_timestamp_mismatch` / `diff_flags_state_bits_mismatch`
+- `tests/writer_roundtrip.rs` +1：`storage_timestamps_and_state_bits_round_trip`（内存 fixture 烧任意 created/modified/state_bits → round-trip 完整保留）
+- `tests/writer_real_files.rs` +2：
+  - `real_file_passthrough_preserves_storage_timestamps`（真实样本 25+ timestamps 全部保真）
+  - `real_file_passthrough_produces_empty_diff_full`（6 个维度全部 0 diff）
+- **总计 177 个测试通过**（从 172 → 177，新增 5 个）
+
+### 修复：Phase 9a-9g 的 "passthrough 0 diffs" 实际上一直在丢数据
+
+Phase 9a 起 `--round-trip --verify` 报告 "verified: 0 diffs"，但旧 `diff_packages` 只看 stream 字节 + root CLSID，不看非 root CLSID（Phase 9e 补）、不看 timestamps / state_bits（Phase 9k 补）。v0.3.13 起 **"0 diffs"** 真正意味着 "容器级字节几乎无损"。
+
+### 文档
+
+- `docs/writer-clsid-and-timestamps.md` 全线改写：能力矩阵从"3 层保真"升级到"6 层保真"；新增 v0.3.13 验证清单；历史升级表
+- `ARCHITECTURE.md`：能力边界 v0.3.13
+
+## [0.3.12] - 2026-04-19
+
 ### Phase 8c: Layout-first 可读整图模型（供 H7CAD PID 工作台消费）
 
 在既有 `PidDocument + ObjectGraph + CrossReferenceGraph` 之上新增面向显示的 `layout` 真值层，让下游不必再把 `.pid` 对象简单摆成网格圆点，而能生成一份**可读整图**所需的布局摘要。此层仍是 visualization model，不追求 SmartPlant 原始几何逐字节/逐像素复刻。

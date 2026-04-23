@@ -25,7 +25,8 @@ pub use import_view::*;
 pub use layout::*;
 pub use model::*;
 pub use package::{
-    diff_packages, PackageDiff, PidPackage, RawStream, StorageClsidDiff, StreamDiff,
+    diff_packages, PackageDiff, PidPackage, RawStream, StateBitsDiff, StorageClsidDiff,
+    StorageTimestampDiff, StorageTimestamps, StreamDiff,
 };
 pub use writer::{
     EncodedString, MetadataUpdates, PidWriter, SheetChunkPatch, SheetPatch, StreamReplacement,
