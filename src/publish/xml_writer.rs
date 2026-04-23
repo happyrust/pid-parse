@@ -129,7 +129,10 @@ pub fn write_meta_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
 /// Emit every `PublishObject` as the corresponding SmartPlant XML
 /// tag (`<PIDProcessVessel>` / `<PIDNozzle>` / ...). Stage-1
 /// handles the four item types the TEST02 A01 fixture exercises
-/// (Vessel, Nozzle, PipeRun, PipingPoint); unknown types fall
+/// (Vessel, Nozzle, PipeRun, PipingPoint); A11 extends the
+/// dispatcher to Note / ItemNote (→ `<PIDNote>`) and Instrument /
+/// InstrFunction (→ `<PIDControlSystemFunction>`), modeled on the
+/// DWG-0202GP06-01 reference fixture. Unknown types still fall
 /// through with a generic `<PIDItem>` wrapper so the writer stays
 /// total.
 fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
@@ -145,11 +148,22 @@ fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<
                 write_pipeline(buf, obj)?;
                 write_piping_connector(buf, obj)?;
             }
-            // Drawing-scoped PipingPoint rows do not show up in
-            // stage-1's object list (they live via T_PipingPoint
-            // and will layer in once we load that subtable). Keep
-            // the arm so future expansion is a one-line addition.
             "PipingPoint" => write_piping_port(buf, obj)?,
+            // A11: Note / ItemNote → `<PIDNote>`. The reference
+            // DWG fixture ships 11 of these — annotation labels
+            // hung on the drawing canvas.
+            "Note" | "ItemNote" => write_item_note(buf, obj)?,
+            // A11: Instrument / InstrFunction → `<PIDControlSystemFunction>`.
+            // The DWG fixture ships 2 of these — measurement /
+            // control loops keyed by `MeasuredVariableCode +
+            // TagSequenceNo` (e.g. `LIA-060201`).
+            "Instrument" | "InstrFunction" => write_control_system_function(buf, obj)?,
+            // TODO(A12+): Exchanger / Mechanical have business
+            // subtables registered in `subtables_for_item_type` but
+            // no dedicated SmartPlant tag observed in the TEST02 +
+            // DWG-0202GP06-01 reference fixtures. They fall through
+            // to the generic placeholder until a fixture surfaces
+            // their canonical XML shape.
             other => write_generic_object(buf, obj, other)?,
         }
     }
@@ -458,6 +472,165 @@ fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), Publis
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   </PIDPipingPort>").map_err(fmt_err)
+}
+
+/// Emit a `<PIDNote>` block for a Note / ItemNote object.
+///
+/// The reference DWG fixture (`DWG-0202GP06-01_Data.xml`) shows
+/// the canonical shape:
+/// ```text
+/// <PIDNote>
+///    <IObject UID="..."/>
+///    <IDrawingItem/>
+///    <IPBSNote/>
+///    <INote NoteText="量液孔"/>
+///    <IDocumentItem/>
+/// </PIDNote>
+/// ```
+///
+/// `NoteText` is sourced from the standard
+/// `T_ModelItem.Description` column when present (this is where the
+/// SmartPlant client puts the note body for plain annotation rows).
+/// Fixtures whose business subtable has stamped a dedicated
+/// `NoteText` field win over `Description`. When neither is
+/// present the attribute renders empty rather than fabricating a
+/// placeholder.
+fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+    let note_text = obj
+        .fields
+        .get("NoteText")
+        .cloned()
+        .or_else(|| obj.description.clone())
+        .unwrap_or_default();
+    writeln!(buf, "   <PIDNote>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}"/>"#,
+        escape_attr(&obj.uid)
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPBSNote/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <INote NoteText="{}"/>"#,
+        escape_attr(&note_text)
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IDocumentItem/>").map_err(fmt_err)?;
+    writeln!(buf, "   </PIDNote>").map_err(fmt_err)
+}
+
+/// Emit a `<PIDControlSystemFunction>` block for an Instrument /
+/// InstrFunction object.
+///
+/// The reference DWG fixture shows the canonical shape:
+/// ```text
+/// <PIDControlSystemFunction>
+///    <IObject UID="..." Name="LIA-060201"/>
+///    <IPBSItem ConstructionStatus="@NewConstruction" .../>
+///    <IControlSystemFunction/>
+///    <IDrawingItem/>
+///    <ISignalPortComposition/>
+///    <IInstrument/>
+///    <IPlannedMatl/>
+///    <ILoopMember/>
+///    <IDocumentItem/>
+///    <INoteCollection/>
+///    <IExpandableThing/>
+///    <INamedInstrument InstrFuncModifier="" InstrLoopSuffix=""
+///       InstrTagPrefix="" InstrTagSequenceNo="060201"
+///       InstrTagSuffix="" MeasuredVariable="LIA"/>
+/// </PIDControlSystemFunction>
+/// ```
+///
+/// The friendly `Name` attribute is built as `<MeasuredVariable>-<TagSequenceNo>`
+/// from `obj.fields["MeasuredVariableCode"]` + `obj.fields["TagSequenceNo"]`
+/// (both columns live on `T_Instrument`, attached to InstrFunction
+/// rows via `subtables_for_item_type`). When either piece is
+/// missing the writer falls back to the bare `MeasuredVariable`
+/// (or the bare sequence) so the human-readable label is still
+/// non-empty whenever any signal is available.
+fn write_control_system_function(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
+    let measured_variable = obj
+        .fields
+        .get("MeasuredVariableCode")
+        .cloned()
+        .unwrap_or_default();
+    let tag_sequence_no = obj
+        .fields
+        .get("TagSequenceNo")
+        .cloned()
+        .unwrap_or_default();
+    let tag_prefix = obj.fields.get("TagPrefix").cloned().unwrap_or_default();
+    let tag_suffix = obj.fields.get("TagSuffix").cloned().unwrap_or_default();
+    let loop_suffix = obj
+        .fields
+        .get("LoopTagSuffix")
+        .cloned()
+        .unwrap_or_default();
+    let func_modifier = obj
+        .fields
+        .get("InstrumentTypeModifier")
+        .cloned()
+        .unwrap_or_default();
+
+    let name = match (measured_variable.is_empty(), tag_sequence_no.is_empty()) {
+        (false, false) => format!("{measured_variable}-{tag_sequence_no}"),
+        (false, true) => measured_variable.clone(),
+        (true, false) => tag_sequence_no.clone(),
+        (true, true) => String::new(),
+    };
+
+    writeln!(buf, "   <PIDControlSystemFunction>").map_err(fmt_err)?;
+    if name.is_empty() {
+        // Empty `Name=""` would be uglier than omitting it; reference
+        // fixtures always have a populated Name, so the empty case is
+        // a defensive fallback only.
+        writeln!(
+            buf,
+            r#"      <IObject UID="{}"/>"#,
+            escape_attr(&obj.uid),
+        )
+        .map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IObject UID="{}" Name="{}"/>"#,
+            escape_attr(&obj.uid),
+            escape_attr(&name),
+        )
+        .map_err(fmt_err)?;
+    }
+    writeln!(buf, "      <IPBSItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IControlSystemFunction/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <ISignalPortComposition/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IInstrument/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPlannedMatl/>").map_err(fmt_err)?;
+    writeln!(buf, "      <ILoopMember/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDocumentItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <INoteCollection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IExpandableThing/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        concat!(
+            r#"      <INamedInstrument InstrFuncModifier="{}" InstrLoopSuffix="{}" "#,
+            r#"InstrTagPrefix="{}" InstrTagSequenceNo="{}" InstrTagSuffix="{}" "#,
+            r#"MeasuredVariable="{}"/>"#,
+        ),
+        escape_attr(&func_modifier),
+        escape_attr(&loop_suffix),
+        escape_attr(&tag_prefix),
+        escape_attr(&tag_sequence_no),
+        escape_attr(&tag_suffix),
+        escape_attr(&measured_variable),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "   </PIDControlSystemFunction>").map_err(fmt_err)
 }
 
 fn write_generic_object(
@@ -1539,5 +1712,293 @@ mod tests {
         assert_eq!(format_meta_date("2026-04-20"), "2026-04-20");
         assert_eq!(format_meta_date("not-a-date"), "not-a-date");
         assert_eq!(format_meta_date(""), "");
+    }
+
+    // -----------------------------------------------------------------
+    // A11 — Note / InstrFunction writers
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn item_note_emits_pid_note_with_text_from_description() {
+        // Note rows use `T_ModelItem.Description` as their primary
+        // text source (verified against DWG-0202GP06-01_Data.xml).
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "NOTE-1".into(),
+            item_type_name: "Note".into(),
+            description: Some("量液孔".into()),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains("<PIDNote>"),
+            "Note must render as <PIDNote>; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IObject UID="NOTE-1"/>"#),
+            "Note IObject must carry the UID; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<INote NoteText="量液孔"/>"#),
+            "Description should source NoteText; out:\n{out}"
+        );
+        assert!(
+            out.contains("</PIDNote>"),
+            "PIDNote must close; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn item_note_alias_routes_to_pid_note() {
+        // SmartPlant ships the type as both "Note" and "ItemNote"
+        // depending on the backup era; both must hit the same writer.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "NOTE-2".into(),
+            item_type_name: "ItemNote".into(),
+            description: Some("Hello".into()),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains("<PIDNote>"),
+            "ItemNote must also dispatch to write_item_note; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<INote NoteText="Hello"/>"#),
+            "ItemNote text round-trips; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn item_note_prefers_note_text_field_over_description() {
+        // When a fixture stamps an explicit `NoteText` field on the
+        // model item (some SmartPlant versions do), that wins over
+        // the generic Description column.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "NOTE-3".into(),
+            item_type_name: "Note".into(),
+            description: Some("ignored".into()),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("NoteText".into(), "explicit-text".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<INote NoteText="explicit-text"/>"#),
+            "fields[NoteText] must override Description; out:\n{out}"
+        );
+        assert!(
+            !out.contains(r#"<INote NoteText="ignored"/>"#),
+            "Description must not appear when NoteText is set; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn item_note_with_no_text_renders_empty_note_text_attribute() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "NOTE-4".into(),
+            item_type_name: "Note".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<INote NoteText=""/>"#),
+            "missing text should render as NoteText=\"\"; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn item_note_escapes_xml_special_chars_in_note_text() {
+        // SmartPlant accepts entity-escaped attribute values, so
+        // `<` / `>` / `&` / `"` in note bodies must round-trip
+        // cleanly without breaking the document.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "NOTE-5".into(),
+            item_type_name: "Note".into(),
+            description: Some(r#"a < b & "c" > d"#.into()),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"NoteText="a &lt; b &amp; &quot;c&quot; &gt; d""#),
+            "XML special chars must be entity-escaped; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn instr_function_emits_pid_control_system_function_with_derived_name() {
+        // Mirrors DWG-0202GP06-01: MeasuredVariableCode + TagSequenceNo
+        // → IObject Name = `LIA-060201`.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-1".into(),
+            item_type_name: "InstrFunction".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("MeasuredVariableCode".into(), "LIA".into());
+                m.insert("TagSequenceNo".into(), "060201".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains("<PIDControlSystemFunction>"),
+            "InstrFunction must render as <PIDControlSystemFunction>; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IObject UID="INSTR-1" Name="LIA-060201"/>"#),
+            "Name must combine MeasuredVariable + TagSequenceNo; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"InstrTagSequenceNo="060201""#),
+            "INamedInstrument must carry InstrTagSequenceNo; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"MeasuredVariable="LIA""#),
+            "INamedInstrument must carry MeasuredVariable; out:\n{out}"
+        );
+        assert!(
+            out.contains("</PIDControlSystemFunction>"),
+            "PIDControlSystemFunction must close; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn instrument_alias_dispatches_to_control_system_function() {
+        // The sibling `Instrument` ItemTypeName routes to the same
+        // writer, matching the SPPID convention where the logical
+        // function tag is the one rendered to XML.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-2".into(),
+            item_type_name: "Instrument".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("MeasuredVariableCode".into(), "FT".into());
+                m.insert("TagSequenceNo".into(), "001".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains("<PIDControlSystemFunction>"),
+            "Instrument must also dispatch to PIDControlSystemFunction; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"Name="FT-001""#),
+            "Name composition rule applies regardless of alias; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn instr_function_falls_back_when_only_measured_variable_present() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-3".into(),
+            item_type_name: "InstrFunction".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("MeasuredVariableCode".into(), "LIA".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"Name="LIA""#),
+            "missing TagSequenceNo should fall through to bare MeasuredVariable; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn instr_function_omits_name_attribute_when_no_signals_available() {
+        // Without MeasuredVariableCode AND without TagSequenceNo
+        // the writer must NOT emit `Name=""` (cosmetic noise);
+        // omit the attribute entirely so SmartPlant's defaulting
+        // can take over.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-4".into(),
+            item_type_name: "InstrFunction".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="INSTR-4"/>"#),
+            "missing tag info should produce a bare IObject; out:\n{out}"
+        );
+        assert!(
+            !out.contains(r#"Name="""#),
+            "writer must not emit empty Name attributes; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn instr_function_named_instrument_passes_through_optional_fields() {
+        // Verify all five INamedInstrument attributes round-trip
+        // when the loader populates them (T_PlantItem.TagPrefix /
+        // T_Instrument.{TagSuffix, LoopTagSuffix, InstrumentTypeModifier}).
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-5".into(),
+            item_type_name: "InstrFunction".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("MeasuredVariableCode".into(), "LIA".into());
+                m.insert("TagSequenceNo".into(), "060201".into());
+                m.insert("TagPrefix".into(), "PFX".into());
+                m.insert("TagSuffix".into(), "SFX".into());
+                m.insert("LoopTagSuffix".into(), "LP".into());
+                m.insert("InstrumentTypeModifier".into(), "MOD".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        for (attr, value) in [
+            ("InstrTagPrefix", "PFX"),
+            ("InstrTagSequenceNo", "060201"),
+            ("InstrTagSuffix", "SFX"),
+            ("InstrLoopSuffix", "LP"),
+            ("InstrFuncModifier", "MOD"),
+            ("MeasuredVariable", "LIA"),
+        ] {
+            assert!(
+                out.contains(&format!(r#"{attr}="{value}""#)),
+                "INamedInstrument must carry `{attr}=\"{value}\"`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_item_types_still_fall_back_to_generic_placeholder() {
+        // Exchanger / Mechanical have subtables registered but no
+        // dedicated writer yet (TODO A12+); ensure they continue to
+        // emit through the generic dispatch instead of being
+        // silently dropped.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "EX-1".into(),
+            item_type_name: "Exchanger".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains("<PIDItem>"),
+            "Exchanger should still hit the generic <PIDItem> fallback; out:\n{out}"
+        );
+        assert!(
+            out.contains("`Exchanger`"),
+            "the generic comment should name the unsupported type; out:\n{out}"
+        );
     }
 }
