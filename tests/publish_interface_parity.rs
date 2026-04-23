@@ -40,6 +40,8 @@ use pid_parse::publish::{
 const SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite";
 const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
 const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
+const DWG_REFERENCE_DATA_XML: &str =
+    "test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01_Data.xml";
 const PLANT_NAME: &str = "TEST02";
 
 /// Generate `A01_Data.xml` through the real publish pipeline:
@@ -70,6 +72,17 @@ fn load_reference_a01_xml() -> Option<String> {
     let p = std::path::Path::new(A01_REFERENCE_DATA_XML);
     if !p.exists() {
         eprintln!("skipping: reference fixture {A01_REFERENCE_DATA_XML} not found");
+        return None;
+    }
+    Some(std::fs::read_to_string(p).expect("reference should be utf8"))
+}
+
+/// Load the SmartPlant-produced reference DWG XML. Returns
+/// `None` when the fixture is missing.
+fn load_reference_dwg_xml() -> Option<String> {
+    let p = std::path::Path::new(DWG_REFERENCE_DATA_XML);
+    if !p.exists() {
+        eprintln!("skipping: reference fixture {DWG_REFERENCE_DATA_XML} not found");
         return None;
     }
     Some(std::fs::read_to_string(p).expect("reference should be utf8"))
@@ -222,5 +235,234 @@ fn interface_parity_generator_produces_every_supported_tag_on_a01_subset() {
     assert!(
         missing_from_generator.is_empty(),
         "Generator is missing these supported PID tags from the A01 output: {missing_from_generator:?}",
+    );
+}
+
+/// Known cross-fixture shape divergences between A01 and DWG.
+///
+/// Each entry is `(tag, (only_in_a01, only_in_dwg), milestone,
+/// rationale)`. Documented divergences are tolerated; unknown
+/// new divergences fail the test. When a divergence closes
+/// (e.g., A25 lands tank-variant emission), remove its entry
+/// and the test will confirm the whitelist drained to empty.
+///
+/// SPPID's per-tag interface list is mostly shape-static but in
+/// a few edge cases it varies with domain-enum columns
+/// (e.g., vessel type, pipeline class). Those are real variant
+/// shapes — not fixture drift — and need conditional writer
+/// paths to close. We pin the known gaps here so they can't
+/// silently drift from the writer's current assumption set.
+#[allow(clippy::type_complexity)]
+const KNOWN_A01_VS_DWG_DIVERGENCES: &[(&str, (&[&str], &[&str]), &str, &str)] = &[
+    (
+        "PIDProcessVessel",
+        (&[], &["ILowPressureTank", "ILowPressureTankOcc"]),
+        "A25",
+        "SmartPlant emits ILowPressureTank + ILowPressureTankOcc on \
+         'Open top tank' EqType1/EqType0 vessel variants (DWG fixture \
+         V F1081777… / EqType1=\"@EE793\") but not on 'Horizontal Drum' \
+         variants (A01 fixture V C57494A1… / EqTypeDescription=\"Horizontal Drum\"). \
+         A25 will close this gap by routing tank-type detection from \
+         the T_ProcessEquipment EqType enum columns into a conditional \
+         ILowPressureTank + ILowPressureTankOcc emit path. Until then, \
+         the writer matches A01's 15-interface shape universally.",
+    ),
+];
+
+/// A24 · Cross-fixture shape universality check.
+///
+/// Motivation: our writer is shape-static per tag — it emits the
+/// same interface list regardless of which plant / drawing owns
+/// the tag. The A23 parity gate verifies writer ⊇ A01 reference.
+/// This test verifies A01 reference == DWG reference for each
+/// supported tag's interface set (modulo known variant deltas
+/// whitelisted in [`KNOWN_A01_VS_DWG_DIVERGENCES`]), which means
+/// "writer ⊇ A01" is transitively "writer ⊇ DWG" too for
+/// non-whitelisted tags. Any future SmartPlant export that
+/// emits a *new* interface mismatch on DWG vs A01 for the same
+/// tag would invalidate the shape-static assumption and break
+/// this assertion, forcing us to either close the gap via a
+/// conditional emit path or add a fresh whitelist entry with
+/// documented rationale.
+///
+/// Works without the DWG SQLite mirror: operates purely on the
+/// two reference XML fixtures that ARE bundled in the repo.
+/// Soft-skips when either fixture is absent.
+#[test]
+fn a01_and_dwg_reference_interfaces_agree_for_every_shared_supported_tag() {
+    let Some(a01_xml) = load_reference_a01_xml() else {
+        return;
+    };
+    let Some(dwg_xml) = load_reference_dwg_xml() else {
+        return;
+    };
+
+    let a01_ifaces = parse_interfaces_per_tag(&a01_xml);
+    let dwg_ifaces = parse_interfaces_per_tag(&dwg_xml);
+
+    // Build a lookup from tag → (expected only_in_a01, expected
+    // only_in_dwg). An absent key means "no divergence tolerated".
+    let whitelist: std::collections::BTreeMap<&str, (BTreeSet<&str>, BTreeSet<&str>)> =
+        KNOWN_A01_VS_DWG_DIVERGENCES
+            .iter()
+            .map(|(tag, (a01_only, dwg_only), _milestone, _rationale)| {
+                (
+                    *tag,
+                    (
+                        a01_only.iter().copied().collect::<BTreeSet<&str>>(),
+                        dwg_only.iter().copied().collect::<BTreeSet<&str>>(),
+                    ),
+                )
+            })
+            .collect();
+
+    let mut unexpected_deltas: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+    let mut closed_gaps: Vec<String> = Vec::new();
+    let mut agreements: Vec<String> = Vec::new();
+    let mut tolerated_gaps: Vec<String> = Vec::new();
+    let mut a01_only: Vec<String> = Vec::new();
+    let mut dwg_only: Vec<String> = Vec::new();
+
+    for tag in TAGS_UNDER_PARITY {
+        let tag = *tag;
+        match (a01_ifaces.get(tag), dwg_ifaces.get(tag)) {
+            (Some(a01_set), Some(dwg_set)) => {
+                let a01_minus_dwg: BTreeSet<String> =
+                    a01_set.difference(dwg_set).cloned().collect();
+                let dwg_minus_a01: BTreeSet<String> =
+                    dwg_set.difference(a01_set).cloned().collect();
+
+                match whitelist.get(tag) {
+                    Some((expected_a01_only, expected_dwg_only)) => {
+                        let actual_a01_only: BTreeSet<&str> =
+                            a01_minus_dwg.iter().map(|s| s.as_str()).collect();
+                        let actual_dwg_only: BTreeSet<&str> =
+                            dwg_minus_a01.iter().map(|s| s.as_str()).collect();
+                        if &actual_a01_only == expected_a01_only
+                            && &actual_dwg_only == expected_dwg_only
+                        {
+                            tolerated_gaps.push(tag.to_string());
+                        } else if actual_a01_only.is_empty() && actual_dwg_only.is_empty() {
+                            // Someone closed the gap — whitelist
+                            // entry is now stale.
+                            closed_gaps.push(tag.to_string());
+                        } else {
+                            let unexpected_in_a01: Vec<String> = actual_a01_only
+                                .difference(expected_a01_only)
+                                .map(|s| s.to_string())
+                                .collect();
+                            let unexpected_in_dwg: Vec<String> = actual_dwg_only
+                                .difference(expected_dwg_only)
+                                .map(|s| s.to_string())
+                                .collect();
+                            unexpected_deltas.push((
+                                tag.to_string(),
+                                unexpected_in_a01,
+                                unexpected_in_dwg,
+                            ));
+                        }
+                    }
+                    None => {
+                        if a01_minus_dwg.is_empty() && dwg_minus_a01.is_empty() {
+                            agreements.push(tag.to_string());
+                        } else {
+                            unexpected_deltas.push((
+                                tag.to_string(),
+                                a01_minus_dwg.into_iter().collect(),
+                                dwg_minus_a01.into_iter().collect(),
+                            ));
+                        }
+                    }
+                }
+            }
+            (Some(_), None) => a01_only.push(tag.to_string()),
+            (None, Some(_)) => dwg_only.push(tag.to_string()),
+            (None, None) => {}
+        }
+    }
+
+    eprintln!("--- A24 cross-fixture shape universality summary ---");
+    eprintln!("Tags agreeing on interface set in both A01 and DWG: {agreements:?}");
+    eprintln!("Tags with tolerated known divergences: {tolerated_gaps:?}");
+    if !a01_only.is_empty() {
+        eprintln!("Tags only present in A01 (no DWG coverage): {a01_only:?}");
+    }
+    if !dwg_only.is_empty() {
+        eprintln!("Tags only present in DWG (no A01 coverage): {dwg_only:?}");
+    }
+    if !closed_gaps.is_empty() {
+        eprintln!("Tags with CLOSED whitelist entries (celebrate + drop): {closed_gaps:?}");
+    }
+    if !unexpected_deltas.is_empty() {
+        eprintln!("Unexpected interface deltas:");
+        for (tag, only_a01, only_dwg) in &unexpected_deltas {
+            eprintln!("  [{tag}] only_in_A01: {only_a01:?}  only_in_DWG: {only_dwg:?}");
+        }
+    }
+
+    assert!(
+        closed_gaps.is_empty(),
+        "A24 whitelist-sync regression: these tags no longer \
+         diverge between A01 and DWG references, which means \
+         someone closed the fidelity gap. Remove the entry from \
+         KNOWN_A01_VS_DWG_DIVERGENCES (and celebrate): {closed_gaps:?}",
+    );
+
+    assert!(
+        unexpected_deltas.is_empty(),
+        "A24 shape universality regression: A01 and DWG references \
+         disagree on interface sets for these supported tags, which \
+         breaks the 'writer is shape-static per tag' invariant for \
+         non-whitelisted tags. Either add a KNOWN_A01_VS_DWG_DIVERGENCES \
+         entry documenting the variant (with milestone + rationale) \
+         or close the gap via a conditional writer emit. \
+         Details:\n{:#?}",
+        unexpected_deltas,
+    );
+}
+
+/// Guard: the whitelist must reference real tags. A typo in the
+/// tag name would make an entry silently inert — both halves
+/// of the assert would evaluate on an empty delta from the
+/// wrong side of the comparison, masking a real divergence.
+#[test]
+fn a01_vs_dwg_whitelist_tags_are_all_under_parity() {
+    let parity_set: BTreeSet<&str> = TAGS_UNDER_PARITY.iter().copied().collect();
+    let stale: Vec<&str> = KNOWN_A01_VS_DWG_DIVERGENCES
+        .iter()
+        .filter_map(|(tag, _, _, _)| {
+            if parity_set.contains(tag) {
+                None
+            } else {
+                Some(*tag)
+            }
+        })
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "KNOWN_A01_VS_DWG_DIVERGENCES references tags not in \
+         TAGS_UNDER_PARITY, which would make the whitelist entry \
+         inert: {stale:?}",
+    );
+}
+
+/// Guard: each whitelist entry must carry at least one interface
+/// on one side (empty+empty is an agreement, not a divergence).
+#[test]
+fn a01_vs_dwg_whitelist_entries_carry_at_least_one_interface() {
+    let empty: Vec<&str> = KNOWN_A01_VS_DWG_DIVERGENCES
+        .iter()
+        .filter_map(|(tag, (a01_only, dwg_only), _, _)| {
+            if a01_only.is_empty() && dwg_only.is_empty() {
+                Some(*tag)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        empty.is_empty(),
+        "KNOWN_A01_VS_DWG_DIVERGENCES has empty entries (should be \
+         full agreements, not whitelist rows): {empty:?}",
     );
 }
