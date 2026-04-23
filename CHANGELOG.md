@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A34b)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A35)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
@@ -68,6 +68,13 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   `KNOWN_WRITER_REL_DEFUID_GAPS` 从 2 项 → 0 项，A33 gate
   完全 drained。Writer 现在 emit 9 DefUIDs（8 reference + 1
   extra "Relationship" fallback for un-classified Rep↔Rep）。
+- A35 doc tests — 给 6 个核心 publish API 加可执行 inline
+  examples：`parse_pid_tag_counts` (A12)、`coverage_against_reference`
+  (A15)、`parse_interfaces_per_tag` (A23)、`parse_attrs_per_interface_per_tag`
+  (A26)、`parse_rel_defuid_counts` (A33) 以及 `PublishStyle` enum
+  (A29)。Doc tests 从 0 → 6，CI 自动跑（`cargo test --doc`），
+  让外部用户 `cargo doc --open` 看到的 API 文档同时是 working
+  example，且文档与代码不会漂移。
 
 #### Added — writer 真实改动
 
@@ -141,6 +148,10 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   +4 在 `tests/publish_xml_cli.rs` 覆盖 A30 `--list-drawings` +
   drawing-not-found hint，
   +4 在 `tests/publish_rel_parity.rs` A33 / A33b + 2 guard）
+* doc tests：0 → 6（A35 — `parse_pid_tag_counts` /
+  `coverage_against_reference` / `parse_interfaces_per_tag` /
+  `parse_attrs_per_interface_per_tag` / `parse_rel_defuid_counts` /
+  `PublishStyle`）
 * lint：0 warnings
 
 #### A28 backlog inventory（已 snapshot 入测试）

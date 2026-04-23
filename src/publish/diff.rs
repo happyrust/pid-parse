@@ -163,6 +163,19 @@ impl fmt::Display for SemanticDiffReport {
 /// The scanner ignores attributes; e.g. `<PIDDrawing Foo="bar">`
 /// tallies as `"PIDDrawing"`. Tag-name characters are restricted
 /// to `[A-Za-z0-9_]` to keep the scan robust to garbage payloads.
+///
+/// # Example
+///
+/// ```
+/// use pid_parse::publish::parse_pid_tag_counts;
+///
+/// let xml = "<PIDDrawing></PIDDrawing>\
+///            <PIDPipeline Foo=\"x\"></PIDPipeline>\
+///            <PIDPipeline></PIDPipeline>";
+/// let counts = parse_pid_tag_counts(xml);
+/// assert_eq!(counts.get("PIDDrawing"), Some(&1));
+/// assert_eq!(counts.get("PIDPipeline"), Some(&2));
+/// ```
 pub fn parse_pid_tag_counts(xml: &str) -> BTreeMap<String, usize> {
     let mut out = BTreeMap::new();
     let bytes = xml.as_bytes();
@@ -342,6 +355,21 @@ impl fmt::Display for WriterCoverage {
 
 /// Compute the [`WriterCoverage`] of `reference_xml` against the
 /// writer's [`supported_pid_tags`] set. Pure function — no I/O.
+///
+/// # Example
+///
+/// ```
+/// use pid_parse::publish::coverage_against_reference;
+///
+/// let reference = "<PIDDrawing></PIDDrawing>\
+///                  <PIDBranchPoint></PIDBranchPoint>";
+/// let coverage = coverage_against_reference(reference);
+/// // PIDDrawing is a supported tag (writer can emit it).
+/// assert_eq!(coverage.supported_total(), 1);
+/// // PIDBranchPoint is a backlog tag the writer cannot emit yet.
+/// assert_eq!(coverage.unsupported_total(), 1);
+/// assert!(!coverage.is_complete());
+/// ```
 pub fn coverage_against_reference(reference_xml: &str) -> WriterCoverage {
     let counts = parse_pid_tag_counts(reference_xml);
     let supported_set: std::collections::BTreeSet<&str> =
@@ -371,6 +399,23 @@ pub fn coverage_against_reference(reference_xml: &str) -> WriterCoverage {
 /// Map from PID tag (e.g. `"PIDPipingConnector"`) to the set of
 /// immediate child `<IFoo...>` interface names observed inside
 /// the FIRST occurrence of that tag in `xml`.
+///
+/// # Example
+///
+/// ```
+/// use pid_parse::publish::parse_interfaces_per_tag;
+///
+/// let xml = "<PIDPipeline>\
+///                <IObject UID=\"X\"/>\
+///                <IPBSItem/>\
+///                <IPipeline/>\
+///            </PIDPipeline>";
+/// let ifaces = parse_interfaces_per_tag(xml);
+/// let pipeline = ifaces.get("PIDPipeline").expect("entry");
+/// assert!(pipeline.contains("IObject"));
+/// assert!(pipeline.contains("IPBSItem"));
+/// assert!(pipeline.contains("IPipeline"));
+/// ```
 ///
 /// Scanning strategy:
 /// * Walk byte-by-byte looking for opening tag starts (`<`).
@@ -480,6 +525,23 @@ pub fn parse_interfaces_per_tag(
 /// — SmartPlant emits identical attribute shapes for every
 /// instance of the same tag on the same interface, so
 /// first-occurrence-per-tag is lossless.
+///
+/// # Example
+///
+/// ```
+/// use pid_parse::publish::parse_attrs_per_interface_per_tag;
+///
+/// let xml = "<PIDPipeline>\
+///                <IObject UID=\"abc\" ItemTag=\"PH-001\"/>\
+///                <IFluidSystem FluidCode=\"@{x}\" FluidSystem=\"@{y}\"/>\
+///            </PIDPipeline>";
+/// let attrs = parse_attrs_per_interface_per_tag(xml);
+/// let pipeline = attrs.get("PIDPipeline").expect("entry");
+/// // Each interface maps to an alphabetically-sorted attr name set.
+/// assert!(pipeline.get("IObject").unwrap().contains("UID"));
+/// assert!(pipeline.get("IObject").unwrap().contains("ItemTag"));
+/// assert!(pipeline.get("IFluidSystem").unwrap().contains("FluidCode"));
+/// ```
 ///
 /// The helper is the attribute-level counterpart to
 /// [`parse_interfaces_per_tag`] (A23) and the cross-fixture
@@ -678,6 +740,19 @@ fn is_attr_name_byte(b: u8) -> bool {
 /// * Self-closing form (`/>`) and verbose closing
 ///   (`</IRel>`) are treated identically — only the
 ///   opening tag matters.
+///
+/// # Example
+///
+/// ```
+/// use pid_parse::publish::parse_rel_defuid_counts;
+///
+/// let xml = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"DrawingItems\"/>\
+///            <IRel UID1=\"c\" UID2=\"d\" DefUID=\"DrawingItems\"/>\
+///            <IRel UID1=\"e\" UID2=\"f\" DefUID=\"PipingConnectors\"/>";
+/// let counts = parse_rel_defuid_counts(xml);
+/// assert_eq!(counts.get("DrawingItems"), Some(&2));
+/// assert_eq!(counts.get("PipingConnectors"), Some(&1));
+/// ```
 pub fn parse_rel_defuid_counts(xml: &str) -> BTreeMap<String, usize> {
     let mut out: BTreeMap<String, usize> = BTreeMap::new();
     let bytes = xml.as_bytes();
