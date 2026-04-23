@@ -32,8 +32,9 @@ pub mod xml_writer;
 
 pub use diff::{
     coverage_against_reference, diff_publish_xml, parse_attrs_per_interface_per_tag,
-    parse_interfaces_per_tag, parse_pid_tag_counts, supported_pid_tags, CoverageRow,
-    SemanticDiffReport, TagCountDiff, TagDiffStatus, WriterCoverage,
+    parse_interfaces_per_tag, parse_pid_tag_counts, parse_rel_defuid_counts,
+    supported_pid_tags, CoverageRow, SemanticDiffReport, TagCountDiff, TagDiffStatus,
+    WriterCoverage,
 };
 pub use model::{
     CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,

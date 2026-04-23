@@ -645,6 +645,109 @@ fn is_attr_name_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
+/// A33 · Per-`DefUID` Rel inventory.
+///
+/// SmartPlant Publish Data XML carries two top-level
+/// element families: `<PIDxxx>` business objects (covered
+/// by A12 / A23 / A27) and `<Rel>` relationship records
+/// (this helper). Each `<Rel>` wraps an `<IRel UID1="..."
+/// UID2="..." DefUID="..."/>` line whose `DefUID` is an
+/// enum-like identifier such as `DrawingItems`,
+/// `DwgRepresentationComposition`, `PipingConnectors`,
+/// `PipingEnd1Conn`, `ProcessPointCollection`. The DefUID
+/// classifies the relationship semantically; a writer that
+/// emits the right per-tag interface and attribute set but
+/// the wrong Rel inventory still produces broken
+/// SmartPlant input.
+///
+/// This helper scans the XML byte stream for
+/// `DefUID="..."` occurrences inside `<IRel ...>` opening
+/// tags and returns a `DefUID -> count` map. It is
+/// deliberately byte-level (no XML parser) so it stays
+/// cheap and resilient to formatting drift, mirroring
+/// [`parse_pid_tag_counts`]'s strategy.
+///
+/// Counting strategy:
+/// * Walk byte-by-byte looking for `<IRel`.
+/// * From there, scan forward to the next `>` (the IRel
+///   opening tag closer); inside that span, locate
+///   `DefUID="..."` and capture the quoted value.
+/// * If multiple `DefUID=` instances exist on the same
+///   element (impossible in well-formed SPPID XML), only
+///   the FIRST one counts.
+/// * Self-closing form (`/>`) and verbose closing
+///   (`</IRel>`) are treated identically — only the
+///   opening tag matters.
+pub fn parse_rel_defuid_counts(xml: &str) -> BTreeMap<String, usize> {
+    let mut out: BTreeMap<String, usize> = BTreeMap::new();
+    let bytes = xml.as_bytes();
+    let mut i = 0usize;
+    let needle = b"<IRel";
+    while i + needle.len() <= bytes.len() {
+        if bytes[i..].starts_with(needle) {
+            // Found `<IRel`; ensure the next byte is whitespace
+            // or `>` so we don't false-positive on `<IRelations>`
+            // or any future hypothetical sibling element.
+            let after = bytes.get(i + needle.len()).copied();
+            let valid_after = matches!(after, Some(b) if b == b'>' || b.is_ascii_whitespace());
+            if !valid_after {
+                i += 1;
+                continue;
+            }
+            // Walk to the closing `>` to bound the search.
+            let close = bytes[i..]
+                .iter()
+                .position(|&b| b == b'>')
+                .map(|off| i + off);
+            let scan_end = match close {
+                Some(c) => c,
+                None => break,
+            };
+            // Search within [i + needle.len(), scan_end) for
+            // `DefUID="..."`.
+            if let Some(defuid) = extract_defuid(&bytes[i + needle.len()..scan_end]) {
+                *out.entry(defuid).or_insert(0) += 1;
+            }
+            i = scan_end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Extract the value of a `DefUID="..."` attribute from a
+/// byte slice that represents the interior of an `<IRel ...>`
+/// opening tag (excluding the `<IRel` prefix and the trailing
+/// `>`). Returns `None` when the attribute is absent or
+/// malformed.
+fn extract_defuid(inside: &[u8]) -> Option<String> {
+    let needle = b"DefUID=";
+    let mut i = 0usize;
+    while i + needle.len() <= inside.len() {
+        if inside[i..].starts_with(needle) {
+            let after_eq = i + needle.len();
+            if after_eq >= inside.len() {
+                return None;
+            }
+            let quote = inside[after_eq];
+            if quote != b'"' && quote != b'\'' {
+                return None;
+            }
+            let value_start = after_eq + 1;
+            let close = inside[value_start..]
+                .iter()
+                .position(|&b| b == quote)
+                .map(|off| value_start + off)?;
+            return std::str::from_utf8(&inside[value_start..close])
+                .ok()
+                .map(str::to_string);
+        }
+        i += 1;
+    }
+    None
+}
+
 pub fn diff_publish_xml(generated_xml: &str, reference_xml: &str) -> SemanticDiffReport {
     let gen_counts = parse_pid_tag_counts(generated_xml);
     let ref_counts = parse_pid_tag_counts(reference_xml);
@@ -1350,5 +1453,94 @@ mod tests {
                 "{iface} should map to an empty attr set (bare form); got {s:?}"
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // A33 — Rel-level DefUID counter
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parse_rel_defuid_counts_returns_empty_for_empty_input() {
+        let counts = parse_rel_defuid_counts("");
+        assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn parse_rel_defuid_counts_returns_empty_when_no_rel_present() {
+        let xml = "<Container><PIDDrawing></PIDDrawing></Container>";
+        let counts = parse_rel_defuid_counts(xml);
+        assert!(counts.is_empty(), "no <IRel> means no defuid entries; got {counts:?}");
+    }
+
+    #[test]
+    fn parse_rel_defuid_counts_extracts_single_defuid_value() {
+        let xml = concat!(
+            "<Rel><IObject UID=\"R1\"/>",
+            "<IRel UID1=\"A\" UID2=\"B\" DefUID=\"DrawingItems\"/>",
+            "</Rel>"
+        );
+        let counts = parse_rel_defuid_counts(xml);
+        assert_eq!(counts.get("DrawingItems"), Some(&1));
+        assert_eq!(counts.len(), 1);
+    }
+
+    #[test]
+    fn parse_rel_defuid_counts_aggregates_across_multiple_rel_blocks() {
+        // 3 of the same DefUID + 1 different — should produce
+        // two entries with the right counts.
+        let xml = concat!(
+            "<IRel UID1=\"A\" UID2=\"B\" DefUID=\"DrawingItems\"/>",
+            "<IRel UID1=\"C\" UID2=\"D\" DefUID=\"DrawingItems\"/>",
+            "<IRel UID1=\"E\" UID2=\"F\" DefUID=\"DrawingItems\"/>",
+            "<IRel UID1=\"G\" UID2=\"H\" DefUID=\"PipingConnectors\"/>"
+        );
+        let counts = parse_rel_defuid_counts(xml);
+        assert_eq!(counts.get("DrawingItems"), Some(&3));
+        assert_eq!(counts.get("PipingConnectors"), Some(&1));
+    }
+
+    #[test]
+    fn parse_rel_defuid_counts_ignores_irelations_lookalikes() {
+        // A future hypothetical sibling element whose name
+        // begins with `<IRel...` (e.g. `<IRelations>`) must
+        // NOT register as an `<IRel>`. The next byte after
+        // `<IRel` must be whitespace or `>` to count.
+        let xml = "<IRelationship UID=\"X\"/><IRelations Foo=\"y\"/>";
+        let counts = parse_rel_defuid_counts(xml);
+        assert!(counts.is_empty(), "lookalike elements must not match; got {counts:?}");
+    }
+
+    #[test]
+    fn parse_rel_defuid_counts_handles_self_closing_form() {
+        // Bothered elements <IRel .../> (self-closing) and
+        // <IRel ...>...</IRel> (open) must yield identical
+        // results — only the opening tag is consulted.
+        let xml = concat!(
+            "<IRel UID1=\"A\" UID2=\"B\" DefUID=\"FoosBars\"/>",
+            "<IRel UID1=\"C\" UID2=\"D\" DefUID=\"FoosBars\"></IRel>",
+        );
+        let counts = parse_rel_defuid_counts(xml);
+        assert_eq!(counts.get("FoosBars"), Some(&2));
+    }
+
+    #[test]
+    fn parse_rel_defuid_counts_skips_irel_without_defuid_attribute() {
+        // Defensive: an `<IRel/>` lacking DefUID must not
+        // crash and must not insert any entry. Real SmartPlant
+        // exports always carry DefUID; this branch protects
+        // against malformed inputs.
+        let xml = "<IRel UID1=\"A\" UID2=\"B\"/>";
+        let counts = parse_rel_defuid_counts(xml);
+        assert!(counts.is_empty(), "DefUID-less IRel must not register; got {counts:?}");
+    }
+
+    #[test]
+    fn parse_rel_defuid_counts_accepts_single_quoted_defuid_value() {
+        // SmartPlant ships `DefUID="..."` exclusively, but the
+        // parser should be tolerant to single quotes for
+        // synthetic / hand-crafted fixtures.
+        let xml = "<IRel UID1=\"A\" UID2=\"B\" DefUID='DrawingItems'/>";
+        let counts = parse_rel_defuid_counts(xml);
+        assert_eq!(counts.get("DrawingItems"), Some(&1));
     }
 }
