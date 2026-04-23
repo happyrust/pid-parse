@@ -75,6 +75,27 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   (A29)。Doc tests 从 0 → 6，CI 自动跑（`cargo test --doc`），
   让外部用户 `cargo doc --open` 看到的 API 文档同时是 working
   example，且文档与代码不会漂移。
+- A34c `PipingEnd1Conn` / `PipingEnd2Conn` UID2 真实 endpoint
+  inference — 关闭 A33 → A34 → A34b 之后残留的 "UID2 = `<connector>.PPT`
+  占位符"语义缺口。新增 loader helper
+  `attach_pipe_endpoint_connections(conn, &mut drawing)`，用
+  三段式 join 把每个 PipeRun / SignalRun 的两个端口解到真实
+  上游 ModelItem UID：
+  1. `T_Representation` 已加载的 rep → ModelItem 映射
+  2. `T_Connector.SP_ConnectItem{1,2}ID` 给出"port.N 接的 rep"
+  3. 回查映射，把 rep UID 转回 ModelItem UID
+  结果 attach 到 `obj.fields["EndConnectedItem1"]` /
+  `EndConnectedItem2`；writer 在 `write_relationships` 里优先
+  消费这两个字段，缺失时回退到原 `<connector>.PPT` 占位符
+  （A01 port.2 本就没外接，reference 里也用 `.PPT`，回退 ≠ 补丁，
+  就是 SPPID "无外接"惯例）。
+  验证：A01 fixture 的 `PipingEnd1Conn` UID2 从 `.PPT` 切换到
+  Nozzle UID `7465E81219...`，与 reference 完全一致；
+  `PipingEnd2Conn` 仍为 `.PPT`（port.2 无外接，与 reference 相同）。
+  `T_Connector` 表缺失时 `prepare_optional` 软跳过 → pid-only
+  bundle 不受影响。对 A33 gate 通过无影响（gate 是 DefUID 计数
+  级，不看 UID 值），但把 SmartPlant 验证器真正关心的语义 UID
+  交叉引用补齐。
 
 #### Added — writer 真实改动
 
@@ -138,10 +159,12 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 
 #### Tests
 
-* lib：540 → 570（+30，A26 +7 `publish::diff::tests::parse_attrs_*`，
+* lib：540 → 581（+41，A26 +7 `publish::diff::tests::parse_attrs_*`，
   A29 +7 `publish::xml_writer::tests` 中 IObject style 切换，
-  A33 +8 `publish::diff::tests::parse_rel_defuid_counts_*`；
-  其余 +8 来自 A23 / A24 / A25 之前已记录的相关单测）
+  A33 +8 `publish::diff::tests::parse_rel_defuid_counts_*`，
+  A34c +11 = 8 个 `publish::sqlite_load::tests::attach_pipe_endpoint_*`
+  + 3 个 `publish::xml_writer::tests::a34c_*`；其余 +8 来自
+  A23 / A24 / A25 之前已记录的相关单测）
 * integration：140 → 162（+5 在 `tests/publish_attribute_parity.rs`，
   +4 在 `tests/publish_backlog_inventory.rs`，
   +5 在 `tests/publish_xml_cli.rs` 覆盖 A29b CLI `--style`，
@@ -168,19 +191,21 @@ UID 后缀模式：`<base>.BPT`，参考 A13 的 `.PPT` / `.1` / `.2`
 派生 ID 模式（PipingConnector → PIDPipingPort + PIDProcessPoint）。
 未来 writer arm 实现时按 spec 守门即可。
 
-#### A33 → A34 → A34b Rel DefUID 进展
+#### A33 → A34 → A34b → A34c Rel DefUID 进展
 
 A33 gate 第一次跑暴露了 writer 端 6 个 derived Rel DefUID 缺口。
-A34 + A34b close 全部 6 项：
+A34 + A34b 先 close 全部 6 项的 DefUID 计数维度，A34c 再把
+PipingEnd1Conn 的 UID2 从"占位符语义"升级为"真实上游 ModelItem
+UID 语义"：
 
-| DefUID | A33 状态 | A34 状态 | A34b 状态 |
-|---|---|---|---|
-| PipingPortComposition × 2 | whitelist | **closed** (writer emit) | (closed) |
-| ProcessPointCollection | whitelist | **closed** (writer emit) | (closed) |
-| PipingEnd1Conn | whitelist | **closed** (writer emit, UID2 placeholder = port.PPT) | (closed) |
-| PipingEnd2Conn | whitelist | **closed** (writer emit, UID2 = port.PPT 与 reference 一致) | (closed) |
-| EquipmentComponentComposition | whitelist | whitelist | **closed** (Vessel→Nozzle derived from T_Nozzle.SP_EquipmentID) |
-| PipingConnectors | whitelist | whitelist | **closed** (Pipeline→Connector derived from PipeRun obj.uid) |
+| DefUID | A33 状态 | A34 状态 | A34b 状态 | A34c 状态 |
+|---|---|---|---|---|
+| PipingPortComposition × 2 | whitelist | **closed** (writer emit) | (closed) | (closed) |
+| ProcessPointCollection | whitelist | **closed** (writer emit) | (closed) | (closed) |
+| PipingEnd1Conn | whitelist | **count closed** (UID2 = `.PPT` 占位符) | (closed) | **UID2 语义 closed**（上游 ModelItem UID，与 reference 一致） |
+| PipingEnd2Conn | whitelist | **closed** (UID2 = `.PPT` 与 reference 一致) | (closed) | 仍 `.PPT`（A01 port.2 无外接；有外接时走新字段路径） |
+| EquipmentComponentComposition | whitelist | whitelist | **closed** (Vessel→Nozzle derived from T_Nozzle.SP_EquipmentID) | (closed) |
+| PipingConnectors | whitelist | whitelist | **closed** (Pipeline→Connector derived from PipeRun obj.uid) | (closed) |
 
 A33b gate 暴露了 4 个跨 fixture DWG-only DefUID（已进
 `KNOWN_A01_VS_DWG_REL_DEFUID_DIVERGENCES`，纯 SmartPlant
@@ -190,14 +215,8 @@ fixture-side variant）：
   SignalPortComposition（DWG ships instrument signal 连接和
   piping tap，A01 没有）
 
-#### Backlog（A34c+）
+#### Backlog（A34d+）
 
-* **A34c PipingEnd1Conn UID2 真实 endpoint inference** — 当前
-  PipingEnd1Conn UID2 是 placeholder (`<connector>.PPT`)，
-  reference 是上游连接的 model item UID（典型为 Vessel）。需要
-  loader 端推断 port.1 接的 model item，可能从 T_PipingPoint /
-  T_Connector 列推断。对 fidelity gate 通过没影响（gate 只看
-  DefUID 计数），但对 SmartPlant 验证器更友好。无需新 fixture。
 * PIDBranchPoint / PIDPipingBranchPoint writer arms（spec 已在
   A28 snapshot test 中 pin 住，实施时需 DWG 端 SQLite mirror
   才能反推源映射）

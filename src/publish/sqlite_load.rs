@@ -16,7 +16,7 @@
 //! returns rows relevant to the requested drawing.
 
 use rusqlite::{params, Connection, OpenFlags};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use super::model::{
@@ -436,6 +436,129 @@ fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
     }
 }
 
+/// A34c — loader-side inference of each PipeRun's two endpoint
+/// connections (port.1 / port.2 → upstream ModelItem UID).
+///
+/// SmartPlant's reference `_Data.xml` emits `PipingEnd1Conn` /
+/// `PipingEnd2Conn` rels whose `UID2` points at the ModelItem
+/// sitting at the connected end of the pipe (typically a Nozzle
+/// or another PipeRun). Our writer previously used the connector's
+/// own `<connector>.PPT` process-point UID as a placeholder on
+/// both ends, which keeps the document structurally valid but
+/// loses the semantic cross-reference SmartPlant validators care
+/// about.
+///
+/// This function reconstructs the real target UIDs by walking
+/// three SQLite columns:
+///
+/// 1. `T_Representation` — already loaded into `drawing.representations`.
+///    Every representation knows its owning `SP_ModelItemID`.
+/// 2. `T_Connector` — one row per representation of a PipeRun /
+///    SignalRun. `SP_ConnectItem1ID` / `SP_ConnectItem2ID` carry
+///    the *representation* UIDs of whatever sits at port.1 and
+///    port.2 of that rep.
+/// 3. Map back: `ConnectItem1ID` → representation → owning
+///    `SP_ModelItemID`.
+///
+/// The resolved UIDs are attached to `obj.fields` under
+/// `EndConnectedItem1` / `EndConnectedItem2` so the writer can
+/// consult them in `write_relationships`. Ports with no external
+/// connection (empty `ConnectItem*ID`) do not receive a field,
+/// and the writer falls back to the `<connector>.PPT` placeholder
+/// — which is exactly what the reference does for unconnected
+/// pipe ends (A01's port.2 behaves this way).
+///
+/// `T_Connector` is optional — a fixture without it (pid-only
+/// bundles) simply produces no attachments and the writer keeps
+/// the pre-A34c placeholder output.
+pub fn attach_pipe_endpoint_connections(
+    conn: &Connection,
+    drawing: &mut PublishDrawing,
+) -> Result<(), PublishError> {
+    if drawing.representations.is_empty() || drawing.objects.is_empty() {
+        return Ok(());
+    }
+
+    // rep_uid → ModelItem UID. Empty / missing links are skipped
+    // so a ConnectItem pointing at a non-model-item rep cleanly
+    // yields None.
+    let mut rep_to_model: HashMap<String, String> = HashMap::new();
+    for rep in &drawing.representations {
+        if let Some(mi) = &rep.model_item_uid {
+            if !mi.is_empty() {
+                rep_to_model.insert(rep.uid.clone(), mi.clone());
+            }
+        }
+    }
+    if rep_to_model.is_empty() {
+        return Ok(());
+    }
+
+    // ModelItem UID → list of its representation UIDs. One PipeRun
+    // can have multiple reps (e.g. one per visible segment); we
+    // scan them all and take the first non-empty endpoint link.
+    let mut reps_by_model: HashMap<String, Vec<String>> = HashMap::new();
+    for rep in &drawing.representations {
+        if let Some(mi) = &rep.model_item_uid {
+            if !mi.is_empty() {
+                reps_by_model
+                    .entry(mi.clone())
+                    .or_default()
+                    .push(rep.uid.clone());
+            }
+        }
+    }
+
+    // Soft-skip if T_Connector is missing (partial fixtures).
+    let sql = "SELECT SP_ConnectItem1ID, SP_ConnectItem2ID \
+               FROM T_Connector WHERE SP_ID = ?1";
+    let Some(mut stmt) = prepare_optional(conn, sql)? else {
+        return Ok(());
+    };
+
+    for obj in &mut drawing.objects {
+        // SPPID ties endpoint connectivity to every connector-
+        // family ItemType (PipeRun + SignalRun). Other item types
+        // have no ports to wire.
+        if obj.item_type_name != "PipeRun" && obj.item_type_name != "SignalRun" {
+            continue;
+        }
+        let Some(rep_uids) = reps_by_model.get(&obj.uid) else {
+            continue;
+        };
+
+        let mut end1: Option<String> = None;
+        let mut end2: Option<String> = None;
+        for rep_uid in rep_uids {
+            let mut rows = stmt.query(params![rep_uid])?;
+            if let Some(row) = rows.next()? {
+                let c1: Option<String> = row.get(0)?;
+                let c2: Option<String> = row.get(1)?;
+                if end1.is_none() {
+                    if let Some(rep) = c1.filter(|s| !s.is_empty()) {
+                        end1 = rep_to_model.get(&rep).cloned();
+                    }
+                }
+                if end2.is_none() {
+                    if let Some(rep) = c2.filter(|s| !s.is_empty()) {
+                        end2 = rep_to_model.get(&rep).cloned();
+                    }
+                }
+                if end1.is_some() && end2.is_some() {
+                    break;
+                }
+            }
+        }
+        if let Some(u) = end1 {
+            obj.fields.insert("EndConnectedItem1".into(), u);
+        }
+        if let Some(u) = end2 {
+            obj.fields.insert("EndConnectedItem2".into(), u);
+        }
+    }
+    Ok(())
+}
+
 /// High-level entry point: load the complete Publish-Data DTO for
 /// one drawing — header row + all representations + the model
 /// items they point at + relationships + per-object business
@@ -507,6 +630,12 @@ pub fn load_drawing_graph(
     // so future backup-side analytics still have access to the raw
     // T_PipingPoint rows; nothing in the publish pipeline consumes
     // it today.
+
+    // A34c — infer per-PipeRun endpoint connections from
+    // T_Connector so the writer can emit real ModelItem UIDs on
+    // PipingEnd1Conn / PipingEnd2Conn rels instead of the
+    // intra-connector `.PPT` placeholder.
+    attach_pipe_endpoint_connections(conn, &mut drawing)?;
 
     Ok(drawing)
 }
@@ -824,5 +953,296 @@ mod tests {
             idx.lookup_by_attribute("ValveType", "0"),
             Some("Gate Valve"),
         );
+    }
+
+    // -------------------------------------------------------------
+    // A34c — attach_pipe_endpoint_connections
+    // -------------------------------------------------------------
+
+    /// Build an in-memory SQLite with the minimum T_Connector shape
+    /// A34c cares about. Callers seed rows for the specific PipeRun
+    /// representations under test.
+    fn setup_connector_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute(
+            "CREATE TABLE T_Connector (\
+                SP_ID TEXT, SP_ConnectItem1ID TEXT, SP_ConnectItem2ID TEXT)",
+            [],
+        )
+        .expect("create T_Connector");
+        conn
+    }
+
+    /// Helper: assemble a `PublishDrawing` with a single PipeRun
+    /// obj and the representations + T_Connector the A01 fixture
+    /// exercises. Keeps every A34c test free of the real backup
+    /// bundle.
+    fn a34c_drawing_fixture() -> PublishDrawing {
+        let mut d = PublishDrawing {
+            drawing_uid: "DWG-1".into(),
+            drawing_name: "A01".into(),
+            ..Default::default()
+        };
+        // PipeRun with two reps, a connected Nozzle with one rep,
+        // a Vessel with one rep.
+        d.representations = vec![
+            PublishRepresentation {
+                uid: "REP-PIPE-A".into(),
+                model_item_uid: Some("PIPE-1".into()),
+                drawing_uid: "DWG-1".into(),
+                ..Default::default()
+            },
+            PublishRepresentation {
+                uid: "REP-PIPE-B".into(),
+                model_item_uid: Some("PIPE-1".into()),
+                drawing_uid: "DWG-1".into(),
+                ..Default::default()
+            },
+            PublishRepresentation {
+                uid: "REP-NOZZ".into(),
+                model_item_uid: Some("NOZZ-1".into()),
+                drawing_uid: "DWG-1".into(),
+                ..Default::default()
+            },
+            PublishRepresentation {
+                uid: "REP-VES".into(),
+                model_item_uid: Some("VES-1".into()),
+                drawing_uid: "DWG-1".into(),
+                ..Default::default()
+            },
+        ];
+        d.objects = vec![
+            PublishObject {
+                uid: "PIPE-1".into(),
+                item_type_name: "PipeRun".into(),
+                ..Default::default()
+            },
+            PublishObject {
+                uid: "NOZZ-1".into(),
+                item_type_name: "Nozzle".into(),
+                ..Default::default()
+            },
+            PublishObject {
+                uid: "VES-1".into(),
+                item_type_name: "Vessel".into(),
+                ..Default::default()
+            },
+        ];
+        d
+    }
+
+    #[test]
+    fn attach_pipe_endpoint_connections_resolves_port1_through_representation_chain() {
+        // Mirrors the A01 shape: PipeRun rep `REP-PIPE-A` connects
+        // its port.1 to the Nozzle's representation, so
+        // `EndConnectedItem1` must resolve to the Nozzle's
+        // ModelItem UID (not the Nozzle's rep UID).
+        let conn = setup_connector_db();
+        conn.execute(
+            "INSERT INTO T_Connector VALUES ('REP-PIPE-A', 'REP-NOZZ', NULL)",
+            [],
+        )
+        .unwrap();
+        let mut d = a34c_drawing_fixture();
+        attach_pipe_endpoint_connections(&conn, &mut d).expect("ok");
+        let pipe = d.objects.iter().find(|o| o.uid == "PIPE-1").unwrap();
+        assert_eq!(
+            pipe.fields.get("EndConnectedItem1").map(String::as_str),
+            Some("NOZZ-1"),
+            "port.1 must resolve rep→ModelItem through T_Representation"
+        );
+        assert!(
+            !pipe.fields.contains_key("EndConnectedItem2"),
+            "port.2 has no T_Connector link → no field written"
+        );
+    }
+
+    #[test]
+    fn attach_pipe_endpoint_connections_populates_both_ends_when_both_connected() {
+        // Two-ended pipe: port.1 → Nozzle, port.2 → Vessel. The
+        // loader must write both fields.
+        let conn = setup_connector_db();
+        conn.execute(
+            "INSERT INTO T_Connector VALUES ('REP-PIPE-A', 'REP-NOZZ', 'REP-VES')",
+            [],
+        )
+        .unwrap();
+        let mut d = a34c_drawing_fixture();
+        attach_pipe_endpoint_connections(&conn, &mut d).expect("ok");
+        let pipe = d.objects.iter().find(|o| o.uid == "PIPE-1").unwrap();
+        assert_eq!(
+            pipe.fields.get("EndConnectedItem1").map(String::as_str),
+            Some("NOZZ-1"),
+        );
+        assert_eq!(
+            pipe.fields.get("EndConnectedItem2").map(String::as_str),
+            Some("VES-1"),
+        );
+    }
+
+    #[test]
+    fn attach_pipe_endpoint_connections_merges_across_multiple_piperun_reps() {
+        // A PipeRun with two reps, each supplying one end of the
+        // connection. REP-PIPE-A supplies port.1, REP-PIPE-B
+        // supplies port.2. The function must fold both into a
+        // single PipeRun object.
+        let conn = setup_connector_db();
+        conn.execute(
+            "INSERT INTO T_Connector VALUES ('REP-PIPE-A', 'REP-NOZZ', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO T_Connector VALUES ('REP-PIPE-B', NULL, 'REP-VES')",
+            [],
+        )
+        .unwrap();
+        let mut d = a34c_drawing_fixture();
+        attach_pipe_endpoint_connections(&conn, &mut d).expect("ok");
+        let pipe = d.objects.iter().find(|o| o.uid == "PIPE-1").unwrap();
+        assert_eq!(
+            pipe.fields.get("EndConnectedItem1").map(String::as_str),
+            Some("NOZZ-1"),
+            "first non-empty ConnectItem1ID across reps must win"
+        );
+        assert_eq!(
+            pipe.fields.get("EndConnectedItem2").map(String::as_str),
+            Some("VES-1"),
+            "first non-empty ConnectItem2ID across reps must win"
+        );
+    }
+
+    #[test]
+    fn attach_pipe_endpoint_connections_soft_skips_missing_t_connector_table() {
+        // A fixture without T_Connector at all (partial bundle)
+        // must leave the drawing unchanged — no error, no fields.
+        let (conn, _uid) = setup_synthetic_db();
+        let mut d = a34c_drawing_fixture();
+        attach_pipe_endpoint_connections(&conn, &mut d).expect("soft-skip, no err");
+        let pipe = d.objects.iter().find(|o| o.uid == "PIPE-1").unwrap();
+        assert!(pipe.fields.is_empty());
+    }
+
+    #[test]
+    fn attach_pipe_endpoint_connections_ignores_empty_string_connect_items() {
+        // SPPID sometimes stores `""` in place of NULL. Empty
+        // strings must be treated as "no connection" — no field.
+        let conn = setup_connector_db();
+        conn.execute(
+            "INSERT INTO T_Connector VALUES ('REP-PIPE-A', '', '')",
+            [],
+        )
+        .unwrap();
+        let mut d = a34c_drawing_fixture();
+        attach_pipe_endpoint_connections(&conn, &mut d).expect("ok");
+        let pipe = d.objects.iter().find(|o| o.uid == "PIPE-1").unwrap();
+        assert!(
+            !pipe.fields.contains_key("EndConnectedItem1"),
+            "empty-string ConnectItem1ID must NOT produce a field"
+        );
+        assert!(!pipe.fields.contains_key("EndConnectedItem2"));
+    }
+
+    #[test]
+    fn attach_pipe_endpoint_connections_skips_connect_items_without_model_item_link() {
+        // A ConnectItem pointing at a rep whose `SP_ModelItemID`
+        // is NULL (orphan rep) must not produce a field — the
+        // writer would otherwise emit a dangling UID.
+        let conn = setup_connector_db();
+        conn.execute(
+            "INSERT INTO T_Connector VALUES ('REP-PIPE-A', 'REP-ORPHAN', NULL)",
+            [],
+        )
+        .unwrap();
+        let mut d = a34c_drawing_fixture();
+        d.representations.push(PublishRepresentation {
+            uid: "REP-ORPHAN".into(),
+            model_item_uid: None,
+            drawing_uid: "DWG-1".into(),
+            ..Default::default()
+        });
+        attach_pipe_endpoint_connections(&conn, &mut d).expect("ok");
+        let pipe = d.objects.iter().find(|o| o.uid == "PIPE-1").unwrap();
+        assert!(
+            !pipe.fields.contains_key("EndConnectedItem1"),
+            "rep without model_item_uid yields no attachment"
+        );
+    }
+
+    #[test]
+    fn attach_pipe_endpoint_connections_covers_signal_run_item_type() {
+        // SignalRun uses the same T_Connector plumbing as PipeRun;
+        // the function must handle both ItemTypes symmetrically.
+        let conn = setup_connector_db();
+        conn.execute(
+            "INSERT INTO T_Connector VALUES ('REP-SIG', 'REP-NOZZ', NULL)",
+            [],
+        )
+        .unwrap();
+        let mut d = PublishDrawing {
+            drawing_uid: "DWG-1".into(),
+            drawing_name: "A01".into(),
+            ..Default::default()
+        };
+        d.representations = vec![
+            PublishRepresentation {
+                uid: "REP-SIG".into(),
+                model_item_uid: Some("SIG-1".into()),
+                drawing_uid: "DWG-1".into(),
+                ..Default::default()
+            },
+            PublishRepresentation {
+                uid: "REP-NOZZ".into(),
+                model_item_uid: Some("NOZZ-1".into()),
+                drawing_uid: "DWG-1".into(),
+                ..Default::default()
+            },
+        ];
+        d.objects = vec![
+            PublishObject {
+                uid: "SIG-1".into(),
+                item_type_name: "SignalRun".into(),
+                ..Default::default()
+            },
+            PublishObject {
+                uid: "NOZZ-1".into(),
+                item_type_name: "Nozzle".into(),
+                ..Default::default()
+            },
+        ];
+        attach_pipe_endpoint_connections(&conn, &mut d).expect("ok");
+        let sig = d.objects.iter().find(|o| o.uid == "SIG-1").unwrap();
+        assert_eq!(
+            sig.fields.get("EndConnectedItem1").map(String::as_str),
+            Some("NOZZ-1"),
+        );
+    }
+
+    #[test]
+    fn attach_pipe_endpoint_connections_leaves_non_connector_item_types_alone() {
+        // Vessels / Nozzles / Notes / Instruments don't have
+        // port.1 or port.2 ports, so the function must NOT touch
+        // their fields map.
+        let conn = setup_connector_db();
+        // Seed a bogus T_Connector row that "would" map the
+        // Nozzle's rep onto something — the function should
+        // still ignore it because the Nozzle isn't a PipeRun.
+        conn.execute(
+            "INSERT INTO T_Connector VALUES ('REP-NOZZ', 'REP-VES', NULL)",
+            [],
+        )
+        .unwrap();
+        let mut d = a34c_drawing_fixture();
+        attach_pipe_endpoint_connections(&conn, &mut d).expect("ok");
+        for obj in &d.objects {
+            if obj.item_type_name != "PipeRun" && obj.item_type_name != "SignalRun" {
+                assert!(
+                    !obj.fields.contains_key("EndConnectedItem1"),
+                    "non-connector item {} got an EndConnectedItem1 field",
+                    obj.uid
+                );
+                assert!(!obj.fields.contains_key("EndConnectedItem2"));
+            }
+        }
     }
 }

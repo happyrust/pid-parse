@@ -2184,15 +2184,21 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     //   * port UIDs:     `<connector>.1` / `<connector>.2`
     //   * process point: `<connector>.PPT`
     //
-    // The PipingEnd1Conn target is a placeholder pointing
-    // at the same connector's process point; the SmartPlant
-    // reference threads this through the upstream connected
-    // model item (e.g. a Vessel UID), but doing that
-    // correctly requires loader-side `T_PipingPoint`
-    // endpoint inference which is deferred to A34c. The
-    // placeholder still produces a valid intra-connector
-    // reference so SmartPlant validators that check UID
-    // resolvability don't reject the document outright.
+    // A34c — the PipingEnd1Conn / PipingEnd2Conn target is the
+    // upstream ModelItem UID sitting at the connected end of the
+    // pipe (e.g. a Nozzle or Vessel). The loader resolves this
+    // via `T_Connector.SP_ConnectItem{1,2}ID` in
+    // `attach_pipe_endpoint_connections` and stashes the result
+    // in `obj.fields["EndConnectedItem1"]` /
+    // `obj.fields["EndConnectedItem2"]`.
+    //
+    // Fallback: when the loader didn't populate an endpoint (no
+    // T_Connector row, or the port is physically unconnected —
+    // A01's port.2 behaves this way), we keep the pre-A34c
+    // `<connector>.PPT` placeholder. The reference XML does
+    // exactly the same for its unconnected port.2, so the
+    // fallback is not a hack — it's the SPPID convention for
+    // "no external connection".
     for obj in &drawing.objects {
         if obj.item_type_name != "PipeRun" {
             continue;
@@ -2202,6 +2208,16 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
         let port1_uid = format!("{connector_uid}.1");
         let port2_uid = format!("{connector_uid}.2");
         let ppt_uid = format!("{connector_uid}.PPT");
+        let end1_uid = obj
+            .fields
+            .get("EndConnectedItem1")
+            .cloned()
+            .unwrap_or_else(|| ppt_uid.clone());
+        let end2_uid = obj
+            .fields
+            .get("EndConnectedItem2")
+            .cloned()
+            .unwrap_or_else(|| ppt_uid.clone());
         // A34b: Pipeline → Connector composition.
         write_rel(
             buf,
@@ -2235,14 +2251,14 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
             buf,
             &format!("PE1-{port1_uid}"),
             &port1_uid,
-            &ppt_uid,
+            &end1_uid,
             "PipingEnd1Conn",
         )?;
         write_rel(
             buf,
             &format!("PE2-{port2_uid}"),
             &port2_uid,
-            &ppt_uid,
+            &end2_uid,
             "PipingEnd2Conn",
         )?;
     }
@@ -2512,6 +2528,104 @@ mod tests {
         assert!(
             out.contains(r#"<IObject UID="DRC-C33E5BD9B9CC4287B244A925A7A1F29B-CA8A0A9DD1784E3BB6913445CE3F6375"/>"#),
             "expected a DRC- prefixed rel from the T_Relationship row (Rep→Rep); out:\n{out}"
+        );
+    }
+
+    // -------------------------------------------------------------
+    // A34c — PipingEnd1Conn / PipingEnd2Conn UID2 real endpoint inference
+    // -------------------------------------------------------------
+
+    #[test]
+    fn a34c_piping_end1_conn_uses_upstream_model_item_uid_when_loader_attached() {
+        // Simulate what `attach_pipe_endpoint_connections` would
+        // have written to the PipeRun obj: port.1 connects to the
+        // Nozzle (7465...), port.2 is unconnected (no field).
+        let mut d = example_drawing();
+        let pipe = d
+            .objects
+            .iter_mut()
+            .find(|o| o.item_type_name == "PipeRun")
+            .expect("PipeRun in fixture");
+        pipe.fields.insert(
+            "EndConnectedItem1".into(),
+            "7465E81219DB49B492BDF60A055AA391".into(),
+        );
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        // PipingEnd1Conn UID2 is the real Nozzle UID, not the
+        // placeholder `.PPT`.
+        assert!(
+            out.contains(
+                r#"<IRel UID1="185EF98B03E844158E3BD8E82806E6CF-CNX.1" UID2="7465E81219DB49B492BDF60A055AA391" DefUID="PipingEnd1Conn"/>"#
+            ),
+            "PipingEnd1Conn UID2 must be the Nozzle ModelItem UID; out:\n{out}"
+        );
+        // PipingEnd2Conn still falls back to `.PPT` because the
+        // loader did not populate EndConnectedItem2.
+        assert!(
+            out.contains(
+                r#"<IRel UID1="185EF98B03E844158E3BD8E82806E6CF-CNX.2" UID2="185EF98B03E844158E3BD8E82806E6CF-CNX.PPT" DefUID="PipingEnd2Conn"/>"#
+            ),
+            "PipingEnd2Conn UID2 without loader field must fall back to the .PPT placeholder; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn a34c_piping_end_conn_falls_back_to_ppt_when_fields_absent() {
+        // Legacy path: no loader attachment, both ends use the
+        // pre-A34c `.PPT` placeholder. Keeps synthetic unit tests
+        // and pid-only bundles working unchanged.
+        let d = example_drawing();
+        let pipe = d
+            .objects
+            .iter()
+            .find(|o| o.item_type_name == "PipeRun")
+            .expect("PipeRun in fixture");
+        assert!(
+            !pipe.fields.contains_key("EndConnectedItem1"),
+            "precondition: fixture has no loader-attached endpoint"
+        );
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(out.contains(
+            r#"<IRel UID1="185EF98B03E844158E3BD8E82806E6CF-CNX.1" UID2="185EF98B03E844158E3BD8E82806E6CF-CNX.PPT" DefUID="PipingEnd1Conn"/>"#
+        ));
+        assert!(out.contains(
+            r#"<IRel UID1="185EF98B03E844158E3BD8E82806E6CF-CNX.2" UID2="185EF98B03E844158E3BD8E82806E6CF-CNX.PPT" DefUID="PipingEnd2Conn"/>"#
+        ));
+    }
+
+    #[test]
+    fn a34c_piping_end2_conn_honors_end2_field_when_both_populated() {
+        // Two-ended pipe: the loader resolved both port.1 and
+        // port.2 to real ModelItems. Writer must route each end
+        // independently.
+        let mut d = example_drawing();
+        let pipe = d
+            .objects
+            .iter_mut()
+            .find(|o| o.item_type_name == "PipeRun")
+            .expect("PipeRun in fixture");
+        pipe.fields.insert(
+            "EndConnectedItem1".into(),
+            "7465E81219DB49B492BDF60A055AA391".into(),
+        );
+        pipe.fields.insert(
+            "EndConnectedItem2".into(),
+            "C57494A1B154442C9DF0F4BA713E88EC".into(),
+        );
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"UID2="7465E81219DB49B492BDF60A055AA391" DefUID="PipingEnd1Conn""#),
+            "PipingEnd1Conn UID2 = Nozzle UID"
+        );
+        assert!(
+            out.contains(r#"UID2="C57494A1B154442C9DF0F4BA713E88EC" DefUID="PipingEnd2Conn""#),
+            "PipingEnd2Conn UID2 = Vessel UID"
+        );
+        // The PPT placeholder must no longer appear as a target
+        // on either PipingEnd rel.
+        assert!(
+            !out.contains(r#"UID2="185EF98B03E844158E3BD8E82806E6CF-CNX.PPT" DefUID="PipingEnd"#),
+            "PPT placeholder must be fully displaced when both fields are set; out:\n{out}"
         );
     }
 
