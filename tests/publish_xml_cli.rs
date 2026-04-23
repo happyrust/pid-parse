@@ -250,3 +250,212 @@ fn cli_data_only_invocation_does_not_write_meta_file() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// -----------------------------------------------------------------
+// A12 — --diff-against semantic diff CLI surface
+// -----------------------------------------------------------------
+
+const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
+
+#[test]
+fn cli_no_output_or_diff_flags_is_argument_error() {
+    // Pre-A12, the CLI required exactly one of --out / --stdout.
+    // Post-A12 the relaxation is that --diff-against also satisfies
+    // the requirement; no flags at all must still error cleanly.
+    let out = Command::new(binary_path())
+        .args(["any.sqlite", "--drawing", "ANY"])
+        .output()
+        .expect("spawn pid_publish_xml without sinks");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "missing all output/diff sinks should exit 2; got {out:?}",
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("at least one of --out FILE / --stdout / --diff-against"),
+        "stderr should advertise the new triple-disjunction; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_help_advertises_diff_against_flag() {
+    let out = Command::new(binary_path())
+        .arg("--help")
+        .output()
+        .expect("spawn pid_publish_xml --help");
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--diff-against"),
+        "--help should advertise --diff-against; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_diff_against_real_a01_reference_reports_known_findings_and_exits_one() {
+    if !fixture_available() {
+        return;
+    }
+    if !std::path::Path::new(A01_REFERENCE_DATA_XML).exists() {
+        eprintln!("skipping: reference fixture {A01_REFERENCE_DATA_XML} not found");
+        return;
+    }
+
+    let out = Command::new(binary_path())
+        .args([
+            SQLITE_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--diff-against",
+            A01_REFERENCE_DATA_XML,
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --diff-against");
+    // We intentionally exit 1 today because the writer is known
+    // to under-emit PIDProcessPoint and miscount PIDPipingPort /
+    // PIDRepresentation against this reference. The test pins this
+    // contract so a future writer fix that closes the gap will
+    // immediately flag the regression for this assertion to be
+    // updated.
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "A01 reference diff should exit 1 (known unresolved findings); got {out:?}",
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // Header echo proves the report rendered.
+    assert!(
+        stdout.contains("Publish Data XML semantic diff"),
+        "stdout should carry the SemanticDiffReport header; got:\n{stdout}"
+    );
+    // The five guaranteed-MATCH tag varieties on A01.
+    for tag in [
+        "PIDDrawing",
+        "PIDNozzle",
+        "PIDPipeline",
+        "PIDPipingConnector",
+        "PIDProcessVessel",
+    ] {
+        assert!(
+            stdout.contains(tag),
+            "report should list {tag}; got:\n{stdout}"
+        );
+    }
+    // The known-MISSING tag (PIDProcessPoint not yet implemented).
+    assert!(
+        stdout.contains("MISSING"),
+        "report should flag at least one MISSING row; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PIDProcessPoint"),
+        "PIDProcessPoint is the canonical MISSING tag; got:\n{stdout}"
+    );
+    // Side echo on stderr summarizes the verdict.
+    assert!(
+        stderr.contains("surfaced findings"),
+        "stderr should summarize the dirty verdict; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
+    // Generate an _Data.xml from the SQLite mirror, then diff it
+    // against itself: the report must be clean and the binary
+    // must exit 0.
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("self-diff");
+    let data_path = dir.join("A01_Data.xml");
+
+    let gen = Command::new(binary_path())
+        .args([
+            SQLITE_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--out",
+            data_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --out (gen)");
+    assert!(gen.status.success(), "initial generation must succeed");
+
+    let diff = Command::new(binary_path())
+        .args([
+            SQLITE_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--diff-against",
+            data_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --diff-against own output");
+    assert_eq!(
+        diff.status.code(),
+        Some(0),
+        "self-diff must exit 0 (clean); got {diff:?}",
+    );
+    let stderr = String::from_utf8_lossy(&diff.stderr);
+    assert!(
+        stderr.contains("clean ("),
+        "stderr should announce the clean verdict; got:\n{stderr}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_diff_against_combined_with_out_writes_xml_and_reports() {
+    // --diff-against composes with --out: the XML lands on disk
+    // AND the report is printed. Exit 1 because the A01 reference
+    // still surfaces unresolved findings.
+    if !fixture_available() {
+        return;
+    }
+    if !std::path::Path::new(A01_REFERENCE_DATA_XML).exists() {
+        eprintln!("skipping: reference fixture {A01_REFERENCE_DATA_XML} not found");
+        return;
+    }
+    let dir = unique_tmp_dir("diff-and-out");
+    let data_path = dir.join("A01_Data.xml");
+
+    let out = Command::new(binary_path())
+        .args([
+            SQLITE_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--out",
+            data_path.to_str().unwrap(),
+            "--diff-against",
+            A01_REFERENCE_DATA_XML,
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --out --diff-against");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "combined flow with unresolved findings should exit 1; got {out:?}",
+    );
+    assert!(
+        data_path.exists(),
+        "--out should still produce the _Data.xml file when paired with --diff-against",
+    );
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        report.contains("PIDProcessPoint"),
+        "report on stdout should carry the canonical MISSING tag; got:\n{report}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -25,10 +25,12 @@
 //! companion C# probe; the module is pure reader / writer glue and
 //! does not touch MDF bytes directly.
 
+pub mod diff;
 pub mod model;
 pub mod sqlite_load;
 pub mod xml_writer;
 
+pub use diff::{diff_publish_xml, parse_pid_tag_counts, SemanticDiffReport, TagCountDiff, TagDiffStatus};
 pub use model::{
     CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
     PublishRepresentation,

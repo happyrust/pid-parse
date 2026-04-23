@@ -23,19 +23,28 @@
 //! usage error.
 
 use pid_parse::publish::sqlite_load::open_readonly;
-use pid_parse::publish::{load_drawing_graph, write_data_xml, write_meta_xml};
+use pid_parse::publish::{diff_publish_xml, load_drawing_graph, write_data_xml, write_meta_xml};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 struct CliOptions {
     sqlite_path: PathBuf,
     drawing_uid: String,
-    output: OutputTarget,
+    output: Option<OutputTarget>,
     /// Optional `_Meta.xml` companion sink. Only honored when
     /// `output` is a file target — pairing meta output with stdout
     /// would interleave two unrelated XML documents on the same
     /// stream.
     meta_output: Option<PathBuf>,
+    /// Optional reference `_Data.xml` to diff the generated output
+    /// against. When set, the binary prints a [`SemanticDiffReport`]
+    /// to stdout and exits 0 if no differences (clean) or 1 if any
+    /// missing / extra / count-delta rows are surfaced.
+    ///
+    /// Compatible with `--out` and `--stdout` (those still write
+    /// the generated XML before the diff report) and with no
+    /// output flag at all (in which case only the diff is printed).
+    diff_against: Option<PathBuf>,
     plant_name: String,
 }
 
@@ -48,14 +57,18 @@ enum OutputTarget {
 fn print_usage() {
     eprintln!(
         "Usage: pid_publish_xml <sqlite> --drawing UID [--out FILE | --stdout]\n\
-         \x20               [--meta-out FILE] [--plant NAME]\n\n\
-         --drawing UID   T_Drawing.SP_ID of the drawing to emit.\n\
-         --out FILE      write the _Data.xml document to FILE (directory created).\n\
-         --stdout        write the _Data.xml document to stdout instead of a file.\n\
-         --meta-out FILE write the companion _Meta.xml document to FILE.\n\
-         \x20               Requires --out (incompatible with --stdout).\n\
-         --plant NAME    Plant value for the <Container> root attribute\n\
-         \x20               (default: \"P01\" — override with the real plant)."
+         \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\n\
+         --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
+         --out FILE          write the _Data.xml document to FILE.\n\
+         --stdout            write the _Data.xml document to stdout instead.\n\
+         --meta-out FILE     write the companion _Meta.xml document to FILE.\n\
+         \x20                   Requires --out (incompatible with --stdout).\n\
+         --diff-against FILE compare the generated _Data.xml against a reference\n\
+         \x20                   SmartPlant export and print a SemanticDiffReport\n\
+         \x20                   to stdout. Exits 1 when any tag varieties differ.\n\
+         --plant NAME        Plant value for the <Container> root attribute\n\
+         \x20                   (default: \"P01\" — override with the real plant).\n\n\
+         At least one of --out / --stdout / --diff-against is required."
     );
 }
 
@@ -67,6 +80,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut drawing_uid: Option<String> = None;
     let mut out_path: Option<PathBuf> = None;
     let mut meta_out_path: Option<PathBuf> = None;
+    let mut diff_against: Option<PathBuf> = None;
     let mut stdout = false;
     let mut plant_name: Option<String> = None;
 
@@ -94,6 +108,13 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 meta_out_path = Some(PathBuf::from(value));
                 i += 2;
             }
+            "--diff-against" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--diff-against requires a path".to_string())?;
+                diff_against = Some(PathBuf::from(value));
+                i += 2;
+            }
             "--stdout" => {
                 stdout = true;
                 i += 1;
@@ -111,15 +132,21 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
 
     let drawing_uid = drawing_uid.ok_or_else(|| "--drawing UID is required".to_string())?;
     let output = match (out_path, stdout) {
-        (Some(path), false) => OutputTarget::File(path),
-        (None, true) => OutputTarget::Stdout,
+        (Some(path), false) => Some(OutputTarget::File(path)),
+        (None, true) => Some(OutputTarget::Stdout),
         (Some(_), true) => {
             return Err("--out and --stdout are mutually exclusive".into())
         }
-        (None, false) => return Err("either --out FILE or --stdout is required".into()),
+        (None, false) => None,
     };
 
-    if meta_out_path.is_some() && matches!(output, OutputTarget::Stdout) {
+    if output.is_none() && diff_against.is_none() {
+        return Err(
+            "at least one of --out FILE / --stdout / --diff-against FILE is required".into(),
+        );
+    }
+
+    if meta_out_path.is_some() && matches!(output, Some(OutputTarget::Stdout)) {
         return Err("--meta-out requires --out (incompatible with --stdout)".into());
     }
 
@@ -128,6 +155,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         drawing_uid,
         output,
         meta_output: meta_out_path,
+        diff_against,
         plant_name: plant_name.unwrap_or_else(|| "P01".to_string()),
     })
 }
@@ -146,13 +174,22 @@ fn main() {
             std::process::exit(2);
         }
     };
-    if let Err(e) = run(options) {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+    match run(options) {
+        Ok(exit_code) => std::process::exit(exit_code),
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
-fn run(options: CliOptions) -> Result<(), String> {
+/// Returned `i32` is the process exit code:
+/// - `0` — success and (when `--diff-against` is set) the diff
+///   surfaced no actionable findings.
+/// - `1` — diff-only failure: the generated XML differs semantically
+///   from the reference (used as a CI gate). Real I/O / SQLite
+///   errors short-circuit through `Err(String)` instead.
+fn run(options: CliOptions) -> Result<i32, String> {
     let conn = open_readonly(&options.sqlite_path)
         .map_err(|e| format!("open {}: {e}", options.sqlite_path.display()))?;
     let graph = load_drawing_graph(&conn, &options.drawing_uid)
@@ -169,13 +206,15 @@ fn run(options: CliOptions) -> Result<(), String> {
         graph.relationships.len(),
     );
 
-    match &options.output {
-        OutputTarget::Stdout => {
-            print!("{xml}");
-        }
-        OutputTarget::File(path) => {
-            write_file(path, &xml)?;
-            eprintln!("Wrote {} ({} bytes).", path.display(), xml.len());
+    if let Some(target) = &options.output {
+        match target {
+            OutputTarget::Stdout => {
+                print!("{xml}");
+            }
+            OutputTarget::File(path) => {
+                write_file(path, &xml)?;
+                eprintln!("Wrote {} ({} bytes).", path.display(), xml.len());
+            }
         }
     }
 
@@ -190,7 +229,34 @@ fn run(options: CliOptions) -> Result<(), String> {
         );
     }
 
-    Ok(())
+    let mut exit_code = 0;
+    if let Some(ref_path) = &options.diff_against {
+        let reference = std::fs::read_to_string(ref_path)
+            .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
+        let report = diff_publish_xml(&xml, &reference);
+        // Surface the report on stdout so it can be redirected to
+        // a file or compared in tests; the "Loaded drawing..." line
+        // stays on stderr.
+        println!("{report}");
+        if !report.is_clean() {
+            eprintln!(
+                "Semantic diff against {} surfaced findings (missing={} extra={} count_deltas={}); exit 1.",
+                ref_path.display(),
+                report.missing_from_generated,
+                report.extra_in_generated,
+                report.count_deltas,
+            );
+            exit_code = 1;
+        } else {
+            eprintln!(
+                "Semantic diff against {} is clean ({} matching tag varieties).",
+                ref_path.display(),
+                report.matching,
+            );
+        }
+    }
+
+    Ok(exit_code)
 }
 
 /// Write `contents` to `path`, creating the parent directory chain
