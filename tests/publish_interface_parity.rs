@@ -32,83 +32,12 @@
 
 use std::collections::BTreeSet;
 
-use pid_parse::publish::sqlite_load::open_readonly;
-use pid_parse::publish::{
-    load_drawing_graph, parse_interfaces_per_tag, write_data_xml, PublishError,
+use pid_parse::publish::parse_interfaces_per_tag;
+
+mod common;
+use common::{
+    generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml, TAGS_UNDER_PARITY,
 };
-
-const SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite";
-const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
-const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
-const DWG_REFERENCE_DATA_XML: &str =
-    "test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01_Data.xml";
-const PLANT_NAME: &str = "TEST02";
-
-/// Generate `A01_Data.xml` through the real publish pipeline:
-/// open the TEST02 SQLite mirror, load the drawing graph for the
-/// A01 drawing UID, and emit the XML as a String. Returns `None`
-/// when the fixture is not available (soft-skip on CI workers
-/// without the SmartPlant backup bundle).
-fn generate_a01_xml() -> Option<Result<String, PublishError>> {
-    let sqlite_path = std::path::Path::new(SQLITE_PATH);
-    if !sqlite_path.exists() {
-        eprintln!("skipping: SQLite fixture {SQLITE_PATH} not found");
-        return None;
-    }
-    let conn = match open_readonly(sqlite_path) {
-        Ok(c) => c,
-        Err(e) => return Some(Err(e)),
-    };
-    let drawing = match load_drawing_graph(&conn, A01_DRAWING_UID) {
-        Ok(d) => d,
-        Err(e) => return Some(Err(e)),
-    };
-    Some(write_data_xml(&drawing, PLANT_NAME))
-}
-
-/// Load the SmartPlant-produced reference A01 XML. Returns
-/// `None` when the fixture is missing.
-fn load_reference_a01_xml() -> Option<String> {
-    let p = std::path::Path::new(A01_REFERENCE_DATA_XML);
-    if !p.exists() {
-        eprintln!("skipping: reference fixture {A01_REFERENCE_DATA_XML} not found");
-        return None;
-    }
-    Some(std::fs::read_to_string(p).expect("reference should be utf8"))
-}
-
-/// Load the SmartPlant-produced reference DWG XML. Returns
-/// `None` when the fixture is missing.
-fn load_reference_dwg_xml() -> Option<String> {
-    let p = std::path::Path::new(DWG_REFERENCE_DATA_XML);
-    if !p.exists() {
-        eprintln!("skipping: reference fixture {DWG_REFERENCE_DATA_XML} not found");
-        return None;
-    }
-    Some(std::fs::read_to_string(p).expect("reference should be utf8"))
-}
-
-/// The subset of PID tags that the writer emits and we want to
-/// assert interface-level parity on. Tags the writer does not
-/// emit yet (PIDBranchPoint / PIDPipingBranchPoint) are omitted.
-/// Tags that are meta-only (PIDDrawing, PIDRepresentation) are
-/// included because they still exercise the wrapper emission
-/// path.
-const TAGS_UNDER_PARITY: &[&str] = &[
-    "PIDControlSystemFunction",
-    "PIDDrawing",
-    "PIDNote",
-    "PIDNozzle",
-    "PIDPipeline",
-    "PIDPipingComponent",
-    "PIDPipingConnector",
-    "PIDPipingPort",
-    "PIDProcessPoint",
-    "PIDProcessVessel",
-    "PIDRepresentation",
-    "PIDSignalConnector",
-    "PIDSignalPort",
-];
 
 #[test]
 fn interface_parity_on_a01_writer_matches_reference_superset_post_a22() {

@@ -42,27 +42,8 @@ use pid_parse::publish::{
     supported_pid_tags,
 };
 
-const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
-const DWG_REFERENCE_DATA_XML: &str =
-    "test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01_Data.xml";
-
-fn load_a01() -> Option<String> {
-    let p = std::path::Path::new(A01_REFERENCE_DATA_XML);
-    if !p.exists() {
-        eprintln!("skipping: reference fixture {A01_REFERENCE_DATA_XML} not found");
-        return None;
-    }
-    Some(std::fs::read_to_string(p).expect("a01 reference is utf8"))
-}
-
-fn load_dwg() -> Option<String> {
-    let p = std::path::Path::new(DWG_REFERENCE_DATA_XML);
-    if !p.exists() {
-        eprintln!("skipping: reference fixture {DWG_REFERENCE_DATA_XML} not found");
-        return None;
-    }
-    Some(std::fs::read_to_string(p).expect("dwg reference is utf8"))
-}
+mod common;
+use common::{load_reference_a01_xml as load_a01, load_reference_dwg_xml as load_dwg};
 
 /// Hard-coded spec for one backlog tag on one reference
 /// fixture. `instance_count` is the number of `<PIDxxx>`
