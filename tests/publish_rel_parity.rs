@@ -59,26 +59,7 @@ use common::{generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml};
 /// fails the test if a DefUID listed here is now actually
 /// emitted in `>= reference_count`, so the whitelist cannot
 /// silently drift out of date.
-const KNOWN_WRITER_REL_DEFUID_GAPS: &[(&str, &str, &str)] = &[
-    (
-        "EquipmentComponentComposition",
-        "A33-discovery (A34b will fix)",
-        "T_Relationship has Vessel ↔ Nozzle classified by \
-         classify_relationship(), but the loader's source / target \
-         population leaves these rels with empty endpoints on A01 \
-         so the writer's classified-rel emit cannot fire. A34b \
-         lands the loader-side T_Relationship pickup that surfaces \
-         vessel-nozzle composition rows.",
-    ),
-    (
-        "PipingConnectors",
-        "A33-discovery (A34b will fix)",
-        "Pipeline ↔ PipeRun composition rel is also classified by \
-         classify_relationship() but is not currently surfaced by \
-         the loader. A34b closes the gap together with \
-         EquipmentComponentComposition.",
-    ),
-];
+const KNOWN_WRITER_REL_DEFUID_GAPS: &[(&str, &str, &str)] = &[];
 
 /// A33 · Writer ⊇ A01 reference at Rel DefUID granularity,
 /// modulo [`KNOWN_WRITER_REL_DEFUID_GAPS`].

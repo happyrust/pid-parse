@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A34)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A34b)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
@@ -57,6 +57,17 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   / PIDProcessPoint body 配套。`KNOWN_WRITER_REL_DEFUID_GAPS`
   从 6 项 → 2 项（EquipmentComponentComposition +
   PipingConnectors 留给 A34b 的 loader 端工作）
+- A34b derived Rel emit 收尾 — A33 调研发现 A01 fixture 的
+  T_Relationship 表只有 Rep↔Rep 行，writer 缺的 2 个 DefUID
+  其实是 derived from object parent links：
+  * `PipingConnectors`（Pipeline ↔ PipeRun）— 直接从 PipeRun
+    obj.uid 派生 (pipeline = obj.uid, connector = `<obj.uid>-CNX`)
+  * `EquipmentComponentComposition`（Vessel ↔ Nozzle）— 从
+    Nozzle 的 `obj.fields["SP_EquipmentID"]`（loader 已经
+    attach 了的 T_Nozzle.SP_EquipmentID 列）派生
+  `KNOWN_WRITER_REL_DEFUID_GAPS` 从 2 项 → 0 项，A33 gate
+  完全 drained。Writer 现在 emit 9 DefUIDs（8 reference + 1
+  extra "Relationship" fallback for un-classified Rep↔Rep）。
 
 #### Added — writer 真实改动
 
@@ -146,19 +157,19 @@ UID 后缀模式：`<base>.BPT`，参考 A13 的 `.PPT` / `.1` / `.2`
 派生 ID 模式（PipingConnector → PIDPipingPort + PIDProcessPoint）。
 未来 writer arm 实现时按 spec 守门即可。
 
-#### A33 → A34 Rel DefUID 进展
+#### A33 → A34 → A34b Rel DefUID 进展
 
 A33 gate 第一次跑暴露了 writer 端 6 个 derived Rel DefUID 缺口。
-A34 立即 close 其中 4 项（writer-side derived emit）：
+A34 + A34b close 全部 6 项：
 
-| DefUID | A33 状态 | A34 状态 |
-|---|---|---|
-| PipingPortComposition × 2 | whitelist | **closed** (writer emit) |
-| ProcessPointCollection | whitelist | **closed** (writer emit) |
-| PipingEnd1Conn | whitelist | **closed** (writer emit, UID2 placeholder = port.PPT) |
-| PipingEnd2Conn | whitelist | **closed** (writer emit, UID2 = port.PPT 与 reference 一致) |
-| EquipmentComponentComposition | whitelist | whitelist (A34b — loader T_Relationship 拾取) |
-| PipingConnectors | whitelist | whitelist (A34b — loader T_Relationship 拾取) |
+| DefUID | A33 状态 | A34 状态 | A34b 状态 |
+|---|---|---|---|
+| PipingPortComposition × 2 | whitelist | **closed** (writer emit) | (closed) |
+| ProcessPointCollection | whitelist | **closed** (writer emit) | (closed) |
+| PipingEnd1Conn | whitelist | **closed** (writer emit, UID2 placeholder = port.PPT) | (closed) |
+| PipingEnd2Conn | whitelist | **closed** (writer emit, UID2 = port.PPT 与 reference 一致) | (closed) |
+| EquipmentComponentComposition | whitelist | whitelist | **closed** (Vessel→Nozzle derived from T_Nozzle.SP_EquipmentID) |
+| PipingConnectors | whitelist | whitelist | **closed** (Pipeline→Connector derived from PipeRun obj.uid) |
 
 A33b gate 暴露了 4 个跨 fixture DWG-only DefUID（已进
 `KNOWN_A01_VS_DWG_REL_DEFUID_DIVERGENCES`，纯 SmartPlant
@@ -168,15 +179,14 @@ fixture-side variant）：
   SignalPortComposition（DWG ships instrument signal 连接和
   piping tap，A01 没有）
 
-#### Backlog（A34b+）
+#### Backlog（A34c+）
 
-* **A34b loader-side T_Relationship 拾取**（A33 剩 2 项 whitelist
-  消化）：扩 loader 让 T_Relationship 能拾取 Vessel ↔ Nozzle /
-  Pipeline ↔ PipeRun 行，让现有 classify_relationship() 产出
-  EquipmentComponentComposition / PipingConnectors DefUIDs。
-  PipingEnd1Conn UID2 placeholder 也将升级到真实 endpoint
-  inference（来自 T_PipingPoint）。无需新 fixture，A01 SQLite +
-  A01 reference 即可完整验证。
+* **A34c PipingEnd1Conn UID2 真实 endpoint inference** — 当前
+  PipingEnd1Conn UID2 是 placeholder (`<connector>.PPT`)，
+  reference 是上游连接的 model item UID（典型为 Vessel）。需要
+  loader 端推断 port.1 接的 model item，可能从 T_PipingPoint /
+  T_Connector 列推断。对 fidelity gate 通过没影响（gate 只看
+  DefUID 计数），但对 SmartPlant 验证器更友好。无需新 fixture。
 * PIDBranchPoint / PIDPipingBranchPoint writer arms（spec 已在
   A28 snapshot test 中 pin 住，实施时需 DWG 端 SQLite mirror
   才能反推源映射）

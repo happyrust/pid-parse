@@ -2172,8 +2172,14 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     // here keeps the per-connector rel count in lockstep so
     // the A33 `<Rel>` DefUID-count gate stays satisfied.
     //
+    // A34b also derives the Pipeline → Connector composition
+    // rel (`PipingConnectors`) here — same source object,
+    // emitted alongside the five port-derived rels.
+    //
     // UID derivation mirrors what `write_derived_connector_endpoints`
     // already does:
+    //   * pipeline UID:  `<piperun>` (PipeRun obj.uid maps to
+    //                    `<PIDPipeline>`)
     //   * connector UID: `<piperun>-CNX`
     //   * port UIDs:     `<connector>.1` / `<connector>.2`
     //   * process point: `<connector>.PPT`
@@ -2183,7 +2189,7 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     // reference threads this through the upstream connected
     // model item (e.g. a Vessel UID), but doing that
     // correctly requires loader-side `T_PipingPoint`
-    // endpoint inference which is deferred to A34b. The
+    // endpoint inference which is deferred to A34c. The
     // placeholder still produces a valid intra-connector
     // reference so SmartPlant validators that check UID
     // resolvability don't reject the document outright.
@@ -2191,10 +2197,19 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
         if obj.item_type_name != "PipeRun" {
             continue;
         }
-        let connector_uid = format!("{}-CNX", obj.uid);
+        let pipeline_uid = obj.uid.as_str();
+        let connector_uid = format!("{pipeline_uid}-CNX");
         let port1_uid = format!("{connector_uid}.1");
         let port2_uid = format!("{connector_uid}.2");
         let ppt_uid = format!("{connector_uid}.PPT");
+        // A34b: Pipeline → Connector composition.
+        write_rel(
+            buf,
+            &format!("PCN-{pipeline_uid}"),
+            pipeline_uid,
+            &connector_uid,
+            "PipingConnectors",
+        )?;
         write_rel(
             buf,
             &format!("PPC-{connector_uid}-1"),
@@ -2229,6 +2244,34 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
             &port2_uid,
             &ppt_uid,
             "PipingEnd2Conn",
+        )?;
+    }
+
+    // --- A34b: Vessel → Nozzle composition (EquipmentComponentComposition).
+    //
+    // SmartPlant ties every nozzle to its parent vessel via
+    // the T_Nozzle.SP_EquipmentID column (loaded into
+    // `obj.fields["SP_EquipmentID"]` by `attach_business_columns`).
+    // The reference XML's EquipmentComponentComposition row
+    // is a derived `<Rel>` from this parent link, not a
+    // T_Relationship row — A01's T_Relationship table only
+    // carries Representation ↔ Representation rels.
+    for obj in &drawing.objects {
+        if obj.item_type_name != "Nozzle" {
+            continue;
+        }
+        let Some(vessel_uid) = obj.fields.get("SP_EquipmentID") else {
+            continue;
+        };
+        if vessel_uid.is_empty() {
+            continue;
+        }
+        write_rel(
+            buf,
+            &format!("EQC-{vessel_uid}-{}", obj.uid),
+            vessel_uid,
+            &obj.uid,
+            "EquipmentComponentComposition",
         )?;
     }
 
