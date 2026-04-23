@@ -423,6 +423,203 @@ fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
 }
 
 #[test]
+fn cli_help_documents_style_flag_and_choices() {
+    // A29b advertises `--style a01|dwg`; --help is the only
+    // discoverability surface for the flag, so a regression
+    // that drops it from print_usage would silently strand
+    // the new option.
+    let out = Command::new(binary_path())
+        .arg("--help")
+        .output()
+        .expect("spawn pid_publish_xml --help");
+    assert!(out.status.success(), "--help should exit 0; got {out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--style a01|dwg"),
+        "--help should document the --style flag; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("DWG export shape"),
+        "--help should explain the DWG branch; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_style_unknown_value_exits_two_with_clear_error() {
+    // Defensive: an obvious typo (`--style invalid`) must
+    // exit with the usage-error code (2) rather than
+    // silently falling back to A01 — silent fallback would
+    // make CI runs against the wrong reference appear
+    // clean for entirely unrelated reasons.
+    let out = Command::new(binary_path())
+        .args([
+            "irrelevant.sqlite",
+            "--drawing",
+            "irrelevant",
+            "--stdout",
+            "--style",
+            "klingon",
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --style klingon");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "unknown --style value should exit 2; got {out:?}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--style accepts `a01` or `dwg`"),
+        "error message should name the legal values; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_default_style_matches_a01_reference_byte_for_byte() {
+    // Behavioral lock for the default branch: omitting
+    // --style must produce IObject with the A01 ItemTag
+    // shape (matching the A01 reference fixture's IObject
+    // pattern). This is the byte-level back-compat
+    // guarantee A29b commits to.
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("style-default");
+    let data_path = dir.join("A01_Data.xml");
+    let out = Command::new(binary_path())
+        .args([
+            SQLITE_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--out",
+            data_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml default --style");
+    assert!(out.status.success(), "default-style run should exit 0; got {out:?}");
+    let xml = std::fs::read_to_string(&data_path).expect("read generated xml");
+    assert!(
+        xml.contains("<PIDPipeline>"),
+        "default-style output must include PIDPipeline; out:\n{xml}",
+    );
+    // Locate the FIRST PIDPipeline IObject and assert it
+    // carries the A01 ItemTag attribute. Structural needle
+    // (rather than a fixture-specific ItemTag value) keeps
+    // the test resilient to whatever T_PlantItem.ItemTag the
+    // mirror happens to carry — only the writer-side IObject
+    // shape is under test.
+    let pipeline_block_start = xml
+        .find("<PIDPipeline>")
+        .expect("PIDPipeline must be present");
+    let pipeline_block_end = xml[pipeline_block_start..]
+        .find("</PIDPipeline>")
+        .expect("PIDPipeline must close")
+        + pipeline_block_start;
+    let iobject_line = xml[pipeline_block_start..pipeline_block_end]
+        .lines()
+        .find(|l| l.contains("<IObject "))
+        .expect("PIDPipeline must contain an IObject");
+    assert!(
+        iobject_line.contains("ItemTag="),
+        "default style must emit ItemTag on the pipeline IObject; got:\n{iobject_line}",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_style_dwg_drops_itemtag_on_pipeline_iobject() {
+    // A29b end-to-end test: --style dwg must flip the
+    // PIDPipeline / PIDPipingConnector IObject shape to the
+    // DWG convention. The TEST02 SQLite mirror is an A01
+    // plant so the data is itself A01-flavor; the test
+    // therefore only asserts that the writer-side IObject
+    // shape NO LONGER carries `ItemTag` on the pipeline
+    // block (the writer's DWG branch drops ItemTag in favor
+    // of Name when the loader has a name, or emits a
+    // UID-only IObject otherwise). This pins the writer's
+    // style switch independent of the loader's flavor.
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("style-dwg");
+    let data_path = dir.join("A01_Data.xml");
+    let out = Command::new(binary_path())
+        .args([
+            SQLITE_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--style",
+            "dwg",
+            "--out",
+            data_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --style dwg");
+    assert!(out.status.success(), "--style dwg run should exit 0; got {out:?}");
+    let xml = std::fs::read_to_string(&data_path).expect("read generated xml");
+    assert!(
+        xml.contains("<PIDPipeline>"),
+        "DWG-style output must still include PIDPipeline; out:\n{xml}",
+    );
+    // Pipeline IObject must NOT carry an ItemTag in DWG
+    // shape — that is the entire point of the flag.
+    let pipeline_block_start = xml
+        .find("<PIDPipeline>")
+        .expect("PIDPipeline must be present");
+    let pipeline_block_end = xml[pipeline_block_start..]
+        .find("</PIDPipeline>")
+        .expect("PIDPipeline must close")
+        + pipeline_block_start;
+    let pipeline_block = &xml[pipeline_block_start..pipeline_block_end];
+    let iobject_line = pipeline_block
+        .lines()
+        .find(|l| l.contains("<IObject "))
+        .expect("PIDPipeline must contain an IObject");
+    assert!(
+        !iobject_line.contains("ItemTag="),
+        "DWG-style PIDPipeline IObject must drop ItemTag; got:\n{iobject_line}",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_style_case_insensitive_accepts_uppercase_dwg() {
+    // The CLI accepts `--style DWG` / `--style A01` /
+    // `--style Dwg` interchangeably; documenting this
+    // spares users from tripping on case typos and
+    // matches CLI-convention everywhere else (lower-case
+    // canonical, upper-case tolerated).
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("style-case");
+    let data_path = dir.join("A01_Data.xml");
+    let out = Command::new(binary_path())
+        .args([
+            SQLITE_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--style",
+            "DWG",
+            "--out",
+            data_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --style DWG");
+    assert!(
+        out.status.success(),
+        "uppercase --style DWG should exit 0; got {out:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_diff_against_combined_with_out_writes_xml_and_reports_clean() {
     // --diff-against composes with --out: the XML lands on disk
     // AND the report is printed. Post-A14 the A01 reference is

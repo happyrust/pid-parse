@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A29)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A29b)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
@@ -65,6 +65,9 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
     [Description="..."]/>`（不发 ItemTag，匹配 DWG reference）
   把 pre-A29 "PipelineName 有值即触发 DWG-shape"的隐式数据驱动
   改为显式 style 选择，让 caller 明确表达 fixture flavor。
+- A29b `pid_publish_xml --style a01|dwg` CLI 选项（默认 a01，
+  大小写不敏感）。CLI 把选择透传给 `PublishDrawing.style`，
+  让 ops 不写代码就能从命令行切换 fixture flavor。
 
 #### Added — A27b whitelist（KNOWN_A01_VS_DWG_ATTR_DIVERGENCES）
 
@@ -86,8 +89,9 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 
 * lib：540 → 562（+22，A26 +7 `publish::diff::tests::parse_attrs_*`，
   A29 +7 `publish::xml_writer::tests` 中 IObject style 切换）
-* integration：140 → 149（+5 在 `tests/publish_attribute_parity.rs`，
-  +4 在 `tests/publish_backlog_inventory.rs`）
+* integration：140 → 154（+5 在 `tests/publish_attribute_parity.rs`，
+  +4 在 `tests/publish_backlog_inventory.rs`，
+  +5 在 `tests/publish_xml_cli.rs` 覆盖 A29b CLI `--style` 行为）
 * lint：0 warnings
 
 #### A28 backlog inventory（已 snapshot 入测试）
@@ -112,10 +116,11 @@ UID 后缀模式：`<base>.BPT`，参考 A13 的 `.PPT` / `.1` / `.2`
 * A25b loader-side `IsLowPressureTank` 推断（同上）
 * A27b whitelist 收尾：随 DWG mirror bundle 落地，逐条 (tag,
   interface) 关闭 12 条 loader-side 富化列差异
-* A29b loader-side `PublishStyle` 决策逻辑：根据 SQLite
+* A29c loader-side `PublishStyle` 自动决策：根据 SQLite
   metadata（plant 名 / SmartPlant project 配置）自动设
-  `drawing.style`；当前 caller 必须显式指定。CLI 层加
-  `--style a01|dwg` 选项也属于 A29b。
+  `drawing.style`；当前 caller / CLI 必须显式指定 (--style)。
+  需要 DWG SQLite mirror 落地后才能 reverse-engineer 出可靠
+  detection 启发式。
 
 ## [0.9.2] - 2026-04-21
 

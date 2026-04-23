@@ -23,7 +23,9 @@
 //! usage error.
 
 use pid_parse::publish::sqlite_load::open_readonly;
-use pid_parse::publish::{diff_publish_xml, load_drawing_graph, write_data_xml, write_meta_xml};
+use pid_parse::publish::{
+    diff_publish_xml, load_drawing_graph, write_data_xml, write_meta_xml, PublishStyle,
+};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -46,6 +48,12 @@ struct CliOptions {
     /// output flag at all (in which case only the diff is printed).
     diff_against: Option<PathBuf>,
     plant_name: String,
+    /// SmartPlant project flavor selector (A29b). Picks between
+    /// the A01 and DWG IObject attribute conventions on the
+    /// PIDPipeline / PIDPipingConnector / PIDProcessVessel
+    /// blocks. Defaults to A01 to keep every pre-A29b CLI
+    /// invocation byte-identical.
+    style: PublishStyle,
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +65,8 @@ enum OutputTarget {
 fn print_usage() {
     eprintln!(
         "Usage: pid_publish_xml <sqlite> --drawing UID [--out FILE | --stdout]\n\
-         \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\n\
+         \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
+         \x20               [--style a01|dwg]\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
@@ -67,7 +76,13 @@ fn print_usage() {
          \x20                   SmartPlant export and print a SemanticDiffReport\n\
          \x20                   to stdout. Exits 1 when any tag varieties differ.\n\
          --plant NAME        Plant value for the <Container> root attribute\n\
-         \x20                   (default: \"P01\" — override with the real plant).\n\n\
+         \x20                   (default: \"P01\" — override with the real plant).\n\
+         --style a01|dwg     Pick the IObject attribute convention used in the\n\
+         \x20                   PIDPipeline / PIDPipingConnector / PIDProcessVessel\n\
+         \x20                   blocks. `a01` (default) emits ItemTag attributes\n\
+         \x20                   matching the A01 SmartPlant export shape; `dwg`\n\
+         \x20                   drops ItemTag in favor of Name (or omits it on\n\
+         \x20                   PIDProcessVessel) to match the DWG export shape.\n\n\
          At least one of --out / --stdout / --diff-against is required."
     );
 }
@@ -83,6 +98,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut diff_against: Option<PathBuf> = None;
     let mut stdout = false;
     let mut plant_name: Option<String> = None;
+    let mut style: Option<PublishStyle> = None;
 
     let mut i = 2;
     while i < args.len() {
@@ -126,6 +142,22 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 plant_name = Some(value.clone());
                 i += 2;
             }
+            "--style" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--style requires a value (a01 | dwg)".to_string())?;
+                let parsed = match value.to_ascii_lowercase().as_str() {
+                    "a01" => PublishStyle::A01,
+                    "dwg" => PublishStyle::Dwg,
+                    other => {
+                        return Err(format!(
+                            "--style accepts `a01` or `dwg` (case-insensitive); got `{other}`"
+                        ))
+                    }
+                };
+                style = Some(parsed);
+                i += 2;
+            }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
@@ -157,6 +189,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         meta_output: meta_out_path,
         diff_against,
         plant_name: plant_name.unwrap_or_else(|| "P01".to_string()),
+        style: style.unwrap_or_default(),
     })
 }
 
@@ -192,8 +225,14 @@ fn main() {
 fn run(options: CliOptions) -> Result<i32, String> {
     let conn = open_readonly(&options.sqlite_path)
         .map_err(|e| format!("open {}: {e}", options.sqlite_path.display()))?;
-    let graph = load_drawing_graph(&conn, &options.drawing_uid)
+    let mut graph = load_drawing_graph(&conn, &options.drawing_uid)
         .map_err(|e| format!("load drawing {}: {e}", options.drawing_uid))?;
+    // A29b: thread CLI --style choice through the loaded graph
+    // so the writer routes IObject shape via PublishStyle. The
+    // default branch keeps every pre-A29b CLI invocation
+    // byte-identical (the CLI default is PublishStyle::A01,
+    // which matches the model-side Default impl).
+    graph.style = options.style;
     let xml = write_data_xml(&graph, &options.plant_name)
         .map_err(|e| format!("render data XML: {e}"))?;
 
