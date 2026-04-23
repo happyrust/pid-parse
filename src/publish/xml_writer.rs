@@ -23,7 +23,9 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use super::model::{PublishDrawing, PublishError, PublishObject, PublishRelationship};
+use super::model::{
+    PublishDrawing, PublishError, PublishObject, PublishRelationship, PublishRepresentation,
+};
 
 /// Software-version / schema-version / tooling constants that the
 /// SmartPlant reference implementation stamps onto every Publish
@@ -1028,8 +1030,27 @@ fn write_pid_drawing(buf: &mut String, drawing: &PublishDrawing) -> Result<(), P
     writeln!(buf, "   </PIDDrawing>").map_err(fmt_err)
 }
 
+/// True when a representation row deserves a `<PIDRepresentation>`
+/// element in the published XML. SmartPlant's exporter skips the
+/// pure annotation / label rows — those whose `T_Representation.SP_ModelItemID`
+/// is NULL or empty (typically `\Equipment\Labels - ...` and
+/// `\Piping\Labels - ...` symbols). Mirroring that filter is what
+/// keeps the A01 diff in lockstep with the reference fixture.
+///
+/// The check is centralized so `write_representations` and the
+/// derived `<Rel>` emitters share the exact same predicate; the
+/// derived `DwgRepresentationComposition` rel was already
+/// naturally filtered (its source IS `model_item_uid`), but the
+/// `DrawingItems` rel was not — A14 brings them into alignment.
+fn representation_is_publishable(rep: &PublishRepresentation) -> bool {
+    matches!(rep.model_item_uid.as_deref(), Some(uid) if !uid.is_empty())
+}
+
 fn write_representations(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
     for rep in &drawing.representations {
+        if !representation_is_publishable(rep) {
+            continue;
+        }
         writeln!(buf, "   <PIDRepresentation>").map_err(fmt_err)?;
         writeln!(
             buf,
@@ -1071,13 +1092,19 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     }
 
     // --- Derived: ModelItem → Representation (DwgRepresentationComposition)
+    // Naturally filtered to publishable reps (the rel's source IS
+    // `model_item_uid`, so a pure annotation row with no model
+    // item never produces one). Keep the inline check anyway so a
+    // future loader change that accidentally injects `Some("")`
+    // does not silently produce a malformed rel.
     for rep in &drawing.representations {
-        let Some(model_item_uid) = rep.model_item_uid.as_deref() else {
-            continue;
-        };
-        if model_item_uid.is_empty() {
+        if !representation_is_publishable(rep) {
             continue;
         }
+        let model_item_uid = rep
+            .model_item_uid
+            .as_deref()
+            .expect("publishable rep has model_item_uid");
         write_rel(
             buf,
             &format!("DRC-{}-{}", model_item_uid, rep.uid),
@@ -1088,7 +1115,14 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     }
 
     // --- Derived: Drawing → Representation (DrawingItems)
+    // A14: only emit `DrawingItems` for representations that survive
+    // the A14 publishability filter. Otherwise we would generate a
+    // rel pointing at a `<PIDRepresentation>` we never wrote — a
+    // dangling reference SmartPlant validators reject.
     for rep in &drawing.representations {
+        if !representation_is_publishable(rep) {
+            continue;
+        }
         write_rel(
             buf,
             &format!("DRI-{}-{}", drawing.drawing_uid, rep.uid),
@@ -2178,6 +2212,136 @@ mod tests {
              pipeline={i_pipeline} connector={i_connector} first_port={i_first_port} \
              process_point={i_process_point}\nout:\n{out}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // A14 — annotation/label representation filtering
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn write_representations_emits_one_pid_representation_per_publishable_row() {
+        // The reference SmartPlant exporter emits PIDRepresentation
+        // ONLY for representations that point at a model item.
+        // Three reps wired to model items, two pure annotations
+        // (model_item_uid None / Some("")), one with valid uid:
+        // expect exactly four `<PIDRepresentation>` opens.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.representations = vec![
+            PublishRepresentation {
+                uid: "REP-1".into(),
+                model_item_uid: Some("OBJ-1".into()),
+                drawing_uid: "UID-D".into(),
+                graphic_oid: Some(1),
+                ..PublishRepresentation::default()
+            },
+            PublishRepresentation {
+                uid: "REP-2-LABEL".into(),
+                model_item_uid: None,
+                drawing_uid: "UID-D".into(),
+                graphic_oid: Some(2),
+                ..PublishRepresentation::default()
+            },
+            PublishRepresentation {
+                uid: "REP-3".into(),
+                model_item_uid: Some("OBJ-3".into()),
+                drawing_uid: "UID-D".into(),
+                graphic_oid: Some(3),
+                ..PublishRepresentation::default()
+            },
+            PublishRepresentation {
+                uid: "REP-4-EMPTY".into(),
+                model_item_uid: Some(String::new()),
+                drawing_uid: "UID-D".into(),
+                graphic_oid: Some(4),
+                ..PublishRepresentation::default()
+            },
+            PublishRepresentation {
+                uid: "REP-5".into(),
+                model_item_uid: Some("OBJ-5".into()),
+                drawing_uid: "UID-D".into(),
+                graphic_oid: None,
+                ..PublishRepresentation::default()
+            },
+        ];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(
+            out.matches("<PIDRepresentation>").count(),
+            3,
+            "only the three reps with non-empty model_item_uid should produce <PIDRepresentation>; out:\n{out}"
+        );
+        // Spot-check the three publishable UIDs are present.
+        for uid in ["REP-1", "REP-3", "REP-5"] {
+            assert!(
+                out.contains(&format!(r#"<IObject UID="{uid}"/>"#)),
+                "publishable rep `{uid}` must be present; out:\n{out}"
+            );
+        }
+        // The two annotation-only reps must NOT appear.
+        for uid in ["REP-2-LABEL", "REP-4-EMPTY"] {
+            assert!(
+                !out.contains(&format!(r#"<IObject UID="{uid}"/>"#)),
+                "annotation rep `{uid}` must NOT be present; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn drawing_items_rel_only_emitted_for_publishable_representations() {
+        // The DrawingItems derived rel must follow the same filter
+        // — otherwise the Rel section would dangle pointers to
+        // PIDRepresentation tags we never wrote.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.representations = vec![
+            PublishRepresentation {
+                uid: "REP-OK".into(),
+                model_item_uid: Some("OBJ-1".into()),
+                drawing_uid: "UID-D".into(),
+                ..PublishRepresentation::default()
+            },
+            PublishRepresentation {
+                uid: "REP-LABEL".into(),
+                model_item_uid: None,
+                drawing_uid: "UID-D".into(),
+                ..PublishRepresentation::default()
+            },
+        ];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"DefUID="DrawingItems""#),
+            "DrawingItems rel for the publishable rep must be present; out:\n{out}"
+        );
+        // The dangling rel for the annotation rep must NOT exist.
+        assert!(
+            !out.contains("REP-LABEL"),
+            "annotation rep UID must not appear in any DrawingItems / DwgRepresentationComposition rel; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn representation_is_publishable_classifier_unit_table() {
+        // Pure helper test for the predicate that drives both the
+        // representation block and the derived rels.
+        let publishable = PublishRepresentation {
+            uid: "REP".into(),
+            model_item_uid: Some("OBJ".into()),
+            drawing_uid: "UID".into(),
+            ..PublishRepresentation::default()
+        };
+        let no_model = PublishRepresentation {
+            uid: "REP".into(),
+            model_item_uid: None,
+            drawing_uid: "UID".into(),
+            ..PublishRepresentation::default()
+        };
+        let empty_model = PublishRepresentation {
+            uid: "REP".into(),
+            model_item_uid: Some(String::new()),
+            drawing_uid: "UID".into(),
+            ..PublishRepresentation::default()
+        };
+        assert!(representation_is_publishable(&publishable));
+        assert!(!representation_is_publishable(&no_model));
+        assert!(!representation_is_publishable(&empty_model));
     }
 
     #[test]

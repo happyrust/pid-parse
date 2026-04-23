@@ -293,7 +293,13 @@ fn cli_help_advertises_diff_against_flag() {
 }
 
 #[test]
-fn cli_diff_against_real_a01_reference_reports_known_findings_and_exits_one() {
+fn cli_diff_against_real_a01_reference_is_clean_and_exits_zero() {
+    // A14 closes the last semantic diff against the SmartPlant
+    // reference A01 export: filtering pure annotation/label
+    // representations brings PIDRepresentation from 6 to 4 and the
+    // report goes fully clean. This test pins the post-A14
+    // milestone — the writer now reproduces the reference fixture's
+    // PID tag set exactly.
     if !fixture_available() {
         return;
     }
@@ -314,26 +320,19 @@ fn cli_diff_against_real_a01_reference_reports_known_findings_and_exits_one() {
         ])
         .output()
         .expect("spawn pid_publish_xml --diff-against");
-    // After A13 the only remaining diff against the SmartPlant A01
-    // reference is `PIDRepresentation` count delta (we emit 6, the
-    // reference emits 4 — annotation/label representations are
-    // filtered by SmartPlant's exporter and we have not yet
-    // mirrored that filter). Exit 1 is still the expected verdict
-    // until that gap is closed in a later phase.
     assert_eq!(
         out.status.code(),
-        Some(1),
-        "A01 reference diff should exit 1 (known unresolved PIDRepresentation delta); got {out:?}",
+        Some(0),
+        "A01 reference diff should exit 0 (clean); got {out:?}",
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
 
-    // Header echo proves the report rendered.
     assert!(
         stdout.contains("Publish Data XML semantic diff"),
         "stdout should carry the SemanticDiffReport header; got:\n{stdout}"
     );
-    // After A13 the seven guaranteed-MATCH tag varieties on A01.
+    // All eight tag varieties on A01 must be MATCH.
     for tag in [
         "PIDDrawing",
         "PIDNozzle",
@@ -342,27 +341,33 @@ fn cli_diff_against_real_a01_reference_reports_known_findings_and_exits_one() {
         "PIDPipingPort",
         "PIDProcessPoint",
         "PIDProcessVessel",
+        "PIDRepresentation",
     ] {
         assert!(
             stdout.contains(tag),
             "report should list {tag}; got:\n{stdout}"
         );
     }
-    // PIDProcessPoint must NOT be flagged as MISSING any more
-    // (A13 derives it from each PipingConnector).
+    // No actionable rows allowed.
     assert!(
-        !stdout.contains("MISSING") || !stdout.contains("PIDProcessPoint"),
-        "PIDProcessPoint should no longer surface as MISSING after A13; got:\n{stdout}"
+        !stdout.contains("MISSING"),
+        "no MISSING rows expected; got:\n{stdout}"
     );
-    // PIDRepresentation should be the surviving DELTA row.
     assert!(
-        stdout.contains("DELTA") && stdout.contains("PIDRepresentation"),
-        "PIDRepresentation should be the surviving DELTA row; got:\n{stdout}"
+        !stdout.contains("EXTRA"),
+        "no EXTRA rows expected; got:\n{stdout}"
     );
-    // Side echo on stderr summarizes the verdict.
     assert!(
-        stderr.contains("surfaced findings"),
-        "stderr should summarize the dirty verdict; got:\n{stderr}"
+        !stdout.contains("DELTA"),
+        "no DELTA rows expected; got:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("clean ("),
+        "stderr should announce the clean verdict; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("8 matching"),
+        "summary should report eight matching tag varieties; got:\n{stderr}"
     );
 }
 
@@ -418,10 +423,10 @@ fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
 }
 
 #[test]
-fn cli_diff_against_combined_with_out_writes_xml_and_reports() {
+fn cli_diff_against_combined_with_out_writes_xml_and_reports_clean() {
     // --diff-against composes with --out: the XML lands on disk
-    // AND the report is printed. Exit 1 because the A01 reference
-    // still surfaces unresolved findings.
+    // AND the report is printed. Post-A14 the A01 reference is
+    // semantically clean, so the combined flow exits 0.
     if !fixture_available() {
         return;
     }
@@ -448,17 +453,23 @@ fn cli_diff_against_combined_with_out_writes_xml_and_reports() {
         .expect("spawn pid_publish_xml --out --diff-against");
     assert_eq!(
         out.status.code(),
-        Some(1),
-        "combined flow with unresolved findings should exit 1; got {out:?}",
+        Some(0),
+        "post-A14 the combined flow against A01 reference should exit 0; got {out:?}",
     );
     assert!(
         data_path.exists(),
         "--out should still produce the _Data.xml file when paired with --diff-against",
     );
     let report = String::from_utf8_lossy(&out.stdout);
+    // The report content survives even on clean exits — it is the
+    // canonical artifact a CI run records for traceability.
     assert!(
-        report.contains("PIDProcessPoint"),
-        "report on stdout should carry the canonical MISSING tag; got:\n{report}"
+        report.contains("Publish Data XML semantic diff"),
+        "report on stdout should carry the SemanticDiffReport header; got:\n{report}"
+    );
+    assert!(
+        report.contains("PIDRepresentation"),
+        "report should list PIDRepresentation as MATCH; got:\n{report}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
