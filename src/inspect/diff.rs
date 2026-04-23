@@ -9,6 +9,8 @@
 //! in version control or CI logs. It stays under a page for passthrough
 //! round-trips ("no diffs") and scales with the number of modified
 //! streams otherwise.
+use std::fmt::Write;
+
 use crate::package::PackageDiff;
 
 /// Render a [`PackageDiff`] as a human-readable report. Always ends with
