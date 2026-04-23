@@ -235,6 +235,136 @@ fn is_tag_name_byte(b: u8) -> bool {
 /// `reference_xml`. Both inputs are full `_Data.xml` document
 /// strings; the function is pure (no I/O) so it is cheap to call
 /// from tests, CI gates, and the CLI alike.
+/// PID tag varieties the writer is known to emit today. Sorted
+/// for determinism. The list is the executable counterpart of the
+/// `subtables_for_item_type` dispatch matrix in `xml_writer.rs`
+/// plus the four virtual nodes (PIDDrawing / PIDRepresentation /
+/// derived PIDPipingPort / PIDProcessPoint) that any non-trivial
+/// drawing emits.
+///
+/// Used by [`coverage_against_reference`] to classify a reference
+/// SmartPlant `_Data.xml` into "tags we already know how to emit"
+/// vs "tags that form the next-phase backlog".
+pub fn supported_pid_tags() -> &'static [&'static str] {
+    &[
+        "PIDControlSystemFunction",
+        "PIDDrawing",
+        "PIDNote",
+        "PIDNozzle",
+        "PIDPipeline",
+        "PIDPipingConnector",
+        "PIDPipingPort",
+        "PIDProcessPoint",
+        "PIDProcessVessel",
+        "PIDRepresentation",
+    ]
+}
+
+/// One row of the [`WriterCoverage`] report. `count` is the
+/// number of times the tag appears in the reference document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverageRow {
+    /// Tag name, e.g. `"PIDPipingPort"`.
+    pub tag: String,
+    /// Open-tag count observed in the reference document.
+    pub count: usize,
+}
+
+/// Coverage report — the reference document's PID tag inventory
+/// split into two buckets relative to [`supported_pid_tags`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WriterCoverage {
+    /// Tag varieties the writer can already emit, with their
+    /// reference-side counts. Sorted alphabetically.
+    pub supported_in_reference: Vec<CoverageRow>,
+    /// Tag varieties the writer cannot yet emit. The actionable
+    /// backlog. Sorted by descending count then alphabetically so
+    /// the "biggest impact" rows come first.
+    pub unsupported_in_reference: Vec<CoverageRow>,
+}
+
+impl WriterCoverage {
+    /// Total reference PID tags accounted for by supported
+    /// varieties — the numerator of the writer-coverage ratio.
+    pub fn supported_total(&self) -> usize {
+        self.supported_in_reference.iter().map(|r| r.count).sum()
+    }
+
+    /// Total reference PID tags the writer cannot emit yet.
+    pub fn unsupported_total(&self) -> usize {
+        self.unsupported_in_reference.iter().map(|r| r.count).sum()
+    }
+
+    /// True when every PID tag in the reference is one the writer
+    /// knows how to emit.
+    pub fn is_complete(&self) -> bool {
+        self.unsupported_in_reference.is_empty()
+    }
+}
+
+impl fmt::Display for WriterCoverage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.supported_total();
+        let u = self.unsupported_total();
+        let total = s + u;
+        let pct = if total == 0 {
+            100.0_f64
+        } else {
+            (s as f64) * 100.0_f64 / (total as f64)
+        };
+        writeln!(f, "=== Publish writer coverage ===")?;
+        writeln!(
+            f,
+            "Reference PID tags: {total}; supported tags: {s} ({pct:.1}%); backlog tags: {u}",
+        )?;
+        if !self.unsupported_in_reference.is_empty() {
+            writeln!(f)?;
+            writeln!(f, "{:<32} {:>6}", "Unsupported tag (backlog)", "Count")?;
+            writeln!(f, "{}", "-".repeat(40))?;
+            for row in &self.unsupported_in_reference {
+                writeln!(f, "{:<32} {:>6}", row.tag, row.count)?;
+            }
+        }
+        if !self.supported_in_reference.is_empty() {
+            writeln!(f)?;
+            writeln!(f, "{:<32} {:>6}", "Supported tag", "Count")?;
+            writeln!(f, "{}", "-".repeat(40))?;
+            for row in &self.supported_in_reference {
+                writeln!(f, "{:<32} {:>6}", row.tag, row.count)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Compute the [`WriterCoverage`] of `reference_xml` against the
+/// writer's [`supported_pid_tags`] set. Pure function — no I/O.
+pub fn coverage_against_reference(reference_xml: &str) -> WriterCoverage {
+    let counts = parse_pid_tag_counts(reference_xml);
+    let supported_set: std::collections::BTreeSet<&str> =
+        supported_pid_tags().iter().copied().collect();
+
+    let mut supported = Vec::new();
+    let mut unsupported = Vec::new();
+    for (tag, count) in counts {
+        let row = CoverageRow { tag: tag.clone(), count };
+        if supported_set.contains(tag.as_str()) {
+            supported.push(row);
+        } else {
+            unsupported.push(row);
+        }
+    }
+    // Backlog wants impact-first ordering: descending count, then
+    // alphabetical for ties.
+    unsupported.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.tag.cmp(&b.tag)));
+    // Supported list stays alphabetical (already sorted by BTreeMap iteration).
+
+    WriterCoverage {
+        supported_in_reference: supported,
+        unsupported_in_reference: unsupported,
+    }
+}
+
 pub fn diff_publish_xml(generated_xml: &str, reference_xml: &str) -> SemanticDiffReport {
     let gen_counts = parse_pid_tag_counts(generated_xml);
     let ref_counts = parse_pid_tag_counts(reference_xml);
@@ -447,6 +577,137 @@ mod tests {
         assert!(s.contains("PIDB"));
         assert!(s.contains("MATCH"));
         assert!(s.contains("PIDA"));
+    }
+
+    // -----------------------------------------------------------------
+    // A15 — writer coverage classifier
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn supported_pid_tags_is_sorted_and_non_empty() {
+        let tags = supported_pid_tags();
+        assert!(!tags.is_empty(), "writer should declare at least one tag");
+        for win in tags.windows(2) {
+            assert!(
+                win[0] < win[1],
+                "supported tags must be sorted (kept stable for diffing); offender: {win:?}"
+            );
+        }
+        // Spot-check the post-A14 milestone set: every tag the
+        // writer emits today must appear here.
+        for must_have in [
+            "PIDDrawing",
+            "PIDProcessVessel",
+            "PIDNozzle",
+            "PIDPipeline",
+            "PIDPipingConnector",
+            "PIDPipingPort",
+            "PIDProcessPoint",
+            "PIDRepresentation",
+            "PIDNote",
+            "PIDControlSystemFunction",
+        ] {
+            assert!(
+                tags.contains(&must_have),
+                "supported set missing {must_have}; got {tags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn coverage_on_empty_xml_is_complete_and_zero_total() {
+        let cov = coverage_against_reference("");
+        assert!(cov.is_complete(), "empty xml has no backlog");
+        assert_eq!(cov.supported_total(), 0);
+        assert_eq!(cov.unsupported_total(), 0);
+    }
+
+    #[test]
+    fn coverage_recognizes_only_supported_tags() {
+        // Reference contains exclusively supported tags.
+        let xml = "<PIDDrawing></PIDDrawing><PIDDrawing></PIDDrawing><PIDNozzle></PIDNozzle>";
+        let cov = coverage_against_reference(xml);
+        assert!(cov.is_complete(), "all tags supported -> complete");
+        assert_eq!(cov.supported_total(), 3);
+        assert_eq!(cov.unsupported_total(), 0);
+        assert_eq!(cov.supported_in_reference.len(), 2);
+        // Alphabetical order on supported rows.
+        assert_eq!(cov.supported_in_reference[0].tag, "PIDDrawing");
+        assert_eq!(cov.supported_in_reference[0].count, 2);
+        assert_eq!(cov.supported_in_reference[1].tag, "PIDNozzle");
+        assert_eq!(cov.supported_in_reference[1].count, 1);
+    }
+
+    #[test]
+    fn coverage_classifies_unsupported_tags_into_backlog() {
+        // Mixed: PIDDrawing supported, the other three not.
+        let xml = concat!(
+            "<PIDDrawing></PIDDrawing>",
+            "<PIDSignalPort></PIDSignalPort><PIDSignalPort></PIDSignalPort>",
+            "<PIDBranchPoint></PIDBranchPoint>",
+            "<PIDPipingComponent></PIDPipingComponent>",
+            "<PIDPipingComponent></PIDPipingComponent>",
+            "<PIDPipingComponent></PIDPipingComponent>",
+        );
+        let cov = coverage_against_reference(xml);
+        assert!(!cov.is_complete());
+        assert_eq!(cov.supported_total(), 1);
+        assert_eq!(cov.unsupported_total(), 6);
+        // Backlog ordering: descending count, then alphabetical.
+        assert_eq!(cov.unsupported_in_reference[0].tag, "PIDPipingComponent");
+        assert_eq!(cov.unsupported_in_reference[0].count, 3);
+        assert_eq!(cov.unsupported_in_reference[1].tag, "PIDSignalPort");
+        assert_eq!(cov.unsupported_in_reference[1].count, 2);
+        assert_eq!(cov.unsupported_in_reference[2].tag, "PIDBranchPoint");
+        assert_eq!(cov.unsupported_in_reference[2].count, 1);
+    }
+
+    #[test]
+    fn coverage_display_includes_percentage_and_two_blocks() {
+        let xml = "<PIDDrawing></PIDDrawing><PIDSignalPort></PIDSignalPort>";
+        let cov = coverage_against_reference(xml);
+        let s = format!("{cov}");
+        assert!(s.contains("Publish writer coverage"));
+        assert!(s.contains("Reference PID tags: 2"));
+        assert!(s.contains("supported tags: 1 (50.0%)"));
+        assert!(s.contains("backlog tags: 1"));
+        assert!(s.contains("Unsupported tag (backlog)"));
+        assert!(s.contains("Supported tag"));
+        assert!(s.contains("PIDSignalPort"));
+        assert!(s.contains("PIDDrawing"));
+    }
+
+    #[test]
+    fn coverage_display_omits_blocks_when_one_side_is_empty() {
+        // All supported -> only one block.
+        let xml = "<PIDDrawing></PIDDrawing>";
+        let cov = coverage_against_reference(xml);
+        let s = format!("{cov}");
+        assert!(s.contains("Supported tag"));
+        assert!(!s.contains("Unsupported tag (backlog)"));
+
+        // None supported -> only the backlog block.
+        let xml = "<PIDSignalPort></PIDSignalPort>";
+        let cov = coverage_against_reference(xml);
+        let s = format!("{cov}");
+        assert!(s.contains("Unsupported tag (backlog)"));
+        assert!(!s.contains("Supported tag\n"));
+    }
+
+    #[test]
+    fn coverage_total_equals_sum_of_two_buckets() {
+        let xml = concat!(
+            "<PIDDrawing></PIDDrawing>",
+            "<PIDNozzle></PIDNozzle>",
+            "<PIDSignalPort></PIDSignalPort>",
+            "<PIDPipingComponent></PIDPipingComponent>",
+        );
+        let cov = coverage_against_reference(xml);
+        assert_eq!(
+            cov.supported_total() + cov.unsupported_total(),
+            4,
+            "totals should partition every PID tag exactly once"
+        );
     }
 
     #[test]
