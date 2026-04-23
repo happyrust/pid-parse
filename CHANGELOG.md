@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A31)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A32)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
@@ -82,6 +82,12 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   （`publish_interface_parity` / `publish_attribute_parity` /
   `publish_backlog_inventory`）改用 `mod common;` 共享，删
   ~120 行重复代码，未来加新 fidelity gate 直接复用。
+- A32 README 重写 — 把 publish writer Stage-1（A12-A31）的能力、
+  CLI 用法、库调用示例和 fidelity 矩阵补到 README.md。原 README
+  停留在 v0.4.1 的 layout 模型，未反映 backup 解析 +
+  `pid_publish_xml` CLI + 13 类 PID tag writer + 9 道 fidelity
+  gate + A29 PublishStyle 切换 + A29b CLI --style 选项 + A30
+  --list-drawings 等本轮成熟度。
 
 #### Added — A27b whitelist（KNOWN_A01_VS_DWG_ATTR_DIVERGENCES）
 
