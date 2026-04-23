@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A28)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A29)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
@@ -56,6 +56,15 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 - A25 `PIDProcessVessel low-pressure-tank variant conditional
   emit`（DWG 17-interface tank shape；A01 15-interface drum
   shape；通过 `obj.fields["IsLowPressureTank"]` 路由）
+- A29 `PublishStyle::{A01, Dwg}` enum + `PublishDrawing.style`
+  字段（默认 A01）；writer 在 PIDPipeline / PIDPipingConnector /
+  PIDProcessVessel 的 IObject 上按 style 切换：
+  * A01 style：`<IObject UID="..." [Name="..."] ItemTag="..."
+    [Description="..."]/>`（保持 pre-A29 字节级一致）
+  * Dwg style：`<IObject UID="..." [Name="..."]
+    [Description="..."]/>`（不发 ItemTag，匹配 DWG reference）
+  把 pre-A29 "PipelineName 有值即触发 DWG-shape"的隐式数据驱动
+  改为显式 style 选择，让 caller 明确表达 fixture flavor。
 
 #### Added — A27b whitelist（KNOWN_A01_VS_DWG_ATTR_DIVERGENCES）
 
@@ -75,7 +84,8 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 
 #### Tests
 
-* lib：540 → 555（+15，全部在 `publish::diff::tests`）
+* lib：540 → 562（+22，A26 +7 `publish::diff::tests::parse_attrs_*`，
+  A29 +7 `publish::xml_writer::tests` 中 IObject style 切换）
 * integration：140 → 149（+5 在 `tests/publish_attribute_parity.rs`，
   +4 在 `tests/publish_backlog_inventory.rs`）
 * lint：0 warnings
@@ -94,7 +104,7 @@ UID 后缀模式：`<base>.BPT`，参考 A13 的 `.PPT` / `.1` / `.2`
 派生 ID 模式（PipingConnector → PIDPipingPort + PIDProcessPoint）。
 未来 writer arm 实现时按 spec 守门即可。
 
-#### Backlog（A29+）
+#### Backlog（A30+）
 
 * PIDBranchPoint / PIDPipingBranchPoint writer arms（spec 已在
   A28 snapshot test 中 pin 住，实施时需 DWG 端 SQLite mirror
@@ -102,8 +112,10 @@ UID 后缀模式：`<base>.BPT`，参考 A13 的 `.PPT` / `.1` / `.2`
 * A25b loader-side `IsLowPressureTank` 推断（同上）
 * A27b whitelist 收尾：随 DWG mirror bundle 落地，逐条 (tag,
   interface) 关闭 12 条 loader-side 富化列差异
-* A27c IObject identifier rename 切换：A01 (`ItemTag`) ⇄ DWG
-  (`Name`) 的 site-config / project-flavor 设计
+* A29b loader-side `PublishStyle` 决策逻辑：根据 SQLite
+  metadata（plant 名 / SmartPlant project 配置）自动设
+  `drawing.style`；当前 caller 必须显式指定。CLI 层加
+  `--style a01|dwg` 选项也属于 A29b。
 
 ## [0.9.2] - 2026-04-21
 

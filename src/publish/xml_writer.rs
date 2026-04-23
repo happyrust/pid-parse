@@ -25,6 +25,7 @@ use std::fmt::Write;
 
 use super::model::{
     PublishDrawing, PublishError, PublishObject, PublishRelationship, PublishRepresentation,
+    PublishStyle,
 };
 
 /// Software-version / schema-version / tooling constants that the
@@ -158,8 +159,8 @@ fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<
             // exact order; we mirror that to stay compatible with
             // the SemanticDiffReport contract.
             "PipeRun" => {
-                write_pipeline(buf, obj)?;
-                write_piping_connector(buf, obj)?;
+                write_pipeline(buf, obj, drawing.style)?;
+                write_piping_connector(buf, obj, drawing.style)?;
                 write_derived_connector_endpoints(buf, obj)?;
             }
             // PipingPoint as a top-level object is now treated as a
@@ -381,14 +382,7 @@ fn write_process_vessel(
         .map(|v| map_bool(v) == "True")
         .unwrap_or(false);
     writeln!(buf, "   <PIDProcessVessel>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}" ItemTag="{}" Description="{}"/>"#,
-        escape_attr(&obj.uid),
-        escape_attr(&item_tag),
-        escape_attr(description),
-    )
-    .map_err(fmt_err)?;
+    write_process_vessel_iobject(buf, &obj.uid, &item_tag, description, drawing.style)?;
     writeln!(buf, "      <IPIDProcessVesselOcc/>").map_err(fmt_err)?;
     writeln!(buf, "      <IProcessVesselOcc/>").map_err(fmt_err)?;
     // IEquipment renders EqTypeDescription always; EqType0-3 and
@@ -688,6 +682,137 @@ fn resolve_pipe_item_tag(obj: &PublishObject) -> String {
     obj.uid.clone()
 }
 
+/// A29 · Render `<IObject>` for the `<PIDPipeline>` body.
+///
+/// Two attribute conventions:
+///
+/// * **A01 style** (default) — preserves the pre-A29
+///   shape: when `pipeline_name` is populated the IObject
+///   emits all three of `UID` / `Name` / `ItemTag`; when
+///   absent, only `UID` / `ItemTag`. This is the strict
+///   superset shape that has been live since A19, so every
+///   pre-A29 caller / fixture round-trips bit-for-bit.
+/// * **DWG style** — the IObject drops `ItemTag` to match
+///   the DWG reference (`<IObject UID="..." Name="..."/>`
+///   two-attribute shape). When `pipeline_name` is absent
+///   the writer emits a UID-only IObject; the DWG fixture
+///   itself only ships pipelines with names, so the
+///   UID-only branch is purely defensive against malformed
+///   input.
+fn write_pipeline_iobject(
+    buf: &mut String,
+    uid: &str,
+    item_tag: &str,
+    pipeline_name: Option<&str>,
+    style: PublishStyle,
+) -> Result<(), PublishError> {
+    let name = pipeline_name.filter(|s| !s.is_empty());
+    match (style, name) {
+        (PublishStyle::A01, Some(name)) => writeln!(
+            buf,
+            r#"      <IObject UID="{}" Name="{}" ItemTag="{}"/>"#,
+            escape_attr(uid),
+            escape_attr(name),
+            escape_attr(item_tag),
+        ),
+        (PublishStyle::A01, None) => writeln!(
+            buf,
+            r#"      <IObject UID="{}" ItemTag="{}"/>"#,
+            escape_attr(uid),
+            escape_attr(item_tag),
+        ),
+        (PublishStyle::Dwg, Some(name)) => writeln!(
+            buf,
+            r#"      <IObject UID="{}" Name="{}"/>"#,
+            escape_attr(uid),
+            escape_attr(name),
+        ),
+        (PublishStyle::Dwg, None) => writeln!(
+            buf,
+            r#"      <IObject UID="{}"/>"#,
+            escape_attr(uid),
+        ),
+    }
+    .map_err(fmt_err)
+}
+
+/// A29 · Render `<IObject>` for the `<PIDPipingConnector>`
+/// body. Same A01 / DWG split as
+/// [`write_pipeline_iobject`], but the connector's A01
+/// shape is a strict two-attribute IObject (no `Name`
+/// attribute even when the loader has the data) — this
+/// matches the connector's pre-A29 behavior, which only
+/// flipped to Name-style IObject when PipelineName was
+/// populated. A29 makes the flip an explicit
+/// `style = Dwg` decision rather than an implicit field-
+/// presence side-effect.
+fn write_piping_connector_iobject(
+    buf: &mut String,
+    uid: &str,
+    item_tag: &str,
+    pipeline_name: Option<&str>,
+    style: PublishStyle,
+) -> Result<(), PublishError> {
+    let name = pipeline_name.filter(|s| !s.is_empty());
+    match (style, name) {
+        (PublishStyle::A01, _) => writeln!(
+            buf,
+            r#"      <IObject UID="{}" ItemTag="{}"/>"#,
+            escape_attr(uid),
+            escape_attr(item_tag),
+        ),
+        (PublishStyle::Dwg, Some(name)) => writeln!(
+            buf,
+            r#"      <IObject UID="{}" Name="{}"/>"#,
+            escape_attr(uid),
+            escape_attr(name),
+        ),
+        (PublishStyle::Dwg, None) => writeln!(
+            buf,
+            r#"      <IObject UID="{}"/>"#,
+            escape_attr(uid),
+        ),
+    }
+    .map_err(fmt_err)
+}
+
+/// A29 · Render `<IObject>` for the `<PIDProcessVessel>`
+/// body. Vessel IObject shape:
+///
+/// * **A01 style** (default) — `UID + ItemTag + Description`
+///   three-attribute shape that has been live since the
+///   initial publish writer landed. Every existing test
+///   exercises this path.
+/// * **DWG style** — `UID + Description` two-attribute
+///   shape. The DWG reference omits the identifier on the
+///   vessel IObject entirely (the `污水池` sample carries
+///   just `UID` + `Description="污水池"`); this branch
+///   matches that fixture byte-for-byte.
+fn write_process_vessel_iobject(
+    buf: &mut String,
+    uid: &str,
+    item_tag: &str,
+    description: &str,
+    style: PublishStyle,
+) -> Result<(), PublishError> {
+    match style {
+        PublishStyle::A01 => writeln!(
+            buf,
+            r#"      <IObject UID="{}" ItemTag="{}" Description="{}"/>"#,
+            escape_attr(uid),
+            escape_attr(item_tag),
+            escape_attr(description),
+        ),
+        PublishStyle::Dwg => writeln!(
+            buf,
+            r#"      <IObject UID="{}" Description="{}"/>"#,
+            escape_attr(uid),
+            escape_attr(description),
+        ),
+    }
+    .map_err(fmt_err)
+}
+
 /// Emit the full `<PIDPipeline>` block for a PipeRun row.
 ///
 /// The reference SmartPlant shape (confirmed byte-for-byte on
@@ -727,7 +852,19 @@ fn resolve_pipe_item_tag(obj: &PublishObject) -> String {
 /// falls back to the item tag. The DWG reference uses e.g.
 /// `Name="A3jqz0101-OD"` for pipeline labels; A01 uses
 /// unlabeled pipelines and the attribute is omitted to match.
-fn write_pipeline(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+///
+/// A29 introduces an explicit [`PublishStyle`] selector so the
+/// IObject shape no longer relies on `obj.fields["PipelineName"]`
+/// alone. With `style = A01` (default), the pre-A29 behaviour
+/// is preserved bit-for-bit. With `style = Dwg` (set by callers
+/// that loaded a DWG-flavor SQLite mirror), the IObject drops
+/// the `ItemTag` attribute — matching the DWG reference's
+/// `<IObject UID="..." Name="..."/>` two-attribute shape.
+fn write_pipeline(
+    buf: &mut String,
+    obj: &PublishObject,
+    style: PublishStyle,
+) -> Result<(), PublishError> {
     let item_tag = resolve_pipe_item_tag(obj);
     let fluid_code = obj.fields.get("OperFluidCode").cloned().unwrap_or_default();
     let fluid_system = obj.fields.get("FluidSystem").cloned().unwrap_or_default();
@@ -736,23 +873,7 @@ fn write_pipeline(buf: &mut String, obj: &PublishObject) -> Result<(), PublishEr
     // stamp Name on its pipeline IObject.
     let pipeline_name = obj.fields.get("PipelineName").cloned();
     writeln!(buf, "   <PIDPipeline>").map_err(fmt_err)?;
-    match pipeline_name {
-        Some(name) if !name.is_empty() => writeln!(
-            buf,
-            r#"      <IObject UID="{}" Name="{}" ItemTag="{}"/>"#,
-            escape_attr(&obj.uid),
-            escape_attr(&name),
-            escape_attr(&item_tag),
-        )
-        .map_err(fmt_err)?,
-        _ => writeln!(
-            buf,
-            r#"      <IObject UID="{}" ItemTag="{}"/>"#,
-            escape_attr(&obj.uid),
-            escape_attr(&item_tag),
-        )
-        .map_err(fmt_err)?,
-    }
+    write_pipeline_iobject(buf, &obj.uid, &item_tag, pipeline_name.as_deref(), style)?;
     writeln!(buf, "      <IPBSItem/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPlannedFacility/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPBSItemCollection/>").map_err(fmt_err)?;
@@ -829,7 +950,11 @@ fn write_pipeline(buf: &mut String, obj: &PublishObject) -> Result<(), PublishEr
 /// A01 byte-shape identical to the pre-A20 empty case while
 /// unlocking the DWG-specific populated shape when the columns
 /// arrive from T_PipeRun / T_Connector.
-fn write_piping_connector(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+fn write_piping_connector(
+    buf: &mut String,
+    obj: &PublishObject,
+    style: PublishStyle,
+) -> Result<(), PublishError> {
     let tag_prefix = obj.fields.get("TagPrefix").cloned().unwrap_or_default();
     let tag_sequence = obj.fields.get("TagSequenceNo").cloned().unwrap_or_default();
     let tag_suffix = obj.fields.get("TagSuffix").cloned().unwrap_or_default();
@@ -896,27 +1021,22 @@ fn write_piping_connector(buf: &mut String, obj: &PublishObject) -> Result<(), P
     // composition relationship inside the drawing.
     let connector_uid = format!("{}-CNX", obj.uid);
     writeln!(buf, "   <PIDPipingConnector>").map_err(fmt_err)?;
-    // DWG's PIDPipingConnector stamps the human-readable Name on
-    // the IObject when available; A01 stamps ItemTag instead.
-    // We follow DWG shape when PipelineName is loaded, A01 shape
-    // otherwise — both paths preserve the canonical two-attribute
-    // IObject wire shape.
-    match pipeline_name {
-        Some(name) if !name.is_empty() => writeln!(
-            buf,
-            r#"      <IObject UID="{}" Name="{}"/>"#,
-            escape_attr(&connector_uid),
-            escape_attr(&name),
-        )
-        .map_err(fmt_err)?,
-        _ => writeln!(
-            buf,
-            r#"      <IObject UID="{}" ItemTag="{}"/>"#,
-            escape_attr(&connector_uid),
-            escape_attr(&item_tag),
-        )
-        .map_err(fmt_err)?,
-    }
+    // A29 routes the IObject shape through the explicit
+    // PublishStyle selector. Pre-A29 the writer used the
+    // presence of `obj.fields["PipelineName"]` as an
+    // implicit DWG marker, which conflated "data has a name"
+    // with "fixture is DWG-flavor". Post-A29 the style flag
+    // is authoritative; PipelineName still controls whether
+    // the Name attribute carries a value, but the choice
+    // between `Name` and `ItemTag` keys is made by
+    // [`PublishStyle`].
+    write_piping_connector_iobject(
+        buf,
+        &connector_uid,
+        &item_tag,
+        pipeline_name.as_deref(),
+        style,
+    )?;
     writeln!(
         buf,
         r#"      <IPBSItem ConstructionStatus="{}" ConstructionStatus2="{}"/>"#,
@@ -4166,11 +4286,15 @@ mod tests {
 
     #[test]
     fn piping_connector_uses_name_attribute_on_dwg_shape() {
-        // DWG stamps Name on IObject instead of ItemTag. When the
-        // loader populates PipelineName the writer switches to the
-        // DWG shape (UID + Name); otherwise it keeps the A01 shape
-        // (UID + ItemTag).
+        // A29 makes the IObject shape an explicit decision via
+        // [`PublishStyle`]. Pre-A29 the connector flipped to
+        // Name-style as soon as `obj.fields["PipelineName"]` was
+        // populated (an implicit, data-driven flip). Post-A29 the
+        // caller must opt in via `drawing.style = Dwg` for the
+        // DWG-shape IObject (`UID + Name`); the A01 shape
+        // (`UID + ItemTag`) remains the default.
         let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
         d.objects = vec![PublishObject {
             uid: "PIPE-N".into(),
             item_type_name: "PipeRun".into(),
@@ -4187,7 +4311,7 @@ mod tests {
         let out = write_data_xml(&d, "TEST02").expect("write");
         assert!(
             out.contains(r#"<IObject UID="PIPE-N-CNX" Name="A3jqz0101-OD-100 mm-1.6AR12-WE-50mm"/>"#),
-            "PipingConnector with PipelineName populated must switch to DWG IObject shape; out:\n{out}"
+            "DWG-style PipingConnector with PipelineName populated must emit UID + Name IObject; out:\n{out}"
         );
         // The A01-shape ItemTag must NOT appear when we've
         // switched to the DWG shape.
@@ -4684,6 +4808,187 @@ mod tests {
     // + conditional bare shape for IPipeCrossSectionItem /
     //   IPipingSpecifiedItem)
     // -----------------------------------------------------------------
+
+    // -----------------------------------------------------------------
+    // A29 — explicit PublishStyle selector for IObject shape on
+    // PIDPipeline / PIDPipingConnector / PIDProcessVessel.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn default_publish_style_is_a01_so_pre_a29_callers_round_trip() {
+        // Documents the default-style contract: an unset
+        // `style` field equals A01, so every pre-A29 caller
+        // round-trips bit-for-bit. A regression that flips
+        // the default would silently change every existing
+        // caller's emitted XML.
+        let d = PublishDrawing::default();
+        assert_eq!(d.style, PublishStyle::A01);
+    }
+
+    #[test]
+    fn pipeline_dwg_style_iobject_drops_itemtag_and_uses_name_only() {
+        // DWG reference emits `<IObject UID="..." Name="..."/>`
+        // on PIDPipeline (two-attr shape, no ItemTag). Pre-A29
+        // the writer would emit Name + ItemTag together when
+        // PipelineName was populated; A29 routes it via the
+        // explicit style selector and gives a clean DWG shape.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
+        d.objects = vec![PublishObject {
+            uid: "PIPE-DWG".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("PipelineName".into(), "A3jqz0101-OD".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-DWG" Name="A3jqz0101-OD"/>"#),
+            "DWG-style PIDPipeline IObject must be UID + Name only; out:\n{out}"
+        );
+        assert!(
+            !out.contains(r#"<IObject UID="PIPE-DWG" Name="A3jqz0101-OD" ItemTag="#),
+            "DWG-style must not retain the A01-shape ItemTag tail; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_dwg_style_with_no_pipeline_name_emits_uid_only_iobject() {
+        // Defensive branch: DWG fixture itself only ships
+        // pipelines with names, but we still need a sensible
+        // emit for inputs that lack PipelineName under
+        // style = Dwg.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
+        d.objects = vec![PublishObject {
+            uid: "PIPE-DWG-NONAME".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-DWG-NONAME"/>"#),
+            "DWG-style with no PipelineName must emit UID-only IObject; out:\n{out}"
+        );
+        assert!(
+            !out.contains(r#"<IObject UID="PIPE-DWG-NONAME" ItemTag="#),
+            "DWG-style must never fall back to ItemTag; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_a01_style_with_pipeline_name_keeps_pre_a29_three_attr_shape() {
+        // Behavioral lock: style=A01 + PipelineName populated
+        // continues to emit `Name + ItemTag` together,
+        // matching the pre-A29 superset shape that A23 / A27
+        // gates ratify.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        // No explicit assignment — default already PublishStyle::A01.
+        d.objects = vec![PublishObject {
+            uid: "PIPE-A01".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("PipelineName".into(), "PIPE-A01-NAME".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-A01" Name="PIPE-A01-NAME" ItemTag="#),
+            "A01 default style + PipelineName must emit Name + ItemTag together; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn piping_connector_dwg_style_drops_itemtag() {
+        // PipingConnector under DWG style: UID + Name when
+        // PipelineName populated; matches DWG reference shape.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
+        d.objects = vec![PublishObject {
+            uid: "PIPE-CNX-DWG".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("PipelineName".into(), "PIPE-CNX-DWG-NAME".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-CNX-DWG-CNX" Name="PIPE-CNX-DWG-NAME"/>"#),
+            "DWG-style PipingConnector IObject must be UID + Name only; out:\n{out}"
+        );
+        assert!(
+            !out.contains(r#"<IObject UID="PIPE-CNX-DWG-CNX" ItemTag="#),
+            "DWG-style PipingConnector must drop ItemTag; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn process_vessel_dwg_style_drops_itemtag_keeps_description() {
+        // DWG reference vessel IObject is `UID + Description`
+        // (no ItemTag, no Name). The `污水池` sample at DWG:
+        // 1430 demonstrates the shape. A29 routes it through
+        // the new style flag.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
+        d.objects = vec![PublishObject {
+            uid: "V-DWG".into(),
+            item_type_name: "Vessel".into(),
+            description: Some("污水池".into()),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("ItemTag".into(), "V-DWG-TAG".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="V-DWG" Description="污水池"/>"#),
+            "DWG-style PIDProcessVessel IObject must be UID + Description only; out:\n{out}"
+        );
+        // Even when the field carries an ItemTag, DWG style
+        // must NOT emit the ItemTag attribute.
+        assert!(
+            !out.contains(r#"<IObject UID="V-DWG" ItemTag="#),
+            "DWG-style vessel must drop ItemTag even when the field is populated; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn process_vessel_a01_style_keeps_three_attr_shape() {
+        // Lock in the pre-A29 three-attr shape under default
+        // style. This is the contract every supported_pid_tags()
+        // / A23 / A27 gate already enforces; the explicit
+        // assertion below makes the lock obvious.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "V-A01".into(),
+            item_type_name: "Vessel".into(),
+            description: Some("Horizontal Drum".into()),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("ItemTag".into(), "V-A01-TAG".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IObject UID="V-A01" ItemTag="V-A01-TAG" Description="Horizontal Drum"/>"#
+            ),
+            "A01-style vessel IObject must be UID + ItemTag + Description; out:\n{out}"
+        );
+    }
 
     #[test]
     fn nozzle_emits_full_twenty_two_interface_block() {

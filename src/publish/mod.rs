@@ -37,7 +37,7 @@ pub use diff::{
 };
 pub use model::{
     CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
-    PublishRepresentation,
+    PublishRepresentation, PublishStyle,
 };
 pub use sqlite_load::{
     load_codelist_index, load_drawing, load_drawing_graph, load_objects_by_uids,
