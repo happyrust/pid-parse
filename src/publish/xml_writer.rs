@@ -252,29 +252,48 @@ fn write_nozzle(
     writeln!(buf, "   </PIDNozzle>").map_err(fmt_err)
 }
 
-fn write_pipeline(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
-    let tag_sequence = obj.fields.get("TagSequenceNo").cloned().unwrap_or_default();
-    let piping_materials_class = obj
-        .fields
-        .get("PipingMaterialsClass")
-        .cloned()
-        .unwrap_or_default();
-    let nominal_diameter = obj
-        .fields
-        .get("NominalDiameter")
-        .cloned()
-        .map(|v| format_diameter(&v))
-        .unwrap_or_default();
-    // Compose an `ItemTag` resembling SmartPlant's line number
-    // convention when we have enough signal; otherwise just pass
-    // the UID through.
-    let item_tag = if !tag_sequence.is_empty() {
-        format!(
+/// Resolve the `ItemTag` attribute for a pipeline-like object (a
+/// PipeRun row that drives both `<PIDPipeline>` and
+/// `<PIDPipingConnector>`). Order of preference:
+///
+/// 1. `obj.fields["ItemTag"]` — populated by the loader from
+///    `T_PlantItem.ItemTag`. This is the canonical tag SmartPlant
+///    itself stores (e.g. `"A010102102-PH"` in the TEST02 fixture)
+///    and is what Publish Data XML consumers expect.
+/// 2. Legacy synthesized form `PH-{seq}-{dia}-{class}` — kept as a
+///    fallback so drawings without a T_PlantItem row still emit a
+///    non-opaque identifier. Matches pre-A8 behaviour for anything
+///    that lacks the catalog link.
+/// 3. The raw `obj.uid` — last-ditch choice when neither an
+///    `ItemTag` nor a `TagSequenceNo` is available; ensures the
+///    attribute is never blank.
+fn resolve_pipe_item_tag(obj: &PublishObject) -> String {
+    if let Some(tag) = obj.fields.get("ItemTag") {
+        if !tag.is_empty() {
+            return tag.clone();
+        }
+    }
+    let tag_sequence = obj.fields.get("TagSequenceNo").map(String::as_str).unwrap_or("");
+    if !tag_sequence.is_empty() {
+        let piping_materials_class = obj
+            .fields
+            .get("PipingMaterialsClass")
+            .map(String::as_str)
+            .unwrap_or("");
+        let nominal_diameter = obj
+            .fields
+            .get("NominalDiameter")
+            .map(|v| format_diameter(v))
+            .unwrap_or_default();
+        return format!(
             "PH-{tag_sequence}-{nominal_diameter}-{piping_materials_class}"
-        )
-    } else {
-        obj.uid.clone()
-    };
+        );
+    }
+    obj.uid.clone()
+}
+
+fn write_pipeline(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+    let item_tag = resolve_pipe_item_tag(obj);
     writeln!(buf, "   <PIDPipeline>").map_err(fmt_err)?;
     writeln!(
         buf,
@@ -304,11 +323,9 @@ fn write_piping_connector(buf: &mut String, obj: &PublishObject) -> Result<(), P
         .cloned()
         .map(|v| format_diameter(&v))
         .unwrap_or_default();
-    let item_tag = if !tag_sequence.is_empty() {
-        format!("PH-{tag_sequence}-{nominal_diameter}-{piping_materials_class}")
-    } else {
-        obj.uid.clone()
-    };
+    // The connector inherits its ItemTag from the pipeline it is
+    // the physical half of — SmartPlant renders them identically.
+    let item_tag = resolve_pipe_item_tag(obj);
     // PipingConnector UID derived from the PipeRun UID so it
     // remains stable across runs. SPPID treats this as a
     // composition relationship inside the drawing.
@@ -931,6 +948,124 @@ mod tests {
         assert!(
             out.contains(r#"ProcEqpCompTypeDescription="Flanged Nozzle""#),
             "hard-coded `Flanged Nozzle` fallback still fires; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_uses_plantitem_itemtag_when_available() {
+        // A8: When T_PlantItem supplies an ItemTag (e.g. SmartPlant's
+        // canonical "A010102102-PH" form), the writer MUST use it
+        // verbatim rather than re-deriving a "PH-…" placeholder
+        // from pipe-run columns. Same rule applies to the connector
+        // that SmartPlant renders as the physical half of the
+        // pipeline — both end up with identical tags.
+        let mut d = PublishDrawing::new("UID-A01", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-UID".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("ItemTag".into(), "A010102102-PH".into());
+                m.insert("TagSequenceNo".into(), "0102102".into());
+                m.insert("NominalDiameter".into(), "250".into());
+                m.insert("PipingMaterialsClass".into(), "B5".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        // Pipeline + Connector share the SmartPlant-canonical tag.
+        assert!(
+            out.contains(r#"ItemTag="A010102102-PH""#),
+            "expected canonical ItemTag from T_PlantItem; out:\n{out}"
+        );
+        // The pre-A8 synthesized form must NOT appear anywhere once
+        // the catalog-driven tag is available.
+        assert!(
+            !out.contains("PH-0102102-250"),
+            "synthesized PH- form should be suppressed when T_PlantItem has an ItemTag; out:\n{out}"
+        );
+        // Exactly two occurrences — once for <PIDPipeline> and once
+        // for <PIDPipingConnector>.
+        let occurrences = out.matches(r#"ItemTag="A010102102-PH""#).count();
+        assert_eq!(
+            occurrences, 2,
+            "pipeline + connector should both carry the PlantItem ItemTag; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_synthesizes_tag_when_plantitem_itemtag_absent() {
+        // No `ItemTag` key in obj.fields → the legacy `PH-…`
+        // synthesis path should still fire so drawings without
+        // T_PlantItem data remain readable.
+        let mut d = PublishDrawing::new("UID-A01", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-UID".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("TagSequenceNo".into(), "0102102".into());
+                m.insert("NominalDiameter".into(), "250".into());
+                m.insert("PipingMaterialsClass".into(), "B5".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"ItemTag="PH-0102102-250 mm-B5""#),
+            "synthesized PH- tag should fire when T_PlantItem.ItemTag is missing; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_empty_itemtag_treated_as_absent_and_falls_back() {
+        // A T_PlantItem row that is present but with an EMPTY ItemTag
+        // (SmartPlant's legal "tag not yet assigned" state) must not
+        // overrule the synthesized fallback — otherwise the XML would
+        // emit `ItemTag=""` which is less useful than a synthesized
+        // placeholder.
+        let mut d = PublishDrawing::new("UID-A01", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-UID".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("ItemTag".into(), "".into());
+                m.insert("TagSequenceNo".into(), "0102102".into());
+                m.insert("NominalDiameter".into(), "250".into());
+                m.insert("PipingMaterialsClass".into(), "B5".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"ItemTag="PH-0102102-250 mm-B5""#),
+            "empty PlantItem ItemTag should fall through to synthesized form; out:\n{out}"
+        );
+        assert!(
+            !out.contains(r#"ItemTag="""#),
+            "writer must never emit an empty ItemTag attribute; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_without_any_tag_info_falls_back_to_uid() {
+        // Final fallback tier — no ItemTag, no TagSequenceNo —
+        // emit the raw UID so the attribute is at least uniquely
+        // identifying even if it's not human-readable.
+        let mut d = PublishDrawing::new("UID-A01", "A01");
+        d.objects = vec![PublishObject {
+            uid: "BARE-UID".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"ItemTag="BARE-UID""#),
+            "bare UID should surface when no ItemTag / TagSequenceNo present; out:\n{out}"
         );
     }
 
