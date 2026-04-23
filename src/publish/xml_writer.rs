@@ -141,13 +141,21 @@ fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<
             "Vessel" => write_process_vessel(buf, obj, drawing)?,
             "Nozzle" => write_nozzle(buf, obj, drawing)?,
             // PipeRun maps to the logical pipeline + its physical
-            // connector. We emit both tags from the same PipeRun
-            // row so the resulting XML mirrors SmartPlant's dual
-            // representation.
+            // connector + the connector's two derived piping ports
+            // and one derived process point. SmartPlant's exporter
+            // emits all five tags from a single PipeRun row in this
+            // exact order; we mirror that to stay compatible with
+            // the SemanticDiffReport contract.
             "PipeRun" => {
                 write_pipeline(buf, obj)?;
                 write_piping_connector(buf, obj)?;
+                write_derived_connector_endpoints(buf, obj)?;
             }
+            // PipingPoint as a top-level object is now treated as a
+            // generic placeholder. T_PipingPoint rows never reach
+            // here (the loader stopped injecting them in A13); this
+            // arm exists for forward-compat in case a future fixture
+            // surfaces a true standalone PIDPipingPort.
             "PipingPoint" => write_piping_port(buf, obj)?,
             // A11: Note / ItemNote → `<PIDNote>`. The reference
             // DWG fixture ships 11 of these — annotation labels
@@ -445,6 +453,87 @@ fn write_piping_connector(buf: &mut String, obj: &PublishObject) -> Result<(), P
     .map_err(fmt_err)?;
     writeln!(buf, "      <IPIDTypical IsTypical=\"False\"/>").map_err(fmt_err)?;
     writeln!(buf, "   </PIDPipingConnector>").map_err(fmt_err)
+}
+
+/// Emit the three virtual nodes SmartPlant always derives from a
+/// PipingConnector: two `<PIDPipingPort>` children (suffixed `.1`
+/// and `.2`, both inheriting the parent connector's nominal
+/// diameter) plus one `<PIDProcessPoint>` (suffixed `.PPT`).
+///
+/// These nodes never appear as their own SQLite rows — they are
+/// SmartPlant client-side composition members rendered by the
+/// exporter at publish time. The base UID is the same `<piperun>-CNX`
+/// the connector carries, so the resulting `_Data.xml` cross-refs
+/// (`PipingPortComposition`, `ProcessPointCollection`,
+/// `PipingEnd1Conn`, `PipingEnd2Conn`) line up with the reference
+/// fixture's UID conventions.
+fn write_derived_connector_endpoints(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
+    let connector_uid = format!("{}-CNX", obj.uid);
+    let nominal_diameter = obj
+        .fields
+        .get("NominalDiameter")
+        .cloned()
+        .map(|v| format_diameter(&v))
+        .unwrap_or_default();
+
+    for port_index in [1u8, 2u8] {
+        let port_uid = format!("{connector_uid}.{port_index}");
+        writeln!(buf, "   <PIDPipingPort>").map_err(fmt_err)?;
+        writeln!(
+            buf,
+            r#"      <IObject UID="{}" Name="{}"/>"#,
+            escape_attr(&port_uid),
+            port_index,
+        )
+        .map_err(fmt_err)?;
+        writeln!(buf, "      <IConnection/>").map_err(fmt_err)?;
+        writeln!(buf, "      <IPipingPort/>").map_err(fmt_err)?;
+        writeln!(buf, "      <IPipingConnection/>").map_err(fmt_err)?;
+        writeln!(buf, "      <IPort/>").map_err(fmt_err)?;
+        writeln!(
+            buf,
+            r#"      <IPipeCrossSectionItem NominalDiameter="{}"/>"#,
+            escape_attr(&nominal_diameter),
+        )
+        .map_err(fmt_err)?;
+        writeln!(buf, "   </PIDPipingPort>").map_err(fmt_err)?;
+    }
+
+    let process_point_uid = format!("{connector_uid}.PPT");
+    writeln!(buf, "   <PIDProcessPoint>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}"/>"#,
+        escape_attr(&process_point_uid),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IProcessPoint/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IFacilityPoint/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IProcessPointCaseComposition/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IBulkMaxProcessPoint PhaseTemperatureMax="" PressureMax=""/>"#,
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IBulkMinProcessPoint PhaseTemperatureMin="" PressureMin=""/>"#,
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IBulkNormProcessPoint MolecularWeightNorm="" CpCvRatioNorm=""/>"#,
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IBulkBaseProcessPoint PhaseTemperatureBase="" PressureBase=""/>"#,
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "   </PIDProcessPoint>").map_err(fmt_err)
 }
 
 fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
@@ -1977,6 +2066,118 @@ mod tests {
                 "INamedInstrument must carry `{attr}=\"{value}\"`; out:\n{out}"
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // A13 — connector-derived endpoints
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn piperun_emits_two_derived_piping_ports_and_one_process_point() {
+        // SmartPlant's exporter derives `<PIDPipingPort>.1`,
+        // `<PIDPipingPort>.2`, and `<PIDProcessPoint>.PPT` from
+        // every PipingConnector. The composition is purely
+        // SmartPlant-side — no SQLite row carries those UIDs.
+        let mut d = PublishDrawing::new("UID-A01", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-1".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("NominalDiameter".into(), "250".into());
+                m.insert("PipingMaterialsClass".into(), "B5".into());
+                m.insert("TagSequenceNo".into(), "0102".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+
+        // The pipeline + connector + 2 ports + 1 process point all
+        // fire from this single PipeRun row.
+        assert_eq!(
+            out.matches("<PIDPipingPort>").count(),
+            2,
+            "PipeRun must emit exactly 2 derived <PIDPipingPort> nodes; out:\n{out}"
+        );
+        assert_eq!(
+            out.matches("<PIDProcessPoint>").count(),
+            1,
+            "PipeRun must emit exactly 1 derived <PIDProcessPoint> node; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-1-CNX.1" Name="1"/>"#),
+            "first derived port UID is `<connector>.1` with Name=\"1\"; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-1-CNX.2" Name="2"/>"#),
+            "second derived port UID is `<connector>.2` with Name=\"2\"; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-1-CNX.PPT"/>"#),
+            "derived process point UID is `<connector>.PPT`; out:\n{out}"
+        );
+        // Both derived ports inherit the connector's nominal
+        // diameter (with the `mm` unit applied by format_diameter).
+        assert_eq!(
+            out.matches(r#"<IPipeCrossSectionItem NominalDiameter="250 mm"/>"#)
+                .count(),
+            3,
+            "two derived ports + the connector itself carry NominalDiameter; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn piperun_with_no_nominal_diameter_still_derives_three_endpoints() {
+        // Even when the upstream row has no diameter, the writer
+        // must still derive the three virtual endpoints (with an
+        // empty NominalDiameter attribute) so the Rel topology in
+        // the eventual `_Data.xml` cross-references can resolve.
+        let mut d = PublishDrawing::new("UID-A01", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-EMPTY".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(out.matches("<PIDPipingPort>").count(), 2);
+        assert_eq!(out.matches("<PIDProcessPoint>").count(), 1);
+        assert!(out.contains(r#"<IObject UID="PIPE-EMPTY-CNX.1" Name="1"/>"#));
+        assert!(out.contains(r#"<IObject UID="PIPE-EMPTY-CNX.PPT"/>"#));
+    }
+
+    #[test]
+    fn derived_endpoints_appear_after_connector_in_emit_order() {
+        // SmartPlant's reference fixture emits the five PipeRun
+        // children in this exact order: PIDPipeline,
+        // PIDPipingConnector, PIDPipingPort×2, PIDProcessPoint.
+        // Tests pin the order so a future refactor cannot quietly
+        // swap them.
+        let mut d = PublishDrawing::new("UID-A01", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-ORD".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+
+        let i_pipeline = out.find("<PIDPipeline>").expect("pipeline present");
+        let i_connector = out
+            .find("<PIDPipingConnector>")
+            .expect("connector present");
+        let i_first_port = out.find("<PIDPipingPort>").expect("first port");
+        let i_process_point = out
+            .find("<PIDProcessPoint>")
+            .expect("process point present");
+
+        assert!(
+            i_pipeline < i_connector
+                && i_connector < i_first_port
+                && i_first_port < i_process_point,
+            "emit order must be Pipeline < Connector < Port(.1) < ProcessPoint; got positions \
+             pipeline={i_pipeline} connector={i_connector} first_port={i_first_port} \
+             process_point={i_process_point}\nout:\n{out}"
+        );
     }
 
     #[test]

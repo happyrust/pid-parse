@@ -487,25 +487,19 @@ pub fn load_drawing_graph(
         }
     }
 
-    // A9 — pull drawing-scoped T_PipingPoint rows. Each physical
-    // port is attached to an existing PlantItem (typically a
-    // Nozzle or PipingComp) via `SP_PlantItemID`, so we enumerate
-    // ports whose parent UID is in the drawing's main object list.
-    // Synthesized as `PublishObject { item_type_name: "PipingPoint", ... }`
-    // so the writer's dispatcher picks `write_piping_port`
-    // automatically.
-    let parent_uids: BTreeSet<String> =
-        drawing.objects.iter().map(|o| o.uid.clone()).collect();
-    let piping_points = load_piping_points_for_objects(conn, &parent_uids)?;
-    if !piping_points.is_empty() {
-        let existing: BTreeSet<String> =
-            drawing.objects.iter().map(|o| o.uid.clone()).collect();
-        for point in piping_points {
-            if !existing.contains(&point.uid) {
-                drawing.objects.push(point);
-            }
-        }
-    }
+    // A9 → A13: T_PipingPoint rows are NOT injected as drawing-
+    // scoped objects. Investigation against the SmartPlant A01
+    // reference fixture proved that SmartPlant's exporter ignores
+    // `T_PipingPoint` entirely when emitting `_Data.xml`; instead
+    // every PipingConnector synthesizes its own pair of virtual
+    // `<PIDPipingPort>` nodes (UIDs `<connector>.1` / `<connector>.2`)
+    // plus a `<PIDProcessPoint>` (UID `<connector>.PPT`). The
+    // writer side handles that derivation in `write_piping_connector`.
+    //
+    // `load_piping_points_for_objects` is kept as a public helper
+    // so future backup-side analytics still have access to the raw
+    // T_PipingPoint rows; nothing in the publish pipeline consumes
+    // it today.
 
     Ok(drawing)
 }

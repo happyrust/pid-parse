@@ -56,50 +56,34 @@ fn real_sqlite_load_drawing_graph_exposes_a01_objects_and_representations() {
     assert_eq!(graph.drawing_uid, A01_DRAWING_UID);
     assert_eq!(graph.drawing_name, "A01");
 
-    // TEST02 A01 has four drawing-scoped SmartPlant objects:
-    //   - Vessel, Nozzle, PipeRun — surfaced through T_Representation
-    //   - PipingPoint — a physical endpoint hung off the Nozzle via
-    //     T_PipingPoint (A9 now pulls these alongside the main graph).
+    // TEST02 A01 has three drawing-scoped SmartPlant objects:
+    // Vessel, Nozzle, PipeRun. T_PipingPoint rows are intentionally
+    // NOT injected here — A13 confirmed against the SmartPlant
+    // reference exporter that physical T_PipingPoint rows are
+    // never surfaced as drawing-scoped publish objects; the
+    // exporter derives every `<PIDPipingPort>` from the parent
+    // PipingConnector at publish time instead.
     let item_types: std::collections::BTreeSet<&str> = graph
         .objects
         .iter()
         .map(|o| o.item_type_name.as_str())
         .collect();
-    for want in ["Vessel", "Nozzle", "PipeRun", "PipingPoint"] {
+    for want in ["Vessel", "Nozzle", "PipeRun"] {
         assert!(
             item_types.contains(want),
             "expected object of ItemTypeName `{want}`, got {:?}",
             item_types
         );
     }
+    assert!(
+        !item_types.contains("PipingPoint"),
+        "A13: load_drawing_graph must NOT inject T_PipingPoint rows; got {:?}",
+        item_types
+    );
     assert_eq!(
         graph.objects.len(),
-        4,
-        "A01 should have 4 drawing-level objects (Vessel + Nozzle + PipeRun + PipingPoint via T_PipingPoint)"
-    );
-    // The PipingPoint is the nozzle's physical endpoint, so its
-    // SP_PlantItemID should point at the Nozzle's UID.
-    let nozzle_uid = graph
-        .objects
-        .iter()
-        .find(|o| o.item_type_name == "Nozzle")
-        .expect("nozzle object")
-        .uid
-        .clone();
-    let piping_point = graph
-        .objects
-        .iter()
-        .find(|o| o.item_type_name == "PipingPoint")
-        .expect("piping point object");
-    assert_eq!(
-        piping_point.fields.get("SP_PlantItemID").map(String::as_str),
-        Some(nozzle_uid.as_str()),
-        "A01 PipingPoint should be parented to the Nozzle",
-    );
-    assert_eq!(
-        piping_point.fields.get("NominalDiameter").map(String::as_str),
-        Some("250"),
-        "A01 PipingPoint carries the DN250 spec from T_PipingPoint",
+        3,
+        "A01 should have 3 drawing-level objects (Vessel + Nozzle + PipeRun)"
     );
 
     // 6 representations on the drawing — pipeline line, nozzle,

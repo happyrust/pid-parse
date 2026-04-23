@@ -314,16 +314,16 @@ fn cli_diff_against_real_a01_reference_reports_known_findings_and_exits_one() {
         ])
         .output()
         .expect("spawn pid_publish_xml --diff-against");
-    // We intentionally exit 1 today because the writer is known
-    // to under-emit PIDProcessPoint and miscount PIDPipingPort /
-    // PIDRepresentation against this reference. The test pins this
-    // contract so a future writer fix that closes the gap will
-    // immediately flag the regression for this assertion to be
-    // updated.
+    // After A13 the only remaining diff against the SmartPlant A01
+    // reference is `PIDRepresentation` count delta (we emit 6, the
+    // reference emits 4 — annotation/label representations are
+    // filtered by SmartPlant's exporter and we have not yet
+    // mirrored that filter). Exit 1 is still the expected verdict
+    // until that gap is closed in a later phase.
     assert_eq!(
         out.status.code(),
         Some(1),
-        "A01 reference diff should exit 1 (known unresolved findings); got {out:?}",
+        "A01 reference diff should exit 1 (known unresolved PIDRepresentation delta); got {out:?}",
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -333,12 +333,14 @@ fn cli_diff_against_real_a01_reference_reports_known_findings_and_exits_one() {
         stdout.contains("Publish Data XML semantic diff"),
         "stdout should carry the SemanticDiffReport header; got:\n{stdout}"
     );
-    // The five guaranteed-MATCH tag varieties on A01.
+    // After A13 the seven guaranteed-MATCH tag varieties on A01.
     for tag in [
         "PIDDrawing",
         "PIDNozzle",
         "PIDPipeline",
         "PIDPipingConnector",
+        "PIDPipingPort",
+        "PIDProcessPoint",
         "PIDProcessVessel",
     ] {
         assert!(
@@ -346,14 +348,16 @@ fn cli_diff_against_real_a01_reference_reports_known_findings_and_exits_one() {
             "report should list {tag}; got:\n{stdout}"
         );
     }
-    // The known-MISSING tag (PIDProcessPoint not yet implemented).
+    // PIDProcessPoint must NOT be flagged as MISSING any more
+    // (A13 derives it from each PipingConnector).
     assert!(
-        stdout.contains("MISSING"),
-        "report should flag at least one MISSING row; got:\n{stdout}"
+        !stdout.contains("MISSING") || !stdout.contains("PIDProcessPoint"),
+        "PIDProcessPoint should no longer surface as MISSING after A13; got:\n{stdout}"
     );
+    // PIDRepresentation should be the surviving DELTA row.
     assert!(
-        stdout.contains("PIDProcessPoint"),
-        "PIDProcessPoint is the canonical MISSING tag; got:\n{stdout}"
+        stdout.contains("DELTA") && stdout.contains("PIDRepresentation"),
+        "PIDRepresentation should be the surviving DELTA row; got:\n{stdout}"
     );
     // Side echo on stderr summarizes the verdict.
     assert!(
