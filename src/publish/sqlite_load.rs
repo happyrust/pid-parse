@@ -20,7 +20,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::model::{
-    PublishDrawing, PublishError, PublishObject, PublishRelationship, PublishRepresentation,
+    CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
+    PublishRepresentation,
 };
 
 /// Open a SQLite file produced by `OrcaMdfProbe --to-sqlite` in
@@ -195,6 +196,94 @@ pub fn load_objects_by_uids(
     Ok(out)
 }
 
+/// Translate a rusqlite "no such table" error into an `Ok(None)`
+/// so callers can soft-skip missing tables (common in partial
+/// fixtures). Any other preparation error is bubbled up as a
+/// [`PublishError::Sqlite`].
+fn prepare_optional<'conn>(
+    conn: &'conn Connection,
+    sql: &str,
+) -> Result<Option<rusqlite::Statement<'conn>>, PublishError> {
+    match conn.prepare(sql) {
+        Ok(s) => Ok(Some(s)),
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
+            Ok(None)
+        }
+        Err(e) => Err(PublishError::from(e)),
+    }
+}
+
+/// Load the SmartPlant codelist + attribute-codelist metadata out
+/// of `conn`, returning a [`CodelistIndex`] that the XML writer
+/// consults when resolving coded attribute values (e.g.
+/// `EquipmentType = "0"` → `"Horizontal Drum"`).
+///
+/// Both underlying tables — `codelists` and `attributes` — are
+/// treated as optional. When a fixture's SQLite mirror has not
+/// populated them (because OrcaMDF skipped the catalog, or the
+/// export scope is drawing-only) the loader returns a default
+/// empty index; callers fall through to whatever lookup they
+/// already had.
+///
+/// Rows with NULL / empty `codelist_number` / `codelist_index` /
+/// `codelist_text` are filtered out to keep the index tight.
+/// Similarly `attribute_codelisted` values of `""` or `"0"` (the
+/// SPPID "no codelist" sentinels) do not register an
+/// attribute-name mapping.
+pub fn load_codelist_index(conn: &Connection) -> Result<CodelistIndex, PublishError> {
+    let mut idx = CodelistIndex::default();
+
+    // Codelist entry rows: (codelist_number, codelist_index) →
+    // codelist_text. The table in the OrcaMDF SQLite mirror is
+    // lowercase-`codelists` because the C# probe preserves
+    // SmartPlant's catalog-layer naming (user-data tables are
+    // uppercase `T_*`; catalog tables keep their original case).
+    let codelists_sql = "SELECT codelist_number, codelist_index, codelist_text \
+                         FROM codelists";
+    if let Some(mut stmt) = prepare_optional(conn, codelists_sql)? {
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let number: Option<String> = row.get(0)?;
+            let index: Option<String> = row.get(1)?;
+            let text: Option<String> = row.get(2)?;
+            let (Some(number), Some(index), Some(text)) = (number, index, text) else {
+                continue;
+            };
+            if number.is_empty() || index.is_empty() || text.is_empty() {
+                continue;
+            }
+            idx.insert_entry(number, index, text);
+        }
+    }
+
+    // attribute_name → codelist_number mapping. The SPPID metadata
+    // uses `attribute_codelisted = "0"` (or empty) to mean "this
+    // attribute is not backed by a codelist"; both sentinels are
+    // filtered out here so `lookup_by_attribute` can trust any
+    // registered mapping.
+    let attributes_sql = "SELECT attribute_name, attribute_codelisted \
+                          FROM attributes";
+    if let Some(mut stmt) = prepare_optional(conn, attributes_sql)? {
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: Option<String> = row.get(0)?;
+            let codelist_number: Option<String> = row.get(1)?;
+            let (Some(name), Some(codelist_number)) = (name, codelist_number) else {
+                continue;
+            };
+            if name.is_empty()
+                || codelist_number.is_empty()
+                || codelist_number == "0"
+            {
+                continue;
+            }
+            idx.insert_attribute_mapping(name, codelist_number);
+        }
+    }
+
+    Ok(idx)
+}
+
 /// Attach every non-null column of a single business-subtable row
 /// to `obj.fields`. Column names from `SELECT *` are kept verbatim
 /// (so downstream consumers can spot them in the DTO), with the
@@ -208,16 +297,12 @@ fn attach_business_columns(
     table_name: &str,
     obj: &mut super::model::PublishObject,
 ) -> Result<(), PublishError> {
-    // The table might not exist for every object type; treat a
-    // "no such table" error as a soft skip so the loader tolerates
-    // fixtures that ship a partial schema.
+    // The table might not exist for every object type; `prepare_optional`
+    // returns `Ok(None)` in that case so fixtures with partial schemas
+    // do not fail the whole load.
     let sql = format!("SELECT * FROM \"{}\" WHERE SP_ID = ?1", table_name.replace('"', "\"\""));
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
-            return Ok(());
-        }
-        Err(e) => return Err(PublishError::from(e)),
+    let Some(mut stmt) = prepare_optional(conn, &sql)? else {
+        return Ok(());
     };
 
     let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
@@ -265,7 +350,9 @@ fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
 /// High-level entry point: load the complete Publish-Data DTO for
 /// one drawing — header row + all representations + the model
 /// items they point at + relationships + per-object business
-/// fields from the appropriate SPPID subtables.
+/// fields from the appropriate SPPID subtables, plus the
+/// plant-wide codelist metadata so the writer can resolve coded
+/// attribute values.
 pub fn load_drawing_graph(
     conn: &Connection,
     drawing_uid: &str,
@@ -274,6 +361,12 @@ pub fn load_drawing_graph(
 
     drawing.representations = load_representations(conn, drawing_uid)?;
     drawing.relationships = load_relationships(conn, drawing_uid)?;
+    // A7: codelist is plant-scoped, not drawing-scoped, but
+    // attaching it to the `PublishDrawing` keeps the writer's
+    // inputs self-contained. Loaders that want to share the
+    // catalog across many drawings can clone the index from any
+    // previously loaded drawing.
+    drawing.codelist = load_codelist_index(conn)?;
 
     // Every unique `SP_ModelItemID` referenced by a representation
     // — plus every `SP_Item1ID` / `SP_Item2ID` referenced by a
@@ -404,5 +497,129 @@ mod tests {
         assert!(d.template.is_none());
         assert!(d.path.is_none());
         assert!(d.date_created.is_none());
+    }
+
+    /// Create an in-memory SQLite with the catalog-layer tables
+    /// SmartPlant ships alongside every export: `codelists` and
+    /// `attributes`. The function does NOT populate any rows —
+    /// individual tests seed whatever they need.
+    fn setup_codelist_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute(
+            "CREATE TABLE codelists (\
+                codelist_number TEXT, codelist_index TEXT, codelist_text TEXT, \
+                codelist_short_text TEXT)",
+            [],
+        )
+        .expect("create codelists");
+        conn.execute(
+            "CREATE TABLE attributes (\
+                attribute_number TEXT, attribute_name TEXT, \
+                attribute_codelisted TEXT)",
+            [],
+        )
+        .expect("create attributes");
+        conn
+    }
+
+    #[test]
+    fn load_codelist_index_on_missing_tables_returns_empty() {
+        // An export that shipped `T_Drawing` but skipped the
+        // catalog layer should not make the loader error —
+        // `prepare_optional` soft-skips both `codelists` and
+        // `attributes`.
+        let (conn, _uid) = setup_synthetic_db();
+        let idx = load_codelist_index(&conn).expect("should not error on missing tables");
+        assert!(idx.is_empty());
+    }
+
+    #[test]
+    fn load_codelist_index_ignores_null_and_empty_rows() {
+        let conn = setup_codelist_db();
+        // Three codelist rows: one valid, one with NULL text,
+        // one with empty codelist_number.
+        conn.execute(
+            "INSERT INTO codelists VALUES ('28', '0', 'Horizontal Drum', 'HD')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO codelists VALUES ('28', '1', NULL, NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO codelists VALUES ('', '2', 'Ghost', 'G')",
+            [],
+        )
+        .unwrap();
+        // Three attribute rows: one codelisted, one empty sentinel,
+        // one zero sentinel.
+        conn.execute(
+            "INSERT INTO attributes VALUES ('1', 'EquipmentType', '28')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO attributes VALUES ('2', 'TagPrefix', '')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO attributes VALUES ('3', 'NominalDiameter', '0')",
+            [],
+        )
+        .unwrap();
+
+        let idx = load_codelist_index(&conn).expect("load");
+        assert_eq!(idx.entry_count(), 1);
+        assert_eq!(idx.attribute_mapping_count(), 1);
+        assert_eq!(idx.lookup("28", "0"), Some("Horizontal Drum"));
+        assert_eq!(
+            idx.lookup_by_attribute("EquipmentType", "0"),
+            Some("Horizontal Drum"),
+        );
+        // Filtered-out attributes did not register a mapping.
+        assert!(idx.lookup_by_attribute("TagPrefix", "V").is_none());
+        assert!(idx.lookup_by_attribute("NominalDiameter", "250").is_none());
+    }
+
+    #[test]
+    fn load_codelist_index_populates_multiple_entries_in_order_agnostic_way() {
+        let conn = setup_codelist_db();
+        for (number, index, text) in [
+            ("28", "0", "Horizontal Drum"),
+            ("28", "1", "Vertical Drum"),
+            ("28", "2", "Reactor"),
+            ("14", "0", "Gate Valve"),
+        ] {
+            conn.execute(
+                "INSERT INTO codelists VALUES (?1, ?2, ?3, NULL)",
+                params![number, index, text],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO attributes VALUES ('1', 'EquipmentType', '28')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO attributes VALUES ('2', 'ValveType', '14')",
+            [],
+        )
+        .unwrap();
+
+        let idx = load_codelist_index(&conn).expect("load");
+        assert_eq!(idx.entry_count(), 4);
+        assert_eq!(idx.attribute_mapping_count(), 2);
+        assert_eq!(
+            idx.lookup_by_attribute("EquipmentType", "2"),
+            Some("Reactor"),
+        );
+        assert_eq!(
+            idx.lookup_by_attribute("ValveType", "0"),
+            Some("Gate Valve"),
+        );
     }
 }

@@ -30,10 +30,11 @@ pub mod sqlite_load;
 pub mod xml_writer;
 
 pub use model::{
-    PublishDrawing, PublishError, PublishObject, PublishRelationship, PublishRepresentation,
+    CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
+    PublishRepresentation,
 };
 pub use sqlite_load::{
-    load_drawing, load_drawing_graph, load_objects_by_uids, load_relationships,
-    load_representations,
+    load_codelist_index, load_drawing, load_drawing_graph, load_objects_by_uids,
+    load_relationships, load_representations,
 };
 pub use xml_writer::write_data_xml;

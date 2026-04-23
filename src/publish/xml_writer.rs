@@ -64,8 +64,8 @@ pub fn write_data_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
 fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
     for obj in &drawing.objects {
         match obj.item_type_name.as_str() {
-            "Vessel" => write_process_vessel(buf, obj)?,
-            "Nozzle" => write_nozzle(buf, obj)?,
+            "Vessel" => write_process_vessel(buf, obj, drawing)?,
+            "Nozzle" => write_nozzle(buf, obj, drawing)?,
             // PipeRun maps to the logical pipeline + its physical
             // connector. We emit both tags from the same PipeRun
             // row so the resulting XML mirrors SmartPlant's dual
@@ -85,14 +85,77 @@ fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<
     Ok(())
 }
 
-fn write_process_vessel(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+/// Derive a human-readable description from the object's first
+/// symbol-bearing representation, e.g.
+/// `\Equipment\Vessels\Horizontal Drums\Horizontal Drum.sym`
+/// → `"Horizontal Drum"`. Returns `None` when no `.sym` rep is
+/// attached; callers fall back to whichever SPPID code column
+/// they already have.
+fn derive_type_description_from_symbol(
+    drawing: &PublishDrawing,
+    object_uid: &str,
+) -> Option<String> {
+    for rep in &drawing.representations {
+        if rep.model_item_uid.as_deref() != Some(object_uid) {
+            continue;
+        }
+        let Some(path) = &rep.symbol_path else {
+            continue;
+        };
+        if path.is_empty() {
+            continue;
+        }
+        let last = path.rsplit('\\').next().unwrap_or(path);
+        let stem = last.strip_suffix(".sym").unwrap_or(last);
+        if !stem.is_empty() {
+            return Some(stem.to_string());
+        }
+    }
+    None
+}
+
+/// Resolve a business-field value (e.g. `EquipmentType = "0"`) to
+/// its codelist display text when the drawing's [`CodelistIndex`]
+/// carries a mapping for `attribute_name`. Empty / missing values
+/// short-circuit to `None` so the writer never burns a codelist
+/// lookup on rows without the attribute set.
+fn resolve_codelist_field(
+    drawing: &PublishDrawing,
+    obj: &PublishObject,
+    attribute_name: &str,
+) -> Option<String> {
+    let raw = obj.fields.get(attribute_name)?;
+    if raw.is_empty() {
+        return None;
+    }
+    drawing
+        .codelist
+        .lookup_by_attribute(attribute_name, raw)
+        .map(str::to_string)
+}
+
+fn write_process_vessel(
+    buf: &mut String,
+    obj: &PublishObject,
+    drawing: &PublishDrawing,
+) -> Result<(), PublishError> {
     let item_tag = obj
         .fields
         .get("ItemTag")
         .cloned()
         .unwrap_or_else(|| format_equipment_tag(obj));
     let description = obj.description.as_deref().unwrap_or("");
-    let eq_type_description = obj.fields.get("EquipmentType").cloned().unwrap_or_default();
+    // Three-tier fallback for the SmartPlant `EqTypeDescription`
+    // attribute. The codelist lookup is authoritative — it is what
+    // SmartPlant itself uses to render the enum — so it wins when
+    // the metadata catalog ships the mapping. Drawing fixtures
+    // produced without a codelist catalog fall back to parsing the
+    // symbol path (`Horizontal Drum.sym` → `"Horizontal Drum"`),
+    // and finally to the raw `EquipmentType` enum ID so the
+    // attribute is never silently blank.
+    let eq_type_description = resolve_codelist_field(drawing, obj, "EquipmentType")
+        .or_else(|| derive_type_description_from_symbol(drawing, &obj.uid))
+        .unwrap_or_else(|| obj.fields.get("EquipmentType").cloned().unwrap_or_default());
     writeln!(buf, "   <PIDProcessVessel>").map_err(fmt_err)?;
     writeln!(
         buf,
@@ -124,7 +187,11 @@ fn write_process_vessel(buf: &mut String, obj: &PublishObject) -> Result<(), Pub
     writeln!(buf, "   </PIDProcessVessel>").map_err(fmt_err)
 }
 
-fn write_nozzle(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+fn write_nozzle(
+    buf: &mut String,
+    obj: &PublishObject,
+    drawing: &PublishDrawing,
+) -> Result<(), PublishError> {
     let nominal_diameter = obj
         .fields
         .get("NominalDiameter")
@@ -136,6 +203,17 @@ fn write_nozzle(buf: &mut String, obj: &PublishObject) -> Result<(), PublishErro
         .get("PipingMaterialsClass")
         .cloned()
         .unwrap_or_default();
+    // Three-tier fallback for `ProcEqpCompTypeDescription`, in
+    // order of authority:
+    //   1. SmartPlant codelist on T_Nozzle.NozzleType
+    //      (e.g. "0" → "Flanged Nozzle")
+    //   2. Symbol path stem (`Flanged Nozzle.sym` → "Flanged Nozzle")
+    //   3. Hard-coded fallback "Flanged Nozzle" so the attribute is
+    //      never blank — matches the SmartPlant default for the
+    //      overwhelming majority of nozzle rows.
+    let proc_eq_comp_description = resolve_codelist_field(drawing, obj, "NozzleType")
+        .or_else(|| derive_type_description_from_symbol(drawing, &obj.uid))
+        .unwrap_or_else(|| "Flanged Nozzle".to_string());
     writeln!(buf, "   <PIDNozzle>").map_err(fmt_err)?;
     writeln!(
         buf,
@@ -148,7 +226,8 @@ fn write_nozzle(buf: &mut String, obj: &PublishObject) -> Result<(), PublishErro
     writeln!(buf, "      <INozzle/>").map_err(fmt_err)?;
     writeln!(
         buf,
-        r#"      <IEquipmentComponent ProcEqpCompTypeDescription="Flanged Nozzle"/>"#
+        r#"      <IEquipmentComponent ProcEqpCompTypeDescription="{}"/>"#,
+        escape_attr(&proc_eq_comp_description)
     )
     .map_err(fmt_err)?;
     writeln!(buf, "      <IEquipmentComponentOcc/>").map_err(fmt_err)?;
@@ -741,6 +820,118 @@ mod tests {
         assert_eq!(escape_attr("<x>"), "&lt;x&gt;");
         assert_eq!(escape_attr("it's \"ok\""), "it&apos;s &quot;ok&quot;");
         assert_eq!(escape_attr("line1\r\nline2"), "line1&#13;&#10;line2");
+    }
+
+    #[test]
+    fn vessel_eq_type_uses_codelist_lookup_when_available() {
+        // When the drawing ships a codelist entry for
+        // EquipmentType = "0", the writer MUST prefer the codelist
+        // text over the symbol-path stem. This mirrors SmartPlant's
+        // own rendering (the enum display text is the source of
+        // truth; the symbol path is a UI convention).
+        let mut d = example_drawing();
+        // Seed the vessel with an EquipmentType code so the codelist
+        // path has something to resolve.
+        let vessel = d
+            .objects
+            .iter_mut()
+            .find(|o| o.item_type_name == "Vessel")
+            .expect("vessel in fixture");
+        vessel.fields.insert("EquipmentType".into(), "3".into());
+        // Register EquipmentType → codelist 28 → "3" = "Reactor".
+        d.codelist.insert_attribute_mapping("EquipmentType", "28");
+        d.codelist.insert_entry("28", "3", "Reactor");
+
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IEquipment EqTypeDescription="Reactor"/>"#),
+            "codelist-resolved description should win over the symbol-path stem; out:\n{out}"
+        );
+        // The symbol path stem ("Horizontal Drum") must NOT appear
+        // as the EqType description — it's still in the XML as part
+        // of the rep's FileName chain, but not on <IEquipment>.
+        assert!(
+            !out.contains(r#"EqTypeDescription="Horizontal Drum""#),
+            "codelist lookup should beat symbol-path fallback; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn vessel_eq_type_falls_back_to_symbol_path_when_codelist_empty() {
+        // No codelist metadata loaded → the writer's second-tier
+        // fallback (symbol-path stem) must still produce the human
+        // name so legacy fixtures keep working.
+        let d = example_drawing();
+        assert!(d.codelist.is_empty(), "fixture ships with empty codelist");
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IEquipment EqTypeDescription="Horizontal Drum"/>"#),
+            "symbol path should still surface when codelist is empty; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn vessel_eq_type_falls_back_to_raw_code_when_no_symbol_and_no_codelist() {
+        // Neither a codelist mapping nor a symbol path — the writer
+        // must still emit something, and the raw EquipmentType code
+        // is the last-ditch choice. (A blank attribute would silently
+        // hide data, which is strictly worse than an opaque code.)
+        let mut d = PublishDrawing::new("UID-V", "V");
+        d.objects = vec![PublishObject {
+            uid: "V1".into(),
+            item_type_name: "Vessel".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("EquipmentType".into(), "7".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IEquipment EqTypeDescription="7"/>"#),
+            "raw EquipmentType code must still land when both preferred \
+             lookups miss; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn nozzle_proc_eq_comp_uses_codelist_lookup_when_available() {
+        // Same three-tier fallback as the vessel, but keyed on
+        // `NozzleType`. When the catalog ships the mapping the
+        // writer must prefer it.
+        let mut d = example_drawing();
+        let nozzle = d
+            .objects
+            .iter_mut()
+            .find(|o| o.item_type_name == "Nozzle")
+            .expect("nozzle in fixture");
+        nozzle.fields.insert("NozzleType".into(), "2".into());
+        d.codelist.insert_attribute_mapping("NozzleType", "12");
+        d.codelist.insert_entry("12", "2", "Pressurized Nozzle");
+
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"ProcEqpCompTypeDescription="Pressurized Nozzle""#),
+            "codelist-resolved nozzle description should win; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn nozzle_proc_eq_comp_keeps_default_when_nothing_else_available() {
+        // No codelist, no symbol path — the default `"Flanged Nozzle"`
+        // still lands so every nozzle has a non-empty description.
+        let mut d = PublishDrawing::new("UID-N", "N");
+        d.objects = vec![PublishObject {
+            uid: "NZ1".into(),
+            item_type_name: "Nozzle".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"ProcEqpCompTypeDescription="Flanged Nozzle""#),
+            "hard-coded `Flanged Nozzle` fallback still fires; out:\n{out}"
+        );
     }
 
     #[test]

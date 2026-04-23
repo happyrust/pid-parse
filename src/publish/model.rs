@@ -8,6 +8,97 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+/// SmartPlant codelist lookup — maps `(codelist_number, codelist_index)`
+/// pairs to their human-readable display text, plus an auxiliary
+/// `attribute_name → codelist_number` map so callers can resolve
+/// business-field values (e.g. `EquipmentType = "0"`) to
+/// descriptions (e.g. `"Horizontal Drum"`) by attribute name alone.
+///
+/// The SmartPlant metadata catalog stores this as two tables:
+///
+/// * `codelists(codelist_number, codelist_index, codelist_text, ...)`
+///   — one row per enum entry.
+/// * `attributes(attribute_name, attribute_codelisted, ...)`
+///   — declares which codelist an attribute pulls from.
+///
+/// Stage-1 A7 surfaces this to the XML writer so `EqTypeDescription`
+/// no longer has to rely solely on symbol-path parsing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CodelistIndex {
+    /// `(codelist_number, codelist_index) → codelist_text`.
+    /// Both keys are kept as `String` because OrcaMDF ships them as
+    /// TEXT regardless of the underlying SQL Server type.
+    entries: BTreeMap<(String, String), String>,
+    /// `attribute_name → codelist_number`, sourced from the
+    /// `attributes` metadata table's `attribute_codelisted` column.
+    /// Empty / zero / null values are filtered out at load time —
+    /// they mean "this attribute is not codelisted".
+    attribute_codelist: BTreeMap<String, String>,
+}
+
+impl CodelistIndex {
+    /// Insert a single codelist entry. Duplicate keys overwrite —
+    /// real SPPID catalogs do not produce duplicates, but the
+    /// loader is conservative rather than panicking on import.
+    pub fn insert_entry(
+        &mut self,
+        codelist_number: impl Into<String>,
+        codelist_index: impl Into<String>,
+        codelist_text: impl Into<String>,
+    ) {
+        self.entries
+            .insert((codelist_number.into(), codelist_index.into()), codelist_text.into());
+    }
+
+    /// Record that `attribute_name` is codelisted under
+    /// `codelist_number`. Used by [`CodelistIndex::lookup_by_attribute`].
+    pub fn insert_attribute_mapping(
+        &mut self,
+        attribute_name: impl Into<String>,
+        codelist_number: impl Into<String>,
+    ) {
+        self.attribute_codelist
+            .insert(attribute_name.into(), codelist_number.into());
+    }
+
+    /// Direct lookup by `(codelist_number, codelist_index)` pair.
+    /// Returns the display text, or `None` if no row matches.
+    pub fn lookup(&self, codelist_number: &str, codelist_index: &str) -> Option<&str> {
+        self.entries
+            .get(&(codelist_number.to_string(), codelist_index.to_string()))
+            .map(|s| s.as_str())
+    }
+
+    /// Resolve a codelisted attribute value by name:
+    /// `attribute_name` → codelist_number → `(codelist_number, value)`
+    /// → display text. Returns `None` when either the attribute is
+    /// not codelisted or the value is not in the resolved codelist.
+    pub fn lookup_by_attribute(&self, attribute_name: &str, value: &str) -> Option<&str> {
+        let codelist_number = self.attribute_codelist.get(attribute_name)?;
+        self.lookup(codelist_number, value)
+    }
+
+    /// True when no codelist entries and no attribute mappings are
+    /// registered — useful for tests and for callers who want to
+    /// skip the lookup fast-path when the fixture does not ship
+    /// codelist metadata.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty() && self.attribute_codelist.is_empty()
+    }
+
+    /// Number of resolved codelist entries (not including the
+    /// auxiliary attribute-name map).
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Number of registered `attribute_name → codelist_number`
+    /// bindings.
+    pub fn attribute_mapping_count(&self) -> usize {
+        self.attribute_codelist.len()
+    }
+}
+
 /// Error returned by any of the `publish::*` loaders. Kept string-
 /// based so callers can bubble up context without defining an
 /// enum for every SQL failure mode.
@@ -150,6 +241,16 @@ pub struct PublishDrawing {
     pub representations: Vec<PublishRepresentation>,
     /// Every relationship tied to this drawing.
     pub relationships: Vec<PublishRelationship>,
+    /// Plant-wide SmartPlant codelist metadata. Populated once per
+    /// load because the catalog is the same for every drawing; kept
+    /// on the drawing DTO for convenience of the XML writer, which
+    /// is already drawing-scoped.
+    ///
+    /// Empty when the fixture's SQLite mirror has not populated the
+    /// `codelists` / `attributes` tables — the writer must fall
+    /// through to its symbol-path or raw-value heuristics in that
+    /// case.
+    pub codelist: CodelistIndex,
 }
 
 impl PublishDrawing {
@@ -162,5 +263,67 @@ impl PublishDrawing {
             drawing_name: name.into(),
             ..Self::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod codelist_tests {
+    use super::*;
+
+    #[test]
+    fn empty_index_reports_empty() {
+        let idx = CodelistIndex::default();
+        assert!(idx.is_empty());
+        assert_eq!(idx.entry_count(), 0);
+        assert_eq!(idx.attribute_mapping_count(), 0);
+        assert!(idx.lookup("28", "0").is_none());
+        assert!(idx.lookup_by_attribute("EquipmentType", "0").is_none());
+    }
+
+    #[test]
+    fn direct_lookup_returns_registered_text() {
+        let mut idx = CodelistIndex::default();
+        idx.insert_entry("28", "0", "Horizontal Drum");
+        idx.insert_entry("28", "1", "Vertical Drum");
+        assert_eq!(idx.lookup("28", "0"), Some("Horizontal Drum"));
+        assert_eq!(idx.lookup("28", "1"), Some("Vertical Drum"));
+        assert_eq!(idx.lookup("28", "99"), None);
+        assert_eq!(idx.lookup("31", "0"), None);
+    }
+
+    #[test]
+    fn lookup_by_attribute_resolves_via_attribute_mapping() {
+        let mut idx = CodelistIndex::default();
+        idx.insert_entry("28", "0", "Horizontal Drum");
+        idx.insert_attribute_mapping("EquipmentType", "28");
+        assert_eq!(
+            idx.lookup_by_attribute("EquipmentType", "0"),
+            Some("Horizontal Drum"),
+        );
+        // Known attribute but value missing from codelist → None.
+        assert_eq!(idx.lookup_by_attribute("EquipmentType", "9999"), None);
+        // Unknown attribute → None even if the value matches some
+        // other codelist.
+        assert_eq!(idx.lookup_by_attribute("NominalDiameter", "0"), None);
+    }
+
+    #[test]
+    fn insert_entry_overwrites_duplicate_keys() {
+        let mut idx = CodelistIndex::default();
+        idx.insert_entry("28", "0", "Stale");
+        idx.insert_entry("28", "0", "Fresh");
+        assert_eq!(idx.lookup("28", "0"), Some("Fresh"));
+        assert_eq!(idx.entry_count(), 1);
+    }
+
+    #[test]
+    fn is_empty_becomes_false_with_any_registration() {
+        let mut idx = CodelistIndex::default();
+        idx.insert_attribute_mapping("EquipmentType", "28");
+        assert!(!idx.is_empty());
+
+        let mut idx2 = CodelistIndex::default();
+        idx2.insert_entry("28", "0", "Horizontal Drum");
+        assert!(!idx2.is_empty());
     }
 }

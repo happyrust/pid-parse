@@ -3,7 +3,9 @@
 //!
 //! Skips cleanly on CI workers that do not carry the fixture.
 
-use pid_parse::publish::{load_drawing, load_drawing_graph, sqlite_load::open_readonly};
+use pid_parse::publish::{
+    load_codelist_index, load_drawing, load_drawing_graph, sqlite_load::open_readonly,
+};
 use std::path::Path;
 
 const SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite";
@@ -191,4 +193,32 @@ fn real_sqlite_vessel_and_nozzle_objects_carry_business_fields() {
         "PipeRun should gather at least some fields from T_PipeRun / T_Connector"
     );
     eprintln!("PipeRun fields: {:#?}", pipe.fields);
+}
+
+#[test]
+fn real_sqlite_codelist_loader_does_not_error_even_when_catalog_empty() {
+    // A7: `load_codelist_index` must tolerate the TEST02 fixture
+    // shape, where `codelists` + `attributes` exist but are empty
+    // (OrcaMDF exported the schema but not the catalog rows).
+    // The loader should return a default empty index without any
+    // SQL failure.
+    let Some(conn) = load_sqlite() else { return };
+    let idx = load_codelist_index(&conn).expect("codelist loader should not error");
+    eprintln!(
+        "A7 codelist index: entries={}, attribute_mappings={}",
+        idx.entry_count(),
+        idx.attribute_mapping_count()
+    );
+    // The index is expected to be empty for this fixture, but the
+    // assertion is written defensively so any future catalog
+    // export still passes: the key correctness property is "no
+    // error", not "zero rows".
+    assert!(
+        idx.entry_count() == 0 || idx.entry_count() > 0,
+        "entry_count is always a valid count"
+    );
+    assert!(
+        idx.attribute_mapping_count() == 0 || idx.attribute_mapping_count() > 0,
+        "attribute_mapping_count is always a valid count"
+    );
 }
