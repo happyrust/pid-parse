@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A32)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A33)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
@@ -44,6 +44,12 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   + 3 guard：未支持 PID tag 的 fidelity spec snapshot
   （PIDPipingBranchPoint × 4 + PIDBranchPoint × 5 on DWG）
   作为未来 writer arm 的可执行 spec + 漂移检测
+- A33 `tests/publish_rel_parity.rs` ·
+  `rel_defuid_parity_on_a01_writer_matches_reference_supersets`
+  + `a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise`
+  + 2 guard：`<Rel>` 元素的 DefUID-级 fidelity（writer ⊇ A01
+  ref + A01 ⇄ DWG 跨 fixture 一致性）。补齐 `<Rel>` 守门，
+  之前所有 gate 只覆盖 `<PIDxxx>` body
 
 #### Added — writer 真实改动
 
@@ -107,13 +113,16 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 
 #### Tests
 
-* lib：540 → 562（+22，A26 +7 `publish::diff::tests::parse_attrs_*`，
-  A29 +7 `publish::xml_writer::tests` 中 IObject style 切换）
-* integration：140 → 158（+5 在 `tests/publish_attribute_parity.rs`，
+* lib：540 → 570（+30，A26 +7 `publish::diff::tests::parse_attrs_*`，
+  A29 +7 `publish::xml_writer::tests` 中 IObject style 切换，
+  A33 +8 `publish::diff::tests::parse_rel_defuid_counts_*`；
+  其余 +8 来自 A23 / A24 / A25 之前已记录的相关单测）
+* integration：140 → 162（+5 在 `tests/publish_attribute_parity.rs`，
   +4 在 `tests/publish_backlog_inventory.rs`，
   +5 在 `tests/publish_xml_cli.rs` 覆盖 A29b CLI `--style`，
   +4 在 `tests/publish_xml_cli.rs` 覆盖 A30 `--list-drawings` +
-  drawing-not-found hint）
+  drawing-not-found hint，
+  +4 在 `tests/publish_rel_parity.rs` A33 / A33b + 2 guard）
 * lint：0 warnings
 
 #### A28 backlog inventory（已 snapshot 入测试）
@@ -130,8 +139,36 @@ UID 后缀模式：`<base>.BPT`，参考 A13 的 `.PPT` / `.1` / `.2`
 派生 ID 模式（PipingConnector → PIDPipingPort + PIDProcessPoint）。
 未来 writer arm 实现时按 spec 守门即可。
 
-#### Backlog（A30+）
+#### A33 Rel DefUID 发现（whitelist）
 
+A33 gate 第一次跑暴露了 writer 端 6 个 derived Rel DefUID 缺口
+（已进 `KNOWN_WRITER_REL_DEFUID_GAPS`，A34 修复目标）：
+
+* PipingPortComposition（PipingConnector → port.1/.2）
+* ProcessPointCollection（PipingConnector → port.PPT）
+* PipingEnd1Conn / PipingEnd2Conn（port.1/.2 → endpoint）
+* EquipmentComponentComposition（Vessel ↔ Nozzle，loader 端 T_Relationship 拾取缺口）
+* PipingConnectors（Pipeline ↔ PipeRun，同上）
+
+A33b gate 暴露了 4 个跨 fixture DWG-only DefUID（已进
+`KNOWN_A01_VS_DWG_REL_DEFUID_DIVERGENCES`，纯 SmartPlant
+fixture-side variant）：
+
+* PipingTapOrFitting / SignalEnd1Conn / SignalEnd2Conn /
+  SignalPortComposition（DWG ships instrument signal 连接和
+  piping tap，A01 没有）
+
+#### Backlog（A34+）
+
+* **A34 derived Rel emit 修复**（A33 发现的 6 项缺口）：扩
+  `write_derived_connector_endpoints` 让它在 emit
+  PIDPipingPort.{1,2} / PIDProcessPoint.PPT 时同步 emit 对应的
+  PipingPortComposition / ProcessPointCollection / PipingEnd1Conn /
+  PipingEnd2Conn 4 类 derived `<Rel>`；扩 loader 让 T_Relationship
+  能拾取 Vessel ↔ Nozzle / Pipeline ↔ PipeRun 行以让现有
+  classify_relationship 路径能产出 EquipmentComponentComposition /
+  PipingConnectors。无需新 fixture，A01 SQLite + A01 reference
+  即可完整验证。
 * PIDBranchPoint / PIDPipingBranchPoint writer arms（spec 已在
   A28 snapshot test 中 pin 住，实施时需 DWG 端 SQLite mirror
   才能反推源映射）
