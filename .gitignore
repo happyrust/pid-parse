@@ -3,3 +3,5 @@ test-file/
 .ace-tool/
 .cursor/
 .cursorignore
+.factory/
+.commit_msg.txt
