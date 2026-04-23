@@ -2292,9 +2292,19 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     }
 
     // --- From T_Relationship, classified by endpoint item types
+    //
+    // A36b — skip rows whose source or target UID is NULL / empty.
+    // SmartPlant's exporter never emits an `<IRel UID2=""/>` for
+    // a half-wired relationship; shipping one produces a dangling
+    // reference that validators reject. The A36b soundness gate
+    // surfaced this when T_Relationship carried a row with an
+    // unpaired endpoint on A01.
     for rel in &drawing.relationships {
         let uid1 = rel.source_uid.as_deref().unwrap_or("");
         let uid2 = rel.target_uid.as_deref().unwrap_or("");
+        if uid1.is_empty() || uid2.is_empty() {
+            continue;
+        }
         let def_uid = classify_relationship(rel, &type_by_uid);
         let prefix = defuid_prefix(&def_uid);
         let rel_uid = format!("{prefix}-{uid1}-{uid2}");

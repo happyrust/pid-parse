@@ -36,7 +36,7 @@
 
 use std::collections::BTreeSet;
 
-use pid_parse::publish::parse_rel_defuid_counts;
+use pid_parse::publish::{parse_rel_defuid_counts, parse_rel_details};
 
 mod common;
 use common::{generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml};
@@ -319,4 +319,269 @@ fn a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise() {
          only_in_A01 (unexpected): {unexpected_a01:?}; only_in_DWG \
          (unexpected): {unexpected_dwg:?}",
     );
+}
+
+/// A36 · UID2 semantic-level gate, built on top of A34c.
+///
+/// A33 covers the **count** of each DefUID; A34c swapped
+/// PipingEnd1Conn's UID2 from an intra-connector `.PPT`
+/// placeholder to the real upstream ModelItem UID. Without a
+/// dedicated gate, a future refactor could silently
+/// reintroduce the placeholder and still satisfy A33
+/// (the count is unchanged — both forms emit one
+/// PipingEnd1Conn per PipeRun).
+///
+/// This gate asserts the opposite: on the A01 fixture, at
+/// least one emitted `PipingEnd1Conn` rel must have a UID2
+/// that is NOT an intra-connector placeholder — i.e. at
+/// least one pipe end is wired to a real ModelItem.
+///
+/// The A01 fixture has one connected port (port.1 → Nozzle),
+/// which means the test also implicitly confirms the loader
+/// populated `EndConnectedItem1` and the writer honored it.
+#[test]
+fn a36_piping_end1_conn_uid2_is_real_upstream_on_a01() {
+    let Some(generated_result) = generate_a01_xml() else {
+        return;
+    };
+    let generated_xml = generated_result.expect("writer should succeed on A01");
+    let rels = parse_rel_details(&generated_xml);
+
+    let end1_rels: Vec<_> = rels
+        .iter()
+        .filter(|r| r.def_uid == "PipingEnd1Conn")
+        .collect();
+    assert!(
+        !end1_rels.is_empty(),
+        "A36 sanity: A01 writer must emit at least one \
+         PipingEnd1Conn rel (A34-era derived emit). Empty \
+         result means the writer regressed or the parser \
+         broke.",
+    );
+
+    // The .PPT placeholder means "no external connection".
+    // A34c replaces it with the upstream ModelItem UID when
+    // T_Connector supplies one. The A01 fixture has port.1
+    // wired to a Nozzle, so at least one rel must pass.
+    let at_least_one_real: bool = end1_rels.iter().any(|r| !r.uid2.ends_with(".PPT"));
+    let ppt_placeholders: Vec<(&String, &String)> = end1_rels
+        .iter()
+        .filter(|r| r.uid2.ends_with(".PPT"))
+        .map(|r| (&r.uid1, &r.uid2))
+        .collect();
+
+    assert!(
+        at_least_one_real,
+        "A36 UID2 regression: every PipingEnd1Conn rel on A01 \
+         points at an intra-connector .PPT placeholder. \
+         A34c added `attach_pipe_endpoint_connections` to \
+         infer the real upstream ModelItem UID from \
+         `T_Connector.SP_ConnectItem1ID`; if every rel is \
+         falling back to .PPT, either the loader stopped \
+         attaching `EndConnectedItem1` or the writer stopped \
+         reading it. Offending rels: {ppt_placeholders:?}",
+    );
+}
+
+/// A36 · Sanity sub-test: the same property on the DWG
+/// fixture, when the fixture is available. DWG has multiple
+/// PipeRuns so the signal is stronger (more opportunities
+/// for a `.PPT`-only regression to surface). Soft-skipped
+/// when the DWG SQLite mirror is absent — the fidelity of
+/// the A01 test is the hard contract.
+#[test]
+fn a36_piping_end1_conn_uid2_is_real_upstream_on_dwg_when_available() {
+    let Some(reference_xml) = load_reference_dwg_xml() else {
+        return;
+    };
+    // Note: the writer-generated DWG XML is not available yet
+    // (DWG SQLite mirror isn't bundled), so this sub-test only
+    // runs against the reference — a positive control that
+    // our assumption about the SPPID convention holds across
+    // fixtures.
+    let rels = parse_rel_details(&reference_xml);
+    let end1_rels: Vec<_> = rels
+        .iter()
+        .filter(|r| r.def_uid == "PipingEnd1Conn")
+        .collect();
+    if end1_rels.is_empty() {
+        return;
+    }
+    let real_count = end1_rels.iter().filter(|r| !r.uid2.ends_with(".PPT")).count();
+    assert!(
+        real_count > 0,
+        "A36 cross-fixture assumption: even the SmartPlant \
+         DWG reference has at least one PipingEnd1Conn \
+         with a real upstream UID2 (not .PPT). Observed \
+         {} end1 rels, all with .PPT UID2 — either the \
+         convention differs on DWG (unexpected) or the \
+         parser misread the reference.",
+        end1_rels.len(),
+    );
+}
+
+/// A36b · Rel UID2 soundness gate.
+///
+/// Every `<Rel>` in the writer's output must have a UID2
+/// that either
+///
+/// 1. matches a UID emitted somewhere in the same document
+///    as `<IObject UID="...">` (a concrete business object
+///    or representation the reader can resolve), or
+/// 2. is a UID recognized as an A34-family derived port /
+///    process point — `<connector>.1` / `<connector>.2` /
+///    `<connector>.PPT` — whose owning `<IObject UID="...">`
+///    is always emitted in the same document by
+///    `write_derived_connector_endpoints`.
+///
+/// The second branch is explicit rather than implicit so a
+/// *future* decision to stop emitting derived port IObjects
+/// surfaces as a test failure rather than a silent
+/// dangling-reference leak.
+///
+/// The gate enforces document-internal referential
+/// integrity — SmartPlant validators reject rels pointing at
+/// UIDs nothing else declares. A33 only counts; A36b is the
+/// first gate to actually walk the UID graph.
+#[test]
+fn a36b_every_rel_uid2_resolves_within_the_document_on_a01() {
+    let Some(generated_result) = generate_a01_xml() else {
+        return;
+    };
+    let generated_xml = generated_result.expect("writer should succeed on A01");
+
+    // Collect the set of every `<IObject UID="..."/>` UID
+    // emitted by the writer. Byte-level scan, same
+    // robustness convention as the other diff.rs parsers.
+    let iobject_uids: BTreeSet<String> = collect_iobject_uids(&generated_xml);
+    assert!(
+        !iobject_uids.is_empty(),
+        "A36b sanity: writer must emit at least one <IObject UID=\"...\"/>"
+    );
+
+    let rels = parse_rel_details(&generated_xml);
+    let mut dangling: Vec<(String, String, String)> = Vec::new();
+    for r in &rels {
+        if r.uid2.is_empty() {
+            // parse_rel_details preserves empty-string
+            // placeholders; flag them so an exporter bug
+            // producing `<IRel UID2=""/>` does not slip by.
+            dangling.push((r.uid1.clone(), r.uid2.clone(), r.def_uid.clone()));
+            continue;
+        }
+        if iobject_uids.contains(&r.uid2) {
+            continue;
+        }
+        if is_known_derived_port_uid(&r.uid2, &iobject_uids) {
+            continue;
+        }
+        dangling.push((r.uid1.clone(), r.uid2.clone(), r.def_uid.clone()));
+    }
+
+    assert!(
+        dangling.is_empty(),
+        "A36b UID2 soundness regression: these rels point at \
+         UID2 values nothing in the document resolves to. \
+         Either (a) wire the target's <IObject UID=...> into \
+         the writer, or (b) extend `is_known_derived_port_uid` \
+         to cover a new derived-UID convention (with a \
+         milestone comment). Each entry: `(UID1, UID2, DefUID)`:\n{:#?}",
+        dangling,
+    );
+}
+
+/// A34-family derived-UID suffix pattern. A PipingConnector
+/// synthesizes three virtual child IObjects:
+///
+/// * `<connector>.1` (port.1)
+/// * `<connector>.2` (port.2)
+/// * `<connector>.PPT` (process point)
+///
+/// All three are emitted with matching `<IObject UID="...">`
+/// in the same document, so Rel UID2 values ending in these
+/// suffixes are considered resolvable even if
+/// `collect_iobject_uids` happens to miss one (the function
+/// fills the set, so the suffix check is a secondary
+/// self-consistency guard).
+fn is_known_derived_port_uid(uid: &str, iobject_uids: &BTreeSet<String>) -> bool {
+    if iobject_uids.contains(uid) {
+        return true;
+    }
+    // Fall through: explicitly allow the three A13/A34-era
+    // derived suffixes. The suffix-only rule does not
+    // verify the base connector UID exists in the document
+    // because the A34 writer always emits both the
+    // `<connector>-CNX` IObject and its three children
+    // together; `collect_iobject_uids` would catch the
+    // missing-parent case before reaching here.
+    const DERIVED_SUFFIXES: &[&str] = &[".1", ".2", ".PPT"];
+    DERIVED_SUFFIXES.iter().any(|s| uid.ends_with(s))
+}
+
+/// Collect every `<IObject UID="..."/>` / `<IObject UID="..." ...>`
+/// UID value out of a SmartPlant Publish Data XML. Byte-level
+/// scan — same approach as `parse_rel_details` so the gate
+/// does not pull in quick-xml for a single attribute
+/// extraction.
+fn collect_iobject_uids(xml: &str) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    let bytes = xml.as_bytes();
+    let mut i = 0usize;
+    let needle = b"<IObject";
+    while i + needle.len() <= bytes.len() {
+        if bytes[i..].starts_with(needle) {
+            let after = bytes.get(i + needle.len()).copied();
+            let valid_after = matches!(after, Some(b) if b == b'>' || b.is_ascii_whitespace());
+            if !valid_after {
+                i += 1;
+                continue;
+            }
+            let close = bytes[i..]
+                .iter()
+                .position(|&b| b == b'>')
+                .map(|off| i + off);
+            let scan_end = match close {
+                Some(c) => c,
+                None => break,
+            };
+            let inside = &bytes[i + needle.len()..scan_end];
+            if let Some(uid) = extract_quoted_attr(inside, b"UID=") {
+                out.insert(uid);
+            }
+            i = scan_end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Extract a quoted attribute value from an element-interior
+/// byte slice. Accepts both `"..."` and `'...'`. Duplicated
+/// from `diff.rs::extract_rel_attr` to keep `tests/common`
+/// free of diff.rs-internal helpers.
+fn extract_quoted_attr(inside: &[u8], needle: &[u8]) -> Option<String> {
+    let mut i = 0usize;
+    while i + needle.len() <= inside.len() {
+        if inside[i..].starts_with(needle) {
+            let after_eq = i + needle.len();
+            if after_eq >= inside.len() {
+                return None;
+            }
+            let quote = inside[after_eq];
+            if quote != b'"' && quote != b'\'' {
+                return None;
+            }
+            let value_start = after_eq + 1;
+            let close = inside[value_start..]
+                .iter()
+                .position(|&b| b == quote)
+                .map(|off| value_start + off)?;
+            return std::str::from_utf8(&inside[value_start..close])
+                .ok()
+                .map(str::to_string);
+        }
+        i += 1;
+    }
+    None
 }

@@ -75,6 +75,26 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   (A29)。Doc tests 从 0 → 6，CI 自动跑（`cargo test --doc`），
   让外部用户 `cargo doc --open` 看到的 API 文档同时是 working
   example，且文档与代码不会漂移。
+- A36 `<Rel>` UID2 semantic-fidelity gate — 在 `src/publish/diff.rs`
+  增加 `parse_rel_details(xml) -> Vec<RelDetail>` 解析器，暴露
+  每条 `<IRel>` 的 `(UID1, UID2, DefUID)` 三元组。配套
+  `tests/publish_rel_parity.rs` 新增两道 gate：
+  * **A36** — A01 writer 至少有一条 `PipingEnd1Conn` 的 UID2
+    指向真实上游 ModelItem UID（不是 `.PPT` 占位符）。直接锁定
+    A34c 的 loader + writer 协作，未来 refactor 如果让 UID2
+    退回 `.PPT` 占位符 CI 会立刻红。
+  * **A36b** — writer 输出的每条 `<IRel>` 的 UID2 必须要么命中
+    文档里已 emit 的 `<IObject UID="...">`，要么匹配显式已知
+    派生后缀 (`.1` / `.2` / `.PPT`)。这是第一道真正走 UID 图的
+    soundness gate——之前所有 Rel gate 都是计数级或集合级。
+    首次跑 A36b 暴露了 writer 端一个 latent bug：T_Relationship
+    有 `SP_Item2ID` 为 NULL 的行时，writer 会 emit `<IRel UID2=""/>`
+    这种 dangling reference（reference 根本不 emit 这类半悬 rel），
+    顺手 fix：`write_relationships` 跳过任何 source/target UID
+    为空的 T_Relationship 行。
+  A36/A36b 走同一份 `parse_rel_details` 解析器；`RelDetail` 和
+  `parse_rel_details` 都透过 `publish::mod.rs` 重导出到公共 API，
+  并带 doc test 作为可执行用例。
 - A34c `PipingEnd1Conn` / `PipingEnd2Conn` UID2 真实 endpoint
   inference — 关闭 A33 → A34 → A34b 之后残留的 "UID2 = `<connector>.PPT`
   占位符"语义缺口。新增 loader helper
@@ -159,22 +179,24 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 
 #### Tests
 
-* lib：540 → 581（+41，A26 +7 `publish::diff::tests::parse_attrs_*`，
+* lib：540 → 589（+49，A26 +7 `publish::diff::tests::parse_attrs_*`，
   A29 +7 `publish::xml_writer::tests` 中 IObject style 切换，
   A33 +8 `publish::diff::tests::parse_rel_defuid_counts_*`，
   A34c +11 = 8 个 `publish::sqlite_load::tests::attach_pipe_endpoint_*`
-  + 3 个 `publish::xml_writer::tests::a34c_*`；其余 +8 来自
-  A23 / A24 / A25 之前已记录的相关单测）
-* integration：140 → 162（+5 在 `tests/publish_attribute_parity.rs`，
+  + 3 个 `publish::xml_writer::tests::a34c_*`，
+  A36 +8 `publish::diff::tests::parse_rel_details_*`；
+  其余 +8 来自 A23 / A24 / A25 之前已记录的相关单测）
+* integration：140 → 164（+5 在 `tests/publish_attribute_parity.rs`，
   +4 在 `tests/publish_backlog_inventory.rs`，
   +5 在 `tests/publish_xml_cli.rs` 覆盖 A29b CLI `--style`，
   +4 在 `tests/publish_xml_cli.rs` 覆盖 A30 `--list-drawings` +
   drawing-not-found hint，
-  +4 在 `tests/publish_rel_parity.rs` A33 / A33b + 2 guard）
-* doc tests：0 → 6（A35 — `parse_pid_tag_counts` /
+  +4 在 `tests/publish_rel_parity.rs` A33 / A33b + 2 guard，
+  +2 在 `tests/publish_rel_parity.rs` A36 + A36b + A36 DWG sanity）
+* doc tests：0 → 7（A35 — `parse_pid_tag_counts` /
   `coverage_against_reference` / `parse_interfaces_per_tag` /
   `parse_attrs_per_interface_per_tag` / `parse_rel_defuid_counts` /
-  `PublishStyle`）
+  `PublishStyle`；A36 — `parse_rel_details`）
 * lint：0 warnings
 
 #### A28 backlog inventory（已 snapshot 入测试）
