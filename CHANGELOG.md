@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A29b)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A30)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
@@ -68,6 +68,12 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 - A29b `pid_publish_xml --style a01|dwg` CLI 选项（默认 a01，
   大小写不敏感）。CLI 把选择透传给 `PublishDrawing.style`，
   让 ops 不写代码就能从命令行切换 fixture flavor。
+- A30 CLI 增强 — `pid_publish_xml --list-drawings` 列出 SQLite
+  mirror 里的 T_Drawing 表（SP_ID / Name / DocumentCategory /
+  DocumentType / Path），单独一种 mode（不与 --drawing /
+  --out / --stdout / --diff-against / --meta-out 组合）；
+  `DrawingNotFound` 错误信息追加 `use --list-drawings to see
+  available drawing UIDs` actionable hint。
 
 #### Added — A27b whitelist（KNOWN_A01_VS_DWG_ATTR_DIVERGENCES）
 
@@ -89,9 +95,11 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 
 * lib：540 → 562（+22，A26 +7 `publish::diff::tests::parse_attrs_*`，
   A29 +7 `publish::xml_writer::tests` 中 IObject style 切换）
-* integration：140 → 154（+5 在 `tests/publish_attribute_parity.rs`，
+* integration：140 → 158（+5 在 `tests/publish_attribute_parity.rs`，
   +4 在 `tests/publish_backlog_inventory.rs`，
-  +5 在 `tests/publish_xml_cli.rs` 覆盖 A29b CLI `--style` 行为）
+  +5 在 `tests/publish_xml_cli.rs` 覆盖 A29b CLI `--style`，
+  +4 在 `tests/publish_xml_cli.rs` 覆盖 A30 `--list-drawings` +
+  drawing-not-found hint）
 * lint：0 warnings
 
 #### A28 backlog inventory（已 snapshot 入测试）

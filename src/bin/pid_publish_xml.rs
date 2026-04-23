@@ -24,14 +24,17 @@
 
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    diff_publish_xml, load_drawing_graph, write_data_xml, write_meta_xml, PublishStyle,
+    diff_publish_xml, load_drawing_graph, write_data_xml, write_meta_xml, PublishError,
+    PublishStyle,
 };
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 struct CliOptions {
     sqlite_path: PathBuf,
-    drawing_uid: String,
+    /// Required for the normal "render this drawing" flow;
+    /// `None` is only valid when `list_drawings` is true.
+    drawing_uid: Option<String>,
     output: Option<OutputTarget>,
     /// Optional `_Meta.xml` companion sink. Only honored when
     /// `output` is a file target — pairing meta output with stdout
@@ -54,6 +57,12 @@ struct CliOptions {
     /// blocks. Defaults to A01 to keep every pre-A29b CLI
     /// invocation byte-identical.
     style: PublishStyle,
+    /// A30 — when true, the CLI prints every `T_Drawing` row in
+    /// the SQLite mirror and exits 0 without rendering anything.
+    /// Mutually exclusive with `--drawing` / `--out` / `--stdout`
+    /// / `--diff-against` because there is no per-drawing
+    /// output to produce.
+    list_drawings: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +75,8 @@ fn print_usage() {
     eprintln!(
         "Usage: pid_publish_xml <sqlite> --drawing UID [--out FILE | --stdout]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
-         \x20               [--style a01|dwg]\n\n\
+         \x20               [--style a01|dwg]\n\
+         \x20  pid_publish_xml <sqlite> --list-drawings\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
@@ -82,8 +92,13 @@ fn print_usage() {
          \x20                   blocks. `a01` (default) emits ItemTag attributes\n\
          \x20                   matching the A01 SmartPlant export shape; `dwg`\n\
          \x20                   drops ItemTag in favor of Name (or omits it on\n\
-         \x20                   PIDProcessVessel) to match the DWG export shape.\n\n\
-         At least one of --out / --stdout / --diff-against is required."
+         \x20                   PIDProcessVessel) to match the DWG export shape.\n\
+         --list-drawings     Print every T_Drawing row in the SQLite mirror\n\
+         \x20                   (SP_ID, Name, DocumentCategory, DocumentType,\n\
+         \x20                   Path) and exit 0. Mutually exclusive with the\n\
+         \x20                   render flags.\n\n\
+         At least one of --out / --stdout / --diff-against / --list-drawings\n\
+         is required."
     );
 }
 
@@ -99,6 +114,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut stdout = false;
     let mut plant_name: Option<String> = None;
     let mut style: Option<PublishStyle> = None;
+    let mut list_drawings = false;
 
     let mut i = 2;
     while i < args.len() {
@@ -158,11 +174,14 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 style = Some(parsed);
                 i += 2;
             }
+            "--list-drawings" => {
+                list_drawings = true;
+                i += 1;
+            }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
 
-    let drawing_uid = drawing_uid.ok_or_else(|| "--drawing UID is required".to_string())?;
     let output = match (out_path, stdout) {
         (Some(path), false) => Some(OutputTarget::File(path)),
         (None, true) => Some(OutputTarget::Stdout),
@@ -172,10 +191,35 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         (None, false) => None,
     };
 
-    if output.is_none() && diff_against.is_none() {
-        return Err(
-            "at least one of --out FILE / --stdout / --diff-against FILE is required".into(),
-        );
+    if list_drawings {
+        // --list-drawings is its own self-contained mode. It
+        // requires NONE of --drawing / --out / --stdout /
+        // --diff-against / --meta-out (the SQLite path is the
+        // only mandatory positional). Reject explicit
+        // combinations rather than silently doing both — that
+        // would conflate "list" output with rendered XML on
+        // stdout, breaking shell pipelines.
+        if drawing_uid.is_some() {
+            return Err("--list-drawings is mutually exclusive with --drawing".into());
+        }
+        if output.is_some() {
+            return Err("--list-drawings is mutually exclusive with --out / --stdout".into());
+        }
+        if diff_against.is_some() {
+            return Err("--list-drawings is mutually exclusive with --diff-against".into());
+        }
+        if meta_out_path.is_some() {
+            return Err("--list-drawings is mutually exclusive with --meta-out".into());
+        }
+    } else {
+        if drawing_uid.is_none() {
+            return Err("--drawing UID is required (or use --list-drawings)".into());
+        }
+        if output.is_none() && diff_against.is_none() {
+            return Err(
+                "at least one of --out FILE / --stdout / --diff-against FILE / --list-drawings is required".into(),
+            );
+        }
     }
 
     if meta_out_path.is_some() && matches!(output, Some(OutputTarget::Stdout)) {
@@ -190,6 +234,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         diff_against,
         plant_name: plant_name.unwrap_or_else(|| "P01".to_string()),
         style: style.unwrap_or_default(),
+        list_drawings,
     })
 }
 
@@ -225,8 +270,30 @@ fn main() {
 fn run(options: CliOptions) -> Result<i32, String> {
     let conn = open_readonly(&options.sqlite_path)
         .map_err(|e| format!("open {}: {e}", options.sqlite_path.display()))?;
-    let mut graph = load_drawing_graph(&conn, &options.drawing_uid)
-        .map_err(|e| format!("load drawing {}: {e}", options.drawing_uid))?;
+
+    // A30 — list mode prints all drawings and exits.
+    if options.list_drawings {
+        return list_drawings(&conn).map(|_| 0);
+    }
+
+    // After parse_args' validation, drawing_uid must be Some when
+    // we reach this point. Unwrap is safe and an internal error
+    // (rather than a user-facing one) if it ever fires.
+    let drawing_uid = options
+        .drawing_uid
+        .as_deref()
+        .expect("drawing_uid required in non-list-drawings mode");
+    let mut graph = load_drawing_graph(&conn, drawing_uid).map_err(|e| {
+        // A30 · attach a discoverability hint when the drawing
+        // UID was not found. The error message stays single-line
+        // so test harnesses can keep matching on the prefix.
+        match &e {
+            PublishError::DrawingNotFound { uid } => format!(
+                "load drawing {uid}: {e}; use `--list-drawings` to see available drawing UIDs"
+            ),
+            _ => format!("load drawing {drawing_uid}: {e}"),
+        }
+    })?;
     // A29b: thread CLI --style choice through the loaded graph
     // so the writer routes IObject shape via PublishStyle. The
     // default branch keeps every pre-A29b CLI invocation
@@ -296,6 +363,49 @@ fn run(options: CliOptions) -> Result<i32, String> {
     }
 
     Ok(exit_code)
+}
+
+/// A30 · `--list-drawings` mode: print every `T_Drawing` row in
+/// the SQLite mirror as a tab-aligned table and return. Reuses
+/// the same `Connection` already opened by `run`, so the SQLite
+/// path validation is centralized.
+///
+/// Output layout pins to fixed-width columns so an operator can
+/// `grep` for a Name / Path substring; the trailing summary
+/// ("Total: N drawing(s)") goes to stderr to keep stdout
+/// pipe-friendly.
+fn list_drawings(conn: &rusqlite::Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("SELECT SP_ID, Name, DocumentCategory, DocumentType, Path FROM T_Drawing")
+        .map_err(|e| format!("prepare T_Drawing query: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            ))
+        })
+        .map_err(|e| format!("query T_Drawing rows: {e}"))?;
+    println!(
+        "{:<34} | {:<24} | {:<22} | {:<10} | Path",
+        "SP_ID", "Name", "DocumentCategory", "DocumentType",
+    );
+    println!("{}", "-".repeat(120));
+    let mut count = 0usize;
+    for row in rows {
+        let (uid, name, cat, dtype, path) =
+            row.map_err(|e| format!("read T_Drawing row: {e}"))?;
+        println!(
+            "{:<34} | {:<24} | {:<22} | {:<10} | {}",
+            uid, name, cat, dtype, path,
+        );
+        count += 1;
+    }
+    eprintln!("\nTotal: {count} drawing(s).");
+    Ok(())
 }
 
 /// Write `contents` to `path`, creating the parent directory chain

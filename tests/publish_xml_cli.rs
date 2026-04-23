@@ -620,6 +620,120 @@ fn cli_style_case_insensitive_accepts_uppercase_dwg() {
 }
 
 #[test]
+fn cli_list_drawings_prints_table_and_summary_for_test02_fixture() {
+    // A30 — `--list-drawings` reads T_Drawing and prints a
+    // tab-aligned table on stdout plus a "Total: N drawing(s)"
+    // summary on stderr. Pin both surfaces so a regression
+    // (broken SQL, missing column, output to wrong stream)
+    // trips immediately.
+    if !fixture_available() {
+        return;
+    }
+    let out = Command::new(binary_path())
+        .args([SQLITE_PATH, "--list-drawings"])
+        .output()
+        .expect("spawn pid_publish_xml --list-drawings");
+    assert!(out.status.success(), "--list-drawings should exit 0; got {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stdout.contains("SP_ID"),
+        "stdout should carry the column header; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(A01_DRAWING_UID),
+        "TEST02 fixture's only drawing UID must appear in the listing; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("A01.pid"),
+        "the A01 drawing's Path should appear in the listing; got:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("Total: 1 drawing"),
+        "stderr should carry the summary line; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_list_drawings_rejects_combination_with_drawing_flag() {
+    // The two modes are mutually exclusive — combining them
+    // would conflate "list" output with rendered XML on the
+    // same stdout stream and break shell pipelines.
+    let out = Command::new(binary_path())
+        .args([
+            "irrelevant.sqlite",
+            "--list-drawings",
+            "--drawing",
+            "FAKE_UID",
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --list-drawings --drawing");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "combining --list-drawings and --drawing should be a usage error; got {out:?}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--list-drawings is mutually exclusive with --drawing"),
+        "error must name the conflict; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_drawing_not_found_error_includes_list_drawings_hint() {
+    // A30 attaches `use --list-drawings to see available drawing
+    // UIDs` to the DrawingNotFound error path so an operator who
+    // mistypes a UID immediately sees the recovery action.
+    if !fixture_available() {
+        return;
+    }
+    let out = Command::new(binary_path())
+        .args([
+            SQLITE_PATH,
+            "--drawing",
+            "DOES_NOT_EXIST",
+            "--stdout",
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --drawing DOES_NOT_EXIST --stdout");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "missing drawing should exit 1 (I/O / data error); got {out:?}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("DOES_NOT_EXIST"),
+        "error should name the missing UID; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("use `--list-drawings`"),
+        "DrawingNotFound error must surface the recovery hint; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_help_documents_list_drawings_flag() {
+    // Discoverability: --help is the only place ops learn about
+    // --list-drawings without reading the source.
+    let out = Command::new(binary_path())
+        .arg("--help")
+        .output()
+        .expect("spawn pid_publish_xml --help");
+    assert!(out.status.success(), "--help should exit 0; got {out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--list-drawings"),
+        "--help should advertise the --list-drawings flag; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Print every T_Drawing row"),
+        "--help should describe what --list-drawings does; stderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn cli_diff_against_combined_with_out_writes_xml_and_reports_clean() {
     // --diff-against composes with --out: the XML lands on disk
     // AND the report is printed. Post-A14 the A01 reference is
