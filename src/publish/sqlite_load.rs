@@ -425,6 +425,13 @@ fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
         "Note" | "ItemNote" => &["T_ItemNote"],
         "Exchanger" => &["T_PlantItem", "T_Equipment", "T_Exchanger"],
         "Mechanical" => &["T_PlantItem", "T_Equipment", "T_Mechanical"],
+        // A18: `SignalRun` is the signal-side counterpart of
+        // `PipeRun` — T_SignalRun stores the signal-specific
+        // attributes (SignalType / TagSequenceNo / TagSuffix)
+        // while T_Connector carries the standard connector
+        // geometry (start/end items, zero-length flag).
+        // Drives the `write_signal_connector` XML writer arm.
+        "SignalRun" => &["T_PlantItem", "T_Connector", "T_SignalRun"],
         _ => &[],
     }
 }

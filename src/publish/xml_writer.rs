@@ -183,6 +183,22 @@ fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<
                 write_control_system_function(buf, obj)?;
                 write_derived_instr_signal_ports(buf, obj, INSTR_DERIVED_SIGNAL_PORT_COUNT)?;
             }
+            // A17: PipingComp → `<PIDPipingComponent>`. SQLite
+            // loader already stitches T_PlantItem + T_InlineComp +
+            // T_PipingComp fields onto the `PublishObject`; the
+            // writer renders the 19-interface shape observed in
+            // DWG-0202GP06-01_Data.xml (Cap / Conduit gate valve
+            // samples). Closes PIDPipingComponent × 2 in the A15
+            // backlog.
+            "PipingComp" => write_piping_component(buf, obj)?,
+            // A18: SignalRun → `<PIDSignalConnector>`. The
+            // signal-side counterpart of PipeRun → PIDPipingConnector.
+            // The DWG-0202GP06-01 fixture ships 1 SignalRun row
+            // whose XML shape is deliberately minimal (8
+            // interfaces, no IPBSItem business envelope) because
+            // SmartPlant treats signal connectors as pure wiring
+            // overlays rather than piped facilities.
+            "SignalRun" => write_signal_connector(buf, obj)?,
             // TODO(A12+): Exchanger / Mechanical have business
             // subtables registered in `subtables_for_item_type` but
             // no dedicated SmartPlant tag observed in the TEST02 +
@@ -244,6 +260,44 @@ fn resolve_codelist_field(
         .map(str::to_string)
 }
 
+/// Emit the full `<PIDProcessVessel>` block for a Vessel row.
+///
+/// The reference shape has 15 interfaces, confirmed byte-for-byte
+/// against both `A01_Data.xml:12–28` and
+/// `DWG-0202GP06-01_Data.xml:1429–1447`.
+///
+/// A21 closes a 5-interface fidelity gap: the pre-A21 writer
+/// emitted only 10 interfaces (IObject, IPIDProcessVesselOcc,
+/// IProcessVesselOcc, IEquipment, IEquipmentOcc, IPBSItem,
+/// IProcessEquipment, IProcessVessel, IPIDProcessVessel,
+/// IPIDTypical). The five missing wrapper interfaces are now
+/// emitted in SPPID-canonical order:
+///
+/// * `IPBSItemCollection` (between IPBSItem and IPlannedMatl)
+/// * `IPlannedMatl`
+/// * `IProcessEquipmentOcc` (next to IProcessEquipment)
+/// * `IDrawingItem` (between IProcessVessel and IPIDProcessVessel)
+/// * `ISpecifiedMatlItem` (after IPIDProcessVessel)
+///
+/// A21 also populates:
+/// * `IPBSItem ConstructionStatus="..." ConstructionStatus2="..."`
+///   with the same SPPID canonical defaults used for the
+///   PipingComponent/PipingConnector writers (overridable via
+///   `obj.fields["ConstructionStatus"]` /
+///   `["ConstructionStatus2"]`).
+/// * Optional DWG-specific attributes:
+///   - `IPBSItem HeightRelativeToGrade` from
+///     `obj.fields["HeightRelativeToGrade"]`.
+///   - `IEquipment EqType0/1/2/3 + EquipmentTrimSpec` from the
+///     corresponding `T_Vessel` / `T_Equipment` columns.
+///   - `IProcessVessel ProcessVessel_VesselVolumetricCapacity`
+///     from `obj.fields["VesselVolumetricCapacity"]`.
+///   - `ISpecifiedMatlItem LongMaterialDescription` from
+///     `obj.fields["LongMaterialDescription"]`.
+///
+/// Optional attributes render as empty / bare when absent,
+/// preserving A01 byte-shape compatibility; render populated
+/// when loader-side fields arrive.
 fn write_process_vessel(
     buf: &mut String,
     obj: &PublishObject,
@@ -266,6 +320,40 @@ fn write_process_vessel(
     let eq_type_description = resolve_codelist_field(drawing, obj, "EquipmentType")
         .or_else(|| derive_type_description_from_symbol(drawing, &obj.uid))
         .unwrap_or_else(|| obj.fields.get("EquipmentType").cloned().unwrap_or_default());
+    let construction_status = obj
+        .fields
+        .get("ConstructionStatus")
+        .cloned()
+        .unwrap_or_else(|| "@NewConstruction".to_string());
+    let construction_status2 = obj
+        .fields
+        .get("ConstructionStatus2")
+        .cloned()
+        .unwrap_or_else(|| "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string());
+    let height_relative_to_grade = obj
+        .fields
+        .get("HeightRelativeToGrade")
+        .cloned()
+        .unwrap_or_default();
+    let eq_type0 = obj.fields.get("EqType0").cloned().unwrap_or_default();
+    let eq_type1 = obj.fields.get("EqType1").cloned().unwrap_or_default();
+    let eq_type2 = obj.fields.get("EqType2").cloned().unwrap_or_default();
+    let eq_type3 = obj.fields.get("EqType3").cloned().unwrap_or_default();
+    let equipment_trim_spec = obj
+        .fields
+        .get("EquipmentTrimSpec")
+        .cloned()
+        .unwrap_or_default();
+    let vessel_volumetric_capacity = obj
+        .fields
+        .get("VesselVolumetricCapacity")
+        .cloned()
+        .unwrap_or_default();
+    let long_material_description = obj
+        .fields
+        .get("LongMaterialDescription")
+        .cloned()
+        .unwrap_or_default();
     writeln!(buf, "   <PIDProcessVessel>").map_err(fmt_err)?;
     writeln!(
         buf,
@@ -277,17 +365,84 @@ fn write_process_vessel(
     .map_err(fmt_err)?;
     writeln!(buf, "      <IPIDProcessVesselOcc/>").map_err(fmt_err)?;
     writeln!(buf, "      <IProcessVesselOcc/>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IEquipment EqTypeDescription="{}"/>"#,
-        escape_attr(&eq_type_description)
-    )
-    .map_err(fmt_err)?;
+    // IEquipment renders EqTypeDescription always; EqType0-3 and
+    // EquipmentTrimSpec render as an additional leading block
+    // when any of them is populated (DWG shape).
+    if eq_type0.is_empty()
+        && eq_type1.is_empty()
+        && eq_type2.is_empty()
+        && eq_type3.is_empty()
+        && equipment_trim_spec.is_empty()
+    {
+        writeln!(
+            buf,
+            r#"      <IEquipment EqTypeDescription="{}"/>"#,
+            escape_attr(&eq_type_description)
+        )
+        .map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            concat!(
+                r#"      <IEquipment EqType0="{}" EqType3="{}" EqType2="{}" "#,
+                r#"EqType1="{}" EquipmentTrimSpec="{}" EqTypeDescription="{}"/>"#,
+            ),
+            escape_attr(&eq_type0),
+            escape_attr(&eq_type3),
+            escape_attr(&eq_type2),
+            escape_attr(&eq_type1),
+            escape_attr(&equipment_trim_spec),
+            escape_attr(&eq_type_description),
+        )
+        .map_err(fmt_err)?;
+    }
     writeln!(buf, "      <IEquipmentOcc/>").map_err(fmt_err)?;
-    writeln!(buf, "      <IPBSItem/>").map_err(fmt_err)?;
+    // IPBSItem: defaults to A17-canonical defaults; gains
+    // HeightRelativeToGrade when populated (DWG shape).
+    if height_relative_to_grade.is_empty() {
+        writeln!(
+            buf,
+            r#"      <IPBSItem ConstructionStatus="{}" ConstructionStatus2="{}"/>"#,
+            escape_attr(&construction_status),
+            escape_attr(&construction_status2),
+        )
+        .map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IPBSItem HeightRelativeToGrade="{}" ConstructionStatus="{}" ConstructionStatus2="{}"/>"#,
+            escape_attr(&height_relative_to_grade),
+            escape_attr(&construction_status),
+            escape_attr(&construction_status2),
+        )
+        .map_err(fmt_err)?;
+    }
+    writeln!(buf, "      <IPBSItemCollection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPlannedMatl/>").map_err(fmt_err)?;
     writeln!(buf, "      <IProcessEquipment/>").map_err(fmt_err)?;
-    writeln!(buf, "      <IProcessVessel/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IProcessEquipmentOcc/>").map_err(fmt_err)?;
+    if vessel_volumetric_capacity.is_empty() {
+        writeln!(buf, "      <IProcessVessel/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IProcessVessel ProcessVessel_VesselVolumetricCapacity="{}"/>"#,
+            escape_attr(&vessel_volumetric_capacity),
+        )
+        .map_err(fmt_err)?;
+    }
+    writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPIDProcessVessel/>").map_err(fmt_err)?;
+    if long_material_description.is_empty() {
+        writeln!(buf, "      <ISpecifiedMatlItem/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <ISpecifiedMatlItem LongMaterialDescription="{}"/>"#,
+            escape_attr(&long_material_description),
+        )
+        .map_err(fmt_err)?;
+    }
     writeln!(
         buf,
         r#"      <IPIDTypical IsTypical="{}"/>"#,
@@ -297,6 +452,42 @@ fn write_process_vessel(
     writeln!(buf, "   </PIDProcessVessel>").map_err(fmt_err)
 }
 
+/// Emit the full `<PIDNozzle>` block for a Nozzle row.
+///
+/// The reference shape has 22 interfaces, confirmed byte-for-byte
+/// against both `A01_Data.xml:29–53` and DWG sample 117–141.
+///
+/// A22 closes a 13-interface fidelity gap: pre-A22 writer emitted
+/// only 9 interfaces (IObject, IPipingPortComposition, INozzleOcc,
+/// INozzle, IEquipmentComponent, IEquipmentComponentOcc,
+/// IPipeCrossSectionItem, IPipingSpecifiedItem, IPIDTypical).
+/// The 13 missing wrapper interfaces are now emitted in SPPID
+/// canonical order:
+///
+/// * `IPBSItem ConstructionStatus=... ConstructionStatus2=...`
+///   (inserted right after IObject with A17-canonical defaults).
+/// * `IPlannedMatl`, `IDrawingItem` (before the per-nozzle
+///   INozzleOcc / INozzle pair).
+/// * `IFabricatedItem`, `IHeatTracedItem HTraceRqmt="..."` (after
+///   IEquipmentComponentOcc).
+/// * `IPBSItemCollection`, `IProcessPointCollection`,
+///   `ISignalPortComposition`, `IPartOcc`, `IDocumentItem`,
+///   `IElecPowerConsumer`, `IPart`, `INoteCollection`,
+///   `IProcessDataCaseComposition` (between IHeatTracedItem and
+///   IPipeCrossSectionItem).
+///
+/// A22 also upgrades:
+/// * `IEquipmentComponent` — expanded-attr DWG form gains
+///   `ProcessEqCompType1` + `ProcessEqCompType2` leading
+///   attributes when the loader populates the corresponding
+///   T_Nozzle columns. A01 shape stays single-attribute
+///   (`ProcEqpCompTypeDescription` alone).
+/// * `IPipeCrossSectionItem` — now renders bare (A01) when
+///   NominalDiameter is absent; with the attribute (DWG) when
+///   populated. Pre-A22 forced an empty attribute even when
+///   absent, diverging from the A01 bare shape.
+/// * `IPipingSpecifiedItem` — same conditional path for
+///   `PipingMaterialsClass` (bare in A01; populated in DWG).
 fn write_nozzle(
     buf: &mut String,
     obj: &PublishObject,
@@ -311,6 +502,27 @@ fn write_nozzle(
     let piping_materials_class = obj
         .fields
         .get("PipingMaterialsClass")
+        .cloned()
+        .unwrap_or_default();
+    let construction_status = obj
+        .fields
+        .get("ConstructionStatus")
+        .cloned()
+        .unwrap_or_else(|| "@NewConstruction".to_string());
+    let construction_status2 = obj
+        .fields
+        .get("ConstructionStatus2")
+        .cloned()
+        .unwrap_or_else(|| "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string());
+    let htrace_rqmt = obj.fields.get("HTraceRqmt").cloned().unwrap_or_default();
+    let process_eq_comp_type1 = obj
+        .fields
+        .get("ProcessEqCompType1")
+        .cloned()
+        .unwrap_or_default();
+    let process_eq_comp_type2 = obj
+        .fields
+        .get("ProcessEqCompType2")
         .cloned()
         .unwrap_or_default();
     // Three-tier fallback for `ProcEqpCompTypeDescription`, in
@@ -331,28 +543,72 @@ fn write_nozzle(
         escape_attr(&obj.uid)
     )
     .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IPBSItem ConstructionStatus="{}" ConstructionStatus2="{}"/>"#,
+        escape_attr(&construction_status),
+        escape_attr(&construction_status2),
+    )
+    .map_err(fmt_err)?;
     writeln!(buf, "      <IPipingPortComposition/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPlannedMatl/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
     writeln!(buf, "      <INozzleOcc/>").map_err(fmt_err)?;
     writeln!(buf, "      <INozzle/>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IEquipmentComponent ProcEqpCompTypeDescription="{}"/>"#,
-        escape_attr(&proc_eq_comp_description)
-    )
-    .map_err(fmt_err)?;
+    if process_eq_comp_type1.is_empty() && process_eq_comp_type2.is_empty() {
+        writeln!(
+            buf,
+            r#"      <IEquipmentComponent ProcEqpCompTypeDescription="{}"/>"#,
+            escape_attr(&proc_eq_comp_description)
+        )
+        .map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IEquipmentComponent ProcessEqCompType1="{}" ProcessEqCompType2="{}" ProcEqpCompTypeDescription="{}"/>"#,
+            escape_attr(&process_eq_comp_type1),
+            escape_attr(&process_eq_comp_type2),
+            escape_attr(&proc_eq_comp_description),
+        )
+        .map_err(fmt_err)?;
+    }
     writeln!(buf, "      <IEquipmentComponentOcc/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IFabricatedItem/>").map_err(fmt_err)?;
     writeln!(
         buf,
-        r#"      <IPipeCrossSectionItem NominalDiameter="{}"/>"#,
-        escape_attr(&nominal_diameter)
+        r#"      <IHeatTracedItem HTraceRqmt="{}"/>"#,
+        escape_attr(&htrace_rqmt),
     )
     .map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IPipingSpecifiedItem PipingMaterialsClass="{}"/>"#,
-        escape_attr(&piping_materials_class)
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, "      <IPBSItemCollection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IProcessPointCollection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <ISignalPortComposition/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPartOcc/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDocumentItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IElecPowerConsumer/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPart/>").map_err(fmt_err)?;
+    writeln!(buf, "      <INoteCollection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IProcessDataCaseComposition/>").map_err(fmt_err)?;
+    if nominal_diameter.is_empty() {
+        writeln!(buf, "      <IPipeCrossSectionItem/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IPipeCrossSectionItem NominalDiameter="{}"/>"#,
+            escape_attr(&nominal_diameter)
+        )
+        .map_err(fmt_err)?;
+    }
+    if piping_materials_class.is_empty() {
+        writeln!(buf, "      <IPipingSpecifiedItem/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IPipingSpecifiedItem PipingMaterialsClass="{}"/>"#,
+            escape_attr(&piping_materials_class)
+        )
+        .map_err(fmt_err)?;
+    }
     writeln!(
         buf,
         r#"      <IPIDTypical IsTypical="{}"/>"#,
@@ -402,26 +658,151 @@ fn resolve_pipe_item_tag(obj: &PublishObject) -> String {
     obj.uid.clone()
 }
 
+/// Emit the full `<PIDPipeline>` block for a PipeRun row.
+///
+/// The reference SmartPlant shape (confirmed byte-for-byte on
+/// both `A01_Data.xml:54-65` and `DWG-0202GP06-01_Data.xml:1369-1380`):
+/// ```text
+/// <PIDPipeline>
+///    <IObject UID="..." Name="..." ItemTag="..."/>
+///    <IPBSItem/>
+///    <IPlannedFacility/>
+///    <IPBSItemCollection/>
+///    <IPipeline/>
+///    <IPipingConnectorComposition/>
+///    <IFluidSystem FluidCode="@{...}" FluidSystem="@{...}"/>
+///    <INoteCollection/>
+///    <IExpandableThing/>
+///    <IPIDTypical/>
+/// </PIDPipeline>
+/// ```
+///
+/// A19 closes four pre-existing fidelity gaps:
+/// * Adds the empty wrapper interfaces `IPBSItem`,
+///   `IPlannedFacility`, `IPBSItemCollection`, `INoteCollection`
+///   which SmartPlant always emits but our earlier writer
+///   silently dropped.
+/// * Populates `IFluidSystem FluidCode="..." FluidSystem="..."`
+///   from `obj.fields["OperFluidCode"]` + `obj.fields["FluidSystem"]`
+///   (T_PipeRun columns loaded by the sqlite_load layer). When
+///   either value is absent the respective attribute renders
+///   empty, matching the A01 fixture shape (`<IFluidSystem/>`
+///   without attributes, which under A19 becomes
+///   `<IFluidSystem FluidCode="" FluidSystem=""/>` — still a
+///   fidelity improvement for downstream consumers expecting
+///   the attributes to be declared).
+///
+/// A19 also adds an optional `Name=` attribute on the IObject
+/// when the loader populates `obj.fields["PipelineName"]` or
+/// falls back to the item tag. The DWG reference uses e.g.
+/// `Name="A3jqz0101-OD"` for pipeline labels; A01 uses
+/// unlabeled pipelines and the attribute is omitted to match.
 fn write_pipeline(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
     let item_tag = resolve_pipe_item_tag(obj);
+    let fluid_code = obj.fields.get("OperFluidCode").cloned().unwrap_or_default();
+    let fluid_system = obj.fields.get("FluidSystem").cloned().unwrap_or_default();
+    // Name takes the loader-provided `PipelineName` when present;
+    // absence keeps the output aligned with A01 which does not
+    // stamp Name on its pipeline IObject.
+    let pipeline_name = obj.fields.get("PipelineName").cloned();
     writeln!(buf, "   <PIDPipeline>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}" ItemTag="{}"/>"#,
-        escape_attr(&obj.uid),
-        escape_attr(&item_tag),
-    )
-    .map_err(fmt_err)?;
+    match pipeline_name {
+        Some(name) if !name.is_empty() => writeln!(
+            buf,
+            r#"      <IObject UID="{}" Name="{}" ItemTag="{}"/>"#,
+            escape_attr(&obj.uid),
+            escape_attr(&name),
+            escape_attr(&item_tag),
+        )
+        .map_err(fmt_err)?,
+        _ => writeln!(
+            buf,
+            r#"      <IObject UID="{}" ItemTag="{}"/>"#,
+            escape_attr(&obj.uid),
+            escape_attr(&item_tag),
+        )
+        .map_err(fmt_err)?,
+    }
+    writeln!(buf, "      <IPBSItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPlannedFacility/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPBSItemCollection/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPipeline/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPipingConnectorComposition/>").map_err(fmt_err)?;
-    writeln!(buf, "      <IFluidSystem/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IFluidSystem FluidCode="{}" FluidSystem="{}"/>"#,
+        escape_attr(&fluid_code),
+        escape_attr(&fluid_system),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <INoteCollection/>").map_err(fmt_err)?;
     writeln!(buf, "      <IExpandableThing/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPIDTypical/>").map_err(fmt_err)?;
     writeln!(buf, "   </PIDPipeline>").map_err(fmt_err)
 }
 
+/// Emit the full `<PIDPipingConnector>` block for a PipeRun row.
+///
+/// The reference SmartPlant shape is a 22-interface block
+/// (confirmed byte-for-byte on `A01_Data.xml:66–89` — 22
+/// interfaces, all bare except the named/sized ones — and
+/// `DWG-0202GP06-01_Data.xml:246–269` — the same 22 interfaces
+/// plus populated optional attributes on `IConnector` /
+/// `IPipingConnector` / `ISlopedPipingItem` / `IInsulatedItem`).
+///
+/// A20 closes a 15-interface fidelity gap. Pre-A20 writer emitted
+/// only 7 interfaces (IObject, IConnector, IPipingConnector,
+/// INamedPipingConnector, IPipeCrossSectionItem, IPipingSpecifiedItem,
+/// IPIDTypical). The 15 missing wrapper interfaces
+/// (IPBSItem, IPlannedFacility, IDrawingItem, IPBSItemCollection,
+/// IFabricatedItem, IHeatTracedItem, IProcessPointCollection,
+/// IDocumentItem, IElecPowerConsumer, INoteCollection,
+/// IProcessDataCaseComposition, IExpandableThing,
+/// ISlopedPipingItem, IInsulatedItem, IJacketedItem) are now
+/// emitted unconditionally in SPPID-canonical order.
+///
+/// Attribute routing:
+/// * `IObject` — `UID` is the derived `<piperun>-CNX`. A01 uses
+///   `ItemTag="..."`; DWG uses `Name="..."` instead (same
+///   field, different SmartPlant exporter versions). The writer
+///   emits `Name="..."` when `obj.fields["PipelineName"]` is
+///   populated (DWG-shape), otherwise `ItemTag="..."` (A01-shape).
+/// * `IPBSItem` — same defaults as A17's PIDPipingComponent
+///   (`@NewConstruction` + the fixed `{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}`
+///   GUID), overridable via `obj.fields["ConstructionStatus"]`
+///   and `obj.fields["ConstructionStatus2"]`.
+/// * `IConnector` — `FlowDirection` +
+///   `RepresentationsAreAllZeroLength` optional, sourced from
+///   `obj.fields["FlowDirection"]` + the SPPID boolean
+///   `obj.fields["RepresentationsAreAllZeroLength"]` via
+///   [`map_bool`]. Both render `False`/empty in the A01 shape;
+///   both populate from the DWG shape.
+/// * `IPipingConnector` — `PipingConnectorType` optional.
+/// * `IHeatTracedItem` — `HTraceRqmt` (standard SPPID field).
+/// * `INamedPipingConnector` — three always-declared attributes
+///   (`PipingConnectorPrefix`, `PipingConnectorSeqNo`,
+///   `PipingConnectorSuff`) routed from
+///   `obj.fields["TagPrefix"/"TagSequenceNo"/"TagSuffix"]`.
+/// * `IPipeCrossSectionItem` — `NominalDiameter` with mm
+///   suffix via [`format_diameter`].
+/// * `IPipingSpecifiedItem` — `PipingMaterialsClass`.
+/// * `ISlopedPipingItem` — `SlopedPipingAngle` +
+///   `SlopedPipeDirection` optional (DWG populates with
+///   radians + enum GUID; A01 emits bare).
+/// * `IInsulatedItem` — `InsulThickSrc` + `TotalInsulThick`
+///   optional (DWG populates; A01 emits bare).
+/// * `IPIDTypical` — `IsTypical` routed from
+///   `obj.is_typical` via [`map_bool`].
+///
+/// Optional attributes render as empty strings when the loader
+/// has not populated the corresponding column. This keeps the
+/// A01 byte-shape identical to the pre-A20 empty case while
+/// unlocking the DWG-specific populated shape when the columns
+/// arrive from T_PipeRun / T_Connector.
 fn write_piping_connector(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+    let tag_prefix = obj.fields.get("TagPrefix").cloned().unwrap_or_default();
     let tag_sequence = obj.fields.get("TagSequenceNo").cloned().unwrap_or_default();
+    let tag_suffix = obj.fields.get("TagSuffix").cloned().unwrap_or_default();
     let piping_materials_class = obj
         .fields
         .get("PipingMaterialsClass")
@@ -433,6 +814,50 @@ fn write_piping_connector(buf: &mut String, obj: &PublishObject) -> Result<(), P
         .cloned()
         .map(|v| format_diameter(&v))
         .unwrap_or_default();
+    let construction_status = obj
+        .fields
+        .get("ConstructionStatus")
+        .cloned()
+        .unwrap_or_else(|| "@NewConstruction".to_string());
+    let construction_status2 = obj
+        .fields
+        .get("ConstructionStatus2")
+        .cloned()
+        .unwrap_or_else(|| "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string());
+    let flow_direction = obj.fields.get("FlowDirection").cloned().unwrap_or_default();
+    let reps_all_zero_length = obj
+        .fields
+        .get("RepresentationsAreAllZeroLength")
+        .map(|s| map_bool(s))
+        .unwrap_or("False");
+    let piping_connector_type = obj
+        .fields
+        .get("PipingConnectorType")
+        .cloned()
+        .unwrap_or_default();
+    let htrace_rqmt = obj
+        .fields
+        .get("HTraceRqmt")
+        .cloned()
+        .or_else(|| obj.fields.get("HTraceReqmt").cloned())
+        .unwrap_or_default();
+    let sloped_piping_angle = obj
+        .fields
+        .get("SlopedPipingAngle")
+        .cloned()
+        .unwrap_or_default();
+    let sloped_pipe_direction = obj
+        .fields
+        .get("SlopedPipeDirection")
+        .cloned()
+        .unwrap_or_default();
+    let insul_thick_src = obj.fields.get("InsulThickSrc").cloned().unwrap_or_default();
+    let total_insul_thick = obj
+        .fields
+        .get("TotalInsulThick")
+        .cloned()
+        .unwrap_or_default();
+    let pipeline_name = obj.fields.get("PipelineName").cloned();
     // The connector inherits its ItemTag from the pipeline it is
     // the physical half of — SmartPlant renders them identically.
     let item_tag = resolve_pipe_item_tag(obj);
@@ -441,19 +866,83 @@ fn write_piping_connector(buf: &mut String, obj: &PublishObject) -> Result<(), P
     // composition relationship inside the drawing.
     let connector_uid = format!("{}-CNX", obj.uid);
     writeln!(buf, "   <PIDPipingConnector>").map_err(fmt_err)?;
+    // DWG's PIDPipingConnector stamps the human-readable Name on
+    // the IObject when available; A01 stamps ItemTag instead.
+    // We follow DWG shape when PipelineName is loaded, A01 shape
+    // otherwise — both paths preserve the canonical two-attribute
+    // IObject wire shape.
+    match pipeline_name {
+        Some(name) if !name.is_empty() => writeln!(
+            buf,
+            r#"      <IObject UID="{}" Name="{}"/>"#,
+            escape_attr(&connector_uid),
+            escape_attr(&name),
+        )
+        .map_err(fmt_err)?,
+        _ => writeln!(
+            buf,
+            r#"      <IObject UID="{}" ItemTag="{}"/>"#,
+            escape_attr(&connector_uid),
+            escape_attr(&item_tag),
+        )
+        .map_err(fmt_err)?,
+    }
     writeln!(
         buf,
-        r#"      <IObject UID="{}" ItemTag="{}"/>"#,
-        escape_attr(&connector_uid),
-        escape_attr(&item_tag),
+        r#"      <IPBSItem ConstructionStatus="{}" ConstructionStatus2="{}"/>"#,
+        escape_attr(&construction_status),
+        escape_attr(&construction_status2),
     )
     .map_err(fmt_err)?;
-    writeln!(buf, "      <IConnector/>").map_err(fmt_err)?;
-    writeln!(buf, "      <IPipingConnector/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPlannedFacility/>").map_err(fmt_err)?;
+    // IConnector renders bare when both optional attributes are
+    // absent (matches A01); renders with both attributes when any
+    // is present (matches DWG). Compat invariant: the two shapes
+    // are byte-identical to their respective reference fixtures.
+    if flow_direction.is_empty()
+        && obj.fields.get("RepresentationsAreAllZeroLength").is_none()
+    {
+        writeln!(buf, "      <IConnector/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IConnector FlowDirection="{}" RepresentationsAreAllZeroLength="{}"/>"#,
+            escape_attr(&flow_direction),
+            reps_all_zero_length,
+        )
+        .map_err(fmt_err)?;
+    }
+    writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPBSItemCollection/>").map_err(fmt_err)?;
+    if piping_connector_type.is_empty() {
+        writeln!(buf, "      <IPipingConnector/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IPipingConnector PipingConnectorType="{}"/>"#,
+            escape_attr(&piping_connector_type),
+        )
+        .map_err(fmt_err)?;
+    }
+    writeln!(buf, "      <IFabricatedItem/>").map_err(fmt_err)?;
     writeln!(
         buf,
-        r#"      <INamedPipingConnector PipingConnectorPrefix="" PipingConnectorSeqNo="{}" PipingConnectorSuff=""/>"#,
-        escape_attr(&tag_sequence)
+        r#"      <IHeatTracedItem HTraceRqmt="{}"/>"#,
+        escape_attr(&htrace_rqmt),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IProcessPointCollection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDocumentItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IElecPowerConsumer/>").map_err(fmt_err)?;
+    writeln!(buf, "      <INoteCollection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IProcessDataCaseComposition/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IExpandableThing/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <INamedPipingConnector PipingConnectorPrefix="{}" PipingConnectorSeqNo="{}" PipingConnectorSuff="{}"/>"#,
+        escape_attr(&tag_prefix),
+        escape_attr(&tag_sequence),
+        escape_attr(&tag_suffix),
     )
     .map_err(fmt_err)?;
     writeln!(
@@ -468,7 +957,35 @@ fn write_piping_connector(buf: &mut String, obj: &PublishObject) -> Result<(), P
         escape_attr(&piping_materials_class)
     )
     .map_err(fmt_err)?;
-    writeln!(buf, "      <IPIDTypical IsTypical=\"False\"/>").map_err(fmt_err)?;
+    if sloped_piping_angle.is_empty() && sloped_pipe_direction.is_empty() {
+        writeln!(buf, "      <ISlopedPipingItem/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <ISlopedPipingItem SlopedPipingAngle="{}" SlopedPipeDirection="{}"/>"#,
+            escape_attr(&sloped_piping_angle),
+            escape_attr(&sloped_pipe_direction),
+        )
+        .map_err(fmt_err)?;
+    }
+    if insul_thick_src.is_empty() && total_insul_thick.is_empty() {
+        writeln!(buf, "      <IInsulatedItem/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IInsulatedItem InsulThickSrc="{}" TotalInsulThick="{}"/>"#,
+            escape_attr(&insul_thick_src),
+            escape_attr(&total_insul_thick),
+        )
+        .map_err(fmt_err)?;
+    }
+    writeln!(buf, "      <IJacketedItem/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IPIDTypical IsTypical="{}"/>"#,
+        obj.is_typical.as_deref().map(map_bool).unwrap_or("False"),
+    )
+    .map_err(fmt_err)?;
     writeln!(buf, "   </PIDPipingConnector>").map_err(fmt_err)
 }
 
@@ -657,12 +1174,22 @@ fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishE
     .map_err(fmt_err)?;
     writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPBSNote/>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <INote NoteText="{}"/>"#,
-        escape_attr(&note_text)
-    )
-    .map_err(fmt_err)?;
+    // A24: When NoteText is empty the reference fixture ships a
+    // bare `<INote/>` (no attribute), not `<INote NoteText=""/>`.
+    // Match that shape so diff tools and SmartPlant validators
+    // see byte-identical output for empty notes. Populated notes
+    // still carry the attribute (Chinese CR/LF-embedded strings
+    // and all).
+    if note_text.is_empty() {
+        writeln!(buf, "      <INote/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <INote NoteText="{}"/>"#,
+            escape_attr(&note_text)
+        )
+        .map_err(fmt_err)?;
+    }
     writeln!(buf, "      <IDocumentItem/>").map_err(fmt_err)?;
     writeln!(buf, "   </PIDNote>").map_err(fmt_err)
 }
@@ -723,6 +1250,24 @@ fn write_control_system_function(
         .get("InstrumentTypeModifier")
         .cloned()
         .unwrap_or_default();
+    // A24: IPBSItem now carries the SPPID canonical defaults
+    // uniformly with PIDPipingComponent (A17), PIDPipingConnector
+    // (A20), PIDProcessVessel (A21), PIDNozzle (A22). Before A24
+    // the ControlSystemFunction emitted a bare `<IPBSItem/>`
+    // which diverged from the DWG reference's
+    // `<IPBSItem ConstructionStatus="@NewConstruction" ...>`
+    // shape. Overridable via `obj.fields["ConstructionStatus"]`
+    // and `obj.fields["ConstructionStatus2"]`.
+    let construction_status = obj
+        .fields
+        .get("ConstructionStatus")
+        .cloned()
+        .unwrap_or_else(|| "@NewConstruction".to_string());
+    let construction_status2 = obj
+        .fields
+        .get("ConstructionStatus2")
+        .cloned()
+        .unwrap_or_else(|| "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string());
 
     let name = match (measured_variable.is_empty(), tag_sequence_no.is_empty()) {
         (false, false) => format!("{measured_variable}-{tag_sequence_no}"),
@@ -751,7 +1296,13 @@ fn write_control_system_function(
         )
         .map_err(fmt_err)?;
     }
-    writeln!(buf, "      <IPBSItem/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IPBSItem ConstructionStatus="{}" ConstructionStatus2="{}"/>"#,
+        escape_attr(&construction_status),
+        escape_attr(&construction_status2),
+    )
+    .map_err(fmt_err)?;
     writeln!(buf, "      <IControlSystemFunction/>").map_err(fmt_err)?;
     writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
     writeln!(buf, "      <ISignalPortComposition/>").map_err(fmt_err)?;
@@ -777,6 +1328,280 @@ fn write_control_system_function(
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   </PIDControlSystemFunction>").map_err(fmt_err)
+}
+
+/// Emit a `<PIDPipingComponent>` block for a PipingComp object.
+///
+/// The reference DWG fixture shows the canonical shape (the Cap
+/// sample at `DWG-0202GP06-01_Data.xml:204-224`):
+/// ```text
+/// <PIDPipingComponent>
+///    <IObject UID="..."/>
+///    <IPBSItem ConstructionStatus="@NewConstruction"
+///       ConstructionStatus2="@{...}"/>
+///    <IPipingPortComposition/>
+///    <IPlannedMatl/>
+///    <IDrawingItem/>
+///    <IPipingComponent PipingComponentType1="@{...}"
+///       PipingComponentType3="@{...}"
+///       PipingComponentType2="@{...}"
+///       PipModelCode="Cap"
+///       CommoditySpecialtyType="@{...}"/>
+///    <IPipingComponentOcc/>
+///    <IInlineComponentOcc/>
+///    <IFabricatedItem/>
+///    <IHeatTracedItem HTraceRqmt=""/>
+///    <IPartOcc CatalogPartNumber="A3"/>
+///    <IPressureReliefItem/>
+///    <IDocumentItem/>
+///    <IElecPowerConsumer/>
+///    <IPart/>
+///    <INoteCollection/>
+///    <IPipeCrossSectionItem NominalDiameter="100 mm"/>
+///    <IInlineComponent IsFlowDirectional="False"/>
+///    <IPIDTypical IsTypical="False"/>
+/// </PIDPipingComponent>
+/// ```
+///
+/// Attribute provenance:
+/// * `PipingComponentType1/2/3` — SPPID enum codelist IDs sourced
+///   from `T_PipingComp` columns of the same name. They are
+///   opaque GUIDs in the `@{...}` form SPPID canonical; the writer
+///   renders them verbatim when present.
+/// * `PipModelCode` — the component-kind display string
+///   (`"Cap"` / `"Conduit gate valve"` etc.), sourced from
+///   `T_PipingComp.PipModelCode`.
+/// * `CommoditySpecialtyType` — another `@{...}` codelist ref from
+///   `T_PipingComp.CommoditySpecialtyType`.
+/// * `CatalogPartNumber` on `IPartOcc` — sourced from
+///   `T_PlantItem.CatalogPartNumber`. DWG fixtures ship this only
+///   on the valve sample (`"A3"`), so it's rendered empty by
+///   default to match the Cap shape.
+/// * `HTraceRqmt` on `IHeatTracedItem` — sourced from the same
+///   column on `T_PlantItem`. Empty by default, matching both
+///   samples.
+/// * `NominalDiameter` on `IPipeCrossSectionItem` — standard SPPID
+///   numeric field, formatted with the `" mm"` suffix via
+///   [`format_diameter`].
+/// * `IsFlowDirectional` on `IInlineComponent` — SPPID boolean
+///   from `T_InlineComp.IsFlowDirectional`, rendered through
+///   [`map_bool`]; defaults to `"False"` when absent (matches both
+///   reference samples).
+/// * `IsTypical` on `IPIDTypical` — the `T_ModelItem.SP_IsTypical`
+///   standard boolean, rendered through [`map_bool`]; defaults to
+///   `"False"`.
+fn write_piping_component(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
+    let construction_status = obj
+        .fields
+        .get("ConstructionStatus")
+        .cloned()
+        .unwrap_or_else(|| "@NewConstruction".to_string());
+    let construction_status2 = obj
+        .fields
+        .get("ConstructionStatus2")
+        .cloned()
+        .unwrap_or_else(|| "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string());
+    let pip_ct1 = obj
+        .fields
+        .get("PipingComponentType1")
+        .cloned()
+        .unwrap_or_default();
+    let pip_ct2 = obj
+        .fields
+        .get("PipingComponentType2")
+        .cloned()
+        .unwrap_or_default();
+    let pip_ct3 = obj
+        .fields
+        .get("PipingComponentType3")
+        .cloned()
+        .unwrap_or_default();
+    let pip_model_code = obj
+        .fields
+        .get("PipModelCode")
+        .cloned()
+        .unwrap_or_default();
+    let commodity_specialty = obj
+        .fields
+        .get("CommoditySpecialtyType")
+        .cloned()
+        .unwrap_or_default();
+    let catalog_part_number = obj
+        .fields
+        .get("CatalogPartNumber")
+        .cloned()
+        .unwrap_or_default();
+    let htrace_rqmt = obj.fields.get("HTraceRqmt").cloned().unwrap_or_default();
+    let nominal_diameter = obj
+        .fields
+        .get("NominalDiameter")
+        .cloned()
+        .map(|v| format_diameter(&v))
+        .unwrap_or_default();
+    let is_flow_directional = obj
+        .fields
+        .get("IsFlowDirectional")
+        .map(|s| map_bool(s))
+        .unwrap_or("False");
+
+    writeln!(buf, "   <PIDPipingComponent>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}"/>"#,
+        escape_attr(&obj.uid)
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IPBSItem ConstructionStatus="{}" ConstructionStatus2="{}"/>"#,
+        escape_attr(&construction_status),
+        escape_attr(&construction_status2),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IPipingPortComposition/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPlannedMatl/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        concat!(
+            r#"      <IPipingComponent PipingComponentType1="{}" "#,
+            r#"PipingComponentType3="{}" PipingComponentType2="{}" "#,
+            r#"PipModelCode="{}" CommoditySpecialtyType="{}"/>"#,
+        ),
+        escape_attr(&pip_ct1),
+        escape_attr(&pip_ct3),
+        escape_attr(&pip_ct2),
+        escape_attr(&pip_model_code),
+        escape_attr(&commodity_specialty),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IPipingComponentOcc/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IInlineComponentOcc/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IFabricatedItem/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IHeatTracedItem HTraceRqmt="{}"/>"#,
+        escape_attr(&htrace_rqmt),
+    )
+    .map_err(fmt_err)?;
+    // CatalogPartNumber is only emitted when present — the Cap
+    // sample omits it entirely (`<IPartOcc/>`) while the valve
+    // sample carries `CatalogPartNumber="A3"`. Matching the
+    // conditional shape keeps the writer byte-compatible with
+    // both reference variants.
+    if catalog_part_number.is_empty() {
+        writeln!(buf, "      <IPartOcc/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IPartOcc CatalogPartNumber="{}"/>"#,
+            escape_attr(&catalog_part_number),
+        )
+        .map_err(fmt_err)?;
+    }
+    writeln!(buf, "      <IPressureReliefItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDocumentItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IElecPowerConsumer/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPart/>").map_err(fmt_err)?;
+    writeln!(buf, "      <INoteCollection/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IPipeCrossSectionItem NominalDiameter="{}"/>"#,
+        escape_attr(&nominal_diameter),
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IInlineComponent IsFlowDirectional="{}"/>"#,
+        is_flow_directional,
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IPIDTypical IsTypical="{}"/>"#,
+        obj.is_typical.as_deref().map(map_bool).unwrap_or("False"),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "   </PIDPipingComponent>").map_err(fmt_err)
+}
+
+/// Emit a `<PIDSignalConnector>` block for a SignalRun object.
+///
+/// The reference DWG fixture shows the canonical shape (at
+/// `DWG-0202GP06-01_Data.xml:1111-1120`):
+/// ```text
+/// <PIDSignalConnector>
+///    <IObject UID="E871304702F74D39B15BD2D8B41D34B3"/>
+///    <IPlannedFacility/>
+///    <IConnector FlowDirection=""/>
+///    <IDrawingItem/>
+///    <ISignalConnector/>
+///    <IDocumentItem/>
+///    <IExpandableThing/>
+///    <IPIDTypical IsTypical="False"/>
+/// </PIDSignalConnector>
+/// ```
+///
+/// Compared with `PIDPipingConnector` the signal variant is
+/// intentionally minimal:
+/// * No `IPBSItem` — signal wiring is not a planned-build
+///   component of the facility's pressure system, so SPPID skips
+///   the construction-status envelope.
+/// * No `IPipingConnector` / `INamedPipingConnector` /
+///   `IPipeCrossSectionItem` / `IPipingSpecifiedItem` — those are
+///   piping-only interfaces.
+/// * `IConnector FlowDirection=""` instead of populated — the DWG
+///   fixture ships an empty FlowDirection on every signal
+///   connector. Future fixtures may surface a populated value
+///   sourced from a column the loader doesn't yet read; for now
+///   the attribute renders as whatever the loader places in
+///   `obj.fields["FlowDirection"]`, defaulting to empty.
+/// * `IPIDTypical IsTypical="False"` matches the reference
+///   default; sourced from `T_ModelItem.SP_IsTypical` via
+///   [`map_bool`] when populated.
+///
+/// Endpoint `<Rel UID1="..." UID2="..." DefUID="SignalEnd1Conn">`
+/// / `SignalEnd2Conn` rows are NOT derived here — they live on
+/// `T_Relationship` and flow through the generic relationship
+/// emitter in `write_relationships`. A17/A18 stay focused on the
+/// per-object tag shape.
+fn write_signal_connector(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
+    let flow_direction = obj
+        .fields
+        .get("FlowDirection")
+        .cloned()
+        .unwrap_or_default();
+    writeln!(buf, "   <PIDSignalConnector>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}"/>"#,
+        escape_attr(&obj.uid)
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IPlannedFacility/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IConnector FlowDirection="{}"/>"#,
+        escape_attr(&flow_direction),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <ISignalConnector/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDocumentItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IExpandableThing/>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IPIDTypical IsTypical="{}"/>"#,
+        obj.is_typical.as_deref().map(map_bool).unwrap_or("False"),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "   </PIDSignalConnector>").map_err(fmt_err)
 }
 
 fn write_generic_object(
@@ -1977,7 +2802,12 @@ mod tests {
     }
 
     #[test]
-    fn item_note_with_no_text_renders_empty_note_text_attribute() {
+    fn item_note_with_no_text_renders_bare_inote() {
+        // A24 aligned the empty-text path with the DWG reference
+        // shape: SmartPlant emits `<INote/>` (bare), not
+        // `<INote NoteText=""/>`. Both are semantically equivalent
+        // but SPPID validators compare byte-level, so matching
+        // the bare form removes a spurious diff signal.
         let mut d = PublishDrawing::new("UID-D", "DWG");
         d.objects = vec![PublishObject {
             uid: "NOTE-4".into(),
@@ -1986,8 +2816,14 @@ mod tests {
         }];
         let out = write_data_xml(&d, "TEST02").expect("write");
         assert!(
-            out.contains(r#"<INote NoteText=""/>"#),
-            "missing text should render as NoteText=\"\"; out:\n{out}"
+            out.contains("<INote/>"),
+            "missing text must render as bare <INote/>; out:\n{out}"
+        );
+        // And must NOT emit the pre-A24 `<INote NoteText=""/>`
+        // attribute form.
+        assert!(
+            !out.contains(r#"<INote NoteText=""/>"#),
+            "A24 must no longer emit the empty-attribute form; out:\n{out}"
         );
     }
 
@@ -2560,6 +3396,1368 @@ mod tests {
         assert!(
             out.contains("`Exchanger`"),
             "the generic comment should name the unsupported type; out:\n{out}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // A17 — PIDPipingComponent writer (PipingComp → full 19-interface block)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn piping_comp_emits_pid_piping_component_with_all_interfaces() {
+        // Mirrors the `Cap` sample at
+        // DWG-0202GP06-01_Data.xml:204–224. Fill the fields with
+        // representative SPPID data so every attribute-bearing
+        // interface can round-trip end-to-end.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "C5A2865821394E019D7DAA0CAFE0490D".into(),
+            item_type_name: "PipingComp".into(),
+            is_typical: Some("0".into()),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert(
+                    "PipingComponentType1".into(),
+                    "@{81CD929C-BC07-11D6-BDBC-00104BCC2B69}".into(),
+                );
+                m.insert(
+                    "PipingComponentType2".into(),
+                    "@{81CD9804-BC07-11D6-BDBC-00104BCC2B69}".into(),
+                );
+                m.insert(
+                    "PipingComponentType3".into(),
+                    "@{81CD9816-BC07-11D6-BDBC-00104BCC2B69}".into(),
+                );
+                m.insert("PipModelCode".into(), "Cap".into());
+                m.insert(
+                    "CommoditySpecialtyType".into(),
+                    "@{5F7F8F6E-BC29-11D6-BDBC-00104BCC2B69}".into(),
+                );
+                m.insert("NominalDiameter".into(), "100".into());
+                m.insert("IsFlowDirectional".into(), "0".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(
+            out.matches("<PIDPipingComponent>").count(),
+            1,
+            "single PipingComp must open exactly one <PIDPipingComponent>; out:\n{out}"
+        );
+        // All 19 interface opens in canonical order. Ordering is
+        // asserted via increasing `find` positions below.
+        for needle in [
+            r#"<IObject UID="C5A2865821394E019D7DAA0CAFE0490D"/>"#,
+            r#"<IPBSItem ConstructionStatus="@NewConstruction" ConstructionStatus2="@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}"/>"#,
+            "<IPipingPortComposition/>",
+            "<IPlannedMatl/>",
+            "<IDrawingItem/>",
+            r#"PipingComponentType1="@{81CD929C-BC07-11D6-BDBC-00104BCC2B69}""#,
+            r#"PipingComponentType3="@{81CD9816-BC07-11D6-BDBC-00104BCC2B69}""#,
+            r#"PipingComponentType2="@{81CD9804-BC07-11D6-BDBC-00104BCC2B69}""#,
+            r#"PipModelCode="Cap""#,
+            r#"CommoditySpecialtyType="@{5F7F8F6E-BC29-11D6-BDBC-00104BCC2B69}""#,
+            "<IPipingComponentOcc/>",
+            "<IInlineComponentOcc/>",
+            "<IFabricatedItem/>",
+            r#"<IHeatTracedItem HTraceRqmt=""/>"#,
+            "<IPartOcc/>", // Cap sample ships no CatalogPartNumber.
+            "<IPressureReliefItem/>",
+            "<IDocumentItem/>",
+            "<IElecPowerConsumer/>",
+            "<IPart/>",
+            "<INoteCollection/>",
+            r#"<IPipeCrossSectionItem NominalDiameter="100 mm"/>"#,
+            r#"<IInlineComponent IsFlowDirectional="False"/>"#,
+            r#"<IPIDTypical IsTypical="False"/>"#,
+        ] {
+            assert!(
+                out.contains(needle),
+                "PIDPipingComponent block must carry `{needle}`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn piping_comp_with_catalog_part_number_renders_valve_variant() {
+        // Mirrors the `Conduit gate valve` sample at
+        // DWG-0202GP06-01_Data.xml:225–245, which carries the
+        // optional `CatalogPartNumber="A3"` attribute on
+        // <IPartOcc>. Verifies the conditional path doesn't drop
+        // it when present.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "6CC683FA4C6A409D8CB4D3F22BBE194E".into(),
+            item_type_name: "PipingComp".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("PipModelCode".into(), "Conduit gate valve".into());
+                m.insert("NominalDiameter".into(), "80".into());
+                m.insert("CatalogPartNumber".into(), "A3".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IPartOcc CatalogPartNumber="A3"/>"#),
+            "<IPartOcc> must carry CatalogPartNumber when the field is set; out:\n{out}"
+        );
+        assert!(
+            !out.contains("<IPartOcc/>"),
+            "empty <IPartOcc/> must NOT appear when CatalogPartNumber is set; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"PipModelCode="Conduit gate valve""#),
+            "valve sample's PipModelCode must round-trip; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IPipeCrossSectionItem NominalDiameter="80 mm"/>"#),
+            "80-mm diameter must acquire the mm suffix; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn piping_comp_with_empty_fields_still_opens_pid_piping_component() {
+        // A PipingComp row with no business-subtable fields — i.e.
+        // a fixture where the loader found T_ModelItem but the
+        // companion tables are missing — must still produce a
+        // syntactically complete block so downstream validators
+        // don't choke. Optional attributes render empty.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PC-BARE".into(),
+            item_type_name: "PipingComp".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(out.matches("<PIDPipingComponent>").count(), 1);
+        assert!(
+            out.contains(r#"<IObject UID="PC-BARE"/>"#),
+            "bare PipingComp must still carry its UID; out:\n{out}"
+        );
+        // With no PipingComponentType* columns, the attributes are
+        // empty strings — still present, still well-formed.
+        assert!(
+            out.contains(r#"PipingComponentType1="" PipingComponentType3="" PipingComponentType2="" PipModelCode="" CommoditySpecialtyType="""#),
+            "bare PipingComp must emit empty PipingComponentType*/PipModelCode/CommoditySpecialtyType attributes; out:\n{out}"
+        );
+        assert!(
+            out.contains("<IPartOcc/>"),
+            "bare PipingComp must default to empty <IPartOcc/>; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IPipeCrossSectionItem NominalDiameter=""/>"#),
+            "bare PipingComp must still emit <IPipeCrossSectionItem NominalDiameter=\"\"/>; out:\n{out}"
+        );
+        // Default booleans must resolve to False via map_bool.
+        assert!(
+            out.contains(r#"<IInlineComponent IsFlowDirectional="False"/>"#),
+            "default IsFlowDirectional must be `False`; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IPIDTypical IsTypical="False"/>"#),
+            "default IsTypical must be `False`; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn piping_comp_maps_is_flow_directional_true() {
+        // A fixture where T_InlineComp.IsFlowDirectional is `"1"`
+        // (SPPID boolean true) must surface as `IsFlowDirectional="True"`
+        // via map_bool. Pins the mapping so a future refactor of
+        // map_bool's call sites cannot silently degrade the
+        // PipingComponent attribute.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PC-TRUE".into(),
+            item_type_name: "PipingComp".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("IsFlowDirectional".into(), "1".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IInlineComponent IsFlowDirectional="True"/>"#),
+            "PipingComp with IsFlowDirectional=1 must emit `True`; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn two_piping_comps_yield_two_distinct_pid_piping_component_blocks() {
+        // The DWG backlog row pins count=2 for PIDPipingComponent;
+        // this test locks the per-row cardinality so a future
+        // refactor cannot accidentally collapse them into one.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![
+            PublishObject {
+                uid: "PC-A".into(),
+                item_type_name: "PipingComp".into(),
+                ..PublishObject::default()
+            },
+            PublishObject {
+                uid: "PC-B".into(),
+                item_type_name: "PipingComp".into(),
+                ..PublishObject::default()
+            },
+        ];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(
+            out.matches("<PIDPipingComponent>").count(),
+            2,
+            "two PipingComp rows must open two <PIDPipingComponent> blocks; out:\n{out}"
+        );
+        assert!(out.contains(r#"<IObject UID="PC-A"/>"#));
+        assert!(out.contains(r#"<IObject UID="PC-B"/>"#));
+    }
+
+    #[test]
+    fn piping_comp_emits_interfaces_in_sppid_canonical_order() {
+        // SPPID emits the 19 interfaces in a fixed order (confirmed
+        // against both DWG samples at lines 204–224 and 225–245).
+        // Pin that order so a future refactor cannot shuffle them.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PC-ORD".into(),
+            item_type_name: "PipingComp".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+
+        let positions = [
+            "<PIDPipingComponent>",
+            r#"<IObject UID="PC-ORD"/>"#,
+            "<IPBSItem ConstructionStatus=",
+            "<IPipingPortComposition/>",
+            "<IPlannedMatl/>",
+            "<IDrawingItem/>",
+            "<IPipingComponent ",
+            "<IPipingComponentOcc/>",
+            "<IInlineComponentOcc/>",
+            "<IFabricatedItem/>",
+            "<IHeatTracedItem ",
+            "<IPartOcc/>",
+            "<IPressureReliefItem/>",
+            "<IDocumentItem/>",
+            "<IElecPowerConsumer/>",
+            "<IPart/>",
+            "<INoteCollection/>",
+            "<IPipeCrossSectionItem ",
+            "<IInlineComponent ",
+            "<IPIDTypical ",
+            "</PIDPipingComponent>",
+        ];
+        let mut last_pos = 0usize;
+        for needle in positions {
+            let pos = out[last_pos..]
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            last_pos += pos + needle.len();
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // A18 — PIDSignalConnector writer (SignalRun → 8-interface block)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn signal_run_emits_pid_signal_connector_with_all_interfaces() {
+        // Mirrors the reference sample at
+        // DWG-0202GP06-01_Data.xml:1111–1120. A bare SignalRun
+        // row must open every one of the 8 interfaces.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "E871304702F74D39B15BD2D8B41D34B3".into(),
+            item_type_name: "SignalRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(
+            out.matches("<PIDSignalConnector>").count(),
+            1,
+            "single SignalRun must open exactly one <PIDSignalConnector>; out:\n{out}"
+        );
+        for needle in [
+            r#"<IObject UID="E871304702F74D39B15BD2D8B41D34B3"/>"#,
+            "<IPlannedFacility/>",
+            r#"<IConnector FlowDirection=""/>"#,
+            "<IDrawingItem/>",
+            "<ISignalConnector/>",
+            "<IDocumentItem/>",
+            "<IExpandableThing/>",
+            r#"<IPIDTypical IsTypical="False"/>"#,
+            "</PIDSignalConnector>",
+        ] {
+            assert!(
+                out.contains(needle),
+                "PIDSignalConnector block must carry `{needle}`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn signal_run_propagates_populated_flow_direction() {
+        // When a future loader learns to populate FlowDirection
+        // from the appropriate T_* column, the writer must
+        // surface it on <IConnector> instead of forcing the
+        // empty-string default. This test pins the passthrough
+        // path so the upgrade is a pure loader-side change.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "SR-FLOW".into(),
+            item_type_name: "SignalRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("FlowDirection".into(), "@EE872".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IConnector FlowDirection="@EE872"/>"#),
+            "populated FlowDirection must round-trip onto <IConnector>; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn signal_run_emits_no_piping_interfaces() {
+        // PIDSignalConnector is deliberately minimal compared to
+        // PIDPipingConnector — no IPBSItem envelope, no piping-
+        // specific interfaces. Pin that contrast so a well-meaning
+        // refactor that tries to share a common "connector"
+        // writer doesn't accidentally inject piping-only
+        // interfaces into the signal shape.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "SR-MIN".into(),
+            item_type_name: "SignalRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        // Slice the output between `<PIDSignalConnector>` and
+        // `</PIDSignalConnector>` so we only inspect the signal
+        // block, not the rest of the document (Rel nodes etc.
+        // may legitimately mention piping-adjacent strings).
+        let open = out.find("<PIDSignalConnector>").expect("open");
+        let close = out.find("</PIDSignalConnector>").expect("close");
+        let block = &out[open..=close + "</PIDSignalConnector>".len()];
+        for forbidden in [
+            "IPBSItem",
+            "IPipingConnector",
+            "INamedPipingConnector",
+            "IPipeCrossSectionItem",
+            "IPipingSpecifiedItem",
+            "IPipingPort",
+        ] {
+            assert!(
+                !block.contains(forbidden),
+                "PIDSignalConnector must NOT contain `{forbidden}`; block:\n{block}"
+            );
+        }
+    }
+
+    #[test]
+    fn signal_run_maps_is_typical_true() {
+        // IsTypical="True" on a SignalRun must round-trip via
+        // map_bool when T_ModelItem.SP_IsTypical is `"1"`.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "SR-TYP".into(),
+            item_type_name: "SignalRun".into(),
+            is_typical: Some("1".into()),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IPIDTypical IsTypical="True"/>"#),
+            "SignalRun with IsTypical=1 must emit `True`; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn signal_run_emits_interfaces_in_sppid_canonical_order() {
+        // Pin the 8-interface canonical order observed in the DWG
+        // reference fixture.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "SR-ORD".into(),
+            item_type_name: "SignalRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        let positions = [
+            "<PIDSignalConnector>",
+            r#"<IObject UID="SR-ORD"/>"#,
+            "<IPlannedFacility/>",
+            "<IConnector ",
+            "<IDrawingItem/>",
+            "<ISignalConnector/>",
+            "<IDocumentItem/>",
+            "<IExpandableThing/>",
+            "<IPIDTypical ",
+            "</PIDSignalConnector>",
+        ];
+        let mut last_pos = 0usize;
+        for needle in positions {
+            let pos = out[last_pos..]
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            last_pos += pos + needle.len();
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // A19 — PIDPipeline fidelity upgrade (add 4 missing interfaces +
+    // FluidCode / FluidSystem attribute routing)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn pipeline_emits_full_ten_interface_block_matching_reference() {
+        // A01_Data.xml:54–65 and DWG-0202GP06-01_Data.xml:1369–1380
+        // both ship the same 10-interface shape. Pin it end-to-end
+        // so a future refactor that drops one of the wrapper
+        // interfaces (IPBSItem / IPlannedFacility / IPBSItemCollection
+        // / INoteCollection) will trip this assertion immediately.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-F".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        for needle in [
+            "<PIDPipeline>",
+            "<IObject UID=",
+            "<IPBSItem/>",
+            "<IPlannedFacility/>",
+            "<IPBSItemCollection/>",
+            "<IPipeline/>",
+            "<IPipingConnectorComposition/>",
+            "<IFluidSystem ",
+            "<INoteCollection/>",
+            "<IExpandableThing/>",
+            "<IPIDTypical/>",
+            "</PIDPipeline>",
+        ] {
+            assert!(
+                out.contains(needle),
+                "PIDPipeline block must carry `{needle}`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn pipeline_fluid_system_attrs_route_from_loader_fields() {
+        // When the loader populates OperFluidCode + FluidSystem
+        // from T_PipeRun, the writer surfaces them on
+        // <IFluidSystem FluidCode="..." FluidSystem="..."/>. This
+        // test locks that routing so a loader-side upgrade to
+        // stamp those columns becomes immediately visible in the
+        // emitted XML.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-FS".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert(
+                    "OperFluidCode".into(),
+                    "@{63A6FC56-CB92-402D-8D92-BF9E2F204CE4}".into(),
+                );
+                m.insert(
+                    "FluidSystem".into(),
+                    "@{104E7730-99EF-49C6-A928-D8CD78394381}".into(),
+                );
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IFluidSystem FluidCode="@{63A6FC56-CB92-402D-8D92-BF9E2F204CE4}" FluidSystem="@{104E7730-99EF-49C6-A928-D8CD78394381}"/>"#
+            ),
+            "<IFluidSystem> must carry populated FluidCode + FluidSystem; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_fluid_system_attrs_default_to_empty_when_absent() {
+        // A01 fixtures do not populate the fluid attributes —
+        // reference shape is `<IFluidSystem/>` (no attrs at all).
+        // A19 declares the attributes but leaves them empty; it's
+        // a strict superset of the A01 shape and a fidelity
+        // upgrade for DWG consumers. Pin the empty-attrs path so a
+        // regression that drops the attributes entirely will trip.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-E".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IFluidSystem FluidCode="" FluidSystem=""/>"#),
+            "A01-style empty attrs must be declared explicitly; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_name_attribute_added_when_pipeline_name_field_present() {
+        // DWG fixtures like `<IObject Name="A3jqz0101-OD" .../>`
+        // stamp a human-readable pipeline name. When the loader
+        // populates obj.fields["PipelineName"] the writer surfaces
+        // it between UID and ItemTag on the IObject.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-N".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("PipelineName".into(), "A3jqz0101-OD".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IObject UID="PIPE-N" Name="A3jqz0101-OD" ItemTag=""#
+            ),
+            "Name attribute must appear between UID and ItemTag when PipelineName is populated; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_name_attribute_omitted_when_pipeline_name_empty() {
+        // A01 fixtures do not ship PipelineName; the writer must
+        // omit the Name="" attribute entirely to keep the IObject
+        // element compact.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-NONAME".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            !out.contains(r#"<IObject UID="PIPE-NONAME" Name="""#),
+            "empty PipelineName must not emit a Name=\"\" attribute; out:\n{out}"
+        );
+        // The UID + ItemTag shape must still be intact.
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-NONAME" ItemTag="#),
+            "IObject must carry UID + ItemTag even without Name; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_emits_interfaces_in_sppid_canonical_order() {
+        // Pin the 10-interface canonical order end-to-end via
+        // find() cursor so a reorder would trip the assertion at
+        // the exact problematic needle.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-ORD".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        let positions = [
+            "<PIDPipeline>",
+            "<IObject UID=",
+            "<IPBSItem/>",
+            "<IPlannedFacility/>",
+            "<IPBSItemCollection/>",
+            "<IPipeline/>",
+            "<IPipingConnectorComposition/>",
+            "<IFluidSystem ",
+            "<INoteCollection/>",
+            "<IExpandableThing/>",
+            "<IPIDTypical/>",
+            "</PIDPipeline>",
+        ];
+        let mut last_pos = 0usize;
+        for needle in positions {
+            let pos = out[last_pos..]
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            last_pos += pos + needle.len();
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // A20 — PIDPipingConnector fidelity upgrade (7 → 22 interfaces,
+    // + optional DWG-style attribute routing)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn piping_connector_emits_full_twenty_two_interface_block() {
+        // A01_Data.xml:66–89 ships this 22-interface shape bare.
+        // Pin every wrapper interface so a regression that drops
+        // one trips immediately.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-F".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        for needle in [
+            "<PIDPipingConnector>",
+            "<IObject UID=",
+            "<IPBSItem ConstructionStatus=",
+            "<IPlannedFacility/>",
+            "<IConnector/>",
+            "<IDrawingItem/>",
+            "<IPBSItemCollection/>",
+            "<IPipingConnector/>",
+            "<IFabricatedItem/>",
+            "<IHeatTracedItem ",
+            "<IProcessPointCollection/>",
+            "<IDocumentItem/>",
+            "<IElecPowerConsumer/>",
+            "<INoteCollection/>",
+            "<IProcessDataCaseComposition/>",
+            "<IExpandableThing/>",
+            "<INamedPipingConnector ",
+            "<IPipeCrossSectionItem ",
+            "<IPipingSpecifiedItem ",
+            "<ISlopedPipingItem/>",
+            "<IInsulatedItem/>",
+            "<IJacketedItem/>",
+            "<IPIDTypical ",
+            "</PIDPipingConnector>",
+        ] {
+            assert!(
+                out.contains(needle),
+                "PIDPipingConnector block must carry `{needle}`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn piping_connector_defaults_match_a01_reference_construction_status() {
+        // A01 ships `<IPBSItem ConstructionStatus="@NewConstruction"
+        // ConstructionStatus2="@{78398AB4-...}"/>`; our writer must
+        // emit the same canonical defaults when the loader has
+        // not stamped the ConstructionStatus field.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-CON".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IPBSItem ConstructionStatus="@NewConstruction" ConstructionStatus2="@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}"/>"#
+            ),
+            "A01-canonical IPBSItem defaults must land on PIDPipingConnector; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn piping_connector_optional_attrs_render_bare_when_absent() {
+        // A01 fixture's PIDPipingConnector ships bare
+        // <IConnector/>, <IPipingConnector/>, <ISlopedPipingItem/>,
+        // <IInsulatedItem/> — no attributes. Pin the bare paths so
+        // they do not accidentally emit empty-attribute versions
+        // (which would still parse but diverge from A01 bytes).
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-BARE".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        for bare in [
+            "<IConnector/>",
+            "<IPipingConnector/>",
+            "<ISlopedPipingItem/>",
+            "<IInsulatedItem/>",
+        ] {
+            assert!(
+                out.contains(bare),
+                "A01 shape requires bare `{bare}`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn piping_connector_populates_optional_attrs_when_loader_supplies_them() {
+        // DWG shape populates IConnector / IPipingConnector /
+        // ISlopedPipingItem / IInsulatedItem with attributes. A20
+        // routes those fields so a future loader-side upgrade
+        // becomes immediately visible in the emitted XML.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-DWG".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("FlowDirection".into(), "@EE872".into());
+                m.insert("RepresentationsAreAllZeroLength".into(), "0".into());
+                m.insert("PipingConnectorType".into(), "@EE690".into());
+                m.insert(
+                    "SlopedPipingAngle".into(),
+                    "2.9999910000486E-03 rad".into(),
+                );
+                m.insert(
+                    "SlopedPipeDirection".into(),
+                    "@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}".into(),
+                );
+                m.insert(
+                    "InsulThickSrc".into(),
+                    "@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}".into(),
+                );
+                m.insert("TotalInsulThick".into(), "50 mm".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(out.contains(
+            r#"<IConnector FlowDirection="@EE872" RepresentationsAreAllZeroLength="False"/>"#
+        ));
+        assert!(out.contains(r#"<IPipingConnector PipingConnectorType="@EE690"/>"#));
+        assert!(out.contains(
+            r#"<ISlopedPipingItem SlopedPipingAngle="2.9999910000486E-03 rad" SlopedPipeDirection="@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}"/>"#
+        ));
+        assert!(out.contains(
+            r#"<IInsulatedItem InsulThickSrc="@{1B53D013-9B24-11D6-BDA4-00104BCC2B69}" TotalInsulThick="50 mm"/>"#
+        ));
+    }
+
+    #[test]
+    fn piping_connector_uses_name_attribute_on_dwg_shape() {
+        // DWG stamps Name on IObject instead of ItemTag. When the
+        // loader populates PipelineName the writer switches to the
+        // DWG shape (UID + Name); otherwise it keeps the A01 shape
+        // (UID + ItemTag).
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-N".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert(
+                    "PipelineName".into(),
+                    "A3jqz0101-OD-100 mm-1.6AR12-WE-50mm".into(),
+                );
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-N-CNX" Name="A3jqz0101-OD-100 mm-1.6AR12-WE-50mm"/>"#),
+            "PipingConnector with PipelineName populated must switch to DWG IObject shape; out:\n{out}"
+        );
+        // The A01-shape ItemTag must NOT appear when we've
+        // switched to the DWG shape.
+        assert!(
+            !out.contains(r#"<IObject UID="PIPE-N-CNX" ItemTag="#),
+            "Name path must suppress the A01-shape ItemTag IObject; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn piping_connector_named_prefix_and_suffix_route_from_tag_columns() {
+        // <INamedPipingConnector> needs all three SPPID tag
+        // columns (TagPrefix / TagSequenceNo / TagSuffix) to
+        // round-trip. A01 stamps only the sequence; DWG stamps
+        // only the sequence. Pin both paths: prefix and suffix
+        // remain empty when absent but populate when the loader
+        // has them, so future fixtures with tag-prefixed
+        // connectors continue working without further code
+        // changes.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-PF".into(),
+            item_type_name: "PipeRun".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("TagPrefix".into(), "PFX".into());
+                m.insert("TagSequenceNo".into(), "0101".into());
+                m.insert("TagSuffix".into(), "SFX".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<INamedPipingConnector PipingConnectorPrefix="PFX" PipingConnectorSeqNo="0101" PipingConnectorSuff="SFX"/>"#),
+            "all three tag columns must round-trip; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn piping_connector_emits_interfaces_in_sppid_canonical_order() {
+        // Pin the 22-interface canonical order via find() cursor.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PIPE-O".into(),
+            item_type_name: "PipeRun".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        let positions = [
+            "<PIDPipingConnector>",
+            "<IObject UID=",
+            "<IPBSItem ",
+            "<IPlannedFacility/>",
+            "<IConnector",
+            "<IDrawingItem/>",
+            "<IPBSItemCollection/>",
+            "<IPipingConnector",
+            "<IFabricatedItem/>",
+            "<IHeatTracedItem ",
+            "<IProcessPointCollection/>",
+            "<IDocumentItem/>",
+            "<IElecPowerConsumer/>",
+            "<INoteCollection/>",
+            "<IProcessDataCaseComposition/>",
+            "<IExpandableThing/>",
+            "<INamedPipingConnector ",
+            "<IPipeCrossSectionItem ",
+            "<IPipingSpecifiedItem ",
+            "<ISlopedPipingItem",
+            "<IInsulatedItem",
+            "<IJacketedItem/>",
+            "<IPIDTypical ",
+            "</PIDPipingConnector>",
+        ];
+        let mut last_pos = 0usize;
+        for needle in positions {
+            let pos = out[last_pos..]
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            last_pos += pos + needle.len();
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // A21 — PIDProcessVessel fidelity upgrade (10 → 15 interfaces,
+    // + DWG-style attribute routing on IEquipment / IPBSItem /
+    // IProcessVessel / ISpecifiedMatlItem)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn process_vessel_emits_full_fifteen_interface_block() {
+        // Reference A01_Data.xml:12–28 ships 15 interfaces. Pin
+        // every wrapper so a regression that drops one of the
+        // five A21-added interfaces (IPBSItemCollection,
+        // IPlannedMatl, IProcessEquipmentOcc, IDrawingItem,
+        // ISpecifiedMatlItem) trips the assertion immediately.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "V-F".into(),
+            item_type_name: "Vessel".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        for needle in [
+            "<PIDProcessVessel>",
+            "<IObject UID=",
+            "<IPIDProcessVesselOcc/>",
+            "<IProcessVesselOcc/>",
+            "<IEquipment ",
+            "<IEquipmentOcc/>",
+            "<IPBSItem ",
+            "<IPBSItemCollection/>",
+            "<IPlannedMatl/>",
+            "<IProcessEquipment/>",
+            "<IProcessEquipmentOcc/>",
+            "<IProcessVessel/>",
+            "<IDrawingItem/>",
+            "<IPIDProcessVessel/>",
+            "<ISpecifiedMatlItem/>",
+            "<IPIDTypical ",
+            "</PIDProcessVessel>",
+        ] {
+            assert!(
+                out.contains(needle),
+                "PIDProcessVessel block must carry `{needle}`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn process_vessel_ipbsitem_uses_canonical_defaults_when_height_absent() {
+        // A01 fixture emits `<IPBSItem ConstructionStatus=
+        // "@NewConstruction" ConstructionStatus2="@{78398AB4-...}"/>`
+        // with no HeightRelativeToGrade. A21's writer must
+        // reproduce that exact two-attribute form; adding
+        // HeightRelativeToGrade would diverge from A01 bytes.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "V-DEF".into(),
+            item_type_name: "Vessel".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IPBSItem ConstructionStatus="@NewConstruction" ConstructionStatus2="@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}"/>"#
+            ),
+            "A01-canonical IPBSItem defaults (no HeightRelativeToGrade) must land; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn process_vessel_ipbsitem_includes_height_when_populated() {
+        // DWG fixture emits
+        // `<IPBSItem HeightRelativeToGrade="3 m" ConstructionStatus="..."
+        // ConstructionStatus2="..."/>`. A21 must populate the
+        // attribute when the loader supplies it.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "V-H".into(),
+            item_type_name: "Vessel".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("HeightRelativeToGrade".into(), "3 m".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IPBSItem HeightRelativeToGrade="3 m" ConstructionStatus="@NewConstruction" ConstructionStatus2="@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}"/>"#
+            ),
+            "populated HeightRelativeToGrade must precede the two default attrs; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn process_vessel_iequipment_expands_with_eqtype_attrs() {
+        // DWG ships the expanded IEquipment form with EqType0-3 +
+        // EquipmentTrimSpec. A21 routes those fields so the DWG
+        // shape round-trips when the loader stamps them.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "V-EQ".into(),
+            item_type_name: "Vessel".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert(
+                    "EqType0".into(),
+                    "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}".into(),
+                );
+                m.insert(
+                    "EqType3".into(),
+                    "@{9B3ED983-16AE-4AD7-A19F-A337149DF437}".into(),
+                );
+                m.insert("EqType2".into(), "@EE7A6".into());
+                m.insert("EqType1".into(), "@EE793".into());
+                m.insert("EquipmentTrimSpec".into(), "1.6AR12".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        // The expanded shape pins the DWG-canonical attribute
+        // order: EqType0 / EqType3 / EqType2 / EqType1 /
+        // EquipmentTrimSpec / EqTypeDescription.
+        assert!(
+            out.contains(
+                r#"<IEquipment EqType0="@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}" EqType3="@{9B3ED983-16AE-4AD7-A19F-A337149DF437}" EqType2="@EE7A6" EqType1="@EE793" EquipmentTrimSpec="1.6AR12" EqTypeDescription="#
+            ),
+            "populated EqType0-3 + TrimSpec must expand IEquipment shape; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn process_vessel_iprocessvessel_includes_volumetric_capacity() {
+        // DWG pairs `<IProcessVessel ProcessVessel_VesselVolumetricCapacity="27 m^3"/>`
+        // when the loader stamps that column. A01 emits the bare
+        // form `<IProcessVessel/>`.
+        let mut d_a01 = PublishDrawing::new("UID-D", "A01");
+        d_a01.objects = vec![PublishObject {
+            uid: "V-A".into(),
+            item_type_name: "Vessel".into(),
+            ..PublishObject::default()
+        }];
+        let out_a01 = write_data_xml(&d_a01, "TEST02").expect("write");
+        assert!(
+            out_a01.contains("<IProcessVessel/>"),
+            "A01 shape requires bare <IProcessVessel/>; out:\n{out_a01}"
+        );
+        let mut d_dwg = PublishDrawing::new("UID-D", "DWG");
+        d_dwg.objects = vec![PublishObject {
+            uid: "V-D".into(),
+            item_type_name: "Vessel".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("VesselVolumetricCapacity".into(), "27 m^3".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out_dwg = write_data_xml(&d_dwg, "TEST02").expect("write");
+        assert!(
+            out_dwg.contains(
+                r#"<IProcessVessel ProcessVessel_VesselVolumetricCapacity="27 m^3"/>"#
+            ),
+            "populated VesselVolumetricCapacity must expand <IProcessVessel>; out:\n{out_dwg}"
+        );
+    }
+
+    #[test]
+    fn process_vessel_ispecifiedmatlitem_gains_long_material_description() {
+        // DWG pairs `<ISpecifiedMatlItem LongMaterialDescription="新建"/>`
+        // — round-trip the Chinese text through XML escaping.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "V-MAT".into(),
+            item_type_name: "Vessel".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("LongMaterialDescription".into(), "新建".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<ISpecifiedMatlItem LongMaterialDescription="新建"/>"#),
+            "populated LongMaterialDescription must land with Chinese text intact; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn process_vessel_emits_interfaces_in_sppid_canonical_order() {
+        // Pin the 15-interface canonical order via find() cursor.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "V-ORD".into(),
+            item_type_name: "Vessel".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        let positions = [
+            "<PIDProcessVessel>",
+            "<IObject UID=",
+            "<IPIDProcessVesselOcc/>",
+            "<IProcessVesselOcc/>",
+            "<IEquipment ",
+            "<IEquipmentOcc/>",
+            "<IPBSItem ",
+            "<IPBSItemCollection/>",
+            "<IPlannedMatl/>",
+            "<IProcessEquipment/>",
+            "<IProcessEquipmentOcc/>",
+            "<IProcessVessel",
+            "<IDrawingItem/>",
+            "<IPIDProcessVessel/>",
+            "<ISpecifiedMatlItem",
+            "<IPIDTypical ",
+            "</PIDProcessVessel>",
+        ];
+        let mut last_pos = 0usize;
+        for needle in positions {
+            let pos = out[last_pos..]
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            last_pos += pos + needle.len();
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // A22 — PIDNozzle fidelity upgrade (9 → 22 interfaces,
+    // + DWG-style ProcessEqCompType1/2 attr routing,
+    // + conditional bare shape for IPipeCrossSectionItem /
+    //   IPipingSpecifiedItem)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn nozzle_emits_full_twenty_two_interface_block() {
+        // A01_Data.xml:29–53 reference has 22 interfaces. Pin
+        // every wrapper so a regression that drops one of the 13
+        // A22-added interfaces trips immediately.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "NZ-F".into(),
+            item_type_name: "Nozzle".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        for needle in [
+            "<PIDNozzle>",
+            r#"<IObject UID="NZ-F"/>"#,
+            "<IPBSItem ",
+            "<IPipingPortComposition/>",
+            "<IPlannedMatl/>",
+            "<IDrawingItem/>",
+            "<INozzleOcc/>",
+            "<INozzle/>",
+            "<IEquipmentComponent ",
+            "<IEquipmentComponentOcc/>",
+            "<IFabricatedItem/>",
+            "<IHeatTracedItem ",
+            "<IPBSItemCollection/>",
+            "<IProcessPointCollection/>",
+            "<ISignalPortComposition/>",
+            "<IPartOcc/>",
+            "<IDocumentItem/>",
+            "<IElecPowerConsumer/>",
+            "<IPart/>",
+            "<INoteCollection/>",
+            "<IProcessDataCaseComposition/>",
+            "<IPipeCrossSectionItem/>",
+            "<IPipingSpecifiedItem/>",
+            "<IPIDTypical ",
+            "</PIDNozzle>",
+        ] {
+            assert!(
+                out.contains(needle),
+                "PIDNozzle block must carry `{needle}`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn nozzle_ipipe_cross_section_item_bare_when_nominal_diameter_absent() {
+        // A01 ships bare <IPipeCrossSectionItem/> (no attribute)
+        // on PIDNozzle; only PIDPipingConnector populates
+        // NominalDiameter. Pre-A22 writer forced an empty
+        // attribute here, diverging from A01 bytes.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "NZ-BARE".into(),
+            item_type_name: "Nozzle".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains("<IPipeCrossSectionItem/>"),
+            "A01 shape requires bare <IPipeCrossSectionItem/> on PIDNozzle; out:\n{out}"
+        );
+        assert!(
+            out.contains("<IPipingSpecifiedItem/>"),
+            "A01 shape requires bare <IPipingSpecifiedItem/> on PIDNozzle; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn nozzle_expands_cross_section_and_specified_item_when_populated() {
+        // DWG-style populated form. When the loader stamps
+        // NominalDiameter + PipingMaterialsClass, the writer must
+        // switch to the attribute-bearing shape.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "NZ-POP".into(),
+            item_type_name: "Nozzle".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("NominalDiameter".into(), "100".into());
+                m.insert("PipingMaterialsClass".into(), "1.6AR12".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IPipeCrossSectionItem NominalDiameter="100 mm"/>"#),
+            "populated NominalDiameter must land with mm suffix; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IPipingSpecifiedItem PipingMaterialsClass="1.6AR12"/>"#),
+            "populated PipingMaterialsClass must land; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn nozzle_iequipment_component_gains_process_eq_comp_type_attrs() {
+        // DWG ships `<IEquipmentComponent ProcessEqCompType1="@EE6D4"
+        // ProcessEqCompType2="@{...}" ProcEqpCompTypeDescription="..."/>`.
+        // A22 routes those fields so a future loader-side upgrade
+        // becomes visible without touching the writer again.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "NZ-TYPE".into(),
+            item_type_name: "Nozzle".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("ProcessEqCompType1".into(), "@EE6D4".into());
+                m.insert(
+                    "ProcessEqCompType2".into(),
+                    "@{B88907F5-D4FC-49D8-BA8E-C1F76F392A52}".into(),
+                );
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IEquipmentComponent ProcessEqCompType1="@EE6D4" ProcessEqCompType2="@{B88907F5-D4FC-49D8-BA8E-C1F76F392A52}" ProcEqpCompTypeDescription="Flanged Nozzle"/>"#
+            ),
+            "expanded DWG-shape IEquipmentComponent must carry all three attrs in canonical order; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn nozzle_defaults_to_a17_canonical_ipbsitem_values() {
+        // Every pipe-composed tag (PipingComponent / PipingConnector
+        // / Vessel / Nozzle) uses the same canonical IPBSItem
+        // defaults. Pin them so a future change that diverges on
+        // one tag alone will trip here.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "NZ-DEF".into(),
+            item_type_name: "Nozzle".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IPBSItem ConstructionStatus="@NewConstruction" ConstructionStatus2="@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}"/>"#
+            ),
+            "A01-canonical IPBSItem defaults must land on PIDNozzle; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn nozzle_emits_interfaces_in_sppid_canonical_order() {
+        // Pin the 22-interface canonical order via find() cursor.
+        let mut d = PublishDrawing::new("UID-D", "A01");
+        d.objects = vec![PublishObject {
+            uid: "NZ-O".into(),
+            item_type_name: "Nozzle".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        let positions = [
+            "<PIDNozzle>",
+            "<IObject UID=",
+            "<IPBSItem ",
+            "<IPipingPortComposition/>",
+            "<IPlannedMatl/>",
+            "<IDrawingItem/>",
+            "<INozzleOcc/>",
+            "<INozzle/>",
+            "<IEquipmentComponent ",
+            "<IEquipmentComponentOcc/>",
+            "<IFabricatedItem/>",
+            "<IHeatTracedItem ",
+            "<IPBSItemCollection/>",
+            "<IProcessPointCollection/>",
+            "<ISignalPortComposition/>",
+            "<IPartOcc/>",
+            "<IDocumentItem/>",
+            "<IElecPowerConsumer/>",
+            "<IPart/>",
+            "<INoteCollection/>",
+            "<IProcessDataCaseComposition/>",
+            "<IPipeCrossSectionItem",
+            "<IPipingSpecifiedItem",
+            "<IPIDTypical ",
+            "</PIDNozzle>",
+        ];
+        let mut last_pos = 0usize;
+        for needle in positions {
+            let pos = out[last_pos..]
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            last_pos += pos + needle.len();
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // A24 — final fidelity pass: IPBSItem defaults on
+    // PIDControlSystemFunction + bare-when-empty INote on PIDNote
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn control_system_function_ipbsitem_uses_canonical_defaults() {
+        // A24: PIDControlSystemFunction joins the uniform IPBSItem
+        // defaults used by A17/A20/A21/A22. The DWG reference has
+        // `<IPBSItem ConstructionStatus="@NewConstruction"
+        // ConstructionStatus2="@{78398AB4-...}"/>` and pre-A24 our
+        // writer emitted a bare `<IPBSItem/>` which diverged.
+        // NB: PIDDrawing legitimately keeps `<IPBSItem/>` bare
+        // (its reference shape), so the bare-form check must be
+        // scoped to the ControlSystemFunction block only.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-A24".into(),
+            item_type_name: "InstrFunction".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IPBSItem ConstructionStatus="@NewConstruction" ConstructionStatus2="@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}"/>"#
+            ),
+            "PIDControlSystemFunction must use canonical IPBSItem defaults; out:\n{out}"
+        );
+        // Slice out the ControlSystemFunction block and assert
+        // the bare form does not appear there (it's fine inside
+        // PIDDrawing, which has a different canonical shape).
+        let open = out
+            .find("<PIDControlSystemFunction>")
+            .expect("function block open");
+        let close = out
+            .find("</PIDControlSystemFunction>")
+            .expect("function block close");
+        let block = &out[open..=close + "</PIDControlSystemFunction>".len()];
+        assert!(
+            !block.contains("<IPBSItem/>"),
+            "A24 must no longer emit bare <IPBSItem/> inside PIDControlSystemFunction; block:\n{block}"
+        );
+    }
+
+    #[test]
+    fn control_system_function_ipbsitem_allows_field_override() {
+        // The canonical defaults are overridable when the loader
+        // populates alternate ConstructionStatus columns — matches
+        // the same override path used by PipingComponent /
+        // PipingConnector / ProcessVessel / Nozzle.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-OVR".into(),
+            item_type_name: "InstrFunction".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("ConstructionStatus".into(), "@Revised".into());
+                m.insert("ConstructionStatus2".into(), "@{CUSTOM-GUID}".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(
+                r#"<IPBSItem ConstructionStatus="@Revised" ConstructionStatus2="@{CUSTOM-GUID}"/>"#
+            ),
+            "loader-supplied ConstructionStatus values must override the SPPID defaults; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn note_with_populated_text_still_emits_attribute_form() {
+        // Keep the populated-text path intact (A24 only changed
+        // the empty-text path). Verifies that notes with Chinese
+        // CR/LF content still escape correctly.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "NOTE-TEXT".into(),
+            item_type_name: "Note".into(),
+            description: Some("量液孔".into()),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<INote NoteText="量液孔"/>"#),
+            "populated NoteText must round-trip through the attribute form; out:\n{out}"
         );
     }
 }

@@ -252,11 +252,13 @@ pub fn supported_pid_tags() -> &'static [&'static str] {
         "PIDNote",
         "PIDNozzle",
         "PIDPipeline",
+        "PIDPipingComponent",
         "PIDPipingConnector",
         "PIDPipingPort",
         "PIDProcessPoint",
         "PIDProcessVessel",
         "PIDRepresentation",
+        "PIDSignalConnector",
         "PIDSignalPort",
     ]
 }
@@ -364,6 +366,105 @@ pub fn coverage_against_reference(reference_xml: &str) -> WriterCoverage {
         supported_in_reference: supported,
         unsupported_in_reference: unsupported,
     }
+}
+
+/// Map from PID tag (e.g. `"PIDPipingConnector"`) to the set of
+/// immediate child `<IFoo...>` interface names observed inside
+/// the FIRST occurrence of that tag in `xml`.
+///
+/// Scanning strategy:
+/// * Walk byte-by-byte looking for opening tag starts (`<`).
+/// * When a PID container opens (`<PIDxxx>` or
+///   `<PIDxxx attrs...>`, never self-closing), note the tag name
+///   as the `active` container IFF we haven't already recorded
+///   its first occurrence. Interfaces encountered while this
+///   active container is still open will be inserted into the
+///   tag's entry in the output map.
+/// * When we see `</PIDxxx>` matching the active container, the
+///   first occurrence is considered recorded and we stop
+///   tracking interfaces for this tag.
+/// * Second, third, ... occurrences of the same PID tag are
+///   skipped — the first one is the representative template
+///   (SmartPlant emits identical interface lists for every
+///   instance of the same tag).
+/// * Interfaces are any opening element whose name begins with
+///   `I` and contains only ASCII alphanumerics plus `_`. Both
+///   self-closing (`<IFoo/>`) and open forms (`<IFoo x="y"/>` or
+///   `<IFoo>...</IFoo>`) are recorded identically — SmartPlant
+///   always emits interfaces as self-closers inside PID
+///   containers, so this is a non-issue in practice.
+///
+/// The helper is the counterpart of [`parse_pid_tag_counts`]
+/// for interface-level fidelity analysis. Tests use it to assert
+/// that every supported PID tag emits the same interface set as
+/// the SmartPlant reference, closing the gap that coverage-level
+/// (tag-only) checks leave open.
+pub fn parse_interfaces_per_tag(
+    xml: &str,
+) -> BTreeMap<String, std::collections::BTreeSet<String>> {
+    let bytes = xml.as_bytes();
+    let mut out: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    // Name of the PID tag we are currently collecting interfaces
+    // for. `None` when we are outside any tracked container (or
+    // inside a container whose first occurrence we already
+    // recorded).
+    let mut active: Option<String> = None;
+    let mut recorded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        let after_lt = i + 1;
+        if after_lt >= bytes.len() {
+            break;
+        }
+        let is_closing = bytes[after_lt] == b'/';
+        let name_start = if is_closing { after_lt + 1 } else { after_lt };
+        let mut name_end = name_start;
+        while name_end < bytes.len() && is_tag_name_byte(bytes[name_end]) {
+            name_end += 1;
+        }
+        if name_end == name_start {
+            i = name_end.max(i + 1);
+            continue;
+        }
+        let name = std::str::from_utf8(&bytes[name_start..name_end]).unwrap_or("");
+        // Walk to `>` and detect self-close.
+        let mut close = name_end;
+        while close < bytes.len() && bytes[close] != b'>' {
+            close += 1;
+        }
+        let self_closing = !is_closing
+            && close > name_end
+            && bytes[close.saturating_sub(1)] == b'/';
+        if is_closing {
+            if name.starts_with("PID")
+                && active.as_deref() == Some(name)
+            {
+                // First occurrence complete — mark as recorded
+                // and stop tracking interfaces.
+                recorded.insert(name.to_string());
+                active = None;
+            }
+        } else if name.starts_with("PID") && !self_closing {
+            // Only start tracking the FIRST occurrence.
+            if !recorded.contains(name) && active.is_none() {
+                active = Some(name.to_string());
+                // Ensure the entry exists even if the tag has no
+                // interfaces (empty set is still meaningful).
+                out.entry(name.to_string()).or_default();
+            }
+        } else if name.starts_with('I') {
+            if let Some(tag) = active.as_deref() {
+                out.entry(tag.to_string()).or_default().insert(name.to_string());
+            }
+        }
+        i = if close < bytes.len() { close + 1 } else { close };
+    }
+    out
 }
 
 pub fn diff_publish_xml(generated_xml: &str, reference_xml: &str) -> SemanticDiffReport {
@@ -594,19 +695,25 @@ mod tests {
                 "supported tags must be sorted (kept stable for diffing); offender: {win:?}"
             );
         }
-        // Spot-check the post-A14 milestone set: every tag the
-        // writer emits today must appear here.
+        // Spot-check the post-A18 milestone set: every tag the
+        // writer emits today must appear here. `PIDSignalPort`
+        // joined in A16 (derived from InstrFunction);
+        // `PIDPipingComponent` joined in A17 (PipingComp writer arm);
+        // `PIDSignalConnector` joined in A18 (SignalRun writer arm).
         for must_have in [
+            "PIDControlSystemFunction",
             "PIDDrawing",
-            "PIDProcessVessel",
+            "PIDNote",
             "PIDNozzle",
             "PIDPipeline",
+            "PIDPipingComponent",
             "PIDPipingConnector",
             "PIDPipingPort",
             "PIDProcessPoint",
+            "PIDProcessVessel",
             "PIDRepresentation",
-            "PIDNote",
-            "PIDControlSystemFunction",
+            "PIDSignalConnector",
+            "PIDSignalPort",
         ] {
             assert!(
                 tags.contains(&must_have),
@@ -641,26 +748,30 @@ mod tests {
 
     #[test]
     fn coverage_classifies_unsupported_tags_into_backlog() {
-        // Mixed: PIDDrawing supported, the other three not. The
-        // backlog tags chosen here (PIDPipingComponent /
-        // PIDBranchPoint / PIDSignalConnector) are the ones the
-        // writer cannot emit as of A16.
+        // Mixed: PIDDrawing supported, the other two not. The
+        // backlog tags chosen here (PIDPipingBranchPoint +
+        // PIDBranchPoint) are the ones the writer cannot emit as
+        // of A18. PIDPipingComponent and PIDSignalConnector were
+        // backlog fixtures pre-A17/A18 but are both supported
+        // now, so we rotate to `PIDTypical` (fabricated, will
+        // never ship) as a second filler to keep three-way
+        // ordering interesting without leaking milestone signal.
         let xml = concat!(
             "<PIDDrawing></PIDDrawing>",
-            "<PIDSignalConnector></PIDSignalConnector><PIDSignalConnector></PIDSignalConnector>",
+            "<PIDTypical></PIDTypical><PIDTypical></PIDTypical>",
             "<PIDBranchPoint></PIDBranchPoint>",
-            "<PIDPipingComponent></PIDPipingComponent>",
-            "<PIDPipingComponent></PIDPipingComponent>",
-            "<PIDPipingComponent></PIDPipingComponent>",
+            "<PIDPipingBranchPoint></PIDPipingBranchPoint>",
+            "<PIDPipingBranchPoint></PIDPipingBranchPoint>",
+            "<PIDPipingBranchPoint></PIDPipingBranchPoint>",
         );
         let cov = coverage_against_reference(xml);
         assert!(!cov.is_complete());
         assert_eq!(cov.supported_total(), 1);
         assert_eq!(cov.unsupported_total(), 6);
         // Backlog ordering: descending count, then alphabetical.
-        assert_eq!(cov.unsupported_in_reference[0].tag, "PIDPipingComponent");
+        assert_eq!(cov.unsupported_in_reference[0].tag, "PIDPipingBranchPoint");
         assert_eq!(cov.unsupported_in_reference[0].count, 3);
-        assert_eq!(cov.unsupported_in_reference[1].tag, "PIDSignalConnector");
+        assert_eq!(cov.unsupported_in_reference[1].tag, "PIDTypical");
         assert_eq!(cov.unsupported_in_reference[1].count, 2);
         assert_eq!(cov.unsupported_in_reference[2].tag, "PIDBranchPoint");
         assert_eq!(cov.unsupported_in_reference[2].count, 1);
@@ -707,7 +818,7 @@ mod tests {
             "<PIDDrawing></PIDDrawing>",
             "<PIDNozzle></PIDNozzle>",
             "<PIDBranchPoint></PIDBranchPoint>",
-            "<PIDPipingComponent></PIDPipingComponent>",
+            "<PIDPipingBranchPoint></PIDPipingBranchPoint>",
         );
         let cov = coverage_against_reference(xml);
         assert_eq!(
@@ -759,5 +870,129 @@ mod tests {
         assert_eq!(report.count_deltas, 2, "PIDPipingPort and PIDRepresentation");
         assert_eq!(report.generated_total, 12);
         assert_eq!(report.reference_total, 12);
+    }
+
+    // -----------------------------------------------------------------
+    // A23 — interface-per-tag parser
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parse_interfaces_per_tag_captures_all_children_of_single_pid_tag() {
+        let xml = concat!(
+            "<PIDPipeline>",
+            "<IObject/>",
+            "<IPBSItem/>",
+            r#"<IFluidSystem FluidCode="" FluidSystem=""/>"#,
+            "<IPIDTypical/>",
+            "</PIDPipeline>",
+        );
+        let ifaces = parse_interfaces_per_tag(xml);
+        let pipeline = ifaces.get("PIDPipeline").expect("pipeline entry");
+        for expected in ["IObject", "IPBSItem", "IFluidSystem", "IPIDTypical"] {
+            assert!(
+                pipeline.contains(expected),
+                "PIDPipeline interfaces must include `{expected}`; got {pipeline:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_interfaces_per_tag_ignores_second_occurrence_of_same_tag() {
+        // Two PIDPipeline blocks. The first has IObject + IPBSItem;
+        // the second has IObject + INewInterface. The function
+        // must return only the first occurrence's interface set.
+        let xml = concat!(
+            "<PIDPipeline>",
+            "<IObject/>",
+            "<IPBSItem/>",
+            "</PIDPipeline>",
+            "<PIDPipeline>",
+            "<IObject/>",
+            "<INewInterface/>",
+            "</PIDPipeline>",
+        );
+        let ifaces = parse_interfaces_per_tag(xml);
+        let pipeline = ifaces.get("PIDPipeline").expect("pipeline entry");
+        assert!(pipeline.contains("IObject"));
+        assert!(pipeline.contains("IPBSItem"));
+        assert!(
+            !pipeline.contains("INewInterface"),
+            "second-occurrence-only interface must not leak into the first-occurrence set; got {pipeline:?}"
+        );
+    }
+
+    #[test]
+    fn parse_interfaces_per_tag_collects_multiple_tag_types_independently() {
+        let xml = concat!(
+            "<PIDPipeline>",
+            "<IPipeline/>",
+            "</PIDPipeline>",
+            "<PIDNozzle>",
+            "<INozzle/>",
+            "<INozzleOcc/>",
+            "</PIDNozzle>",
+        );
+        let ifaces = parse_interfaces_per_tag(xml);
+        assert_eq!(ifaces.len(), 2);
+        assert!(ifaces["PIDPipeline"].contains("IPipeline"));
+        assert!(ifaces["PIDNozzle"].contains("INozzle"));
+        assert!(ifaces["PIDNozzle"].contains("INozzleOcc"));
+        assert!(!ifaces["PIDPipeline"].contains("INozzle"));
+    }
+
+    #[test]
+    fn parse_interfaces_per_tag_handles_attribute_heavy_opens() {
+        // SmartPlant interfaces carry attributes; the parser must
+        // ignore attribute content and just record the element
+        // name.
+        let xml = concat!(
+            "<PIDPipingConnector>",
+            r#"<IObject UID="X" Name="Y"/>"#,
+            r#"<IConnector FlowDirection="@EE872" RepresentationsAreAllZeroLength="False"/>"#,
+            r#"<INamedPipingConnector PipingConnectorPrefix="" PipingConnectorSeqNo="0101" PipingConnectorSuff=""/>"#,
+            "</PIDPipingConnector>",
+        );
+        let ifaces = parse_interfaces_per_tag(xml);
+        let entry = ifaces.get("PIDPipingConnector").expect("entry");
+        for expected in ["IObject", "IConnector", "INamedPipingConnector"] {
+            assert!(
+                entry.contains(expected),
+                "attribute-heavy interfaces must still register; missing `{expected}`"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_interfaces_per_tag_tolerates_unicode_text_content() {
+        // SPPID ships attribute content with Chinese characters
+        // and entity references. The parser must not be confused
+        // by non-ASCII bytes in attribute values.
+        let xml = concat!(
+            "<PIDNote>",
+            r#"<IObject UID="D317F1AAC79641E985B955779CCDF051"/>"#,
+            "<IDrawingItem/>",
+            "<IPBSNote/>",
+            r#"<INote NoteText="量液孔"/>"#,
+            "<IDocumentItem/>",
+            "</PIDNote>",
+        );
+        let ifaces = parse_interfaces_per_tag(xml);
+        let note = ifaces.get("PIDNote").expect("entry");
+        assert_eq!(note.len(), 5);
+        for expected in ["IObject", "IDrawingItem", "IPBSNote", "INote", "IDocumentItem"] {
+            assert!(
+                note.contains(expected),
+                "interface `{expected}` must round-trip through unicode attribute content; got {note:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_interfaces_per_tag_returns_empty_for_xml_with_no_pid_tags() {
+        let ifaces = parse_interfaces_per_tag("<Container><Foo/></Container>");
+        assert!(
+            ifaces.is_empty(),
+            "no PID tags means no entries; got {ifaces:?}"
+        );
     }
 }

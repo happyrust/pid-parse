@@ -3,13 +3,22 @@
 //!
 //! A14 closed every gap on the small A01 fixture, so it must show
 //! 100% writer coverage. The larger DWG-0202GP06-01 fixture
-//! exercises tag varieties the writer does not yet emit
-//! (PIDSignalPort, PIDPipingComponent, PIDBranchPoint,
-//! PIDPipingBranchPoint, PIDSignalConnector); pinning that backlog
-//! here turns the next-phase work into an executable contract — the
-//! moment a writer addition closes one of those tags, the
-//! corresponding assertion will fail and prompt the test to be
-//! tightened.
+//! exercises tag varieties the writer does not yet emit. Pinning
+//! the remaining backlog here turns the next-phase work into an
+//! executable contract — the moment a writer addition closes one
+//! of those tags, the corresponding assertion will fail and
+//! prompt the test to be tightened.
+//!
+//! Backlog history:
+//! - A15 baseline: `PIDSignalPort × 16, PIDBranchPoint × 5,
+//!   PIDPipingBranchPoint × 4, PIDPipingComponent × 2,
+//!   PIDSignalConnector × 1` (28 tags total).
+//! - A16 closed `PIDSignalPort` (16 derived per InstrFunction).
+//! - A17 closed `PIDPipingComponent` (2 per PipingComp row), so
+//!   the backlog dropped to 10 tags.
+//! - A18 closed `PIDSignalConnector` (1 per SignalRun row), so
+//!   the backlog drops to `PIDBranchPoint × 5 +
+//!   PIDPipingBranchPoint × 4 = 9` tags.
 //!
 //! Both tests skip cleanly when the reference fixture is missing so
 //! CI workers without the SmartPlant export bundle still pass.
@@ -76,20 +85,10 @@ fn coverage_on_dwg_reference_documents_known_writer_backlog() {
     // detect any drift in the reference fixture itself (e.g. a
     // SmartPlant exporter version bump that changes its emission
     // rules).
-    //
-    // History — backlog evolution:
-    //   - A15 baseline: PIDSignalPort × 16, PIDBranchPoint × 5,
-    //     PIDPipingBranchPoint × 4, PIDPipingComponent × 2,
-    //     PIDSignalConnector × 1 (28 tags total).
-    //   - A16 closed PIDSignalPort (16 derived per InstrFunction):
-    //     backlog drops to PIDBranchPoint + PIDPipingBranchPoint +
-    //     PIDPipingComponent + PIDSignalConnector = 12 tags.
     for (tag, expected_count) in [
         ("PIDProcessPoint", 7), // DWG ProcessPoint for non-PipeRun objects, partially supported
         ("PIDBranchPoint", 5),
         ("PIDPipingBranchPoint", 4),
-        ("PIDPipingComponent", 2),
-        ("PIDSignalConnector", 1),
     ] {
         let actual = backlog.get(tag).copied();
         // ProcessPoint is partially supported (we derive one per
@@ -128,6 +127,45 @@ fn coverage_on_dwg_reference_documents_known_writer_backlog() {
         signal_port_supported,
         Some(16),
         "A16 milestone: 16 PIDSignalPort occurrences in DWG must now be writer-supported; got {signal_port_supported:?}",
+    );
+
+    // A17: PIDPipingComponent moved out of the backlog (the DWG
+    // fixture ships 2 PipingComp samples — a `Cap` and a
+    // `Conduit gate valve` — which the writer now emits directly
+    // from the PipingComp dispatch arm). Regression guard: the
+    // supported bucket must now carry PIDPipingComponent × 2.
+    assert!(
+        !backlog.contains_key("PIDPipingComponent"),
+        "PIDPipingComponent should no longer be in the backlog after A17; backlog={backlog:?}",
+    );
+    let piping_component_supported = cov
+        .supported_in_reference
+        .iter()
+        .find(|r| r.tag == "PIDPipingComponent")
+        .map(|r| r.count);
+    assert_eq!(
+        piping_component_supported,
+        Some(2),
+        "A17 milestone: 2 PIDPipingComponent occurrences in DWG must now be writer-supported; got {piping_component_supported:?}",
+    );
+
+    // A18: PIDSignalConnector moved out of the backlog (the DWG
+    // fixture ships 1 SignalRun row emitted through the new
+    // SignalRun dispatch arm). Regression guard: the supported
+    // bucket must now carry PIDSignalConnector × 1.
+    assert!(
+        !backlog.contains_key("PIDSignalConnector"),
+        "PIDSignalConnector should no longer be in the backlog after A18; backlog={backlog:?}",
+    );
+    let signal_connector_supported = cov
+        .supported_in_reference
+        .iter()
+        .find(|r| r.tag == "PIDSignalConnector")
+        .map(|r| r.count);
+    assert_eq!(
+        signal_connector_supported,
+        Some(1),
+        "A18 milestone: 1 PIDSignalConnector occurrence in DWG must now be writer-supported; got {signal_connector_supported:?}",
     );
 
     // Coverage ratio sanity: writer must already cover SOMETHING in
