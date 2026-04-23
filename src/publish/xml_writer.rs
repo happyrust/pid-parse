@@ -31,12 +31,25 @@ use super::model::{PublishDrawing, PublishError, PublishObject, PublishRelations
 /// carried by any backup table — the values are part of SmartPlant
 /// 2014 R1's output contract.
 const CONTAINER_COMP_SCHEMA: &str = "PIDComponent";
+/// `_Meta.xml` switches the schema marker to advertise it as the
+/// document-versioning sibling of the main data document. Reference
+/// SPPID exports keep `Scope="Data"` for both files, so only the
+/// schema label changes.
+const CONTAINER_META_COMP_SCHEMA: &str = "DocVersioningComponent";
 const CONTAINER_SCOPE: &str = "Data";
 const CONTAINER_SOFTWARE_VERSION: &str = "10.00.31.0023";
 const CONTAINER_SCHEMA_VERSION: &str = "04.02.17.01";
 const CONTAINER_TOOL_ID: &str = "SMARTPLANTPID";
 const CONTAINER_TOOL_SIGNATURE: &str = "AAAD";
 const CONTAINER_SDECIMAL: &str = ".";
+
+/// Default `<IDocumentVersion DocRevision="..."/>` attribute when a
+/// drawing has not been versioned in the source backup. Reference
+/// exports ship `"0"` for unrevised drawings.
+const META_DEFAULT_DOC_REVISION: &str = "0";
+/// Default `<IDocumentVersion DocVersion="..."/>` attribute. Same
+/// rationale — reference exports use `"1"` for first-time emits.
+const META_DEFAULT_DOC_VERSION: &str = "1";
 
 /// Emit a full `_Data.xml` document for the given drawing into a
 /// string buffer. `plant_name` is a user-supplied value (e.g. the
@@ -52,6 +65,64 @@ pub fn write_data_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
     write_representations(&mut buf, drawing)?;
     write_relationships(&mut buf, drawing)?;
     writeln!(buf, " </Container>").map_err(fmt_err)?;
+    Ok(buf)
+}
+
+/// Emit a `_Meta.xml` document for the given drawing. SmartPlant's
+/// reference Publish-Data export ships the document-versioning
+/// envelope as a sibling file alongside `<DrawingName>_Data.xml`.
+/// Compared with `write_data_xml` the structural shape is fixed and
+/// minimal — three nodes (DocumentVersion / DocumentRevision /
+/// File) and three `<Rel>` rows wiring them together.
+///
+/// The meta document carries no business attributes. Its sole
+/// inputs are the drawing's `drawing_uid`, `drawing_name`, and
+/// (optionally) `date_created`. Inner UIDs (the ones stamped onto
+/// the version / revision / file / rel nodes) are derived
+/// deterministically from `drawing_uid` via [`derive_meta_uid`] so
+/// successive re-emits of the same drawing produce byte-identical
+/// XML — a property tests rely on heavily.
+///
+/// `plant_name` is reused unchanged from the data document; it
+/// shows up as the `<Container Plant="...">` attribute.
+pub fn write_meta_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<String, PublishError> {
+    let mut buf = String::with_capacity(1024);
+    writeln!(buf, r#"<?xml version ="1.0" encoding="UTF-8"?>"#).map_err(fmt_err)?;
+    write_meta_container_open(&mut buf, drawing, plant_name)?;
+
+    let version_uid = derive_meta_uid(&drawing.drawing_uid, "version");
+    let revision_uid = derive_meta_uid(&drawing.drawing_uid, "revision");
+    let file_uid = derive_meta_uid(&drawing.drawing_uid, "file");
+    let rel_versioned_uid = derive_meta_uid(&drawing.drawing_uid, "rel/versioned-doc");
+    let rel_revised_uid = derive_meta_uid(&drawing.drawing_uid, "rel/revised-document");
+    let rel_file_uid = derive_meta_uid(&drawing.drawing_uid, "rel/file-composition");
+
+    write_meta_document_version(&mut buf, drawing, &version_uid)?;
+    write_meta_rel(
+        &mut buf,
+        &rel_versioned_uid,
+        &drawing.drawing_uid,
+        &version_uid,
+        "VersionedDoc",
+    )?;
+    write_meta_document_revision(&mut buf, drawing, &revision_uid)?;
+    write_meta_rel(
+        &mut buf,
+        &rel_revised_uid,
+        &revision_uid,
+        &drawing.drawing_uid,
+        "RevisedDocument",
+    )?;
+    write_meta_file(&mut buf, drawing, &file_uid)?;
+    write_meta_rel(
+        &mut buf,
+        &rel_file_uid,
+        &file_uid,
+        &version_uid,
+        "FileComposition",
+    )?;
+
+    writeln!(buf, "  </Container>").map_err(fmt_err)?;
     Ok(buf)
 }
 
@@ -486,6 +557,190 @@ fn write_container_open(
         CONTAINER_SDECIMAL,
     )
     .map_err(fmt_err)
+}
+
+/// `_Meta.xml` flavor of the container header. Identical wire shape
+/// to [`write_container_open`] but stamps `CompSchema=
+/// "DocVersioningComponent"` so SmartPlant routes the document to
+/// the document-versioning loader instead of the data loader.
+/// `LoginUser` / `LoginPWD` attributes are intentionally omitted to
+/// match the reference exports byte-for-byte.
+fn write_meta_container_open(
+    buf: &mut String,
+    drawing: &PublishDrawing,
+    plant_name: &str,
+) -> Result<(), PublishError> {
+    writeln!(
+        buf,
+        concat!(
+            r#"<Container CompSchema="{}" Scope="{}" SoftwareVersion="{}" "#,
+            r#"IsValidated="False" SchemaVersion="{}" Plant="{}" Project="" "#,
+            r#"DocUID="{}" DocName="{}" Version="" ToolID="{}" "#,
+            r#"ToolSignature="{}" SDECIMAL="{}">"#
+        ),
+        CONTAINER_META_COMP_SCHEMA,
+        CONTAINER_SCOPE,
+        CONTAINER_SOFTWARE_VERSION,
+        CONTAINER_SCHEMA_VERSION,
+        escape_attr(plant_name),
+        escape_attr(&drawing.drawing_uid),
+        escape_attr(&drawing.drawing_name),
+        CONTAINER_TOOL_ID,
+        CONTAINER_TOOL_SIGNATURE,
+        CONTAINER_SDECIMAL,
+    )
+    .map_err(fmt_err)
+}
+
+/// Emit `<DocumentVersion>` block with the deterministic
+/// `version_uid`, the drawing's friendly name (`"<name> Version"`),
+/// and a `DocVersionDate` parsed from `drawing.date_created`. When
+/// no date is available the attribute renders empty rather than
+/// fabricating a fake one — downstream tooling can treat the empty
+/// string as "unknown".
+fn write_meta_document_version(
+    buf: &mut String,
+    drawing: &PublishDrawing,
+    version_uid: &str,
+) -> Result<(), PublishError> {
+    let version_date = drawing
+        .date_created
+        .as_deref()
+        .map(format_meta_date)
+        .unwrap_or_default();
+    writeln!(buf, "   <DocumentVersion>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}" Name="{} Version"/>"#,
+        escape_attr(version_uid),
+        escape_attr(&drawing.drawing_name),
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IDocumentVersion DocRevision="{}" DocVersionDate="{}" DocVersion="{}"/>"#,
+        META_DEFAULT_DOC_REVISION,
+        escape_attr(&version_date),
+        META_DEFAULT_DOC_VERSION,
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IFileComposition/>").map_err(fmt_err)?;
+    writeln!(buf, "   </DocumentVersion>").map_err(fmt_err)
+}
+
+/// Emit `<DocumentRevision>` with the deterministic `revision_uid`.
+/// `MajorRev_ForRevise` defaults to `"0"` and `MinorRev_ForRevise`
+/// stays empty; both match every reference fixture and there is no
+/// SQLite column carrying the values yet.
+fn write_meta_document_revision(
+    buf: &mut String,
+    drawing: &PublishDrawing,
+    revision_uid: &str,
+) -> Result<(), PublishError> {
+    writeln!(buf, "   <DocumentRevision>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}" Name="{} Revision"/>"#,
+        escape_attr(revision_uid),
+        escape_attr(&drawing.drawing_name),
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IDocumentRevision MajorRev_ForRevise="0" MinorRev_ForRevise=""/>"#,
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "   </DocumentRevision>").map_err(fmt_err)
+}
+
+/// Emit `<File>` with the deterministic `file_uid`. The file name
+/// is `<drawing_name>.pid` to mirror the on-disk artifact; the
+/// `IFile FilePath=""` attribute stays empty because the original
+/// SPPID export stamps the local filesystem path of the operator's
+/// machine — a value we have no way of recovering and that, when
+/// missing, downstream consumers tolerate.
+fn write_meta_file(
+    buf: &mut String,
+    drawing: &PublishDrawing,
+    file_uid: &str,
+) -> Result<(), PublishError> {
+    writeln!(buf, "   <File>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}" Name="{}.pid" Description=""/>"#,
+        escape_attr(file_uid),
+        escape_attr(&drawing.drawing_name),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IFile FilePath=""/>"#).map_err(fmt_err)?;
+    writeln!(buf, "   </File>").map_err(fmt_err)
+}
+
+/// Emit a single `<Rel>` row. `def_uid` is the SmartPlant
+/// relationship classifier (`"VersionedDoc"`, `"RevisedDocument"`,
+/// `"FileComposition"`); the meta document only ever uses these
+/// three so the helper does not need to be more general.
+fn write_meta_rel(
+    buf: &mut String,
+    rel_uid: &str,
+    uid1: &str,
+    uid2: &str,
+    def_uid: &str,
+) -> Result<(), PublishError> {
+    writeln!(buf, "   <Rel>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}"/>"#,
+        escape_attr(rel_uid),
+    )
+    .map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IRel UID1="{}" UID2="{}" DefUID="{}"/>"#,
+        escape_attr(uid1),
+        escape_attr(uid2),
+        escape_attr(def_uid),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "   </Rel>").map_err(fmt_err)
+}
+
+/// Derive a deterministic 32-hex-character SmartPlant UID from
+/// `(seed, role)` via UUID v5 (SHA-1 over the OID namespace). The
+/// `seed` is typically the drawing's `T_Drawing.SP_ID`; the `role`
+/// disambiguates the per-document children (`"version"`,
+/// `"revision"`, `"file"`, `"rel/<def-uid>"`). The output is the
+/// uppercase 32-char hex form SmartPlant uses for every SP_ID.
+///
+/// Determinism is the whole point: the writer can be invoked twice
+/// and both runs produce byte-identical `_Meta.xml`, so test
+/// fixtures can be golden-compared and CI can detect any drift.
+pub(crate) fn derive_meta_uid(seed: &str, role: &str) -> String {
+    let payload = format!("{seed}/{role}");
+    let uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, payload.as_bytes());
+    uuid.simple().to_string().to_uppercase()
+}
+
+/// Normalize a SmartPlant `DateCreated` string into the
+/// `YYYY/MM/DD` form reference exports use for `DocVersionDate`.
+///
+/// OrcaMDF surfaces the value as the SQL Server raw render — for
+/// example `"2026/4/20 10:32:46"`. We zero-pad the month and day
+/// and drop the time component, matching the reference fixtures'
+/// `"2026/04/20"`. Any input that does not parse as
+/// `YYYY/M/D[ ...]` is returned verbatim so callers retain enough
+/// debug context to spot unsupported formats.
+fn format_meta_date(raw: &str) -> String {
+    let date_part = raw.split_whitespace().next().unwrap_or(raw);
+    let mut parts = date_part.split('/');
+    let (Some(y), Some(m), Some(d), None) = (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return raw.to_string();
+    };
+    let (Ok(y_n), Ok(m_n), Ok(d_n)) = (y.parse::<u32>(), m.parse::<u32>(), d.parse::<u32>()) else {
+        return raw.to_string();
+    };
+    format!("{y_n:04}/{m_n:02}/{d_n:02}")
 }
 
 fn write_pid_drawing(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
@@ -1114,5 +1369,175 @@ mod tests {
         // No representations or rels — but the container still
         // closes and the document is valid.
         assert!(out.trim_end().ends_with("</Container>"));
+    }
+
+    // -----------------------------------------------------------------
+    // A10.2 — _Meta.xml writer
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn meta_xml_renders_doc_versioning_container_header() {
+        let d = PublishDrawing::new("D9635C3C898840D1990B7E8BEE1D55DA", "A01");
+        let out = write_meta_xml(&d, "TEST02").expect("write meta");
+        assert!(
+            out.contains(r#"CompSchema="DocVersioningComponent""#),
+            "meta document must advertise the DocVersioningComponent schema; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"Plant="TEST02""#),
+            "Plant attribute must round-trip; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"DocUID="D9635C3C898840D1990B7E8BEE1D55DA""#),
+            "DocUID must equal drawing_uid; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"DocName="A01""#),
+            "DocName must equal drawing_name; out:\n{out}"
+        );
+        assert!(
+            out.trim_end().ends_with("</Container>"),
+            "container must close; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn meta_xml_emits_three_main_blocks_and_three_rels_in_order() {
+        let d = PublishDrawing::new("UID-ABC", "DRAW1");
+        let out = write_meta_xml(&d, "P01").expect("write meta");
+
+        let pos_version = out.find("<DocumentVersion>").expect("DocumentVersion present");
+        let pos_revision = out.find("<DocumentRevision>").expect("DocumentRevision present");
+        let pos_file = out.find("<File>").expect("File present");
+
+        assert!(
+            pos_version < pos_revision && pos_revision < pos_file,
+            "blocks must be ordered DocumentVersion < DocumentRevision < File; out:\n{out}"
+        );
+
+        let rel_count = out.matches("<Rel>").count();
+        assert_eq!(rel_count, 3, "meta document carries exactly three Rel rows; out:\n{out}");
+
+        for def_uid in ["VersionedDoc", "RevisedDocument", "FileComposition"] {
+            assert!(
+                out.contains(&format!(r#"DefUID="{def_uid}""#)),
+                "DefUID `{def_uid}` must appear; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn meta_xml_uids_are_deterministic_across_runs() {
+        let d = PublishDrawing::new("UID-ABC", "DRAW1");
+        let out_a = write_meta_xml(&d, "P01").expect("write");
+        let out_b = write_meta_xml(&d, "P01").expect("write again");
+        assert_eq!(
+            out_a, out_b,
+            "deterministic UID derivation must produce byte-identical meta XML"
+        );
+    }
+
+    #[test]
+    fn meta_xml_uses_drawing_name_for_version_revision_and_file_node() {
+        let d = PublishDrawing::new("UID-1", "TANK-01");
+        let out = write_meta_xml(&d, "P01").expect("write");
+        assert!(
+            out.contains(r#"Name="TANK-01 Version""#),
+            "DocumentVersion IObject Name should embed drawing name; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"Name="TANK-01 Revision""#),
+            "DocumentRevision IObject Name should embed drawing name; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"Name="TANK-01.pid""#),
+            "File IObject Name should be `<drawing>.pid`; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn meta_xml_normalizes_date_created_to_yyyy_mm_dd() {
+        let mut d = PublishDrawing::new("UID-1", "A01");
+        d.date_created = Some("2026/4/20 10:32:46".into());
+        let out = write_meta_xml(&d, "P01").expect("write");
+        assert!(
+            out.contains(r#"DocVersionDate="2026/04/20""#),
+            "OrcaMDF raw date should zero-pad to YYYY/MM/DD; out:\n{out}"
+        );
+        assert!(
+            !out.contains(r#"DocVersionDate="2026/4/20 10:32:46""#),
+            "raw timestamp must not appear verbatim; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn meta_xml_handles_missing_date_with_empty_attribute() {
+        let d = PublishDrawing::new("UID-1", "A01");
+        let out = write_meta_xml(&d, "P01").expect("write");
+        assert!(
+            out.contains(r#"DocVersionDate="""#),
+            "missing date_created should surface as DocVersionDate=\"\"; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn meta_xml_rel_uid1_uid2_match_expected_topology() {
+        let d = PublishDrawing::new("DUID", "A01");
+        let out = write_meta_xml(&d, "P01").expect("write");
+
+        let version_uid = derive_meta_uid("DUID", "version");
+        let revision_uid = derive_meta_uid("DUID", "revision");
+        let file_uid = derive_meta_uid("DUID", "file");
+
+        // Drawing -> Version (VersionedDoc)
+        assert!(
+            out.contains(&format!(
+                r#"UID1="DUID" UID2="{version_uid}" DefUID="VersionedDoc""#
+            )),
+            "VersionedDoc rel must wire drawing -> version; out:\n{out}"
+        );
+        // Revision -> Drawing (RevisedDocument)
+        assert!(
+            out.contains(&format!(
+                r#"UID1="{revision_uid}" UID2="DUID" DefUID="RevisedDocument""#
+            )),
+            "RevisedDocument rel must wire revision -> drawing; out:\n{out}"
+        );
+        // File -> Version (FileComposition)
+        assert!(
+            out.contains(&format!(
+                r#"UID1="{file_uid}" UID2="{version_uid}" DefUID="FileComposition""#
+            )),
+            "FileComposition rel must wire file -> version; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn derive_meta_uid_is_uppercase_32_hex() {
+        let uid = derive_meta_uid("DUID", "version");
+        assert_eq!(uid.len(), 32, "derived UID must be 32 hex chars; got {uid}");
+        assert!(
+            uid.chars().all(|c| c.is_ascii_hexdigit() && (!c.is_ascii_alphabetic() || c.is_ascii_uppercase())),
+            "derived UID must be uppercase hex only; got {uid}"
+        );
+    }
+
+    #[test]
+    fn derive_meta_uid_distinguishes_role_within_same_seed() {
+        let v = derive_meta_uid("DUID", "version");
+        let r = derive_meta_uid("DUID", "revision");
+        let f = derive_meta_uid("DUID", "file");
+        assert_ne!(v, r);
+        assert_ne!(r, f);
+        assert_ne!(v, f);
+    }
+
+    #[test]
+    fn format_meta_date_returns_input_for_unrecognized_shapes() {
+        // Anything that doesn't parse as YYYY/M/D is returned as-is
+        // so the loader / debugger can still see what came through.
+        assert_eq!(format_meta_date("2026-04-20"), "2026-04-20");
+        assert_eq!(format_meta_date("not-a-date"), "not-a-date");
+        assert_eq!(format_meta_date(""), "");
     }
 }

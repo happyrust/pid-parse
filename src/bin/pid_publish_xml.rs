@@ -23,7 +23,7 @@
 //! usage error.
 
 use pid_parse::publish::sqlite_load::open_readonly;
-use pid_parse::publish::{load_drawing_graph, write_data_xml};
+use pid_parse::publish::{load_drawing_graph, write_data_xml, write_meta_xml};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -31,6 +31,11 @@ struct CliOptions {
     sqlite_path: PathBuf,
     drawing_uid: String,
     output: OutputTarget,
+    /// Optional `_Meta.xml` companion sink. Only honored when
+    /// `output` is a file target — pairing meta output with stdout
+    /// would interleave two unrelated XML documents on the same
+    /// stream.
+    meta_output: Option<PathBuf>,
     plant_name: String,
 }
 
@@ -43,12 +48,14 @@ enum OutputTarget {
 fn print_usage() {
     eprintln!(
         "Usage: pid_publish_xml <sqlite> --drawing UID [--out FILE | --stdout]\n\
-         \x20               [--plant NAME]\n\n\
-         --drawing UID  T_Drawing.SP_ID of the drawing to emit.\n\
-         --out FILE     write the XML document to FILE (directory created).\n\
-         --stdout       write the XML document to stdout instead of a file.\n\
-         --plant NAME   Plant value for the <Container> root attribute\n\
-         \x20              (default: \"P01\" — override with the real plant)."
+         \x20               [--meta-out FILE] [--plant NAME]\n\n\
+         --drawing UID   T_Drawing.SP_ID of the drawing to emit.\n\
+         --out FILE      write the _Data.xml document to FILE (directory created).\n\
+         --stdout        write the _Data.xml document to stdout instead of a file.\n\
+         --meta-out FILE write the companion _Meta.xml document to FILE.\n\
+         \x20               Requires --out (incompatible with --stdout).\n\
+         --plant NAME    Plant value for the <Container> root attribute\n\
+         \x20               (default: \"P01\" — override with the real plant)."
     );
 }
 
@@ -59,6 +66,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let sqlite_path = PathBuf::from(&args[1]);
     let mut drawing_uid: Option<String> = None;
     let mut out_path: Option<PathBuf> = None;
+    let mut meta_out_path: Option<PathBuf> = None;
     let mut stdout = false;
     let mut plant_name: Option<String> = None;
 
@@ -77,6 +85,13 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     .get(i + 1)
                     .ok_or_else(|| "--out requires a path".to_string())?;
                 out_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--meta-out" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--meta-out requires a path".to_string())?;
+                meta_out_path = Some(PathBuf::from(value));
                 i += 2;
             }
             "--stdout" => {
@@ -104,10 +119,15 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         (None, false) => return Err("either --out FILE or --stdout is required".into()),
     };
 
+    if meta_out_path.is_some() && matches!(output, OutputTarget::Stdout) {
+        return Err("--meta-out requires --out (incompatible with --stdout)".into());
+    }
+
     Ok(CliOptions {
         sqlite_path,
         drawing_uid,
         output,
+        meta_output: meta_out_path,
         plant_name: plant_name.unwrap_or_else(|| "P01".to_string()),
     })
 }
@@ -138,7 +158,7 @@ fn run(options: CliOptions) -> Result<(), String> {
     let graph = load_drawing_graph(&conn, &options.drawing_uid)
         .map_err(|e| format!("load drawing {}: {e}", options.drawing_uid))?;
     let xml = write_data_xml(&graph, &options.plant_name)
-        .map_err(|e| format!("render XML: {e}"))?;
+        .map_err(|e| format!("render data XML: {e}"))?;
 
     eprintln!(
         "Loaded drawing `{}` ({} UID): {} objects, {} representations, {} relationships",
@@ -149,20 +169,39 @@ fn run(options: CliOptions) -> Result<(), String> {
         graph.relationships.len(),
     );
 
-    match options.output {
+    match &options.output {
         OutputTarget::Stdout => {
             print!("{xml}");
         }
         OutputTarget::File(path) => {
-            if let Some(dir) = path.parent() {
-                if !dir.as_os_str().is_empty() {
-                    std::fs::create_dir_all(dir)
-                        .map_err(|e| format!("create {}: {e}", dir.display()))?;
-                }
-            }
-            std::fs::write(&path, &xml).map_err(|e| format!("write {}: {e}", path.display()))?;
+            write_file(path, &xml)?;
             eprintln!("Wrote {} ({} bytes).", path.display(), xml.len());
         }
     }
+
+    if let Some(meta_path) = &options.meta_output {
+        let meta_xml = write_meta_xml(&graph, &options.plant_name)
+            .map_err(|e| format!("render meta XML: {e}"))?;
+        write_file(meta_path, &meta_xml)?;
+        eprintln!(
+            "Wrote {} ({} bytes).",
+            meta_path.display(),
+            meta_xml.len()
+        );
+    }
+
     Ok(())
+}
+
+/// Write `contents` to `path`, creating the parent directory chain
+/// if needed. Pulled out so `_Data.xml` and `_Meta.xml` go through
+/// the same I/O path and surface the same `format!` error messages.
+fn write_file(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("create {}: {e}", dir.display()))?;
+        }
+    }
+    std::fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))
 }

@@ -37,4 +37,4 @@ pub use sqlite_load::{
     load_codelist_index, load_drawing, load_drawing_graph, load_objects_by_uids,
     load_piping_points_for_objects, load_relationships, load_representations,
 };
-pub use xml_writer::write_data_xml;
+pub use xml_writer::{write_data_xml, write_meta_xml};
