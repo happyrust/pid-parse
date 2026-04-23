@@ -257,6 +257,7 @@ pub fn supported_pid_tags() -> &'static [&'static str] {
         "PIDProcessPoint",
         "PIDProcessVessel",
         "PIDRepresentation",
+        "PIDSignalPort",
     ]
 }
 
@@ -640,10 +641,13 @@ mod tests {
 
     #[test]
     fn coverage_classifies_unsupported_tags_into_backlog() {
-        // Mixed: PIDDrawing supported, the other three not.
+        // Mixed: PIDDrawing supported, the other three not. The
+        // backlog tags chosen here (PIDPipingComponent /
+        // PIDBranchPoint / PIDSignalConnector) are the ones the
+        // writer cannot emit as of A16.
         let xml = concat!(
             "<PIDDrawing></PIDDrawing>",
-            "<PIDSignalPort></PIDSignalPort><PIDSignalPort></PIDSignalPort>",
+            "<PIDSignalConnector></PIDSignalConnector><PIDSignalConnector></PIDSignalConnector>",
             "<PIDBranchPoint></PIDBranchPoint>",
             "<PIDPipingComponent></PIDPipingComponent>",
             "<PIDPipingComponent></PIDPipingComponent>",
@@ -656,7 +660,7 @@ mod tests {
         // Backlog ordering: descending count, then alphabetical.
         assert_eq!(cov.unsupported_in_reference[0].tag, "PIDPipingComponent");
         assert_eq!(cov.unsupported_in_reference[0].count, 3);
-        assert_eq!(cov.unsupported_in_reference[1].tag, "PIDSignalPort");
+        assert_eq!(cov.unsupported_in_reference[1].tag, "PIDSignalConnector");
         assert_eq!(cov.unsupported_in_reference[1].count, 2);
         assert_eq!(cov.unsupported_in_reference[2].tag, "PIDBranchPoint");
         assert_eq!(cov.unsupported_in_reference[2].count, 1);
@@ -664,7 +668,9 @@ mod tests {
 
     #[test]
     fn coverage_display_includes_percentage_and_two_blocks() {
-        let xml = "<PIDDrawing></PIDDrawing><PIDSignalPort></PIDSignalPort>";
+        // Use a backlog tag the writer still cannot emit
+        // (PIDBranchPoint) so the percentage stays interesting.
+        let xml = "<PIDDrawing></PIDDrawing><PIDBranchPoint></PIDBranchPoint>";
         let cov = coverage_against_reference(xml);
         let s = format!("{cov}");
         assert!(s.contains("Publish writer coverage"));
@@ -673,7 +679,7 @@ mod tests {
         assert!(s.contains("backlog tags: 1"));
         assert!(s.contains("Unsupported tag (backlog)"));
         assert!(s.contains("Supported tag"));
-        assert!(s.contains("PIDSignalPort"));
+        assert!(s.contains("PIDBranchPoint"));
         assert!(s.contains("PIDDrawing"));
     }
 
@@ -686,8 +692,9 @@ mod tests {
         assert!(s.contains("Supported tag"));
         assert!(!s.contains("Unsupported tag (backlog)"));
 
-        // None supported -> only the backlog block.
-        let xml = "<PIDSignalPort></PIDSignalPort>";
+        // None supported -> only the backlog block. PIDBranchPoint
+        // remains a definitively unsupported tag as of A16.
+        let xml = "<PIDBranchPoint></PIDBranchPoint>";
         let cov = coverage_against_reference(xml);
         let s = format!("{cov}");
         assert!(s.contains("Unsupported tag (backlog)"));
@@ -699,7 +706,7 @@ mod tests {
         let xml = concat!(
             "<PIDDrawing></PIDDrawing>",
             "<PIDNozzle></PIDNozzle>",
-            "<PIDSignalPort></PIDSignalPort>",
+            "<PIDBranchPoint></PIDBranchPoint>",
             "<PIDPipingComponent></PIDPipingComponent>",
         );
         let cov = coverage_against_reference(xml);

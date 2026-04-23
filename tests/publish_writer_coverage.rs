@@ -76,9 +76,16 @@ fn coverage_on_dwg_reference_documents_known_writer_backlog() {
     // detect any drift in the reference fixture itself (e.g. a
     // SmartPlant exporter version bump that changes its emission
     // rules).
+    //
+    // History — backlog evolution:
+    //   - A15 baseline: PIDSignalPort × 16, PIDBranchPoint × 5,
+    //     PIDPipingBranchPoint × 4, PIDPipingComponent × 2,
+    //     PIDSignalConnector × 1 (28 tags total).
+    //   - A16 closed PIDSignalPort (16 derived per InstrFunction):
+    //     backlog drops to PIDBranchPoint + PIDPipingBranchPoint +
+    //     PIDPipingComponent + PIDSignalConnector = 12 tags.
     for (tag, expected_count) in [
-        ("PIDSignalPort", 16),
-        ("PIDProcessPoint", 7), // DWG uses ProcessPoint for non-PipeRun objects too
+        ("PIDProcessPoint", 7), // DWG ProcessPoint for non-PipeRun objects, partially supported
         ("PIDBranchPoint", 5),
         ("PIDPipingBranchPoint", 4),
         ("PIDPipingComponent", 2),
@@ -104,6 +111,24 @@ fn coverage_on_dwg_reference_documents_known_writer_backlog() {
             "expected DWG fixture to ship {expected_count} occurrences of `{tag}` in the writer backlog; got {actual:?}",
         );
     }
+
+    // A16: PIDSignalPort moved out of the backlog into the supported
+    // bucket. Pin that explicitly so a future regression that drops
+    // the writer back to "no SignalPort" trips this assertion.
+    assert!(
+        !backlog.contains_key("PIDSignalPort"),
+        "PIDSignalPort should no longer be in the backlog after A16; backlog={backlog:?}",
+    );
+    let signal_port_supported = cov
+        .supported_in_reference
+        .iter()
+        .find(|r| r.tag == "PIDSignalPort")
+        .map(|r| r.count);
+    assert_eq!(
+        signal_port_supported,
+        Some(16),
+        "A16 milestone: 16 PIDSignalPort occurrences in DWG must now be writer-supported; got {signal_port_supported:?}",
+    );
 
     // Coverage ratio sanity: writer must already cover SOMETHING in
     // DWG (the supported tags include PIDDrawing / PIDNozzle /

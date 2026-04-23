@@ -53,6 +53,15 @@ const META_DEFAULT_DOC_REVISION: &str = "0";
 /// rationale — reference exports use `"1"` for first-time emits.
 const META_DEFAULT_DOC_VERSION: &str = "1";
 
+/// Number of `<PIDSignalPort>` children SmartPlant always derives
+/// from a single InstrFunction / Instrument row. Pinned at 8
+/// because the DWG-0202GP06-01 reference fixture emits exactly
+/// `<instr>.1` through `<instr>.8` for each of its two
+/// InstrFunction objects (16 ports total = the A15 backlog
+/// count). Future fixtures that exhibit a different cardinality
+/// will let this constant become a per-object derivation rule.
+const INSTR_DERIVED_SIGNAL_PORT_COUNT: u8 = 8;
+
 /// Emit a full `_Data.xml` document for the given drawing into a
 /// string buffer. `plant_name` is a user-supplied value (e.g. the
 /// SmartPlant plant identifier from MSCI / Manifest); stage-1
@@ -163,11 +172,17 @@ fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<
             // DWG fixture ships 11 of these — annotation labels
             // hung on the drawing canvas.
             "Note" | "ItemNote" => write_item_note(buf, obj)?,
-            // A11: Instrument / InstrFunction → `<PIDControlSystemFunction>`.
-            // The DWG fixture ships 2 of these — measurement /
-            // control loops keyed by `MeasuredVariableCode +
-            // TagSequenceNo` (e.g. `LIA-060201`).
-            "Instrument" | "InstrFunction" => write_control_system_function(buf, obj)?,
+            // A11+A16: Instrument / InstrFunction →
+            // `<PIDControlSystemFunction>` plus the eight derived
+            // `<PIDSignalPort>` children SmartPlant always
+            // synthesizes (UIDs `<instr>.{1..8}`). The DWG fixture
+            // ships 2 InstrFunction rows × 8 derived ports = 16
+            // PIDSignalPort entries, matching the A15 backlog
+            // count exactly.
+            "Instrument" | "InstrFunction" => {
+                write_control_system_function(buf, obj)?;
+                write_derived_instr_signal_ports(buf, obj, INSTR_DERIVED_SIGNAL_PORT_COUNT)?;
+            }
             // TODO(A12+): Exchanger / Mechanical have business
             // subtables registered in `subtables_for_item_type` but
             // no dedicated SmartPlant tag observed in the TEST02 +
@@ -536,6 +551,46 @@ fn write_derived_connector_endpoints(
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   </PIDProcessPoint>").map_err(fmt_err)
+}
+
+/// Emit `count` `<PIDSignalPort>` children SmartPlant derives
+/// from a single InstrFunction / Instrument row.
+///
+/// Each port carries:
+/// * `IObject UID="<instr>.N" Name="N"` — index-suffixed UID matching
+///   the SmartPlant `<instr>.{1..count}` pattern (verified against
+///   `DWG-0202GP06-01_Data.xml`).
+/// * Five empty interface tags (`IConnection`, `ISignalConnection`,
+///   `ISignalPort`, `IPipingConnection`, `IFacilityPoint`) — exact
+///   shape of the reference fixture.
+/// * `IPIDTypical` (no `IsTypical` attribute, matching the
+///   reference; Vessel/Nozzle's typical attribute is omitted here).
+///
+/// Counts of zero render nothing but stay well-formed.
+fn write_derived_instr_signal_ports(
+    buf: &mut String,
+    obj: &PublishObject,
+    count: u8,
+) -> Result<(), PublishError> {
+    for index in 1..=count {
+        let port_uid = format!("{}.{index}", obj.uid);
+        writeln!(buf, "   <PIDSignalPort>").map_err(fmt_err)?;
+        writeln!(
+            buf,
+            r#"      <IObject UID="{}" Name="{}"/>"#,
+            escape_attr(&port_uid),
+            index,
+        )
+        .map_err(fmt_err)?;
+        writeln!(buf, "      <IConnection/>").map_err(fmt_err)?;
+        writeln!(buf, "      <ISignalConnection/>").map_err(fmt_err)?;
+        writeln!(buf, "      <ISignalPort/>").map_err(fmt_err)?;
+        writeln!(buf, "      <IPipingConnection/>").map_err(fmt_err)?;
+        writeln!(buf, "      <IFacilityPoint/>").map_err(fmt_err)?;
+        writeln!(buf, "      <IPIDTypical/>").map_err(fmt_err)?;
+        writeln!(buf, "   </PIDSignalPort>").map_err(fmt_err)?;
+    }
+    Ok(())
 }
 
 fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
@@ -2062,6 +2117,147 @@ mod tests {
         assert!(
             !out.contains(r#"Name="""#),
             "writer must not emit empty Name attributes; out:\n{out}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // A16 — derived PIDSignalPort children
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn instr_function_emits_eight_derived_signal_ports() {
+        // SmartPlant always derives 8 `<PIDSignalPort>` children
+        // per InstrFunction (verified against
+        // DWG-0202GP06-01_Data.xml: 2 InstrFunction × 8 ports = 16).
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-1".into(),
+            item_type_name: "InstrFunction".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("MeasuredVariableCode".into(), "LIA".into());
+                m.insert("TagSequenceNo".into(), "060201".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(
+            out.matches("<PIDSignalPort>").count(),
+            8,
+            "single InstrFunction must derive exactly 8 PIDSignalPort; out:\n{out}"
+        );
+        // Spot-check first / mid / last derived UIDs.
+        for index in [1, 4, 8] {
+            assert!(
+                out.contains(&format!(
+                    r#"<IObject UID="INSTR-1.{index}" Name="{index}"/>"#
+                )),
+                "derived port {index} must carry UID `INSTR-1.{index}` and Name=\"{index}\"; out:\n{out}"
+            );
+        }
+        // Each derived block carries the full 5-interface skeleton.
+        assert!(out.contains("<ISignalConnection/>"));
+        assert!(out.contains("<ISignalPort/>"));
+        assert!(out.contains("<IFacilityPoint/>"));
+        assert!(out.contains("<IPIDTypical/>"));
+    }
+
+    #[test]
+    fn instrument_alias_also_derives_eight_signal_ports() {
+        // Both `Instrument` and `InstrFunction` ItemTypeNames must
+        // produce the eight derived ports.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-2".into(),
+            item_type_name: "Instrument".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(out.matches("<PIDSignalPort>").count(), 8);
+        assert!(out.contains(r#"<IObject UID="INSTR-2.1" Name="1"/>"#));
+        assert!(out.contains(r#"<IObject UID="INSTR-2.8" Name="8"/>"#));
+    }
+
+    #[test]
+    fn two_instr_functions_yield_sixteen_distinct_signal_ports() {
+        // The DWG fixture's 2 × 8 = 16 ports must round-trip
+        // distinct UIDs even when the two InstrFunctions live on
+        // the same drawing.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![
+            PublishObject {
+                uid: "INSTR-A".into(),
+                item_type_name: "InstrFunction".into(),
+                ..PublishObject::default()
+            },
+            PublishObject {
+                uid: "INSTR-B".into(),
+                item_type_name: "InstrFunction".into(),
+                ..PublishObject::default()
+            },
+        ];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(
+            out.matches("<PIDSignalPort>").count(),
+            16,
+            "two InstrFunctions must derive 2 × 8 = 16 PIDSignalPort; out:\n{out}"
+        );
+        for prefix in ["INSTR-A", "INSTR-B"] {
+            for index in 1..=8u8 {
+                assert!(
+                    out.contains(&format!(
+                        r#"<IObject UID="{prefix}.{index}" Name="{index}"/>"#
+                    )),
+                    "expected `{prefix}.{index}` in output",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn signal_port_derivation_count_matches_constant() {
+        // Pin the constant against the writer's runtime behavior so
+        // a future tweak that, say, lowers the count to 4 must
+        // update both the constant and this assertion in lockstep.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-C".into(),
+            item_type_name: "InstrFunction".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert_eq!(
+            out.matches("<PIDSignalPort>").count(),
+            INSTR_DERIVED_SIGNAL_PORT_COUNT as usize,
+        );
+    }
+
+    #[test]
+    fn signal_ports_appear_after_their_parent_control_system_function() {
+        // SPPID-canonical emit order: the parent
+        // <PIDControlSystemFunction> closes BEFORE the first
+        // <PIDSignalPort> opens.
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "INSTR-ORD".into(),
+            item_type_name: "InstrFunction".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+
+        let i_function = out
+            .find("<PIDControlSystemFunction>")
+            .expect("control system function");
+        let i_function_close = out
+            .find("</PIDControlSystemFunction>")
+            .expect("control system function closer");
+        let i_first_port = out.find("<PIDSignalPort>").expect("first signal port");
+
+        assert!(
+            i_function < i_function_close && i_function_close < i_first_port,
+            "PIDSignalPort must appear after the closer of its parent PIDControlSystemFunction; \
+             got function={i_function} close={i_function_close} first_port={i_first_port}\nout:\n{out}"
         );
     }
 
