@@ -467,6 +467,184 @@ pub fn parse_interfaces_per_tag(
     out
 }
 
+/// A26 · Attribute-name-level structural inventory per PID tag.
+///
+/// Returns a nested map: `PID tag -> interface -> set of
+/// attribute names`. Only attribute NAMES are collected; values
+/// are deliberately ignored so that data-driven content
+/// differences (e.g. `FluidCode="@{abc}"` vs
+/// `FluidCode="@{xyz}"`) do not register as drift while genuine
+/// shape drift (e.g. DWG's IEquipment carries five attrs A01's
+/// doesn't) does. Like [`parse_interfaces_per_tag`], only the
+/// FIRST occurrence of each PID tag is considered representative
+/// — SmartPlant emits identical attribute shapes for every
+/// instance of the same tag on the same interface, so
+/// first-occurrence-per-tag is lossless.
+///
+/// The helper is the attribute-level counterpart to
+/// [`parse_interfaces_per_tag`] (A23) and the cross-fixture
+/// parity gate (A24). Tests use it to pin attribute-shape
+/// invariants across fixtures — any newly appeared attribute
+/// on DWG that A01 doesn't have (or vice versa) shows up as
+/// a concrete `(tag, interface, attr)` triplet diagnostic.
+///
+/// Internally this reuses [`parse_interfaces_per_tag`]'s
+/// first-occurrence tracking loop, extended to parse attribute
+/// names from the interface opening tag. Attribute parsing is
+/// deliberately tolerant: an attribute is any maximal run of
+/// ASCII alphanumerics plus `_` that sits between whitespace
+/// and an `=` character, inside the tag's `<...>` brackets
+/// and outside of any quoted value.
+pub fn parse_attrs_per_interface_per_tag(
+    xml: &str,
+) -> BTreeMap<String, BTreeMap<String, std::collections::BTreeSet<String>>> {
+    let bytes = xml.as_bytes();
+    let mut out: BTreeMap<String, BTreeMap<String, std::collections::BTreeSet<String>>> =
+        BTreeMap::new();
+    let mut active: Option<String> = None;
+    let mut recorded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        let after_lt = i + 1;
+        if after_lt >= bytes.len() {
+            break;
+        }
+        let is_closing = bytes[after_lt] == b'/';
+        let name_start = if is_closing { after_lt + 1 } else { after_lt };
+        let mut name_end = name_start;
+        while name_end < bytes.len() && is_tag_name_byte(bytes[name_end]) {
+            name_end += 1;
+        }
+        if name_end == name_start {
+            i = name_end.max(i + 1);
+            continue;
+        }
+        let name = std::str::from_utf8(&bytes[name_start..name_end]).unwrap_or("");
+        let mut close = name_end;
+        while close < bytes.len() && bytes[close] != b'>' {
+            close += 1;
+        }
+        let self_closing = !is_closing
+            && close > name_end
+            && bytes[close.saturating_sub(1)] == b'/';
+        if is_closing {
+            if name.starts_with("PID") && active.as_deref() == Some(name) {
+                recorded.insert(name.to_string());
+                active = None;
+            }
+        } else if name.starts_with("PID") && !self_closing {
+            if !recorded.contains(name) && active.is_none() {
+                active = Some(name.to_string());
+                out.entry(name.to_string()).or_default();
+            }
+        } else if name.starts_with('I') {
+            if let Some(tag) = active.as_deref() {
+                // Parse attr names out of the opening tag bytes
+                // (between `name_end` and `close`, exclusive of
+                // any trailing `/` for self-closing forms).
+                let attrs_end = if self_closing {
+                    close.saturating_sub(1)
+                } else {
+                    close
+                };
+                let attr_bytes = &bytes[name_end..attrs_end];
+                let attrs = parse_attr_names(attr_bytes);
+                let interface_entry = out
+                    .entry(tag.to_string())
+                    .or_default()
+                    .entry(name.to_string())
+                    .or_default();
+                for a in attrs {
+                    interface_entry.insert(a);
+                }
+            }
+        }
+        i = if close < bytes.len() { close + 1 } else { close };
+    }
+    out
+}
+
+/// Extract attribute NAMES from the interior bytes of an
+/// opening tag (between the tag-name end and the `>` close,
+/// excluding any trailing `/` for self-closers).
+///
+/// Scans left-to-right: skips whitespace, reads an attr-name
+/// run (ASCII alphanumeric + `_`), expects `=`, then skips the
+/// quoted value. Malformed runs terminate attribute collection
+/// gracefully without panicking — the caller gets whatever was
+/// parsed cleanly up to the first malformed token.
+fn parse_attr_names(inside: &[u8]) -> std::collections::BTreeSet<String> {
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut i = 0usize;
+    while i < inside.len() {
+        // Skip whitespace.
+        while i < inside.len() && inside[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let name_start = i;
+        while i < inside.len() && is_attr_name_byte(inside[i]) {
+            i += 1;
+        }
+        if i == name_start {
+            // No name found here — advance one byte and retry
+            // so a stray char doesn't loop forever.
+            i += 1;
+            continue;
+        }
+        let name = std::str::from_utf8(&inside[name_start..i]).unwrap_or("");
+        // Skip whitespace and expect `=`.
+        while i < inside.len() && inside[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= inside.len() || inside[i] != b'=' {
+            // Name not followed by `=` — valueless attribute,
+            // skip but still record the name.
+            if !name.is_empty() {
+                names.insert(name.to_string());
+            }
+            continue;
+        }
+        i += 1;
+        while i < inside.len() && inside[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= inside.len() {
+            break;
+        }
+        let quote = inside[i];
+        if quote != b'"' && quote != b'\'' {
+            // Unquoted value — skip until whitespace or `/`.
+            while i < inside.len() && !inside[i].is_ascii_whitespace() && inside[i] != b'/' {
+                i += 1;
+            }
+        } else {
+            i += 1;
+            while i < inside.len() && inside[i] != quote {
+                i += 1;
+            }
+            if i < inside.len() {
+                i += 1;
+            }
+        }
+        if !name.is_empty() {
+            names.insert(name.to_string());
+        }
+    }
+    names
+}
+
+/// Attribute names follow the SmartPlant XML convention: ASCII
+/// alphanumeric plus `_`. Hyphens and colons never appear in
+/// the fixtures we deal with, so we don't extend the charset.
+fn is_attr_name_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
 pub fn diff_publish_xml(generated_xml: &str, reference_xml: &str) -> SemanticDiffReport {
     let gen_counts = parse_pid_tag_counts(generated_xml);
     let ref_counts = parse_pid_tag_counts(reference_xml);
@@ -994,5 +1172,183 @@ mod tests {
             ifaces.is_empty(),
             "no PID tags means no entries; got {ifaces:?}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // A26 — parse_attrs_per_interface_per_tag: attribute-name-level
+    // structural inventory that sits one layer below
+    // parse_interfaces_per_tag. Tests below pin the parser's
+    // behavior on:
+    //   * bare interfaces (no attrs)
+    //   * interfaces with single and multiple attrs
+    //   * unicode attribute content
+    //   * entity-escaped attribute values
+    //   * open-form interfaces with nested children
+    //   * first-occurrence-only semantics (same as A23)
+    //   * empty input
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parse_attrs_collects_single_attr_from_self_closing_interface() {
+        let xml = concat!(
+            "<PIDPipeline>",
+            r#"<IObject UID="abc"/>"#,
+            r#"<IFluidSystem FluidCode="@{guid}" FluidSystem="@x"/>"#,
+            "<IExpandableThing/>",
+            "</PIDPipeline>"
+        );
+        let attrs = parse_attrs_per_interface_per_tag(xml);
+        let pipeline = attrs.get("PIDPipeline").expect("PIDPipeline entry");
+        let iobject = pipeline.get("IObject").expect("IObject entry");
+        assert_eq!(
+            iobject.iter().cloned().collect::<Vec<_>>(),
+            vec!["UID".to_string()],
+            "IObject should surface its UID attr name only; got {iobject:?}"
+        );
+        let fluid = pipeline.get("IFluidSystem").expect("IFluidSystem entry");
+        assert_eq!(
+            fluid.iter().cloned().collect::<Vec<_>>(),
+            vec!["FluidCode".to_string(), "FluidSystem".to_string()],
+            "IFluidSystem should surface both attr names in sorted order; got {fluid:?}"
+        );
+        let expand = pipeline.get("IExpandableThing").expect("IExpandableThing entry");
+        assert!(
+            expand.is_empty(),
+            "bare interface should have empty attr set; got {expand:?}"
+        );
+    }
+
+    #[test]
+    fn parse_attrs_ignores_attribute_values_only_records_names() {
+        // Two PIDPipelines with the same interface shape but
+        // different attr VALUES. The parser should report
+        // identical attr-name sets — values must not leak in.
+        let xml = concat!(
+            "<PIDPipeline>",
+            r#"<IObject UID="one" Name="alpha"/>"#,
+            "</PIDPipeline>"
+        );
+        let attrs = parse_attrs_per_interface_per_tag(xml);
+        let iobject_attrs = attrs
+            .get("PIDPipeline")
+            .and_then(|ifs| ifs.get("IObject"))
+            .expect("IObject entry");
+        assert_eq!(
+            iobject_attrs.iter().cloned().collect::<Vec<_>>(),
+            vec!["Name".to_string(), "UID".to_string()],
+            "attr name set should be independent of values; got {iobject_attrs:?}"
+        );
+    }
+
+    #[test]
+    fn parse_attrs_tolerates_unicode_in_attribute_values() {
+        // SPPID ships Chinese text in attribute values. The
+        // parser must skip past them without corrupting the
+        // parse state.
+        let xml = concat!(
+            "<PIDProcessVessel>",
+            r#"<IObject UID="C57494A1B154442C9DF0F4BA713E88EC" Description="污水池"/>"#,
+            r#"<ISpecifiedMatlItem LongMaterialDescription="新建"/>"#,
+            "</PIDProcessVessel>"
+        );
+        let attrs = parse_attrs_per_interface_per_tag(xml);
+        let pvessel = attrs.get("PIDProcessVessel").expect("PIDProcessVessel entry");
+        let iobject_attrs = pvessel.get("IObject").expect("IObject");
+        assert_eq!(
+            iobject_attrs.iter().cloned().collect::<Vec<_>>(),
+            vec!["Description".to_string(), "UID".to_string()],
+            "unicode in values must not break name parsing; got {iobject_attrs:?}"
+        );
+        let matl_attrs = pvessel.get("ISpecifiedMatlItem").expect("ISpecifiedMatlItem");
+        assert_eq!(
+            matl_attrs.iter().cloned().collect::<Vec<_>>(),
+            vec!["LongMaterialDescription".to_string()],
+        );
+    }
+
+    #[test]
+    fn parse_attrs_handles_entity_escaped_values() {
+        // Entity references like &amp; / &#13;&#10; appear in
+        // SPPID DocTitle. The parser walks the quoted value
+        // opaquely so escapes are non-issues for attr-name
+        // parsing.
+        let xml = concat!(
+            "<PIDDrawing>",
+            r#"<IObject UID="UID-D" Name="DWG-0202GP06-01" Description=""/>"#,
+            r#"<IDocument DocCategory="P&amp;ID Documents" DocTitle="title&#13;&#10;with entities" DocType="P&amp;ID" DocSubtype=""/>"#,
+            "</PIDDrawing>"
+        );
+        let attrs = parse_attrs_per_interface_per_tag(xml);
+        let idoc_attrs = attrs
+            .get("PIDDrawing")
+            .and_then(|ifs| ifs.get("IDocument"))
+            .expect("IDocument entry");
+        assert_eq!(
+            idoc_attrs.iter().cloned().collect::<Vec<_>>(),
+            vec![
+                "DocCategory".to_string(),
+                "DocSubtype".to_string(),
+                "DocTitle".to_string(),
+                "DocType".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn parse_attrs_first_occurrence_only_semantics_same_as_interfaces() {
+        // Second PIDPipeline adds an attribute SmartPlant
+        // would never actually change at runtime — but the
+        // parser must still ignore it, matching A23 semantics.
+        let xml = concat!(
+            "<PIDPipeline>",
+            r#"<IObject UID="first"/>"#,
+            "</PIDPipeline>",
+            "<PIDPipeline>",
+            r#"<IObject UID="second" Shadow="secondary"/>"#,
+            "</PIDPipeline>"
+        );
+        let attrs = parse_attrs_per_interface_per_tag(xml);
+        let iobject_attrs = attrs
+            .get("PIDPipeline")
+            .and_then(|ifs| ifs.get("IObject"))
+            .expect("IObject entry");
+        assert_eq!(
+            iobject_attrs.iter().cloned().collect::<Vec<_>>(),
+            vec!["UID".to_string()],
+            "second occurrence's attrs must not leak into the first's set; got {iobject_attrs:?}"
+        );
+    }
+
+    #[test]
+    fn parse_attrs_returns_empty_for_xml_with_no_pid_tags() {
+        let attrs = parse_attrs_per_interface_per_tag("<Container><Foo bar=\"x\"/></Container>");
+        assert!(
+            attrs.is_empty(),
+            "no PID tags means no entries; got {attrs:?}"
+        );
+    }
+
+    #[test]
+    fn parse_attrs_bare_interfaces_have_empty_attr_sets() {
+        // Every empty interface inside a PID tag should show
+        // up as an empty-set entry (not missing from the map).
+        let xml = concat!(
+            "<PIDPipingPort>",
+            "<IObject/>",
+            "<IPortComposition/>",
+            "<IPipingConnection/>",
+            "</PIDPipingPort>"
+        );
+        let attrs = parse_attrs_per_interface_per_tag(xml);
+        let port = attrs.get("PIDPipingPort").expect("PIDPipingPort entry");
+        for iface in ["IObject", "IPortComposition", "IPipingConnection"] {
+            let s = port.get(iface).unwrap_or_else(|| {
+                panic!("interface {iface} missing from map, expected empty-set entry: {port:?}")
+            });
+            assert!(
+                s.is_empty(),
+                "{iface} should map to an empty attr set (bare form); got {s:?}"
+            );
+        }
     }
 }
