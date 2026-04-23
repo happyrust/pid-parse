@@ -2,6 +2,86 @@
 
 ## [Unreleased]
 
+### Publish writer Stage-1 — fidelity ratchet (A12 → A27b)
+
+把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
+逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
+reference"扩展到"A01 vs DWG 跨 fixture"。这一系列工作不改变
+writer 的字节输出（A25 引入了 PIDProcessVessel tank-variant 的条件
+emit，是唯一例外），但建立了一套 8 道 regression gate，任何未来
+的接口/属性 drift 会立即在 CI 上以"`(tag, interface, attr)`"
+三元组失败定位。
+
+#### Added — fidelity 分析层（src/publish/diff.rs）
+
+- A12 `parse_pid_tag_counts` / `diff_publish_xml` /
+  `SemanticDiffReport` — `<PIDxxx>` 开标签计数级语义 diff
+- A15 `coverage_against_reference` / `WriterCoverage` /
+  `supported_pid_tags` — 把 reference 标签集分为"writer 已支持"
+  和"backlog"两桶
+- A23 `parse_interfaces_per_tag` — 每个 PID tag 下 first-occurrence
+  的接口名集合（`I*`）
+- A26 `parse_attrs_per_interface_per_tag` — 每个 `(tag, interface)`
+  对的属性名集合（值不计，只看 attr key）
+
+#### Added — fidelity gate 层（tests/）
+
+- A23 `tests/publish_interface_parity.rs` ·
+  `interface_parity_on_a01_writer_matches_reference_superset_post_a22`
+  + sanity sub-test：writer 必须 ⊇ A01 reference 的接口集
+- A24 同文件 ·
+  `a01_and_dwg_reference_interfaces_agree_for_every_shared_supported_tag`
+  + 2 guard：A01 ↔ DWG fixture 接口集一致性 + whitelist 维护守门
+- A27 `tests/publish_attribute_parity.rs` ·
+  `attribute_parity_on_a01_writer_matches_reference_superset_per_interface`
+  + sanity sub-test：writer 必须 ⊇ A01 reference 的属性集
+  （per `(tag, interface)`）
+- A27b 同文件 ·
+  `a27b_a01_and_dwg_reference_attrs_agree_for_every_shared_tag_interface`
+  + 2 guard：A01 ↔ DWG 属性集一致性 + whitelist 维护守门
+
+#### Added — writer 真实改动
+
+- A13 `derive PIDPipingPort + PIDProcessPoint from connectors`
+- A14 `filter annotation representations -> A01 fully clean`
+- A16 `derive PIDSignalPort children from InstrFunction`
+- A17/A18/A19/A20/A21/A22 `close PIDPipingComponent +
+  PIDSignalConnector + upgrade 6 tags to full-interface SPPID
+  canonical shape`
+- A25 `PIDProcessVessel low-pressure-tank variant conditional
+  emit`（DWG 17-interface tank shape；A01 15-interface drum
+  shape；通过 `obj.fields["IsLowPressureTank"]` 路由）
+
+#### Added — A27b whitelist（KNOWN_A01_VS_DWG_ATTR_DIVERGENCES）
+
+15 条 fixture-side variant，分两类：
+
+1. **IObject identifier rename**（3 项）— A01 export 用 `ItemTag`，
+   DWG export 用 `Name`，业务标识相同但 attr key 不同。
+   `PIDPipeline / PIDPipingConnector / PIDProcessVessel` 的 IObject
+   都中招（PIDProcessVessel 的 DWG 实例没有 tag，退化为单边
+   only_in_a01）。
+2. **DWG-side 富化列**（12 项）— DWG plant 的源数据填了 SmartPlant
+   多列（FluidCode / FluidSystem / EqType0..3 / EquipmentTrimSpec /
+   FlowDirection / TotalInsulThick / SlopedPipingAngle / ...），
+   A01 plant 的源是 NULL。Writer 当前按 SmartPlant 惯例"NULL 列就
+   不发 attr"，所以这是 loader-side gap，需要 DWG SQLite mirror
+   bundle 后才能填。
+
+#### Tests
+
+* lib：540 → 555（+15，全部在 `publish::diff::tests`）
+* integration：140 → 145（+5 在 `tests/publish_attribute_parity.rs`）
+* lint：0 warnings
+
+#### Backlog（A28+）
+
+* PIDBranchPoint / PIDPipingBranchPoint writer arms（需 DWG 端
+  SQLite mirror 才能反推源映射）
+* A25b loader-side `IsLowPressureTank` 推断（同上）
+* A27b whitelist 收尾：随 DWG mirror bundle 落地，逐条 (tag,
+  interface) 关闭 12 条 loader-side 富化列差异
+
 ## [0.9.2] - 2026-04-21
 
 ### Phase 3: Provenance-aware cross-reference (Step 1–4)
