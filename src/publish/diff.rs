@@ -791,13 +791,122 @@ pub fn parse_rel_defuid_counts(xml: &str) -> BTreeMap<String, usize> {
     out
 }
 
-/// Extract the value of a `DefUID="..."` attribute from a
-/// byte slice that represents the interior of an `<IRel ...>`
-/// opening tag (excluding the `<IRel` prefix and the trailing
-/// `>`). Returns `None` when the attribute is absent or
-/// malformed.
-fn extract_defuid(inside: &[u8]) -> Option<String> {
-    let needle = b"DefUID=";
+/// A36 · One parsed `<IRel ...>` record.
+///
+/// Carries the three attributes the Stage-1 fidelity gates
+/// care about — `UID1`, `UID2`, `DefUID`. Values are owned
+/// strings so the parser output detaches from the input XML
+/// lifetime. Missing attributes surface as empty strings
+/// rather than `Option<...>` to keep the downstream gate
+/// assertions succinct; well-formed SPPID output always
+/// populates all three.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelDetail {
+    /// Source side of the relationship (`UID1` on `<IRel>`).
+    pub uid1: String,
+    /// Target side of the relationship (`UID2` on `<IRel>`).
+    pub uid2: String,
+    /// Relationship kind (`DefUID` on `<IRel>`), e.g.
+    /// `"PipingEnd1Conn"`, `"DrawingItems"`.
+    pub def_uid: String,
+}
+
+/// A36 · Per-`<IRel>` inventory with `UID1` / `UID2` / `DefUID`
+/// triples.
+///
+/// Sibling of [`parse_rel_defuid_counts`]: same byte-level
+/// scan, same robustness to formatting drift, but instead of
+/// collapsing to per-DefUID counts it returns every
+/// individual Rel record so callers can assert UID-level
+/// fidelity gates.
+///
+/// The primary consumer is the A36 / A36b `publish_rel_parity`
+/// gate: after A34c switched `PipingEnd1Conn.UID2` from an
+/// intra-connector `.PPT` placeholder to the real upstream
+/// ModelItem UID, a future refactor could silently reintroduce
+/// the placeholder and still satisfy the count-only A33 gate.
+/// This helper lets tests distinguish the two.
+///
+/// Parsing rules mirror [`parse_rel_defuid_counts`]:
+/// * Byte-level scan for `<IRel`.
+/// * Only the opening tag is consumed — self-closing form
+///   (`/>`) and verbose closing (`</IRel>`) are treated
+///   identically.
+/// * Attributes are looked up within the span `<IRel ...>`.
+///   Whichever order SmartPlant emits them in (and the two
+///   reference fixtures differ here) is accepted.
+/// * Missing attributes produce empty-string fields rather
+///   than dropping the record; downstream code decides what
+///   to do with the partial data.
+/// * Single- and double-quoted values are both accepted.
+///
+/// # Example
+///
+/// ```
+/// use pid_parse::publish::{parse_rel_details, RelDetail};
+///
+/// let xml = "<IRel UID1=\"a.1\" UID2=\"b\" DefUID=\"PipingEnd1Conn\"/>\
+///            <IRel UID1=\"a.2\" UID2=\"a.PPT\" DefUID=\"PipingEnd2Conn\"/>";
+/// let rels = parse_rel_details(xml);
+/// assert_eq!(rels.len(), 2);
+/// assert_eq!(
+///     rels[0],
+///     RelDetail {
+///         uid1: "a.1".into(),
+///         uid2: "b".into(),
+///         def_uid: "PipingEnd1Conn".into(),
+///     },
+/// );
+/// // The second rel carries a `.PPT` placeholder UID2 — the
+/// // A36b gate uses this exact distinguishing property to
+/// // tell "unconnected port" from "connected port".
+/// assert_eq!(rels[1].uid2, "a.PPT");
+/// ```
+pub fn parse_rel_details(xml: &str) -> Vec<RelDetail> {
+    let mut out: Vec<RelDetail> = Vec::new();
+    let bytes = xml.as_bytes();
+    let mut i = 0usize;
+    let needle = b"<IRel";
+    while i + needle.len() <= bytes.len() {
+        if bytes[i..].starts_with(needle) {
+            // Guard against `<IRelations>` / future siblings.
+            let after = bytes.get(i + needle.len()).copied();
+            let valid_after = matches!(after, Some(b) if b == b'>' || b.is_ascii_whitespace());
+            if !valid_after {
+                i += 1;
+                continue;
+            }
+            let close = bytes[i..]
+                .iter()
+                .position(|&b| b == b'>')
+                .map(|off| i + off);
+            let scan_end = match close {
+                Some(c) => c,
+                None => break,
+            };
+            let inside = &bytes[i + needle.len()..scan_end];
+            out.push(RelDetail {
+                uid1: extract_rel_attr(inside, b"UID1=").unwrap_or_default(),
+                uid2: extract_rel_attr(inside, b"UID2=").unwrap_or_default(),
+                def_uid: extract_rel_attr(inside, b"DefUID=").unwrap_or_default(),
+            });
+            i = scan_end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Extract a quoted attribute value from an `<IRel ...>` interior
+/// byte slice. Accepts either `"..."` or `'...'` quoting. Returns
+/// `None` when the attribute is absent / malformed / has no
+/// closing quote.
+///
+/// Shared between [`parse_rel_details`] and [`extract_defuid`];
+/// the latter is kept as a thin wrapper so A33's public API and
+/// its call site stay byte-level identical.
+fn extract_rel_attr(inside: &[u8], needle: &[u8]) -> Option<String> {
     let mut i = 0usize;
     while i + needle.len() <= inside.len() {
         if inside[i..].starts_with(needle) {
@@ -821,6 +930,19 @@ fn extract_defuid(inside: &[u8]) -> Option<String> {
         i += 1;
     }
     None
+}
+
+/// Extract the value of a `DefUID="..."` attribute from a
+/// byte slice that represents the interior of an `<IRel ...>`
+/// opening tag (excluding the `<IRel` prefix and the trailing
+/// `>`). Returns `None` when the attribute is absent or
+/// malformed.
+///
+/// A36: thin wrapper over the generic [`extract_rel_attr`] so
+/// both the A33 DefUID-only fast path and the A36
+/// full-triple parser share one quoting implementation.
+fn extract_defuid(inside: &[u8]) -> Option<String> {
+    extract_rel_attr(inside, b"DefUID=")
 }
 
 pub fn diff_publish_xml(generated_xml: &str, reference_xml: &str) -> SemanticDiffReport {
@@ -1617,5 +1739,109 @@ mod tests {
         let xml = "<IRel UID1=\"A\" UID2=\"B\" DefUID='DrawingItems'/>";
         let counts = parse_rel_defuid_counts(xml);
         assert_eq!(counts.get("DrawingItems"), Some(&1));
+    }
+
+    // -----------------------------------------------------------------
+    // A36 — parse_rel_details (full UID1/UID2/DefUID triple)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parse_rel_details_returns_empty_for_empty_input() {
+        assert!(parse_rel_details("").is_empty());
+    }
+
+    #[test]
+    fn parse_rel_details_extracts_single_triple_in_fixed_attribute_order() {
+        let xml = "<IRel UID1=\"PORT.1\" UID2=\"NOZZ-1\" DefUID=\"PipingEnd1Conn\"/>";
+        let rels = parse_rel_details(xml);
+        assert_eq!(rels.len(), 1);
+        assert_eq!(
+            rels[0],
+            RelDetail {
+                uid1: "PORT.1".into(),
+                uid2: "NOZZ-1".into(),
+                def_uid: "PipingEnd1Conn".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_rel_details_preserves_relative_order_across_multiple_rels() {
+        // A36b gate's soundness check walks the Rel list in
+        // document order to correlate (UID1 prefix → UID2
+        // type). Preserve emit order so that logic is
+        // deterministic.
+        let xml = concat!(
+            "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"X\"/>",
+            "<IRel UID1=\"c\" UID2=\"d\" DefUID=\"Y\"/>",
+            "<IRel UID1=\"e\" UID2=\"f\" DefUID=\"X\"/>",
+        );
+        let rels = parse_rel_details(xml);
+        assert_eq!(rels.len(), 3);
+        assert_eq!(rels[0].uid1, "a");
+        assert_eq!(rels[1].uid1, "c");
+        assert_eq!(rels[2].uid1, "e");
+        assert_eq!(rels[0].def_uid, "X");
+        assert_eq!(rels[1].def_uid, "Y");
+        assert_eq!(rels[2].def_uid, "X");
+    }
+
+    #[test]
+    fn parse_rel_details_tolerates_attributes_in_any_order() {
+        // SPPID emits `UID1 UID2 DefUID` but hand-edited fixtures
+        // (and any future attribute reordering in the exporter)
+        // should still parse cleanly.
+        let xml = "<IRel DefUID=\"PipingEnd1Conn\" UID2=\"B\" UID1=\"A\"/>";
+        let rels = parse_rel_details(xml);
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].uid1, "A");
+        assert_eq!(rels[0].uid2, "B");
+        assert_eq!(rels[0].def_uid, "PipingEnd1Conn");
+    }
+
+    #[test]
+    fn parse_rel_details_ignores_irelations_lookalikes() {
+        // Same guard as the A33 parser — `<IRelations>` or any
+        // other element whose name starts with `IRel` but
+        // continues with extra letters must not match.
+        let xml = "<IRelations UID1=\"X\" UID2=\"Y\" DefUID=\"Fake\"/>";
+        let rels = parse_rel_details(xml);
+        assert!(rels.is_empty(), "lookalike must not register; got {rels:?}");
+    }
+
+    #[test]
+    fn parse_rel_details_fills_empty_strings_for_missing_attributes() {
+        // A malformed Rel without UID2 / DefUID is still
+        // surfaced so the A36 gate can count records, but the
+        // missing fields are empty strings. The A36 soundness
+        // check is responsible for rejecting them.
+        let xml = "<IRel UID1=\"ORPHAN\"/>";
+        let rels = parse_rel_details(xml);
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].uid1, "ORPHAN");
+        assert_eq!(rels[0].uid2, "");
+        assert_eq!(rels[0].def_uid, "");
+    }
+
+    #[test]
+    fn parse_rel_details_handles_self_closing_and_verbose_forms() {
+        let xml = concat!(
+            "<IRel UID1=\"A\" UID2=\"B\" DefUID=\"DrawingItems\"/>",
+            "<IRel UID1=\"C\" UID2=\"D\" DefUID=\"DrawingItems\"></IRel>",
+        );
+        let rels = parse_rel_details(xml);
+        assert_eq!(rels.len(), 2);
+        assert_eq!(rels[0].uid2, "B");
+        assert_eq!(rels[1].uid2, "D");
+    }
+
+    #[test]
+    fn parse_rel_details_accepts_single_quoted_values() {
+        let xml = "<IRel UID1='A' UID2='B' DefUID='DrawingItems'/>";
+        let rels = parse_rel_details(xml);
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].uid1, "A");
+        assert_eq!(rels[0].uid2, "B");
+        assert_eq!(rels[0].def_uid, "DrawingItems");
     }
 }

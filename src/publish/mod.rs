@@ -32,8 +32,8 @@ pub mod xml_writer;
 
 pub use diff::{
     coverage_against_reference, diff_publish_xml, parse_attrs_per_interface_per_tag,
-    parse_interfaces_per_tag, parse_pid_tag_counts, parse_rel_defuid_counts,
-    supported_pid_tags, CoverageRow, SemanticDiffReport, TagCountDiff, TagDiffStatus,
+    parse_interfaces_per_tag, parse_pid_tag_counts, parse_rel_defuid_counts, parse_rel_details,
+    supported_pid_tags, CoverageRow, RelDetail, SemanticDiffReport, TagCountDiff, TagDiffStatus,
     WriterCoverage,
 };
 pub use model::{
@@ -41,7 +41,8 @@ pub use model::{
     PublishRepresentation, PublishStyle,
 };
 pub use sqlite_load::{
-    load_codelist_index, load_drawing, load_drawing_graph, load_objects_by_uids,
-    load_piping_points_for_objects, load_relationships, load_representations,
+    attach_pipe_endpoint_connections, load_codelist_index, load_drawing, load_drawing_graph,
+    load_objects_by_uids, load_piping_points_for_objects, load_relationships,
+    load_representations,
 };
 pub use xml_writer::{write_data_xml, write_meta_xml};
