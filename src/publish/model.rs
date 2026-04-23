@@ -211,6 +211,43 @@ pub struct PublishRelationship {
     pub is_binary: Option<i64>,
 }
 
+/// SmartPlant export style — selects between the two
+/// fixture-side variants observed on real Publish Data XML.
+///
+/// SmartPlant's Publish Data exporter emits structurally
+/// identical XML across plants and projects, but two
+/// fixture-side conventions differ in attribute naming on
+/// `IObject`:
+///
+/// * **A01 style** — A01 plant export uses `ItemTag` on
+///   PIDPipeline / PIDPipingConnector / PIDProcessVessel
+///   IObjects; the business identifier is exposed under the
+///   `ItemTag` attribute key. PIDProcessVessel always carries
+///   the tag (UID + ItemTag + Description shape).
+/// * **DWG style** — DWG plant export (DWG-0202GP06-01
+///   reference fixture) uses `Name` instead of `ItemTag` on
+///   the same IObjects. PIDProcessVessel omits the
+///   identifier attribute entirely (UID + Description only).
+///
+/// Both styles publish the same data; the choice is a
+/// per-plant SmartPlant project flavor, not a runtime
+/// preference. The writer is shape-aware: it emits the
+/// IObject according to the drawing's [`PublishDrawing::style`]
+/// field. Default is [`PublishStyle::A01`] to preserve every
+/// pre-A29 round-trip.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PublishStyle {
+    /// A01-flavor fixture export — IObject uses `ItemTag` on
+    /// pipe / connector / vessel; vessel always stamps a tag.
+    /// This is the writer default.
+    #[default]
+    A01,
+    /// DWG-flavor fixture export — IObject uses `Name`
+    /// instead of `ItemTag` on pipe / connector; vessel omits
+    /// the identifier attribute entirely.
+    Dwg,
+}
+
 /// Top-level DTO — one drawing worth of SmartPlant data that the
 /// XML writer will render into a single Publish Data document.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -251,6 +288,12 @@ pub struct PublishDrawing {
     /// through to its symbol-path or raw-value heuristics in that
     /// case.
     pub codelist: CodelistIndex,
+    /// SmartPlant project-flavor selector — chooses between
+    /// the A01 and DWG attribute-naming conventions on
+    /// IObject. See [`PublishStyle`] for full semantics.
+    /// Defaults to [`PublishStyle::A01`] so every pre-A29
+    /// caller and round-trip stays byte-identical.
+    pub style: PublishStyle,
 }
 
 impl PublishDrawing {
