@@ -235,6 +235,22 @@ pub struct PublishRelationship {
 /// IObject according to the drawing's [`PublishDrawing::style`]
 /// field. Default is [`PublishStyle::A01`] to preserve every
 /// pre-A29 round-trip.
+///
+/// # Example
+///
+/// ```
+/// use pid_parse::publish::{PublishDrawing, PublishStyle};
+///
+/// // Default style is A01 — every pre-A29 caller round-trips.
+/// let mut drawing = PublishDrawing::new("UID-D", "DEMO");
+/// assert_eq!(drawing.style, PublishStyle::A01);
+///
+/// // Opt into DWG-flavor IObject shape (drops ItemTag in favor
+/// // of Name on PIDPipeline / PIDPipingConnector, omits the
+/// // identifier on PIDProcessVessel).
+/// drawing.style = PublishStyle::Dwg;
+/// assert_eq!(drawing.style, PublishStyle::Dwg);
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PublishStyle {
     /// A01-flavor fixture export — IObject uses `ItemTag` on
