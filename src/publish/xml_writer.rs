@@ -1070,6 +1070,42 @@ mod tests {
     }
 
     #[test]
+    fn piping_point_emits_pid_piping_port_tag_with_nominal_diameter() {
+        // A9: PipingPoint objects synthesized from T_PipingPoint
+        // rows must render as <PIDPipingPort> with the nominal
+        // diameter carried through.
+        let mut d = PublishDrawing::new("UID-A01", "A01");
+        d.objects = vec![PublishObject {
+            uid: "PP-UID".into(),
+            item_type_name: "PipingPoint".into(),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("NominalDiameter".into(), "250".into());
+                m.insert("SP_PlantItemID".into(), "NOZZLE1".into());
+                m
+            },
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains("<PIDPipingPort>"),
+            "PipingPoint should render as <PIDPipingPort>; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IObject UID="PP-UID"/>"#),
+            "IObject should carry the PipingPoint UID; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IPipeCrossSectionItem NominalDiameter="250 mm"/>"#),
+            "NominalDiameter should round-trip with the `mm` unit; out:\n{out}"
+        );
+        assert!(
+            out.contains("</PIDPipingPort>"),
+            "PIDPipingPort must close; out:\n{out}"
+        );
+    }
+
+    #[test]
     fn empty_drawing_still_produces_well_formed_xml() {
         let d = PublishDrawing::new("UID-EMPTY", "NoName");
         let out = write_data_xml(&d, "Plant1").expect("write");

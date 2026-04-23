@@ -156,6 +156,88 @@ pub fn load_relationships(
     Ok(out)
 }
 
+/// Load every `T_PipingPoint` row whose parent `SP_PlantItemID`
+/// is in the given set, and materialize it as a synthetic
+/// [`PublishObject`] the XML writer can render via
+/// `write_piping_port`. PipingPoints are drawing-scoped only
+/// through their parent PlantItem (Nozzle / PipingComp / ...), so
+/// this function must be called AFTER the drawing's main object
+/// list is populated; the caller passes the union of those
+/// objects' UIDs as the lookup key.
+///
+/// The resulting `PublishObject`s carry:
+/// - `uid` = `T_PipingPoint.SP_ID`
+/// - `item_type_name` = `"PipingPoint"` (so the writer dispatch
+///   picks `write_piping_port`)
+/// - `fields` populated from the point's business columns
+///   (`NominalDiameter`, `FlowDirection`, `EndPrep`,
+///   `PipingPointUsage`, `PipingPointNumber`) plus
+///   `SP_PlantItemID` for tools that want to link back to the
+///   owning PlantItem.
+///
+/// Empty-string values are filtered to keep the `fields` map
+/// tight; NULL columns are omitted automatically. Returns an
+/// empty `Vec` when either the `plant_item_uids` set is empty or
+/// the `T_PipingPoint` table is missing from the fixture.
+pub fn load_piping_points_for_objects(
+    conn: &Connection,
+    plant_item_uids: &BTreeSet<String>,
+) -> Result<Vec<PublishObject>, PublishError> {
+    if plant_item_uids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; plant_item_uids.len()].join(",");
+    let sql = format!(
+        "SELECT SP_ID, SP_PlantItemID, NominalDiameter, FlowDirection, \
+                EndPrep, PipingPointUsage, PipingPointNumber \
+         FROM T_PipingPoint WHERE SP_PlantItemID IN ({placeholders}) ORDER BY SP_ID"
+    );
+    let Some(mut stmt) = prepare_optional(conn, &sql)? else {
+        return Ok(Vec::new());
+    };
+    let params_vec: Vec<&dyn rusqlite::ToSql> = plant_item_uids
+        .iter()
+        .map(|s| s as &dyn rusqlite::ToSql)
+        .collect();
+    let mut rows = stmt.query(params_vec.as_slice())?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        let uid: String = row.get(0)?;
+        let parent_plant_item: Option<String> = row.get(1)?;
+        let mut fields = std::collections::BTreeMap::new();
+        // SP_PlantItemID ties the point back to its Nozzle /
+        // PipingComp / ... owner. Writers / downstream consumers
+        // can walk this to surface cross-object information.
+        if let Some(parent) = parent_plant_item {
+            if !parent.is_empty() {
+                fields.insert("SP_PlantItemID".into(), parent);
+            }
+        }
+        for (col_idx, col_name) in [
+            (2, "NominalDiameter"),
+            (3, "FlowDirection"),
+            (4, "EndPrep"),
+            (5, "PipingPointUsage"),
+            (6, "PipingPointNumber"),
+        ] {
+            let value: Option<String> = row.get(col_idx)?;
+            if let Some(v) = value {
+                if !v.is_empty() {
+                    fields.insert(col_name.to_string(), v);
+                }
+            }
+        }
+        out.push(PublishObject {
+            uid,
+            item_type_name: "PipingPoint".into(),
+            description: None,
+            is_typical: None,
+            fields,
+        });
+    }
+    Ok(out)
+}
+
 /// Load every `T_ModelItem` row whose `SP_ID` is in the given set.
 /// Returns rows in the same order as the input set's iteration
 /// (BTreeSet ⇒ lexicographic).
@@ -405,6 +487,26 @@ pub fn load_drawing_graph(
         }
     }
 
+    // A9 — pull drawing-scoped T_PipingPoint rows. Each physical
+    // port is attached to an existing PlantItem (typically a
+    // Nozzle or PipingComp) via `SP_PlantItemID`, so we enumerate
+    // ports whose parent UID is in the drawing's main object list.
+    // Synthesized as `PublishObject { item_type_name: "PipingPoint", ... }`
+    // so the writer's dispatcher picks `write_piping_port`
+    // automatically.
+    let parent_uids: BTreeSet<String> =
+        drawing.objects.iter().map(|o| o.uid.clone()).collect();
+    let piping_points = load_piping_points_for_objects(conn, &parent_uids)?;
+    if !piping_points.is_empty() {
+        let existing: BTreeSet<String> =
+            drawing.objects.iter().map(|o| o.uid.clone()).collect();
+        for point in piping_points {
+            if !existing.contains(&point.uid) {
+                drawing.objects.push(point);
+            }
+        }
+    }
+
     Ok(drawing)
 }
 
@@ -582,6 +684,106 @@ mod tests {
         // Filtered-out attributes did not register a mapping.
         assert!(idx.lookup_by_attribute("TagPrefix", "V").is_none());
         assert!(idx.lookup_by_attribute("NominalDiameter", "250").is_none());
+    }
+
+    /// Seed an in-memory SQLite with the `T_PipingPoint` shape so
+    /// A9 loader tests can insert their own rows. Returns the
+    /// connection to the caller.
+    fn setup_piping_point_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute(
+            "CREATE TABLE T_PipingPoint (\
+                SP_ID TEXT, SP_PlantItemID TEXT, \
+                NominalDiameter TEXT, FlowDirection TEXT, \
+                EndPrep TEXT, PipingPointUsage TEXT, \
+                PipingPointNumber TEXT)",
+            [],
+        )
+        .expect("create T_PipingPoint");
+        conn
+    }
+
+    #[test]
+    fn load_piping_points_returns_empty_when_parent_set_is_empty() {
+        let conn = setup_piping_point_db();
+        let uids = BTreeSet::new();
+        let out = load_piping_points_for_objects(&conn, &uids).expect("ok");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn load_piping_points_soft_skips_missing_table() {
+        // A fixture without T_PipingPoint must not error —
+        // `prepare_optional` turns the missing table into an empty
+        // result.
+        let (conn, _uid) = setup_synthetic_db();
+        let mut uids = BTreeSet::new();
+        uids.insert("SOMETHING".to_string());
+        let out = load_piping_points_for_objects(&conn, &uids).expect("ok");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn load_piping_points_filters_to_requested_parents() {
+        let conn = setup_piping_point_db();
+        // Insert three points: two parented to NOZZLE1, one to an
+        // unrelated PlantItem. The function should only surface
+        // the two with the requested parent.
+        for (id, parent, dn) in [
+            ("PP1", "NOZZLE1", "250"),
+            ("PP2", "NOZZLE1", "150"),
+            ("PP3", "ELSEWHERE", "50"),
+        ] {
+            conn.execute(
+                "INSERT INTO T_PipingPoint \
+                 VALUES (?1, ?2, ?3, '', '', '', '0')",
+                params![id, parent, dn],
+            )
+            .unwrap();
+        }
+        let mut uids = BTreeSet::new();
+        uids.insert("NOZZLE1".to_string());
+        let out = load_piping_points_for_objects(&conn, &uids).expect("ok");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].uid, "PP1");
+        assert_eq!(out[0].item_type_name, "PipingPoint");
+        assert_eq!(
+            out[0].fields.get("SP_PlantItemID").map(String::as_str),
+            Some("NOZZLE1"),
+        );
+        assert_eq!(
+            out[0].fields.get("NominalDiameter").map(String::as_str),
+            Some("250"),
+        );
+        // Empty-string FlowDirection / EndPrep should not land
+        // in the fields map.
+        assert!(!out[0].fields.contains_key("FlowDirection"));
+        assert!(!out[0].fields.contains_key("EndPrep"));
+        assert_eq!(out[1].uid, "PP2");
+    }
+
+    #[test]
+    fn load_piping_points_tolerates_null_and_empty_columns() {
+        let conn = setup_piping_point_db();
+        // Insert a row with NULL in most columns and empty string
+        // for FlowDirection. Only SP_PlantItemID +
+        // PipingPointNumber should survive the tight-fields
+        // filter.
+        conn.execute(
+            "INSERT INTO T_PipingPoint \
+             VALUES ('PP1', 'NOZZLE1', NULL, '', NULL, NULL, '3')",
+            [],
+        )
+        .unwrap();
+        let mut uids = BTreeSet::new();
+        uids.insert("NOZZLE1".to_string());
+        let out = load_piping_points_for_objects(&conn, &uids).expect("ok");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].fields.len(), 2); // SP_PlantItemID + PipingPointNumber
+        assert_eq!(
+            out[0].fields.get("PipingPointNumber").map(String::as_str),
+            Some("3"),
+        );
     }
 
     #[test]
