@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A30)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A31)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
@@ -74,6 +74,14 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   --out / --stdout / --diff-against / --meta-out 组合）；
   `DrawingNotFound` 错误信息追加 `use --list-drawings to see
   available drawing UIDs` actionable hint。
+- A31 集成测试 refactor — 新建 `tests/common/mod.rs` 抽出 4 个
+  publish-相关 tests 文件之间重复的 fixture loader（`generate_a01_xml`、
+  `load_reference_a01_xml`、`load_reference_dwg_xml`）+ 路径常量
+  （SQLITE_PATH / A01_DRAWING_UID / PLANT_NAME / 两个 reference
+  XML 路径）+ TAGS_UNDER_PARITY 13-tag 表。3 个 test 文件
+  （`publish_interface_parity` / `publish_attribute_parity` /
+  `publish_backlog_inventory`）改用 `mod common;` 共享，删
+  ~120 行重复代码，未来加新 fidelity gate 直接复用。
 
 #### Added — A27b whitelist（KNOWN_A01_VS_DWG_ATTR_DIVERGENCES）
 
