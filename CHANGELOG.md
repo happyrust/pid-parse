@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A27b)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A28)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
@@ -39,6 +39,11 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 - A27b 同文件 ·
   `a27b_a01_and_dwg_reference_attrs_agree_for_every_shared_tag_interface`
   + 2 guard：A01 ↔ DWG 属性集一致性 + whitelist 维护守门
+- A28 `tests/publish_backlog_inventory.rs` ·
+  `a28_backlog_tag_specs_match_reference_fixtures_exactly`
+  + 3 guard：未支持 PID tag 的 fidelity spec snapshot
+  （PIDPipingBranchPoint × 4 + PIDBranchPoint × 5 on DWG）
+  作为未来 writer arm 的可执行 spec + 漂移检测
 
 #### Added — writer 真实改动
 
@@ -71,16 +76,34 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 #### Tests
 
 * lib：540 → 555（+15，全部在 `publish::diff::tests`）
-* integration：140 → 145（+5 在 `tests/publish_attribute_parity.rs`）
+* integration：140 → 149（+5 在 `tests/publish_attribute_parity.rs`，
+  +4 在 `tests/publish_backlog_inventory.rs`）
 * lint：0 warnings
 
-#### Backlog（A28+）
+#### A28 backlog inventory（已 snapshot 入测试）
 
-* PIDBranchPoint / PIDPipingBranchPoint writer arms（需 DWG 端
-  SQLite mirror 才能反推源映射）
+PIDPipingBranchPoint（DWG × 4）：6 接口（IObject 仅 UID，其余 bare）
+- IObject(UID), IConnection, IPipingConnection, IDrawingItem,
+  IPipingBranchPoint, IDocumentItem
+
+PIDBranchPoint（DWG × 5）：9 接口（IObject 含 UID + Name，其余 bare）
+- IObject(UID, Name), IPIDBranchPoint, IDuctConnection, IConnection,
+  IDrawingItem, IPipingConnection, ISignalConnection, IDocumentItem
+
+UID 后缀模式：`<base>.BPT`，参考 A13 的 `.PPT` / `.1` / `.2`
+派生 ID 模式（PipingConnector → PIDPipingPort + PIDProcessPoint）。
+未来 writer arm 实现时按 spec 守门即可。
+
+#### Backlog（A29+）
+
+* PIDBranchPoint / PIDPipingBranchPoint writer arms（spec 已在
+  A28 snapshot test 中 pin 住，实施时需 DWG 端 SQLite mirror
+  才能反推源映射）
 * A25b loader-side `IsLowPressureTank` 推断（同上）
 * A27b whitelist 收尾：随 DWG mirror bundle 落地，逐条 (tag,
   interface) 关闭 12 条 loader-side 富化列差异
+* A27c IObject identifier rename 切换：A01 (`ItemTag`) ⇄ DWG
+  (`Name`) 的 site-config / project-flavor 设计
 
 ## [0.9.2] - 2026-04-21
 
