@@ -25,3 +25,12 @@ uuid = { version = "1", features = ["serde", "v5"] }
 
 [dev-dependencies]
 pretty_assertions = "1"
+# Benchmarks live in `benches/` and gate themselves on the local
+# `test-file/` fixture; see `benches/pid_pipeline.rs`. Keep criterion
+# `default-features = false` so benches compile on a plain stable
+# toolchain (no plotters, no rayon surprise) and stay fast to build.
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "pid_pipeline"
+harness = false
