@@ -21,6 +21,12 @@
 - 新增 `LICENSE-MIT` 和 `LICENSE-APACHE` 文件，匹配 `Cargo.toml` 中声明
   的 `license = "MIT OR Apache-2.0"`。
 
+### 依赖升级
+
+- `quick-xml` 0.38 → 0.39（XML 处理引擎）。
+- `rusqlite` 0.31 → 0.39（bundled sqlite3 + hashbrown v0.16）。
+- 两项升级均无 breaking API 变更，814 测试全绿。
+
 ## [0.10.0] — 2026-04-24
 
 ### Publish XML source — Rust MDF loader (`oxidized-mdf`)
