@@ -26,7 +26,10 @@ use crate::package::PidPackage;
 use crate::writer::plan::EncodedString;
 use std::collections::BTreeMap;
 
+/// Normalized CFB path of the OLE `/\x05SummaryInformation` stream.
 pub const SUMMARY_INFO_PATH: &str = "/\u{5}SummaryInformation";
+/// Normalized CFB path of the OLE `/\x05DocumentSummaryInformation`
+/// stream (hosts section 2's user-defined property dictionary).
 pub const DOC_SUMMARY_PATH: &str = "/\u{5}DocumentSummaryInformation";
 
 /// Symbolic key → PROPID mapping for `/\x05SummaryInformation` section.

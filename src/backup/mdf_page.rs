@@ -161,18 +161,35 @@ impl PageType {
 /// follow-up inside `backup::mdf` when body parsing is added.
 #[derive(Debug, Clone)]
 pub struct MdfPageHeader {
+    /// `u8` page-header format version reported at offset 0
+    /// (always `0x01` on observed fixtures).
     pub header_version: u8,
+    /// Decoded page class (data / index / boot / …).
     pub page_type: PageType,
+    /// Raw `u8` flags paired with [`Self::page_type`] on disk; kept
+    /// so downstream decoders can recover flag bits not yet modelled.
     pub type_flag_bits: u8,
+    /// B-tree level (`0` for leaf pages).
     pub level: u8,
+    /// Raw `u16` flag bits from the header; opaque — preserved for
+    /// future decoding.
     pub flag_bits: u16,
+    /// Identifier of the index this page belongs to (SQL Server
+    /// `index_id`; `0` for heap data pages).
     pub index_id: u16,
+    /// Number of slots (row pointers) currently used on this page.
     pub slot_count: u16,
+    /// Number of bytes free on the page.
     pub free_count: u16,
+    /// Offset of the first free byte inside the page body.
     pub free_data: u16,
     /// `(file_id, page_id)` of this page.
     pub page_id: PageAddress,
+    /// Forward link to the next page in a B-tree / heap chain;
+    /// `(0, 0)` when there is no next page.
     pub next_page: PageAddress,
+    /// Back link to the previous page in the chain; `(0, 0)` when
+    /// there is no previous page.
     pub prev_page: PageAddress,
 }
 
@@ -181,7 +198,10 @@ pub struct MdfPageHeader {
 /// little-endian, stored as the pair `(pageId, fileId)` on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageAddress {
+    /// SQL Server file identifier (`1` for the primary data file).
     pub file_id: u16,
+    /// Zero-based page index within the file identified by
+    /// [`Self::file_id`].
     pub page_id: u32,
 }
 

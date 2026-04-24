@@ -9,6 +9,8 @@
 
 use crate::model::{ClusterHeader, IndexedString};
 
+/// `u32` LE signature that introduces every cluster-family stream
+/// (PSM clusters, style cluster, Dynamic Attributes metadata, sheets).
 pub const CLUSTER_MAGIC: u32 = 0x6C90_F544;
 
 /// Parse the common header shared by all cluster-family streams.

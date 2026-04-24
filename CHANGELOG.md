@@ -2,6 +2,85 @@
 
 ## [Unreleased]
 
+### Public API rustdoc pass — Tier 3 final batch + `#![warn(missing_docs)]` 硬门禁
+
+压轴一批：把剩下 88 条 `missing_docs` **一口气扫光**，baseline 从
+`88 → 0`，并在 `src/lib.rs` 顶部把 `missing_docs` 加进
+`#![warn(...)]` 列表——配合 CI `-D warnings` **自动升级为硬门禁**。
+
+覆盖范围（88 项，跨 25 个文件）：
+
+- `src/error.rs`（6 variant + 2 field）：`PidError` 每个
+  variant 注明触发条件；`ParseFailure` 的 `context` / `message`
+  说明来源和用途。
+- `src/api.rs`（5 field + 2 assoc fn + 1 method）：
+  `ParseOptions` 每个字段标注"控制什么"；`PidParser::new` /
+  `with_options` / `parse_file` 加语义注释。
+- `src/byte_audit/mod.rs`（8 field + 1 assoc fn）：`ByteRange`
+  字段（inclusive/exclusive）、`ParserTrace` 的 6 个字段
+  （含 `consumed_ranges` 排序 / 合并不变量）、
+  `ParserTraceBuilder::new`。
+- `src/writer/metadata_helpers.rs`（1 enum + 6 variant + 8
+  field）：`MetadataEditError` 六 variant（`AttributeNotFound` /
+  `DuplicateAttribute` / `UnterminatedAttribute` /
+  `ElementNotFound` / `DuplicateElement` / `MalformedElement`）
+  + 每个 struct-variant 内嵌字段。
+- `src/backup/mdf_page.rs`（13 field）：`MdfPageHeader` 10 个
+  header 字段 + `PageAddress` 的 `file_id` / `page_id`。
+- `src/backup/mtf.rs`（4 field）：`MtfError::TooShort::{needed,
+  got}` / `NotATapeStart::got` / `MtfStream::kind`。
+- `src/backup/boot_page.rs`（1 field）：`TooShort::got`。
+- `src/publish/model.rs`（2 field）：`DrawingNotFound::uid` +
+  `PidRelationshipRow::item2_location`。
+- `src/writer/plan.rs`（2 field）：`SheetChunkPatch::{start, end}`。
+- `src/writer/summary_write.rs`（2 const）：
+  `SUMMARY_INFO_PATH` / `DOC_SUMMARY_PATH`。
+- `src/parsers/psm_tables.rs`（3 const）：`ROOT_MAGIC` /
+  `CLST_MAGIC` / `STAB_MAGIC`。
+- `src/parsers/cluster_header.rs`（1 const）：`CLUSTER_MAGIC`。
+- `src/parsers/doc_version.rs` / `doc_version2.rs`（2 const）：
+  `RECORD_SIZE` / `DOC_VERSION2_MAGIC`。
+- `src/parsers/string_scan.rs`（2 fn）：`scan_ascii_strings` /
+  `scan_utf16le_strings`。
+- `src/parsers/drawing_xml.rs` / `general_xml.rs` /
+  `jproperties.rs`（3 fn）：`parse_drawing_xml` /
+  `parse_general_xml` / `parse_jproperties`。
+- `src/cfb/tree.rs`（1 fn）：`build_tree`。
+- `src/streams/*.rs`（5 fn）：`parse_clusters` /
+  `parse_jsites` / `parse_summary_streams` /
+  `parse_tagged_text_streams` / `parse_doc_registry` /
+  `parse_dynamic_attrs`。
+- `src/inspect/mermaid.rs`（1 struct + 1 fn）：`CrossRefOptions` +
+  `crossref_mermaid_with`。
+- `src/inspect/report.rs`（1 fn）：`generate_report`。
+- `src/layout.rs`（2 fn）：`derive_layout` / `build_layout_model`。
+- `src/publish/diff.rs`（1 fn）：`diff_publish_xml`。
+
+**硬门禁升级**：
+
+- `src/lib.rs` 把 `missing_docs` 加到顶层 `#![warn(...)]` 列表，
+  跟 `clippy::uninlined_format_args` / `clippy::doc_markdown`
+  等十个已就绪 lint 并列。CI 跑 `-D warnings` 会把
+  `missing_docs` 当成错误——今后任何新 `pub` 项漏 `///` 都
+  在 PR 阶段阻塞合并。
+- `.github/missing-docs-baseline.txt` 从 `88` 改到 `0`；
+  `.github/scripts/check-missing-docs.sh` + CI 步骤保留，
+  作为双保险（即使有人改 `lib.rs` 移掉 warn，ratchet 仍然
+  会捕获）。
+
+验证：
+- `cargo rustdoc --lib --locked -- -W missing-docs` 总数
+  `88 → 0`（-88），
+  `bash .github/scripts/check-missing-docs.sh` 本地验
+  `current=0, baseline=0, OK`。
+- `cargo clippy --locked --workspace --all-targets -- -D warnings` /
+  `cargo fmt --all -- --check` / `cargo test --workspace`
+  （`812 passed / 0 failed / 2 DWG-gated ignored`）全绿。
+
+累计九轮 rustdoc：**`473 → 0`（-473，100%）**。至此
+pub-API 级别 `missing_docs` 战役收官。后续新代码靠硬门禁
+保持 0。
+
 ### Public API rustdoc pass — Tier 3 batch 4（`package.rs` 诊断族）
 
 第四批：把 package 层 `src/package.rs` 的 26 条 `missing_docs`

@@ -949,6 +949,9 @@ fn extract_defuid(inside: &[u8]) -> Option<String> {
     extract_rel_attr(inside, b"DefUID=")
 }
 
+/// Compare a generated publish `_Data.xml` body against a reference
+/// XML from an existing `SmartPlant` export. Returns a semantic diff
+/// focusing on tag counts, interfaces, and relationship families.
 pub fn diff_publish_xml(generated_xml: &str, reference_xml: &str) -> SemanticDiffReport {
     let gen_counts = parse_pid_tag_counts(generated_xml);
     let ref_counts = parse_pid_tag_counts(reference_xml);

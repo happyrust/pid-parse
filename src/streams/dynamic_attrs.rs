@@ -11,6 +11,9 @@ use crate::error::PidError;
 use crate::model::{DynamicAttributesBlob, PidDocument};
 use std::io::Read;
 
+/// Decode `/Dynamic Attributes Metadata` + `/Unclustered Dynamic
+/// Attributes` into [`PidDocument::dynamic_attributes`]. No-op when
+/// neither stream is present.
 pub fn parse_dynamic_attrs<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     doc: &mut PidDocument,

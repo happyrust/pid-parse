@@ -28,6 +28,8 @@
 use crate::byte_audit::{ByteRange, ParserTraceBuilder, TraceConfidence};
 use crate::model::{DocVersion2, DocVersion2Record};
 
+/// `u32` LE magic that introduces a structurally-decodable
+/// `/DocVersion2` stream (fixed `0x0001_0034` on every real fixture).
 pub const DOC_VERSION2_MAGIC: u32 = 0x0001_0034;
 
 /// Attempt to decode `/DocVersion2`'s content as the structured log.

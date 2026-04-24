@@ -11,7 +11,8 @@
     clippy::bool_to_int_with_if,
     clippy::implicit_clone,
     clippy::explicit_iter_loop,
-    clippy::unnecessary_map_or
+    clippy::unnecessary_map_or,
+    missing_docs
 )]
 
 //! `pid-parse` is a layered, panic-free reader / writer for the

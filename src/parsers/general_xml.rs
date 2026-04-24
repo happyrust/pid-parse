@@ -7,6 +7,8 @@
 use crate::error::PidError;
 use crate::model::GeneralMeta;
 
+/// Parse the `/TaggedTxtData/General` XML body into a
+/// [`GeneralMeta`]. Returns `PidError::Xml` on malformed input.
 pub fn parse_general_xml(xml: &str) -> Result<GeneralMeta, PidError> {
     let tags = crate::parsers::xml_util::collect_simple_tags(xml);
     Ok(GeneralMeta {

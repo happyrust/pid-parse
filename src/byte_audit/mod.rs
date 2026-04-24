@@ -33,7 +33,10 @@ use std::collections::BTreeMap;
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
 pub struct ByteRange {
+    /// Inclusive start byte offset inside the owning stream.
     pub start: u64,
+    /// Exclusive end byte offset inside the owning stream; when
+    /// `end <= start` the range is treated as empty.
     pub end: u64,
 }
 
@@ -104,11 +107,22 @@ pub enum TraceConfidence {
 /// reporting.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ParserTrace {
+    /// Short identifier of the parser that produced this trace
+    /// (e.g. `"parse_psm_cluster_table"`).
     pub parser_name: String,
+    /// Normalized CFB path of the stream the parser ran against.
     pub stream_path: String,
+    /// Total stream length in bytes.
     pub total_bytes: u64,
+    /// Ranges the parser claimed, sorted by `start`; adjacent /
+    /// overlapping same-confidence ranges are merged by `build`.
     pub consumed_ranges: Vec<ByteRange>,
+    /// Bytes inside `[0, total_bytes)` that no consume call covered —
+    /// i.e. the complement of [`Self::consumed_ranges`].
     pub leftover_ranges: Vec<ByteRange>,
+    /// Convenience projection of the merged ranges keyed by
+    /// confidence bucket; matches `consumed_ranges` in content but
+    /// pre-split for UI / aggregate reporting.
     pub ranges_by_confidence: BTreeMap<TraceConfidence, Vec<ByteRange>>,
 }
 
@@ -164,6 +178,9 @@ pub struct ParserTraceBuilder {
 }
 
 impl ParserTraceBuilder {
+    /// Build an empty trace for the given `parser_name`. The name is
+    /// copied verbatim into the resulting [`ParserTrace::parser_name`]
+    /// on `build`.
     pub fn new(parser_name: impl Into<String>) -> Self {
         Self {
             parser_name: parser_name.into(),

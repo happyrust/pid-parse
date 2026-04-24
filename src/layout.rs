@@ -27,10 +27,15 @@ const LANE_Y_SPACING: f64 = 110.0;
 const TEXT_OFFSET_X: f64 = 46.0;
 const TEXT_OFFSET_Y: f64 = 20.0;
 
+/// Run [`build_layout_model`] on `doc` and store the result into
+/// `doc.layout`. Convenience wrapper for the reader pipeline.
 pub fn derive_layout(doc: &mut PidDocument) {
     doc.layout = build_layout_model(doc);
 }
 
+/// Synthesize a visualization-ready [`PidLayoutModel`] from the
+/// already-decoded [`ObjectGraph`] on `doc`. Returns `None` when no
+/// graph is available or the graph has no objects worth placing.
 pub fn build_layout_model(doc: &PidDocument) -> Option<PidLayoutModel> {
     let graph = doc.object_graph.as_ref()?;
     if graph.objects.is_empty() {

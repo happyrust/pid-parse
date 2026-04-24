@@ -5,6 +5,8 @@
 //! allocation-light and tolerant of garbage: runs of printable
 //! bytes are promoted to [`String`], everything else is dropped.
 
+/// Collect runs of printable ASCII (plus `\t`) that are at least 4
+/// bytes long, up to `limit` entries.
 pub fn scan_ascii_strings(data: &[u8], limit: usize) -> Vec<String> {
     let mut result = Vec::new();
     let mut buf = Vec::new();
@@ -116,6 +118,8 @@ fn has_plausible_guid_structure(chunk: &[u8]) -> bool {
     nonzero >= 6 && (1..=5).contains(&version_nibble)
 }
 
+/// Collect runs of printable UTF-16LE characters that are at least
+/// `min_chars` code units long, up to `limit` entries.
 pub fn scan_utf16le_strings(data: &[u8], min_chars: usize, limit: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut i = 0;

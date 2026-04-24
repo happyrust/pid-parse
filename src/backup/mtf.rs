@@ -156,14 +156,22 @@ pub enum MtfError {
     #[error(
         "MTF input too short: need at least {needed} bytes for the common block header, got {got}"
     )]
-    TooShort { needed: usize, got: usize },
+    TooShort {
+        /// Minimum bytes required to start probing.
+        needed: usize,
+        /// Bytes actually available in the input.
+        got: usize,
+    },
 
     /// First descriptor block is not a `TAPE` descriptor. MTF always
     /// starts with `TAPE`, so anything else means the file is not an
     /// MTF stream (maybe already extracted MDF, maybe a different
     /// backup format).
     #[error("MTF input does not start with a TAPE descriptor (got tag `{got}`)")]
-    NotATapeStart { got: String },
+    NotATapeStart {
+        /// ASCII tag observed at offset 0 instead of `TAPE`.
+        got: String,
+    },
 }
 
 /// Parsed `TAPE` descriptor header — the very first block of every
@@ -542,6 +550,8 @@ impl MtfStreamKind {
 /// `&data[body_offset..body_end]`.
 #[derive(Debug, Clone)]
 pub struct MtfStream {
+    /// Decoded stream kind discriminator — drives how the body bytes
+    /// should be interpreted.
     pub kind: MtfStreamKind,
     /// Raw attribute word from stream header bytes 4..8. Kept as a
     /// `u32` because SQL Server backups combine the `FSYS_ATTR` and

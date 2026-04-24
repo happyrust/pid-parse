@@ -20,22 +20,56 @@
 
 use thiserror::Error;
 
+/// Errors surfaced by the byte-level XML edit helpers in this module.
+/// Keep the attribute and element families separate so callers can
+/// match on shape without string matching.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum MetadataEditError {
+    /// No `attr="..."` occurrence was found.
     #[error("attribute `{attr}` not found in XML")]
-    AttributeNotFound { attr: String },
+    AttributeNotFound {
+        /// Name of the attribute that was missing.
+        attr: String,
+    },
+    /// More than one `attr="..."` occurrence was found; helpers refuse
+    /// to guess which one to edit.
     #[error(
         "attribute `{attr}` appears {count} times; refusing to edit ambiguously (callers should narrow the target first)"
     )]
-    DuplicateAttribute { attr: String, count: usize },
+    DuplicateAttribute {
+        /// Name of the duplicated attribute.
+        attr: String,
+        /// Number of occurrences observed.
+        count: usize,
+    },
+    /// The attribute's value is missing a closing quote.
     #[error("attribute `{attr}` value is not properly quoted")]
-    UnterminatedAttribute { attr: String },
+    UnterminatedAttribute {
+        /// Name of the attribute with the unterminated value.
+        attr: String,
+    },
+    /// Requested `<element>…</element>` was not found.
     #[error("element `{element}` not found in XML")]
-    ElementNotFound { element: String },
+    ElementNotFound {
+        /// Name of the element that was missing.
+        element: String,
+    },
+    /// More than one `<element>…</element>` occurrence was found;
+    /// helpers refuse to guess which one to edit.
     #[error("element `{element}` appears {count} times; refusing to edit ambiguously")]
-    DuplicateElement { element: String, count: usize },
+    DuplicateElement {
+        /// Name of the duplicated element.
+        element: String,
+        /// Number of occurrences observed.
+        count: usize,
+    },
+    /// Element was found but its structure (open/close tag pairing)
+    /// is unsuitable for a surgical edit.
     #[error("element `{element}` is malformed (missing closing tag or invalid structure)")]
-    MalformedElement { element: String },
+    MalformedElement {
+        /// Name of the malformed element.
+        element: String,
+    },
 }
 
 /// Replace the value of an XML attribute, leaving every other byte

@@ -10,6 +10,9 @@
 use crate::model::JProperties;
 use std::collections::BTreeMap;
 
+/// Flatten a raw `JProperties` blob into the [`JProperties`] DTO —
+/// extracts every recoverable string / key-value pair / GUID and
+/// records the original byte length for audit.
 pub fn parse_jproperties(data: &[u8]) -> JProperties {
     let mut strings = crate::parsers::string_scan::scan_ascii_strings(data, 256);
 

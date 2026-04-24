@@ -115,7 +115,10 @@ pub enum PublishError {
     /// MDF parser failure from the Rust MDF reader.
     Mdf(String),
     /// No drawing row matched the requested UID.
-    DrawingNotFound { uid: String },
+    DrawingNotFound {
+        /// Drawing UID requested by the caller.
+        uid: String,
+    },
 }
 
 impl fmt::Display for PublishError {
@@ -221,6 +224,8 @@ pub struct PublishRelationship {
     /// `T_Relationship.Item1Location` / `Item2Location` pair —
     /// directional hint.
     pub item1_location: Option<i64>,
+    /// `T_Relationship.Item2Location` — target-side directional hint
+    /// mirroring [`Self::item1_location`].
     pub item2_location: Option<i64>,
     /// `T_Relationship.IsBinary`.
     pub is_binary: Option<i64>,

@@ -10,6 +10,8 @@
 use crate::error::PidError;
 use crate::model::DrawingMeta;
 
+/// Parse the `/TaggedTxtData/Drawing` XML body into a
+/// [`DrawingMeta`]. Returns `PidError::Xml` on malformed input.
 pub fn parse_drawing_xml(xml: &str) -> Result<DrawingMeta, PidError> {
     let tags = crate::parsers::xml_util::collect_simple_tags(xml);
 

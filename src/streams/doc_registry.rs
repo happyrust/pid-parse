@@ -10,6 +10,9 @@ use crate::model::PidDocument;
 use crate::parsers::{app_object, doc_version, tagged_stg_list};
 use std::io::Read;
 
+/// Decode `/DocVersion2` / `/DocVersion3` / `/AppObject` into the
+/// corresponding `PidDocument` fields. Silently skips streams that
+/// are absent.
 pub fn parse_doc_registry<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     doc: &mut PidDocument,
