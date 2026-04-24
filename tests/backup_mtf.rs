@@ -104,8 +104,7 @@ fn real_export_dmp_second_descriptor_is_sfmb_at_1024() {
     assert_eq!(
         kind,
         MtfBlockType::SoftFilemark,
-        "expected SFMB at offset 1024, got tag bytes {:02X?}",
-        tag
+        "expected SFMB at offset 1024, got tag bytes {tag:02X?}"
     );
 }
 
@@ -121,8 +120,7 @@ fn real_export_dmp_third_descriptor_is_sset_at_1536() {
     assert_eq!(
         kind,
         MtfBlockType::StartOfSet,
-        "expected SSET at offset 1536, got tag bytes {:02X?}",
-        tag
+        "expected SSET at offset 1536, got tag bytes {tag:02X?}"
     );
 }
 

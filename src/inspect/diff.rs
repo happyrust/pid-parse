@@ -55,14 +55,14 @@ pub fn render(diff: &PackageDiff) -> String {
     if !diff.only_in_a.is_empty() {
         out.push_str("\n--- Only in A ---\n");
         for p in &diff.only_in_a {
-            out.push_str(&format!("  {}\n", p));
+            out.push_str(&format!("  {p}\n"));
         }
     }
 
     if !diff.only_in_b.is_empty() {
         out.push_str("\n--- Only in B ---\n");
         for p in &diff.only_in_b {
-            out.push_str(&format!("  {}\n", p));
+            out.push_str(&format!("  {p}\n"));
         }
     }
 
@@ -142,7 +142,7 @@ fn render_time(t: Option<std::time::SystemTime>) -> String {
             // crate. Negative values (pre-1970) fall back to `Debug`.
             match st.duration_since(std::time::UNIX_EPOCH) {
                 Ok(d) => format!("unix+{}s", d.as_secs()),
-                Err(_) => format!("{:?}", st),
+                Err(_) => format!("{st:?}"),
             }
         }
     }
@@ -151,13 +151,13 @@ fn render_time(t: Option<std::time::SystemTime>) -> String {
 fn render_state_bits(b: Option<u32>) -> String {
     match b {
         None => "(none)".to_string(),
-        Some(v) => format!("0x{:08X}", v),
+        Some(v) => format!("0x{v:08X}"),
     }
 }
 
 fn render_clsid(c: Option<uuid::Uuid>) -> String {
     match c {
-        Some(uuid) => format!("{{{}}}", uuid),
+        Some(uuid) => format!("{{{uuid}}}"),
         None => "(none)".to_string(),
     }
 }

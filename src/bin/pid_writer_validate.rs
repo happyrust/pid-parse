@@ -532,8 +532,7 @@ pub fn apply_edits_to_package(
         })?;
         let xml = std::str::from_utf8(&raw.data).map_err(|e| {
             ValidateError::Edit(format!(
-                "stream {} is not UTF-8 (BOM/UTF-16 not yet supported): {e}",
-                path
+                "stream {path} is not UTF-8 (BOM/UTF-16 not yet supported): {e}"
             ))
         })?;
         let new_xml = match op.kind {
@@ -939,7 +938,7 @@ fn hex_pretty(buf: &[u8]) -> String {
         return "(empty)".to_string();
     }
     buf.iter()
-        .map(|b| format!("{:02X}", b))
+        .map(|b| format!("{b:02X}"))
         .collect::<Vec<_>>()
         .join(" ")
 }

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 fn fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(format!("test-file/{}", name))
+    PathBuf::from(format!("test-file/{name}"))
 }
 
 fn tmp_output(label: &str) -> PathBuf {
@@ -16,7 +16,7 @@ fn tmp_output(label: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    p.push(format!("pid-parse-real-{}-{}.pid", label, nanos));
+    p.push(format!("pid-parse-real-{label}-{nanos}.pid"));
     p
 }
 
@@ -59,8 +59,7 @@ fn real_file_passthrough_preserves_all_streams_byte_for_byte() {
     }
     assert!(
         mismatched.is_empty(),
-        "expected every stream to round-trip byte-identical, mismatched: {:?}",
-        mismatched
+        "expected every stream to round-trip byte-identical, mismatched: {mismatched:?}"
     );
 
     let _ = std::fs::remove_file(&dst);
@@ -124,8 +123,7 @@ fn real_file_reports_non_root_storage_clsids_deterministically() {
         assert_eq!(
             pkg_out.storage_clsids.get(path),
             Some(clsid),
-            "non-root CLSID mismatch at {}",
-            path
+            "non-root CLSID mismatch at {path}"
         );
     }
     // Sanity: the map is either empty (typical real-file case) or all
@@ -174,16 +172,14 @@ fn real_file_passthrough_preserves_storage_timestamps() {
         let ts_out = pkg_out
             .storage_timestamps
             .get(path)
-            .unwrap_or_else(|| panic!("missing timestamp for {} after round-trip", path));
+            .unwrap_or_else(|| panic!("missing timestamp for {path} after round-trip"));
         assert_eq!(
             ts_in.created, ts_out.created,
-            "created time mismatch at {}",
-            path
+            "created time mismatch at {path}"
         );
         assert_eq!(
             ts_in.modified, ts_out.modified,
-            "modified time mismatch at {}",
-            path
+            "modified time mismatch at {path}"
         );
     }
 

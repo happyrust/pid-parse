@@ -307,7 +307,7 @@ pub fn list_general_elements(xml: &str) -> Vec<(String, String)> {
         if k >= bytes.len() {
             break;
         }
-        let close_marker = format!("</{}", name);
+        let close_marker = format!("</{name}");
         if bytes[k..].starts_with(close_marker.as_bytes()) {
             let after_marker = k + close_marker.len();
             let mut m = after_marker;
@@ -518,9 +518,9 @@ fn find_element_text_ranges(
     element: &str,
 ) -> Result<Vec<(usize, usize)>, MetadataEditError> {
     let bytes = xml.as_bytes();
-    let open_prefix = format!("<{}", element);
+    let open_prefix = format!("<{element}");
     let open_bytes = open_prefix.as_bytes();
-    let close_tag = format!("</{}>", element);
+    let close_tag = format!("</{element}>");
     let close_bytes = close_tag.as_bytes();
 
     let mut out = Vec::new();

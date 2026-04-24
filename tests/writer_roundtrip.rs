@@ -23,7 +23,7 @@ fn unique_tmp(label: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    p.push(format!("pid-parse-it-{}-{}.pid", label, nanos));
+    p.push(format!("pid-parse-it-{label}-{nanos}.pid"));
     p
 }
 
@@ -88,8 +88,7 @@ fn passthrough_roundtrip_preserves_every_stream() {
         assert_eq!(
             data,
             after.get(p).expect("path must exist after round-trip"),
-            "bytes differ for stream {}",
-            p
+            "bytes differ for stream {p}"
         );
     }
 
@@ -133,8 +132,7 @@ fn metadata_only_update_replaces_tagged_streams_and_keeps_others() {
         assert_eq!(
             after.get(p).expect("path must still exist"),
             original,
-            "stream {} should be untouched",
-            p
+            "stream {p} should be untouched"
         );
     }
 

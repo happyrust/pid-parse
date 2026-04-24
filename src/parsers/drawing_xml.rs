@@ -7,7 +7,7 @@ pub fn parse_drawing_xml(xml: &str) -> Result<DrawingMeta, PidError> {
     // Helper: try plain key first, then SP_-prefixed key (Smart P&ID convention).
     let get = |key: &str| -> Option<String> {
         tags.get(key)
-            .or_else(|| tags.get(&format!("SP_{}", key)))
+            .or_else(|| tags.get(&format!("SP_{key}")))
             .cloned()
     };
 

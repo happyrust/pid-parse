@@ -212,7 +212,7 @@ fn sheet_stream_reuses_cluster_header() {
     // parse_real_files.rs.
     let fixture = "test-file/DWG-0201GP06-01.pid";
     if !std::path::Path::new(fixture).exists() {
-        eprintln!("skipping: fixture {} not found", fixture);
+        eprintln!("skipping: fixture {fixture} not found");
         return;
     }
     let parser = pid_parse::PidParser::new();
@@ -222,8 +222,7 @@ fn sheet_stream_reuses_cluster_header() {
     let magic = sheet.magic_u32_le.expect("sheet stream must have magic");
     assert_eq!(
         magic, CLUSTER_MAGIC,
-        "sheet stream shares cluster magic 0x{:08X}, got 0x{:08X}",
-        CLUSTER_MAGIC, magic
+        "sheet stream shares cluster magic 0x{CLUSTER_MAGIC:08X}, got 0x{magic:08X}"
     );
     let hdr = sheet.header.as_ref().expect("sheet header must parse");
     assert_eq!(hdr.magic, CLUSTER_MAGIC);

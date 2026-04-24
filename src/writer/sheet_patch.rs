@@ -28,13 +28,13 @@ pub fn apply_sheet_patch(
     for p in patches {
         if p.start > p.end {
             return Err(PidError::ParseFailure {
-                context: format!("sheet_patch:{}", context),
+                context: format!("sheet_patch:{context}"),
                 message: format!("start {} > end {}", p.start, p.end),
             });
         }
         if p.end > data.len() {
             return Err(PidError::ParseFailure {
-                context: format!("sheet_patch:{}", context),
+                context: format!("sheet_patch:{context}"),
                 message: format!("end {} exceeds stream length {}", p.end, data.len()),
             });
         }

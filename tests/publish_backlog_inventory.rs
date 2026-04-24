@@ -195,8 +195,7 @@ fn a28_backlog_tag_specs_match_reference_fixtures_exactly() {
          2. Investigate WHY the fixture changed before \
             updating — drift here might mask a real \
             SmartPlant export regression worth reporting \
-            upstream.\n\nFailures:\n{:#?}",
-        failures
+            upstream.\n\nFailures:\n{failures:#?}"
     );
 }
 

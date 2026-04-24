@@ -6,7 +6,7 @@ use std::io::Read;
 
 fn dump_all(data: &[u8]) {
     for (row, chunk) in data.chunks(16).enumerate() {
-        let hex: Vec<String> = chunk.iter().map(|b| format!("{:02X}", b)).collect();
+        let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02X}")).collect();
         let ascii: String = chunk
             .iter()
             .map(|&b| {
@@ -32,11 +32,11 @@ fn main() {
     };
     let mut cfb = cfb::open(path).expect("open cfb");
     for name in names {
-        let stream_path = format!("/{}", name);
+        let stream_path = format!("/{name}");
         let mut stream = match cfb.open_stream(&stream_path) {
             Ok(s) => s,
             Err(_) => {
-                println!("\n=== {} (NOT FOUND) ===", name);
+                println!("\n=== {name} (NOT FOUND) ===");
                 continue;
             }
         };
@@ -77,10 +77,7 @@ fn main() {
             let byte_len = cc * 2;
             let name_start = pos + 8;
             if name_start + byte_len > data.len() || cc > 512 {
-                println!(
-                    "    [{}] @+{:04X} id=0x{:08X} cc={} BAD (truncated or absurd)",
-                    idx, pos, id, cc
-                );
+                println!("    [{idx}] @+{pos:04X} id=0x{id:08X} cc={cc} BAD (truncated or absurd)");
                 break;
             }
             let name_bytes = &data[name_start..name_start + byte_len];
@@ -89,10 +86,7 @@ fn main() {
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
                 .collect();
             let name = String::from_utf16_lossy(&utf16);
-            println!(
-                "    [{}] @+{:04X} id=0x{:08X} cc={:2} name=\"{}\"",
-                idx, pos, id, cc, name
-            );
+            println!("    [{idx}] @+{pos:04X} id=0x{id:08X} cc={cc:2} name=\"{name}\"");
             pos = name_start + byte_len;
             idx += 1;
         }

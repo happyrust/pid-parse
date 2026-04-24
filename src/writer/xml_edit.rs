@@ -23,20 +23,20 @@ use crate::error::PidError;
 /// `new_value` is XML-escaped (`&`, `<`, `>` only — sufficient for text
 /// nodes per the XML spec).
 pub fn replace_simple_tag_text(xml: &str, tag: &str, new_value: &str) -> Result<String, PidError> {
-    let open = format!("<{}>", tag);
-    let close = format!("</{}>", tag);
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
 
     let open_idx = xml.find(&open).ok_or_else(|| PidError::ParseFailure {
-        context: format!("xml_edit:{}", tag),
-        message: format!("no <{}> open tag found", tag),
+        context: format!("xml_edit:{tag}"),
+        message: format!("no <{tag}> open tag found"),
     })?;
     let content_start = open_idx + open.len();
 
     let rel_close = xml[content_start..]
         .find(&close)
         .ok_or_else(|| PidError::ParseFailure {
-            context: format!("xml_edit:{}", tag),
-            message: format!("no matching </{}> close tag found", tag),
+            context: format!("xml_edit:{tag}"),
+            message: format!("no matching </{tag}> close tag found"),
         })?;
     let content_end = content_start + rel_close;
 
@@ -45,8 +45,8 @@ pub fn replace_simple_tag_text(xml: &str, tag: &str, new_value: &str) -> Result<
     // writer).
     if xml[content_start..content_end].contains(&open) {
         return Err(PidError::ParseFailure {
-            context: format!("xml_edit:{}", tag),
-            message: format!("nested <{}> tag found, cannot safely edit", tag),
+            context: format!("xml_edit:{tag}"),
+            message: format!("nested <{tag}> tag found, cannot safely edit"),
         });
     }
 

@@ -31,7 +31,7 @@ pub fn generate_package_report(pkg: &PidPackage) -> String {
     if pkg.root_clsid.is_some() || !pkg.storage_clsids.is_empty() {
         writeln!(out, "\n--- Container CLSIDs ---").ok();
         if let Some(c) = pkg.root_clsid {
-            writeln!(out, "  root: {{{}}}", c).ok();
+            writeln!(out, "  root: {{{c}}}").ok();
         } else {
             writeln!(out, "  root: (nil — source container had no CLSID)").ok();
         }
@@ -40,7 +40,7 @@ pub fn generate_package_report(pkg: &PidPackage) -> String {
         } else {
             writeln!(out, "  non-root storages ({}):", pkg.storage_clsids.len()).ok();
             for (path, clsid) in &pkg.storage_clsids {
-                writeln!(out, "    {}  {{{}}}", path, clsid).ok();
+                writeln!(out, "    {path}  {{{clsid}}}").ok();
             }
         }
     }
@@ -62,13 +62,13 @@ pub fn generate_package_report(pkg: &PidPackage) -> String {
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| format!("unix+{}s", d.as_secs()))
                 .unwrap_or_else(|| "(none)".to_string());
-            writeln!(out, "  {}  created={}  modified={}", path, c, m).ok();
+            writeln!(out, "  {path}  created={c}  modified={m}").ok();
         }
     }
     if !pkg.state_bits.is_empty() {
         writeln!(out, "\n--- State Bits ({}) ---", pkg.state_bits.len()).ok();
         for (path, bits) in &pkg.state_bits {
-            writeln!(out, "  {}  0x{:08X}", path, bits).ok();
+            writeln!(out, "  {path}  0x{bits:08X}").ok();
         }
     }
     out
@@ -88,48 +88,48 @@ pub fn generate_report(doc: &PidDocument) -> String {
     if let Some(ref si) = doc.summary {
         writeln!(out, "\n--- Summary ---").ok();
         if let Some(ref v) = si.creating_application {
-            writeln!(out, "  Application: {}", v).ok();
+            writeln!(out, "  Application: {v}").ok();
         }
         if let Some(ref v) = si.title {
-            writeln!(out, "  Title: {}", v).ok();
+            writeln!(out, "  Title: {v}").ok();
         }
         if let Some(ref v) = si.template {
-            writeln!(out, "  Template: {}", v).ok();
+            writeln!(out, "  Template: {v}").ok();
         }
         if let Some(ref v) = si.created_time {
-            writeln!(out, "  Created: {}", v).ok();
+            writeln!(out, "  Created: {v}").ok();
         }
         if let Some(ref v) = si.modified_time {
-            writeln!(out, "  Modified: {}", v).ok();
+            writeln!(out, "  Modified: {v}").ok();
         }
         for (k, v) in &si.raw {
-            writeln!(out, "  {}: {}", k, v).ok();
+            writeln!(out, "  {k}: {v}").ok();
         }
     }
 
     if let Some(ref dm) = doc.drawing_meta {
         writeln!(out, "\n--- Drawing Meta ---").ok();
         if let Some(ref v) = dm.drawing_number {
-            writeln!(out, "  DrawingNumber: {}", v).ok();
+            writeln!(out, "  DrawingNumber: {v}").ok();
         }
         if let Some(ref v) = dm.document_category {
-            writeln!(out, "  DocumentCategory: {}", v).ok();
+            writeln!(out, "  DocumentCategory: {v}").ok();
         }
         if let Some(ref v) = dm.template_name {
-            writeln!(out, "  Template: {}", v).ok();
+            writeln!(out, "  Template: {v}").ok();
         }
         for (k, v) in &dm.tags {
-            writeln!(out, "  {}: {}", k, v).ok();
+            writeln!(out, "  {k}: {v}").ok();
         }
     }
 
     if let Some(ref gm) = doc.general_meta {
         writeln!(out, "\n--- General Meta ---").ok();
         if let Some(ref v) = gm.file_path {
-            writeln!(out, "  FilePath: {}", v).ok();
+            writeln!(out, "  FilePath: {v}").ok();
         }
         if let Some(ref v) = gm.file_size {
-            writeln!(out, "  FileSize: {}", v).ok();
+            writeln!(out, "  FileSize: {v}").ok();
         }
     }
 
@@ -138,7 +138,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
         for js in &doc.jsites {
             write!(out, "  {} ", js.name).ok();
             if let Some(ref sym) = js.symbol_name {
-                write!(out, "[sym: {}]", sym).ok();
+                write!(out, "[sym: {sym}]").ok();
             }
             if js.has_ole_stream {
                 write!(out, " [OLE]").ok();
@@ -151,7 +151,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
 
         let total_guids: usize = doc.jsites.iter().map(|j| j.properties.guids.len()).sum();
         if total_guids > 0 {
-            writeln!(out, "  Total GUIDs across JSites: {}", total_guids).ok();
+            writeln!(out, "  Total GUIDs across JSites: {total_guids}").ok();
         }
     }
 
@@ -243,9 +243,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             write!(out, "  {} ({} bytes", sh.name, sh.size).ok();
             if let Some(m) = sh.magic_u32_le {
                 if let Some(ref tag) = sh.magic_tag {
-                    write!(out, ", magic=0x{:08X} '{}'", m, tag).ok();
+                    write!(out, ", magic=0x{m:08X} '{tag}'").ok();
                 } else {
-                    write!(out, ", magic=0x{:08X}", m).ok();
+                    write!(out, ", magic=0x{m:08X}").ok();
                 }
             }
             writeln!(out, ")").ok();
@@ -314,11 +314,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
             )
             .ok();
             if !e.prefix_bytes.is_empty() {
-                let hex: Vec<String> = e
-                    .prefix_bytes
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect();
+                let hex: Vec<String> = e.prefix_bytes.iter().map(|b| format!("{b:02X}")).collect();
                 write!(out, ", prefix=[{}]", hex.join(" ")).ok();
             }
             writeln!(out, ")").ok();
@@ -388,7 +384,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 writeln!(out, "  ... ({} more)", t.entries.len() - 20).ok();
             }
         } else {
-            let flags_hex: Vec<String> = t.flags.iter().map(|b| format!("0x{:02X}", b)).collect();
+            let flags_hex: Vec<String> = t.flags.iter().map(|b| format!("0x{b:02X}")).collect();
             writeln!(out, "  flags: [{}]", flags_hex.join(", ")).ok();
         }
         if t.trailing_bytes > 0 {
@@ -488,10 +484,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
     if let Some(ref g) = doc.object_graph {
         writeln!(out, "\n--- Object Graph ---").ok();
         if let Some(ref p) = g.project_number {
-            writeln!(out, "  Project: {}", p).ok();
+            writeln!(out, "  Project: {p}").ok();
         }
         if let Some(ref d) = g.drawing_no {
-            writeln!(out, "  Drawing: {}", d).ok();
+            writeln!(out, "  Drawing: {d}").ok();
         }
         writeln!(
             out,
@@ -502,14 +498,14 @@ pub fn generate_report(doc: &PidDocument) -> String {
         .ok();
         writeln!(out, "  By type:").ok();
         for (ty, n) in &g.counts_by_type {
-            writeln!(out, "    {}: {}", ty, n).ok();
+            writeln!(out, "    {ty}: {n}").ok();
         }
         writeln!(out, "  Sample objects:").ok();
         for obj in g.objects.iter().take(6) {
             let sub = obj
                 .drawing_item_type
                 .as_deref()
-                .map(|s| format!(" [{}]", s))
+                .map(|s| format!(" [{s}]"))
                 .unwrap_or_default();
             writeln!(out, "    {} {}{}", obj.item_type, obj.drawing_id, sub).ok();
         }
@@ -530,8 +526,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
             let unresolved = g.relationships.len() - fully - partial;
             writeln!(
                 out,
-                "  Endpoint resolution: {} fully / {} partial / {} unresolved",
-                fully, partial, unresolved
+                "  Endpoint resolution: {fully} fully / {partial} partial / {unresolved} unresolved"
             )
             .ok();
             writeln!(out, "  Sample relationships:").ok();
@@ -543,7 +538,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 } else {
                     rel.guid.clone()
                 };
-                writeln!(out, "    {}  {} -> {}", guid, src, tgt).ok();
+                writeln!(out, "    {guid}  {src} -> {tgt}").ok();
             }
             if g.relationships.len() > 4 {
                 writeln!(out, "    ... ({} more)", g.relationships.len() - 4).ok();
@@ -612,13 +607,13 @@ pub fn generate_report(doc: &PidDocument) -> String {
         for s in top_level_unidentified {
             write!(out, "  {} ({} bytes", s.path, s.size).ok();
             if let Some(m) = s.magic_u32_le {
-                write!(out, ", magic=0x{:08X}", m).ok();
+                write!(out, ", magic=0x{m:08X}").ok();
                 if let Some(tag) = magic::magic_tag(m) {
-                    write!(out, " '{}'", tag).ok();
+                    write!(out, " '{tag}'").ok();
                 }
                 let desc = magic::describe_magic(m);
                 if !desc.is_empty() {
-                    write!(out, " [{}]", desc).ok();
+                    write!(out, " [{desc}]").ok();
                 }
             }
             writeln!(out, ")").ok();
@@ -628,14 +623,14 @@ pub fn generate_report(doc: &PidDocument) -> String {
     if let Some(ref inv) = doc.object_inventory {
         writeln!(out, "\n--- P&ID Object Inventory ---").ok();
         if let Some(ref proj) = inv.project {
-            writeln!(out, "  Project: {}", proj).ok();
+            writeln!(out, "  Project: {proj}").ok();
         }
         if let Some(ref did) = inv.drawing_id {
-            writeln!(out, "  Drawing: {}", did).ok();
+            writeln!(out, "  Drawing: {did}").ok();
         }
         writeln!(out, "  Total items: {}", inv.items.len()).ok();
         for (item_type, count) in &inv.item_counts {
-            writeln!(out, "    {}: {}", item_type, count).ok();
+            writeln!(out, "    {item_type}: {count}").ok();
         }
     }
 

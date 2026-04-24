@@ -23,7 +23,7 @@ pub fn collect_simple_tags(input: &str) -> BTreeMap<String, String> {
         }
 
         let name = input[name_start..name_end].trim();
-        let close = format!("</{}>", name);
+        let close = format!("</{name}>");
         let value_start = name_end + 1;
         if let Some(rel_end) = input[value_start..].find(&close) {
             let value_end = value_start + rel_end;

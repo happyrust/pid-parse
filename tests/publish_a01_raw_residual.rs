@@ -663,7 +663,7 @@ fn find_text_occurrences(conn: &Connection, probe: &ResidualProbe) -> Vec<String
                 .map(|r| r.expect("read rowid"))
                 .collect::<Vec<_>>();
             for rowid in hits {
-                out.push(format!("{}.{} rowid={}", table, column, rowid));
+                out.push(format!("{table}.{column} rowid={rowid}"));
             }
         }
     }

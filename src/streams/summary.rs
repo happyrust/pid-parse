@@ -241,14 +241,14 @@ fn filetime_to_string(ft: i64) -> String {
     const EPOCH_DIFF: i64 = 116_444_736_000_000_000;
     let unix_100ns = ft - EPOCH_DIFF;
     if unix_100ns < 0 {
-        return format!("FILETIME({})", ft);
+        return format!("FILETIME({ft})");
     }
     let secs = unix_100ns / 10_000_000;
     let nanos = (unix_100ns % 10_000_000) * 100;
     if let Some(dt) = chrono_free_format(secs, nanos as u32) {
         dt
     } else {
-        format!("FILETIME({})", ft)
+        format!("FILETIME({ft})")
     }
 }
 
@@ -261,8 +261,7 @@ fn chrono_free_format(unix_secs: i64, _nanos: u32) -> Option<String> {
 
     let (year, month, day) = civil_from_days(days);
     Some(format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, month, day, h, m, s
+        "{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z"
     ))
 }
 
@@ -296,7 +295,7 @@ fn summary_prop_name(id: u32) -> String {
         14 => "PageCount".into(),
         15 => "WordCount".into(),
         18 => "AppName".into(),
-        _ => format!("Prop_{}", id),
+        _ => format!("Prop_{id}"),
     }
 }
 
@@ -306,7 +305,7 @@ fn doc_summary_prop_name(id: u32) -> String {
         2 => "Category".into(),
         14 => "Manager".into(),
         15 => "Company".into(),
-        _ => format!("Prop_{}", id),
+        _ => format!("Prop_{id}"),
     }
 }
 

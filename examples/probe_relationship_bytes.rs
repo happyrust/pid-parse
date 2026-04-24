@@ -110,7 +110,7 @@ fn main() {
 
     println!("\n-- ASCII-form matches (32-char hex) --");
     for (p, n) in &ascii_hits {
-        println!("  {}: {} hits", p, n);
+        println!("  {p}: {n} hits");
     }
     println!(
         "\n-- binary raw-hex-layout matches (16 bytes, as-is) --   total streams: {}",
@@ -119,7 +119,7 @@ fn main() {
     for (p, hits) in &binary_raw_hits {
         println!("  {}: {} hits", p, hits.len());
         for (g, off) in hits.iter().take(3) {
-            println!("    @0x{:06X}  {}", off, g);
+            println!("    @0x{off:06X}  {g}");
         }
         if hits.len() > 3 {
             println!("    ... ({} more)", hits.len() - 3);
@@ -132,7 +132,7 @@ fn main() {
     for (p, hits) in &binary_win_hits {
         println!("  {}: {} hits", p, hits.len());
         for (g, off) in hits.iter().take(3) {
-            println!("    @0x{:06X}  {}", off, g);
+            println!("    @0x{off:06X}  {g}");
         }
         if hits.len() > 3 {
             println!("    ... ({} more)", hits.len() - 3);
@@ -145,16 +145,13 @@ fn main() {
     for (n, &hit) in hits.iter().take(4).enumerate() {
         let lo = hit.saturating_sub(window);
         let hi = (hit + needle.len() + 48 + window).min(data.len());
-        println!(
-            "\n=== hit #{} @ offset 0x{:05X} ({}), window 0x{:05X}..0x{:05X} ===",
-            n, hit, hit, lo, hi
-        );
+        println!("\n=== hit #{n} @ offset 0x{hit:05X} ({hit}), window 0x{lo:05X}..0x{hi:05X} ===");
 
         let relationship_end = (hit + needle.len() + 32).min(data.len());
         if relationship_end <= data.len() {
             let full = &data[hit..relationship_end];
             let s = String::from_utf8_lossy(full);
-            println!("  record tag: {:?}", s);
+            println!("  record tag: {s:?}");
         }
 
         hex_dump_range(&data[lo..hi], lo);
@@ -180,7 +177,7 @@ fn main() {
 fn hex_dump_range(chunk: &[u8], base: usize) {
     for (row, line) in chunk.chunks(16).enumerate() {
         let off = base + row * 16;
-        let hex: Vec<String> = line.iter().map(|b| format!("{:02X}", b)).collect();
+        let hex: Vec<String> = line.iter().map(|b| format!("{b:02X}")).collect();
         let ascii: String = line
             .iter()
             .map(|&b| {

@@ -81,8 +81,7 @@ fn generated_dwg_interface_parity_matches_reference_superset_when_mirror_availab
     assert!(
         missing_per_tag.is_empty(),
         "DWG generated interface parity regression: writer is missing interfaces \
-         present in the SmartPlant DWG reference:\n{:#?}",
-        missing_per_tag,
+         present in the SmartPlant DWG reference:\n{missing_per_tag:#?}",
     );
 }
 
@@ -146,8 +145,7 @@ fn generated_dwg_attribute_parity_matches_reference_superset_when_mirror_availab
         missing.is_empty(),
         "DWG generated attribute parity regression: writer is missing attributes \
          the SmartPlant DWG reference declares. Each entry is one \
-         `(PID tag, interface, attr_name[s])` triplet:\n{:#?}",
-        missing,
+         `(PID tag, interface, attr_name[s])` triplet:\n{missing:#?}",
     );
 }
 

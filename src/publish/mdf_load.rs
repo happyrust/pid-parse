@@ -84,11 +84,11 @@ fn stage_table(
     table_name: &str,
 ) -> Result<usize, PublishError> {
     let Some(columns) = db.column_names(table_name) else {
-        info!("  {}: not found in MDF, skipped", table_name);
+        info!("  {table_name}: not found in MDF, skipped");
         return Ok(0);
     };
     if columns.is_empty() {
-        info!("  {}: 0 columns, skipped", table_name);
+        info!("  {table_name}: 0 columns, skipped");
         return Ok(0);
     }
 
@@ -119,7 +119,7 @@ fn stage_table(
     );
 
     let Some(rows) = db.rows(table_name) else {
-        info!("  {}: 0 rows", table_name);
+        info!("  {table_name}: 0 rows");
         return Ok(0);
     };
     let mut stmt = conn.prepare(&insert_sql)?;

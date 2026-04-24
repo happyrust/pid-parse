@@ -39,14 +39,14 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
     }
 
     for name in names {
-        let base = format!("/{}", name);
+        let base = format!("/{name}");
         let mut site = JSite {
             name: name.clone(),
             path: base.clone(),
             ..JSite::default()
         };
 
-        let prop_path = format!("{}/JProperties", base);
+        let prop_path = format!("{base}/JProperties");
         if let Ok(mut s) = cfb.open_stream(&prop_path) {
             let mut data = Vec::new();
             s.read_to_end(&mut data)?;
@@ -62,7 +62,7 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
             }
         }
 
-        let ole_path = format!("{}/\u{1}Ole", base);
+        let ole_path = format!("{base}/\u{1}Ole");
         if let Ok(mut s) = cfb.open_stream(&ole_path) {
             let mut data = Vec::new();
             s.read_to_end(&mut data)?;

@@ -795,13 +795,11 @@ mod tests {
 
         assert!(
             !prefix_ranges.is_empty(),
-            "at least one Probed prefix range expected; got {:?}",
-            prefix_ranges
+            "at least one Probed prefix range expected; got {prefix_ranges:?}"
         );
         assert!(
             decoded_ranges.len() >= 2, // header + at least one name range
-            "expected header + name decoded ranges; got {:?}",
-            decoded_ranges
+            "expected header + name decoded ranges; got {decoded_ranges:?}"
         );
         // Header must be the first Decoded range.
         assert_eq!(decoded_ranges[0], ByteRange::new(0, 8));

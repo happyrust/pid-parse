@@ -1835,8 +1835,7 @@ fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), P
     .map_err(fmt_err)?;
     writeln!(
         buf,
-        r#"      <IInlineComponent IsFlowDirectional="{}"/>"#,
-        is_flow_directional,
+        r#"      <IInlineComponent IsFlowDirectional="{is_flow_directional}"/>"#,
     )
     .map_err(fmt_err)?;
     writeln!(

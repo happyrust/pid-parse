@@ -17,7 +17,7 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
     ];
 
     for name in names {
-        let path = format!("/{}", name);
+        let path = format!("/{name}");
         if let Ok(mut s) = cfb.open_stream(&path) {
             let mut data = Vec::new();
             s.read_to_end(&mut data)?;

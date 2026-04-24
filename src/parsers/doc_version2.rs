@@ -124,7 +124,7 @@ pub fn op_type_label(op: u8) -> String {
     match op {
         0x82 => "SaveAs".to_string(),
         0x81 => "Save".to_string(),
-        other => format!("0x{:02X}", other),
+        other => format!("0x{other:02X}"),
     }
 }
 

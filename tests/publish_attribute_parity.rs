@@ -125,8 +125,7 @@ fn attribute_parity_on_a01_writer_matches_reference_superset_per_interface() {
          attributes the SmartPlant A01 reference declares. \
          Each entry below is one `(PID tag, interface, \
          attr_name[s])` triplet that needs a writer-side \
-         emit:\n{:#?}",
-        missing,
+         emit:\n{missing:#?}",
     );
     assert!(
         extras.is_empty(),
@@ -134,8 +133,7 @@ fn attribute_parity_on_a01_writer_matches_reference_superset_per_interface() {
          attributes the SmartPlant A01 reference does not \
          declare. Each entry below is one `(PID tag, \
          interface, attr_name[s])` triplet that needs an \
-         A01-side writer suppression or style-normalization:\n{:#?}",
-        extras,
+         A01-side writer suppression or style-normalization:\n{extras:#?}",
     );
 }
 
@@ -520,8 +518,7 @@ fn a27b_a01_and_dwg_reference_attrs_agree_for_every_shared_tag_interface() {
          KNOWN_A01_VS_DWG_ATTR_DIVERGENCES entry documenting \
          the variant (with milestone + rationale) or close the \
          gap via a writer / loader change. \
-         Details:\n{:#?}",
-        unexpected,
+         Details:\n{unexpected:#?}",
     );
 }
 

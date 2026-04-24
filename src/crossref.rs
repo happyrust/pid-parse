@@ -663,7 +663,7 @@ mod tests {
     fn mk_storage(name: &str, kind: EntryKind) -> StorageNode {
         StorageNode {
             name: name.to_string(),
-            path: format!("/{}", name),
+            path: format!("/{name}"),
             kind,
             children: vec![],
         }
@@ -672,7 +672,7 @@ mod tests {
     fn mk_jsite(name: &str, symbol_path: Option<&str>, symbol_name: Option<&str>) -> JSite {
         JSite {
             name: name.to_string(),
-            path: format!("/{}", name),
+            path: format!("/{name}"),
             symbol_name: symbol_name.map(String::from),
             symbol_path: symbol_path.map(String::from),
             local_symbol_path: None,
@@ -1573,7 +1573,7 @@ mod tests {
         let mut graph = ObjectGraph::default();
         for i in 0..(PROVENANCE_CHAIN_BREAK_SAMPLE_CAP + 5) {
             graph.relationships.push(mk_relationship(
-                &format!("{:032X}", i),
+                &format!("{i:032X}"),
                 None,
                 Some("UNLINKED"),
                 Some("UNLINKED"),

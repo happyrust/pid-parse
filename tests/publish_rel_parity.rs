@@ -174,8 +174,7 @@ fn rel_defuid_parity_on_a01_writer_matches_reference_supersets() {
          reference and they are NOT in KNOWN_WRITER_REL_DEFUID_GAPS. \
          Either add a whitelist entry (with milestone + rationale) \
          or close the gap via a writer change. \
-         Each entry: `(DefUID, generated_count, reference_count)`:\n{:#?}",
-        unwhitelisted_under_emit,
+         Each entry: `(DefUID, generated_count, reference_count)`:\n{unwhitelisted_under_emit:#?}",
     );
 }
 
@@ -378,8 +377,7 @@ fn rel_defuid_parity_on_dwg_writer_matches_reference_supersets_when_mirror_avail
         under_emit.is_empty(),
         "DWG generated Rel parity regression: writer is missing or under-emitting \
          these DefUIDs vs the SmartPlant DWG reference. Each entry is \
-         `(DefUID, generated_count, reference_count)`:\n{:#?}",
-        under_emit,
+         `(DefUID, generated_count, reference_count)`:\n{under_emit:#?}",
     );
 }
 
@@ -518,8 +516,7 @@ fn a36b_every_rel_uid2_resolves_within_the_document_on_dwg_when_available() {
         dangling.is_empty(),
         "A36b DWG UID2 soundness regression: these rels point at UID2 values \
          nothing in the generated DWG document resolves to. Each entry: \
-         `(UID1, UID2, DefUID)`:\n{:#?}",
-        dangling,
+         `(UID1, UID2, DefUID)`:\n{dangling:#?}",
     );
 }
 
@@ -588,8 +585,7 @@ fn a36b_every_rel_uid2_resolves_within_the_document_on_a01() {
          Either (a) wire the target's <IObject UID=...> into \
          the writer, or (b) extend `is_known_derived_port_uid` \
          to cover a new derived-UID convention (with a \
-         milestone comment). Each entry: `(UID1, UID2, DefUID)`:\n{:#?}",
-        dangling,
+         milestone comment). Each entry: `(UID1, UID2, DefUID)`:\n{dangling:#?}",
     );
 }
 

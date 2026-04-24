@@ -59,9 +59,9 @@ fn main() {
 
     if schema_mode {
         match pid_parse::schema::pid_document_schema_pretty() {
-            Ok(s) => println!("{}", s),
+            Ok(s) => println!("{s}"),
             Err(e) => {
-                eprintln!("Schema serialization error: {}", e);
+                eprintln!("Schema serialization error: {e}");
                 std::process::exit(1);
             }
         }
@@ -78,7 +78,7 @@ fn main() {
     let pkg = match parser.parse_package(path) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Parse error: {}", e);
+            eprintln!("Parse error: {e}");
             std::process::exit(1);
         }
     };
@@ -91,18 +91,18 @@ fn main() {
             // Lets CI / automation consume coverage metrics without
             // paying to serialize (or skip past) every decoded field.
             match pid_parse::inspect::coverage::coverage_report(doc).to_json_pretty() {
-                Ok(json) => println!("{}", json),
+                Ok(json) => println!("{json}"),
                 Err(e) => {
-                    eprintln!("Coverage JSON serialization error: {}", e);
+                    eprintln!("Coverage JSON serialization error: {e}");
                     std::process::exit(1);
                 }
             }
             return;
         }
         match serde_json::to_string_pretty(doc) {
-            Ok(json) => println!("{}", json),
+            Ok(json) => println!("{json}"),
             Err(e) => {
-                eprintln!("JSON serialization error: {}", e);
+                eprintln!("JSON serialization error: {e}");
                 std::process::exit(1);
             }
         }
@@ -138,7 +138,7 @@ fn main() {
         if out.is_empty() {
             eprintln!("(no object graph available — nothing to render)");
         } else {
-            print!("{}", out);
+            print!("{out}");
         }
     }
 
@@ -147,7 +147,7 @@ fn main() {
         if out.is_empty() {
             eprintln!("(no cross-reference graph — nothing to render)");
         } else {
-            print!("{}", out);
+            print!("{out}");
         }
     }
 
@@ -167,7 +167,7 @@ fn main() {
         && !coverage_flag
     {
         let report = pid_parse::inspect::report::generate_package_report(&pkg);
-        print!("{}", report);
+        print!("{report}");
     }
 }
 
@@ -224,7 +224,7 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
     match args.get(idx + 1) {
         Some(v) if !v.starts_with("--") => Some(v.clone()),
         _ => {
-            eprintln!("{} requires a value", flag);
+            eprintln!("{flag} requires a value");
             std::process::exit(2);
         }
     }
@@ -238,7 +238,7 @@ fn flag_triple(args: &[String], flag: &str) -> Option<(String, String, String)> 
         match args.get(idx + offset) {
             Some(v) if !v.starts_with("--") => v.clone(),
             _ => {
-                eprintln!("{} requires <{}> as argument #{}", flag, label, offset);
+                eprintln!("{flag} requires <{label}> as argument #{offset}");
                 std::process::exit(2);
             }
         }
@@ -253,7 +253,7 @@ fn run_probe_sheet_chunks(path: &str, target: Option<&str>, json_mode: bool) {
     let package = match parser.parse_package(path) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Parse error: {}", e);
+            eprintln!("Parse error: {e}");
             std::process::exit(1);
         }
     };
@@ -277,7 +277,7 @@ fn run_probe_sheet_chunks(path: &str, target: Option<&str>, json_mode: bool) {
 
     if reports.is_empty() {
         if let Some(t) = target {
-            eprintln!("(no Sheet stream named '{}' found)", t);
+            eprintln!("(no Sheet stream named '{t}' found)");
         } else {
             eprintln!("(no Sheet* streams found)");
         }
@@ -286,9 +286,9 @@ fn run_probe_sheet_chunks(path: &str, target: Option<&str>, json_mode: bool) {
 
     if json_mode {
         match serde_json::to_string_pretty(&reports) {
-            Ok(json) => println!("{}", json),
+            Ok(json) => println!("{json}"),
             Err(e) => {
-                eprintln!("JSON serialization error: {}", e);
+                eprintln!("JSON serialization error: {e}");
                 std::process::exit(1);
             }
         }
@@ -332,10 +332,10 @@ fn print_sheet_chunk_reports(reports: &[pid_parse::parsers::sheet_probe::SheetPr
                 chunk.repeated_u32_hits,
             );
             if !chunk.ascii_preview.is_empty() {
-                println!("         ascii: {}", ascii);
+                println!("         ascii: {ascii}");
             }
             if !chunk.utf16_preview.is_empty() {
-                println!("         utf16: {}", utf16);
+                println!("         utf16: {utf16}");
             }
         }
         println!();
@@ -352,18 +352,18 @@ fn run_round_trip(input: &str, output: &str, verify: bool) {
     let pkg = match parser.parse_package(input) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Parse error: {}", e);
+            eprintln!("Parse error: {e}");
             std::process::exit(1);
         }
     };
     if let Err(e) = PidWriter::write_to(&pkg, &WritePlan::default(), std::path::Path::new(output)) {
-        eprintln!("Write error: {}", e);
+        eprintln!("Write error: {e}");
         std::process::exit(1);
     }
-    eprintln!("round-trip ok: {} -> {}", input, output);
+    eprintln!("round-trip ok: {input} -> {output}");
     eprintln!("  streams written: {}", pkg.streams.len());
     if let Some(clsid) = pkg.root_clsid {
-        eprintln!("  root CLSID preserved: {{{}}}", clsid);
+        eprintln!("  root CLSID preserved: {{{clsid}}}");
     } else {
         eprintln!("  root CLSID: (none in source)");
     }
@@ -372,7 +372,7 @@ fn run_round_trip(input: &str, output: &str, verify: bool) {
         let pkg_back = match parser.parse_package(output) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("Verify parse error: {}", e);
+                eprintln!("Verify parse error: {e}");
                 std::process::exit(1);
             }
         };
@@ -396,20 +396,20 @@ fn run_diff(a_path: &str, b_path: &str) {
     let a = match parser.parse_package(a_path) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Parse A error: {}", e);
+            eprintln!("Parse A error: {e}");
             std::process::exit(1);
         }
     };
     let b = match parser.parse_package(b_path) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Parse B error: {}", e);
+            eprintln!("Parse B error: {e}");
             std::process::exit(1);
         }
     };
     let diff = pid_parse::diff_packages(&a, &b);
-    eprintln!("A: {}", a_path);
-    eprintln!("B: {}", b_path);
+    eprintln!("A: {a_path}");
+    eprintln!("B: {b_path}");
     print!("{}", pid_parse::inspect::diff::render(&diff));
     // Non-empty diff exits with non-zero to be CI-friendly.
     if !diff.is_empty() {
@@ -427,8 +427,7 @@ fn run_set_drawing_number(input: &str, new_number: &str, output: &str) {
         output,
     );
     eprintln!(
-        "set-drawing-number ok: DrawingNumber {:?} -> {:?}  ({} -> {})",
-        old, new_number, input, output
+        "set-drawing-number ok: DrawingNumber {old:?} -> {new_number:?}  ({input} -> {output})"
     );
 }
 
@@ -436,10 +435,7 @@ fn run_set_drawing_number(input: &str, new_number: &str, output: &str) {
 /// provided `/TaggedTxtData/*` stream and write the result.
 fn run_set_xml_tag(input: &str, stream: &str, tag: &str, value: &str, output: &str) {
     let old = perform_xml_tag_write(input, stream, tag, value, output);
-    eprintln!(
-        "set-xml-tag ok: {} <{}>: {:?} -> {:?}  ({} -> {})",
-        stream, tag, old, value, input, output
-    );
+    eprintln!("set-xml-tag ok: {stream} <{tag}>: {old:?} -> {value:?}  ({input} -> {output})");
 }
 
 /// Shared implementation for `--set-drawing-number` and `--set-xml-tag`.
@@ -455,19 +451,19 @@ fn perform_xml_tag_write(
     let mut pkg = match parser.parse_package(input) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Parse error: {}", e);
+            eprintln!("Parse error: {e}");
             std::process::exit(1);
         }
     };
     let old = match pkg.set_xml_tag(stream, tag, value) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("XML edit failed: {}", e);
+            eprintln!("XML edit failed: {e}");
             std::process::exit(1);
         }
     };
     if let Err(e) = PidWriter::write_to(&pkg, &WritePlan::default(), std::path::Path::new(output)) {
-        eprintln!("Write error: {}", e);
+        eprintln!("Write error: {e}");
         std::process::exit(1);
     }
     old
@@ -506,10 +502,7 @@ fn print_probe_endpoints(doc: &pid_parse::PidDocument) {
         graph.relationships.len(),
         total_eps
     );
-    println!(
-        "resolution   : {} fully / {} partial / {} unresolved\n",
-        fully, partial, unresolved
-    );
+    println!("resolution   : {fully} fully / {partial} partial / {unresolved} unresolved\n");
 
     let item_type_by_did: std::collections::HashMap<&str, &str> = graph
         .objects
@@ -520,7 +513,7 @@ fn print_probe_endpoints(doc: &pid_parse::PidDocument) {
         match did {
             Some(d) => {
                 let ty = item_type_by_did.get(d).copied().unwrap_or("?");
-                format!("{} [{}]", d, ty)
+                format!("{d} [{ty}]")
             }
             None => "(off-drawing)".to_string(),
         }
@@ -620,7 +613,7 @@ fn print_probe_cluster(doc: &pid_parse::PidDocument) {
         println!("  path: {}", c.path);
         println!("  size: {} bytes (0x{:X})", c.size, c.size);
         if let Some(m) = c.magic_u32_le {
-            println!("  magic: 0x{:08X}", m);
+            println!("  magic: 0x{m:08X}");
         }
         if let Some(ref hdr) = c.header {
             println!(
@@ -663,9 +656,9 @@ fn print_probe_sheet(doc: &pid_parse::PidDocument) {
         println!("  path: {}", sh.path);
         println!("  size: {} bytes (0x{:X})", sh.size, sh.size);
         if let Some(m) = sh.magic_u32_le {
-            print!("  magic: 0x{:08X}", m);
+            print!("  magic: 0x{m:08X}");
             if let Some(ref tag) = sh.magic_tag {
-                print!(" '{}'", tag);
+                print!(" '{tag}'");
             }
             println!();
         }
@@ -713,7 +706,7 @@ fn print_probe_sheet(doc: &pid_parse::PidDocument) {
                 sh.extracted_texts.len()
             );
             for t in sh.extracted_texts.iter().take(10) {
-                println!("    {}", t);
+                println!("    {t}");
             }
         }
         println!();
@@ -752,7 +745,7 @@ fn print_probe_relationships(doc: &pid_parse::PidDocument) {
         } else {
             for (off, g) in &p.nearby_ascii_guids {
                 let annotation = if *g == p.guid { " (this record)" } else { "" };
-                println!("      nearby GUID @0x{:06X}  {}{}", off, g, annotation);
+                println!("      nearby GUID @0x{off:06X}  {g}{annotation}");
             }
         }
         if !p.trailing_tokens.is_empty() {
@@ -772,7 +765,7 @@ fn print_probe_dynamic(doc: &pid_parse::PidDocument) {
         println!("path: {}", da.path);
         println!("size: {} bytes (0x{:X})", da.size, da.size);
         if let Some(m) = da.magic_u32_le {
-            println!("magic: 0x{:08X}", m);
+            println!("magic: 0x{m:08X}");
         }
         if let Some(ref hdr) = da.header {
             println!(

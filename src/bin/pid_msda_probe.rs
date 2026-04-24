@@ -206,10 +206,10 @@ fn run(options: CliOptions) -> Result<(), String> {
 
     println!("Source:       {}", options.input.display());
     println!("Size:         {} bytes", data.len());
-    println!("Page size:    {} bytes", PAGE_SIZE);
+    println!("Page size:    {PAGE_SIZE} bytes");
     println!("Stride:       {} bytes", options.stride);
-    println!("Base offset:  0x{:08X} ({})", base, base);
-    println!("Candidates:   {}", total_candidates);
+    println!("Base offset:  0x{base:08X} ({base})");
+    println!("Candidates:   {total_candidates}");
     println!(
         "Valid pages:  {}  ({:.1}%)",
         valid_headers,
@@ -219,7 +219,7 @@ fn run(options: CliOptions) -> Result<(), String> {
     println!();
     println!("== Page type distribution ==");
     for (tag, n) in &by_type {
-        println!("  {:>9}  {}", tag, n);
+        println!("  {tag:>9}  {n}");
     }
 
     if !samples.is_empty() {

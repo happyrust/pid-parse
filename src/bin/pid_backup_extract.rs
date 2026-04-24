@@ -209,8 +209,7 @@ fn run(options: CliOptions) -> Result<(), String> {
     if let Some(off) = mdf_header_len {
         println!();
         println!(
-            "Detected backup-stream header length: {} bytes (MDF pages start at MSDA+0x{:X})",
-            off, off
+            "Detected backup-stream header length: {off} bytes (MDF pages start at MSDA+0x{off:X})"
         );
     }
     println!();

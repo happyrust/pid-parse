@@ -473,10 +473,7 @@ fn list_drawings(conn: &rusqlite::Connection) -> Result<(), String> {
     let mut count = 0usize;
     for row in rows {
         let (uid, name, cat, dtype, path) = row.map_err(|e| format!("read T_Drawing row: {e}"))?;
-        println!(
-            "{:<34} | {:<24} | {:<22} | {:<10} | {}",
-            uid, name, cat, dtype, path,
-        );
+        println!("{uid:<34} | {name:<24} | {cat:<22} | {dtype:<10} | {path}",);
         count += 1;
     }
     eprintln!("\nTotal: {count} drawing(s).");

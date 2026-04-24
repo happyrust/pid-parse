@@ -166,7 +166,7 @@ fn capture_doc_version2<R: Read + std::io::Seek>(
         let hex_preview = data
             .iter()
             .take(128)
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<Vec<_>>()
             .join(" ");
         doc.doc_version2 = Some(crate::model::DocVersion2Raw {
@@ -318,7 +318,7 @@ fn build_object_graph(doc: &mut PidDocument) {
             let model_id = if guid.is_empty() {
                 "Relationship".to_string()
             } else {
-                format!("Relationship.{}", guid)
+                format!("Relationship.{guid}")
             };
             *counts.entry("Relationship".to_string()).or_default() += 1;
             graph.relationships.push(PidRelationship {

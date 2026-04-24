@@ -241,13 +241,13 @@ fn main() {
         println!();
         println!("== Block counts by tag ==");
         for (tag, n) in &counts_by_tag {
-            println!("  {:>6}  {}", tag, n);
+            println!("  {tag:>6}  {n}");
         }
         if !counts_by_stream_tag.is_empty() {
             println!();
             println!("== Stream counts by tag (inside DBLKs) ==");
             for (tag, n) in &counts_by_stream_tag {
-                println!("  {:>6}  {}", tag, n);
+                println!("  {tag:>6}  {n}");
             }
         }
         println!();

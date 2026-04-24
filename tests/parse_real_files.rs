@@ -5,15 +5,15 @@ use pid_parse::PidParser;
 /// access to SmartPlant samples) so the test can cleanly skip instead of
 /// panicking. See `writer_real_files.rs` for the matching pattern.
 fn parse_test_file(name: &str) -> Option<pid_parse::PidDocument> {
-    let path = format!("test-file/{}", name);
+    let path = format!("test-file/{name}");
     if !std::path::Path::new(&path).exists() {
-        eprintln!("skipping: fixture {} not found", name);
+        eprintln!("skipping: fixture {name} not found");
         return None;
     }
     Some(
         PidParser::new()
             .parse_file(&path)
-            .unwrap_or_else(|e| panic!("Failed to parse {}: {}", name, e)),
+            .unwrap_or_else(|e| panic!("Failed to parse {name}: {e}")),
     )
 }
 
@@ -96,13 +96,11 @@ fn jsite_symbol_paths_are_clean() {
         if let Some(ref sp) = js.symbol_path {
             assert!(
                 sp.starts_with("\\\\") || sp.contains(":\\"),
-                "symbol_path should be a clean UNC or drive path, got: {}",
-                sp
+                "symbol_path should be a clean UNC or drive path, got: {sp}"
             );
             assert!(
                 sp.ends_with(".sym"),
-                "symbol_path should end with .sym: {}",
-                sp
+                "symbol_path should end with .sym: {sp}"
             );
         }
     }
@@ -265,8 +263,7 @@ fn psm_roots_extracts_known_entries() {
     ] {
         assert!(
             names.contains(&expected),
-            "missing expected PSMroots entry: {}",
-            expected
+            "missing expected PSMroots entry: {expected}"
         );
     }
 }
@@ -291,8 +288,7 @@ fn psm_cluster_table_matches_actual_clusters() {
     ] {
         assert!(
             names.contains(&expected),
-            "PSMclustertable should list {}",
-            expected
+            "PSMclustertable should list {expected}"
         );
     }
 }
@@ -764,8 +760,7 @@ fn relationship_endpoints_resolve_via_sheet_record() {
     // handful but not hundreds.
     assert!(
         foreign_endpoints < 20,
-        "too many endpoints point to objects absent from graph: {}",
-        foreign_endpoints
+        "too many endpoints point to objects absent from graph: {foreign_endpoints}"
     );
 }
 

@@ -74,14 +74,12 @@ fn real_sqlite_load_drawing_graph_exposes_a01_objects_and_representations() {
     for want in ["Vessel", "Nozzle", "PipeRun"] {
         assert!(
             item_types.contains(want),
-            "expected object of ItemTypeName `{want}`, got {:?}",
-            item_types
+            "expected object of ItemTypeName `{want}`, got {item_types:?}"
         );
     }
     assert!(
         !item_types.contains("PipingPoint"),
-        "A13: load_drawing_graph must NOT inject T_PipingPoint rows; got {:?}",
-        item_types
+        "A13: load_drawing_graph must NOT inject T_PipingPoint rows; got {item_types:?}"
     );
     assert_eq!(
         graph.objects.len(),

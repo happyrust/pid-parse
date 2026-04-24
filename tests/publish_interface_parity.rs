@@ -101,8 +101,7 @@ fn interface_parity_on_a01_writer_matches_reference_superset_post_a22() {
     assert!(
         missing_per_tag.is_empty(),
         "A23 interface-parity regression: writer is missing interfaces \
-         present in SmartPlant A01 reference:\n{:#?}",
-        missing_per_tag,
+         present in SmartPlant A01 reference:\n{missing_per_tag:#?}",
     );
 
     // Extras are informational: the writer is a strict superset
@@ -335,8 +334,7 @@ fn a01_and_dwg_reference_interfaces_agree_for_every_shared_supported_tag() {
          non-whitelisted tags. Either add a KNOWN_A01_VS_DWG_DIVERGENCES \
          entry documenting the variant (with milestone + rationale) \
          or close the gap via a conditional writer emit. \
-         Details:\n{:#?}",
-        unexpected_deltas,
+         Details:\n{unexpected_deltas:#?}",
     );
 }
 

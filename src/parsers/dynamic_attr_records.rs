@@ -563,7 +563,7 @@ mod tests {
         let (value, raw_value) = read_attribute_value(data, &mut cursor, data.len());
         match value {
             AttributeValue::Text(ref t) => assert_eq!(t, "DWG-XY"),
-            other => panic!("expected Text, got {:?}", other),
+            other => panic!("expected Text, got {other:?}"),
         }
         assert_eq!(raw_value.as_deref(), Some("1DWG-XY"));
     }
@@ -576,12 +576,11 @@ mod tests {
         let (value, raw_value) = read_attribute_value(data, &mut cursor, data.len());
         match value {
             AttributeValue::Text(ref t) => assert_eq!(t, "DWG-XY"),
-            other => panic!("expected Text, got {:?}", other),
+            other => panic!("expected Text, got {other:?}"),
         }
         assert!(
             raw_value.is_none(),
-            "raw_value should be None when no stripping occurred, got {:?}",
-            raw_value
+            "raw_value should be None when no stripping occurred, got {raw_value:?}"
         );
     }
 
@@ -595,7 +594,7 @@ mod tests {
             AttributeValue::Text(ref t) => {
                 assert_eq!(t, "0F7B8ABD0C4E493FA3C7F06FD03AD6AA");
             }
-            other => panic!("expected Text, got {:?}", other),
+            other => panic!("expected Text, got {other:?}"),
         }
         assert!(
             raw_value.is_none(),
@@ -612,7 +611,7 @@ mod tests {
         let (value, raw_value) = read_attribute_value(&bytes, &mut cursor, bytes.len());
         match value {
             AttributeValue::Float(f) => assert!((f - 36526.0).abs() < 1e-9),
-            other => panic!("expected Float, got {:?}", other),
+            other => panic!("expected Float, got {other:?}"),
         }
         assert!(raw_value.is_none());
         assert_eq!(cursor, 8, "double consumes exactly 8 bytes");
@@ -627,8 +626,7 @@ mod tests {
         let (value, _) = read_attribute_value(&zero, &mut cursor, zero.len());
         assert!(
             !matches!(value, AttributeValue::Float(_)),
-            "0.0 must not be decoded as Float, got {:?}",
-            value
+            "0.0 must not be decoded as Float, got {value:?}"
         );
     }
 
@@ -641,7 +639,7 @@ mod tests {
         let (value, raw_value) = read_attribute_value(data, &mut cursor, data.len());
         match value {
             AttributeValue::Text(ref t) => assert_eq!(t, "Name"),
-            other => panic!("expected Text, got {:?}", other),
+            other => panic!("expected Text, got {other:?}"),
         }
         assert!(raw_value.is_none());
     }
@@ -664,7 +662,7 @@ mod tests {
         let (value, raw_value) = read_attribute_value(&data, &mut cursor, data.len());
         match value {
             AttributeValue::Integer(n) => assert_eq!(n, 5),
-            other => panic!("expected Integer(5), got {:?}", other),
+            other => panic!("expected Integer(5), got {other:?}"),
         }
         assert!(raw_value.is_none());
         assert_eq!(cursor, 4);

@@ -180,8 +180,8 @@ impl PidPackage {
             .get_stream(stream_path)
             .ok_or_else(|| PidError::MissingStream(stream_path.to_string()))?;
         let old_xml = std::str::from_utf8(&raw.data).map_err(|e| PidError::ParseFailure {
-            context: format!("set_xml_tag:{}", stream_path),
-            message: format!("stream is not UTF-8: {}", e),
+            context: format!("set_xml_tag:{stream_path}"),
+            message: format!("stream is not UTF-8: {e}"),
         })?;
         // Capture the old text before we rewrite so callers can report
         // what they replaced.
@@ -215,8 +215,8 @@ impl PidPackage {
 /// [`PidPackage::set_xml_tag`] to report the old value without re-running
 /// the full XML parser.
 fn extract_simple_tag_text(xml: &str, tag: &str) -> Option<String> {
-    let open = format!("<{}>", tag);
-    let close = format!("</{}>", tag);
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
     let start = xml.find(&open)? + open.len();
     let end_rel = xml[start..].find(&close)?;
     Some(xml[start..start + end_rel].to_string())
@@ -437,7 +437,7 @@ fn hex_preview(data: &[u8], offset: usize) -> String {
     let end = (offset + 16).min(data.len());
     data[offset..end]
         .iter()
-        .map(|b| format!("{:02x}", b))
+        .map(|b| format!("{b:02x}"))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -449,7 +449,7 @@ pub(crate) fn normalize_path(path: &str) -> String {
     if replaced.starts_with('/') {
         replaced
     } else {
-        format!("/{}", replaced)
+        format!("/{replaced}")
     }
 }
 

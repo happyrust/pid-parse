@@ -87,16 +87,16 @@ fn write_graph_header(out: &mut String, graph: &ObjectGraph) {
     let counts: Vec<String> = graph
         .counts_by_type
         .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
+        .map(|(k, v)| format!("{k}={v}"))
         .collect();
     if !counts.is_empty() {
         writeln!(out, "  %% objects: {}", counts.join(", ")).ok();
     }
     if let Some(ref d) = graph.drawing_no {
-        writeln!(out, "  %% drawing_no: {}", d).ok();
+        writeln!(out, "  %% drawing_no: {d}").ok();
     }
     if let Some(ref p) = graph.project_number {
-        writeln!(out, "  %% project: {}", p).ok();
+        writeln!(out, "  %% project: {p}").ok();
     }
 }
 
@@ -155,7 +155,7 @@ fn render_relationship_edges(
         }
         let label = rel_label(rel, rel_idx);
         rel_idx += 1;
-        writeln!(out, "  {} -->|\"{}\"| {}", src, label, tgt).ok();
+        writeln!(out, "  {src} -->|\"{label}\"| {tgt}").ok();
         edges_drawn += 1;
     }
     if off_drawing_needed {
@@ -187,7 +187,7 @@ fn rel_label(rel: &PidRelationship, fallback_idx: usize) -> String {
     if !rel.guid.is_empty() {
         format!("rel#{}", &rel.guid[..rel.guid.len().min(6)])
     } else {
-        format!("rel#{}", fallback_idx)
+        format!("rel#{fallback_idx}")
     }
 }
 
@@ -195,7 +195,7 @@ fn node_id_for_drawing(drawing_id: &str) -> String {
     // Mermaid node ids must be alphanumeric or underscore. DrawingIDs are
     // already 32 hex chars, so we prefix + truncate.
     let short: String = drawing_id.chars().take(12).collect();
-    format!("o_{}", short)
+    format!("o_{short}")
 }
 
 fn node_label_for_object(obj: &PidObject) -> String {
@@ -331,7 +331,7 @@ fn write_symbol_usage_subgraph(out: &mut String, usages: &[SymbolUsage], opts: &
     )
     .ok();
     for (i, u) in usages.iter().take(opts.max_symbols).enumerate() {
-        let sym_node = format!("sym_{}", i);
+        let sym_node = format!("sym_{i}");
         let label = u
             .symbol_name
             .clone()
@@ -350,15 +350,15 @@ fn write_symbol_usage_subgraph(out: &mut String, usages: &[SymbolUsage], opts: &
             .take(opts.max_jsites_per_symbol)
             .enumerate()
         {
-            let js_node = format!("js_{}_{}", i, j);
+            let js_node = format!("js_{i}_{j}");
             writeln!(out, "    {}[\"{}\"]:::jsite", js_node, escape_mermaid(js)).ok();
-            writeln!(out, "    {} --> {}", sym_node, js_node).ok();
+            writeln!(out, "    {sym_node} --> {js_node}").ok();
         }
         if u.jsite_names.len() > opts.max_jsites_per_symbol {
             let extra = u.jsite_names.len() - opts.max_jsites_per_symbol;
-            let ov = format!("js_{}_ov", i);
-            writeln!(out, "    {}[\"... ({} more)\"]:::jsite", ov, extra).ok();
-            writeln!(out, "    {} --> {}", sym_node, ov).ok();
+            let ov = format!("js_{i}_ov");
+            writeln!(out, "    {ov}[\"... ({extra} more)\"]:::jsite").ok();
+            writeln!(out, "    {sym_node} --> {ov}").ok();
         }
     }
     if usages.len() > opts.max_symbols {
@@ -496,7 +496,7 @@ mod tests {
 
     fn rel(guid: &str, src: Option<&str>, tgt: Option<&str>) -> PidRelationship {
         PidRelationship {
-            model_id: format!("Relationship.{}", guid),
+            model_id: format!("Relationship.{guid}"),
             guid: guid.to_string(),
             record_id: None,
             field_x: None,
@@ -551,8 +551,7 @@ mod tests {
         let s = object_graph_mermaid(&doc);
         assert!(
             s.contains("off_drawing[\"(off-drawing)\"]"),
-            "off-drawing placeholder missing from:\n{}",
-            s
+            "off-drawing placeholder missing from:\n{s}"
         );
         assert!(s.contains("--> off_drawing") || s.contains("|\"rel#F00DF0\"| off_drawing"));
     }
@@ -572,8 +571,7 @@ mod tests {
         let s = object_graph_mermaid(&doc);
         assert!(
             !s.contains("rel#0"),
-            "template relationship should be filtered out:\n{}",
-            s
+            "template relationship should be filtered out:\n{s}"
         );
     }
 
@@ -666,7 +664,7 @@ mod tests {
         let mut g = ObjectGraph::default();
         for i in 0..5 {
             g.objects.push(obj(
-                &format!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA{:1X}", i),
+                &format!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA{i:1X}"),
                 "Pipe",
             ));
         }

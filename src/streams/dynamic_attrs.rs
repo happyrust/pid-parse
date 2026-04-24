@@ -87,7 +87,7 @@ pub fn parse_dynamic_attrs<R: Read + std::io::Seek>(
 fn hex_preview(data: &[u8], n: usize) -> String {
     data.iter()
         .take(n)
-        .map(|b| format!("{:02X}", b))
+        .map(|b| format!("{b:02X}"))
         .collect::<Vec<_>>()
         .join(" ")
 }
