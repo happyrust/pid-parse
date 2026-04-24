@@ -147,19 +147,37 @@ pub struct PidDocument {
 }
 
 /// Summary inventory of P&ID objects in the drawing.
+///
+/// Derived from the Dynamic Attributes records during the reader
+/// pipeline; see [`Self::items`] for the flat list and
+/// [`Self::item_counts`] for a `ModelItemType → count` breakdown.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ObjectInventory {
+    /// Drawing-level identifier parsed out of the `DrawingNo`
+    /// attribute (32-hex-char GUID form).
     pub drawing_id: Option<String>,
+    /// `ProjectNumber` attribute — owning project number.
     pub project: Option<String>,
+    /// Count of each `ModelItemType` seen in the DA stream (e.g.
+    /// `"PipeRun" -> 12`). Mirrors
+    /// [`ObjectGraph::counts_by_type`] but aggregated across
+    /// non-relationship and relationship items.
     pub item_counts: BTreeMap<String, usize>,
+    /// Flat list of decoded items (one entry per DA object record).
     pub items: Vec<PidItem>,
 }
 
 /// A single identifiable P&ID item (instrument, pipe, equipment, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PidItem {
+    /// `ModelItemType` as it appears in the DA record (e.g.
+    /// `"PipeRun"`, `"Instrument"`, `"Nozzle"`).
     pub item_type: String,
+    /// 32-hex-char drawing-scoped identifier. `None` when the DA
+    /// record did not carry a `DrawingID` attribute.
     pub drawing_id: Option<String>,
+    /// `ModelID` attribute — rare in our samples but preserved
+    /// when present.
     pub model_id: Option<String>,
 }
 
@@ -351,31 +369,65 @@ pub struct GeneralMeta {
     pub tags: BTreeMap<String, String>,
 }
 
+/// One `JSite` top-level storage from the compound file — the
+/// `SmartPlant` container that groups a symbol instance with its
+/// property blob, OLE links, and embedded raw streams.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct JSite {
+    /// Name of the `JSite*` storage as seen in the CFB tree.
     pub name: String,
+    /// Full CFB path of the storage (e.g. `/JSite123`).
     pub path: String,
+    /// Local symbol name decoded from the `JSite` header when present.
     pub symbol_name: Option<String>,
+    /// `SmartPlant` symbol-library path (`SymbolPath`), typically
+    /// something like `Piping\Valves\GateValve`.
     pub symbol_path: Option<String>,
+    /// Workstation-relative symbol path — the on-disk variant that
+    /// can differ from [`Self::symbol_path`] when the symbol library
+    /// is remapped.
     pub local_symbol_path: Option<String>,
+    /// Whether the `JSite` storage carries a `\x01Ole` sub-stream
+    /// (i.e. the symbol embeds an OLE object).
     pub has_ole_stream: bool,
+    /// Any `\x01CompObj` / `\x03ObjInfo` links pulled out of the
+    /// OLE sub-streams, in the order the reader observed them.
     pub ole_links: Vec<String>,
+    /// Decoded `JProperties` blob — the `SmartPlant` dynamic
+    /// property payload carried by this site.
     pub properties: JProperties,
+    /// Every other embedded stream found inside the storage, sized
+    /// and previewed for audit.
     pub raw_streams: Vec<EmbeddedStream>,
 }
 
+/// Flattened `JProperties` payload — strings, key/value pairs, GUID
+/// references, and the raw-blob length, all extracted from a `JSite`
+/// property stream.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct JProperties {
+    /// Every UTF-8 / UTF-16 string recovered from the property blob.
     pub strings: Vec<String>,
+    /// String pairs the parser could resolve as `key=value` entries.
     pub key_values: BTreeMap<String, String>,
+    /// 32-hex-char GUIDs observed in the blob.
     pub guids: Vec<String>,
+    /// Byte length of the original blob, retained so consumers can
+    /// compare against expected sizes without re-reading the stream.
     pub raw_len: usize,
 }
 
+/// One embedded raw stream inside a `JSite` (or similar) storage —
+/// just enough metadata for an inspect report; full bytes stay on
+/// the [`crate::package::PidPackage`] side when round-tripping.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EmbeddedStream {
+    /// Local stream name (last path segment).
     pub name: String,
+    /// Size in bytes as reported by the CFB directory.
     pub size: u64,
+    /// ASCII-ish preview tokens extracted from the stream body —
+    /// handy for spotting stringly-typed payloads in a glance.
     pub preview_ascii: Vec<String>,
 }
 
@@ -1204,6 +1256,7 @@ pub struct ObjectGraph {
 /// invariant for fixture drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct EndpointResolutionStats {
+    /// Total relationships considered (i.e. `graph.relationships.len()`).
     pub total: usize,
     /// Both `source_drawing_id` and `target_drawing_id` are `Some`.
     pub fully_resolved: usize,

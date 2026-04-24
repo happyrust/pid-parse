@@ -72,6 +72,29 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### Public API rustdoc pass — Tier 2（对象图 / JSite 层）
+
+Tier 2 第二批：接着把用户经常 drill-down 的"对象图族"与
+`JSite` 族的字段级 doc 补齐。这两族合计拿掉 27 条 missing_docs
+warning（424 → 380？——实测 407 → 380，-27）。
+
+- `ObjectInventory`（4 字段）：指明每个字段对应的 DA attribute
+  来源（`DrawingNo` / `ProjectNumber` / `ModelItemType`），以及
+  与 `ObjectGraph::counts_by_type` 的关系；顺带给结构本身补了
+  一段 3 行 rustdoc 摘要。
+- `PidItem`（3 字段）：每个字段对应的 DA 记录含义
+  （`ModelItemType` / `DrawingID` / `ModelID`）+ 什么时候为
+  `None`。
+- `EndpointResolutionStats::total`：补上此前唯一未文档化的字段。
+- `JSite`（9 字段 + 结构级 `///`）：`JSite*` 存储在 CFB 中的
+  角色、`symbol_path` vs `local_symbol_path` 区别、`ole_links`
+  来自 `\x01CompObj` / `\x03ObjInfo` 这些细节、`raw_streams`
+  的用途都写进去了。
+- `JProperties`（4 字段 + 结构级 `///`）：每个字段对应原始 blob
+  的哪一部分、`raw_len` 保留的原因。
+- `EmbeddedStream`（3 字段 + 结构级 `///`）：`JSite` 等容器里
+  的裸流元数据。
+
 ### Public API rustdoc pass — Tier 2（`PidDocument` 层）
 
 Tier 2 第一批：在上一轮把 `src/lib.rs` crate-level `//!` + 9 个
