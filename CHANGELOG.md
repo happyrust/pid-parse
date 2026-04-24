@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### 架构文档
+
+- 新增 `docs/architecture-guide.md`：完整的 pid-parse 架构与原理指南，覆盖 L1–L8 八层架构、核心数据流、`.pid` / OLE 复合文档结构、关键类型体系、Probe/Decode 双层解码策略、`PidWriter` 回写机制、独立管线（publish/byte_audit/inspect）与 crate 依赖关系。
+- 新增 `docs/diagrams/pid-parse-architecture.{png,svg}` 与 `docs/diagrams/pid-parse-dataflow.{png,svg}`：架构分层图与数据流图，配合 `.mmd` 源文件同步更新，供 README 与架构指南引用。
+
 ### Publish pipeline 改进
 
 - publish pipeline 生产代码完全 panic-free：消除 `xml_writer.rs` 中最后

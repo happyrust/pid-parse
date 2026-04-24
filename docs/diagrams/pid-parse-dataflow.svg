@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 820">
+<style>
+  text { font-family: "Inter", "SF Pro Display", "Helvetica Neue", sans-serif; }
+  .title { font-size: 18px; font-weight: 700; fill: #0f172a; }
+  .subtitle { font-size: 12px; fill: #64748b; }
+  .phase { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+  .node-label { font-size: 11px; font-weight: 600; fill: #1e293b; }
+  .node-detail { font-size: 9.5px; fill: #64748b; }
+  .path-label { font-size: 10px; font-weight: 600; }
+  .arrow-label { font-size: 9px; }
+</style>
+<defs>
+  <marker id="ab" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#2563eb"/></marker>
+  <marker id="ag" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#059669"/></marker>
+  <marker id="ao" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#ea580c"/></marker>
+  <marker id="ap" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#7c3aed"/></marker>
+  <filter id="sh"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/></filter>
+</defs>
+<rect width="960" height="820" fill="#ffffff"/>
+<text x="480" y="28" text-anchor="middle" class="title">pid-parse 数据流</text>
+<text x="480" y="46" text-anchor="middle" class="subtitle">Read Path (left) · Write Path (right) · Enrichment Pipeline (center)</text>
+<rect x="30" y="65" width="140" height="42" rx="4" fill="#fef3c7" stroke="#d97706" stroke-width="1.2" filter="url(#sh)"/>
+<text x="100" y="83" text-anchor="middle" class="node-label">.pid File</text>
+<text x="100" y="97" text-anchor="middle" class="node-detail">OLE/CFBF Container</text>
+<path d="M100,107 L100,128" stroke="#2563eb" stroke-width="1.5" fill="none" marker-end="url(#ab)"/>
+<rect x="30" y="130" width="140" height="36" rx="6" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2" filter="url(#sh)"/>
+<text x="100" y="153" text-anchor="middle" class="node-label">cfb::open(path)</text>
+<path d="M100,166 L100,176 L60,176 L60,190" stroke="#2563eb" stroke-width="1.3" fill="none" marker-end="url(#ab)"/>
+<path d="M100,166 L100,176 L160,176 L160,190" stroke="#2563eb" stroke-width="1.3" fill="none" marker-end="url(#ab)"/>
+<rect x="10" y="192" width="110" height="36" rx="6" fill="#ede9fe" stroke="#a78bfa" stroke-width="1"/>
+<text x="65" y="215" text-anchor="middle" class="node-label">build_tree</text>
+<rect x="130" y="192" width="130" height="36" rx="6" fill="#ede9fe" stroke="#a78bfa" stroke-width="1"/>
+<text x="195" y="215" text-anchor="middle" class="node-label">collect_streams</text>
+<path d="M65,228 L65,240 L130,240 L130,255" stroke="#059669" stroke-width="1.3" fill="none"/>
+<path d="M195,228 L195,240 L130,240 L130,255" stroke="#059669" stroke-width="1.3" fill="none" marker-end="url(#ag)"/>
+<rect x="50" y="257" width="170" height="36" rx="6" fill="#ecfdf5" stroke="#059669" stroke-width="1.2" filter="url(#sh)"/>
+<text x="135" y="280" text-anchor="middle" class="node-label">PidDocument (init)</text>
+<rect x="250" y="60" width="210" height="384" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="0.8" stroke-dasharray="5,3"/>
+<text x="260" y="77" class="phase" fill="#475569">STREAM PIPELINE</text>
+<rect x="260" y="87" width="190" height="40" rx="6" fill="#eef2ff" stroke="#4f46e5" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="105" text-anchor="middle" class="node-label">summary</text>
+<text x="355" y="119" text-anchor="middle" class="node-detail">SummaryInfo</text>
+<path d="M355,127 L355,139" stroke="#4f46e5" stroke-width="1.2" fill="none" marker-end="url(#ab)"/>
+<rect x="260" y="139" width="190" height="40" rx="6" fill="#eef2ff" stroke="#4f46e5" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="157" text-anchor="middle" class="node-label">tagged_text</text>
+<text x="355" y="171" text-anchor="middle" class="node-detail">DrawingMeta / GeneralMeta</text>
+<path d="M355,179 L355,191" stroke="#4f46e5" stroke-width="1.2" fill="none" marker-end="url(#ab)"/>
+<rect x="260" y="191" width="190" height="40" rx="6" fill="#eef2ff" stroke="#4f46e5" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="209" text-anchor="middle" class="node-label">jsite</text>
+<text x="355" y="223" text-anchor="middle" class="node-detail">JSite[] symbols</text>
+<path d="M355,231 L355,243" stroke="#4f46e5" stroke-width="1.2" fill="none" marker-end="url(#ab)"/>
+<rect x="260" y="243" width="190" height="40" rx="6" fill="#eef2ff" stroke="#4f46e5" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="261" text-anchor="middle" class="node-label">cluster</text>
+<text x="355" y="275" text-anchor="middle" class="node-detail">ClusterInfo[] headers</text>
+<path d="M355,283 L355,295" stroke="#4f46e5" stroke-width="1.2" fill="none" marker-end="url(#ab)"/>
+<rect x="260" y="295" width="190" height="40" rx="6" fill="#eef2ff" stroke="#4f46e5" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="313" text-anchor="middle" class="node-label">dynamic_attrs</text>
+<text x="355" y="327" text-anchor="middle" class="node-detail">DA Blob + records</text>
+<path d="M355,335 L355,347" stroke="#4f46e5" stroke-width="1.2" fill="none" marker-end="url(#ab)"/>
+<rect x="260" y="347" width="190" height="40" rx="6" fill="#eef2ff" stroke="#4f46e5" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="365" text-anchor="middle" class="node-label">psm_tables</text>
+<text x="355" y="379" text-anchor="middle" class="node-detail">PSM roots/clst/seg</text>
+<path d="M355,387 L355,399" stroke="#4f46e5" stroke-width="1.2" fill="none" marker-end="url(#ab)"/>
+<rect x="260" y="399" width="190" height="40" rx="6" fill="#eef2ff" stroke="#4f46e5" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="417" text-anchor="middle" class="node-label">doc_registry</text>
+<text x="355" y="431" text-anchor="middle" class="node-detail">DocVersion / AppObject</text>
+<path d="M220,275 L250,275" stroke="#059669" stroke-width="1.3" fill="none" marker-end="url(#ag)"/>
+<rect x="260" y="461" width="190" height="36" rx="6" fill="#fce7f3" stroke="#ec4899" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="483" text-anchor="middle" class="node-label">build_object_graph</text>
+<path d="M355,451 L355,461" stroke="#4f46e5" stroke-width="1.2" fill="none" marker-end="url(#ab)"/>
+<rect x="260" y="509" width="190" height="36" rx="6" fill="#fff1f2" stroke="#e11d48" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="531" text-anchor="middle" class="node-label">crossref::build_graph</text>
+<path d="M355,497 L355,509" stroke="#e11d48" stroke-width="1.2" fill="none" marker-end="url(#ab)"/>
+<rect x="260" y="557" width="190" height="36" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="1" filter="url(#sh)"/>
+<text x="355" y="579" text-anchor="middle" class="node-label">layout::derive_layout</text>
+<path d="M355,545 L355,557" stroke="#d97706" stroke-width="1.2" fill="none" marker-end="url(#ao)"/>
+<rect x="240" y="607" width="230" height="42" rx="8" fill="#dcfce7" stroke="#059669" stroke-width="1.8" filter="url(#sh)"/>
+<text x="355" y="625" text-anchor="middle" class="node-label" style="font-size:12px">PidDocument (enriched)</text>
+<text x="355" y="641" text-anchor="middle" class="node-detail">all streams parsed + crossref + layout</text>
+<path d="M355,593 L355,607" stroke="#059669" stroke-width="1.5" fill="none" marker-end="url(#ag)"/>
+<rect x="570" y="65" width="180" height="50" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5" filter="url(#sh)"/>
+<text x="660" y="85" text-anchor="middle" class="node-label">PidPackage</text>
+<text x="660" y="100" text-anchor="middle" class="node-detail">streams + parsed + root_clsid</text>
+<rect x="780" y="65" width="150" height="50" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.2" filter="url(#sh)"/>
+<text x="855" y="85" text-anchor="middle" class="node-label">WritePlan</text>
+<text x="855" y="100" text-anchor="middle" class="node-detail">metadata / replacements</text>
+<path d="M660,115 L660,140" stroke="#ea580c" stroke-width="1.5" fill="none" marker-end="url(#ao)"/>
+<path d="M855,115 L855,130 L740,130 L740,140" stroke="#d97706" stroke-width="1.3" fill="none" marker-end="url(#ao)"/>
+<rect x="580" y="142" width="200" height="40" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5" filter="url(#sh)"/>
+<text x="680" y="167" text-anchor="middle" class="node-label">PidWriter::write_to</text>
+<rect x="590" y="200" width="180" height="32" rx="5" fill="#fef3c7" stroke="#d97706" stroke-width="0.8"/>
+<text x="680" y="220" text-anchor="middle" class="node-label" style="font-size:10px">clone package</text>
+<path d="M680,232 L680,242" stroke="#ea580c" stroke-width="1" fill="none" marker-end="url(#ao)"/>
+<rect x="590" y="242" width="180" height="32" rx="5" fill="#ffedd5" stroke="#ea580c" stroke-width="0.8"/>
+<text x="680" y="262" text-anchor="middle" class="node-label" style="font-size:10px">apply_metadata</text>
+<path d="M680,274 L680,284" stroke="#ea580c" stroke-width="1" fill="none" marker-end="url(#ao)"/>
+<rect x="590" y="284" width="180" height="32" rx="5" fill="#ffedd5" stroke="#ea580c" stroke-width="0.8"/>
+<text x="680" y="304" text-anchor="middle" class="node-label" style="font-size:10px">apply_replacements</text>
+<path d="M680,316 L680,326" stroke="#ea580c" stroke-width="1" fill="none" marker-end="url(#ao)"/>
+<rect x="590" y="326" width="180" height="32" rx="5" fill="#ffedd5" stroke="#ea580c" stroke-width="0.8"/>
+<text x="680" y="346" text-anchor="middle" class="node-label" style="font-size:10px">apply_sheet_patches</text>
+<path d="M680,358 L680,368" stroke="#ea580c" stroke-width="1" fill="none" marker-end="url(#ao)"/>
+<rect x="590" y="368" width="180" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="0.8"/>
+<text x="680" y="388" text-anchor="middle" class="node-label" style="font-size:10px">cfb::CompoundFile::create</text>
+<path d="M680,400 L680,410" stroke="#ea580c" stroke-width="1" fill="none" marker-end="url(#ao)"/>
+<rect x="590" y="410" width="180" height="32" rx="5" fill="#ede9fe" stroke="#a78bfa" stroke-width="0.8"/>
+<text x="680" y="430" text-anchor="middle" class="node-label" style="font-size:10px">create_storage + stream</text>
+<path d="M680,442 L680,452" stroke="#ea580c" stroke-width="1" fill="none" marker-end="url(#ao)"/>
+<rect x="590" y="452" width="180" height="32" rx="5" fill="#ede9fe" stroke="#a78bfa" stroke-width="0.8"/>
+<text x="680" y="472" text-anchor="middle" class="node-label" style="font-size:10px">set_storage_clsid</text>
+<rect x="620" y="504" width="120" height="42" rx="4" fill="#dcfce7" stroke="#059669" stroke-width="1.5" filter="url(#sh)"/>
+<text x="680" y="522" text-anchor="middle" class="node-label">.pid (output)</text>
+<text x="680" y="538" text-anchor="middle" class="node-detail">round-trip verified</text>
+<path d="M680,486 L680,504" stroke="#059669" stroke-width="1.5" fill="none" marker-end="url(#ag)"/>
+<rect x="615" y="554" width="130" height="36" rx="6" fill="#f1f5f9" stroke="#475569" stroke-width="1" filter="url(#sh)"/>
+<text x="680" y="568" text-anchor="middle" class="node-label" style="font-size:10px">re-parse + diff</text>
+<text x="680" y="582" text-anchor="middle" class="node-detail">--round-trip --verify</text>
+<path d="M680,546 L680,554" stroke="#475569" stroke-width="1" fill="none" marker-end="url(#ab)" stroke-dasharray="4,2"/>
+<text x="60" y="667" class="phase" fill="#475569">OUTPUT FORMATS</text>
+<rect x="60" y="677" width="125" height="40" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.8"/>
+<text x="122" y="695" text-anchor="middle" class="node-label" style="font-size:10px">Text Report</text>
+<text x="122" y="709" text-anchor="middle" class="node-detail">inspect/report.rs</text>
+<rect x="200" y="677" width="125" height="40" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.8"/>
+<text x="262" y="695" text-anchor="middle" class="node-label" style="font-size:10px">JSON Export</text>
+<text x="262" y="709" text-anchor="middle" class="node-detail">--json PidDocument</text>
+<rect x="360" y="677" width="125" height="40" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.8"/>
+<text x="422" y="695" text-anchor="middle" class="node-label" style="font-size:10px">Mermaid</text>
+<text x="422" y="709" text-anchor="middle" class="node-detail">--graph-mermaid</text>
+<rect x="500" y="677" width="125" height="40" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.8"/>
+<text x="562" y="695" text-anchor="middle" class="node-label" style="font-size:10px">JSON Schema</text>
+<text x="562" y="709" text-anchor="middle" class="node-detail">--schema</text>
+<rect x="640" y="677" width="125" height="40" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.8"/>
+<text x="702" y="695" text-anchor="middle" class="node-label" style="font-size:10px">Diff Report</text>
+<text x="702" y="709" text-anchor="middle" class="node-detail">--diff / --verify</text>
+<rect x="780" y="677" width="125" height="40" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.8"/>
+<text x="842" y="695" text-anchor="middle" class="node-label" style="font-size:10px">Byte Audit</text>
+<text x="842" y="709" text-anchor="middle" class="node-detail">byte_audit coverage</text>
+<path d="M355,649 L355,697" stroke="#475569" stroke-width="1.3" fill="none" marker-end="url(#ab)" stroke-dasharray="4,2"/>
+<rect x="40" y="732" width="880" height="40" rx="6" fill="#fafafa" stroke="#e5e7eb" stroke-width="0.8"/>
+<line x1="60" y1="754" x2="90" y2="754" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+<text x="98" y="758" style="font-size:10px;fill:#475569">Read / Parse</text>
+<line x1="210" y1="754" x2="240" y2="754" stroke="#059669" stroke-width="1.5" marker-end="url(#ab)"/>
+<text x="248" y="758" style="font-size:10px;fill:#475569">Model populate</text>
+<line x1="370" y1="754" x2="400" y2="754" stroke="#ea580c" stroke-width="1.5" marker-end="url(#ab)"/>
+<text x="408" y="758" style="font-size:10px;fill:#475569">Write path</text>
+<line x1="510" y1="754" x2="540" y2="754" stroke="#4f46e5" stroke-width="1.5" marker-end="url(#ab)"/>
+<text x="548" y="758" style="font-size:10px;fill:#475569">Stream pipeline</text>
+<line x1="670" y1="754" x2="700" y2="754" stroke="#e11d48" stroke-width="1.5" marker-end="url(#ab)"/>
+<text x="708" y="758" style="font-size:10px;fill:#475569">Derivation</text>
+<line x1="810" y1="754" x2="840" y2="754" stroke="#475569" stroke-width="1.5" marker-end="url(#ab)"/>
+<text x="848" y="758" style="font-size:10px;fill:#475569">Report</text>
+</svg>

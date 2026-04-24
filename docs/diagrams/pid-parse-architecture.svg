@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 780">
+<style>
+  text { font-family: "Inter", "SF Pro Display", "Helvetica Neue", sans-serif; }
+  .title { font-size: 18px; font-weight: 700; fill: #0f172a; }
+  .subtitle { font-size: 12px; fill: #64748b; }
+  .layer-tag { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+  .mod-name { font-size: 11px; font-weight: 600; fill: #1e293b; }
+  .mod-detail { font-size: 10px; fill: #475569; }
+  .sep-label { font-size: 10px; fill: #94a3b8; font-weight: 600; letter-spacing: 1px; }
+</style>
+<defs>
+  <marker id="arr-b" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#2563eb"/></marker>
+  <marker id="arr-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#059669"/></marker>
+  <marker id="arr-o" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#ea580c"/></marker>
+  <marker id="arr-s" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#475569"/></marker>
+  <filter id="shadow"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/></filter>
+</defs>
+<rect width="960" height="780" fill="#ffffff"/>
+<text x="480" y="28" text-anchor="middle" class="title">pid-parse 分层架构</text>
+<text x="480" y="46" text-anchor="middle" class="subtitle">SmartPlant P&amp;ID .pid 文件逆向工程解析器 · Rust · v0.9.2</text>
+<rect x="260" y="62" width="440" height="48" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="280" y="80" class="layer-tag" fill="#2563eb">L1  API</text>
+<text x="480" y="96" text-anchor="middle" class="mod-name">PidParser · ParseOptions</text>
+<rect x="40" y="132" width="420" height="82" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="60" y="150" class="layer-tag" fill="#7c3aed">L2  CFB Container</text>
+<rect x="55" y="160" width="130" height="40" rx="5" fill="#ede9fe" stroke="#a78bfa" stroke-width="0.8"/>
+<text x="120" y="176" text-anchor="middle" class="mod-name">reader.rs</text>
+<text x="120" y="190" text-anchor="middle" class="mod-detail">parse_pid_file()</text>
+<rect x="200" y="160" width="120" height="40" rx="5" fill="#ede9fe" stroke="#a78bfa" stroke-width="0.8"/>
+<text x="260" y="176" text-anchor="middle" class="mod-name">tree.rs</text>
+<text x="260" y="190" text-anchor="middle" class="mod-detail">build_tree()</text>
+<rect x="335" y="160" width="110" height="40" rx="5" fill="#ede9fe" stroke="#a78bfa" stroke-width="0.8"/>
+<text x="390" y="180" text-anchor="middle" class="mod-name">CLSID / TS</text>
+<rect x="500" y="132" width="420" height="82" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="520" y="150" class="layer-tag" fill="#ea580c">L8  Package / Writer</text>
+<rect x="515" y="160" width="115" height="40" rx="5" fill="#ffedd5" stroke="#fb923c" stroke-width="0.8"/>
+<text x="572" y="176" text-anchor="middle" class="mod-name">PidPackage</text>
+<text x="572" y="190" text-anchor="middle" class="mod-detail">streams + parsed</text>
+<rect x="645" y="160" width="100" height="40" rx="5" fill="#ffedd5" stroke="#fb923c" stroke-width="0.8"/>
+<text x="695" y="176" text-anchor="middle" class="mod-name">WritePlan</text>
+<text x="695" y="190" text-anchor="middle" class="mod-detail">metadata / patch</text>
+<rect x="760" y="160" width="145" height="40" rx="5" fill="#ffedd5" stroke="#fb923c" stroke-width="0.8"/>
+<text x="832" y="176" text-anchor="middle" class="mod-name">PidWriter</text>
+<text x="832" y="190" text-anchor="middle" class="mod-detail">cfb_write / xml_edit</text>
+<rect x="40" y="240" width="450" height="110" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="60" y="258" class="layer-tag" fill="#4f46e5">L5  Stream Semantics</text>
+<rect x="55" y="268" width="100" height="30" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.7"/>
+<text x="105" y="287" text-anchor="middle" class="mod-detail">summary</text>
+<rect x="163" y="268" width="100" height="30" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.7"/>
+<text x="213" y="287" text-anchor="middle" class="mod-detail">tagged_text</text>
+<rect x="271" y="268" width="100" height="30" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.7"/>
+<text x="321" y="287" text-anchor="middle" class="mod-detail">jsite</text>
+<rect x="379" y="268" width="100" height="30" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.7"/>
+<text x="429" y="287" text-anchor="middle" class="mod-detail">cluster</text>
+<rect x="55" y="306" width="128" height="30" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.7"/>
+<text x="119" y="325" text-anchor="middle" class="mod-detail">dynamic_attrs</text>
+<rect x="195" y="306" width="128" height="30" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.7"/>
+<text x="259" y="325" text-anchor="middle" class="mod-detail">psm_tables</text>
+<rect x="335" y="306" width="128" height="30" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.7"/>
+<text x="399" y="325" text-anchor="middle" class="mod-detail">doc_registry</text>
+<rect x="510" y="240" width="410" height="110" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="530" y="258" class="layer-tag" fill="#d97706">L4  Parser Utilities</text>
+<rect x="525" y="268" width="118" height="30" rx="4" fill="#fde68a" stroke="#fbbf24" stroke-width="0.7"/>
+<text x="584" y="287" text-anchor="middle" class="mod-detail">xml_util</text>
+<rect x="653" y="268" width="118" height="30" rx="4" fill="#fde68a" stroke="#fbbf24" stroke-width="0.7"/>
+<text x="712" y="287" text-anchor="middle" class="mod-detail">cluster_hdr</text>
+<rect x="781" y="268" width="118" height="30" rx="4" fill="#fde68a" stroke="#fbbf24" stroke-width="0.7"/>
+<text x="840" y="287" text-anchor="middle" class="mod-detail">da_records</text>
+<rect x="525" y="306" width="118" height="30" rx="4" fill="#fde68a" stroke="#fbbf24" stroke-width="0.7"/>
+<text x="584" y="325" text-anchor="middle" class="mod-detail">magic</text>
+<rect x="653" y="306" width="118" height="30" rx="4" fill="#fde68a" stroke="#fbbf24" stroke-width="0.7"/>
+<text x="712" y="325" text-anchor="middle" class="mod-detail">psm_tables</text>
+<rect x="781" y="306" width="118" height="30" rx="4" fill="#fde68a" stroke="#fbbf24" stroke-width="0.7"/>
+<text x="840" y="325" text-anchor="middle" class="mod-detail">doc_version</text>
+<rect x="40" y="376" width="880" height="76" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="60" y="394" class="layer-tag" fill="#059669">L3  Model (PidDocument)</text>
+<rect x="55" y="404" width="100" height="36" rx="4" fill="#d1fae5" stroke="#34d399" stroke-width="0.7"/>
+<text x="105" y="426" text-anchor="middle" class="mod-detail">StorageNode</text>
+<rect x="163" y="404" width="100" height="36" rx="4" fill="#d1fae5" stroke="#34d399" stroke-width="0.7"/>
+<text x="213" y="426" text-anchor="middle" class="mod-detail">StreamEntry</text>
+<rect x="271" y="404" width="100" height="36" rx="4" fill="#d1fae5" stroke="#34d399" stroke-width="0.7"/>
+<text x="321" y="426" text-anchor="middle" class="mod-detail">JSite</text>
+<rect x="379" y="404" width="100" height="36" rx="4" fill="#d1fae5" stroke="#34d399" stroke-width="0.7"/>
+<text x="429" y="426" text-anchor="middle" class="mod-detail">ClusterInfo</text>
+<rect x="487" y="404" width="100" height="36" rx="4" fill="#d1fae5" stroke="#34d399" stroke-width="0.7"/>
+<text x="537" y="426" text-anchor="middle" class="mod-detail">DA Blob</text>
+<rect x="595" y="404" width="100" height="36" rx="4" fill="#d1fae5" stroke="#34d399" stroke-width="0.7"/>
+<text x="645" y="426" text-anchor="middle" class="mod-detail">AttributeRec</text>
+<rect x="703" y="404" width="100" height="36" rx="4" fill="#d1fae5" stroke="#34d399" stroke-width="0.7"/>
+<text x="753" y="426" text-anchor="middle" class="mod-detail">PsmRoots</text>
+<rect x="811" y="404" width="100" height="36" rx="4" fill="#d1fae5" stroke="#34d399" stroke-width="0.7"/>
+<text x="861" y="426" text-anchor="middle" class="mod-detail">ObjectGraph</text>
+<rect x="40" y="480" width="300" height="70" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="60" y="498" class="layer-tag" fill="#e11d48">L6  Derivation</text>
+<rect x="55" y="508" width="85" height="30" rx="4" fill="#ffe4e6" stroke="#fb7185" stroke-width="0.7"/>
+<text x="97" y="527" text-anchor="middle" class="mod-detail">crossref</text>
+<rect x="150" y="508" width="85" height="30" rx="4" fill="#ffe4e6" stroke="#fb7185" stroke-width="0.7"/>
+<text x="192" y="527" text-anchor="middle" class="mod-detail">layout</text>
+<rect x="245" y="508" width="85" height="30" rx="4" fill="#ffe4e6" stroke="#fb7185" stroke-width="0.7"/>
+<text x="287" y="527" text-anchor="middle" class="mod-detail">import_view</text>
+<rect x="360" y="480" width="560" height="70" rx="8" fill="#f1f5f9" stroke="#475569" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="380" y="498" class="layer-tag" fill="#475569">L7  Report / Inspect / CLI</text>
+<rect x="375" y="508" width="80" height="30" rx="4" fill="#e2e8f0" stroke="#94a3b8" stroke-width="0.7"/>
+<text x="415" y="527" text-anchor="middle" class="mod-detail">report</text>
+<rect x="463" y="508" width="80" height="30" rx="4" fill="#e2e8f0" stroke="#94a3b8" stroke-width="0.7"/>
+<text x="503" y="527" text-anchor="middle" class="mod-detail">mermaid</text>
+<rect x="551" y="508" width="80" height="30" rx="4" fill="#e2e8f0" stroke="#94a3b8" stroke-width="0.7"/>
+<text x="591" y="527" text-anchor="middle" class="mod-detail">diff</text>
+<rect x="639" y="508" width="80" height="30" rx="4" fill="#e2e8f0" stroke="#94a3b8" stroke-width="0.7"/>
+<text x="679" y="527" text-anchor="middle" class="mod-detail">coverage</text>
+<rect x="727" y="508" width="80" height="30" rx="4" fill="#e2e8f0" stroke="#94a3b8" stroke-width="0.7"/>
+<text x="767" y="527" text-anchor="middle" class="mod-detail">schema</text>
+<rect x="815" y="508" width="80" height="30" rx="4" fill="#e2e8f0" stroke="#94a3b8" stroke-width="0.7"/>
+<text x="855" y="527" text-anchor="middle" class="mod-detail">pid_inspect</text>
+<line x1="40" y1="572" x2="920" y2="572" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="6,3"/>
+<text x="480" y="586" text-anchor="middle" class="sep-label">STANDALONE  PIPELINES</text>
+<rect x="40" y="598" width="420" height="55" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,2"/>
+<text x="60" y="616" class="layer-tag" fill="#64748b">Backup</text>
+<text x="60" y="636" class="mod-detail">MTF envelope · MDF pages · syscatalog · text_scan</text>
+<rect x="500" y="598" width="420" height="55" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,2"/>
+<text x="520" y="616" class="layer-tag" fill="#64748b">Publish</text>
+<text x="520" y="636" class="mod-detail">SQLite (from C# probe) → DTOs → XML writer</text>
+<path d="M380,110 L250,132" stroke="#2563eb" stroke-width="1.5" fill="none" marker-end="url(#arr-b)"/>
+<rect x="275" y="115" width="68" height="14" rx="3" fill="#ffffff" opacity="0.95"/>
+<text x="309" y="125" text-anchor="middle" style="font-size:9px;fill:#2563eb">parse_file</text>
+<path d="M580,110 L710,132" stroke="#ea580c" stroke-width="1.5" fill="none" marker-end="url(#arr-o)"/>
+<rect x="606" y="115" width="85" height="14" rx="3" fill="#ffffff" opacity="0.95"/>
+<text x="648" y="125" text-anchor="middle" style="font-size:9px;fill:#ea580c">parse_package</text>
+<path d="M250,214 L265,240" stroke="#4f46e5" stroke-width="1.5" fill="none" marker-end="url(#arr-b)"/>
+<rect x="222" y="220" width="55" height="14" rx="3" fill="#ffffff" opacity="0.95"/>
+<text x="249" y="230" text-anchor="middle" style="font-size:9px;fill:#4f46e5">pipeline</text>
+<path d="M490,295 L510,295" stroke="#d97706" stroke-width="1.3" fill="none" marker-end="url(#arr-o)"/>
+<path d="M200,350 L200,376" stroke="#059669" stroke-width="1.5" fill="none" marker-end="url(#arr-g)"/>
+<rect x="207" y="354" width="55" height="14" rx="3" fill="#ffffff" opacity="0.95"/>
+<text x="234" y="364" text-anchor="middle" style="font-size:9px;fill:#059669">populate</text>
+<path d="M715,350 L715,376" stroke="#059669" stroke-width="1.5" fill="none" marker-end="url(#arr-g)"/>
+<rect x="722" y="354" width="55" height="14" rx="3" fill="#ffffff" opacity="0.95"/>
+<text x="749" y="364" text-anchor="middle" style="font-size:9px;fill:#059669">populate</text>
+<path d="M190,452 L190,480" stroke="#e11d48" stroke-width="1.5" fill="none" marker-end="url(#arr-b)"/>
+<rect x="197" y="456" width="45" height="14" rx="3" fill="#ffffff" opacity="0.95"/>
+<text x="219" y="466" text-anchor="middle" style="font-size:9px;fill:#e11d48">derive</text>
+<path d="M640,452 L640,480" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arr-s)"/>
+<rect x="647" y="456" width="45" height="14" rx="3" fill="#ffffff" opacity="0.95"/>
+<text x="669" y="466" text-anchor="middle" style="font-size:9px;fill:#475569">report</text>
+<path d="M460,187 L500,187" stroke="#ea580c" stroke-width="1.3" fill="none" marker-end="url(#arr-o)"/>
+<rect x="885" y="157" width="50" height="35" rx="3" fill="#fef3c7" stroke="#d97706" stroke-width="1"/>
+<text x="910" y="179" text-anchor="middle" style="font-size:10px;fill:#92400e;font-weight:600">.pid</text>
+<path d="M905,157 L910,144 L915,157" stroke="#d97706" stroke-width="0.8" fill="#fef3c7"/>
+<path d="M920,192 L930,174" stroke="#ea580c" stroke-width="1.3" fill="none" marker-end="url(#arr-o)" transform="rotate(180,925,183)"/>
+<rect x="40" y="680" width="880" height="80" rx="8" fill="#fafafa" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="60" y="698" style="font-size:11px;font-weight:700;fill:#374151">Legend</text>
+<line x1="60" y1="718" x2="100" y2="718" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arr-b)"/>
+<text x="110" y="722" style="font-size:10px;fill:#475569">Read path (parse)</text>
+<line x1="240" y1="718" x2="280" y2="718" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-b)"/>
+<text x="290" y="722" style="font-size:10px;fill:#475569">Populate model</text>
+<line x1="420" y1="718" x2="460" y2="718" stroke="#ea580c" stroke-width="1.5" marker-end="url(#arr-b)"/>
+<text x="470" y="722" style="font-size:10px;fill:#475569">Write path (package)</text>
+<line x1="600" y1="718" x2="640" y2="718" stroke="#475569" stroke-width="1.5" marker-end="url(#arr-b)"/>
+<text x="650" y="722" style="font-size:10px;fill:#475569">Report / inspect</text>
+<rect x="60" y="736" width="50" height="16" rx="3" fill="#eff6ff" stroke="#2563eb" stroke-width="0.8"/>
+<text x="115" y="748" style="font-size:10px;fill:#475569">API</text>
+<rect x="120" y="736" width="50" height="16" rx="3" fill="#f5f3ff" stroke="#7c3aed" stroke-width="0.8"/>
+<text x="175" y="748" style="font-size:10px;fill:#475569">CFB</text>
+<rect x="180" y="736" width="50" height="16" rx="3" fill="#eef2ff" stroke="#4f46e5" stroke-width="0.8"/>
+<text x="235" y="748" style="font-size:10px;fill:#475569">Streams</text>
+<rect x="240" y="736" width="50" height="16" rx="3" fill="#fef3c7" stroke="#d97706" stroke-width="0.8"/>
+<text x="295" y="748" style="font-size:10px;fill:#475569">Parsers</text>
+<rect x="310" y="736" width="50" height="16" rx="3" fill="#ecfdf5" stroke="#059669" stroke-width="0.8"/>
+<text x="365" y="748" style="font-size:10px;fill:#475569">Model</text>
+<rect x="380" y="736" width="50" height="16" rx="3" fill="#fff1f2" stroke="#e11d48" stroke-width="0.8"/>
+<text x="435" y="748" style="font-size:10px;fill:#475569">Derive</text>
+<rect x="450" y="736" width="50" height="16" rx="3" fill="#f1f5f9" stroke="#475569" stroke-width="0.8"/>
+<text x="505" y="748" style="font-size:10px;fill:#475569">Report</text>
+<rect x="520" y="736" width="50" height="16" rx="3" fill="#fff7ed" stroke="#ea580c" stroke-width="0.8"/>
+<text x="575" y="748" style="font-size:10px;fill:#475569">Writer</text>
+</svg>
