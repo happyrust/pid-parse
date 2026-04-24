@@ -8,7 +8,9 @@
 //! the proven `sqlite_load` path builds the DTO.
 
 use std::path::Path;
+use std::time::Instant;
 
+use log::info;
 use oxidized_mdf::{MdfDatabase, Value};
 use rusqlite::{params_from_iter, Connection};
 
@@ -45,11 +47,25 @@ const PUBLISH_TABLES: &[&str] = &[
 /// SmartPlant tables into an in-memory SQLite connection, and return
 /// that connection for reuse by the existing query loader.
 pub fn open_mdf_as_sqlite(path: &Path) -> Result<Connection, PublishError> {
+    let t0 = Instant::now();
     let mut db = MdfDatabase::open(path)?;
     let conn = Connection::open_in_memory()?;
+    let mut tables_staged = 0u32;
+    let mut total_rows = 0usize;
     for table_name in PUBLISH_TABLES {
-        stage_table(&mut db, &conn, table_name)?;
+        let rows = stage_table(&mut db, &conn, table_name)?;
+        if rows > 0 {
+            tables_staged += 1;
+        }
+        total_rows += rows;
     }
+    info!(
+        "MDF staged: {} tables, {} rows in {:.1}ms ({})",
+        tables_staged,
+        total_rows,
+        t0.elapsed().as_secs_f64() * 1000.0,
+        path.display(),
+    );
     Ok(conn)
 }
 
@@ -66,12 +82,14 @@ fn stage_table(
     db: &mut MdfDatabase,
     conn: &Connection,
     table_name: &str,
-) -> Result<(), PublishError> {
+) -> Result<usize, PublishError> {
     let Some(columns) = db.column_names(table_name) else {
-        return Ok(());
+        info!("  {}: not found in MDF, skipped", table_name);
+        return Ok(0);
     };
     if columns.is_empty() {
-        return Ok(());
+        info!("  {}: 0 columns, skipped", table_name);
+        return Ok(0);
     }
 
     let ddl = format!(
@@ -101,18 +119,27 @@ fn stage_table(
     );
 
     let Some(rows) = db.rows(table_name) else {
-        return Ok(());
+        info!("  {}: 0 rows", table_name);
+        return Ok(0);
     };
     let mut stmt = conn.prepare(&insert_sql)?;
+    let mut row_count = 0usize;
     for row in rows {
         let values = columns
             .iter()
             .map(|column| row.value(column).cloned().and_then(value_to_text))
             .collect::<Vec<_>>();
         stmt.execute(params_from_iter(values.iter()))?;
+        row_count += 1;
     }
+    info!(
+        "  {}: {} rows, {} cols",
+        table_name,
+        row_count,
+        columns.len()
+    );
 
-    Ok(())
+    Ok(row_count)
 }
 
 fn value_to_text(value: Value) -> Option<String> {
