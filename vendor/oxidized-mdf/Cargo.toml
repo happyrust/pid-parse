@@ -21,7 +21,6 @@ encoding_rs = "0.8"
 futures-lite = "1.11"
 log = "0.4"
 nom = "8"
-num-bigint = "0.4"
 rust_decimal = "1.17"
 uuid = "0.8"
 
