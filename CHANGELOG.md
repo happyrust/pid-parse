@@ -16,6 +16,10 @@
   SQL Server compact record format 中可空列超出固定区域是正常行为，不是解析器 bug。
 - 消除 vendored `lib.rs` 中最后一个生产代码 `.unwrap()`，改为 `let-else`
   模式。三个 vendored 源文件现在真正实现零 `unwrap`/`panic!`/`todo!()`。
+- 消除 vendored `sys.rs` 中 `expect("Should have type for column")`，改为
+  `filter_map` 模式——未知 scalar type 的列被安静跳过而不是 panic。
+- 新增 `LICENSE-MIT` 和 `LICENSE-APACHE` 文件，匹配 `Cargo.toml` 中声明
+  的 `license = "MIT OR Apache-2.0"`。
 
 ## [0.10.0] — 2026-04-24
 
