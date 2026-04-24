@@ -48,10 +48,7 @@ pub fn probe_relationships(data: &[u8]) -> Vec<RelationshipProbe> {
         }
         let guid_start = i + TAG.len();
         let guid_end = guid_start + 32;
-        if !data[guid_start..guid_end]
-            .iter()
-            .all(|b| b.is_ascii_hexdigit())
-        {
+        if !data[guid_start..guid_end].iter().all(u8::is_ascii_hexdigit) {
             i += 1;
             continue;
         }
@@ -94,7 +91,7 @@ fn find_nearby_guids(
             i += 1;
             continue;
         }
-        if data[i..i + 32].iter().all(|b| b.is_ascii_hexdigit()) {
+        if data[i..i + 32].iter().all(u8::is_ascii_hexdigit) {
             if seen.insert(i) {
                 out.push((i, String::from_utf8_lossy(&data[i..i + 32]).to_string()));
             }

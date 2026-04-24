@@ -15,7 +15,7 @@ fn extract_unc_or_path(s: &str) -> String {
             let drive_start = pos - 1;
             if s.as_bytes()
                 .get(drive_start)
-                .is_some_and(|b| b.is_ascii_alphabetic())
+                .is_some_and(u8::is_ascii_alphabetic)
             {
                 return s[drive_start..].to_string();
             }
@@ -73,7 +73,7 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
         if options.keep_unknown_streams {
             let paths: Vec<PathBuf> = cfb
                 .walk_storage(&base)?
-                .filter(|entry| entry.is_stream())
+                .filter(cfb::Entry::is_stream)
                 .map(|entry| entry.path().to_path_buf())
                 .collect();
 

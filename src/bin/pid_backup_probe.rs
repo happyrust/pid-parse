@@ -88,7 +88,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 || args.iter().any(|a| a == "-h" || a == "--help") {
         print_usage();
-        std::process::exit(if args.len() < 2 { 1 } else { 0 });
+        std::process::exit(i32::from(args.len() < 2));
     }
 
     let input = PathBuf::from(&args[1]);

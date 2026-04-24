@@ -116,12 +116,12 @@ impl ParserTrace {
     /// Sum of `consumed_ranges`; invariant: `consumed_bytes +
     /// leftover_bytes == total_bytes`.
     pub fn consumed_bytes(&self) -> u64 {
-        self.consumed_ranges.iter().map(|r| r.len()).sum()
+        self.consumed_ranges.iter().map(ByteRange::len).sum()
     }
 
     /// Sum of `leftover_ranges`.
     pub fn leftover_bytes(&self) -> u64 {
-        self.leftover_ranges.iter().map(|r| r.len()).sum()
+        self.leftover_ranges.iter().map(ByteRange::len).sum()
     }
 
     /// `consumed_bytes / total_bytes` as a ratio in `[0.0, 1.0]`.
@@ -197,7 +197,7 @@ impl ParserTraceBuilder {
         let mut entries = self.ranges;
         // Clip ranges to `[0, total_bytes)` so a buggy parser cannot
         // inflate coverage past the stream size.
-        for (range, _) in entries.iter_mut() {
+        for (range, _) in &mut entries {
             range.end = range.end.min(total_bytes);
             if range.start > total_bytes {
                 range.start = total_bytes;

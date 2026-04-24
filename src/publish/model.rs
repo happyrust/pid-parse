@@ -72,7 +72,7 @@ impl CodelistIndex {
     pub fn lookup(&self, codelist_number: &str, codelist_index: &str) -> Option<&str> {
         self.entries
             .get(&(codelist_number.to_string(), codelist_index.to_string()))
-            .map(|s| s.as_str())
+            .map(std::string::String::as_str)
     }
 
     /// Resolve a codelisted attribute value by name:

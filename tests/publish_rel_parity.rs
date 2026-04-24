@@ -269,8 +269,14 @@ fn a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise() {
     let a01_set: BTreeSet<String> = parse_rel_defuid_counts(&a01_xml).into_keys().collect();
     let dwg_set: BTreeSet<String> = parse_rel_defuid_counts(&dwg_xml).into_keys().collect();
 
-    let a01_only: BTreeSet<&str> = a01_set.difference(&dwg_set).map(|s| s.as_str()).collect();
-    let dwg_only: BTreeSet<&str> = dwg_set.difference(&a01_set).map(|s| s.as_str()).collect();
+    let a01_only: BTreeSet<&str> = a01_set
+        .difference(&dwg_set)
+        .map(std::string::String::as_str)
+        .collect();
+    let dwg_only: BTreeSet<&str> = dwg_set
+        .difference(&a01_set)
+        .map(std::string::String::as_str)
+        .collect();
 
     // Resolve whitelist coverage: the only-in-X sets must
     // either be empty OR fully accounted for by the

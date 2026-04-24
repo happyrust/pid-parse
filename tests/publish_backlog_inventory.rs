@@ -130,7 +130,7 @@ fn a28_backlog_tag_specs_match_reference_fixtures_exactly() {
         let actual_ifaces = parse_interfaces_per_tag(&xml);
         let actual_iface_set: BTreeSet<&str> = actual_ifaces
             .get(spec.tag)
-            .map(|s| s.iter().map(|x| x.as_str()).collect())
+            .map(|s| s.iter().map(std::string::String::as_str).collect())
             .unwrap_or_default();
         let expected_iface_set: BTreeSet<&str> = spec.interfaces.iter().copied().collect();
         if actual_iface_set != expected_iface_set {
@@ -157,7 +157,9 @@ fn a28_backlog_tag_specs_match_reference_fixtures_exactly() {
                     .map(|(k, v)| {
                         (
                             k.as_str(),
-                            v.iter().map(|x| x.as_str()).collect::<BTreeSet<_>>(),
+                            v.iter()
+                                .map(std::string::String::as_str)
+                                .collect::<BTreeSet<_>>(),
                         )
                     })
                     .collect()
@@ -248,7 +250,7 @@ fn a28_every_unsupported_reference_tag_has_a_backlog_spec() {
 
     let uncovered: Vec<&str> = observed_unsupported
         .iter()
-        .map(|s| s.as_str())
+        .map(std::string::String::as_str)
         .filter(|t| !speccd_tags.contains(t))
         .collect();
     assert!(

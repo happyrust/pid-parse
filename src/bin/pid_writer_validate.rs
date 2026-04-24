@@ -128,7 +128,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 || args.iter().any(|a| a == "-h" || a == "--help") {
         print_usage();
-        std::process::exit(if args.len() < 2 { 1 } else { 0 });
+        std::process::exit(i32::from(args.len() < 2));
     }
 
     let options = match parse_args(&args) {
@@ -194,7 +194,7 @@ fn main() {
         print_human(&report, options.quiet);
     }
 
-    let exit_code = if report.ok { 0 } else { 1 };
+    let exit_code = i32::from(!report.ok);
     cleanup_output(&options.out_spec);
     std::process::exit(exit_code);
 }
@@ -368,8 +368,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let path = out_path.unwrap_or_else(|| {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos());
         let pid = std::process::id();
         std::env::temp_dir().join(format!("pid-writer-validate-{pid}-{nanos}.pid"))
     });
@@ -617,7 +616,7 @@ fn compare_packages(
             let (source_window, roundtrip_window) =
                 diff_windows(&exp.data, &dst.data, first_diff_offset, max_diff_bytes);
             mismatches.push(StreamMismatch {
-                path: (*path).to_string(),
+                path: (*path).clone(),
                 source_len: exp.data.len(),
                 roundtrip_len: dst.data.len(),
                 first_diff_offset,
@@ -779,7 +778,7 @@ fn compare_with_edited_paths(
             let (source_window, roundtrip_window) =
                 diff_windows(&exp.data, &dst.data, first_diff_offset, max_diff_bytes);
             mismatches.push(StreamMismatch {
-                path: (*path).to_string(),
+                path: (*path).clone(),
                 source_len: exp.data.len(),
                 roundtrip_len: dst.data.len(),
                 first_diff_offset,
@@ -929,7 +928,7 @@ fn print_human(report: &ValidateReport, quiet: bool) {
     println!(
         "Result: {} (exit {})",
         if report.ok { "PASS" } else { "FAIL" },
-        if report.ok { 0 } else { 1 }
+        i32::from(!report.ok)
     );
 }
 

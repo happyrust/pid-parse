@@ -140,7 +140,7 @@ fn render_relationship_edges(
     let mut off_drawing_needed = false;
     let mut edges_drawn = 0usize;
     let mut rel_idx = 0usize;
-    for rel in graph.relationships.iter() {
+    for rel in &graph.relationships {
         if edges_drawn >= opts.max_edges {
             break;
         }
@@ -444,12 +444,7 @@ fn sanitize(s: &str) -> String {
         out.push('_');
     }
     // Mermaid ids cannot start with a digit in some dialects — prefix.
-    if out
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_digit())
-        .unwrap_or(false)
-    {
+    if out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         out.insert(0, 'x');
     }
     out

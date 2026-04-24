@@ -420,15 +420,13 @@ fn open_input_as_sqlite(path: &std::path::Path) -> Result<rusqlite::Connection, 
 fn is_mdf_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("mdf"))
-        .unwrap_or(false)
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mdf"))
 }
 
 fn is_sqlite_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("sqlite"))
-        .unwrap_or(false)
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("sqlite"))
 }
 
 fn warn_if_legacy_sqlite_input(path: &std::path::Path) {

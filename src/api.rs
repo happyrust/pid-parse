@@ -97,8 +97,7 @@ impl PidPackage {
 fn unique_temp_path() -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     let pid = std::process::id();
     std::env::temp_dir().join(format!("pid-parse-from-bytes-{pid}-{nanos}.pid"))
 }

@@ -486,10 +486,7 @@ fn raw_byte_needles(probe: &ResidualProbe) -> Vec<(String, Vec<u8>)> {
 }
 
 fn utf16le_bytes(value: &str) -> Vec<u8> {
-    value
-        .encode_utf16()
-        .flat_map(|unit| unit.to_le_bytes())
-        .collect()
+    value.encode_utf16().flat_map(u16::to_le_bytes).collect()
 }
 
 fn is_32_hex(value: &str) -> bool {
@@ -723,7 +720,11 @@ fn load_row_map(conn: &Connection, table_name: &str, uid: &str) -> BTreeMap<Stri
         table_name.replace('"', "\"\"")
     );
     let mut stmt = conn.prepare(&sql).expect("prepare row-map query");
-    let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let col_names: Vec<String> = stmt
+        .column_names()
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     let mut rows = stmt.query([uid]).expect("query row-map");
     let Some(row) = rows.next().expect("read row-map result") else {
         return BTreeMap::new();

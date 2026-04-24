@@ -411,7 +411,7 @@ fn collect_relationship_guids(data: &[u8]) -> Vec<(usize, String)> {
         let g_start = i + tag.len();
         let g_end = g_start + 32;
         let bytes = &data[g_start..g_end];
-        if bytes.iter().all(|b| b.is_ascii_hexdigit()) {
+        if bytes.iter().all(u8::is_ascii_hexdigit) {
             out.push((i, String::from_utf8_lossy(bytes).to_string()));
             i = g_end;
         } else {
@@ -439,7 +439,7 @@ pub(crate) fn find_pidattributes_record_starts(data: &[u8]) -> Vec<usize> {
             continue;
         }
         let prev = data[i - 1];
-        if matches!(prev, 0x00 | 0x01) && out.last().map(|&l| i - l > 32).unwrap_or(true) {
+        if matches!(prev, 0x00 | 0x01) && out.last().is_none_or(|&l| i - l > 32) {
             out.push(i);
         }
     }
@@ -470,7 +470,7 @@ pub(crate) fn read_drawing_id_before(
         return None;
     }
     let bytes = &data[str_start..str_end];
-    if !bytes.iter().all(|b| b.is_ascii_hexdigit()) {
+    if !bytes.iter().all(u8::is_ascii_hexdigit) {
         return None;
     }
     Some(String::from_utf8_lossy(bytes).to_string())

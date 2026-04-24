@@ -162,12 +162,18 @@ fn real_sqlite_vessel_and_nozzle_objects_carry_business_fields() {
         .find(|o| o.item_type_name == "Vessel")
         .expect("vessel object");
     assert_eq!(
-        vessel.fields.get("TagPrefix").map(|s| s.as_str()),
+        vessel
+            .fields
+            .get("TagPrefix")
+            .map(std::string::String::as_str),
         Some("V"),
         "Vessel.TagPrefix should be loaded from T_Equipment"
     );
     assert_eq!(
-        vessel.fields.get("TagSequenceNo").map(|s| s.as_str()),
+        vessel
+            .fields
+            .get("TagSequenceNo")
+            .map(std::string::String::as_str),
         Some("010121A"),
         "Vessel.TagSequenceNo matches the A01 fixture's well-known tag"
     );
@@ -179,7 +185,10 @@ fn real_sqlite_vessel_and_nozzle_objects_carry_business_fields() {
         .find(|o| o.item_type_name == "Nozzle")
         .expect("nozzle object");
     assert_eq!(
-        nozzle.fields.get("NominalDiameter").map(|s| s.as_str()),
+        nozzle
+            .fields
+            .get("NominalDiameter")
+            .map(std::string::String::as_str),
         Some("250"),
         "Nozzle.NominalDiameter mirrors the DN250 spec"
     );
@@ -187,7 +196,7 @@ fn real_sqlite_vessel_and_nozzle_objects_carry_business_fields() {
         nozzle
             .fields
             .get("PipingMaterialsClass")
-            .map(|s| s.as_str()),
+            .map(std::string::String::as_str),
         Some("B5"),
         "Nozzle.PipingMaterialsClass mirrors the B5 spec"
     );

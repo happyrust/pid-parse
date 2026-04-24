@@ -168,8 +168,7 @@ fn run(options: CliOptions) -> Result<(), String> {
     let stem = options
         .input
         .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "backup".to_string());
+        .map_or_else(|| "backup".to_string(), |s| s.to_string_lossy().to_string());
     let msci_json_path = options.out_dir.join(format!("{stem}.msci.json"));
     let msci_bin_path = options.out_dir.join(format!("{stem}.msci.bin"));
     let msda_bin_path = options.out_dir.join(format!("{stem}.msda.bin"));

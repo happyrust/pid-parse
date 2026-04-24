@@ -418,16 +418,20 @@ fn a27b_a01_and_dwg_reference_attrs_agree_for_every_shared_tag_interface() {
         };
         // Iterate the intersection of interface keys; one-side-
         // only interfaces are A24 territory.
-        let a01_keys: BTreeSet<&str> = a01_ifaces.keys().map(|s| s.as_str()).collect();
-        let dwg_keys: BTreeSet<&str> = dwg_ifaces.keys().map(|s| s.as_str()).collect();
+        let a01_keys: BTreeSet<&str> = a01_ifaces.keys().map(std::string::String::as_str).collect();
+        let dwg_keys: BTreeSet<&str> = dwg_ifaces.keys().map(std::string::String::as_str).collect();
         for iface in a01_keys.intersection(&dwg_keys).copied() {
             let a01_set = a01_ifaces.get(iface).expect("interface present in a01");
             let dwg_set = dwg_ifaces.get(iface).expect("interface present in dwg");
             compared_pairs += 1;
-            let a01_only: BTreeSet<&str> =
-                a01_set.difference(dwg_set).map(|s| s.as_str()).collect();
-            let dwg_only: BTreeSet<&str> =
-                dwg_set.difference(a01_set).map(|s| s.as_str()).collect();
+            let a01_only: BTreeSet<&str> = a01_set
+                .difference(dwg_set)
+                .map(std::string::String::as_str)
+                .collect();
+            let dwg_only: BTreeSet<&str> = dwg_set
+                .difference(a01_set)
+                .map(std::string::String::as_str)
+                .collect();
 
             // Resolve any matching whitelist entry. The whitelist
             // key uses `&'static str`; cast iface to &str via
@@ -446,11 +450,11 @@ fn a27b_a01_and_dwg_reference_attrs_agree_for_every_shared_tag_interface() {
                     } else {
                         let unexpected_a01: Vec<String> = a01_only
                             .difference(expected_a01_only)
-                            .map(|s| s.to_string())
+                            .map(std::string::ToString::to_string)
                             .collect();
                         let unexpected_dwg: Vec<String> = dwg_only
                             .difference(expected_dwg_only)
-                            .map(|s| s.to_string())
+                            .map(std::string::ToString::to_string)
                             .collect();
                         unexpected.push((
                             tag.to_string(),

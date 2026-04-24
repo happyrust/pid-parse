@@ -152,7 +152,7 @@ mod tests {
     use super::*;
 
     fn utf16le(s: &str) -> Vec<u8> {
-        let mut out: Vec<u8> = s.encode_utf16().flat_map(|w| w.to_le_bytes()).collect();
+        let mut out: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
         out.extend_from_slice(&[0, 0]); // L'\0' terminator
         out
     }

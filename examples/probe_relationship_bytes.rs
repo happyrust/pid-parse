@@ -35,7 +35,7 @@ fn main() {
         .filter_map(|&h| {
             let start = h + needle.len();
             let end = start + 32;
-            if end <= data.len() && data[start..end].iter().all(|b| b.is_ascii_hexdigit()) {
+            if end <= data.len() && data[start..end].iter().all(u8::is_ascii_hexdigit) {
                 Some(String::from_utf8_lossy(&data[start..end]).to_string())
             } else {
                 None
@@ -196,7 +196,7 @@ fn find_hex_guids(data: &[u8]) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut i = 0usize;
     while i + 32 <= data.len() {
-        if data[i..i + 32].iter().all(|b| b.is_ascii_hexdigit()) {
+        if data[i..i + 32].iter().all(u8::is_ascii_hexdigit) {
             let s = String::from_utf8_lossy(&data[i..i + 32]).to_string();
             out.push((i, s));
             i += 32;
@@ -209,7 +209,7 @@ fn find_hex_guids(data: &[u8]) -> Vec<(usize, String)> {
 
 fn list_all_stream_paths<R: Read + std::io::Seek>(cfb: &mut cfb::CompoundFile<R>) -> Vec<String> {
     cfb.walk()
-        .filter(|e| e.is_stream())
+        .filter(cfb::Entry::is_stream)
         .map(|e| e.path().to_string_lossy().replace('\\', "/"))
         .collect()
 }

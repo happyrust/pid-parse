@@ -385,7 +385,7 @@ fn canonical_construction_status2(obj: &PublishObject, style: PublishStyle) -> S
 fn canonical_is_typical(obj: &PublishObject, style: PublishStyle) -> &'static str {
     match style {
         PublishStyle::A01 => "False",
-        PublishStyle::Dwg => obj.is_typical.as_deref().map(map_bool).unwrap_or("False"),
+        PublishStyle::Dwg => obj.is_typical.as_deref().map_or("False", map_bool),
     }
 }
 
@@ -578,8 +578,7 @@ fn write_process_vessel(
     let is_low_pressure_tank = obj
         .fields
         .get("IsLowPressureTank")
-        .map(|v| map_bool(v) == "True")
-        .unwrap_or(false);
+        .is_some_and(|v| map_bool(v) == "True");
     writeln!(buf, "   <PIDProcessVessel>").map_err(fmt_err)?;
     write_process_vessel_iobject(buf, &obj.uid, &item_tag, description, drawing.style)?;
     writeln!(buf, "      <IPIDProcessVesselOcc/>").map_err(fmt_err)?;
@@ -855,17 +854,12 @@ fn resolve_pipe_item_tag(obj: &PublishObject) -> String {
             return tag.clone();
         }
     }
-    let tag_sequence = obj
-        .fields
-        .get("TagSequenceNo")
-        .map(String::as_str)
-        .unwrap_or("");
+    let tag_sequence = obj.fields.get("TagSequenceNo").map_or("", String::as_str);
     if !tag_sequence.is_empty() {
         let piping_materials_class = obj
             .fields
             .get("PipingMaterialsClass")
-            .map(String::as_str)
-            .unwrap_or("");
+            .map_or("", String::as_str);
         let nominal_diameter = obj
             .fields
             .get("NominalDiameter")
@@ -1191,8 +1185,7 @@ fn write_piping_connector(
                 None
             }
         })
-        .map(map_bool)
-        .unwrap_or("False");
+        .map_or("False", map_bool);
     let piping_connector_type =
         dwg_field_with_aliases(obj, style, "PipingConnectorType", &["PipeRunType"])
             .unwrap_or_default()
@@ -1769,8 +1762,7 @@ fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), P
     let is_flow_directional = obj
         .fields
         .get("IsFlowDirectional")
-        .map(|s| map_bool(s))
-        .unwrap_or("False");
+        .map_or("False", |s| map_bool(s));
 
     writeln!(buf, "   <PIDPipingComponent>").map_err(fmt_err)?;
     writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid)).map_err(fmt_err)?;
@@ -1841,7 +1833,7 @@ fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), P
     writeln!(
         buf,
         r#"      <IPIDTypical IsTypical="{}"/>"#,
-        obj.is_typical.as_deref().map(map_bool).unwrap_or("False"),
+        obj.is_typical.as_deref().map_or("False", map_bool),
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   </PIDPipingComponent>").map_err(fmt_err)
@@ -1905,7 +1897,7 @@ fn write_signal_connector(buf: &mut String, obj: &PublishObject) -> Result<(), P
     writeln!(
         buf,
         r#"      <IPIDTypical IsTypical="{}"/>"#,
-        obj.is_typical.as_deref().map(map_bool).unwrap_or("False"),
+        obj.is_typical.as_deref().map_or("False", map_bool),
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   </PIDSignalConnector>").map_err(fmt_err)
@@ -2009,13 +2001,11 @@ fn format_equipment_tag(obj: &PublishObject) -> String {
     let prefix = obj
         .fields
         .get("TagPrefix")
-        .map(|s| s.as_str())
-        .unwrap_or("");
+        .map_or("", std::string::String::as_str);
     let seq = obj
         .fields
         .get("TagSequenceNo")
-        .map(|s| s.as_str())
-        .unwrap_or("");
+        .map_or("", std::string::String::as_str);
     if prefix.is_empty() && seq.is_empty() {
         String::new()
     } else {

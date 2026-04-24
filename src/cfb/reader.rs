@@ -138,7 +138,7 @@ fn populate_sheet_endpoints<R: Read + std::io::Seek>(
     if rel_field_xs.is_empty() {
         return Ok(());
     }
-    for sheet in doc.sheet_streams.iter_mut() {
+    for sheet in &mut doc.sheet_streams {
         if let Ok(mut s) = cfb.open_stream(&sheet.path) {
             let mut data = Vec::new();
             s.read_to_end(&mut data)?;
@@ -370,7 +370,7 @@ fn build_object_graph(doc: &mut PidDocument) {
             .cloned()
             .or_else(|| record_id_to_drawing.get(&fx).cloned())
     };
-    for rel in graph.relationships.iter_mut() {
+    for rel in &mut graph.relationships {
         let Some(fx) = rel.field_x else { continue };
         let Some(&(a, b)) = rel_endpoints.get(&fx) else {
             continue;
@@ -473,7 +473,7 @@ fn collect_streams_and_bytes<R: Read + std::io::Seek>(
 ) -> Result<(Vec<StreamEntry>, BTreeMap<String, RawStream>), PidError> {
     let paths: Vec<_> = cfb
         .walk()
-        .filter(|e| e.is_stream())
+        .filter(cfb::Entry::is_stream)
         .map(|e| e.path().to_path_buf())
         .collect();
 

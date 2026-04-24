@@ -116,8 +116,7 @@ fn decode_utf16le_trim_padding(bytes: &[u8]) -> String {
     let trimmed_end = units
         .iter()
         .rposition(|&c| c != 0x0000 && c != 0x0020 && c != 0x2020)
-        .map(|i| i + 1)
-        .unwrap_or(0);
+        .map_or(0, |i| i + 1);
     String::from_utf16_lossy(&units[..trimmed_end])
 }
 

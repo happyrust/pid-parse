@@ -64,9 +64,10 @@ pub fn build_import_view(doc: &PidDocument) -> PidImportView {
                 .collect()
         })
         .unwrap_or_default();
-    let symbols = cross
-        .map(|cross| cross.symbol_usage.iter().map(symbol_summary_from).collect())
-        .unwrap_or_else(|| fallback_symbols(doc));
+    let symbols = cross.map_or_else(
+        || fallback_symbols(doc),
+        |cross| cross.symbol_usage.iter().map(symbol_summary_from).collect(),
+    );
     let clusters = build_cluster_summaries(doc, cross.map(|c| &c.cluster_coverage));
     let unresolved = build_unresolved(doc, object_graph, cross.map(|c| &c.root_presence));
 
@@ -159,13 +160,11 @@ fn build_cluster_summaries(
             record_count: cluster
                 .string_table
                 .as_ref()
-                .map(|table| table.len())
-                .unwrap_or(cluster.extracted_strings.len()),
-            note: cluster
-                .header
-                .as_ref()
-                .map(|h| format!("type=0x{:04X} flags=0x{:04X}", h.stream_type, h.flags))
-                .unwrap_or_else(|| "header=none".into()),
+                .map_or(cluster.extracted_strings.len(), std::vec::Vec::len),
+            note: cluster.header.as_ref().map_or_else(
+                || "header=none".into(),
+                |h| format!("type=0x{:04X} flags=0x{:04X}", h.stream_type, h.flags),
+            ),
         });
     }
     for sheet in &doc.sheet_streams {
@@ -192,17 +191,16 @@ fn sheet_summary_from(sheet: &SheetStream) -> PidClusterSummary {
             .endpoint_records
             .len()
             .max(sheet.attribute_records.len()),
-        note: sheet
-            .header
-            .as_ref()
-            .map(|h| {
+        note: sheet.header.as_ref().map_or_else(
+            || format!("endpoints={}", sheet.endpoint_records.len()),
+            |h| {
                 format!(
                     "type=0x{:04X} endpoints={}",
                     h.stream_type,
                     sheet.endpoint_records.len()
                 )
-            })
-            .unwrap_or_else(|| format!("endpoints={}", sheet.endpoint_records.len())),
+            },
+        ),
     }
 }
 

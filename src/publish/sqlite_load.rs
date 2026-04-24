@@ -389,7 +389,11 @@ fn attach_business_columns(
         return Ok(());
     };
 
-    let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let col_names: Vec<String> = stmt
+        .column_names()
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     let mut rows = stmt.query(params![obj.uid])?;
     if let Some(row) = rows.next()? {
         for (idx, name) in col_names.iter().enumerate() {

@@ -1253,7 +1253,11 @@ impl ObjectGraph {
     /// short prefix is given.
     pub fn find_drawing_ids_by_prefix(&self, prefix: &str) -> Vec<&str> {
         if prefix.is_empty() {
-            return self.by_drawing_id.keys().map(|s| s.as_str()).collect();
+            return self
+                .by_drawing_id
+                .keys()
+                .map(std::string::String::as_str)
+                .collect();
         }
         self.by_drawing_id
             .range(prefix.to_string()..)

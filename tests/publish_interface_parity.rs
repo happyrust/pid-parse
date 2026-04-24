@@ -128,7 +128,7 @@ fn interface_parity_generator_produces_every_supported_tag_on_a01_subset() {
 
     let generated_set: BTreeSet<&str> = parse_interfaces_per_tag(&generated_xml)
         .keys()
-        .map(|s| s.as_str())
+        .map(std::string::String::as_str)
         .map(|s| -> &'static str {
             // leak to gain a 'static view for this short-lived
             // comparison (test-only path, negligible leak).
@@ -137,7 +137,7 @@ fn interface_parity_generator_produces_every_supported_tag_on_a01_subset() {
         .collect();
     let reference_set: BTreeSet<&str> = parse_interfaces_per_tag(&reference_xml)
         .keys()
-        .map(|s| -> &'static str { Box::leak(s.to_string().into_boxed_str()) })
+        .map(|s| -> &'static str { Box::leak(s.clone().into_boxed_str()) })
         .collect();
 
     let tags_under_parity: BTreeSet<&str> = TAGS_UNDER_PARITY.iter().copied().collect();
@@ -252,10 +252,14 @@ fn a01_and_dwg_reference_interfaces_agree_for_every_shared_supported_tag() {
 
                 match whitelist.get(tag) {
                     Some((expected_a01_only, expected_dwg_only)) => {
-                        let actual_a01_only: BTreeSet<&str> =
-                            a01_minus_dwg.iter().map(|s| s.as_str()).collect();
-                        let actual_dwg_only: BTreeSet<&str> =
-                            dwg_minus_a01.iter().map(|s| s.as_str()).collect();
+                        let actual_a01_only: BTreeSet<&str> = a01_minus_dwg
+                            .iter()
+                            .map(std::string::String::as_str)
+                            .collect();
+                        let actual_dwg_only: BTreeSet<&str> = dwg_minus_a01
+                            .iter()
+                            .map(std::string::String::as_str)
+                            .collect();
                         if &actual_a01_only == expected_a01_only
                             && &actual_dwg_only == expected_dwg_only
                         {
@@ -267,11 +271,11 @@ fn a01_and_dwg_reference_interfaces_agree_for_every_shared_supported_tag() {
                         } else {
                             let unexpected_in_a01: Vec<String> = actual_a01_only
                                 .difference(expected_a01_only)
-                                .map(|s| s.to_string())
+                                .map(std::string::ToString::to_string)
                                 .collect();
                             let unexpected_in_dwg: Vec<String> = actual_dwg_only
                                 .difference(expected_dwg_only)
-                                .map(|s| s.to_string())
+                                .map(std::string::ToString::to_string)
                                 .collect();
                             unexpected_deltas.push((
                                 tag.to_string(),

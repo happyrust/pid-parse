@@ -401,12 +401,12 @@ fn real_file_set_drawing_number_rewrites_only_the_target_tag() {
         drawing_out
             .tags
             .get("DrawingSite.DrawingNumber")
-            .map(|s| s.as_str()),
+            .map(std::string::String::as_str),
         Some("DWG-0201GP06-01"),
         "DrawingSite.DrawingNumber must be untouched"
     );
     // Every stream other than /TaggedTxtData/Drawing must be byte-identical.
-    for (path, raw_in) in pkg_in.streams.iter() {
+    for (path, raw_in) in &pkg_in.streams {
         if path == "/TaggedTxtData/Drawing" {
             continue;
         }
@@ -476,7 +476,7 @@ fn real_file_set_summary_title_preserves_other_streams() {
     // Every stream other than /\u{5}SummaryInformation must be
     // byte-identical (this is the Phase 9l byte-level fidelity contract
     // exercised end-to-end on a real fixture).
-    for (path, raw_in) in pkg_in.streams.iter() {
+    for (path, raw_in) in &pkg_in.streams {
         if path == "/\u{5}SummaryInformation" {
             continue;
         }
@@ -545,7 +545,7 @@ fn real_file_delete_summary_prop_when_present() {
 
     let pkg_out = parser.parse_package(&dst).expect("reparse");
     // Non-summary streams must remain byte-identical.
-    for (path, raw_in) in pkg_in.streams.iter() {
+    for (path, raw_in) in &pkg_in.streams {
         if path == "/\u{5}SummaryInformation" {
             continue;
         }

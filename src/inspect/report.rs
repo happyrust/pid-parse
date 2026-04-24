@@ -55,13 +55,17 @@ pub fn generate_package_report(pkg: &PidPackage) -> String {
             let c = ts
                 .created
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| format!("unix+{}s", d.as_secs()))
-                .unwrap_or_else(|| "(none)".to_string());
+                .map_or_else(
+                    || "(none)".to_string(),
+                    |d| format!("unix+{}s", d.as_secs()),
+                );
             let m = ts
                 .modified
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| format!("unix+{}s", d.as_secs()))
-                .unwrap_or_else(|| "(none)".to_string());
+                .map_or_else(
+                    || "(none)".to_string(),
+                    |d| format!("unix+{}s", d.as_secs()),
+                );
             writeln!(out, "  {path}  created={c}  modified={m}").ok();
         }
     }
@@ -325,12 +329,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
                         "    probe: first_u32_le={} last_u32_le={} chars={} trailer=[{}]",
                         probe
                             .first_u32_le
-                            .map(|v| format!("0x{v:08X}"))
-                            .unwrap_or_else(|| "-".into()),
+                            .map_or_else(|| "-".into(), |v| format!("0x{v:08X}")),
                         probe
                             .last_u32_le
-                            .map(|v| format!("0x{v:08X}"))
-                            .unwrap_or_else(|| "-".into()),
+                            .map_or_else(|| "-".into(), |v| format!("0x{v:08X}")),
                         probe.name_char_count,
                         probe.trailer_hex
                     )
@@ -840,8 +842,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                         source.class_name.as_deref().unwrap_or("(none)"),
                         source
                             .attribute_record_index
-                            .map(|i| i.to_string())
-                            .unwrap_or_else(|| "-".into()),
+                            .map_or_else(|| "-".into(), |i| i.to_string()),
                         source.confidence.as_deref().unwrap_or("(none)"),
                         source.has_trailer_record_id,
                         source.missing_da_record
@@ -873,9 +874,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
                         entry.endpoint_record_count,
                         entry.declared_in_psm,
                         entry
-                            .matched_declared_index
-                            .map(|i| i.to_string())
-                            .unwrap_or_else(|| "-".into()),
+                            .matched_declared_index.map_or_else(|| "-".into(), |i| i.to_string()),
                         entry.linked_relationship_count,
                         entry.fully_traced_relationship_count
                     )

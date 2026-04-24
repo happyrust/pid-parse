@@ -231,8 +231,7 @@ fn collect_physical_edges(
             let role = relationship_role(relationship);
             let primary_pair = source
                 .zip(target)
-                .map(|(a, b)| primary_ids.contains(a) && primary_ids.contains(b))
-                .unwrap_or(false);
+                .is_some_and(|(a, b)| primary_ids.contains(a) && primary_ids.contains(b));
             if !primary_pair {
                 return false;
             }
@@ -299,13 +298,11 @@ fn sorted_primary_roots(
             .then_with(|| {
                 adjacency
                     .get(left)
-                    .map(|items| usize::MAX - items.len())
-                    .unwrap_or(usize::MAX)
+                    .map_or(usize::MAX, |items| usize::MAX - items.len())
                     .cmp(
                         &adjacency
                             .get(right)
-                            .map(|items| usize::MAX - items.len())
-                            .unwrap_or(usize::MAX),
+                            .map_or(usize::MAX, |items| usize::MAX - items.len()),
                     )
             })
             .then_with(|| left.cmp(right))
@@ -467,7 +464,7 @@ fn infer_symbol_identity(
         .find_map(|value| extract_symbol_path(value));
     let symbol_name = symbol_name_for_type(object.item_type.as_str()).or_else(|| {
         direct_symbol_path.as_ref().and_then(|path| {
-            infer_semantic_from_symbol_hint(None, path).map(|semantic| semantic.to_string())
+            infer_semantic_from_symbol_hint(None, path).map(std::string::ToString::to_string)
         })
     });
     let symbol_path = direct_symbol_path.or_else(|| {
@@ -536,17 +533,9 @@ fn representative_symbol_hints(doc: &PidDocument) -> BTreeMap<String, String> {
                 continue;
             };
             let candidate = (usage.usage_count, usage.symbol_path.clone());
-            let replace = candidates
-                .get(semantic)
-                .map(|existing| {
-                    should_replace_representative(
-                        existing.0,
-                        &existing.1,
-                        candidate.0,
-                        &candidate.1,
-                    )
-                })
-                .unwrap_or(true);
+            let replace = candidates.get(semantic).is_none_or(|existing| {
+                should_replace_representative(existing.0, &existing.1, candidate.0, &candidate.1)
+            });
             if replace {
                 candidates.insert(semantic.to_string(), candidate);
             }

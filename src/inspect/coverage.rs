@@ -225,8 +225,7 @@ fn stream_is_populated(name: &str, doc: &PidDocument) -> Option<bool> {
         "PSMroots" => Some(
             doc.psm_roots
                 .as_ref()
-                .map(|r| !r.entries.is_empty())
-                .unwrap_or(false),
+                .is_some_and(|r| !r.entries.is_empty()),
         ),
         "PSMclustertable" => Some(doc.psm_cluster_table.is_some()),
         "PSMsegmenttable" => Some(doc.psm_segment_table.is_some()),
@@ -234,8 +233,7 @@ fn stream_is_populated(name: &str, doc: &PidDocument) -> Option<bool> {
         "DocVersion3" => Some(
             doc.version_history
                 .as_ref()
-                .map(|v| !v.records.is_empty())
-                .unwrap_or(false),
+                .is_some_and(|v| !v.records.is_empty()),
         ),
         "AppObject" => Some(doc.app_object_registry.is_some()),
         "JTaggedTxtStgList" => Some(doc.tagged_storages.is_some()),

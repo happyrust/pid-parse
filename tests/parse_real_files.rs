@@ -426,7 +426,7 @@ fn psm_cluster_table_aligns_with_cross_reference_declared_clusters() {
     );
 
     let table_names: Vec<&str> = table.entries.iter().map(|e| e.name.as_str()).collect();
-    let declared_names: Vec<&str> = declared.iter().map(|s| s.as_str()).collect();
+    let declared_names: Vec<&str> = declared.iter().map(std::string::String::as_str).collect();
     assert_eq!(
         table_names, declared_names,
         "cluster coverage declared names should preserve the parsed PSMclustertable order"
@@ -1053,8 +1053,7 @@ fn psm_segment_record_probes_align_with_flags() {
     let cluster_count = doc
         .psm_cluster_table
         .as_ref()
-        .map(|c| c.entries.len())
-        .unwrap_or(0);
+        .map_or(0, |c| c.entries.len());
     let hint_count = table
         .entries
         .iter()
