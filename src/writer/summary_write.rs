@@ -51,10 +51,34 @@ const KEY_TO_DOC_SUMMARY_PROPID: &[(&str, u32)] =
     &[("category", 2), ("manager", 14), ("company", 15)];
 
 // VT codes from MS-OLEPS.
+//
+// Editable targets: VT_LPSTR / VT_LPWSTR (only these two are rewritten;
+// all other VTs are preserved verbatim via raw_value passthrough). The
+// remaining fixed-width / scalar VTs listed below are recognized solely
+// so `typed_value_size` can slice the correct number of bytes — they
+// exist in real SmartPlant SummaryInformation streams (e.g. VT_I2 holds
+// `CodePage`, VT_BOOL appears occasionally) and we must not reject a
+// property set just because it carries one.
+const VT_I2: u16 = 0x0002;
 const VT_I4: u16 = 0x0003;
+const VT_R4: u16 = 0x0004;
+const VT_R8: u16 = 0x0005;
+const VT_CY: u16 = 0x0006;
+const VT_DATE: u16 = 0x0007;
+const VT_ERROR: u16 = 0x000A;
+const VT_BOOL: u16 = 0x000B;
+const VT_I1: u16 = 0x0010;
+const VT_UI1: u16 = 0x0011;
+const VT_UI2: u16 = 0x0012;
+const VT_UI4: u16 = 0x0013;
+const VT_I8: u16 = 0x0014;
+const VT_UI8: u16 = 0x0015;
+const VT_INT: u16 = 0x0016;
+const VT_UINT: u16 = 0x0017;
 const VT_LPSTR: u16 = 0x001E;
 const VT_LPWSTR: u16 = 0x001F;
 const VT_FILETIME: u16 = 0x0040;
+const VT_CLSID: u16 = 0x0048;
 
 /// Which OLE stream a symbolic key targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -466,10 +490,31 @@ fn parse_section(data: &[u8], offset: usize) -> Result<Vec<SummaryProp>, PidErro
 /// Compute the number of bytes (sans 4-byte VT tag) the typed value at
 /// `offset` occupies. Caller combines this with the VT tag size (4) and
 /// any 4-byte alignment padding to determine how much raw bytes to keep.
+///
+/// The table covers every scalar / variable-length VT we have observed
+/// inside real `SmartPlant` property-set streams plus every fixed-width
+/// VT in MS-OLEPS whose width is unambiguous. Editable targets are a
+/// narrow subset (`VT_LPSTR` / `VT_LPWSTR`); the rest are only sized so
+/// their bytes can be preserved verbatim when a `summary_updates` patch
+/// touches an adjacent property. Anything truly unrecognized still
+/// bails out so we never silently truncate.
 fn typed_value_size(vt: u16, data: &[u8], offset: usize) -> Result<usize, PidError> {
+    // `value_size` is the width *after* the 4-byte VT tag. Scalar types
+    // below are the on-wire sizes documented in MS-OLEPS. Note that the
+    // caller already applies 4-byte alignment padding on top.
     match vt {
-        VT_I4 => Ok(4),
-        VT_FILETIME => Ok(8),
+        // 2-byte scalars. VT_I2 shows up as the CodePage property in
+        // SmartPlant summary streams; VT_BOOL is occasionally used for
+        // flags; VT_UI2 is less common but spec-valid.
+        VT_I2 | VT_BOOL | VT_UI2 => Ok(2),
+        // 1-byte scalars.
+        VT_I1 | VT_UI1 => Ok(1),
+        // 4-byte scalars.
+        VT_I4 | VT_R4 | VT_ERROR | VT_UI4 | VT_INT | VT_UINT => Ok(4),
+        // 8-byte scalars.
+        VT_R8 | VT_CY | VT_DATE | VT_I8 | VT_UI8 | VT_FILETIME => Ok(8),
+        // 16-byte scalar.
+        VT_CLSID => Ok(16),
         VT_LPSTR => {
             if offset + 4 > data.len() {
                 return Err(malformed("VT_LPSTR char count overruns"));
@@ -485,17 +530,14 @@ fn typed_value_size(vt: u16, data: &[u8], offset: usize) -> Result<usize, PidErr
             Ok(4 + count * 2)
         }
         other => {
-            // Unsupported-but-present types: we preserve the raw bytes
-            // verbatim, so we need to know their length. Without a full
-            // VT type table we fall back to "read the rest of the section
-            // up to the next 4-byte alignment or end-of-stream". Rather
-            // than guess, reject the whole property-set — the caller can
-            // always stream_replacements-blob the full bytes through
-            // untouched.
+            // Truly unsupported — callers can still `stream_replacements`-blob
+            // the raw bytes through untouched if they must preserve the
+            // stream; we refuse to guess a size here.
             Err(malformed(&format!(
                 "unsupported VT type 0x{other:04X} at offset {offset}; \
-                 only VT_I4 / VT_LPSTR / VT_LPWSTR / VT_FILETIME are \
-                 recognized"
+                 summary writer handles VT_I1/I2/I4/I8 + UI1/UI2/UI4/UI8 + \
+                 INT/UINT + BOOL + R4/R8 + CY + DATE + ERROR + CLSID + \
+                 LPSTR + LPWSTR + FILETIME"
             )))
         }
     }
@@ -1265,5 +1307,70 @@ mod tests {
         apply_summary_updates_encoded(&mut pkg, &BTreeMap::new()).expect("noop");
         let after = &pkg.get_stream(SUMMARY_INFO_PATH).unwrap().data;
         assert_eq!(after, &bytes, "empty map = byte-identical passthrough");
+    }
+
+    // -----------------------------------------------------------------
+    // `typed_value_size` coverage for the MS-OLEPS VT table.
+    //
+    // Regression: real `SmartPlant` `SummaryInformation` streams carry a
+    // `VT_I2` (0x0002) CodePage property; before the 2026-04-24 widening
+    // the writer rejected any property set containing one with
+    // _"unsupported VT type 0x0002"_, breaking `summary_updates` on the
+    // A01 fixture used by `examples/roundtrip_walkthrough.rs`.
+    //
+    // These tests pin the byte widths so future refactors cannot
+    // silently shrink the table.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn typed_value_size_recognizes_2byte_scalars() {
+        let payload = [0u8; 8];
+        assert_eq!(typed_value_size(VT_I2, &payload, 0).unwrap(), 2);
+        assert_eq!(typed_value_size(VT_BOOL, &payload, 0).unwrap(), 2);
+        assert_eq!(typed_value_size(VT_UI2, &payload, 0).unwrap(), 2);
+    }
+
+    #[test]
+    fn typed_value_size_recognizes_1byte_scalars() {
+        let payload = [0u8; 8];
+        assert_eq!(typed_value_size(VT_I1, &payload, 0).unwrap(), 1);
+        assert_eq!(typed_value_size(VT_UI1, &payload, 0).unwrap(), 1);
+    }
+
+    #[test]
+    fn typed_value_size_recognizes_4byte_scalars() {
+        let payload = [0u8; 8];
+        assert_eq!(typed_value_size(VT_I4, &payload, 0).unwrap(), 4);
+        assert_eq!(typed_value_size(VT_R4, &payload, 0).unwrap(), 4);
+        assert_eq!(typed_value_size(VT_ERROR, &payload, 0).unwrap(), 4);
+        assert_eq!(typed_value_size(VT_UI4, &payload, 0).unwrap(), 4);
+        assert_eq!(typed_value_size(VT_INT, &payload, 0).unwrap(), 4);
+        assert_eq!(typed_value_size(VT_UINT, &payload, 0).unwrap(), 4);
+    }
+
+    #[test]
+    fn typed_value_size_recognizes_8byte_scalars() {
+        let payload = [0u8; 16];
+        assert_eq!(typed_value_size(VT_R8, &payload, 0).unwrap(), 8);
+        assert_eq!(typed_value_size(VT_CY, &payload, 0).unwrap(), 8);
+        assert_eq!(typed_value_size(VT_DATE, &payload, 0).unwrap(), 8);
+        assert_eq!(typed_value_size(VT_I8, &payload, 0).unwrap(), 8);
+        assert_eq!(typed_value_size(VT_UI8, &payload, 0).unwrap(), 8);
+        assert_eq!(typed_value_size(VT_FILETIME, &payload, 0).unwrap(), 8);
+    }
+
+    #[test]
+    fn typed_value_size_recognizes_clsid() {
+        let payload = [0u8; 16];
+        assert_eq!(typed_value_size(VT_CLSID, &payload, 0).unwrap(), 16);
+    }
+
+    #[test]
+    fn typed_value_size_rejects_truly_unknown_vt() {
+        let payload = [0u8; 8];
+        // VT_ARRAY (0x2000) composite flag — intentionally out of scope.
+        let err = typed_value_size(0x2000, &payload, 0).expect_err("should reject");
+        let msg = format!("{err}");
+        assert!(msg.contains("unsupported VT type 0x2000"), "got: {msg}");
     }
 }

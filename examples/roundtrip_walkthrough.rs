@@ -1,21 +1,12 @@
-//! End-to-end "parse → write → re-parse" round-trip walkthrough.
+//! End-to-end "parse → declarative patch → write → re-parse" walkthrough.
 //!
 //! Rounds out the `examples/` trilogy alongside `parse_walkthrough`
 //! (reader) and `publish_walkthrough` (MDF → XML). Demonstrates the
 //! writer path: open a `.pid` as a full [`PidPackage`] (model + raw
-//! stream bytes), hand it plus a declarative [`WritePlan`] to
-//! [`PidWriter::write_to_bytes`] for an in-memory round-trip, and
-//! re-parse the output to prove every stream came back intact.
-//!
-//! Deliberately uses `WritePlan::default()` — a passthrough — rather
-//! than a metadata patch. Field-level edits (e.g. `summary_updates`
-//! writing a new `title`) require the target `.pid`'s
-//! `SummaryInformation` stream to use only the VT codes the writer
-//! currently rewrites (`VT_I4` / `VT_LPSTR` / `VT_LPWSTR` /
-//! `VT_FILETIME`); real SmartPlant fixtures often also carry
-//! `VT_I2`, which the writer rejects up-front. The passthrough shape
-//! works on every `.pid` and still exercises the entire writer
-//! pipeline, which is the useful part for a walkthrough.
+//! stream bytes), build a [`WritePlan`] that patches the OLE
+//! `SummaryInformation` title, hand both to [`PidWriter::write_to_bytes`]
+//! for an in-memory round-trip, and re-parse the produced bytes to
+//! prove the patch actually landed.
 //!
 //! Usage:
 //!   cargo run --example roundtrip_walkthrough -- path/to/file.pid
@@ -24,13 +15,15 @@
 //! fixture under `test-file/`. Missing fixture prints a soft-skip
 //! notice and exits cleanly.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::PathBuf;
 
-use pid_parse::writer::{PidWriter, WritePlan};
+use pid_parse::writer::{MetadataUpdates, PidWriter, WritePlan};
 use pid_parse::PidPackage;
 
 const FALLBACK_FIXTURE: &str = "test-file/export-test/publish-data/A01/A01.pid";
+const NEW_TITLE: &str = "pid-parse roundtrip_walkthrough demo";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let Some(path) = resolve_input() else {
@@ -54,51 +47,57 @@ fn main() -> Result<(), Box<dyn Error>> {
         .as_ref()
         .and_then(|s| s.title.clone());
     println!(
-        "  title           : {}",
+        "  title before    : {}",
         title_before.as_deref().unwrap_or("(unset)")
     );
     println!("  streams         : {}", pkg_before.parsed.streams.len());
-    println!(
-        "  unknown_streams : {}",
-        pkg_before.parsed.unknown_streams.len()
-    );
 
-    // 2. Build a passthrough `WritePlan`. Non-default variants
-    //    include:
-    //    - `metadata_updates.summary_updates` — string edits to
-    //      OLE SummaryInformation (keys: "title" / "author" /
-    //      "subject" / …).
-    //    - `metadata_updates.drawing_xml` / `general_xml` — full
-    //      replacement of the tagged-text Drawing / General blobs.
-    //    - `stream_replacements` — byte-level swap of any stream.
-    //    - `sheet_patches` — experimental sheet byte-range edits.
-    //    Every channel left at its default is a no-op, which is the
-    //    passthrough contract we exercise here.
-    let plan = WritePlan::default();
+    // 2. Build a declarative patch. `summary_updates` keys are the
+    //    symbolic `SummaryInformation` property names (`title`,
+    //    `author`, `subject`, …); values are UTF-8 by default. Every
+    //    other writer channel (`drawing_xml`, `stream_replacements`,
+    //    `sheet_patches`) is left at its default — the writer skips
+    //    no-op work automatically.
+    let mut summary_updates: BTreeMap<String, String> = BTreeMap::new();
+    summary_updates.insert("title".to_string(), NEW_TITLE.to_string());
+    let plan = WritePlan {
+        metadata_updates: MetadataUpdates {
+            summary_updates,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     // 3. Apply the plan and materialise the result as bytes. For a
     //    disk-backed round-trip use `PidWriter::write_to(&pkg, &plan,
     //    output_path)` instead; both funnel through the same CFB
     //    writer under the hood.
-    let roundtripped_bytes = PidWriter::write_to_bytes(&pkg_before, &plan)?;
-    println!("  output bytes    : {}", roundtripped_bytes.len());
+    let patched_bytes = PidWriter::write_to_bytes(&pkg_before, &plan)?;
+    println!("  patched bytes   : {}", patched_bytes.len());
 
-    // 4. Re-parse to prove the output is still a well-formed `.pid`
-    //    and that every stream round-tripped. Any consumer writing
-    //    to disk can skip step 4; it's the "did it work?"
+    // 4. Re-parse to prove the patch actually landed and the
+    //    resulting CFB is still a well-formed `.pid`. Any consumer
+    //    can stop at step 3; step 4 is the "did it work?"
     //    assertion.
-    let pkg_after = PidPackage::from_bytes(&roundtripped_bytes)?;
-    let streams_after = pkg_after.parsed.streams.len();
-    let streams_before = pkg_before.parsed.streams.len();
+    let pkg_after = PidPackage::from_bytes(&patched_bytes)?;
+    let title_after = pkg_after
+        .parsed
+        .summary
+        .as_ref()
+        .and_then(|s| s.title.clone());
+    println!(
+        "  title after     : {}",
+        title_after.as_deref().unwrap_or("(unset)")
+    );
 
-    println!("\n  re-parsed streams : {streams_after}");
-    if streams_after == streams_before {
-        println!("[ok] stream count matches — round-trip preserves every stream.");
+    if title_after.as_deref() == Some(NEW_TITLE) {
+        println!("\n[ok] summary title patch landed through the round-trip.");
     } else {
         eprintln!(
-            "[warn] stream count mismatch: before={streams_before}, \
-             after={streams_after}"
+            "[warn] summary title did NOT land — got {title_after:?}; \
+             expected {NEW_TITLE:?}"
         );
+        std::process::exit(1);
     }
 
     Ok(())

@@ -72,6 +72,41 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### Writer 扩展 `typed_value_size` 的 VT 覆盖面
+
+上一轮 `roundtrip_walkthrough` 为了能跑通真实 SmartPlant fixture
+只能用 `WritePlan::default()` passthrough，不敢走 `summary_updates`
+元数据 patch ——一旦走上就硬撞
+`unsupported VT type 0x0002`（`VT_I2`，A01 的 `SummaryInformation`
+里 `CodePage` 属性就是这个类型）。
+
+本轮把 `src/writer/summary_write.rs::typed_value_size` 的 VT 字节
+宽度表从 4 种（`VT_I4 / VT_LPSTR / VT_LPWSTR / VT_FILETIME`）扩
+到完整的 MS-OLEPS 标量集：
+
+- 1 字节：`VT_I1 / VT_UI1`
+- 2 字节：`VT_I2 / VT_BOOL / VT_UI2`
+- 4 字节：`VT_I4 / VT_R4 / VT_ERROR / VT_UI4 / VT_INT / VT_UINT`
+- 8 字节：`VT_R8 / VT_CY / VT_DATE / VT_I8 / VT_UI8 / VT_FILETIME`
+- 16 字节：`VT_CLSID`
+- 变长：`VT_LPSTR / VT_LPWSTR`（保持原有长度字段读取）
+
+关键点：widening 只改"切多少字节"的策略表，没有触碰"改哪几个
+属性"的白名单（依旧只能重写 `VT_LPSTR / VT_LPWSTR` 下的字符串
+值）。其他 VT 的属性作为 `raw_value` 原样 passthrough，和改前
+对它们的语义完全一致——只是之前整个 property-set 会被一刀拒
+收，现在可以共存。
+
+- 错误消息更新为可执行的完整列表。
+- 新增 6 条回归测试（`writer::summary_write::tests::typed_value_size_*`）
+  分别锁定 1/2/4/8/16 字节标量的宽度，以及对真正 unknown VT（如
+  `0x2000 VT_ARRAY`）仍然拒收的行为。
+- `examples/roundtrip_walkthrough.rs` 从 passthrough 重构为真正
+  演示 `summary_updates.insert("title", …)` 的 declarative patch；
+  A01 fixture 的 `title` 现在干净地从 `"Normal"` 轮转成
+  `"pid-parse roundtrip_walkthrough demo"`。示例源注释里原本对
+  "为什么只能 passthrough"的解释被删去。
+
 ### `roundtrip_walkthrough` 示例 + `cargo build --examples` 进 CI
 
 把 `examples/` 走查三部曲最后一条补齐，同时把 examples 锁进
