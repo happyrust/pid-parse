@@ -1,5 +1,18 @@
 # 变更日志
 
+## [Unreleased]
+
+### Publish pipeline 改进
+
+- publish pipeline 生产代码完全 panic-free：消除 `xml_writer.rs` 中最后
+  一个 `expect("publishable rep has model_item_uid")`，改为 `let-else continue`。
+- 新增 MDF loader 可观测性：引入 `log` crate，`stage_table` 报告每张表
+  行数/列数，`open_mdf_as_sqlite` 报告汇总统计（表数、行数、耗时）。
+  默认静默，无 log subscriber 时零开销。
+- CLI `pid_publish_xml` 新增 `--verbose` / `-v` 标志：激活 `env_logger`
+  显示 MDF 加载诊断（每表行数、耗时、缺失表），同时显示 `oxidized-mdf`
+  内部的 ERROR 级日志（列解析边界问题），便于调试新 MDF 文件。
+
 ## [0.10.0] — 2026-04-24
 
 ### Publish XML source — Rust MDF loader (`oxidized-mdf`)
