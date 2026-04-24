@@ -72,6 +72,7 @@ struct CliOptions {
     /// / `--diff-against` because there is no per-drawing
     /// output to produce.
     list_drawings: bool,
+    verbose: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +107,8 @@ fn print_usage() {
          \x20                   (SP_ID, Name, DocumentCategory, DocumentType,\n\
          \x20                   Path) and exit 0. Mutually exclusive with the\n\
          \x20                   render flags.\n\
+         -v, --verbose       Print MDF loading diagnostics (table row counts,\n\
+         \x20                   timing) to stderr.\n\
          Legacy compatibility historical `Export_v2.sqlite` mirrors are still\n\
          \x20                   accepted during the transition, but MDF is the\n\
          \x20                   only public publish-fidelity baseline and `.sqlite`\n\
@@ -131,6 +134,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut plant_name: Option<String> = None;
     let mut style: Option<PublishStyle> = None;
     let mut list_drawings = false;
+    let mut verbose = false;
 
     let mut i = 2;
     while i < args.len() {
@@ -194,6 +198,10 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 list_drawings = true;
                 i += 1;
             }
+            "--verbose" | "-v" => {
+                verbose = true;
+                i += 1;
+            }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
@@ -251,6 +259,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         plant_name: plant_name.unwrap_or_else(|| "P01".to_string()),
         style: style.unwrap_or_default(),
         list_drawings,
+        verbose,
     })
 }
 
@@ -268,6 +277,11 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if options.verbose {
+        env_logger::Builder::new()
+            .filter_level(log::LevelFilter::Info)
+            .init();
+    }
     match run(options) {
         Ok(exit_code) => std::process::exit(exit_code),
         Err(e) => {
