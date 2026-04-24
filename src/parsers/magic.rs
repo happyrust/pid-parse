@@ -32,14 +32,14 @@ pub fn magic_tag(magic: u32) -> Option<String> {
 /// appear in the file.
 pub fn describe_magic(magic: u32) -> &'static str {
     match magic {
-        0x6C90F544 => "SP cluster (shared header)",
-        0x67657374 => "PSMspacemap segment table",
-        0x746F6F72 => "PSMroots root table",
-        0x74736C63 => "PSMclustertable index",
-        0x62617473 => "PSMsegmenttable index",
-        0x72616D53 => "DocVersion (SmartPlant)",
-        0x6D783F3C => "XML declaration (<?xm)",
-        0x53454C4F => "OLE storage block",
+        0x6C90_F544 => "SP cluster (shared header)",
+        0x6765_7374 => "PSMspacemap segment table",
+        0x746F_6F72 => "PSMroots root table",
+        0x7473_6C63 => "PSMclustertable index",
+        0x6261_7473 => "PSMsegmenttable index",
+        0x7261_6D53 => "DocVersion (SmartPlant)",
+        0x6D78_3F3C => "XML declaration (<?xm)",
+        0x5345_4C4F => "OLE storage block",
         _ => "",
     }
 }
@@ -53,26 +53,26 @@ mod tests {
         // Values are magic_u32_le read from real .pid streams; the ASCII
         // rendering matches the on-disk byte order (since to_le_bytes puts
         // the lowest byte first, i.e. the first byte of the stream).
-        assert_eq!(magic_tag(0x67657374).as_deref(), Some("tseg"));
-        assert_eq!(magic_tag(0x746F6F72).as_deref(), Some("root"));
-        assert_eq!(magic_tag(0x6D783F3C).as_deref(), Some("<?xm"));
-        assert_eq!(magic_tag(0x53454C4F).as_deref(), Some("OLES"));
-        assert_eq!(magic_tag(0x72616D53).as_deref(), Some("Smar"));
-        assert_eq!(magic_tag(0x74736C63).as_deref(), Some("clst"));
-        assert_eq!(magic_tag(0x62617473).as_deref(), Some("stab"));
+        assert_eq!(magic_tag(0x6765_7374).as_deref(), Some("tseg"));
+        assert_eq!(magic_tag(0x746F_6F72).as_deref(), Some("root"));
+        assert_eq!(magic_tag(0x6D78_3F3C).as_deref(), Some("<?xm"));
+        assert_eq!(magic_tag(0x5345_4C4F).as_deref(), Some("OLES"));
+        assert_eq!(magic_tag(0x7261_6D53).as_deref(), Some("Smar"));
+        assert_eq!(magic_tag(0x7473_6C63).as_deref(), Some("clst"));
+        assert_eq!(magic_tag(0x6261_7473).as_deref(), Some("stab"));
     }
 
     #[test]
     fn non_printable_returns_none() {
-        assert_eq!(magic_tag(0x6C90F544), None);
-        assert_eq!(magic_tag(0x00000005), None);
+        assert_eq!(magic_tag(0x6C90_F544), None);
+        assert_eq!(magic_tag(0x0000_0005), None);
     }
 
     #[test]
     fn known_tags_described() {
-        assert!(describe_magic(0x6C90F544).contains("cluster"));
-        assert!(describe_magic(0x746F6F72).contains("root"));
-        assert!(describe_magic(0x72616D53).contains("SmartPlant"));
-        assert_eq!(describe_magic(0xDEADBEEF), "");
+        assert!(describe_magic(0x6C90_F544).contains("cluster"));
+        assert!(describe_magic(0x746F_6F72).contains("root"));
+        assert!(describe_magic(0x7261_6D53).contains("SmartPlant"));
+        assert_eq!(describe_magic(0xDEAD_BEEF), "");
     }
 }

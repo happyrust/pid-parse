@@ -531,7 +531,7 @@ mod tests {
     fn repeated_u32_pattern_detected() {
         let mut data = Vec::new();
         for _ in 0..4 {
-            data.extend(0xDEADBEEFu32.to_le_bytes());
+            data.extend(0xDEAD_BEEFu32.to_le_bytes());
         }
         data.extend(vec![0x55u8; 64]);
 

@@ -120,9 +120,8 @@ fn try_parse_record(data: &[u8], pos: usize) -> Option<(AttributeRecord, usize)>
         let _skipped = cursor - scan_start;
 
         // Read attribute name
-        let (attr_name, after_name) = match read_null_terminated_ascii(data, cursor) {
-            Some(r) => r,
-            None => break,
+        let Some((attr_name, after_name)) = read_null_terminated_ascii(data, cursor) else {
+            break;
         };
         cursor = after_name;
 

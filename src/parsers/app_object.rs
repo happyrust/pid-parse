@@ -240,7 +240,7 @@ mod tests {
         let mut data = Vec::new();
         data.extend_from_slice(&1u32.to_le_bytes());
         data.extend_from_slice(&[0x11; 16]);
-        data.extend_from_slice(&0xFFFFFFFFu32.to_le_bytes()); // bogus char count
+        data.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // bogus char count
 
         let mut b = ParserTraceBuilder::new("parse_app_object");
         let r = parse_app_object_with_trace(&data, &mut b).expect("still returns");
@@ -282,7 +282,7 @@ mod tests {
         let mut data = Vec::new();
         data.extend_from_slice(&1u32.to_le_bytes());
         data.extend_from_slice(&[0x11; 16]);
-        data.extend_from_slice(&0xFFFFFFFFu32.to_le_bytes()); // bogus char count
+        data.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // bogus char count
         let r = parse_app_object(&data).expect("still returns");
         assert!(r.entries.is_empty());
     }

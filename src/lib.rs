@@ -1,3 +1,19 @@
+// Keep the curated subset of pedantic lints we already baked in via the
+// `cargo clippy --fix` passes (see CHANGELOG "Clippy 清理" sections).
+// These warn on new code only — existing violations are already fixed.
+#![warn(
+    clippy::uninlined_format_args,
+    clippy::doc_markdown,
+    clippy::redundant_closure_for_method_calls,
+    clippy::manual_let_else,
+    clippy::map_unwrap_or,
+    clippy::unreadable_literal,
+    clippy::bool_to_int_with_if,
+    clippy::implicit_clone,
+    clippy::explicit_iter_loop,
+    clippy::unnecessary_map_or
+)]
+
 pub mod api;
 pub mod backup;
 pub mod byte_audit;

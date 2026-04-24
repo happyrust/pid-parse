@@ -776,13 +776,12 @@ pub fn parse_rel_defuid_counts(xml: &str) -> BTreeMap<String, usize> {
                 continue;
             }
             // Walk to the closing `>` to bound the search.
-            let close = bytes[i..]
+            let Some(scan_end) = bytes[i..]
                 .iter()
                 .position(|&b| b == b'>')
-                .map(|off| i + off);
-            let scan_end = match close {
-                Some(c) => c,
-                None => break,
+                .map(|off| i + off)
+            else {
+                break;
             };
             // Search within [i + needle.len(), scan_end) for
             // `DefUID="..."`.
@@ -882,13 +881,12 @@ pub fn parse_rel_details(xml: &str) -> Vec<RelDetail> {
                 i += 1;
                 continue;
             }
-            let close = bytes[i..]
+            let Some(scan_end) = bytes[i..]
                 .iter()
                 .position(|&b| b == b'>')
-                .map(|off| i + off);
-            let scan_end = match close {
-                Some(c) => c,
-                None => break,
+                .map(|off| i + off)
+            else {
+                break;
             };
             let inside = &bytes[i + needle.len()..scan_end];
             out.push(RelDetail {

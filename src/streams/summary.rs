@@ -266,10 +266,10 @@ fn chrono_free_format(unix_secs: i64, _nanos: u32) -> Option<String> {
 }
 
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
     let y = yoe as i64 + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
@@ -433,9 +433,8 @@ fn parse_dictionary_lpstr(data: &[u8], offset: usize) -> BTreeMap<u32, String> {
         let raw = &data[name_start..name_start + len];
         // Strip NUL terminator(s) before decoding.
         let stripped: Vec<u8> = raw.iter().copied().take_while(|b| *b != 0).collect();
-        let name = match String::from_utf8(stripped) {
-            Ok(s) => s,
-            Err(_) => return out, // defensive: non-UTF-8 dict, bail
+        let Ok(name) = String::from_utf8(stripped) else {
+            return out; // defensive: non-UTF-8 dict, bail
         };
         out.insert(prop_id, name);
         // Advance past the name bytes. Dictionary entries are NOT
