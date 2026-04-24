@@ -32,21 +32,21 @@
 //!
 //! ## Stage-1 outstanding
 //!
-//! * The DWG-flavor plant mirror (`test-file/backup-test/<plant>_p/
-//!   extracted/Export_v2.sqlite` for the `DWG-0202GP06-01` fixture)
+//! * The DWG-flavor plant MDF (`test-file/backup-test/<plant>_p/
+//!   extracted/Export.mdf` for the `DWG-0202GP06-01` fixture)
 //!   is the hard prerequisite for: loader canonical-field
 //!   enrichment (DWG-only `EqType*` / `ProcessEqCompType*` /
 //!   `ConnectionFlowDirection` / insulation+slope fields) and
 //!   closing the A24 / A27b tolerated-divergence whitelists.
-//!   Until the mirror lands, the DWG-side integration tests
-//!   soft-skip through `common::DWG_SQLITE_MISSING_HINT`.
+//!   Until the MDF lands, the DWG-side integration tests
+//!   soft-skip through `common::DWG_MDF_MISSING_HINT`.
 //!
 //! * Stage-4 writer arms for `PIDBranchPoint` (8 interfaces)
 //!   and `PIDPipingBranchPoint` (6 interfaces) are implemented
 //!   and unit-tested, but the loader-side `item_type_name`
 //!   mapping (`"BranchPoint"` / `"PipingBranchPoint"`) and
 //!   subtable chain are provisional — they will be confirmed
-//!   once the DWG mirror lands and the end-to-end count gates
+//!   once the DWG MDF lands and the end-to-end count gates
 //!   in `tests/publish_dwg_mirror.rs` fire.
 
 pub mod diff;

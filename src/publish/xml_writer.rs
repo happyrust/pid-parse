@@ -27,9 +27,13 @@
 //! * Unknown optional fields render as empty attribute values
 //!   (`Description=""`) — matches how SPPID itself emits
 //!   blank-but-present attributes.
-//! * Writer-synthesized publish-only UIDs are deterministic
-//!   32-hex values, so repeated exports remain byte-stable
-//!   without leaking internal seed strings into the final XML.
+//! * Writer-synthesized publish-only identifiers are
+//!   deterministic, so repeated exports remain byte-stable.
+//!   A01 raw parity is already closed at the contract level, but
+//!   the connector-family UID, `<Rel><IObject UID="..."/>`, and
+//!   `GraphicOID` publish numbering still use writer-side
+//!   placeholder strategies pending full SmartPlant-rule
+//!   reconstruction.
 
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -447,17 +451,15 @@ fn canonical_connector_item_tag(obj: &PublishObject, style: PublishStyle) -> Str
 }
 
 /// Derive the `<PIDPipingConnector>` IObject UID from the parent
-/// `<PIDPipeline>` (PipeRun) UID. A34b convention: a deterministic
-/// `<pipe_uid>-CNX` literal suffix that the downstream `.1` / `.2`
-/// / `.PPT` port and process-point UIDs append to. Ports therefore
-/// render as `<pipe_uid>-CNX.1`, etc., and every Rel UID1/UID2
-/// referencing the connector family follows the same rule.
+/// `<PIDPipeline>` (PipeRun) UID.
 ///
-/// The suffix is intentionally opaque-looking rather than a real
-/// UUID so it round-trips through the A01 raw-residual masker
-/// (`@CONNECTOR@`, `@PORT1@`, `@PORT2@`, `@PROCESS_POINT@`)
-/// unchanged, keeping the generated XML byte-for-byte equivalent
-/// to the SmartPlant reference after masking.
+/// Current state: this still uses the stage-1 placeholder
+/// convention `<pipe_uid>-CNX`, with downstream `.1` / `.2` /
+/// `.PPT` children appended on top. That keeps the document
+/// internally self-consistent and byte-stable, but it is NOT yet
+/// the real SmartPlant publish-time numbering rule. The A01 raw
+/// residual gates intentionally keep this family under explicit
+/// burn-down until the true rule is reconstructed from TEST02.
 fn derived_pipe_connector_uid(pipe_uid: &str) -> String {
     format!("{pipe_uid}-CNX")
 }
@@ -2391,6 +2393,10 @@ fn write_representations(buf: &mut String, drawing: &PublishDrawing) -> Result<(
             escape_attr(&rep.uid)
         )
         .map_err(fmt_err)?;
+        // Current behavior still passes through the staged-table
+        // `GraphicOID`. A01 contract parity masks the publish-time
+        // remap slot explicitly until the SmartPlant numbering rule
+        // is reconstructed.
         match rep.graphic_oid {
             Some(oid) => writeln!(
                 buf,
@@ -2627,15 +2633,17 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     Ok(())
 }
 
-/// Emit a single `<Rel>` node. `rel_uid` is a deterministic seed
-/// built by the caller (`DRC-…`, `DRI-…`, `PCN-…`, `PPC-…`,
-/// `PPP-…`, `EQC-…`, `PE1-…`, `PE2-…`, or the general
+/// Emit a single `<Rel>` node. `rel_uid` is the current writer-side
+/// deterministic placeholder seed (`DRC-…`, `DRI-…`, `PCN-…`,
+/// `PPC-…`, `PPP-…`, `EQC-…`, `PE1-…`, `PE2-…`, or the general
 /// `prefix-uid1-uid2` form) and is used verbatim as the published
-/// `<IObject UID>`. The A01 raw-residual masker replaces the
-/// value with `@RELn@` sequentially so byte-for-byte comparisons
-/// against the SmartPlant reference stay stable without the
-/// writer having to invent real SmartPlant-style 32-hex UIDs we
-/// cannot actually reproduce.
+/// `<IObject UID>`.
+///
+/// This keeps repeated exports stable and debuggable, but it is not
+/// yet the real SmartPlant 32-hex rel-IObject numbering rule. A01
+/// delivery-contract and raw-residual tests therefore keep this slot
+/// under explicit normalization until the publish-time rule is
+/// reconstructed from TEST02.
 fn write_rel(
     buf: &mut String,
     rel_uid: &str,

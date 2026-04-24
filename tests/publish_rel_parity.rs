@@ -323,7 +323,7 @@ fn a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise() {
 
 /// Mirror-backed DWG sibling of A33.
 ///
-/// Once the DWG SQLite mirror is bundled, the writer's
+/// Once the DWG MDF fixture is bundled, the writer's
 /// generated DWG `_Data.xml` must emit at least the same Rel
 /// DefUID inventory as the SmartPlant DWG reference. Extras are
 /// tolerated and only logged, matching the A33 contract on A01.
@@ -335,7 +335,7 @@ fn rel_defuid_parity_on_dwg_writer_matches_reference_supersets_when_mirror_avail
     let Some(reference_xml) = load_reference_dwg_xml() else {
         return;
     };
-    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+    let generated_xml = generated_result.expect("writer should succeed on DWG MDF");
 
     let generated_counts = parse_rel_defuid_counts(&generated_xml);
     let reference_counts = parse_rel_defuid_counts(&reference_xml);

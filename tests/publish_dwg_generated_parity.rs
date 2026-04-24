@@ -3,7 +3,7 @@
 //! A24 / A27b document how the bundled A01 and DWG reference
 //! fixtures differ from each other. They are useful as fixture
 //! facts, but they are NOT the same thing as "did our generated
-//! DWG XML match the DWG reference once a real DWG SQLite mirror
+//! DWG XML match the DWG reference once a real DWG MDF fixture
 //! was available?".
 //!
 //! This file adds that missing acceptance layer:
@@ -17,7 +17,7 @@
 //!   conventions.
 //!
 //! All tests soft-skip through `common::generate_dwg_data_xml()`
-//! when the DWG SQLite mirror is absent.
+//! when the DWG MDF fixture is absent.
 
 use std::collections::BTreeMap;
 

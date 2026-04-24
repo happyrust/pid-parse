@@ -8,15 +8,18 @@
 //! cleanly when the file is missing so CI workers without the
 //! TEST02 backup do not fail.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
+
+mod common;
+use common::{normalize_a01_synthetic_slots, A01SyntheticMaskOptions};
 
 fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_pid_publish_xml")
 }
 
-const SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
+const A01_MDF_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
+const LEGACY_SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite";
 const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
 const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
 
@@ -45,128 +48,25 @@ fn unique_tmp_dir(label: &str) -> PathBuf {
 /// prints a reason) for skipping behavior on bare CI workers that do
 /// not carry the SmartPlant backup data.
 fn fixture_available() -> bool {
-    let p = std::path::Path::new(SQLITE_PATH);
+    let p = std::path::Path::new(A01_MDF_PATH);
     let here = p.exists();
     if !here {
-        eprintln!("skipping: fixture {SQLITE_PATH} not found");
+        eprintln!("skipping: fixture {A01_MDF_PATH} not found");
     }
     here
 }
 
-fn extract_attr(line: &str, attr: &str) -> Option<String> {
-    let needle = format!(r#"{attr}=""#);
-    let start = line.find(&needle)? + needle.len();
-    let end = line[start..].find('"')? + start;
-    Some(line[start..end].to_string())
-}
-
-fn replace_attr_value(line: &str, attr: &str, replacement: &str) -> String {
-    let needle = format!(r#"{attr}=""#);
-    let Some(start) = line.find(&needle) else {
-        return line.to_string();
-    };
-    let value_start = start + needle.len();
-    let Some(rel_end) = line[value_start..].find('"') else {
-        return line.to_string();
-    };
-    let value_end = value_start + rel_end;
-    format!(
-        "{}{}{}",
-        &line[..value_start],
-        replacement,
-        &line[value_end..]
-    )
+fn legacy_sqlite_fixture_available() -> bool {
+    let p = std::path::Path::new(LEGACY_SQLITE_PATH);
+    let here = p.exists();
+    if !here {
+        eprintln!("skipping: legacy fixture {LEGACY_SQLITE_PATH} not found");
+    }
+    here
 }
 
 fn normalize_a01_delivery_contract(xml: &str) -> String {
-    let mut current_block: Option<&'static str> = None;
-    let mut uid_aliases: BTreeMap<String, String> = BTreeMap::new();
-    let mut port_count = 0usize;
-    let mut rep_count = 0usize;
-    let mut rel_count = 0usize;
-    let mut out = Vec::new();
-
-    for raw in xml.replace("\r\n", "\n").lines() {
-        let trimmed = raw.trim_start();
-        match trimmed {
-            "<PIDDrawing>" => current_block = Some("PIDDrawing"),
-            "<PIDProcessVessel>" => current_block = Some("PIDProcessVessel"),
-            "<PIDNozzle>" => current_block = Some("PIDNozzle"),
-            "<PIDPipeline>" => current_block = Some("PIDPipeline"),
-            "<PIDPipingConnector>" => current_block = Some("PIDPipingConnector"),
-            "<PIDPipingPort>" => current_block = Some("PIDPipingPort"),
-            "<PIDProcessPoint>" => current_block = Some("PIDProcessPoint"),
-            "<PIDRepresentation>" => current_block = Some("PIDRepresentation"),
-            "<Rel>" => current_block = Some("Rel"),
-            _ => {}
-        }
-
-        let mut line = raw.to_string();
-        if trimmed.starts_with("<IObject ") {
-            if let Some(uid) = extract_attr(&line, "UID") {
-                let alias = match current_block {
-                    Some("PIDDrawing") => Some("@DRAWING@".to_string()),
-                    Some("PIDProcessVessel") => Some("@VESSEL@".to_string()),
-                    Some("PIDNozzle") => Some("@NOZZLE@".to_string()),
-                    Some("PIDPipeline") => Some("@PIPELINE@".to_string()),
-                    Some("PIDPipingConnector") => Some("@CONNECTOR@".to_string()),
-                    Some("PIDPipingPort") => {
-                        port_count += 1;
-                        Some(format!("@PORT{port_count}@"))
-                    }
-                    Some("PIDProcessPoint") => Some("@PROCESS_POINT@".to_string()),
-                    Some("PIDRepresentation") => {
-                        rep_count += 1;
-                        Some(format!("@REP{rep_count}@"))
-                    }
-                    Some("Rel") => {
-                        rel_count += 1;
-                        Some(format!("@REL{rel_count}@"))
-                    }
-                    _ => None,
-                };
-                if let Some(alias) = alias {
-                    if current_block != Some("Rel") {
-                        uid_aliases.insert(uid, alias.clone());
-                    }
-                    line = replace_attr_value(&line, "UID", &alias);
-                }
-            }
-        }
-
-        if trimmed.starts_with("<IDrawingRepresentation ") {
-            line = replace_attr_value(&line, "GraphicOID", "@GRAPHIC@");
-        }
-
-        if trimmed.starts_with("<IRel ") {
-            for attr in ["UID1", "UID2"] {
-                if let Some(value) = extract_attr(&line, attr) {
-                    if let Some(alias) = uid_aliases.get(&value) {
-                        line = replace_attr_value(&line, attr, alias);
-                    }
-                }
-            }
-        }
-
-        out.push(line);
-
-        match trimmed {
-            "</PIDDrawing>"
-            | "</PIDProcessVessel>"
-            | "</PIDNozzle>"
-            | "</PIDPipeline>"
-            | "</PIDPipingConnector>"
-            | "</PIDPipingPort>"
-            | "</PIDProcessPoint>"
-            | "</PIDRepresentation>"
-            | "</Rel>" => current_block = None,
-            _ => {}
-        }
-    }
-
-    let mut normalized = out.join("\n");
-    normalized.push('\n');
-    normalized
+    normalize_a01_synthetic_slots(xml, A01SyntheticMaskOptions::ALL)
 }
 
 #[test]
@@ -185,6 +85,10 @@ fn cli_help_flag_exits_zero_with_usage_text() {
         stderr.contains("--meta-out"),
         "--help should advertise the new --meta-out flag; stderr:\n{stderr}"
     );
+    assert!(
+        stderr.contains("Legacy compatibility"),
+        "--help should explain the MDF-first / SQLite-legacy contract; stderr:\n{stderr}"
+    );
 }
 
 #[test]
@@ -199,7 +103,7 @@ fn cli_missing_input_argument_exits_two() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("missing <mdf|sqlite>"),
+        stderr.contains("missing <mdf> argument"),
         "stderr should explain the missing argument; got:\n{stderr}"
     );
 }
@@ -240,7 +144,7 @@ fn cli_writes_both_data_and_meta_xml_for_real_drawing() {
 
     let out = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--out",
@@ -312,7 +216,7 @@ fn cli_writes_both_data_and_meta_xml_for_real_drawing() {
     // releases without spurious churn.
     let out2 = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--out",
@@ -351,7 +255,7 @@ fn cli_data_only_invocation_does_not_write_meta_file() {
 
     let out = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--out",
@@ -426,7 +330,7 @@ fn cli_diff_against_real_a01_reference_is_clean_and_exits_zero() {
 
     let out = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--plant",
@@ -526,7 +430,7 @@ fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
 
     let gen = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--plant",
@@ -540,7 +444,7 @@ fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
 
     let diff = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--plant",
@@ -619,14 +523,15 @@ fn cli_style_unknown_value_exits_two_with_clear_error() {
 #[test]
 fn cli_default_style_matches_a01_reference_delivery_contract() {
     // A01 is the only backup-backed correctness baseline.
-    // The raw file still contains publish-time synthetic
-    // values (representation GraphicOID numbering and Rel
-    // IObject UID seeds) that are not reconstructable from
-    // the publish source alone, so the delivery contract
-    // normalizes those unstable slots and then demands the
-    // entire `_Data.xml` match the bundled SmartPlant
-    // reference exactly. The emitted bytes themselves must
-    // still be deterministic across repeated CLI runs.
+    // The raw file still contains A39 evidence-guarded
+    // publish-time synthetic values (connector-family UID,
+    // Rel IObject UID seeds, and representation GraphicOID
+    // numbering) that are not present in the full Rust MDF
+    // table inventory or raw byte-form scan, so the delivery contract
+    // normalizes only those slots and then demands the entire
+    // `_Data.xml` match the bundled SmartPlant reference exactly.
+    // The emitted bytes themselves must still be deterministic
+    // across repeated CLI runs.
     if !fixture_available() {
         return;
     }
@@ -634,7 +539,7 @@ fn cli_default_style_matches_a01_reference_delivery_contract() {
     let data_path = dir.join("A01_Data.xml");
     let out = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--plant",
@@ -658,7 +563,7 @@ fn cli_default_style_matches_a01_reference_delivery_contract() {
     );
     let out2 = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--plant",
@@ -696,7 +601,7 @@ fn cli_style_dwg_drops_itemtag_on_pipeline_iobject() {
     let data_path = dir.join("A01_Data.xml");
     let out = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--plant",
@@ -749,7 +654,7 @@ fn cli_style_case_insensitive_accepts_uppercase_dwg() {
     let data_path = dir.join("A01_Data.xml");
     let out = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--plant",
@@ -779,7 +684,7 @@ fn cli_list_drawings_prints_table_and_summary_for_test02_fixture() {
         return;
     }
     let out = Command::new(binary_path())
-        .args([SQLITE_PATH, "--list-drawings"])
+        .args([A01_MDF_PATH, "--list-drawings"])
         .output()
         .expect("spawn pid_publish_xml --list-drawings");
     assert!(out.status.success(), "--list-drawings should exit 0; got {out:?}");
@@ -839,7 +744,7 @@ fn cli_drawing_not_found_error_includes_list_drawings_hint() {
     }
     let out = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             "DOES_NOT_EXIST",
             "--stdout",
@@ -883,6 +788,40 @@ fn cli_help_documents_list_drawings_flag() {
 }
 
 #[test]
+fn cli_legacy_sqlite_list_drawings_smoke_still_works_with_deprecation_warning() {
+    // `.sqlite` input remains supported only as a transition / legacy
+    // path. This test intentionally avoids any publish-fidelity
+    // assertions and only pins the minimal CLI compatibility surface:
+    // the binary must still list drawings successfully and emit the
+    // deprecation warning.
+    if !legacy_sqlite_fixture_available() {
+        return;
+    }
+    let out = Command::new(binary_path())
+        .args([LEGACY_SQLITE_PATH, "--list-drawings"])
+        .output()
+        .expect("spawn pid_publish_xml legacy sqlite --list-drawings");
+    assert!(
+        out.status.success(),
+        "legacy sqlite smoke should still exit 0; got {out:?}"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stdout.contains(A01_DRAWING_UID),
+        "legacy sqlite smoke should still list the A01 drawing UID; got:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("deprecated for publish fidelity"),
+        "legacy sqlite path should emit a deprecation warning; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("legacy compatibility adapter"),
+        "warning should explain the remaining support level; got:\n{stderr}"
+    );
+}
+
+#[test]
 fn cli_diff_against_combined_with_out_writes_xml_and_reports_clean() {
     // --diff-against composes with --out: the XML lands on disk
     // AND the report is printed. Post-A14 the A01 reference is
@@ -899,7 +838,7 @@ fn cli_diff_against_combined_with_out_writes_xml_and_reports_clean() {
 
     let out = Command::new(binary_path())
         .args([
-            SQLITE_PATH,
+            A01_MDF_PATH,
             "--drawing",
             A01_DRAWING_UID,
             "--plant",

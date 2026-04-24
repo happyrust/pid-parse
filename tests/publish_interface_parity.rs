@@ -13,15 +13,10 @@
 //! interfaces inside" gap that A19/A20/A21/A22 systematically
 //! closed.
 //!
-//! The test reads:
-//! * The TEST02 SQLite mirror at
-//!   `test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite`
-//! * The reference A01 XML at
-//!   `test-file/export-test/publish-data/A01/A01_Data.xml`
-//!
-//! and generates our `A01_Data.xml` in-process via
-//! `publish::sqlite_load::load_drawing_graph` +
-//! `publish::xml_writer::write_data_xml`. It then uses
+//! The test reads the TEST02 `Export.mdf` through the Rust MDF
+//! loader and the bundled reference A01 XML at
+//! `test-file/export-test/publish-data/A01/A01_Data.xml`.
+//! It then uses
 //! [`pid_parse::publish::parse_interfaces_per_tag`] on both sides
 //! to build `(tag -> interface set)` maps and asserts the writer
 //! side is a superset of the reference set for every tag in the

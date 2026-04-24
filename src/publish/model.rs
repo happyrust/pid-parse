@@ -4,9 +4,9 @@
 //! `_Meta.xml` writers, including plant-wide codelist metadata and
 //! the explicit A01/DWG style selector.
 //!
-//! The DTO still lacks DWG-mirror-derived branch-point nodes and any
+//! The DTO still lacks DWG-MDF-derived branch-point nodes and any
 //! loader canonical fields that cannot be validated without the DWG
-//! `Export_v2.sqlite` mirror; those remain additive.
+//! `Export.mdf` fixture; those remain additive.
 
 use std::collections::BTreeMap;
 use std::fmt;

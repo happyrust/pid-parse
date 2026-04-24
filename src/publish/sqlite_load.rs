@@ -14,7 +14,7 @@
 //! DWG-flavor canonical-field enrichment (plant-specific columns
 //! surfaced only in `T_ProcessEquipment` / extended connector and
 //! nozzle tables) is the next direction, but needs the DWG
-//! `Export_v2.sqlite` mirror to land before it can be validated;
+//! `Export.mdf` fixture to land before it can be validated;
 //! see the module-level note in [`super`] for the gate.
 //!
 //! # Join strategy

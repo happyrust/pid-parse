@@ -12,6 +12,10 @@
 //! `--style a01|dwg`, `--diff-against <reference.xml>`, and
 //! `--list-drawings`.
 //!
+//! Historical `Export_v2.sqlite` mirrors remain accepted as a
+//! legacy compatibility adapter, but MDF is now the only public
+//! publish-fidelity baseline.
+//!
 //! The unresolved work is no longer "can the CLI render business
 //! objects?" but rather DWG-mirror-gated fidelity closure:
 //! loader canonical-field enrichment and the remaining branch-point
@@ -78,10 +82,10 @@ enum OutputTarget {
 
 fn print_usage() {
     eprintln!(
-        "Usage: pid_publish_xml <mdf|sqlite> --drawing UID [--out FILE | --stdout]\n\
+        "Usage: pid_publish_xml <mdf> --drawing UID [--out FILE | --stdout]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
          \x20               [--style a01|dwg]\n\
-         \x20  pid_publish_xml <mdf|sqlite> --list-drawings\n\n\
+         \x20  pid_publish_xml <mdf> --list-drawings\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
@@ -101,7 +105,11 @@ fn print_usage() {
          --list-drawings     Print every T_Drawing row in the input table set\n\
          \x20                   (SP_ID, Name, DocumentCategory, DocumentType,\n\
          \x20                   Path) and exit 0. Mutually exclusive with the\n\
-         \x20                   render flags.\n\n\
+         \x20                   render flags.\n\
+         Legacy compatibility historical `Export_v2.sqlite` mirrors are still\n\
+         \x20                   accepted during the transition, but MDF is the\n\
+         \x20                   only public publish-fidelity baseline and `.sqlite`\n\
+         \x20                   inputs print a deprecation warning at runtime.\n\n\
          At least one of --out / --stdout / --diff-against / --list-drawings\n\
          is required."
     );
@@ -109,7 +117,10 @@ fn print_usage() {
 
 fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     if args.len() < 2 {
-        return Err("missing <mdf|sqlite> argument".into());
+        return Err(
+            "missing <mdf> argument (legacy .sqlite is still accepted during the transition)"
+                .into(),
+        );
     }
     let input_path = PathBuf::from(&args[1]);
     let mut drawing_uid: Option<String> = None;
@@ -199,7 +210,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     if list_drawings {
         // --list-drawings is its own self-contained mode. It
         // requires NONE of --drawing / --out / --stdout /
-        // --diff-against / --meta-out (the SQLite path is the
+        // --diff-against / --meta-out (the input path is the
         // only mandatory positional). Reject explicit
         // combinations rather than silently doing both — that
         // would conflate "list" output with rendered XML on
@@ -273,6 +284,7 @@ fn main() {
 ///   from the reference (used as a CI gate). Real I/O / SQLite
 ///   errors short-circuit through `Err(String)` instead.
 fn run(options: CliOptions) -> Result<i32, String> {
+    warn_if_legacy_sqlite_input(&options.input_path);
     let conn = open_input_as_sqlite(&options.input_path)?;
 
     // A30 — list mode prints all drawings and exits.
@@ -402,6 +414,23 @@ fn is_mdf_path(path: &std::path::Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("mdf"))
         .unwrap_or(false)
+}
+
+fn is_sqlite_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("sqlite"))
+        .unwrap_or(false)
+}
+
+fn warn_if_legacy_sqlite_input(path: &std::path::Path) {
+    if is_sqlite_path(path) {
+        eprintln!(
+            "warning: `.sqlite` input is deprecated for publish fidelity; \
+             prefer `Export.mdf`. The SQLite path remains available only as \
+             a legacy compatibility adapter."
+        );
+    }
 }
 
 /// A30 · `--list-drawings` mode: print every `T_Drawing` row in

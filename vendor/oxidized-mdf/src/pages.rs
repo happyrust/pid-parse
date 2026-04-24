@@ -74,10 +74,6 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
         };
         read_bytes += 2;
 
-        if fixed_length_size == 0 {
-            todo!("No fixed length data! Record cannot be handled yet");
-        }
-
         let (fixed_bytes, mut bytes) = bytes.split_at(fixed_length_size as usize);
         read_bytes += fixed_length_size as usize;
 
@@ -792,6 +788,35 @@ mod tests {
     }
 
     #[test]
+    fn parse_string_allows_zero_fixed_length_region_with_null_bitmap() {
+        // SQL Server rows may carry only variable-length payload
+        // after the 4-byte record header. This shape appears in
+        // SmartPlant lookup tables such as T_Area / T_Plant.
+        let bytes = vec![
+            0b0011_0000, // primary record + null bitmap + variable columns
+            0x00,
+            0x04,
+            0x00, // fixed-length size is header-only, so fixed region is empty
+            0x01,
+            0x00, // one column
+            0x00, // column is not null
+            0x01,
+            0x00, // one variable-length column
+            0x0f,
+            0x00, // end offset from record start
+            b'H',
+            0x00,
+            b'i',
+            0x00,
+        ];
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let (parsed_value, _record) = record.parse_string().unwrap();
+
+        assert_eq!(Some(String::from("Hi")), parsed_value);
+    }
+
+    #[test]
     fn parse_string_with_length() {
         // Bytes copied from data/spg_verein_TST.mdf
         let bytes = vec![
@@ -876,10 +901,10 @@ mod tests {
     #[rstest(
         bytes,
         expected_value,
-        case(vec![], vec![1, 5, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 148, 146, 34, 80, 208, 187, 100, 97, 111, 197, 84, 61, 232, 3, 0, 0])
+        case(vec![0b0010_0000, 0, 4, 0, 1, 0, 1, 0, 38, 0, 1, 5, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 148, 146, 34, 80, 208, 187, 100, 97, 111, 197, 84, 61, 232, 3, 0, 0], vec![1, 5, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 148, 146, 34, 80, 208, 187, 100, 97, 111, 197, 84, 61, 232, 3, 0, 0])
     )]
     fn parse_varbinary(bytes: Vec<u8>, expected_value: Vec<u8>) {
-    let record = Record::try_from(&bytes[..]).unwrap();
+        let record = Record::try_from(&bytes[..]).unwrap();
         let (parsed_value, _record) = record.parse_binary().unwrap();
 
         assert_eq!(expected_value, parsed_value.unwrap());

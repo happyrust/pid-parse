@@ -13,8 +13,8 @@
 //! * repeated emits of the same drawing must stay byte-identical,
 //! * the writer's generated DWG `_Meta.xml` matches the DWG
 //!   reference under the same semantic-field contract —
-//!   soft-skipped until the DWG SQLite mirror lands (see
-//!   [`common::DWG_SQLITE_MISSING_HINT`]).
+//!   soft-skipped until the DWG MDF fixture lands (see
+//!   [`common::DWG_MDF_MISSING_HINT`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -443,15 +443,15 @@ fn generated_a01_meta_is_byte_stable_across_repeated_emits() {
 }
 
 /// DWG-side sibling of the A01 parity gate. When the DWG
-/// SQLite mirror is bundled, the writer's generated
+/// MDF fixture is bundled, the writer's generated
 /// `_Meta.xml` must carry the same canonical shape as the
 /// bundled DWG reference (sans derived UIDs, per the same
-/// contract as A01). Soft-skipped until the mirror lands —
-/// see `DWG_SQLITE_MISSING_HINT` for the rationale message
+/// contract as A01). Soft-skipped until the MDF lands —
+/// see `DWG_MDF_MISSING_HINT` for the rationale message
 /// the helper logs.
 ///
 /// This is the test entry point that binds the DWG reference
-/// XML to the DWG SQLite mirror; callers no longer need to
+/// XML to the DWG MDF fixture; callers no longer need to
 /// fall back to the A01 fixture as a DWG-shape stand-in.
 #[test]
 fn generated_dwg_meta_matches_reference_summary_when_mirror_available() {

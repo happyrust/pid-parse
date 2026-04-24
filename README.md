@@ -26,8 +26,8 @@
 - **Layout-first 可读整图模型**（v0.4.1）：`PidDocument.layout` 输出 `items / segments / texts / unplaced / warnings`，供 H7CAD 等下游优先生成可读整图而不是语义网格图
 - **pid-only 符号证据下沉**（v0.4.1 patch）：从 `cross_reference.symbol_usage` / `jsites` 提取代表性 `.sym` 路径，补到对象级 `PidLayoutItem.symbol_path`
 - **Backup 解析（offline pipeline）**：MTF 备份头剥离（`backup::mtf`）+ MSCI / MDF 元数据探针 + `pid_backup_extract` CLI，把 SmartPlant 备份还原成可被 Rust MDF loader 读取的 `.mdf`
-- **Publish Data XML writer**（Stage-1，A12 → A31+）：通过本地克隆的 `vendor/oxidized-mdf` 直接读取 MDF 内的 `T_Drawing` / `T_ModelItem` / `T_Representation` / `T_Relationship` 等表，发出 SmartPlant 兼容的 `_Data.xml` + `_Meta.xml`。15 类 PID tag 已支持（PIDBranchPoint / PIDControlSystemFunction / PIDDrawing / PIDNote / PIDNozzle / PIDPipeline / PIDPipingBranchPoint / PIDPipingComponent / PIDPipingConnector / PIDPipingPort / PIDProcessPoint / PIDProcessVessel / PIDRepresentation / PIDSignalConnector / PIDSignalPort）；A01 reference 上共享 tag 的接口集 / 属性集继续由 A23 / A27 守门，DWG reference 的 writer coverage 已达 `108/108`
-- **Publish fidelity 9 道守门**：tag-count diff（A12）+ writer coverage 分类（A15）+ 接口级 parity（A23 / A24）+ 属性级 parity（A27 / A27b）+ backlog tag inventory snapshot（A28）+ A01/DWG style 切换（A29 / A29b）。任何 future SmartPlant 端漂移会以 `(tag, interface, attr)` 三元组在 CI 上失败定位
+- **Publish Data XML writer**（Stage-1，A12 → A39）：通过本地克隆的 `vendor/oxidized-mdf` 直接读取 MDF 内的 `T_Drawing` / `T_ModelItem` / `T_Representation` / `T_Relationship` 等表，发出 SmartPlant 兼容的 `_Data.xml` + `_Meta.xml`。15 类 PID tag 已支持（PIDBranchPoint / PIDControlSystemFunction / PIDDrawing / PIDNote / PIDNozzle / PIDPipeline / PIDPipingBranchPoint / PIDPipingComponent / PIDPipingPort / PIDProcessPoint / PIDProcessVessel / PIDRepresentation / PIDSignalConnector / PIDSignalPort）；A01 reference 上共享 tag 的接口集 / 属性集继续由 A23 / A27 守门，DWG reference 的 writer coverage 已达 `108/108`
+- **Publish fidelity 守门**：tag-count diff（A12）+ writer coverage 分类（A15）+ 接口级 parity（A23 / A24）+ 属性级 parity（A27 / A27b）+ backlog tag inventory snapshot（A28）+ A01/DWG style 切换（A29 / A29b）+ A01 raw residual 完整 MDF 证据探针（A39）。任何 future SmartPlant 端漂移会以 `(tag, interface, attr)` 三元组或 raw synthetic slot 证据门失败定位
 - **PIDProcessVessel tank 变体**（A25）：通过 `obj.fields["IsLowPressureTank"]` 路由，DWG-style "Open top tank" 17 接口形态与 A01-style "Horizontal Drum" 15 接口形态共用一套 writer
 - **Probe / Decode 分层**：启发式标记与确定性解码明确分离
 - **报告输出**：人类可读文本报告 + JSON 完整导出
@@ -113,10 +113,25 @@ cargo run --bin pid_publish_xml -- Export.mdf \
     --plant TEST02 --diff-against reference/A01_Data.xml
 ```
 
-DWG plant 的 loader / branch-point 回归目前依赖额外的 SQLite mirror：
-`test-file/backup-test/DWG-0202GP06-01_p/extracted/Export_v2.sqlite`。
+当前公开的 publish 正确性基线只承诺 `Export.mdf` 主链。
+历史 `Export_v2.sqlite` mirror 仍可作为 legacy 兼容输入喂给
+`pid_publish_xml`，但不再承担 publish fidelity 验收角色；CLI
+对 `.sqlite` 输入会打印 deprecation 提示。
+
+A01 `_Data.xml` 当前满足语义 diff、接口/属性/关系 parity、格式风格
+和 `_Meta.xml` parity。raw byte 精确对齐只剩 3 类 A39 证据化
+publish-time synthetic slots：`PIDPipingConnector` UID 家族、`Rel`
+块内的 synthetic `IObject UID`、以及 `PIDRepresentation GraphicOID`。
+ignored 探针会用 Rust MDF reader 枚举 TEST02 MDF 全表；当前实测
+128 张表全部进入完整 Rust MDF 表扫描，`tables_skipped=0`，三类
+参考残余值在 staging 表、完整表清单、以及 MDF raw ASCII /
+UTF-16LE / UUID byte-form 扫描中均无命中，因此 delivery contract
+只对这 3 类 slot 做窄归一化。
+
+DWG plant 的 loader / branch-point 回归目前依赖对应的 MDF fixture：
+`test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf`。
 仓内已带 `tests/publish_dwg_mirror.rs` 与 `tests/publish_meta_parity.rs`
-作为入口；若该 mirror 缺失，这两组 DWG 侧测试会 soft-skip，并在
+作为入口；若该 MDF 缺失，这两组 DWG 侧测试会 soft-skip，并在
 输出中明确提示“DWG canonical-field enrichment / branch-point parity 未验证”。
 
 ## 库调用

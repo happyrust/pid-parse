@@ -12,8 +12,9 @@
 
 #### Changed
 
-- `pid_publish_xml` 的 CLI 输入从 `<sqlite>` 扩展为 `<mdf|sqlite>`：
-  `.mdf` 自动走 Rust MDF loader，旧 SQLite 输入仍保留为兼容路径。
+- `pid_publish_xml` 的公开正确性基线已收敛到 `<mdf>`：
+  `.mdf` 自动走 Rust MDF loader；旧 `Export_v2.sqlite` 输入仍保留，
+  但只作为 legacy 兼容路径，并在运行时打印 deprecation 提示。
 - 新增 `publish::mdf_load`，用 `oxidized-mdf` 读取 publish 所需
   SmartPlant 表，再暂存到 in-memory SQLite connection，复用既有
   `sqlite_load` / writer / diff 逻辑，避免重复实现查询层。
@@ -30,6 +31,9 @@
   - variable-length NULL 列仍推进 offset，避免后续 nvarchar 列错位。
   - fixed-length nullable 列即使为 NULL 也消费固定字节，修复
     `T_Drawing.DateCreated` 被错读为 `1900/1/2` 的问题。
+  - 允许 fixed-length region 为 0 的 variable-only record，修复
+    `T_Area` / `T_GlobalDrawing` / `T_Plant` / `T_Unit` 扫描时的
+    `No fixed length data` panic。
   - 列元数据按 `colid` 排序，避免系统表返回顺序造成字段错配。
   - 固定长度列越界从 panic 改为返回 parse error。
 
@@ -52,13 +56,13 @@
   基于 OrcaMDF；当前改动移除了运行时 C# OrcaMDF probe 依赖，但
   许可证边界需要发布前单独确认。
 
-### Publish writer Stage-1 — fidelity ratchet (A12 → A35)
+### Publish writer Stage-1 — fidelity ratchet (A12 → A39)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
 逐层加固到"接口级"再到"属性级"，并把对照范围从"writer vs A01
 reference"扩展到"A01 vs DWG 跨 fixture"。这一系列工作不改变
 writer 的字节输出（A25 引入了 PIDProcessVessel tank-variant 的条件
-emit，是唯一例外），但建立了一套 8 道 regression gate，任何未来
+emit，是唯一例外），但建立了一套 9 道 regression gate，任何未来
 的接口/属性 drift 会立即在 CI 上以"`(tag, interface, attr)`"
 三元组失败定位。
 
@@ -67,13 +71,22 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
 - `_Meta.xml` parity 已补齐到独立测试文件
   `tests/publish_meta_parity.rs`，同时覆盖 A01 参考样本与
   mirror-available 时的 DWG 语义对照。
-- 新增 `tests/publish_dwg_mirror.rs` 作为 DWG mirror 入口；
-  当 `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export_v2.sqlite`
+- 新增 `tests/publish_dwg_mirror.rs` 作为 DWG MDF 入口；
+  当 `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf`
   缺失时，测试会显式 soft-skip 并指出 Stage 2-4
   （DWG canonical-field enrichment / branch-point parity）
   尚未验证，而不是默默把 DWG 缺口混进绿线。
+- `tests/common` 的 A01 publish 生成 helper 已改为 MDF-first，
+  旧 `Export_v2.sqlite` 只保留给 `sqlite_load` 兼容测试。
+- `tests/publish_a01_raw_residual.rs` 新增 ignored Rust MDF 全表
+  probe：A39 实测 `oxidized-mdf` 枚举 TEST02 MDF 128 张表，
+  `tables_skipped=0`；connector UID / Rel IObject UID /
+  GraphicOID 三类 raw residual 在当前 staging 表、完整 Rust MDF
+  表清单、以及 MDF raw ASCII / UTF-16LE / UUID byte-form 扫描中
+  均无命中，因此正式归类为 publish-time synthetic slots，并只在
+  A01 delivery-contract 里做窄 mask。
 - publish 模块、writer 与 CLI 顶部注释改为反映当前真实状态：
-  `_Data.xml` / `_Meta.xml` 已可运行，现存主阻塞收敛为 DWG mirror
+  `_Data.xml` / `_Meta.xml` 已可运行，现存主阻塞收敛为 DWG MDF
   缺失与其后的 branch-point / loader 富化闭环。
 
 #### Added — fidelity 分析层（src/publish/diff.rs）

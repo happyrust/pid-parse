@@ -1,5 +1,8 @@
-//! Integration test: load the TEST02 A01 drawing row out of the
-//! real `Export_v2.sqlite` produced by `tools/orca-mdf-probe`.
+//! Legacy compatibility test: load the TEST02 A01 drawing row out
+//! of an `Export_v2.sqlite` mirror when that historical fixture is
+//! present. The publish fidelity path now uses `Export.mdf` through
+//! the Rust MDF reader; this file only keeps the SQLite adapter
+//! covered.
 //!
 //! Skips cleanly on CI workers that do not carry the fixture.
 
@@ -16,8 +19,8 @@ fn load_sqlite() -> Option<rusqlite::Connection> {
     if !p.exists() {
         eprintln!("skipping: fixture {SQLITE_PATH} not found");
         eprintln!(
-            "run the pid_backup_extract → OrcaMdfProbe pipeline first; \
-             see tools/orca-mdf-probe/Program.cs for the `--to-sqlite` flag."
+            "current publish tests use Export.mdf; this legacy SQLite \
+             adapter test runs only when Export_v2.sqlite is already present."
         );
         return None;
     }
