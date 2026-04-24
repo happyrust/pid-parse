@@ -79,26 +79,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // Serialise a compact summary view rather than the whole
-    // `PidDocument` — the root struct contains some tagged-newtype
-    // variants (e.g. `SummaryPropertyValue::Lpwstr(String)`) that
-    // `serde_json` refuses to encode, and in any case a short
-    // summary is what a demo wants. Consumers needing the full
-    // model can use `pid_inspect --json` (or craft their own
-    // serializer with `serde_json::Serializer::new()` + a custom
-    // enum strategy).
-    let summary = serde_json::json!({
-        "streams"       : doc.streams.len(),
-        "unknown"       : doc.unknown_streams.len(),
-        "clusters"      : doc.clusters.len(),
-        "jsites"        : doc.jsites.len(),
-        "drawing_number": doc.drawing_meta
-            .as_ref()
-            .and_then(|m| m.drawing_number.clone()),
-    });
+    // Full JSON dump. Pipe stdout to a file to persist the decoded
+    // `PidDocument`; here we only announce the byte count so the
+    // interactive output stays tidy. (This works end-to-end as of
+    // the `SummaryPropertyValue` adjacently-tagged fix — prior to
+    // that, serializing any `.pid` with user-defined summary
+    // properties was broken.)
+    let json = serde_json::to_string_pretty(&doc)?;
     println!(
-        "\nsummary JSON:\n{}",
-        serde_json::to_string_pretty(&summary)?
+        "\nPidDocument JSON: {} bytes (pipe to file to persist)",
+        json.len()
     );
 
     Ok(())

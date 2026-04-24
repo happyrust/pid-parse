@@ -72,6 +72,40 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### 修复：`SummaryPropertyValue` 的 `serde_json` 可序列化
+
+上一轮写 `examples/parse_walkthrough.rs` 时发现
+`PidDocument::to_json` / `serde_json::to_string_pretty(&doc)` 在
+任何带 "user-defined summary properties" 的 `.pid` 文件上都会
+panic：
+`cannot serialize tagged newtype variant SummaryPropertyValue::Lpwstr containing a string`
+
+根因：`SummaryPropertyValue`（Phase 10j 引入的 typed `.pid`
+user-dict property）标注了 `#[serde(tag = "kind")]`（*internally-tagged*），
+而 serde 对 internally-tagged enum **不支持** 直接包 `String` /
+`i32` / `bool` / `u64` 这种 newtype variant——只支持 struct variant
+和 unit variant。
+
+- 改为 adjacently-tagged：`#[serde(tag = "kind", content = "value",
+  rename_all = "snake_case")]`。wire 格式现在是
+  `{"kind": "lpstr", "value": "hello"}` /
+  `{"kind": "raw", "value": {"vt": 21, "bytes": [...]}}` 等，六个
+  variant 全部可序列化。
+- 这是 wire 格式变化，但从未成功序列化过的 variant 不存在向后兼
+  容担忧；`Raw` variant 的 JSON 形状从
+  `{"kind": "raw", "vt": ..., "bytes": [...]}` 变为
+  `{"kind": "raw", "value": {"vt": ..., "bytes": [...]}}`——此前
+  没有测试或 fixture 锁定这个形状（本次扫查确认）。
+- 新增 6 条回归测试（`model::summary_property_value_serde_tests`）
+  对每个 variant 做 `to_string → from_str` 轮转 + pin wire shape。
+- `examples/parse_walkthrough.rs` 还原为直接 `to_string_pretty(&doc)`，
+  A01 fixture 现在稳定产出 97549 字节 JSON；旁路的 summary
+  `json!({...})` 被删除。
+- `PidDocument` 的结构定义本身未变——该类型无 `to_json()` 方
+  法，用户按惯例直接 `serde_json::to_string_pretty(&doc)`；此
+  前 `pid_inspect --json` 在有 user_properties 的 `.pid` 上也会
+  fail，本次一并根治。
+
 ### End-to-end `examples/` walkthroughs
 
 为 crate-level `//!` 刚写进 `src/lib.rs` 的"3 条管线入口"承诺

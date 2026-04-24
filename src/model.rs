@@ -195,8 +195,20 @@ pub struct SummaryInfo {
 /// Covers the VT codes `SmartPlant` practically emits in section 2;
 /// unknown VTs fall through to [`SummaryPropertyValue::Raw`] so the
 /// round-trip remains safe (writer passes them through verbatim).
+///
+/// # Wire format
+///
+/// Adjacently-tagged JSON (`{"kind": "…", "value": …}`). The previous
+/// internally-tagged attribute (`tag = "kind"` without `content`)
+/// could never serialize the newtype variants (`Lpstr` / `Lpwstr` /
+/// `I4` / `Bool` / `Filetime`) because internally-tagged enums in
+/// serde only support struct / unit variants — `serde_json::to_string`
+/// would reject them with _"cannot serialize tagged newtype variant"_.
+/// The `content = "value"` fixup lands `PidDocument::to_json` /
+/// `cargo run --example parse_walkthrough` for any `.pid` whose
+/// `DocumentSummaryInformation` carries user-defined properties.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum SummaryPropertyValue {
     /// `VT_LPSTR` (0x001E) — single-byte string. Writer encodes by
     /// `MetadataUpdates.summary_user_updates_encoded` or UTF-8 default.
@@ -2271,5 +2283,75 @@ mod object_graph_impl_tests {
         let g = ObjectGraph::default();
         let s = g.endpoint_resolution_stats();
         assert_eq!(s, EndpointResolutionStats::default());
+    }
+}
+
+#[cfg(test)]
+mod summary_property_value_serde_tests {
+    use super::SummaryPropertyValue;
+
+    // Regression: `#[serde(tag = "kind")]` without a `content` key was an
+    // internally-tagged enum, which serde refuses to apply to newtype
+    // variants over primitives. Every round-trip below used to fail with
+    // "cannot serialize tagged newtype variant" before the adjacently-
+    // tagged fix landed. The string literals here pin the resulting wire
+    // shape so downstream consumers can rely on it.
+
+    fn roundtrip(value: &SummaryPropertyValue, expected_json: &str) {
+        let encoded = serde_json::to_string(value).expect("serialize");
+        assert_eq!(encoded, expected_json, "wire shape");
+        let decoded: SummaryPropertyValue = serde_json::from_str(&encoded).expect("deserialize");
+        assert_eq!(&decoded, value, "round-trip identity");
+    }
+
+    #[test]
+    fn lpstr_roundtrips() {
+        roundtrip(
+            &SummaryPropertyValue::Lpstr("hello".into()),
+            r#"{"kind":"lpstr","value":"hello"}"#,
+        );
+    }
+
+    #[test]
+    fn lpwstr_roundtrips() {
+        roundtrip(
+            &SummaryPropertyValue::Lpwstr("PROJ-001".into()),
+            r#"{"kind":"lpwstr","value":"PROJ-001"}"#,
+        );
+    }
+
+    #[test]
+    fn i4_roundtrips() {
+        roundtrip(
+            &SummaryPropertyValue::I4(-42),
+            r#"{"kind":"i4","value":-42}"#,
+        );
+    }
+
+    #[test]
+    fn bool_roundtrips() {
+        roundtrip(
+            &SummaryPropertyValue::Bool(true),
+            r#"{"kind":"bool","value":true}"#,
+        );
+    }
+
+    #[test]
+    fn filetime_roundtrips() {
+        roundtrip(
+            &SummaryPropertyValue::Filetime(132_000_000_000_000_000),
+            r#"{"kind":"filetime","value":132000000000000000}"#,
+        );
+    }
+
+    #[test]
+    fn raw_roundtrips() {
+        roundtrip(
+            &SummaryPropertyValue::Raw {
+                vt: 0x0015,
+                bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            },
+            r#"{"kind":"raw","value":{"vt":21,"bytes":[222,173,190,239]}}"#,
+        );
     }
 }
