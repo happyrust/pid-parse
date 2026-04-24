@@ -36,13 +36,15 @@ macro_rules! parse_page_records {
 
 macro_rules! parse_from_sysrow_set {
     ( $page_reader:expr, $sysrow_sets:expr, $sysalloc_units:expr, $t:ty ) => {{
-        let rowset_id = $sysrow_sets.map(|row| row.rowsetid).unwrap();
+        let rowset_id = $sysrow_sets
+            .map(|row| row.rowsetid)
+            .ok_or(Error::ParseError("sysrowset entry not found"))?;
 
         let page_pointer = $sysalloc_units
             .iter()
             .find(|unit| unit.auid == rowset_id && unit.r#type == 1)
             .and_then(|unit| PagePointer::try_from(&unit.pgfirst[..]).ok())
-            .unwrap();
+            .ok_or(Error::ParseError("sysallocunit page pointer not found"))?;
 
         let mut parsed_records = Vec::new();
 
@@ -76,7 +78,7 @@ impl BaseTableData {
             .iter()
             .find(|unit| unit.auid == SYSROWEST_AUID)
             .and_then(|unit| PagePointer::try_from(&unit.pgfirst[..]).ok())
-            .unwrap();
+            .ok_or(Error::ParseError("sysrowset page pointer not found"))?;
 
         let sysrow_sets = parse_page_records!(&mut page_reader, sysrowset_page_pointer, SysrowSet);
 
@@ -152,7 +154,7 @@ impl BaseTableData {
                             .expect("Should have type for column");
 
                         Column {
-                            name: c.name.as_ref().unwrap(),
+                            name: c.name.as_deref().unwrap_or(""),
                             r#type,
                             max_length: c.length,
                             precision: c.prec as u8,
@@ -190,8 +192,9 @@ impl<'a> Table<'a> {
                 .iter()
                 .find(|unit| unit.ownerid == partition.rowsetid && unit.r#type == 1)
             {
-                let page_pointer = PagePointer::try_from(&unit.pgfirst[..]).unwrap();
-                page_pointers.push(page_pointer);
+                if let Ok(page_pointer) = PagePointer::try_from(&unit.pgfirst[..]) {
+                    page_pointers.push(page_pointer);
+                }
             }
         }
 
@@ -349,7 +352,7 @@ impl<'a> TryFrom<Record<'a>> for Sysschobj {
 
         Ok(Self {
             id,
-            name: name.unwrap(),
+            name: name.ok_or("sysschobj name is null")?,
             nsid,
             nsclass,
             status,
@@ -394,7 +397,7 @@ impl<'a> TryFrom<Record<'a>> for Sysscalartype {
         Ok(Self {
             id,
             schid,
-            name: name.unwrap(),
+            name: name.ok_or("sysscalartype name is null")?,
             xtype,
             length,
             prec,
@@ -434,7 +437,7 @@ impl<'a> TryFrom<Record<'a>> for Syscolpar {
         let (colid, record) = record.parse_i32()?;
         let (name, record) = if record.has_variable_length_columns() {
             let (name, record) = record.parse_string()?;
-            (Some(name.unwrap()), record)
+            (name, record)
         } else {
             (None, record)
         };
