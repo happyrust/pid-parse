@@ -72,6 +72,33 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### Public API rustdoc pass — Tier 1
+
+首轮对 crate 级 + 顶层 `pub mod` + 用户门面结构 / 枚举写
+rustdoc，目标是把 "读者第一次 `cargo doc --open` 看得懂是什么"
+的那层补齐，不触及 `#![warn(missing_docs)]` 硬门禁（field 级 313
+条要分多轮收口）。
+
+- `src/lib.rs` 顶部新增 crate-level `//!`：把 8 层架构指向
+  `docs/architecture-guide.md`，列出读/写/publish 三条管线的
+  入口符号并附一段最小 `no_run` 示例。
+- 为 9 个此前缺 `//!` 的模块补模块级总览：
+  `api` / `cfb` / `error` / `import_view` / `inspect` / `layout` /
+  `model` / `parsers` / `streams`。每段 4–8 行，说明模块在流水线
+  中的位置、依赖哪些上游模块、产出喂给哪些下游模块。
+- 为 4 个此前缺 `///` 的门面类型写类型级文档：
+  `PidParser` / `ParseOptions` / `PidDocument` / `PidError`。
+  聚焦"该类型在什么位置被调用、常见入口、常见失败模式"。
+- `cargo rustdoc --lib --locked -- -W missing-docs` 统计
+  473 → 447（-14）：crate 1→0、module 25→16、struct 42→39、
+  enum 8→7；剩余 313 field + 42 variant 等更细粒度项留到 Tier 2
+  按模块分期吃掉，届时再考虑把 `#![warn(missing_docs)]` 钉进
+  `src/lib.rs` 做硬门禁。
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+  仍然全绿（`clippy::doc_markdown` 也绿——途中触发过 19 个
+  `SmartPlant` / `DocVersion` / `JSite` / `JProperties` /
+  `AppObject` 反引号缺失被当场补上）。
+
 ### Performance baseline（criterion）
 
 首次为三条热路径建立 criterion 基线，用于后续重构 / 依赖升级

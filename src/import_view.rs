@@ -1,3 +1,18 @@
+//! UI-oriented projection of a decoded [`PidDocument`].
+//!
+//! Where [`crate::model`] keeps the faithful decoded structure and
+//! [`crate::crossref`] derives exact cross-references, this module
+//! flattens the pieces a consuming UI or report typically cares
+//! about — titled objects, relationship summaries, symbol usage,
+//! cluster coverage, and a bucket of unresolved entities — into the
+//! compact [`PidImportView`] DTO.
+//!
+//! Build one with [`build_import_view`]. The input [`PidDocument`]
+//! is **not** mutated, so the same document can be projected under
+//! multiple view policies without reparsing. This module does no
+//! I/O and is safe to call from any thread that already owns the
+//! document.
+
 use crate::model::{
     ClusterCoverage, ObjectGraph, PidDocument, PidObject, PidRelationship, RootPresence,
     SheetStream, SymbolUsage,

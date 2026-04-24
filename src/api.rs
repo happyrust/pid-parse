@@ -1,12 +1,47 @@
+//! Public parsing entry points.
+//!
+//! This is the first hop of the reader pipeline: the consumer picks
+//! either [`PidParser::parse_file`] (model only) or
+//! [`PidParser::parse_package`] (model + preserved raw streams). The
+//! decoded output — a [`PidDocument`] or a [`PidPackage`] — is then
+//! refined by follow-on passes in [`crate::crossref`],
+//! [`crate::layout`], [`crate::import_view`], and written back via
+//! [`crate::writer::PidWriter`] when round-tripping.
+//!
+//! [`ParseOptions`] controls cost and depth (string scans, XML
+//! decoding, `JSite` property extraction, unknown-stream retention).
+//! The defaults parse everything; shrink them for bulk scans where
+//! only a subset of the model is needed.
+
 use crate::error::PidError;
 use crate::model::PidDocument;
 use crate::package::PidPackage;
 use std::path::{Path, PathBuf};
 
+/// Front-door parser for `SmartPlant` `.pid` compound files.
+///
+/// Build one with [`PidParser::new`] (all defaults) or
+/// [`PidParser::with_options`] (custom [`ParseOptions`]), then
+/// drive it via [`PidParser::parse_file`] for a read-only decode or
+/// [`PidParser::parse_package`] when the caller will later round-trip
+/// through [`crate::writer::PidWriter`].
 pub struct PidParser {
     options: ParseOptions,
 }
 
+/// Tunables that control how aggressively `PidParser` decodes a `.pid`.
+///
+/// All fields default to "maximal fidelity" — full XML parse, full
+/// `JSite` properties, full unknown-stream retention. Shrink them
+/// when a bulk scan only needs a subset of the model:
+///
+/// - `scan_strings` — per-stream UTF-16 string probes.
+/// - `parse_xml` — `SmartPlant`-embedded XML fragments.
+/// - `parse_jsite_properties` — `JSite` dynamic property blobs.
+/// - `keep_unknown_streams` — retain unrecognized streams for audit
+///   / round-trip.
+/// - `max_preview_strings` — cap on the per-stream string preview
+///   collected during scan.
 #[derive(Debug, Clone)]
 pub struct ParseOptions {
     pub scan_strings: bool,

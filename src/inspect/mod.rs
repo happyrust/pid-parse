@@ -1,3 +1,20 @@
+//! Reporting, coverage and diagnostic tooling.
+//!
+//! Everything in this module is geared at development and audit
+//! workflows: producing human-readable reports, comparing two
+//! documents, rendering mermaid diagrams, and flagging streams
+//! whose decoder is still on the backlog.
+//!
+//! - [`KNOWN_TOP_LEVEL_STREAM_NAMES`] /
+//!   [`KNOWN_TOP_LEVEL_STORAGE_PREFIXES`] — registry of streams we
+//!   already (at least partially) decode. Adding a new decoder is a
+//!   one-line change here so [`unidentified_top_level_streams`]
+//!   immediately stops flagging it.
+//! - [`coverage`] — per-stream decode-coverage metrics.
+//! - [`diff`]     — structural diff between two [`PidDocument`]s.
+//! - [`mermaid`]  — render the CFB tree / object graph as mermaid.
+//! - [`report`]   — assemble a text / JSON report suitable for CI.
+
 pub mod coverage;
 pub mod diff;
 pub mod mermaid;

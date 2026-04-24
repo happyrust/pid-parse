@@ -1,7 +1,37 @@
+//! Canonical decoded model for a `SmartPlant` `.pid` file.
+//!
+//! This module is intentionally large: it is the single source of
+//! truth for every shape the reader produces and the writer consumes.
+//! The root type — [`PidDocument`] — aggregates the CFB tree, the
+//! stream inventory, high-level metadata (summary, drawing, general),
+//! business-level decodes (clusters, `JSites`, dynamic attributes,
+//! sheets, PSM tables, object graph, object inventory), optional
+//! derived views (cross-reference, layout), and the `DocVersion` /
+//! `AppObject` / tagged-text auxiliary blocks.
+//!
+//! The structs here derive [`serde::Serialize`] / [`serde::Deserialize`]
+//! and [`schemars::JsonSchema`], so they double as the JSON-schema
+//! surface emitted by [`crate::schema`]. Any field add/rename is a
+//! schema change — keep deprecations explicit.
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Fully decoded view of a `SmartPlant` `.pid` file.
+///
+/// Produced by [`crate::api::PidParser::parse_file`] (or, with raw
+/// bytes retained, by [`crate::api::PidParser::parse_package`]). Most
+/// fields are populated eagerly by the reader; [`object_graph`],
+/// [`cross_reference`], [`layout`] and [`object_inventory`] are
+/// filled in by follow-on passes ([`crate::crossref::build_graph`],
+/// [`crate::layout::derive_layout`], the reader's own inventory pass)
+/// and are [`Option`]al so partially-decoded documents remain usable.
+///
+/// [`object_graph`]: Self::object_graph
+/// [`cross_reference`]: Self::cross_reference
+/// [`layout`]: Self::layout
+/// [`object_inventory`]: Self::object_inventory
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PidDocument {
     pub cfb_tree: StorageNode,

@@ -1,3 +1,19 @@
+//! Topology-driven layout synthesis.
+//!
+//! [`derive_layout`] / [`build_layout_model`] walk the already-decoded
+//! [`crate::model::ObjectGraph`] and produce a [`PidLayoutModel`]
+//! that places objects, pipeline segments, nozzles and stray text in
+//! a grid suitable for downstream visualisation. This is **not** a
+//! CAD geometry decode — `SmartPlant`'s own coordinates live in
+//! separate binary streams that are not parsed here; the layout in
+//! this module is a heuristic reconstruction based on graph topology
+//! and sheet membership.
+//!
+//! Side effect: [`derive_layout`] writes into
+//! [`crate::model::PidDocument::layout`]. Pass an owned `&mut doc`
+//! from the reader pipeline or refuse the call from read-only
+//! contexts — we deliberately don't clone the document.
+
 use crate::model::{
     ObjectGraph, PidDocument, PidLayoutItem, PidLayoutModel, PidLayoutSegment, PidLayoutText,
     PidLayoutUnplaced, PidObject, PidRelationship,
