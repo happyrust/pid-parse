@@ -46,7 +46,7 @@ fn unique_tmp_dir(label: &str) -> PathBuf {
 
 /// True when the real MDF fixture is on disk. Returns false (and
 /// prints a reason) for skipping behavior on bare CI workers that do
-/// not carry the SmartPlant backup data.
+/// not carry the `SmartPlant` backup data.
 fn fixture_available() -> bool {
     let p = std::path::Path::new(A01_MDF_PATH);
     let here = p.exists();

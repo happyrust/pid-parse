@@ -1,8 +1,8 @@
 //! Integration tests for the MTF envelope parser.
 //!
-//! These tests poke at a real SmartPlant backup `Export.dmp` fixture
+//! These tests poke at a real `SmartPlant` backup `Export.dmp` fixture
 //! shipped under `test-file/backup-test/`. When the fixture is missing
-//! (e.g. CI workers that do not carry large SmartPlant samples) the
+//! (e.g. CI workers that do not carry large `SmartPlant` samples) the
 //! tests skip cleanly — same pattern used by `parse_real_files.rs` /
 //! `writer_real_files.rs`.
 

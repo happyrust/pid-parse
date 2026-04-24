@@ -1,7 +1,7 @@
 //! Legacy compatibility test: load the TEST02 A01 drawing row out
 //! of an `Export_v2.sqlite` mirror when that historical fixture is
 //! present. The publish fidelity path now uses `Export.mdf` through
-//! the Rust MDF reader; this file only keeps the SQLite adapter
+//! the Rust MDF reader; this file only keeps the `SQLite` adapter
 //! covered.
 //!
 //! Skips cleanly on CI workers that do not carry the fixture.

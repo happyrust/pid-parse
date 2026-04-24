@@ -54,14 +54,14 @@ pub struct PidDocument {
     pub object_graph: Option<ObjectGraph>,
 
     /// Cross-reference graph that stitches decoded data together
-    /// (PSM declarations ↔ actual clusters, JSite ↔ symbols, DA class ↔ records,
-    /// PSMroots ↔ cfb tree). Derived from `PidDocument` in a second pass.
+    /// (PSM declarations ↔ actual clusters, `JSite` ↔ symbols, DA class ↔ records,
+    /// `PSMroots` ↔ cfb tree). Derived from `PidDocument` in a second pass.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cross_reference: Option<CrossReferenceGraph>,
 
     /// Readable whole-drawing layout derived from semantic graph topology,
     /// representation hints, and known symbol categories. This is a
-    /// visualization-oriented layout model, not a byte-for-byte SmartPlant
+    /// visualization-oriented layout model, not a byte-for-byte `SmartPlant`
     /// geometry decode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<PidLayoutModel>,
@@ -160,25 +160,25 @@ pub struct SummaryInfo {
 }
 
 /// Phase 10j (v0.9.0+): typed property value from the user-defined
-/// dictionary in DocumentSummaryInformation section 2.
+/// dictionary in `DocumentSummaryInformation` section 2.
 ///
-/// Covers the VT codes SmartPlant practically emits in section 2;
+/// Covers the VT codes `SmartPlant` practically emits in section 2;
 /// unknown VTs fall through to [`SummaryPropertyValue::Raw`] so the
 /// round-trip remains safe (writer passes them through verbatim).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SummaryPropertyValue {
-    /// VT_LPSTR (0x001E) — single-byte string. Writer encodes by
+    /// `VT_LPSTR` (0x001E) — single-byte string. Writer encodes by
     /// `MetadataUpdates.summary_user_updates_encoded` or UTF-8 default.
     Lpstr(String),
-    /// VT_LPWSTR (0x001F) — UTF-16LE string.
+    /// `VT_LPWSTR` (0x001F) — UTF-16LE string.
     Lpwstr(String),
-    /// VT_I4 (0x0003).
+    /// `VT_I4` (0x0003).
     I4(i32),
-    /// VT_BOOL (0x000B) — property-set representation is u16 0x0000 /
+    /// `VT_BOOL` (0x000B) — property-set representation is u16 0x0000 /
     /// 0xFFFF.
     Bool(bool),
-    /// VT_FILETIME (0x0040) — raw 64-bit 100ns-since-1601 value.
+    /// `VT_FILETIME` (0x0040) — raw 64-bit 100ns-since-1601 value.
     Filetime(u64),
     /// Any other VT the parser recognizes structurally but does not
     /// model explicitly; writer passes bytes through verbatim.
@@ -344,7 +344,7 @@ pub struct DaRecordTrailer {
     pub class_id: u32,
     /// 32-character hex `DrawingID` of the record, resolved by scanning
     /// backwards from the trailer for the `DrawingID\0<32hex>` sequence.
-    /// `None` for relationships (which don't carry a DrawingID) and for
+    /// `None` for relationships (which don't carry a `DrawingID`) and for
     /// records where the marker couldn't be located.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub drawing_id: Option<String>,
@@ -391,12 +391,12 @@ pub enum AttributeValue {
     Empty,
 }
 
-/// Probe metadata for PSMcluster0 string-table heuristic.
+/// Probe metadata for `PSMcluster0` string-table heuristic.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClusterProbeInfo {
     /// Byte offset where the string table was detected.
     pub string_table_offset: usize,
-    /// Method used to locate the start: "entry2_backtrack" or "fallback".
+    /// Method used to locate the start: "`entry2_backtrack`" or "fallback".
     pub detection_method: String,
     /// Number of entries parsed.
     pub entries_parsed: usize,
@@ -470,11 +470,11 @@ pub struct SheetStream {
     /// Structured attribute records extracted from the sheet stream (heuristic).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub attribute_records: Vec<AttributeRecord>,
-    /// Probe summary: heuristic scan metadata (body_start_offset, marker_count, etc.).
+    /// Probe summary: heuristic scan metadata (`body_start_offset`, `marker_count`, etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub probe_summary: Option<ProbeSummary>,
     /// Endpoint-pair records decoded from the sheet. Each entry maps a
-    /// Relationship's `field_x` to the `(endpoint_a, endpoint_b)` field_x
+    /// Relationship's `field_x` to the `(endpoint_a, endpoint_b)` `field_x`
     /// pair of the two objects it connects.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub endpoint_records: Vec<SheetEndpointRecord>,
@@ -688,7 +688,7 @@ pub struct PsmClusterTable {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmClusterEntry {
-    /// Decoded UTF-16LE cluster name, e.g. "PSMcluster0", "Sheet6".
+    /// Decoded UTF-16LE cluster name, e.g. "`PSMcluster0`", "Sheet6".
     pub name: String,
     /// Offset inside the stream where the UTF-16LE name begins.
     pub name_offset: usize,
@@ -711,7 +711,7 @@ pub struct PsmClusterEntry {
     pub probe: Option<PsmClusterRecordProbe>,
 }
 
-/// Phase 11a-probe — byte-level summary of a single PSMclustertable record.
+/// Phase 11a-probe — byte-level summary of a single `PSMclustertable` record.
 /// All fields are computed purely from the raw bytes; none of them claim
 /// semantic meaning. Use for visual inspection and fixture-drift detection;
 /// do not consume from `layout` / `import_view`.
@@ -772,7 +772,7 @@ pub struct PsmSegmentEntry {
     pub probe: Option<PsmSegmentRecordProbe>,
 }
 
-/// Phase 11b-probe — byte-level summary of a single PSMsegmenttable entry.
+/// Phase 11b-probe — byte-level summary of a single `PSMsegmenttable` entry.
 /// All fields are computed purely from the raw stream + surrounding bytes;
 /// none of them claim semantic meaning. Use for visual inspection and
 /// fixture-drift detection; do not consume from `layout` / `import_view`.
@@ -834,19 +834,19 @@ pub struct VersionRecord {
 }
 
 impl VersionRecord {
-    /// True iff `operation == "SA"`, mirroring DocVersion2 op_type
-    /// `0x82` (SaveAs / create) observed in Phase 9f sample analysis.
+    /// True iff `operation == "SA"`, mirroring `DocVersion2` `op_type`
+    /// `0x82` (`SaveAs` / create) observed in Phase 9f sample analysis.
     pub fn is_save_as(&self) -> bool {
         self.operation == "SA"
     }
 
-    /// True iff `operation == "SV"`, mirroring DocVersion2 op_type
+    /// True iff `operation == "SV"`, mirroring `DocVersion2` `op_type`
     /// `0x81` (Save / modify).
     pub fn is_save(&self) -> bool {
         self.operation == "SV"
     }
 
-    /// True iff `operation` is one of the codes SmartPlant is known to
+    /// True iff `operation` is one of the codes `SmartPlant` is known to
     /// produce. When `false`, the raw string is still available via
     /// [`Self::operation`] for diagnostic logging.
     pub fn is_recognized_operation(&self) -> bool {
@@ -978,8 +978,8 @@ pub struct AppObjectEntry {
 }
 
 /// Decoded `JTaggedTxtStgList`: small index mapping a storage list name
-/// (e.g. "TaggedTxtStorages") to the actual storage directory name
-/// (e.g. "TaggedTxtData").
+/// (e.g. "`TaggedTxtStorages`") to the actual storage directory name
+/// (e.g. "`TaggedTxtData`").
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaggedTextStorageList {
     pub size: u64,
@@ -989,7 +989,7 @@ pub struct TaggedTextStorageList {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaggedTextStorageEntry {
-    /// Storage directory name (e.g. "TaggedTxtData").
+    /// Storage directory name (e.g. "`TaggedTxtData`").
     pub storage_name: String,
 }
 
@@ -1007,7 +1007,7 @@ pub struct DocVersion2Raw {
 /// Structured decoding of the `/DocVersion2` stream (v0.3.8+).
 ///
 /// `/DocVersion2` is a compact per-save version log, matching `/DocVersion3`
-/// one-to-one (a SaveAs + N Saves). Format:
+/// one-to-one (a `SaveAs` + N Saves). Format:
 ///
 /// - 12-byte header: `u32 LE magic = 0x0001_0034` + 8 reserved bytes
 /// - N × 9-byte records: `op_type | fixed=[0,0,9] | separator | u32 LE version`
@@ -1026,7 +1026,7 @@ pub struct DocVersion2 {
 }
 
 /// One record inside a [`DocVersion2`] log. The `op_type` byte (0x82 =
-/// SaveAs, 0x81 = Save) and `version` (u32 LE) are the semantic fields;
+/// `SaveAs`, 0x81 = Save) and `version` (u32 LE) are the semantic fields;
 /// the other bytes are carried through so round-trippers can still
 /// reproduce the original byte stream.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1124,7 +1124,7 @@ impl ObjectGraph {
 
     /// Linear scan: every object whose `item_type` exactly equals
     /// `item_type` (case-sensitive). Returned in source order.
-    /// O(N) — for hot loops with few item_types, callers can build a
+    /// O(N) — for hot loops with few `item_types`, callers can build a
     /// `BTreeMap<&str, Vec<&PidObject>>` themselves once.
     pub fn find_objects_by_item_type(&self, item_type: &str) -> Vec<&PidObject> {
         self.objects
@@ -1133,7 +1133,7 @@ impl ObjectGraph {
             .collect()
     }
 
-    /// Linear scan: every object whose `extra` BTreeMap contains
+    /// Linear scan: every object whose `extra` `BTreeMap` contains
     /// `key`=`value` (both case-sensitive, exact match). Returned in
     /// source order.
     pub fn find_objects_by_extra(&self, key: &str, value: &str) -> Vec<&PidObject> {
@@ -1245,8 +1245,8 @@ impl ObjectGraph {
 
     /// All `drawing_id`s that start with `prefix`, in ascending sorted
     /// order. Empty `prefix` returns every id (≡ all object
-    /// drawing_ids). Case-sensitive — `drawing_id`s are uppercase
-    /// 32-hex by SmartPlant convention.
+    /// `drawing_ids`). Case-sensitive — `drawing_id`s are uppercase
+    /// 32-hex by `SmartPlant` convention.
     ///
     /// `BTreeMap::range`-backed: O(log N + K) where K is the result
     /// length; faster than scanning `objects` linearly when only a
@@ -1293,9 +1293,9 @@ impl ObjectGraph {
 pub struct PidObject {
     /// 32-character hex unique identifier (e.g. "D8FAB6ED48684E799CDFF0396E213773").
     pub drawing_id: String,
-    /// `ModelItemType`: "PipeRun", "Nozzle", "Instrument", "Drawing", …
+    /// `ModelItemType`: "`PipeRun`", "Nozzle", "Instrument", "Drawing", …
     pub item_type: String,
-    /// `DrawingItemType`: "Symbol", "LabelPersist", "ItemNote", …
+    /// `DrawingItemType`: "Symbol", "`LabelPersist`", "`ItemNote`", …
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drawing_item_type: Option<String>,
     /// `ModelID` if present (rare in our samples).
@@ -1447,11 +1447,11 @@ pub struct PidLayoutUnplaced {
 pub struct CrossReferenceGraph {
     /// PSM-declared clusters vs. clusters actually present in the file.
     pub cluster_coverage: ClusterCoverage,
-    /// JSite instances grouped by the symbol they reference.
+    /// `JSite` instances grouped by the symbol they reference.
     pub symbol_usage: Vec<SymbolUsage>,
     /// One summary per attribute class found in Unclustered Dynamic Attributes.
     pub attribute_classes: Vec<AttributeClassSummary>,
-    /// Each PSMroots entry correlated with its existence in the CFB tree.
+    /// Each `PSMroots` entry correlated with its existence in the CFB tree.
     pub root_presence: Vec<RootPresence>,
     /// Phase 3 Step 2: per-relationship provenance link between
     /// `ObjectGraph.relationships` and their matching `SheetEndpointRecord`.
@@ -1548,7 +1548,7 @@ pub struct ClusterCoverageMatch {
 /// guaranteed 1:1 with `ObjectGraph.relationships` (in source order).
 ///
 /// Each relationship is in one of three states:
-/// - `rel_field_x = None` → parser never attached a DA trailer field_x to
+/// - `rel_field_x = None` → parser never attached a DA trailer `field_x` to
 ///   this relationship. `sheet_*` all `None`, `missing_sheet_record = false`.
 /// - `rel_field_x = Some(x)` but no sheet endpoint record matches → link
 ///   carries `missing_sheet_record = true` so callers can surface a
@@ -1604,7 +1604,7 @@ pub struct EndpointLinkCoverage {
     /// Relationships with a `rel_field_x` that did not match any sheet
     /// endpoint record (fixture-drift warning).
     pub missing_sheet_record: usize,
-    /// Relationships whose PidRelationship already resolved both
+    /// Relationships whose `PidRelationship` already resolved both
     /// source/target `drawing_id`.
     pub fully_resolved: usize,
     /// Relationships where exactly one of source/target `drawing_id` was
@@ -1667,7 +1667,7 @@ pub struct ObjectSourceCoverage {
 }
 
 /// Phase 3 Step 3 — end-to-end "cluster → sheet → endpoint → DA record →
-/// PidObject" provenance chain diagnostic. Each field counts how many
+/// `PidObject`" provenance chain diagnostic. Each field counts how many
 /// relationships passed a given hop; `fully_traced` is the subset that
 /// passed all 4 hops. Computed strictly from the other `CrossReferenceGraph`
 /// sections, so no extra parser state is required.
@@ -1752,7 +1752,7 @@ pub struct SheetProvenanceCoverage {
     pub empty_declared_sheets: usize,
 }
 
-/// Symbol → JSite reverse index. One entry per unique `symbol_path`.
+/// Symbol → `JSite` reverse index. One entry per unique `symbol_path`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SymbolUsage {
     /// Absolute symbol path (e.g. `\\server\share\symbols\Valve.sym`).
@@ -1760,7 +1760,7 @@ pub struct SymbolUsage {
     /// Basename of the symbol (e.g. `Valve`). `None` when unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol_name: Option<String>,
-    /// JSite storage names that reference this symbol (sorted, unique).
+    /// `JSite` storage names that reference this symbol (sorted, unique).
     pub jsite_names: Vec<String>,
     /// Number of references. Always equal to `jsite_names.len()`.
     pub usage_count: usize,

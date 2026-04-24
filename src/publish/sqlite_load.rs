@@ -1,14 +1,14 @@
-//! Load a Publish-Data DTO out of a SQLite connection shaped like the
-//! SmartPlant SQL tables.
+//! Load a Publish-Data DTO out of a `SQLite` connection shaped like the
+//! `SmartPlant` SQL tables.
 //!
 //! The current MDF path uses `mdf_load` to stage publish-relevant rows
-//! into an in-memory SQLite connection, then reuses this query layer.
+//! into an in-memory `SQLite` connection, then reuses this query layer.
 //!
 //! Scope: read the drawing row, its representations and the model
 //! items they anchor, plus every relationship that ties them. The
 //! loader also descends into the per-ItemType business subtables
-//! (Equipment → Vessel / Nozzle, PlantItem → PipeRun, Connector,
-//! PipingPoint, …) so the writer receives a fully-populated DTO.
+//! (Equipment → Vessel / Nozzle, `PlantItem` → `PipeRun`, Connector,
+//! `PipingPoint`, …) so the writer receives a fully-populated DTO.
 //! The subtable chain is defined by `subtables_for_item_type`.
 //!
 //! DWG-flavor canonical-field enrichment (plant-specific columns
@@ -34,7 +34,7 @@ use super::model::{
     PublishRepresentation,
 };
 
-/// Open a legacy SQLite table dump in read-only mode and return a
+/// Open a legacy `SQLite` table dump in read-only mode and return a
 /// ready-to-query connection. Exposed publicly so integration tests
 /// and compatibility tools can reuse the same open logic.
 pub fn open_readonly(path: &Path) -> Result<Connection, PublishError> {
@@ -74,7 +74,7 @@ pub fn load_drawing(conn: &Connection, drawing_uid: &str) -> Result<PublishDrawi
     })
 }
 
-/// Parse a SQLite TEXT column that SmartPlant may have stored as
+/// Parse a `SQLite` TEXT column that `SmartPlant` may have stored as
 /// either a numeric string ("42") or a full decimal
 /// representation ("42.0"). Empty / NULL / non-numeric input
 /// surfaces as `None` rather than an error — stage-1 treats these
@@ -100,7 +100,7 @@ fn parse_optional_i64(raw: Option<String>) -> Option<i64> {
 }
 
 /// Load every [`PublishRepresentation`] attached to `drawing_uid`,
-/// sorted by the order SmartPlant stored them (SP_ID text order —
+/// sorted by the order `SmartPlant` stored them (`SP_ID` text order —
 /// stable across runs).
 pub fn load_representations(
     conn: &Connection,
@@ -167,8 +167,8 @@ pub fn load_relationships(
 /// Load every `T_PipingPoint` row whose parent `SP_PlantItemID`
 /// is in the given set, and materialize it as a synthetic
 /// [`PublishObject`] the XML writer can render via
-/// `write_piping_port`. PipingPoints are drawing-scoped only
-/// through their parent PlantItem (Nozzle / PipingComp / ...), so
+/// `write_piping_port`. `PipingPoints` are drawing-scoped only
+/// through their parent `PlantItem` (Nozzle / `PipingComp` / ...), so
 /// this function must be called AFTER the drawing's main object
 /// list is populated; the caller passes the union of those
 /// objects' UIDs as the lookup key.
@@ -181,7 +181,7 @@ pub fn load_relationships(
 ///   (`NominalDiameter`, `FlowDirection`, `EndPrep`,
 ///   `PipingPointUsage`, `PipingPointNumber`) plus
 ///   `SP_PlantItemID` for tools that want to link back to the
-///   owning PlantItem.
+///   owning `PlantItem`.
 ///
 /// Empty-string values are filtered to keep the `fields` map
 /// tight; NULL columns are omitted automatically. Returns an
@@ -248,7 +248,7 @@ pub fn load_piping_points_for_objects(
 
 /// Load every `T_ModelItem` row whose `SP_ID` is in the given set.
 /// Returns rows in the same order as the input set's iteration
-/// (BTreeSet ⇒ lexicographic).
+/// (`BTreeSet` ⇒ lexicographic).
 pub fn load_objects_by_uids(
     conn: &Connection,
     uids: &BTreeSet<String>,
@@ -299,7 +299,7 @@ fn prepare_optional<'conn>(
     }
 }
 
-/// Load the SmartPlant codelist + attribute-codelist metadata out
+/// Load the `SmartPlant` codelist + attribute-codelist metadata out
 /// of `conn`, returning a [`CodelistIndex`] that the XML writer
 /// consults when resolving coded attribute values (e.g.
 /// `EquipmentType = "0"` → `"Horizontal Drum"`).
@@ -415,8 +415,8 @@ fn attach_business_columns(
 /// Return the list of SPPID subtables that carry business
 /// attributes for a given `ItemTypeName`. Order matters: multiple
 /// tables may contribute to the same object (e.g. Vessel rows
-/// live in both T_Equipment — general equipment attributes —
-/// and T_Vessel — vessel-specific dimensions), and later rows
+/// live in both `T_Equipment` — general equipment attributes —
+/// and `T_Vessel` — vessel-specific dimensions), and later rows
 /// overwrite earlier ones on column name collision.
 pub(super) fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
     match item_type_name {
@@ -454,25 +454,25 @@ pub(super) fn subtables_for_item_type(item_type_name: &str) -> &'static [&'stati
     }
 }
 
-/// A34c — loader-side inference of each PipeRun's two endpoint
-/// connections (port.1 / port.2 → upstream ModelItem UID).
+/// A34c — loader-side inference of each `PipeRun`'s two endpoint
+/// connections (port.1 / port.2 → upstream `ModelItem` UID).
 ///
-/// SmartPlant's reference `_Data.xml` emits `PipingEnd1Conn` /
-/// `PipingEnd2Conn` rels whose `UID2` points at the ModelItem
+/// `SmartPlant`'s reference `_Data.xml` emits `PipingEnd1Conn` /
+/// `PipingEnd2Conn` rels whose `UID2` points at the `ModelItem`
 /// sitting at the connected end of the pipe (typically a Nozzle
-/// or another PipeRun). Our writer previously used the connector's
+/// or another `PipeRun`). Our writer previously used the connector's
 /// own `<connector>.PPT` process-point UID as a placeholder on
 /// both ends, which keeps the document structurally valid but
-/// loses the semantic cross-reference SmartPlant validators care
+/// loses the semantic cross-reference `SmartPlant` validators care
 /// about.
 ///
 /// This function reconstructs the real target UIDs by walking
-/// three SQLite columns:
+/// three `SQLite` columns:
 ///
 /// 1. `T_Representation` — already loaded into `drawing.representations`.
 ///    Every representation knows its owning `SP_ModelItemID`.
-/// 2. `T_Connector` — one row per representation of a PipeRun /
-///    SignalRun. `SP_ConnectItem1ID` / `SP_ConnectItem2ID` carry
+/// 2. `T_Connector` — one row per representation of a `PipeRun` /
+///    `SignalRun`. `SP_ConnectItem1ID` / `SP_ConnectItem2ID` carry
 ///    the *representation* UIDs of whatever sits at port.1 and
 ///    port.2 of that rep.
 /// 3. Map back: `ConnectItem1ID` → representation → owning
@@ -662,7 +662,7 @@ pub fn load_drawing_graph(
 mod tests {
     use super::*;
 
-    /// Create an in-memory SQLite database, populate it with a
+    /// Create an in-memory `SQLite` database, populate it with a
     /// minimal `T_Drawing` schema, and return the connection plus
     /// the synthetic drawing UID. Keeps the unit tests
     /// fixture-free.
@@ -749,8 +749,8 @@ mod tests {
         assert!(d.date_created.is_none());
     }
 
-    /// Create an in-memory SQLite with the catalog-layer tables
-    /// SmartPlant ships alongside every export: `codelists` and
+    /// Create an in-memory `SQLite` with the catalog-layer tables
+    /// `SmartPlant` ships alongside every export: `codelists` and
     /// `attributes`. The function does NOT populate any rows —
     /// individual tests seed whatever they need.
     fn setup_codelist_db() -> Connection {
@@ -825,7 +825,7 @@ mod tests {
         assert!(idx.lookup_by_attribute("NominalDiameter", "250").is_none());
     }
 
-    /// Seed an in-memory SQLite with the `T_PipingPoint` shape so
+    /// Seed an in-memory `SQLite` with the `T_PipingPoint` shape so
     /// A9 loader tests can insert their own rows. Returns the
     /// connection to the caller.
     fn setup_piping_point_db() -> Connection {
@@ -965,8 +965,8 @@ mod tests {
     // A34c — attach_pipe_endpoint_connections
     // -------------------------------------------------------------
 
-    /// Build an in-memory SQLite with the minimum T_Connector shape
-    /// A34c cares about. Callers seed rows for the specific PipeRun
+    /// Build an in-memory `SQLite` with the minimum `T_Connector` shape
+    /// A34c cares about. Callers seed rows for the specific `PipeRun`
     /// representations under test.
     fn setup_connector_db() -> Connection {
         let conn = Connection::open_in_memory().expect("open sqlite");
@@ -979,8 +979,8 @@ mod tests {
         conn
     }
 
-    /// Helper: assemble a `PublishDrawing` with a single PipeRun
-    /// obj and the representations + T_Connector the A01 fixture
+    /// Helper: assemble a `PublishDrawing` with a single `PipeRun`
+    /// obj and the representations + `T_Connector` the A01 fixture
     /// exercises. Keeps every A34c test free of the real backup
     /// bundle.
     fn a34c_drawing_fixture() -> PublishDrawing {

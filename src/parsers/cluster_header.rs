@@ -21,8 +21,8 @@ pub fn parse_header(data: &[u8]) -> Option<ClusterHeader> {
     })
 }
 
-/// Parse the indexed UTF-16LE string table found in PSMcluster0.
-/// Starts scanning from `offset`; each entry is: u32 index + u32 byte_len + UTF-16LE payload.
+/// Parse the indexed UTF-16LE string table found in `PSMcluster0`.
+/// Starts scanning from `offset`; each entry is: u32 index + u32 `byte_len` + UTF-16LE payload.
 /// Stops when it encounters an index of 0 followed by a zero-length entry, or runs out of data.
 pub fn parse_string_table(data: &[u8], start: usize) -> (Vec<IndexedString>, usize) {
     let mut out = Vec::new();

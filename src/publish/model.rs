@@ -1,4 +1,4 @@
-//! Object-graph DTO the SQLite loader feeds into the XML writer.
+//! Object-graph DTO the `SQLite` loader feeds into the XML writer.
 //!
 //! Current scope: enough shape to drive the shipped `_Data.xml` and
 //! `_Meta.xml` writers, including plant-wide codelist metadata and
@@ -11,13 +11,13 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-/// SmartPlant codelist lookup — maps `(codelist_number, codelist_index)`
+/// `SmartPlant` codelist lookup — maps `(codelist_number, codelist_index)`
 /// pairs to their human-readable display text, plus an auxiliary
 /// `attribute_name → codelist_number` map so callers can resolve
 /// business-field values (e.g. `EquipmentType = "0"`) to
 /// descriptions (e.g. `"Horizontal Drum"`) by attribute name alone.
 ///
-/// The SmartPlant metadata catalog stores this as two tables:
+/// The `SmartPlant` metadata catalog stores this as two tables:
 ///
 /// * `codelists(codelist_number, codelist_index, codelist_text, ...)`
 ///   — one row per enum entry.
@@ -76,7 +76,7 @@ impl CodelistIndex {
     }
 
     /// Resolve a codelisted attribute value by name:
-    /// `attribute_name` → codelist_number → `(codelist_number, value)`
+    /// `attribute_name` → `codelist_number` → `(codelist_number, value)`
     /// → display text. Returns `None` when either the attribute is
     /// not codelisted or the value is not in the resolved codelist.
     pub fn lookup_by_attribute(&self, attribute_name: &str, value: &str) -> Option<&str> {
@@ -110,7 +110,7 @@ impl CodelistIndex {
 /// enum for every SQL failure mode.
 #[derive(Debug)]
 pub enum PublishError {
-    /// Generic SQLite / rusqlite failure.
+    /// Generic `SQLite` / rusqlite failure.
     Sqlite(String),
     /// MDF parser failure from the Rust MDF reader.
     Mdf(String),
@@ -142,8 +142,8 @@ impl From<oxidized_mdf::error::Error> for PublishError {
     }
 }
 
-/// One SmartPlant model item — the shared identity for every
-/// user-level object (Vessel / Nozzle / PipeRun / PipingPoint /
+/// One `SmartPlant` model item — the shared identity for every
+/// user-level object (Vessel / Nozzle / `PipeRun` / `PipingPoint` /
 /// Instrument / Note / ...).
 ///
 /// `item_type_name` mirrors `T_ModelItem.ItemTypeName` verbatim and
@@ -154,7 +154,7 @@ pub struct PublishObject {
     /// `T_ModelItem.SP_ID`.
     pub uid: String,
     /// `T_ModelItem.ItemTypeName` — e.g. "Vessel", "Nozzle",
-    /// "PipeRun", "PipingPoint", "Instrument", "Note".
+    /// "`PipeRun`", "`PipingPoint`", "Instrument", "Note".
     pub item_type_name: String,
     /// `T_ModelItem.Description` (optional in most rows).
     pub description: Option<String>,
@@ -165,8 +165,8 @@ pub struct PublishObject {
     /// `"PipingMaterialsClass"`, `"EquipmentType"`).
     ///
     /// Populated by the loader when a matching row is found in
-    /// the per-kind subtable (T_Equipment / T_Vessel / T_Nozzle /
-    /// T_PipeRun / ...). Columns that store non-Text SQL types
+    /// the per-kind subtable (`T_Equipment` / `T_Vessel` / `T_Nozzle` /
+    /// `T_PipeRun` / ...). Columns that store non-Text SQL types
     /// still surface here as their loader-rendered string form.
     ///
     /// Values are kept as `String` rather than raw bytes so the
@@ -192,7 +192,7 @@ pub struct PublishRepresentation {
     /// representation belongs to. Populated by the loader so
     /// callers can filter without recomputing the join.
     pub drawing_uid: String,
-    /// `T_Representation.GraphicOID` — the runtime SmartPlant
+    /// `T_Representation.GraphicOID` — the runtime `SmartPlant`
     /// graphic object id. Surfaced as `GraphicOID="…"` in XML.
     pub graphic_oid: Option<i64>,
     /// `T_Representation.FileName` — symbol path (e.g.
@@ -226,28 +226,28 @@ pub struct PublishRelationship {
     pub is_binary: Option<i64>,
 }
 
-/// SmartPlant export style — selects between the two
+/// `SmartPlant` export style — selects between the two
 /// fixture-side variants observed on real Publish Data XML.
 ///
-/// SmartPlant's Publish Data exporter emits structurally
+/// `SmartPlant`'s Publish Data exporter emits structurally
 /// identical XML across plants and projects, but two
 /// fixture-side conventions differ in attribute naming on
 /// `IObject`:
 ///
 /// * **A01 style** — A01 plant export uses `ItemTag` on
-///   PIDPipeline / PIDPipingConnector / PIDProcessVessel
-///   IObjects; the business identifier is exposed under the
-///   `ItemTag` attribute key. PIDProcessVessel always carries
-///   the tag (UID + ItemTag + Description shape).
+///   `PIDPipeline` / `PIDPipingConnector` / `PIDProcessVessel`
+///   `IObjects`; the business identifier is exposed under the
+///   `ItemTag` attribute key. `PIDProcessVessel` always carries
+///   the tag (UID + `ItemTag` + Description shape).
 /// * **DWG style** — DWG plant export (DWG-0202GP06-01
 ///   reference fixture) uses `Name` instead of `ItemTag` on
-///   the same IObjects. PIDProcessVessel omits the
+///   the same `IObjects`. `PIDProcessVessel` omits the
 ///   identifier attribute entirely (UID + Description only).
 ///
 /// Both styles publish the same data; the choice is a
-/// per-plant SmartPlant project flavor, not a runtime
+/// per-plant `SmartPlant` project flavor, not a runtime
 /// preference. The writer is shape-aware: it emits the
-/// IObject according to the drawing's [`PublishDrawing::style`]
+/// `IObject` according to the drawing's [`PublishDrawing::style`]
 /// field. Default is [`PublishStyle::A01`] to preserve every
 /// pre-A29 round-trip.
 ///
@@ -268,22 +268,22 @@ pub struct PublishRelationship {
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PublishStyle {
-    /// A01-flavor fixture export — IObject uses `ItemTag` on
+    /// A01-flavor fixture export — `IObject` uses `ItemTag` on
     /// pipe / connector / vessel; vessel always stamps a tag.
     /// This is the writer default.
     #[default]
     A01,
-    /// DWG-flavor fixture export — IObject uses `Name`
+    /// DWG-flavor fixture export — `IObject` uses `Name`
     /// instead of `ItemTag` on pipe / connector; vessel omits
     /// the identifier attribute entirely.
     Dwg,
 }
 
-/// Top-level DTO — one drawing worth of SmartPlant data that the
+/// Top-level DTO — one drawing worth of `SmartPlant` data that the
 /// XML writer will render into a single Publish Data document.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PublishDrawing {
-    /// `T_Drawing.SP_ID` — the drawing's SmartPlant UID. Becomes
+    /// `T_Drawing.SP_ID` — the drawing's `SmartPlant` UID. Becomes
     /// `<Container DocUID>` in the XML output.
     pub drawing_uid: String,
     /// `T_Drawing.Name` — becomes `<Container DocName>` and
@@ -293,9 +293,9 @@ pub struct PublishDrawing {
     pub document_category: Option<String>,
     /// `T_Drawing.DocumentType` — optional free-form string.
     pub document_type: Option<String>,
-    /// `T_Drawing.Template` — the SmartPlant template name.
+    /// `T_Drawing.Template` — the `SmartPlant` template name.
     pub template: Option<String>,
-    /// `T_Drawing.Path` — the `.pid` drawing path in the SmartPlant
+    /// `T_Drawing.Path` — the `.pid` drawing path in the `SmartPlant`
     /// archive tree.
     pub path: Option<String>,
     /// `T_Drawing.DateCreated` — free-form datetime string as
@@ -303,25 +303,25 @@ pub struct PublishDrawing {
     pub date_created: Option<String>,
     /// All model items that show up on this drawing. Populated by
     /// [`crate::publish::load_drawing_graph`] after matching
-    /// T_Representation → T_ModelItem.
+    /// `T_Representation` → `T_ModelItem`.
     pub objects: Vec<PublishObject>,
     /// Every representation tied to this drawing.
     pub representations: Vec<PublishRepresentation>,
     /// Every relationship tied to this drawing.
     pub relationships: Vec<PublishRelationship>,
-    /// Plant-wide SmartPlant codelist metadata. Populated once per
+    /// Plant-wide `SmartPlant` codelist metadata. Populated once per
     /// load because the catalog is the same for every drawing; kept
     /// on the drawing DTO for convenience of the XML writer, which
     /// is already drawing-scoped.
     ///
-    /// Empty when the fixture's SQLite mirror has not populated the
+    /// Empty when the fixture's `SQLite` mirror has not populated the
     /// `codelists` / `attributes` tables — the writer must fall
     /// through to its symbol-path or raw-value heuristics in that
     /// case.
     pub codelist: CodelistIndex,
-    /// SmartPlant project-flavor selector — chooses between
+    /// `SmartPlant` project-flavor selector — chooses between
     /// the A01 and DWG attribute-naming conventions on
-    /// IObject. See [`PublishStyle`] for full semantics.
+    /// `IObject`. See [`PublishStyle`] for full semantics.
     /// Defaults to [`PublishStyle::A01`] so every pre-A29
     /// caller and round-trip stays byte-identical.
     pub style: PublishStyle,

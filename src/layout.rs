@@ -637,7 +637,7 @@ fn infer_semantic_from_symbol_hint(
 }
 
 /// Extract the file-stem component of a symbol path in a platform-independent
-/// way. SmartPlant symbol paths are usually Windows UNC strings (e.g.
+/// way. `SmartPlant` symbol paths are usually Windows UNC strings (e.g.
 /// `\\srv\sym\管件\球阀.sym`); on Linux `Path::new` does not recognize `\\`
 /// as a separator and would return the full path as a single "file name".
 /// Normalizing `\\` to `/` before feeding `Path` restores parity.

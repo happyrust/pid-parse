@@ -1,4 +1,4 @@
-//! Phase 9l — SummaryInformation / DocumentSummaryInformation property-set
+//! Phase 9l — `SummaryInformation` / `DocumentSummaryInformation` property-set
 //! writer.
 //!
 //! This module parses an OLE property-set stream (as defined by
@@ -119,8 +119,8 @@ struct SummarySection {
 /// serialize.
 #[derive(Debug, Clone)]
 struct SummaryPropertySet {
-    /// Bytes 0..=27 of the source stream (byte_order, version, system_id,
-    /// class_id, num_sections). We hold these verbatim to avoid accidental
+    /// Bytes 0..=27 of the source stream (`byte_order`, version, `system_id`,
+    /// `class_id`, `num_sections`). We hold these verbatim to avoid accidental
     /// re-encoding drift.
     header: [u8; 28],
     sections: Vec<SummarySection>,
@@ -305,7 +305,7 @@ impl SummarySection {
 /// Phase 9l / 10g entry: encode `value` into the wire layout for property
 /// type `vt`. `VT_LPSTR` uses UTF-8 bytes (10g default).
 ///
-/// For explicit code page control (CP1252 / GBK / Shift_JIS, etc.), see
+/// For explicit code page control (CP1252 / GBK / `Shift_JIS`, etc.), see
 /// [`encode_string_with_encoding`] (Phase 10i).
 ///
 /// This UTF-8 convenience wrapper is retained for test symmetry with
@@ -773,9 +773,9 @@ pub fn apply_summary_updates_encoded(
 mod tests {
     use super::*;
 
-    /// Build a minimal valid SummaryInformation stream carrying exactly
-    /// three props: a VT_LPSTR title, a VT_LPWSTR author, and a VT_FILETIME
-    /// create_time. Layout inside the section:
+    /// Build a minimal valid `SummaryInformation` stream carrying exactly
+    /// three props: a `VT_LPSTR` title, a `VT_LPWSTR` author, and a `VT_FILETIME`
+    /// `create_time`. Layout inside the section:
     ///
     /// ```text
     ///   [ section header 8B | id+offset table 3*8B | data area (props) ]

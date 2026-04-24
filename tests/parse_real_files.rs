@@ -2,7 +2,7 @@ use pid_parse::PidParser;
 
 /// Parse a real `.pid` fixture from `test-file/`. Returns `None` when the
 /// fixture isn't present (typical for CI and for contributors without
-/// access to SmartPlant samples) so the test can cleanly skip instead of
+/// access to `SmartPlant` samples) so the test can cleanly skip instead of
 /// panicking. See `writer_real_files.rs` for the matching pattern.
 fn parse_test_file(name: &str) -> Option<pid_parse::PidDocument> {
     let path = format!("test-file/{name}");

@@ -9,7 +9,7 @@
 //! 2022.
 //!
 //! Stage-1 starts minimal: we only decode the database-name field,
-//! which is sufficient for our offline SmartPlant pipeline to
+//! which is sufficient for our offline `SmartPlant` pipeline to
 //! correlate the MDF inside an MSDA stream with the logical
 //! database the backup describes. More DBINFO fields (create
 //! timestamp, server version, family GUID) can be added when

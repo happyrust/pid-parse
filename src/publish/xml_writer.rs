@@ -20,7 +20,7 @@
 //! ## Format guarantees
 //!
 //! * UTF-8 output, indented for human inspection (two-space
-//!   indent, trailing newline). SmartPlant accepts compact and
+//!   indent, trailing newline). `SmartPlant` accepts compact and
 //!   indented forms alike.
 //! * Strings go through XML entity escaping so names / paths with
 //!   `&`, `<`, quotes, CR/LF round-trip cleanly.
@@ -44,9 +44,9 @@ use super::model::{
 };
 
 /// Software-version / schema-version / tooling constants that the
-/// SmartPlant reference implementation stamps onto every Publish
+/// `SmartPlant` reference implementation stamps onto every Publish
 /// Data `<Container>`. Hard-coded here because they are not
-/// carried by any backup table — the values are part of SmartPlant
+/// carried by any backup table — the values are part of `SmartPlant`
 /// 2014 R1's output contract.
 const CONTAINER_COMP_SCHEMA: &str = "PIDComponent";
 /// `_Meta.xml` switches the schema marker to advertise it as the
@@ -69,18 +69,18 @@ const META_DEFAULT_DOC_REVISION: &str = "0";
 /// rationale — reference exports use `"1"` for first-time emits.
 const META_DEFAULT_DOC_VERSION: &str = "1";
 
-/// Number of `<PIDSignalPort>` children SmartPlant always derives
-/// from a single InstrFunction / Instrument row. Pinned at 8
+/// Number of `<PIDSignalPort>` children `SmartPlant` always derives
+/// from a single `InstrFunction` / Instrument row. Pinned at 8
 /// because the DWG-0202GP06-01 reference fixture emits exactly
 /// `<instr>.1` through `<instr>.8` for each of its two
-/// InstrFunction objects (16 ports total = the A15 backlog
+/// `InstrFunction` objects (16 ports total = the A15 backlog
 /// count). Future fixtures that exhibit a different cardinality
 /// will let this constant become a per-object derivation rule.
 const INSTR_DERIVED_SIGNAL_PORT_COUNT: u8 = 8;
 
 /// Emit a full `_Data.xml` document for the given drawing into a
 /// string buffer. `plant_name` is a user-supplied value (e.g. the
-/// SmartPlant plant identifier from MSCI / Manifest); stage-1
+/// `SmartPlant` plant identifier from MSCI / Manifest); stage-1
 /// exposes it as an input because SPPID encodes it in the
 /// `<Container Plant="...">` attribute.
 pub fn write_data_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<String, PublishError> {
@@ -95,11 +95,11 @@ pub fn write_data_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
     Ok(buf)
 }
 
-/// Emit a `_Meta.xml` document for the given drawing. SmartPlant's
+/// Emit a `_Meta.xml` document for the given drawing. `SmartPlant`'s
 /// reference Publish-Data export ships the document-versioning
 /// envelope as a sibling file alongside `<DrawingName>_Data.xml`.
 /// Compared with `write_data_xml` the structural shape is fixed and
-/// minimal — three nodes (DocumentVersion / DocumentRevision /
+/// minimal — three nodes (`DocumentVersion` / `DocumentRevision` /
 /// File) and three `<Rel>` rows wiring them together.
 ///
 /// The meta document carries no business attributes. Its sole
@@ -153,12 +153,12 @@ pub fn write_meta_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
     Ok(buf)
 }
 
-/// Emit every `PublishObject` as the corresponding SmartPlant XML
+/// Emit every `PublishObject` as the corresponding `SmartPlant` XML
 /// tag (`<PIDProcessVessel>` / `<PIDNozzle>` / ...). Stage-1
 /// handles the four item types the TEST02 A01 fixture exercises
-/// (Vessel, Nozzle, PipeRun, PipingPoint); A11 extends the
-/// dispatcher to Note / ItemNote (→ `<PIDNote>`) and Instrument /
-/// InstrFunction (→ `<PIDControlSystemFunction>`), modeled on the
+/// (Vessel, Nozzle, `PipeRun`, `PipingPoint`); A11 extends the
+/// dispatcher to Note / `ItemNote` (→ `<PIDNote>`) and Instrument /
+/// `InstrFunction` (→ `<PIDControlSystemFunction>`), modeled on the
 /// DWG-0202GP06-01 reference fixture. Unknown types still fall
 /// through with a generic `<PIDItem>` wrapper so the writer stays
 /// total.
@@ -456,14 +456,14 @@ fn canonical_connector_item_tag(obj: &PublishObject, style: PublishStyle) -> Str
     resolve_pipe_item_tag(obj)
 }
 
-/// Derive the `<PIDPipingConnector>` IObject UID from the parent
-/// `<PIDPipeline>` (PipeRun) UID.
+/// Derive the `<PIDPipingConnector>` `IObject` UID from the parent
+/// `<PIDPipeline>` (`PipeRun`) UID.
 ///
 /// Current state: this still uses the stage-1 placeholder
 /// convention `<pipe_uid>-CNX`, with downstream `.1` / `.2` /
 /// `.PPT` children appended on top. That keeps the document
 /// internally self-consistent and byte-stable, but it is NOT yet
-/// the real SmartPlant publish-time numbering rule. The A01 raw
+/// the real `SmartPlant` publish-time numbering rule. The A01 raw
 /// residual gates intentionally keep this family under explicit
 /// burn-down until the true rule is reconstructed from TEST02.
 fn derived_pipe_connector_uid(pipe_uid: &str) -> String {
@@ -477,17 +477,17 @@ fn derived_pipe_connector_uid(pipe_uid: &str) -> String {
 /// `DWG-0202GP06-01_Data.xml:1429–1447`.
 ///
 /// A21 closes a 5-interface fidelity gap: the pre-A21 writer
-/// emitted only 10 interfaces (IObject, IPIDProcessVesselOcc,
-/// IProcessVesselOcc, IEquipment, IEquipmentOcc, IPBSItem,
-/// IProcessEquipment, IProcessVessel, IPIDProcessVessel,
-/// IPIDTypical). The five missing wrapper interfaces are now
+/// emitted only 10 interfaces (`IObject`, `IPIDProcessVesselOcc`,
+/// `IProcessVesselOcc`, `IEquipment`, `IEquipmentOcc`, `IPBSItem`,
+/// `IProcessEquipment`, `IProcessVessel`, `IPIDProcessVessel`,
+/// `IPIDTypical`). The five missing wrapper interfaces are now
 /// emitted in SPPID-canonical order:
 ///
-/// * `IPBSItemCollection` (between IPBSItem and IPlannedMatl)
+/// * `IPBSItemCollection` (between `IPBSItem` and `IPlannedMatl`)
 /// * `IPlannedMatl`
-/// * `IProcessEquipmentOcc` (next to IProcessEquipment)
-/// * `IDrawingItem` (between IProcessVessel and IPIDProcessVessel)
-/// * `ISpecifiedMatlItem` (after IPIDProcessVessel)
+/// * `IProcessEquipmentOcc` (next to `IProcessEquipment`)
+/// * `IDrawingItem` (between `IProcessVessel` and `IPIDProcessVessel`)
+/// * `ISpecifiedMatlItem` (after `IPIDProcessVessel`)
 ///
 /// A21 also populates:
 /// * `IPBSItem ConstructionStatus="..." ConstructionStatus2="..."`
@@ -520,8 +520,8 @@ fn derived_pipe_connector_uid(pipe_uid: &str) -> String {
 /// this conditional emission so the same writer produces the
 /// 15-interface A01 shape AND the 17-interface DWG-tank
 /// shape, bit-for-bit. The loader side (inferring the flag
-/// from T_ProcessEquipment's EqType columns) is deferred to
-/// A25b — until then, callers synthesising PublishObjects
+/// from `T_ProcessEquipment`'s `EqType` columns) is deferred to
+/// A25b — until then, callers synthesising `PublishObjects`
 /// manually can set the field directly.
 fn write_process_vessel(
     buf: &mut String,
@@ -680,32 +680,32 @@ fn write_process_vessel(
 /// against both `A01_Data.xml:29–53` and DWG sample 117–141.
 ///
 /// A22 closes a 13-interface fidelity gap: pre-A22 writer emitted
-/// only 9 interfaces (IObject, IPipingPortComposition, INozzleOcc,
-/// INozzle, IEquipmentComponent, IEquipmentComponentOcc,
-/// IPipeCrossSectionItem, IPipingSpecifiedItem, IPIDTypical).
+/// only 9 interfaces (`IObject`, `IPipingPortComposition`, `INozzleOcc`,
+/// `INozzle`, `IEquipmentComponent`, `IEquipmentComponentOcc`,
+/// `IPipeCrossSectionItem`, `IPipingSpecifiedItem`, `IPIDTypical`).
 /// The 13 missing wrapper interfaces are now emitted in SPPID
 /// canonical order:
 ///
 /// * `IPBSItem ConstructionStatus=... ConstructionStatus2=...`
-///   (inserted right after IObject with A17-canonical defaults).
+///   (inserted right after `IObject` with A17-canonical defaults).
 /// * `IPlannedMatl`, `IDrawingItem` (before the per-nozzle
-///   INozzleOcc / INozzle pair).
+///   `INozzleOcc` / `INozzle` pair).
 /// * `IFabricatedItem`, `IHeatTracedItem HTraceRqmt="..."` (after
-///   IEquipmentComponentOcc).
+///   `IEquipmentComponentOcc`).
 /// * `IPBSItemCollection`, `IProcessPointCollection`,
 ///   `ISignalPortComposition`, `IPartOcc`, `IDocumentItem`,
 ///   `IElecPowerConsumer`, `IPart`, `INoteCollection`,
-///   `IProcessDataCaseComposition` (between IHeatTracedItem and
-///   IPipeCrossSectionItem).
+///   `IProcessDataCaseComposition` (between `IHeatTracedItem` and
+///   `IPipeCrossSectionItem`).
 ///
 /// A22 also upgrades:
 /// * `IEquipmentComponent` — expanded-attr DWG form gains
 ///   `ProcessEqCompType1` + `ProcessEqCompType2` leading
 ///   attributes when the loader populates the corresponding
-///   T_Nozzle columns. A01 shape stays single-attribute
+///   `T_Nozzle` columns. A01 shape stays single-attribute
 ///   (`ProcEqpCompTypeDescription` alone).
 /// * `IPipeCrossSectionItem` — now renders bare (A01) when
-///   NominalDiameter is absent; with the attribute (DWG) when
+///   `NominalDiameter` is absent; with the attribute (DWG) when
 ///   populated. Pre-A22 forced an empty attribute even when
 ///   absent, diverging from the A01 bare shape.
 /// * `IPipingSpecifiedItem` — same conditional path for
@@ -834,15 +834,15 @@ fn write_nozzle(
 }
 
 /// Resolve the `ItemTag` attribute for a pipeline-like object (a
-/// PipeRun row that drives both `<PIDPipeline>` and
+/// `PipeRun` row that drives both `<PIDPipeline>` and
 /// `<PIDPipingConnector>`). Order of preference:
 ///
 /// 1. `obj.fields["ItemTag"]` — populated by the loader from
-///    `T_PlantItem.ItemTag`. This is the canonical tag SmartPlant
+///    `T_PlantItem.ItemTag`. This is the canonical tag `SmartPlant`
 ///    itself stores (e.g. `"A010102102-PH"` in the TEST02 fixture)
 ///    and is what Publish Data XML consumers expect.
 /// 2. Legacy synthesized form `PH-{seq}-{dia}-{class}` — kept as a
-///    fallback so drawings without a T_PlantItem row still emit a
+///    fallback so drawings without a `T_PlantItem` row still emit a
 ///    non-opaque identifier. Matches pre-A8 behaviour for anything
 ///    that lacks the catalog link.
 /// 3. The raw `obj.uid` — last-ditch choice when neither an
@@ -875,15 +875,15 @@ fn resolve_pipe_item_tag(obj: &PublishObject) -> String {
 /// Two attribute conventions:
 ///
 /// * **A01 style** (default) — preserves the pre-A29
-///   shape: when `pipeline_name` is populated the IObject
+///   shape: when `pipeline_name` is populated the `IObject`
 ///   emits all three of `UID` / `Name` / `ItemTag`; when
 ///   absent, only `UID` / `ItemTag`. This is the strict
 ///   superset shape that has been live since A19, so every
 ///   pre-A29 caller / fixture round-trips bit-for-bit.
-/// * **DWG style** — the IObject drops `ItemTag` to match
+/// * **DWG style** — the `IObject` drops `ItemTag` to match
 ///   the DWG reference (`<IObject UID="..." Name="..."/>`
 ///   two-attribute shape). When `pipeline_name` is absent
-///   the writer emits a UID-only IObject; the DWG fixture
+///   the writer emits a UID-only `IObject`; the DWG fixture
 ///   itself only ships pipelines with names, so the
 ///   UID-only branch is purely defensive against malformed
 ///   input.
@@ -925,10 +925,10 @@ fn write_pipeline_iobject(
 /// A29 · Render `<IObject>` for the `<PIDPipingConnector>`
 /// body. Same A01 / DWG split as
 /// [`write_pipeline_iobject`], but the connector's A01
-/// shape is a strict two-attribute IObject (no `Name`
+/// shape is a strict two-attribute `IObject` (no `Name`
 /// attribute even when the loader has the data) — this
 /// matches the connector's pre-A29 behavior, which only
-/// flipped to Name-style IObject when PipelineName was
+/// flipped to Name-style `IObject` when `PipelineName` was
 /// populated. A29 makes the flip an explicit
 /// `style = Dwg` decision rather than an implicit field-
 /// presence side-effect.
@@ -961,7 +961,7 @@ fn write_piping_connector_iobject(
 }
 
 /// A29 · Render `<IObject>` for the `<PIDProcessVessel>`
-/// body. Vessel IObject shape:
+/// body. Vessel `IObject` shape:
 ///
 /// * **A01 style** (default) — `UID + ItemTag + Description`
 ///   three-attribute shape that has been live since the
@@ -969,7 +969,7 @@ fn write_piping_connector_iobject(
 ///   exercises this path.
 /// * **DWG style** — `UID + Description` two-attribute
 ///   shape. The DWG reference omits the identifier on the
-///   vessel IObject entirely (the `污水池` sample carries
+///   vessel `IObject` entirely (the `污水池` sample carries
 ///   just `UID` + `Description="污水池"`); this branch
 ///   matches that fixture byte-for-byte.
 fn write_process_vessel_iobject(
@@ -997,9 +997,9 @@ fn write_process_vessel_iobject(
     .map_err(fmt_err)
 }
 
-/// Emit the full `<PIDPipeline>` block for a PipeRun row.
+/// Emit the full `<PIDPipeline>` block for a `PipeRun` row.
 ///
-/// The reference SmartPlant shape (confirmed byte-for-byte on
+/// The reference `SmartPlant` shape (confirmed byte-for-byte on
 /// both `A01_Data.xml:54-65` and `DWG-0202GP06-01_Data.xml:1369-1380`):
 /// ```text
 /// <PIDPipeline>
@@ -1019,11 +1019,11 @@ fn write_process_vessel_iobject(
 /// A19 closes four pre-existing fidelity gaps:
 /// * Adds the empty wrapper interfaces `IPBSItem`,
 ///   `IPlannedFacility`, `IPBSItemCollection`, `INoteCollection`
-///   which SmartPlant always emits but our earlier writer
+///   which `SmartPlant` always emits but our earlier writer
 ///   silently dropped.
 /// * Populates `IFluidSystem FluidCode="..." FluidSystem="..."`
 ///   from `obj.fields["OperFluidCode"]` + `obj.fields["FluidSystem"]`
-///   (T_PipeRun columns loaded by the sqlite_load layer). When
+///   (`T_PipeRun` columns loaded by the `sqlite_load` layer). When
 ///   either value is absent the respective attribute renders
 ///   empty, matching the A01 fixture shape (`<IFluidSystem/>`
 ///   without attributes, which under A19 becomes
@@ -1031,17 +1031,17 @@ fn write_process_vessel_iobject(
 ///   fidelity improvement for downstream consumers expecting
 ///   the attributes to be declared).
 ///
-/// A19 also adds an optional `Name=` attribute on the IObject
+/// A19 also adds an optional `Name=` attribute on the `IObject`
 /// when the loader populates `obj.fields["PipelineName"]` or
 /// falls back to the item tag. The DWG reference uses e.g.
 /// `Name="A3jqz0101-OD"` for pipeline labels; A01 uses
 /// unlabeled pipelines and the attribute is omitted to match.
 ///
 /// A29 introduces an explicit [`PublishStyle`] selector so the
-/// IObject shape no longer relies on `obj.fields["PipelineName"]`
+/// `IObject` shape no longer relies on `obj.fields["PipelineName"]`
 /// alone. With `style = A01` (default), the pre-A29 behaviour
 /// is preserved bit-for-bit. With `style = Dwg` (set by callers
-/// that loaded a DWG-flavor SQLite mirror), the IObject drops
+/// that loaded a DWG-flavor `SQLite` mirror), the `IObject` drops
 /// the `ItemTag` attribute — matching the DWG reference's
 /// `<IObject UID="..." Name="..."/>` two-attribute shape.
 fn write_pipeline(
@@ -1090,9 +1090,9 @@ fn write_pipeline(
     writeln!(buf, "   </PIDPipeline>").map_err(fmt_err)
 }
 
-/// Emit the full `<PIDPipingConnector>` block for a PipeRun row.
+/// Emit the full `<PIDPipingConnector>` block for a `PipeRun` row.
 ///
-/// The reference SmartPlant shape is a 22-interface block
+/// The reference `SmartPlant` shape is a 22-interface block
 /// (confirmed byte-for-byte on `A01_Data.xml:66–89` — 22
 /// interfaces, all bare except the named/sized ones — and
 /// `DWG-0202GP06-01_Data.xml:246–269` — the same 22 interfaces
@@ -1100,23 +1100,23 @@ fn write_pipeline(
 /// `IPipingConnector` / `ISlopedPipingItem` / `IInsulatedItem`).
 ///
 /// A20 closes a 15-interface fidelity gap. Pre-A20 writer emitted
-/// only 7 interfaces (IObject, IConnector, IPipingConnector,
-/// INamedPipingConnector, IPipeCrossSectionItem, IPipingSpecifiedItem,
-/// IPIDTypical). The 15 missing wrapper interfaces
-/// (IPBSItem, IPlannedFacility, IDrawingItem, IPBSItemCollection,
-/// IFabricatedItem, IHeatTracedItem, IProcessPointCollection,
-/// IDocumentItem, IElecPowerConsumer, INoteCollection,
-/// IProcessDataCaseComposition, IExpandableThing,
-/// ISlopedPipingItem, IInsulatedItem, IJacketedItem) are now
+/// only 7 interfaces (`IObject`, `IConnector`, `IPipingConnector`,
+/// `INamedPipingConnector`, `IPipeCrossSectionItem`, `IPipingSpecifiedItem`,
+/// `IPIDTypical`). The 15 missing wrapper interfaces
+/// (`IPBSItem`, `IPlannedFacility`, `IDrawingItem`, `IPBSItemCollection`,
+/// `IFabricatedItem`, `IHeatTracedItem`, `IProcessPointCollection`,
+/// `IDocumentItem`, `IElecPowerConsumer`, `INoteCollection`,
+/// `IProcessDataCaseComposition`, `IExpandableThing`,
+/// `ISlopedPipingItem`, `IInsulatedItem`, `IJacketedItem`) are now
 /// emitted unconditionally in SPPID-canonical order.
 ///
 /// Attribute routing:
 /// * `IObject` — `UID` is the derived `<piperun>-CNX`. A01 uses
 ///   `ItemTag="..."`; DWG uses `Name="..."` instead (same
-///   field, different SmartPlant exporter versions). The writer
+///   field, different `SmartPlant` exporter versions). The writer
 ///   emits `Name="..."` when `obj.fields["PipelineName"]` is
 ///   populated (DWG-shape), otherwise `ItemTag="..."` (A01-shape).
-/// * `IPBSItem` — same defaults as A17's PIDPipingComponent
+/// * `IPBSItem` — same defaults as A17's `PIDPipingComponent`
 ///   (`@NewConstruction` + the fixed `{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}`
 ///   GUID), overridable via `obj.fields["ConstructionStatus"]`
 ///   and `obj.fields["ConstructionStatus2"]`.
@@ -1147,7 +1147,7 @@ fn write_pipeline(
 /// has not populated the corresponding column. This keeps the
 /// A01 byte-shape identical to the pre-A20 empty case while
 /// unlocking the DWG-specific populated shape when the columns
-/// arrive from T_PipeRun / T_Connector.
+/// arrive from `T_PipeRun` / `T_Connector`.
 fn write_piping_connector(
     buf: &mut String,
     obj: &PublishObject,
@@ -1338,16 +1338,16 @@ fn write_piping_connector(
     writeln!(buf, "   </PIDPipingConnector>").map_err(fmt_err)
 }
 
-/// Emit the three virtual nodes SmartPlant always derives from a
-/// PipingConnector: two `<PIDPipingPort>` children (suffixed `.1`
+/// Emit the three virtual nodes `SmartPlant` always derives from a
+/// `PipingConnector`: two `<PIDPipingPort>` children (suffixed `.1`
 /// and `.2`, both inheriting the parent connector's nominal
 /// diameter) plus one `<PIDProcessPoint>` (suffixed `.PPT`).
 ///
-/// These nodes never appear as their own SQLite rows — they are
-/// SmartPlant client-side composition members rendered by the
+/// These nodes never appear as their own `SQLite` rows — they are
+/// `SmartPlant` client-side composition members rendered by the
 /// exporter at publish time. The base UID is the same
 /// deterministic connector UID the `<PIDPipingConnector>`
-/// block carries, with the SmartPlant suffixes `.1`, `.2`,
+/// block carries, with the `SmartPlant` suffixes `.1`, `.2`,
 /// `.PPT`.
 fn write_derived_connector_endpoints(
     buf: &mut String,
@@ -1418,12 +1418,12 @@ fn write_derived_connector_endpoints(
     writeln!(buf, "   </PIDProcessPoint>").map_err(fmt_err)
 }
 
-/// Emit `count` `<PIDSignalPort>` children SmartPlant derives
-/// from a single InstrFunction / Instrument row.
+/// Emit `count` `<PIDSignalPort>` children `SmartPlant` derives
+/// from a single `InstrFunction` / Instrument row.
 ///
 /// Each port carries:
 /// * `IObject UID="<instr>.N" Name="N"` — index-suffixed UID matching
-///   the SmartPlant `<instr>.{1..count}` pattern (verified against
+///   the `SmartPlant` `<instr>.{1..count}` pattern (verified against
 ///   `DWG-0202GP06-01_Data.xml`).
 /// * Five empty interface tags (`IConnection`, `ISignalConnection`,
 ///   `ISignalPort`, `IPipingConnection`, `IFacilityPoint`) — exact
@@ -1480,7 +1480,7 @@ fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), Publis
     writeln!(buf, "   </PIDPipingPort>").map_err(fmt_err)
 }
 
-/// Emit a `<PIDNote>` block for a Note / ItemNote object.
+/// Emit a `<PIDNote>` block for a Note / `ItemNote` object.
 ///
 /// The reference DWG fixture (`DWG-0202GP06-01_Data.xml`) shows
 /// the canonical shape:
@@ -1496,7 +1496,7 @@ fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), Publis
 ///
 /// `NoteText` is sourced from the standard
 /// `T_ModelItem.Description` column when present (this is where the
-/// SmartPlant client puts the note body for plain annotation rows).
+/// `SmartPlant` client puts the note body for plain annotation rows).
 /// Fixtures whose business subtable has stamped a dedicated
 /// `NoteText` field win over `Description`. When neither is
 /// present the attribute renders empty rather than fabricating a
@@ -1533,7 +1533,7 @@ fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishE
 }
 
 /// Emit a `<PIDControlSystemFunction>` block for an Instrument /
-/// InstrFunction object.
+/// `InstrFunction` object.
 ///
 /// The reference DWG fixture shows the canonical shape:
 /// ```text
@@ -1557,7 +1557,7 @@ fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishE
 ///
 /// The friendly `Name` attribute is built as `<MeasuredVariable>-<TagSequenceNo>`
 /// from `obj.fields["MeasuredVariableCode"]` + `obj.fields["TagSequenceNo"]`
-/// (both columns live on `T_Instrument`, attached to InstrFunction
+/// (both columns live on `T_Instrument`, attached to `InstrFunction`
 /// rows via `subtables_for_item_type`). When either piece is
 /// missing the writer falls back to the bare `MeasuredVariable`
 /// (or the bare sequence) so the human-readable label is still
@@ -1655,7 +1655,7 @@ fn write_control_system_function(
     writeln!(buf, "   </PIDControlSystemFunction>").map_err(fmt_err)
 }
 
-/// Emit a `<PIDPipingComponent>` block for a PipingComp object.
+/// Emit a `<PIDPipingComponent>` block for a `PipingComp` object.
 ///
 /// The reference DWG fixture shows the canonical shape (the Cap
 /// sample at `DWG-0202GP06-01_Data.xml:204-224`):
@@ -1839,7 +1839,7 @@ fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), P
     writeln!(buf, "   </PIDPipingComponent>").map_err(fmt_err)
 }
 
-/// Emit a `<PIDSignalConnector>` block for a SignalRun object.
+/// Emit a `<PIDSignalConnector>` block for a `SignalRun` object.
 ///
 /// The reference DWG fixture shows the canonical shape (at
 /// `DWG-0202GP06-01_Data.xml:1111-1120`):
@@ -1865,7 +1865,7 @@ fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), P
 ///   `IPipeCrossSectionItem` / `IPipingSpecifiedItem` — those are
 ///   piping-only interfaces.
 /// * `IConnector FlowDirection=""` instead of populated — the DWG
-///   fixture ships an empty FlowDirection on every signal
+///   fixture ships an empty `FlowDirection` on every signal
 ///   connector. Future fixtures may surface a populated value
 ///   sourced from a column the loader doesn't yet read; for now
 ///   the attribute renders as whatever the loader places in
@@ -1949,7 +1949,7 @@ fn write_piping_branch_point(buf: &mut String, obj: &PublishObject) -> Result<()
 /// ```
 ///
 /// UID is a plain 32-hex and `Name` holds an internal sequence
-/// number. All interfaces below IObject are bare. `Name` is
+/// number. All interfaces below `IObject` are bare. `Name` is
 /// sourced from `obj.fields["Name"]` falling back to
 /// `obj.description` — the loader must populate one of them.
 fn write_pid_branch_point(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
@@ -1994,8 +1994,8 @@ fn write_generic_object(
     writeln!(buf, "   </PIDItem>").map_err(fmt_err)
 }
 
-/// Render the SmartPlant composite equipment tag ("TagPrefix
-/// TagSequenceNo") from a vessel / equipment row's business
+/// Render the `SmartPlant` composite equipment tag ("`TagPrefix`
+/// `TagSequenceNo`") from a vessel / equipment row's business
 /// fields. Returns an empty string when neither field is present.
 fn format_equipment_tag(obj: &PublishObject) -> String {
     let prefix = obj
@@ -2014,7 +2014,7 @@ fn format_equipment_tag(obj: &PublishObject) -> String {
 }
 
 /// Append a `" mm"` suffix to a bare numeric diameter so the XML
-/// matches SmartPlant's canonical "250 mm" form. If the value
+/// matches `SmartPlant`'s canonical "250 mm" form. If the value
 /// already carries a unit we leave it alone.
 fn format_diameter(raw: &str) -> String {
     let trimmed = raw.trim();
@@ -2041,7 +2041,7 @@ fn format_insulation_inches(raw: &str) -> String {
 }
 
 /// Map a SPPID boolean string ("1" / "0" / "") to the XML form
-/// SmartPlant uses ("True" / "False").
+/// `SmartPlant` uses ("True" / "False").
 fn map_bool(value: &str) -> &'static str {
     match value.trim() {
         "1" | "True" | "true" => "True",
@@ -2050,7 +2050,7 @@ fn map_bool(value: &str) -> &'static str {
 }
 
 /// Convert a `std::fmt::Error` into a [`PublishError`] so the
-/// writer's `?`-operator chain stays uniform with the SQLite
+/// writer's `?`-operator chain stays uniform with the `SQLite`
 /// loader's.
 fn fmt_err(err: std::fmt::Error) -> PublishError {
     PublishError::Sqlite(format!("format: {err}"))
@@ -2085,7 +2085,7 @@ fn write_container_open(
 
 /// `_Meta.xml` flavor of the container header. Identical wire shape
 /// to [`write_container_open`] but stamps `CompSchema=
-/// "DocVersioningComponent"` so SmartPlant routes the document to
+/// "DocVersioningComponent"` so `SmartPlant` routes the document to
 /// the document-versioning loader instead of the data loader.
 /// `LoginUser` / `LoginPWD` attributes are intentionally omitted to
 /// match the reference exports byte-for-byte.
@@ -2155,7 +2155,7 @@ fn write_meta_document_version(
 /// Emit `<DocumentRevision>` with the deterministic `revision_uid`.
 /// `MajorRev_ForRevise` defaults to `"0"` and `MinorRev_ForRevise`
 /// stays empty; both match every reference fixture and there is no
-/// SQLite column carrying the values yet.
+/// `SQLite` column carrying the values yet.
 fn write_meta_document_revision(
     buf: &mut String,
     drawing: &PublishDrawing,
@@ -2200,7 +2200,7 @@ fn write_meta_file(
     writeln!(buf, "   </File>").map_err(fmt_err)
 }
 
-/// Emit a single `<Rel>` row. `def_uid` is the SmartPlant
+/// Emit a single `<Rel>` row. `def_uid` is the `SmartPlant`
 /// relationship classifier (`"VersionedDoc"`, `"RevisedDocument"`,
 /// `"FileComposition"`); the meta document only ever uses these
 /// three so the helper does not need to be more general.
@@ -2224,12 +2224,12 @@ fn write_meta_rel(
     writeln!(buf, "   </Rel>").map_err(fmt_err)
 }
 
-/// Derive a deterministic 32-hex-character SmartPlant UID from
+/// Derive a deterministic 32-hex-character `SmartPlant` UID from
 /// `(seed, role)` via UUID v5 (SHA-1 over the OID namespace). The
 /// `seed` is typically the drawing's `T_Drawing.SP_ID`; the `role`
 /// disambiguates the per-document children (`"version"`,
 /// `"revision"`, `"file"`, `"rel/<def-uid>"`). The output is the
-/// uppercase 32-char hex form SmartPlant uses for every SP_ID.
+/// uppercase 32-char hex form `SmartPlant` uses for every `SP_ID`.
 ///
 /// Determinism is the whole point: the writer can be invoked twice
 /// and both runs produce byte-identical `_Meta.xml`, so test
@@ -2240,7 +2240,7 @@ pub(crate) fn derive_meta_uid(seed: &str, role: &str) -> String {
     uuid.simple().to_string().to_uppercase()
 }
 
-/// Normalize a SmartPlant `DateCreated` string into the
+/// Normalize a `SmartPlant` `DateCreated` string into the
 /// `YYYY/MM/DD` form reference exports use for `DocVersionDate`.
 ///
 /// The MDF loader may surface the value as a SQL Server-style raw
@@ -2287,7 +2287,7 @@ fn write_pid_drawing(buf: &mut String, drawing: &PublishDrawing) -> Result<(), P
 }
 
 /// True when a representation row deserves a `<PIDRepresentation>`
-/// element in the published XML. SmartPlant's exporter skips the
+/// element in the published XML. `SmartPlant`'s exporter skips the
 /// pure annotation / label rows — those whose `T_Representation.SP_ModelItemID`
 /// is NULL or empty (typically `\Equipment\Labels - ...` and
 /// `\Piping\Labels - ...` symbols). Mirroring that filter is what
@@ -2549,7 +2549,7 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
 /// `<IObject UID>`.
 ///
 /// This keeps repeated exports stable and debuggable, but it is not
-/// yet the real SmartPlant 32-hex rel-IObject numbering rule. A01
+/// yet the real `SmartPlant` 32-hex rel-IObject numbering rule. A01
 /// delivery-contract and raw-residual tests therefore keep this slot
 /// under explicit normalization until the publish-time rule is
 /// reconstructed from TEST02.
@@ -2573,8 +2573,8 @@ fn write_rel(
     writeln!(buf, "   </Rel>").map_err(fmt_err)
 }
 
-/// Pick the SPPID DefUID for a T_Relationship row given a lookup
-/// of endpoint ItemTypeNames. Stage-1 covers the combinations
+/// Pick the SPPID `DefUID` for a `T_Relationship` row given a lookup
+/// of endpoint `ItemTypeNames`. Stage-1 covers the combinations
 /// observed in TEST02 A01; anything unknown falls back to the
 /// generic `"Relationship"` so the writer stays total.
 fn classify_relationship(rel: &PublishRelationship, type_by_uid: &HashMap<&str, &str>) -> String {
@@ -2626,7 +2626,7 @@ fn defuid_prefix(def_uid: &str) -> &'static str {
     }
 }
 
-/// XML attribute-value escape. SmartPlant uses double-quote
+/// XML attribute-value escape. `SmartPlant` uses double-quote
 /// delimiters so we only need to escape the five canonical
 /// entities plus CR/LF (which SPPID stores verbatim as
 /// `&#13;&#10;` inside attribute values).

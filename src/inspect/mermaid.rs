@@ -4,12 +4,12 @@
 //!
 //! * [`object_graph_mermaid`] — renders the P&ID object graph (objects +
 //!   resolved relationships). Each node is colored by `item_type` and
-//!   displays its DrawingID (truncated) + ModelItemType. Relationships are
+//!   displays its `DrawingID` (truncated) + `ModelItemType`. Relationships are
 //!   directed edges; unresolved endpoints are drawn to an explicit
 //!   `off_drawing` pseudo-node so the picture stays lossless.
 //! * [`crossref_mermaid`] — renders the cross-reference graph from
 //!   `doc.cross_reference`: PSM-declared clusters vs. actual clusters,
-//!   symbol → JSite fan-out, and PSMroots → CFB-tree resolution state.
+//!   symbol → `JSite` fan-out, and `PSMroots` → CFB-tree resolution state.
 //!
 //! Both functions are **pure** and can be tested with a synthesized
 //! `PidDocument`. They intentionally avoid any external mermaid crate —
@@ -100,7 +100,7 @@ fn write_graph_header(out: &mut String, graph: &ObjectGraph) {
     }
 }
 
-/// Render every object as a mermaid node. Returns the set of drawing_ids
+/// Render every object as a mermaid node. Returns the set of `drawing_ids`
 /// that were actually rendered so edges can skip dangling endpoints.
 fn render_object_nodes(
     out: &mut String,
@@ -239,7 +239,7 @@ fn write_graph_classes(out: &mut String) {
 pub struct CrossRefOptions {
     /// Maximum number of symbols to render.
     pub max_symbols: usize,
-    /// Maximum number of JSite fan-out edges per symbol.
+    /// Maximum number of `JSite` fan-out edges per symbol.
     pub max_jsites_per_symbol: usize,
 }
 

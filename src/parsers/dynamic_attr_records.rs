@@ -7,7 +7,7 @@ use crate::model::{
 /// The stream follows the pattern (observed from hex analysis):
 ///   - Stream header: 16+ bytes (magic + meta), followed by zero padding
 ///   - Section body starts after padding with: u32 count, then 0xFFFF marker
-///   - Each section: u32 section_len, then interleaved class name + attribute fields
+///   - Each section: u32 `section_len`, then interleaved class name + attribute fields
 ///   - Attribute fields: 1-byte type tag + length-prefixed name + typed value
 ///
 /// This parser uses a tolerant, heuristic approach suitable for reverse-engineering:

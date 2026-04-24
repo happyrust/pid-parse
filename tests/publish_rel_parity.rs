@@ -1,6 +1,6 @@
 //! A33 · Rel-level fidelity gates.
 //!
-//! SmartPlant Publish Data XML carries two top-level
+//! `SmartPlant` Publish Data XML carries two top-level
 //! element families:
 //!
 //! 1. `<PIDxxx>` business objects — covered by the A12 /
@@ -10,26 +10,26 @@
 //!    not directly gated; A12's tag-count diff happened to
 //!    surface gross missing-Rel regressions because the
 //!    overall PID tag totals shift, but a writer that
-//!    swapped one Rel's DefUID for another (e.g. emitted
-//!    `DwgRepresentationComposition` where SmartPlant
+//!    swapped one Rel's `DefUID` for another (e.g. emitted
+//!    `DwgRepresentationComposition` where `SmartPlant`
 //!    expects `DrawingItems`) would slip past every gate.
 //!
 //! A33 closes that hole by adding two Rel-specific gates
 //! built on the new
 //! [`pid_parse::publish::parse_rel_defuid_counts`] helper:
 //!
-//! * **A33** — for every DefUID present in the SmartPlant
+//! * **A33** — for every `DefUID` present in the `SmartPlant`
 //!   A01 reference, the writer must emit at least the
 //!   reference count. Extras are tolerated and only
 //!   logged (the writer may emit additional derived Rels
-//!   that SmartPlant skips on annotation-only items, etc.,
+//!   that `SmartPlant` skips on annotation-only items, etc.,
 //!   without breaking downstream).
 //! * **A33b** — A01 reference and DWG reference must
-//!   declare the SAME set of DefUIDs (modulo
-//!   [`KNOWN_A01_VS_DWG_REL_DEFUID_DIVERGENCES`]). DefUIDs
+//!   declare the SAME set of `DefUIDs` (modulo
+//!   [`KNOWN_A01_VS_DWG_REL_DEFUID_DIVERGENCES`]). `DefUIDs`
 //!   are domain enums, not fixture-driven values, so
 //!   cross-fixture set agreement is the expected baseline.
-//!   Any divergence here flags a real SmartPlant export
+//!   Any divergence here flags a real `SmartPlant` export
 //!   convention difference worth investigating.
 //!
 //! Both tests soft-skip when their fixtures are missing.
@@ -43,9 +43,9 @@ use common::{
     generate_a01_xml, generate_dwg_data_xml, load_reference_a01_xml, load_reference_dwg_xml,
 };
 
-/// Known writer-side Rel DefUID gaps the A33 gate tolerates.
+/// Known writer-side Rel `DefUID` gaps the A33 gate tolerates.
 ///
-/// These are SmartPlant DefUIDs the A01 reference declares
+/// These are `SmartPlant` `DefUIDs` the A01 reference declares
 /// but the writer does not yet emit. They were discovered
 /// when the A33 gate first ran on the A01 fixture; A34 will
 /// close them by extending `write_derived_connector_endpoints`
@@ -55,31 +55,31 @@ use common::{
 /// Entry format: `(defuid, milestone, rationale)`.
 ///
 /// Whitelist semantics: the A33 gate ignores reference
-/// counts on these DefUIDs entirely (rather than gating
+/// counts on these `DefUIDs` entirely (rather than gating
 /// `generated >= reference - tolerance`). The `closed_gaps`
 /// detection in [`rel_defuid_parity_on_a01_writer_matches_reference_supersets`]
-/// fails the test if a DefUID listed here is now actually
+/// fails the test if a `DefUID` listed here is now actually
 /// emitted in `>= reference_count`, so the whitelist cannot
 /// silently drift out of date.
 const KNOWN_WRITER_REL_DEFUID_GAPS: &[(&str, &str, &str)] = &[];
 
-/// A33 · Writer ⊇ A01 reference at Rel DefUID granularity,
+/// A33 · Writer ⊇ A01 reference at Rel `DefUID` granularity,
 /// modulo [`KNOWN_WRITER_REL_DEFUID_GAPS`].
 ///
 /// Three failure modes:
 ///
-/// 1. **Unwhitelisted under-emit** — a DefUID is missing or
+/// 1. **Unwhitelisted under-emit** — a `DefUID` is missing or
 ///    under-counted relative to the A01 reference and is NOT
 ///    in the whitelist. Forces explicit classification (add
 ///    a whitelist entry with milestone + rationale, or close
 ///    the gap via a writer change).
-/// 2. **Closed gap stale entry** — a DefUID listed in
+/// 2. **Closed gap stale entry** — a `DefUID` listed in
 ///    [`KNOWN_WRITER_REL_DEFUID_GAPS`] is now actually
 ///    emitted in `>= reference_count`. The whitelist entry
 ///    is stale and should be removed (and the milestone
 ///    pointer celebrated).
-/// 3. **Extras** — writer emits a DefUID the reference
-///    does not declare. Tolerated and only logged; SmartPlant's
+/// 3. **Extras** — writer emits a `DefUID` the reference
+///    does not declare. Tolerated and only logged; `SmartPlant`'s
 ///    composition emitter sometimes skips derived rels for
 ///    annotation-only items, so writer supersets are valid.
 #[test]
@@ -217,15 +217,15 @@ fn rel_defuid_parity_a01_reference_exposes_nonempty_inventory() {
     );
 }
 
-/// Cross-fixture DefUID divergences known to be valid
-/// SmartPlant variants. Format:
+/// Cross-fixture `DefUID` divergences known to be valid
+/// `SmartPlant` variants. Format:
 /// `(only_in_a01, only_in_dwg, milestone, rationale)`.
 ///
 /// As of A33 landing the whitelist documents 4 DWG-only
-/// DefUIDs the A01 reference does not declare. They all
-/// derive from data SmartPlant ships only on DWG-flavor
+/// `DefUIDs` the A01 reference does not declare. They all
+/// derive from data `SmartPlant` ships only on DWG-flavor
 /// fixtures (instrument signal connectors, piping tap
-/// fittings) so are real SmartPlant variants rather than
+/// fittings) so are real `SmartPlant` variants rather than
 /// drift.
 #[allow(clippy::type_complexity)]
 const KNOWN_A01_VS_DWG_REL_DEFUID_DIVERGENCES: &[(&[&str], &[&str], &str, &str)] = &[(
@@ -247,15 +247,15 @@ const KNOWN_A01_VS_DWG_REL_DEFUID_DIVERGENCES: &[(&[&str], &[&str], &str, &str)]
      should naturally produce these DefUIDs.",
 )];
 
-/// A33b · Cross-fixture Rel DefUID set agreement.
+/// A33b · Cross-fixture Rel `DefUID` set agreement.
 ///
 /// Both A01 and DWG reference must declare identical
-/// DefUID sets (modulo whitelist). DefUIDs are SmartPlant
-/// domain enums (DrawingItems, PipingConnectors,
-/// DwgRepresentationComposition, ...), not data-driven
+/// `DefUID` sets (modulo whitelist). `DefUIDs` are `SmartPlant`
+/// domain enums (`DrawingItems`, `PipingConnectors`,
+/// `DwgRepresentationComposition`, ...), not data-driven
 /// values, so cross-fixture set agreement is the
 /// expected baseline. A divergence here flags a
-/// SmartPlant convention difference between plants — those
+/// `SmartPlant` convention difference between plants — those
 /// are real and need explicit documentation.
 #[test]
 fn a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise() {
@@ -328,7 +328,7 @@ fn a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise() {
 ///
 /// Once the DWG MDF fixture is bundled, the writer's
 /// generated DWG `_Data.xml` must emit at least the same Rel
-/// DefUID inventory as the SmartPlant DWG reference. Extras are
+/// `DefUID` inventory as the `SmartPlant` DWG reference. Extras are
 /// tolerated and only logged, matching the A33 contract on A01.
 #[test]
 fn rel_defuid_parity_on_dwg_writer_matches_reference_supersets_when_mirror_available() {
@@ -389,18 +389,18 @@ fn rel_defuid_parity_on_dwg_writer_matches_reference_supersets_when_mirror_avail
 
 /// A36 · UID2 semantic-level gate, built on top of A34c.
 ///
-/// A33 covers the **count** of each DefUID; A34c swapped
-/// PipingEnd1Conn's UID2 from an intra-connector `.PPT`
-/// placeholder to the real upstream ModelItem UID. Without a
+/// A33 covers the **count** of each `DefUID`; A34c swapped
+/// `PipingEnd1Conn`'s UID2 from an intra-connector `.PPT`
+/// placeholder to the real upstream `ModelItem` UID. Without a
 /// dedicated gate, a future refactor could silently
 /// reintroduce the placeholder and still satisfy A33
 /// (the count is unchanged — both forms emit one
-/// PipingEnd1Conn per PipeRun).
+/// `PipingEnd1Conn` per `PipeRun`).
 ///
 /// This gate asserts the opposite: on the A01 fixture, at
 /// least one emitted `PipingEnd1Conn` rel must have a UID2
 /// that is NOT an intra-connector placeholder — i.e. at
-/// least one pipe end is wired to a real ModelItem.
+/// least one pipe end is wired to a real `ModelItem`.
 ///
 /// The A01 fixture has one connected port (port.1 → Nozzle),
 /// which means the test also implicitly confirms the loader
@@ -451,9 +451,9 @@ fn a36_piping_end1_conn_uid2_is_real_upstream_on_a01() {
 
 /// A36 · Sanity sub-test: the same property on the DWG
 /// generated output, when the mirror is available. DWG has
-/// multiple PipeRuns so the signal is stronger (more
+/// multiple `PipeRuns` so the signal is stronger (more
 /// opportunities for a `.PPT`-only regression to surface).
-/// Soft-skipped when the DWG SQLite mirror is absent — the
+/// Soft-skipped when the DWG `SQLite` mirror is absent — the
 /// fidelity of the A01 test remains the hard contract.
 #[test]
 fn a36_piping_end1_conn_uid2_is_real_upstream_on_dwg_when_available() {
@@ -541,12 +541,12 @@ fn a36b_every_rel_uid2_resolves_within_the_document_on_dwg_when_available() {
 ///    `write_derived_connector_endpoints`.
 ///
 /// The second branch is explicit rather than implicit so a
-/// *future* decision to stop emitting derived port IObjects
+/// *future* decision to stop emitting derived port `IObjects`
 /// surfaces as a test failure rather than a silent
 /// dangling-reference leak.
 ///
 /// The gate enforces document-internal referential
-/// integrity — SmartPlant validators reject rels pointing at
+/// integrity — `SmartPlant` validators reject rels pointing at
 /// UIDs nothing else declares. A33 only counts; A36b is the
 /// first gate to actually walk the UID graph.
 #[test]
@@ -595,8 +595,8 @@ fn a36b_every_rel_uid2_resolves_within_the_document_on_a01() {
     );
 }
 
-/// A34-family derived-UID suffix pattern. A PipingConnector
-/// synthesizes three virtual child IObjects:
+/// A34-family derived-UID suffix pattern. A `PipingConnector`
+/// synthesizes three virtual child `IObjects`:
 ///
 /// * `<connector>.1` (port.1)
 /// * `<connector>.2` (port.2)
@@ -624,7 +624,7 @@ fn is_known_derived_port_uid(uid: &str, iobject_uids: &BTreeSet<String>) -> bool
 }
 
 /// Collect every `<IObject UID="..."/>` / `<IObject UID="..." ...>`
-/// UID value out of a SmartPlant Publish Data XML. Byte-level
+/// UID value out of a `SmartPlant` Publish Data XML. Byte-level
 /// scan — same approach as `parse_rel_details` so the gate
 /// does not pull in quick-xml for a single attribute
 /// extraction.

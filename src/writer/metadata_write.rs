@@ -15,7 +15,7 @@
 //! 5. Phase 10i (v0.8.0+): code-page-aware property updates via
 //!    `summary_updates_encoded` — same symbolic keys, each value carries
 //!    an explicit `encoding_rs` label for `VT_LPSTR` targets
-//!    (CP1252 / GBK / Shift_JIS / …).
+//!    (CP1252 / GBK / `Shift_JIS` / …).
 //!
 //! Ordering within one call is deterministic:
 //!
@@ -40,7 +40,7 @@ const GENERAL_PATH: &str = "/TaggedTxtData/General";
 /// provided XML bodies and apply `summary_updates` / `summary_deletions`
 /// to the OLE property-set streams. Empty XML bodies are rejected to
 /// avoid producing a `quick-xml`-unparseable stream. Empty
-/// summary_updates / summary_deletions are free no-ops.
+/// `summary_updates` / `summary_deletions` are free no-ops.
 pub fn apply_metadata_updates(
     package: &mut PidPackage,
     updates: &MetadataUpdates,

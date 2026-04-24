@@ -1,13 +1,13 @@
-//! Publish Data XML generation — offline SmartPlant pipeline terminal stage.
+//! Publish Data XML generation — offline `SmartPlant` pipeline terminal stage.
 //!
-//! Stage-1 pipeline reads the MDF extracted from a SmartPlant backup
+//! Stage-1 pipeline reads the MDF extracted from a `SmartPlant` backup
 //! via:
 //!
 //! 1. Rust: [`crate::backup::mtf`] + [`crate::bin::pid_backup_extract`]
 //!    — strips the SQL Server backup stream header and writes a
 //!    reconstructable `.mdf` file.
 //! 2. Rust: [`mdf_load`] + vendored `oxidized-mdf` — reads the
-//!    publish-relevant SmartPlant SQL tables directly from MDF.
+//!    publish-relevant `SmartPlant` SQL tables directly from MDF.
 //! 3. Rust: *this module* — loads the relevant rows into the publish
 //!    DTO and emits a SmartPlant-compatible Publish Data XML document
 //!    (`<DrawingName>_Data.xml` and `<DrawingName>_Meta.xml`).
@@ -15,19 +15,19 @@
 //! ## Submodules
 //!
 //! * [`mdf_load`] — MDF → publish table adapter.
-//! * [`sqlite_load`] — in-memory/legacy SQLite → object graph DTO.
+//! * [`sqlite_load`] — in-memory/legacy `SQLite` → object graph DTO.
 //! * [`model`] — object-graph DTO shared by the loader and the
 //!   writer. Includes the [`model::PublishStyle`] selector, which
 //!   is an **explicit** input per drawing — the writer never
-//!   auto-detects the A01 / DWG SmartPlant flavor.
+//!   auto-detects the A01 / DWG `SmartPlant` flavor.
 //! * [`xml_writer`] — DTO → Publish Data XML byte stream. Emits
 //!   both the `_Data.xml` and `_Meta.xml` documents and is guarded
 //!   end-to-end by the fixture parity gates in `tests/publish_*.rs`
 //!   (tag / interface / attribute / Rel-DefUID for `_Data.xml` and
 //!   canonical-shape parity for `_Meta.xml`).
 //!
-//! The normal path no longer depends on the C# OrcaMDF probe. The
-//! legacy SQLite loader remains for fixture compatibility and as a
+//! The normal path no longer depends on the C# `OrcaMDF` probe. The
+//! legacy `SQLite` loader remains for fixture compatibility and as a
 //! simple relational adapter behind the MDF reader.
 //!
 //! ## Stage-1 outstanding

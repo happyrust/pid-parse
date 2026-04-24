@@ -2,7 +2,7 @@
 //!
 //! These helpers are intentionally **not** a full XML rewriter. They do a
 //! targeted `<Tag>old</Tag>` text substitution that is safe for the simple,
-//! flat, no-namespace metadata XML used by SmartPlant `/TaggedTxtData/*`
+//! flat, no-namespace metadata XML used by `SmartPlant` `/TaggedTxtData/*`
 //! streams. Anything more elaborate (CDATA sections, comments, attributes
 //! on the target tag, self-closing forms, nested tags with the same name)
 //! is reported as an error instead of silently rewriting the wrong thing.

@@ -7,7 +7,7 @@
 //!
 //! Field layout (source: Paul Randal's "Inside the Storage Engine"
 //! and Mark Rasmussen's "Anatomy of a Page" blog series; cross-
-//! validated against real SmartPlant SQL Server 2008 R2 backups
+//! validated against real `SmartPlant` SQL Server 2008 R2 backups
 //! extracted from our TEST02 fixture):
 //!
 //! | Offset | Size | Field |

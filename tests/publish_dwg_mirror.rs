@@ -13,7 +13,7 @@
 //! ignored. The hint explicitly tells the reader that
 //! Stage 2–4 verification (loader canonical-field
 //! enrichment, A24 / A27b whitelist closure,
-//! PIDBranchPoint / PIDPipingBranchPoint parity) is NOT
+//! `PIDBranchPoint` / `PIDPipingBranchPoint` parity) is NOT
 //! validated on this run.
 //!
 //! When the MDF fixture is present:
@@ -82,7 +82,7 @@ fn dwg_mirror_end_to_end_meta_xml_agrees_with_reference_identifiers() {
 }
 
 /// Ditto for `_Data.xml`: MDF-driven writer output must be
-/// non-empty and must follow the DWG-style IObject
+/// non-empty and must follow the DWG-style `IObject`
 /// convention (A29) on `<PIDPipeline>` — this is the
 /// smallest end-to-end assertion that
 /// [`PublishStyle::Dwg`] was actually applied.

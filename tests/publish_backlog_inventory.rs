@@ -5,7 +5,7 @@
 //! ## Why a snapshot test instead of code?
 //!
 //! `publish::supported_pid_tags()` lists the tags the writer
-//! emits today. Every SmartPlant reference XML in the repo
+//! emits today. Every `SmartPlant` reference XML in the repo
 //! (A01 + DWG fixtures) may ship extra tags that the writer
 //! has no emit path for. A23/A27 only check tags the writer
 //! claims to support, so the backlog stays invisible in CI
@@ -21,20 +21,20 @@
 //!   executable spec — they extend the writer until
 //!   `interface_parity_*` (A23) / `attribute_parity_*`
 //!   (A27) start passing for the new tag.
-//! * **Drift detection.** If a future SmartPlant export
+//! * **Drift detection.** If a future `SmartPlant` export
 //!   introduces a new attribute or reorders the interface
 //!   list on a backlog tag, this test fails on the next
 //!   `cargo test` rather than silently going unnoticed
 //!   until someone implements that writer arm.
 //!
 //! Both fixtures soft-skip when missing so CI workers
-//! without the SmartPlant TEST02 / DWG bundle stay green.
+//! without the `SmartPlant` TEST02 / DWG bundle stay green.
 //!
 //! ## Current state
 //!
 //! As of Stage-4 all previously backlogged tags
 //! (`PIDBranchPoint` + `PIDPipingBranchPoint`) have
-//! graduated into `supported_pid_tags()`. BACKLOG_SPECS
+//! graduated into `supported_pid_tags()`. `BACKLOG_SPECS`
 //! is empty. The guard test
 //! `a28_every_unsupported_reference_tag_has_a_backlog_spec`
 //! will fire the moment a new unsupported tag appears in
@@ -55,7 +55,7 @@ use common::{load_reference_a01_xml as load_a01, load_reference_dwg_xml as load_
 /// opens we expect in that fixture. `interfaces` is the
 /// ordered list of interface element names that appear
 /// inside the FIRST occurrence of the tag — order matters
-/// because SmartPlant emits interfaces in a canonical
+/// because `SmartPlant` emits interfaces in a canonical
 /// order that the writer must mirror. `interface_attrs`
 /// maps each interface to the alphabetical set of
 /// attribute names it carries.
@@ -76,7 +76,7 @@ struct BacklogTagSpec {
 /// All backlog tag specs the snapshot test enforces.
 /// Currently empty — all previously backlogged tags have
 /// graduated into `supported_pid_tags()`. New specs will
-/// be added here when a SmartPlant export surfaces a PID
+/// be added here when a `SmartPlant` export surfaces a PID
 /// tag the writer does not yet emit.
 const BACKLOG_SPECS: &[&BacklogTagSpec] = &[];
 
@@ -92,14 +92,14 @@ fn pick_xml_for(fixture: &str) -> Option<String> {
 /// match its reference fixture's actual shape exactly.
 /// Failure modes:
 ///
-/// * `instance_count` mismatch → SmartPlant added or
+/// * `instance_count` mismatch → `SmartPlant` added or
 ///   removed branch points in the fixture, OR our scanner
 ///   regressed on tag-counting.
-/// * `interfaces` mismatch → SmartPlant changed the
+/// * `interfaces` mismatch → `SmartPlant` changed the
 ///   canonical interface list / order for a backlog tag.
 ///   The future writer arm must be revised before it can
 ///   land cleanly.
-/// * `interface_attrs` mismatch → SmartPlant added or
+/// * `interface_attrs` mismatch → `SmartPlant` added or
 ///   removed an attribute on a specific interface — the
 ///   spec needs to be updated.
 #[test]
@@ -202,7 +202,7 @@ fn a28_backlog_tag_specs_match_reference_fixtures_exactly() {
 }
 
 /// Guard: every backlog spec must reference a tag the
-/// writer does NOT yet support. If a tag in BACKLOG_SPECS
+/// writer does NOT yet support. If a tag in `BACKLOG_SPECS`
 /// graduates into `supported_pid_tags()`, the snapshot
 /// becomes a duplicate of A23/A27's coverage and should be
 /// removed (the new writer arm now owns the spec).
@@ -225,7 +225,7 @@ fn a28_backlog_spec_tags_are_not_in_writer_supported_set() {
 /// Guard: backlog spec coverage must include every tag
 /// observed in any reference fixture that is NOT in the
 /// writer's supported set. Otherwise a newly-introduced
-/// SmartPlant tag could land in fixtures and stay
+/// `SmartPlant` tag could land in fixtures and stay
 /// invisible until someone notices the coverage gap.
 #[test]
 fn a28_every_unsupported_reference_tag_has_a_backlog_spec() {

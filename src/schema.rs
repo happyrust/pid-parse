@@ -3,7 +3,7 @@
 //! Downstream consumers (TypeScript, Python, C# ...) can run `pid_inspect
 //! --schema` to emit a JSON Schema describing the entire `PidDocument`
 //! tree, then feed that schema into a codegen tool (quicktype,
-//! json-schema-to-typescript, NJsonSchema ...).
+//! json-schema-to-typescript, `NJsonSchema` ...).
 //!
 //! The schema is derived automatically from every `#[derive(JsonSchema)]`
 //! model type, so it stays in sync with the Rust source.

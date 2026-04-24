@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 
 /// A half-open byte range `[start, end)` inside some stream. Ranges are
 /// stored with `u64` coordinates because PID streams can in theory exceed
-/// 4 GiB (CFB sector tables allow it even if real-world SmartPlant
+/// 4 GiB (CFB sector tables allow it even if real-world `SmartPlant`
 /// fixtures never reach that size).
 ///
 /// Empty ranges (`start >= end`) are permitted but never produced by the

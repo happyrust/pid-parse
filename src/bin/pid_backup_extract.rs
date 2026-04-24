@@ -1,5 +1,5 @@
 //! CLI: extract the SQL Server backup payload (MSDA stream body)
-//! and the configuration metadata (MSCI stream) from a SmartPlant
+//! and the configuration metadata (MSCI stream) from a `SmartPlant`
 //! `Export.dmp` into standalone files.
 //!
 //! Stage 0 treats the extracted `*.msda.bin` as the raw SQL Server
@@ -8,7 +8,7 @@
 //! extent-sparse format internally. Decoding that format into
 //! individual MDF pages is Stage 1's job; extracting the contiguous
 //! bytes here gives downstream tooling (our future page parser, or
-//! external tools like OrcaMDF) a clean starting point.
+//! external tools like `OrcaMDF`) a clean starting point.
 //!
 //! Usage:
 //!
@@ -41,7 +41,7 @@ struct CliOptions {
     dry_run: bool,
     /// Also write a `<stem>.mdf` file that skips the SQL-Server
     /// backup-stream leading header (default 1008 bytes) so tools
-    /// like OrcaMDF can open the extracted bytes as an MDF. The
+    /// like `OrcaMDF` can open the extracted bytes as an MDF. The
     /// leading-header size is auto-detected by finding the first
     /// valid MDF page header on a 16-byte grid, falling back to
     /// the 0x3F0 value observed in SQL Server 2008 R2 fixtures.
@@ -270,7 +270,7 @@ fn run(options: CliOptions) -> Result<(), String> {
 /// page header.
 ///
 /// Falls back to the canonical 0x3F0 offset observed in SQL
-/// Server 2008 R2 SmartPlant fixtures if the scan yields nothing.
+/// Server 2008 R2 `SmartPlant` fixtures if the scan yields nothing.
 fn detect_backup_stream_header_len(msda_body: &[u8]) -> usize {
     use pid_parse::backup::mdf_page::{MdfPageHeader, MIN_HEADER_BYTES, PAGE_SIZE};
 

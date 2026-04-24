@@ -2,9 +2,9 @@
 //! using the vendored `oxidized-mdf` Rust reader.
 //!
 //! The existing publish loader already knows how to turn a table set
-//! shaped like SmartPlant's SQL tables into [`super::model::PublishDrawing`].
+//! shaped like `SmartPlant`'s SQL tables into [`super::model::PublishDrawing`].
 //! This module keeps that contract without a C# probe step: rows are
-//! read from MDF and staged into an in-memory SQLite connection, then
+//! read from MDF and staged into an in-memory `SQLite` connection, then
 //! the proven `sqlite_load` path builds the DTO.
 
 use std::path::Path;
@@ -44,7 +44,7 @@ const PUBLISH_TABLES: &[&str] = &[
 ];
 
 /// Open `path` with `oxidized-mdf`, stage the publish-relevant
-/// SmartPlant tables into an in-memory SQLite connection, and return
+/// `SmartPlant` tables into an in-memory `SQLite` connection, and return
 /// that connection for reuse by the existing query loader.
 pub fn open_mdf_as_sqlite(path: &Path) -> Result<Connection, PublishError> {
     let t0 = Instant::now();

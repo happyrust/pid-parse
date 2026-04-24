@@ -49,7 +49,7 @@ pub struct PidPackage {
     /// CLSIDs of non-root storages (directories inside the CFB) whose
     /// value is **not** the nil UUID. Keyed by the normalized storage
     /// path. Nil-valued storages are omitted to keep the map sparse —
-    /// real SmartPlant samples almost never set non-root CLSIDs, so the
+    /// real `SmartPlant` samples almost never set non-root CLSIDs, so the
     /// typical real-file map is empty.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub storage_clsids: BTreeMap<String, Uuid>,
@@ -277,7 +277,7 @@ pub struct StateBitsDiff {
 impl PackageDiff {
     /// `true` iff the two packages are container-identical: same streams
     /// byte-for-byte, same root / non-root CLSIDs, same storage
-    /// timestamps, same state_bits.
+    /// timestamps, same `state_bits`.
     pub fn is_empty(&self) -> bool {
         self.only_in_a.is_empty()
             && self.only_in_b.is_empty()

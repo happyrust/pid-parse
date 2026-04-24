@@ -3,7 +3,7 @@ use crate::model::{PidDocument, SummaryInfo, SummaryPropertyValue};
 use std::collections::BTreeMap;
 use std::io::Read;
 
-/// FMTID of DocumentSummaryInformation section 2 (user-defined
+/// FMTID of `DocumentSummaryInformation` section 2 (user-defined
 /// property dictionary). [MS-OLEPS] lists this as
 /// `{D5CDD505-2E9C-101B-9397-08002B2CF9AE}` with Data1/Data2/Data3 in
 /// little-endian and Data4 in big-endian — the same wire layout that
@@ -168,7 +168,7 @@ fn read_typed_value(data: &[u8], offset: usize) -> Option<PropValue> {
     }
 }
 
-/// Map standard SummaryInformation property IDs.
+/// Map standard `SummaryInformation` property IDs.
 fn map_summary_props(props: &BTreeMap<u32, PropValue>, info: &mut SummaryInfo) {
     // PID_TITLE = 2
     if let Some(PropValue::Str(v)) = props.get(&2) {
@@ -214,7 +214,7 @@ fn map_summary_props(props: &BTreeMap<u32, PropValue>, info: &mut SummaryInfo) {
     }
 }
 
-/// Map DocumentSummaryInformation property IDs into the same SummaryInfo.
+/// Map `DocumentSummaryInformation` property IDs into the same `SummaryInfo`.
 fn map_doc_summary_props(props: &BTreeMap<u32, PropValue>, info: &mut SummaryInfo) {
     for (&id, val) in props {
         let label = format!("DocSummary.{}", doc_summary_prop_name(id));
@@ -411,8 +411,8 @@ fn decode_user_dict_section(data: &[u8], offset: usize) -> BTreeMap<String, Summ
 /// with 4-byte alignment between entries. For the LPSTR variant used
 /// here, `Length` is a byte count that includes the NUL terminator, and
 /// `Name` is raw single-byte characters. Phase 10j reads these as UTF-8
-/// (reasonable default since SmartPlant dict names are uniformly
-/// ASCII); Phase 10k will honor the section's CodePage property.
+/// (reasonable default since `SmartPlant` dict names are uniformly
+/// ASCII); Phase 10k will honor the section's `CodePage` property.
 fn parse_dictionary_lpstr(data: &[u8], offset: usize) -> BTreeMap<u32, String> {
     let mut out = BTreeMap::new();
     if offset + 4 > data.len() {
@@ -530,11 +530,11 @@ fn read_user_value(data: &[u8], offset: usize) -> Option<SummaryPropertyValue> {
 mod section2_tests {
     use super::*;
 
-    /// Build a minimal DocumentSummaryInformation stream with exactly
+    /// Build a minimal `DocumentSummaryInformation` stream with exactly
     /// two sections:
-    /// - section 1 (standard): one VT_LPWSTR Category = "CAT"
+    /// - section 1 (standard): one `VT_LPWSTR` Category = "CAT"
     /// - section 2 (user dict): Dictionary with one entry
-    ///   (PROPID 4 → "SP_ProjectID") plus one VT_LPWSTR value
+    ///   (PROPID 4 → "`SP_ProjectID`") plus one `VT_LPWSTR` value
     ///   "PROJ-001".
     fn sample_docsummary_bytes() -> Vec<u8> {
         // ---- section 1 (FMTID_DOC_SUMMARY) ----

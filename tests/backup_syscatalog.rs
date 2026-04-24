@@ -1,6 +1,6 @@
 //! Integration test: apply [`scan_sysschobjs_rows`] to the MDF data
 //! page we reverse-engineered as the primary sysschobjs data page
-//! (#2173 in the TEST02 fixture) and assert that the SmartPlant
+//! (#2173 in the TEST02 fixture) and assert that the `SmartPlant`
 //! `T_*` tables are recoverable by name.
 //!
 //! # Scope (post-pivot)
@@ -8,7 +8,7 @@
 //! Stage-1 originally aimed at a fully-self-hosted row decoder — we
 //! wrote this scanner to pull the `object_id ↔ name` mapping out of
 //! `sysschobjs` without any SQL Server involvement. After the pivot
-//! to the [OrcaMDF wrapper path](../tools/orca-mdf-probe), the
+//! to the [`OrcaMDF` wrapper path](../tools/orca-mdf-probe), the
 //! canonical way to recover that mapping is to run
 //! `OrcaMdfProbe --export sysschobjs` (or any other DMV call) on
 //! the extracted `.mdf`. This scanner remains in the tree as a
@@ -17,7 +17,7 @@
 //! silently broken.
 //!
 //! Accordingly this test now asserts **name** recovery only. The
-//! object_id bytes require a deeper row-format decoder that stage-1
+//! `object_id` bytes require a deeper row-format decoder that stage-1
 //! no longer intends to ship; see the module docs in
 //! `src/backup/syscatalog.rs` for details.
 

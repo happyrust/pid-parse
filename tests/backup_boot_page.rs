@@ -1,5 +1,5 @@
 //! Integration test: locate page 9 inside the extracted MSDA body
-//! and assert [`parse_boot_page`] recovers the SmartPlant fixture's
+//! and assert [`parse_boot_page`] recovers the `SmartPlant` fixture's
 //! logical database name.
 
 use pid_parse::backup::mdf_page::PAGE_SIZE;

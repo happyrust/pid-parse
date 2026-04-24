@@ -7,9 +7,9 @@
 //! `publish_writer_coverage.rs`. The earlier test verifies every
 //! PID tag the reference emits is ONE the writer knows about.
 //! This test goes further: for each supported tag, it pins the
-//! interface set emitted by SmartPlant into an assertion table
+//! interface set emitted by `SmartPlant` into an assertion table
 //! and confirms the writer emits at least the same interfaces —
-//! closing the "we counted PIDPipeline but emitted only 6/10
+//! closing the "we counted `PIDPipeline` but emitted only 6/10
 //! interfaces inside" gap that A19/A20/A21/A22 systematically
 //! closed.
 //!
@@ -23,7 +23,7 @@
 //! reference inventory.
 //!
 //! Both inputs skip cleanly when missing so CI workers without
-//! the SmartPlant TEST02 backup bundle continue to pass.
+//! the `SmartPlant` TEST02 backup bundle continue to pass.
 
 use std::collections::BTreeSet;
 
@@ -196,14 +196,14 @@ const KNOWN_A01_VS_DWG_DIVERGENCES: &[(&str, (&[&str], &[&str]), &str, &str)] = 
 /// supported tag's interface set (modulo known variant deltas
 /// whitelisted in [`KNOWN_A01_VS_DWG_DIVERGENCES`]), which means
 /// "writer ⊇ A01" is transitively "writer ⊇ DWG" too for
-/// non-whitelisted tags. Any future SmartPlant export that
+/// non-whitelisted tags. Any future `SmartPlant` export that
 /// emits a *new* interface mismatch on DWG vs A01 for the same
 /// tag would invalidate the shape-static assumption and break
 /// this assertion, forcing us to either close the gap via a
 /// conditional emit path or add a fresh whitelist entry with
 /// documented rationale.
 ///
-/// Works without the DWG SQLite mirror: operates purely on the
+/// Works without the DWG `SQLite` mirror: operates purely on the
 /// two reference XML fixtures that ARE bundled in the repo.
 /// Soft-skips when either fixture is absent.
 #[test]

@@ -30,9 +30,9 @@
 //! |--------------|-------|---------|
 //! | `0x028`      | `MQCI` | Outer SQL Config wrapper |
 //! | `0x03C`      | `SCIN` | Backup set header (date, db name, page counts) |
-//! | `0x200`      | `SFGI` | SmartFile Group Info (filegroup name follows) |
-//! | `0x2F0`      | `SFIN` | SmartFile Info #1 (MDF) |
-//! | `0x7EC`      | `SFIN` | SmartFile Info #2 (LDF) |
+//! | `0x200`      | `SFGI` | `SmartFile` Group Info (filegroup name follows) |
+//! | `0x2F0`      | `SFIN` | `SmartFile` Info #1 (MDF) |
+//! | `0x7EC`      | `SFIN` | `SmartFile` Info #2 (LDF) |
 //!
 //! Each `SFIN` record header begins with the magic, a 32-bit record
 //! length field, and a variable-size body. Following the numeric
@@ -44,9 +44,9 @@
 
 use std::fmt;
 
-/// Magic marker introducing a SmartFile Group Info descriptor.
+/// Magic marker introducing a `SmartFile` Group Info descriptor.
 pub const SFGI_MAGIC: [u8; 4] = *b"SFGI";
-/// Magic marker introducing a SmartFile Info (per-file) descriptor.
+/// Magic marker introducing a `SmartFile` Info (per-file) descriptor.
 pub const SFIN_MAGIC: [u8; 4] = *b"SFIN";
 /// Magic marker introducing the SQL Configuration Information
 /// header. Stage-0 does not currently decode this section beyond

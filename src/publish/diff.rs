@@ -4,14 +4,14 @@
 //! Stage-1 A12 establishes the comparison baseline: every PID tag
 //! variety surfaces in a side-by-side count table together with a
 //! `(generated - reference)` delta. The intent is *not* a textual
-//! diff — SmartPlant's exporter and ours emit different per-element
+//! diff — `SmartPlant`'s exporter and ours emit different per-element
 //! formatting, attribute ordering, and inline whitespace, all of
 //! which would noise out a byte-level comparison.
 //!
 //! Instead the report answers two strategic questions:
 //!
 //! 1. **Coverage** — which PID tag varieties are missing from our
-//!    output, and which extras are we emitting that SmartPlant never
+//!    output, and which extras are we emitting that `SmartPlant` never
 //!    produces?
 //! 2. **Volume** — for shared tag varieties, do counts match? A
 //!    discrepancy hints at loader-side under- or over-counting.
@@ -93,7 +93,7 @@ pub struct SemanticDiffReport {
     pub missing_from_generated: usize,
     /// Number of tag varieties present in generated but missing in
     /// reference. Usually means we are over-emitting an interface
-    /// that SmartPlant skips on the source drawing.
+    /// that `SmartPlant` skips on the source drawing.
     pub extra_in_generated: usize,
     /// Number of shared tag varieties whose counts differ.
     pub count_deltas: usize,
@@ -154,7 +154,7 @@ impl fmt::Display for SemanticDiffReport {
 
 /// Scan `xml` and return a `tag_name -> count` map for every
 /// `<PIDxxx>` open we encounter. Self-closing tags (`<PIDxxx/>`)
-/// are NOT counted — SmartPlant always opens these as block
+/// are NOT counted — `SmartPlant` always opens these as block
 /// elements with an explicit `</PIDxxx>` closer, so a self-closing
 /// match would always be a false positive.
 ///
@@ -234,7 +234,7 @@ pub fn parse_pid_tag_counts(xml: &str) -> BTreeMap<String, usize> {
 
 /// True when `b` is a legal continuation byte for an XML tag name
 /// in our restricted scanner. We deliberately reject Unicode bytes
-/// to keep the implementation simple — SmartPlant's tag names are
+/// to keep the implementation simple — `SmartPlant`'s tag names are
 /// always ASCII and the false-negative rate on real fixtures is
 /// zero.
 fn is_tag_name_byte(b: u8) -> bool {
@@ -248,12 +248,12 @@ fn is_tag_name_byte(b: u8) -> bool {
 /// PID tag varieties the writer is known to emit today. Sorted
 /// for determinism. The list is the executable counterpart of the
 /// `subtables_for_item_type` dispatch matrix in `xml_writer.rs`
-/// plus the four virtual nodes (PIDDrawing / PIDRepresentation /
-/// derived PIDPipingPort / PIDProcessPoint) that any non-trivial
+/// plus the four virtual nodes (`PIDDrawing` / `PIDRepresentation` /
+/// derived `PIDPipingPort` / `PIDProcessPoint`) that any non-trivial
 /// drawing emits.
 ///
 /// Used by [`coverage_against_reference`] to classify a reference
-/// SmartPlant `_Data.xml` into "tags we already know how to emit"
+/// `SmartPlant` `_Data.xml` into "tags we already know how to emit"
 /// vs "tags that form the next-phase backlog".
 pub fn supported_pid_tags() -> &'static [&'static str] {
     &[
@@ -432,19 +432,19 @@ pub fn coverage_against_reference(reference_xml: &str) -> WriterCoverage {
 ///   tracking interfaces for this tag.
 /// * Second, third, ... occurrences of the same PID tag are
 ///   skipped — the first one is the representative template
-///   (SmartPlant emits identical interface lists for every
+///   (`SmartPlant` emits identical interface lists for every
 ///   instance of the same tag).
 /// * Interfaces are any opening element whose name begins with
 ///   `I` and contains only ASCII alphanumerics plus `_`. Both
 ///   self-closing (`<IFoo/>`) and open forms (`<IFoo x="y"/>` or
-///   `<IFoo>...</IFoo>`) are recorded identically — SmartPlant
+///   `<IFoo>...</IFoo>`) are recorded identically — `SmartPlant`
 ///   always emits interfaces as self-closers inside PID
 ///   containers, so this is a non-issue in practice.
 ///
 /// The helper is the counterpart of [`parse_pid_tag_counts`]
 /// for interface-level fidelity analysis. Tests use it to assert
 /// that every supported PID tag emits the same interface set as
-/// the SmartPlant reference, closing the gap that coverage-level
+/// the `SmartPlant` reference, closing the gap that coverage-level
 /// (tag-only) checks leave open.
 pub fn parse_interfaces_per_tag(xml: &str) -> BTreeMap<String, std::collections::BTreeSet<String>> {
     let bytes = xml.as_bytes();
@@ -522,10 +522,10 @@ pub fn parse_interfaces_per_tag(xml: &str) -> BTreeMap<String, std::collections:
 /// are deliberately ignored so that data-driven content
 /// differences (e.g. `FluidCode="@{abc}"` vs
 /// `FluidCode="@{xyz}"`) do not register as drift while genuine
-/// shape drift (e.g. DWG's IEquipment carries five attrs A01's
+/// shape drift (e.g. DWG's `IEquipment` carries five attrs A01's
 /// doesn't) does. Like [`parse_interfaces_per_tag`], only the
 /// FIRST occurrence of each PID tag is considered representative
-/// — SmartPlant emits identical attribute shapes for every
+/// — `SmartPlant` emits identical attribute shapes for every
 /// instance of the same tag on the same interface, so
 /// first-occurrence-per-tag is lossless.
 ///
@@ -706,7 +706,7 @@ fn parse_attr_names(inside: &[u8]) -> std::collections::BTreeSet<String> {
     names
 }
 
-/// Attribute names follow the SmartPlant XML convention: ASCII
+/// Attribute names follow the `SmartPlant` XML convention: ASCII
 /// alphanumeric plus `_`. Hyphens and colons never appear in
 /// the fixtures we deal with, so we don't extend the charset.
 fn is_attr_name_byte(b: u8) -> bool {
@@ -715,18 +715,18 @@ fn is_attr_name_byte(b: u8) -> bool {
 
 /// A33 · Per-`DefUID` Rel inventory.
 ///
-/// SmartPlant Publish Data XML carries two top-level
+/// `SmartPlant` Publish Data XML carries two top-level
 /// element families: `<PIDxxx>` business objects (covered
 /// by A12 / A23 / A27) and `<Rel>` relationship records
 /// (this helper). Each `<Rel>` wraps an `<IRel UID1="..."
 /// UID2="..." DefUID="..."/>` line whose `DefUID` is an
 /// enum-like identifier such as `DrawingItems`,
 /// `DwgRepresentationComposition`, `PipingConnectors`,
-/// `PipingEnd1Conn`, `ProcessPointCollection`. The DefUID
+/// `PipingEnd1Conn`, `ProcessPointCollection`. The `DefUID`
 /// classifies the relationship semantically; a writer that
 /// emits the right per-tag interface and attribute set but
 /// the wrong Rel inventory still produces broken
-/// SmartPlant input.
+/// `SmartPlant` input.
 ///
 /// This helper scans the XML byte stream for
 /// `DefUID="..."` occurrences inside `<IRel ...>` opening
@@ -737,7 +737,7 @@ fn is_attr_name_byte(b: u8) -> bool {
 ///
 /// Counting strategy:
 /// * Walk byte-by-byte looking for `<IRel`.
-/// * From there, scan forward to the next `>` (the IRel
+/// * From there, scan forward to the next `>` (the `IRel`
 ///   opening tag closer); inside that span, locate
 ///   `DefUID="..."` and capture the quoted value.
 /// * If multiple `DefUID=` instances exist on the same
@@ -829,7 +829,7 @@ pub struct RelDetail {
 /// The primary consumer is the A36 / A36b `publish_rel_parity`
 /// gate: after A34c switched `PipingEnd1Conn.UID2` from an
 /// intra-connector `.PPT` placeholder to the real upstream
-/// ModelItem UID, a future refactor could silently reintroduce
+/// `ModelItem` UID, a future refactor could silently reintroduce
 /// the placeholder and still satisfy the count-only A33 gate.
 /// This helper lets tests distinguish the two.
 ///
@@ -839,7 +839,7 @@ pub struct RelDetail {
 ///   (`/>`) and verbose closing (`</IRel>`) are treated
 ///   identically.
 /// * Attributes are looked up within the span `<IRel ...>`.
-///   Whichever order SmartPlant emits them in (and the two
+///   Whichever order `SmartPlant` emits them in (and the two
 ///   reference fixtures differ here) is accepted.
 /// * Missing attributes produce empty-string fields rather
 ///   than dropping the record; downstream code decides what
@@ -1021,14 +1021,14 @@ pub fn diff_publish_xml(generated_xml: &str, reference_xml: &str) -> SemanticDif
 
 /// A40 — one row of per-`DefUID` count comparison.
 ///
-/// Mirrors [`TagCountDiff`] one level deeper: every DefUID
+/// Mirrors [`TagCountDiff`] one level deeper: every `DefUID`
 /// that appears in either the generated or reference document
 /// gets a row. Reuses [`TagDiffStatus`] so CLI display code
-/// can treat `<PIDxxx>` counts and `<IRel>` DefUID counts
+/// can treat `<PIDxxx>` counts and `<IRel>` `DefUID` counts
 /// with one formatting path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelDefUidDiff {
-    /// The DefUID value, e.g. `"PipingEnd1Conn"`,
+    /// The `DefUID` value, e.g. `"PipingEnd1Conn"`,
     /// `"DrawingItems"`.
     pub def_uid: String,
     /// Count of `<IRel DefUID="..."/>` occurrences in the
@@ -1063,15 +1063,15 @@ pub struct RelDefUidDiffReport {
     /// Per-DefUID rows, sorted action-priority (MISSING >
     /// EXTRA > DELTA > MATCH, alphabetical within each).
     pub rows: Vec<RelDefUidDiff>,
-    /// Number of DefUIDs whose counts match exactly.
+    /// Number of `DefUIDs` whose counts match exactly.
     pub matching: usize,
-    /// Number of DefUIDs present in reference but not
+    /// Number of `DefUIDs` present in reference but not
     /// generated.
     pub missing_from_generated: usize,
-    /// Number of DefUIDs present in generated but not
+    /// Number of `DefUIDs` present in generated but not
     /// reference.
     pub extra_in_generated: usize,
-    /// Number of shared DefUIDs with different counts.
+    /// Number of shared `DefUIDs` with different counts.
     pub count_deltas: usize,
 }
 
@@ -1136,7 +1136,7 @@ impl fmt::Display for RelDefUidDiffReport {
 /// emitted?", the latter says "are all cross-references
 /// emitted?" A drawing can pass one gate and fail the other
 /// (the writer could emit every PID tag while dropping every
-/// T_Relationship row, or vice versa).
+/// `T_Relationship` row, or vice versa).
 ///
 /// The returned report uses the same `MISSING > EXTRA >
 /// DELTA > MATCH` priority ordering as

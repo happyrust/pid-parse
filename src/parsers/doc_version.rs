@@ -1,4 +1,4 @@
-//! Parser for the `DocVersion3` stream (SmartPlant P&ID version history log).
+//! Parser for the `DocVersion3` stream (`SmartPlant` P&ID version history log).
 //!
 //! The stream begins with the ASCII magic `"SmartPlantPID.a"` (same as the
 //! first record's product field) and is a plain array of fixed-size 48-byte

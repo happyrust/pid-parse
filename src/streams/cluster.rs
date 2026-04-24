@@ -117,10 +117,10 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
     Ok(())
 }
 
-/// Heuristic: find where the indexed string table starts in PSMcluster0.
-/// Scans for a [u32 byte_len (even, 4..512)] followed by valid UTF-16LE text,
+/// Heuristic: find where the indexed string table starts in `PSMcluster0`.
+/// Scans for a [u32 `byte_len` (even, 4..512)] followed by valid UTF-16LE text,
 /// then backs up 4 bytes to include the preceding u32 index field.
-/// Returns (offset, detection_method) for the string table start.
+/// Returns (offset, `detection_method`) for the string table start.
 fn find_string_table_start(data: &[u8]) -> (usize, String) {
     // First try to find index=2 entry (reliably u32-aligned) and back-derive entry 1
     for i in 20..data.len().saturating_sub(12) {

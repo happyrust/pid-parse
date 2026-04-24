@@ -511,7 +511,7 @@ fn validate_apply_plan_conflicts_with_edit_exits_one() {
 const SUMMARY_PATH: &str = "/\u{5}SummaryInformation";
 
 /// Build a minimal valid `/\u{5}SummaryInformation` property-set stream
-/// carrying a single VT_LPSTR `title` property. Mirrors the helper in
+/// carrying a single `VT_LPSTR` `title` property. Mirrors the helper in
 /// `writer_roundtrip.rs`; kept local to this file so the integration
 /// layer does not take a test-fixture dependency on another test file.
 fn minimal_summary_info_bytes(title_ascii: &str) -> Vec<u8> {

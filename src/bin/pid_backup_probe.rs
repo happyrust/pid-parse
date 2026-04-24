@@ -1,4 +1,4 @@
-//! CLI: scan a SmartPlant backup `Export.dmp` (an MTF envelope around
+//! CLI: scan a `SmartPlant` backup `Export.dmp` (an MTF envelope around
 //! SQL Server backup pages) and print the block layout. Stage-0 tool
 //! used to validate the [`pid_parse::backup::mtf`] parser on real
 //! fixtures without committing large binaries to the repo.

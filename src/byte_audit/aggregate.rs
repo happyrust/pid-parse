@@ -56,7 +56,7 @@ pub struct StreamAuditSummary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ByteAuditReport {
     /// Every `ParserTrace` the aggregation produced. Order follows
-    /// [`PidPackage::streams`] iteration (BTreeMap on normalized path).
+    /// [`PidPackage::streams`] iteration (`BTreeMap` on normalized path).
     pub traces: Vec<ParserTrace>,
     /// Sum of `stream_size` for every stream in the package.
     pub total_file_bytes: u64,
@@ -68,7 +68,7 @@ pub struct ByteAuditReport {
     /// `overall_consumed / total_file_bytes`, or `0.0` when the package
     /// contains no streams. NaN-safe by construction.
     pub overall_coverage_ratio: f32,
-    /// One summary per stream, keyed by path. BTreeMap so JSON output
+    /// One summary per stream, keyed by path. `BTreeMap` so JSON output
     /// is deterministic.
     pub per_stream: BTreeMap<String, StreamAuditSummary>,
     /// Convenience projection: stream paths that have no registered

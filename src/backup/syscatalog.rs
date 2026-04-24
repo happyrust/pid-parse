@@ -22,14 +22,14 @@
 //! ```
 //!
 //! This signature was discovered empirically from SQL Server 2008
-//! R2 fixture `Export.dmp` in our SmartPlant TEST02 backup: the
+//! R2 fixture `Export.dmp` in our `SmartPlant` TEST02 backup: the
 //! marker appears exactly once per catalog row. See also
 //! [`SYSSCHOBJS_ROW_MARKER`].
 //!
 //! Rows matched here are a **subset** of the real schema (we skip
 //! any row whose name is non-printable UTF-16LE or whose declared
 //! length would overflow the page). That's fine for stage-1 needs:
-//! we only care about recovering the SmartPlant `T_*` user tables.
+//! we only care about recovering the `SmartPlant` `T_*` user tables.
 //!
 //! # Validation
 //!
@@ -42,7 +42,7 @@
 //!    or valid BMP code points.
 //! 4. The four bytes preceding the marker are interpreted as the
 //!    row's `object_id`. We do not bound-check the numeric range
-//!    because SmartPlant catalogs can hit 10000+ object ids.
+//!    because `SmartPlant` catalogs can hit 10000+ object ids.
 
 /// 13-byte signature found immediately before the name field of
 /// every `sysschobjs` data row observed in SQL Server 2008 R2
@@ -119,7 +119,7 @@ pub fn scan_sysschobjs_rows(page: &[u8]) -> Vec<SysschobjsRow> {
 /// rejecting the whole row because of that padding.
 ///
 /// Stage-1 only treats printable ASCII (0x20..=0x7E) as valid
-/// per-unit content. SmartPlant table names are all ASCII in the
+/// per-unit content. `SmartPlant` table names are all ASCII in the
 /// current fixture; broadening the allow-list to full BMP is a
 /// follow-up when we encounter real CJK table names.
 fn try_decode_utf16le_name(page: &[u8], offset: usize, byte_count: usize) -> Option<String> {

@@ -428,7 +428,7 @@ fn original_package_is_not_mutated_by_write() {
 }
 
 /// Build a minimal but valid `/\u{5}SummaryInformation` property-set stream
-/// with a single VT_LPSTR title property. Mirrors the fixture helper in
+/// with a single `VT_LPSTR` title property. Mirrors the fixture helper in
 /// `writer::summary_write::tests` but lives here so the integration layer
 /// stays self-contained.
 fn minimal_summary_info_bytes(title_ascii: &str) -> Vec<u8> {

@@ -1,9 +1,9 @@
-//! Surgical edits on the SmartPlant `/TaggedTxtData/Drawing` and
+//! Surgical edits on the `SmartPlant` `/TaggedTxtData/Drawing` and
 //! `/TaggedTxtData/General` XML payloads.
 //!
 //! Why byte-level instead of a full XML re-write?
 //!
-//! - SmartPlant readers can be picky about whitespace, attribute quote
+//! - `SmartPlant` readers can be picky about whitespace, attribute quote
 //!   style, and namespace ordering. A `quick_xml::Reader` → `Writer`
 //!   round-trip would normalize all of that and introduce visual diffs
 //!   for every save, even when the user edited a single field.
@@ -417,7 +417,7 @@ pub fn set_element_text(
     }
 }
 
-/// Convenience: try `<FilePath>` first (the canonical SmartPlant tag),
+/// Convenience: try `<FilePath>` first (the canonical `SmartPlant` tag),
 /// then `<Path>` as fallback (some older General XMLs use that name —
 /// see `parsers/general_xml.rs`).
 pub fn set_general_file_path(xml: &str, value: &str) -> Result<String, MetadataEditError> {
@@ -495,7 +495,7 @@ fn find_next_quote(bytes: &[u8], from: usize) -> Option<usize> {
     }
 }
 
-/// Find the next unescaped `"` after `from`. SmartPlant XML uses XML
+/// Find the next unescaped `"` after `from`. `SmartPlant` XML uses XML
 /// entity escapes (`&quot;`) inside attribute values, never a literal
 /// `\"` C-style escape, so a plain byte scan is correct.
 fn find_unescaped_quote(bytes: &[u8], from: usize) -> Option<usize> {

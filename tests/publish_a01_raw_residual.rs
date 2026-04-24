@@ -1,7 +1,7 @@
 //! A01 raw-file residual gates.
 //!
 //! The A01 delivery-contract test in `publish_xml_cli.rs` proves
-//! the generated `_Data.xml` matches the bundled SmartPlant
+//! the generated `_Data.xml` matches the bundled `SmartPlant`
 //! reference once publish-time synthetic slots are normalized.
 //! This file narrows the remaining gap further:
 //!

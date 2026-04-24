@@ -15,11 +15,11 @@
 //! ```
 //!
 //! A23 verified the writer emits the same INTERFACE list as the
-//! SmartPlant reference. A27 goes one layer deeper: for every
+//! `SmartPlant` reference. A27 goes one layer deeper: for every
 //! `(PID tag, interface)` pair the reference exposes, the
 //! writer must declare at least the same set of ATTRIBUTE
-//! NAMES. A new SmartPlant attribute the writer doesn't know
-//! about (e.g. an EngineeringCode column on IPipingNetworkSystem)
+//! NAMES. A new `SmartPlant` attribute the writer doesn't know
+//! about (e.g. an `EngineeringCode` column on `IPipingNetworkSystem`)
 //! shows up here as a `(tag, interface, missing_attr)`
 //! triplet diagnostic, pinning the gap concretely instead of
 //! just "interface present, content unknown".
@@ -27,14 +27,14 @@
 //! A27b is the cross-fixture analog of A24: it verifies A01
 //! and DWG references agree on the attribute name set for each
 //! shared `(tag, interface)` pair. Documented variant
-//! divergences (typically driven by SmartPlant domain enums
+//! divergences (typically driven by `SmartPlant` domain enums
 //! like ProcessVessel.EqType) are pinned in
 //! [`KNOWN_A01_VS_DWG_ATTR_DIVERGENCES`] so they don't trigger
 //! noise; any newly-emerged divergence breaks the test and
 //! forces an explicit whitelist entry or a writer change.
 //!
 //! Both tests soft-skip when their fixtures are absent so CI
-//! workers without the SmartPlant TEST02 backup bundle stay
+//! workers without the `SmartPlant` TEST02 backup bundle stay
 //! green.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,7 +47,7 @@ use common::{generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml, T
 /// A27 · Writer == A01 reference at attribute granularity.
 ///
 /// For every `(tag, interface)` pair present in the
-/// SmartPlant A01 reference for an in-scope PID tag, the
+/// `SmartPlant` A01 reference for an in-scope PID tag, the
 /// writer must declare the same set of attribute names on
 /// that interface. A01 is now the only backup-backed
 /// correctness baseline, so writer-side extras are no longer
@@ -140,7 +140,7 @@ fn attribute_parity_on_a01_writer_matches_reference_superset_per_interface() {
 /// Sanity sub-test: confirm A27's contract surface is
 /// non-empty. If `parse_attrs_per_interface_per_tag` regresses
 /// to returning empty maps (or the writer stops emitting
-/// PIDPipeline entirely), the main A27 test would false-pass
+/// `PIDPipeline` entirely), the main A27 test would false-pass
 /// because there's nothing to check. This guard pins the
 /// contract surface to a sensible lower bound.
 #[test]
@@ -182,17 +182,17 @@ fn attribute_parity_a01_reference_exposes_at_least_one_attr_per_supported_tag() 
 ///
 /// ## Two divergence classes observed at A27b landing
 ///
-/// 1. **IObject identifier rename** — the SmartPlant exporter
+/// 1. **`IObject` identifier rename** — the `SmartPlant` exporter
 ///    on A01 publishes the legacy `ItemTag` attribute on
 ///    `IObject` while the DWG export (taken from a different
 ///    plant + site config) uses `Name`. Affects three tags:
-///    PIDPipeline, PIDPipingConnector, PIDProcessVessel. The
+///    `PIDPipeline`, `PIDPipingConnector`, `PIDProcessVessel`. The
 ///    underlying value is the same business identifier; only
 ///    the attribute key differs. The writer follows A01 and
 ///    emits `ItemTag` everywhere for now. Closing this gap
 ///    requires either an A27c-style cross-fixture
 ///    site-config switch or a writer flag that tracks which
-///    SmartPlant project flavor a drawing came from. Note
+///    `SmartPlant` project flavor a drawing came from. Note
 ///    that PIDProcessVessel.IObject is asymmetric: A01 ships
 ///    `ItemTag` but DWG ships NEITHER `ItemTag` nor `Name` —
 ///    the DWG vessel was authored without a tag in the
@@ -200,14 +200,14 @@ fn attribute_parity_a01_reference_exposes_at_least_one_attr_per_supported_tag() 
 ///    `only_in_a01: ["ItemTag"]` entry.
 /// 2. **DWG-side enriched attribute coverage** — twelve
 ///    interfaces ship more attributes on DWG than on A01.
-///    Every one of these maps to a SmartPlant column that
+///    Every one of these maps to a `SmartPlant` column that
 ///    is populated on the DWG plant's source data but
 ///    NULL/empty on the A01 plant's source. The writer is
 ///    correct in not emitting them when the underlying
-///    column is empty (SmartPlant convention: omit attr
+///    column is empty (`SmartPlant` convention: omit attr
 ///    rather than emit `attr=""`); closing the cross-fixture
 ///    gap therefore requires loader-side enrichment from
-///    DWG's SQLite mirror, which is not currently bundled
+///    DWG's `SQLite` mirror, which is not currently bundled
 ///    in the repo. Tagged as A27b-discovery so a future
 ///    A28-series milestone can pick them off interface-by-
 ///    interface as the DWG mirror lands.

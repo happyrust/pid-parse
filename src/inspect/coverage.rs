@@ -13,7 +13,7 @@
 //!
 //! **v0.6.1 (Phase 10b)**: the classifier now additionally consults the
 //! [`PidDocument`] itself. A stream that is statically declared
-//! "FullyDecoded" but whose corresponding model field is `None` or empty
+//! "`FullyDecoded`" but whose corresponding model field is `None` or empty
 //! is **downgraded** to `IdentifiedOnly` with a note explaining why.
 //! This surfaces silent parser failures — if the stream is present but
 //! the model field is empty, the parser tolerated an input it should

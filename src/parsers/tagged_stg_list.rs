@@ -1,6 +1,6 @@
 //! Parser for the `JTaggedTxtStgList` stream — a small index that maps a
-//! logical "storage list" name (e.g. "TaggedTxtStorages") to the actual
-//! storage directory names inside the document (e.g. "TaggedTxtData").
+//! logical "storage list" name (e.g. "`TaggedTxtStorages`") to the actual
+//! storage directory names inside the document (e.g. "`TaggedTxtData`").
 //!
 //! Observed layout (sampled file is 70 bytes total):
 //!
@@ -35,8 +35,8 @@ pub fn parse_tagged_stg_list(data: &[u8]) -> Option<TaggedTextStorageList> {
 ///   `TraceConfidence::Decoded`
 /// - `[after_name..after_name+4]` — `count` u32 LE — `Decoded`
 /// - per entry at offset `pos`:
-///   - `[pos..pos+4]` — entry char_count — `Decoded`
-///   - `[pos+4..name_end]` — UTF-16LE storage_name (including L'\0') —
+///   - `[pos..pos+4]` — entry `char_count` — `Decoded`
+///   - `[pos+4..name_end]` — UTF-16LE `storage_name` (including L'\0') —
 ///     `Decoded`
 /// - Bytes past the last successfully-read entry (e.g. truncated
 ///   entries or real trailing garbage) surface as leftover.

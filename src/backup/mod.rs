@@ -1,7 +1,7 @@
-//! Parsers for SmartPlant / Smart P&ID backup packages (`*.pid` database
-//! backups produced by the SmartPlant desktop tool).
+//! Parsers for `SmartPlant` / Smart P&ID backup packages (`*.pid` database
+//! backups produced by the `SmartPlant` desktop tool).
 //!
-//! A SmartPlant backup package is a folder containing:
+//! A `SmartPlant` backup package is a folder containing:
 //!
 //! * `Export.dmp` — a **Microsoft Tape Format (MTF)** envelope around one
 //!   or more SQL Server Master Data Files (MDF/LDF). This is the canonical
@@ -19,7 +19,7 @@
 //! extract the raw MDF bytes for relational-database parsing.
 //!
 //! Phase 13+: the long-term goal of this module is to enable a
-//! fully-offline pipeline that reconstructs SmartPlant "Publish Data" XML
+//! fully-offline pipeline that reconstructs `SmartPlant` "Publish Data" XML
 //! (`*_Data.xml` / `*_Meta.xml`) straight from the backup package,
 //! without ever requiring a live SQL Server instance. Stage 0 ships only
 //! the MTF envelope layer; subsequent stages will add MDF page parsing,

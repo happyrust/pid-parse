@@ -35,7 +35,7 @@ pub fn parse_app_object(data: &[u8]) -> Option<AppObjectRegistry> {
 /// Trace schema per entry at offset `pos`:
 /// - `[0..4]` — leading u32 (stream-level, consumed once) — `Decoded`
 /// - `[pos..pos+16]` — CLSID — `Decoded`
-/// - `[pos+16..pos+20]` — path_char_count — `Decoded`
+/// - `[pos+16..pos+20]` — `path_char_count` — `Decoded`
 /// - `[pos+20..path_end]` — UTF-16LE path (including L'\0') — `Decoded`
 /// - `[path_end..new_pos]` — up to 3 bytes of zero filler between
 ///   entries — `Probed` (structural role known: "resync buffer", but

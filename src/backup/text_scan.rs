@@ -52,7 +52,7 @@ pub fn find_ascii_run_containing(haystack: &[u8], needle: &str) -> Option<usize>
 /// UTF-16LE-encoded. Non-ASCII characters in the needle are
 /// respected: each `char` is emitted as its 16-bit low-surrogate
 /// representation (no full surrogate-pair support in stage 1 —
-/// SmartPlant table names are all ASCII or BMP Chinese, both of
+/// `SmartPlant` table names are all ASCII or BMP Chinese, both of
 /// which fit in a single 16-bit unit).
 pub fn find_utf16le_run_containing(haystack: &[u8], needle: &str) -> Option<usize> {
     if needle.chars().count() < MIN_RUN_LEN {

@@ -4,7 +4,7 @@
 //! view that stitches together the data pieces parsed by the stream handlers:
 //!
 //! * `ClusterCoverage` — PSM declarations vs. on-disk cluster/sheet streams.
-//! * `SymbolUsage`     — JSite instances grouped by the symbol they reference.
+//! * `SymbolUsage`     — `JSite` instances grouped by the symbol they reference.
 //! * `AttributeClassSummary` — per-class aggregation of Dynamic Attributes.
 //! * `RootPresence`    — whether each `PSMroots` name resolves in the CFB tree.
 //!

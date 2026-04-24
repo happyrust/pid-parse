@@ -30,7 +30,7 @@ use pid_parse::publish::{
 /// single source-of-truth path for publish fidelity tests.
 pub const A01_MDF_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
 
-/// Legacy SQLite mirror kept only for `sqlite_load` compatibility
+/// Legacy `SQLite` mirror kept only for `sqlite_load` compatibility
 /// tests. New publish fidelity gates must use [`A01_MDF_PATH`].
 pub const SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite";
 
@@ -94,7 +94,7 @@ pub const DWG_PLANT_NAME: &str = "P01";
 /// explicitly flags the blockage so a reader seeing the
 /// message in test output knows the Stage 2–4 gates
 /// (loader canonical-field enrichment, A24/A27b whitelist
-/// closure, PIDBranchPoint / PIDPipingBranchPoint parity) are
+/// closure, `PIDBranchPoint` / `PIDPipingBranchPoint` parity) are
 /// NOT validated on this run even though the suite appears
 /// green.
 pub const DWG_MDF_MISSING_HINT: &str = "skipping: DWG Export.mdf fixture not found at \
@@ -177,7 +177,7 @@ pub fn generate_a01_meta_xml() -> Option<Result<String, PublishError>> {
 /// publish pipeline, opening the DWG plant's MDF fixture at
 /// [`DWG_MDF_PATH`] and emitting with
 /// [`PublishStyle::Dwg`] explicitly applied (per the
-/// "PublishStyle stays an explicit input" convention — the
+/// "`PublishStyle` stays an explicit input" convention — the
 /// helper never guesses style from the source file).
 ///
 /// Returns `None` when [`DWG_MDF_PATH`] is missing; emits

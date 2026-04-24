@@ -1,5 +1,5 @@
 //! Integration / fixture tests for [`coverage_against_reference`]
-//! over the SmartPlant reference Publish-Data documents.
+//! over the `SmartPlant` reference Publish-Data documents.
 //!
 //! Both A01 and DWG-0202GP06-01 are now 100% writer-covered.
 //!
@@ -7,14 +7,14 @@
 //! - A15 baseline: `PIDSignalPort × 16, PIDBranchPoint × 5,
 //!   PIDPipingBranchPoint × 4, PIDPipingComponent × 2,
 //!   PIDSignalConnector × 1` (28 tags total).
-//! - A16 closed `PIDSignalPort` (16 derived per InstrFunction).
-//! - A17 closed `PIDPipingComponent` (2 per PipingComp row).
-//! - A18 closed `PIDSignalConnector` (1 per SignalRun row).
+//! - A16 closed `PIDSignalPort` (16 derived per `InstrFunction`).
+//! - A17 closed `PIDPipingComponent` (2 per `PipingComp` row).
+//! - A18 closed `PIDSignalConnector` (1 per `SignalRun` row).
 //! - Stage-4 closed `PIDBranchPoint × 5 +
 //!   PIDPipingBranchPoint × 4`, reaching 0 backlog tags.
 //!
 //! Both tests skip cleanly when the reference fixture is missing so
-//! CI workers without the SmartPlant export bundle still pass.
+//! CI workers without the `SmartPlant` export bundle still pass.
 
 use pid_parse::publish::coverage_against_reference;
 

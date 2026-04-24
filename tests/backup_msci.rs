@@ -1,7 +1,7 @@
 //! Integration tests for the MSCI (SQL Configuration Information)
 //! stream parser. Slices the real `Export.dmp` fixture at the
 //! byte-range our MTF scan identified in stage 0 and verifies the
-//! parser recovers the two SmartPlant TEST02 file records.
+//! parser recovers the two `SmartPlant` TEST02 file records.
 
 use pid_parse::backup::mtf::{MtfBlockCursor, MtfStreamCursor, MtfStreamKind};
 use pid_parse::backup::{parse_msci, MsciFile};
@@ -19,8 +19,8 @@ fn load_fixture() -> Option<Vec<u8>> {
 }
 
 /// Locate the first MSCI stream in `data` using the same walker
-/// chain production callers would use (MtfBlockCursor →
-/// MtfStreamCursor). Returns the stream's body byte slice.
+/// chain production callers would use (`MtfBlockCursor` →
+/// `MtfStreamCursor`). Returns the stream's body byte slice.
 fn locate_msci_body(data: &[u8]) -> Option<&[u8]> {
     for block in MtfBlockCursor::new(data) {
         let offset_to_first_event =

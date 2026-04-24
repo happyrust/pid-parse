@@ -6,7 +6,7 @@
 //!   lexicographic path).
 //! - **Metadata-only updates**: replace `/TaggedTxtData/Drawing` and
 //!   `/TaggedTxtData/General` XML bodies.
-//! - **SummaryInformation / DocumentSummaryInformation** string-property
+//! - **`SummaryInformation` / `DocumentSummaryInformation`** string-property
 //!   edits via `MetadataUpdates.summary_updates` (see [`summary_write`]).
 //! - **Stream replacements**: verbatim byte replacement of any stream.
 //! - **Experimental Sheet byte-range patches** (see [`sheet_patch`]).
@@ -69,7 +69,7 @@ impl PidWriter {
 
 /// Internal: mutate `package` in-place according to `plan`. Shared by
 /// [`PidWriter::write_to`] and [`PidWriter::write_to_bytes`] so any
-/// future pipeline change (metadata → stream_replacements → sheet_patches)
+/// future pipeline change (metadata → `stream_replacements` → `sheet_patches`)
 /// lands in both paths automatically.
 fn apply_plan_to_package(package: &mut PidPackage, plan: &WritePlan) -> Result<(), PidError> {
     metadata_write::apply_metadata_updates(package, &plan.metadata_updates)?;

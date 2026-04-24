@@ -7,7 +7,7 @@
 //! ```
 //!
 //! The output is pure mermaid text; pipe it into a `.mmd` file and open in
-//! Mermaid Live Editor (https://mermaid.live), Obsidian, or VS Code.
+//! Mermaid Live Editor (<https://mermaid.live>), Obsidian, or VS Code.
 
 use pid_parse::{
     inspect::mermaid::{crossref_mermaid, object_graph_mermaid},

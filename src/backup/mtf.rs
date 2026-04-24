@@ -1,6 +1,6 @@
 //! Microsoft Tape Format (MTF) envelope parser.
 //!
-//! SmartPlant's `Export.dmp` wraps the raw SQL Server database backup
+//! `SmartPlant`'s `Export.dmp` wraps the raw SQL Server database backup
 //! pages in MTF blocks. This module reads those blocks without trying
 //! to understand the inner database payload.
 //!

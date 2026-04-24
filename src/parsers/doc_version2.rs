@@ -1,7 +1,7 @@
 //! Structured decoder for the `/DocVersion2` stream.
 //!
 //! `/DocVersion2` is a **compact per-save version log**, complementing the
-//! human-readable `/DocVersion3`. Reverse-engineering of two real SmartPlant
+//! human-readable `/DocVersion3`. Reverse-engineering of two real `SmartPlant`
 //! `.pid` samples revealed the following layout:
 //!
 //! ```text
@@ -18,8 +18,8 @@
 //! ```
 //!
 //! **Cross-check**: the version field matches `DocVersion3` records on the
-//! same file. Sample 1 has DocVersion3 `[SA 0144, SV 0077, SV 0144, SV 0077]`
-//! and DocVersion2 records `[0x82 version=0x90 (144), 0x81 0x4D (77),
+//! same file. Sample 1 has `DocVersion3` `[SA 0144, SV 0077, SV 0144, SV 0077]`
+//! and `DocVersion2` records `[0x82 version=0x90 (144), 0x81 0x4D (77),
 //! 0x81 0x90 (144), 0x81 0x4D (77)]` — one-to-one.
 //!
 //! This parser is strict about the header magic and the 9-byte record
@@ -52,7 +52,7 @@ pub fn parse_doc_version2(data: &[u8]) -> Option<DocVersion2> {
 ///   field name — the parser only records whether they are all zero via
 ///   `DocVersion2.reserved_all_zero`).
 /// - per 9-byte record at offset `12 + 9*i`:
-///   - `[+0..+1]` — op_type — `Decoded`
+///   - `[+0..+1]` — `op_type` — `Decoded`
 ///   - `[+1..+4]` — fixed 3-byte observed constant — `Probed` (no
 ///     independent field name beyond "observed constant")
 ///   - `[+4..+5]` — separator — `Probed` (same reasoning)

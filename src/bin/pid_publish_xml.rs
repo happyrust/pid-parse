@@ -1,10 +1,10 @@
-//! CLI: generate SmartPlant Publish Data XML from a SmartPlant MDF
+//! CLI: generate `SmartPlant` Publish Data XML from a `SmartPlant` MDF
 //! file using the Rust `oxidized-mdf` reader.
 //!
 //! Stage-1 terminal binary. Given
 //!
 //! 1. a SQL Server MDF file extracted from `Export.dmp`,
-//! 2. a SmartPlant drawing UID (the `T_Drawing.SP_ID` value),
+//! 2. a `SmartPlant` drawing UID (the `T_Drawing.SP_ID` value),
 //!
 //! this tool emits the drawing's `_Data.xml` and, optionally,
 //! `_Meta.xml` companion. The binary also exposes the publish
@@ -60,9 +60,9 @@ struct CliOptions {
     /// output flag at all (in which case only the diff is printed).
     diff_against: Option<PathBuf>,
     plant_name: String,
-    /// SmartPlant project flavor selector (A29b). Picks between
-    /// the A01 and DWG IObject attribute conventions on the
-    /// PIDPipeline / PIDPipingConnector / PIDProcessVessel
+    /// `SmartPlant` project flavor selector (A29b). Picks between
+    /// the A01 and DWG `IObject` attribute conventions on the
+    /// `PIDPipeline` / `PIDPipingConnector` / `PIDProcessVessel`
     /// blocks. Defaults to A01 to keep every pre-A29b CLI
     /// invocation byte-identical.
     style: PublishStyle,
@@ -293,7 +293,7 @@ fn main() {
 /// - `0` — success and (when `--diff-against` is set) the diff
 ///   surfaced no actionable findings.
 /// - `1` — diff-only failure: the generated XML differs semantically
-///   from the reference (used as a CI gate). Real I/O / SQLite
+///   from the reference (used as a CI gate). Real I/O / `SQLite`
 ///   errors short-circuit through `Err(String)` instead.
 fn run(options: CliOptions) -> Result<i32, String> {
     warn_if_legacy_sqlite_input(&options.input_path);
