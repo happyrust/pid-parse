@@ -57,6 +57,21 @@
 - `AGENTS.md` 新增 "Pre-commit gates" 一节，明确列出 build / test /
   clippy / fmt 四道 gate 的本地等价命令。
 
+### Pedantic clippy 批次（第二轮）
+
+- `clippy::uninlined_format_args`：40 个文件改用 inlined 捕获
+  （`format!("{x}")` 风格）。
+- `clippy::doc_markdown`：56 个文件给 rustdoc 中的标识符加反引号
+  （`SmartPlant` → `` `SmartPlant` ``、`SQLite` → `` `SQLite` `` 等，
+  415 处替换，净零行数变化）。
+- `clippy::redundant_closure_for_method_calls` / `manual_let_else` /
+  `unreadable_literal` / `map_unwrap_or` / `bool_to_int_with_if` /
+  `implicit_clone` / `explicit_iter_loop` / `unnecessary_map_or`
+  全部清零（含 2 个 `map_or(true, …)` → `is_none_or`，
+  4 个 `match …`  → `let-else`，约 25 处 hex 字面量加下划线）。
+- `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
+  配合 CI `-D warnings` 形成硬门禁。
+
 ## [0.10.0] — 2026-04-24
 
 ### Publish XML source — Rust MDF loader (`oxidized-mdf`)
