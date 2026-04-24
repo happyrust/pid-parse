@@ -9,8 +9,6 @@
 
 use std::path::Path;
 
-use async_std::task;
-use futures_lite::stream::StreamExt;
 use oxidized_mdf::{MdfDatabase, Value};
 use rusqlite::{params_from_iter, Connection};
 
@@ -47,7 +45,12 @@ const PUBLISH_TABLES: &[&str] = &[
 /// SmartPlant tables into an in-memory SQLite connection, and return
 /// that connection for reuse by the existing query loader.
 pub fn open_mdf_as_sqlite(path: &Path) -> Result<Connection, PublishError> {
-    task::block_on(open_mdf_as_sqlite_async(path))
+    let mut db = MdfDatabase::open(path)?;
+    let conn = Connection::open_in_memory()?;
+    for table_name in PUBLISH_TABLES {
+        stage_table(&mut db, &conn, table_name)?;
+    }
+    Ok(conn)
 }
 
 /// Load one drawing graph directly from an MDF file.
@@ -59,23 +62,11 @@ pub fn load_drawing_graph_from_mdf(
     sqlite_load::load_drawing_graph(&conn, drawing_uid)
 }
 
-async fn open_mdf_as_sqlite_async(path: &Path) -> Result<Connection, PublishError> {
-    let conn = Connection::open_in_memory()?;
-    for table_name in PUBLISH_TABLES {
-        stage_table(path, &conn, table_name).await?;
-    }
-    Ok(conn)
-}
-
-async fn stage_table(
-    path: &Path,
+fn stage_table(
+    db: &mut MdfDatabase,
     conn: &Connection,
     table_name: &str,
 ) -> Result<(), PublishError> {
-    // `oxidized-mdf`'s page reader is forward-only. Re-opening per
-    // table is slower but avoids cross-table page-order coupling and
-    // keeps this adapter deterministic for small publish exports.
-    let mut db = MdfDatabase::open(path).await?;
     let Some(columns) = db.column_names(table_name) else {
         return Ok(());
     };
@@ -109,11 +100,11 @@ async fn stage_table(
         placeholders
     );
 
-    let Some(mut rows) = db.rows(table_name) else {
+    let Some(rows) = db.rows(table_name) else {
         return Ok(());
     };
     let mut stmt = conn.prepare(&insert_sql)?;
-    while let Some(row) = rows.next().await {
+    for row in rows {
         let values = columns
             .iter()
             .map(|column| row.value(column).cloned().and_then(value_to_text))

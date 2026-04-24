@@ -1,7 +1,6 @@
 use crate::error::Error;
 use crate::pages::{BootPage, PagePointer, Record};
 use crate::PageReader;
-use async_std::stream::StreamExt;
 use std::convert::TryFrom;
 
 pub(crate) struct BaseTableData {
@@ -21,8 +20,8 @@ macro_rules! parse_page_records {
     ( $page_reader:expr, $page_pointer:expr, $t:ty ) => {{
         let mut parsed_records = Vec::new();
 
-        let mut page_stream = $page_reader.read_pages_of_pointer($page_pointer);
-        while let Some(Ok(page)) = page_stream.next().await {
+        let mut page_iter = $page_reader.read_pages_of_pointer($page_pointer);
+        while let Some(Ok(page)) = page_iter.next() {
             parsed_records.extend(
                 page.records()
                     .into_iter()
@@ -48,8 +47,8 @@ macro_rules! parse_from_sysrow_set {
 
         let mut parsed_records = Vec::new();
 
-        let mut page_stream = $page_reader.read_pages_of_pointer(page_pointer);
-        while let Some(Ok(page)) = page_stream.next().await {
+        let mut page_iter = $page_reader.read_pages_of_pointer(page_pointer);
+        while let Some(Ok(page)) = page_iter.next() {
             parsed_records.extend(
                 page.records()
                     .into_iter()
@@ -64,7 +63,7 @@ macro_rules! parse_from_sysrow_set {
 }
 
 impl BaseTableData {
-    pub(crate) async fn parse(
+    pub(crate) fn parse(
         mut page_reader: &mut PageReader,
         boot_page: &BootPage,
     ) -> Result<Self, Error> {
@@ -477,9 +476,9 @@ mod tests {
     use crate::{Error, MdfDatabase};
     use pretty_assertions::assert_eq;
 
-    #[async_std::test]
-    async fn test_read_boot_page_records() -> Result<(), Error> {
-        let db = MdfDatabase::open("data/AWLT2005.mdf").await?;
+    #[test]
+    fn test_read_boot_page_records() -> Result<(), Error> {
+        let db = MdfDatabase::open("data/AWLT2005.mdf")?;
         let auids = db
             .base_table_data
             .sysalloc_units

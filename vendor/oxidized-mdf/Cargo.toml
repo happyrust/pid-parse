@@ -13,19 +13,15 @@ resolver = "2"
 exclude = ["data/*", ".gitlab-ci.yml", ".gitattributes", ".gitignore"]
 
 [dependencies]
-async-log = "2.0"
-async-std = "1.10"
 bitvec = "1.0"
 chrono = "0.4"
 encoding_rs = "0.8"
-futures-lite = "1.11"
 log = "0.4"
 nom = "8"
 rust_decimal = "1.17"
 uuid = "0.8"
 
 [dev-dependencies]
-async-std = { version = "1.9", features = ["attributes"] }
 femme = "2.1"
 pretty_assertions = "1.0"
 prettytable-rs = "0.8"

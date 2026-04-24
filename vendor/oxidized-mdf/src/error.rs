@@ -1,6 +1,5 @@
-use async_std::io::Error as IoError;
-use std::convert::From;
 use std::fmt::{Display, Formatter};
+use std::io::Error as IoError;
 
 #[derive(Debug)]
 pub enum Error {

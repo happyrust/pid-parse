@@ -2,18 +2,16 @@
 
 //! # A Crate for Parsing MDF files
 //!
-//! `oxidized-mdf` provides utifities to parse MDF files of the [Microsoft SQL Server](https://en.wikipedia.org/wiki/Microsoft_SQL_Server).
+//! `oxidized-mdf` provides utilities to parse MDF files of the [Microsoft SQL Server](https://en.wikipedia.org/wiki/Microsoft_SQL_Server).
 //!
 //! ```rust
 //! use oxidized_mdf::MdfDatabase;
-//! use async_std::stream::StreamExt;
 //!
-//! # #[async_std::main]
-//! # async fn main() {
-//! let mut db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
+//! # fn main() {
+//! let mut db = MdfDatabase::open("data/AWLT2005.mdf").unwrap();
 //! let mut rows = db.rows("Address").unwrap();
 //!
-//! while let Some(row) = rows.next().await {
+//! for row in rows {
 //!    println!("{:?}", row.value("City"));
 //! }
 //! # }
@@ -28,21 +26,15 @@ mod sys;
 use crate::error::Error;
 use crate::pages::{BootPage, Page, PagePointer, Record};
 use crate::sys::{BaseTableData, Column};
-use async_log::span;
-use async_std::fs::File;
-use async_std::io::Read;
-use async_std::path::{Path, PathBuf};
-use async_std::prelude::*;
-use async_std::stream::Stream;
-use async_std::task::{Context, Poll};
 use chrono::{DateTime, Utc};
 use core::fmt::{Display, Formatter};
-use futures_lite::stream::StreamExt;
 use log::error;
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
-use std::pin::Pin;
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use uuid::Uuid;
 
@@ -53,29 +45,28 @@ pub struct MdfDatabase {
 }
 
 impl MdfDatabase {
-    pub async fn open<P>(p: P) -> Result<Self, Error>
+    pub fn open<P>(p: P) -> Result<Self, Error>
     where
         P: AsRef<Path>,
     {
         let mut path = PathBuf::new();
         path.push(p);
 
-        let file = File::open(&path).await?;
-        Ok(Self::from_read(Box::new(file)).await?)
+        let file = File::open(&path)?;
+        Self::from_read(Box::new(file))
     }
 
-    pub async fn from_read(read: Box<dyn Read + Unpin>) -> Result<Self, Error> {
+    pub fn from_read(read: Box<dyn Read>) -> Result<Self, Error> {
         let mut buffer = [0u8; 8192];
         let mut page_reader = PageReader::new(read);
 
-        // Skipping first headers
         for _i in 0u8..9u8 {
-            page_reader.read_next_page(&mut buffer).await?;
+            page_reader.read_next_page(&mut buffer)?;
         }
-        page_reader.read_next_page(&mut buffer).await?;
+        page_reader.read_next_page(&mut buffer)?;
 
         let boot_page = BootPage::try_from(buffer).unwrap();
-        let base_table_data = BaseTableData::parse(&mut page_reader, &boot_page).await?;
+        let base_table_data = BaseTableData::parse(&mut page_reader, &boot_page)?;
 
         Ok(Self {
             page_reader,
@@ -92,9 +83,8 @@ impl MdfDatabase {
     ///
     /// ```rust
     /// # use oxidized_mdf::MdfDatabase;
-    /// # #[async_std::main]
-    /// # async fn main() {
-    /// let db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
+    /// # fn main() {
+    /// let db = MdfDatabase::open("data/AWLT2005.mdf").unwrap();
     /// let table_names = db.table_names();
     /// assert!(table_names.contains(&String::from("Customer")));
     /// # }
@@ -107,9 +97,8 @@ impl MdfDatabase {
     ///
     /// ```rust
     /// # use oxidized_mdf::MdfDatabase;
-    /// # #[async_std::main]
-    /// # async fn main() {
-    /// let db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
+    /// # fn main() {
+    /// let db = MdfDatabase::open("data/AWLT2005.mdf").unwrap();
     ///
     /// let column_names = db.column_names("Address").unwrap();
     /// assert!(column_names.contains(&String::from("City")));
@@ -126,17 +115,15 @@ impl MdfDatabase {
         )
     }
 
-    /// Returns a stream of the rows in the given table.
+    /// Returns an iterator over the rows in the given table.
     ///
     /// ```rust
     /// use oxidized_mdf::{MdfDatabase, Value};
-    /// use async_std::stream::StreamExt;
     ///
-    /// # #[async_std::main]
-    /// # async fn main() {
-    /// let mut db = MdfDatabase::open("data/AWLT2005.mdf").await.unwrap();
+    /// # fn main() {
+    /// let mut db = MdfDatabase::open("data/AWLT2005.mdf").unwrap();
     /// let mut rows = db.rows("Address").unwrap();
-    /// let first_row = rows.next().await.unwrap();
+    /// let first_row = rows.next().unwrap();
     ///
     /// assert_eq!(
     ///     first_row.value("AddressLine1").cloned(),
@@ -147,56 +134,53 @@ impl MdfDatabase {
     pub fn rows<'a, 'b: 'a>(
         &'b mut self,
         table_name: &str,
-    ) -> Option<impl Stream<Item = Row> + 'a> {
+    ) -> Option<impl Iterator<Item = Row> + 'a> {
         let table = self.base_table_data.table(table_name)?;
 
         let page_pointers = table.page_pointers();
 
-        span!("reading pages of {}", table_name, {
-            Some(
-                self.page_reader
-                    .read_pages_of_pointers(page_pointers)
-                    .flat_map(move |page| {
-                        let mut rows = Vec::new();
+        log::debug!("reading pages of {}", table_name);
+        Some(
+            self.page_reader
+                .read_pages_of_pointers(page_pointers)
+                .flat_map(move |page| {
+                    let mut rows = Vec::new();
 
-                        let page = match page {
-                            Ok(page) => page,
-                            Err(err) => {
-                                error!("Cannot read page: {}", err);
-                                return async_std::stream::from_iter(rows.into_iter());
-                            }
-                        };
+                    let page = match page {
+                        Ok(page) => page,
+                        Err(err) => {
+                            error!("Cannot read page: {}", err);
+                            return rows;
+                        }
+                    };
 
-                        span!("page header {:?}", page.header(), {
-                            for record in page.records().into_iter() {
-                                let mut columns = BTreeMap::new();
+                    for record in page.records().into_iter() {
+                        let mut columns = BTreeMap::new();
 
-                                let mut record = Some(record);
-                                for column in &table.columns {
-                                    let (value, r) =
-                                        match Value::parse(column, record.take().unwrap()) {
-                                            Ok((value, r)) => (value, r),
-                                            Err(e) => {
-                                                error!(
-                                                    "Error during parsing column {:?}: {}",
-                                                    column, e
-                                                );
-                                                break;
-                                            }
-                                        };
+                        let mut record = Some(record);
+                        for column in &table.columns {
+                            let (value, r) =
+                                match Value::parse(column, record.take().unwrap()) {
+                                    Ok((value, r)) => (value, r),
+                                    Err(e) => {
+                                        error!(
+                                            "Error during parsing column {:?}: {}",
+                                            column, e
+                                        );
+                                        break;
+                                    }
+                                };
 
-                                    columns.insert(column.name.to_string(), value);
+                            columns.insert(column.name.to_string(), value);
 
-                                    record = Some(r);
-                                }
+                            record = Some(r);
+                        }
 
-                                rows.push(Row { columns });
-                            }
-                        });
-                        async_std::stream::from_iter(rows.into_iter())
-                    }),
-            )
-        })
+                        rows.push(Row { columns });
+                    }
+                    rows
+                }),
+        )
     }
 }
 
@@ -321,13 +305,13 @@ impl Row {
 }
 
 struct PageReader {
-    read: Box<dyn Read + Unpin>,
+    read: Box<dyn Read>,
     page_index: u32,
     page_cache: HashMap<PagePointer, Rc<Page>>,
 }
 
 impl PageReader {
-    fn new(read: Box<dyn Read + Unpin>) -> Self {
+    fn new(read: Box<dyn Read>) -> Self {
         Self {
             read,
             page_index: 0,
@@ -335,9 +319,9 @@ impl PageReader {
         }
     }
 
-    async fn read_next_page(&mut self, buffer: &mut [u8; 8192]) -> Result<(), Error> {
+    fn read_next_page(&mut self, buffer: &mut [u8; 8192]) -> Result<(), Error> {
         let page_id = self.page_index;
-        self.read.by_ref().take(8192).read(&mut buffer[..]).await?;
+        self.read.by_ref().take(8192).read(&mut buffer[..])?;
         if let Ok(page) = Page::try_from(*buffer) {
             self.page_cache.insert(
                 PagePointer {
@@ -351,7 +335,7 @@ impl PageReader {
         Ok(())
     }
 
-    async fn read_page(&mut self, page_pointer: &PagePointer) -> Result<Rc<Page>, Error> {
+    fn read_page(&mut self, page_pointer: &PagePointer) -> Result<Rc<Page>, Error> {
         if let Some(page) = self.page_cache.get(page_pointer) {
             return Ok(page.clone());
         }
@@ -367,7 +351,7 @@ impl PageReader {
 
         for i in self.page_index..=page_pointer.page_id {
             let mut buffer = [0u8; 8192];
-            self.read_next_page(&mut buffer).await?;
+            self.read_next_page(&mut buffer)?;
 
             let page = Page::try_from(buffer).unwrap();
 
@@ -382,8 +366,8 @@ impl PageReader {
     fn read_pages_of_pointers<'a, 'b: 'a>(
         &'b mut self,
         page_pointers: Vec<PagePointer>,
-    ) -> PageStream<'a> {
-        PageStream {
+    ) -> PageIter<'a> {
+        PageIter {
             page_pointers: Box::new(page_pointers.into_iter()),
             page_reader: self,
             current_page: None,
@@ -393,8 +377,8 @@ impl PageReader {
     fn read_pages_of_pointer<'a, 'b: 'a>(
         &'b mut self,
         page_pointer: PagePointer,
-    ) -> PageStream<'a> {
-        PageStream {
+    ) -> PageIter<'a> {
+        PageIter {
             page_pointers: Box::new(std::iter::once(page_pointer)),
             page_reader: self,
             current_page: None,
@@ -402,14 +386,16 @@ impl PageReader {
     }
 }
 
-struct PageStream<'a> {
+struct PageIter<'a> {
     page_pointers: Box<dyn Iterator<Item = PagePointer>>,
     page_reader: &'a mut PageReader,
     current_page: Option<Rc<Page>>,
 }
 
-impl<'a> PageStream<'a> {
-    async fn next_page(&mut self) -> Option<Result<Rc<Page>, Error>> {
+impl<'a> Iterator for PageIter<'a> {
+    type Item = Result<Rc<Page>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
         let page_pointer = match self.current_page.take() {
             Some(current_page) => current_page.next_page_pointer().cloned(),
             None => self.page_pointers.next(),
@@ -417,7 +403,7 @@ impl<'a> PageStream<'a> {
 
         match page_pointer {
             Some(page_pointer) => {
-                let page = self.page_reader.read_page(&page_pointer).await;
+                let page = self.page_reader.read_page(&page_pointer);
 
                 if let Ok(current_page) = &page {
                     self.current_page = Some(current_page.clone());
@@ -430,24 +416,14 @@ impl<'a> PageStream<'a> {
     }
 }
 
-impl<'a> Stream for PageStream<'a> {
-    type Item = Result<Rc<Page>, Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let f = self.next_page();
-        futures_lite::pin!(f);
-        Poll::Ready(async_std::task::block_on(f))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[async_std::test]
-    async fn should_result_in_io_error_when_file_does_not_exists() {
-        match MdfDatabase::open("some-random-path").await {
-            Err(Error::IoError(err)) if err.kind() == async_std::io::ErrorKind::NotFound => {}
+    #[test]
+    fn should_result_in_io_error_when_file_does_not_exists() {
+        match MdfDatabase::open("some-random-path") {
+            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
             _ => panic!("Unexpected result"),
         }
     }
