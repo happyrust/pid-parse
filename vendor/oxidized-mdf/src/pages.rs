@@ -1,7 +1,7 @@
 use bitvec::{order::Lsb0, slice::BitSlice};
-use byteorder::{LittleEndian, ReadBytesExt};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use core::iter::Iterator;
+use nom::{bytes::complete::take, error::Error as NomError, Parser};
 use rust_decimal::Decimal;
 use std::convert::TryFrom;
 use std::iter::FromIterator;
@@ -40,12 +40,39 @@ enum RecordType {
     GhostVersion,
 }
 
+fn take_bytes<'a>(
+    input: &'a [u8],
+    len: usize,
+    err: &'static str,
+) -> Result<(&'a [u8], &'a [u8]), &'static str> {
+    take::<_, _, NomError<&'a [u8]>>(len)
+        .parse(input)
+        .map_err(|_| err)
+}
+
+fn parse_le_u16<'a>(input: &'a [u8], err: &'static str) -> Result<(&'a [u8], u16), &'static str> {
+    let (input, bytes) = take_bytes(input, 2, err)?;
+    Ok((input, u16::from_le_bytes([bytes[0], bytes[1]])))
+}
+
+fn parse_le_u32<'a>(input: &'a [u8], err: &'static str) -> Result<(&'a [u8], u32), &'static str> {
+    let (input, bytes) = take_bytes(input, 4, err)?;
+    Ok((input, u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])))
+}
+
+fn parse_le_i16<'a>(input: &'a [u8], err: &'static str) -> Result<(&'a [u8], i16), &'static str> {
+    let (input, bytes) = take_bytes(input, 2, err)?;
+    Ok((input, i16::from_le_bytes([bytes[0], bytes[1]])))
+}
+
 impl<'a> TryFrom<&'a [u8]> for Record<'a> {
     type Error = &'static str;
 
     fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
+        let (bytes, header_bytes) = take_bytes(bytes, 2, "record too short for header")?;
+
         // Bits 1-3 represents record type
-        let record_type = (bytes[0] & 0b0000_1110) >> 1;
+        let record_type = (header_bytes[0] & 0b0000_1110) >> 1;
         let r#type = match record_type {
             0 => RecordType::Primary,
             1 => RecordType::Forwarded,
@@ -55,34 +82,40 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
             5 => RecordType::GhostIndex,
             6 => RecordType::GhostData,
             7 => RecordType::GhostVersion,
-            _ => panic!("Unknown record type: {}", record_type),
+            _ => return Err("unknown record type"),
         };
 
         // Bit 4 determines whether a null bitmap is present
-        let has_null_bitmap = (bytes[0] & 0b0001_0000) > 0;
+        let has_null_bitmap = (header_bytes[0] & 0b0001_0000) > 0;
 
         // Bit 5 determines whether there are variable length columns
-        let has_variable_length_columns = (bytes[0] & 0b0010_0000) > 0;
+        let has_variable_length_columns = (header_bytes[0] & 0b0010_0000) > 0;
 
-        let mut bytes = &bytes[2..];
         let mut read_bytes = 2usize;
 
         // Parse fixed length size
-        let fixed_length_size = {
-            let fixed_length_size = bytes.read_u16::<LittleEndian>().unwrap();
-            fixed_length_size - 4
-        };
+        let (bytes, fixed_length_size) =
+            parse_le_u16(bytes, "record too short for fixed-length size")?;
+        let fixed_length_size = fixed_length_size
+            .checked_sub(4)
+            .ok_or("record fixed-length size smaller than header")?;
         read_bytes += 2;
 
-        let (fixed_bytes, mut bytes) = bytes.split_at(fixed_length_size as usize);
+        let (bytes, fixed_bytes) = take_bytes(
+            bytes,
+            fixed_length_size as usize,
+            "record fixed-length region exceeds record bounds",
+        )?;
         read_bytes += fixed_length_size as usize;
 
-        let number_of_columns = bytes.read_u16::<LittleEndian>().unwrap() as usize;
+        let (bytes, number_of_columns) = parse_le_u16(bytes, "record too short for column count")?;
+        let number_of_columns = number_of_columns as usize;
         read_bytes += 2;
 
         let (null_bitmap, bytes) = if has_null_bitmap {
             let null_bitmap_length = (number_of_columns + 7) / 8;
-            let (null_bitmap, bytes) = bytes.split_at(null_bitmap_length);
+            let (bytes, null_bitmap) =
+                take_bytes(bytes, null_bitmap_length, "record too short for null bitmap")?;
             read_bytes += null_bitmap_length;
             (Some(null_bitmap), bytes)
         } else {
@@ -90,7 +123,7 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
         };
 
         let variable_columns = if has_variable_length_columns {
-            Some(VariableColumns::new(read_bytes, bytes))
+            Some(VariableColumns::try_new(read_bytes, bytes)?)
         } else {
             None
         };
@@ -110,33 +143,24 @@ impl<'a> Record<'a> {
     }
 
     pub(crate) fn parse_i8(self) -> Result<(i8, Record<'a>), &'static str> {
-        let (mut bytes, record) = self.parse_bytes(1)?;
-
-        let n = bytes.read_i8().unwrap();
-
-        Ok((n, record))
+        let (bytes, record) = self.parse_bytes(1)?;
+        Ok((bytes[0] as i8, record))
     }
 
     pub(crate) fn parse_i16(self) -> Result<(i16, Record<'a>), &'static str> {
-        let (mut bytes, record) = self.parse_bytes(2)?;
-
-        let n = bytes.read_i16::<LittleEndian>().unwrap();
-
-        Ok((n, record))
+        let (bytes, record) = self.parse_bytes(2)?;
+        Ok((i16::from_le_bytes([bytes[0], bytes[1]]), record))
     }
 
     pub(crate) fn parse_i32(self) -> Result<(i32, Record<'a>), &'static str> {
-        let (mut bytes, record) = self.parse_bytes(4)?;
-
-        let n = bytes.read_i32::<LittleEndian>().unwrap();
-
-        Ok((n, record))
+        let (bytes, record) = self.parse_bytes(4)?;
+        Ok((i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]), record))
     }
 
     pub(crate) fn parse_i32_opt(self) -> Result<(Option<i32>, Record<'a>), &'static str> {
         self.parse_bytes_opt(4).map(|(bytes, record)| {
             (
-                bytes.map(|mut bytes| bytes.read_i32::<LittleEndian>().unwrap()),
+                bytes.map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])),
                 record,
             )
         })
@@ -145,24 +169,26 @@ impl<'a> Record<'a> {
     pub(crate) fn parse_f32_opt(self) -> Result<(Option<f32>, Record<'a>), &'static str> {
         self.parse_bytes_opt(4).map(|(bytes, record)| {
             (
-                bytes.map(|mut bytes| bytes.read_f32::<LittleEndian>().unwrap()),
+                bytes.map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
                 record,
             )
         })
     }
 
     pub(crate) fn parse_i64(self) -> Result<(i64, Record<'a>), &'static str> {
-        let (mut bytes, record) = self.parse_bytes(8)?;
-
-        let n = bytes.read_i64::<LittleEndian>().unwrap();
-
-        Ok((n, record))
+        let (bytes, record) = self.parse_bytes(8)?;
+        Ok((
+            i64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]]),
+            record,
+        ))
     }
 
     pub(crate) fn parse_i64_opt(self) -> Result<(Option<i64>, Record<'a>), &'static str> {
         self.parse_bytes_opt(8).map(|(bytes, record)| {
             (
-                bytes.map(|mut bytes| bytes.read_i64::<LittleEndian>().unwrap()),
+                bytes.map(|b| {
+                    i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+                }),
                 record,
             )
         })
@@ -171,18 +197,23 @@ impl<'a> Record<'a> {
     pub(crate) fn parse_f64_opt(self) -> Result<(Option<f64>, Record<'a>), &'static str> {
         self.parse_bytes_opt(8).map(|(bytes, record)| {
             (
-                bytes.map(|mut bytes| bytes.read_f64::<LittleEndian>().unwrap()),
+                bytes.map(|b| {
+                    f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+                }),
                 record,
             )
         })
     }
 
     fn parse_u128(self) -> Result<(u128, Record<'a>), &'static str> {
-        let (mut bytes, record) = self.parse_bytes(16)?;
-
-        let n = bytes.read_u128::<LittleEndian>().unwrap();
-
-        Ok((n, record))
+        let (bytes, record) = self.parse_bytes(16)?;
+        Ok((
+            u128::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+            ]),
+            record,
+        ))
     }
 
     pub(crate) fn parse_decimal_opt(
@@ -203,16 +234,26 @@ impl<'a> Record<'a> {
         let (bytes, record) = self.parse_bytes_opt(required_storage_bytes)?;
         Ok((
             bytes.map(|bytes| {
-                let (sign_byte, mut bytes) = bytes.split_at(1usize);
+                let (sign_byte, bytes) = bytes.split_at(1usize);
 
                 let x = if precision <= 9 {
-                    bytes.read_i32::<LittleEndian>().unwrap() as i128
+                    i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i128
                 } else if precision <= 19 {
-                    bytes.read_i64::<LittleEndian>().unwrap() as i128
+                    i64::from_le_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3],
+                        bytes[4], bytes[5], bytes[6], bytes[7],
+                    ]) as i128
                 } else if precision <= 28 {
-                    todo!();
+                    let mut padded = [0u8; 16];
+                    padded[..12].copy_from_slice(bytes);
+                    i128::from_le_bytes(padded)
                 } else {
-                    bytes.read_i128::<LittleEndian>().unwrap() as i128
+                    i128::from_le_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3],
+                        bytes[4], bytes[5], bytes[6], bytes[7],
+                        bytes[8], bytes[9], bytes[10], bytes[11],
+                        bytes[12], bytes[13], bytes[14], bytes[15],
+                    ])
                 };
 
                 let mut decimal = Decimal::from_i128_with_scale(x, scale as u32);
@@ -237,13 +278,14 @@ impl<'a> Record<'a> {
         let (bytes, record) = self.parse_bytes_opt(8)?;
 
         let datetime = match bytes {
-            Some(mut bytes) => {
-                let time = bytes.read_i32::<LittleEndian>().unwrap();
-                let days = bytes.read_i32::<LittleEndian>().unwrap();
+            Some(bytes) => {
+                let time = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                let days = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
 
                 let datetime = Utc
                     .with_ymd_and_hms(1900, 1, 1, 0, 0, 0)
-                    .unwrap()
+                    .single()
+                    .ok_or("Cannot construct datetime epoch 1900-01-01")?
                     .checked_add_signed(Duration::milliseconds(
                         (time as f64 * Self::CLOCK_TICK_MS) as i64,
                     ))
@@ -266,7 +308,7 @@ impl<'a> Record<'a> {
         let (bytes, record) = self.parse_bytes_opt(8)?;
 
         let datetime = match bytes {
-            Some(mut bytes) => {
+            Some(bytes) => {
                 let bytes_of_time = if scale <= 2 {
                     3
                 } else if (3..=4).contains(&scale) {
@@ -275,13 +317,21 @@ impl<'a> Record<'a> {
                     5
                 };
 
-                let _time = bytes.read_int::<LittleEndian>(bytes_of_time).unwrap();
-                // TODO: include time in the calcution
-                let days = bytes.read_i24::<LittleEndian>().unwrap();
+                // TODO: include time in the calculation
+                let d = bytes_of_time;
+                let mut day_buf = [0u8; 4];
+                day_buf[0] = bytes[d];
+                day_buf[1] = bytes[d + 1];
+                day_buf[2] = bytes[d + 2];
+                if bytes[d + 2] & 0x80 != 0 {
+                    day_buf[3] = 0xFF;
+                }
+                let days = i32::from_le_bytes(day_buf);
 
                 let datetime = Utc
                     .with_ymd_and_hms(1, 1, 1, 0, 0, 0)
-                    .unwrap()
+                    .single()
+                    .ok_or("Cannot construct datetime epoch 0001-01-01")?
                     .checked_add_signed(Duration::days(days as i64))
                     .ok_or("Cannot parse datetime due to overflow")?;
 
@@ -347,7 +397,7 @@ impl<'a> Record<'a> {
         };
 
         if is_null {
-            let _ = variable_columns.next();
+            let _ = variable_columns.next_bytes()?;
             let record = Self {
                 fixed_bytes: self.fixed_bytes,
                 r#type: self.r#type,
@@ -358,7 +408,7 @@ impl<'a> Record<'a> {
         }
 
         let bytes = variable_columns
-            .next()
+            .next_bytes()?
             // If the current variable length column index exceeds the number of stored
             // variable length columns, the value is empty by definition (that is, 0 bytes, but not null).
             .unwrap_or(Self::EMPTY_SLICE);
@@ -468,8 +518,11 @@ struct VariableColumns<'a> {
 }
 
 impl<'a> VariableColumns<'a> {
-    fn new(mut read_bytes: usize, mut bytes: &'a [u8]) -> Self {
-        let number_of_variable_length_columns = bytes.read_u16::<LittleEndian>().unwrap();
+    fn try_new(mut read_bytes: usize, bytes: &'a [u8]) -> Result<Self, &'static str> {
+        let (bytes, number_of_variable_length_columns) = parse_le_u16(
+            bytes,
+            "record too short for variable-length column count",
+        )?;
         read_bytes += 2;
 
         /* TODO: from the original coder
@@ -483,58 +536,58 @@ impl<'a> VariableColumns<'a> {
         }
         */
 
-        let (variable_length_column_lengths, variable_columns) =
-            bytes.split_at(number_of_variable_length_columns as usize * 2);
+        let (variable_columns, variable_length_column_lengths) = take_bytes(
+            bytes,
+            number_of_variable_length_columns as usize * 2,
+            "record too short for variable-length column lengths",
+        )?;
 
-        Self {
+        Ok(Self {
             variable_columns,
             variable_length_column_lengths,
             read_bytes_index: Some(read_bytes + variable_length_column_lengths.len()),
-        }
+        })
     }
-}
+    fn next_bytes(&mut self) -> Result<Option<&'a [u8]>, &'static str> {
+        let read_bytes_index = match self.read_bytes_index.take() {
+            Some(read_bytes_index) => read_bytes_index,
+            None => return Ok(None),
+        };
 
-impl<'a> Iterator for VariableColumns<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let read_bytes_index = self.read_bytes_index.take()?;
-
-        if self.variable_length_column_lengths.len() < 2 {
-            return None;
+        if self.variable_length_column_lengths.is_empty() {
+            return Ok(None);
         }
 
-        let (mut length_bytes, variable_length_column_lengths) =
-            self.variable_length_column_lengths.split_at(2);
-
+        let (variable_length_column_lengths, end_idx) = parse_le_i16(
+            self.variable_length_column_lengths,
+            "variable column length entry truncated",
+        )?;
         self.variable_length_column_lengths = variable_length_column_lengths;
 
-        let (complex, end_index_of_readable_bytes) = {
-            let end_idx = length_bytes.read_i16::<LittleEndian>().unwrap();
-
-            if end_idx < 0 {
-                (true, -end_idx as usize)
-            } else {
-                (false, end_idx as usize)
-            }
+        let (complex, end_index_of_readable_bytes) = if end_idx < 0 {
+            (true, -end_idx as usize)
+        } else {
+            (false, end_idx as usize)
         };
 
         if complex {
-            return None;
+            return Ok(None);
+        }
+
+        if end_index_of_readable_bytes < read_bytes_index {
+            return Err("variable column end offset precedes current read position");
         }
 
         self.read_bytes_index = Some(end_index_of_readable_bytes);
 
         let length = end_index_of_readable_bytes - read_bytes_index;
-
-
         let (bytes, remaining_bytes) = self
             .variable_columns
             .split_at(std::cmp::min(length, self.variable_columns.len()));
 
         self.variable_columns = remaining_bytes;
 
-        Some(bytes)
+        Ok(Some(bytes))
     }
 }
 
@@ -561,9 +614,15 @@ impl TryFrom<&[u8]> for PagePointer {
             return Err("Page pointer must be 6 bytes.");
         }
 
+        let (bytes, page_id) = parse_le_u32(bytes, "Page pointer must be 6 bytes.")?;
+        let (bytes, file_id) = parse_le_u16(bytes, "Page pointer must be 6 bytes.")?;
+        if !bytes.is_empty() {
+            return Err("Page pointer must be 6 bytes.");
+        }
+
         Ok(Self {
-            page_id: (&bytes[0..4]).read_u32::<LittleEndian>().unwrap(),
-            file_id: (&bytes[4..6]).read_u16::<LittleEndian>().unwrap(),
+            page_id,
+            file_id,
         })
     }
 }
@@ -617,15 +676,18 @@ impl TryFrom<&[u8]> for PageHeader {
             return Err("Page header must be 96 bytes.");
         }
 
-        let next_page_pointer = PagePointer::try_from(&bytes[16..22])?;
+        let (bytes, _) = take_bytes(bytes, 16, "Page header must be 96 bytes.")?;
+        let (bytes, next_page_bytes) = take_bytes(bytes, 6, "Page header must be 96 bytes.")?;
+        let next_page_pointer = PagePointer::try_from(next_page_bytes)?;
         let next_page_pointer = if next_page_pointer.page_id > 0 {
             Some(next_page_pointer)
         } else {
             None
         };
+        let (_, slot_count) = parse_le_u16(bytes, "Page header must be 96 bytes.")?;
 
         Ok(PageHeader {
-            slot_count: (&bytes[22..24]).read_u16::<LittleEndian>().unwrap(),
+            slot_count,
             next_page_pointer,
         })
     }
@@ -643,14 +705,40 @@ impl Page {
     }
 
     fn slots(&self) -> Vec<usize> {
-        let mut slots = Vec::with_capacity(self.header.slot_count as usize);
+        let slot_count = self.header.slot_count as usize;
+        let mut slots = Vec::with_capacity(slot_count);
 
-        let slot_range = (self.bytes.len() - self.header.slot_count as usize * 2)..self.bytes.len();
-        let mut slot_bytes = &self.bytes[slot_range];
+        let slot_bytes_len = match slot_count.checked_mul(2) {
+            Some(slot_bytes_len) => slot_bytes_len,
+            None => {
+                log::error!("Skipping malformed slot directory: slot count {} overflows", slot_count);
+                return slots;
+            }
+        };
+        let slot_range_start = match self.bytes.len().checked_sub(slot_bytes_len) {
+            Some(slot_range_start) => slot_range_start,
+            None => {
+                log::error!(
+                    "Skipping malformed slot directory: {} slots exceed page size {}",
+                    slot_count,
+                    self.bytes.len()
+                );
+                return slots;
+            }
+        };
+        let mut slot_bytes = &self.bytes[slot_range_start..];
 
         while !slot_bytes.is_empty() {
-            let slot_value = slot_bytes.read_u16::<LittleEndian>().unwrap();
+            let (remaining_bytes, slot_value) =
+                match parse_le_u16(slot_bytes, "page slot directory entry truncated") {
+                    Ok(parsed) => parsed,
+                    Err(err) => {
+                        log::error!("Skipping malformed slot directory: {}", err);
+                        return Vec::new();
+                    }
+                };
             slots.push(slot_value as usize);
+            slot_bytes = remaining_bytes;
         }
 
         slots.sort_unstable();
@@ -668,8 +756,27 @@ impl Page {
                 None => *slot..self.bytes.len(),
             };
 
-            let record = Record::try_from(&self.bytes[range]).unwrap();
-            records.push(record);
+            if range.start >= self.bytes.len() || range.start >= range.end || range.end > self.bytes.len() {
+                log::error!(
+                    "Skipping malformed record slot range {}..{} (page size {})",
+                    range.start,
+                    range.end,
+                    self.bytes.len()
+                );
+                continue;
+            }
+
+            match Record::try_from(&self.bytes[range.clone()]) {
+                Ok(record) => records.push(record),
+                Err(err) => {
+                    log::error!(
+                        "Skipping malformed record slot {}..{}: {}",
+                        range.start,
+                        range.end,
+                        err
+                    );
+                }
+            }
         }
         records
     }
@@ -760,7 +867,13 @@ mod tests {
         case(vec![0u8, 0u8, 9u8, 0u8, 0x01, 0x39, 0x30, 0u8, 0u8, 0u8, 0u8], 5u8, 3u8, Decimal::new(12345, 3)),
         case(vec![0u8, 0u8, 9u8, 0u8, 0x00, 0x39, 0x30, 0u8, 0u8, 0u8, 0u8], 5u8, 3u8, Decimal::new(-12345, 3)),
         case(vec![0u8, 0u8, 9u8, 0u8, 0x01, 0x4e, 0xe4, 0x01, 0x00, 0u8, 0u8], 9u8, 1u8, Decimal::new(123982, 1)),
-        case(vec![0u8, 0u8, 13u8, 0u8, 0x01, 0xb9, 0xe3, 0x5d, 0xb6, 0x40, 0x70, 0x00, 0x00, 0u8, 0u8], 17u8, 5u8, Decimal::new(123423239824313, 5))
+        case(vec![0u8, 0u8, 13u8, 0u8, 0x01, 0xb9, 0xe3, 0x5d, 0xb6, 0x40, 0x70, 0x00, 0x00, 0u8, 0u8], 17u8, 5u8, Decimal::new(123423239824313, 5)),
+        case(
+            vec![0u8, 0u8, 17u8, 0u8, 0x01, 121u8, 223u8, 226u8, 61u8, 68u8, 166u8, 54u8, 15u8, 110u8, 5u8, 1u8, 0u8, 0u8, 0u8],
+            25u8,
+            4u8,
+            Decimal::from_i128_with_scale(1234567890123456789012345i128, 4)
+        )
     )]
     fn parse_decimal(bytes: Vec<u8>, precision: u8, scale: u8, expected_value: Decimal) {
         let record = Record::try_from(&bytes[..]).unwrap();
@@ -768,6 +881,62 @@ mod tests {
         let (parsed_value, _record) = record.parse_decimal_opt(precision, scale).unwrap();
 
         assert_eq!(Some(expected_value), parsed_value);
+    }
+
+    #[test]
+    fn record_try_from_returns_err_for_truncated_header() {
+        let err = Record::try_from(&[0u8][..]).expect_err("truncated record header should return Err");
+        assert_eq!("record too short for header", err);
+    }
+
+    #[test]
+    fn record_try_from_returns_err_for_truncated_variable_column_metadata() {
+        let err = Record::try_from(&[0b0010_0000, 0x00, 0x04, 0x00, 0x01, 0x00, 0x01, 0x00][..])
+            .expect_err("truncated variable-column metadata should return Err");
+        assert_eq!("record too short for variable-length column lengths", err);
+    }
+
+    #[test]
+    fn page_records_skips_malformed_slots_instead_of_panicking() {
+        let mut bytes = [0u8; 8192];
+        bytes[22..24].copy_from_slice(&1u16.to_le_bytes());
+        bytes[8190..8192].copy_from_slice(&96u16.to_le_bytes());
+
+        let page = Page::try_from(bytes).expect("synthetic page header should be valid");
+        assert!(page.records().is_empty(), "malformed slot should be skipped");
+    }
+
+    #[test]
+    fn page_records_skips_out_of_bounds_slots_instead_of_panicking() {
+        let mut bytes = [0u8; 8192];
+        bytes[22..24].copy_from_slice(&1u16.to_le_bytes());
+        bytes[8190..8192].copy_from_slice(&9000u16.to_le_bytes());
+
+        let page = Page::try_from(bytes).expect("synthetic page header should be valid");
+        assert!(page.records().is_empty(), "out-of-bounds slot should be skipped");
+    }
+
+    #[test]
+    fn page_records_skips_impossible_slot_directory_size_instead_of_panicking() {
+        let mut bytes = [0u8; 8192];
+        bytes[22..24].copy_from_slice(&5000u16.to_le_bytes());
+
+        let page = Page::try_from(bytes).expect("synthetic page header should be valid");
+        assert!(
+            page.records().is_empty(),
+            "slot directory larger than the page should be skipped"
+        );
+    }
+
+    #[test]
+    fn parse_i32_returns_err_for_truncated_fixed_region() {
+        let bytes = vec![0u8, 0u8, 5u8, 0u8, 0xAA, 0u8, 0u8];
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let err = record
+            .parse_i32()
+            .expect_err("should fail when fixed region has fewer than 4 bytes");
+        assert_eq!("requested fixed-length bytes exceed record bounds", err);
     }
 
     #[rstest(
@@ -814,6 +983,29 @@ mod tests {
         let (parsed_value, _record) = record.parse_string().unwrap();
 
         assert_eq!(Some(String::from("Hi")), parsed_value);
+    }
+
+    #[test]
+    fn parse_string_returns_err_for_descending_variable_column_end_offset() {
+        let bytes = vec![
+            0b0010_0000, // primary record + variable columns
+            0x00,
+            0x04,
+            0x00, // fixed-length size is header-only, so fixed region is empty
+            0x00,
+            0x00, // column count is irrelevant here because there is no null bitmap
+            0x01,
+            0x00, // one variable-length column
+            0x00,
+            0x00, // malformed end offset: smaller than the current read index
+        ];
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let err = record
+            .parse_string()
+            .expect_err("descending variable column end offset should return Err");
+
+        assert_eq!("variable column end offset precedes current read position", err);
     }
 
     #[test]

@@ -299,11 +299,11 @@ impl<'a> TryFrom<Record<'a>> for SysrowSet {
         // TODO let (cmprlevel, record) = record.parse_i8()?;
         // TODO let (fillfact, _record) = record.parse_i8()?;
 
-        // TODO let maxnullbit = bytes.read_i16::<LittleEndian>().unwrap();
-        // TODO let maxleaf = bytes.read_i32::<LittleEndian>().unwrap();
-        // TODO let maxint = bytes.read_i16::<LittleEndian>().unwrap();
-        // TODO let minleaf = bytes.read_i16::<LittleEndian>().unwrap();
-        // TODO let minint = bytes.read_i16::<LittleEndian>().unwrap();
+        // TODO let (maxnullbit, record) = record.parse_i16()?;
+        // TODO let (maxleaf, record) = record.parse_i32()?;
+        // TODO let (maxint, record) = record.parse_i16()?;
+        // TODO let (minleaf, record) = record.parse_i16()?;
+        // TODO let (minint, _record) = record.parse_i16()?;
 
         Ok(Self {
             rowsetid,

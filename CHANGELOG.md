@@ -37,6 +37,20 @@
   - 列元数据按 `colid` 排序，避免系统表返回顺序造成字段错配。
   - 固定长度列越界从 panic 改为返回 parse error。
 
+#### Changed — `oxidized-mdf` nom 8 迁移 + parser hardening
+
+- 将 vendored `oxidized-mdf` 的全部 byte 解码路径迁移到 `nom 8`
+  （envelope layer）和 stdlib `from_le_bytes`（value layer）：
+  - `Record::try_from` / `VariableColumns::try_new` 使用 `nom::bytes::complete::take` 做边界安全解析。
+  - `PagePointer::try_from` / `PageHeader::try_from` / slot directory 同步迁移。
+  - `parse_variables_bytes_opt()` 对 variable-column end offset 倒退返回 `Err`，不再 subtract overflow panic。
+  - fixed-width readers（`parse_i8/i16/i32/i64/f32/f64/u128`）从 `ReadBytesExt::unwrap()` 改为 `from_le_bytes`。
+  - datetime / decimal helpers 同步迁移，`parse_datetime2_opt` 中 `read_i24` 替换为手工 i24 符号扩展。
+- 移除 `byteorder` crate 依赖，零残留。
+- 产品代码（`pages.rs`）实现完全 panic-free：零 `panic!` / `unwrap()` / `todo!()`。
+  - unknown record-type panic 改为 `Err`。
+  - chrono epoch `.unwrap()` 改为 `.single().ok_or()`。
+
 #### Tests / Verification
 
 - 新增 `tests/publish_mdf_load.rs`，直接从
@@ -70,7 +84,8 @@ emit，是唯一例外），但建立了一套 9 道 regression gate，任何未
 
 - `_Meta.xml` parity 已补齐到独立测试文件
   `tests/publish_meta_parity.rs`，同时覆盖 A01 参考样本与
-  mirror-available 时的 DWG 语义对照。
+  compare-only 的 DWG `Export.mdf` 语义对照；该样板只用于对比，
+  不要求其对应数据库参与验证。
 - 新增 `tests/publish_dwg_mirror.rs` 作为 DWG MDF 入口；
   当 `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf`
   缺失时，测试会显式 soft-skip 并指出 Stage 2-4
@@ -86,8 +101,8 @@ emit，是唯一例外），但建立了一套 9 道 regression gate，任何未
   均无命中，因此正式归类为 publish-time synthetic slots，并只在
   A01 delivery-contract 里做窄 mask。
 - publish 模块、writer 与 CLI 顶部注释改为反映当前真实状态：
-  `_Data.xml` / `_Meta.xml` 已可运行，现存主阻塞收敛为 DWG MDF
-  缺失与其后的 branch-point / loader 富化闭环。
+  `_Data.xml` / `_Meta.xml` 已可运行，现存主阻塞收敛为 compare-only
+  DWG `Export.mdf` 样板缺失与其后的 branch-point / loader 富化闭环。
 
 #### Added — fidelity 分析层（src/publish/diff.rs）
 

@@ -128,8 +128,10 @@ ignored 探针会用 Rust MDF reader 枚举 TEST02 MDF 全表；当前实测
 UTF-16LE / UUID byte-form 扫描中均无命中，因此 delivery contract
 只对这 3 类 slot 做窄归一化。
 
-DWG plant 的 loader / branch-point 回归目前依赖对应的 MDF fixture：
+DWG plant 的 loader / branch-point 回归目前只依赖一份 compare-only 的
+MDF 样板：
 `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf`。
+这份样板仅用于 DWG `Export.mdf` 对比验证，不要求也不绑定其对应数据库。
 仓内已带 `tests/publish_dwg_mirror.rs` 与 `tests/publish_meta_parity.rs`
 作为入口；若该 MDF 缺失，这两组 DWG 侧测试会 soft-skip，并在
 输出中明确提示“DWG canonical-field enrichment / branch-point parity 未验证”。
