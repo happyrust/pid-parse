@@ -2438,10 +2438,9 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     // does not silently produce a malformed rel.
     let ordered_reps = ordered_publishable_representations(drawing);
     for rep in &ordered_reps {
-        let model_item_uid = rep
-            .model_item_uid
-            .as_deref()
-            .expect("publishable rep has model_item_uid");
+        let Some(model_item_uid) = rep.model_item_uid.as_deref() else {
+            continue;
+        };
         write_rel(
             buf,
             &format!("DRC-{}-{}", model_item_uid, rep.uid),
