@@ -61,7 +61,12 @@
   - `BootPage::try_from` / `Page::try_from` 的 `.unwrap()` 改为 `?` 错误传播。
   - `read_page` 中的 `assert!` 改为 `Err`（backward-read 检查）。
   - page cache miss 从 `.unwrap()` 改为 `.ok_or()`。
-- 总计移除 5 个依赖：`byteorder`、`num-bigint`、`async-std`、`futures-lite`、`async-log`。
+- 总计移除 7 个依赖：`byteorder`、`num-bigint`、`async-std`、`futures-lite`、`async-log`、`femme`、`uuid 0.8`。
+- `sys.rs` 产品代码也实现 panic-free：macro / TryFrom 中的 `.unwrap()` 全部改为 `ok_or` + `?`。
+- 升级 vendored crate 到 Rust edition 2021，uuid 对齐父项目（uuid 1.x），清理 prelude imports。
+- `read_next_page` 从 `read()` 改为 `read_exact()`，保证每个 8192 字节 page 完整读取。
+- MDF 列类型覆盖从 15 种扩展到 27 种，新增 `sysname`、`char`、`binary`、`numeric`、`smalldatetime`、`smallmoney`、`image`、`text`、`ntext`、`date`、`timestamp`。
+- 新增 `AGENTS.md`，记录 vendored parser 约束和项目架构供后续 agent 快速上手。
 
 #### Tests / Verification
 
