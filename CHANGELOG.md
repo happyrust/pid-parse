@@ -72,6 +72,40 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### Public API rustdoc pass — Tier 2（`PidDocument` 层）
+
+Tier 2 第一批：在上一轮把 `src/lib.rs` crate-level `//!` + 9 个
+模块 `//!` + 4 个门面类型级 `///` 写完之后，继续把顶层门面结构
+`PidDocument` 以及它唯一暴露给终端用户的三个元数据聚合类型
+（`SummaryInfo` / `DrawingMeta` / `GeneralMeta`）的 `pub` 字段
+全部补上 `///`。
+
+- `PidDocument` 的 17 个此前无字段级 doc 的字段——`cfb_tree` /
+  `streams` / `summary` / `drawing_meta` / `general_meta` /
+  `jsites` / `clusters` / `dynamic_attributes` / `sheet_streams` /
+  `psm_roots` / `psm_cluster_table` / `psm_segment_table` /
+  `version_history` / `app_object_registry` / `tagged_storages` /
+  `doc_version2` / `unknown_streams`——每条 1–3 行指明"对应哪个
+  CFB 流 / 什么时候 `None` / 跟哪些相邻字段联动"。
+- `SummaryInfo` 的 6 个字段（`creating_application` / `template` /
+  `title` / `created_time` / `modified_time` / `raw`）写上
+  `PID_…` PROPID 对应、OLE Summary 语义和 ISO-8601 渲染点。
+- `DrawingMeta` 10 个字段（含结构本身）：把每个 `Option` 字段
+  对应到 `<DrawingNumber>` / UID 语义 / `SP_` attribute 形式；
+  `raw_xml` 明确其"writer 原样回写"角色。
+- `GeneralMeta` 4 个字段 + 结构体级 `///`：`<FilePath>` /
+  `<FileSize>` 语义 + `raw_xml` 的回写语义。
+
+`cargo rustdoc --lib --locked -- -W missing-docs` 统计
+**447 → 407（-40）**：struct field 313 → 276（-37），struct
+39 → 36（-3）。剩下 276 field / 42 variant / 36 struct 大多在
+`model.rs` 的深层 DTO（`PidObject` / `PidLayoutItem` / 各 `Psm*`
+表等）、`inspect::coverage` 的 `CoverageEntry` / `ParseCoverage…`
+枚举、`backup::mtf` 的记录结构。Tier 3 及以后按模块逐步收。
+
+工程侧健康度不变：clippy `-D warnings`、`cargo fmt --check`、
+`cargo test --workspace` 813 → 819 全绿。
+
 ### Writer 扩展 `typed_value_size` 的 VT 覆盖面
 
 上一轮 `roundtrip_walkthrough` 为了能跑通真实 SmartPlant fixture

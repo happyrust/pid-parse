@@ -34,33 +34,78 @@ use std::collections::BTreeMap;
 /// [`object_inventory`]: Self::object_inventory
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PidDocument {
+    /// CFB storage / stream hierarchy as visited by the reader. Every
+    /// stream entry in [`Self::streams`] is reachable through this
+    /// tree — use one or the other depending on whether you want a
+    /// path view ([`Self::streams`]) or a hierarchical view.
     pub cfb_tree: StorageNode,
+    /// Flat inventory of every CFB stream the reader walked, with
+    /// size / preview / magic metadata. Companion view of
+    /// [`Self::cfb_tree`]; paths use the usual `/A/B` form.
     pub streams: Vec<StreamEntry>,
 
+    /// Decoded OLE `SummaryInformation` (title, template, timestamps,
+    /// Phase 10j user-defined property dictionary). `None` means the
+    /// stream was absent or too short to parse.
     pub summary: Option<SummaryInfo>,
+    /// Decoded `TaggedTxtData/Drawing` XML — drawing number,
+    /// `SmartPlant` template / rules / formats / symbology / gapping
+    /// UIDs, plus every tag seen in the body.
     pub drawing_meta: Option<DrawingMeta>,
+    /// Decoded `TaggedTxtData/General` XML — file path / file size
+    /// plus the rest of the tag bag.
     pub general_meta: Option<GeneralMeta>,
 
+    /// All `JSite` storages found at the top level of the compound
+    /// file. Each entry retains its symbol-path hint and decoded
+    /// `JProperties` if `ParseOptions::parse_jsite_properties`
+    /// stayed on.
     pub jsites: Vec<JSite>,
+    /// Raw `PSMcluster0` / `StyleCluster` / etc. clusters as
+    /// observed on disk. Higher-level views live in
+    /// [`Self::object_graph`] / [`Self::cross_reference`].
     pub clusters: Vec<ClusterInfo>,
 
+    /// `Dynamic Attributes Metadata` + `Unclustered Dynamic
+    /// Attributes` pair, if present. Phase 8 onwards these feed
+    /// [`Self::object_inventory`] and [`Self::object_graph`].
     pub dynamic_attributes: Option<DynamicAttributesBlob>,
+    /// `Sheet*` storages with their embedded probe data. Order
+    /// matches CFB traversal; sheet byte-range patches from the
+    /// writer operate against these.
     pub sheet_streams: Vec<SheetStream>,
 
+    /// Optional `/PSMroots` decode — the top-level list of named
+    /// style / drawing property collections.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub psm_roots: Option<PsmRoots>,
+    /// Optional `/PSMclustertable` decode — index from cluster
+    /// IDs to cluster metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub psm_cluster_table: Option<PsmClusterTable>,
+    /// Optional `/PSMsegmenttable` decode — index from segment
+    /// IDs to segment metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub psm_segment_table: Option<PsmSegmentTable>,
 
+    /// Optional `/DocVersion3` history. Mutually exclusive-ish with
+    /// [`Self::doc_version2`]: which one is populated depends on
+    /// which version of `SmartPlant` wrote the file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version_history: Option<VersionHistory>,
+    /// Optional `/AppObject` registry — application-level object
+    /// inventory carried alongside the main P&ID payload.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_object_registry: Option<AppObjectRegistry>,
+    /// Optional `/JTaggedTxtStgList` + `/TaggedTxtData/*` decode —
+    /// a general-purpose named-text storage system used by the
+    /// `Drawing` / `General` metadata XMLs and a few others.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tagged_storages: Option<TaggedTextStorageList>,
 
+    /// Raw `/DocVersion2` bytes plus a magic/length summary,
+    /// retained independently of the structured decode for audit
+    /// and unknown-layout investigations.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc_version2: Option<DocVersion2Raw>,
 
@@ -71,6 +116,10 @@ pub struct PidDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc_version2_decoded: Option<DocVersion2>,
 
+    /// Every top-level stream whose name didn't match any registered
+    /// decoder (see [`crate::inspect::KNOWN_TOP_LEVEL_STREAM_NAMES`]).
+    /// Retained so [`crate::writer::PidWriter`] can round-trip them
+    /// byte-for-byte even when we don't (yet) know what they mean.
     pub unknown_streams: Vec<UnknownStream>,
 
     /// P&ID object inventory derived from Dynamic Attributes records.
@@ -171,13 +220,32 @@ pub struct StreamEntry {
     pub magic_u32_le: Option<u32>,
 }
 
+/// Decoded OLE `/\x05SummaryInformation` (section 1) plus
+/// `/\x05DocumentSummaryInformation` section 2's user-defined
+/// property dictionary.
+///
+/// The five first-class fields cover the properties that show up in
+/// every `SmartPlant` save (`PIDPROPID_TITLE`, `PIDPROPID_TEMPLATE`,
+/// etc.); the catch-all [`Self::raw`] map preserves the string form
+/// of every other property so nothing is silently dropped.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct SummaryInfo {
+    /// `PID_APPNAME` (PROPID 18) — the `SmartPlant` build that wrote
+    /// the file (e.g. `"SPPID 11.0"`).
     pub creating_application: Option<String>,
+    /// `PID_TEMPLATE` (PROPID 7) — the template drawing name.
     pub template: Option<String>,
+    /// `PID_TITLE` (PROPID 2) — the free-form drawing title.
     pub title: Option<String>,
+    /// `PID_CREATE_DTM` (PROPID 12) — ISO-8601 rendering of the
+    /// creation `VT_FILETIME`.
     pub created_time: Option<String>,
+    /// `PID_LASTSAVE_DTM` (PROPID 13) — ISO-8601 rendering of the
+    /// last-modified `VT_FILETIME`.
     pub modified_time: Option<String>,
+    /// Every other property rendered to a string key / string value.
+    /// The key format is either the symbolic name from the property
+    /// set dictionary or `"PROPID_{n}"` when the name is unknown.
     pub raw: BTreeMap<String, String>,
     /// Phase 10j (v0.9.0+): `/\x05DocumentSummaryInformation` section 2
     /// user-defined property dictionary. Keys are the dictionary names
@@ -230,25 +298,56 @@ pub enum SummaryPropertyValue {
     Raw { vt: u16, bytes: Vec<u8> },
 }
 
+/// Decoded `TaggedTxtData/Drawing` XML — the headline drawing
+/// metadata `SmartPlant` writes alongside every `.pid`.
+///
+/// Every `Option` is `None` when the corresponding XML element /
+/// attribute wasn't present; the un-typed tag bag in [`Self::tags`]
+/// preserves everything else so a consumer can recover any field we
+/// haven't yet promoted to a named slot.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct DrawingMeta {
+    /// `<DrawingNumber>` / `SP_DRAWINGNUMBER` attribute.
     pub drawing_number: Option<String>,
+    /// Free-form document category (e.g. `"Piping Documents"`).
     pub document_category: Option<String>,
+    /// `SmartPlant` template file name the drawing was started from.
     pub template_name: Option<String>,
+    /// UID of the rules set applied to the drawing.
     pub rules_uid: Option<String>,
+    /// UID of the numbering / formatting rules set.
     pub formats_uid: Option<String>,
+    /// UID of the line-gapping style set.
     pub gapping_uid: Option<String>,
+    /// UID of the symbology style set.
     pub symbology_uid: Option<String>,
+    /// UID of the fallback formats set when the primary set is absent.
     pub default_formats_uid: Option<String>,
+    /// The original XML body, retained verbatim so
+    /// [`crate::writer::PidWriter`] can reproduce bytes untouched when
+    /// no metadata patch asks for a rewrite.
     pub raw_xml: String,
+    /// Every tag pair the parser observed, keyed by local element
+    /// name; the five UID-valued entries above are copies of
+    /// corresponding keys here.
     pub tags: BTreeMap<String, String>,
 }
 
+/// Decoded `TaggedTxtData/General` XML — the file-scoped metadata
+/// `SmartPlant` writes next to [`DrawingMeta`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct GeneralMeta {
+    /// `<FilePath>` element — the `.pid` path inside the `SmartPlant`
+    /// project tree.
     pub file_path: Option<String>,
+    /// `<FileSize>` element rendered as-is (the XML ships it as a
+    /// decimal string).
     pub file_size: Option<String>,
+    /// Original XML body; see [`DrawingMeta::raw_xml`] for the
+    /// round-trip rationale.
     pub raw_xml: String,
+    /// Every tag pair the parser observed, keyed by local element
+    /// name.
     pub tags: BTreeMap<String, String>,
 }
 
