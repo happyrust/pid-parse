@@ -152,21 +152,20 @@ impl BaseTableData {
                         .filter(|c| c.number == 0 && c.id == table.id && c.name.is_some())
                         .collect::<Vec<_>>();
                     cols.sort_by_key(|c| c.colid);
-                    cols.into_iter().map(|c| {
+                    cols.into_iter().filter_map(|c| {
                         let r#type = self
                             .sysscalartypes
                             .iter()
                             .find(|st| st.xtype == c.xtype)
-                            .map(|st| &st.name)
-                            .expect("Should have type for column");
+                            .map(|st| &st.name)?;
 
-                        Column {
+                        Some(Column {
                             name: c.name.as_deref().unwrap_or(""),
                             r#type,
                             max_length: c.length,
                             precision: c.prec as u8,
                             scale: c.scale as u8,
-                        }
+                        })
                     }).collect()
                 },
             })
