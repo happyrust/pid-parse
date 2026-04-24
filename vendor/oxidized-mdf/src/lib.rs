@@ -65,7 +65,7 @@ impl MdfDatabase {
         }
         page_reader.read_next_page(&mut buffer)?;
 
-        let boot_page = BootPage::try_from(buffer).unwrap();
+        let boot_page = BootPage::try_from(buffer).map_err(Error::from)?;
         let base_table_data = BaseTableData::parse(&mut page_reader, &boot_page)?;
 
         Ok(Self {
@@ -347,20 +347,26 @@ impl PageReader {
             return Ok(page.clone());
         }
 
-        assert!(self.page_index <= page_pointer.page_id, "Currently the database supports only forward reading and the requested page {}:{} has been already read", page_pointer.file_id, page_pointer.page_id);
+        if self.page_index > page_pointer.page_id {
+            return Err(Error::ParseError(
+                "forward-only reader cannot re-read an earlier page",
+            ));
+        }
 
         for i in self.page_index..=page_pointer.page_id {
             let mut buffer = [0u8; 8192];
             self.read_next_page(&mut buffer)?;
 
-            let page = Page::try_from(buffer).unwrap();
+            let page = Page::try_from(buffer).map_err(Error::from)?;
 
             self.page_cache
                 .insert(page_pointer.with_page_id(i), Rc::new(page));
         }
 
-        let page = self.page_cache.get(page_pointer).unwrap();
-        Ok(page.clone())
+        self.page_cache
+            .get(page_pointer)
+            .cloned()
+            .ok_or(Error::ParseError("page not found in cache after read"))
     }
 
     fn read_pages_of_pointers<'a, 'b: 'a>(
