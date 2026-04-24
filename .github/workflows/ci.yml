@@ -64,3 +64,11 @@ jobs:
         # Phase 9i onwards: hard-fail on any drift. Run `cargo fmt --all`
         # locally before pushing, or let your editor handle it.
         run: cargo fmt --all -- --check
+
+      - name: missing_docs ratchet
+        # Reject PRs that add undocumented `pub` items. The baseline in
+        # `.github/missing-docs-baseline.txt` is intentionally
+        # ratchet-down only: reducing the count requires editing the
+        # file in the same PR, which keeps the progress visible in git
+        # history. See `AGENTS.md` for the runbook.
+        run: bash .github/scripts/check-missing-docs.sh

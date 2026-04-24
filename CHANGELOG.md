@@ -72,6 +72,31 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### `missing_docs` CI ratchet gate
+
+四轮 rustdoc 压 warning 之后，baseline 已经稳定在 `364`。这一
+轮落地"棘轮门禁"把这个数字锁进 CI：
+
+- `.github/missing-docs-baseline.txt` — 单行整数 `364`，表示当前
+  可容忍的 `rustdoc -W missing-docs` warning 数。
+- `.github/scripts/check-missing-docs.sh` — 跑
+  `cargo rustdoc --lib --locked -- -W missing-docs`，count
+  匹配 `"missing documentation for"` 的行数，然后比对 baseline：
+  - `current > baseline` → fail（有人加了没文档的 `pub` 项）。
+    输出前 40 条 warning 位置，让 PR 作者立刻看到问题。
+  - `current < baseline` → fail（有改善！但要求在同一次 PR 里把
+    baseline 文件也改到新数字，保持 ratchet 进度可见）。
+  - `current == baseline` → pass。
+- `.github/workflows/ci.yml` 在 `cargo fmt --check` 后面追加
+  `missing_docs ratchet` 步骤执行脚本。
+- `AGENTS.md` 把 Pre-commit gates 从 4 条扩到 5 条，并把 ratchet
+  的 runbook（如何降 baseline）写进文档。
+
+本地验证：`C:\Program Files\Git\bin\bash.exe .github/scripts/
+check-missing-docs.sh` → `current=364, baseline=364, OK`。Linux CI
+(ubuntu-latest) 的执行路径完全一致（gitbash 和 ubuntu bash 对该
+脚本行为一致）。
+
 ### Public API rustdoc pass — 子模块 `//!` 全收口
 
 把剩下 16 个此前仅有 `use` 开头、缺模块级文档的子模块一次性

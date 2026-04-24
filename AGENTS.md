@@ -45,15 +45,34 @@ cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (31 tes
 
 ## Pre-commit gates (CI mirrors these)
 
-Run **all four** before `git push`. CI (`.github/workflows/ci.yml`) fails
-on any drift and will block merges:
+Run **all five** before `git push`. CI (`.github/workflows/ci.yml`)
+fails on any drift and will block merges:
 
 ```bash
 cargo build --locked --workspace --all-targets
 cargo test  --locked --workspace --all-targets
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check        # apply with `cargo fmt --all`
+bash .github/scripts/check-missing-docs.sh   # rustdoc ratchet
 ```
+
+### `missing_docs` ratchet
+
+`.github/missing-docs-baseline.txt` stores the maximum number of
+`rustdoc -W missing-docs` warnings the crate is allowed to produce.
+The gate is **ratchet-down only**:
+
+- Adding a `pub` item without `///` docs bumps the count → CI fails.
+  Document the new item.
+- Intentionally lowering the count (by documenting more items)
+  requires also editing the baseline file to the new lower number,
+  in the same PR. That keeps every doc improvement visible in
+  git history.
+- Raising the baseline is almost never the right answer; treat it
+  as a temporary crutch only.
+
+See `.github/scripts/check-missing-docs.sh` for the exact command
+(`cargo rustdoc --lib --locked -- -W missing-docs` + grep count).
 
 - `--workspace` makes the vendored `oxidized-mdf` crate a hard gate.
 - `RUSTFLAGS=-Dwarnings` (set in CI env) promotes compiler warnings to
