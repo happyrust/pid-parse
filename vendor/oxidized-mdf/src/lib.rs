@@ -242,6 +242,10 @@ impl Value {
                 let (datetime, r) = record.parse_smalldatetime_opt()?;
                 Ok((datetime.map_or(Value::Null, Value::DateTime), r))
             }
+            "date" => {
+                let (datetime, r) = record.parse_date_opt()?;
+                Ok((datetime.map_or(Value::Null, Value::DateTime), r))
+            }
             "tinyint" => {
                 let (int, r) = record.parse_i8()?;
                 Ok((Value::TinyInt(int), r))
@@ -295,7 +299,7 @@ impl Value {
                 let (bytes, r) = record.parse_binary()?;
                 Ok((bytes.map_or(Value::Null, Value::Binary), r))
             }
-            "binary" => {
+            "binary" | "timestamp" => {
                 let (bytes, r) = record.parse_bytes(column.max_length as usize)?;
                 Ok((Value::Binary(bytes.to_vec()), r))
             }

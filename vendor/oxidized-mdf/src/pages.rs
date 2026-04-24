@@ -325,6 +325,34 @@ impl<'a> Record<'a> {
         Ok((datetime, record))
     }
 
+    pub(crate) fn parse_date_opt(
+        self,
+    ) -> Result<(Option<DateTime<Utc>>, Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_bytes_opt(3)?;
+
+        let datetime = match bytes {
+            Some(bytes) => {
+                let mut day_buf = [0u8; 4];
+                day_buf[0] = bytes[0];
+                day_buf[1] = bytes[1];
+                day_buf[2] = bytes[2];
+                let days = i32::from_le_bytes(day_buf);
+
+                let datetime = Utc
+                    .with_ymd_and_hms(1, 1, 1, 0, 0, 0)
+                    .single()
+                    .ok_or("Cannot construct date epoch 0001-01-01")?
+                    .checked_add_signed(Duration::days(days as i64))
+                    .ok_or("Cannot parse date due to day overflow")?;
+
+                Some(datetime)
+            }
+            None => None,
+        };
+
+        Ok((datetime, record))
+    }
+
     pub(crate) fn parse_datetime2_opt(
         self,
         scale: u8,
