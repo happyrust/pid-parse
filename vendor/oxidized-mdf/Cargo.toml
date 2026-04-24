@@ -2,7 +2,7 @@
 name = "oxidized-mdf"
 version = "0.3.1"
 authors = ["Marc Schreiber <info@schrieveslaach.de>"]
-edition = "2018"
+edition = "2021"
 description = "A crate for reading data storage files of MSSQL's MDF files"
 license = "GPL-3.0"
 homepage = "https://gitlab.com/schrieveslaach/oxidized-mdf"
@@ -19,7 +19,7 @@ encoding_rs = "0.8"
 log = "0.4"
 nom = "8"
 rust_decimal = "1.17"
-uuid = "0.8"
+uuid = "1"
 
 [dev-dependencies]
 femme = "2.1"
