@@ -158,10 +158,8 @@ fn main() {
         // inside the DBLK (bytes 8..10 of the common header); stage 0
         // reads it directly rather than recomputing the per-kind
         // layout.
-        let offset_to_first_event = u16::from_le_bytes([
-            block.raw_common_header[8],
-            block.raw_common_header[9],
-        ]) as usize;
+        let offset_to_first_event =
+            u16::from_le_bytes([block.raw_common_header[8], block.raw_common_header[9]]) as usize;
         let dblk_body_start = block.offset + offset_to_first_event;
         let dblk_body_end = block.offset + block.size;
         let streams: Vec<StreamRecord> =
@@ -176,7 +174,8 @@ fn main() {
                     if matches!(s.kind, MtfStreamKind::SqlConfig) && msci_summary.is_none() {
                         let body_bytes = &data[s.body_offset..s.body_end];
                         if let Ok(cfg) = parse_msci(body_bytes) {
-                            msci_summary = Some(summarize_msci(&cfg, s.body_offset, body_bytes.len()));
+                            msci_summary =
+                                Some(summarize_msci(&cfg, s.body_offset, body_bytes.len()));
                         }
                     }
 
@@ -270,7 +269,10 @@ fn main() {
             }
         }
         if preview != 0 && blocks.len() > preview {
-            println!("  ... ({} more; rerun with --preview 0 for full list)", blocks.len() - preview);
+            println!(
+                "  ... ({} more; rerun with --preview 0 for full list)",
+                blocks.len() - preview
+            );
         }
 
         if let Some(msci) = &msci_summary {
@@ -295,7 +297,11 @@ fn main() {
 /// Shrink a parsed [`MsciConfig`] into the compact summary the probe
 /// CLI emits. Kept out-of-band so the main control flow stays
 /// readable.
-fn summarize_msci(cfg: &MsciConfig, stream_body_offset: usize, stream_body_len: usize) -> MsciSummary {
+fn summarize_msci(
+    cfg: &MsciConfig,
+    stream_body_offset: usize,
+    stream_body_len: usize,
+) -> MsciSummary {
     MsciSummary {
         stream_body_offset,
         stream_body_len,

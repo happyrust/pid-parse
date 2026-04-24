@@ -84,10 +84,7 @@ pub fn parse_psm_roots(data: &[u8]) -> Option<PsmRoots> {
 /// Defensive branches (`cc > 512`, `read_utf16le_name` failure) break
 /// out of the loop **without** consuming the half-read entry header so
 /// the uninterpreted bytes surface as leftover.
-pub fn parse_psm_roots_with_trace(
-    data: &[u8],
-    trace: &mut ParserTraceBuilder,
-) -> Option<PsmRoots> {
+pub fn parse_psm_roots_with_trace(data: &[u8], trace: &mut ParserTraceBuilder) -> Option<PsmRoots> {
     let magic = read_u32_le(data, 0)?;
     if magic != ROOT_MAGIC {
         return None;
@@ -215,11 +212,8 @@ pub fn parse_psm_cluster_table_with_trace(
             if name.len() >= 4 {
                 let prefix = data[record_start..name_start].to_vec();
                 let record_len = record_end - record_start;
-                let probe = build_cluster_record_probe(
-                    &data[record_start..record_end],
-                    &prefix,
-                    &name,
-                );
+                let probe =
+                    build_cluster_record_probe(&data[record_start..record_end], &prefix, &name);
                 // Trace: prefix is Probed (inner field semantics
                 // unknown); name + optional null terminator are
                 // Decoded. Emitting as separate ranges keeps the
@@ -311,10 +305,7 @@ pub fn parse_psm_segment_table_with_trace(
         .map(|(i, &flag)| {
             let offset = flags_start + i;
             let off64 = offset as u64;
-            trace.consume(
-                ByteRange::new(off64, off64 + 1),
-                TraceConfidence::Probed,
-            );
+            trace.consume(ByteRange::new(off64, off64 + 1), TraceConfidence::Probed);
             PsmSegmentEntry {
                 index: i,
                 offset,
@@ -684,11 +675,7 @@ mod tests {
         let hints: Vec<_> = seg
             .entries
             .iter()
-            .map(|e| {
-                e.probe
-                    .as_ref()
-                    .and_then(|p| p.owner_cluster_hint.clone())
-            })
+            .map(|e| e.probe.as_ref().and_then(|p| p.owner_cluster_hint.clone()))
             .collect();
         assert_eq!(
             hints,
@@ -787,8 +774,7 @@ mod tests {
         data.extend(utf16_bytes("StyleCluster"));
 
         let mut b = ParserTraceBuilder::new("parse_psm_cluster_table");
-        let table =
-            parse_psm_cluster_table_with_trace(&data, &mut b).expect("valid");
+        let table = parse_psm_cluster_table_with_trace(&data, &mut b).expect("valid");
         assert_eq!(table.entries.len(), 2);
 
         let trace = b.build("/PSMclustertable", data.len() as u64);
@@ -834,8 +820,7 @@ mod tests {
         data.extend_from_slice(&[0, 0]);
 
         let mut b = ParserTraceBuilder::new("parse_psm_cluster_table");
-        let table =
-            parse_psm_cluster_table_with_trace(&data, &mut b).expect("valid");
+        let table = parse_psm_cluster_table_with_trace(&data, &mut b).expect("valid");
         assert_eq!(table.entries.len(), 1);
 
         let trace = b.build("/PSMclustertable", data.len() as u64);
@@ -876,8 +861,7 @@ mod tests {
         data.extend_from_slice(&[0xDE, 0xAD, 0xBE]); // 3 trailing bytes
 
         let mut b = ParserTraceBuilder::new("parse_psm_cluster_table");
-        let table =
-            parse_psm_cluster_table_with_trace(&data, &mut b).expect("valid");
+        let table = parse_psm_cluster_table_with_trace(&data, &mut b).expect("valid");
         assert_eq!(table.entries.len(), 1);
         assert_eq!(table.trailing_bytes, 3);
 
@@ -1116,8 +1100,7 @@ mod tests {
         let without_trace = parse_psm_segment_table(&data).expect("old API works");
 
         let mut b = ParserTraceBuilder::new("parse_psm_segment_table");
-        let with_trace =
-            parse_psm_segment_table_with_trace(&data, &mut b).expect("new API works");
+        let with_trace = parse_psm_segment_table_with_trace(&data, &mut b).expect("new API works");
 
         // The thin wrapper around `_with_trace` must produce an
         // identical table — down to entry probes — even though the

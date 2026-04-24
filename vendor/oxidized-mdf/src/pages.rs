@@ -66,7 +66,10 @@ fn parse_le_u16<'a>(input: &'a [u8], err: &'static str) -> Result<(&'a [u8], u16
 
 fn parse_le_u32<'a>(input: &'a [u8], err: &'static str) -> Result<(&'a [u8], u32), &'static str> {
     let (input, bytes) = take_bytes(input, 4, err)?;
-    Ok((input, u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])))
+    Ok((
+        input,
+        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+    ))
 }
 
 fn parse_le_i16<'a>(input: &'a [u8], err: &'static str) -> Result<(&'a [u8], i16), &'static str> {
@@ -123,8 +126,11 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
 
         let (null_bitmap, bytes) = if has_null_bitmap {
             let null_bitmap_length = number_of_columns.div_ceil(8);
-            let (bytes, null_bitmap) =
-                take_bytes(bytes, null_bitmap_length, "record too short for null bitmap")?;
+            let (bytes, null_bitmap) = take_bytes(
+                bytes,
+                null_bitmap_length,
+                "record too short for null bitmap",
+            )?;
             read_bytes += null_bitmap_length;
             (Some(null_bitmap), bytes)
         } else {
@@ -163,7 +169,10 @@ impl<'a> Record<'a> {
 
     pub(crate) fn parse_i32(self) -> Result<(i32, Record<'a>), &'static str> {
         let (bytes, record) = self.parse_bytes(4)?;
-        Ok((i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]), record))
+        Ok((
+            i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            record,
+        ))
     }
 
     pub(crate) fn parse_i32_opt(self) -> Result<(Option<i32>, Record<'a>), &'static str> {
@@ -187,7 +196,9 @@ impl<'a> Record<'a> {
     pub(crate) fn parse_i64(self) -> Result<(i64, Record<'a>), &'static str> {
         let (bytes, record) = self.parse_bytes(8)?;
         Ok((
-            i64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]]),
+            i64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]),
             record,
         ))
     }
@@ -195,9 +206,7 @@ impl<'a> Record<'a> {
     pub(crate) fn parse_i64_opt(self) -> Result<(Option<i64>, Record<'a>), &'static str> {
         self.parse_bytes_opt(8).map(|(bytes, record)| {
             (
-                bytes.map(|b| {
-                    i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-                }),
+                bytes.map(|b| i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])),
                 record,
             )
         })
@@ -206,9 +215,7 @@ impl<'a> Record<'a> {
     pub(crate) fn parse_f64_opt(self) -> Result<(Option<f64>, Record<'a>), &'static str> {
         self.parse_bytes_opt(8).map(|(bytes, record)| {
             (
-                bytes.map(|b| {
-                    f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-                }),
+                bytes.map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])),
                 record,
             )
         })
@@ -219,7 +226,8 @@ impl<'a> Record<'a> {
         Ok((
             u128::from_le_bytes([
                 bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
+                bytes[15],
             ]),
             record,
         ))
@@ -249,8 +257,8 @@ impl<'a> Record<'a> {
                     i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i128
                 } else if precision <= 19 {
                     i64::from_le_bytes([
-                        bytes[0], bytes[1], bytes[2], bytes[3],
-                        bytes[4], bytes[5], bytes[6], bytes[7],
+                        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
+                        bytes[7],
                     ]) as i128
                 } else if precision <= 28 {
                     let mut padded = [0u8; 16];
@@ -258,10 +266,9 @@ impl<'a> Record<'a> {
                     i128::from_le_bytes(padded)
                 } else {
                     i128::from_le_bytes([
-                        bytes[0], bytes[1], bytes[2], bytes[3],
-                        bytes[4], bytes[5], bytes[6], bytes[7],
-                        bytes[8], bytes[9], bytes[10], bytes[11],
-                        bytes[12], bytes[13], bytes[14], bytes[15],
+                        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
+                        bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13],
+                        bytes[14], bytes[15],
                     ])
                 };
 
@@ -580,10 +587,8 @@ struct VariableColumns<'a> {
 
 impl<'a> VariableColumns<'a> {
     fn try_new(mut read_bytes: usize, bytes: &'a [u8]) -> Result<Self, &'static str> {
-        let (bytes, number_of_variable_length_columns) = parse_le_u16(
-            bytes,
-            "record too short for variable-length column count",
-        )?;
+        let (bytes, number_of_variable_length_columns) =
+            parse_le_u16(bytes, "record too short for variable-length column count")?;
         read_bytes += 2;
 
         /* TODO: from the original coder
@@ -681,10 +686,7 @@ impl TryFrom<&[u8]> for PagePointer {
             return Err("Page pointer must be 6 bytes.");
         }
 
-        Ok(Self {
-            page_id,
-            file_id,
-        })
+        Ok(Self { page_id, file_id })
     }
 }
 
@@ -772,7 +774,10 @@ impl Page {
         let slot_bytes_len = match slot_count.checked_mul(2) {
             Some(slot_bytes_len) => slot_bytes_len,
             None => {
-                log::error!("Skipping malformed slot directory: slot count {} overflows", slot_count);
+                log::error!(
+                    "Skipping malformed slot directory: slot count {} overflows",
+                    slot_count
+                );
                 return slots;
             }
         };
@@ -817,7 +822,10 @@ impl Page {
                 None => *slot..self.bytes.len(),
             };
 
-            if range.start >= self.bytes.len() || range.start >= range.end || range.end > self.bytes.len() {
+            if range.start >= self.bytes.len()
+                || range.start >= range.end
+                || range.end > self.bytes.len()
+            {
                 log::error!(
                     "Skipping malformed record slot range {}..{} (page size {})",
                     range.start,
@@ -946,7 +954,8 @@ mod tests {
 
     #[test]
     fn record_try_from_returns_err_for_truncated_header() {
-        let err = Record::try_from(&[0u8][..]).expect_err("truncated record header should return Err");
+        let err =
+            Record::try_from(&[0u8][..]).expect_err("truncated record header should return Err");
         assert_eq!("record too short for header", err);
     }
 
@@ -964,7 +973,10 @@ mod tests {
         bytes[8190..8192].copy_from_slice(&96u16.to_le_bytes());
 
         let page = Page::try_from(bytes).expect("synthetic page header should be valid");
-        assert!(page.records().is_empty(), "malformed slot should be skipped");
+        assert!(
+            page.records().is_empty(),
+            "malformed slot should be skipped"
+        );
     }
 
     #[test]
@@ -974,7 +986,10 @@ mod tests {
         bytes[8190..8192].copy_from_slice(&9000u16.to_le_bytes());
 
         let page = Page::try_from(bytes).expect("synthetic page header should be valid");
-        assert!(page.records().is_empty(), "out-of-bounds slot should be skipped");
+        assert!(
+            page.records().is_empty(),
+            "out-of-bounds slot should be skipped"
+        );
     }
 
     #[test]
@@ -1066,7 +1081,10 @@ mod tests {
             .parse_string()
             .expect_err("descending variable column end offset should return Err");
 
-        assert_eq!("variable column end offset precedes current read position", err);
+        assert_eq!(
+            "variable column end offset precedes current read position",
+            err
+        );
     }
 
     #[test]

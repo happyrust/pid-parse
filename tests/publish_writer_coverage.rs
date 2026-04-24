@@ -79,8 +79,5 @@ fn coverage_on_dwg_reference_documents_known_writer_backlog() {
         );
     }
 
-    assert!(
-        cov.supported_total() > 0,
-        "writer must cover all DWG tags",
-    );
+    assert!(cov.supported_total() > 0, "writer must cover all DWG tags",);
 }

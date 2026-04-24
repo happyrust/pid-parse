@@ -32,9 +32,7 @@ pub fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
     }
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Return `true` iff the given byte slice contains `needle` as a
@@ -93,10 +91,7 @@ mod tests {
     #[test]
     fn find_ascii_run_matches_exact_substring() {
         let data = b"padding bytes T_ModelItem padding";
-        assert_eq!(
-            find_ascii_run_containing(data, "T_ModelItem"),
-            Some(14)
-        );
+        assert_eq!(find_ascii_run_containing(data, "T_ModelItem"), Some(14));
     }
 
     #[test]
@@ -122,10 +117,7 @@ mod tests {
             bytes[8 + i * 2] = c as u8;
             bytes[8 + i * 2 + 1] = 0;
         }
-        assert_eq!(
-            find_utf16le_run_containing(&bytes, "T_ModelItem"),
-            Some(8)
-        );
+        assert_eq!(find_utf16le_run_containing(&bytes, "T_ModelItem"), Some(8));
     }
 
     #[test]

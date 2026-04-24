@@ -134,10 +134,14 @@ fn a28_backlog_tag_specs_match_reference_fixtures_exactly() {
             .unwrap_or_default();
         let expected_iface_set: BTreeSet<&str> = spec.interfaces.iter().copied().collect();
         if actual_iface_set != expected_iface_set {
-            let missing: Vec<&str> =
-                expected_iface_set.difference(&actual_iface_set).copied().collect();
-            let extra: Vec<&str> =
-                actual_iface_set.difference(&expected_iface_set).copied().collect();
+            let missing: Vec<&str> = expected_iface_set
+                .difference(&actual_iface_set)
+                .copied()
+                .collect();
+            let extra: Vec<&str> = actual_iface_set
+                .difference(&expected_iface_set)
+                .copied()
+                .collect();
             failures.push(format!(
                 "[{}/{}] interfaces drift: missing_from_fixture={:?} extra_in_fixture={:?}",
                 spec.fixture, spec.tag, missing, extra
@@ -151,7 +155,10 @@ fn a28_backlog_tag_specs_match_reference_fixtures_exactly() {
             .map(|m| {
                 m.iter()
                     .map(|(k, v)| {
-                        (k.as_str(), v.iter().map(|x| x.as_str()).collect::<BTreeSet<_>>())
+                        (
+                            k.as_str(),
+                            v.iter().map(|x| x.as_str()).collect::<BTreeSet<_>>(),
+                        )
                     })
                     .collect()
             })
@@ -262,8 +269,7 @@ fn a28_every_unsupported_reference_tag_has_a_backlog_spec() {
 fn a28_per_spec_interface_lists_align_between_interfaces_and_interface_attrs() {
     for spec in BACKLOG_SPECS {
         let interfaces_set: BTreeSet<&str> = spec.interfaces.iter().copied().collect();
-        let attrs_keys: BTreeSet<&str> =
-            spec.interface_attrs.iter().map(|(k, _)| *k).collect();
+        let attrs_keys: BTreeSet<&str> = spec.interface_attrs.iter().map(|(k, _)| *k).collect();
         assert_eq!(
             interfaces_set, attrs_keys,
             "[{}/{}] BacklogTagSpec.interfaces and \

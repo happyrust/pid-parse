@@ -45,15 +45,13 @@ pub const PLANT_NAME: &str = "TEST02";
 
 /// Path to the SmartPlant-produced reference `_Data.xml` for
 /// the A01 drawing. Bundled in `test-file/export-test/`.
-pub const A01_REFERENCE_DATA_XML: &str =
-    "test-file/export-test/publish-data/A01/A01_Data.xml";
+pub const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
 
 /// Path to the SmartPlant-produced reference `_Meta.xml` for
 /// the A01 drawing. Sibling of [`A01_REFERENCE_DATA_XML`];
 /// drives the `_Meta.xml` parity gates in
 /// `tests/publish_meta_parity.rs`.
-pub const A01_REFERENCE_META_XML: &str =
-    "test-file/export-test/publish-data/A01/A01_Meta.xml";
+pub const A01_REFERENCE_META_XML: &str = "test-file/export-test/publish-data/A01/A01_Meta.xml";
 
 // -----------------------------------------------------------------
 // Fixture paths and identifiers — DWG plant (P01)
@@ -99,8 +97,7 @@ pub const DWG_PLANT_NAME: &str = "P01";
 /// closure, PIDBranchPoint / PIDPipingBranchPoint parity) are
 /// NOT validated on this run even though the suite appears
 /// green.
-pub const DWG_MDF_MISSING_HINT: &str =
-    "skipping: DWG Export.mdf fixture not found at \
+pub const DWG_MDF_MISSING_HINT: &str = "skipping: DWG Export.mdf fixture not found at \
      `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` — \
      loader canonical-field enrichment, A24/A27b whitelist closure, \
      PIDBranchPoint / PIDPipingBranchPoint parity, and every other \

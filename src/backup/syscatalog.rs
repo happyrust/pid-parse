@@ -87,8 +87,8 @@ pub fn scan_sysschobjs_rows(page: &[u8]) -> Vec<SysschobjsRow> {
                 page[object_id_offset + 3],
             ]);
             let name_len_offset = i + MARKER.len();
-            let name_len = u16::from_le_bytes([page[name_len_offset], page[name_len_offset + 1]])
-                as usize;
+            let name_len =
+                u16::from_le_bytes([page[name_len_offset], page[name_len_offset + 1]]) as usize;
             let name_bytes_offset = name_len_offset + 2;
 
             if let Some(decoded) = try_decode_utf16le_name(page, name_bytes_offset, name_len) {

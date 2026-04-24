@@ -119,8 +119,12 @@ fn real_sqlite_load_drawing_graph_exposes_a01_objects_and_representations() {
         "A01 fixture has three T_Relationship rows"
     );
     // Diagnostic echo.
-    eprintln!("A01 graph: {} objects, {} representations, {} rels",
-        graph.objects.len(), graph.representations.len(), graph.relationships.len());
+    eprintln!(
+        "A01 graph: {} objects, {} representations, {} rels",
+        graph.objects.len(),
+        graph.representations.len(),
+        graph.relationships.len()
+    );
     for o in &graph.objects {
         eprintln!(
             "  object {} ({}) desc={:?} fields={}",
@@ -182,7 +186,10 @@ fn real_sqlite_vessel_and_nozzle_objects_carry_business_fields() {
         "Nozzle.NominalDiameter mirrors the DN250 spec"
     );
     assert_eq!(
-        nozzle.fields.get("PipingMaterialsClass").map(|s| s.as_str()),
+        nozzle
+            .fields
+            .get("PipingMaterialsClass")
+            .map(|s| s.as_str()),
         Some("B5"),
         "Nozzle.PipingMaterialsClass mirrors the B5 spec"
     );

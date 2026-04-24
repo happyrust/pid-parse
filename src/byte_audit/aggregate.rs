@@ -201,16 +201,17 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
         }),
         _ => return None,
     };
-    executed.map(|b| b.build(path, data.len() as u64))
-    .map(|mut t| {
-        // parser_name is the canonical name (helper literal above) —
-        // keeps the trace robust even if a future caller passes a
-        // differently-named builder.
-        if t.parser_name.is_empty() {
-            t.parser_name = parser_name.to_string();
-        }
-        t
-    })
+    executed
+        .map(|b| b.build(path, data.len() as u64))
+        .map(|mut t| {
+            // parser_name is the canonical name (helper literal above) —
+            // keeps the trace robust even if a future caller passes a
+            // differently-named builder.
+            if t.parser_name.is_empty() {
+                t.parser_name = parser_name.to_string();
+            }
+            t
+        })
 }
 
 #[cfg(test)]
@@ -264,7 +265,10 @@ mod tests {
 
         // Two registered traces, one unregistered.
         assert_eq!(report.traces.len(), 2);
-        assert_eq!(report.unregistered_paths, vec!["/MysteryStream".to_string()]);
+        assert_eq!(
+            report.unregistered_paths,
+            vec!["/MysteryStream".to_string()]
+        );
         assert!(!report.all_streams_have_registered_parser());
 
         let seg_summary = &report.per_stream["/PSMsegmenttable"];
@@ -296,16 +300,8 @@ mod tests {
 
         let report = byte_audit_report(&pkg);
         let sum_total: u64 = report.per_stream.values().map(|s| s.total_bytes).sum();
-        let sum_consumed: u64 = report
-            .per_stream
-            .values()
-            .map(|s| s.consumed_bytes)
-            .sum();
-        let sum_leftover: u64 = report
-            .per_stream
-            .values()
-            .map(|s| s.leftover_bytes)
-            .sum();
+        let sum_consumed: u64 = report.per_stream.values().map(|s| s.consumed_bytes).sum();
+        let sum_leftover: u64 = report.per_stream.values().map(|s| s.leftover_bytes).sum();
         assert_eq!(report.total_file_bytes, sum_total);
         assert_eq!(report.overall_consumed, sum_consumed);
         assert_eq!(report.overall_leftover, sum_leftover);

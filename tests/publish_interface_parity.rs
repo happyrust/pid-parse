@@ -30,9 +30,7 @@ use std::collections::BTreeSet;
 use pid_parse::publish::parse_interfaces_per_tag;
 
 mod common;
-use common::{
-    generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml, TAGS_UNDER_PARITY,
-};
+use common::{generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml, TAGS_UNDER_PARITY};
 
 #[test]
 fn interface_parity_on_a01_writer_matches_reference_superset_post_a22() {
@@ -63,10 +61,7 @@ fn interface_parity_on_a01_writer_matches_reference_superset_post_a22() {
             // We declare the tag supported but the generator didn't
             // emit a single instance for this drawing. Treat as
             // full-miss and continue.
-            missing_per_tag.push((
-                tag.to_string(),
-                ref_set.iter().cloned().collect(),
-            ));
+            missing_per_tag.push((tag.to_string(), ref_set.iter().cloned().collect()));
             continue;
         };
         let missing: Vec<String> = ref_set.difference(gen_set).cloned().collect();
@@ -147,8 +142,10 @@ fn interface_parity_generator_produces_every_supported_tag_on_a01_subset() {
         .collect();
 
     let tags_under_parity: BTreeSet<&str> = TAGS_UNDER_PARITY.iter().copied().collect();
-    let a01_expected: BTreeSet<&str> =
-        reference_set.intersection(&tags_under_parity).copied().collect();
+    let a01_expected: BTreeSet<&str> = reference_set
+        .intersection(&tags_under_parity)
+        .copied()
+        .collect();
 
     let missing_from_generator: Vec<&str> = a01_expected
         .iter()
@@ -177,12 +174,11 @@ fn interface_parity_generator_produces_every_supported_tag_on_a01_subset() {
 /// paths to close. We pin the known gaps here so they can't
 /// silently drift from the writer's current assumption set.
 #[allow(clippy::type_complexity)]
-const KNOWN_A01_VS_DWG_DIVERGENCES: &[(&str, (&[&str], &[&str]), &str, &str)] = &[
-    (
-        "PIDProcessVessel",
-        (&[], &["ILowPressureTank", "ILowPressureTankOcc"]),
-        "A25",
-        "SmartPlant emits ILowPressureTank + ILowPressureTankOcc on \
+const KNOWN_A01_VS_DWG_DIVERGENCES: &[(&str, (&[&str], &[&str]), &str, &str)] = &[(
+    "PIDProcessVessel",
+    (&[], &["ILowPressureTank", "ILowPressureTankOcc"]),
+    "A25",
+    "SmartPlant emits ILowPressureTank + ILowPressureTankOcc on \
          'Open top tank' EqType1/EqType0 vessel variants (DWG fixture \
          V F1081777… / EqType1=\"@EE793\") but not on 'Horizontal Drum' \
          variants (A01 fixture V C57494A1… / EqTypeDescription=\"Horizontal Drum\"). \
@@ -190,8 +186,7 @@ const KNOWN_A01_VS_DWG_DIVERGENCES: &[(&str, (&[&str], &[&str]), &str, &str)] = 
          the T_ProcessEquipment EqType enum columns into a conditional \
          ILowPressureTank + ILowPressureTankOcc emit path. Until then, \
          the writer matches A01's 15-interface shape universally.",
-    ),
-];
+)];
 
 /// A24 · Cross-fixture shape universality check.
 ///

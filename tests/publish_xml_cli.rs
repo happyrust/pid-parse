@@ -228,7 +228,10 @@ fn cli_writes_both_data_and_meta_xml_for_real_drawing() {
         ])
         .output()
         .expect("spawn pid_publish_xml second time");
-    assert!(out2.status.success(), "second invocation should also succeed");
+    assert!(
+        out2.status.success(),
+        "second invocation should also succeed"
+    );
     let meta_xml_2 = std::fs::read_to_string(&meta_path).expect("re-read _Meta.xml");
     assert_eq!(
         meta_xml, meta_xml_2,
@@ -549,9 +552,13 @@ fn cli_default_style_matches_a01_reference_delivery_contract() {
         ])
         .output()
         .expect("spawn pid_publish_xml default --style");
-    assert!(out.status.success(), "default-style run should exit 0; got {out:?}");
+    assert!(
+        out.status.success(),
+        "default-style run should exit 0; got {out:?}"
+    );
     let xml = std::fs::read_to_string(&data_path).expect("read generated xml");
-    let reference_xml = std::fs::read_to_string(A01_REFERENCE_DATA_XML).expect("read A01 reference");
+    let reference_xml =
+        std::fs::read_to_string(A01_REFERENCE_DATA_XML).expect("read A01 reference");
     assert!(
         !xml.is_empty(),
         "default-style output must produce non-empty _Data.xml",
@@ -573,7 +580,10 @@ fn cli_default_style_matches_a01_reference_delivery_contract() {
         ])
         .output()
         .expect("spawn pid_publish_xml default --style second time");
-    assert!(out2.status.success(), "second default-style run should exit 0; got {out2:?}");
+    assert!(
+        out2.status.success(),
+        "second default-style run should exit 0; got {out2:?}"
+    );
     let xml2 = std::fs::read_to_string(&data_path).expect("re-read generated xml");
     assert_eq!(
         xml, xml2,
@@ -613,7 +623,10 @@ fn cli_style_dwg_drops_itemtag_on_pipeline_iobject() {
         ])
         .output()
         .expect("spawn pid_publish_xml --style dwg");
-    assert!(out.status.success(), "--style dwg run should exit 0; got {out:?}");
+    assert!(
+        out.status.success(),
+        "--style dwg run should exit 0; got {out:?}"
+    );
     let xml = std::fs::read_to_string(&data_path).expect("read generated xml");
     assert!(
         xml.contains("<PIDPipeline>"),
@@ -687,7 +700,10 @@ fn cli_list_drawings_prints_table_and_summary_for_test02_fixture() {
         .args([A01_MDF_PATH, "--list-drawings"])
         .output()
         .expect("spawn pid_publish_xml --list-drawings");
-    assert!(out.status.success(), "--list-drawings should exit 0; got {out:?}");
+    assert!(
+        out.status.success(),
+        "--list-drawings should exit 0; got {out:?}"
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -743,12 +759,7 @@ fn cli_drawing_not_found_error_includes_list_drawings_hint() {
         return;
     }
     let out = Command::new(binary_path())
-        .args([
-            A01_MDF_PATH,
-            "--drawing",
-            "DOES_NOT_EXIST",
-            "--stdout",
-        ])
+        .args([A01_MDF_PATH, "--drawing", "DOES_NOT_EXIST", "--stdout"])
         .output()
         .expect("spawn pid_publish_xml --drawing DOES_NOT_EXIST --stdout");
     assert_eq!(

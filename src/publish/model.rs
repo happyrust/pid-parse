@@ -50,8 +50,10 @@ impl CodelistIndex {
         codelist_index: impl Into<String>,
         codelist_text: impl Into<String>,
     ) {
-        self.entries
-            .insert((codelist_number.into(), codelist_index.into()), codelist_text.into());
+        self.entries.insert(
+            (codelist_number.into(), codelist_index.into()),
+            codelist_text.into(),
+        );
     }
 
     /// Record that `attribute_name` is codelisted under

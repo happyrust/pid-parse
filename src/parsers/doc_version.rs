@@ -247,10 +247,7 @@ mod tests {
         assert_eq!(trace.leftover_bytes(), RECORD_SIZE as u64);
         assert_eq!(
             trace.leftover_ranges,
-            vec![ByteRange::new(
-                RECORD_SIZE as u64,
-                (RECORD_SIZE * 2) as u64
-            )],
+            vec![ByteRange::new(RECORD_SIZE as u64, (RECORD_SIZE * 2) as u64)],
         );
     }
 

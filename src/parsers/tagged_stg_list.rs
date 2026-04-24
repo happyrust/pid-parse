@@ -162,8 +162,7 @@ mod tests {
         data.extend_from_slice(&[0, 0]);
 
         let mut b = ParserTraceBuilder::new("parse_tagged_stg_list");
-        let list =
-            parse_tagged_stg_list_with_trace(&data, &mut b).expect("valid");
+        let list = parse_tagged_stg_list_with_trace(&data, &mut b).expect("valid");
         assert_eq!(list.entries.len(), 1);
 
         let trace = b.build("/JTaggedTxtStgList", data.len() as u64);
@@ -202,8 +201,7 @@ mod tests {
         data.extend_from_slice(&[5, 0, 0]);
 
         let mut b = ParserTraceBuilder::new("parse_tagged_stg_list");
-        let list =
-            parse_tagged_stg_list_with_trace(&data, &mut b).expect("valid");
+        let list = parse_tagged_stg_list_with_trace(&data, &mut b).expect("valid");
         assert_eq!(list.entries.len(), 1);
 
         let trace = b.build("/JTaggedTxtStgList", data.len() as u64);

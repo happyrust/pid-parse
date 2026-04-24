@@ -62,14 +62,13 @@ pub use diff::{
     RelDefUidDiffReport, RelDetail, SemanticDiffReport, TagCountDiff, TagDiffStatus,
     WriterCoverage,
 };
+pub use mdf_load::{load_drawing_graph_from_mdf, open_mdf_as_sqlite};
 pub use model::{
     CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
     PublishRepresentation, PublishStyle,
 };
-pub use mdf_load::{load_drawing_graph_from_mdf, open_mdf_as_sqlite};
 pub use sqlite_load::{
     attach_pipe_endpoint_connections, load_codelist_index, load_drawing, load_drawing_graph,
-    load_objects_by_uids, load_piping_points_for_objects, load_relationships,
-    load_representations,
+    load_objects_by_uids, load_piping_points_for_objects, load_relationships, load_representations,
 };
 pub use xml_writer::{write_data_xml, write_meta_xml};

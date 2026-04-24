@@ -266,9 +266,7 @@ fn ordered_business_objects(drawing: &PublishDrawing) -> Vec<&PublishObject> {
     objects
 }
 
-fn ordered_publishable_representations(
-    drawing: &PublishDrawing,
-) -> Vec<&PublishRepresentation> {
+fn ordered_publishable_representations(drawing: &PublishDrawing) -> Vec<&PublishRepresentation> {
     let mut reps: Vec<&PublishRepresentation> = drawing
         .representations
         .iter()
@@ -278,7 +276,12 @@ fn ordered_publishable_representations(
         let rank_by_object: HashMap<&str, u8> = drawing
             .objects
             .iter()
-            .map(|obj| (obj.uid.as_str(), a01_object_rank(obj.item_type_name.as_str())))
+            .map(|obj| {
+                (
+                    obj.uid.as_str(),
+                    a01_object_rank(obj.item_type_name.as_str()),
+                )
+            })
             .collect();
         reps.sort_by(|a, b| {
             let a_rank = a
@@ -356,7 +359,10 @@ fn dwg_field_with_aliases<'a>(
 }
 
 fn canonical_construction_status(obj: &PublishObject, style: PublishStyle) -> String {
-    match (style, obj.fields.get("ConstructionStatus").map(|s| s.trim())) {
+    match (
+        style,
+        obj.fields.get("ConstructionStatus").map(|s| s.trim()),
+    ) {
         (PublishStyle::A01, None | Some("") | Some("2")) => "@NewConstruction".to_string(),
         (_, Some(value)) => value.to_string(),
         (_, None) => "@NewConstruction".to_string(),
@@ -550,10 +556,14 @@ fn write_process_vessel(
         dwg_field_with_aliases(obj, drawing.style, "EquipmentTrimSpec", &["TrimSpec"])
             .unwrap_or_default()
             .to_string();
-    let vessel_volumetric_capacity =
-        dwg_field_with_aliases(obj, drawing.style, "VesselVolumetricCapacity", &["VolumeRating"])
-            .unwrap_or_default()
-            .to_string();
+    let vessel_volumetric_capacity = dwg_field_with_aliases(
+        obj,
+        drawing.style,
+        "VesselVolumetricCapacity",
+        &["VolumeRating"],
+    )
+    .unwrap_or_default()
+    .to_string();
     let long_material_description = obj
         .fields
         .get("LongMaterialDescription")
@@ -748,12 +758,7 @@ fn write_nozzle(
         .or_else(|| derive_type_description_from_symbol(drawing, &obj.uid))
         .unwrap_or_else(|| "Flanged Nozzle".to_string());
     writeln!(buf, "   <PIDNozzle>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}"/>"#,
-        escape_attr(&obj.uid)
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid)).map_err(fmt_err)?;
     writeln!(
         buf,
         r#"      <IPBSItem ConstructionStatus="{}" ConstructionStatus2="{}"/>"#,
@@ -850,7 +855,11 @@ fn resolve_pipe_item_tag(obj: &PublishObject) -> String {
             return tag.clone();
         }
     }
-    let tag_sequence = obj.fields.get("TagSequenceNo").map(String::as_str).unwrap_or("");
+    let tag_sequence = obj
+        .fields
+        .get("TagSequenceNo")
+        .map(String::as_str)
+        .unwrap_or("");
     if !tag_sequence.is_empty() {
         let piping_materials_class = obj
             .fields
@@ -862,9 +871,7 @@ fn resolve_pipe_item_tag(obj: &PublishObject) -> String {
             .get("NominalDiameter")
             .map(|v| format_diameter(v))
             .unwrap_or_default();
-        return format!(
-            "PH-{tag_sequence}-{nominal_diameter}-{piping_materials_class}"
-        );
+        return format!("PH-{tag_sequence}-{nominal_diameter}-{piping_materials_class}");
     }
     obj.uid.clone()
 }
@@ -914,11 +921,9 @@ fn write_pipeline_iobject(
             escape_attr(uid),
             escape_attr(name),
         ),
-        (PublishStyle::Dwg, None) => writeln!(
-            buf,
-            r#"      <IObject UID="{}"/>"#,
-            escape_attr(uid),
-        ),
+        (PublishStyle::Dwg, None) => {
+            writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(uid),)
+        }
     }
     .map_err(fmt_err)
 }
@@ -954,11 +959,9 @@ fn write_piping_connector_iobject(
             escape_attr(uid),
             escape_attr(name),
         ),
-        (PublishStyle::Dwg, None) => writeln!(
-            buf,
-            r#"      <IObject UID="{}"/>"#,
-            escape_attr(uid),
-        ),
+        (PublishStyle::Dwg, None) => {
+            writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(uid),)
+        }
     }
     .map_err(fmt_err)
 }
@@ -1200,10 +1203,9 @@ fn write_piping_connector(
         .cloned()
         .or_else(|| obj.fields.get("HTraceReqmt").cloned())
         .unwrap_or_default();
-    let sloped_piping_angle =
-        dwg_field_with_aliases(obj, style, "SlopedPipingAngle", &["Slope"])
-            .unwrap_or_default()
-            .to_string();
+    let sloped_piping_angle = dwg_field_with_aliases(obj, style, "SlopedPipingAngle", &["Slope"])
+        .unwrap_or_default()
+        .to_string();
     let sloped_pipe_direction =
         dwg_field_with_aliases(obj, style, "SlopedPipeDirection", &["SlopeDirection"])
             .unwrap_or_default()
@@ -1212,10 +1214,9 @@ fn write_piping_connector(
         dwg_field_with_aliases(obj, style, "InsulThickSrc", &["InsulationThkSource"])
             .unwrap_or_default()
             .to_string();
-    let total_insul_thick =
-        dwg_field_with_aliases(obj, style, "TotalInsulThick", &["InsulThick"])
-            .unwrap_or_default()
-            .to_string();
+    let total_insul_thick = dwg_field_with_aliases(obj, style, "TotalInsulThick", &["InsulThick"])
+        .unwrap_or_default()
+        .to_string();
     let pipeline_name = non_empty_field(obj, "PipelineName")
         .or_else(|| non_empty_field(obj, "Name"))
         .map(str::to_string);
@@ -1472,12 +1473,7 @@ fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), Publis
         .map(|v| format_diameter(&v))
         .unwrap_or_default();
     writeln!(buf, "   <PIDPipingPort>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}"/>"#,
-        escape_attr(&obj.uid)
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid)).map_err(fmt_err)?;
     writeln!(buf, "      <IConnection/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPipingPort/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPipingConnection/>").map_err(fmt_err)?;
@@ -1520,12 +1516,7 @@ fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishE
         .or_else(|| obj.description.clone())
         .unwrap_or_default();
     writeln!(buf, "   <PIDNote>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}"/>"#,
-        escape_attr(&obj.uid)
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid)).map_err(fmt_err)?;
     writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPBSNote/>").map_err(fmt_err)?;
     // A24: When NoteText is empty the reference fixture ships a
@@ -1587,18 +1578,10 @@ fn write_control_system_function(
         .get("MeasuredVariableCode")
         .cloned()
         .unwrap_or_default();
-    let tag_sequence_no = obj
-        .fields
-        .get("TagSequenceNo")
-        .cloned()
-        .unwrap_or_default();
+    let tag_sequence_no = obj.fields.get("TagSequenceNo").cloned().unwrap_or_default();
     let tag_prefix = obj.fields.get("TagPrefix").cloned().unwrap_or_default();
     let tag_suffix = obj.fields.get("TagSuffix").cloned().unwrap_or_default();
-    let loop_suffix = obj
-        .fields
-        .get("LoopTagSuffix")
-        .cloned()
-        .unwrap_or_default();
+    let loop_suffix = obj.fields.get("LoopTagSuffix").cloned().unwrap_or_default();
     let func_modifier = obj
         .fields
         .get("InstrumentTypeModifier")
@@ -1635,12 +1618,7 @@ fn write_control_system_function(
         // Empty `Name=""` would be uglier than omitting it; reference
         // fixtures always have a populated Name, so the empty case is
         // a defensive fallback only.
-        writeln!(
-            buf,
-            r#"      <IObject UID="{}"/>"#,
-            escape_attr(&obj.uid),
-        )
-        .map_err(fmt_err)?;
+        writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid),).map_err(fmt_err)?;
     } else {
         writeln!(
             buf,
@@ -1744,10 +1722,7 @@ fn write_control_system_function(
 /// * `IsTypical` on `IPIDTypical` — the `T_ModelItem.SP_IsTypical`
 ///   standard boolean, rendered through [`map_bool`]; defaults to
 ///   `"False"`.
-fn write_piping_component(
-    buf: &mut String,
-    obj: &PublishObject,
-) -> Result<(), PublishError> {
+fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
     let construction_status = obj
         .fields
         .get("ConstructionStatus")
@@ -1773,11 +1748,7 @@ fn write_piping_component(
         .get("PipingComponentType3")
         .cloned()
         .unwrap_or_default();
-    let pip_model_code = obj
-        .fields
-        .get("PipModelCode")
-        .cloned()
-        .unwrap_or_default();
+    let pip_model_code = obj.fields.get("PipModelCode").cloned().unwrap_or_default();
     let commodity_specialty = obj
         .fields
         .get("CommoditySpecialtyType")
@@ -1802,12 +1773,7 @@ fn write_piping_component(
         .unwrap_or("False");
 
     writeln!(buf, "   <PIDPipingComponent>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}"/>"#,
-        escape_attr(&obj.uid)
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid)).map_err(fmt_err)?;
     writeln!(
         buf,
         r#"      <IPBSItem ConstructionStatus="{}" ConstructionStatus2="{}"/>"#,
@@ -1922,22 +1888,10 @@ fn write_piping_component(
 /// `T_Relationship` and flow through the generic relationship
 /// emitter in `write_relationships`. A17/A18 stay focused on the
 /// per-object tag shape.
-fn write_signal_connector(
-    buf: &mut String,
-    obj: &PublishObject,
-) -> Result<(), PublishError> {
-    let flow_direction = obj
-        .fields
-        .get("FlowDirection")
-        .cloned()
-        .unwrap_or_default();
+fn write_signal_connector(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+    let flow_direction = obj.fields.get("FlowDirection").cloned().unwrap_or_default();
     writeln!(buf, "   <PIDSignalConnector>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}"/>"#,
-        escape_attr(&obj.uid)
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid)).map_err(fmt_err)?;
     writeln!(buf, "      <IPlannedFacility/>").map_err(fmt_err)?;
     writeln!(
         buf,
@@ -1976,17 +1930,9 @@ fn write_signal_connector(
 /// emits whatever `obj.uid` the loader supplies, leaving the
 /// suffix convention to the loader side. All interfaces are bare
 /// (no attributes) so the function needs nothing beyond the UID.
-fn write_piping_branch_point(
-    buf: &mut String,
-    obj: &PublishObject,
-) -> Result<(), PublishError> {
+fn write_piping_branch_point(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
     writeln!(buf, "   <PIDPipingBranchPoint>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}"/>"#,
-        escape_attr(&obj.uid),
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid),).map_err(fmt_err)?;
     writeln!(buf, "      <IConnection/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPipingConnection/>").map_err(fmt_err)?;
     writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
@@ -2015,21 +1961,13 @@ fn write_piping_branch_point(
 /// number. All interfaces below IObject are bare. `Name` is
 /// sourced from `obj.fields["Name"]` falling back to
 /// `obj.description` — the loader must populate one of them.
-fn write_pid_branch_point(
-    buf: &mut String,
-    obj: &PublishObject,
-) -> Result<(), PublishError> {
+fn write_pid_branch_point(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
     let name = non_empty_field(obj, "Name")
         .or(obj.description.as_deref())
         .unwrap_or("");
     writeln!(buf, "   <PIDBranchPoint>").map_err(fmt_err)?;
     if name.is_empty() {
-        writeln!(
-            buf,
-            r#"      <IObject UID="{}"/>"#,
-            escape_attr(&obj.uid),
-        )
-        .map_err(fmt_err)?;
+        writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid),).map_err(fmt_err)?;
     } else {
         writeln!(
             buf,
@@ -2061,12 +1999,7 @@ fn write_generic_object(
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   <PIDItem>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}"/>"#,
-        escape_attr(&obj.uid),
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid),).map_err(fmt_err)?;
     writeln!(buf, "   </PIDItem>").map_err(fmt_err)
 }
 
@@ -2290,12 +2223,7 @@ fn write_meta_rel(
     def_uid: &str,
 ) -> Result<(), PublishError> {
     writeln!(buf, "   <Rel>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}"/>"#,
-        escape_attr(rel_uid),
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(rel_uid),).map_err(fmt_err)?;
     writeln!(
         buf,
         r#"      <IRel UID1="{}" UID2="{}" DefUID="{}"/>"#,
@@ -2335,7 +2263,8 @@ pub(crate) fn derive_meta_uid(seed: &str, role: &str) -> String {
 fn format_meta_date(raw: &str) -> String {
     let date_part = raw.split_whitespace().next().unwrap_or(raw);
     let mut parts = date_part.split('/');
-    let (Some(y), Some(m), Some(d), None) = (parts.next(), parts.next(), parts.next(), parts.next())
+    let (Some(y), Some(m), Some(d), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
     else {
         return raw.to_string();
     };
@@ -2387,22 +2316,14 @@ fn representation_is_publishable(rep: &PublishRepresentation) -> bool {
 fn write_representations(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
     for rep in ordered_publishable_representations(drawing) {
         writeln!(buf, "   <PIDRepresentation>").map_err(fmt_err)?;
-        writeln!(
-            buf,
-            r#"      <IObject UID="{}"/>"#,
-            escape_attr(&rep.uid)
-        )
-        .map_err(fmt_err)?;
+        writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&rep.uid)).map_err(fmt_err)?;
         // Current behavior still passes through the staged-table
         // `GraphicOID`. A01 contract parity masks the publish-time
         // remap slot explicitly until the SmartPlant numbering rule
         // is reconstructed.
         match rep.graphic_oid {
-            Some(oid) => writeln!(
-                buf,
-                r#"      <IDrawingRepresentation GraphicOID="{oid}"/>"#
-            )
-            .map_err(fmt_err)?,
+            Some(oid) => writeln!(buf, r#"      <IDrawingRepresentation GraphicOID="{oid}"/>"#)
+                .map_err(fmt_err)?,
             None => writeln!(buf, r#"      <IDrawingRepresentation/>"#).map_err(fmt_err)?,
         }
         writeln!(buf, "   </PIDRepresentation>").map_err(fmt_err)?;
@@ -2651,12 +2572,7 @@ fn write_rel(
     def_uid: &str,
 ) -> Result<(), PublishError> {
     writeln!(buf, "   <Rel>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IObject UID="{}"/>"#,
-        escape_attr(rel_uid)
-    )
-    .map_err(fmt_err)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(rel_uid)).map_err(fmt_err)?;
     writeln!(
         buf,
         r#"      <IRel UID1="{}" UID2="{}" DefUID="{}"/>"#,
@@ -2672,10 +2588,7 @@ fn write_rel(
 /// of endpoint ItemTypeNames. Stage-1 covers the combinations
 /// observed in TEST02 A01; anything unknown falls back to the
 /// generic `"Relationship"` so the writer stays total.
-fn classify_relationship(
-    rel: &PublishRelationship,
-    type_by_uid: &HashMap<&str, &str>,
-) -> String {
+fn classify_relationship(rel: &PublishRelationship, type_by_uid: &HashMap<&str, &str>) -> String {
     let src_type = rel
         .source_uid
         .as_deref()
@@ -2778,7 +2691,9 @@ mod tests {
                 drawing_uid: d.drawing_uid.clone(),
                 model_item_uid: Some("C57494A1B154442C9DF0F4BA713E88EC".into()),
                 graphic_oid: Some(184),
-                symbol_path: Some(r"\Equipment\Vessels\Horizontal Drums\Horizontal Drum.sym".into()),
+                symbol_path: Some(
+                    r"\Equipment\Vessels\Horizontal Drums\Horizontal Drum.sym".into(),
+                ),
                 representation_type: Some(13),
             },
             PublishRepresentation {
@@ -3305,8 +3220,12 @@ mod tests {
         let d = PublishDrawing::new("UID-ABC", "DRAW1");
         let out = write_meta_xml(&d, "P01").expect("write meta");
 
-        let pos_version = out.find("<DocumentVersion>").expect("DocumentVersion present");
-        let pos_revision = out.find("<DocumentRevision>").expect("DocumentRevision present");
+        let pos_version = out
+            .find("<DocumentVersion>")
+            .expect("DocumentVersion present");
+        let pos_revision = out
+            .find("<DocumentRevision>")
+            .expect("DocumentRevision present");
         let pos_file = out.find("<File>").expect("File present");
 
         assert!(
@@ -3315,7 +3234,10 @@ mod tests {
         );
 
         let rel_count = out.matches("<Rel>").count();
-        assert_eq!(rel_count, 3, "meta document carries exactly three Rel rows; out:\n{out}");
+        assert_eq!(
+            rel_count, 3,
+            "meta document carries exactly three Rel rows; out:\n{out}"
+        );
 
         for def_uid in ["VersionedDoc", "RevisedDocument", "FileComposition"] {
             assert!(
@@ -3416,7 +3338,9 @@ mod tests {
         let uid = derive_meta_uid("DUID", "version");
         assert_eq!(uid.len(), 32, "derived UID must be 32 hex chars; got {uid}");
         assert!(
-            uid.chars().all(|c| c.is_ascii_hexdigit() && (!c.is_ascii_alphabetic() || c.is_ascii_uppercase())),
+            uid.chars()
+                .all(|c| c.is_ascii_hexdigit()
+                    && (!c.is_ascii_alphabetic() || c.is_ascii_uppercase())),
             "derived UID must be uppercase hex only; got {uid}"
         );
     }
@@ -3951,9 +3875,7 @@ mod tests {
         let out = write_data_xml(&d, "TEST02").expect("write");
 
         let i_pipeline = out.find("<PIDPipeline>").expect("pipeline present");
-        let i_connector = out
-            .find("<PIDPipingConnector>")
-            .expect("connector present");
+        let i_connector = out.find("<PIDPipingConnector>").expect("connector present");
         let i_first_port = out.find("<PIDPipingPort>").expect("first port");
         let i_process_point = out
             .find("<PIDProcessPoint>")
@@ -4376,9 +4298,9 @@ mod tests {
         ];
         let mut last_pos = 0usize;
         for needle in positions {
-            let pos = out[last_pos..]
-                .find(needle)
-                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            let pos = out[last_pos..].find(needle).unwrap_or_else(|| {
+                panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}")
+            });
             last_pos += pos + needle.len();
         }
     }
@@ -4527,9 +4449,9 @@ mod tests {
         ];
         let mut last_pos = 0usize;
         for needle in positions {
-            let pos = out[last_pos..]
-                .find(needle)
-                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            let pos = out[last_pos..].find(needle).unwrap_or_else(|| {
+                panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}")
+            });
             last_pos += pos + needle.len();
         }
     }
@@ -4708,9 +4630,9 @@ mod tests {
         ];
         let mut last_pos = 0usize;
         for needle in positions {
-            let pos = out[last_pos..]
-                .find(needle)
-                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            let pos = out[last_pos..].find(needle).unwrap_or_else(|| {
+                panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}")
+            });
             last_pos += pos + needle.len();
         }
     }
@@ -4828,10 +4750,7 @@ mod tests {
                 m.insert("FlowDirection".into(), "@EE872".into());
                 m.insert("RepresentationsAreAllZeroLength".into(), "0".into());
                 m.insert("PipingConnectorType".into(), "@EE690".into());
-                m.insert(
-                    "SlopedPipingAngle".into(),
-                    "2.9999910000486E-03 rad".into(),
-                );
+                m.insert("SlopedPipingAngle".into(), "2.9999910000486E-03 rad".into());
                 m.insert(
                     "SlopedPipeDirection".into(),
                     "@{FAC6E20B-6B3C-48C4-BEE8-409B224925C2}".into(),
@@ -4963,9 +4882,9 @@ mod tests {
         ];
         let mut last_pos = 0usize;
         for needle in positions {
-            let pos = out[last_pos..]
-                .find(needle)
-                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            let pos = out[last_pos..].find(needle).unwrap_or_else(|| {
+                panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}")
+            });
             last_pos += pos + needle.len();
         }
     }
@@ -5131,9 +5050,8 @@ mod tests {
         }];
         let out_dwg = write_data_xml(&d_dwg, "TEST02").expect("write");
         assert!(
-            out_dwg.contains(
-                r#"<IProcessVessel ProcessVessel_VesselVolumetricCapacity="27 m^3"/>"#
-            ),
+            out_dwg
+                .contains(r#"<IProcessVessel ProcessVessel_VesselVolumetricCapacity="27 m^3"/>"#),
             "populated VesselVolumetricCapacity must expand <IProcessVessel>; out:\n{out_dwg}"
         );
     }
@@ -5191,9 +5109,9 @@ mod tests {
         ];
         let mut last_pos = 0usize;
         for needle in positions {
-            let pos = out[last_pos..]
-                .find(needle)
-                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            let pos = out[last_pos..].find(needle).unwrap_or_else(|| {
+                panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}")
+            });
             last_pos += pos + needle.len();
         }
     }
@@ -5302,10 +5220,16 @@ mod tests {
             description: Some("污水池".into()),
             fields: std::collections::BTreeMap::from([
                 ("IsLowPressureTank".to_string(), "True".to_string()),
-                ("EqType0".to_string(), "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}".to_string()),
+                (
+                    "EqType0".to_string(),
+                    "@{47BF0267-DD41-4E1A-9B41-C4B714C8FF92}".to_string(),
+                ),
                 ("EqType1".to_string(), "@EE793".to_string()),
                 ("EqType2".to_string(), "@EE7A6".to_string()),
-                ("EqType3".to_string(), "@{9B3ED983-16AE-4AD7-A19F-A337149DF437}".to_string()),
+                (
+                    "EqType3".to_string(),
+                    "@{9B3ED983-16AE-4AD7-A19F-A337149DF437}".to_string(),
+                ),
                 ("EquipmentTrimSpec".to_string(), "1.6AR12".to_string()),
                 ("HeightRelativeToGrade".to_string(), "3 m".to_string()),
                 ("VesselVolumetricCapacity".to_string(), "27 m^3".to_string()),
@@ -5337,9 +5261,9 @@ mod tests {
         ];
         let mut last_pos = 0usize;
         for needle in positions {
-            let pos = out[last_pos..]
-                .find(needle)
-                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            let pos = out[last_pos..].find(needle).unwrap_or_else(|| {
+                panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}")
+            });
             last_pos += pos + needle.len();
         }
     }
@@ -5752,9 +5676,9 @@ mod tests {
         ];
         let mut last_pos = 0usize;
         for needle in positions {
-            let pos = out[last_pos..]
-                .find(needle)
-                .unwrap_or_else(|| panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}"));
+            let pos = out[last_pos..].find(needle).unwrap_or_else(|| {
+                panic!("missing `{needle}` after offset {last_pos}\nout:\n{out}")
+            });
             last_pos += pos + needle.len();
         }
     }
@@ -6005,9 +5929,7 @@ mod tests {
         d.objects = vec![PublishObject {
             uid: "0DFD856D382C42F88DA8CDDFD37D4227".into(),
             item_type_name: "BranchPoint".into(),
-            fields: std::collections::BTreeMap::from([
-                ("Name".to_string(), "272".to_string()),
-            ]),
+            fields: std::collections::BTreeMap::from([("Name".to_string(), "272".to_string())]),
             ..PublishObject::default()
         }];
         let out = write_data_xml(&d, "P01").expect("write");
@@ -6036,9 +5958,7 @@ mod tests {
         d.objects = vec![PublishObject {
             uid: "BBB".into(),
             item_type_name: "BranchPoint".into(),
-            fields: std::collections::BTreeMap::from([
-                ("Name".to_string(), "1".to_string()),
-            ]),
+            fields: std::collections::BTreeMap::from([("Name".to_string(), "1".to_string())]),
             ..PublishObject::default()
         }];
         let out = write_data_xml(&d, "P01").expect("write");

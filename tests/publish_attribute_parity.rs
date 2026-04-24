@@ -42,9 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pid_parse::publish::parse_attrs_per_interface_per_tag;
 
 mod common;
-use common::{
-    generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml, TAGS_UNDER_PARITY,
-};
+use common::{generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml, TAGS_UNDER_PARITY};
 
 /// A27 · Writer == A01 reference at attribute granularity.
 ///
@@ -216,14 +214,7 @@ fn attribute_parity_a01_reference_exposes_at_least_one_attr_per_supported_tag() 
 ///    A28-series milestone can pick them off interface-by-
 ///    interface as the DWG mirror lands.
 #[allow(clippy::type_complexity)]
-const KNOWN_A01_VS_DWG_ATTR_DIVERGENCES: &[(
-    &str,
-    &str,
-    &[&str],
-    &[&str],
-    &str,
-    &str,
-)] = &[
+const KNOWN_A01_VS_DWG_ATTR_DIVERGENCES: &[(&str, &str, &[&str], &[&str], &str, &str)] = &[
     (
         "PIDPipeline",
         "IObject",
@@ -333,7 +324,13 @@ const KNOWN_A01_VS_DWG_ATTR_DIVERGENCES: &[(
         "PIDProcessVessel",
         "IEquipment",
         &[],
-        &["EqType0", "EqType1", "EqType2", "EqType3", "EquipmentTrimSpec"],
+        &[
+            "EqType0",
+            "EqType1",
+            "EqType2",
+            "EqType3",
+            "EquipmentTrimSpec",
+        ],
         "A27b",
         "DWG vessels populate the full EqType0..3 + \
          EquipmentTrimSpec domain-enum stack; A01 vessels \
@@ -418,17 +415,13 @@ fn a27b_a01_and_dwg_reference_attrs_agree_for_every_shared_tag_interface() {
 
     for tag in TAGS_UNDER_PARITY {
         let tag = *tag;
-        let (Some(a01_ifaces), Some(dwg_ifaces)) =
-            (a01_attrs.get(tag), dwg_attrs.get(tag))
-        else {
+        let (Some(a01_ifaces), Some(dwg_ifaces)) = (a01_attrs.get(tag), dwg_attrs.get(tag)) else {
             continue;
         };
         // Iterate the intersection of interface keys; one-side-
         // only interfaces are A24 territory.
-        let a01_keys: BTreeSet<&str> =
-            a01_ifaces.keys().map(|s| s.as_str()).collect();
-        let dwg_keys: BTreeSet<&str> =
-            dwg_ifaces.keys().map(|s| s.as_str()).collect();
+        let a01_keys: BTreeSet<&str> = a01_ifaces.keys().map(|s| s.as_str()).collect();
+        let dwg_keys: BTreeSet<&str> = dwg_ifaces.keys().map(|s| s.as_str()).collect();
         for iface in a01_keys.intersection(&dwg_keys).copied() {
             let a01_set = a01_ifaces.get(iface).expect("interface present in a01");
             let dwg_set = dwg_ifaces.get(iface).expect("interface present in dwg");
@@ -508,9 +501,7 @@ fn a27b_a01_and_dwg_reference_attrs_agree_for_every_shared_tag_interface() {
     if !unexpected.is_empty() {
         eprintln!("Unexpected attribute divergences:");
         for (tag, iface, a01_only, dwg_only) in &unexpected {
-            eprintln!(
-                "  [{tag} / {iface}] only_in_A01: {a01_only:?}  only_in_DWG: {dwg_only:?}"
-            );
+            eprintln!("  [{tag} / {iface}] only_in_A01: {a01_only:?}  only_in_DWG: {dwg_only:?}");
         }
     }
 

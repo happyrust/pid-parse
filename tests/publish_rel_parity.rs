@@ -39,7 +39,9 @@ use std::collections::BTreeSet;
 use pid_parse::publish::{parse_rel_defuid_counts, parse_rel_details};
 
 mod common;
-use common::{generate_a01_xml, generate_dwg_data_xml, load_reference_a01_xml, load_reference_dwg_xml};
+use common::{
+    generate_a01_xml, generate_dwg_data_xml, load_reference_a01_xml, load_reference_dwg_xml,
+};
 
 /// Known writer-side Rel DefUID gaps the A33 gate tolerates.
 ///
@@ -265,10 +267,8 @@ fn a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise() {
         return;
     };
 
-    let a01_set: BTreeSet<String> =
-        parse_rel_defuid_counts(&a01_xml).into_keys().collect();
-    let dwg_set: BTreeSet<String> =
-        parse_rel_defuid_counts(&dwg_xml).into_keys().collect();
+    let a01_set: BTreeSet<String> = parse_rel_defuid_counts(&a01_xml).into_keys().collect();
+    let dwg_set: BTreeSet<String> = parse_rel_defuid_counts(&dwg_xml).into_keys().collect();
 
     let a01_only: BTreeSet<&str> = a01_set.difference(&dwg_set).map(|s| s.as_str()).collect();
     let dwg_only: BTreeSet<&str> = dwg_set.difference(&a01_set).map(|s| s.as_str()).collect();
@@ -288,10 +288,8 @@ fn a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise() {
             tolerated_dwg.insert(*s);
         }
     }
-    let unexpected_a01: Vec<&str> =
-        a01_only.difference(&tolerated_a01).copied().collect();
-    let unexpected_dwg: Vec<&str> =
-        dwg_only.difference(&tolerated_dwg).copied().collect();
+    let unexpected_a01: Vec<&str> = a01_only.difference(&tolerated_a01).copied().collect();
+    let unexpected_dwg: Vec<&str> = dwg_only.difference(&tolerated_dwg).copied().collect();
 
     eprintln!("--- A33b Cross-fixture Rel DefUID universality ---");
     eprintln!(
@@ -467,7 +465,10 @@ fn a36_piping_end1_conn_uid2_is_real_upstream_on_dwg_when_available() {
     if end1_rels.is_empty() {
         return;
     }
-    let real_count = end1_rels.iter().filter(|r| !r.uid2.ends_with(".PPT")).count();
+    let real_count = end1_rels
+        .iter()
+        .filter(|r| !r.uid2.ends_with(".PPT"))
+        .count();
     assert!(
         real_count > 0,
         "A36 DWG UID2 regression: every writer-generated \

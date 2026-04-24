@@ -251,10 +251,7 @@ mod tests {
         // entry header must surface as leftover.
         assert_eq!(trace.consumed_bytes(), 4);
         assert_eq!(trace.leftover_bytes(), 20);
-        assert_eq!(
-            trace.leftover_ranges,
-            vec![ByteRange::new(4, 24)],
-        );
+        assert_eq!(trace.leftover_ranges, vec![ByteRange::new(4, 24)],);
     }
 
     #[test]

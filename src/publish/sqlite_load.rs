@@ -38,8 +38,7 @@ use super::model::{
 /// ready-to-query connection. Exposed publicly so integration tests
 /// and compatibility tools can reuse the same open logic.
 pub fn open_readonly(path: &Path) -> Result<Connection, PublishError> {
-    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(PublishError::from)
+    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(PublishError::from)
 }
 
 /// Load the drawing-level header row for `drawing_uid` from the
@@ -267,18 +266,14 @@ pub fn load_objects_by_uids(
          FROM T_ModelItem WHERE SP_ID IN ({placeholders}) ORDER BY SP_ID"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params_vec: Vec<&dyn rusqlite::ToSql> = uids
-        .iter()
-        .map(|s| s as &dyn rusqlite::ToSql)
-        .collect();
+    let params_vec: Vec<&dyn rusqlite::ToSql> =
+        uids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
     let mut rows = stmt.query(params_vec.as_slice())?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         out.push(PublishObject {
             uid: row.get(0)?,
-            item_type_name: row
-                .get::<_, Option<String>>(1)?
-                .unwrap_or_default(),
+            item_type_name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
             description: row.get(2)?,
             is_typical: row.get(3)?,
             fields: std::collections::BTreeMap::new(),
@@ -360,10 +355,7 @@ pub fn load_codelist_index(conn: &Connection) -> Result<CodelistIndex, PublishEr
             let (Some(name), Some(codelist_number)) = (name, codelist_number) else {
                 continue;
             };
-            if name.is_empty()
-                || codelist_number.is_empty()
-                || codelist_number == "0"
-            {
+            if name.is_empty() || codelist_number.is_empty() || codelist_number == "0" {
                 continue;
             }
             idx.insert_attribute_mapping(name, codelist_number);
@@ -389,7 +381,10 @@ fn attach_business_columns(
     // The table might not exist for every object type; `prepare_optional`
     // returns `Ok(None)` in that case so fixtures with partial schemas
     // do not fail the whole load.
-    let sql = format!("SELECT * FROM \"{}\" WHERE SP_ID = ?1", table_name.replace('"', "\"\""));
+    let sql = format!(
+        "SELECT * FROM \"{}\" WHERE SP_ID = ?1",
+        table_name.replace('"', "\"\"")
+    );
     let Some(mut stmt) = prepare_optional(conn, &sql)? else {
         return Ok(());
     };
@@ -423,7 +418,12 @@ pub(super) fn subtables_for_item_type(item_type_name: &str) -> &'static [&'stati
     match item_type_name {
         // A vessel is an equipment subtype: general equipment
         // fields first, then vessel-specific fields.
-        "Vessel" => &["T_PlantItem", "T_Equipment", "T_ProcessEquipment", "T_Vessel"],
+        "Vessel" => &[
+            "T_PlantItem",
+            "T_Equipment",
+            "T_ProcessEquipment",
+            "T_Vessel",
+        ],
         "Nozzle" => &["T_PlantItem", "T_EquipComponent", "T_Nozzle"],
         "PipeRun" => &["T_PlantItem", "T_Connector", "T_PipeRun"],
         "PipingPoint" => &["T_PipingPoint"],
@@ -789,16 +789,10 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO codelists VALUES ('28', '1', NULL, NULL)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO codelists VALUES ('', '2', 'Ghost', 'G')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO codelists VALUES ('28', '1', NULL, NULL)", [])
+            .unwrap();
+        conn.execute("INSERT INTO codelists VALUES ('', '2', 'Ghost', 'G')", [])
+            .unwrap();
         // Three attribute rows: one codelisted, one empty sentinel,
         // one zero sentinel.
         conn.execute(
@@ -806,11 +800,8 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO attributes VALUES ('2', 'TagPrefix', '')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO attributes VALUES ('2', 'TagPrefix', '')", [])
+            .unwrap();
         conn.execute(
             "INSERT INTO attributes VALUES ('3', 'NominalDiameter', '0')",
             [],
@@ -950,11 +941,8 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO attributes VALUES ('2', 'ValveType', '14')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO attributes VALUES ('2', 'ValveType', '14')", [])
+            .unwrap();
 
         let idx = load_codelist_index(&conn).expect("load");
         assert_eq!(idx.entry_count(), 4);
@@ -1142,11 +1130,8 @@ mod tests {
         // SPPID sometimes stores `""` in place of NULL. Empty
         // strings must be treated as "no connection" — no field.
         let conn = setup_connector_db();
-        conn.execute(
-            "INSERT INTO T_Connector VALUES ('REP-PIPE-A', '', '')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO T_Connector VALUES ('REP-PIPE-A', '', '')", [])
+            .unwrap();
         let mut d = a34c_drawing_fixture();
         attach_pipe_endpoint_connections(&conn, &mut d).expect("ok");
         let pipe = d.objects.iter().find(|o| o.uid == "PIPE-1").unwrap();

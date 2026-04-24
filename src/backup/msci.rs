@@ -128,10 +128,7 @@ pub fn parse_msci(body: &[u8]) -> Result<MsciConfig, MsciError> {
         // Record runs until the next SFIN, or end-of-body for the
         // last record. This bound keeps the run scanner from
         // bleeding file #1's path into file #2.
-        let record_end = sfin_offsets
-            .get(idx + 1)
-            .copied()
-            .unwrap_or(body.len());
+        let record_end = sfin_offsets.get(idx + 1).copied().unwrap_or(body.len());
         let combined =
             find_next_utf16_ascii_run(&body[..record_end], sfin_start + 4, MIN_UTF16_RUN_CHARS)
                 .unwrap_or_default();
@@ -189,9 +186,7 @@ fn find_windows_path_start(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     // UNC prefix `\\\\` — pick the earliest hit among supported
     // shapes.
-    let unc = bytes
-        .windows(2)
-        .position(|w| w == b"\\\\");
+    let unc = bytes.windows(2).position(|w| w == b"\\\\");
     // Drive-letter prefix `X:\\` — only valid when the char before
     // the colon is an ASCII letter.
     let drive = (0..bytes.len().saturating_sub(2)).find(|&i| {
@@ -242,10 +237,7 @@ fn find_next_utf16_ascii_run(data: &[u8], start: usize, min_chars: usize) -> Opt
             let mut end = i;
             let mut chars = 0usize;
             let mut s = String::new();
-            while end + 1 < data.len()
-                && is_printable_ascii(data[end])
-                && data[end + 1] == 0
-            {
+            while end + 1 < data.len() && is_printable_ascii(data[end]) && data[end + 1] == 0 {
                 s.push(data[end] as char);
                 end += 2;
                 chars += 1;
@@ -291,7 +283,7 @@ mod tests {
         out.extend_from_slice(&encode_utf16_with_h_prefix("DATA_FILE"));
         out.extend_from_slice(&encode_utf16_no_prefix("C:\\DB\\data.mdf"));
         out.extend_from_slice(&[0u8; 16]); // trailing pad
-        // SFIN #2: "LOG_FILE" followed immediately by path.
+                                           // SFIN #2: "LOG_FILE" followed immediately by path.
         let sfin2_offset = out.len();
         out.extend_from_slice(b"SFIN");
         out.extend_from_slice(&[0xFC, 0x04, 0, 0]);

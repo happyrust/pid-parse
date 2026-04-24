@@ -23,10 +23,8 @@ fn load_fixture() -> Option<Vec<u8>> {
 /// MtfStreamCursor). Returns the stream's body byte slice.
 fn locate_msci_body(data: &[u8]) -> Option<&[u8]> {
     for block in MtfBlockCursor::new(data) {
-        let offset_to_first_event = u16::from_le_bytes([
-            block.raw_common_header[8],
-            block.raw_common_header[9],
-        ]) as usize;
+        let offset_to_first_event =
+            u16::from_le_bytes([block.raw_common_header[8], block.raw_common_header[9]]) as usize;
         let start = block.offset + offset_to_first_event;
         let end = block.offset + block.size;
         for stream in MtfStreamCursor::new(data, start, end) {

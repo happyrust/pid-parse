@@ -104,9 +104,7 @@ impl SemanticDiffReport {
     /// matches and neither side has unique tags. Useful as the CLI
     /// exit code gate.
     pub fn is_clean(&self) -> bool {
-        self.missing_from_generated == 0
-            && self.extra_in_generated == 0
-            && self.count_deltas == 0
+        self.missing_from_generated == 0 && self.extra_in_generated == 0 && self.count_deltas == 0
     }
 
     /// Convenience: just the rows that need investigation, in the
@@ -226,8 +224,7 @@ pub fn parse_pid_tag_counts(xml: &str) -> BTreeMap<String, usize> {
         if opens {
             // SAFETY: tag-name bytes are restricted to ASCII via
             // `is_tag_name_byte`, so the slice is valid UTF-8.
-            let name = std::str::from_utf8(&bytes[start..end])
-                .expect("tag-name bytes are ASCII");
+            let name = std::str::from_utf8(&bytes[start..end]).expect("tag-name bytes are ASCII");
             *out.entry(name.to_string()).or_insert(0) += 1;
         }
         i = end;
@@ -380,7 +377,10 @@ pub fn coverage_against_reference(reference_xml: &str) -> WriterCoverage {
     let mut supported = Vec::new();
     let mut unsupported = Vec::new();
     for (tag, count) in counts {
-        let row = CoverageRow { tag: tag.clone(), count };
+        let row = CoverageRow {
+            tag: tag.clone(),
+            count,
+        };
         if supported_set.contains(tag.as_str()) {
             supported.push(row);
         } else {
@@ -446,9 +446,7 @@ pub fn coverage_against_reference(reference_xml: &str) -> WriterCoverage {
 /// that every supported PID tag emits the same interface set as
 /// the SmartPlant reference, closing the gap that coverage-level
 /// (tag-only) checks leave open.
-pub fn parse_interfaces_per_tag(
-    xml: &str,
-) -> BTreeMap<String, std::collections::BTreeSet<String>> {
+pub fn parse_interfaces_per_tag(xml: &str) -> BTreeMap<String, std::collections::BTreeSet<String>> {
     let bytes = xml.as_bytes();
     let mut out: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
     // Name of the PID tag we are currently collecting interfaces
@@ -484,13 +482,10 @@ pub fn parse_interfaces_per_tag(
         while close < bytes.len() && bytes[close] != b'>' {
             close += 1;
         }
-        let self_closing = !is_closing
-            && close > name_end
-            && bytes[close.saturating_sub(1)] == b'/';
+        let self_closing =
+            !is_closing && close > name_end && bytes[close.saturating_sub(1)] == b'/';
         if is_closing {
-            if name.starts_with("PID")
-                && active.as_deref() == Some(name)
-            {
+            if name.starts_with("PID") && active.as_deref() == Some(name) {
                 // First occurrence complete — mark as recorded
                 // and stop tracking interfaces.
                 recorded.insert(name.to_string());
@@ -506,10 +501,16 @@ pub fn parse_interfaces_per_tag(
             }
         } else if name.starts_with('I') {
             if let Some(tag) = active.as_deref() {
-                out.entry(tag.to_string()).or_default().insert(name.to_string());
+                out.entry(tag.to_string())
+                    .or_default()
+                    .insert(name.to_string());
             }
         }
-        i = if close < bytes.len() { close + 1 } else { close };
+        i = if close < bytes.len() {
+            close + 1
+        } else {
+            close
+        };
     }
     out
 }
@@ -593,9 +594,8 @@ pub fn parse_attrs_per_interface_per_tag(
         while close < bytes.len() && bytes[close] != b'>' {
             close += 1;
         }
-        let self_closing = !is_closing
-            && close > name_end
-            && bytes[close.saturating_sub(1)] == b'/';
+        let self_closing =
+            !is_closing && close > name_end && bytes[close.saturating_sub(1)] == b'/';
         if is_closing {
             if name.starts_with("PID") && active.as_deref() == Some(name) {
                 recorded.insert(name.to_string());
@@ -628,7 +628,11 @@ pub fn parse_attrs_per_interface_per_tag(
                 }
             }
         }
-        i = if close < bytes.len() { close + 1 } else { close };
+        i = if close < bytes.len() {
+            close + 1
+        } else {
+            close
+        };
     }
     out
 }
@@ -999,7 +1003,9 @@ pub fn diff_publish_xml(generated_xml: &str, reference_xml: &str) -> SemanticDif
             TagDiffStatus::CountDelta => 2,
             TagDiffStatus::Match => 3,
         };
-        order(a.status).cmp(&order(b.status)).then_with(|| a.tag.cmp(&b.tag))
+        order(a.status)
+            .cmp(&order(b.status))
+            .then_with(|| a.tag.cmp(&b.tag))
     });
 
     SemanticDiffReport {
@@ -1074,9 +1080,7 @@ impl RelDefUidDiffReport {
     /// matches the reference exactly at DefUID-count
     /// granularity.
     pub fn is_clean(&self) -> bool {
-        self.missing_from_generated == 0
-            && self.extra_in_generated == 0
-            && self.count_deltas == 0
+        self.missing_from_generated == 0 && self.extra_in_generated == 0 && self.count_deltas == 0
     }
 
     /// Convenience: only the problematic rows, in priority
@@ -1270,8 +1274,7 @@ mod tests {
 
     #[test]
     fn parse_pid_tag_counts_handles_multiple_tags() {
-        let xml =
-            "<PIDDrawing></PIDDrawing><PIDNozzle></PIDNozzle><PIDNozzle></PIDNozzle>";
+        let xml = "<PIDDrawing></PIDDrawing><PIDNozzle></PIDNozzle><PIDNozzle></PIDNozzle>";
         let counts = parse_pid_tag_counts(xml);
         assert_eq!(counts.get("PIDDrawing"), Some(&1));
         assert_eq!(counts.get("PIDNozzle"), Some(&2));
@@ -1291,7 +1294,10 @@ mod tests {
     fn diff_report_is_clean_when_both_sides_are_identical() {
         let xml = "<PIDFoo></PIDFoo><PIDBar></PIDBar>";
         let report = diff_publish_xml(xml, xml);
-        assert!(report.is_clean(), "identical XML should diff clean: {report}");
+        assert!(
+            report.is_clean(),
+            "identical XML should diff clean: {report}"
+        );
         assert_eq!(report.matching, 2);
         assert_eq!(report.missing_from_generated, 0);
         assert_eq!(report.extra_in_generated, 0);
@@ -1341,7 +1347,11 @@ mod tests {
         let report = diff_publish_xml(gen, refer);
         assert!(!report.is_clean());
         assert_eq!(report.count_deltas, 1);
-        let row = report.tag_diffs.iter().find(|r| r.tag == "PIDRep").expect("PIDRep");
+        let row = report
+            .tag_diffs
+            .iter()
+            .find(|r| r.tag == "PIDRep")
+            .expect("PIDRep");
         assert_eq!(row.generated, 3);
         assert_eq!(row.reference, 1);
         assert_eq!(row.delta(), 2);
@@ -1557,7 +1567,10 @@ mod tests {
         assert!(!report.is_clean());
         assert_eq!(report.missing_from_generated, 1, "PIDProcessPoint");
         assert_eq!(report.extra_in_generated, 0);
-        assert_eq!(report.count_deltas, 2, "PIDPipingPort and PIDRepresentation");
+        assert_eq!(
+            report.count_deltas, 2,
+            "PIDPipingPort and PIDRepresentation"
+        );
         assert_eq!(report.generated_total, 12);
         assert_eq!(report.reference_total, 12);
     }
@@ -1669,7 +1682,13 @@ mod tests {
         let ifaces = parse_interfaces_per_tag(xml);
         let note = ifaces.get("PIDNote").expect("entry");
         assert_eq!(note.len(), 5);
-        for expected in ["IObject", "IDrawingItem", "IPBSNote", "INote", "IDocumentItem"] {
+        for expected in [
+            "IObject",
+            "IDrawingItem",
+            "IPBSNote",
+            "INote",
+            "IDocumentItem",
+        ] {
             assert!(
                 note.contains(expected),
                 "interface `{expected}` must round-trip through unicode attribute content; got {note:?}"
@@ -1723,7 +1742,9 @@ mod tests {
             vec!["FluidCode".to_string(), "FluidSystem".to_string()],
             "IFluidSystem should surface both attr names in sorted order; got {fluid:?}"
         );
-        let expand = pipeline.get("IExpandableThing").expect("IExpandableThing entry");
+        let expand = pipeline
+            .get("IExpandableThing")
+            .expect("IExpandableThing entry");
         assert!(
             expand.is_empty(),
             "bare interface should have empty attr set; got {expand:?}"
@@ -1764,14 +1785,18 @@ mod tests {
             "</PIDProcessVessel>"
         );
         let attrs = parse_attrs_per_interface_per_tag(xml);
-        let pvessel = attrs.get("PIDProcessVessel").expect("PIDProcessVessel entry");
+        let pvessel = attrs
+            .get("PIDProcessVessel")
+            .expect("PIDProcessVessel entry");
         let iobject_attrs = pvessel.get("IObject").expect("IObject");
         assert_eq!(
             iobject_attrs.iter().cloned().collect::<Vec<_>>(),
             vec!["Description".to_string(), "UID".to_string()],
             "unicode in values must not break name parsing; got {iobject_attrs:?}"
         );
-        let matl_attrs = pvessel.get("ISpecifiedMatlItem").expect("ISpecifiedMatlItem");
+        let matl_attrs = pvessel
+            .get("ISpecifiedMatlItem")
+            .expect("ISpecifiedMatlItem");
         assert_eq!(
             matl_attrs.iter().cloned().collect::<Vec<_>>(),
             vec!["LongMaterialDescription".to_string()],
@@ -1878,7 +1903,10 @@ mod tests {
     fn parse_rel_defuid_counts_returns_empty_when_no_rel_present() {
         let xml = "<Container><PIDDrawing></PIDDrawing></Container>";
         let counts = parse_rel_defuid_counts(xml);
-        assert!(counts.is_empty(), "no <IRel> means no defuid entries; got {counts:?}");
+        assert!(
+            counts.is_empty(),
+            "no <IRel> means no defuid entries; got {counts:?}"
+        );
     }
 
     #[test]
@@ -1916,7 +1944,10 @@ mod tests {
         // `<IRel` must be whitespace or `>` to count.
         let xml = "<IRelationship UID=\"X\"/><IRelations Foo=\"y\"/>";
         let counts = parse_rel_defuid_counts(xml);
-        assert!(counts.is_empty(), "lookalike elements must not match; got {counts:?}");
+        assert!(
+            counts.is_empty(),
+            "lookalike elements must not match; got {counts:?}"
+        );
     }
 
     #[test]
@@ -1940,7 +1971,10 @@ mod tests {
         // against malformed inputs.
         let xml = "<IRel UID1=\"A\" UID2=\"B\"/>";
         let counts = parse_rel_defuid_counts(xml);
-        assert!(counts.is_empty(), "DefUID-less IRel must not register; got {counts:?}");
+        assert!(
+            counts.is_empty(),
+            "DefUID-less IRel must not register; got {counts:?}"
+        );
     }
 
     #[test]
@@ -2142,7 +2176,10 @@ mod tests {
         let refr = gen;
         let s = format!("{}", diff_rel_defuids(gen, refr));
         assert!(s.contains("=== Publish Data XML Rel DefUID diff ==="));
-        assert!(s.contains("DefUID"), "Display header must label DefUID column");
+        assert!(
+            s.contains("DefUID"),
+            "Display header must label DefUID column"
+        );
         assert!(s.contains("MATCH"));
         assert!(s.contains("DrawingItems"));
     }

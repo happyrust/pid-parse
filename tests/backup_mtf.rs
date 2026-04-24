@@ -159,6 +159,11 @@ fn real_export_dmp_cursor_yields_expected_prefix() {
     // unexpected.
     eprintln!("first four blocks:");
     for (kind, offset, size) in &blocks {
-        eprintln!("  tag={} offset=0x{:06X} size={} B", kind.tag(), offset, size);
+        eprintln!(
+            "  tag={} offset=0x{:06X} size={} B",
+            kind.tag(),
+            offset,
+            size
+        );
     }
 }

@@ -181,14 +181,10 @@ fn parse_meta_xml(xml: &str) -> ParsedMeta {
                         let block = document_revision
                             .as_mut()
                             .expect("IObject must precede IDocumentRevision");
-                        block.major_rev_for_revise = attrs
-                            .get("MajorRev_ForRevise")
-                            .cloned()
-                            .unwrap_or_default();
-                        block.minor_rev_for_revise = attrs
-                            .get("MinorRev_ForRevise")
-                            .cloned()
-                            .unwrap_or_default();
+                        block.major_rev_for_revise =
+                            attrs.get("MajorRev_ForRevise").cloned().unwrap_or_default();
+                        block.minor_rev_for_revise =
+                            attrs.get("MinorRev_ForRevise").cloned().unwrap_or_default();
                     }
                     (Some("File"), "IObject") => {
                         let uid = attrs.get("UID").cloned().unwrap_or_default();
@@ -270,7 +266,11 @@ fn canonical_summary(meta: &ParsedMeta) -> CanonicalMetaSummary {
         .collect();
 
     CanonicalMetaSummary {
-        comp_schema: meta.container.get("CompSchema").cloned().unwrap_or_default(),
+        comp_schema: meta
+            .container
+            .get("CompSchema")
+            .cloned()
+            .unwrap_or_default(),
         scope: meta.container.get("Scope").cloned().unwrap_or_default(),
         plant: meta.container.get("Plant").cloned().unwrap_or_default(),
         doc_uid,
@@ -295,8 +295,14 @@ fn assert_common_meta_contract(meta: &ParsedMeta, expected_plant: &str, expected
         meta.container.get("CompSchema").map(String::as_str),
         Some("DocVersioningComponent")
     );
-    assert_eq!(meta.container.get("Scope").map(String::as_str), Some("Data"));
-    assert_eq!(meta.container.get("Plant").map(String::as_str), Some(expected_plant));
+    assert_eq!(
+        meta.container.get("Scope").map(String::as_str),
+        Some("Data")
+    );
+    assert_eq!(
+        meta.container.get("Plant").map(String::as_str),
+        Some(expected_plant)
+    );
     assert_eq!(
         meta.container.get("DocName").map(String::as_str),
         Some(expected_doc_name)
@@ -339,14 +345,22 @@ fn assert_common_meta_contract(meta: &ParsedMeta, expected_plant: &str, expected
     assert_eq!(meta.document_revision.major_rev_for_revise, "0");
     assert_eq!(meta.document_revision.minor_rev_for_revise, "");
     assert_eq!(meta.file.description, "");
-    assert_eq!(meta.rels.len(), 3, "meta document must carry exactly 3 rels");
+    assert_eq!(
+        meta.rels.len(),
+        3,
+        "meta document must carry exactly 3 rels"
+    );
 
     let unique_uids: BTreeSet<&str> = BTreeSet::from([
         meta.document_version.uid.as_str(),
         meta.document_revision.uid.as_str(),
         meta.file.uid.as_str(),
     ]);
-    assert_eq!(unique_uids.len(), 3, "version/revision/file UIDs must be unique");
+    assert_eq!(
+        unique_uids.len(),
+        3,
+        "version/revision/file UIDs must be unique"
+    );
 
     let summary = canonical_summary(meta);
     assert_eq!(

@@ -175,10 +175,7 @@ impl MdfDatabase {
                             let (value, r) = match Value::parse(column, rec) {
                                 Ok((value, r)) => (value, r),
                                 Err(e) => {
-                                    warn!(
-                                        "Column {:?} parse skipped (NULL): {}",
-                                        column, e
-                                    );
+                                    warn!("Column {:?} parse skipped (NULL): {}", column, e);
                                     break;
                                 }
                             };
@@ -412,10 +409,7 @@ impl PageReader {
         }
     }
 
-    fn read_pages_of_pointer<'a, 'b: 'a>(
-        &'b mut self,
-        page_pointer: PagePointer,
-    ) -> PageIter<'a> {
+    fn read_pages_of_pointer<'a, 'b: 'a>(&'b mut self, page_pointer: PagePointer) -> PageIter<'a> {
         PageIter {
             page_pointers: Box::new(std::iter::once(page_pointer)),
             page_reader: self,

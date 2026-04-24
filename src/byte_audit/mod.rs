@@ -357,10 +357,7 @@ mod byte_range_tests {
 mod parser_trace_tests {
     use super::*;
 
-    fn build_simple(
-        total: u64,
-        items: &[(u64, u64, TraceConfidence)],
-    ) -> ParserTrace {
+    fn build_simple(total: u64, items: &[(u64, u64, TraceConfidence)]) -> ParserTrace {
         let mut b = ParserTraceBuilder::new("test_parser");
         for &(s, e, c) in items {
             b.consume(ByteRange::new(s, e), c);
@@ -373,9 +370,9 @@ mod parser_trace_tests {
         let trace = build_simple(
             10,
             &[
-                (0, 0, TraceConfidence::Decoded),   // empty
-                (5, 5, TraceConfidence::Decoded),   // empty
-                (2, 6, TraceConfidence::Decoded),   // real
+                (0, 0, TraceConfidence::Decoded), // empty
+                (5, 5, TraceConfidence::Decoded), // empty
+                (2, 6, TraceConfidence::Decoded), // real
             ],
         );
         assert_eq!(trace.consumed_ranges, vec![ByteRange::new(2, 6)]);
@@ -446,10 +443,7 @@ mod parser_trace_tests {
 
     #[test]
     fn builder_clips_ranges_extending_past_total_bytes() {
-        let trace = build_simple(
-            8,
-            &[(0, 100, TraceConfidence::Decoded)],
-        );
+        let trace = build_simple(8, &[(0, 100, TraceConfidence::Decoded)]);
         assert_eq!(trace.consumed_ranges, vec![ByteRange::new(0, 8)]);
         assert!(trace.leftover_ranges.is_empty());
     }

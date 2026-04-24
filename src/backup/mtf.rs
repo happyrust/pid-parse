@@ -307,7 +307,12 @@ pub fn detect_logical_block_size(data: &[u8]) -> Option<u32> {
 fn find_next_descriptor(data: &[u8], start: usize) -> Option<usize> {
     let mut offset = align_up(start.max(DESCRIPTOR_GRID_STEP), DESCRIPTOR_GRID_STEP);
     while offset + 4 <= data.len() {
-        let tag = [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]];
+        let tag = [
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ];
         if MtfBlockType::from_bytes(tag).is_known() {
             return Some(offset);
         }
@@ -634,9 +639,7 @@ impl Iterator for MtfStreamCursor<'_> {
         let body_offset = header_offset + STREAM_HEADER_LEN;
         // Scan forward on the 4-byte grid for the next recognized
         // stream tag; the gap gives this stream's body end.
-        let body_end = self
-            .find_next_stream_tag(body_offset)
-            .unwrap_or(self.end);
+        let body_end = self.find_next_stream_tag(body_offset).unwrap_or(self.end);
 
         let stream = MtfStream {
             kind: MtfStreamKind::from_bytes(tag),
@@ -722,10 +725,19 @@ mod tests {
     fn block_type_known_tags_decode() {
         assert_eq!(MtfBlockType::from_bytes(*b"TAPE"), MtfBlockType::Tape);
         assert_eq!(MtfBlockType::from_bytes(*b"SSET"), MtfBlockType::StartOfSet);
-        assert_eq!(MtfBlockType::from_bytes(*b"DBDB"), MtfBlockType::DatabaseBackup);
-        assert_eq!(MtfBlockType::from_bytes(*b"MQDA"), MtfBlockType::SqlMetadata);
+        assert_eq!(
+            MtfBlockType::from_bytes(*b"DBDB"),
+            MtfBlockType::DatabaseBackup
+        );
+        assert_eq!(
+            MtfBlockType::from_bytes(*b"MQDA"),
+            MtfBlockType::SqlMetadata
+        );
         assert_eq!(MtfBlockType::from_bytes(*b"ESET"), MtfBlockType::EndOfSet);
-        assert_eq!(MtfBlockType::from_bytes(*b"SFMB"), MtfBlockType::SoftFilemark);
+        assert_eq!(
+            MtfBlockType::from_bytes(*b"SFMB"),
+            MtfBlockType::SoftFilemark
+        );
     }
 
     #[test]
@@ -908,13 +920,7 @@ mod tests {
     /// Emit a synthetic stream header at `offset` with the given tag
     /// and declared length, filling the body slot with `fill`.
     /// Helper for the stream-cursor tests below.
-    fn emit_stream(
-        buf: &mut Vec<u8>,
-        offset: usize,
-        tag: &[u8; 4],
-        body_len: u64,
-        fill: u8,
-    ) {
+    fn emit_stream(buf: &mut Vec<u8>, offset: usize, tag: &[u8; 4], body_len: u64, fill: u8) {
         let total = STREAM_HEADER_LEN + body_len as usize;
         let end = offset + total;
         if buf.len() < end {
@@ -933,9 +939,18 @@ mod tests {
     fn stream_kind_classifies_known_tags() {
         assert_eq!(MtfStreamKind::from_bytes(*b"SPAD"), MtfStreamKind::Pad);
         assert_eq!(MtfStreamKind::from_bytes(*b"MSDA"), MtfStreamKind::SqlData);
-        assert_eq!(MtfStreamKind::from_bytes(*b"MSDB"), MtfStreamKind::SqlDatabase);
-        assert_eq!(MtfStreamKind::from_bytes(*b"MSCI"), MtfStreamKind::SqlConfig);
-        assert_eq!(MtfStreamKind::from_bytes(*b"TSMP"), MtfStreamKind::Timestamp);
+        assert_eq!(
+            MtfStreamKind::from_bytes(*b"MSDB"),
+            MtfStreamKind::SqlDatabase
+        );
+        assert_eq!(
+            MtfStreamKind::from_bytes(*b"MSCI"),
+            MtfStreamKind::SqlConfig
+        );
+        assert_eq!(
+            MtfStreamKind::from_bytes(*b"TSMP"),
+            MtfStreamKind::Timestamp
+        );
     }
 
     #[test]
@@ -949,8 +964,7 @@ mod tests {
         let spad_end = STREAM_HEADER_LEN + 100; // 116, already 4-aligned
         emit_stream(&mut bytes, spad_end, b"MSCI", 50, 0xBB);
 
-        let streams: Vec<MtfStream> =
-            MtfStreamCursor::new(&bytes, 0, bytes.len()).collect();
+        let streams: Vec<MtfStream> = MtfStreamCursor::new(&bytes, 0, bytes.len()).collect();
         assert_eq!(streams.len(), 2);
         assert_eq!(streams[0].kind, MtfStreamKind::Pad);
         assert_eq!(streams[0].header_offset, 0);
@@ -988,7 +1002,9 @@ mod tests {
         // Guards against the "over-scan" case: a DBLK whose body
         // section is entirely padding should yield zero streams.
         let bytes = vec![0u8; 128];
-        assert!(MtfStreamCursor::new(&bytes, 0, bytes.len()).next().is_none());
+        assert!(MtfStreamCursor::new(&bytes, 0, bytes.len())
+            .next()
+            .is_none());
     }
 
     #[test]
@@ -1000,8 +1016,7 @@ mod tests {
         let mut bytes = vec![0u8; 512];
         emit_stream(&mut bytes, 0, b"MSDA", 10_000, 0xCC);
 
-        let streams: Vec<MtfStream> =
-            MtfStreamCursor::new(&bytes, 0, 256).collect();
+        let streams: Vec<MtfStream> = MtfStreamCursor::new(&bytes, 0, 256).collect();
         assert_eq!(streams.len(), 1);
         assert_eq!(streams[0].kind, MtfStreamKind::SqlData);
         assert_eq!(streams[0].body_end, 256);

@@ -176,7 +176,12 @@ fn connector_uid_reverse_engineering_probe_logs_current_candidates_against_refer
     eprintln!("T_PipeRun row           : {pipe_run_row:?}");
 
     let mut candidates = BTreeMap::new();
-    for seed in candidate_seeds(&pipeline_uid, &connector_item_tag, &plant_item_row, &pipe_run_row) {
+    for seed in candidate_seeds(
+        &pipeline_uid,
+        &connector_item_tag,
+        &plant_item_row,
+        &pipe_run_row,
+    ) {
         for (algo, value) in derive_candidate_values(&seed) {
             candidates.insert(format!("{algo} :: {seed}"), value);
         }
@@ -240,8 +245,8 @@ fn raw_residual_source_probe_scans_full_mdf_and_confirms_synthetic_slots_are_abs
 
     let full_scan =
         scan_full_mdf_for_residual_values(Path::new(A01_MDF_PATH), &probes).expect("scan full MDF");
-    let raw_byte_hits =
-        scan_mdf_bytes_for_residual_values(Path::new(A01_MDF_PATH), &probes).expect("scan MDF bytes");
+    let raw_byte_hits = scan_mdf_bytes_for_residual_values(Path::new(A01_MDF_PATH), &probes)
+        .expect("scan MDF bytes");
     eprintln!("full MDF scan:");
     eprintln!(
         "  tables_discovered={} tables_read={} tables_skipped={} columns_scanned={} rows_scanned={}",
@@ -408,11 +413,7 @@ fn scan_full_mdf_for_residual_values(
 
     for table_name in table_names {
         let table_scan = catch_table_scan_panic_silent(|| {
-            scan_mdf_table_for_residual_values(
-                path,
-                &table_name,
-                probes,
-            )
+            scan_mdf_table_for_residual_values(path, &table_name, probes)
         });
         match table_scan {
             Ok(Ok(table_scan)) => {
@@ -520,8 +521,8 @@ fn scan_mdf_table_for_residual_values(
     table_name: &str,
     probes: &[ResidualProbe],
 ) -> Result<TableResidualScan, String> {
-    let mut db = MdfDatabase::open(path)
-        .map_err(|err| format!("open MDF for table {table_name}: {err}"))?;
+    let mut db =
+        MdfDatabase::open(path).map_err(|err| format!("open MDF for table {table_name}: {err}"))?;
     let Some(columns) = db.column_names(table_name) else {
         return Ok(TableResidualScan::default());
     };
@@ -612,7 +613,8 @@ fn collect_tag_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
 }
 
 fn extract_attr_from_first_iobject(block: &str, attr: &str) -> Option<String> {
-    block.lines()
+    block
+        .lines()
         .find(|line| line.trim_start().starts_with("<IObject "))
         .and_then(|line| extract_attr(line, attr))
 }

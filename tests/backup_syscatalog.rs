@@ -54,8 +54,7 @@ fn real_page_2173_exposes_sppid_user_tables() {
     );
 
     // Collect names into a set so assertions are order-independent.
-    let names: std::collections::BTreeSet<String> =
-        rows.iter().map(|r| r.name.clone()).collect();
+    let names: std::collections::BTreeSet<String> = rows.iter().map(|r| r.name.clone()).collect();
 
     // The SmartPlant TEST02 schema spans several sysschobjs
     // pages. Page #2173 is empirically known to hold ~39 user

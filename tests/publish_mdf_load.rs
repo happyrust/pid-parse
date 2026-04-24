@@ -51,7 +51,15 @@ fn mdf_adapter_loads_a01_publish_core_tables() {
              FROM T_PipeRun \
              WHERE SP_ID = '185EF98B03E844158E3BD8E82806E6CF'",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .expect("read pipe run business columns");
     assert_eq!(

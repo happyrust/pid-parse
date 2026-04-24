@@ -209,9 +209,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let output = match (out_path, stdout) {
         (Some(path), false) => Some(OutputTarget::File(path)),
         (None, true) => Some(OutputTarget::Stdout),
-        (Some(_), true) => {
-            return Err("--out and --stdout are mutually exclusive".into())
-        }
+        (Some(_), true) => return Err("--out and --stdout are mutually exclusive".into()),
         (None, false) => None,
     };
 
@@ -330,8 +328,8 @@ fn run(options: CliOptions) -> Result<i32, String> {
     // byte-identical (the CLI default is PublishStyle::A01,
     // which matches the model-side Default impl).
     graph.style = options.style;
-    let xml = write_data_xml(&graph, &options.plant_name)
-        .map_err(|e| format!("render data XML: {e}"))?;
+    let xml =
+        write_data_xml(&graph, &options.plant_name).map_err(|e| format!("render data XML: {e}"))?;
 
     eprintln!(
         "Loaded drawing `{}` ({} UID): {} objects, {} representations, {} relationships",
@@ -358,11 +356,7 @@ fn run(options: CliOptions) -> Result<i32, String> {
         let meta_xml = write_meta_xml(&graph, &options.plant_name)
             .map_err(|e| format!("render meta XML: {e}"))?;
         write_file(meta_path, &meta_xml)?;
-        eprintln!(
-            "Wrote {} ({} bytes).",
-            meta_path.display(),
-            meta_xml.len()
-        );
+        eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
     }
 
     let mut exit_code = 0;
@@ -478,8 +472,7 @@ fn list_drawings(conn: &rusqlite::Connection) -> Result<(), String> {
     println!("{}", "-".repeat(120));
     let mut count = 0usize;
     for row in rows {
-        let (uid, name, cat, dtype, path) =
-            row.map_err(|e| format!("read T_Drawing row: {e}"))?;
+        let (uid, name, cat, dtype, path) = row.map_err(|e| format!("read T_Drawing row: {e}"))?;
         println!(
             "{:<34} | {:<24} | {:<22} | {:<10} | {}",
             uid, name, cat, dtype, path,
@@ -496,8 +489,7 @@ fn list_drawings(conn: &rusqlite::Connection) -> Result<(), String> {
 fn write_file(path: &std::path::Path, contents: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| format!("create {}: {e}", dir.display()))?;
+            std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
         }
     }
     std::fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()))

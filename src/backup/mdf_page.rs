@@ -230,10 +230,8 @@ impl MdfPageHeader {
         let level = data[3];
         let flag_bits = u16::from_le_bytes([data[4], data[5]]);
         let index_id = u16::from_le_bytes([data[6], data[7]]);
-        let next_page = PageAddress::from_bytes(
-            [data[8], data[9], data[10], data[11]],
-            [data[12], data[13]],
-        );
+        let next_page =
+            PageAddress::from_bytes([data[8], data[9], data[10], data[11]], [data[12], data[13]]);
         let prev_page = PageAddress::from_bytes(
             [data[16], data[17], data[18], data[19]],
             [data[20], data[21]],
@@ -391,8 +389,7 @@ mod tests {
         let mut bytes = vec![0u8; PAGE_SIZE * 3];
         bytes[..32].copy_from_slice(&synthetic_header(1, 5)[..32]);
         // page #1 intentionally left zeroed -> header_version = 0 -> reject
-        bytes[PAGE_SIZE * 2..PAGE_SIZE * 2 + 32]
-            .copy_from_slice(&synthetic_header(10, 256)[..32]);
+        bytes[PAGE_SIZE * 2..PAGE_SIZE * 2 + 32].copy_from_slice(&synthetic_header(10, 256)[..32]);
 
         let reports: Vec<_> = MdfPageCursor::new(&bytes, 0, PAGE_SIZE).collect();
         assert_eq!(reports.len(), 2);

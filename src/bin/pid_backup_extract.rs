@@ -134,10 +134,8 @@ fn run(options: CliOptions) -> Result<(), String> {
     let mut msci: Option<LocatedStream<'_>> = None;
     let mut msda: Option<LocatedStream<'_>> = None;
     for block in MtfBlockCursor::new(&data) {
-        let offset_to_first_event = u16::from_le_bytes([
-            block.raw_common_header[8],
-            block.raw_common_header[9],
-        ]) as usize;
+        let offset_to_first_event =
+            u16::from_le_bytes([block.raw_common_header[8], block.raw_common_header[9]]) as usize;
         let start = block.offset + offset_to_first_event;
         let end = block.offset + block.size;
         for stream in MtfStreamCursor::new(&data, start, end) {
@@ -188,8 +186,16 @@ fn run(options: CliOptions) -> Result<(), String> {
     };
 
     println!("Input:       {}", options.input.display());
-    println!("MSCI body:   {} bytes @0x{:08X}", msci.body.len(), msci.stream.body_offset);
-    println!("MSDA body:   {} bytes @0x{:08X}", msda.body.len(), msda.stream.body_offset);
+    println!(
+        "MSCI body:   {} bytes @0x{:08X}",
+        msci.body.len(),
+        msci.stream.body_offset
+    );
+    println!(
+        "MSDA body:   {} bytes @0x{:08X}",
+        msda.body.len(),
+        msda.stream.body_offset
+    );
     println!();
     println!("MSCI summary:");
     if let Some(fg) = &config.filegroup_name {
@@ -246,11 +252,7 @@ fn run(options: CliOptions) -> Result<(), String> {
     println!("Wrote:");
     println!("  {}", msci_json_path.display());
     println!("  {}", msci_bin_path.display());
-    println!(
-        "  {}  ({} bytes)",
-        msda_bin_path.display(),
-        msda.body.len()
-    );
+    println!("  {}  ({} bytes)", msda_bin_path.display(), msda.body.len());
     if let Some(off) = mdf_header_len {
         let mdf_len = msda.body.len().saturating_sub(off);
         println!(
