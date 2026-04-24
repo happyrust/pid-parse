@@ -2,6 +2,56 @@
 
 ## [Unreleased]
 
+### Publish XML source — Rust MDF loader (`oxidized-mdf`)
+
+把 Stage-1 publish XML 的主数据源从“先用 C# OrcaMDF probe 导出
+`Export_v2.sqlite`，再由 Rust 读取 SQLite mirror”改为“直接读取
+`Export.mdf`”。仓内已把
+[`f3rn0s/oxidized-mdf`](https://gitlab.com/f3rn0s/oxidized-mdf)
+克隆到 `vendor/oxidized-mdf`，并以 path dependency 接入。
+
+#### Changed
+
+- `pid_publish_xml` 的 CLI 输入从 `<sqlite>` 扩展为 `<mdf|sqlite>`：
+  `.mdf` 自动走 Rust MDF loader，旧 SQLite 输入仍保留为兼容路径。
+- 新增 `publish::mdf_load`，用 `oxidized-mdf` 读取 publish 所需
+  SmartPlant 表，再暂存到 in-memory SQLite connection，复用既有
+  `sqlite_load` / writer / diff 逻辑，避免重复实现查询层。
+- README 与 `docs/sppid/publish-xml-export-flow.html` 已更新为当前
+  主链：`Export.dmp -> Export.mdf -> oxidized-mdf -> drawing graph ->
+  _Data.xml/_Meta.xml`。
+
+#### Fixed
+
+- 对 vendored `oxidized-mdf` 做了兼容补丁，保证 TEST02 / A01 MDF
+  可稳定读取：
+  - page reader 缓存已读页，并在 `file_id` 不一致时按 `page_id`
+    fallback，避免 forward-only reader 回读旧页 panic。
+  - variable-length NULL 列仍推进 offset，避免后续 nvarchar 列错位。
+  - fixed-length nullable 列即使为 NULL 也消费固定字节，修复
+    `T_Drawing.DateCreated` 被错读为 `1900/1/2` 的问题。
+  - 列元数据按 `colid` 排序，避免系统表返回顺序造成字段错配。
+  - 固定长度列越界从 panic 改为返回 parse error。
+
+#### Tests / Verification
+
+- 新增 `tests/publish_mdf_load.rs`，直接从
+  `test-file/backup-test/TEST02_p/extracted/Export.mdf` 验证 A01
+  publish 核心表、representation 关联与 `DateCreated`。
+- `tests/publish_xml_cli.rs` 改为用真实 `Export.mdf` 跑 CLI 集成测试。
+- 本轮已验证：
+  - `cargo test --test publish_mdf_load -- --nocapture` → 1 passed
+  - `cargo test --test publish_xml_cli -- --nocapture` → 19 passed
+  - `cargo check` → ok
+  - `pid_publish_xml Export.mdf --diff-against A01_Data.xml` →
+    8 个 PID tag varieties 全部 MATCH。
+
+#### Notes
+
+- `oxidized-mdf` 本身为 GPL-3.0，并在上游 README 中说明其来源上
+  基于 OrcaMDF；当前改动移除了运行时 C# OrcaMDF probe 依赖，但
+  许可证边界需要发布前单独确认。
+
 ### Publish writer Stage-1 — fidelity ratchet (A12 → A35)
 
 把 SmartPlant Publish Data XML writer 的 fidelity 守门从"tag 计数级"
@@ -11,6 +61,20 @@ writer 的字节输出（A25 引入了 PIDProcessVessel tank-variant 的条件
 emit，是唯一例外），但建立了一套 8 道 regression gate，任何未来
 的接口/属性 drift 会立即在 CI 上以"`(tag, interface, attr)`"
 三元组失败定位。
+
+本轮继续收口 Stage-1 的可见边界：
+
+- `_Meta.xml` parity 已补齐到独立测试文件
+  `tests/publish_meta_parity.rs`，同时覆盖 A01 参考样本与
+  mirror-available 时的 DWG 语义对照。
+- 新增 `tests/publish_dwg_mirror.rs` 作为 DWG mirror 入口；
+  当 `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export_v2.sqlite`
+  缺失时，测试会显式 soft-skip 并指出 Stage 2-4
+  （DWG canonical-field enrichment / branch-point parity）
+  尚未验证，而不是默默把 DWG 缺口混进绿线。
+- publish 模块、writer 与 CLI 顶部注释改为反映当前真实状态：
+  `_Data.xml` / `_Meta.xml` 已可运行，现存主阻塞收敛为 DWG mirror
+  缺失与其后的 branch-point / loader 富化闭环。
 
 #### Added — fidelity 分析层（src/publish/diff.rs）
 
@@ -41,9 +105,10 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   + 2 guard：A01 ↔ DWG 属性集一致性 + whitelist 维护守门
 - A28 `tests/publish_backlog_inventory.rs` ·
   `a28_backlog_tag_specs_match_reference_fixtures_exactly`
-  + 3 guard：未支持 PID tag 的 fidelity spec snapshot
-  （PIDPipingBranchPoint × 4 + PIDBranchPoint × 5 on DWG）
-  作为未来 writer arm 的可执行 spec + 漂移检测
+  + 3 guard：未支持 PID tag 的 fidelity spec snapshot。
+  Stage-4 后 `PIDPipingBranchPoint × 4 + PIDBranchPoint × 5`
+  已毕业进 `supported_pid_tags()`；当前 `BACKLOG_SPECS`
+  为空，A28 改作“新 unsupported tag 出现即红”的 guard
 - A33 `tests/publish_rel_parity.rs` ·
   `rel_defuid_parity_on_a01_writer_matches_reference_supersets`
   + `a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise`
@@ -199,19 +264,17 @@ emit，是唯一例外），但建立了一套 8 道 regression gate，任何未
   `PublishStyle`；A36 — `parse_rel_details`）
 * lint：0 warnings
 
-#### A28 backlog inventory（已 snapshot 入测试）
+#### A28 backlog inventory（历史 snapshot，现已毕业）
 
-PIDPipingBranchPoint（DWG × 4）：6 接口（IObject 仅 UID，其余 bare）
-- IObject(UID), IConnection, IPipingConnection, IDrawingItem,
-  IPipingBranchPoint, IDocumentItem
+A28 当初把两类 branch-point 的 DWG 参考形态 pin 成可执行 spec：
 
-PIDBranchPoint（DWG × 5）：9 接口（IObject 含 UID + Name，其余 bare）
-- IObject(UID, Name), IPIDBranchPoint, IDuctConnection, IConnection,
-  IDrawingItem, IPipingConnection, ISignalConnection, IDocumentItem
+* `PIDPipingBranchPoint`（DWG × 4）：6 接口
+* `PIDBranchPoint`（DWG × 5）：9 接口
+* UID 后缀模式：`<base>.BPT`
 
-UID 后缀模式：`<base>.BPT`，参考 A13 的 `.PPT` / `.1` / `.2`
-派生 ID 模式（PipingConnector → PIDPipingPort + PIDProcessPoint）。
-未来 writer arm 实现时按 spec 守门即可。
+Stage-4 已按该 snapshot 落地对应 writer arm，并将两类 tag
+纳入 `supported_pid_tags()`；`tests/publish_backlog_inventory.rs`
+现改为 guard“新的 unsupported tag 不得悄然进入 reference fixture”。
 
 #### A33 → A34 → A34b → A34c Rel DefUID 进展
 
@@ -239,12 +302,12 @@ fixture-side variant）：
 
 #### Backlog（A34d+）
 
-* PIDBranchPoint / PIDPipingBranchPoint writer arms（spec 已在
-  A28 snapshot test 中 pin 住，实施时需 DWG 端 SQLite mirror
-  才能反推源映射）
+* DWG SQLite mirror 落位后，校实 branch-point 的 loader-side
+  `item_type_name` / subtable chain / source mapping；writer arm
+  已实现，但真实 SQLite 驱动的 source validation 仍未闭环
 * A25b loader-side `IsLowPressureTank` 推断（同上）
 * A27b whitelist 收尾：随 DWG mirror bundle 落地，逐条 (tag,
-  interface) 关闭 12 条 loader-side 富化列差异
+  interface) 关闭 15 条 style / loader-side 富化列差异
 * A29c loader-side `PublishStyle` 自动决策：根据 SQLite
   metadata（plant 名 / SmartPlant project 配置）自动设
   `drawing.style`；当前 caller / CLI 必须显式指定 (--style)。

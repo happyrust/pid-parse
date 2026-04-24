@@ -260,11 +260,13 @@ fn is_tag_name_byte(b: u8) -> bool {
 /// vs "tags that form the next-phase backlog".
 pub fn supported_pid_tags() -> &'static [&'static str] {
     &[
+        "PIDBranchPoint",
         "PIDControlSystemFunction",
         "PIDDrawing",
         "PIDNote",
         "PIDNozzle",
         "PIDPipeline",
+        "PIDPipingBranchPoint",
         "PIDPipingComponent",
         "PIDPipingConnector",
         "PIDPipingPort",
@@ -362,11 +364,11 @@ impl fmt::Display for WriterCoverage {
 /// use pid_parse::publish::coverage_against_reference;
 ///
 /// let reference = "<PIDDrawing></PIDDrawing>\
-///                  <PIDBranchPoint></PIDBranchPoint>";
+///                  <PIDPhantom></PIDPhantom>";
 /// let coverage = coverage_against_reference(reference);
 /// // PIDDrawing is a supported tag (writer can emit it).
 /// assert_eq!(coverage.supported_total(), 1);
-/// // PIDBranchPoint is a backlog tag the writer cannot emit yet.
+/// // PIDPhantom is a fabricated backlog tag the writer cannot emit.
 /// assert_eq!(coverage.unsupported_total(), 1);
 /// assert!(!coverage.is_complete());
 /// ```
@@ -1011,6 +1013,218 @@ pub fn diff_publish_xml(generated_xml: &str, reference_xml: &str) -> SemanticDif
     }
 }
 
+/// A40 — one row of per-`DefUID` count comparison.
+///
+/// Mirrors [`TagCountDiff`] one level deeper: every DefUID
+/// that appears in either the generated or reference document
+/// gets a row. Reuses [`TagDiffStatus`] so CLI display code
+/// can treat `<PIDxxx>` counts and `<IRel>` DefUID counts
+/// with one formatting path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelDefUidDiff {
+    /// The DefUID value, e.g. `"PipingEnd1Conn"`,
+    /// `"DrawingItems"`.
+    pub def_uid: String,
+    /// Count of `<IRel DefUID="..."/>` occurrences in the
+    /// generated document.
+    pub generated: usize,
+    /// Count of the same in the reference document.
+    pub reference: usize,
+    /// Classification reusing the `<PIDxxx>` tag-status enum.
+    pub status: TagDiffStatus,
+}
+
+impl RelDefUidDiff {
+    /// Signed delta `generated - reference`.
+    pub fn delta(&self) -> i64 {
+        self.generated as i64 - self.reference as i64
+    }
+}
+
+/// A40 — aggregate Rel-level diff report, sibling of
+/// [`SemanticDiffReport`].
+///
+/// Counts every `<IRel>` in both documents grouped by
+/// `DefUID`. Use via [`diff_rel_defuids`]; the `Display`
+/// impl renders a canonical text table the CLI's
+/// `--diff-against` flow appends after the `<PIDxxx>` table.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RelDefUidDiffReport {
+    /// Total `<IRel>` count in the generated document.
+    pub generated_total: usize,
+    /// Total `<IRel>` count in the reference document.
+    pub reference_total: usize,
+    /// Per-DefUID rows, sorted action-priority (MISSING >
+    /// EXTRA > DELTA > MATCH, alphabetical within each).
+    pub rows: Vec<RelDefUidDiff>,
+    /// Number of DefUIDs whose counts match exactly.
+    pub matching: usize,
+    /// Number of DefUIDs present in reference but not
+    /// generated.
+    pub missing_from_generated: usize,
+    /// Number of DefUIDs present in generated but not
+    /// reference.
+    pub extra_in_generated: usize,
+    /// Number of shared DefUIDs with different counts.
+    pub count_deltas: usize,
+}
+
+impl RelDefUidDiffReport {
+    /// True when the generated document's Rel inventory
+    /// matches the reference exactly at DefUID-count
+    /// granularity.
+    pub fn is_clean(&self) -> bool {
+        self.missing_from_generated == 0
+            && self.extra_in_generated == 0
+            && self.count_deltas == 0
+    }
+
+    /// Convenience: only the problematic rows, in priority
+    /// order. Skips `Match`.
+    pub fn problems(&self) -> impl Iterator<Item = &RelDefUidDiff> {
+        self.rows
+            .iter()
+            .filter(|r| !matches!(r.status, TagDiffStatus::Match))
+    }
+}
+
+impl fmt::Display for RelDefUidDiffReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "=== Publish Data XML Rel DefUID diff ===")?;
+        writeln!(
+            f,
+            "Generated Rels: {}; Reference Rels: {}; DefUIDs matched: {}; missing: {}; extra: {}; count deltas: {}",
+            self.generated_total,
+            self.reference_total,
+            self.matching,
+            self.missing_from_generated,
+            self.extra_in_generated,
+            self.count_deltas,
+        )?;
+        writeln!(f)?;
+        writeln!(
+            f,
+            "{:<8} {:>9} {:>9} {:>7}  DefUID",
+            "Status", "Generated", "Reference", "Delta",
+        )?;
+        writeln!(f, "{}", "-".repeat(56))?;
+        for row in &self.rows {
+            writeln!(
+                f,
+                "{:<8} {:>9} {:>9} {:>+7}  {}",
+                row.status.to_string(),
+                row.generated,
+                row.reference,
+                row.delta(),
+                row.def_uid,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// A40 — compute a DefUID-level diff between two Publish
+/// Data XML documents.
+///
+/// Sibling of [`diff_publish_xml`] but for `<IRel>` records.
+/// `<PIDxxx>` counts and Rel counts answer complementary
+/// questions — the former says "are all business objects
+/// emitted?", the latter says "are all cross-references
+/// emitted?" A drawing can pass one gate and fail the other
+/// (the writer could emit every PID tag while dropping every
+/// T_Relationship row, or vice versa).
+///
+/// The returned report uses the same `MISSING > EXTRA >
+/// DELTA > MATCH` priority ordering as
+/// [`SemanticDiffReport`] so the CLI can render both tables
+/// with one formatter routine.
+///
+/// # Example
+///
+/// ```
+/// use pid_parse::publish::diff_rel_defuids;
+///
+/// let gen = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"DrawingItems\"/>\
+///            <IRel UID1=\"c\" UID2=\"d\" DefUID=\"DrawingItems\"/>";
+/// let refr = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"DrawingItems\"/>\
+///             <IRel UID1=\"a\" UID2=\"b\" DefUID=\"DwgRepresentationComposition\"/>";
+/// let report = diff_rel_defuids(gen, refr);
+/// assert!(!report.is_clean());
+/// assert_eq!(report.generated_total, 2);
+/// assert_eq!(report.reference_total, 2);
+/// // `DrawingItems` count differs (2 vs 1) so it lands as DELTA;
+/// // `DwgRepresentationComposition` is missing from generated.
+/// assert_eq!(report.missing_from_generated, 1);
+/// assert_eq!(report.count_deltas, 1);
+/// ```
+pub fn diff_rel_defuids(generated_xml: &str, reference_xml: &str) -> RelDefUidDiffReport {
+    let gen_counts = parse_rel_defuid_counts(generated_xml);
+    let ref_counts = parse_rel_defuid_counts(reference_xml);
+
+    let mut all: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    all.extend(gen_counts.keys().cloned());
+    all.extend(ref_counts.keys().cloned());
+
+    let mut rows: Vec<RelDefUidDiff> = Vec::with_capacity(all.len());
+    let mut matching = 0;
+    let mut missing = 0;
+    let mut extra = 0;
+    let mut count_deltas = 0;
+
+    for def_uid in all {
+        let g = gen_counts.get(&def_uid).copied().unwrap_or(0);
+        let r = ref_counts.get(&def_uid).copied().unwrap_or(0);
+        let status = match (g, r) {
+            (g, r) if g == r => {
+                matching += 1;
+                TagDiffStatus::Match
+            }
+            (0, _r) => {
+                missing += 1;
+                TagDiffStatus::MissingFromGenerated
+            }
+            (_g, 0) => {
+                extra += 1;
+                TagDiffStatus::ExtraInGenerated
+            }
+            _ => {
+                count_deltas += 1;
+                TagDiffStatus::CountDelta
+            }
+        };
+        rows.push(RelDefUidDiff {
+            def_uid,
+            generated: g,
+            reference: r,
+            status,
+        });
+    }
+
+    // Same action-priority sort as the PID-tag report so the
+    // combined --diff-against output reads uniformly.
+    rows.sort_by(|a, b| {
+        let order = |s: TagDiffStatus| match s {
+            TagDiffStatus::MissingFromGenerated => 0,
+            TagDiffStatus::ExtraInGenerated => 1,
+            TagDiffStatus::CountDelta => 2,
+            TagDiffStatus::Match => 3,
+        };
+        order(a.status)
+            .cmp(&order(b.status))
+            .then_with(|| a.def_uid.cmp(&b.def_uid))
+    });
+
+    RelDefUidDiffReport {
+        generated_total: gen_counts.values().sum(),
+        reference_total: ref_counts.values().sum(),
+        rows,
+        matching,
+        missing_from_generated: missing,
+        extra_in_generated: extra,
+        count_deltas,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1179,11 +1393,13 @@ mod tests {
         // `PIDPipingComponent` joined in A17 (PipingComp writer arm);
         // `PIDSignalConnector` joined in A18 (SignalRun writer arm).
         for must_have in [
+            "PIDBranchPoint",
             "PIDControlSystemFunction",
             "PIDDrawing",
             "PIDNote",
             "PIDNozzle",
             "PIDPipeline",
+            "PIDPipingBranchPoint",
             "PIDPipingComponent",
             "PIDPipingConnector",
             "PIDPipingPort",
@@ -1226,40 +1442,36 @@ mod tests {
 
     #[test]
     fn coverage_classifies_unsupported_tags_into_backlog() {
-        // Mixed: PIDDrawing supported, the other two not. The
-        // backlog tags chosen here (PIDPipingBranchPoint +
-        // PIDBranchPoint) are the ones the writer cannot emit as
-        // of A18. PIDPipingComponent and PIDSignalConnector were
-        // backlog fixtures pre-A17/A18 but are both supported
-        // now, so we rotate to `PIDTypical` (fabricated, will
-        // never ship) as a second filler to keep three-way
-        // ordering interesting without leaking milestone signal.
+        // Mixed: PIDDrawing + PIDBranchPoint + PIDPipingBranchPoint
+        // are all supported now. Backlog tags use fabricated names
+        // (PIDTypical, PIDPhantom, PIDFuture) that will never ship
+        // so the test is immune to future writer expansion.
         let xml = concat!(
             "<PIDDrawing></PIDDrawing>",
-            "<PIDTypical></PIDTypical><PIDTypical></PIDTypical>",
             "<PIDBranchPoint></PIDBranchPoint>",
             "<PIDPipingBranchPoint></PIDPipingBranchPoint>",
-            "<PIDPipingBranchPoint></PIDPipingBranchPoint>",
-            "<PIDPipingBranchPoint></PIDPipingBranchPoint>",
+            "<PIDPhantom></PIDPhantom><PIDPhantom></PIDPhantom><PIDPhantom></PIDPhantom>",
+            "<PIDTypical></PIDTypical><PIDTypical></PIDTypical>",
+            "<PIDFuture></PIDFuture>",
         );
         let cov = coverage_against_reference(xml);
         assert!(!cov.is_complete());
-        assert_eq!(cov.supported_total(), 1);
+        assert_eq!(cov.supported_total(), 3);
         assert_eq!(cov.unsupported_total(), 6);
         // Backlog ordering: descending count, then alphabetical.
-        assert_eq!(cov.unsupported_in_reference[0].tag, "PIDPipingBranchPoint");
+        assert_eq!(cov.unsupported_in_reference[0].tag, "PIDPhantom");
         assert_eq!(cov.unsupported_in_reference[0].count, 3);
         assert_eq!(cov.unsupported_in_reference[1].tag, "PIDTypical");
         assert_eq!(cov.unsupported_in_reference[1].count, 2);
-        assert_eq!(cov.unsupported_in_reference[2].tag, "PIDBranchPoint");
+        assert_eq!(cov.unsupported_in_reference[2].tag, "PIDFuture");
         assert_eq!(cov.unsupported_in_reference[2].count, 1);
     }
 
     #[test]
     fn coverage_display_includes_percentage_and_two_blocks() {
-        // Use a backlog tag the writer still cannot emit
-        // (PIDBranchPoint) so the percentage stays interesting.
-        let xml = "<PIDDrawing></PIDDrawing><PIDBranchPoint></PIDBranchPoint>";
+        // Use a fabricated backlog tag (PIDPhantom) so the
+        // percentage stays interesting.
+        let xml = "<PIDDrawing></PIDDrawing><PIDPhantom></PIDPhantom>";
         let cov = coverage_against_reference(xml);
         let s = format!("{cov}");
         assert!(s.contains("Publish writer coverage"));
@@ -1268,7 +1480,7 @@ mod tests {
         assert!(s.contains("backlog tags: 1"));
         assert!(s.contains("Unsupported tag (backlog)"));
         assert!(s.contains("Supported tag"));
-        assert!(s.contains("PIDBranchPoint"));
+        assert!(s.contains("PIDPhantom"));
         assert!(s.contains("PIDDrawing"));
     }
 
@@ -1281,9 +1493,9 @@ mod tests {
         assert!(s.contains("Supported tag"));
         assert!(!s.contains("Unsupported tag (backlog)"));
 
-        // None supported -> only the backlog block. PIDBranchPoint
-        // remains a definitively unsupported tag as of A16.
-        let xml = "<PIDBranchPoint></PIDBranchPoint>";
+        // None supported -> only the backlog block. PIDPhantom
+        // is a fabricated tag that will never be supported.
+        let xml = "<PIDPhantom></PIDPhantom>";
         let cov = coverage_against_reference(xml);
         let s = format!("{cov}");
         assert!(s.contains("Unsupported tag (backlog)"));
@@ -1843,5 +2055,95 @@ mod tests {
         assert_eq!(rels[0].uid1, "A");
         assert_eq!(rels[0].uid2, "B");
         assert_eq!(rels[0].def_uid, "DrawingItems");
+    }
+
+    // -----------------------------------------------------------------
+    // A40 — diff_rel_defuids (per-DefUID diff report)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn diff_rel_defuids_reports_clean_when_counts_match_exactly() {
+        let gen = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"DrawingItems\"/>\
+                   <IRel UID1=\"c\" UID2=\"d\" DefUID=\"PipingConnectors\"/>";
+        let refr = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"DrawingItems\"/>\
+                    <IRel UID1=\"c\" UID2=\"d\" DefUID=\"PipingConnectors\"/>";
+        let report = diff_rel_defuids(gen, refr);
+        assert!(report.is_clean());
+        assert_eq!(report.generated_total, 2);
+        assert_eq!(report.reference_total, 2);
+        assert_eq!(report.matching, 2);
+        assert_eq!(report.missing_from_generated, 0);
+        assert_eq!(report.extra_in_generated, 0);
+        assert_eq!(report.count_deltas, 0);
+    }
+
+    #[test]
+    fn diff_rel_defuids_classifies_missing_and_extra_and_delta_buckets() {
+        // gen has PC×1 + DrI×1; ref has PC×1 + EQC×2 + DrI×3.
+        // Expected: PC matches; EQC missing from generated;
+        // DrI count-delta; (nothing extra-in-generated).
+        let gen = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"PipingConnectors\"/>\
+                   <IRel UID1=\"c\" UID2=\"d\" DefUID=\"DrawingItems\"/>";
+        let refr = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"PipingConnectors\"/>\
+                    <IRel UID1=\"x\" UID2=\"y\" DefUID=\"EquipmentComponentComposition\"/>\
+                    <IRel UID1=\"x\" UID2=\"y\" DefUID=\"EquipmentComponentComposition\"/>\
+                    <IRel UID1=\"c\" UID2=\"d\" DefUID=\"DrawingItems\"/>\
+                    <IRel UID1=\"c\" UID2=\"d\" DefUID=\"DrawingItems\"/>\
+                    <IRel UID1=\"c\" UID2=\"d\" DefUID=\"DrawingItems\"/>";
+        let report = diff_rel_defuids(gen, refr);
+        assert!(!report.is_clean());
+        assert_eq!(report.generated_total, 2);
+        assert_eq!(report.reference_total, 6);
+        assert_eq!(report.matching, 1);
+        assert_eq!(report.missing_from_generated, 1);
+        assert_eq!(report.extra_in_generated, 0);
+        assert_eq!(report.count_deltas, 1);
+        // Row ordering — missing bucket first.
+        assert_eq!(report.rows[0].status, TagDiffStatus::MissingFromGenerated);
+        assert_eq!(report.rows[0].def_uid, "EquipmentComponentComposition");
+    }
+
+    #[test]
+    fn diff_rel_defuids_surfaces_writer_extras_in_their_own_bucket() {
+        // Writer emits a DefUID the reference does not. This is
+        // valid (the writer sometimes over-emits derived rels
+        // SmartPlant skips) but should still be visible in the
+        // report's EXTRA bucket.
+        let gen = "<IRel UID1=\"x\" UID2=\"y\" DefUID=\"DerivedExtra\"/>";
+        let refr = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"DrawingItems\"/>";
+        let report = diff_rel_defuids(gen, refr);
+        assert_eq!(report.matching, 0);
+        assert_eq!(report.missing_from_generated, 1);
+        assert_eq!(report.extra_in_generated, 1);
+    }
+
+    #[test]
+    fn diff_rel_defuids_handles_fully_empty_inputs() {
+        let report = diff_rel_defuids("", "");
+        assert!(report.is_clean());
+        assert!(report.rows.is_empty());
+        assert_eq!(report.generated_total, 0);
+        assert_eq!(report.reference_total, 0);
+    }
+
+    #[test]
+    fn rel_def_uid_diff_report_problems_iterator_skips_matches() {
+        let gen = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"DrawingItems\"/>\
+                   <IRel UID1=\"a\" UID2=\"b\" DefUID=\"ExtraOnly\"/>";
+        let refr = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"DrawingItems\"/>";
+        let report = diff_rel_defuids(gen, refr);
+        let problems: Vec<&str> = report.problems().map(|r| r.def_uid.as_str()).collect();
+        assert_eq!(problems, vec!["ExtraOnly"]);
+    }
+
+    #[test]
+    fn rel_def_uid_diff_report_display_has_table_header_and_summary_line() {
+        let gen = "<IRel UID1=\"a\" UID2=\"b\" DefUID=\"DrawingItems\"/>";
+        let refr = gen;
+        let s = format!("{}", diff_rel_defuids(gen, refr));
+        assert!(s.contains("=== Publish Data XML Rel DefUID diff ==="));
+        assert!(s.contains("DefUID"), "Display header must label DefUID column");
+        assert!(s.contains("MATCH"));
+        assert!(s.contains("DrawingItems"));
     }
 }

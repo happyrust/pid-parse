@@ -1,9 +1,12 @@
 //! Object-graph DTO the SQLite loader feeds into the XML writer.
 //!
-//! Stage-1 scope: just enough shape to write a recognizable
-//! `_Data.xml`. Richer fields (process-point numeric attributes,
-//! symbology GUIDs, typicals) are additive and will land in
-//! follow-up commits as the writer starts emitting them.
+//! Current scope: enough shape to drive the shipped `_Data.xml` and
+//! `_Meta.xml` writers, including plant-wide codelist metadata and
+//! the explicit A01/DWG style selector.
+//!
+//! The DTO still lacks DWG-mirror-derived branch-point nodes and any
+//! loader canonical fields that cannot be validated without the DWG
+//! `Export_v2.sqlite` mirror; those remain additive.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -26,8 +29,9 @@ use std::fmt;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CodelistIndex {
     /// `(codelist_number, codelist_index) → codelist_text`.
-    /// Both keys are kept as `String` because OrcaMDF ships them as
-    /// TEXT regardless of the underlying SQL Server type.
+    /// Both keys are kept as `String` because the publish loader
+    /// stages them as TEXT regardless of the underlying SQL Server
+    /// type.
     entries: BTreeMap<(String, String), String>,
     /// `attribute_name → codelist_number`, sourced from the
     /// `attributes` metadata table's `attribute_codelisted` column.
@@ -106,6 +110,8 @@ impl CodelistIndex {
 pub enum PublishError {
     /// Generic SQLite / rusqlite failure.
     Sqlite(String),
+    /// MDF parser failure from the Rust MDF reader.
+    Mdf(String),
     /// No drawing row matched the requested UID.
     DrawingNotFound { uid: String },
 }
@@ -114,6 +120,7 @@ impl fmt::Display for PublishError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Sqlite(msg) => write!(f, "SQLite: {msg}"),
+            Self::Mdf(msg) => write!(f, "MDF: {msg}"),
             Self::DrawingNotFound { uid } => write!(f, "drawing UID `{uid}` not found"),
         }
     }
@@ -124,6 +131,12 @@ impl std::error::Error for PublishError {}
 impl From<rusqlite::Error> for PublishError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Sqlite(err.to_string())
+    }
+}
+
+impl From<oxidized_mdf::error::Error> for PublishError {
+    fn from(err: oxidized_mdf::error::Error) -> Self {
+        Self::Mdf(err.to_string())
     }
 }
 
@@ -152,7 +165,7 @@ pub struct PublishObject {
     /// Populated by the loader when a matching row is found in
     /// the per-kind subtable (T_Equipment / T_Vessel / T_Nozzle /
     /// T_PipeRun / ...). Columns that store non-Text SQL types
-    /// still surface here as their OrcaMDF-rendered string form.
+    /// still surface here as their loader-rendered string form.
     ///
     /// Values are kept as `String` rather than raw bytes so the
     /// XML writer can emit them directly; where numeric parsing
@@ -284,7 +297,7 @@ pub struct PublishDrawing {
     /// archive tree.
     pub path: Option<String>,
     /// `T_Drawing.DateCreated` — free-form datetime string as
-    /// emitted by OrcaMDF's value rendering.
+    /// emitted by the MDF loader's value rendering.
     pub date_created: Option<String>,
     /// All model items that show up on this drawing. Populated by
     /// [`crate::publish::load_drawing_graph`] after matching

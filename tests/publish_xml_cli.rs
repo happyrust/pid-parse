@@ -1,13 +1,14 @@
 //! End-to-end CLI tests for the `pid_publish_xml` binary (A10
 //! series). Drives the actual compiled binary via `Command` so the
-//! whole stack — argument parsing, SQLite read, DTO load,
+//! whole stack — argument parsing, MDF read, DTO load,
 //! `_Data.xml` + `_Meta.xml` rendering, and file I/O — is exercised
 //! the same way an operator would invoke it.
 //!
-//! All tests that touch the real `Export_v2.sqlite` fixture skip
+//! All tests that touch the real `Export.mdf` fixture skip
 //! cleanly when the file is missing so CI workers without the
 //! TEST02 backup do not fail.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -15,8 +16,9 @@ fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_pid_publish_xml")
 }
 
-const SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite";
+const SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
 const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
+const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
 
 /// Allocate a unique sub-directory under the OS temp dir so two
 /// concurrent test runs do not collide. Tests are responsible for
@@ -39,7 +41,7 @@ fn unique_tmp_dir(label: &str) -> PathBuf {
     p
 }
 
-/// True when the real OrcaMDF fixture is on disk. Returns false (and
+/// True when the real MDF fixture is on disk. Returns false (and
 /// prints a reason) for skipping behavior on bare CI workers that do
 /// not carry the SmartPlant backup data.
 fn fixture_available() -> bool {
@@ -49,6 +51,122 @@ fn fixture_available() -> bool {
         eprintln!("skipping: fixture {SQLITE_PATH} not found");
     }
     here
+}
+
+fn extract_attr(line: &str, attr: &str) -> Option<String> {
+    let needle = format!(r#"{attr}=""#);
+    let start = line.find(&needle)? + needle.len();
+    let end = line[start..].find('"')? + start;
+    Some(line[start..end].to_string())
+}
+
+fn replace_attr_value(line: &str, attr: &str, replacement: &str) -> String {
+    let needle = format!(r#"{attr}=""#);
+    let Some(start) = line.find(&needle) else {
+        return line.to_string();
+    };
+    let value_start = start + needle.len();
+    let Some(rel_end) = line[value_start..].find('"') else {
+        return line.to_string();
+    };
+    let value_end = value_start + rel_end;
+    format!(
+        "{}{}{}",
+        &line[..value_start],
+        replacement,
+        &line[value_end..]
+    )
+}
+
+fn normalize_a01_delivery_contract(xml: &str) -> String {
+    let mut current_block: Option<&'static str> = None;
+    let mut uid_aliases: BTreeMap<String, String> = BTreeMap::new();
+    let mut port_count = 0usize;
+    let mut rep_count = 0usize;
+    let mut rel_count = 0usize;
+    let mut out = Vec::new();
+
+    for raw in xml.replace("\r\n", "\n").lines() {
+        let trimmed = raw.trim_start();
+        match trimmed {
+            "<PIDDrawing>" => current_block = Some("PIDDrawing"),
+            "<PIDProcessVessel>" => current_block = Some("PIDProcessVessel"),
+            "<PIDNozzle>" => current_block = Some("PIDNozzle"),
+            "<PIDPipeline>" => current_block = Some("PIDPipeline"),
+            "<PIDPipingConnector>" => current_block = Some("PIDPipingConnector"),
+            "<PIDPipingPort>" => current_block = Some("PIDPipingPort"),
+            "<PIDProcessPoint>" => current_block = Some("PIDProcessPoint"),
+            "<PIDRepresentation>" => current_block = Some("PIDRepresentation"),
+            "<Rel>" => current_block = Some("Rel"),
+            _ => {}
+        }
+
+        let mut line = raw.to_string();
+        if trimmed.starts_with("<IObject ") {
+            if let Some(uid) = extract_attr(&line, "UID") {
+                let alias = match current_block {
+                    Some("PIDDrawing") => Some("@DRAWING@".to_string()),
+                    Some("PIDProcessVessel") => Some("@VESSEL@".to_string()),
+                    Some("PIDNozzle") => Some("@NOZZLE@".to_string()),
+                    Some("PIDPipeline") => Some("@PIPELINE@".to_string()),
+                    Some("PIDPipingConnector") => Some("@CONNECTOR@".to_string()),
+                    Some("PIDPipingPort") => {
+                        port_count += 1;
+                        Some(format!("@PORT{port_count}@"))
+                    }
+                    Some("PIDProcessPoint") => Some("@PROCESS_POINT@".to_string()),
+                    Some("PIDRepresentation") => {
+                        rep_count += 1;
+                        Some(format!("@REP{rep_count}@"))
+                    }
+                    Some("Rel") => {
+                        rel_count += 1;
+                        Some(format!("@REL{rel_count}@"))
+                    }
+                    _ => None,
+                };
+                if let Some(alias) = alias {
+                    if current_block != Some("Rel") {
+                        uid_aliases.insert(uid, alias.clone());
+                    }
+                    line = replace_attr_value(&line, "UID", &alias);
+                }
+            }
+        }
+
+        if trimmed.starts_with("<IDrawingRepresentation ") {
+            line = replace_attr_value(&line, "GraphicOID", "@GRAPHIC@");
+        }
+
+        if trimmed.starts_with("<IRel ") {
+            for attr in ["UID1", "UID2"] {
+                if let Some(value) = extract_attr(&line, attr) {
+                    if let Some(alias) = uid_aliases.get(&value) {
+                        line = replace_attr_value(&line, attr, alias);
+                    }
+                }
+            }
+        }
+
+        out.push(line);
+
+        match trimmed {
+            "</PIDDrawing>"
+            | "</PIDProcessVessel>"
+            | "</PIDNozzle>"
+            | "</PIDPipeline>"
+            | "</PIDPipingConnector>"
+            | "</PIDPipingPort>"
+            | "</PIDProcessPoint>"
+            | "</PIDRepresentation>"
+            | "</Rel>" => current_block = None,
+            _ => {}
+        }
+    }
+
+    let mut normalized = out.join("\n");
+    normalized.push('\n');
+    normalized
 }
 
 #[test]
@@ -70,7 +188,7 @@ fn cli_help_flag_exits_zero_with_usage_text() {
 }
 
 #[test]
-fn cli_missing_sqlite_argument_exits_two() {
+fn cli_missing_input_argument_exits_two() {
     let out = Command::new(binary_path())
         .output()
         .expect("spawn pid_publish_xml with no args");
@@ -81,7 +199,7 @@ fn cli_missing_sqlite_argument_exits_two() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("missing <sqlite>"),
+        stderr.contains("missing <mdf|sqlite>"),
         "stderr should explain the missing argument; got:\n{stderr}"
     );
 }
@@ -90,7 +208,7 @@ fn cli_missing_sqlite_argument_exits_two() {
 fn cli_meta_out_with_stdout_is_rejected_as_argument_error() {
     let out = Command::new(binary_path())
         .args([
-            "Export_v2.sqlite",
+            "Export.mdf",
             "--drawing",
             "ANY",
             "--stdout",
@@ -186,7 +304,7 @@ fn cli_writes_both_data_and_meta_xml_for_real_drawing() {
     );
     assert!(
         meta_xml.contains(r#"DocVersionDate="2026/04/20""#),
-        "_Meta.xml DocVersionDate should normalize OrcaMDF's raw `2026/4/20 ...` to ISO-ish; got:\n{meta_xml}"
+        "_Meta.xml DocVersionDate should normalize the MDF date `2026/4/20 ...` to ISO-ish; got:\n{meta_xml}"
     );
 
     // Determinism — invoking the CLI a second time must produce
@@ -254,8 +372,6 @@ fn cli_data_only_invocation_does_not_write_meta_file() {
 // -----------------------------------------------------------------
 // A12 — --diff-against semantic diff CLI surface
 // -----------------------------------------------------------------
-
-const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
 
 #[test]
 fn cli_no_output_or_diff_flags_is_argument_error() {
@@ -369,11 +485,37 @@ fn cli_diff_against_real_a01_reference_is_clean_and_exits_zero() {
         stderr.contains("8 matching"),
         "summary should report eight matching tag varieties; got:\n{stderr}"
     );
+    // A40: the Rel DefUID section must also appear and be
+    // clean (every DefUID matches). The summary line on
+    // stderr is expected to carry both counts.
+    assert!(
+        stdout.contains("Publish Data XML Rel DefUID diff"),
+        "stdout should carry the A40 Rel diff header; got:\n{stdout}"
+    );
+    for def_uid in [
+        "DrawingItems",
+        "DwgRepresentationComposition",
+        "EquipmentComponentComposition",
+        "PipingConnectors",
+        "PipingEnd1Conn",
+        "PipingEnd2Conn",
+        "PipingPortComposition",
+        "ProcessPointCollection",
+    ] {
+        assert!(
+            stdout.contains(def_uid),
+            "Rel block should list `{def_uid}`; got:\n{stdout}"
+        );
+    }
+    assert!(
+        stderr.contains("matching Rel DefUIDs"),
+        "stderr summary should count matching Rel DefUIDs; got:\n{stderr}"
+    );
 }
 
 #[test]
 fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
-    // Generate an _Data.xml from the SQLite mirror, then diff it
+    // Generate an _Data.xml from the MDF input, then diff it
     // against itself: the report must be clean and the binary
     // must exit 0.
     if !fixture_available() {
@@ -475,12 +617,16 @@ fn cli_style_unknown_value_exits_two_with_clear_error() {
 }
 
 #[test]
-fn cli_default_style_matches_a01_reference_byte_for_byte() {
-    // Behavioral lock for the default branch: omitting
-    // --style must produce IObject with the A01 ItemTag
-    // shape (matching the A01 reference fixture's IObject
-    // pattern). This is the byte-level back-compat
-    // guarantee A29b commits to.
+fn cli_default_style_matches_a01_reference_delivery_contract() {
+    // A01 is the only backup-backed correctness baseline.
+    // The raw file still contains publish-time synthetic
+    // values (representation GraphicOID numbering and Rel
+    // IObject UID seeds) that are not reconstructable from
+    // the publish source alone, so the delivery contract
+    // normalizes those unstable slots and then demands the
+    // entire `_Data.xml` match the bundled SmartPlant
+    // reference exactly. The emitted bytes themselves must
+    // still be deterministic across repeated CLI runs.
     if !fixture_available() {
         return;
     }
@@ -500,30 +646,33 @@ fn cli_default_style_matches_a01_reference_byte_for_byte() {
         .expect("spawn pid_publish_xml default --style");
     assert!(out.status.success(), "default-style run should exit 0; got {out:?}");
     let xml = std::fs::read_to_string(&data_path).expect("read generated xml");
+    let reference_xml = std::fs::read_to_string(A01_REFERENCE_DATA_XML).expect("read A01 reference");
     assert!(
-        xml.contains("<PIDPipeline>"),
-        "default-style output must include PIDPipeline; out:\n{xml}",
+        !xml.is_empty(),
+        "default-style output must produce non-empty _Data.xml",
     );
-    // Locate the FIRST PIDPipeline IObject and assert it
-    // carries the A01 ItemTag attribute. Structural needle
-    // (rather than a fixture-specific ItemTag value) keeps
-    // the test resilient to whatever T_PlantItem.ItemTag the
-    // mirror happens to carry — only the writer-side IObject
-    // shape is under test.
-    let pipeline_block_start = xml
-        .find("<PIDPipeline>")
-        .expect("PIDPipeline must be present");
-    let pipeline_block_end = xml[pipeline_block_start..]
-        .find("</PIDPipeline>")
-        .expect("PIDPipeline must close")
-        + pipeline_block_start;
-    let iobject_line = xml[pipeline_block_start..pipeline_block_end]
-        .lines()
-        .find(|l| l.contains("<IObject "))
-        .expect("PIDPipeline must contain an IObject");
-    assert!(
-        iobject_line.contains("ItemTag="),
-        "default style must emit ItemTag on the pipeline IObject; got:\n{iobject_line}",
+    assert_eq!(
+        normalize_a01_delivery_contract(&xml),
+        normalize_a01_delivery_contract(&reference_xml),
+        "default style must match the bundled A01 publish reference under the delivery contract"
+    );
+    let out2 = Command::new(binary_path())
+        .args([
+            SQLITE_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--out",
+            data_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml default --style second time");
+    assert!(out2.status.success(), "second default-style run should exit 0; got {out2:?}");
+    let xml2 = std::fs::read_to_string(&data_path).expect("re-read generated xml");
+    assert_eq!(
+        xml, xml2,
+        "repeated CLI emits for the same A01 input must stay byte-identical"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -532,7 +681,7 @@ fn cli_default_style_matches_a01_reference_byte_for_byte() {
 fn cli_style_dwg_drops_itemtag_on_pipeline_iobject() {
     // A29b end-to-end test: --style dwg must flip the
     // PIDPipeline / PIDPipingConnector IObject shape to the
-    // DWG convention. The TEST02 SQLite mirror is an A01
+    // DWG convention. The TEST02 MDF fixture is an A01
     // plant so the data is itself A01-flavor; the test
     // therefore only asserts that the writer-side IObject
     // shape NO LONGER carries `ItemTag` on the pipeline

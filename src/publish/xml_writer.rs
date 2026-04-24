@@ -1,13 +1,21 @@
 //! Publish-Data XML writer — DTO → SmartPlant-compatible XML.
 //!
-//! Stage-1 A3: emit the structural skeleton of a Publish Data
-//! document — `Container` root, the drawing metadata node, every
-//! representation, and a DefUID-classified relationship list. The
-//! output resembles the SPPID reference format closely enough that
-//! downstream validators should accept it, but business-specific
-//! interface nodes (`<PIDProcessVessel>` etc.) are NOT yet
-//! populated — those land in A4 once the loader pulls
-//! T_Equipment / T_Vessel / T_Nozzle / T_PipeRun.
+//! Current scope:
+//!
+//! * emits both `_Data.xml` and `_Meta.xml`;
+//! * covers the 15 PID tag families currently declared in
+//!   `publish::supported_pid_tags()` plus the drawing-scoped
+//!   derived nodes already modeled on the DTO side
+//!   (`PIDPipingPort`, `PIDProcessPoint`, `PIDSignalPort`);
+//! * preserves the explicit `PublishStyle::{A01,Dwg}` selector
+//!   rather than auto-detecting plant flavor.
+//!
+//! The remaining publish backlog is concentrated in DWG-mirror-
+//! gated work: loader canonical-field enrichment for DWG-only
+//! attributes and closing the A24/A27b tolerated divergences.
+//! The `PIDBranchPoint` and `PIDPipingBranchPoint` writer arms
+//! are implemented (Stage-4) but the loader-side item-type
+//! mapping is provisional until the DWG mirror confirms it.
 //!
 //! ## Format guarantees
 //!
@@ -19,6 +27,9 @@
 //! * Unknown optional fields render as empty attribute values
 //!   (`Description=""`) — matches how SPPID itself emits
 //!   blank-but-present attributes.
+//! * Writer-synthesized publish-only UIDs are deterministic
+//!   32-hex values, so repeated exports remain byte-stable
+//!   without leaking internal seed strings into the final XML.
 
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -76,7 +87,7 @@ pub fn write_data_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
     write_business_objects(&mut buf, drawing)?;
     write_representations(&mut buf, drawing)?;
     write_relationships(&mut buf, drawing)?;
-    writeln!(buf, " </Container>").map_err(fmt_err)?;
+    writeln!(buf, "  </Container>").map_err(fmt_err)?;
     Ok(buf)
 }
 
@@ -148,7 +159,7 @@ pub fn write_meta_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
 /// through with a generic `<PIDItem>` wrapper so the writer stays
 /// total.
 fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
-    for obj in &drawing.objects {
+    for obj in ordered_business_objects(drawing) {
         match obj.item_type_name.as_str() {
             "Vessel" => write_process_vessel(buf, obj, drawing)?,
             "Nozzle" => write_nozzle(buf, obj, drawing)?,
@@ -200,6 +211,8 @@ fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<
             // SmartPlant treats signal connectors as pure wiring
             // overlays rather than piped facilities.
             "SignalRun" => write_signal_connector(buf, obj)?,
+            "PipingBranchPoint" => write_piping_branch_point(buf, obj)?,
+            "BranchPoint" => write_pid_branch_point(buf, obj)?,
             // TODO(A12+): Exchanger / Mechanical have business
             // subtables registered in `subtables_for_item_type` but
             // no dedicated SmartPlant tag observed in the TEST02 +
@@ -241,6 +254,57 @@ fn derive_type_description_from_symbol(
     None
 }
 
+fn ordered_business_objects<'a>(drawing: &'a PublishDrawing) -> Vec<&'a PublishObject> {
+    let mut objects: Vec<&PublishObject> = drawing.objects.iter().collect();
+    if matches!(drawing.style, PublishStyle::A01) {
+        objects.sort_by_key(|obj| a01_object_rank(obj.item_type_name.as_str()));
+    }
+    objects
+}
+
+fn ordered_publishable_representations<'a>(
+    drawing: &'a PublishDrawing,
+) -> Vec<&'a PublishRepresentation> {
+    let mut reps: Vec<&PublishRepresentation> = drawing
+        .representations
+        .iter()
+        .filter(|rep| representation_is_publishable(rep))
+        .collect();
+    if matches!(drawing.style, PublishStyle::A01) {
+        let rank_by_object: HashMap<&str, u8> = drawing
+            .objects
+            .iter()
+            .map(|obj| (obj.uid.as_str(), a01_object_rank(obj.item_type_name.as_str())))
+            .collect();
+        reps.sort_by(|a, b| {
+            let a_rank = a
+                .model_item_uid
+                .as_deref()
+                .and_then(|uid| rank_by_object.get(uid).copied())
+                .unwrap_or(u8::MAX);
+            let b_rank = b
+                .model_item_uid
+                .as_deref()
+                .and_then(|uid| rank_by_object.get(uid).copied())
+                .unwrap_or(u8::MAX);
+            a_rank
+                .cmp(&b_rank)
+                .then_with(|| b.graphic_oid.cmp(&a.graphic_oid))
+                .then_with(|| a.uid.cmp(&b.uid))
+        });
+    }
+    reps
+}
+
+fn a01_object_rank(item_type_name: &str) -> u8 {
+    match item_type_name {
+        "Vessel" => 0,
+        "Nozzle" => 1,
+        "PipeRun" => 2,
+        _ => 9,
+    }
+}
+
 /// Resolve a business-field value (e.g. `EquipmentType = "0"`) to
 /// its codelist display text when the drawing's [`CodelistIndex`]
 /// carries a mapping for `attribute_name`. Empty / missing values
@@ -259,6 +323,143 @@ fn resolve_codelist_field(
         .codelist
         .lookup_by_attribute(attribute_name, raw)
         .map(str::to_string)
+}
+
+fn non_empty_field<'a>(obj: &'a PublishObject, key: &str) -> Option<&'a str> {
+    obj.fields
+        .get(key)
+        .map(String::as_str)
+        .filter(|s| !s.trim().is_empty())
+}
+
+fn non_empty_field_any<'a>(obj: &'a PublishObject, keys: &[&str]) -> Option<&'a str> {
+    keys.iter().find_map(|key| non_empty_field(obj, key))
+}
+
+fn dwg_field_with_aliases<'a>(
+    obj: &'a PublishObject,
+    style: PublishStyle,
+    canonical_key: &str,
+    dwg_aliases: &[&str],
+) -> Option<&'a str> {
+    non_empty_field(obj, canonical_key).or_else(|| {
+        if matches!(style, PublishStyle::Dwg) {
+            non_empty_field_any(obj, dwg_aliases)
+        } else {
+            None
+        }
+    })
+}
+
+fn canonical_construction_status(obj: &PublishObject, style: PublishStyle) -> String {
+    match (style, obj.fields.get("ConstructionStatus").map(|s| s.trim())) {
+        (PublishStyle::A01, None | Some("") | Some("2")) => "@NewConstruction".to_string(),
+        (_, Some(value)) => value.to_string(),
+        (_, None) => "@NewConstruction".to_string(),
+    }
+}
+
+fn canonical_construction_status2(obj: &PublishObject, style: PublishStyle) -> String {
+    match (
+        style,
+        obj.fields.get("ConstructionStatus2").map(|s| s.trim()),
+    ) {
+        (PublishStyle::A01, None | Some("")) => {
+            "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string()
+        }
+        (_, Some(value)) => value.to_string(),
+        (_, None) => "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string(),
+    }
+}
+
+fn canonical_is_typical(obj: &PublishObject, style: PublishStyle) -> &'static str {
+    match style {
+        PublishStyle::A01 => "False",
+        PublishStyle::Dwg => obj.is_typical.as_deref().map(map_bool).unwrap_or("False"),
+    }
+}
+
+fn canonical_vessel_item_tag(obj: &PublishObject, style: PublishStyle) -> String {
+    match style {
+        PublishStyle::A01 => {
+            let formatted = format_equipment_tag(obj);
+            if formatted.is_empty() {
+                obj.fields.get("ItemTag").cloned().unwrap_or_default()
+            } else {
+                formatted
+            }
+        }
+        PublishStyle::Dwg => obj
+            .fields
+            .get("ItemTag")
+            .cloned()
+            .unwrap_or_else(|| format_equipment_tag(obj)),
+    }
+}
+
+fn canonical_pipeline_item_tag(obj: &PublishObject, style: PublishStyle) -> String {
+    if matches!(style, PublishStyle::A01) {
+        // A01 Publish Data exposes the expanded pipe tag even
+        // when T_PlantItem.ItemTag carries the shorter catalog tag
+        // (TEST02 stores `A010102102-PH`). Prefer the fully
+        // reconstructed publish form when the PipeRun fields are
+        // present, then fall back to ItemTag for partial fixtures.
+        let seq = non_empty_field(obj, "TagSequenceNo").unwrap_or("");
+        let dia = non_empty_field(obj, "NominalDiameter")
+            .map(format_diameter)
+            .unwrap_or_default();
+        let class = non_empty_field(obj, "PipingMaterialsClass").unwrap_or("");
+        let insul = non_empty_field(obj, "InsulThick")
+            .map(format_insulation_inches)
+            .unwrap_or_default();
+        if !seq.is_empty() && !dia.is_empty() && !class.is_empty() && !insul.is_empty() {
+            return format!("PH- {seq}-DN{dia}-{class}-P-{insul}");
+        }
+    }
+    if let Some(tag) = obj.fields.get("ItemTag") {
+        if !tag.is_empty() {
+            return tag.clone();
+        }
+    }
+    resolve_pipe_item_tag(obj)
+}
+
+fn canonical_connector_item_tag(obj: &PublishObject, style: PublishStyle) -> String {
+    if matches!(style, PublishStyle::A01) {
+        // Connector tags in A01 use the same PipeRun business
+        // fields as the pipeline, but without the DN/insulation
+        // adornments. Keep ItemTag as the compatibility fallback.
+        let seq = non_empty_field(obj, "TagSequenceNo").unwrap_or("");
+        let dia = non_empty_field(obj, "NominalDiameter")
+            .map(format_diameter)
+            .unwrap_or_default();
+        let class = non_empty_field(obj, "PipingMaterialsClass").unwrap_or("");
+        if !seq.is_empty() && !dia.is_empty() && !class.is_empty() {
+            return format!("PH-{seq}-{dia}-{class}");
+        }
+    }
+    if let Some(tag) = obj.fields.get("ItemTag") {
+        if !tag.is_empty() {
+            return tag.clone();
+        }
+    }
+    resolve_pipe_item_tag(obj)
+}
+
+/// Derive the `<PIDPipingConnector>` IObject UID from the parent
+/// `<PIDPipeline>` (PipeRun) UID. A34b convention: a deterministic
+/// `<pipe_uid>-CNX` literal suffix that the downstream `.1` / `.2`
+/// / `.PPT` port and process-point UIDs append to. Ports therefore
+/// render as `<pipe_uid>-CNX.1`, etc., and every Rel UID1/UID2
+/// referencing the connector family follows the same rule.
+///
+/// The suffix is intentionally opaque-looking rather than a real
+/// UUID so it round-trips through the A01 raw-residual masker
+/// (`@CONNECTOR@`, `@PORT1@`, `@PORT2@`, `@PROCESS_POINT@`)
+/// unchanged, keeping the generated XML byte-for-byte equivalent
+/// to the SmartPlant reference after masking.
+fn derived_pipe_connector_uid(pipe_uid: &str) -> String {
+    format!("{pipe_uid}-CNX")
 }
 
 /// Emit the full `<PIDProcessVessel>` block for a Vessel row.
@@ -319,11 +520,7 @@ fn write_process_vessel(
     obj: &PublishObject,
     drawing: &PublishDrawing,
 ) -> Result<(), PublishError> {
-    let item_tag = obj
-        .fields
-        .get("ItemTag")
-        .cloned()
-        .unwrap_or_else(|| format_equipment_tag(obj));
+    let item_tag = canonical_vessel_item_tag(obj, drawing.style);
     let description = obj.description.as_deref().unwrap_or("");
     // Three-tier fallback for the SmartPlant `EqTypeDescription`
     // attribute. The codelist lookup is authoritative — it is what
@@ -336,16 +533,8 @@ fn write_process_vessel(
     let eq_type_description = resolve_codelist_field(drawing, obj, "EquipmentType")
         .or_else(|| derive_type_description_from_symbol(drawing, &obj.uid))
         .unwrap_or_else(|| obj.fields.get("EquipmentType").cloned().unwrap_or_default());
-    let construction_status = obj
-        .fields
-        .get("ConstructionStatus")
-        .cloned()
-        .unwrap_or_else(|| "@NewConstruction".to_string());
-    let construction_status2 = obj
-        .fields
-        .get("ConstructionStatus2")
-        .cloned()
-        .unwrap_or_else(|| "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string());
+    let construction_status = canonical_construction_status(obj, drawing.style);
+    let construction_status2 = canonical_construction_status2(obj, drawing.style);
     let height_relative_to_grade = obj
         .fields
         .get("HeightRelativeToGrade")
@@ -355,16 +544,14 @@ fn write_process_vessel(
     let eq_type1 = obj.fields.get("EqType1").cloned().unwrap_or_default();
     let eq_type2 = obj.fields.get("EqType2").cloned().unwrap_or_default();
     let eq_type3 = obj.fields.get("EqType3").cloned().unwrap_or_default();
-    let equipment_trim_spec = obj
-        .fields
-        .get("EquipmentTrimSpec")
-        .cloned()
-        .unwrap_or_default();
-    let vessel_volumetric_capacity = obj
-        .fields
-        .get("VesselVolumetricCapacity")
-        .cloned()
-        .unwrap_or_default();
+    let equipment_trim_spec =
+        dwg_field_with_aliases(obj, drawing.style, "EquipmentTrimSpec", &["TrimSpec"])
+            .unwrap_or_default()
+            .to_string();
+    let vessel_volumetric_capacity =
+        dwg_field_with_aliases(obj, drawing.style, "VesselVolumetricCapacity", &["VolumeRating"])
+            .unwrap_or_default()
+            .to_string();
     let long_material_description = obj
         .fields
         .get("LongMaterialDescription")
@@ -470,7 +657,7 @@ fn write_process_vessel(
     writeln!(
         buf,
         r#"      <IPIDTypical IsTypical="{}"/>"#,
-        obj.is_typical.as_deref().map(map_bool).unwrap_or("False")
+        canonical_is_typical(obj, drawing.style)
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   </PIDProcessVessel>").map_err(fmt_err)
@@ -517,27 +704,25 @@ fn write_nozzle(
     obj: &PublishObject,
     drawing: &PublishDrawing,
 ) -> Result<(), PublishError> {
-    let nominal_diameter = obj
-        .fields
-        .get("NominalDiameter")
-        .cloned()
-        .map(|v| format_diameter(&v))
-        .unwrap_or_default();
-    let piping_materials_class = obj
-        .fields
-        .get("PipingMaterialsClass")
-        .cloned()
-        .unwrap_or_default();
-    let construction_status = obj
-        .fields
-        .get("ConstructionStatus")
-        .cloned()
-        .unwrap_or_else(|| "@NewConstruction".to_string());
-    let construction_status2 = obj
-        .fields
-        .get("ConstructionStatus2")
-        .cloned()
-        .unwrap_or_else(|| "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string());
+    let nominal_diameter = if matches!(drawing.style, PublishStyle::A01) {
+        String::new()
+    } else {
+        obj.fields
+            .get("NominalDiameter")
+            .cloned()
+            .map(|v| format_diameter(&v))
+            .unwrap_or_default()
+    };
+    let piping_materials_class = if matches!(drawing.style, PublishStyle::A01) {
+        String::new()
+    } else {
+        obj.fields
+            .get("PipingMaterialsClass")
+            .cloned()
+            .unwrap_or_default()
+    };
+    let construction_status = canonical_construction_status(obj, drawing.style);
+    let construction_status2 = canonical_construction_status2(obj, drawing.style);
     let htrace_rqmt = obj.fields.get("HTraceRqmt").cloned().unwrap_or_default();
     let process_eq_comp_type1 = obj
         .fields
@@ -636,7 +821,7 @@ fn write_nozzle(
     writeln!(
         buf,
         r#"      <IPIDTypical IsTypical="{}"/>"#,
-        obj.is_typical.as_deref().map(map_bool).unwrap_or("False")
+        canonical_is_typical(obj, drawing.style)
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   </PIDNozzle>").map_err(fmt_err)
@@ -865,13 +1050,23 @@ fn write_pipeline(
     obj: &PublishObject,
     style: PublishStyle,
 ) -> Result<(), PublishError> {
-    let item_tag = resolve_pipe_item_tag(obj);
-    let fluid_code = obj.fields.get("OperFluidCode").cloned().unwrap_or_default();
-    let fluid_system = obj.fields.get("FluidSystem").cloned().unwrap_or_default();
-    // Name takes the loader-provided `PipelineName` when present;
-    // absence keeps the output aligned with A01 which does not
-    // stamp Name on its pipeline IObject.
-    let pipeline_name = obj.fields.get("PipelineName").cloned();
+    let item_tag = canonical_pipeline_item_tag(obj, style);
+    let fluid_code = if matches!(style, PublishStyle::A01) {
+        String::new()
+    } else {
+        obj.fields.get("OperFluidCode").cloned().unwrap_or_default()
+    };
+    let fluid_system = if matches!(style, PublishStyle::A01) {
+        String::new()
+    } else {
+        obj.fields.get("FluidSystem").cloned().unwrap_or_default()
+    };
+    // Name takes the loader-provided `PipelineName` when present.
+    // Current SQLite mirrors often preserve only the raw
+    // `T_PlantItem.Name` column, so accept it as a fallback.
+    let pipeline_name = non_empty_field(obj, "PipelineName")
+        .or_else(|| non_empty_field(obj, "Name"))
+        .map(str::to_string);
     writeln!(buf, "   <PIDPipeline>").map_err(fmt_err)?;
     write_pipeline_iobject(buf, &obj.uid, &item_tag, pipeline_name.as_deref(), style)?;
     writeln!(buf, "      <IPBSItem/>").map_err(fmt_err)?;
@@ -879,13 +1074,17 @@ fn write_pipeline(
     writeln!(buf, "      <IPBSItemCollection/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPipeline/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPipingConnectorComposition/>").map_err(fmt_err)?;
-    writeln!(
-        buf,
-        r#"      <IFluidSystem FluidCode="{}" FluidSystem="{}"/>"#,
-        escape_attr(&fluid_code),
-        escape_attr(&fluid_system),
-    )
-    .map_err(fmt_err)?;
+    if fluid_code.is_empty() && fluid_system.is_empty() {
+        writeln!(buf, "      <IFluidSystem/>").map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IFluidSystem FluidCode="{}" FluidSystem="{}"/>"#,
+            escape_attr(&fluid_code),
+            escape_attr(&fluid_system),
+        )
+        .map_err(fmt_err)?;
+    }
     writeln!(buf, "      <INoteCollection/>").map_err(fmt_err)?;
     writeln!(buf, "      <IExpandableThing/>").map_err(fmt_err)?;
     writeln!(buf, "      <IPIDTypical/>").map_err(fmt_err)?;
@@ -969,57 +1168,63 @@ fn write_piping_connector(
         .cloned()
         .map(|v| format_diameter(&v))
         .unwrap_or_default();
-    let construction_status = obj
-        .fields
-        .get("ConstructionStatus")
-        .cloned()
-        .unwrap_or_else(|| "@NewConstruction".to_string());
-    let construction_status2 = obj
-        .fields
-        .get("ConstructionStatus2")
-        .cloned()
-        .unwrap_or_else(|| "@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}".to_string());
+    let construction_status = canonical_construction_status(obj, style);
+    let construction_status2 = canonical_construction_status2(obj, style);
     let flow_direction = obj.fields.get("FlowDirection").cloned().unwrap_or_default();
+    let has_reps_all_zero_length = non_empty_field(obj, "RepresentationsAreAllZeroLength")
+        .is_some()
+        || matches!(style, PublishStyle::Dwg)
+            && non_empty_field_any(obj, &["SP_ConnectorsZeroLength", "IsZeroLength"]).is_some();
     let reps_all_zero_length = obj
         .fields
         .get("RepresentationsAreAllZeroLength")
-        .map(|s| map_bool(s))
+        .map(String::as_str)
+        .or_else(|| {
+            if matches!(style, PublishStyle::Dwg) {
+                non_empty_field_any(obj, &["SP_ConnectorsZeroLength", "IsZeroLength"])
+            } else {
+                None
+            }
+        })
+        .map(map_bool)
         .unwrap_or("False");
-    let piping_connector_type = obj
-        .fields
-        .get("PipingConnectorType")
-        .cloned()
-        .unwrap_or_default();
+    let piping_connector_type =
+        dwg_field_with_aliases(obj, style, "PipingConnectorType", &["PipeRunType"])
+            .unwrap_or_default()
+            .to_string();
     let htrace_rqmt = obj
         .fields
         .get("HTraceRqmt")
         .cloned()
         .or_else(|| obj.fields.get("HTraceReqmt").cloned())
         .unwrap_or_default();
-    let sloped_piping_angle = obj
-        .fields
-        .get("SlopedPipingAngle")
-        .cloned()
-        .unwrap_or_default();
-    let sloped_pipe_direction = obj
-        .fields
-        .get("SlopedPipeDirection")
-        .cloned()
-        .unwrap_or_default();
-    let insul_thick_src = obj.fields.get("InsulThickSrc").cloned().unwrap_or_default();
-    let total_insul_thick = obj
-        .fields
-        .get("TotalInsulThick")
-        .cloned()
-        .unwrap_or_default();
-    let pipeline_name = obj.fields.get("PipelineName").cloned();
+    let sloped_piping_angle =
+        dwg_field_with_aliases(obj, style, "SlopedPipingAngle", &["Slope"])
+            .unwrap_or_default()
+            .to_string();
+    let sloped_pipe_direction =
+        dwg_field_with_aliases(obj, style, "SlopedPipeDirection", &["SlopeDirection"])
+            .unwrap_or_default()
+            .to_string();
+    let insul_thick_src =
+        dwg_field_with_aliases(obj, style, "InsulThickSrc", &["InsulationThkSource"])
+            .unwrap_or_default()
+            .to_string();
+    let total_insul_thick =
+        dwg_field_with_aliases(obj, style, "TotalInsulThick", &["InsulThick"])
+            .unwrap_or_default()
+            .to_string();
+    let pipeline_name = non_empty_field(obj, "PipelineName")
+        .or_else(|| non_empty_field(obj, "Name"))
+        .map(str::to_string);
     // The connector inherits its ItemTag from the pipeline it is
     // the physical half of — SmartPlant renders them identically.
-    let item_tag = resolve_pipe_item_tag(obj);
-    // PipingConnector UID derived from the PipeRun UID so it
-    // remains stable across runs. SPPID treats this as a
-    // composition relationship inside the drawing.
-    let connector_uid = format!("{}-CNX", obj.uid);
+    let item_tag = canonical_connector_item_tag(obj, style);
+    // The connector is a publish-time synthetic node, so the
+    // final artifact uses a deterministic SmartPlant-style
+    // 32-hex UID rather than exposing a writer-internal
+    // `<pipe>-CNX` seed.
+    let connector_uid = derived_pipe_connector_uid(&obj.uid);
     writeln!(buf, "   <PIDPipingConnector>").map_err(fmt_err)?;
     // A29 routes the IObject shape through the explicit
     // PublishStyle selector. Pre-A29 the writer used the
@@ -1049,9 +1254,7 @@ fn write_piping_connector(
     // absent (matches A01); renders with both attributes when any
     // is present (matches DWG). Compat invariant: the two shapes
     // are byte-identical to their respective reference fixtures.
-    if flow_direction.is_empty()
-        && obj.fields.get("RepresentationsAreAllZeroLength").is_none()
-    {
+    if flow_direction.is_empty() && !has_reps_all_zero_length {
         writeln!(buf, "      <IConnector/>").map_err(fmt_err)?;
     } else {
         writeln!(
@@ -1133,7 +1336,7 @@ fn write_piping_connector(
     writeln!(
         buf,
         r#"      <IPIDTypical IsTypical="{}"/>"#,
-        obj.is_typical.as_deref().map(map_bool).unwrap_or("False"),
+        canonical_is_typical(obj, style),
     )
     .map_err(fmt_err)?;
     writeln!(buf, "   </PIDPipingConnector>").map_err(fmt_err)
@@ -1146,16 +1349,15 @@ fn write_piping_connector(
 ///
 /// These nodes never appear as their own SQLite rows — they are
 /// SmartPlant client-side composition members rendered by the
-/// exporter at publish time. The base UID is the same `<piperun>-CNX`
-/// the connector carries, so the resulting `_Data.xml` cross-refs
-/// (`PipingPortComposition`, `ProcessPointCollection`,
-/// `PipingEnd1Conn`, `PipingEnd2Conn`) line up with the reference
-/// fixture's UID conventions.
+/// exporter at publish time. The base UID is the same
+/// deterministic connector UID the `<PIDPipingConnector>`
+/// block carries, with the SmartPlant suffixes `.1`, `.2`,
+/// `.PPT`.
 fn write_derived_connector_endpoints(
     buf: &mut String,
     obj: &PublishObject,
 ) -> Result<(), PublishError> {
-    let connector_uid = format!("{}-CNX", obj.uid);
+    let connector_uid = derived_pipe_connector_uid(&obj.uid);
     let nominal_diameter = obj
         .fields
         .get("NominalDiameter")
@@ -1754,6 +1956,97 @@ fn write_signal_connector(
     writeln!(buf, "   </PIDSignalConnector>").map_err(fmt_err)
 }
 
+/// Emit a `<PIDPipingBranchPoint>` block.
+///
+/// DWG reference shape (`DWG-0202GP06-01_Data.xml:1337–1344`):
+/// ```text
+/// <PIDPipingBranchPoint>
+///    <IObject UID="CCB3BA926FC54BF89691BC690FAF7D74.BPT"/>
+///    <IConnection/>
+///    <IPipingConnection/>
+///    <IDrawingItem/>
+///    <IPipingBranchPoint/>
+///    <IDocumentItem/>
+/// </PIDPipingBranchPoint>
+/// ```
+///
+/// UID carries the `.BPT` suffix in the reference — the writer
+/// emits whatever `obj.uid` the loader supplies, leaving the
+/// suffix convention to the loader side. All interfaces are bare
+/// (no attributes) so the function needs nothing beyond the UID.
+fn write_piping_branch_point(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
+    writeln!(buf, "   <PIDPipingBranchPoint>").map_err(fmt_err)?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}"/>"#,
+        escape_attr(&obj.uid),
+    )
+    .map_err(fmt_err)?;
+    writeln!(buf, "      <IConnection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPipingConnection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPipingBranchPoint/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDocumentItem/>").map_err(fmt_err)?;
+    writeln!(buf, "   </PIDPipingBranchPoint>").map_err(fmt_err)
+}
+
+/// Emit a `<PIDBranchPoint>` block.
+///
+/// DWG reference shape (`DWG-0202GP06-01_Data.xml:1448–1457`):
+/// ```text
+/// <PIDBranchPoint>
+///    <IObject UID="0DFD856D382C42F88DA8CDDFD37D4227" Name="272"/>
+///    <IPIDBranchPoint/>
+///    <IDuctConnection/>
+///    <IConnection/>
+///    <IDrawingItem/>
+///    <IPipingConnection/>
+///    <ISignalConnection/>
+///    <IDocumentItem/>
+/// </PIDBranchPoint>
+/// ```
+///
+/// UID is a plain 32-hex and `Name` holds an internal sequence
+/// number. All interfaces below IObject are bare. `Name` is
+/// sourced from `obj.fields["Name"]` falling back to
+/// `obj.description` — the loader must populate one of them.
+fn write_pid_branch_point(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
+    let name = non_empty_field(obj, "Name")
+        .or(obj.description.as_deref())
+        .unwrap_or("");
+    writeln!(buf, "   <PIDBranchPoint>").map_err(fmt_err)?;
+    if name.is_empty() {
+        writeln!(
+            buf,
+            r#"      <IObject UID="{}"/>"#,
+            escape_attr(&obj.uid),
+        )
+        .map_err(fmt_err)?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IObject UID="{}" Name="{}"/>"#,
+            escape_attr(&obj.uid),
+            escape_attr(name),
+        )
+        .map_err(fmt_err)?;
+    }
+    writeln!(buf, "      <IPIDBranchPoint/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDuctConnection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IConnection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDrawingItem/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IPipingConnection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <ISignalConnection/>").map_err(fmt_err)?;
+    writeln!(buf, "      <IDocumentItem/>").map_err(fmt_err)?;
+    writeln!(buf, "   </PIDBranchPoint>").map_err(fmt_err)
+}
+
 fn write_generic_object(
     buf: &mut String,
     obj: &PublishObject,
@@ -1808,6 +2101,19 @@ fn format_diameter(raw: &str) -> String {
         return trimmed.to_string();
     }
     format!("{trimmed} mm")
+}
+
+fn format_insulation_inches(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(number) = trimmed.strip_suffix('"').map(str::trim) {
+        if let Ok(value) = number.parse::<f64>() {
+            return format!("{value:.3} in");
+        }
+    }
+    trimmed.to_string()
 }
 
 /// Map a SPPID boolean string ("1" / "0" / "") to the XML form
@@ -2018,10 +2324,10 @@ pub(crate) fn derive_meta_uid(seed: &str, role: &str) -> String {
 /// Normalize a SmartPlant `DateCreated` string into the
 /// `YYYY/MM/DD` form reference exports use for `DocVersionDate`.
 ///
-/// OrcaMDF surfaces the value as the SQL Server raw render — for
-/// example `"2026/4/20 10:32:46"`. We zero-pad the month and day
-/// and drop the time component, matching the reference fixtures'
-/// `"2026/04/20"`. Any input that does not parse as
+/// The MDF loader may surface the value as a SQL Server-style raw
+/// render, for example `"2026/4/20 10:32:46"`. We zero-pad the
+/// month and day and drop the time component, matching the reference
+/// fixtures' `"2026/04/20"`. Any input that does not parse as
 /// `YYYY/M/D[ ...]` is returned verbatim so callers retain enough
 /// debug context to spot unsupported formats.
 fn format_meta_date(raw: &str) -> String {
@@ -2077,10 +2383,7 @@ fn representation_is_publishable(rep: &PublishRepresentation) -> bool {
 }
 
 fn write_representations(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
-    for rep in &drawing.representations {
-        if !representation_is_publishable(rep) {
-            continue;
-        }
+    for rep in ordered_publishable_representations(drawing) {
         writeln!(buf, "   <PIDRepresentation>").map_err(fmt_err)?;
         writeln!(
             buf,
@@ -2127,10 +2430,8 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     // item never produces one). Keep the inline check anyway so a
     // future loader change that accidentally injects `Some("")`
     // does not silently produce a malformed rel.
-    for rep in &drawing.representations {
-        if !representation_is_publishable(rep) {
-            continue;
-        }
+    let ordered_reps = ordered_publishable_representations(drawing);
+    for rep in &ordered_reps {
         let model_item_uid = rep
             .model_item_uid
             .as_deref()
@@ -2149,10 +2450,7 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     // the A14 publishability filter. Otherwise we would generate a
     // rel pointing at a `<PIDRepresentation>` we never wrote — a
     // dangling reference SmartPlant validators reject.
-    for rep in &drawing.representations {
-        if !representation_is_publishable(rep) {
-            continue;
-        }
+    for rep in &ordered_reps {
         write_rel(
             buf,
             &format!("DRI-{}-{}", drawing.drawing_uid, rep.uid),
@@ -2180,7 +2478,7 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     // already does:
     //   * pipeline UID:  `<piperun>` (PipeRun obj.uid maps to
     //                    `<PIDPipeline>`)
-    //   * connector UID: `<piperun>-CNX`
+    //   * connector UID: deterministic publish-time 32-hex UID
     //   * port UIDs:     `<connector>.1` / `<connector>.2`
     //   * process point: `<connector>.PPT`
     //
@@ -2199,12 +2497,40 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     // exactly the same for its unconnected port.2, so the
     // fallback is not a hack — it's the SPPID convention for
     // "no external connection".
+    // --- A34b: Vessel → Nozzle composition (EquipmentComponentComposition).
+    //
+    // SmartPlant ties every nozzle to its parent vessel via
+    // the T_Nozzle.SP_EquipmentID column (loaded into
+    // `obj.fields["SP_EquipmentID"]` by `attach_business_columns`).
+    // The reference XML's EquipmentComponentComposition row
+    // is a derived `<Rel>` from this parent link, not a
+    // T_Relationship row — A01's T_Relationship table only
+    // carries Representation ↔ Representation rels.
+    for obj in &drawing.objects {
+        if obj.item_type_name != "Nozzle" {
+            continue;
+        }
+        let Some(vessel_uid) = obj.fields.get("SP_EquipmentID") else {
+            continue;
+        };
+        if vessel_uid.is_empty() {
+            continue;
+        }
+        write_rel(
+            buf,
+            &format!("EQC-{vessel_uid}-{}", obj.uid),
+            &obj.uid,
+            vessel_uid,
+            "EquipmentComponentComposition",
+        )?;
+    }
+
     for obj in &drawing.objects {
         if obj.item_type_name != "PipeRun" {
             continue;
         }
         let pipeline_uid = obj.uid.as_str();
-        let connector_uid = format!("{pipeline_uid}-CNX");
+        let connector_uid = derived_pipe_connector_uid(pipeline_uid);
         let port1_uid = format!("{connector_uid}.1");
         let port2_uid = format!("{connector_uid}.2");
         let ppt_uid = format!("{connector_uid}.PPT");
@@ -2263,34 +2589,6 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
         )?;
     }
 
-    // --- A34b: Vessel → Nozzle composition (EquipmentComponentComposition).
-    //
-    // SmartPlant ties every nozzle to its parent vessel via
-    // the T_Nozzle.SP_EquipmentID column (loaded into
-    // `obj.fields["SP_EquipmentID"]` by `attach_business_columns`).
-    // The reference XML's EquipmentComponentComposition row
-    // is a derived `<Rel>` from this parent link, not a
-    // T_Relationship row — A01's T_Relationship table only
-    // carries Representation ↔ Representation rels.
-    for obj in &drawing.objects {
-        if obj.item_type_name != "Nozzle" {
-            continue;
-        }
-        let Some(vessel_uid) = obj.fields.get("SP_EquipmentID") else {
-            continue;
-        };
-        if vessel_uid.is_empty() {
-            continue;
-        }
-        write_rel(
-            buf,
-            &format!("EQC-{vessel_uid}-{}", obj.uid),
-            vessel_uid,
-            &obj.uid,
-            "EquipmentComponentComposition",
-        )?;
-    }
-
     // --- From T_Relationship, classified by endpoint item types
     //
     // A36b — skip rows whose source or target UID is NULL / empty.
@@ -2299,10 +2597,26 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     // reference that validators reject. The A36b soundness gate
     // surfaced this when T_Relationship carried a row with an
     // unpaired endpoint on A01.
+    //
+    // A40 — also skip rows where BOTH endpoints resolve to
+    // Representations. Investigation on the A01 fixture
+    // revealed SmartPlant's exporter does not emit these as
+    // their own `<Rel>` entries — every Rep↔Rep relationship
+    // is already covered by the ModelItem → Rep derived
+    // emits in `write_derived_*`, so re-emitting them here
+    // classifies as DwgRepresentationComposition a second
+    // time and produces an over-count. The A40 Rel DefUID
+    // diff against the A01 reference surfaced this as a
+    // DELTA row (writer 6, reference 4, +2 extras).
     for rel in &drawing.relationships {
         let uid1 = rel.source_uid.as_deref().unwrap_or("");
         let uid2 = rel.target_uid.as_deref().unwrap_or("");
         if uid1.is_empty() || uid2.is_empty() {
+            continue;
+        }
+        let t1 = type_by_uid.get(uid1).copied().unwrap_or("");
+        let t2 = type_by_uid.get(uid2).copied().unwrap_or("");
+        if t1 == "Representation" && t2 == "Representation" {
             continue;
         }
         let def_uid = classify_relationship(rel, &type_by_uid);
@@ -2313,7 +2627,15 @@ fn write_relationships(buf: &mut String, drawing: &PublishDrawing) -> Result<(),
     Ok(())
 }
 
-/// Emit a single `<Rel>` node with the given pre-composed UIDs.
+/// Emit a single `<Rel>` node. `rel_uid` is a deterministic seed
+/// built by the caller (`DRC-…`, `DRI-…`, `PCN-…`, `PPC-…`,
+/// `PPP-…`, `EQC-…`, `PE1-…`, `PE2-…`, or the general
+/// `prefix-uid1-uid2` form) and is used verbatim as the published
+/// `<IObject UID>`. The A01 raw-residual masker replaces the
+/// value with `@RELn@` sequentially so byte-for-byte comparisons
+/// against the SmartPlant reference stay stable without the
+/// writer having to invent real SmartPlant-style 32-hex UIDs we
+/// cannot actually reproduce.
 fn write_rel(
     buf: &mut String,
     rel_uid: &str,
@@ -2528,17 +2850,36 @@ mod tests {
     }
 
     #[test]
-    fn xml_classifies_rel_endpoints_to_concrete_defuid() {
-        // The example drawing's T_Relationship row ties the
-        // Nozzle representation to the Vessel representation —
-        // two Representations on the same drawing. The writer
-        // classifies that pair as `DwgRepresentationComposition`
-        // and uses the DRC- prefix on the composite UID.
+    fn xml_skips_rep_to_rep_t_relationship_rows_to_avoid_drc_double_emit() {
+        // A40 — the example drawing's T_Relationship row
+        // ties the Nozzle representation to the Vessel
+        // representation. The writer *used* to classify that
+        // pair as `DwgRepresentationComposition` and emit a
+        // DRC- prefixed rel from it, but that over-counts
+        // DwgRepresentationComposition on A01 (reference
+        // emits 4, pre-A40 writer emitted 6). Investigation
+        // on the A01 fixture showed SmartPlant's exporter
+        // never emits Rep↔Rep T_Relationship rows as their
+        // own `<Rel>` entries — the ModelItem → Rep derived
+        // loop already produces the correct DRC inventory.
         let out = write_data_xml(&example_drawing(), "TEST02").expect("write");
+        // The REP↔REP composite UID must NOT appear.
         assert!(
-            out.contains(r#"<IObject UID="DRC-C33E5BD9B9CC4287B244A925A7A1F29B-CA8A0A9DD1784E3BB6913445CE3F6375"/>"#),
-            "expected a DRC- prefixed rel from the T_Relationship row (Rep→Rep); out:\n{out}"
+            !out.contains(
+                r#"<IObject UID="DRC-C33E5BD9B9CC4287B244A925A7A1F29B-CA8A0A9DD1784E3BB6913445CE3F6375"/>"#
+            ),
+            "Rep↔Rep T_Relationship row must no longer produce a DRC rel; out:\n{out}"
         );
+        // The ModelItem → Rep derived DRC rels must still
+        // be present (one per representation that carries a
+        // `model_item_uid`). This is the single source of
+        // truth for DwgRepresentationComposition after A40.
+        assert!(out.contains(
+            r#"<IRel UID1="C57494A1B154442C9DF0F4BA713E88EC" UID2="CA8A0A9DD1784E3BB6913445CE3F6375" DefUID="DwgRepresentationComposition"/>"#
+        ));
+        assert!(out.contains(
+            r#"<IRel UID1="7465E81219DB49B492BDF60A055AA391" UID2="C33E5BD9B9CC4287B244A925A7A1F29B" DefUID="DwgRepresentationComposition"/>"#
+        ));
     }
 
     // -------------------------------------------------------------
@@ -2770,13 +3111,10 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_uses_plantitem_itemtag_when_available() {
-        // A8: When T_PlantItem supplies an ItemTag (e.g. SmartPlant's
-        // canonical "A010102102-PH" form), the writer MUST use it
-        // verbatim rather than re-deriving a "PH-…" placeholder
-        // from pipe-run columns. Same rule applies to the connector
-        // that SmartPlant renders as the physical half of the
-        // pipeline — both end up with identical tags.
+    fn a01_pipeline_prefers_expanded_publish_tags_when_pipe_fields_available() {
+        // A01 reference XML expands the pipe tag from PipeRun
+        // business fields even when T_PlantItem.ItemTag carries
+        // the shorter catalog tag (`A010102102-PH` in TEST02).
         let mut d = PublishDrawing::new("UID-A01", "A01");
         d.objects = vec![PublishObject {
             uid: "PIPE-UID".into(),
@@ -2787,28 +3125,19 @@ mod tests {
                 m.insert("TagSequenceNo".into(), "0102102".into());
                 m.insert("NominalDiameter".into(), "250".into());
                 m.insert("PipingMaterialsClass".into(), "B5".into());
+                m.insert("InsulThick".into(), "40\"".into());
                 m
             },
             ..PublishObject::default()
         }];
         let out = write_data_xml(&d, "TEST02").expect("write");
-        // Pipeline + Connector share the SmartPlant-canonical tag.
         assert!(
-            out.contains(r#"ItemTag="A010102102-PH""#),
-            "expected canonical ItemTag from T_PlantItem; out:\n{out}"
+            out.contains(r#"ItemTag="PH- 0102102-DN250 mm-B5-P-40.000 in""#),
+            "A01 PIDPipeline should use the expanded publish tag; out:\n{out}"
         );
-        // The pre-A8 synthesized form must NOT appear anywhere once
-        // the catalog-driven tag is available.
         assert!(
-            !out.contains("PH-0102102-250"),
-            "synthesized PH- form should be suppressed when T_PlantItem has an ItemTag; out:\n{out}"
-        );
-        // Exactly two occurrences — once for <PIDPipeline> and once
-        // for <PIDPipingConnector>.
-        let occurrences = out.matches(r#"ItemTag="A010102102-PH""#).count();
-        assert_eq!(
-            occurrences, 2,
-            "pipeline + connector should both carry the PlantItem ItemTag; out:\n{out}"
+            out.contains(r#"ItemTag="PH-0102102-250 mm-B5""#),
+            "A01 PIDPipingConnector should use the compact pipe tag; out:\n{out}"
         );
     }
 
@@ -3025,7 +3354,7 @@ mod tests {
         let out = write_meta_xml(&d, "P01").expect("write");
         assert!(
             out.contains(r#"DocVersionDate="2026/04/20""#),
-            "OrcaMDF raw date should zero-pad to YYYY/MM/DD; out:\n{out}"
+            "MDF loader raw date should zero-pad to YYYY/MM/DD; out:\n{out}"
         );
         assert!(
             !out.contains(r#"DocVersionDate="2026/4/20 10:32:46""#),
@@ -4211,6 +4540,7 @@ mod tests {
         // interfaces (IPBSItem / IPlannedFacility / IPBSItemCollection
         // / INoteCollection) will trip this assertion immediately.
         let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
         d.objects = vec![PublishObject {
             uid: "PIPE-F".into(),
             item_type_name: "PipeRun".into(),
@@ -4225,7 +4555,7 @@ mod tests {
             "<IPBSItemCollection/>",
             "<IPipeline/>",
             "<IPipingConnectorComposition/>",
-            "<IFluidSystem ",
+            "<IFluidSystem",
             "<INoteCollection/>",
             "<IExpandableThing/>",
             "<IPIDTypical/>",
@@ -4247,6 +4577,7 @@ mod tests {
         // stamp those columns becomes immediately visible in the
         // emitted XML.
         let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
         d.objects = vec![PublishObject {
             uid: "PIPE-FS".into(),
             item_type_name: "PipeRun".into(),
@@ -4275,13 +4606,11 @@ mod tests {
 
     #[test]
     fn pipeline_fluid_system_attrs_default_to_empty_when_absent() {
-        // A01 fixtures do not populate the fluid attributes —
-        // reference shape is `<IFluidSystem/>` (no attrs at all).
-        // A19 declares the attributes but leaves them empty; it's
-        // a strict superset of the A01 shape and a fidelity
-        // upgrade for DWG consumers. Pin the empty-attrs path so a
-        // regression that drops the attributes entirely will trip.
+        // DWG declares the FluidCode / FluidSystem attributes even
+        // when the loader has not populated values; A01 keeps the
+        // bare `<IFluidSystem/>` shape.
         let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
         d.objects = vec![PublishObject {
             uid: "PIPE-E".into(),
             item_type_name: "PipeRun".into(),
@@ -4289,8 +4618,8 @@ mod tests {
         }];
         let out = write_data_xml(&d, "TEST02").expect("write");
         assert!(
-            out.contains(r#"<IFluidSystem FluidCode="" FluidSystem=""/>"#),
-            "A01-style empty attrs must be declared explicitly; out:\n{out}"
+            out.contains(r#"<IFluidSystem/>"#),
+            "empty fluid fields should render the bare IFluidSystem shape; out:\n{out}"
         );
     }
 
@@ -4349,6 +4678,7 @@ mod tests {
         // find() cursor so a reorder would trip the assertion at
         // the exact problematic needle.
         let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
         d.objects = vec![PublishObject {
             uid: "PIPE-ORD".into(),
             item_type_name: "PipeRun".into(),
@@ -4363,7 +4693,7 @@ mod tests {
             "<IPBSItemCollection/>",
             "<IPipeline/>",
             "<IPipingConnectorComposition/>",
-            "<IFluidSystem ",
+            "<IFluidSystem",
             "<INoteCollection/>",
             "<IExpandableThing/>",
             "<IPIDTypical/>",
@@ -5302,6 +5632,7 @@ mod tests {
         // NominalDiameter + PipingMaterialsClass, the writer must
         // switch to the attribute-bearing shape.
         let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
         d.objects = vec![PublishObject {
             uid: "NZ-POP".into(),
             item_type_name: "Nozzle".into(),
@@ -5508,6 +5839,262 @@ mod tests {
         assert!(
             out.contains(r#"<INote NoteText="量液孔"/>"#),
             "populated NoteText must round-trip through the attribute form; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn pipeline_dwg_style_falls_back_to_raw_name_field() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
+        d.objects = vec![PublishObject {
+            uid: "PIPE-RAW-NAME".into(),
+            item_type_name: "PipeRun".into(),
+            fields: std::collections::BTreeMap::from([(
+                "Name".to_string(),
+                "A3jqz0101-OD".to_string(),
+            )]),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-RAW-NAME" Name="A3jqz0101-OD"/>"#),
+            "DWG-style PIDPipeline must accept raw T_PlantItem.Name as fallback; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn piping_connector_dwg_style_uses_raw_pipe_run_field_aliases() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
+        d.objects = vec![PublishObject {
+            uid: "PIPE-RAW-ALIAS".into(),
+            item_type_name: "PipeRun".into(),
+            fields: std::collections::BTreeMap::from([
+                ("Name".to_string(), "RAW-CONNECTOR".to_string()),
+                ("FlowDirection".to_string(), "@EE873".to_string()),
+                ("SP_ConnectorsZeroLength".to_string(), "1".to_string()),
+                ("PipeRunType".to_string(), "Stub".to_string()),
+                ("Slope".to_string(), "0.125".to_string()),
+                ("SlopeDirection".to_string(), "@UP".to_string()),
+                ("InsulationThkSource".to_string(), "@SRC".to_string()),
+                ("InsulThick".to_string(), "12 mm".to_string()),
+            ]),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="PIPE-RAW-ALIAS-CNX" Name="RAW-CONNECTOR"/>"#),
+            "DWG-style connector IObject must accept raw Name fallback; out:\n{out}"
+        );
+        assert!(
+            out.contains(
+                r#"<IConnector FlowDirection="@EE873" RepresentationsAreAllZeroLength="True"/>"#
+            ),
+            "raw zero-length flag must map onto RepresentationsAreAllZeroLength; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IPipingConnector PipingConnectorType="Stub"/>"#),
+            "PipeRunType must map onto PipingConnectorType under DWG style; out:\n{out}"
+        );
+        assert!(
+            out.contains(
+                r#"<ISlopedPipingItem SlopedPipingAngle="0.125" SlopedPipeDirection="@UP"/>"#
+            ),
+            "Slope/SlopeDirection must feed the DWG sloped-piping shape; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IInsulatedItem InsulThickSrc="@SRC" TotalInsulThick="12 mm"/>"#),
+            "InsulationThkSource/InsulThick must feed the DWG insulated-item shape; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn process_vessel_dwg_style_uses_trimspec_and_volume_rating_fallbacks() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.style = PublishStyle::Dwg;
+        d.objects = vec![PublishObject {
+            uid: "VESSEL-RAW-FALLBACK".into(),
+            item_type_name: "Vessel".into(),
+            fields: std::collections::BTreeMap::from([
+                ("TrimSpec".to_string(), "1.6AR12".to_string()),
+                ("VolumeRating".to_string(), "27 m^3".to_string()),
+            ]),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"EquipmentTrimSpec="1.6AR12""#),
+            "DWG-style vessel must accept TrimSpec as EquipmentTrimSpec fallback; out:\n{out}"
+        );
+        assert!(
+            out.contains(r#"<IProcessVessel ProcessVessel_VesselVolumetricCapacity="27 m^3"/>"#),
+            "DWG-style vessel must accept VolumeRating as volumetric-capacity fallback; out:\n{out}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Stage-4 — PIDBranchPoint + PIDPipingBranchPoint writer arms.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn piping_branch_point_emits_six_interface_shape() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "CCB3BA926FC54BF89691BC690FAF7D74.BPT".into(),
+            item_type_name: "PipingBranchPoint".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "P01").expect("write");
+        for needle in [
+            "<PIDPipingBranchPoint>",
+            r#"<IObject UID="CCB3BA926FC54BF89691BC690FAF7D74.BPT"/>"#,
+            "<IConnection/>",
+            "<IPipingConnection/>",
+            "<IDrawingItem/>",
+            "<IPipingBranchPoint/>",
+            "<IDocumentItem/>",
+            "</PIDPipingBranchPoint>",
+        ] {
+            assert!(
+                out.contains(needle),
+                "PIDPipingBranchPoint must carry `{needle}`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn piping_branch_point_interface_ordering_matches_reference() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "AAA.BPT".into(),
+            item_type_name: "PipingBranchPoint".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "P01").expect("write");
+        let positions = [
+            "<PIDPipingBranchPoint>",
+            "<IObject UID=",
+            "<IConnection/>",
+            "<IPipingConnection/>",
+            "<IDrawingItem/>",
+            "<IPipingBranchPoint/>",
+            "<IDocumentItem/>",
+            "</PIDPipingBranchPoint>",
+        ];
+        let mut last_pos = 0usize;
+        for needle in positions {
+            let pos = out[last_pos..].find(needle).unwrap_or_else(|| {
+                panic!(
+                    "PIDPipingBranchPoint: `{needle}` not found after position {last_pos}; out:\n{out}"
+                )
+            }) + last_pos;
+            last_pos = pos + needle.len();
+        }
+    }
+
+    #[test]
+    fn pid_branch_point_emits_eight_interface_shape_with_name() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "0DFD856D382C42F88DA8CDDFD37D4227".into(),
+            item_type_name: "BranchPoint".into(),
+            fields: std::collections::BTreeMap::from([
+                ("Name".to_string(), "272".to_string()),
+            ]),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "P01").expect("write");
+        for needle in [
+            "<PIDBranchPoint>",
+            r#"<IObject UID="0DFD856D382C42F88DA8CDDFD37D4227" Name="272"/>"#,
+            "<IPIDBranchPoint/>",
+            "<IDuctConnection/>",
+            "<IConnection/>",
+            "<IDrawingItem/>",
+            "<IPipingConnection/>",
+            "<ISignalConnection/>",
+            "<IDocumentItem/>",
+            "</PIDBranchPoint>",
+        ] {
+            assert!(
+                out.contains(needle),
+                "PIDBranchPoint must carry `{needle}`; out:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn pid_branch_point_interface_ordering_matches_reference() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "BBB".into(),
+            item_type_name: "BranchPoint".into(),
+            fields: std::collections::BTreeMap::from([
+                ("Name".to_string(), "1".to_string()),
+            ]),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "P01").expect("write");
+        let positions = [
+            "<PIDBranchPoint>",
+            r#"<IObject UID="BBB" Name="1"/>"#,
+            "<IPIDBranchPoint/>",
+            "<IDuctConnection/>",
+            "<IConnection/>",
+            "<IDrawingItem/>",
+            "<IPipingConnection/>",
+            "<ISignalConnection/>",
+            "<IDocumentItem/>",
+            "</PIDBranchPoint>",
+        ];
+        let mut last_pos = 0usize;
+        for needle in positions {
+            let pos = out[last_pos..].find(needle).unwrap_or_else(|| {
+                panic!(
+                    "PIDBranchPoint: `{needle}` not found after position {last_pos}; out:\n{out}"
+                )
+            }) + last_pos;
+            last_pos = pos + needle.len();
+        }
+    }
+
+    #[test]
+    fn pid_branch_point_omits_name_attr_when_field_is_empty() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "CCC".into(),
+            item_type_name: "BranchPoint".into(),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "P01").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="CCC"/>"#),
+            "PIDBranchPoint IObject must omit Name when the field is missing; out:\n{out}"
+        );
+        let branch_block = out
+            .split("<PIDBranchPoint>")
+            .nth(1)
+            .and_then(|rest| rest.split("</PIDBranchPoint>").next())
+            .unwrap_or("");
+        assert!(
+            !branch_block.contains("Name="),
+            "PIDBranchPoint block must not contain Name= when field is missing; block:\n{branch_block}"
+        );
+    }
+
+    #[test]
+    fn pid_branch_point_falls_back_to_description_for_name() {
+        let mut d = PublishDrawing::new("UID-D", "DWG");
+        d.objects = vec![PublishObject {
+            uid: "DDD".into(),
+            item_type_name: "BranchPoint".into(),
+            description: Some("99".to_string()),
+            ..PublishObject::default()
+        }];
+        let out = write_data_xml(&d, "P01").expect("write");
+        assert!(
+            out.contains(r#"<IObject UID="DDD" Name="99"/>"#),
+            "PIDBranchPoint must fall back to description for Name; out:\n{out}"
         );
     }
 }

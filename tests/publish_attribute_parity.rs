@@ -46,14 +46,14 @@ use common::{
     generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml, TAGS_UNDER_PARITY,
 };
 
-/// A27 · Writer ⊇ A01 reference at attribute granularity.
+/// A27 · Writer == A01 reference at attribute granularity.
 ///
 /// For every `(tag, interface)` pair present in the
 /// SmartPlant A01 reference for an in-scope PID tag, the
-/// writer must declare at least the same set of attribute
-/// names on that interface. Extra attributes on the writer
-/// side (already-declared `FluidCode=""` style placeholders)
-/// are tolerated and only logged.
+/// writer must declare the same set of attribute names on
+/// that interface. A01 is now the only backup-backed
+/// correctness baseline, so writer-side extras are no longer
+/// informational drift — they are output regressions.
 ///
 /// Failure mode produces a per-tag, per-interface report of
 /// missing attribute names so the gap pinpoints exactly which
@@ -73,7 +73,7 @@ fn attribute_parity_on_a01_writer_matches_reference_superset_per_interface() {
 
     // (tag, interface, missing_attrs)
     let mut missing: Vec<(String, String, Vec<String>)> = Vec::new();
-    // (tag, interface, extra_attrs) — informational only
+    // (tag, interface, extra_attrs)
     let mut extras: Vec<(String, String, Vec<String>)> = Vec::new();
     let mut checked_pairs = 0usize;
 
@@ -109,7 +109,7 @@ fn attribute_parity_on_a01_writer_matches_reference_superset_per_interface() {
     eprintln!("--- A27 attribute-parity (writer vs A01 reference) ---");
     eprintln!("Checked (tag, interface) pairs: {checked_pairs}");
     if !extras.is_empty() {
-        eprintln!("Extra attrs on writer (informational, tolerated):");
+        eprintln!("Extra attrs on writer (HARD CONTRACT):");
         for (tag, iface, ext) in &extras {
             eprintln!("  [{tag} / {iface}] extra: {ext:?}");
         }
@@ -129,6 +129,15 @@ fn attribute_parity_on_a01_writer_matches_reference_superset_per_interface() {
          attr_name[s])` triplet that needs a writer-side \
          emit:\n{:#?}",
         missing,
+    );
+    assert!(
+        extras.is_empty(),
+        "A27 attribute-parity regression: writer is emitting \
+         attributes the SmartPlant A01 reference does not \
+         declare. Each entry below is one `(PID tag, \
+         interface, attr_name[s])` triplet that needs an \
+         A01-side writer suppression or style-normalization:\n{:#?}",
+        extras,
     );
 }
 

@@ -1,11 +1,21 @@
-//! Load a Publish-Data DTO out of the SQLite mirror produced by
-//! `tools/orca-mdf-probe`.
+//! Load a Publish-Data DTO out of a SQLite connection shaped like the
+//! SmartPlant SQL tables.
 //!
-//! Stage-1 A2: in addition to the single `T_Drawing` row, pull the
-//! drawing's representations, their owning model items, and the
-//! relationships that span them. Business-subtable fields
-//! (Equipment / Vessel / Nozzle / PipeRun / ...) will layer on in
-//! a later commit.
+//! The current MDF path uses `mdf_load` to stage publish-relevant rows
+//! into an in-memory SQLite connection, then reuses this query layer.
+//!
+//! Scope: read the drawing row, its representations and the model
+//! items they anchor, plus every relationship that ties them. The
+//! loader also descends into the per-ItemType business subtables
+//! (Equipment → Vessel / Nozzle, PlantItem → PipeRun, Connector,
+//! PipingPoint, …) so the writer receives a fully-populated DTO.
+//! The subtable chain is defined by `subtables_for_item_type`.
+//!
+//! DWG-flavor canonical-field enrichment (plant-specific columns
+//! surfaced only in `T_ProcessEquipment` / extended connector and
+//! nozzle tables) is the next direction, but needs the DWG
+//! `Export_v2.sqlite` mirror to land before it can be validated;
+//! see the module-level note in [`super`] for the gate.
 //!
 //! # Join strategy
 //!
@@ -24,22 +34,21 @@ use super::model::{
     PublishRepresentation,
 };
 
-/// Open a SQLite file produced by `OrcaMdfProbe --to-sqlite` in
-/// read-only mode and return a ready-to-query connection. Exposed
-/// publicly so integration tests and the eventual CLI can reuse
-/// the same open logic.
+/// Open a legacy SQLite table dump in read-only mode and return a
+/// ready-to-query connection. Exposed publicly so integration tests
+/// and compatibility tools can reuse the same open logic.
 pub fn open_readonly(path: &Path) -> Result<Connection, PublishError> {
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(PublishError::from)
 }
 
 /// Load the drawing-level header row for `drawing_uid` from the
-/// SQLite mirror. Returns [`PublishError::DrawingNotFound`] when no
+/// table set. Returns [`PublishError::DrawingNotFound`] when no
 /// `T_Drawing` row matches.
 pub fn load_drawing(conn: &Connection, drawing_uid: &str) -> Result<PublishDrawing, PublishError> {
-    // OrcaMDF ships every column as TEXT in the SQLite mirror, so
-    // we deserialize everything as Option<String> and let higher
-    // layers parse numerics / dates if they need to.
+    // The MDF adapter stages every column as TEXT, so we deserialize
+    // everything as Option<String> and let higher layers parse
+    // numerics / dates if they need to.
     let mut stmt = conn.prepare(
         "SELECT Name, DocumentCategory, DocumentType, Template, Path, DateCreated \
          FROM T_Drawing WHERE SP_ID = ?1",
@@ -66,8 +75,8 @@ pub fn load_drawing(conn: &Connection, drawing_uid: &str) -> Result<PublishDrawi
     })
 }
 
-/// Parse a SQLite TEXT column that SmartPlant / OrcaMDF may have
-/// stored as either a numeric string ("42") or a full decimal
+/// Parse a SQLite TEXT column that SmartPlant may have stored as
+/// either a numeric string ("42") or a full decimal
 /// representation ("42.0"). Empty / NULL / non-numeric input
 /// surfaces as `None` rather than an error — stage-1 treats these
 /// values as decorative and does not want to fail the whole load
@@ -301,11 +310,10 @@ fn prepare_optional<'conn>(
 /// `EquipmentType = "0"` → `"Horizontal Drum"`).
 ///
 /// Both underlying tables — `codelists` and `attributes` — are
-/// treated as optional. When a fixture's SQLite mirror has not
-/// populated them (because OrcaMDF skipped the catalog, or the
-/// export scope is drawing-only) the loader returns a default
-/// empty index; callers fall through to whatever lookup they
-/// already had.
+/// treated as optional. When a fixture has not populated them
+/// (for example because the export scope is drawing-only), the
+/// loader returns a default empty index; callers fall through to
+/// whatever lookup they already had.
 ///
 /// Rows with NULL / empty `codelist_number` / `codelist_index` /
 /// `codelist_text` are filtered out to keep the index tight.
@@ -316,10 +324,9 @@ pub fn load_codelist_index(conn: &Connection) -> Result<CodelistIndex, PublishEr
     let mut idx = CodelistIndex::default();
 
     // Codelist entry rows: (codelist_number, codelist_index) →
-    // codelist_text. The table in the OrcaMDF SQLite mirror is
-    // lowercase-`codelists` because the C# probe preserves
-    // SmartPlant's catalog-layer naming (user-data tables are
-    // uppercase `T_*`; catalog tables keep their original case).
+    // codelist_text. The table is lowercase-`codelists` because
+    // SmartPlant uses catalog-layer naming here; user-data tables
+    // are uppercase `T_*`.
     let codelists_sql = "SELECT codelist_number, codelist_index, codelist_text \
                          FROM codelists";
     if let Some(mut stmt) = prepare_optional(conn, codelists_sql)? {
@@ -416,7 +423,7 @@ fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
     match item_type_name {
         // A vessel is an equipment subtype: general equipment
         // fields first, then vessel-specific fields.
-        "Vessel" => &["T_PlantItem", "T_Equipment", "T_Vessel"],
+        "Vessel" => &["T_PlantItem", "T_Equipment", "T_ProcessEquipment", "T_Vessel"],
         "Nozzle" => &["T_PlantItem", "T_EquipComponent", "T_Nozzle"],
         "PipeRun" => &["T_PlantItem", "T_Connector", "T_PipeRun"],
         "PipingPoint" => &["T_PipingPoint"],
@@ -432,6 +439,13 @@ fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
         // geometry (start/end items, zero-length flag).
         // Drives the `write_signal_connector` XML writer arm.
         "SignalRun" => &["T_PlantItem", "T_Connector", "T_SignalRun"],
+        // Stage-4: branch point types appear in DWG-flavor
+        // plants. The exact subtable chain will be confirmed
+        // when the DWG Export.mdf fixture lands; for now
+        // we attach T_PlantItem (which carries Name) so the
+        // writer has the Name field available for IObject.
+        "BranchPoint" => &["T_PlantItem"],
+        "PipingBranchPoint" => &["T_PlantItem"],
         _ => &[],
     }
 }
@@ -704,7 +718,7 @@ mod tests {
 
     #[test]
     fn load_drawing_handles_null_columns() {
-        // Real OrcaMDF output routinely has many NULL columns
+        // Real SmartPlant exports routinely have many NULL columns
         // (SmartPlant defaults that the user never filled in).
         // The loader must surface those as None rather than
         // panicking or returning an empty string.
@@ -1244,5 +1258,14 @@ mod tests {
                 assert!(!obj.fields.contains_key("EndConnectedItem2"));
             }
         }
+    }
+
+    #[test]
+    fn vessel_subtable_chain_includes_optional_process_equipment_layer() {
+        assert_eq!(
+            subtables_for_item_type("Vessel"),
+            &["T_PlantItem", "T_Equipment", "T_ProcessEquipment", "T_Vessel"],
+            "Vessel loader chain must include the optional T_ProcessEquipment layer for DWG EqType fields",
+        );
     }
 }
