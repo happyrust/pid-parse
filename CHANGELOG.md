@@ -72,6 +72,30 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### Vendored `oxidized-mdf` 对齐父 crate lint gate
+
+- `vendor/oxidized-mdf/src/lib.rs` 顶部加入与父 crate 相同的
+  10 lint `#![warn(...)]`（`uninlined_format_args` / `doc_markdown` /
+  `redundant_closure_for_method_calls` / `manual_let_else` /
+  `map_unwrap_or` / `unreadable_literal` / `bool_to_int_with_if` /
+  `implicit_clone` / `explicit_iter_loop` / `unnecessary_map_or`），
+  标注来源为"镜像父 crate 的 pedantic lint 子集"。
+- 同步清理 vendored 源码残留：
+  - `error.rs` 两处 `write!` inline format（`{err}` / `{msg}`）。
+  - `sys.rs` 常量 / 二十余处 scalar-type mapping 长字面量加下划线
+    （`327_680`、`281_474_978_349_056` 等）。
+  - `pages.rs` 四处 `match Some(_) => …, None => {…}` → `let-else`
+    （`variable_columns`、`read_bytes_index`、slot `checked_mul` /
+    `checked_sub`），保留 `log::error!` 诊断并把 `{slot_count}` /
+    `{page_size}` 也改为 inline capture。
+- 结果：`cd vendor/oxidized-mdf && cargo clippy --locked --all-targets
+  -- -D warnings` 独立绿；`cargo clippy --locked --workspace --all-targets
+  -- -D warnings` workspace 级全绿；vendored 31 单测 + 4 doc-test 仍全通过。
+- SPDX 头已声明 `GPL-3.0-or-later`，本次修改仅为 lint 噪声清理与
+  `let-else` 语法糖重写，无语义变化，符合 GPL 兼容要求；同时在
+  `lib.rs` 顶部注释里追加一行 "Added #![warn(...)] lint set to mirror
+  parent crate's quality gate" 作为修改备注。
+
 ## [0.10.0] — 2026-04-24
 
 ### Publish XML source — Rust MDF loader (`oxidized-mdf`)
