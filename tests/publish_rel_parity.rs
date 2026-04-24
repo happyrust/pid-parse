@@ -39,7 +39,7 @@ use std::collections::BTreeSet;
 use pid_parse::publish::{parse_rel_defuid_counts, parse_rel_details};
 
 mod common;
-use common::{generate_a01_xml, load_reference_a01_xml, load_reference_dwg_xml};
+use common::{generate_a01_xml, generate_dwg_data_xml, load_reference_a01_xml, load_reference_dwg_xml};
 
 /// Known writer-side Rel DefUID gaps the A33 gate tolerates.
 ///
@@ -321,6 +321,70 @@ fn a33b_a01_and_dwg_reference_rel_defuids_agree_set_wise() {
     );
 }
 
+/// Mirror-backed DWG sibling of A33.
+///
+/// Once the DWG SQLite mirror is bundled, the writer's
+/// generated DWG `_Data.xml` must emit at least the same Rel
+/// DefUID inventory as the SmartPlant DWG reference. Extras are
+/// tolerated and only logged, matching the A33 contract on A01.
+#[test]
+fn rel_defuid_parity_on_dwg_writer_matches_reference_supersets_when_mirror_available() {
+    let Some(generated_result) = generate_dwg_data_xml() else {
+        return;
+    };
+    let Some(reference_xml) = load_reference_dwg_xml() else {
+        return;
+    };
+    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+
+    let generated_counts = parse_rel_defuid_counts(&generated_xml);
+    let reference_counts = parse_rel_defuid_counts(&reference_xml);
+
+    let mut under_emit: Vec<(String, usize, usize)> = Vec::new();
+    let mut extras: Vec<(String, usize)> = Vec::new();
+
+    for (defuid, ref_count) in &reference_counts {
+        let gen_count = generated_counts.get(defuid).copied().unwrap_or(0);
+        if gen_count < *ref_count {
+            under_emit.push((defuid.clone(), gen_count, *ref_count));
+        }
+    }
+    for (defuid, gen_count) in &generated_counts {
+        if !reference_counts.contains_key(defuid) {
+            extras.push((defuid.clone(), *gen_count));
+        }
+    }
+
+    eprintln!("--- DWG generated-vs-reference Rel DefUID parity ---");
+    eprintln!(
+        "DefUIDs in reference: {}; in generated: {}; under-emits: {}; extras: {}",
+        reference_counts.len(),
+        generated_counts.len(),
+        under_emit.len(),
+        extras.len(),
+    );
+    if !extras.is_empty() {
+        eprintln!("Extra DWG DefUIDs on writer (informational, tolerated):");
+        for (defuid, count) in &extras {
+            eprintln!("  [{defuid}] x{count}");
+        }
+    }
+    if !under_emit.is_empty() {
+        eprintln!("Missing / under-emitted DWG DefUIDs (HARD CONTRACT):");
+        for (defuid, gen_count, ref_count) in &under_emit {
+            eprintln!("  [{defuid}] generated={gen_count}  reference={ref_count}");
+        }
+    }
+
+    assert!(
+        under_emit.is_empty(),
+        "DWG generated Rel parity regression: writer is missing or under-emitting \
+         these DefUIDs vs the SmartPlant DWG reference. Each entry is \
+         `(DefUID, generated_count, reference_count)`:\n{:#?}",
+        under_emit,
+    );
+}
+
 /// A36 · UID2 semantic-level gate, built on top of A34c.
 ///
 /// A33 covers the **count** of each DefUID; A34c swapped
@@ -384,22 +448,18 @@ fn a36_piping_end1_conn_uid2_is_real_upstream_on_a01() {
 }
 
 /// A36 · Sanity sub-test: the same property on the DWG
-/// fixture, when the fixture is available. DWG has multiple
-/// PipeRuns so the signal is stronger (more opportunities
-/// for a `.PPT`-only regression to surface). Soft-skipped
-/// when the DWG SQLite mirror is absent — the fidelity of
-/// the A01 test is the hard contract.
+/// generated output, when the mirror is available. DWG has
+/// multiple PipeRuns so the signal is stronger (more
+/// opportunities for a `.PPT`-only regression to surface).
+/// Soft-skipped when the DWG SQLite mirror is absent — the
+/// fidelity of the A01 test remains the hard contract.
 #[test]
 fn a36_piping_end1_conn_uid2_is_real_upstream_on_dwg_when_available() {
-    let Some(reference_xml) = load_reference_dwg_xml() else {
+    let Some(generated_result) = generate_dwg_data_xml() else {
         return;
     };
-    // Note: the writer-generated DWG XML is not available yet
-    // (DWG SQLite mirror isn't bundled), so this sub-test only
-    // runs against the reference — a positive control that
-    // our assumption about the SPPID convention holds across
-    // fixtures.
-    let rels = parse_rel_details(&reference_xml);
+    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+    let rels = parse_rel_details(&generated_xml);
     let end1_rels: Vec<_> = rels
         .iter()
         .filter(|r| r.def_uid == "PipingEnd1Conn")
@@ -410,13 +470,55 @@ fn a36_piping_end1_conn_uid2_is_real_upstream_on_dwg_when_available() {
     let real_count = end1_rels.iter().filter(|r| !r.uid2.ends_with(".PPT")).count();
     assert!(
         real_count > 0,
-        "A36 cross-fixture assumption: even the SmartPlant \
-         DWG reference has at least one PipingEnd1Conn \
-         with a real upstream UID2 (not .PPT). Observed \
-         {} end1 rels, all with .PPT UID2 — either the \
-         convention differs on DWG (unexpected) or the \
-         parser misread the reference.",
+        "A36 DWG UID2 regression: every writer-generated \
+         PipingEnd1Conn rel on DWG points at a `.PPT` \
+         placeholder. Observed {} end1 rels, all with \
+         placeholder UID2 — either the DWG loader failed to \
+         populate upstream endpoints or the writer stopped \
+         consuming them.",
         end1_rels.len(),
+    );
+}
+
+/// DWG sibling of A36b. When the mirror is available every
+/// writer-generated `<IRel UID2="...">` must resolve within the
+/// generated DWG document, either as a concrete `<IObject UID>`
+/// or as one of the known derived port/process-point suffixes.
+#[test]
+fn a36b_every_rel_uid2_resolves_within_the_document_on_dwg_when_available() {
+    let Some(generated_result) = generate_dwg_data_xml() else {
+        return;
+    };
+    let generated_xml = generated_result.expect("writer should succeed on DWG mirror");
+
+    let iobject_uids: BTreeSet<String> = collect_iobject_uids(&generated_xml);
+    assert!(
+        !iobject_uids.is_empty(),
+        "A36b DWG sanity: writer must emit at least one <IObject UID=\"...\"/>"
+    );
+
+    let rels = parse_rel_details(&generated_xml);
+    let mut dangling: Vec<(String, String, String)> = Vec::new();
+    for r in &rels {
+        if r.uid2.is_empty() {
+            dangling.push((r.uid1.clone(), r.uid2.clone(), r.def_uid.clone()));
+            continue;
+        }
+        if iobject_uids.contains(&r.uid2) {
+            continue;
+        }
+        if is_known_derived_port_uid(&r.uid2, &iobject_uids) {
+            continue;
+        }
+        dangling.push((r.uid1.clone(), r.uid2.clone(), r.def_uid.clone()));
+    }
+
+    assert!(
+        dangling.is_empty(),
+        "A36b DWG UID2 soundness regression: these rels point at UID2 values \
+         nothing in the generated DWG document resolves to. Each entry: \
+         `(UID1, UID2, DefUID)`:\n{:#?}",
+        dangling,
     );
 }
 

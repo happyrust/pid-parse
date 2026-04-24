@@ -6,11 +6,16 @@
 //! 1. a SQLite file produced by `OrcaMdfProbe --to-sqlite`,
 //! 2. a SmartPlant drawing UID (the `T_Drawing.SP_ID` value),
 //!
-//! this tool emits a `_Data.xml` document that carries the
-//! drawing's structural skeleton. Business-interface fields
-//! (`<PIDProcessVessel>` / `<PIDNozzle>` / ...) land in a later
-//! commit once the loader reads their subtables; the current
-//! output is intentionally minimal but well-formed.
+//! this tool emits the drawing's `_Data.xml` and, optionally,
+//! `_Meta.xml` companion. The binary also exposes the publish
+//! fidelity helpers that are now part of the normal workflow:
+//! `--style a01|dwg`, `--diff-against <reference.xml>`, and
+//! `--list-drawings`.
+//!
+//! The unresolved work is no longer "can the CLI render business
+//! objects?" but rather DWG-mirror-gated fidelity closure:
+//! loader canonical-field enrichment and the remaining branch-point
+//! writer arms.
 //!
 //! Usage:
 //!
@@ -24,8 +29,8 @@
 
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    diff_publish_xml, load_drawing_graph, write_data_xml, write_meta_xml, PublishError,
-    PublishStyle,
+    diff_publish_xml, diff_rel_defuids, load_drawing_graph, write_data_xml, write_meta_xml,
+    PublishError, PublishStyle,
 };
 use std::path::PathBuf;
 
@@ -339,25 +344,45 @@ fn run(options: CliOptions) -> Result<i32, String> {
     if let Some(ref_path) = &options.diff_against {
         let reference = std::fs::read_to_string(ref_path)
             .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
-        let report = diff_publish_xml(&xml, &reference);
+        let tag_report = diff_publish_xml(&xml, &reference);
         // Surface the report on stdout so it can be redirected to
         // a file or compared in tests; the "Loaded drawing..." line
         // stays on stderr.
-        println!("{report}");
-        if !report.is_clean() {
+        println!("{tag_report}");
+
+        // A40: append a Rel-DefUID-level diff block. `<PIDxxx>` tag
+        // counts answer "are all business objects emitted?"; the
+        // Rel block answers the complementary question "are all
+        // cross-references emitted?" A drawing can pass one and
+        // fail the other — the combined report catches both.
+        let rel_report = diff_rel_defuids(&xml, &reference);
+        println!();
+        println!("{rel_report}");
+
+        let tag_clean = tag_report.is_clean();
+        let rel_clean = rel_report.is_clean();
+        if !tag_clean || !rel_clean {
             eprintln!(
-                "Semantic diff against {} surfaced findings (missing={} extra={} count_deltas={}); exit 1.",
+                "Semantic diff against {} surfaced findings:\n  \
+                 PID tag  findings — missing={} extra={} count_deltas={}\n  \
+                 Rel DefUID findings — missing={} extra={} count_deltas={}\n\
+                 exit 1.",
                 ref_path.display(),
-                report.missing_from_generated,
-                report.extra_in_generated,
-                report.count_deltas,
+                tag_report.missing_from_generated,
+                tag_report.extra_in_generated,
+                tag_report.count_deltas,
+                rel_report.missing_from_generated,
+                rel_report.extra_in_generated,
+                rel_report.count_deltas,
             );
             exit_code = 1;
         } else {
             eprintln!(
-                "Semantic diff against {} is clean ({} matching tag varieties).",
+                "Semantic diff against {} is clean ({} matching tag varieties, \
+                 {} matching Rel DefUIDs).",
                 ref_path.display(),
-                report.matching,
+                tag_report.matching,
+                rel_report.matching,
             );
         }
     }

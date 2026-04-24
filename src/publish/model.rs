@@ -1,9 +1,12 @@
 //! Object-graph DTO the SQLite loader feeds into the XML writer.
 //!
-//! Stage-1 scope: just enough shape to write a recognizable
-//! `_Data.xml`. Richer fields (process-point numeric attributes,
-//! symbology GUIDs, typicals) are additive and will land in
-//! follow-up commits as the writer starts emitting them.
+//! Current scope: enough shape to drive the shipped `_Data.xml` and
+//! `_Meta.xml` writers, including plant-wide codelist metadata and
+//! the explicit A01/DWG style selector.
+//!
+//! The DTO still lacks DWG-mirror-derived branch-point nodes and any
+//! loader canonical fields that cannot be validated without the DWG
+//! `Export_v2.sqlite` mirror; those remain additive.
 
 use std::collections::BTreeMap;
 use std::fmt;

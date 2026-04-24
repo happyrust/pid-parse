@@ -1,11 +1,18 @@
 //! Load a Publish-Data DTO out of the SQLite mirror produced by
 //! `tools/orca-mdf-probe`.
 //!
-//! Stage-1 A2: in addition to the single `T_Drawing` row, pull the
-//! drawing's representations, their owning model items, and the
-//! relationships that span them. Business-subtable fields
-//! (Equipment / Vessel / Nozzle / PipeRun / ...) will layer on in
-//! a later commit.
+//! Scope: read the drawing row, its representations and the model
+//! items they anchor, plus every relationship that ties them. The
+//! loader also descends into the per-ItemType business subtables
+//! (Equipment → Vessel / Nozzle, PlantItem → PipeRun, Connector,
+//! PipingPoint, …) so the writer receives a fully-populated DTO.
+//! The subtable chain is defined by `subtables_for_item_type`.
+//!
+//! DWG-flavor canonical-field enrichment (plant-specific columns
+//! surfaced only in `T_ProcessEquipment` / extended connector and
+//! nozzle tables) is the next direction, but needs the DWG
+//! `Export_v2.sqlite` mirror to land before it can be validated;
+//! see the module-level note in [`super`] for the gate.
 //!
 //! # Join strategy
 //!
@@ -416,7 +423,7 @@ fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
     match item_type_name {
         // A vessel is an equipment subtype: general equipment
         // fields first, then vessel-specific fields.
-        "Vessel" => &["T_PlantItem", "T_Equipment", "T_Vessel"],
+        "Vessel" => &["T_PlantItem", "T_Equipment", "T_ProcessEquipment", "T_Vessel"],
         "Nozzle" => &["T_PlantItem", "T_EquipComponent", "T_Nozzle"],
         "PipeRun" => &["T_PlantItem", "T_Connector", "T_PipeRun"],
         "PipingPoint" => &["T_PipingPoint"],
@@ -432,6 +439,13 @@ fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
         // geometry (start/end items, zero-length flag).
         // Drives the `write_signal_connector` XML writer arm.
         "SignalRun" => &["T_PlantItem", "T_Connector", "T_SignalRun"],
+        // Stage-4: branch point types appear in DWG-flavor
+        // plants. The exact subtable chain will be confirmed
+        // when the DWG Export_v2.sqlite mirror lands; for now
+        // we attach T_PlantItem (which carries Name) so the
+        // writer has the Name field available for IObject.
+        "BranchPoint" => &["T_PlantItem"],
+        "PipingBranchPoint" => &["T_PlantItem"],
         _ => &[],
     }
 }
@@ -1244,5 +1258,14 @@ mod tests {
                 assert!(!obj.fields.contains_key("EndConnectedItem2"));
             }
         }
+    }
+
+    #[test]
+    fn vessel_subtable_chain_includes_optional_process_equipment_layer() {
+        assert_eq!(
+            subtables_for_item_type("Vessel"),
+            &["T_PlantItem", "T_Equipment", "T_ProcessEquipment", "T_Vessel"],
+            "Vessel loader chain must include the optional T_ProcessEquipment layer for DWG EqType fields",
+        );
     }
 }

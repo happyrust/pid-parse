@@ -4,15 +4,12 @@
 //!
 //! ## Why a snapshot test instead of code?
 //!
-//! `publish::supported_pid_tags()` lists 13 tags the writer
+//! `publish::supported_pid_tags()` lists the tags the writer
 //! emits today. Every SmartPlant reference XML in the repo
-//! (A01 + DWG fixtures) ships extra tags — currently
-//! `PIDPipingBranchPoint` (4 instances on DWG, 0 on A01) and
-//! `PIDBranchPoint` (5 instances on DWG, 0 on A01) — that
-//! the writer has no emit path for. A23/A27 only check tags
-//! the writer claims to support, so the backlog stays
-//! invisible in CI until someone manually re-scans the
-//! reference XMLs.
+//! (A01 + DWG fixtures) may ship extra tags that the writer
+//! has no emit path for. A23/A27 only check tags the writer
+//! claims to support, so the backlog stays invisible in CI
+//! until someone manually re-scans the reference XMLs.
 //!
 //! A28 closes that observability gap: it pins the exact
 //! interface + attribute shape of every backlog tag
@@ -20,12 +17,10 @@
 //! const tables guarded by `assert_eq!`. Two payoffs:
 //!
 //! * **Spec for future writer arms.** When someone takes
-//!   on PIDBranchPoint emission, the const table here is
-//!   the executable spec — they extend the writer until
+//!   on a backlog tag, the const table here is the
+//!   executable spec — they extend the writer until
 //!   `interface_parity_*` (A23) / `attribute_parity_*`
-//!   (A27) start passing for the new tag. No need to re-
-//!   read DWG XML by hand or guess the canonical interface
-//!   order.
+//!   (A27) start passing for the new tag.
 //! * **Drift detection.** If a future SmartPlant export
 //!   introduces a new attribute or reorders the interface
 //!   list on a backlog tag, this test fails on the next
@@ -34,6 +29,16 @@
 //!
 //! Both fixtures soft-skip when missing so CI workers
 //! without the SmartPlant TEST02 / DWG bundle stay green.
+//!
+//! ## Current state
+//!
+//! As of Stage-4 all previously backlogged tags
+//! (`PIDBranchPoint` + `PIDPipingBranchPoint`) have
+//! graduated into `supported_pid_tags()`. BACKLOG_SPECS
+//! is empty. The guard test
+//! `a28_every_unsupported_reference_tag_has_a_backlog_spec`
+//! will fire the moment a new unsupported tag appears in
+//! any reference fixture.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -68,63 +73,12 @@ struct BacklogTagSpec {
     interface_attrs: &'static [(&'static str, &'static [&'static str])],
 }
 
-/// PIDPipingBranchPoint as observed in DWG-0202GP06-01.
-/// 4 instances. Each carries 6 interfaces; only `IObject`
-/// has any attributes (just `UID`).
-const SPEC_PIDPIPINGBRANCHPOINT_DWG: BacklogTagSpec = BacklogTagSpec {
-    tag: "PIDPipingBranchPoint",
-    fixture: "DWG",
-    instance_count: 4,
-    interfaces: &[
-        "IObject",
-        "IConnection",
-        "IPipingConnection",
-        "IDrawingItem",
-        "IPipingBranchPoint",
-        "IDocumentItem",
-    ],
-    interface_attrs: &[
-        ("IConnection", &[]),
-        ("IDocumentItem", &[]),
-        ("IDrawingItem", &[]),
-        ("IObject", &["UID"]),
-        ("IPipingBranchPoint", &[]),
-        ("IPipingConnection", &[]),
-    ],
-};
-
-/// PIDBranchPoint as observed in DWG-0202GP06-01. 5
-/// instances. 9 interfaces; only `IObject` carries attrs
-/// (`UID` + `Name`).
-const SPEC_PIDBRANCHPOINT_DWG: BacklogTagSpec = BacklogTagSpec {
-    tag: "PIDBranchPoint",
-    fixture: "DWG",
-    instance_count: 5,
-    interfaces: &[
-        "IObject",
-        "IPIDBranchPoint",
-        "IDuctConnection",
-        "IConnection",
-        "IDrawingItem",
-        "IPipingConnection",
-        "ISignalConnection",
-        "IDocumentItem",
-    ],
-    interface_attrs: &[
-        ("IConnection", &[]),
-        ("IDocumentItem", &[]),
-        ("IDrawingItem", &[]),
-        ("IDuctConnection", &[]),
-        ("IObject", &["Name", "UID"]),
-        ("IPIDBranchPoint", &[]),
-        ("IPipingConnection", &[]),
-        ("ISignalConnection", &[]),
-    ],
-};
-
 /// All backlog tag specs the snapshot test enforces.
-const BACKLOG_SPECS: &[&BacklogTagSpec] =
-    &[&SPEC_PIDPIPINGBRANCHPOINT_DWG, &SPEC_PIDBRANCHPOINT_DWG];
+/// Currently empty — all previously backlogged tags have
+/// graduated into `supported_pid_tags()`. New specs will
+/// be added here when a SmartPlant export surfaces a PID
+/// tag the writer does not yet emit.
+const BACKLOG_SPECS: &[&BacklogTagSpec] = &[];
 
 fn pick_xml_for(fixture: &str) -> Option<String> {
     match fixture {
