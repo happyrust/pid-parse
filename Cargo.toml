@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 base64 = "0.22"
 cfb = "0.14"
-quick-xml = { version = "0.38", features = ["serialize"] }
+quick-xml = { version = "0.39", features = ["serialize"] }
 # rusqlite with the `bundled` feature compiles a vendored sqlite3.
 # Publish XML keeps this as an in-memory relational adapter while
 # the primary plant source is now Rust MDF parsing via oxidized-mdf.
