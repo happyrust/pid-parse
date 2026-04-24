@@ -1,7 +1,6 @@
 use crate::error::Error;
 use crate::pages::{BootPage, PagePointer, Record};
 use crate::PageReader;
-use std::convert::TryFrom;
 
 pub(crate) struct BaseTableData {
     sysalloc_units: Vec<SysallocUnit>,

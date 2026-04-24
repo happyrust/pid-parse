@@ -145,7 +145,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a347dcabdae9c31b0825fd6a8bed285ec9c2acb89c47827126d52fa4f59cece3"
 dependencies = [
  "fnv",
- "uuid 1.23.1",
+ "uuid",
  "web-time",
 ]
 
@@ -394,7 +394,7 @@ dependencies = [
  "log",
  "nom",
  "rust_decimal",
- "uuid 0.8.2",
+ "uuid",
 ]
 
 [[package]]
@@ -412,7 +412,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "uuid 1.23.1",
+ "uuid",
 ]
 
 [[package]]
@@ -577,7 +577,7 @@ dependencies = [
  "rkyv_derive",
  "seahash",
  "tinyvec",
- "uuid 1.23.1",
+ "uuid",
 ]
 
 [[package]]
@@ -836,12 +836,6 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
-
-[[package]]
-name = "uuid"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
 
 [[package]]
 name = "uuid"

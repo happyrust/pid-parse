@@ -1,10 +1,7 @@
 use bitvec::{order::Lsb0, slice::BitSlice};
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use core::iter::Iterator;
 use nom::{bytes::complete::take, error::Error as NomError, Parser};
 use rust_decimal::Decimal;
-use std::convert::TryFrom;
-use std::iter::FromIterator;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
