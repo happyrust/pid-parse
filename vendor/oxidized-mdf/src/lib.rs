@@ -1,3 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Original: oxidized-mdf by schrieveslaach (https://gitlab.com/schrieveslaach/oxidized-mdf)
+// Modified: 2026-04-24 by happyrust
+//   - Removed async runtime (async-std, futures-lite, async-log)
+//   - Converted public API to sync (MdfDatabase::open, db.rows)
+//   - Eliminated panic edges: unwrap/todo replaced with Result propagation
+//   - Changed read() to read_exact() for page integrity
+//   - Upgraded to edition 2021, uuid 1.x
+
 #![allow(dead_code)]
 
 //! # A Crate for Parsing MDF files

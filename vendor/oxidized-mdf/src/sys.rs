@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Original: oxidized-mdf by schrieveslaach (https://gitlab.com/schrieveslaach/oxidized-mdf)
+// Modified: 2026-04-24 by happyrust
+//   - Replaced panic!() / unwrap() / todo!() with ok_or + ? for panic-free TryFrom
+//   - Added sysname, char, binary, numeric, smalldatetime, smallmoney, image,
+//     text, ntext, date, timestamp column type variants
+
 use crate::error::Error;
 use crate::pages::{BootPage, PagePointer, Record};
 use crate::PageReader;

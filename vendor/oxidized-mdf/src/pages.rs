@@ -1,3 +1,14 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Original: oxidized-mdf by schrieveslaach (https://gitlab.com/schrieveslaach/oxidized-mdf)
+// Modified: 2026-04-24 by happyrust
+//   - Migrated record/page envelope parsing to nom 8 take helpers
+//   - Replaced all ReadBytesExt::unwrap() with from_le_bytes (panic-free)
+//   - Hardened VariableColumns to return Err on descending end offsets
+//   - Hardened Page::slots() to skip+log impossible slot directory sizes
+//   - Removed byteorder dependency; all byte decoding via nom or from_le_bytes
+//   - Added manual i24 sign-extension for datetime2
+//   - Extended column type coverage to 27 SQL Server types
+
 use bitvec::{order::Lsb0, slice::BitSlice};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use nom::{bytes::complete::take, error::Error as NomError, Parser};

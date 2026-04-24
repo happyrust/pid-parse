@@ -327,3 +327,32 @@ loader fidelity：A24 仍保留 `PIDProcessVessel` 的 tank variant 单项接口
 A27b 仍保留 15 条 DWG-only style / canonical-field enrichment 差异。任何未来
 SmartPlant 端漂移会以 `(tag, interface, attr)` 三元组在 CI 上失败定位。
 
+## License
+
+The `pid-parse` source code (everything **outside** `vendor/`) is dual-licensed under
+[MIT](https://opensource.org/licenses/MIT) OR
+[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0),
+at your option.
+
+### Vendored dependency — GPL-3.0
+
+`vendor/oxidized-mdf/` is a **modified** fork of
+[oxidized-mdf](https://gitlab.com/schrieveslaach/oxidized-mdf)
+by schrieveslaach, licensed under
+[GPL-3.0-or-later](https://www.gnu.org/licenses/gpl-3.0.html).
+Because `pid-parse` statically links this crate, the **combined binary**
+(or any distribution that includes both components) is subject to the
+terms of the GPL-3.0. Both MIT and Apache-2.0 are GPL-3.0-compatible,
+so there is no license conflict.
+
+**In practice this means:**
+
+- **Internal / private use**: no obligations beyond keeping the license files.
+- **Public distribution of binaries**: you must make the Corresponding Source
+  available under GPL-3.0 (this repository already satisfies that requirement).
+- **Reusing only `pid-parse` code** (without the vendored parser): the MIT / Apache-2.0
+  terms apply; no GPL obligation.
+
+Modification notices for the vendored files are recorded at the top of each
+modified source file per GPL-3.0 §5(a).
+
