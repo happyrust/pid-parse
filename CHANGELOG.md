@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+### Public API rustdoc pass — Tier 3 batch 3（`import_view.rs`）
+
+延续上一批 sheet_probe：把 UI 投影层 `src/import_view.rs`
+30 条 `missing_docs` 打空，baseline `144 → 114`。
+
+覆盖范围（5 struct + 24 field + 1 fn）：
+
+- `PidImportView`（7 字段 + 结构级 `///`）：明确它是 UI 视图
+  而不是原始解码；`title` 的 fallback 链（drawing_number
+  → summary.title → `"Smart P&ID Import"`）、`project_number`
+  的 fallback（ObjectGraph → GeneralMeta.tags）写进了 rustdoc。
+- `PidVisualObject`（5 字段 + 结构级 `///`）：点明它是
+  `PidObject` 的"UI slim"，`extra` 从 `BTreeMap` 拍平成
+  排序 `Vec` 的原因（diff 稳定性）写清楚。
+- `PidVisualRelationship`（4 字段 + 结构级 `///`）：source /
+  target drawing_id 的 `None` 含义跟
+  `EndpointResolutionStats` 对齐。
+- `PidSymbolSummary`（4 字段 + 结构级 `///`）：
+  `usage_count == jsite_names.len()` 不变式写进注释。
+- `PidClusterSummary`（4 字段 + 结构级 `///`）：点明它在
+  `build_cluster_summaries` 里混合了 cluster / sheet /
+  coverage 三种来源。
+- `build_import_view` 顶层 fn：加了一行
+  "does not mutate `doc`；safe to call repeatedly"。
+
+验证：
+- `cargo rustdoc --lib --locked -- -W missing-docs` 总数
+  `144 → 114`（-30）。
+- `.github/missing-docs-baseline.txt` 从 `144` 改到 `114`，
+  `bash .github/scripts/check-missing-docs.sh` 本地验
+  `current=114, baseline=114, OK`。
+- `cargo clippy --locked --workspace --all-targets -- -D warnings` /
+  `cargo fmt --all -- --check` / `cargo test --workspace`
+  （`810 passed / 0 failed / 2 DWG-gated ignored`）全绿。
+
+累计七轮 rustdoc：`473 → 114`（-359）。剩余 114 集中在
+`src/package.rs`（26）、`src/writer/metadata_helpers.rs`（15）、
+`src/backup/mdf_page.rs`（13）、`src/byte_audit/mod.rs`（9）、
+`src/error.rs`（8）、`src/api.rs`（8）、长尾小文件 35。下轮
+候选：`package.rs`。
+
 ### Public API rustdoc pass — Tier 3 batch 2（`parsers/sheet_probe.rs`）
 
 紧跟 model.rs Tier 3 一击破：把第二大缺口

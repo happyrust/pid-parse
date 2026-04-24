@@ -19,50 +19,106 @@ use crate::model::{
 };
 use std::collections::BTreeMap;
 
+/// Compact UI-oriented snapshot of a [`PidDocument`], produced by
+/// [`build_import_view`]. Immutable view intended for reports, pickers
+/// and imports; richer or byte-level detail stays on
+/// [`crate::model::PidDocument`] / [`crate::model::CrossReferenceGraph`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PidImportView {
+    /// Display title sourced from `DrawingMeta.drawing_number`, then
+    /// `SummaryInfo.title`, falling back to `"Smart P&ID Import"`.
     pub title: String,
+    /// Owning project number sourced from
+    /// `ObjectGraph.project_number`, else the raw `ProjectNumber` tag
+    /// on [`crate::model::GeneralMeta`].
     pub project_number: Option<String>,
+    /// Flat list of modelled objects, one per [`PidObject`].
     pub objects: Vec<PidVisualObject>,
+    /// Flat list of relationships, one per [`PidRelationship`].
     pub relationships: Vec<PidVisualRelationship>,
+    /// Distinct symbol usages — one entry per `symbol_path`.
     pub symbols: Vec<PidSymbolSummary>,
+    /// Mixed cluster / sheet / coverage summary lines, in the order
+    /// [`build_cluster_summaries`] emits them.
     pub clusters: Vec<PidClusterSummary>,
+    /// Human-readable diagnostics for data the reader could not fully
+    /// resolve (dangling relationship endpoints, missing roots, etc.).
     pub unresolved: Vec<String>,
 }
 
+/// Slim view of a single [`PidObject`] — keeps just the fields a UI
+/// typically needs for pickers, tables and diffs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PidVisualObject {
+    /// 32-character hex drawing-scoped identifier.
     pub drawing_id: String,
+    /// `ModelItemType` verbatim from the source object
+    /// (e.g. `"PipeRun"`).
     pub item_type: String,
+    /// `DrawingItemType` when present on the source object
+    /// (e.g. `"Symbol"`, `"LabelPersist"`).
     pub drawing_item_type: Option<String>,
+    /// `ModelID` when present on the source object.
     pub model_id: Option<String>,
+    /// All `extra` `BTreeMap` entries from the source object sorted
+    /// by key — flattened into a stable-ordered `Vec` so the view
+    /// diffs deterministically.
     pub extra: Vec<(String, String)>,
 }
 
+/// Slim view of a single [`PidRelationship`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PidVisualRelationship {
+    /// 32-character hex GUID portion of `model_id`.
     pub guid: String,
+    /// Full `"Relationship.<GUID>"` identifier verbatim.
     pub model_id: String,
+    /// Source endpoint drawing id if the relationship resolved it;
+    /// surfaced here so unresolved endpoints can be filtered out at
+    /// the UI layer.
     pub source_drawing_id: Option<String>,
+    /// Target endpoint drawing id if the relationship resolved it.
     pub target_drawing_id: Option<String>,
 }
 
+/// Reverse-index summary of how a symbol is used across `JSite`
+/// instances — slim view of [`crate::model::SymbolUsage`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PidSymbolSummary {
+    /// Symbol basename (e.g. `"GateValve"`) when the `JSite` exposed
+    /// one; else `None`.
     pub symbol_name: Option<String>,
+    /// Full symbol-library path (absolute, as observed on the
+    /// writer's filesystem).
     pub symbol_path: String,
+    /// Number of references to this symbol — equal to
+    /// `jsite_names.len()`.
     pub usage_count: usize,
+    /// `JSite` storage names that reference this symbol
+    /// (deduplicated, source order).
     pub jsite_names: Vec<String>,
 }
 
+/// One-line cluster / sheet / coverage summary used inside
+/// [`PidImportView::clusters`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PidClusterSummary {
+    /// Display name — matches [`crate::model::ClusterInfo::name`] or
+    /// a synthetic marker like `"coverage.declared_missing"`.
     pub name: String,
+    /// Short kind tag (e.g. `"PsmCluster"`, `"Sheet"`, `"Coverage"`)
+    /// used to colour / bucket the row at the UI layer.
     pub kind: String,
+    /// Record count contributed by the cluster / sheet (string-table
+    /// rows, endpoint records, declared-missing list length, …).
     pub record_count: usize,
+    /// Free-form note describing header metadata or coverage gap
+    /// context — displayed as a secondary line under the row.
     pub note: String,
 }
 
+/// Build a [`PidImportView`] from a decoded [`PidDocument`]. Does not
+/// mutate `doc`; safe to call repeatedly.
 pub fn build_import_view(doc: &PidDocument) -> PidImportView {
     let object_graph = doc.object_graph.as_ref();
     let cross = doc.cross_reference.as_ref();
