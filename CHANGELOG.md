@@ -27,6 +27,20 @@
 - `rusqlite` 0.31 → 0.39（bundled sqlite3 + hashbrown v0.16）。
 - 两项升级均无 breaking API 变更，814 测试全绿。
 
+### Clippy 清理（29 warnings → 0）
+
+- vendored `pages.rs`：`div_ceil` / `Option::map` / 多余 range 括号 /
+  测试内 `vec!` → 数组字面量。
+- 父 crate 生产代码：`i.is_multiple_of(2)`、`Vec::resize` 代替
+  同值 push 循环、`elide needless lifetimes`、`HashMap::contains_key`、
+  提取 `SymbolUsageBucket` 类型别名。
+- 父 crate 测试／可执行程序：`let-else` → `?`、`enumerate` 代替手动
+  行号计数、提取测试专用类型别名、调整 rustdoc 列表缩进；
+  `crossref` / `inspect::report` 测试模块加 `#[allow(clippy::
+  field_reassign_with_default)]` 保留 fixture 搭建的可读性。
+- 工作区 `cargo clippy --all-targets --workspace` 零 warning，
+  全量测试（606 unit + 200 integration + 31 vendored）全绿。
+
 ## [0.10.0] — 2026-04-24
 
 ### Publish XML source — Rust MDF loader (`oxidized-mdf`)
