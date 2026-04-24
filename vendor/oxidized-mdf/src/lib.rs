@@ -167,17 +167,19 @@ impl MdfDatabase {
 
                         let mut record = Some(record);
                         for column in &table.columns {
-                            let (value, r) =
-                                match Value::parse(column, record.take().unwrap()) {
-                                    Ok((value, r)) => (value, r),
-                                    Err(e) => {
-                                        warn!(
-                                            "Column {:?} parse skipped (NULL): {}",
-                                            column, e
-                                        );
-                                        break;
-                                    }
-                                };
+                            let Some(rec) = record.take() else {
+                                break;
+                            };
+                            let (value, r) = match Value::parse(column, rec) {
+                                Ok((value, r)) => (value, r),
+                                Err(e) => {
+                                    warn!(
+                                        "Column {:?} parse skipped (NULL): {}",
+                                        column, e
+                                    );
+                                    break;
+                                }
+                            };
 
                             columns.insert(column.name.to_string(), value);
 
