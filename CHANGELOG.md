@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+### Public API rustdoc pass — Tier 3 batch 2（`parsers/sheet_probe.rs`）
+
+紧跟 model.rs Tier 3 一击破：把第二大缺口
+`src/parsers/sheet_probe.rs` 的 42 条 `missing_docs` 一次补齐，
+baseline 再降一档 `186 → 144`。
+
+覆盖范围（4 struct + 2 enum + 23 field + 13 variant）：
+
+- `SheetProbeOptions`（6 字段 + 结构级 `///`）：
+  `min_chunk_len` / `max_preview_strings` / `zero_run_threshold` /
+  `ascii_burst_threshold` / `utf16_burst_threshold` /
+  `min_boundary_score` 每条都说明它控制哪一步启发式。
+- `SheetProbeReport`（5 字段 + 结构级 `///`）：点明
+  `candidate_boundaries` 是每启发式视图、`chunks` 是
+  post-thresholding 切片，二者不等价。
+- `CandidateBoundary`（3 字段 + 结构级 `///`）：`score`
+  直接跟 `SheetProbeOptions::min_boundary_score` 做门限比较。
+- `BoundaryReason`（8 variant + 枚举级 `///`）：逐条注明
+  `ZeroRun` / `AsciiBurst` / `Utf16Burst` / `Alignment4` /
+  `Alignment8` /`RepeatedU32Pattern` / `OffsetLikeSequence` /
+  `MarkerTransition`，其中 `Alignment8` 和 `MarkerTransition`
+  明确标记为"保留，尚未发射"。
+- `SheetChunk`（9 字段 + 结构级 `///`）：特别点明
+  `start..end` 和 [`crate::writer::plan::SheetChunkPatch`]
+  保持 layout 兼容；`zero_ratio` 的值域、`aligned_u32_density`
+  的定义都写清楚。
+- `SheetChunkKindHint`（5 variant + 枚举级 `///`）：每个
+  bucket 跟 `classify_chunk` 内部阈值对上。
+
+风格要求同上一轮：每条 rustdoc 点"是什么 / 什么时候起作用 /
+在 pipeline 哪一步写入"，不做无信息叙述；`SmartPlant` 加反引号
+（顺手修了 `SheetProbeOptions` 结构级 `///` 里一个被
+`clippy::doc_markdown` 抓到的裸 `SmartPlant`）。
+
+验证：
+- `cargo rustdoc --lib --locked -- -W missing-docs` 总数
+  `186 → 144`（-42）。
+- `.github/missing-docs-baseline.txt` 从 `186` 改到 `144`，
+  `bash .github/scripts/check-missing-docs.sh` 本地验
+  `current=144, baseline=144, OK`。
+- `cargo build --locked --workspace --all-targets`、
+  `cargo test --locked --workspace --all-targets`
+  （`810 passed / 0 failed / 2 DWG-gated ignored`）、
+  `cargo clippy --locked --workspace --all-targets -- -D warnings`、
+  `cargo fmt --all -- --check` 全绿。
+
+累计六轮 rustdoc：`473 → 144`（-329）。剩余 144 集中在
+`src/import_view.rs`（30）、`src/package.rs`（26）、
+`src/writer/metadata_helpers.rs`（15）、
+`src/backup/mdf_page.rs`（13）。下轮候选：`import_view.rs`。
+
 ### Public API rustdoc pass — Tier 3（`src/model.rs` 一击破）
 
 Ratchet 落地之后的第一轮"棘轮降档"——把缺口最集中的

@@ -27,13 +27,29 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Tunable thresholds for the sheet-probe heuristics; all downstream
+/// functions read their cut-offs from this struct. [`Default`] values
+/// match the original Phase 8 hand-tuning against `SmartPlant` fixtures.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SheetProbeOptions {
+    /// Chunks shorter than this (in bytes) are discarded by
+    /// [`split_by_boundaries`]; prevents cutting the stream into
+    /// near-empty slices.
     pub min_chunk_len: usize,
+    /// Upper bound on how many ASCII / UTF-16 runs
+    /// [`summarize_chunk`] keeps in each chunk's preview.
     pub max_preview_strings: usize,
+    /// Minimum run length (in bytes) that counts as a "zero run"
+    /// boundary hint.
     pub zero_run_threshold: usize,
+    /// Minimum consecutive ASCII-printable bytes that count as an
+    /// "ASCII burst" boundary hint.
     pub ascii_burst_threshold: usize,
+    /// Minimum consecutive UTF-16LE printable code units that count
+    /// as a "UTF-16 burst" boundary hint.
     pub utf16_burst_threshold: usize,
+    /// Minimum cumulative score a boundary must gather before
+    /// [`split_by_boundaries`] will actually cut the stream there.
     pub min_boundary_score: u32,
 }
 
@@ -50,53 +66,117 @@ impl Default for SheetProbeOptions {
     }
 }
 
+/// End-to-end result of [`probe_sheet_stream`] for a single sheet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SheetProbeReport {
+    /// Local CFB name of the sheet (e.g. `"Sheet6"`).
     pub sheet_name: String,
+    /// Full `/`-joined CFB path of the sheet stream.
     pub path: String,
+    /// Byte length of the stream that was probed.
     pub size: u64,
+    /// Every boundary the heuristics voted for, merged by offset and
+    /// sorted ascending. Unrelated to [`Self::chunks`] — this is the
+    /// raw per-heuristic view, `chunks` is the post-threshold slicing.
     pub candidate_boundaries: Vec<CandidateBoundary>,
+    /// Chunks emitted by [`split_by_boundaries`] after applying
+    /// `min_chunk_len` / `min_boundary_score` filtering.
     pub chunks: Vec<SheetChunk>,
 }
 
+/// One byte offset inside the sheet that at least one heuristic thinks
+/// is a record / region boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CandidateBoundary {
+    /// Absolute byte offset inside the sheet stream.
     pub offset: usize,
+    /// Sum of per-heuristic scores contributing to this offset.
+    /// Compare against [`SheetProbeOptions::min_boundary_score`].
     pub score: u32,
+    /// Each reason that voted for this offset (deduplicated).
     pub reasons: Vec<BoundaryReason>,
 }
 
+/// Which heuristic suggested a [`CandidateBoundary`]. Documented beside
+/// [`find_candidate_boundaries`]; unreserved variants currently do not
+/// fire (see module-level note).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BoundaryReason {
+    /// A run of at least `zero_run_threshold` `0x00` bytes surrounds
+    /// this offset.
     ZeroRun,
+    /// A printable-ASCII burst of at least `ascii_burst_threshold`
+    /// starts at this offset.
     AsciiBurst,
+    /// A printable UTF-16LE burst of at least `utf16_burst_threshold`
+    /// starts at this offset.
     Utf16Burst,
+    /// 4-byte alignment hit, used for the implicit start/end markers.
     Alignment4,
+    /// 8-byte alignment hit. Reserved for future heuristics; not
+    /// currently emitted.
     Alignment8,
+    /// Four consecutive 32-bit words at this offset carry the same
+    /// value (fill pattern / header padding).
     RepeatedU32Pattern,
+    /// Four consecutive 32-bit words form a strictly ascending,
+    /// in-range sequence (offset-table signature).
     OffsetLikeSequence,
+    /// A known record-marker byte gives way to a different family at
+    /// this offset. Reserved for future heuristics; not currently
+    /// emitted.
     MarkerTransition,
 }
 
+/// One chunk produced by [`split_by_boundaries`] — a post-thresholding
+/// slice of the sheet stream with its per-chunk probe stats. The
+/// `start..end` range is deliberately layout-compatible with
+/// [`crate::writer::plan::SheetChunkPatch`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SheetChunk {
+    /// Inclusive start byte offset inside the sheet stream.
     pub start: usize,
+    /// Exclusive end byte offset inside the sheet stream.
     pub end: usize,
+    /// Convenience `end - start` byte count (cached so consumers
+    /// don't recompute on every access).
     pub len: usize,
+    /// ASCII-printable runs lifted out of the chunk; capped by
+    /// [`SheetProbeOptions::max_preview_strings`].
     pub ascii_preview: Vec<String>,
+    /// UTF-16LE printable runs lifted out of the chunk; same cap as
+    /// [`Self::ascii_preview`].
     pub utf16_preview: Vec<String>,
+    /// Fraction of bytes in the chunk that are `0x00` (in `[0, 1]`).
     pub zero_ratio: f32,
+    /// Fraction of aligned `u32` reads whose value is smaller than
+    /// the whole stream's length — a rough "could this be an offset
+    /// table?" score in `[0, 1]`.
     pub aligned_u32_density: f32,
+    /// Number of adjacent aligned `u32` pairs that were equal — a
+    /// fill-pattern / repeated-header signal.
     pub repeated_u32_hits: usize,
+    /// High-level classification derived from the other stats; see
+    /// [`SheetChunkKindHint`] for the buckets.
     pub kind_hint: SheetChunkKindHint,
 }
 
+/// Quick classification bucket emitted by [`summarize_chunk`] from the
+/// per-chunk probe stats.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SheetChunkKindHint {
+    /// Multiple ASCII / UTF-16 runs and few zero bytes — looks like
+    /// a text payload.
     TextHeavy,
+    /// No text runs and very few zero bytes — looks like compact
+    /// binary data.
     BinaryDense,
+    /// Some text runs mixed with non-text bytes.
     Mixed,
+    /// High offset-like u32 density plus repeated u32 hits — looks
+    /// like an offset table / index block.
     OffsetTableLike,
+    /// None of the above heuristics triggered confidently.
     Unknown,
 }
 
