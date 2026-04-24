@@ -22,7 +22,6 @@ rust_decimal = "1.17"
 uuid = "1"
 
 [dev-dependencies]
-femme = "2.1"
 pretty_assertions = "1.0"
 prettytable-rs = "0.8"
 rstest = "0.19"

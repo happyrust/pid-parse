@@ -1,11 +1,10 @@
-use futures_lite::stream::StreamExt;
 use oxidized_mdf::MdfDatabase;
 use prettytable::{Cell, Row, Table};
 use std::path::PathBuf;
 use structopt::StructOpt;
 
-async fn print_rows(db: &mut MdfDatabase, table: &str, row_limit: &Option<usize>) {
-    let mut rows = match db.rows(&table) {
+fn print_rows(db: &mut MdfDatabase, table: &str, row_limit: &Option<usize>) {
+    let rows = match db.rows(table) {
         Some(rows) => rows,
         None => {
             eprintln!("No table {}", table);
@@ -16,7 +15,7 @@ async fn print_rows(db: &mut MdfDatabase, table: &str, row_limit: &Option<usize>
     let mut pretty_table = Table::new();
 
     let mut i = 0usize;
-    while let Some(row) = rows.next().await {
+    for row in rows {
         let values = row.values();
 
         if pretty_table.is_empty() {
@@ -43,21 +42,19 @@ async fn print_rows(db: &mut MdfDatabase, table: &str, row_limit: &Option<usize>
     pretty_table.printstd();
 }
 
-#[async_std::main]
-async fn main() {
-    femme::with_level(log::LevelFilter::Trace);
+fn main() {
     let opt = Opts::from_args();
 
-    let mut db = MdfDatabase::open(opt.path).await.unwrap();
+    let mut db = MdfDatabase::open(opt.path).unwrap();
 
     match opt.table {
         None => {
             for table in db.table_names() {
-                print_rows(&mut db, &table, &opt.row_limit).await;
+                print_rows(&mut db, &table, &opt.row_limit);
             }
         }
         Some(table) => {
-            print_rows(&mut db, &table, &opt.row_limit).await;
+            print_rows(&mut db, &table, &opt.row_limit);
         }
     }
 }
