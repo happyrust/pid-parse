@@ -38,7 +38,23 @@ DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extra
 ## Common commands
 
 ```bash
-cargo test                                        # 814 tests (607 unit + 207 integration)
+cargo test                                        # 806 tests (607 unit + 199 integration, 2 DWG-gated skipped)
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
 cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (31 tests)
 ```
+
+## Pre-commit gates (CI mirrors these)
+
+Run **all four** before `git push`. CI (`.github/workflows/ci.yml`) fails
+on any drift and will block merges:
+
+```bash
+cargo build --locked --workspace --all-targets
+cargo test  --locked --workspace --all-targets
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check        # apply with `cargo fmt --all`
+```
+
+- `--workspace` makes the vendored `oxidized-mdf` crate a hard gate.
+- `RUSTFLAGS=-Dwarnings` (set in CI env) promotes compiler warnings to
+  errors; keep local output clean by the same bar.

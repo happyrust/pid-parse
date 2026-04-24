@@ -46,6 +46,17 @@
 - 工作区 `cargo clippy --all-targets --workspace` 零 warning，
   全量测试（606 unit + 200 integration + 31 vendored）全绿。
 
+### CI + 格式一致性
+
+- 跑 `cargo fmt --all` 修复 36 个文件累计的 rustfmt 漂移
+  （+547 / −598，纯空白/换行整理，零行为变更）。
+  先前 main 分支 CI 连续 red 均源于 `cargo fmt --all -- --check` 失败。
+- `.github/workflows/ci.yml` 的 `cargo build` / `cargo test` /
+  `cargo clippy` 统一加 `--workspace`，把 vendored `oxidized-mdf`
+  纳入相同 gate，任何 vendored 端 warning 也会直接阻塞合并。
+- `AGENTS.md` 新增 "Pre-commit gates" 一节，明确列出 build / test /
+  clippy / fmt 四道 gate 的本地等价命令。
+
 ## [0.10.0] — 2026-04-24
 
 ### Publish XML source — Rust MDF loader (`oxidized-mdf`)

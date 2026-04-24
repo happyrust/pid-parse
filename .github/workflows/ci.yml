@@ -33,17 +33,22 @@ jobs:
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
 
-      - name: cargo build (lib + bins)
-        run: cargo build --locked --all-targets
+      - name: cargo build (workspace)
+        # --workspace also builds the vendored `oxidized-mdf` crate so any
+        # breakage in the GPL-3.0 parser is caught in the same job.
+        run: cargo build --locked --workspace --all-targets
 
-      - name: cargo test (offline suite)
+      - name: cargo test (offline suite, workspace)
         # Real `.pid` fixtures live in `test-file/` and are gitignored,
         # so the real-file tests gracefully skip when the directory is
         # absent — see `writer_real_files.rs` / `parse_real_files.rs`.
-        run: cargo test --locked --all-targets
+        # --workspace picks up vendored oxidized-mdf unit tests too.
+        run: cargo test --locked --workspace --all-targets
 
-      - name: cargo clippy (fail on any warning)
-        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: cargo clippy (workspace, fail on any warning)
+        # --workspace makes the vendored crate a hard gate alongside the
+        # parent crate; -D warnings keeps the bar at zero.
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: cargo fmt (check)
         # Phase 9i onwards: hard-fail on any drift. Run `cargo fmt --all`
