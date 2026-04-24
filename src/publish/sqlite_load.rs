@@ -419,7 +419,7 @@ fn attach_business_columns(
 /// live in both T_Equipment — general equipment attributes —
 /// and T_Vessel — vessel-specific dimensions), and later rows
 /// overwrite earlier ones on column name collision.
-fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
+pub(super) fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
     match item_type_name {
         // A vessel is an equipment subtype: general equipment
         // fields first, then vessel-specific fields.
