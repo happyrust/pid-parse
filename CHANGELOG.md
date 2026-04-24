@@ -72,6 +72,38 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### Public API rustdoc pass — 子模块 `//!` 全收口
+
+把剩下 16 个此前仅有 `use` 开头、缺模块级文档的子模块一次性
+打完。**模块级 missing_docs 从 16 降到 0**，`cargo doc --open` 的
+目录页每个节点都有一段可导航的简介。
+
+涉及文件（都在各自模块入口加了 4–8 行 `//!`）：
+
+- `src/cfb/reader.rs`、`src/cfb/tree.rs`
+- `src/inspect/report.rs`
+- `src/parsers/cluster_header.rs`、`drawing_xml.rs`、
+  `dynamic_attr_records.rs`、`general_xml.rs`、`jproperties.rs`、
+  `string_scan.rs`、`xml_util.rs`
+- `src/streams/cluster.rs`、`dynamic_attrs.rs`、`jsite.rs`、
+  `psm_tables.rs`、`summary.rs`、`tagged_text.rs`
+
+每段统一结构：第一行点明"这是做什么的"，后面 2-4 行说明该子
+模块在 pipeline 中的上下游（调用谁、被谁调用、产出填充哪个
+`PidDocument` 字段），避免 code narration，全部是意图 / 协作关
+系描述。
+
+`cargo rustdoc --lib --locked -- -W missing-docs` 总数
+**380 → 364（-16）**；累计四轮 rustdoc 改进 473 → 364（-109）。
+剩余 364 集中在深层 DTO（252 field + 42 variant + 33 struct）、
+低层 utility fn（18）、少量 constant/enum/assoc_fn/method。
+
+途中 clippy::doc_markdown 抓住了 `string_scan.rs` `//!` 中未加
+反引号的 `JSite`，顺手修掉，没别的行为变化。`cargo clippy
+--locked --workspace --all-targets -- -D warnings` / `cargo fmt
+--check` / `cargo test --workspace` (819 passed / 2 DWG-gated
+ignored) 全绿。
+
 ### Public API rustdoc pass — Tier 2（对象图 / JSite 层）
 
 Tier 2 第二批：接着把用户经常 drill-down 的"对象图族"与

@@ -1,3 +1,12 @@
+//! Cluster-family stream header decoder.
+//!
+//! Every `PSMcluster0` / `StyleCluster` / similar cluster stream
+//! opens with a common fixed header carrying a magic number, row
+//! counts, and an indexed-string table. This module exposes
+//! [`parse_header`] and the magic constant so the orchestrating
+//! layer in [`crate::streams::cluster`] can quickly tell cluster
+//! streams apart from the rest.
+
 use crate::model::{ClusterHeader, IndexedString};
 
 pub const CLUSTER_MAGIC: u32 = 0x6C90_F544;

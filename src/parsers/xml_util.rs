@@ -1,3 +1,11 @@
+//! Tiny XML helpers shared by the tagged-text decoders.
+//!
+//! Just enough machinery ([`collect_simple_tags`] and friends) to
+//! handle the flat `<Tag>value</Tag>` / attribute-soup documents
+//! the `TaggedTxtData/*` streams ship. Full-fledged XML parsing
+//! stays on `quick-xml`; these helpers cover the places where
+//! pulling in a streaming parser would be overkill.
+
 use std::collections::BTreeMap;
 
 /// Extract simple `<Tag>value</Tag>` pairs from an XML-like string.

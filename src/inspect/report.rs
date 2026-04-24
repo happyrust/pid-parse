@@ -1,3 +1,11 @@
+//! Human-readable summary report generation.
+//!
+//! Produces a multi-section text report covering the CFB tree, the
+//! decoded `PidDocument` highlights, parse coverage, and known vs
+//! unknown streams. Consumed by the `pid_inspect` binary and by any
+//! consumer that wants a one-line / one-screen overview of a parsed
+//! `.pid`.
+
 use crate::model::PidDocument;
 use crate::package::PidPackage;
 use crate::parsers::magic;

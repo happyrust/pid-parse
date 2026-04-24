@@ -1,3 +1,11 @@
+//! Orchestrator for cluster-family streams.
+//!
+//! Walks every top-level cluster stream (`PSMcluster0`, `StyleCluster`,
+//! `Dynamic Attributes Metadata`, sheet clusters, …), runs the
+//! cluster-header probe from [`crate::parsers::cluster_header`], and
+//! populates [`PidDocument::clusters`] / [`PidDocument::sheet_streams`].
+//! DA records are pulled via [`crate::parsers::dynamic_attr_records`].
+
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{ClusterInfo, ClusterKind, ClusterProbeInfo, PidDocument, SheetStream};

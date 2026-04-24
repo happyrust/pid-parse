@@ -1,3 +1,12 @@
+//! Decoder for the `TaggedTxtData/Drawing` XML body.
+//!
+//! Turns the raw XML string (as fetched by [`crate::streams::tagged_text`])
+//! into a typed [`DrawingMeta`], including the `SmartPlant`
+//! `SP_`-prefixed attribute fallbacks for drawing number / UID
+//! fields. Writer-side patches go through
+//! [`crate::writer::metadata_helpers`] which produces XML this
+//! parser can round-trip.
+
 use crate::error::PidError;
 use crate::model::DrawingMeta;
 

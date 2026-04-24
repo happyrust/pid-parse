@@ -1,3 +1,12 @@
+//! Orchestrator for `SummaryInformation` + `DocumentSummaryInformation`.
+//!
+//! Reads the two OLE property-set streams, decodes first-class
+//! fields into [`SummaryInfo`], and — for section 2 of
+//! `DocumentSummaryInformation` — also pulls out the user-defined
+//! property dictionary into
+//! [`SummaryInfo::user_properties`]. Writer-side edits go through
+//! [`crate::writer::summary_write`].
+
 use crate::error::PidError;
 use crate::model::{PidDocument, SummaryInfo, SummaryPropertyValue};
 use std::collections::BTreeMap;

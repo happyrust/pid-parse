@@ -1,3 +1,11 @@
+//! CFB storage / stream hierarchy extraction.
+//!
+//! [`build_tree`] walks a `cfb::CompoundFile` starting at a given
+//! path and materialises the result as a [`StorageNode`] tree — the
+//! shape consumed by [`crate::model::PidDocument::cfb_tree`] and by
+//! the mermaid / inspect renderers. No business semantics; purely a
+//! structural view of the container.
+
 use crate::error::PidError;
 use crate::model::{EntryKind, StorageNode};
 use std::io::{Read, Seek};

@@ -1,3 +1,12 @@
+//! Record decoder for the `Unclustered Dynamic Attributes` stream.
+//!
+//! Parses the sequence of `AttributeRecord`s and their trailing
+//! `DaRecordTrailer`s out of the DA stream bytes, which
+//! [`crate::streams::dynamic_attrs`] then stitches into
+//! [`crate::model::ObjectInventory`] / [`crate::model::ObjectGraph`].
+//! The record layout is recovered heuristically from observed hex
+//! dumps — see module-local comments for the magic-byte signatures.
+
 use crate::model::{
     AttributeField, AttributeRecord, AttributeValue, DaRecordTrailer, ProbeSummary,
 };

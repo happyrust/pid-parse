@@ -1,3 +1,11 @@
+//! Orchestrator for `JSite*` top-level storages.
+//!
+//! For every `JSite*` storage the reader finds, decodes symbol /
+//! local-symbol paths, scans `\x01Ole` / `\x01CompObj` sub-streams
+//! for OLE links, and hands the property blob to
+//! [`crate::parsers::jproperties`]. Output lives under
+//! [`PidDocument::jsites`].
+
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{EmbeddedStream, JSite, PidDocument};

@@ -1,3 +1,9 @@
+//! Decoder for the `TaggedTxtData/General` XML body.
+//!
+//! Sibling of [`crate::parsers::drawing_xml`] but for the
+//! file-scoped metadata — path, file size, and the free-form tag
+//! bag. Output feeds [`crate::model::GeneralMeta`].
+
 use crate::error::PidError;
 use crate::model::GeneralMeta;
 

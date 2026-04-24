@@ -1,3 +1,11 @@
+//! Orchestrator for `TaggedTxtData/*` + `JTaggedTxtStgList`.
+//!
+//! Walks every `TaggedTxtData/<Name>` stream, feeds the body to the
+//! matching parser (`drawing_xml` for `Drawing`, `general_xml` for
+//! `General`, raw preservation for the rest), and populates the
+//! corresponding slots on [`PidDocument`] plus the
+//! [`PidDocument::tagged_storages`] index.
+
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::PidDocument;

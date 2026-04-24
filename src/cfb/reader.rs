@@ -1,3 +1,13 @@
+//! CFB → [`crate::model::PidDocument`] / [`crate::package::PidPackage`]
+//! entry points.
+//!
+//! Wraps the [`cfb`] crate with the `.pid`-specific orchestration
+//! needed to fan out stream decoding, populate the model, and (in
+//! the `parse_pid_package` path) retain every stream's raw bytes for
+//! round-trip writing. Every public entry point funnels through here
+//! — [`crate::api::PidParser`] is a thin facade over these
+//! functions.
+
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{PidDocument, StreamEntry};

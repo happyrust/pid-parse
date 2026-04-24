@@ -1,3 +1,10 @@
+//! ASCII / UTF-16LE string scanning over arbitrary byte buffers.
+//!
+//! Shared utility for the reader paths (string previews, `JSite`
+//! property extraction, unknown-stream probes). Designed to be
+//! allocation-light and tolerant of garbage: runs of printable
+//! bytes are promoted to [`String`], everything else is dropped.
+
 pub fn scan_ascii_strings(data: &[u8], limit: usize) -> Vec<String> {
     let mut result = Vec::new();
     let mut buf = Vec::new();

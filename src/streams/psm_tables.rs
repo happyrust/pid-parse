@@ -1,3 +1,12 @@
+//! Orchestrator for the `PSMroots` / `PSMclustertable` /
+//! `PSMsegmenttable` streams.
+//!
+//! Reads the three PSM index streams (when present), dispatches each
+//! to [`crate::parsers::psm_tables`], and attaches the decoded tables
+//! to the document ([`PidDocument::psm_roots`],
+//! [`PidDocument::psm_cluster_table`],
+//! [`PidDocument::psm_segment_table`]).
+
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::PidDocument;

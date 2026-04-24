@@ -1,3 +1,12 @@
+//! Decoder for `JSite` property blobs.
+//!
+//! Extracts ASCII / UTF-16 strings, `key=value` pairs, and 32-hex
+//! GUIDs from a raw property payload and packages them into
+//! [`JProperties`]. The input format is heuristic — `SmartPlant`
+//! stores these as opaque CFB streams — so the output is
+//! best-effort: the raw byte length is retained so consumers can
+//! still sanity-check coverage.
+
 use crate::model::JProperties;
 use std::collections::BTreeMap;
 
