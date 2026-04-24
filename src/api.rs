@@ -44,10 +44,18 @@ pub struct PidParser {
 ///   collected during scan.
 #[derive(Debug, Clone)]
 pub struct ParseOptions {
+    /// Enable per-stream UTF-16 / ASCII string probes.
     pub scan_strings: bool,
+    /// Enable `SmartPlant`-embedded XML fragment decoding
+    /// (`Drawing` / `General` metadata, rules, formats, …).
     pub parse_xml: bool,
+    /// Enable decoding of `JSite` dynamic property blobs (can be
+    /// expensive on big files with many sites).
     pub parse_jsite_properties: bool,
+    /// Retain streams that don't match any registered decoder, so
+    /// [`crate::writer::PidWriter`] can still round-trip them.
     pub keep_unknown_streams: bool,
+    /// Upper bound on preview strings kept per stream during scans.
     pub max_preview_strings: usize,
 }
 
@@ -64,16 +72,22 @@ impl Default for ParseOptions {
 }
 
 impl PidParser {
+    /// Build a parser with [`ParseOptions::default`] (maximal fidelity).
     pub fn new() -> Self {
         Self {
             options: ParseOptions::default(),
         }
     }
 
+    /// Build a parser with a custom [`ParseOptions`].
     pub fn with_options(options: ParseOptions) -> Self {
         Self { options }
     }
 
+    /// Parse a `.pid` file on disk into a [`PidDocument`]. Streams are
+    /// consumed on the fly; raw bytes are not retained. Use
+    /// [`Self::parse_package`] when the caller plans to write the file
+    /// back.
     pub fn parse_file<P: AsRef<Path>>(&self, path: P) -> Result<PidDocument, PidError> {
         crate::cfb::reader::parse_pid_file(path.as_ref(), &self.options)
     }

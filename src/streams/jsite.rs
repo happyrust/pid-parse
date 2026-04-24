@@ -32,6 +32,9 @@ fn extract_unc_or_path(s: &str) -> String {
     s.to_string()
 }
 
+/// Decode every top-level `JSite*` storage into
+/// [`PidDocument::jsites`]. Honors
+/// [`ParseOptions::parse_jsite_properties`].
 pub fn parse_jsites<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     doc: &mut PidDocument,

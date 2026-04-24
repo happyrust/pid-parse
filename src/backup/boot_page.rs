@@ -51,7 +51,10 @@ pub struct BootPageInfo {
 #[derive(Debug)]
 pub enum BootPageError {
     /// Input slice is shorter than a full MDF page.
-    TooShort { got: usize },
+    TooShort {
+        /// Bytes actually available in the input slice.
+        got: usize,
+    },
     /// The boot page's `DatabaseName` bytes could not be decoded as
     /// valid UTF-16LE that resolves to at least one printable
     /// character after trimming padding. Indicates the slice is

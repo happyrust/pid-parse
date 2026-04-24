@@ -235,6 +235,9 @@ fn write_graph_classes(out: &mut String) {
 // Cross-reference graph → Mermaid
 // ────────────────────────────────────────────────────────────────────────────
 
+/// Knobs that cap how large a cross-reference mermaid diagram grows
+/// before it becomes unreadable. Passed to [`crossref_mermaid_with`];
+/// [`Default`] values match the shipped [`crossref_mermaid`] preset.
 #[derive(Debug, Clone)]
 pub struct CrossRefOptions {
     /// Maximum number of symbols to render.
@@ -259,6 +262,8 @@ pub fn crossref_mermaid(doc: &PidDocument) -> String {
     crossref_mermaid_with(doc, &CrossRefOptions::default())
 }
 
+/// [`crossref_mermaid`] with caller-supplied caps. Returns an empty
+/// string when `doc.cross_reference` is absent.
 pub fn crossref_mermaid_with(doc: &PidDocument, opts: &CrossRefOptions) -> String {
     let Some(xr) = doc.cross_reference.as_ref() else {
         return String::new();

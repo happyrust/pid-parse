@@ -11,6 +11,10 @@ use crate::error::PidError;
 use crate::model::PidDocument;
 use std::io::Read;
 
+/// Decode the `/TaggedTxtData/*` XML family into
+/// [`PidDocument::drawing_meta`] / [`PidDocument::general_meta`] /
+/// [`PidDocument::tagged_storages`]. Missing streams leave the
+/// corresponding fields as `None`.
 pub fn parse_tagged_text_streams<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     doc: &mut PidDocument,

@@ -28,9 +28,12 @@ use crate::model::{
     PsmSegmentEntry, PsmSegmentRecordProbe, PsmSegmentTable,
 };
 
-pub const ROOT_MAGIC: u32 = 0x746F_6F72; // 'root' (LE bytes: 72 6F 6F 74)
-pub const CLST_MAGIC: u32 = 0x7473_6C63; // 'clst'
-pub const STAB_MAGIC: u32 = 0x6261_7473; // 'stab'
+/// `u32` LE magic that begins a `/PSMroots` stream (ASCII `'root'`).
+pub const ROOT_MAGIC: u32 = 0x746F_6F72;
+/// `u32` LE magic that begins a `/PSMclustertable` stream (ASCII `'clst'`).
+pub const CLST_MAGIC: u32 = 0x7473_6C63;
+/// `u32` LE magic that begins a `/PSMsegmenttable` stream (ASCII `'stab'`).
+pub const STAB_MAGIC: u32 = 0x6261_7473;
 
 fn read_u32_le(data: &[u8], pos: usize) -> Option<u32> {
     if pos + 4 > data.len() {

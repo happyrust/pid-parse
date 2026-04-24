@@ -156,7 +156,9 @@ pub struct SheetPatch {
 /// `start == end` patch is a pure insertion.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SheetChunkPatch {
+    /// Inclusive start byte offset inside the target sheet stream.
     pub start: usize,
+    /// Exclusive end byte offset inside the target sheet stream.
     pub end: usize,
     /// Patch bytes. Serialized as standard base64 in JSON plans.
     #[serde(with = "bytes_base64")]

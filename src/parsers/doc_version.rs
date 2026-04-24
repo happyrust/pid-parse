@@ -17,6 +17,8 @@
 use crate::byte_audit::{ByteRange, ParserTraceBuilder, TraceConfidence};
 use crate::model::{VersionHistory, VersionRecord};
 
+/// Fixed byte length of one [`VersionRecord`] inside a
+/// `/DocVersion3` stream (header + strings + timestamp).
 pub const RECORD_SIZE: usize = 48;
 
 /// Parse `DocVersion3`. Returns `None` if no records can be recovered.

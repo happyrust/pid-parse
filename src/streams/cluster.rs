@@ -12,6 +12,9 @@ use crate::model::{ClusterInfo, ClusterKind, ClusterProbeInfo, PidDocument, Shee
 use crate::parsers::{cluster_header, dynamic_attr_records, magic};
 use std::io::Read;
 
+/// Decode every top-level cluster-family stream (`PSMcluster*`,
+/// `StyleCluster`, `Sheet*`) into [`PidDocument::clusters`] /
+/// [`PidDocument::sheet_streams`].
 pub fn parse_clusters<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     doc: &mut PidDocument,

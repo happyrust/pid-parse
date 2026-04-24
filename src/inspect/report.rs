@@ -86,6 +86,9 @@ pub fn generate_package_report(pkg: &PidPackage) -> String {
     out
 }
 
+/// Produce a human-readable multi-line report summarising the
+/// decoded `doc`. Covers stream inventory, `JSite` symbols, cluster
+/// coverage and cross-reference stats.
 pub fn generate_report(doc: &PidDocument) -> String {
     let mut out = String::new();
 

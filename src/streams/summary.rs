@@ -21,6 +21,9 @@ const FMTID_DOC_SUMMARY_SECTION_2: [u8; 16] = [
     0x05, 0xD5, 0xCD, 0xD5, 0x9C, 0x2E, 0x1B, 0x10, 0x93, 0x97, 0x08, 0x00, 0x2B, 0x2C, 0xF9, 0xAE,
 ];
 
+/// Decode OLE `/\x05SummaryInformation` +
+/// `/\x05DocumentSummaryInformation` into [`PidDocument::summary`].
+/// Silently skips missing streams.
 pub fn parse_summary_streams<R: Read + std::io::Seek>(
     cfb: &mut ::cfb::CompoundFile<R>,
     doc: &mut PidDocument,

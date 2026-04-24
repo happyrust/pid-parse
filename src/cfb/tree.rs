@@ -10,6 +10,10 @@ use crate::error::PidError;
 use crate::model::{EntryKind, StorageNode};
 use std::io::{Read, Seek};
 
+/// Walk the CFB tree rooted at `path` and return a [`StorageNode`]
+/// snapshot. `path` must be `/` for the root or a full CFB path to
+/// any storage / stream entry. Any `cfb` error is mapped to
+/// [`PidError::Io`].
 pub fn build_tree<R: Read + Seek>(
     cfb: &::cfb::CompoundFile<R>,
     path: &str,
