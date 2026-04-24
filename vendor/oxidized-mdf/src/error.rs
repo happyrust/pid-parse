@@ -10,8 +10,8 @@ pub enum Error {
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::IoError(err) => write!(f, "IO Error: {}", err),
-            Error::ParseError(msg) => write!(f, "Parse Error: {}", msg),
+            Error::IoError(err) => write!(f, "IO Error: {err}"),
+            Error::ParseError(msg) => write!(f, "Parse Error: {msg}"),
         }
     }
 }

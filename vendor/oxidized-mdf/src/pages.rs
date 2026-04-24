@@ -460,11 +460,8 @@ impl<'a> Record<'a> {
     ) -> Result<(Option<&'a [u8]>, Record<'a>), &'static str> {
         let is_null = self.pop_next_null_bit();
 
-        let mut variable_columns = match self.variable_columns {
-            Some(columns) => columns,
-            None => {
-                return Err("no variable column data");
-            }
+        let Some(mut variable_columns) = self.variable_columns else {
+            return Err("no variable column data");
         };
 
         if is_null {
@@ -615,9 +612,8 @@ impl<'a> VariableColumns<'a> {
         })
     }
     fn next_bytes(&mut self) -> Result<Option<&'a [u8]>, &'static str> {
-        let read_bytes_index = match self.read_bytes_index.take() {
-            Some(read_bytes_index) => read_bytes_index,
-            None => return Ok(None),
+        let Some(read_bytes_index) = self.read_bytes_index.take() else {
+            return Ok(None);
         };
 
         if self.variable_length_column_lengths.is_empty() {
@@ -771,26 +767,16 @@ impl Page {
         let slot_count = self.header.slot_count as usize;
         let mut slots = Vec::with_capacity(slot_count);
 
-        let slot_bytes_len = match slot_count.checked_mul(2) {
-            Some(slot_bytes_len) => slot_bytes_len,
-            None => {
-                log::error!(
-                    "Skipping malformed slot directory: slot count {} overflows",
-                    slot_count
-                );
-                return slots;
-            }
+        let Some(slot_bytes_len) = slot_count.checked_mul(2) else {
+            log::error!("Skipping malformed slot directory: slot count {slot_count} overflows");
+            return slots;
         };
-        let slot_range_start = match self.bytes.len().checked_sub(slot_bytes_len) {
-            Some(slot_range_start) => slot_range_start,
-            None => {
-                log::error!(
-                    "Skipping malformed slot directory: {} slots exceed page size {}",
-                    slot_count,
-                    self.bytes.len()
-                );
-                return slots;
-            }
+        let Some(slot_range_start) = self.bytes.len().checked_sub(slot_bytes_len) else {
+            let page_size = self.bytes.len();
+            log::error!(
+                "Skipping malformed slot directory: {slot_count} slots exceed page size {page_size}"
+            );
+            return slots;
         };
         let mut slot_bytes = &self.bytes[slot_range_start..];
 
@@ -799,7 +785,7 @@ impl Page {
                 match parse_le_u16(slot_bytes, "page slot directory entry truncated") {
                     Ok(parsed) => parsed,
                     Err(err) => {
-                        log::error!("Skipping malformed slot directory: {}", err);
+                        log::error!("Skipping malformed slot directory: {err}");
                         return Vec::new();
                     }
                 };
@@ -866,6 +852,9 @@ impl TryFrom<[u8; 8192]> for Page {
 }
 
 #[cfg(test)]
+#[allow(clippy::unreadable_literal)]
+// Test fixtures use page-ID, AUID, and byte-offset literals copied verbatim
+// from real MDF dumps; underscore-separating them would obscure cross-reference.
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;

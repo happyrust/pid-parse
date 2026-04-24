@@ -8,8 +8,25 @@
 //   - Column parse failure: error! → warn! (compact format NULL is expected)
 //   - Changed read() to read_exact() for page integrity
 //   - Upgraded to edition 2021, uuid 1.x
+//   - Added #![warn(...)] lint set to mirror parent crate's quality gate
 
 #![allow(dead_code)]
+// Mirror the pedantic lint subset baked into the parent `pid-parse`
+// crate (see `../../../../src/lib.rs`) so vendored code maintains the
+// same quality bar as our own modules. Combined with the CI
+// `-D warnings` gate this hard-fails regressions across the workspace.
+#![warn(
+    clippy::uninlined_format_args,
+    clippy::doc_markdown,
+    clippy::redundant_closure_for_method_calls,
+    clippy::manual_let_else,
+    clippy::map_unwrap_or,
+    clippy::unreadable_literal,
+    clippy::bool_to_int_with_if,
+    clippy::implicit_clone,
+    clippy::explicit_iter_loop,
+    clippy::unnecessary_map_or
+)]
 
 //! # A Crate for Parsing MDF files
 //!
@@ -149,7 +166,7 @@ impl MdfDatabase {
 
         let page_pointers = table.page_pointers();
 
-        log::debug!("reading pages of {}", table_name);
+        log::debug!("reading pages of {table_name}");
         Some(
             self.page_reader
                 .read_pages_of_pointers(page_pointers)
@@ -159,7 +176,7 @@ impl MdfDatabase {
                     let page = match page {
                         Ok(page) => page,
                         Err(err) => {
-                            error!("Cannot read page: {}", err);
+                            error!("Cannot read page: {err}");
                             return rows;
                         }
                     };
@@ -175,7 +192,7 @@ impl MdfDatabase {
                             let (value, r) = match Value::parse(column, rec) {
                                 Ok((value, r)) => (value, r),
                                 Err(e) => {
-                                    warn!("Column {:?} parse skipped (NULL): {}", column, e);
+                                    warn!("Column {column:?} parse skipped (NULL): {e}");
                                     break;
                                 }
                             };
@@ -213,18 +230,18 @@ pub enum Value {
 impl Display for Value {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            Value::Bit(bit) => write!(fmt, "{}", bit),
-            Value::TinyInt(i) => write!(fmt, "{}", i),
-            Value::SmallInt(i) => write!(fmt, "{}", i),
-            Value::Int(i) => write!(fmt, "{}", i),
-            Value::BigInt(i) => write!(fmt, "{}", i),
-            Value::Real(f) => write!(fmt, "{}", f),
-            Value::Float(f) => write!(fmt, "{}", f),
-            Value::Decimal(decimal) => write!(fmt, "{}", decimal),
-            Value::String(s) => write!(fmt, "{}", s),
-            Value::Binary(b) => write!(fmt, "{:?}", b),
-            Value::DateTime(d) => write!(fmt, "{}", d),
-            Value::Uuid(uuid) => write!(fmt, "{}", uuid),
+            Value::Bit(bit) => write!(fmt, "{bit}"),
+            Value::TinyInt(i) => write!(fmt, "{i}"),
+            Value::SmallInt(i) => write!(fmt, "{i}"),
+            Value::Int(i) => write!(fmt, "{i}"),
+            Value::BigInt(i) => write!(fmt, "{i}"),
+            Value::Real(f) => write!(fmt, "{f}"),
+            Value::Float(f) => write!(fmt, "{f}"),
+            Value::Decimal(decimal) => write!(fmt, "{decimal}"),
+            Value::String(s) => write!(fmt, "{s}"),
+            Value::Binary(b) => write!(fmt, "{b:?}"),
+            Value::DateTime(d) => write!(fmt, "{d}"),
+            Value::Uuid(uuid) => write!(fmt, "{uuid}"),
             Value::Null => write!(fmt, "null"),
         }
     }

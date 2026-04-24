@@ -17,7 +17,7 @@ pub(crate) struct BaseTableData {
     syscolpars: Vec<Syscolpar>,
 }
 
-const SYSROWEST_AUID: i64 = 327680;
+const SYSROWEST_AUID: i64 = 327_680;
 const SYSSCHOBJS_IDMAJOR: i32 = 34;
 const SYSCOLPARS_IDMAJOR: i32 = 41;
 const SYSSCALARTYPE_IDMAJOR: i32 = 50;
@@ -482,6 +482,9 @@ impl<'a> TryFrom<Record<'a>> for Syscolpar {
 }
 
 #[cfg(test)]
+#[allow(clippy::unreadable_literal)]
+// AUID test list is copied verbatim from an MDF dump; underscore
+// separators would obscure direct cross-reference to the raw bytes.
 mod tests {
     use crate::{Error, MdfDatabase};
     use pretty_assertions::assert_eq;
