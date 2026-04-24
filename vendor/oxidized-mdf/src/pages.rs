@@ -162,6 +162,11 @@ impl<'a> Record<'a> {
         Ok((bytes[0] as i8, record))
     }
 
+    pub(crate) fn parse_u8(self) -> Result<(u8, Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_bytes(1)?;
+        Ok((bytes[0], record))
+    }
+
     pub(crate) fn parse_i16(self) -> Result<(i16, Record<'a>), &'static str> {
         let (bytes, record) = self.parse_bytes(2)?;
         Ok((i16::from_le_bytes([bytes[0], bytes[1]]), record))
@@ -376,34 +381,46 @@ impl<'a> Record<'a> {
         self,
         scale: u8,
     ) -> Result<(Option<DateTime<Utc>>, Record<'a>), &'static str> {
-        let (bytes, record) = self.parse_bytes_opt(8)?;
+        if scale > 7 {
+            return Err("datetime2 scale exceeds SQL Server maximum");
+        }
+
+        let bytes_of_time = if scale <= 2 {
+            3
+        } else if (3..=4).contains(&scale) {
+            4
+        } else {
+            5
+        };
+        let (bytes, record) = self.parse_bytes_opt(bytes_of_time + 3)?;
 
         let datetime = match bytes {
             Some(bytes) => {
-                let bytes_of_time = if scale <= 2 {
-                    3
-                } else if (3..=4).contains(&scale) {
-                    4
-                } else {
-                    5
-                };
-
-                // TODO: include time in the calculation
-                let d = bytes_of_time;
+                let time_units = bytes[..bytes_of_time]
+                    .iter()
+                    .enumerate()
+                    .fold(0u64, |acc, (index, byte)| {
+                        acc | ((*byte as u64) << (index * 8))
+                    });
                 let mut day_buf = [0u8; 4];
-                day_buf[0] = bytes[d];
-                day_buf[1] = bytes[d + 1];
-                day_buf[2] = bytes[d + 2];
-                if bytes[d + 2] & 0x80 != 0 {
-                    day_buf[3] = 0xFF;
+                day_buf[..3].copy_from_slice(&bytes[bytes_of_time..bytes_of_time + 3]);
+                let days = u32::from_le_bytes(day_buf);
+
+                let nanos_per_unit = 10u64.pow(9 - scale as u32);
+                let nanos = time_units
+                    .checked_mul(nanos_per_unit)
+                    .ok_or("Cannot parse datetime2 due to time overflow")?;
+                if nanos >= 86_400_000_000_000 {
+                    return Err("datetime2 time exceeds one day");
                 }
-                let days = i32::from_le_bytes(day_buf);
 
                 let datetime = Utc
                     .with_ymd_and_hms(1, 1, 1, 0, 0, 0)
                     .single()
                     .ok_or("Cannot construct datetime epoch 0001-01-01")?
                     .checked_add_signed(Duration::days(days as i64))
+                    .ok_or("Cannot parse datetime due to overflow")?
+                    .checked_add_signed(Duration::nanoseconds(nanos as i64))
                     .ok_or("Cannot parse datetime due to overflow")?;
 
                 Some(datetime)
@@ -499,6 +516,18 @@ impl<'a> Record<'a> {
 
         let (s, _, _) = encoding_rs::UTF_8.decode(bytes);
         let s = s.into_owned();
+
+        Ok((s, record))
+    }
+
+    pub(crate) fn parse_utf16le_string_from_fixed_bytes(
+        self,
+        len: usize,
+    ) -> Result<(String, Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_bytes(len)?;
+
+        let (s, _, _) = encoding_rs::UTF_16LE.decode(bytes);
+        let s = s.trim_end_matches('\0').to_string();
 
         Ok((s, record))
     }

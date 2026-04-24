@@ -48,11 +48,11 @@ const PUBLISH_TABLES: &[&str] = &[
 /// that connection for reuse by the existing query loader.
 pub fn open_mdf_as_sqlite(path: &Path) -> Result<Connection, PublishError> {
     let t0 = Instant::now();
-    let mut db = MdfDatabase::open(path)?;
     let conn = Connection::open_in_memory()?;
     let mut tables_staged = 0u32;
     let mut total_rows = 0usize;
     for table_name in PUBLISH_TABLES {
+        let mut db = MdfDatabase::open(path)?;
         let rows = stage_table(&mut db, &conn, table_name)?;
         if rows > 0 {
             tables_staged += 1;
@@ -118,13 +118,14 @@ fn stage_table(
         placeholders
     );
 
-    let Some(rows) = db.rows(table_name) else {
+    let Some(rows) = db.try_rows(table_name) else {
         info!("  {table_name}: 0 rows");
         return Ok(0);
     };
     let mut stmt = conn.prepare(&insert_sql)?;
     let mut row_count = 0usize;
     for row in rows {
+        let row = row?;
         let values = columns
             .iter()
             .map(|column| row.value(column).cloned().and_then(value_to_text))
