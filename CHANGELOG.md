@@ -72,6 +72,32 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### Performance baseline（criterion）
+
+首次为三条热路径建立 criterion 基线，用于后续重构 / 依赖升级
+的回归信号；**不**纳入 CI gate —— criterion 数字跨机器漂移太大，
+目前只作为本地参考。Fixture（A01 `.pid` + TEST02 `Export.mdf`）缺失
+时 bench 会 soft-skip 打印提示，`cargo bench` 仍正常完成。
+
+| Scenario                 | Median     | 95% CI                 | 备注 |
+|--------------------------|------------|------------------------|------|
+| `parse_pid_a01`          |  7.79 ms   |  7.00 ms …  8.64 ms    | `.pid` 冷读（CFB → `PidDocument`），含整棵流解码 |
+| `load_mdf_a01`           | 21.30 ms   | 20.86 ms … 21.77 ms    | `Export.mdf` → `PublishDrawing`，走 vendored `oxidized-mdf` |
+| `write_data_xml_a01`     | 15.09 µs   | 14.92 µs … 15.32 µs    | 预加载 `PublishDrawing` → `<PIDDrawing>` XML（writer 独立量） |
+
+跑法：`cargo bench --bench pid_pipeline`
+（可选参数：`-- --sample-size 20 --warm-up-time 1 --measurement-time 3`
+用于压低单次耗时；默认参数约 40–50 s）。测量机器：本地 Windows
+/ release profile / `bench` target。
+
+接入方式：
+- `Cargo.toml` 新增 `criterion = { version = "0.8", default-features
+  = false, features = ["cargo_bench_support"] }` dev-dep 与
+  `[[bench]] name = "pid_pipeline" harness = false`。
+- `benches/pid_pipeline.rs` 共三个 `criterion_group` 成员，每个都
+  走 `path.exists()` 预检，fixture 缺失时 `eprintln!` 提示并 return，
+  与 `tests/common/mod.rs` 的 soft-skip 模式对齐。
+
 ### Vendored `oxidized-mdf` 对齐父 crate lint gate
 
 - `vendor/oxidized-mdf/src/lib.rs` 顶部加入与父 crate 相同的
