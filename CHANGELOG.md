@@ -11,7 +11,11 @@
   默认静默，无 log subscriber 时零开销。
 - CLI `pid_publish_xml` 新增 `--verbose` / `-v` 标志：激活 `env_logger`
   显示 MDF 加载诊断（每表行数、耗时、缺失表），同时显示 `oxidized-mdf`
-  内部的 ERROR 级日志（列解析边界问题），便于调试新 MDF 文件。
+  内部的 WARN 级日志（列解析边界跳过），便于调试新 MDF 文件。
+- vendored `lib.rs` 中列解析失败的日志从 `error!` 降级为 `warn!`：
+  SQL Server compact record format 中可空列超出固定区域是正常行为，不是解析器 bug。
+- 消除 vendored `lib.rs` 中最后一个生产代码 `.unwrap()`，改为 `let-else`
+  模式。三个 vendored 源文件现在真正实现零 `unwrap`/`panic!`/`todo!()`。
 
 ## [0.10.0] — 2026-04-24
 

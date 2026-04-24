@@ -4,6 +4,8 @@
 //   - Removed async runtime (async-std, futures-lite, async-log)
 //   - Converted public API to sync (MdfDatabase::open, db.rows)
 //   - Eliminated panic edges: unwrap/todo replaced with Result propagation
+//   - Row iterator: record.take().unwrap() → let-else (zero unwrap in production)
+//   - Column parse failure: error! → warn! (compact format NULL is expected)
 //   - Changed read() to read_exact() for page integrity
 //   - Upgraded to edition 2021, uuid 1.x
 
