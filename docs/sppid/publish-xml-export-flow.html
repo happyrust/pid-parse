@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPPID Publish XML 导出流程</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --paper: #f5f4ed;
+      --paper-2: #efeee5;
+      --ink: #0b0d0b;
+      --muted: #52534e;
+      --soft: #8b8d83;
+      --rule: rgba(11, 13, 11, 0.12);
+      --rule-solid: #c8c6ba;
+      --accent: #f7591f;
+      --accent-tint: #fff0ea;
+      --link: #1a70c7;
+      --good: #2f7d4e;
+      --white: #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 48px 0 40px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-family: "Geist Mono", Consolas, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 44px;
+      font-weight: 400;
+      letter-spacing: 0;
+      line-height: 1.08;
+    }
+
+    .subtitle {
+      max-width: 880px;
+      margin: 16px 0 28px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .diagram-shell {
+      overflow-x: auto;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      background: var(--paper-2);
+    }
+
+    svg {
+      display: block;
+      min-width: 1120px;
+      height: auto;
+    }
+
+    .node-title {
+      font-family: "Geist", sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      fill: var(--ink);
+    }
+
+    .node-sub {
+      font-family: "Geist Mono", Consolas, monospace;
+      font-size: 9px;
+      fill: var(--muted);
+    }
+
+    .tag {
+      font-family: "Geist Mono", Consolas, monospace;
+      font-size: 8px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-anchor: middle;
+      dominant-baseline: middle;
+    }
+
+    .arrow-label {
+      font-family: "Geist Mono", Consolas, monospace;
+      font-size: 8px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      fill: var(--muted);
+      text-anchor: middle;
+    }
+
+    .callout {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 16px;
+      font-style: italic;
+      fill: var(--ink);
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: 1.12fr 0.96fr 0.92fr;
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .card {
+      min-width: 0;
+      border: 1px solid var(--rule);
+      border-radius: 6px;
+      background: var(--white);
+      padding: 20px;
+    }
+
+    .card h2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 12px;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .dot.accent {
+      background: var(--accent);
+    }
+
+    .dot.link {
+      background: var(--link);
+    }
+
+    .dot.good {
+      background: var(--good);
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    li {
+      margin: 7px 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    code {
+      font-family: "Geist Mono", Consolas, monospace;
+      font-size: 0.92em;
+      color: var(--ink);
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .matrix .card {
+      padding: 18px;
+    }
+
+    footer {
+      margin-top: 28px;
+      padding-top: 16px;
+      border-top: 1px solid var(--rule);
+      color: var(--soft);
+      font-family: "Geist Mono", Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 860px) {
+      main {
+        width: min(100vw - 28px, 1180px);
+        padding-top: 32px;
+      }
+
+      h1 {
+        font-size: 36px;
+      }
+
+      .cards,
+      .matrix {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">PID-PARSE / SMARTPLANT P&amp;ID</p>
+    <h1>Publish XML 导出流程与格式约束</h1>
+    <p class="subtitle">
+      本图描述当前仓内离线 publish pipeline：从 SmartPlant 备份得到 MDF，再由 Rust MDF loader 读取表数据，按 drawing UID 生成
+      <code>_Data.xml</code> 与可选 <code>_Meta.xml</code>。格式说明以 SPPID 参考导出样本、当前 writer 实现、
+      CLI 守门项共同约束。
+    </p>
+
+    <section class="diagram-shell" aria-label="Publish XML 导出流程图">
+      <svg viewBox="0 0 1120 640" role="img" aria-labelledby="title desc">
+        <title id="title">SPPID Publish XML 导出流程</title>
+        <desc id="desc">从 Export.dmp 到 MDF、Rust MDF loader、drawing graph、Data XML、Meta XML、语义 diff 的流程图。</desc>
+        <defs>
+          <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r="0.9" fill="rgba(11,13,11,0.10)"/>
+          </pattern>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#52534e"/>
+          </marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#f7591f"/>
+          </marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#1a70c7"/>
+          </marker>
+        </defs>
+
+        <rect width="1120" height="640" fill="#efeee5"/>
+        <rect width="1120" height="640" fill="url(#dots)" opacity="0.56"/>
+
+        <!-- arrows -->
+        <path d="M180 120 H244" fill="none" stroke="#52534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <path d="M384 120 H448" fill="none" stroke="#52534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <path d="M588 120 H652" fill="none" stroke="#52534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <path d="M792 120 H856" fill="none" stroke="#f7591f" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+        <path d="M724 168 V248" fill="none" stroke="#52534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <path d="M724 328 V408" fill="none" stroke="#1a70c7" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-link)"/>
+        <path d="M948 168 C948 244 888 252 792 260" fill="none" stroke="#52534e" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <path d="M948 168 C948 368 888 416 792 440" fill="none" stroke="#1a70c7" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-link)"/>
+
+        <!-- arrow labels -->
+        <rect x="196" y="100" width="36" height="16" rx="2" fill="#efeee5"/>
+        <text x="214" y="111" class="arrow-label">STRIP</text>
+        <rect x="400" y="100" width="48" height="16" rx="2" fill="#efeee5"/>
+        <text x="424" y="111" class="arrow-label">READ</text>
+        <rect x="604" y="100" width="40" height="16" rx="2" fill="#efeee5"/>
+        <text x="624" y="111" class="arrow-label">LOAD</text>
+        <rect x="808" y="100" width="44" height="16" rx="2" fill="#efeee5"/>
+        <text x="830" y="111" class="arrow-label">WRITE</text>
+        <rect x="736" y="200" width="48" height="16" rx="2" fill="#efeee5"/>
+        <text x="760" y="211" class="arrow-label">OPTION</text>
+        <rect x="736" y="360" width="48" height="16" rx="2" fill="#efeee5"/>
+        <text x="760" y="371" class="arrow-label">VERIFY</text>
+
+        <!-- nodes -->
+        <g>
+          <rect x="40" y="72" width="140" height="96" rx="6" fill="#efeee5"/>
+          <rect x="40" y="72" width="140" height="96" rx="6" fill="#ffffff" stroke="#0b0d0b" stroke-width="1"/>
+          <rect x="52" y="84" width="36" height="16" rx="2" fill="transparent" stroke="rgba(11,13,11,0.40)" stroke-width="0.8"/>
+          <text x="70" y="92" class="tag" fill="#0b0d0b">SRC</text>
+          <text x="110" y="120" class="node-title" text-anchor="middle">SmartPlant 备份</text>
+          <text x="110" y="140" class="node-sub" text-anchor="middle">Export.dmp</text>
+        </g>
+
+        <g>
+          <rect x="244" y="72" width="140" height="96" rx="6" fill="#efeee5"/>
+          <rect x="244" y="72" width="140" height="96" rx="6" fill="#ffffff" stroke="#0b0d0b" stroke-width="1"/>
+          <rect x="256" y="84" width="36" height="16" rx="2" fill="transparent" stroke="rgba(11,13,11,0.40)" stroke-width="0.8"/>
+          <text x="274" y="92" class="tag" fill="#0b0d0b">CLI</text>
+          <text x="314" y="116" class="node-title" text-anchor="middle">剥离 MTF 头</text>
+          <text x="314" y="136" class="node-sub" text-anchor="middle">pid_backup_extract</text>
+        </g>
+
+        <g>
+          <rect x="448" y="72" width="140" height="96" rx="6" fill="#efeee5"/>
+          <rect x="448" y="72" width="140" height="96" rx="6" fill="rgba(11,13,11,0.04)" stroke="#52534e" stroke-width="1"/>
+          <rect x="460" y="84" width="36" height="16" rx="2" fill="transparent" stroke="rgba(82,83,78,0.50)" stroke-width="0.8"/>
+          <text x="478" y="92" class="tag" fill="#52534e">DB</text>
+          <text x="518" y="116" class="node-title" text-anchor="middle">Rust MDF 读取</text>
+          <text x="518" y="136" class="node-sub" text-anchor="middle">oxidized-mdf / Export.mdf</text>
+        </g>
+
+        <g>
+          <rect x="652" y="72" width="140" height="96" rx="6" fill="#efeee5"/>
+          <rect x="652" y="72" width="140" height="96" rx="6" fill="#fff0ea" stroke="#f7591f" stroke-width="1"/>
+          <rect x="664" y="84" width="36" height="16" rx="2" fill="transparent" stroke="rgba(247,89,31,0.50)" stroke-width="0.8"/>
+          <text x="682" y="92" class="tag" fill="#f7591f">DTO</text>
+          <text x="722" y="116" class="node-title" text-anchor="middle">加载 drawing graph</text>
+          <text x="722" y="136" class="node-sub" text-anchor="middle">load_drawing_graph</text>
+        </g>
+
+        <g>
+          <rect x="856" y="72" width="184" height="96" rx="6" fill="#efeee5"/>
+          <rect x="856" y="72" width="184" height="96" rx="6" fill="#fff0ea" stroke="#f7591f" stroke-width="1"/>
+          <rect x="868" y="84" width="40" height="16" rx="2" fill="transparent" stroke="rgba(247,89,31,0.50)" stroke-width="0.8"/>
+          <text x="888" y="92" class="tag" fill="#f7591f">DATA</text>
+          <text x="948" y="116" class="node-title" text-anchor="middle">生成 _Data.xml</text>
+          <text x="948" y="136" class="node-sub" text-anchor="middle">write_data_xml</text>
+        </g>
+
+        <g>
+          <rect x="604" y="248" width="240" height="80" rx="6" fill="#efeee5"/>
+          <rect x="604" y="248" width="240" height="80" rx="6" fill="#ffffff" stroke="#1a70c7" stroke-width="1"/>
+          <rect x="616" y="260" width="40" height="16" rx="2" fill="transparent" stroke="rgba(26,112,199,0.50)" stroke-width="0.8"/>
+          <text x="636" y="268" class="tag" fill="#1a70c7">META</text>
+          <text x="724" y="288" class="node-title" text-anchor="middle">生成 _Meta.xml</text>
+          <text x="724" y="308" class="node-sub" text-anchor="middle">--meta-out / write_meta_xml</text>
+        </g>
+
+        <g>
+          <rect x="604" y="408" width="240" height="84" rx="6" fill="#efeee5"/>
+          <rect x="604" y="408" width="240" height="84" rx="6" fill="rgba(11,13,11,0.03)" stroke="rgba(11,13,11,0.30)" stroke-width="1" stroke-dasharray="5,4"/>
+          <rect x="616" y="420" width="40" height="16" rx="2" fill="transparent" stroke="rgba(11,13,11,0.30)" stroke-width="0.8"/>
+          <text x="636" y="428" class="tag" fill="#52534e">GATE</text>
+          <text x="724" y="448" class="node-title" text-anchor="middle">SemanticDiff 守门</text>
+          <text x="724" y="468" class="node-sub" text-anchor="middle">tag / iface / attr / Rel</text>
+        </g>
+
+        <g>
+          <path d="M104 272 C172 236 244 232 312 264" fill="none" stroke="#f7591f" stroke-width="1.2"/>
+          <text x="116" y="264" class="callout">SPPID 规范核心：对象靠接口集合表达语义。</text>
+          <text x="116" y="292" class="node-sub">PID tag 包住多条 I* interface；关系统一落到 Rel / IRel。</text>
+        </g>
+
+        <g>
+          <path d="M884 276 C972 260 1024 284 1052 352" fill="none" stroke="#52534e" stroke-width="1.2"/>
+          <text x="884" y="288" class="callout">A01 与 DWG 是项目风格差异，不是 XML 失效。</text>
+          <text x="884" y="316" class="node-sub">--style a01: ItemTag；--style dwg: Name / omit vessel id。</text>
+        </g>
+
+        <!-- legend -->
+        <line x1="40" y1="560" x2="1080" y2="560" stroke="rgba(11,13,11,0.12)" stroke-width="0.8"/>
+        <text x="40" y="584" fill="#52534e" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="120" y="572" width="32" height="16" rx="4" fill="#fff0ea" stroke="#f7591f"/>
+        <text x="164" y="584" class="node-sub">当前关键 writer</text>
+        <rect x="304" y="572" width="32" height="16" rx="4" fill="rgba(11,13,11,0.04)" stroke="#52534e"/>
+        <text x="348" y="584" class="node-sub">中间数据源</text>
+        <path d="M496 580 H536" stroke="#1a70c7" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-link)"/>
+        <text x="552" y="584" class="node-sub">可选输出或验证</text>
+      </svg>
+    </section>
+
+    <section class="cards" aria-label="格式要求摘要">
+      <article class="card">
+        <p class="eyebrow">DATA XML</p>
+        <h2><span class="dot accent"></span><code>_Data.xml</code> 主文档</h2>
+        <ul>
+          <li>XML 声明固定为 <code>&lt;?xml version ="1.0" encoding="UTF-8"?&gt;</code>。</li>
+          <li>根为 <code>&lt;Container&gt;</code>，<code>CompSchema="PIDComponent"</code>，<code>Scope="Data"</code>。</li>
+          <li><code>Plant</code> 来自 CLI <code>--plant</code>；<code>DocUID</code> / <code>DocName</code> 来自 drawing。</li>
+          <li>首个业务节点为 <code>&lt;PIDDrawing&gt;</code>，随后输出设备、管线、仪表、表示对象与关系。</li>
+          <li>SPPID 对象格式是“PID tag + 多个 <code>I*</code> 接口节点”；接口和属性集合由 parity 测试守门。</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">META XML</p>
+        <h2><span class="dot link"></span><code>_Meta.xml</code> 配套文档</h2>
+        <ul>
+          <li>根同为 <code>&lt;Container&gt;</code>，但 <code>CompSchema="DocVersioningComponent"</code>。</li>
+          <li>固定三类实体：<code>DocumentVersion</code>、<code>DocumentRevision</code>、<code>File</code>。</li>
+          <li>固定三类关系：<code>VersionedDoc</code>、<code>RevisedDocument</code>、<code>FileComposition</code>。</li>
+          <li>内部 UID 由 drawing UID 确定性派生，保证同一 drawing 重复导出稳定。</li>
+          <li><code>IFile FilePath</code> 可为空；真实 SPPID 可能写操作员本机路径，此项属 field policy。</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">SERIALIZATION</p>
+        <h2><span class="dot good"></span>序列化与兼容</h2>
+        <ul>
+          <li>当前 writer 输出 plain UTF-8、两空格级缩进、尾随换行，写文件走 <code>std::fs::write</code>。</li>
+          <li>属性值必须 XML escape：<code>&amp;</code>、<code>&lt;</code>、引号、CR/LF 均需可往返。</li>
+          <li>未知可选字段以空属性保留，如 <code>Description=""</code>，匹配 SPPID blank-but-present 风格。</li>
+          <li>样例层存在差异：A01 为 UTF-8 无 BOM + LF；DWG 样本为 UTF-8 BOM + CRLF。</li>
+          <li>因此 BOM / CRLF 不宜判作 schema 问题；若要字节级对齐，应显式引入 serialization policy。</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="matrix" aria-label="命令与验收">
+      <article class="card">
+        <p class="eyebrow">CLI</p>
+        <h2><span class="dot accent"></span>导出命令</h2>
+        <ul>
+          <li>列 drawing：<code>cargo run --bin pid_publish_xml -- Export.mdf --list-drawings</code></li>
+          <li>只导出 Data：<code>cargo run --bin pid_publish_xml -- Export.mdf --drawing &lt;UID&gt; --plant TEST02 --out A01_Data.xml</code></li>
+          <li>同时导出 Meta：<code>cargo run --bin pid_publish_xml -- Export.mdf --drawing &lt;UID&gt; --plant TEST02 --out A01_Data.xml --meta-out A01_Meta.xml</code></li>
+          <li>DWG 风格：<code>--style dwg</code>；默认 A01 风格：<code>--style a01</code>。</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <p class="eyebrow">SPPID SHAPE</p>
+        <h2><span class="dot link"></span>格式验收口径</h2>
+        <ul>
+          <li>结构验收：XML 可解析，根 <code>Container</code> 与 schema 标记正确。</li>
+          <li>语义验收：PID tag 数量、接口集合、属性集合与参考 publish XML 对齐。</li>
+          <li>关系验收：<code>&lt;Rel&gt;</code> / <code>&lt;IRel UID1 UID2 DefUID&gt;</code> 覆盖 model item、representation、业务关系。</li>
+          <li>风格验收：A01 / DWG 的 <code>IObject</code> 命名约定按 <code>PublishStyle</code> 显式选择。</li>
+          <li>CI 守门：<code>--diff-against</code> 输出 tag 与 Rel-DefUID 级 <code>SemanticDiffReport</code>。</li>
+        </ul>
+      </article>
+    </section>
+
+    <footer>
+      来源：README.md 的 offline pipeline；src/bin/pid_publish_xml.rs 的 CLI 与 run flow；
+      src/publish/xml_writer.rs 的 Data/Meta writer 与格式保证；test-file/export-test/publish-data/* 的 A01/DWG 参考样本。
+    </footer>
+  </main>
+</body>
+</html>
