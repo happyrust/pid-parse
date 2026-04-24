@@ -99,6 +99,9 @@ pub fn parse_tagged_stg_list_with_trace(
         entries.push(TaggedTextStorageEntry { storage_name });
         pos = name_end;
     }
+    if count > 0 && entries.is_empty() {
+        return None;
+    }
     Some(TaggedTextStorageList {
         size: data.len() as u64,
         list_name,
@@ -149,6 +152,16 @@ mod tests {
     fn rejects_short_stream() {
         assert!(parse_tagged_stg_list(&[]).is_none());
         assert!(parse_tagged_stg_list(&[1, 2, 3, 4]).is_none());
+    }
+
+    #[test]
+    fn rejects_declared_entries_when_first_entry_is_truncated() {
+        let mut data = Vec::new();
+        data.extend(utf16("TaggedTxtStorages"));
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&[14, 0, 0]); // truncated first char_count u32
+
+        assert!(parse_tagged_stg_list(&data).is_none());
     }
 
     #[test]
