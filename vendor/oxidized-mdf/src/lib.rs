@@ -238,6 +238,10 @@ impl Value {
                 let (datetime, r) = record.parse_datetime2_opt(column.scale)?;
                 Ok((datetime.map_or(Value::Null, Value::DateTime), r))
             }
+            "smalldatetime" => {
+                let (datetime, r) = record.parse_smalldatetime_opt()?;
+                Ok((datetime.map_or(Value::Null, Value::DateTime), r))
+            }
             "tinyint" => {
                 let (int, r) = record.parse_i8()?;
                 Ok((Value::TinyInt(int), r))
@@ -262,12 +266,16 @@ impl Value {
                 let (float, r) = record.parse_f64_opt()?;
                 Ok((float.map_or(Value::Null, Value::Float), r))
             }
-            "nchar" => {
+            "char" | "nchar" => {
                 let (string, r) =
                     record.parse_string_from_fixed_bytes(column.max_length as usize)?;
                 Ok((Value::String(string), r))
             }
-            "nvarchar" | "varchar" => {
+            "nvarchar" | "varchar" | "sysname" => {
+                let (string, r) = record.parse_string()?;
+                Ok((string.map_or(Value::Null, Value::String), r))
+            }
+            "text" | "ntext" => {
                 let (string, r) = record.parse_string()?;
                 Ok((string.map_or(Value::Null, Value::String), r))
             }
@@ -275,13 +283,21 @@ impl Value {
                 let (uuid, r) = record.parse_uuid()?;
                 Ok((Value::Uuid(uuid), r))
             }
-            "decimal" => {
+            "decimal" | "numeric" => {
                 let (decimal, r) = record.parse_decimal_opt(column.precision, column.scale)?;
                 Ok((decimal.map_or(Value::Null, Value::Decimal), r))
             }
-            "varbinary" => {
+            "smallmoney" => {
+                let (int, r) = record.parse_i32_opt()?;
+                Ok((int.map_or(Value::Null, Value::Int), r))
+            }
+            "varbinary" | "image" => {
                 let (bytes, r) = record.parse_binary()?;
                 Ok((bytes.map_or(Value::Null, Value::Binary), r))
+            }
+            "binary" => {
+                let (bytes, r) = record.parse_bytes(column.max_length as usize)?;
+                Ok((Value::Binary(bytes.to_vec()), r))
             }
             _ => Err("Unknown column type"),
         }
@@ -320,7 +336,7 @@ impl PageReader {
 
     fn read_next_page(&mut self, buffer: &mut [u8; 8192]) -> Result<(), Error> {
         let page_id = self.page_index;
-        self.read.by_ref().take(8192).read(&mut buffer[..])?;
+        self.read.read_exact(&mut buffer[..])?;
         if let Ok(page) = Page::try_from(*buffer) {
             self.page_cache.insert(
                 PagePointer {

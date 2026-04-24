@@ -298,6 +298,33 @@ impl<'a> Record<'a> {
         Ok((datetime, record))
     }
 
+    pub(crate) fn parse_smalldatetime_opt(
+        self,
+    ) -> Result<(Option<DateTime<Utc>>, Record<'a>), &'static str> {
+        let (bytes, record) = self.parse_bytes_opt(4)?;
+
+        let datetime = match bytes {
+            Some(bytes) => {
+                let days = u16::from_le_bytes([bytes[0], bytes[1]]);
+                let minutes = u16::from_le_bytes([bytes[2], bytes[3]]);
+
+                let datetime = Utc
+                    .with_ymd_and_hms(1900, 1, 1, 0, 0, 0)
+                    .single()
+                    .ok_or("Cannot construct smalldatetime epoch 1900-01-01")?
+                    .checked_add_signed(Duration::days(days as i64))
+                    .ok_or("Cannot parse smalldatetime due to day overflow")?
+                    .checked_add_signed(Duration::minutes(minutes as i64))
+                    .ok_or("Cannot parse smalldatetime due to minute overflow")?;
+
+                Some(datetime)
+            }
+            None => None,
+        };
+
+        Ok((datetime, record))
+    }
+
     pub(crate) fn parse_datetime2_opt(
         self,
         scale: u8,
