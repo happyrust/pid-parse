@@ -72,6 +72,26 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### `roundtrip_walkthrough` 示例 + `cargo build --examples` 进 CI
+
+把 `examples/` 走查三部曲最后一条补齐，同时把 examples 锁进
+CI，让上一轮的 Lpwstr bug 这种"example 暴露、commit 前 CI 拦住"
+的回退类问题今后一律在推送时就被发现。
+
+- 新增 `examples/roundtrip_walkthrough.rs`：`PidPackage::from_path`
+  → `WritePlan::default()` passthrough → `PidWriter::write_to_bytes`
+  → `PidPackage::from_bytes` 再 parse，断言流数量一致。A01 fixture
+  本地跑过：75 streams → 106496 bytes → 75 streams。
+- 示例故意用 passthrough 而非 `summary_updates` 元数据 patch——真实
+  SmartPlant SummaryInformation 常常包含 `VT_I2`（0x0002），目前的
+  writer 只支持 `VT_I4 / VT_LPSTR / VT_LPWSTR / VT_FILETIME` 的重写，
+  patch 路径对真实 fixture 会硬失败。示例源码中保留一段注释详细说
+  明这一点，供读者理解不是 bug。
+- `src/lib.rs` crate-level `//!` 的 "examples 走查" 列表扩到三条。
+- `.github/workflows/ci.yml` 在 `cargo test` 之后加一步 `cargo build
+  --locked --examples`；实测缓存后 ~1–2 秒，换来 examples 层独立可
+  观测性（失败消息里能明确指向示例而不是库）。
+
 ### 修复：`SummaryPropertyValue` 的 `serde_json` 可序列化
 
 上一轮写 `examples/parse_walkthrough.rs` 时发现

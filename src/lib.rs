@@ -58,12 +58,15 @@
 //! End-to-end runnable walkthroughs live under `examples/`:
 //!
 //! - `parse_walkthrough.rs` — open a `.pid`, inspect streams /
-//!   [`DrawingMeta`] / [`GeneralMeta`], emit a summary JSON.
+//!   [`DrawingMeta`] / [`GeneralMeta`], emit a full JSON dump.
 //! - `publish_walkthrough.rs` — open an `Export.mdf`, load a
 //!   drawing graph, emit `_Data.xml` + `_Meta.xml`.
+//! - `roundtrip_walkthrough.rs` — open a `.pid`, write it back out
+//!   through [`PidWriter`] with a declarative [`WritePlan`], and
+//!   re-parse the bytes to verify a clean round-trip.
 //!
-//! Both soft-skip when the local `test-file/` fixture is missing,
-//! so `cargo run --example …` is safe on any checkout.
+//! All three soft-skip when the local `test-file/` fixture is
+//! missing, so `cargo run --example …` is safe on any checkout.
 
 pub mod api;
 pub mod backup;

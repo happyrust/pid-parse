@@ -45,6 +45,16 @@ jobs:
         # --workspace picks up vendored oxidized-mdf unit tests too.
         run: cargo test --locked --workspace --all-targets
 
+      - name: cargo build --examples
+        # Examples under `examples/` double as living regression tests
+        # for the public API surface advertised in the crate-level
+        # rustdoc. `cargo build --all-targets` above already covered
+        # them, but we keep an explicit step so CI failures point
+        # clearly at the examples layer (compared to library build
+        # failures further up). Runtime is near-zero because `build
+        # --all-targets` warmed the cache.
+        run: cargo build --locked --examples
+
       - name: cargo clippy (workspace, fail on any warning)
         # --workspace makes the vendored crate a hard gate alongside the
         # parent crate; -D warnings keeps the bar at zero.
