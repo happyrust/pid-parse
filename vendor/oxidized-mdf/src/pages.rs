@@ -8,6 +8,7 @@
 //   - Removed byteorder dependency; all byte decoding via nom or from_le_bytes
 //   - Added manual i24 sign-extension for datetime2
 //   - Extended column type coverage to 27 SQL Server types
+//   - Clippy pass: div_ceil, Option::map, trimmed range parens, array literal
 
 use bitvec::{order::Lsb0, slice::BitSlice};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -121,7 +122,7 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
         read_bytes += 2;
 
         let (null_bitmap, bytes) = if has_null_bitmap {
-            let null_bitmap_length = (number_of_columns + 7) / 8;
+            let null_bitmap_length = number_of_columns.div_ceil(8);
             let (bytes, null_bitmap) =
                 take_bytes(bytes, null_bitmap_length, "record too short for null bitmap")?;
             read_bytes += null_bitmap_length;
@@ -501,10 +502,7 @@ impl<'a> Record<'a> {
     pub(crate) fn parse_binary(self) -> Result<(Option<Vec<u8>>, Record<'a>), &'static str> {
         let (bytes, record) = self.parse_variables_bytes_opt()?;
 
-        let b = match bytes {
-            Some(x) => Some(x.to_vec()),
-            None => None,
-        };
+        let b = bytes.map(<[u8]>::to_vec);
 
         Ok((b, record))
     }
@@ -707,7 +705,7 @@ impl TryFrom<[u8; 8192]> for BootPage {
     fn try_from(bytes: [u8; 8192]) -> Result<Self, Self::Error> {
         let header = PageHeader::try_from(&bytes[0..96])?;
 
-        let (s, _, _) = encoding_rs::UTF_16LE.decode(&bytes[148..(404)]);
+        let (s, _, _) = encoding_rs::UTF_16LE.decode(&bytes[148..404]);
         let database_name = String::from_iter(s.chars().filter(|c| *c != '†'));
 
         let first_sys_indexes = PagePointer::try_from(&bytes[612..618])?;
@@ -993,7 +991,7 @@ mod tests {
 
     #[test]
     fn parse_i32_returns_err_for_truncated_fixed_region() {
-        let bytes = vec![0u8, 0u8, 5u8, 0u8, 0xAA, 0u8, 0u8];
+        let bytes = [0u8, 0u8, 5u8, 0u8, 0xAA, 0u8, 0u8];
         let record = Record::try_from(&bytes[..]).unwrap();
 
         let err = record
