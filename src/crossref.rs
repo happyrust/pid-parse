@@ -127,9 +127,12 @@ fn build_cluster_coverage(doc: &PidDocument) -> ClusterCoverage {
     }
 }
 
+/// Accumulator bucket used while aggregating `JSite` entries into
+/// `SymbolUsage`: `(symbol_name, unique_jsite_names, references)`.
+type SymbolUsageBucket = (Option<String>, BTreeSet<String>, Vec<SymbolReference>);
+
 fn build_symbol_usage(doc: &PidDocument) -> Vec<SymbolUsage> {
-    let mut by_path: BTreeMap<String, (Option<String>, BTreeSet<String>, Vec<SymbolReference>)> =
-        BTreeMap::new();
+    let mut by_path: BTreeMap<String, SymbolUsageBucket> = BTreeMap::new();
 
     for js in &doc.jsites {
         let Some(ref path) = js.symbol_path else {
@@ -647,6 +650,7 @@ fn build_sheet_provenance(
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::model::{

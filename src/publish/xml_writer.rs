@@ -258,7 +258,7 @@ fn derive_type_description_from_symbol(
     None
 }
 
-fn ordered_business_objects<'a>(drawing: &'a PublishDrawing) -> Vec<&'a PublishObject> {
+fn ordered_business_objects(drawing: &PublishDrawing) -> Vec<&PublishObject> {
     let mut objects: Vec<&PublishObject> = drawing.objects.iter().collect();
     if matches!(drawing.style, PublishStyle::A01) {
         objects.sort_by_key(|obj| a01_object_rank(obj.item_type_name.as_str()));
@@ -266,9 +266,9 @@ fn ordered_business_objects<'a>(drawing: &'a PublishDrawing) -> Vec<&'a PublishO
     objects
 }
 
-fn ordered_publishable_representations<'a>(
-    drawing: &'a PublishDrawing,
-) -> Vec<&'a PublishRepresentation> {
+fn ordered_publishable_representations(
+    drawing: &PublishDrawing,
+) -> Vec<&PublishRepresentation> {
     let mut reps: Vec<&PublishRepresentation> = drawing
         .representations
         .iter()

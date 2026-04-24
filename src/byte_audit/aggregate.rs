@@ -239,9 +239,7 @@ mod tests {
         let mut data = Vec::new();
         data.extend_from_slice(&0x6261_7473u32.to_le_bytes()); // STAB_MAGIC
         data.extend_from_slice(&count.to_le_bytes());
-        for _ in 0..count {
-            data.push(0x01);
-        }
+        data.resize(data.len() + count as usize, 0x01);
         data
     }
 

@@ -233,7 +233,7 @@ fn find_next_utf16_ascii_run(data: &[u8], start: usize, min_chars: usize) -> Opt
     while i + 1 < data.len() {
         // Align to even offsets since UTF-16LE pairs start there in
         // SQL Server's MSCI records.
-        if i % 2 != 0 {
+        if !i.is_multiple_of(2) {
             i += 1;
             continue;
         }

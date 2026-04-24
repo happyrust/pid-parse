@@ -471,7 +471,10 @@ mod parser_trace_tests {
     #[test]
     fn consumed_plus_leftover_equals_total_bytes_invariant() {
         // Fuzz-style exercise of the conservation law across shapes.
-        let cases: &[(u64, &[(u64, u64, TraceConfidence)])] = &[
+        // Each case = (total_bytes, &[(start, end, confidence), ...]).
+        type RangeSpec = (u64, u64, TraceConfidence);
+        type CaseSpec<'a> = (u64, &'a [RangeSpec]);
+        let cases: &[CaseSpec] = &[
             (0, &[]),
             (16, &[]),
             (16, &[(0, 16, TraceConfidence::Decoded)]),

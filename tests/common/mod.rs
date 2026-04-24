@@ -187,9 +187,7 @@ pub fn generate_a01_meta_xml() -> Option<Result<String, PublishError>> {
 /// [`DWG_MDF_MISSING_HINT`] so the blockage is visible in
 /// test output and not mistaken for a silent pass.
 pub fn generate_dwg_data_xml() -> Option<Result<String, PublishError>> {
-    let Some(mut drawing) = open_dwg_drawing() else {
-        return None;
-    };
+    let mut drawing = open_dwg_drawing()?;
     drawing.style = PublishStyle::Dwg;
     Some(write_data_xml(&drawing, DWG_PLANT_NAME))
 }
@@ -197,9 +195,7 @@ pub fn generate_dwg_data_xml() -> Option<Result<String, PublishError>> {
 /// Generate `DWG-0202GP06-01_Meta.xml` through the real
 /// publish pipeline. Sibling of [`generate_dwg_data_xml`].
 pub fn generate_dwg_meta_xml() -> Option<Result<String, PublishError>> {
-    let Some(mut drawing) = open_dwg_drawing() else {
-        return None;
-    };
+    let mut drawing = open_dwg_drawing()?;
     drawing.style = PublishStyle::Dwg;
     Some(write_meta_xml(&drawing, DWG_PLANT_NAME))
 }

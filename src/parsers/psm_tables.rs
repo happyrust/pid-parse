@@ -949,8 +949,7 @@ mod tests {
         // Only Decoded confidence is emitted by this parser.
         assert!(trace
             .ranges_by_confidence
-            .get(&TraceConfidence::Decoded)
-            .is_some());
+            .contains_key(&TraceConfidence::Decoded));
         assert!(!trace
             .ranges_by_confidence
             .contains_key(&TraceConfidence::Probed));

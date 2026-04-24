@@ -536,9 +536,8 @@ fn scan_mdf_table_for_residual_values(
         columns_scanned: columns.len(),
         ..TableResidualScan::default()
     };
-    let mut row_number = 0usize;
-    for row in rows {
-        row_number += 1;
+    for (row_index, row) in rows.enumerate() {
+        let row_number = row_index + 1;
         out.rows_scanned += 1;
         let row_identity = row_identity(&row);
         for column in &columns {

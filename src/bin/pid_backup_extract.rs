@@ -19,11 +19,11 @@
 //!
 //! Outputs, written to the target directory (created if missing):
 //!
-//! * `<stem>.msci.json`   — parsed MSCI configuration (filegroup +
-//!                          per-file records)
-//! * `<stem>.msci.bin`    — raw MSCI stream body (for inspection)
-//! * `<stem>.msda.bin`    — raw MSDA stream body (the SQL backup
-//!                          stream)
+//! * `<stem>.msci.json` — parsed MSCI configuration (filegroup +
+//!   per-file records)
+//! * `<stem>.msci.bin` — raw MSCI stream body (for inspection)
+//! * `<stem>.msda.bin` — raw MSDA stream body (the SQL backup
+//!   stream)
 //!
 //! `<stem>` is the input file's stem (e.g. `Export`).
 //!

@@ -550,7 +550,7 @@ mod section2_tests {
             // pad to 4-byte boundary (4 code units × 2 = 8, already 8B, no pad)
             v
         };
-        let sec1_header_len = 8 + 1 * 8; // size+count + 1 entry
+        let sec1_header_len = 8 + 8; // size+count (8B) + 1 × 8-byte entry
         let sec1_data_off = sec1_header_len;
         let sec1: Vec<u8> = {
             let mut v = Vec::new();
