@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### Public API rustdoc pass — Tier 3 batch 4（`package.rs` 诊断族）
+
+第四批：把 package 层 `src/package.rs` 的 26 条 `missing_docs`
+（全部是 struct field）一口气打掉，baseline `114 → 88`。
+
+覆盖范围：
+
+- `RawStream`（3 字段）：`path` 规范化到 `/`、`data` 是原始
+  字节、`modified` 由 `replace_stream` / `mark_unmodified`
+  翻动。
+- `StorageTimestamps`（2 字段）：`created` / `modified` 的
+  `None` 语义写清楚（源 CFB 未设置）。
+- `PackageDiff`（6 字段）：`only_in_a` / `only_in_b` /
+  `modified` / `root_clsid_match` / `root_clsid_a` /
+  `root_clsid_b` 各自的含义 + 跟 `is_empty` 的关系。
+- `StorageClsidDiff`（3 字段）：`path` / `a` / `b` 一条 diff
+  记录。
+- `StorageTimestampDiff`（3 字段）：同上。
+- `StateBitsDiff`（3 字段）：同上。
+- `StreamDiff`（6 字段）：`len_a` / `len_b` 字段来源；
+  `first_mismatch_offset` 在 strict-prefix 情况下等于
+  `min(len_a, len_b)`；`context_before` / `context_after`
+  越界打 `"(eof)"` 的行为写进 rustdoc。
+
+验证：
+- `cargo rustdoc --lib --locked -- -W missing-docs` 总数
+  `114 → 88`（-26）。
+- `.github/missing-docs-baseline.txt` 从 `114` 改到 `88`，
+  `bash .github/scripts/check-missing-docs.sh` 本地验
+  `current=88, baseline=88, OK`。
+- `cargo clippy --locked --workspace --all-targets -- -D warnings` /
+  `cargo fmt --all -- --check` / `cargo test --workspace`
+  （`810 passed / 0 failed / 2 DWG-gated ignored`）全绿。
+
+累计八轮 rustdoc：`473 → 88`（-385）。剩余 88 散在
+`src/writer/metadata_helpers.rs`（15）、
+`src/backup/mdf_page.rs`（13）、`src/byte_audit/mod.rs`（9）、
+`src/error.rs`（8）、`src/api.rs`（8）等。下轮 batch 5 目标：
+把剩下 88 条一次性扫完，随后切到硬门禁。
+
 ### Public API rustdoc pass — Tier 3 batch 3（`import_view.rs`）
 
 延续上一批 sheet_probe：把 UI 投影层 `src/import_view.rs`

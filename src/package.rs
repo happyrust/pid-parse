@@ -22,8 +22,13 @@ use uuid::Uuid;
 /// streams that don't need it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawStream {
+    /// Normalized `/`-separated CFB path (always starts with `/`).
     pub path: String,
+    /// Verbatim stream bytes as read from the source compound file.
     pub data: Vec<u8>,
+    /// `true` after a writer / caller replaced the stream; flipped by
+    /// [`PidPackage::replace_stream`] and cleared by
+    /// [`PidPackage::mark_unmodified`].
     pub modified: bool,
 }
 
@@ -72,8 +77,12 @@ pub struct PidPackage {
 /// CFB epoch 1601-01-01 by `cfb`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageTimestamps {
+    /// Storage creation time as reported by the CFB directory entry;
+    /// `None` when the source didn't set one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<SystemTime>,
+    /// Storage last-modified time as reported by the CFB directory
+    /// entry; `None` when the source didn't set one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified: Option<SystemTime>,
 }
@@ -231,11 +240,20 @@ fn extract_simple_tag_text(xml: &str, tag: &str) -> Option<String> {
 /// the other `None`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PackageDiff {
+    /// Stream paths present in package A but absent in package B.
     pub only_in_a: Vec<String>,
+    /// Stream paths present in package B but absent in package A.
     pub only_in_b: Vec<String>,
+    /// Stream paths present in both packages whose bytes disagree.
     pub modified: Vec<StreamDiff>,
+    /// `true` when both packages carry the same root CLSID (including
+    /// both being `None`); `false` otherwise.
     pub root_clsid_match: bool,
+    /// Root CLSID of package A, for display when
+    /// [`Self::root_clsid_match`] is `false`.
     pub root_clsid_a: Option<Uuid>,
+    /// Root CLSID of package B, for display when
+    /// [`Self::root_clsid_match`] is `false`.
     pub root_clsid_b: Option<Uuid>,
     /// Storage paths whose non-root CLSID differs between A and B. For
     /// each path, carries the two values (either side may be `None` when
@@ -253,24 +271,39 @@ pub struct PackageDiff {
 /// One-entry diff for a non-root storage CLSID.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageClsidDiff {
+    /// Normalized CFB storage path.
     pub path: String,
+    /// Package A's CLSID at this path; `None` when the storage wasn't
+    /// CLSID-stamped on side A.
     pub a: Option<Uuid>,
+    /// Package B's CLSID at this path; `None` when the storage wasn't
+    /// CLSID-stamped on side B.
     pub b: Option<Uuid>,
 }
 
 /// One-entry diff for a storage's created + modified timestamps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageTimestampDiff {
+    /// Normalized CFB storage path.
     pub path: String,
+    /// Package A's timestamps at this path; `None` when the storage
+    /// had no entry in A's `storage_timestamps` map.
     pub a: Option<StorageTimestamps>,
+    /// Package B's timestamps at this path; `None` when the storage
+    /// had no entry in B's `storage_timestamps` map.
     pub b: Option<StorageTimestamps>,
 }
 
 /// One-entry diff for a path's non-zero `state_bits`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateBitsDiff {
+    /// Normalized CFB storage / stream path.
     pub path: String,
+    /// Package A's `state_bits` at this path; `None` when A's map had
+    /// no non-zero entry for this path.
     pub a: Option<u32>,
+    /// Package B's `state_bits` at this path; `None` when B's map had
+    /// no non-zero entry for this path.
     pub b: Option<u32>,
 }
 
@@ -305,11 +338,21 @@ impl PackageDiff {
 /// are short hex previews around that offset for quick inspection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamDiff {
+    /// Normalized CFB path of the stream.
     pub path: String,
+    /// Byte length of the stream in package A.
     pub len_a: usize,
+    /// Byte length of the stream in package B.
     pub len_b: usize,
+    /// First byte index where A and B disagree; equal to
+    /// `min(len_a, len_b)` when one side is a strict prefix of the
+    /// other.
     pub first_mismatch_offset: usize,
+    /// 16-byte hex preview of package A starting at
+    /// [`Self::first_mismatch_offset`] (`"(eof)"` if past end).
     pub context_before: String,
+    /// 16-byte hex preview of package B starting at
+    /// [`Self::first_mismatch_offset`] (`"(eof)"` if past end).
     pub context_after: String,
 }
 
