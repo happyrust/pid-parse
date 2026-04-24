@@ -1,6 +1,6 @@
 # 变更日志
 
-## [Unreleased]
+## [0.10.0] — 2026-04-24
 
 ### Publish XML source — Rust MDF loader (`oxidized-mdf`)
 
@@ -83,9 +83,10 @@
 
 #### Notes
 
-- `oxidized-mdf` 本身为 GPL-3.0，并在上游 README 中说明其来源上
-  基于 OrcaMDF；当前改动移除了运行时 C# OrcaMDF probe 依赖，但
-  许可证边界需要发布前单独确认。
+- `oxidized-mdf` 本身为 GPL-3.0（by schrieveslaach）。许可证合规
+  已确认：所有修改过的 vendor 文件添加了 GPL-3.0 §5(a) 修改通知，
+  README 添加了 License section 说明 MIT/Apache-2.0 + GPL-3.0
+  combined-work 边界。详见 `README.md` License 章节。
 
 ### Publish writer Stage-1 — fidelity ratchet (A12 → A39)
 

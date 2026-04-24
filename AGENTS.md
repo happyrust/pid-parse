@@ -16,9 +16,10 @@ publish XML pipeline (`Export.mdf → oxidized-mdf → drawing graph → _Data.x
 ## Vendored `oxidized-mdf` (key constraints)
 
 - **Sync API** — no async runtime needed; `MdfDatabase::open()` / `db.rows()` return sync `Result` / `Iterator`.
-- **Panic-free** — all three source files (`pages.rs`, `lib.rs`, `sys.rs`) propagate errors via `Result` / `Error::ParseError`; zero `panic!` / `unwrap()` / `todo!()` in production code.
+- **Panic-free** — all three source files (`pages.rs`, `lib.rs`, `sys.rs`) propagate errors via `Result` / `Error::ParseError`; zero `panic!` / `unwrap()` / `todo!()` in production code. GPL-3.0 §5(a) modification notices at top of each file.
 - **Parsing engine** — `nom 8` for envelope-layer byte parsing; stdlib `from_le_bytes` for value-layer decoding.
 - **Dependencies** — bitvec, chrono, encoding_rs, log, nom, rust_decimal, uuid. No async crates, no byteorder.
+- **License** — GPL-3.0. Parent crate is MIT/Apache-2.0; combined binary is GPL-3.0 (see README License section).
 - **License** — GPL-3.0 (vendored from [f3rn0s/oxidized-mdf](https://gitlab.com/f3rn0s/oxidized-mdf)). OK for internal use; public distribution of `pid-parse` requires license alignment.
 - **Page reader** — forward-only; `mdf_load.rs` re-opens per table to stay deterministic.
 
@@ -37,7 +38,7 @@ DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extra
 ## Common commands
 
 ```bash
-cargo test                                        # 804 tests
+cargo test                                        # 814 tests (607 unit + 207 integration)
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
-cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests
+cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (31 tests)
 ```
