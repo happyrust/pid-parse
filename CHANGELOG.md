@@ -2,6 +2,69 @@
 
 ## [Unreleased]
 
+### Public API rustdoc pass — Tier 3（`src/model.rs` 一击破）
+
+Ratchet 落地之后的第一轮"棘轮降档"——把缺口最集中的
+`src/model.rs` 178 条 `missing_docs` 警告**一次全部补齐**，同步把
+baseline 从 `364` 降到 `186`（`rustdoc -W missing-docs`
+实测 `current=186, baseline=186, OK`）。
+
+覆盖的类型族（按模块语义分 7 组）：
+
+- **CFB / 流表面**：`StorageNode` / `EntryKind` / `StreamEntry`
+  + `SummaryPropertyValue::Raw` 的 `vt` / `bytes` 字段。
+- **Cluster 族**：`ClusterInfo`（含每个字段对应的 CFB 语义）、
+  `ClusterHeader`（`magic 0x6C90F544` / `record_count` /
+  `stream_type` / `body_len` / `flags`）、`IndexedString`、
+  `ClusterKind` 六个 variant、`DynamicAttributesBlob`。
+- **Attribute 族**：`AttributeRecord` / `AttributeField` /
+  `AttributeValue` 四 variant + `RelationshipTrailingToken` 的
+  `offset` / `value`。
+- **Sheet / Unknown / Coverage**：`SheetStream` / `UnknownStream` /
+  `CoverageNodeKind` / `CoverageEntry::{kind, status}` /
+  `CoverageReport::entries`。
+- **PSM / AppObject / Tagged / DocVersion2**：`PsmRoots` /
+  `PsmRootEntry` / `PsmClusterTable` / `PsmClusterEntry` /
+  `PsmSegmentTable` / `VersionHistory` / `VersionRecord` /
+  `AppObjectRegistry` / `AppObjectEntry` / `TaggedTextStorageList` /
+  `TaggedTextStorageEntry` / `DocVersion2Raw` / `DocVersion2Record`。
+- **Layout 族**：`PidLayoutModel` / `PidLayoutItem`（10 字段）/
+  `PidLayoutSegment`（6 字段）/ `PidLayoutText`（5 字段）/
+  `PidLayoutUnplaced`（3 字段）；每个字段都标清楚"是
+  `ObjectGraph` 的哪个来源 + 是 layout heuristic 产出还是
+  `SmartPlant` 原生 CAD 值"。
+- **CrossReference / Provenance 族**：`ClusterCoverageSourceKind` /
+  `DeclaredClusterRef` / `FoundClusterRef` / `ClusterCoverageMatch` /
+  `ProvenanceChainBreak` / `SheetProvenanceRef` / `SymbolReference` /
+  `AttributeClassSummary::{class_name, record_count}` /
+  `AttributeClassRecordRef`（5 字段）/ `RootPresence`（4 字段）。
+
+风格要求：
+- 每条 rustdoc 都说明**该字段是什么 / 来自哪个 CFB 层 /
+  什么时候为 `None`**，不写"The `name` field"这种无信息注释。
+- 结构体级 `///` 点明"是做什么用的 + 产生者是谁"；
+  `SmartPlant` 加反引号，避免 `clippy::doc_markdown` 抓漏。
+- 顺手把 5 处没加反引号的 `SmartPlant` 一起改掉
+  （`StorageNode`、`VersionRecord`、`DocVersion2Record::version`、
+  `PidLayoutModel`、`PidLayoutItem::graphic_oid`）。
+
+验证：
+- `cargo rustdoc --lib --locked -- -W missing-docs` →
+  `178` 条消失，总数 `364 → 186`。
+- `.github/missing-docs-baseline.txt` 从 `364` 改到 `186`，
+  `bash .github/scripts/check-missing-docs.sh` 本地验
+  `current=186, baseline=186, OK`。
+- `cargo build --locked --workspace --all-targets`、
+  `cargo test --locked --workspace --all-targets`
+  （`810 passed / 0 failed / 2 DWG-gated ignored`）、
+  `cargo clippy --locked --workspace --all-targets -- -D warnings`、
+  `cargo fmt --all -- --check` 全绿。
+
+剩余 186 条主要集中在 `src/parsers/sheet_probe.rs`（42）、
+`src/import_view.rs`（30）、`src/package.rs`（26）、
+`src/writer/metadata_helpers.rs`（15）、`src/backup/mdf_page.rs`（13）
+等。累计五轮 rustdoc 改进：`473 → 186`（-287）。
+
 ### 架构文档
 
 - 新增 `docs/architecture-guide.md`：完整的 pid-parse 架构与原理指南，覆盖 L1–L8 八层架构、核心数据流、`.pid` / OLE 复合文档结构、关键类型体系、Probe/Decode 双层解码策略、`PidWriter` 回写机制、独立管线（publish/byte_audit/inspect）与 crate 依赖关系。

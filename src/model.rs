@@ -215,26 +215,55 @@ impl Default for PidDocument {
     }
 }
 
+/// One node in the CFB directory tree as walked by the reader. Hosts
+/// either a storage (a "directory", which owns [`Self::children`]) or a
+/// stream (a leaf, `children` empty). Used alongside the flat
+/// [`StreamEntry`] inventory via [`PidDocument::cfb_tree`] /
+/// [`PidDocument::streams`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StorageNode {
+    /// Last path segment — the local entry name as stored in the
+    /// compound file directory (e.g. `"JSite0001"`).
     pub name: String,
+    /// Full `/`-joined path from the root, matching
+    /// [`StreamEntry::path`] for stream nodes.
     pub path: String,
+    /// Root / storage / stream discriminator.
     pub kind: EntryKind,
+    /// Child entries when [`Self::kind`] is
+    /// [`EntryKind::Root`] / [`EntryKind::Storage`]; always empty for
+    /// [`EntryKind::Stream`].
     pub children: Vec<StorageNode>,
 }
 
+/// Discriminator for [`StorageNode::kind`] — mirrors the three CFB
+/// directory-entry classes `SmartPlant` uses.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub enum EntryKind {
+    /// Compound-file root entry at path `/`. Exactly one per document.
     Root,
+    /// Intermediate storage ("directory"): no payload bytes, only
+    /// children.
     Storage,
+    /// Leaf stream: carries bytes and shows up in
+    /// [`PidDocument::streams`].
     Stream,
 }
 
+/// Flat inventory view of one CFB stream — companion to
+/// [`StorageNode`], emitted in [`PidDocument::streams`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StreamEntry {
+    /// Full `/`-joined CFB path (e.g. `"/JSite0001/JProperties"`).
     pub path: String,
+    /// Byte length reported by the CFB directory entry.
     pub size: u64,
+    /// ASCII-ish tokens extracted from the body for quick eyeballing;
+    /// never decodes binary data, always a best-effort preview.
     pub preview_ascii: Vec<String>,
+    /// First 4 little-endian bytes of the stream interpreted as `u32`,
+    /// or `None` when the stream is shorter than 4 bytes. Callers use
+    /// this as the primary dispatch key when classifying streams.
     pub magic_u32_le: Option<u32>,
 }
 
@@ -313,7 +342,14 @@ pub enum SummaryPropertyValue {
     /// Serialized as a plain JSON array of ints. If the size becomes
     /// a JSON-bloat concern in practice, a future Phase can swap to a
     /// base64 adaptor under a new wire version.
-    Raw { vt: u16, bytes: Vec<u8> },
+    Raw {
+        /// MS-OLEPS VT code verbatim from the property header
+        /// (e.g. `0x0002` for `VT_I2`).
+        vt: u16,
+        /// Payload bytes carried through unchanged so the writer can
+        /// reproduce the property byte-for-byte.
+        bytes: Vec<u8>,
+    },
 }
 
 /// Decoded `TaggedTxtData/Drawing` XML — the headline drawing
@@ -431,16 +467,32 @@ pub struct EmbeddedStream {
     pub preview_ascii: Vec<String>,
 }
 
+/// One cluster-family stream as it lives on disk — raw metadata plus,
+/// when the reader recognized the layout, a structured [`ClusterHeader`]
+/// and string table. Both PSM clusters and style clusters are modelled
+/// through this common shape; [`Self::kind`] resolves the subtype.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClusterInfo {
+    /// Local CFB name (last path segment), e.g. `"PSMcluster0"`.
     pub name: String,
+    /// Full `/`-joined CFB path the stream was read from.
     pub path: String,
+    /// Stream size in bytes as reported by the CFB directory.
     pub size: u64,
+    /// Leading `u32` LE of the stream — `0x6C90F544` for the shared
+    /// cluster magic; `None` when the stream is shorter than 4 bytes.
     pub magic_u32_le: Option<u32>,
+    /// ASCII-ish strings the reader lifted from the payload for quick
+    /// diagnostics; ordering matches on-disk occurrence.
     pub extracted_strings: Vec<String>,
+    /// Subtype classification derived from the stream name / content.
     pub kind: ClusterKind,
+    /// Decoded [`ClusterHeader`] when the stream matched the standard
+    /// `0x6C90F544` layout; `None` on unrecognized headers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<ClusterHeader>,
+    /// Sequenced string table recovered by the string-table probe.
+    /// `None` when the probe could not locate a table.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub string_table: Option<Vec<IndexedString>>,
     /// Probe metadata for string-table detection heuristic.
@@ -448,41 +500,86 @@ pub struct ClusterInfo {
     pub probe_info: Option<ClusterProbeInfo>,
 }
 
-/// Common header shared by all streams with magic 0x6C90F544.
+/// Common header shared by all streams with magic `0x6C90F544`
+/// (`PSMcluster*`, `StyleCluster`, `Dynamic Attributes Metadata`, and
+/// `Sheet*`). Layout was reverse-engineered across several fixtures; see
+/// `src/parsers/cluster_header.rs` for the byte-level reference.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClusterHeader {
+    /// Fixed `u32` LE signature — always `0x6C90F544` for decoded headers.
     pub magic: u32,
+    /// Number of records advertised by the header; may disagree with
+    /// the count of records the probe actually decodes (drift signal).
     pub record_count: u32,
+    /// Discriminator the writer uses to pick a stream subtype; in
+    /// practice tracks [`ClusterKind`] but not 1:1 for every file.
     pub stream_type: u16,
+    /// Declared body byte length (header + payload). Not always exact
+    /// on older fixtures, so downstream code cross-checks with
+    /// [`ClusterInfo::size`].
     pub body_len: u32,
+    /// Opaque 16-bit flag field — values have not been fully decoded;
+    /// callers round-trip them verbatim.
     pub flags: u16,
 }
 
+/// One entry `(index, value)` of a cluster string table.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IndexedString {
+    /// Zero-based position in the table (matches on-disk order).
     pub index: u32,
+    /// Decoded string value; encoding follows the owning cluster's
+    /// conventions (UTF-16LE for PSM clusters, UTF-8 elsewhere).
     pub value: String,
 }
 
+/// Cluster-stream subtype discriminator used by [`ClusterInfo::kind`].
+/// Matches the well-known top-level stream families the reader knows
+/// how to probe; unknown / new families fall through to
+/// [`Self::Unknown`] without silently dropping bytes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum ClusterKind {
+    /// `/PSMcluster*` — the main property-set cluster family.
     PsmCluster,
+    /// `/StyleCluster` — drawing-style cluster.
     StyleCluster,
+    /// `/Dynamic Attributes Metadata` — DA schema definition stream.
     DynamicAttributesMetadata,
+    /// `/Sheet*` — per-sheet payload stream (endpoint-pair records live
+    /// here; detail lives on [`SheetStream`]).
     Sheet,
+    /// `/Unclustered Dynamic Attributes` — the payload side of the DA
+    /// metadata stream; carries the actual attribute records.
     UnclusteredDynamicAttributes,
+    /// Stream with cluster magic but unclassified name.
     Unknown,
 }
 
+/// Decoded `/Unclustered Dynamic Attributes` stream — the payload that
+/// pairs with `/Dynamic Attributes Metadata` to form the DA system.
+/// Carries the raw string/relationship bag plus, when the probe
+/// succeeded, structured attribute / trailer / relationship records.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DynamicAttributesBlob {
+    /// Full `/`-joined CFB path of the stream.
     pub path: String,
+    /// Stream size in bytes.
     pub size: u64,
+    /// Leading `u32` LE of the stream (cluster magic when present).
     pub magic_u32_le: Option<u32>,
+    /// Every UTF-8 / UTF-16 run the string-scan probe recovered;
+    /// order matches on-disk occurrence.
     pub strings: Vec<String>,
+    /// `Relationship.<GUID>` tags discovered inside the payload.
     pub relationships: Vec<String>,
+    /// Attribute class names identified inside the payload
+    /// (e.g. `"P&IDAttributes"`, `"DrawingAttributes"`).
     pub class_names: Vec<String>,
+    /// Short hex preview of the first bytes of the stream — aids
+    /// quick visual inspection in diagnostic reports.
     pub raw_preview_hex: String,
+    /// Decoded cluster header when the stream starts with the standard
+    /// `0x6C90F544` layout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<ClusterHeader>,
     /// Structured attribute records parsed from the binary stream.
@@ -552,7 +649,10 @@ pub struct DaRecordTrailer {
 /// A single attribute class record from Unclustered Dynamic Attributes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AttributeRecord {
+    /// Class name verbatim from the DA payload
+    /// (e.g. `"P&IDAttributes"`, `"DrawingAttributes"`).
     pub class_name: String,
+    /// Decoded `(name, value)` fields for this record, in on-disk order.
     pub attributes: Vec<AttributeField>,
     /// Confidence level: "heuristic" for probe-derived, "decoded" for verified.
     #[serde(default = "default_confidence")]
@@ -563,9 +663,15 @@ fn default_confidence() -> String {
     "heuristic".to_string()
 }
 
+/// A single `(name, value)` attribute field inside an
+/// [`AttributeRecord`]. Mirrors one key-value pair from the DA payload.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AttributeField {
+    /// Attribute name verbatim from the DA record
+    /// (e.g. `"ModelItemType"`, `"DrawingID"`).
     pub name: String,
+    /// Decoded attribute value; see [`AttributeValue`] for the
+    /// supported variants.
     pub value: AttributeValue,
     /// Audit trail: when the heuristic value decoder strips a leading
     /// prefix byte (see `dynamic_attr_records::strip_value_prefix`), the
@@ -575,12 +681,20 @@ pub struct AttributeField {
     pub raw_value: Option<String>,
 }
 
+/// Decoded value of an [`AttributeField`]. `#[serde(untagged)]` so JSON
+/// carries the raw scalar (no `"kind": "…"` wrapping) — matches the way
+/// the DA payload itself is stringly-typed on disk.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum AttributeValue {
+    /// Free-form string value (the common case).
     Text(String),
+    /// Signed 64-bit integer when the decoder could resolve the bytes
+    /// as an integer scalar.
     Integer(i64),
+    /// 64-bit floating-point value.
     Float(f64),
+    /// Attribute present in the record but without a resolvable value.
     Empty,
 }
 
@@ -640,24 +754,38 @@ pub struct RelationshipProbe {
 /// A single `u16` token extracted from the Relationship trailing bytes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RelationshipTrailingToken {
+    /// Absolute byte offset of the `u16` inside the DA stream.
     pub offset: usize,
     /// Human label indicating *where* the token lives, e.g.
     /// `"after_marker+6"`.
     pub label: String,
+    /// Raw little-endian `u16` value read at [`Self::offset`].
     pub value: u16,
 }
 
+/// One `/Sheet*` stream — the reader's eager decode of the sheet-level
+/// payload that hosts endpoint-pair records and writer byte-range patch
+/// targets.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SheetStream {
+    /// Local CFB name, e.g. `"Sheet6"`.
     pub name: String,
+    /// Full `/`-joined CFB path (matches [`StreamEntry::path`]).
     pub path: String,
+    /// Stream size in bytes reported by the CFB directory.
     pub size: u64,
+    /// Text runs the string-scan probe lifted out of the payload, in
+    /// on-disk order. Useful for dump-style reports.
     pub extracted_texts: Vec<String>,
+    /// Leading `u32` LE of the stream (e.g. cluster magic or a 4-char
+    /// sheet-specific tag); `None` when the stream is too short.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub magic_u32_le: Option<u32>,
     /// Four-character ASCII rendering of `magic_u32_le` (e.g. "DF90", "tseg").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub magic_tag: Option<String>,
+    /// Decoded [`ClusterHeader`] when the stream opens with the
+    /// shared cluster layout; `None` otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<ClusterHeader>,
     /// Structured attribute records extracted from the sheet stream (heuristic).
@@ -673,10 +801,17 @@ pub struct SheetStream {
     pub endpoint_records: Vec<SheetEndpointRecord>,
 }
 
+/// Top-level stream the reader encountered but does not (yet)
+/// interpret. Bytes are preserved via the package-side raw store so
+/// [`crate::writer::PidWriter`] can still round-trip them.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnknownStream {
+    /// Full `/`-joined CFB path of the stream.
     pub path: String,
+    /// Stream size in bytes reported by the CFB directory.
     pub size: u64,
+    /// Leading `u32` LE of the stream; `None` when shorter than 4
+    /// bytes. First tool callers reach for when classifying unknowns.
     pub magic_u32_le: Option<u32>,
     /// Four-character ASCII rendering of `magic_u32_le` (e.g. "toor", "tseg").
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -726,7 +861,10 @@ pub enum ParseCoverageStatus {
 /// members carry most of the data).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum CoverageNodeKind {
+    /// Entry is a leaf stream directly under the CFB root.
     TopLevelStream,
+    /// Entry is a storage (directory) directly under the CFB root;
+    /// inner streams contribute to the aggregated `stream_size`.
     TopLevelStorage,
 }
 
@@ -741,7 +879,11 @@ pub struct CoverageEntry {
     /// Top-level name (e.g. `"DocVersion3"` or `"Sheet1"`), already
     /// stripped of leading `/` and of anything after the first `/`.
     pub name: String,
+    /// Whether the entry is a bare stream or a storage aggregating
+    /// inner streams; see [`CoverageNodeKind`].
     pub kind: CoverageNodeKind,
+    /// How thoroughly the reader currently decodes this node — used
+    /// to bucket the coverage report.
     pub status: ParseCoverageStatus,
     /// Name of the parser responsible for decoding this node, if any.
     /// `None` for `Unknown` entries.
@@ -770,6 +912,8 @@ pub struct CoverageEntry {
 /// reviewable.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct CoverageReport {
+    /// One row per top-level CFB node, sorted ascending by
+    /// [`CoverageEntry::name`].
     pub entries: Vec<CoverageEntry>,
 }
 
@@ -851,12 +995,15 @@ impl CoverageReport {
 /// parsing runs until the stream is exhausted.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmRoots {
+    /// Stream size in bytes as reported by the CFB directory.
     pub size: u64,
+    /// Parsed `(id, offset, name)` records in on-disk order.
     pub entries: Vec<PsmRootEntry>,
     /// Bytes that could not be interpreted as `[id][char_count][utf16]` records.
     pub trailing_bytes: usize,
 }
 
+/// One decoded record from a [`PsmRoots`] stream.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmRootEntry {
     /// Opaque 32-bit identifier (type tag). Seen values: 0x018C, 0x0149, 0x0019,
@@ -871,14 +1018,19 @@ pub struct PsmRootEntry {
 /// Decoded `PSMclustertable` stream: canonical list of cluster stream names.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmClusterTable {
+    /// Stream size in bytes as reported by the CFB directory.
     pub size: u64,
+    /// Declared number of records in the table header; cross-check
+    /// against `entries.len()` for drift.
     pub count: u32,
+    /// Parsed entries in on-disk order.
     pub entries: Vec<PsmClusterEntry>,
     /// Bytes after the last record that could not be attributed to any entry.
     #[serde(default)]
     pub trailing_bytes: usize,
 }
 
+/// One declared cluster entry inside a [`PsmClusterTable`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmClusterEntry {
     /// Decoded UTF-16LE cluster name, e.g. "`PSMcluster0`", "Sheet6".
@@ -935,7 +1087,10 @@ pub struct PsmClusterRecordProbe {
 /// flag array; we expose the raw payload until semantics are confirmed.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmSegmentTable {
+    /// Stream size in bytes as reported by the CFB directory.
     pub size: u64,
+    /// `u32` after the 4-byte magic; interpreted as segment count on
+    /// known fixtures but still treated as opaque by the reader.
     pub count: u32,
     /// Legacy flat flags array, kept for backward compatibility.
     pub flags: Vec<u8>,
@@ -993,7 +1148,10 @@ pub struct PsmSegmentRecordProbe {
 /// log entries that record a document's save history.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VersionHistory {
+    /// Stream size in bytes as reported by the CFB directory.
     pub size: u64,
+    /// One record per observed save, in stream order
+    /// (oldest first).
     pub records: Vec<VersionRecord>,
     /// Fixed record size in bytes (always 48 for known samples).
     #[serde(default = "default_record_size")]
@@ -1007,6 +1165,8 @@ fn default_record_size() -> usize {
     48
 }
 
+/// One decoded entry from a [`VersionHistory`] stream — a single
+/// save / save-as event preserved by `SmartPlant`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VersionRecord {
     /// Null-terminated ASCII product identifier, e.g. "SmartPlantPID.a".
@@ -1150,16 +1310,20 @@ mod version_record_tests {
 /// source application linked to this drawing.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AppObjectRegistry {
+    /// Stream size in bytes as reported by the CFB directory.
     pub size: u64,
     /// `u32` at offset 0; observed value `5` on the sampled file (likely
     /// entry count or registry version).
     pub leading_u32: u32,
+    /// Decoded `(clsid, path)` entries in on-disk order.
     pub entries: Vec<AppObjectEntry>,
     /// Any bytes that could not be attributed to a full entry (e.g. trailing
     /// class-id-only record).
     pub trailing_bytes: usize,
 }
 
+/// One decoded `(clsid, path)` plugin entry inside an
+/// [`AppObjectRegistry`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AppObjectEntry {
     /// Offset in stream where this record begins (for debugging).
@@ -1175,11 +1339,16 @@ pub struct AppObjectEntry {
 /// (e.g. "`TaggedTxtData`").
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaggedTextStorageList {
+    /// Stream size in bytes as reported by the CFB directory.
     pub size: u64,
+    /// Storage-list name carried by the stream header
+    /// (typically `"TaggedTxtStorages"`).
     pub list_name: String,
+    /// One entry per referenced storage directory, in on-disk order.
     pub entries: Vec<TaggedTextStorageEntry>,
 }
 
+/// One decoded entry inside a [`TaggedTextStorageList`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaggedTextStorageEntry {
     /// Storage directory name (e.g. "`TaggedTxtData`").
@@ -1191,7 +1360,10 @@ pub struct TaggedTextStorageEntry {
 /// that downstream tooling can round-trip or inspect without losing data.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DocVersion2Raw {
+    /// Stream size in bytes as reported by the CFB directory.
     pub size: u64,
+    /// Leading `u32` LE — `0x0001_0034` on every real sample; exposed
+    /// so fixture drift can be spotted without re-reading the bytes.
     pub magic_u32_le: u32,
     /// Lowercase hex dump of the full payload (up to 128 bytes).
     pub hex_preview: String,
@@ -1224,9 +1396,18 @@ pub struct DocVersion2 {
 /// reproduce the original byte stream.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DocVersion2Record {
+    /// Operation type byte — `0x82` (`SaveAs`) or `0x81` (Save) on
+    /// known fixtures. See [`crate::parsers::doc_version2::op_type_label`]
+    /// for the human-readable mapping.
     pub op_type: u8,
+    /// Fixed `[0x00, 0x00, 0x09]` padding observed on every sample;
+    /// carried through so round-trip bytes stay identical.
     pub fixed: [u8; 3],
+    /// Record separator byte between the `fixed` padding and the
+    /// version `u32`; value always `0x00` on decoded files.
     pub separator: u8,
+    /// `u32` LE carrying the `SmartPlant` version number that produced
+    /// this save entry (monotonic across the save history).
     pub version: u32,
 }
 
@@ -1570,66 +1751,123 @@ pub struct SheetEndpointRecord {
 
 // ---- Readable layout model ---------------------------------------------------
 
+/// Heuristic visualization-oriented layout derived by
+/// [`crate::layout::derive_layout`] from an [`ObjectGraph`]. Coordinates
+/// are not `SmartPlant`'s own CAD geometry; they are a topology-driven
+/// reconstruction suitable for overviews and diffs. Populated into
+/// [`PidDocument::layout`] by the reader's post-pass.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct PidLayoutModel {
+    /// Placed object icons — one entry per primary drawing object that
+    /// the layout routine was able to position.
     pub items: Vec<PidLayoutItem>,
+    /// Pipeline / connection segments connecting the placed items.
     pub segments: Vec<PidLayoutSegment>,
+    /// Free-standing text annotations (labels that aren't attached to
+    /// a single [`PidLayoutItem`]).
     pub texts: Vec<PidLayoutText>,
+    /// Objects present in the graph but skipped by the layout — kept
+    /// so consumers can surface "not drawn" lists without losing data.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub unplaced: Vec<PidLayoutUnplaced>,
+    /// Human-readable warnings raised during layout synthesis (e.g.
+    /// dropped relationships, failed placements). Non-fatal; the
+    /// layout is still returned.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub warnings: Vec<String>,
 }
 
+/// One placed item inside a [`PidLayoutModel`] — typically an
+/// equipment / instrument / nozzle symbol.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PidLayoutItem {
+    /// Layout-local identifier (e.g. `"item:<drawing_id>"`); stable
+    /// across reruns for a given source drawing.
     pub layout_id: String,
+    /// Back-pointer to the source [`PidObject::drawing_id`] when the
+    /// layout could attribute the item to a concrete object.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub drawing_id: Option<String>,
+    /// Representation `graphic_oid` from the cross-ref graph when
+    /// available; carries the `SmartPlant` geometry handle.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub graphic_oid: Option<u32>,
+    /// `ModelItemType` copied from the source object — drives icon /
+    /// color choice on the rendering side.
     pub kind: String,
+    /// Laid-out anchor point `[x, y]` in model units.
     pub anchor: [f64; 2],
+    /// Axis-aligned bounding box `[x_min, y_min, x_max, y_max]` when
+    /// the symbol hint yielded a size; `None` for zero-area items.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub bounds: Option<[f64; 4]>,
+    /// Representative symbol name (e.g. `"GateValve"`) when the
+    /// [`JSite`] layer supplied one.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub symbol_name: Option<String>,
+    /// Full symbol-library path, mirroring the `JSite` hint.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub symbol_path: Option<String>,
+    /// Attached display label when a nearby text record was promoted
+    /// to this item (tag, equipment number, …).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub label: Option<String>,
+    /// Copy of the source object's `ModelID` when present.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub model_id: Option<String>,
 }
 
+/// One placed connection segment inside a [`PidLayoutModel`] — typically a
+/// pipe run or a signal line joining two [`PidLayoutItem`] endpoints.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PidLayoutSegment {
+    /// Layout-local identifier (e.g. `"seg:<rel_guid>"`).
     pub layout_id: String,
+    /// `drawing_id` of the relationship that owns the segment when
+    /// the layout could attribute it to a concrete [`PidRelationship`].
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub owner_drawing_id: Option<String>,
+    /// Representation `graphic_oid` for the segment when available.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub graphic_oid: Option<u32>,
+    /// Start point `[x, y]` in model units.
     pub start: [f64; 2],
+    /// End point `[x, y]` in model units.
     pub end: [f64; 2],
+    /// Free-form role tag (e.g. `"pipe"`, `"signal"`, `"reference"`)
+    /// used by the renderer to pick a stroke style.
     pub role: String,
 }
 
+/// Free-standing text annotation inside a [`PidLayoutModel`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PidLayoutText {
+    /// Layout-local identifier (e.g. `"text:<drawing_id>"`).
     pub layout_id: String,
+    /// Source object `drawing_id` when the text originates from one.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub drawing_id: Option<String>,
+    /// Rendered text contents verbatim.
     pub text: String,
+    /// Anchor point `[x, y]` for the text baseline.
     pub anchor: [f64; 2],
+    /// Axis-aligned bounding box `[x_min, y_min, x_max, y_max]` when
+    /// the text extent could be estimated.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub bounds: Option<[f64; 4]>,
 }
 
+/// Object that the layout chose not to place. Kept alongside
+/// [`PidLayoutModel::items`] so consumers can show an "orphans" list.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PidLayoutUnplaced {
+    /// Source object's `drawing_id` when available.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub drawing_id: Option<String>,
+    /// `ModelItemType` of the unplaced object.
     pub kind: String,
+    /// Best display label the layout could lift (tag, equipment
+    /// number, or fallback to the `drawing_id`).
     pub label: String,
 }
 
@@ -1709,31 +1947,58 @@ pub struct ClusterCoverage {
     pub found_extra: Vec<String>,
 }
 
+/// Which on-disk stream family produced a [`FoundClusterRef`] — tells
+/// the crossref pass whether it came from the cluster side or the
+/// sheet side of the CFB tree.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum ClusterCoverageSourceKind {
+    /// Entry was lifted from a `PSMcluster*` stream.
     PsmCluster,
+    /// Entry was lifted from a `/Sheet*` stream.
     SheetStream,
 }
 
+/// Provenance-preserving view of a single `PSMclustertable` entry —
+/// keeps the declared name alongside its byte offsets so crossref
+/// diagnostics can re-locate the record in the raw stream.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct DeclaredClusterRef {
+    /// Declared cluster name (matches [`FoundClusterRef::name`] on a
+    /// resolved match).
     pub name: String,
+    /// Byte offset of the full record inside the declaring
+    /// `PSMclustertable` stream.
     pub record_offset: usize,
+    /// Byte offset of the UTF-16LE name run inside the same stream.
     pub name_offset: usize,
+    /// Total byte length of the record (prefix + name).
     pub record_len: usize,
 }
 
+/// Provenance-preserving view of a cluster actually observed on disk —
+/// mirrors [`DeclaredClusterRef`] for the "found" side of the coverage
+/// comparison.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct FoundClusterRef {
+    /// Local stream / storage name (e.g. `"PSMcluster0"`,
+    /// `"Sheet1"`).
     pub name: String,
+    /// Which stream family the entry was observed under.
     pub source_kind: ClusterCoverageSourceKind,
+    /// Full `/`-joined CFB path of the source stream.
     pub path: String,
 }
 
+/// One resolved pairing between a [`DeclaredClusterRef`] and the
+/// [`FoundClusterRef`] that satisfies it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ClusterCoverageMatch {
+    /// Shared cluster name.
     pub name: String,
+    /// Index into `ClusterCoverage.declared_entries` of the
+    /// declaration side.
     pub declared_index: usize,
+    /// Index into `ClusterCoverage.found_entries` of the on-disk side.
     pub found_index: usize,
 }
 
@@ -1903,8 +2168,12 @@ pub enum ProvenanceChainStage {
 /// human-readable hint; do not parse it programmatically.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProvenanceChainBreak {
+    /// 32-character hex GUID of the relationship whose chain broke.
     pub relationship_guid: String,
+    /// Hop at which the chain first failed.
     pub stage: ProvenanceChainStage,
+    /// Short human-readable explanation (diagnostic only — don't
+    /// parse).
     pub reason: String,
 }
 
@@ -1921,12 +2190,21 @@ pub struct ProvenanceChainBreak {
 ///   target drawing ids both resolved to a linked [`ObjectSourceRef`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SheetProvenanceRef {
+    /// CFB path of the sheet stream (e.g. `"/Sheet6"`).
     pub sheet_path: String,
+    /// Number of [`SheetEndpointRecord`]s decoded from this sheet.
     pub endpoint_record_count: usize,
+    /// `true` when the sheet was declared in `PSMclustertable` (and
+    /// therefore matched in [`ClusterCoverage::matches_detailed`]).
     pub declared_in_psm: bool,
+    /// Index into `ClusterCoverage.declared_entries` when
+    /// [`Self::declared_in_psm`] is `true`; `None` otherwise.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub matched_declared_index: Option<usize>,
+    /// Relationships whose endpoint record points at this sheet.
     pub linked_relationship_count: usize,
+    /// Subset of [`Self::linked_relationship_count`] whose source and
+    /// target both cleared the full provenance chain.
     pub fully_traced_relationship_count: usize,
 }
 
@@ -1963,19 +2241,31 @@ pub struct SymbolUsage {
     pub references: Vec<SymbolReference>,
 }
 
+/// One per-[`JSite`] reference contributing to a [`SymbolUsage`] —
+/// preserves the `JSite` name/path and a couple of flags so the
+/// crossref pass stays provenance-complete.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SymbolReference {
+    /// Local `JSite` storage name (matches
+    /// [`JSite::name`]).
     pub jsite_name: String,
+    /// Full CFB path of the `JSite` storage.
     pub jsite_path: String,
+    /// Workstation-relative symbol path mirrored from
+    /// [`JSite::local_symbol_path`], kept for drift detection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_symbol_path: Option<String>,
+    /// `true` iff the referenced `JSite` embeds an `\x01Ole` stream.
     pub has_ole_stream: bool,
 }
 
 /// Per-class aggregation of Dynamic Attributes records.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AttributeClassSummary {
+    /// Attribute class this entry summarises
+    /// (e.g. `"P&IDAttributes"`).
     pub class_name: String,
+    /// Number of records observed for the class.
     pub record_count: usize,
     /// Distinct `DrawingID` / `DrawingNo` values encountered (sorted, unique).
     pub drawing_ids: Vec<String>,
@@ -1988,13 +2278,23 @@ pub struct AttributeClassSummary {
     pub records: Vec<AttributeClassRecordRef>,
 }
 
+/// Provenance-preserving reference to a single [`AttributeRecord`]
+/// contributing to an [`AttributeClassSummary`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct AttributeClassRecordRef {
+    /// Class name mirrored from the source record.
     pub class_name: String,
+    /// Number of fields in the source record.
     pub attribute_count: usize,
+    /// Confidence string from the source record
+    /// (`"heuristic"` / `"decoded"`).
     pub confidence: String,
+    /// `DrawingID` / `DrawingNo` values surfaced from the source
+    /// record's attributes (sorted, unique).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub drawing_ids: Vec<String>,
+    /// `ModelID` values surfaced from the source record's attributes
+    /// (sorted, unique).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub model_ids: Vec<String>,
 }
@@ -2003,9 +2303,13 @@ pub struct AttributeClassRecordRef {
 /// storage or stream in the CFB tree.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RootPresence {
+    /// Name as it appears in `PSMroots`.
     pub name: String,
+    /// 32-bit identifier mirrored from the [`PsmRootEntry::id`].
     pub id: u32,
+    /// `true` when the name resolves to a CFB storage (directory).
     pub found_as_storage: bool,
+    /// `true` when the name resolves to a CFB stream (leaf).
     pub found_as_stream: bool,
 }
 
