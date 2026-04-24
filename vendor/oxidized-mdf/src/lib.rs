@@ -37,7 +37,7 @@ use crate::pages::{BootPage, Page, PagePointer, Record};
 use crate::sys::{BaseTableData, Column};
 use chrono::{DateTime, Utc};
 use core::fmt::{Display, Formatter};
-use log::error;
+use log::{error, warn};
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -171,8 +171,8 @@ impl MdfDatabase {
                                 match Value::parse(column, record.take().unwrap()) {
                                     Ok((value, r)) => (value, r),
                                     Err(e) => {
-                                        error!(
-                                            "Error during parsing column {:?}: {}",
+                                        warn!(
+                                            "Column {:?} parse skipped (NULL): {}",
                                             column, e
                                         );
                                         break;
