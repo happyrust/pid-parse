@@ -33,6 +33,8 @@ use crate::model::SheetEndpointRecord;
 const DISCRIMINATOR: u32 = 0x0000_0006;
 /// `u16` type tag at offset `+16` that marks an endpoint record.
 const ENDPOINT_TYPE_TAG: u16 = 0x0002;
+/// `u16` delimiter between the two endpoint `field_x` values.
+const ENDPOINT_DELIMITER: u16 = 0x0001;
 
 /// Parse all endpoint-pair records from a single Sheet stream body.
 ///
@@ -66,6 +68,10 @@ pub fn parse_endpoint_records(
             continue;
         }
         if u16_le(data, i + 14) != ENDPOINT_TYPE_TAG {
+            i += 1;
+            continue;
+        }
+        if u16_le(data, i + 20) != ENDPOINT_DELIMITER {
             i += 1;
             continue;
         }
@@ -162,6 +168,18 @@ mod tests {
         let mut buf = vec![0u8; 32];
         let mut bad = endpoint_bytes(0x03B7, 0x02E4, 0x008B);
         bad[14] = 0x12;
+        buf.extend_from_slice(&bad);
+        let mut set = HashSet::new();
+        set.insert(0x03B7);
+        let r = parse_endpoint_records("/Sheet6", &buf, &set);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn ignores_wrong_endpoint_delimiter() {
+        let mut buf = vec![0u8; 32];
+        let mut bad = endpoint_bytes(0x03B7, 0x02E4, 0x008B);
+        bad[20..22].copy_from_slice(&0x0002u16.to_le_bytes());
         buf.extend_from_slice(&bad);
         let mut set = HashSet::new();
         set.insert(0x03B7);
