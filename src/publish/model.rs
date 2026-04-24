@@ -106,6 +106,8 @@ impl CodelistIndex {
 pub enum PublishError {
     /// Generic SQLite / rusqlite failure.
     Sqlite(String),
+    /// Generic MDF reader failure.
+    Mdf(String),
     /// No drawing row matched the requested UID.
     DrawingNotFound { uid: String },
 }
@@ -114,6 +116,7 @@ impl fmt::Display for PublishError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Sqlite(msg) => write!(f, "SQLite: {msg}"),
+            Self::Mdf(msg) => write!(f, "MDF: {msg}"),
             Self::DrawingNotFound { uid } => write!(f, "drawing UID `{uid}` not found"),
         }
     }
@@ -124,6 +127,12 @@ impl std::error::Error for PublishError {}
 impl From<rusqlite::Error> for PublishError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Sqlite(err.to_string())
+    }
+}
+
+impl From<oxidized_mdf::error::Error> for PublishError {
+    fn from(err: oxidized_mdf::error::Error) -> Self {
+        Self::Mdf(err.to_string())
     }
 }
 
@@ -152,7 +161,7 @@ pub struct PublishObject {
     /// Populated by the loader when a matching row is found in
     /// the per-kind subtable (T_Equipment / T_Vessel / T_Nozzle /
     /// T_PipeRun / ...). Columns that store non-Text SQL types
-    /// still surface here as their OrcaMDF-rendered string form.
+    /// still surface here as their loader-rendered string form.
     ///
     /// Values are kept as `String` rather than raw bytes so the
     /// XML writer can emit them directly; where numeric parsing
@@ -284,7 +293,7 @@ pub struct PublishDrawing {
     /// archive tree.
     pub path: Option<String>,
     /// `T_Drawing.DateCreated` — free-form datetime string as
-    /// emitted by OrcaMDF's value rendering.
+    /// emitted by the MDF loader's value rendering.
     pub date_created: Option<String>,
     /// All model items that show up on this drawing. Populated by
     /// [`crate::publish::load_drawing_graph`] after matching

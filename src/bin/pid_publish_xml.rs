@@ -1,9 +1,9 @@
-//! CLI: generate SmartPlant Publish Data XML from the SQLite
-//! mirror produced by `tools/orca-mdf-probe`.
+//! CLI: generate SmartPlant Publish Data XML from a SmartPlant MDF
+//! file using the Rust `oxidized-mdf` reader.
 //!
 //! Stage-1 terminal binary. Given
 //!
-//! 1. a SQLite file produced by `OrcaMdfProbe --to-sqlite`,
+//! 1. a SQL Server MDF file extracted from `Export.dmp`,
 //! 2. a SmartPlant drawing UID (the `T_Drawing.SP_ID` value),
 //!
 //! this tool emits a `_Data.xml` document that carries the
@@ -15,8 +15,8 @@
 //! Usage:
 //!
 //! ```text
-//! pid_publish_xml <sqlite> --drawing UID --out <file> [--plant NAME]
-//! pid_publish_xml <sqlite> --drawing UID --stdout [--plant NAME]
+//! pid_publish_xml <mdf> --drawing UID --out <file> [--plant NAME]
+//! pid_publish_xml <mdf> --drawing UID --stdout [--plant NAME]
 //! ```
 //!
 //! Exit codes: 0 = wrote document, 1 = I/O / format error, 2 =
@@ -24,14 +24,14 @@
 
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    diff_publish_xml, load_drawing_graph, write_data_xml, write_meta_xml, PublishError,
-    PublishStyle,
+    diff_publish_xml, load_drawing_graph, open_mdf_as_sqlite, write_data_xml, write_meta_xml,
+    PublishError, PublishStyle,
 };
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 struct CliOptions {
-    sqlite_path: PathBuf,
+    input_path: PathBuf,
     /// Required for the normal "render this drawing" flow;
     /// `None` is only valid when `list_drawings` is true.
     drawing_uid: Option<String>,
@@ -73,10 +73,10 @@ enum OutputTarget {
 
 fn print_usage() {
     eprintln!(
-        "Usage: pid_publish_xml <sqlite> --drawing UID [--out FILE | --stdout]\n\
+        "Usage: pid_publish_xml <mdf|sqlite> --drawing UID [--out FILE | --stdout]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
          \x20               [--style a01|dwg]\n\
-         \x20  pid_publish_xml <sqlite> --list-drawings\n\n\
+         \x20  pid_publish_xml <mdf|sqlite> --list-drawings\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
@@ -104,9 +104,9 @@ fn print_usage() {
 
 fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     if args.len() < 2 {
-        return Err("missing <sqlite> argument".into());
+        return Err("missing <mdf|sqlite> argument".into());
     }
-    let sqlite_path = PathBuf::from(&args[1]);
+    let input_path = PathBuf::from(&args[1]);
     let mut drawing_uid: Option<String> = None;
     let mut out_path: Option<PathBuf> = None;
     let mut meta_out_path: Option<PathBuf> = None;
@@ -227,7 +227,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     }
 
     Ok(CliOptions {
-        sqlite_path,
+        input_path,
         drawing_uid,
         output,
         meta_output: meta_out_path,
@@ -268,8 +268,7 @@ fn main() {
 ///   from the reference (used as a CI gate). Real I/O / SQLite
 ///   errors short-circuit through `Err(String)` instead.
 fn run(options: CliOptions) -> Result<i32, String> {
-    let conn = open_readonly(&options.sqlite_path)
-        .map_err(|e| format!("open {}: {e}", options.sqlite_path.display()))?;
+    let conn = open_input_as_sqlite(&options.input_path)?;
 
     // A30 — list mode prints all drawings and exits.
     if options.list_drawings {
@@ -365,9 +364,24 @@ fn run(options: CliOptions) -> Result<i32, String> {
     Ok(exit_code)
 }
 
+fn open_input_as_sqlite(path: &std::path::Path) -> Result<rusqlite::Connection, String> {
+    if is_mdf_path(path) {
+        open_mdf_as_sqlite(path).map_err(|e| format!("open MDF {}: {e}", path.display()))
+    } else {
+        open_readonly(path).map_err(|e| format!("open SQLite {}: {e}", path.display()))
+    }
+}
+
+fn is_mdf_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("mdf"))
+        .unwrap_or(false)
+}
+
 /// A30 · `--list-drawings` mode: print every `T_Drawing` row in
-/// the SQLite mirror as a tab-aligned table and return. Reuses
-/// the same `Connection` already opened by `run`, so the SQLite
+/// the input table set as a tab-aligned table and return. Reuses
+/// the same `Connection` already opened by `run`, so the query
 /// path validation is centralized.
 ///
 /// Output layout pins to fixed-width columns so an operator can

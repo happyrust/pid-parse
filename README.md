@@ -25,8 +25,8 @@
 - **Package diff + verify**（v0.3.5）：`diff_packages` + `--diff <a> <b>` / `--round-trip --verify`，CI 友好 exit code，字节级差异 + hex context
 - **Layout-first 可读整图模型**（v0.4.1）：`PidDocument.layout` 输出 `items / segments / texts / unplaced / warnings`，供 H7CAD 等下游优先生成可读整图而不是语义网格图
 - **pid-only 符号证据下沉**（v0.4.1 patch）：从 `cross_reference.symbol_usage` / `jsites` 提取代表性 `.sym` 路径，补到对象级 `PidLayoutItem.symbol_path`
-- **Backup 解析（offline pipeline）**：MTF 备份头剥离（`backup::mtf`）+ MSCI / MDF 元数据探针 + `pid_backup_extract` CLI，把 SmartPlant 备份还原成可被 OrcaMDF probe 重放的 `.mdf`
-- **Publish Data XML writer**（Stage-1，A12 → A31）：从 OrcaMDF probe 产出的 SQLite mirror 加载 `T_Drawing` / `T_ModelItem` / `T_Representation` / `T_Relationship` 等表，发出 SmartPlant 兼容的 `_Data.xml` + `_Meta.xml`。13 类 PID tag 已支持（PIDProcessVessel / PIDNozzle / PIDPipeline / PIDPipingConnector / PIDPipingComponent / PIDPipingPort / PIDProcessPoint / PIDSignalConnector / PIDSignalPort / PIDControlSystemFunction / PIDNote / PIDDrawing / PIDRepresentation），每个 tag 的接口集和属性集与 A01 reference 字节级对齐
+- **Backup 解析（offline pipeline）**：MTF 备份头剥离（`backup::mtf`）+ MSCI / MDF 元数据探针 + `pid_backup_extract` CLI，把 SmartPlant 备份还原成可被 Rust MDF loader 读取的 `.mdf`
+- **Publish Data XML writer**（Stage-1，A12 → A31）：通过本地克隆的 `vendor/oxidized-mdf` 直接读取 MDF 内的 `T_Drawing` / `T_ModelItem` / `T_Representation` / `T_Relationship` 等表，发出 SmartPlant 兼容的 `_Data.xml` + `_Meta.xml`。13 类 PID tag 已支持（PIDProcessVessel / PIDNozzle / PIDPipeline / PIDPipingConnector / PIDPipingComponent / PIDPipingPort / PIDProcessPoint / PIDSignalConnector / PIDSignalPort / PIDControlSystemFunction / PIDNote / PIDDrawing / PIDRepresentation），每个 tag 的接口集和属性集与 A01 reference 字节级对齐
 - **Publish fidelity 9 道守门**：tag-count diff（A12）+ writer coverage 分类（A15）+ 接口级 parity（A23 / A24）+ 属性级 parity（A27 / A27b）+ backlog tag inventory snapshot（A28）+ A01/DWG style 切换（A29 / A29b）。任何 future SmartPlant 端漂移会以 `(tag, interface, attr)` 三元组在 CI 上失败定位
 - **PIDProcessVessel tank 变体**（A25）：通过 `obj.fields["IsLowPressureTank"]` 路由，DWG-style "Open top tank" 17 接口形态与 A01-style "Horizontal Drum" 15 接口形态共用一套 writer
 - **Probe / Decode 分层**：启发式标记与确定性解码明确分离
@@ -90,28 +90,25 @@ cargo run --bin pid_inspect -- a.pid --diff b.pid
 # 1. 从 SmartPlant 备份（Export.dmp）剥离 MTF 头得到 .mdf
 cargo run --bin pid_backup_extract -- Export.dmp --out Export.mdf
 
-# 2. （C# 工具）OrcaMDF probe 把 .mdf 转成 SQLite mirror
-#    详见 tools/orca-mdf-probe/Program.cs
+# 2. 用 Rust MDF loader（vendor/oxidized-mdf）直接列出 drawing
+cargo run --bin pid_publish_xml -- Export.mdf --list-drawings
 
-# 3. 列出 SQLite mirror 里的全部 drawing
-cargo run --bin pid_publish_xml -- Export_v2.sqlite --list-drawings
-
-# 4. 生成单张 drawing 的 _Data.xml（默认 A01 style）
-cargo run --bin pid_publish_xml -- Export_v2.sqlite \
+# 3. 生成单张 drawing 的 _Data.xml（默认 A01 style）
+cargo run --bin pid_publish_xml -- Export.mdf \
     --drawing D9635C3C898840D1990B7E8BEE1D55DA \
     --plant TEST02 --out A01_Data.xml
 
-# 5. 同时生成 _Meta.xml 配套
-cargo run --bin pid_publish_xml -- Export_v2.sqlite \
+# 4. 同时生成 _Meta.xml 配套
+cargo run --bin pid_publish_xml -- Export.mdf \
     --drawing D9635C3C898840D1990B7E8BEE1D55DA \
     --plant TEST02 --out A01_Data.xml --meta-out A01_Meta.xml
 
-# 6. 切换到 DWG-style IObject 形态（drop ItemTag, 用 Name）
-cargo run --bin pid_publish_xml -- Export_v2.sqlite \
+# 5. 切换到 DWG-style IObject 形态（drop ItemTag, 用 Name）
+cargo run --bin pid_publish_xml -- Export.mdf \
     --drawing <UID> --plant TEST02 --style dwg --out DWG_Data.xml
 
-# 7. 跟 SmartPlant 参考 _Data.xml 跑 SemanticDiff（CI gate）
-cargo run --bin pid_publish_xml -- Export_v2.sqlite \
+# 6. 跟 SmartPlant 参考 _Data.xml 跑 SemanticDiff（CI gate）
+cargo run --bin pid_publish_xml -- Export.mdf \
     --drawing D9635C3C898840D1990B7E8BEE1D55DA \
     --plant TEST02 --diff-against reference/A01_Data.xml
 ```
@@ -163,12 +160,13 @@ PidWriter::write_to(&pkg, &WritePlan::default(), std::path::Path::new("drawing.c
 
 ```rust
 use pid_parse::publish::{
-    load_drawing_graph, sqlite_load::open_readonly,
-    write_data_xml, write_meta_xml, PublishStyle,
+    load_drawing_graph_from_mdf, write_data_xml, write_meta_xml, PublishStyle,
 };
 
-let conn = open_readonly("Export_v2.sqlite".as_ref())?;
-let mut graph = load_drawing_graph(&conn, "D9635C3C898840D1990B7E8BEE1D55DA")?;
+let mut graph = load_drawing_graph_from_mdf(
+    "Export.mdf".as_ref(),
+    "D9635C3C898840D1990B7E8BEE1D55DA",
+)?;
 
 // 默认是 A01 style；如果数据来自 DWG 风格的 plant：
 graph.style = PublishStyle::Dwg;

@@ -2018,10 +2018,10 @@ pub(crate) fn derive_meta_uid(seed: &str, role: &str) -> String {
 /// Normalize a SmartPlant `DateCreated` string into the
 /// `YYYY/MM/DD` form reference exports use for `DocVersionDate`.
 ///
-/// OrcaMDF surfaces the value as the SQL Server raw render — for
-/// example `"2026/4/20 10:32:46"`. We zero-pad the month and day
-/// and drop the time component, matching the reference fixtures'
-/// `"2026/04/20"`. Any input that does not parse as
+/// The MDF loader may surface the value as a SQL Server-style raw
+/// render, for example `"2026/4/20 10:32:46"`. We zero-pad the
+/// month and day and drop the time component, matching the reference
+/// fixtures' `"2026/04/20"`. Any input that does not parse as
 /// `YYYY/M/D[ ...]` is returned verbatim so callers retain enough
 /// debug context to spot unsupported formats.
 fn format_meta_date(raw: &str) -> String {

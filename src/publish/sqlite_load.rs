@@ -1,5 +1,8 @@
-//! Load a Publish-Data DTO out of the SQLite mirror produced by
-//! `tools/orca-mdf-probe`.
+//! Load a Publish-Data DTO out of a SQLite connection shaped like the
+//! SmartPlant SQL tables.
+//!
+//! The current MDF path uses `mdf_load` to stage publish-relevant rows
+//! into an in-memory SQLite connection, then reuses this query layer.
 //!
 //! Stage-1 A2: in addition to the single `T_Drawing` row, pull the
 //! drawing's representations, their owning model items, and the
@@ -24,10 +27,9 @@ use super::model::{
     PublishRepresentation,
 };
 
-/// Open a SQLite file produced by `OrcaMdfProbe --to-sqlite` in
-/// read-only mode and return a ready-to-query connection. Exposed
-/// publicly so integration tests and the eventual CLI can reuse
-/// the same open logic.
+/// Open a legacy SQLite table dump in read-only mode and return a
+/// ready-to-query connection. Exposed publicly so integration tests
+/// and compatibility tools can reuse the same open logic.
 pub fn open_readonly(path: &Path) -> Result<Connection, PublishError> {
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(PublishError::from)
@@ -37,9 +39,9 @@ pub fn open_readonly(path: &Path) -> Result<Connection, PublishError> {
 /// SQLite mirror. Returns [`PublishError::DrawingNotFound`] when no
 /// `T_Drawing` row matches.
 pub fn load_drawing(conn: &Connection, drawing_uid: &str) -> Result<PublishDrawing, PublishError> {
-    // OrcaMDF ships every column as TEXT in the SQLite mirror, so
-    // we deserialize everything as Option<String> and let higher
-    // layers parse numerics / dates if they need to.
+    // The MDF adapter stages every column as TEXT, so we deserialize
+    // everything as Option<String> and let higher layers parse
+    // numerics / dates if they need to.
     let mut stmt = conn.prepare(
         "SELECT Name, DocumentCategory, DocumentType, Template, Path, DateCreated \
          FROM T_Drawing WHERE SP_ID = ?1",
@@ -66,8 +68,8 @@ pub fn load_drawing(conn: &Connection, drawing_uid: &str) -> Result<PublishDrawi
     })
 }
 
-/// Parse a SQLite TEXT column that SmartPlant / OrcaMDF may have
-/// stored as either a numeric string ("42") or a full decimal
+/// Parse a SQLite TEXT column that SmartPlant may have stored as
+/// either a numeric string ("42") or a full decimal
 /// representation ("42.0"). Empty / NULL / non-numeric input
 /// surfaces as `None` rather than an error — stage-1 treats these
 /// values as decorative and does not want to fail the whole load
@@ -301,11 +303,10 @@ fn prepare_optional<'conn>(
 /// `EquipmentType = "0"` → `"Horizontal Drum"`).
 ///
 /// Both underlying tables — `codelists` and `attributes` — are
-/// treated as optional. When a fixture's SQLite mirror has not
-/// populated them (because OrcaMDF skipped the catalog, or the
-/// export scope is drawing-only) the loader returns a default
-/// empty index; callers fall through to whatever lookup they
-/// already had.
+/// treated as optional. When a fixture has not populated them
+/// (for example because the export scope is drawing-only), the
+/// loader returns a default empty index; callers fall through to
+/// whatever lookup they already had.
 ///
 /// Rows with NULL / empty `codelist_number` / `codelist_index` /
 /// `codelist_text` are filtered out to keep the index tight.

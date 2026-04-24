@@ -1,31 +1,32 @@
 //! Publish Data XML generation — offline SmartPlant pipeline terminal stage.
 //!
-//! Stage-1 pipeline produces a SQLite mirror of a SmartPlant backup
-//! database via:
+//! Stage-1 pipeline reads the MDF extracted from a SmartPlant backup
+//! via:
 //!
 //! 1. Rust: [`crate::backup::mtf`] + [`crate::bin::pid_backup_extract`]
 //!    — strips the SQL Server backup stream header and writes a
 //!    reconstructable `.mdf` file.
-//! 2. C#:  `tools/orca-mdf-probe` (forked OrcaMDF + `SqlFloat` /
-//!    `SqlReal` additions) — mirrors every user table into a SQLite
-//!    database.
-//! 3. Rust: *this module* — loads the relevant rows out of SQLite
-//!    and emits a SmartPlant-compatible Publish Data XML document
+//! 2. Rust: [`mdf_load`] + vendored `oxidized-mdf` — reads the
+//!    publish-relevant SmartPlant SQL tables directly from MDF.
+//! 3. Rust: *this module* — loads the relevant rows into the publish
+//!    DTO and emits a SmartPlant-compatible Publish Data XML document
 //!    (`<DrawingName>_Data.xml` and `<DrawingName>_Meta.xml`).
 //!
 //! ## Submodules
 //!
-//! * [`sqlite_load`] — SQLite → in-memory object graph DTO.
+//! * [`mdf_load`] — MDF → publish table adapter.
+//! * [`sqlite_load`] — in-memory/legacy SQLite → object graph DTO.
 //! * [`model`] — object-graph DTO shared by the loader and the
 //!   writer.
 //! * [`xml_writer`] — DTO → Publish Data XML byte stream
 //!   (lands in a later commit).
 //!
-//! Everything here depends on the SQLite file being produced by the
-//! companion C# probe; the module is pure reader / writer glue and
-//! does not touch MDF bytes directly.
+//! The normal path no longer depends on the C# OrcaMDF probe. The
+//! legacy SQLite loader remains for fixture compatibility and as a
+//! simple relational adapter behind the MDF reader.
 
 pub mod diff;
+pub mod mdf_load;
 pub mod model;
 pub mod sqlite_load;
 pub mod xml_writer;
@@ -40,6 +41,7 @@ pub use model::{
     CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
     PublishRepresentation, PublishStyle,
 };
+pub use mdf_load::{load_drawing_graph_from_mdf, open_mdf_as_sqlite};
 pub use sqlite_load::{
     attach_pipe_endpoint_connections, load_codelist_index, load_drawing, load_drawing_graph,
     load_objects_by_uids, load_piping_points_for_objects, load_relationships,

@@ -1,10 +1,10 @@
 //! End-to-end CLI tests for the `pid_publish_xml` binary (A10
 //! series). Drives the actual compiled binary via `Command` so the
-//! whole stack — argument parsing, SQLite read, DTO load,
+//! whole stack — argument parsing, MDF read, DTO load,
 //! `_Data.xml` + `_Meta.xml` rendering, and file I/O — is exercised
 //! the same way an operator would invoke it.
 //!
-//! All tests that touch the real `Export_v2.sqlite` fixture skip
+//! All tests that touch the real `Export.mdf` fixture skip
 //! cleanly when the file is missing so CI workers without the
 //! TEST02 backup do not fail.
 
@@ -15,7 +15,7 @@ fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_pid_publish_xml")
 }
 
-const SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite";
+const SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
 const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
 
 /// Allocate a unique sub-directory under the OS temp dir so two
@@ -39,7 +39,7 @@ fn unique_tmp_dir(label: &str) -> PathBuf {
     p
 }
 
-/// True when the real OrcaMDF fixture is on disk. Returns false (and
+/// True when the real MDF fixture is on disk. Returns false (and
 /// prints a reason) for skipping behavior on bare CI workers that do
 /// not carry the SmartPlant backup data.
 fn fixture_available() -> bool {
@@ -70,7 +70,7 @@ fn cli_help_flag_exits_zero_with_usage_text() {
 }
 
 #[test]
-fn cli_missing_sqlite_argument_exits_two() {
+fn cli_missing_input_argument_exits_two() {
     let out = Command::new(binary_path())
         .output()
         .expect("spawn pid_publish_xml with no args");
@@ -81,7 +81,7 @@ fn cli_missing_sqlite_argument_exits_two() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("missing <sqlite>"),
+        stderr.contains("missing <mdf|sqlite>"),
         "stderr should explain the missing argument; got:\n{stderr}"
     );
 }
@@ -90,7 +90,7 @@ fn cli_missing_sqlite_argument_exits_two() {
 fn cli_meta_out_with_stdout_is_rejected_as_argument_error() {
     let out = Command::new(binary_path())
         .args([
-            "Export_v2.sqlite",
+            "Export.mdf",
             "--drawing",
             "ANY",
             "--stdout",
@@ -186,7 +186,7 @@ fn cli_writes_both_data_and_meta_xml_for_real_drawing() {
     );
     assert!(
         meta_xml.contains(r#"DocVersionDate="2026/04/20""#),
-        "_Meta.xml DocVersionDate should normalize OrcaMDF's raw `2026/4/20 ...` to ISO-ish; got:\n{meta_xml}"
+        "_Meta.xml DocVersionDate should normalize the MDF date `2026/4/20 ...` to ISO-ish; got:\n{meta_xml}"
     );
 
     // Determinism — invoking the CLI a second time must produce
@@ -373,7 +373,7 @@ fn cli_diff_against_real_a01_reference_is_clean_and_exits_zero() {
 
 #[test]
 fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
-    // Generate an _Data.xml from the SQLite mirror, then diff it
+    // Generate an _Data.xml from the MDF input, then diff it
     // against itself: the report must be clean and the binary
     // must exit 0.
     if !fixture_available() {
