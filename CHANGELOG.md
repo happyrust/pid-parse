@@ -72,6 +72,32 @@
 - `src/lib.rs` 顶部 `#![warn(...)]` 锁死上述 10 个 lint，
   配合 CI `-D warnings` 形成硬门禁。
 
+### End-to-end `examples/` walkthroughs
+
+为 crate-level `//!` 刚写进 `src/lib.rs` 的"3 条管线入口"承诺
+配上可运行示例——`cargo run --example …` 一条命令就能看到
+reader 和 publish 两条链路真的跑通。
+
+- `examples/parse_walkthrough.rs`：打开一个 `.pid`（默认 A01
+  fixture，可传 argv[1] 覆盖），打印流数量、`DrawingMeta` /
+  `GeneralMeta` 摘要，然后吐一段 summary JSON。蓄意规避了
+  `SummaryPropertyValue::Lpwstr(String)` 这个已知 serde_json 无
+  法序列化的 tagged newtype 变体，改用一个小的 `json!({...})`
+  摘要视图。
+- `examples/publish_walkthrough.rs`：打开 `Export.mdf`（默认
+  TEST02 fixture 下的 A01 drawing，可传 `<mdf> <uid> <plant>` 覆
+  盖），调 `load_drawing_graph_from_mdf()`、分别 dump
+  `write_data_xml()` / `write_meta_xml()` 的结果大小与前 240 字符
+  预览。
+- 两个示例都遵循既有 soft-skip 模式：fixture 不存在则打印提示并
+  正常退出，`cargo build --examples` / `cargo run --example …`
+  在无 SmartPlant 样本的机器上也干净通过。
+- `src/lib.rs` crate-level `//!` 增补了 "examples/ 走查" 小节，
+  让 `cargo doc --open` 的落地页直接指向这两个文件。
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+  全绿；`cargo fmt --check` 全绿；`cargo run --example
+  parse_walkthrough` / `publish_walkthrough` 本地两次冒烟都正常。
+
 ### Public API rustdoc pass — Tier 1
 
 首轮对 crate 级 + 顶层 `pub mod` + 用户门面结构 / 枚举写

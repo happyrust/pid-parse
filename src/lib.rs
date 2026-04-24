@@ -54,6 +54,16 @@
 //!     .expect("valid SmartPlant .pid file");
 //! println!("streams: {}", doc.streams.len());
 //! ```
+//!
+//! End-to-end runnable walkthroughs live under `examples/`:
+//!
+//! - `parse_walkthrough.rs` — open a `.pid`, inspect streams /
+//!   [`DrawingMeta`] / [`GeneralMeta`], emit a summary JSON.
+//! - `publish_walkthrough.rs` — open an `Export.mdf`, load a
+//!   drawing graph, emit `_Data.xml` + `_Meta.xml`.
+//!
+//! Both soft-skip when the local `test-file/` fixture is missing,
+//! so `cargo run --example …` is safe on any checkout.
 
 pub mod api;
 pub mod backup;
