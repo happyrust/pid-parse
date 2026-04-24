@@ -50,6 +50,18 @@
 - 产品代码（`pages.rs`）实现完全 panic-free：零 `panic!` / `unwrap()` / `todo!()`。
   - unknown record-type panic 改为 `Err`。
   - chrono epoch `.unwrap()` 改为 `.single().ok_or()`。
+- 去除 vendored crate 和父项目中的全部 async 抽象：
+  - `MdfDatabase::open` / `PageReader` / `BaseTableData::parse` 改为同步 API。
+  - `PageStream`（`Stream`）→ `PageIter`（`Iterator`），消除双重 `block_on` 开销。
+  - `mdf_load.rs` 直接调用同步 API，不再包装 `task::block_on`。
+  - 移除 `async-std`、`futures-lite`、`async-log` 依赖。
+  - `publish_mdf_load` 测试从 ~2.6s 降至 ~0.09s（29x 提速）。
+- `lib.rs` 产品代码 panic 边界消除：
+  - 新增 `Error::ParseError` 变体，替代 IoError 包装。
+  - `BootPage::try_from` / `Page::try_from` 的 `.unwrap()` 改为 `?` 错误传播。
+  - `read_page` 中的 `assert!` 改为 `Err`（backward-read 检查）。
+  - page cache miss 从 `.unwrap()` 改为 `.ok_or()`。
+- 总计移除 5 个依赖：`byteorder`、`num-bigint`、`async-std`、`futures-lite`、`async-log`。
 
 #### Tests / Verification
 

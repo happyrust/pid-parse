@@ -27,8 +27,6 @@ use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::Mutex;
 
-use async_std::task;
-use futures_lite::stream::StreamExt;
 use oxidized_mdf::{MdfDatabase, Row, Value};
 use pid_parse::publish::open_mdf_as_sqlite;
 use rusqlite::Connection;
@@ -393,12 +391,11 @@ fn scan_full_mdf_for_residual_values(
     path: &Path,
     probes: &[ResidualProbe],
 ) -> Result<FullMdfResidualScan, String> {
-    let mut table_names = task::block_on(async move {
+    let mut table_names = {
         let db = MdfDatabase::open(path)
-            .await
             .map_err(|err| format!("open MDF for table inventory: {err}"))?;
-        Ok::<Vec<String>, String>(db.table_names())
-    })?;
+        db.table_names()
+    };
     table_names.sort();
     table_names.dedup();
 
@@ -411,11 +408,11 @@ fn scan_full_mdf_for_residual_values(
 
     for table_name in table_names {
         let table_scan = catch_table_scan_panic_silent(|| {
-            task::block_on(scan_mdf_table_for_residual_values(
+            scan_mdf_table_for_residual_values(
                 path,
                 &table_name,
                 probes,
-            ))
+            )
         });
         match table_scan {
             Ok(Ok(table_scan)) => {
@@ -518,13 +515,12 @@ fn find_all_bytes(haystack: &[u8], needle: &[u8], limit: usize) -> Vec<usize> {
     hits
 }
 
-async fn scan_mdf_table_for_residual_values(
+fn scan_mdf_table_for_residual_values(
     path: &Path,
     table_name: &str,
     probes: &[ResidualProbe],
 ) -> Result<TableResidualScan, String> {
     let mut db = MdfDatabase::open(path)
-        .await
         .map_err(|err| format!("open MDF for table {table_name}: {err}"))?;
     let Some(columns) = db.column_names(table_name) else {
         return Ok(TableResidualScan::default());
@@ -533,7 +529,7 @@ async fn scan_mdf_table_for_residual_values(
         return Ok(TableResidualScan::default());
     }
 
-    let Some(mut rows) = db.rows(table_name) else {
+    let Some(rows) = db.rows(table_name) else {
         return Ok(TableResidualScan::default());
     };
     let mut out = TableResidualScan {
@@ -541,7 +537,7 @@ async fn scan_mdf_table_for_residual_values(
         ..TableResidualScan::default()
     };
     let mut row_number = 0usize;
-    while let Some(row) = rows.next().await {
+    for row in rows {
         row_number += 1;
         out.rows_scanned += 1;
         let row_identity = row_identity(&row);
