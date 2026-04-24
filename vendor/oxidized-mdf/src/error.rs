@@ -5,6 +5,11 @@ use std::io::Error as IoError;
 pub enum Error {
     IoError(IoError),
     ParseError(&'static str),
+    RowParseError {
+        table: String,
+        column: String,
+        source: &'static str,
+    },
 }
 
 impl Display for Error {
@@ -12,6 +17,14 @@ impl Display for Error {
         match self {
             Error::IoError(err) => write!(f, "IO Error: {err}"),
             Error::ParseError(msg) => write!(f, "Parse Error: {msg}"),
+            Error::RowParseError {
+                table,
+                column,
+                source,
+            } => write!(
+                f,
+                "Parse Error in table `{table}` column `{column}`: {source}"
+            ),
         }
     }
 }
@@ -20,7 +33,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::IoError(err) => Some(err),
-            Error::ParseError(_) => None,
+            Error::ParseError(_) | Error::RowParseError { .. } => None,
         }
     }
 }

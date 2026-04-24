@@ -163,8 +163,8 @@ impl MdfDatabase {
         table_name: &str,
     ) -> Option<impl Iterator<Item = Row> + 'a> {
         let table = self.base_table_data.table(table_name)?;
-
         let page_pointers = table.page_pointers();
+        let columns = table.columns;
 
         log::debug!("reading pages of {table_name}");
         Some(
@@ -182,27 +182,45 @@ impl MdfDatabase {
                     };
 
                     for record in page.records().into_iter() {
-                        let mut columns = BTreeMap::new();
+                        rows.push(parse_record_columns_lenient(record, &columns));
+                    }
+                    rows
+                }),
+        )
+    }
 
-                        let mut record = Some(record);
-                        for column in &table.columns {
-                            let Some(rec) = record.take() else {
-                                break;
-                            };
-                            let (value, r) = match Value::parse(column, rec) {
-                                Ok((value, r)) => (value, r),
-                                Err(e) => {
-                                    warn!("Column {column:?} parse skipped (NULL): {e}");
-                                    break;
-                                }
-                            };
+    /// Returns an iterator over parse results for rows in the given table.
+    ///
+    /// Unlike [`MdfDatabase::rows`], this method preserves page and column
+    /// parse failures so callers that stage authoritative data can fail fast
+    /// instead of silently producing partial output.
+    pub fn try_rows<'a, 'b: 'a>(
+        &'b mut self,
+        table_name: &str,
+    ) -> Option<impl Iterator<Item = Result<Row, Error>> + 'a> {
+        let table = self.base_table_data.table(table_name)?;
+        let page_pointers = table.page_pointers();
+        let columns = table.columns;
+        let table_name = table_name.to_string();
 
-                            columns.insert(column.name.to_string(), value);
+        log::debug!("reading pages of {table_name}");
+        Some(
+            self.page_reader
+                .read_pages_of_pointers(page_pointers)
+                .flat_map(move |page| {
+                    let mut rows = Vec::new();
 
-                            record = Some(r);
+                    let page = match page {
+                        Ok(page) => page,
+                        Err(err) => {
+                            error!("Cannot read page: {err}");
+                            rows.push(Err(err));
+                            return rows;
                         }
+                    };
 
-                        rows.push(Row { columns });
+                    for record in page.records().into_iter() {
+                        rows.push(parse_record_columns(&table_name, record, &columns));
                     }
                     rows
                 }),
@@ -210,10 +228,79 @@ impl MdfDatabase {
     }
 }
 
+fn parse_record_columns_lenient(record: Record<'_>, columns: &[Column<'_>]) -> Row {
+    let mut parsed_columns = BTreeMap::new();
+    let mut record = Some(record);
+
+    for column in columns {
+        let Some(rec) = record.take() else {
+            break;
+        };
+        let (value, remaining) = match Value::parse(column, rec) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                warn!("Row parse stopped after column {column:?}: {err}");
+                break;
+            }
+        };
+
+        parsed_columns.insert(column.name.to_string(), value);
+        record = Some(remaining);
+    }
+
+    Row {
+        columns: parsed_columns,
+    }
+}
+
+fn parse_record_columns(
+    table_name: &str,
+    record: Record<'_>,
+    columns: &[Column<'_>],
+) -> Result<Row, Error> {
+    let mut parsed_columns = BTreeMap::new();
+    let mut record = Some(record);
+
+    for column in columns {
+        let Some(rec) = record.take() else {
+            break;
+        };
+        let (value, remaining) = match Value::parse(column, rec) {
+            Ok(parsed) => parsed,
+            Err(err) if is_omitted_trailing_column_error(err) && !parsed_columns.is_empty() => {
+                warn!("Row parse stopped at omitted trailing column {column:?}: {err}");
+                break;
+            }
+            Err(err) => {
+                warn!("Row parse failed after column {column:?}: {err}");
+                return Err(Error::RowParseError {
+                    table: table_name.to_string(),
+                    column: column.name.to_string(),
+                    source: err,
+                });
+            }
+        };
+
+        parsed_columns.insert(column.name.to_string(), value);
+        record = Some(remaining);
+    }
+
+    Ok(Row {
+        columns: parsed_columns,
+    })
+}
+
+fn is_omitted_trailing_column_error(err: &str) -> bool {
+    matches!(
+        err,
+        "requested fixed-length bytes exceed record bounds" | "no variable column data"
+    )
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Bit(bool),
-    TinyInt(i8),
+    TinyInt(u8),
     SmallInt(i16),
     Int(i32),
     BigInt(i64),
@@ -274,16 +361,25 @@ impl Value {
                 Ok((datetime.map_or(Value::Null, Value::DateTime), r))
             }
             "tinyint" => {
-                let (int, r) = record.parse_i8()?;
+                let (int, r) = record.parse_u8()?;
                 Ok((Value::TinyInt(int), r))
             }
             "smallint" => {
                 let (int, r) = record.parse_i16()?;
                 Ok((Value::SmallInt(int), r))
             }
-            "int" | "money" => {
+            "int" => {
                 let (int, r) = record.parse_i32_opt()?;
                 Ok((int.map_or(Value::Null, Value::Int), r))
+            }
+            "money" => {
+                let (int, r) = record.parse_i64_opt()?;
+                Ok((
+                    int.map_or(Value::Null, |value| {
+                        Value::Decimal(Decimal::from_i128_with_scale(value as i128, 4))
+                    }),
+                    r,
+                ))
             }
             "bigint" => {
                 let (int, r) = record.parse_i64_opt()?;
@@ -297,9 +393,14 @@ impl Value {
                 let (float, r) = record.parse_f64_opt()?;
                 Ok((float.map_or(Value::Null, Value::Float), r))
             }
-            "char" | "nchar" => {
+            "char" => {
                 let (string, r) =
                     record.parse_string_from_fixed_bytes(column.max_length as usize)?;
+                Ok((Value::String(string), r))
+            }
+            "nchar" => {
+                let (string, r) =
+                    record.parse_utf16le_string_from_fixed_bytes(column.max_length as usize)?;
                 Ok((Value::String(string), r))
             }
             "nvarchar" | "varchar" | "sysname" => {
@@ -320,7 +421,12 @@ impl Value {
             }
             "smallmoney" => {
                 let (int, r) = record.parse_i32_opt()?;
-                Ok((int.map_or(Value::Null, Value::Int), r))
+                Ok((
+                    int.map_or(Value::Null, |value| {
+                        Value::Decimal(Decimal::from_i128_with_scale(value as i128, 4))
+                    }),
+                    r,
+                ))
             }
             "varbinary" | "image" => {
                 let (bytes, r) = record.parse_binary()?;
@@ -468,6 +574,33 @@ impl<'a> Iterator for PageIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sys::Column;
+    use chrono::{Duration, TimeZone};
+    use rust_decimal::Decimal;
+
+    fn test_column(
+        r#type: &'static str,
+        max_length: i16,
+        precision: u8,
+        scale: u8,
+    ) -> Column<'static> {
+        Column {
+            name: "value",
+            r#type,
+            max_length,
+            precision,
+            scale,
+        }
+    }
+
+    fn fixed_record_bytes(fixed_bytes: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(6 + fixed_bytes.len());
+        bytes.extend_from_slice(&[0u8, 0u8]);
+        bytes.extend_from_slice(&((4 + fixed_bytes.len()) as u16).to_le_bytes());
+        bytes.extend_from_slice(fixed_bytes);
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes
+    }
 
     #[test]
     fn should_result_in_io_error_when_file_does_not_exists() {
@@ -475,5 +608,90 @@ mod tests {
             Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
             _ => panic!("Unexpected result"),
         }
+    }
+
+    #[test]
+    fn money_values_are_scaled_decimal_and_consume_eight_bytes() {
+        let mut fixed = 1_234_567i64.to_le_bytes().to_vec();
+        fixed.extend_from_slice(&42i32.to_le_bytes());
+        let bytes = fixed_record_bytes(&fixed);
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let (value, record) =
+            Value::parse(&test_column("money", 8, 19, 4), record).expect("parse money");
+        let (next, _record) =
+            Value::parse(&test_column("int", 4, 10, 0), record).expect("parse following int");
+
+        assert_eq!(Value::Decimal(Decimal::new(1_234_567, 4)), value);
+        assert_eq!(Value::Int(42), next);
+    }
+
+    #[test]
+    fn smallmoney_values_are_scaled_decimal() {
+        let bytes = fixed_record_bytes(&123_456i32.to_le_bytes());
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let (value, _record) =
+            Value::parse(&test_column("smallmoney", 4, 10, 4), record).expect("parse smallmoney");
+
+        assert_eq!(Value::Decimal(Decimal::new(123_456, 4)), value);
+    }
+
+    #[test]
+    fn datetime2_uses_scale_specific_length_and_preserves_following_columns() {
+        let mut fixed = vec![1u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+        fixed.extend_from_slice(&42i32.to_le_bytes());
+        let bytes = fixed_record_bytes(&fixed);
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let (value, record) =
+            Value::parse(&test_column("datetime2", 6, 0, 2), record).expect("parse datetime2");
+        let (next, _record) =
+            Value::parse(&test_column("int", 4, 10, 0), record).expect("parse following int");
+
+        let expected = Utc.with_ymd_and_hms(1, 1, 1, 0, 0, 0).unwrap() + Duration::milliseconds(10);
+        assert_eq!(Value::DateTime(expected), value);
+        assert_eq!(Value::Int(42), next);
+    }
+
+    #[test]
+    fn tinyint_values_preserve_unsigned_range() {
+        let bytes = fixed_record_bytes(&[255u8]);
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let (value, _record) =
+            Value::parse(&test_column("tinyint", 1, 3, 0), record).expect("parse tinyint");
+
+        assert_eq!("255", value.to_string());
+    }
+
+    #[test]
+    fn nchar_fixed_bytes_decode_as_utf16le() {
+        let bytes = fixed_record_bytes(&[0x2d, 0x4e]);
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        let (value, _record) =
+            Value::parse(&test_column("nchar", 2, 0, 0), record).expect("parse nchar");
+
+        assert_eq!(Value::String(String::from("中")), value);
+    }
+
+    #[test]
+    fn row_column_parse_failure_returns_error_instead_of_partial_row() {
+        let bytes = fixed_record_bytes(&[1u8, 0u8]);
+        let record = Record::try_from(&bytes[..]).unwrap();
+        let columns = vec![test_column("int", 4, 10, 0)];
+
+        let err = parse_record_columns("T_Test", record, &columns)
+            .expect_err("truncated column should fail the whole row");
+
+        assert!(matches!(
+            err,
+            Error::RowParseError {
+                table,
+                column,
+                source: "requested fixed-length bytes exceed record bounds"
+            } if table == "T_Test" && column == "value"
+        ));
     }
 }

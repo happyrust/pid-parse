@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use oxidized_mdf::MdfDatabase;
 use pid_parse::publish::open_mdf_as_sqlite;
 
 const A01_MDF_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
@@ -72,4 +73,38 @@ fn mdf_adapter_loads_a01_publish_core_tables() {
             "1".to_string(),
         )
     );
+}
+
+#[test]
+fn strict_rows_load_a01_equip_component_table() {
+    if !Path::new(A01_MDF_PATH).exists() {
+        eprintln!("skipping: MDF fixture {A01_MDF_PATH} not found");
+        return;
+    }
+
+    let mut db = MdfDatabase::open(A01_MDF_PATH).expect("open TEST02 MDF");
+    let rows = db
+        .try_rows("T_EquipComponent")
+        .expect("T_EquipComponent exists")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("strict rows should load T_EquipComponent");
+
+    assert!(!rows.is_empty(), "T_EquipComponent should contain rows");
+}
+
+#[test]
+fn strict_rows_load_a01_codelists_table() {
+    if !Path::new(A01_MDF_PATH).exists() {
+        eprintln!("skipping: MDF fixture {A01_MDF_PATH} not found");
+        return;
+    }
+
+    let mut db = MdfDatabase::open(A01_MDF_PATH).expect("open TEST02 MDF");
+    let rows = db
+        .try_rows("codelists")
+        .expect("codelists exists")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("strict rows should load codelists");
+
+    assert!(!rows.is_empty(), "codelists should contain rows");
 }
