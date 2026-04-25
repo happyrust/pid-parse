@@ -85,8 +85,18 @@ Important fields:
 Use JSON mode for CI and regression baselines.
 
 Currently registered stream families include the PSM tables, DocVersion
-streams, `AppObject`, `JTaggedTxtStgList`, and UTF-8 parseable
-`TaggedTxtData/Drawing` / `TaggedTxtData/General` XML metadata streams.
+streams, `AppObject`, `JTaggedTxtStgList`, UTF-8 parseable
+`TaggedTxtData/Drawing` / `TaggedTxtData/General` XML metadata streams, and
+`*/JProperties` streams.
+
+`*/JProperties` coverage is intentionally partial: only recovered ASCII /
+UTF-16LE text runs are marked as `Probed`; opaque binary prefix, suffix, and
+gaps remain leftover inventory.
+
+Top-level `/Sheet*` streams are also registered through the experimental sheet
+probe. Only non-overlapping printable text runs are marked as `Probed` today;
+candidate chunks, record-type counts, and coordinate hints remain
+reverse-engineering evidence and do not count as consumed geometry bytes yet.
 
 ## Baseline Rules
 

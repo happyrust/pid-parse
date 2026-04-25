@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Byte audit Sheet text trace
+
+`byte_audit_report` 现在会注册顶层 `/Sheet*` stream，并复用
+`sheet_probe::probe_sheet_stream` 的 report-level `text_runs` 证据，只把非重叠
+ASCII / UTF-16LE 文本 run 以 `TraceConfidence::Probed` 计入 consumed。Sheet
+chunk、record type、coordinate hint 仍保持 evidence-only，不会被误算为已解码
+几何字节。
+
+验证：
+- `cargo test sheet_streams_are_registered_with_partial_text_run_coverage --lib -- --nocapture`
+
+### Byte audit JProperties trace
+
+新增 `parse_jproperties_with_trace`，保留旧 `parse_jproperties` 作为 thin
+wrapper，并在 `byte_audit_report` 里注册所有 `*/JProperties` stream。
+该 trace 不会把整个 opaque blob 直接算作 consumed；它只把现有 heuristic
+实际可恢复的 ASCII / UTF-16LE 文本 run 以 `TraceConfidence::Probed` 计入
+coverage，二进制 prefix / suffix / gap 继续作为 leftover inventory。
+
+验证：
+- `cargo test jproperties --lib -- --nocapture`
+
 ### Byte audit TaggedTxtData XML trace
 
 `byte_audit_report` 现在会注册 `/TaggedTxtData/Drawing` 和

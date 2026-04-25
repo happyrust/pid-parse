@@ -213,6 +213,17 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
                 parsers::general_xml::parse_general_xml,
             ))
         }),
+        path if path.ends_with("/JProperties") => ("parse_jproperties", {
+            let mut b = ParserTraceBuilder::new("parse_jproperties");
+            let _ = parsers::jproperties::parse_jproperties_with_trace(data, &mut b);
+            Some(b)
+        }),
+        path if top_level_sheet_name(path).is_some() => ("probe_sheet_stream", {
+            let mut b = ParserTraceBuilder::new("probe_sheet_stream");
+            let sheet_name = top_level_sheet_name(path).expect("guard checked sheet name");
+            trace_sheet_text_runs(sheet_name, path, data, &mut b);
+            Some(b)
+        }),
         _ => return None,
     };
     executed
@@ -244,6 +255,44 @@ fn trace_utf8_xml_stream<T, E>(
         );
     }
     builder
+}
+
+fn top_level_sheet_name(path: &str) -> Option<&str> {
+    let leaf = path.strip_prefix('/')?;
+    if leaf.contains('/') || !leaf.starts_with("Sheet") {
+        return None;
+    }
+    Some(leaf)
+}
+
+fn trace_sheet_text_runs(
+    sheet_name: &str,
+    path: &str,
+    data: &[u8],
+    trace: &mut ParserTraceBuilder,
+) {
+    let report = parsers::sheet_probe::probe_sheet_stream(
+        sheet_name,
+        path,
+        data,
+        &parsers::sheet_probe::SheetProbeOptions::default(),
+    );
+    let mut consumed: Vec<(u64, u64)> = Vec::new();
+    for run in report.text_runs {
+        let start = run.offset as u64;
+        let end = run.offset.saturating_add(run.byte_len).min(data.len()) as u64;
+        if start >= end {
+            continue;
+        }
+        if consumed
+            .iter()
+            .any(|&(prev_start, prev_end)| start < prev_end && prev_start < end)
+        {
+            continue;
+        }
+        trace.consume(ByteRange::new(start, end), TraceConfidence::Probed);
+        consumed.push((start, end));
+    }
 }
 
 #[cfg(test)]
@@ -283,6 +332,10 @@ mod tests {
         // version=144 LE
         data.extend_from_slice(&[0x82, 0x00, 0x00, 0x09, 0x00, 0x90, 0x00, 0x00, 0x00]);
         data
+    }
+
+    fn utf16le(s: &str) -> Vec<u8> {
+        s.encode_utf16().flat_map(u16::to_le_bytes).collect()
     }
 
     #[test]
@@ -347,6 +400,46 @@ mod tests {
         assert_eq!(general.parser_name.as_deref(), Some("parse_general_xml"));
         assert_eq!(general.consumed_bytes, general_xml.len() as u64);
         assert_eq!(general.leftover_bytes, 0);
+    }
+
+    #[test]
+    fn jproperties_streams_are_registered_with_partial_probed_coverage() {
+        let mut data = vec![0xFF, 0x00];
+        data.extend_from_slice(b"SymbolName");
+        data.extend_from_slice(&[0x00, 0x00]);
+        data.extend(utf16le("PUMP-101"));
+        data.push(0xEE);
+        let total = data.len() as u64;
+        let pkg = pkg_with_streams(&[("/JSite0001/JProperties", data)]);
+
+        let report = byte_audit_report(&pkg);
+
+        assert!(report.unregistered_paths.is_empty());
+        let summary = &report.per_stream["/JSite0001/JProperties"];
+        assert_eq!(summary.parser_name.as_deref(), Some("parse_jproperties"));
+        assert!(summary.consumed_bytes > 0);
+        assert!(summary.consumed_bytes < total);
+        assert_eq!(summary.leftover_bytes, total - summary.consumed_bytes);
+    }
+
+    #[test]
+    fn sheet_streams_are_registered_with_partial_text_run_coverage() {
+        let mut data = vec![0x11; 8];
+        data.extend_from_slice(b"ASCII-TAGS");
+        data.extend_from_slice(&[0x00, 0x00]);
+        data.extend(utf16le("PUMP-101"));
+        data.extend_from_slice(&[0x22; 8]);
+        let total = data.len() as u64;
+        let pkg = pkg_with_streams(&[("/Sheet6", data)]);
+
+        let report = byte_audit_report(&pkg);
+
+        assert!(report.unregistered_paths.is_empty());
+        let summary = &report.per_stream["/Sheet6"];
+        assert_eq!(summary.parser_name.as_deref(), Some("probe_sheet_stream"));
+        assert!(summary.consumed_bytes > 0);
+        assert!(summary.consumed_bytes < total);
+        assert_eq!(summary.leftover_bytes, total - summary.consumed_bytes);
     }
 
     #[test]
