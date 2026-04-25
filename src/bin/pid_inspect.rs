@@ -4,7 +4,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]"
+            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]"
         );
         std::process::exit(1);
     }
@@ -22,6 +22,7 @@ fn main() {
     let graph_mermaid = args.iter().any(|a| a == "--graph-mermaid");
     let crossref_mermaid = args.iter().any(|a| a == "--crossref-mermaid");
     let coverage_flag = args.iter().any(|a| a == "--coverage");
+    let byte_audit = args.iter().any(|a| a == "--byte-audit");
 
     let round_trip = flag_value(&args, "--round-trip");
     let set_drawing_number = flag_value(&args, "--set-drawing-number");
@@ -99,6 +100,16 @@ fn main() {
             }
             return;
         }
+        if byte_audit {
+            match serde_json::to_string_pretty(&pid_parse::byte_audit_report(&pkg)) {
+                Ok(json) => println!("{json}"),
+                Err(e) => {
+                    eprintln!("Byte audit JSON serialization error: {e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
         match serde_json::to_string_pretty(doc) {
             Ok(json) => println!("{json}"),
             Err(e) => {
@@ -155,6 +166,10 @@ fn main() {
         print_coverage(doc);
     }
 
+    if byte_audit {
+        print_byte_audit(&pkg);
+    }
+
     if !probe_cluster
         && !probe_dynamic
         && !probe_sheet
@@ -165,9 +180,40 @@ fn main() {
         && !graph_mermaid
         && !crossref_mermaid
         && !coverage_flag
+        && !byte_audit
     {
         let report = pid_parse::inspect::report::generate_package_report(&pkg);
         print!("{report}");
+    }
+}
+
+fn print_byte_audit(pkg: &pid_parse::PidPackage) {
+    let report = pid_parse::byte_audit_report(pkg);
+    println!("--- Byte Audit ---");
+    println!("Total stream bytes: {}", report.total_file_bytes);
+    println!("Overall consumed:   {}", report.overall_consumed);
+    println!("Overall leftover:   {}", report.overall_leftover);
+    println!(
+        "Overall coverage:   {:.1}%",
+        report.overall_coverage_ratio * 100.0
+    );
+    println!(
+        "Fully consumed traced streams: {}",
+        report.fully_consumed_stream_count()
+    );
+    println!("Unregistered streams: {}", report.unregistered_paths.len());
+
+    for summary in report.per_stream.values() {
+        let parser = summary.parser_name.as_deref().unwrap_or("unregistered");
+        println!(
+            "  [{:>5.1}%] {} ({} B consumed / {} B total, {} B leftover) {}",
+            summary.coverage_ratio * 100.0,
+            summary.path,
+            summary.consumed_bytes,
+            summary.total_bytes,
+            summary.leftover_bytes,
+            parser
+        );
     }
 }
 
@@ -309,6 +355,19 @@ fn print_sheet_chunk_reports(reports: &[pid_parse::parsers::sheet_probe::SheetPr
             rep.candidate_boundaries.len(),
             rep.chunks.len()
         );
+        if rep.record_type_counts.is_empty() {
+            println!("  record types: []");
+        } else {
+            let counts = rep
+                .record_type_counts
+                .iter()
+                .map(|(record_type, count)| format!("{record_type}={count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("  record types: {counts}");
+        }
+        println!("  text runs: {}", rep.text_runs.len());
+        println!("  coordinate hints: {}", rep.coordinate_hints.len());
         for (i, chunk) in rep.chunks.iter().enumerate() {
             let ascii = if chunk.ascii_preview.is_empty() {
                 String::from("[]")

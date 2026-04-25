@@ -87,6 +87,24 @@ fn build_mixed_coverage_fixture(path: &std::path::Path) {
     cfb.flush().unwrap();
 }
 
+fn build_sheet_probe_fixture(path: &std::path::Path) {
+    let file = std::fs::File::create(path).expect("create fixture");
+    let mut cfb = ::cfb::CompoundFile::create(file).expect("cfb create");
+    let mut s = cfb.create_stream("/Sheet6").unwrap();
+    s.write_all(&[0x11u8; 32]).unwrap();
+    s.write_all(&[0x89, 0xCE, 0x00, 0xAA]).unwrap();
+    s.write_all(b"ASCII-TAGS").unwrap();
+    s.write_all(&[0x00, 0x00]).unwrap();
+    for ch in "PUMP-101".encode_utf16() {
+        s.write_all(&ch.to_le_bytes()).unwrap();
+    }
+    s.write_all(&1200i32.to_le_bytes()).unwrap();
+    s.write_all(&(-450i32).to_le_bytes()).unwrap();
+    s.write_all(&[0x22u8; 32]).unwrap();
+    drop(s);
+    cfb.flush().unwrap();
+}
+
 #[test]
 fn coverage_flag_prints_section_and_all_four_buckets() {
     let fixture = unique_tmp("coverage-cli");
@@ -249,6 +267,130 @@ fn coverage_json_flag_emits_parseable_coverage_report() {
             .and_then(serde_json::Value::as_u64)
             .is_some()),
         "at least one entry should report stream_size; entries: {entries:?}",
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn byte_audit_flag_prints_text_report() {
+    let fixture = unique_tmp("byte-audit-cli");
+    build_mixed_coverage_fixture(&fixture);
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--byte-audit")
+        .output()
+        .expect("spawn pid_inspect --byte-audit");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+
+    assert!(
+        stdout.contains("--- Byte Audit ---"),
+        "byte-audit section heading missing; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Overall coverage:"),
+        "overall coverage summary missing; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("/DocVersion3") && stdout.contains("parse_doc_version3"),
+        "expected traced DocVersion3 stream; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("/MysteryStream") && stdout.contains("unregistered"),
+        "expected unregistered mystery stream; stdout:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("--- Summary ---"),
+        "--byte-audit alone should suppress the full report; stdout:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn byte_audit_json_flag_emits_parseable_report() {
+    let fixture = unique_tmp("byte-audit-json");
+    build_mixed_coverage_fixture(&fixture);
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--byte-audit")
+        .arg("--json")
+        .output()
+        .expect("spawn pid_inspect --byte-audit --json");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout must be valid JSON");
+    assert!(
+        parsed.get("per_stream").is_some(),
+        "byte-audit JSON should include per_stream; json: {parsed}"
+    );
+    let unregistered = parsed
+        .get("unregistered_paths")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("missing/non-array unregistered_paths: {parsed}"));
+    assert!(
+        unregistered
+            .iter()
+            .any(|v| v.as_str() == Some("/MysteryStream")),
+        "MysteryStream should be listed as unregistered; json: {parsed}"
+    );
+    let doc_version = parsed
+        .pointer("/per_stream/~1DocVersion3/parser_name")
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        doc_version,
+        Some("parse_doc_version3"),
+        "DocVersion3 should be traced by parse_doc_version3; json: {parsed}"
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn probe_sheet_chunks_prints_report_level_evidence() {
+    let fixture = unique_tmp("sheet-chunks-evidence");
+    build_sheet_probe_fixture(&fixture);
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--probe-sheet-chunks")
+        .arg("Sheet6")
+        .output()
+        .expect("spawn pid_inspect --probe-sheet-chunks");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+
+    assert!(
+        stdout.contains("record types: 0x00CE=1"),
+        "record type summary missing; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("text runs:"),
+        "text run summary missing; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("coordinate hints:"),
+        "coordinate hint summary missing; stdout:\n{stdout}"
     );
 
     let _ = std::fs::remove_file(&fixture);

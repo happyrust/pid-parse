@@ -22,6 +22,17 @@ log = "0.4"
 env_logger = "0.11"
 schemars = { version = "1.2.1", features = ["preserve_order"] }
 uuid = { version = "1", features = ["serde", "v5"] }
+# `zip` is gated to the central-directory reader only — we list
+# `RefData~SCHEMA~ID(.zip)?` entry metadata, never decompressing
+# payload bytes ourselves. We still need `deflate` enabled because
+# `ZipArchive::by_index` constructs a decoder for each entry up
+# front (the `zip` crate only validates compression-method support
+# when the entry is opened, not when bytes are read), and every
+# `SmartPlant`-produced archive observed in the wild uses the
+# stored / deflate methods. The other heavy default features
+# (aes-crypto / bzip2 / xz / lzma / zstd) stay off to keep the
+# CVE surface and build time small.
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 pretty_assertions = "1"

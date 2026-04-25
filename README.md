@@ -19,6 +19,7 @@
 - **跨引用对象图**（v0.3.0-rc2）：PSM 声明 vs. 实际 cluster 对齐 / 符号 ↔ JSite 反向索引 / DA 属性类摘要 / PSMroots 解析状态
 - **Mermaid 可视化**（v0.3.0）：`ObjectGraph` / `CrossReferenceGraph` 一键导出 mermaid 文本，直接贴到 Mermaid Live Editor / Obsidian / Notion
 - **JSON Schema 导出**（v0.3.1）：`pid_parse::schema::pid_document_schema()` / `pid_inspect --schema`
+- **Byte audit**：`pid_inspect --byte-audit` 输出每个 raw stream 的 consumed / leftover 字节覆盖，用于 parser 覆盖率回归和未知区盘点；详见 `docs/byte-audit-guide.md`
 - **Package / Writer 层**（v0.3.2）：`PidParser::parse_package` 保留原始字节、`PidWriter::write_to` 声明式回写（passthrough round-trip + Drawing/General XML 回写 + experimental SheetPatch）
 - **Root CLSID 保留 + CLI 回写**（v0.3.3）：`pid_inspect --round-trip` / `--set-drawing-number` / `--schema`；`PidPackage.root_clsid` 读写；详见 `docs/writer-clsid-and-timestamps.md`
 - **通用 XML metadata editor**（v0.3.4）：`PidPackage::set_xml_tag` / `--set-xml-tag <stream> <tag> <value>` 编辑任意 `/TaggedTxtData/*` 里任意简单 tag
@@ -64,6 +65,10 @@ cargo run --example mermaid_demo
 
 # JSON Schema
 cargo run --bin pid_inspect -- drawing.pid --schema > pid-schema.json
+
+# Byte audit（consumed / leftover 字节覆盖）
+cargo run --bin pid_inspect -- drawing.pid --byte-audit
+cargo run --bin pid_inspect -- drawing.pid --byte-audit --json > audit.json
 
 # Passthrough 回写（Root CLSID 保留 + 所有流字节保持）
 cargo run --bin pid_inspect -- drawing.pid --round-trip drawing.copy.pid

@@ -82,6 +82,52 @@ pub struct SheetProbeReport {
     /// Chunks emitted by [`split_by_boundaries`] after applying
     /// `min_chunk_len` / `min_boundary_score` filtering.
     pub chunks: Vec<SheetChunk>,
+    /// Candidate record-type frequencies observed immediately after
+    /// `0x89` marker bytes. Keys are uppercase hex (`"0x00CE"`).
+    /// This is evidence-only; it does not claim a stable record schema.
+    pub record_type_counts: BTreeMap<String, usize>,
+    /// Printable text runs with offsets in the original Sheet stream.
+    /// Unlike per-chunk previews, this is a report-wide index for
+    /// reverse-engineering labels and annotation payloads.
+    pub text_runs: Vec<SheetTextRun>,
+    /// Plausible adjacent `(x, y)` integer pairs found on 4-byte
+    /// alignment. These are coordinate hints, not confirmed geometry.
+    pub coordinate_hints: Vec<SheetCoordinateHint>,
+}
+
+/// One printable text run found in a Sheet stream.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetTextRun {
+    /// Byte offset where the run begins inside the Sheet stream.
+    pub offset: usize,
+    /// Encoding family used to decode [`Self::text`].
+    pub encoding: SheetTextEncoding,
+    /// Decoded printable text.
+    pub text: String,
+    /// Number of bytes consumed by the run in the original stream.
+    pub byte_len: usize,
+}
+
+/// Encoding family for a [`SheetTextRun`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SheetTextEncoding {
+    /// Single-byte printable ASCII.
+    Ascii,
+    /// Little-endian UTF-16 printable text.
+    Utf16Le,
+}
+
+/// Plausible adjacent integer pair that may represent a Sheet
+/// coordinate. Kept as a hint until multiple fixtures confirm the
+/// surrounding record layout.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetCoordinateHint {
+    /// Byte offset of the first `i32` in the pair.
+    pub offset: usize,
+    /// First coordinate-like value.
+    pub x: i32,
+    /// Second coordinate-like value.
+    pub y: i32,
 }
 
 /// One byte offset inside the sheet that at least one heuristic thinks
@@ -189,6 +235,9 @@ pub fn probe_sheet_stream(
 ) -> SheetProbeReport {
     let candidate_boundaries = find_candidate_boundaries(data, opts);
     let chunks = split_by_boundaries(data, &candidate_boundaries, opts);
+    let record_type_counts = record_type_counts(data);
+    let text_runs = scan_text_runs(data, opts);
+    let coordinate_hints = coordinate_hints(data);
 
     SheetProbeReport {
         sheet_name: sheet_name.to_string(),
@@ -196,6 +245,9 @@ pub fn probe_sheet_stream(
         size: data.len() as u64,
         candidate_boundaries,
         chunks,
+        record_type_counts,
+        text_runs,
+        coordinate_hints,
     }
 }
 
@@ -380,6 +432,137 @@ fn add_offset_like_boundaries(data: &[u8], map: &mut BTreeMap<usize, CandidateBo
 
 fn u32_le(data: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+}
+
+fn i32_le(data: &[u8], off: usize) -> i32 {
+    i32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+}
+
+fn record_type_counts(data: &[u8]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    let mut i = 0usize;
+    while i + 2 < data.len() {
+        if data[i] == 0x89 {
+            let candidate = u16::from_le_bytes([data[i + 1], data[i + 2]]);
+            let key = format!("0x{candidate:04X}");
+            *counts.entry(key).or_insert(0) += 1;
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    counts
+}
+
+fn scan_text_runs(data: &[u8], opts: &SheetProbeOptions) -> Vec<SheetTextRun> {
+    let mut runs = Vec::new();
+    runs.extend(scan_ascii_text_runs(
+        data,
+        opts.ascii_burst_threshold,
+        opts.max_preview_strings,
+    ));
+    runs.extend(scan_utf16_text_runs(
+        data,
+        opts.utf16_burst_threshold,
+        opts.max_preview_strings,
+    ));
+    runs.sort_by_key(|run| (run.offset, run.byte_len));
+    runs
+}
+
+fn scan_ascii_text_runs(data: &[u8], min_len: usize, max_runs: usize) -> Vec<SheetTextRun> {
+    let mut runs = Vec::new();
+    let mut i = 0usize;
+    while i < data.len() && runs.len() < max_runs {
+        if !is_ascii_printable(data[i]) {
+            i += 1;
+            continue;
+        }
+
+        let start = i;
+        while i < data.len() && is_ascii_printable(data[i]) {
+            i += 1;
+        }
+        let len = i - start;
+        if len >= min_len {
+            runs.push(SheetTextRun {
+                offset: start,
+                encoding: SheetTextEncoding::Ascii,
+                text: String::from_utf8_lossy(&data[start..i]).to_string(),
+                byte_len: len,
+            });
+        }
+    }
+    runs
+}
+
+fn scan_utf16_text_runs(data: &[u8], min_chars: usize, max_runs: usize) -> Vec<SheetTextRun> {
+    let mut runs = Vec::new();
+    let mut i = 0usize;
+    while i + 1 < data.len() && runs.len() < max_runs {
+        let start = i;
+        let mut words = Vec::new();
+        while i + 1 < data.len() {
+            let ch = u16::from_le_bytes([data[i], data[i + 1]]);
+            if ch == 0 {
+                break;
+            }
+            if is_plausible_utf16_text_char(ch) {
+                words.push(ch);
+                i += 2;
+            } else {
+                break;
+            }
+        }
+
+        let accepted = words.len() >= min_chars;
+        if accepted {
+            runs.push(SheetTextRun {
+                offset: start,
+                encoding: SheetTextEncoding::Utf16Le,
+                text: String::from_utf16_lossy(&words),
+                byte_len: words.len() * 2,
+            });
+        }
+
+        if accepted {
+            i += 2;
+        } else {
+            i = start + 1;
+        }
+    }
+    runs
+}
+
+fn is_plausible_utf16_text_char(ch: u16) -> bool {
+    (0x20..=0x7e).contains(&ch)
+        || (0x4e00..=0x9fff).contains(&ch)
+        || (0x3040..=0x30ff).contains(&ch)
+        || (0xac00..=0xd7af).contains(&ch)
+}
+
+fn coordinate_hints(data: &[u8]) -> Vec<SheetCoordinateHint> {
+    const MAX_HINTS: usize = 64;
+    const MAX_ABS_COORD: i32 = 1_000_000;
+
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + 8 <= data.len() && out.len() < MAX_HINTS {
+        if i % 4 != 0 {
+            i += 1;
+            continue;
+        }
+        let x = i32_le(data, i);
+        let y = i32_le(data, i + 4);
+        let abs_x = x.checked_abs().unwrap_or(i32::MAX);
+        let abs_y = y.checked_abs().unwrap_or(i32::MAX);
+        let plausible = (x != 0 || y != 0) && abs_x <= MAX_ABS_COORD && abs_y <= MAX_ABS_COORD;
+        if plausible {
+            out.push(SheetCoordinateHint { offset: i, x, y });
+        }
+        i += 4;
+    }
+    out
 }
 
 /// Slice the stream at every boundary whose score meets the threshold,
@@ -622,6 +805,62 @@ mod tests {
             .candidate_boundaries
             .iter()
             .any(|b| b.reasons.contains(&BoundaryReason::RepeatedU32Pattern)));
+    }
+
+    #[test]
+    fn records_marker_following_u16_type_counts() {
+        let mut data = vec![0x11u8; 32];
+        data.extend_from_slice(&[0x89, 0xCE, 0x00, 0xAA]);
+        data.extend_from_slice(&[0x89, 0xCE, 0x00, 0xBB]);
+        data.extend_from_slice(&[0x89, 0x02, 0x00, 0xCC]);
+        data.extend(vec![0x22u8; 32]);
+
+        let opts = SheetProbeOptions::default();
+        let report = probe_sheet_stream("SheetX", "/SheetX", &data, &opts);
+
+        assert_eq!(report.record_type_counts.get("0x00CE"), Some(&2));
+        assert_eq!(report.record_type_counts.get("0x0002"), Some(&1));
+    }
+
+    #[test]
+    fn captures_text_runs_with_offsets() {
+        let mut data = vec![0x00u8, 0xFF, 0xAA, 0x01];
+        data.extend_from_slice(b"ASCII-TAGS");
+        data.extend_from_slice(&[0x00, 0x00]);
+        let utf16_offset = data.len();
+        for ch in "PUMP-101".encode_utf16() {
+            data.extend_from_slice(&ch.to_le_bytes());
+        }
+
+        let opts = SheetProbeOptions::default();
+        let report = probe_sheet_stream("SheetX", "/SheetX", &data, &opts);
+        assert!(report.text_runs.iter().any(|run| {
+            matches!(run.encoding, SheetTextEncoding::Ascii)
+                && run.offset == 4
+                && run.text == "ASCII-TAGS"
+        }));
+        assert!(report.text_runs.iter().any(|run| {
+            matches!(run.encoding, SheetTextEncoding::Utf16Le)
+                && run.offset == utf16_offset
+                && run.text == "PUMP-101"
+        }));
+    }
+
+    #[test]
+    fn captures_coordinate_pair_hints() {
+        let mut data = vec![0x00u8; 16];
+        let coord_offset = data.len();
+        data.extend_from_slice(&1200i32.to_le_bytes());
+        data.extend_from_slice(&(-450i32).to_le_bytes());
+        data.extend(vec![0x33u8; 32]);
+
+        let opts = SheetProbeOptions::default();
+        let report = probe_sheet_stream("SheetX", "/SheetX", &data, &opts);
+
+        assert!(report
+            .coordinate_hints
+            .iter()
+            .any(|hint| { hint.offset == coord_offset && hint.x == 1200 && hint.y == -450 }));
     }
 
     #[test]

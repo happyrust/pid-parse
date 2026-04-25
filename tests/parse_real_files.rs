@@ -1,4 +1,7 @@
-use pid_parse::PidParser;
+use pid_parse::{
+    parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions},
+    PidParser,
+};
 
 /// Parse a real `.pid` fixture from `test-file/`. Returns `None` when the
 /// fixture isn't present (typical for CI and for contributors without
@@ -14,6 +17,19 @@ fn parse_test_file(name: &str) -> Option<pid_parse::PidDocument> {
         PidParser::new()
             .parse_file(&path)
             .unwrap_or_else(|e| panic!("Failed to parse {name}: {e}")),
+    )
+}
+
+fn parse_test_package(name: &str) -> Option<pid_parse::PidPackage> {
+    let path = format!("test-file/{name}");
+    if !std::path::Path::new(&path).exists() {
+        eprintln!("skipping: fixture {name} not found");
+        return None;
+    }
+    Some(
+        PidParser::new()
+            .parse_package(&path)
+            .unwrap_or_else(|e| panic!("Failed to parse package {name}: {e}")),
     )
 }
 
@@ -799,6 +815,37 @@ fn sheet_endpoint_records_one_per_relationship() {
             r.rel_field_x
         );
     }
+}
+
+#[test]
+fn sheet_probe_evidence_populates_on_real_sheet_fixture() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &sheet.data,
+        &SheetProbeOptions::default(),
+    );
+
+    assert_eq!(report.sheet_name, "Sheet6");
+    assert_eq!(report.size, sheet.data.len() as u64);
+    assert!(
+        !report.chunks.is_empty(),
+        "Sheet6 should produce at least one probe chunk"
+    );
+    assert!(
+        !report.record_type_counts.is_empty()
+            || !report.text_runs.is_empty()
+            || !report.coordinate_hints.is_empty(),
+        "real Sheet6 should expose at least one report-level evidence signal"
+    );
 }
 
 #[test]

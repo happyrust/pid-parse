@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Byte audit CLI 与基线文档
+
+新增 `pid_inspect --byte-audit`，把已有 `byte_audit_report` 库能力暴露到
+CLI：文本模式输出 total / consumed / leftover / overall coverage、fully
+consumed traced streams、unregistered streams 以及逐 stream parser 覆盖；JSON
+模式通过 `--byte-audit --json` 直接序列化 `ByteAuditReport`，用于 CI 和
+后续 fixture baseline。
+
+同时新增 `docs/byte-audit-guide.md`，说明 text / JSON 输出字段、
+`unregistered_paths` 的含义、未来 baseline 比较规则，以及缺少真实
+`test-file/*.pid` 时不能生成可靠真实基线的限制。`README.md` 已补充
+`--byte-audit` 使用示例。
+
+验证：
+- `cargo test --test inspect_cli -- --nocapture`
+
+### Sheet chunk probe evidence summaries
+
+增强 `--probe-sheet-chunks` / `parsers::sheet_probe` 的证据输出：
+`SheetProbeReport` 现在额外包含 `record_type_counts`、`text_runs` 和
+`coordinate_hints`，用于在正式命名 Sheet 几何/图元字段前先暴露记录类型
+候选频次、文本 run 偏移和坐标型 `i32` 对。CLI 文本模式会在 chunk 列表前
+打印这些 report-level 摘要；JSON 模式随 `SheetProbeReport` 自动输出新增字段。
+
+验证：
+- `cargo test --lib sheet_probe -- --nocapture`
+- `cargo test --test inspect_cli probe_sheet_chunks_prints_report_level_evidence -- --nocapture`
+
+### Backup RefData ZIP entry index
+
+新增 `backup::zip_index` 元数据层，支持对 SmartPlant backup 里的
+`RefData~SCHEMA~ID(.zip)?` ZIP/OOXML payload 读取中央目录并返回
+entry 名称、压缩/未压缩大小、目录标记和 CRC-32。该层只列索引、不解压
+payload，配合 `refdata` magic-byte 分类，作为后续 Symbol Catalogue /
+PlantData cache 解码的入口。
+
+验证：
+- `cargo test zip_index --lib`
+- `cargo test refdata --lib`
+- `cargo test --test backup_zip_index_real_files -- --nocapture`
+- `cargo test --test backup_refdata_real_dir -- --nocapture`
+
 ### Public API rustdoc pass — Tier 3 final batch + `#![warn(missing_docs)]` 硬门禁
 
 压轴一批：把剩下 88 条 `missing_docs` **一口气扫光**，baseline 从

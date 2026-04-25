@@ -33,6 +33,7 @@ pub mod mtf;
 pub mod refdata;
 pub mod syscatalog;
 pub mod text_scan;
+pub mod zip_index;
 
 pub use boot_page::{parse_boot_page, BootPageError, BootPageInfo};
 pub use manifest::{
@@ -49,3 +50,4 @@ pub use refdata::{
 };
 pub use syscatalog::{scan_sysschobjs_rows, SysschobjsRow, SYSSCHOBJS_ROW_MARKER};
 pub use text_scan::{find_ascii_run_containing, find_utf16le_run_containing};
+pub use zip_index::{list_zip_entries, list_zip_entries_from_reader, ZipEntry, ZipIndexError};
