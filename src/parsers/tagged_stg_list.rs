@@ -77,6 +77,9 @@ pub fn parse_tagged_stg_list_with_trace(
         let char_count =
             u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         let name_start = pos + 4;
+        if char_count == 0 {
+            break;
+        }
         let name_end = name_start.checked_add(char_count.checked_mul(2)?)?;
         if name_end > data.len() || char_count > 256 {
             break;
@@ -160,6 +163,16 @@ mod tests {
         data.extend(utf16("TaggedTxtStorages"));
         data.extend_from_slice(&1u32.to_le_bytes());
         data.extend_from_slice(&[14, 0, 0]); // truncated first char_count u32
+
+        assert!(parse_tagged_stg_list(&data).is_none());
+    }
+
+    #[test]
+    fn rejects_declared_entries_with_zero_char_count() {
+        let mut data = Vec::new();
+        data.extend(utf16("TaggedTxtStorages"));
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
 
         assert!(parse_tagged_stg_list(&data).is_none());
     }
