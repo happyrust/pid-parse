@@ -120,46 +120,87 @@ fn push_xorshift_corpus(out: &mut Vec<Vec<u8>>) {
     }
 }
 
+/// Maximum prefix length swept by [`parsers_do_not_panic_on_truncated_inputs`].
+///
+/// Truncations cover the byte ranges every parser actually checks
+/// (header magic, length prefixes, per-record headers — all under
+/// 64 bytes for the formats this crate handles). Capping here
+/// keeps the second test linear in corpus size instead of
+/// O(corpus * max_len).
+const TRUNCATION_SWEEP_LIMIT: usize = 64;
+
+/// Run every parser entry point against `input` exactly once.
+///
+/// Shared by the two `#[test]`s below so the corpus walk and the
+/// truncation walk stay in lock-step — adding a new entry point
+/// here automatically guards both axes.
+fn exercise_all_parsers(input: &[u8]) {
+    let opts = SheetProbeOptions::default();
+    let empty_rels: HashSet<u32> = HashSet::new();
+
+    let _ = parse_header(input);
+    let _ = parse_string_table(input, 0);
+    let _ = parse_string_table(input, input.len().saturating_sub(1));
+    let _ = parse_string_table(input, input.len());
+
+    let _ = parse_doc_version3(input);
+    let _ = parse_doc_version2(input);
+
+    let _ = parse_attribute_records(input);
+    let _ = extract_record_trailers(input);
+
+    let _ = parse_jproperties(input);
+
+    let _ = parse_psm_roots(input);
+    let _ = parse_psm_cluster_table(input);
+    let _ = parse_psm_segment_table(input);
+
+    let _ = probe_relationships(input);
+
+    let _ = parse_endpoint_records("/SheetX", input, &empty_rels);
+    let _ = probe_sheet_stream("SheetX", "/SheetX", input, &opts);
+
+    let _ = scan_ascii_strings(input, 16);
+    let _ = scan_guids(input, 16);
+    let _ = scan_utf16le_strings(input, 4, 16);
+
+    let _ = parse_tagged_stg_list(input);
+
+    let _ = parse_app_object(input);
+}
+
 #[test]
 fn parsers_do_not_panic_on_adversarial_inputs() {
     let mut corpus = adversarial_inputs();
     push_xorshift_corpus(&mut corpus);
 
-    let opts = SheetProbeOptions::default();
-    let empty_rels: HashSet<u32> = HashSet::new();
-
     for input in &corpus {
         // Each call below must return normally; any panic here will
         // surface as a test failure with a useful pointer to the
         // offending parser and the input shape.
-        let _ = parse_header(input);
-        let _ = parse_string_table(input, 0);
-        let _ = parse_string_table(input, input.len().saturating_sub(1));
-        let _ = parse_string_table(input, input.len());
+        exercise_all_parsers(input);
+    }
+}
 
-        let _ = parse_doc_version3(input);
-        let _ = parse_doc_version2(input);
+/// Truncation sweep: for every adversarial input, also feed each
+/// proper prefix `input[..k]` for `k` in `0..=min(len, 64)`.
+///
+/// This catches off-by-one regressions that the full-length corpus
+/// can mask: a guard like `pos + 4 <= data.len()` may pass on the
+/// padded input but fail on a prefix that ends one byte short of
+/// a header field. The 64-byte cap is plenty to cover every
+/// fixed-size header this crate parses (cluster magic = 16 B,
+/// `DocVersion3` record = 48 B, `AppObject` entry header = 20 B,
+/// sheet endpoint record = 26 B, etc.).
+#[test]
+fn parsers_do_not_panic_on_truncated_inputs() {
+    let mut corpus = adversarial_inputs();
+    push_xorshift_corpus(&mut corpus);
 
-        let _ = parse_attribute_records(input);
-        let _ = extract_record_trailers(input);
-
-        let _ = parse_jproperties(input);
-
-        let _ = parse_psm_roots(input);
-        let _ = parse_psm_cluster_table(input);
-        let _ = parse_psm_segment_table(input);
-
-        let _ = probe_relationships(input);
-
-        let _ = parse_endpoint_records("/SheetX", input, &empty_rels);
-        let _ = probe_sheet_stream("SheetX", "/SheetX", input, &opts);
-
-        let _ = scan_ascii_strings(input, 16);
-        let _ = scan_guids(input, 16);
-        let _ = scan_utf16le_strings(input, 4, 16);
-
-        let _ = parse_tagged_stg_list(input);
-
-        let _ = parse_app_object(input);
+    for input in &corpus {
+        let max_k = input.len().min(TRUNCATION_SWEEP_LIMIT);
+        for k in 0..=max_k {
+            exercise_all_parsers(&input[..k]);
+        }
     }
 }
