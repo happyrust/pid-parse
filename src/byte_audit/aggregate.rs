@@ -14,15 +14,15 @@
 //!   lands, the previously-unregistered stream flips to traced and its
 //!   coverage ratio jumps — easy to flag as a regression guard.
 //!
-//! Phase 12b-3 will wire this into `pid_inspect --byte-audit`; for now
-//! only the library API is exposed.
+//! `pid_inspect --byte-audit` uses this same aggregate model for both
+//! text output and JSON / baseline comparison workflows.
 
 use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::byte_audit::{ParserTrace, ParserTraceBuilder};
+use crate::byte_audit::{ByteRange, ParserTrace, ParserTraceBuilder, TraceConfidence};
 use crate::package::PidPackage;
 use crate::parsers;
 
@@ -199,6 +199,20 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
             let _ = parsers::tagged_stg_list::parse_tagged_stg_list_with_trace(data, &mut b);
             Some(b)
         }),
+        "/TaggedTxtData/Drawing" => ("parse_drawing_xml", {
+            Some(trace_utf8_xml_stream(
+                "parse_drawing_xml",
+                data,
+                parsers::drawing_xml::parse_drawing_xml,
+            ))
+        }),
+        "/TaggedTxtData/General" => ("parse_general_xml", {
+            Some(trace_utf8_xml_stream(
+                "parse_general_xml",
+                data,
+                parsers::general_xml::parse_general_xml,
+            ))
+        }),
         _ => return None,
     };
     executed
@@ -212,6 +226,24 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
             }
             t
         })
+}
+
+fn trace_utf8_xml_stream<T, E>(
+    parser_name: &str,
+    data: &[u8],
+    parse: impl FnOnce(&str) -> Result<T, E>,
+) -> ParserTraceBuilder {
+    let mut builder = ParserTraceBuilder::new(parser_name);
+    let Ok(xml) = std::str::from_utf8(data) else {
+        return builder;
+    };
+    if parse(xml).is_ok() {
+        builder.consume(
+            ByteRange::new(0, data.len() as u64),
+            TraceConfidence::Decoded,
+        );
+    }
+    builder
 }
 
 #[cfg(test)]
@@ -289,6 +321,32 @@ mod tests {
         assert_eq!(mystery.parser_name, None);
         assert_eq!(mystery.consumed_bytes, 0);
         assert_eq!(mystery.leftover_bytes, 6);
+    }
+
+    #[test]
+    fn tagged_text_xml_streams_are_registered_and_fully_consumed() {
+        let drawing_xml = br#"<Drawing><DrawingNumber>D-001</DrawingNumber></Drawing>"#.to_vec();
+        let general_xml =
+            br#"<General><Location>C:\plant\drawing.pid</Location></General>"#.to_vec();
+        let pkg = pkg_with_streams(&[
+            ("/TaggedTxtData/Drawing", drawing_xml.clone()),
+            ("/TaggedTxtData/General", general_xml.clone()),
+        ]);
+
+        let report = byte_audit_report(&pkg);
+
+        assert_eq!(report.traces.len(), 2);
+        assert!(report.unregistered_paths.is_empty());
+
+        let drawing = &report.per_stream["/TaggedTxtData/Drawing"];
+        assert_eq!(drawing.parser_name.as_deref(), Some("parse_drawing_xml"));
+        assert_eq!(drawing.consumed_bytes, drawing_xml.len() as u64);
+        assert_eq!(drawing.leftover_bytes, 0);
+
+        let general = &report.per_stream["/TaggedTxtData/General"];
+        assert_eq!(general.parser_name.as_deref(), Some("parse_general_xml"));
+        assert_eq!(general.consumed_bytes, general_xml.len() as u64);
+        assert_eq!(general.leftover_bytes, 0);
     }
 
     #[test]

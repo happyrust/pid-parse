@@ -14,8 +14,13 @@
 //! full-fleet migration, aggregate reporting, and CI regression guarding.
 
 pub mod aggregate;
+pub mod compare;
 
 pub use aggregate::{byte_audit_report, ByteAuditReport, StreamAuditSummary};
+pub use compare::{
+    compare_byte_audit_reports, ByteAuditComparison, ByteAuditImprovement,
+    ByteAuditImprovementKind, ByteAuditRegression, ByteAuditRegressionKind,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

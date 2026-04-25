@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Byte audit TaggedTxtData XML trace
+
+`byte_audit_report` 现在会注册 `/TaggedTxtData/Drawing` 和
+`/TaggedTxtData/General`：当 stream 是 UTF-8 且现有 XML parser 可解析时，
+对应 raw bytes 会以 `TraceConfidence::Decoded` 全量计入 consumed，不再作为
+unregistered inventory 出现在 baseline 报告里。非法 UTF-8 或 parser error
+仍会保留 registered trace，但 consumed 为 0，方便 baseline 对比暴露异常。
+
+验证：
+- `cargo test tagged_text_xml_streams_are_registered_and_fully_consumed --lib -- --nocapture`
+
+### Byte audit baseline comparator
+
+新增 `pid_parse::byte_audit::compare_byte_audit_reports` 以及
+`ByteAuditComparison` / `ByteAuditRegressionKind` /
+`ByteAuditImprovementKind` 等公开模型，用于比较两份 `ByteAuditReport`
+并把整体覆盖率下降、单 stream `consumed_bytes` 下降、已追踪 stream 变回
+unregistered 判为 regression；未追踪 stream 被新 parser 覆盖、新 stream
+自带 parser 则作为 improvement 汇报。
+
+`docs/byte-audit-guide.md` 已补充 comparator API 用法定位，后续 CLI/CI
+可直接反序列化 baseline/current JSON 后调用该库函数。
+
+同时新增 `pid_inspect --byte-audit --byte-audit-baseline <audit.json>`：
+文本模式输出 regression / improvement 摘要，`--json` 模式序列化
+`ByteAuditComparison`；发现 regression 时退出码为 `3`，便于 CI 区分
+"解析失败"和"覆盖率回归"。
+
+验证：
+- `cargo test byte_audit --lib`
+- `cargo test --test inspect_cli byte_audit_baseline -- --nocapture`
+
 ### Byte audit CLI 与基线文档
 
 新增 `pid_inspect --byte-audit`，把已有 `byte_audit_report` 库能力暴露到

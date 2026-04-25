@@ -24,6 +24,16 @@ Machine-readable JSON:
 cargo run --bin pid_inspect -- drawing.pid --byte-audit --json > audit.json
 ```
 
+Compare the current report with a committed baseline:
+
+```bash
+cargo run --bin pid_inspect -- drawing.pid --byte-audit --byte-audit-baseline docs/baselines/drawing.byte-audit.json
+```
+
+`--byte-audit-baseline` prints a `ByteAuditComparison`-style text summary and
+exits with code `3` when regressions are present. With `--json`, stdout is the
+serialized `ByteAuditComparison`; the exit-code policy is the same.
+
 ## Text Output
 
 The text report prints:
@@ -51,6 +61,16 @@ Unregistered streams: 12
   [  0.0%] /MysteryStream (0 B consumed / 48 B total, 48 B leftover) unregistered
 ```
 
+Baseline comparison shape:
+
+```text
+--- Byte Audit Baseline Comparison ---
+Regressions: 1
+  [overall_coverage_decreased] (overall) baseline=0.950000 current=0.920000
+Improvements: 1
+  [stream_became_traced] /MysteryStream baseline=unregistered current=parse_mystery
+```
+
 ## JSON Output
 
 `--byte-audit --json` serializes `ByteAuditReport`.
@@ -64,10 +84,20 @@ Important fields:
 
 Use JSON mode for CI and regression baselines.
 
+Currently registered stream families include the PSM tables, DocVersion
+streams, `AppObject`, `JTaggedTxtStgList`, and UTF-8 parseable
+`TaggedTxtData/Drawing` / `TaggedTxtData/General` XML metadata streams.
+
 ## Baseline Rules
 
 Once real `.pid` fixtures are available under `test-file/`, baseline checks
 should compare the current JSON report to a committed reference.
+
+The library-level comparator is available as
+`pid_parse::byte_audit::compare_byte_audit_reports(baseline, current)`. It
+returns `ByteAuditComparison` with separate `regressions` and `improvements`
+lists, so CI can fail only on regressions while still printing newly traced
+streams for review.
 
 Recommended rules:
 

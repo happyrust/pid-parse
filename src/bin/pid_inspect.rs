@@ -4,7 +4,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]"
+            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit [--byte-audit-baseline <audit.json>]]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]"
         );
         std::process::exit(1);
     }
@@ -23,6 +23,7 @@ fn main() {
     let crossref_mermaid = args.iter().any(|a| a == "--crossref-mermaid");
     let coverage_flag = args.iter().any(|a| a == "--coverage");
     let byte_audit = args.iter().any(|a| a == "--byte-audit");
+    let byte_audit_baseline = flag_value(&args, "--byte-audit-baseline");
 
     let round_trip = flag_value(&args, "--round-trip");
     let set_drawing_number = flag_value(&args, "--set-drawing-number");
@@ -56,6 +57,10 @@ fn main() {
         };
         run_set_xml_tag(path, &stream, &tag, &value, &out);
         return;
+    }
+    if byte_audit_baseline.is_some() && !byte_audit {
+        eprintln!("--byte-audit-baseline requires --byte-audit");
+        std::process::exit(2);
     }
 
     if schema_mode {
@@ -101,7 +106,24 @@ fn main() {
             return;
         }
         if byte_audit {
-            match serde_json::to_string_pretty(&pid_parse::byte_audit_report(&pkg)) {
+            let current = pid_parse::byte_audit_report(&pkg);
+            if let Some(baseline_path) = byte_audit_baseline.as_deref() {
+                let baseline = load_byte_audit_baseline(baseline_path);
+                let comparison =
+                    pid_parse::byte_audit::compare_byte_audit_reports(&baseline, &current);
+                match serde_json::to_string_pretty(&comparison) {
+                    Ok(json) => println!("{json}"),
+                    Err(e) => {
+                        eprintln!("Byte audit comparison JSON serialization error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                if !comparison.is_clean() {
+                    std::process::exit(3);
+                }
+                return;
+            }
+            match serde_json::to_string_pretty(&current) {
                 Ok(json) => println!("{json}"),
                 Err(e) => {
                     eprintln!("Byte audit JSON serialization error: {e}");
@@ -167,7 +189,17 @@ fn main() {
     }
 
     if byte_audit {
-        print_byte_audit(&pkg);
+        let current = pid_parse::byte_audit_report(&pkg);
+        if let Some(baseline_path) = byte_audit_baseline.as_deref() {
+            let baseline = load_byte_audit_baseline(baseline_path);
+            let comparison = pid_parse::byte_audit::compare_byte_audit_reports(&baseline, &current);
+            print_byte_audit_comparison(&comparison);
+            if !comparison.is_clean() {
+                std::process::exit(3);
+            }
+        } else {
+            print_byte_audit_report(&current);
+        }
     }
 
     if !probe_cluster
@@ -187,8 +219,7 @@ fn main() {
     }
 }
 
-fn print_byte_audit(pkg: &pid_parse::PidPackage) {
-    let report = pid_parse::byte_audit_report(pkg);
+fn print_byte_audit_report(report: &pid_parse::byte_audit::ByteAuditReport) {
     println!("--- Byte Audit ---");
     println!("Total stream bytes: {}", report.total_file_bytes);
     println!("Overall consumed:   {}", report.overall_consumed);
@@ -214,6 +245,75 @@ fn print_byte_audit(pkg: &pid_parse::PidPackage) {
             summary.leftover_bytes,
             parser
         );
+    }
+}
+
+fn load_byte_audit_baseline(path: &str) -> pid_parse::byte_audit::ByteAuditReport {
+    let json = match std::fs::read_to_string(path) {
+        Ok(json) => json,
+        Err(e) => {
+            eprintln!("Byte audit baseline read error: {e}");
+            std::process::exit(1);
+        }
+    };
+    match serde_json::from_str(&json) {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("Byte audit baseline JSON parse error: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn print_byte_audit_comparison(comparison: &pid_parse::byte_audit::ByteAuditComparison) {
+    println!("--- Byte Audit Baseline Comparison ---");
+    println!("Regressions: {}", comparison.regressions.len());
+    for regression in &comparison.regressions {
+        println!(
+            "  [{}] {} baseline={} current={}",
+            byte_audit_regression_kind_label(regression.kind),
+            regression.path.as_deref().unwrap_or("(overall)"),
+            regression.baseline_value,
+            regression.current_value,
+        );
+    }
+    println!("Improvements: {}", comparison.improvements.len());
+    for improvement in &comparison.improvements {
+        println!(
+            "  [{}] {} baseline={} current={}",
+            byte_audit_improvement_kind_label(improvement.kind),
+            improvement.path.as_deref().unwrap_or("(overall)"),
+            improvement.baseline_value,
+            improvement.current_value,
+        );
+    }
+}
+
+fn byte_audit_regression_kind_label(
+    kind: pid_parse::byte_audit::ByteAuditRegressionKind,
+) -> &'static str {
+    match kind {
+        pid_parse::byte_audit::ByteAuditRegressionKind::OverallCoverageDecreased => {
+            "overall_coverage_decreased"
+        }
+        pid_parse::byte_audit::ByteAuditRegressionKind::StreamMissing => "stream_missing",
+        pid_parse::byte_audit::ByteAuditRegressionKind::StreamConsumedBytesDecreased => {
+            "stream_consumed_bytes_decreased"
+        }
+        pid_parse::byte_audit::ByteAuditRegressionKind::StreamBecameUnregistered => {
+            "stream_became_unregistered"
+        }
+    }
+}
+
+fn byte_audit_improvement_kind_label(
+    kind: pid_parse::byte_audit::ByteAuditImprovementKind,
+) -> &'static str {
+    match kind {
+        pid_parse::byte_audit::ByteAuditImprovementKind::StreamBecameTraced => {
+            "stream_became_traced"
+        }
+        pid_parse::byte_audit::ByteAuditImprovementKind::NewTracedStream => "new_traced_stream",
     }
 }
 

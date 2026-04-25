@@ -105,6 +105,21 @@ fn build_sheet_probe_fixture(path: &std::path::Path) {
     cfb.flush().unwrap();
 }
 
+fn write_byte_audit_baseline(
+    fixture: &std::path::Path,
+    baseline_path: &std::path::Path,
+    mutate: impl FnOnce(&mut pid_parse::byte_audit::ByteAuditReport),
+) {
+    let parser = pid_parse::PidParser::new();
+    let pkg = parser
+        .parse_package(fixture)
+        .expect("parse fixture package");
+    let mut report = pid_parse::byte_audit_report(&pkg);
+    mutate(&mut report);
+    let json = serde_json::to_string_pretty(&report).expect("serialize baseline");
+    std::fs::write(baseline_path, json).expect("write baseline");
+}
+
 #[test]
 fn coverage_flag_prints_section_and_all_four_buckets() {
     let fixture = unique_tmp("coverage-cli");
@@ -359,6 +374,78 @@ fn byte_audit_json_flag_emits_parseable_report() {
     );
 
     let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn byte_audit_baseline_flag_reports_clean_comparison() {
+    let fixture = unique_tmp("byte-audit-baseline-clean");
+    let baseline = unique_tmp("byte-audit-baseline-clean-json");
+    build_mixed_coverage_fixture(&fixture);
+    write_byte_audit_baseline(&fixture, &baseline, |_| {});
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--byte-audit")
+        .arg("--byte-audit-baseline")
+        .arg(&baseline)
+        .output()
+        .expect("spawn pid_inspect --byte-audit --byte-audit-baseline");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+    assert!(
+        stdout.contains("--- Byte Audit Baseline Comparison ---"),
+        "comparison heading missing; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Regressions: 0"),
+        "clean baseline should report zero regressions; stdout:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+    let _ = std::fs::remove_file(&baseline);
+}
+
+#[test]
+fn byte_audit_baseline_flag_fails_on_regression() {
+    let fixture = unique_tmp("byte-audit-baseline-regression");
+    let baseline = unique_tmp("byte-audit-baseline-regression-json");
+    build_mixed_coverage_fixture(&fixture);
+    write_byte_audit_baseline(&fixture, &baseline, |report| {
+        report.overall_coverage_ratio = 1.0;
+    });
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--byte-audit")
+        .arg("--byte-audit-baseline")
+        .arg(&baseline)
+        .output()
+        .expect("spawn pid_inspect --byte-audit --byte-audit-baseline");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "baseline regression should exit 3; stderr: {stderr}; stdout: {stdout}",
+    );
+    assert!(
+        stdout.contains("Regressions: 1"),
+        "regression count missing; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("overall_coverage_decreased"),
+        "regression kind missing; stdout:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+    let _ = std::fs::remove_file(&baseline);
 }
 
 #[test]
