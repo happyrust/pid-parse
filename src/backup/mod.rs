@@ -26,6 +26,7 @@
 //! schema recovery, and object-graph reconstruction.
 
 pub mod boot_page;
+pub mod manifest;
 pub mod mdf_page;
 pub mod msci;
 pub mod mtf;
@@ -33,6 +34,7 @@ pub mod syscatalog;
 pub mod text_scan;
 
 pub use boot_page::{parse_boot_page, BootPageError, BootPageInfo};
+pub use manifest::{parse_manifest, Manifest, ManifestLine, ManifestTable, FIELD_SEP};
 pub use mdf_page::{MdfPageCursor, MdfPageHeader, PageAddress, PageType, PAGE_SIZE};
 pub use msci::{parse_msci, MsciConfig, MsciError, MsciFile};
 pub use mtf::{
