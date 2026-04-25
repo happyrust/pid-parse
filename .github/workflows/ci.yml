@@ -97,7 +97,9 @@ jobs:
           tool: cargo-audit
 
       - name: cargo audit
-        # `--locked` makes the gate fail if Cargo.lock drifts from the
-        # checked-in version (otherwise audit could mask issues by
-        # updating the lockfile in-place).
-        run: cargo audit --locked
+        # `cargo audit` reads (and never rewrites) the committed
+        # `Cargo.lock`, so the scan is byte-for-byte deterministic on
+        # every CI run. Note: `--locked` is a top-level cargo flag,
+        # not a `cargo-audit` flag — passing it here errors out with
+        # "unexpected argument '--locked' found".
+        run: cargo audit
