@@ -78,6 +78,25 @@ See `.github/scripts/check-missing-docs.sh` for the exact command
 - `RUSTFLAGS=-Dwarnings` (set in CI env) promotes compiler warnings to
   errors; keep local output clean by the same bar.
 
+### Security audit (CI-only)
+
+CI also runs an independent `cargo audit` job in parallel with
+the test matrix. It scans `Cargo.lock` against the [RustSec
+advisory database](https://rustsec.org/) and fails the build the
+moment a known CVE surfaces in any transitive dependency.
+
+- Reproduce locally: `cargo install cargo-audit --locked && cargo audit`.
+  The `--locked` belongs to `cargo install` (so the install
+  obeys the lockfile of `cargo-audit` itself); `cargo audit` does
+  not accept `--locked` as a flag and errors out if given one.
+- `cargo audit` reads but never rewrites the committed
+  `Cargo.lock`, so the scan is byte-for-byte deterministic on
+  every CI run.
+- Failure path: bump the offending crate in `Cargo.toml`
+  (or whichever `vendor/<crate>/Cargo.toml` carries it),
+  run `cargo update -p <crate>`, then re-run `cargo audit`
+  to confirm the advisory disappears before pushing.
+
 ## Parser hardening playbook
 
 Cadence used by PRs #3–#7 to harden `src/parsers/*` one edge case

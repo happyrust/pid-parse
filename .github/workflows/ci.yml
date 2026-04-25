@@ -72,3 +72,34 @@ jobs:
         # file in the same PR, which keeps the progress visible in git
         # history. See `AGENTS.md` for the runbook.
         run: bash .github/scripts/check-missing-docs.sh
+
+  # Independent gate: scan Cargo.lock for known security advisories
+  # (RUSTSEC database). Runs in parallel with `test` so a new CVE
+  # surfacing in a transitive dependency fails CI without waiting for
+  # the full build/test matrix. `taiki-e/install-action` pulls a
+  # pre-built `cargo-audit` binary so the job stays fast (<10 s on
+  # warm cache) — no need to compile cargo-audit from source.
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit
+        # `cargo audit` reads (and never rewrites) the committed
+        # `Cargo.lock`, so the scan is byte-for-byte deterministic on
+        # every CI run. Note: `--locked` is a top-level cargo flag,
+        # not a `cargo-audit` flag — passing it here errors out with
+        # "unexpected argument '--locked' found".
+        run: cargo audit
