@@ -38,12 +38,18 @@ pub fn scan_guids(data: &[u8], limit: usize) -> Vec<String> {
     let mut out = Vec::new();
 
     // Text form: {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}
+    //
+    // `from_utf8_lossy` substitutes 3-byte `U+FFFD` for every invalid
+    // UTF-8 sequence, so the byte offsets returned by `find('{')` no
+    // longer mirror byte offsets of `data`. A naive `&text[abs..abs+38]`
+    // will panic when the trailing index lands inside a multi-byte
+    // codepoint — `text.get(abs..abs+38)` returns `None` in that case
+    // and we skip the (definitely-non-ASCII-GUID) candidate cleanly.
     let text = String::from_utf8_lossy(data);
     let mut start = 0;
     while let Some(pos) = text[start..].find('{') {
         let abs = start + pos;
-        if abs + 38 <= text.len() {
-            let candidate = &text[abs..abs + 38];
+        if let Some(candidate) = text.get(abs..abs + 38) {
             if is_guid_text(candidate) {
                 let upper = candidate.to_ascii_uppercase();
                 if seen.insert(upper.clone()) {
@@ -151,4 +157,20 @@ pub fn scan_utf16le_strings(data: &[u8], min_chars: usize, limit: usize) -> Vec<
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_guids_does_not_panic_on_non_ascii_neighbours() {
+        let mut data = Vec::new();
+        data.push(0xFF);
+        data.push(b'{');
+        data.extend_from_slice(&[b'A'; 36]);
+        data.push(0xFF);
+
+        let _ = scan_guids(&data, 16);
+    }
 }
