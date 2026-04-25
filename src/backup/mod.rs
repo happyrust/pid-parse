@@ -30,6 +30,7 @@ pub mod manifest;
 pub mod mdf_page;
 pub mod msci;
 pub mod mtf;
+pub mod refdata;
 pub mod syscatalog;
 pub mod text_scan;
 
@@ -42,6 +43,9 @@ pub use msci::{parse_msci, MsciConfig, MsciError, MsciFile};
 pub use mtf::{
     detect_logical_block_size, MtfBlock, MtfBlockCursor, MtfBlockType, MtfError, MtfHeader,
     MtfStream, MtfStreamCursor, MtfStreamKind,
+};
+pub use refdata::{
+    classify_format, parse_refdata_filename, scan_refdata_dir, RefDataEntry, RefDataFormat,
 };
 pub use syscatalog::{scan_sysschobjs_rows, SysschobjsRow, SYSSCHOBJS_ROW_MARKER};
 pub use text_scan::{find_ascii_run_containing, find_utf16le_run_containing};
