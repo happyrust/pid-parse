@@ -21,6 +21,17 @@
 //! mixed line endings, lines without the `<<|>>` separator, blank
 //! keys, and totally non-ASCII payload all map to a manifest with
 //! zero or partial lines instead of unwinding.
+//!
+//! # Encoding
+//!
+//! Real `SmartPlant` exports ship `Manifest.txt` as **UTF-16 LE**
+//! with a `FF FE` BOM, not the `&str`-friendly UTF-8 our
+//! `parse_manifest` entry point assumes. Byte-level callers should
+//! reach for [`parse_manifest_bytes`] instead — it sniffs the
+//! leading BOM (UTF-8, UTF-16 LE, UTF-16 BE) via `encoding_rs` and
+//! falls back to UTF-8 lossy decoding for plain ASCII / UTF-8 input.
+//! Decoding is always lossy: malformed bytes become `U+FFFD` rather
+//! than aborting parsing.
 
 /// Field separator used between every component on a manifest line.
 ///
@@ -72,6 +83,38 @@ pub struct ManifestTable {
 pub fn parse_manifest(text: &str) -> Manifest {
     let lines = text.lines().filter_map(parse_line).collect();
     Manifest { lines }
+}
+
+/// Parse a raw `Manifest.txt` byte slice into [`Manifest`], with
+/// transparent BOM-aware decoding.
+///
+/// `SmartPlant` writes `Manifest.txt` as UTF-16 LE with a `FF FE`
+/// BOM in every plant export observed so far, but the parser is
+/// happy with UTF-8 / UTF-8 BOM / UTF-16 BE input as well — the
+/// leading BOM (if any) is sniffed via `encoding_rs` and stripped
+/// before decoding. Inputs without a BOM are decoded as UTF-8 with
+/// invalid sequences replaced by `U+FFFD` (lossy), matching the
+/// `parse_manifest` contract.
+///
+/// The function never panics: any byte payload, including empty
+/// slices and slices shorter than a BOM, decodes into a (possibly
+/// empty) `String` before being routed through [`parse_manifest`].
+pub fn parse_manifest_bytes(bytes: &[u8]) -> Manifest {
+    parse_manifest(&decode_with_bom_sniffing(bytes))
+}
+
+/// Detect a leading UTF-8 / UTF-16 LE / UTF-16 BE BOM and decode
+/// the rest with the matching `encoding_rs` codec, falling back to
+/// UTF-8 lossy decoding when no BOM is present.
+fn decode_with_bom_sniffing(bytes: &[u8]) -> String {
+    use encoding_rs::Encoding;
+    if let Some((encoding, bom_len)) = Encoding::for_bom(bytes) {
+        let body = bytes.get(bom_len..).unwrap_or(&[]);
+        let (decoded, _had_errors) = encoding.decode_without_bom_handling(body);
+        decoded.into_owned()
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
 }
 
 fn parse_line(raw: &str) -> Option<ManifestLine> {
@@ -275,6 +318,78 @@ mod tests {
         // We don't care about the exact shape — just that parsing
         // returned without panicking and produced a finite vector.
         assert!(m.lines.len() <= 32);
+    }
+
+    #[test]
+    fn parse_manifest_bytes_handles_plain_utf8_without_bom() {
+        // Plain ASCII / UTF-8 input without a BOM must round-trip
+        // through `parse_manifest_bytes` unchanged — this is the
+        // common path for synthetic test fixtures.
+        let body = b"Name<<|>>TEST02\nVersion<<|>>7.02\n";
+        let m = parse_manifest_bytes(body);
+        assert_eq!(m.lines.len(), 2);
+        assert_eq!(m.first_field("Name"), Some("TEST02"));
+        assert_eq!(m.first_field("Version"), Some("7.02"));
+    }
+
+    #[test]
+    fn parse_manifest_bytes_strips_utf8_bom_before_parsing() {
+        // EF BB BF marks UTF-8 BOM. The first key would otherwise
+        // include the BOM bytes and fail every `first_field`
+        // lookup downstream.
+        let mut body = vec![0xEF, 0xBB, 0xBF];
+        body.extend_from_slice(b"Name<<|>>TEST02\nVersion<<|>>7.02\n");
+        let m = parse_manifest_bytes(&body);
+        assert_eq!(m.lines.len(), 2);
+        assert_eq!(m.first_field("Name"), Some("TEST02"));
+        assert_eq!(m.first_field("Version"), Some("7.02"));
+    }
+
+    #[test]
+    fn parse_manifest_bytes_decodes_utf16_le_bom_like_real_smartplant_export() {
+        // FF FE marks UTF-16 LE BOM. This is the encoding every
+        // observed `SmartPlant` plant backup uses for
+        // `Manifest.txt` — the production-shape guarantee the
+        // `tests/backup_manifest_real_file.rs` integration gate
+        // depends on.
+        let text = "Name<<|>>TEST02\nVersion<<|>>7.02\n";
+        let mut body = vec![0xFF, 0xFE];
+        for code_unit in text.encode_utf16() {
+            body.extend_from_slice(&code_unit.to_le_bytes());
+        }
+        let m = parse_manifest_bytes(&body);
+        assert_eq!(m.lines.len(), 2);
+        assert_eq!(m.first_field("Name"), Some("TEST02"));
+        assert_eq!(m.first_field("Version"), Some("7.02"));
+    }
+
+    #[test]
+    fn parse_manifest_bytes_decodes_utf16_be_bom() {
+        // FE FF marks UTF-16 BE BOM. Not observed in
+        // `SmartPlant` backups today but cheap to support and
+        // a useful guard against future Endian drift.
+        let text = "Name<<|>>TEST02\nVersion<<|>>7.02\n";
+        let mut body = vec![0xFE, 0xFF];
+        for code_unit in text.encode_utf16() {
+            body.extend_from_slice(&code_unit.to_be_bytes());
+        }
+        let m = parse_manifest_bytes(&body);
+        assert_eq!(m.lines.len(), 2);
+        assert_eq!(m.first_field("Name"), Some("TEST02"));
+        assert_eq!(m.first_field("Version"), Some("7.02"));
+    }
+
+    #[test]
+    fn parse_manifest_bytes_handles_empty_and_undersized_slices() {
+        // Empty slice yields an empty manifest. Slices shorter
+        // than any BOM length (and arbitrary bogus bytes) take
+        // the UTF-8 lossy path: invalid bytes become `U+FFFD`
+        // glyphs that may or may not parse into a tolerated
+        // single-key line, but the call must not panic and must
+        // produce a finite, bounded line count.
+        assert_eq!(parse_manifest_bytes(&[]).lines.len(), 0);
+        assert!(parse_manifest_bytes(&[0xFF]).lines.len() <= 1);
+        assert!(parse_manifest_bytes(&[0xFF, 0xFE]).lines.is_empty());
     }
 
     #[test]
