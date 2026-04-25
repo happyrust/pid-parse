@@ -73,6 +73,12 @@ jobs:
         # history. See `AGENTS.md` for the runbook.
         run: bash .github/scripts/check-missing-docs.sh
 
+      - name: byte-audit baselines (optional private fixtures)
+        # Committed baselines can be checked locally when gitignored
+        # `test-file/*.pid` fixtures are available. Public CI skips
+        # cleanly when no baselines or private fixtures are present.
+        run: bash .github/scripts/check-byte-audit-baselines.sh
+
   # Independent gate: scan Cargo.lock for known security advisories
   # (RUSTSEC database). Runs in parallel with `test` so a new CVE
   # surfacing in a transitive dependency fails CI without waiting for

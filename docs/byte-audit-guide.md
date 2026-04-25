@@ -103,6 +103,21 @@ reverse-engineering evidence and do not count as consumed geometry bytes yet.
 Once real `.pid` fixtures are available under `test-file/`, baseline checks
 should compare the current JSON report to a committed reference.
 
+Optional runner:
+
+```bash
+bash .github/scripts/check-byte-audit-baselines.sh
+```
+
+The runner scans `docs/baselines/*.byte-audit.json` and derives matching
+private fixture paths as `test-file/<name>.pid`. For example,
+`docs/baselines/DWG-0201GP06-01.byte-audit.json` compares against
+`test-file/DWG-0201GP06-01.pid`.
+
+Public CI runs the same script. It exits successfully when no baselines exist,
+or when a baseline's matching private fixture is absent, so the repository can
+carry baseline tooling without committing plant data.
+
 The library-level comparator is available as
 `pid_parse::byte_audit::compare_byte_audit_reports(baseline, current)`. It
 returns `ByteAuditComparison` with separate `regressions` and `improvements`

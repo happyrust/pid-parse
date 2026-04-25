@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Optional byte audit baseline runner
+
+新增 `.github/scripts/check-byte-audit-baselines.sh`，扫描
+`docs/baselines/*.byte-audit.json` 并按同名规则查找
+`test-file/<name>.pid`，有 fixture 时调用
+`pid_inspect --byte-audit --byte-audit-baseline` 做回归比较。
+
+CI 已接入该脚本；当仓库没有 baseline，或公开 CI 缺少 gitignored/private
+fixture 时会输出 skip 并成功退出，避免把 plant data 提交到仓库。
+
+验证：
+- `bash .github/scripts/check-byte-audit-baselines.sh`
+
 ### Byte audit Sheet text trace
 
 `byte_audit_report` 现在会注册顶层 `/Sheet*` stream，并复用
