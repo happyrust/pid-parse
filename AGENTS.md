@@ -77,3 +77,56 @@ See `.github/scripts/check-missing-docs.sh` for the exact command
 - `--workspace` makes the vendored `oxidized-mdf` crate a hard gate.
 - `RUSTFLAGS=-Dwarnings` (set in CI env) promotes compiler warnings to
   errors; keep local output clean by the same bar.
+
+## Parser hardening playbook
+
+Cadence used by PRs #3–#7 to harden `src/parsers/*` one edge case
+at a time. Every PR follows the same TDD loop and ships as a
+single squash-merge:
+
+1. **Reproduce as a red test.** Add a focused `#[test]` in the
+   parser's own `#[cfg(test)] mod tests` that constructs the
+   panicking / wrong-result input and asserts the desired
+   behaviour. Run `cargo test --lib parsers::<module>` and
+   confirm it fails with the exact panic / diagnostic you expect.
+2. **Minimum patch.** Prefer one of these guards over
+   restructuring:
+   - `text.get(a..b)` / `slice.get(a..b)` instead of
+     `&text[a..b]` for char-boundary or out-of-range safety.
+   - `checked_add` / `checked_mul` for size arithmetic on
+     untrusted `u32` lengths.
+   - `(cursor + len).min(data.len())` to clamp end indexes after
+     the corresponding `cursor + len <= data.len()` check.
+   - Early `return None` for `0`-valued lengths and obviously
+     bogus discriminators / magic bytes.
+3. **Run all five pre-commit gates** (see above) and confirm the
+   new test goes green, every other test still passes, and the
+   `missing_docs` count is unchanged.
+4. **One commit, one PR.** Commit message format
+   `fix(parser): <imperative summary>`. PR body keeps a short
+   rationale + the test plan checklist. Squash-merge with branch
+   deletion: `gh pr merge <n> --squash --delete-branch`.
+5. **Smoke-test guard.** `tests/parser_panic_safety.rs` walks
+   every public byte-level parser entry against an adversarial
+   corpus on every CI run; new entry points must be added there
+   in the same PR that introduces them.
+
+### Where to look for the next target
+
+When sweeping for new edge cases, start with these patterns:
+
+- `String::from_utf8_lossy(data)` followed by `&text[a..b]`
+  slicing — non-ASCII bytes inflate to the 3-byte `U+FFFD` and
+  shift offsets; the trailing index can land inside a multi-byte
+  char and panic. Guard with `text.get(a..b)` (regression: PR #6,
+  `scan_guids`).
+- Untrusted `u32 as usize` lengths fed into `cursor + len > …` —
+  watch for missing `checked_add` / `checked_mul`, especially on
+  32-bit targets where `len * 2` can wrap.
+- `data[i]` / `data[i..j]` direct indexing without an upstream
+  `i + N <= data.len()` guard.
+- `s.find(…)` on `from_utf8_lossy` output where the byte index is
+  later used with `&str` slicing.
+- `unwrap()` / `expect()` on `Iterator::next()` after `peek()`
+  returns `Some` — sound by contract but cosmetic noise to remove
+  when the surrounding diff already touches the function.
