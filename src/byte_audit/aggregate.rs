@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::byte_audit::{ByteRange, ParserTrace, ParserTraceBuilder, TraceConfidence};
 use crate::package::PidPackage;
 use crate::parsers;
+use crate::writer::summary_write::{DOC_SUMMARY_PATH, SUMMARY_INFO_PATH};
 
 /// Per-stream rollup pulled from the matching [`ParserTrace`] (when a
 /// parser was registered) or synthesized from the raw stream length
@@ -164,6 +165,36 @@ pub fn byte_audit_report(pkg: &PidPackage) -> ByteAuditReport {
 /// is exactly the information a byte-audit consumer wants to see.
 fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
     let (parser_name, executed) = match path {
+        p if p == SUMMARY_INFO_PATH => ("parse_summary_property_set", {
+            let mut b = ParserTraceBuilder::new("parse_summary_property_set");
+            let _ = parsers::summary::parse_summary_property_set_with_trace(data, &mut b);
+            Some(b)
+        }),
+        p if p == DOC_SUMMARY_PATH => ("parse_summary_property_set", {
+            let mut b = ParserTraceBuilder::new("parse_summary_property_set");
+            let _ = parsers::summary::parse_summary_property_set_with_trace(data, &mut b);
+            Some(b)
+        }),
+        "/PSMcluster0" => ("parse_psm_cluster0", {
+            let mut b = ParserTraceBuilder::new("parse_psm_cluster0");
+            let _ = parsers::cluster_header::parse_psm_cluster0_with_trace(data, &mut b);
+            Some(b)
+        }),
+        "/StyleCluster" => ("parse_cluster_header", {
+            let mut b = ParserTraceBuilder::new("parse_cluster_header");
+            let _ = parsers::cluster_header::parse_header_with_trace(data, &mut b);
+            Some(b)
+        }),
+        "/Dynamic Attributes Metadata" => ("parse_cluster_header", {
+            let mut b = ParserTraceBuilder::new("parse_cluster_header");
+            let _ = parsers::cluster_header::parse_header_with_trace(data, &mut b);
+            Some(b)
+        }),
+        "/Unclustered Dynamic Attributes" => ("scan_da_record_trailers", {
+            let mut b = ParserTraceBuilder::new("scan_da_record_trailers");
+            let _ = parsers::dynamic_attr_records::scan_da_record_trailers_with_trace(data, &mut b);
+            Some(b)
+        }),
         "/PSMroots" => ("parse_psm_roots", {
             let mut b = ParserTraceBuilder::new("parse_psm_roots");
             let _ = parsers::psm_tables::parse_psm_roots_with_trace(data, &mut b);
@@ -222,6 +253,10 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
             let mut b = ParserTraceBuilder::new("probe_sheet_stream");
             let sheet_name = top_level_sheet_name(path).expect("guard checked sheet name");
             trace_sheet_text_runs(sheet_name, path, data, &mut b);
+            // Also scan for 26-byte endpoint records (Phase 12b-1g):
+            // self-contained discriminator-only scan, no need for the
+            // DA-side `rel_field_xs` set.
+            let _ = parsers::sheet_endpoint_records::scan_endpoint_records_with_trace(data, &mut b);
             Some(b)
         }),
         _ => return None,
@@ -422,6 +457,171 @@ mod tests {
         assert_eq!(summary.leftover_bytes, total - summary.consumed_bytes);
     }
 
+    fn make_cluster_header(record_count: u32, body_len: u32) -> Vec<u8> {
+        let mut h = Vec::new();
+        h.extend_from_slice(&0x6C90_F544u32.to_le_bytes()); // CLUSTER_MAGIC
+        h.extend_from_slice(&record_count.to_le_bytes());
+        h.extend_from_slice(&0u16.to_le_bytes()); // stream_type
+        h.extend_from_slice(&body_len.to_le_bytes());
+        h.extend_from_slice(&0u16.to_le_bytes()); // flags
+        h
+    }
+
+    #[test]
+    fn cluster_streams_are_registered_with_header_only_coverage() {
+        // /StyleCluster fixture: header (16B) + opaque body (32B).
+        let mut style = make_cluster_header(0, 0);
+        style.extend_from_slice(&[0xAB; 32]);
+        // /Dynamic Attributes Metadata fixture: header + body.
+        let mut da_meta = make_cluster_header(0, 0);
+        da_meta.extend_from_slice(&[0xCD; 16]);
+
+        let pkg = pkg_with_streams(&[
+            ("/StyleCluster", style.clone()),
+            ("/Dynamic Attributes Metadata", da_meta.clone()),
+        ]);
+
+        let report = byte_audit_report(&pkg);
+        assert!(report.unregistered_paths.is_empty());
+
+        let style_summary = &report.per_stream["/StyleCluster"];
+        assert_eq!(
+            style_summary.parser_name.as_deref(),
+            Some("parse_cluster_header")
+        );
+        assert_eq!(style_summary.consumed_bytes, 16);
+        assert_eq!(style_summary.leftover_bytes, style.len() as u64 - 16);
+
+        let da_summary = &report.per_stream["/Dynamic Attributes Metadata"];
+        assert_eq!(
+            da_summary.parser_name.as_deref(),
+            Some("parse_cluster_header")
+        );
+        assert_eq!(da_summary.consumed_bytes, 16);
+        assert_eq!(da_summary.leftover_bytes, da_meta.len() as u64 - 16);
+    }
+
+    #[test]
+    fn unclustered_dynamic_attributes_traces_31_byte_record_trailers() {
+        // Build a stream with one synthetic trailer-bearing PIDAttributes
+        // record. Layout matches `dynamic_attr_records::tests::
+        // make_synthetic_da_body_with_one_trailer` so the assertions
+        // stay anchored to the same fixture used in the unit tests.
+        let mut data = vec![0x00];
+        data.extend_from_slice(b"P&IDAttributes");
+        data.extend_from_slice(&[0xAB; 5]);
+        let mut trailer = Vec::with_capacity(31);
+        trailer.extend_from_slice(&[0x89, 0x00]);
+        trailer.extend_from_slice(&100u32.to_le_bytes());
+        trailer.extend_from_slice(&7u32.to_le_bytes());
+        trailer.extend_from_slice(&[0u8; 8]);
+        trailer.extend_from_slice(&0x0000_03B7u32.to_le_bytes());
+        trailer.extend_from_slice(&[0xFF, 0xFF]);
+        trailer.extend_from_slice(&0x0000_00EAu32.to_le_bytes());
+        trailer.extend_from_slice(&[0x14, 0x00, 0x00]);
+        data.extend_from_slice(&trailer);
+
+        let pkg = pkg_with_streams(&[("/Unclustered Dynamic Attributes", data.clone())]);
+        let report = byte_audit_report(&pkg);
+        let summary = &report.per_stream["/Unclustered Dynamic Attributes"];
+        assert_eq!(
+            summary.parser_name.as_deref(),
+            Some("scan_da_record_trailers")
+        );
+        assert_eq!(
+            summary.consumed_bytes, 31,
+            "exactly one 31-byte trailer should be consumed; got {}",
+            summary.consumed_bytes
+        );
+        assert_eq!(summary.leftover_bytes, data.len() as u64 - 31);
+    }
+
+    #[test]
+    fn psm_cluster0_stream_traces_header_locator_and_string_table() {
+        let mut data = make_cluster_header(0, 0);
+        // 12-byte locator gap (Probed).
+        data.extend_from_slice(&[0u8; 12]);
+        // Two string-table entries anchored at the entry-2 marker.
+        data.extend_from_slice(&1u32.to_le_bytes()); // entry 1 index
+        data.extend_from_slice(&4u32.to_le_bytes()); // byte_len
+        data.extend_from_slice(&utf16le("AB"));
+        data.extend_from_slice(&2u32.to_le_bytes()); // entry 2 index
+        data.extend_from_slice(&4u32.to_le_bytes());
+        data.extend_from_slice(&utf16le("CD"));
+        // sentinel
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
+
+        let pkg = pkg_with_streams(&[("/PSMcluster0", data.clone())]);
+        let report = byte_audit_report(&pkg);
+        let summary = &report.per_stream["/PSMcluster0"];
+        assert_eq!(summary.parser_name.as_deref(), Some("parse_psm_cluster0"));
+        assert_eq!(
+            summary.consumed_bytes,
+            data.len() as u64,
+            "header + locator gap + string table sentinel must cover every byte",
+        );
+        assert_eq!(summary.leftover_bytes, 0);
+    }
+
+    #[test]
+    fn summary_streams_are_registered_and_fully_consumed() {
+        // Minimal PropertySetStream: 28-byte prefix + 20-byte section
+        // header + 16-byte section body (size + 1 prop + VT_LPSTR).
+        let prop_payload = {
+            let mut v = Vec::new();
+            v.extend_from_slice(&0x0000_001Eu32.to_le_bytes()); // VT_LPSTR
+            let bytes = b"Title\0";
+            v.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            v.extend_from_slice(bytes);
+            v
+        };
+        let header_len = 8 + 8;
+        let total = header_len + prop_payload.len();
+        let mut section = Vec::new();
+        section.extend_from_slice(&(total as u32).to_le_bytes());
+        section.extend_from_slice(&1u32.to_le_bytes());
+        section.extend_from_slice(&2u32.to_le_bytes()); // PROPID 2 = Title
+        section.extend_from_slice(&(header_len as u32).to_le_bytes());
+        section.extend_from_slice(&prop_payload);
+
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&0xFFFEu16.to_le_bytes()); // ByteOrder
+        stream.extend_from_slice(&0u16.to_le_bytes()); // Version
+        stream.extend_from_slice(&0u32.to_le_bytes()); // SystemIdentifier
+        stream.extend_from_slice(&[0u8; 16]); // CLSID
+        stream.extend_from_slice(&1u32.to_le_bytes()); // NumPropertySets
+        stream.extend_from_slice(&[
+            0xE0, 0x85, 0x9F, 0xF2, 0xF9, 0x4F, 0x68, 0x10, 0xAB, 0x91, 0x08, 0x00, 0x2B, 0x27,
+            0xB3, 0xD9,
+        ]); // FMTID_SUMMARY
+        let section_offset: u32 = 28 + 20;
+        stream.extend_from_slice(&section_offset.to_le_bytes());
+        stream.extend_from_slice(&section);
+
+        let pkg = pkg_with_streams(&[
+            (SUMMARY_INFO_PATH, stream.clone()),
+            (DOC_SUMMARY_PATH, stream.clone()),
+        ]);
+
+        let report = byte_audit_report(&pkg);
+        assert!(report.unregistered_paths.is_empty());
+        for path in [SUMMARY_INFO_PATH, DOC_SUMMARY_PATH] {
+            let summary = &report.per_stream[path];
+            assert_eq!(
+                summary.parser_name.as_deref(),
+                Some("parse_summary_property_set"),
+                "expected summary trace for {path}"
+            );
+            assert_eq!(
+                summary.consumed_bytes,
+                stream.len() as u64,
+                "every byte must be claimed for fully-decoded fixture at {path}"
+            );
+            assert_eq!(summary.leftover_bytes, 0, "no leftover for {path}");
+        }
+    }
+
     #[test]
     fn sheet_streams_are_registered_with_partial_text_run_coverage() {
         let mut data = vec![0x11; 8];
@@ -440,6 +640,45 @@ mod tests {
         assert!(summary.consumed_bytes > 0);
         assert!(summary.consumed_bytes < total);
         assert_eq!(summary.leftover_bytes, total - summary.consumed_bytes);
+    }
+
+    #[test]
+    fn sheet_endpoint_records_get_traced_alongside_text_runs() {
+        // Build a sheet stream that contains both an ASCII text run and
+        // a 26-byte endpoint record. Both should land inside the
+        // consumed bucket; the leftover region must shrink relative to
+        // a stream with text runs only.
+        let mut data = vec![0x33; 8];
+        data.extend_from_slice(b"TAG-RUN-ASCII"); // text run candidate
+        data.extend_from_slice(&[0x00, 0x00]);
+        // Endpoint record signature (26B):
+        // u32 rel_fx | u32=0x06 | 6×0 | u16=0x02 | u32 ep_a | u16=0x01 | u32 ep_b
+        let mut endpoint = Vec::new();
+        endpoint.extend_from_slice(&0x0000_03B7u32.to_le_bytes());
+        endpoint.extend_from_slice(&0x0000_0006u32.to_le_bytes());
+        endpoint.extend_from_slice(&[0u8; 6]);
+        endpoint.extend_from_slice(&0x0002u16.to_le_bytes());
+        endpoint.extend_from_slice(&0x0000_02E4u32.to_le_bytes());
+        endpoint.extend_from_slice(&[0x01, 0x00]);
+        endpoint.extend_from_slice(&0x0000_008Bu32.to_le_bytes());
+        data.extend_from_slice(&endpoint);
+        data.extend_from_slice(&[0x44; 8]);
+        let total = data.len() as u64;
+
+        let pkg = pkg_with_streams(&[("/Sheet6", data)]);
+        let report = byte_audit_report(&pkg);
+        let summary = &report.per_stream["/Sheet6"];
+        assert_eq!(summary.parser_name.as_deref(), Some("probe_sheet_stream"));
+        // 26-byte endpoint record + ASCII text run must show up inside
+        // the consumed total. We assert the lower bound rather than
+        // exact bytes so the test stays robust if `sheet_probe`
+        // tightens text-run heuristics in the future.
+        assert!(
+            summary.consumed_bytes >= 26,
+            "expected at least the 26B endpoint record to be claimed; got {}",
+            summary.consumed_bytes
+        );
+        assert!(summary.consumed_bytes < total);
     }
 
     #[test]

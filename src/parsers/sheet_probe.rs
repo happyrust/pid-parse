@@ -548,7 +548,7 @@ fn coordinate_hints(data: &[u8]) -> Vec<SheetCoordinateHint> {
     let mut out = Vec::new();
     let mut i = 0usize;
     while i + 8 <= data.len() && out.len() < MAX_HINTS {
-        if i % 4 != 0 {
+        if !i.is_multiple_of(4) {
             i += 1;
             continue;
         }

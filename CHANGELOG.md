@@ -2,6 +2,108 @@
 
 ## [Unreleased]
 
+### Byte audit DA record trailer trace
+
+`parsers::dynamic_attr_records` 新增
+`scan_da_record_trailers_with_trace` —— 复用既有
+`extract_record_trailers` 的 31 字节固定 trailer 解码，把每个
+`P&IDAttributes` 记录末尾的 trailer (`0x89 0x00` marker / size /
+record_id / 8B padding / field_x / `0xFFFF` separator / class_id /
+`0x14 0x00 0x00` tail) 以 `TraceConfidence::Decoded` 计入 consumed。
+
+`byte_audit::aggregate` 把 `/Unclustered Dynamic Attributes` 接到这条
+新 dispatch；high-heuristic 的 record body 继续作为 leftover 留给
+未来更深一层的 Phase 11a-probe 工作，但 trailer 这层确凿结构现在已
+经是 byte-audit 视图的一部分。
+
+验证：
+- `cargo test parsers::dynamic_attr_records --lib`（18 测试，含 2
+  个新 trace 测试）
+- `cargo test --lib byte_audit::aggregate::tests::unclustered -- --nocapture`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+
+### Byte audit Sheet endpoint records trace
+
+`parsers::sheet_endpoint_records` 新增
+`scan_endpoint_records_with_trace` —— 不依赖 DA 侧 `rel_field_xs`
+集合的自包含扫描器。利用 26 字节 endpoint record 内固定的 14 字节
+discriminator (`0x0000_0006` / `6× 0x00` / `0x0002` / `0x0001`)
+逐字节匹配，每个命中的 26 字节区域以
+`TraceConfidence::Probed` 计入 consumed。
+
+`byte_audit::aggregate` 的 `/Sheet*` dispatch 在既有
+`probe_sheet_stream` text-run trace 之后追加这一扫描，让 Sheet 流
+里的关系端点对记录进入字节预算并清出 leftover 列表，配合 Phase 6
+端点解码工作把 byte-audit 视图对齐到业务模型已知的 record 边界。
+
+验证：
+- `cargo test parsers::sheet_endpoint_records --lib`（10 测试，含 3
+  个新 trace 测试）
+- `cargo test --lib byte_audit::aggregate::tests::sheet -- --nocapture`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+
+### Byte audit cluster header trace
+
+`parsers::cluster_header` 现在提供 `parse_header_with_trace` /
+`parse_string_table_with_trace` / `parse_psm_cluster0_with_trace`
+三个 trace-aware 入口；`parse_header` 与 `parse_string_table` 改为 thin
+wrapper，保持既有调用方（`streams::cluster`、`streams::sheet_probe`
+间接路径）行为零变化。
+
+`byte_audit_report` 把 `/PSMcluster0` / `/StyleCluster` /
+`/Dynamic Attributes Metadata` 三条 cluster-family 顶层流挂上 trace：
+
+- `parse_cluster_header` 把 16 字节公共头（magic / `record_count` /
+  `stream_type` / `body_len` / flags）以 `TraceConfidence::Decoded` 计
+  入 consumed，已知 cluster 结构的精准前缀就此从 leftover 列表里消失
+- `/PSMcluster0` 走 `parse_psm_cluster0_with_trace`：cluster header 之外，
+  heuristic locator 区间 `[16..table_start]` 标记为 `Probed`（位置已知，
+  字段语义未命名），随后逐条 string-table entry 的 `(index, byte_len)`
+  头与 UTF-16LE payload 全部 `Decoded`
+- `/StyleCluster` / `/Dynamic Attributes Metadata` 仅 trace 16 字节
+  公共头；body 对应的 PartiallyDecoded 字节继续作为 leftover 留待
+  Phase 11a-probe 后续工作
+
+验证：
+- `cargo test parsers::cluster_header --lib`（8 个新单测全绿）
+- `cargo test --lib byte_audit::aggregate::tests::cluster -- --nocapture`
+- `cargo test --lib byte_audit::aggregate::tests::psm_cluster0 -- --nocapture`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+
+### Byte audit Summary streams trace
+
+新增 `pid_parse::parsers::summary::parse_summary_property_set_with_trace`
+作为 OLE PropertySetStream（`/\x05SummaryInformation` +
+`/\x05DocumentSummaryInformation`）的纯 trace walker，并在
+`byte_audit_report` 里注册这两条 stream，让 fully-decoded 的 Summary
+section 能把 28 字节 PropertySetStream prefix、20 字节 section header、
+8 字节 section body header、N×8 字节 PROPID/offset 表，以及
+VT_LPSTR / VT_LPWSTR / VT_I4 / VT_BOOL / VT_FILETIME 等已识别 typed
+value 全部以 `TraceConfidence::Decoded` 计入 consumed。
+DocumentSummaryInformation section 2 的 user dictionary（PROPID 0）
+按 LPSTR variant 完整 walk；未识别 VT 仅消耗 4 字节 tag 为 `Probed`，
+payload 留作 leftover 暴露未解读区域。
+
+walker 与既有 `streams::summary::parse_summary_streams` 业务解码
+独立，不依赖任何额外公开 API surface；语义模型仍由 `streams` 层
+负责，byte-audit 只跟踪覆盖率，符合 Phase 12b-1 系列的"thin parallel
+implementation"模式。
+
+附带顺手把 `parsers::sheet_probe::coordinate_hints` 的
+`i % 4 != 0` 表达替换为 `!i.is_multiple_of(4)` —— 触发原因是
+nightly clippy 0.1.96 启用了 `manual_is_multiple_of` lint，sheet
+chunk probe 的 alignment 检查代码被踢出 `-D warnings` 安全区，
+单行替换即可恢复 5 个 pre-commit gate 的零警告状态。
+
+验证：
+- `cargo test parsers::summary --lib`（8 个新单测全绿）
+- `cargo test --lib byte_audit::aggregate::tests::summary -- --nocapture`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+
 ### Optional byte audit baseline runner
 
 新增 `.github/scripts/check-byte-audit-baselines.sh`，扫描

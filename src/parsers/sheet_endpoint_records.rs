@@ -27,6 +27,7 @@
 
 use std::collections::HashSet;
 
+use crate::byte_audit::{ByteRange, ParserTraceBuilder, TraceConfidence};
 use crate::model::SheetEndpointRecord;
 
 /// Constant `u32` at offset `+4` that marks an endpoint record.
@@ -96,6 +97,54 @@ fn u32_le(data: &[u8], p: usize) -> u32 {
 
 fn u16_le(data: &[u8], p: usize) -> u16 {
     u16::from_le_bytes([data[p], data[p + 1]])
+}
+
+/// Phase 12b-1g self-contained byte-audit scan for endpoint records.
+///
+/// Unlike [`parse_endpoint_records`] this variant does **not** require
+/// the caller to supply the `rel_field_xs` set — the 14 fixed bytes of
+/// the 26-byte record (the `0x0000_0006` discriminator at `+4`, six
+/// zero bytes at `+8..+14`, the `0x0002` type tag at `+14`, and the
+/// `0x0001` delimiter at `+20`) are tight enough that random
+/// occurrences inside a Sheet stream are extremely unlikely. Each
+/// match is consumed as a single 26-byte `Probed` range, mirroring the
+/// confidence the Phase 6 reverse-engineering notes attach to these
+/// records.
+///
+/// Returns the count of records claimed; callers may ignore it but the
+/// number is useful for unit assertions.
+pub fn scan_endpoint_records_with_trace(data: &[u8], trace: &mut ParserTraceBuilder) -> usize {
+    if data.len() < 26 {
+        return 0;
+    }
+    let end = data.len() - 26;
+    let mut hits = 0usize;
+    let mut i = 0usize;
+    while i <= end {
+        if u32_le(data, i + 4) != DISCRIMINATOR {
+            i += 1;
+            continue;
+        }
+        if !data[i + 8..i + 14].iter().all(|&b| b == 0) {
+            i += 1;
+            continue;
+        }
+        if u16_le(data, i + 14) != ENDPOINT_TYPE_TAG {
+            i += 1;
+            continue;
+        }
+        if u16_le(data, i + 20) != ENDPOINT_DELIMITER {
+            i += 1;
+            continue;
+        }
+        trace.consume(
+            ByteRange::new(i as u64, (i + 26) as u64),
+            TraceConfidence::Probed,
+        );
+        hits += 1;
+        i += 26;
+    }
+    hits
 }
 
 #[cfg(test)]
@@ -202,5 +251,57 @@ mod tests {
         assert_eq!(r[1].rel_field_x, 0x03B9);
         assert_eq!(r[1].endpoint_a, 0x008B);
         assert_eq!(r[1].endpoint_b, 0x0146);
+    }
+
+    #[test]
+    fn trace_aware_scan_consumes_each_match_as_26b_probed_range() {
+        let mut buf = vec![0u8; 16];
+        buf.extend_from_slice(&endpoint_bytes(0x03B7, 0x02E4, 0x008B));
+        buf.extend_from_slice(&[0xAA; 8]);
+        buf.extend_from_slice(&endpoint_bytes(0x03B9, 0x008B, 0x0146));
+        buf.extend_from_slice(&[0xBB; 4]); // trailing leftover
+
+        let mut trace = ParserTraceBuilder::new("scan_endpoint_records");
+        let hits = scan_endpoint_records_with_trace(&buf, &mut trace);
+        assert_eq!(hits, 2);
+
+        let trace = trace.build("/Sheet6", buf.len() as u64);
+        // 2 hits × 26B = 52 bytes consumed as Probed.
+        let probed_total: u64 = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Probed)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(ByteRange::len)
+            .sum();
+        assert_eq!(probed_total, 52);
+        assert_eq!(trace.consumed_bytes(), 52);
+        assert_eq!(trace.leftover_bytes(), buf.len() as u64 - 52);
+    }
+
+    #[test]
+    fn trace_aware_scan_skips_records_with_corrupt_discriminator() {
+        let mut buf = vec![0u8; 8];
+        let mut bad = endpoint_bytes(0x03B7, 0x02E4, 0x008B);
+        bad[4..8].copy_from_slice(&[0x07, 0x00, 0x00, 0x00]); // wrong
+        buf.extend_from_slice(&bad);
+        buf.extend_from_slice(&endpoint_bytes(0x03B9, 0x008B, 0x0146));
+
+        let mut trace = ParserTraceBuilder::new("scan_endpoint_records");
+        let hits = scan_endpoint_records_with_trace(&buf, &mut trace);
+        assert_eq!(hits, 1, "only the second (well-formed) record must claim");
+        let trace = trace.build("/Sheet6", buf.len() as u64);
+        assert_eq!(trace.consumed_bytes(), 26);
+    }
+
+    #[test]
+    fn trace_aware_scan_short_streams_yield_no_consumes() {
+        let buf = vec![0u8; 20]; // < 26
+        let mut trace = ParserTraceBuilder::new("scan_endpoint_records");
+        let hits = scan_endpoint_records_with_trace(&buf, &mut trace);
+        assert_eq!(hits, 0);
+        let trace = trace.build("/Sheet6", buf.len() as u64);
+        assert_eq!(trace.consumed_bytes(), 0);
     }
 }

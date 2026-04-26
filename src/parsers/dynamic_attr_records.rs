@@ -7,6 +7,7 @@
 //! The record layout is recovered heuristically from observed hex
 //! dumps — see module-local comments for the magic-byte signatures.
 
+use crate::byte_audit::{ByteRange, ParserTraceBuilder, TraceConfidence};
 use crate::model::{
     AttributeField, AttributeRecord, AttributeValue, DaRecordTrailer, ProbeSummary,
 };
@@ -496,6 +497,34 @@ fn find_last(hay: &[u8], needle: &[u8]) -> Option<usize> {
     None
 }
 
+/// Phase 12b-1h trace-aware scan for the 31-byte per-record trailers that
+/// terminate every `P&IDAttributes` record in the
+/// `/Unclustered Dynamic Attributes` stream.
+///
+/// The trailer signature is tight enough (`0x89 0x00` marker + 8 zero
+/// padding bytes + `0xFFFF` separator + `0x14 0x00 0x00` tail; see
+/// [`extract_record_trailers`]) to use as a self-contained byte-audit
+/// landmark without external context. Every located trailer is consumed
+/// as a 31-byte `Decoded` range; the surrounding heuristic record body
+/// keeps surfacing as leftover, which is the desired Phase 11a-probe
+/// behaviour.
+///
+/// Returns the number of trailers traced — useful for unit assertions.
+pub fn scan_da_record_trailers_with_trace(data: &[u8], trace: &mut ParserTraceBuilder) -> usize {
+    let trailers = extract_record_trailers(data);
+    let total = data.len() as u64;
+    let mut hits = 0usize;
+    for t in &trailers {
+        let start = t.trailer_offset as u64;
+        let end = start + 31;
+        if end <= total {
+            trace.consume(ByteRange::new(start, end), TraceConfidence::Decoded);
+            hits += 1;
+        }
+    }
+    hits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,5 +713,87 @@ mod tests {
         let (value, _) = read_attribute_value(&data, &mut cursor, data.len());
         assert!(matches!(value, AttributeValue::Empty));
         assert_eq!(cursor, 1, "null byte should advance cursor by 1");
+    }
+
+    /// Build a synthetic `Unclustered Dynamic Attributes` body that contains
+    /// the minimum bytes `extract_record_trailers` needs to recover one
+    /// trailer:
+    /// - record body opens with `\0P&IDAttributes` (15 bytes; the leading
+    ///   NUL satisfies the "previous byte must be 0x00 / 0x01" guard
+    ///   in `find_pidattributes_record_starts`)
+    /// - 5 bytes of opaque body
+    /// - 31-byte trailer matching the validated signature
+    fn make_synthetic_da_body_with_one_trailer() -> Vec<u8> {
+        let mut data = Vec::new();
+        data.push(0x00); // start with 0x00 so PIDAttributes guard fires
+        data.extend_from_slice(b"P&IDAttributes");
+        data.extend_from_slice(&[0xAB; 5]); // opaque body
+        let trailer_start = data.len();
+
+        // Trailer (31 bytes):
+        //   +0..2   0x89 0x00
+        //   +2..6   size (u32 LE)
+        //   +6..10  record_id (u32 LE)
+        //   +10..18 8 zero pad bytes
+        //   +18..22 field_x (u32 LE)
+        //   +22..24 0xFF 0xFF
+        //   +24..28 class_id (u32 LE)
+        //   +28..31 0x14 0x00 0x00
+        let mut trailer = Vec::with_capacity(31);
+        trailer.extend_from_slice(&[0x89, 0x00]); // marker
+        trailer.extend_from_slice(&100u32.to_le_bytes()); // size
+        trailer.extend_from_slice(&7u32.to_le_bytes()); // record_id
+        trailer.extend_from_slice(&[0u8; 8]); // padding
+        trailer.extend_from_slice(&0x0000_03B7u32.to_le_bytes()); // field_x
+        trailer.extend_from_slice(&[0xFF, 0xFF]); // separator
+        trailer.extend_from_slice(&0x0000_00EAu32.to_le_bytes()); // class_id (drawing)
+        trailer.extend_from_slice(&[0x14, 0x00, 0x00]); // tail
+        assert_eq!(trailer.len(), 31);
+        data.extend_from_slice(&trailer);
+        // The current `extract_record_trailers` implementation derives the
+        // trailer's end position from the next record start (or
+        // `data.len()` for the last record); the trailer signature check
+        // walks back 31 bytes from that boundary. So no further padding
+        // is required — `data.len()` already aligns with the trailer end.
+        let _ = trailer_start;
+        data
+    }
+
+    #[test]
+    fn trace_aware_da_trailer_scan_consumes_31_bytes_per_trailer() {
+        let data = make_synthetic_da_body_with_one_trailer();
+
+        // Sanity-check the synthetic fixture: extract_record_trailers
+        // should find exactly one trailer.
+        let trailers = extract_record_trailers(&data);
+        assert_eq!(trailers.len(), 1, "fixture must yield exactly one trailer");
+
+        let mut trace = ParserTraceBuilder::new("scan_da_record_trailers");
+        let hits = scan_da_record_trailers_with_trace(&data, &mut trace);
+        assert_eq!(hits, 1);
+
+        let trace = trace.build("/Unclustered Dynamic Attributes", data.len() as u64);
+        // Trailer = 31 bytes, decoded.
+        let decoded = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Decoded)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].len(), 31);
+        assert_eq!(trace.consumed_bytes(), 31);
+        assert_eq!(trace.leftover_bytes(), data.len() as u64 - 31);
+    }
+
+    #[test]
+    fn trace_aware_da_trailer_scan_returns_zero_when_no_trailers_present() {
+        // Garbage data — no `P&IDAttributes` markers, no trailer signatures.
+        let data = vec![0xCD; 64];
+        let mut trace = ParserTraceBuilder::new("scan_da_record_trailers");
+        let hits = scan_da_record_trailers_with_trace(&data, &mut trace);
+        assert_eq!(hits, 0);
+        let trace = trace.build("/Unclustered Dynamic Attributes", data.len() as u64);
+        assert_eq!(trace.consumed_bytes(), 0);
+        assert_eq!(trace.leftover_bytes(), data.len() as u64);
     }
 }
