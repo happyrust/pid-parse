@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.11.3] — 2026-04-26
+
+### `missing_docs` warn → deny 升级
+
+把 `src/lib.rs` 顶部的 `missing_docs` 从 `#![warn(...)]` 列表移到
+`#![deny(...)]` 块，与 v0.11.2 已经 deny 的两个 rustdoc lint
+（`broken_intra_doc_links` / `private_intra_doc_links`）合为
+**三道完整 rustdoc 防回归门禁**：
+
+```rust
+#![deny(
+    missing_docs,
+    rustdoc::broken_intra_doc_links,
+    rustdoc::private_intra_doc_links
+)]
+```
+
+升级前提：`cargo rustdoc --lib --locked -- -W missing-docs` 实测 0 个
+`missing_docs` warning，已经在 v0.11.2 自然达成 baseline。本次只是把
+warn 级别提升到 deny，不需要补任何文档。从此任何 commit 引入未文档化
+的公开 item 直接 fail rustdoc gate，不再依赖 reviewer 主动检查。
+
+`#![warn(clippy::*)]` 现存 10 个 pedantic lint 规则保持 warn 不动，
+保留 codebase 增量降噪空间。
+
+验证（5 道 pre-commit gate 全绿）：
+
+- `cargo build --workspace --locked`
+- `cargo test --workspace --locked --all-targets`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+- `cargo rustdoc --lib --locked`（命令行不再需要 `-W missing-docs`，
+  因为源代码已经 deny；EXIT=0, 0 warning, 0 error）
+
 ## [0.11.2] — 2026-04-26
 
 ### Rustdoc intra-doc-link 防回归门禁
