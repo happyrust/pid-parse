@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### docs：`byte-audit-guide.md` 新增 "Programmatic API" 章节
+
+在 `docs/byte-audit-guide.md` 的 JSON Output 之后插入新章节，向库级
+消费者交代 byte-audit 的程序化入口：
+
+- `pid_parse::byte_audit::aggregate::byte_audit_report(&PidPackage)`
+- `pid_parse::byte_audit::compare::compare_byte_audit_reports`
+- 完整 re-export 列表：`ByteAuditReport` / `StreamAuditSummary` /
+  `ByteAuditComparison` / `ParserTrace` / `ParserTraceBuilder` /
+  `ByteRange` / `TraceConfidence`。
+- 强调 `Serialize`/`Deserialize`/`JsonSchema` 与 `--byte-audit --json`
+  的同 schema round-trip。
+- cross-link `examples/byte_audit_demo.rs` 作为零 fixture 入门样板。
+
+不动 lib API、CLI surface、parser 行为，纯文档增强。
+
 ### examples：`byte_audit_demo` 演示字节审计框架的程序化入口
 
 新增 `examples/byte_audit_demo.rs`，用 4 条合成 stream 演示

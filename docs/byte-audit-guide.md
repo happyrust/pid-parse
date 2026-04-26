@@ -98,6 +98,51 @@ probe. Only non-overlapping printable text runs are marked as `Probed` today;
 candidate chunks, record-type counts, and coordinate hints remain
 reverse-engineering evidence and do not count as consumed geometry bytes yet.
 
+## Programmatic API
+
+The byte-audit framework is also exposed as a library-level surface, so
+downstream consumers can produce / compare reports without going through the
+`pid_inspect` binary.
+
+Main entry points:
+
+- `pid_parse::byte_audit::aggregate::byte_audit_report(&PidPackage) -> ByteAuditReport`
+  — generate a full report for an in-memory `PidPackage`.
+- `pid_parse::byte_audit::compare::compare_byte_audit_reports(baseline, current) -> ByteAuditComparison`
+  — pure-data baseline diff; classifies coverage deltas as
+  `regressions` (`OverallCoverageDecreased`, `StreamMissing`,
+  `StreamConsumedBytesDecreased`, `StreamBecameUnregistered`) or
+  `improvements` (`StreamBecameTraced`, `NewTracedStream`).
+
+Re-exported types (`pid_parse::byte_audit::*`):
+
+- `ByteAuditReport` — package-level summary with `traces`, `per_stream`,
+  `unregistered_paths`, and overall byte counters.
+- `StreamAuditSummary` — per-stream rollup (`path`, `total_bytes`,
+  `consumed_bytes`, `leftover_bytes`, `coverage_ratio`, `parser_name`).
+- `ByteAuditComparison` — `regressions` + `improvements` + `is_clean()`.
+- `ParserTrace` / `ParserTraceBuilder` / `ByteRange` / `TraceConfidence`
+  (`Decoded` / `Probed`) — low-level building blocks for new
+  `_with_trace` parsers.
+
+Both `ByteAuditReport` and `ByteAuditComparison` derive `Serialize` /
+`Deserialize` / `JsonSchema`, so they round-trip through the same JSON shape
+as `--byte-audit --json` and can be diffed in CI without re-running the
+binary.
+
+A complete zero-fixture demo lives in `examples/byte_audit_demo.rs`:
+
+```bash
+cargo run --example byte_audit_demo
+```
+
+It builds a 4-stream synthetic `PidPackage` (`/PSMsegmenttable`,
+`/DocVersion2`, `/TaggedTxtData/Drawing`, `/MysteryStream`), prints a
+per-stream + overall breakdown, serializes the report, and runs a baseline
+diff that surfaces both `OverallCoverageDecreased` and
+`StreamConsumedBytesDecreased` regressions. Use it as the entry-point sample
+when integrating the framework into a downstream service or CI tool.
+
 ## Baseline Rules
 
 Once real `.pid` fixtures are available under `test-file/`, baseline checks
