@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-04-26
+
+> 主线：完整建立字节审计（byte-audit）框架 + 公共 API rustdoc 收口。
+> 自 v0.10.0 (2026-04-24) 以来累积的全部 [Unreleased] 内容打包为本
+> 版本，无破坏性变更：所有现有 parser/writer/CLI surface 维持兼容；
+> 字节审计 framework 与 `_with_trace` parser 入口为新增公共 surface。
+>
+> 主要主题：
+>
+> - **Phase 12b 字节审计**：引入 `byte_audit::aggregate::byte_audit_report`
+>   + 17 流注册分发（Summary / cluster / DA records / DA landmarks /
+>   sheet endpoint records / TaggedTxtData XML / JProperties / Sheet
+>   text run / PSM 三表 / DocVersion 2&3 / AppObject / JTaggedTxtStgList），
+>   `--byte-audit` CLI + `--byte-audit-baseline` 比较器（regression /
+>   improvement 分类 + 退出码 3）；roadmap Phase 4 字节级
+>   consumed/leftover 验证由"部分"提升到"框架完备"。
+> - **`PSMspacemap` 顶层 storage 识别**：`KNOWN_TOP_LEVEL_STORAGE_PREFIXES`
+>   补齐，`unidentified_top_level_streams` / coverage 报告不再把它误标
+>   为 Unknown。
+> - **Public API rustdoc Tier 1/2/3 全收口** + `#![warn(missing_docs)]`
+>   硬门禁，未来公共项缺文档直接 fail CI。
+> - **架构文档 / Pedantic clippy 第二轮 / vendored `oxidized-mdf`
+>   lint gate / examples walkthrough / criterion baseline** 等若干基础
+>   设施提升。
+>
+> 详细子项见下方各 `### …` 段落（按合并时间倒序）。
+
 ### 把 PSMspacemap 识别为顶层 storage 前缀
 
 `KNOWN_TOP_LEVEL_STORAGE_PREFIXES` 增加 `"PSMspacemap"` —— 真实
