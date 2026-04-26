@@ -722,12 +722,14 @@ fn collect_edited_paths_from_plan(plan: &WritePlan) -> BTreeSet<String> {
     }
     if !plan.metadata_updates.summary_updates.is_empty()
         || !plan.metadata_updates.summary_deletions.is_empty()
+        || !plan.metadata_updates.summary_updates_encoded.is_empty()
     {
-        // Phase 9m/9n: any summary_updates or summary_deletions key could
-        // target either the SummaryInformation or DocumentSummaryInformation
-        // section. We conservatively mark both; streams not actually
-        // rewritten will still fall into the `matched` bucket on byte
-        // equality.
+        // Phase 9m/9n + 12b-2 (parser-api-consistency Task 1):
+        // summary_updates / summary_deletions / summary_updates_encoded
+        // can each target SummaryInformation 或 DocumentSummaryInformation
+        // section. We conservatively mark both paths as edited; streams
+        // that turn out byte-equal (no real rewrite) still drop into the
+        // `matched` bucket via the equality check below.
         set.insert(pid_parse::writer::summary_write::SUMMARY_INFO_PATH.to_string());
         set.insert(pid_parse::writer::summary_write::DOC_SUMMARY_PATH.to_string());
     }

@@ -1024,3 +1024,70 @@ fn validate_set_summary_encoded_usage_error_on_missing_colon() {
     let _ = std::fs::remove_file(&src);
     let _ = std::fs::remove_file(&dst);
 }
+
+/// Task 1 of `docs/plans/2026-04-26-parser-api-consistency-fixes.md`:
+/// `pid_writer_validate` 的 `collect_edited_paths_from_plan` 现在也要把
+/// `metadata_updates.summary_updates_encoded` 计入 edited summary streams,
+/// 与 `summary_updates` / `summary_deletions` 对称. 不在 edited paths
+/// 里时 SummaryInformation 重写后会被错误归为 mismatch (而不是 edited).
+#[test]
+fn validate_apply_plan_summary_updates_encoded_marks_summary_streams_edited() {
+    let src = unique_temp("plan-summary-encoded-src");
+    let dst = unique_temp("plan-summary-encoded-dst");
+    let plan = plan_path("summary-encoded");
+    build_fixture_with_summary(&src, "OldTitle");
+
+    // WritePlan with only `summary_updates_encoded` set (Phase 10i path).
+    // The validator must mark SummaryInformation as edited, matching how
+    // `summary_updates` / `summary_deletions` are already handled.
+    let body = r#"{
+        "metadata_updates": {
+            "summary_updates_encoded": {
+                "title": {"value": "PLAN-ENCODED", "encoding": "windows-1252"}
+            }
+        }
+    }"#;
+    write_plan(&plan, body);
+
+    let output = Command::new(binary_path())
+        .arg(&src)
+        .args(["--out".as_ref(), dst.as_os_str()])
+        .arg("--keep")
+        .arg("--json")
+        .args(["--apply-plan".as_ref(), plan.as_os_str()])
+        .output()
+        .expect("spawn --apply-plan summary-encoded");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected exit 0; got {:?}; stderr={stderr}; stdout={stdout}",
+        output.status.code()
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout must be valid JSON");
+    assert_eq!(parsed["ok"], serde_json::json!(true));
+    assert_eq!(
+        parsed["edited"],
+        serde_json::json!(1),
+        "SummaryInformation must count as edited (Task 1: validator picks up summary_updates_encoded). Full report: {parsed}"
+    );
+    assert_eq!(
+        parsed["mismatched"],
+        serde_json::json!(0),
+        "no mismatches; encoded summary write is a registered edit. Full report: {parsed}"
+    );
+
+    // 真实写出: title 必须变成 PLAN-ENCODED (apply_summary_updates_encoded
+    // 真的跑了, 不只是 mark edited).
+    assert_eq!(
+        read_title_from_pid(&dst).as_deref(),
+        Some("PLAN-ENCODED"),
+        "destination must contain the encoded-update title"
+    );
+
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+    let _ = std::fs::remove_file(&plan);
+}

@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+## [0.11.5] — 2026-04-26
+
+### `pid_writer_validate` 把 `summary_updates_encoded` 计入 edited paths
+
+`docs/plans/2026-04-26-parser-api-consistency-fixes.md` Task 1 落地。
+`pid_writer_validate` 的 `collect_edited_paths_from_plan` 之前只检查
+`metadata_updates.summary_updates` 与 `summary_deletions` 来标记
+SummaryInformation / DocumentSummaryInformation 路径为 edited，
+`summary_updates_encoded`（Phase 10i 引入的 code-page-aware property
+update 通道）被遗漏，导致只用 encoded 通道的 plan 跑 round-trip 后
+SummaryInformation 重写后的 stream 会被错误归为 mismatch（而不是
+expected edit）。
+
+修复：
+
+- `src/bin/pid_writer_validate.rs`：判定条件追加
+  `|| !plan.metadata_updates.summary_updates_encoded.is_empty()`，
+  与已有的 `summary_updates` / `summary_deletions` 三选一并列。
+- `tests/writer_validate_cli.rs` 新增 CLI 集成测试
+  `validate_apply_plan_summary_updates_encoded_marks_summary_streams_edited`：
+  - 用 `build_fixture_with_summary` 创建 4-stream fixture（含
+    `/\u0005SummaryInformation`）。
+  - WritePlan JSON 仅设
+    `metadata_updates.summary_updates_encoded.title`（windows-1252
+    编码）。
+  - 断言 `--apply-plan --json` 返回 `edited == 1`、`mismatched == 0`，
+    并在落盘文件里读出 `title == "PLAN-ENCODED"`。
+
+零 lib API 变化（`MetadataUpdates.summary_updates_encoded` 字段早就
+公开），仅 validator 行为补正 + 回归测试。
+
+验证（5 道 pre-commit gate 全绿）：
+
+- `cargo build --workspace --locked`
+- `cargo test --workspace --locked --all-targets`（新 case 通过）
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+- `cargo rustdoc --lib --locked`（13-deny gate 仍绿）
+
 ### docs：架构可视化 + parser API 一致性修复执行计划落地
 
 - 新增 `docs/diagrams/pid-parse-current-architecture.html` —— 当前
