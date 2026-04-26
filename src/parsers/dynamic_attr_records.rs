@@ -530,10 +530,10 @@ pub fn scan_da_record_trailers_with_trace(data: &[u8], trace: &mut ParserTraceBu
 /// `P&IDAttributes` record body:
 ///
 /// - The 14-byte ASCII `P&IDAttributes` class-name run at the head of
-///   the record (offset returned by [`find_pidattributes_record_starts`]).
+///   the record (offset returned by `find_pidattributes_record_starts`).
 /// - The 10-byte ASCII `DrawingID\0` tag plus the 32-character
 ///   uppercase-hex `drawing_id` that follows it (when present and well-
-///   formed; the heuristic mirrors [`read_drawing_id_before`]).
+///   formed; the heuristic mirrors `read_drawing_id_before`).
 ///
 /// All three landmark families are consumed as `TraceConfidence::Decoded`
 /// because the byte sequences are exact strings or fixed-shape trailer

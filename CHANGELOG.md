@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-04-26
+
+### Rustdoc intra-doc-link 收口
+
+修复 `cargo rustdoc --lib --locked -- -W missing-docs` 累积的 11 个
+intra-doc-link 类 warning，把链向私有 item 或 unresolved scope 的
+`[\`xxx\`]` 改为：
+
+- 私有 item → backtick plain text（不创建链接，避免 `private_intra_doc_links`）
+- 同一 impl 内方法 → `[\`Self::xxx\`]`（如 `WritePlan::to_json` /
+  `PidWriter::write_to`）
+- crate root re-export 的公共类型 → `[\`crate::xxx\`]`（如 `crate::PidPackage` /
+  `crate::PidError::ParseFailure`）
+
+涉及文件：
+
+- `src/backup/mtf.rs`：`BLOCK_SIZE_SCAN_LIMIT`
+- `src/import_view.rs`：`build_cluster_summaries`
+- `src/parsers/dynamic_attr_records.rs`：`find_pidattributes_record_starts` +
+  `read_drawing_id_before`（顺手把 `scan_da_record_trailers_with_trace`
+  的函数签名按 nightly rustfmt 1.9.0 折叠到单行）
+- `src/publish/mod.rs`：`crate::bin::pid_backup_extract`（pid-parse 没有
+  bin re-export，改为非链接的 “the `pid_backup_extract` CLI binary”）
+- `src/publish/xml_writer.rs`：`derive_meta_uid`
+- `src/writer/plan.rs`：`PidPackage` / `PidError::ParseFailure` / `to_json`
+- `src/writer/mod.rs`：`write_to`（`Self::write_to` 替换两处）
+
+零语义变化。`cargo rustdoc --lib --locked -- -W missing-docs` 现在
+回到 0 warning baseline。
+
+验证（5 道 pre-commit gate 全绿）：
+
+- `cargo build --workspace`
+- `cargo test --workspace --locked --all-targets`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+- `cargo rustdoc --lib --locked -- -W missing-docs`（0 warning）
+
 ## [0.11.0] — 2026-04-26
 
 > 主线：完整建立字节审计（byte-audit）框架 + 公共 API rustdoc 收口。

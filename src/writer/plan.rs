@@ -1,7 +1,8 @@
 //! Declarative write plan consumed by [`crate::writer::PidWriter::write_to`].
 //!
-//! A [`WritePlan`] describes **what** should change in a [`PidPackage`]
-//! before it gets serialized back to CFB. The writer pipeline is:
+//! A [`WritePlan`] describes **what** should change in a
+//! [`crate::PidPackage`] before it gets serialized back to CFB. The
+//! writer pipeline is:
 //!
 //! 1. Apply [`MetadataUpdates`] (drawing XML / general XML / future summary)
 //! 2. Apply every [`StreamReplacement`] verbatim
@@ -193,8 +194,8 @@ impl WritePlan {
     }
 
     /// Phase 9o (v0.5.3+): parse a JSON string into a [`WritePlan`].
-    /// Errors are wrapped into [`PidError::ParseFailure`] so callers
-    /// don't have to deal with `serde_json::Error` directly.
+    /// Errors are wrapped into [`crate::PidError::ParseFailure`] so
+    /// callers don't have to deal with `serde_json::Error` directly.
     pub fn from_json(json: &str) -> Result<Self, crate::error::PidError> {
         serde_json::from_str(json).map_err(|e| crate::error::PidError::ParseFailure {
             context: "WritePlan JSON".into(),
@@ -213,9 +214,9 @@ impl WritePlan {
         })
     }
 
-    /// Phase 9o (v0.5.3+): same as [`to_json`] but with pretty-printed
-    /// output (2-space indent, one field per line) — convenient for
-    /// hand-authored plan.json files under version control.
+    /// Phase 9o (v0.5.3+): same as [`Self::to_json`] but with pretty-
+    /// printed output (2-space indent, one field per line) — convenient
+    /// for hand-authored plan.json files under version control.
     pub fn to_json_pretty(&self) -> Result<String, crate::error::PidError> {
         serde_json::to_string_pretty(self).map_err(|e| crate::error::PidError::ParseFailure {
             context: "WritePlan serialization".into(),

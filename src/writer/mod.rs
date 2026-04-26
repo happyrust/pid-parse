@@ -51,14 +51,15 @@ impl PidWriter {
 
     /// Phase 9o (v0.5.3+): apply `plan` to a clone of `package` and
     /// return the resulting CFB as an in-memory byte buffer. Functionally
-    /// equivalent to [`write_to`] followed by reading the file back, but
-    /// skips the disk round-trip (useful for HTTP service paths, tests,
-    /// or any caller that already has a `Vec<u8>` workflow).
+    /// equivalent to [`Self::write_to`] followed by reading the file
+    /// back, but skips the disk round-trip (useful for HTTP service
+    /// paths, tests, or any caller that already has a `Vec<u8>`
+    /// workflow).
     ///
     /// Overhead note: peak memory is ~2× the final CFB size because we
     /// clone `package` first, then materialize the output in a separate
     /// `Vec`. For multi-MB `.pid` files where memory matters, prefer
-    /// [`write_to`].
+    /// [`Self::write_to`].
     pub fn write_to_bytes(package: &PidPackage, plan: &WritePlan) -> Result<Vec<u8>, PidError> {
         let mut working = package.clone();
         apply_plan_to_package(&mut working, plan)?;

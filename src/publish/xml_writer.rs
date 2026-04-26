@@ -106,7 +106,7 @@ pub fn write_data_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
 /// inputs are the drawing's `drawing_uid`, `drawing_name`, and
 /// (optionally) `date_created`. Inner UIDs (the ones stamped onto
 /// the version / revision / file / rel nodes) are derived
-/// deterministically from `drawing_uid` via [`derive_meta_uid`] so
+/// deterministically from `drawing_uid` via `derive_meta_uid` so
 /// successive re-emits of the same drawing produce byte-identical
 /// XML — a property tests rely on heavily.
 ///

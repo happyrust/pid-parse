@@ -39,7 +39,7 @@ pub struct PidImportView {
     /// Distinct symbol usages — one entry per `symbol_path`.
     pub symbols: Vec<PidSymbolSummary>,
     /// Mixed cluster / sheet / coverage summary lines, in the order
-    /// [`build_cluster_summaries`] emits them.
+    /// `build_cluster_summaries` emits them.
     pub clusters: Vec<PidClusterSummary>,
     /// Human-readable diagnostics for data the reader could not fully
     /// resolve (dangling relationship endpoints, missing roots, etc.).

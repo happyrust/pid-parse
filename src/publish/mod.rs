@@ -3,9 +3,9 @@
 //! Stage-1 pipeline reads the MDF extracted from a `SmartPlant` backup
 //! via:
 //!
-//! 1. Rust: [`crate::backup::mtf`] + [`crate::bin::pid_backup_extract`]
-//!    — strips the SQL Server backup stream header and writes a
-//!    reconstructable `.mdf` file.
+//! 1. Rust: [`crate::backup::mtf`] + the `pid_backup_extract` CLI
+//!    binary — strips the SQL Server backup stream header and writes
+//!    a reconstructable `.mdf` file.
 //! 2. Rust: [`mdf_load`] + vendored `oxidized-mdf` — reads the
 //!    publish-relevant `SmartPlant` SQL tables directly from MDF.
 //! 3. Rust: *this module* — loads the relevant rows into the publish

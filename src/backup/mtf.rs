@@ -280,7 +280,7 @@ impl MtfHeader {
 /// also the stream's logical block size.
 ///
 /// Returns `None` if no recognizable descriptor is found within
-/// [`BLOCK_SIZE_SCAN_LIMIT`] bytes — in which case the file is either
+/// `BLOCK_SIZE_SCAN_LIMIT` bytes — in which case the file is either
 /// truncated, corrupt, or a format we do not yet support.
 ///
 /// # Rationale
