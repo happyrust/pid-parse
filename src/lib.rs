@@ -1,7 +1,10 @@
 // Keep the curated subset of pedantic lints we already baked in via the
 // `cargo clippy --fix` passes (see CHANGELOG "Clippy 清理" sections).
 // These warn on new code only — existing violations are already fixed.
-#![warn(
+// 10 项 pedantic clippy lint 防回归 deny 门禁（v0.11.4+）：与 v0.11.3
+// 之前累积的 cargo clippy --fix 通过结果对齐，把 warn-only 提升为 deny
+// 后任何 commit 引入这些反模式直接 fail，不再依赖 reviewer 抓。
+#![deny(
     clippy::uninlined_format_args,
     clippy::doc_markdown,
     clippy::redundant_closure_for_method_calls,

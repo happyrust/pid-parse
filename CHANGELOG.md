@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+## [0.11.4] — 2026-04-26
+
+> 主线：把 v0.11.3 之后累积的 docs / examples / plans 工作打包，并把
+> `clippy` pedantic 10 项 lint 从 warn 升级到 deny，与 v0.11.2 / v0.11.3
+> 已完成的 rustdoc 3-deny 形成完整的 13-lint quality gate 矩阵。
+> 无破坏性变更，无新公开 API。
+>
+> 主题：
+>
+> - **clippy pedantic warn → deny**：`src/lib.rs` 顶部 10 项 clippy
+>   lint 全部从 `#![warn(...)]` 提升为 `#![deny(...)]`。`cargo clippy
+>   --locked --workspace --all-targets`（不带 `-D warnings`）实测仍
+>   `EXIT=0`，说明现有 codebase 已经对这 10 项干净化，升级零风险但
+>   永久防回归：未来任何 commit 引入 `uninlined_format_args` /
+>   `doc_markdown` / `redundant_closure_for_method_calls` /
+>   `manual_let_else` / `map_unwrap_or` / `unreadable_literal` /
+>   `bool_to_int_with_if` / `implicit_clone` / `explicit_iter_loop` /
+>   `unnecessary_map_or` 任意一项都直接 fail clippy gate。
+> - **PRD + 双入口文档体系落地**：本 release 包含
+>   `docs/prd-pid-parse-current-state.md`（产品现状 PRD）、
+>   `docs/plans/2026-04-26-prd-follow-up-execution.md`（PRD 落地执行
+>   计划，Task 1-4），README + architecture-guide 双入口跳转。
+> - **byte-audit 入门样板与库级 API 文档**：新增
+>   `examples/byte_audit_demo.rs` 演示 `byte_audit_report` +
+>   `compare_byte_audit_reports` 端到端用法（零 fixture 依赖），
+>   `docs/byte-audit-guide.md` 新增 "Programmatic API" 章节交代
+>   公开 surface。
+>
+> 详见下方各 `### …` 段落。
+
+### clippy pedantic 10 项 warn → deny
+
+把 `src/lib.rs` 顶部 `#![warn(clippy::*)]` 列出的 10 项 pedantic /
+restriction lint 升级为 `#![deny(clippy::*)]`。这些规则的 baseline
+是历次 `Clippy 清理` commits（CHANGELOG 中可索引）累积的成果，每条
+都已经在 codebase 上零触发；本次只是把强度从 warn-only 推到 deny，
+让 IDE 直接显示 error 标记、`cargo check`（不带 `-D warnings`）也
+能 fail，未来在 release/CI 之外的本地构建路径里同样防回归。
+
+`#![deny(missing_docs, rustdoc::broken_intra_doc_links,
+rustdoc::private_intra_doc_links)]` 保持不变；本次升级与之合并后，
+crate 顶部一共 deny **13 项 lint**（10 clippy + missing_docs + 2
+rustdoc intra-doc-link）。
+
+5 道 pre-commit gate 在新配置下全绿（build / test / clippy / fmt /
+rustdoc 全部 EXIT=0）。
+
 ### docs：架构指南补 PRD 链接 + PRD follow-up 执行计划落地
 
 - `docs/architecture-guide.md` 顶部"项目目标"附近补一段对
