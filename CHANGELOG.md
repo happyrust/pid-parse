@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-04-26
+
+### Rustdoc intra-doc-link 防回归门禁
+
+把 `rustdoc::broken_intra_doc_links` 与 `rustdoc::private_intra_doc_links`
+两个 lint 在 `src/lib.rs` 顶部 `#![deny(...)]`，从此任何指向 unresolved
+scope 或私有 item 的 `[\`xxx\`]` 都会让 `cargo rustdoc --lib --locked
+-- -W missing-docs` 直接 fail，而不是只产生 warning。这把 v0.11.1 的
+rustdoc cleanup 工作变成了永久 invariant：
+
+- 私有引用请用 `xxx`（不带方括号），不创建 link；
+- 公开引用请用绝对路径 `[\`crate::xxx\`]` 或同 impl 的
+  `[\`Self::xxx\`]`。
+
+`#![warn(missing_docs)]` 与 5 道 pre-commit gate 不变；公开 API 缺
+docstring 仍然只是 warning（不 fail），保留 codebase 增量降噪空间。
+
+验证（5 道 pre-commit gate 全绿）：
+
+- `cargo build --workspace --locked`
+- `cargo test --workspace --locked --all-targets`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+- `cargo rustdoc --lib --locked -- -W missing-docs`（0 warning，
+  在新 deny gate 下保持绿）
+
 ## [0.11.1] — 2026-04-26
 
 ### Rustdoc intra-doc-link 收口

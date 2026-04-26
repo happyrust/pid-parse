@@ -14,6 +14,12 @@
     clippy::unnecessary_map_or,
     missing_docs
 )]
+// rustdoc intra-doc-link 防回归门禁（v0.11.2+）：
+// - 任何指向 unresolved scope 的 [`xxx`] 直接 fail rustdoc gate
+// - 任何指向私有 item 的 [`xxx`] 直接 fail rustdoc gate
+// 私有引用请用 `xxx`（不带方括号），公开引用请用绝对路径
+// `[`crate::xxx`]` 或同 impl 的 `[`Self::xxx`]`。
+#![deny(rustdoc::broken_intra_doc_links, rustdoc::private_intra_doc_links)]
 
 //! `pid-parse` is a layered, panic-free reader / writer for the
 //! `.pid` compound files produced by Intergraph / Hexagon

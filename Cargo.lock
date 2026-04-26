@@ -706,7 +706,7 @@ dependencies = [
 
 [[package]]
 name = "pid-parse"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "base64",
  "cfb",
