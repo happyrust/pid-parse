@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### docs：PRD 与文档导航接入 README
+
+- 新增 `docs/prd-pid-parse-current-state.md` —— "解析现状 + 下一阶段
+  PRD"，本身 P0 任务即"保留本文档作为状态入口"。文档覆盖：当前解析
+  机制、已实现能力、进度判断、产品目标、用户场景、P0–P5 下一阶段
+  需求、非目标、验收指标、风险、推荐执行顺序、状态摘要。
+- `README.md` 顶部新增"文档与产品现状"章节，链向 PRD、
+  `docs/sppid/v0.10.x-status.md` 状态快照、`architecture-guide`、
+  `byte-audit-guide`、SPPID 完整解析路线图，方便新读者快速对齐
+  当前能力边界与剩余缺口。
+- 不动 lib API、CLI surface、parser 行为，纯 docs 改动。
+
 ## [0.11.3] — 2026-04-26
 
 ### `missing_docs` warn → deny 升级
