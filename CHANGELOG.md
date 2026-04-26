@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### examples：`byte_audit_demo` 演示字节审计框架的程序化入口
+
+新增 `examples/byte_audit_demo.rs`，用 4 条合成 stream 演示
+`byte_audit::aggregate::byte_audit_report` 与
+`byte_audit::compare::compare_byte_audit_reports` 的端到端用法，
+不依赖任何真实 `.pid` fixture：
+
+- 合成 baseline 包含 `/PSMsegmenttable`（`stab` magic 完整消费）、
+  `/DocVersion2`（op record 完整消费）、`/TaggedTxtData/Drawing`
+  （UTF-8 XML 全消费）、`/MysteryStream`（无 parser → `parser_name =
+  None`，全部 leftover）。
+- 跑 `byte_audit_report` 输出 per-stream + overall 统计；以
+  `serde_json::to_string_pretty` 演示 `--byte-audit --json` 等价的
+  程序化序列化。
+- 故意把 baseline 中 `/PSMsegmenttable` 的 magic 破坏掉得到 current
+  报告，调 `compare_byte_audit_reports` 演示
+  `OverallCoverageDecreased` + `StreamConsumedBytesDecreased` 两类
+  regression。
+- 期望输出已写在 example 顶部 `//!` doc，方便下游集成时直接对照。
+
+`cargo run --example byte_audit_demo` 在公开 CI 上即可跑过，零 fixture
+依赖，是 P1 真实 baseline 工作之前的最小入门样板。
+
 ### docs：PRD 与文档导航接入 README
 
 - 新增 `docs/prd-pid-parse-current-state.md` —— "解析现状 + 下一阶段
