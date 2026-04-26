@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Recognise PSMspacemap as a top-level storage prefix
+### 把 PSMspacemap 识别为顶层 storage 前缀
 
 `KNOWN_TOP_LEVEL_STORAGE_PREFIXES` 增加 `"PSMspacemap"` —— 真实
 fixture 在顶层和 `JSite*` 下都存在 `PSMspacemap/0xNNNNNNNN` 子流，
@@ -30,7 +30,7 @@ fixture 在顶层和 `JSite*` 下都存在 `PSMspacemap/0xNNNNNNNN` 子流，
 时，可以把 `PSMspacemap` 升级为 `KNOWN_TOP_LEVEL_STREAM_NAMES` 或
 为它专门添加 PartiallyDecoded / FullyDecoded 状态条目。
 
-### Byte audit DA class name and DrawingID landmarks
+### Byte-audit 加入 DA class name 与 DrawingID landmark
 
 `parsers::dynamic_attr_records::scan_da_landmarks_with_trace` 在
 Phase 12b-1g 的 31 字节 trailer trace 之上又叠加两类固定布局
@@ -56,7 +56,7 @@ record body 内剩余字节继续保留 leftover 状态，Phase 11a-probe 后续
 - `cargo clippy --locked --workspace --all-targets -- -D warnings`
 - `cargo fmt --all -- --check`
 
-### Byte audit DA record trailer trace
+### Byte-audit 跟踪 DA 记录尾部 trailer
 
 `parsers::dynamic_attr_records` 新增
 `scan_da_record_trailers_with_trace` —— 复用既有
@@ -77,7 +77,7 @@ record_id / 8B padding / field_x / `0xFFFF` separator / class_id /
 - `cargo clippy --locked --workspace --all-targets -- -D warnings`
 - `cargo fmt --all -- --check`
 
-### Byte audit Sheet endpoint records trace
+### Byte-audit 跟踪 Sheet 端点对记录
 
 `parsers::sheet_endpoint_records` 新增
 `scan_endpoint_records_with_trace` —— 不依赖 DA 侧 `rel_field_xs`
@@ -98,7 +98,7 @@ discriminator (`0x0000_0006` / `6× 0x00` / `0x0002` / `0x0001`)
 - `cargo clippy --locked --workspace --all-targets -- -D warnings`
 - `cargo fmt --all -- --check`
 
-### Byte audit cluster header trace
+### Byte-audit 跟踪 cluster header
 
 `parsers::cluster_header` 现在提供 `parse_header_with_trace` /
 `parse_string_table_with_trace` / `parse_psm_cluster0_with_trace`
@@ -127,7 +127,7 @@ wrapper，保持既有调用方（`streams::cluster`、`streams::sheet_probe`
 - `cargo clippy --locked --workspace --all-targets -- -D warnings`
 - `cargo fmt --all -- --check`
 
-### Byte audit Summary streams trace
+### Byte-audit 跟踪 Summary 流
 
 新增 `pid_parse::parsers::summary::parse_summary_property_set_with_trace`
 作为 OLE PropertySetStream（`/\x05SummaryInformation` +
