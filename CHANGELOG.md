@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### docs：架构指南补 PRD 链接 + PRD follow-up 执行计划落地
+
+- `docs/architecture-guide.md` 顶部"项目目标"附近补一段对
+  `docs/prd-pid-parse-current-state.md` 的链接，让从架构指南入门
+  的读者也能直接跳到产品现状与下一阶段需求。这与 README 顶部
+  "文档与产品现状"章节的 PRD link 形成双入口。
+- 新增 `docs/plans/2026-04-26-prd-follow-up-execution.md` —— PRD
+  落地执行计划，按 Task 1-4 顺序拆出：
+  - Task 1：让 PRD 可被 README + architecture-guide 双路径发现
+    （已完成）。
+  - Task 2：在有真实 fixture 的环境里生成 `docs/baselines/*.byte-audit.json`
+    并跑 `.github/scripts/check-byte-audit-baselines.sh`（blocked on
+    fixture）。
+  - Task 3：PSM table 结构化加深，要求 ≥2 个真实样本才能升级
+    coverage 等级；在动 parser 前先沉淀
+    `docs/plans/YYYY-MM-DD-psm-table-deepening.md` 设计文档。
+  - Task 4：Sheet 几何深层解码延后到 PSM provenance 设计完成之后，
+    避免孤立 heuristics。
+- 不动 lib API、CLI surface、parser 行为，纯 docs / 计划文档接入。
+
 ### docs：`byte-audit-guide.md` 新增 "Programmatic API" 章节
 
 在 `docs/byte-audit-guide.md` 的 JSON Output 之后插入新章节，向库级

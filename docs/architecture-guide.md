@@ -21,6 +21,9 @@
 
 `pid-parse` 是一个用 Rust 编写的 **SmartPlant / Smart P&ID `.pid` 文件解析库和CLI工具集**。
 
+当前产品化状态、能力边界与下一阶段需求见
+[`docs/prd-pid-parse-current-state.md`](prd-pid-parse-current-state.md)。
+
 `.pid` 文件本质是 **OLE/CFBF（Compound File Binary Format）复合文档**，内部包含数十条命名流（streams），存储了 P&ID 图纸的全部信息——从元数据、符号定义到管道属性和关系端点。
 
 项目目标是对这种闭源二进制格式进行**完整逆向**，提供：
