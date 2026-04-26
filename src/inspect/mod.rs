@@ -48,7 +48,14 @@ pub const KNOWN_TOP_LEVEL_STREAM_NAMES: &[&str] = &[
 /// Top-level storage-name prefixes whose members are considered
 /// "identified" as a group — the storage itself is recognized even if
 /// individual stream contents are still being probed.
-pub const KNOWN_TOP_LEVEL_STORAGE_PREFIXES: &[&str] = &["Sheet", "TaggedTxtData", "JSite"];
+///
+/// `PSMspacemap` (added Phase 12b-1j) is a JSite-co-located storage of
+/// `tseg`-magic stream pages keyed by file offset (`/PSMspacemap/0x00000000`
+/// etc.); its members already round-trip via the writer passthrough
+/// path but still need a structural decoder, so the prefix is wired
+/// here as `IdentifiedOnly` rather than `Unknown`.
+pub const KNOWN_TOP_LEVEL_STORAGE_PREFIXES: &[&str] =
+    &["Sheet", "TaggedTxtData", "JSite", "PSMspacemap"];
 
 /// Returns every top-level stream (`/Foo`, not `/Foo/Bar`) that does not
 /// appear in [`KNOWN_TOP_LEVEL_STREAM_NAMES`] nor whose containing
@@ -137,6 +144,29 @@ mod tests {
             leftover,
             vec!["/GhostStream"],
             "leading slash must not defeat the KNOWN filter"
+        );
+    }
+
+    #[test]
+    fn psmspacemap_storage_prefix_is_recognized_and_drops_off_unidentified_list() {
+        // Real .pid fixtures expose PSMspacemap both at the top level and
+        // nested under JSite* storages. Only the top-level case is in
+        // scope for unidentified_top_level_streams; nested members were
+        // already filtered by the JSite prefix.
+        let doc = doc_with_streams(&[
+            "/PSMspacemap",
+            "/PSMspacemap/0x00000000",
+            "/JSite0001/PSMspacemap/0x00000000",
+            "/Random42",
+        ]);
+        let leftover: Vec<&str> = unidentified_top_level_streams(&doc)
+            .iter()
+            .map(|s| s.path.as_str())
+            .collect();
+        assert_eq!(
+            leftover,
+            vec!["/Random42"],
+            "PSMspacemap storage prefix must be recognized; only Random42 remains unknown"
         );
     }
 }

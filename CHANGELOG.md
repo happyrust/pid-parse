@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Recognise PSMspacemap as a top-level storage prefix
+
+`KNOWN_TOP_LEVEL_STORAGE_PREFIXES` 增加 `"PSMspacemap"` —— 真实
+fixture 在顶层和 `JSite*` 下都存在 `PSMspacemap/0xNNNNNNNN` 子流，
+每个 stream 头部为 `tseg` (`0x6765_7374`) magic，已经有
+`describe_magic` 文案（"PSMspacemap segment table"）但这层 storage
+之前没进入识别清单，会被 `unidentified_top_level_streams` 与
+`inspect::coverage` 当作 `Unknown` 报告。
+
+新增/调整后：
+- `unidentified_top_level_streams` 不再列举 `/PSMspacemap`；嵌套在
+  JSite 下的 `PSMspacemap` 仍由 JSite prefix 处理（行为不变）
+- `inspect::coverage` 把 `PSMspacemap` 标记为 `IdentifiedOnly`
+  storage，并把 storage members 的 `stream_size` 累加进 coverage
+  byte 维度
+- 默认人类报告 / JSON / coverage section 不再有 `[UNK] PSMspacemap`
+  噪音
+
+验证：
+- `cargo test --lib inspect`（53 测试，含 1 个新 prefix-recognition
+  测试 + 既有 coverage 测试扩展为覆盖 5 个 storage prefixes）
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+
+后续 follow-up：当反向工作把 `tseg` page table 解码为 stable 字段
+时，可以把 `PSMspacemap` 升级为 `KNOWN_TOP_LEVEL_STREAM_NAMES` 或
+为它专门添加 PartiallyDecoded / FullyDecoded 状态条目。
+
 ### Byte audit DA class name and DrawingID landmarks
 
 `parsers::dynamic_attr_records::scan_da_landmarks_with_trace` 在

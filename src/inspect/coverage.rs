@@ -563,9 +563,16 @@ mod tests {
             "/Sheet42/Bar",
             "/TaggedTxtData/Drawing",
             "/JSite0001/JProperties",
+            "/PSMspacemap/0x00000000",
         ]);
         let report = coverage_report(&doc);
-        for name in ["Sheet1", "Sheet42", "TaggedTxtData", "JSite0001"] {
+        for name in [
+            "Sheet1",
+            "Sheet42",
+            "TaggedTxtData",
+            "JSite0001",
+            "PSMspacemap",
+        ] {
             let entry = find(&report, name);
             assert_eq!(
                 entry.status,
