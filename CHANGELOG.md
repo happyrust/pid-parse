@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [0.11.6] — 2026-04-26
+
+### docs：明确 `replace_stream` / `set_xml_tag` 不刷新 `parsed` 的契约
+
+`docs/plans/2026-04-26-parser-api-consistency-fixes.md` Task 2 落地，
+零行为变化，纯文档化既有契约：
+
+- `src/package.rs::PidPackage::replace_stream` 与
+  `set_xml_tag`（以及它们的 shortcut `set_drawing_xml_tag` /
+  `set_general_xml_tag`）的 doc comment 显式声明 raw stream 字节
+  改动后 **不会**自动刷新 `PidPackage.parsed`，并指明推荐做法是走
+  `PidWriter::write_to_bytes` + `PidPackage::from_bytes` 的完整
+  round-trip 拿到 live 解码视图，而不是 in-place 部分 reparse
+  （后者要等 `cross_reference` / `layout` / `object_graph` 等派生
+  层的 invalidation 契约设计完毕后再考虑加 full-package
+  `reparse()` helper，对应 plan Task 8）。
+
+- `docs/writer-quickstart.md` 在 "保真能力矩阵" 与 "错误处理" 之间
+  插入新章节 "## 6.5 契约：raw stream 改动 vs 解析模型 (v0.11.5+)"，
+  含 round-trip + reparse 的 Rust 代码片段、为什么不直接 in-place
+  reparse 的设计说明，以及对 plan Task 8 的 forward-link。
+
+零 lib API 变化，零 CLI 变化，零 parser 行为变化。
+
+验证（5 道 pre-commit gate 全绿）：
+
+- `cargo build --workspace --locked`
+- `cargo test --workspace --locked --all-targets`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+- `cargo rustdoc --lib --locked`（13-deny gate 仍绿，新 doc comment
+  使用绝对路径 `[\`crate::...\`]` link 通过 deny gate）
+
 ## [0.11.5] — 2026-04-26
 
 ### `pid_writer_validate` 把 `summary_updates_encoded` 计入 edited paths

@@ -402,6 +402,45 @@ pid_writer_validate input.pid --out output.pid `
 
 Root CLSID 保留 ✅ ；非 root storage CLSID / 时间戳 / state_bits / 目录物理顺序 ❌。详见 `writer-clsid-and-timestamps.md`。
 
+## 6.5 契约：raw stream 改动 vs 解析模型（v0.11.5+）
+
+`PidPackage::replace_stream` / `PidPackage::set_xml_tag`（以及它们的
+shortcut `set_drawing_xml_tag` / `set_general_xml_tag`）**只**重写
+`PidPackage.streams` 里对应路径的原始字节，**不会**自动刷新
+`PidPackage.parsed`（即 `PidDocument` 的解码模型 —— `drawing_meta` /
+`general_meta` / `summary` / `clusters` / `object_graph` / `layout`
+等等）。这是**显式契约**：
+
+- 调用 `set_xml_tag("/TaggedTxtData/Drawing", "DrawingNumber", "X-99")`
+  之后读 `pkg.parsed.drawing_meta.drawing_number` **仍然返回旧值**。
+- 调用 `replace_stream("/任意流", new_bytes)` 之后，`pkg.parsed` 的
+  对应字段不会响应改动。
+
+如果下游需要在原 `PidPackage` 实例上拿到与新字节一致的解码视图，
+推荐做法是走一个完整的 writer + parser round-trip：
+
+```rust
+use pid_parse::{PidParser, PidPackage, PidWriter, WritePlan};
+
+let mut pkg = PidParser::new().parse_package("input.pid")?;
+pkg.set_drawing_xml_tag("DrawingNumber", "X-99")?;
+
+// 把改动 serialize 回字节缓冲
+let bytes = PidWriter::write_to_bytes(&pkg, &WritePlan::default())?;
+// 再 reparse 这份新字节得到 live 模型
+let pkg = PidPackage::from_bytes(&bytes)?;
+assert_eq!(
+    pkg.parsed.drawing_meta.unwrap().drawing_number.as_deref(),
+    Some("X-99"),
+);
+```
+
+> 为什么不直接 in-place 部分 reparse？因为 `cross_reference` /
+> `layout` / `object_graph` 等派生层与多个流交叉耦合，partial
+> invalidation 没有稳定语义。完整 `reparse()` helper 等到那一层契约
+> 设计稳定后再加（`docs/plans/2026-04-26-parser-api-consistency-fixes.md`
+> Task 8 之前不会落地）。
+
 ## 7. 错误处理
 
 所有公开 API 返回 `Result<_, pid_parse::PidError>`。常见变体：

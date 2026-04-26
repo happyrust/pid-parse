@@ -149,6 +149,20 @@ impl PidPackage {
 
     /// Replace (or insert) a stream's bytes and mark it as modified. The
     /// provided `path` is normalized just like the parser does.
+    ///
+    /// **Contract — raw vs parsed state**: this method only mutates the
+    /// raw stream bytes inside [`Self::streams`]; `PidPackage.parsed`
+    /// (the decoded [`crate::PidDocument`] model) is **not** refreshed
+    /// automatically. After calling `replace_stream`, the parsed model
+    /// reflects the *original* bytes, not the new ones. If you need a
+    /// live decoded view, reparse the written package — typically by
+    /// running [`crate::PidWriter::write_to_bytes`] / `write_to` to
+    /// serialise the mutated streams back into a CFB and then feeding
+    /// the resulting bytes into [`crate::PidParser::parse_package`].
+    /// The library intentionally does not perform a partial reparse
+    /// here because crossref / layout / object-graph invalidation is
+    /// not yet designed; a future full-package `reparse()` helper may
+    /// land once that contract is sorted.
     pub fn replace_stream(&mut self, path: impl Into<String>, data: Vec<u8>) {
         let path = normalize_path(&path.into());
         self.streams.insert(
@@ -178,6 +192,13 @@ impl PidPackage {
     /// the stream isn't valid UTF-8, and propagates the errors of
     /// [`crate::writer::xml_edit::replace_simple_tag_text`] for missing or
     /// nested tags.
+    ///
+    /// **Contract — raw vs parsed state**: like [`Self::replace_stream`]
+    /// this only rewrites the raw stream bytes;
+    /// `PidPackage.parsed.drawing_meta` / `general_meta` etc. still
+    /// reflect the *original* XML. To consume the edited values from
+    /// the typed model, reparse via the writer + parser round-trip
+    /// (see `replace_stream` for the recommended pattern).
     pub fn set_xml_tag(
         &mut self,
         stream_path: &str,
