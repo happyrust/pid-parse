@@ -34,6 +34,9 @@
 
 ![架构图](diagrams/pid-parse-architecture.png)
 
+当前架构图的可打开 HTML 版本：
+[`docs/diagrams/pid-parse-current-architecture.html`](diagrams/pid-parse-current-architecture.html)。
+
 ---
 
 ## 设计哲学

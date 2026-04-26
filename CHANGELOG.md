@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### docs：架构可视化 + parser API 一致性修复执行计划落地
+
+- 新增 `docs/diagrams/pid-parse-current-architecture.html` —— 当前
+  解析器架构的可打开 HTML 版本（Geist + Instrument Serif 排版，
+  覆盖八层架构与 byte-audit framework 视图）。`architecture-guide.md`
+  顶部"架构图"段下加一行链接指向该 HTML，与既有
+  `pid-parse-architecture.png` 形成 PNG / 交互 HTML 双载体。
+- 新增 `docs/plans/2026-04-26-parser-api-consistency-fixes.md` ——
+  parser/writer API 一致性修复执行计划，按"先行为/报告纠正、再
+  契约/文档、再语义行为变更"的顺序拆出 Task 1-8：
+  - Task 1：`pid_writer_validate` 把 `summary_updates_encoded` 也
+    计入 edited summary streams（small surface, 选作首个执行项）。
+  - Task 2：明确 `replace_stream` / `set_xml_tag` 不刷新
+    `PidPackage.parsed` 的契约。
+  - Task 3：`keep_unknown_streams` 选项语义裁定。
+  - Task 4：validator 复用 writer pipeline，避免 apply-order drift。
+  - Task 5：`populate_sheet_endpoints` 静默失败 → 结构化诊断。
+  - Task 6：`writer/mod.rs` / `writer/summary_write.rs` 等 module
+    comment drift 修复（docs-only PR）。
+  - Task 7：`PidPackage::from_bytes` 改为 `Cursor<Vec<u8>>` reader-
+    generic，避免临时文件。
+  - Task 8：light parse 设计文档先行，再走 API 改造。
+
+不动 lib API、CLI surface、parser 行为，纯文档与计划文档接入。
+
 ## [0.11.4] — 2026-04-26
 
 > 主线：把 v0.11.3 之后累积的 docs / examples / plans 工作打包，并把
