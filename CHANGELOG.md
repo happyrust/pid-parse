@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Byte audit DA class name and DrawingID landmarks
+
+`parsers::dynamic_attr_records::scan_da_landmarks_with_trace` 在
+Phase 12b-1g 的 31 字节 trailer trace 之上又叠加两类固定布局
+landmark：
+
+- 14 字节 ASCII `P&IDAttributes` class-name run（由
+  `find_pidattributes_record_starts` 已经定位的每条记录起点开始）
+- 10 字节 ASCII `DrawingID\0` tag 紧跟 32 字符大写 hex
+  `drawing_id`（与既有 `read_drawing_id_before` 的判定逻辑等价：
+  hex 校验失败时该 record 跳过，仅 trailer + class name 落入
+  consumed）
+
+`byte_audit::aggregate` 把 `/Unclustered Dynamic Attributes` 的
+dispatch 从 `scan_da_record_trailers` 切换到新 `scan_da_landmarks`，
+所有 landmark 均以 `TraceConfidence::Decoded` 计入；high-heuristic
+record body 内剩余字节继续保留 leftover 状态，Phase 11a-probe 后续
+工作可再进一步光照那些区段。
+
+验证：
+- `cargo test parsers::dynamic_attr_records --lib`（21 测试，含 3
+  个新 landmark trace 测试）
+- `cargo test --lib byte_audit::aggregate::tests::unclustered -- --nocapture`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+
 ### Byte audit DA record trailer trace
 
 `parsers::dynamic_attr_records` 新增

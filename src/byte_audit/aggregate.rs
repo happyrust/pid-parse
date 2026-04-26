@@ -190,9 +190,9 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
             let _ = parsers::cluster_header::parse_header_with_trace(data, &mut b);
             Some(b)
         }),
-        "/Unclustered Dynamic Attributes" => ("scan_da_record_trailers", {
-            let mut b = ParserTraceBuilder::new("scan_da_record_trailers");
-            let _ = parsers::dynamic_attr_records::scan_da_record_trailers_with_trace(data, &mut b);
+        "/Unclustered Dynamic Attributes" => ("scan_da_landmarks", {
+            let mut b = ParserTraceBuilder::new("scan_da_landmarks");
+            let _ = parsers::dynamic_attr_records::scan_da_landmarks_with_trace(data, &mut b);
             Some(b)
         }),
         "/PSMroots" => ("parse_psm_roots", {
@@ -502,14 +502,15 @@ mod tests {
     }
 
     #[test]
-    fn unclustered_dynamic_attributes_traces_31_byte_record_trailers() {
-        // Build a stream with one synthetic trailer-bearing PIDAttributes
-        // record. Layout matches `dynamic_attr_records::tests::
-        // make_synthetic_da_body_with_one_trailer` so the assertions
-        // stay anchored to the same fixture used in the unit tests.
+    fn unclustered_dynamic_attributes_traces_class_name_drawing_id_and_trailer_landmarks() {
+        // Synthetic record: \0 P&IDAttributes <body w/ DrawingID> <31B trailer>.
         let mut data = vec![0x00];
         data.extend_from_slice(b"P&IDAttributes");
-        data.extend_from_slice(&[0xAB; 5]);
+        data.extend_from_slice(&[0xAB; 4]);
+        data.extend_from_slice(b"DrawingID\0");
+        // 32 ASCII uppercase hex chars (drawing UID).
+        data.extend_from_slice(b"0F7B8ABD0C4E493FA3C7F06FD03AD6AA");
+        data.extend_from_slice(&[0xCD; 4]);
         let mut trailer = Vec::with_capacity(31);
         trailer.extend_from_slice(&[0x89, 0x00]);
         trailer.extend_from_slice(&100u32.to_le_bytes());
@@ -524,16 +525,15 @@ mod tests {
         let pkg = pkg_with_streams(&[("/Unclustered Dynamic Attributes", data.clone())]);
         let report = byte_audit_report(&pkg);
         let summary = &report.per_stream["/Unclustered Dynamic Attributes"];
+        assert_eq!(summary.parser_name.as_deref(), Some("scan_da_landmarks"));
+        // class name (14) + DrawingID tag (10) + 32 hex (32) + trailer (31)
+        // = 87 bytes; the leftover is the surrounding opaque body.
         assert_eq!(
-            summary.parser_name.as_deref(),
-            Some("scan_da_record_trailers")
-        );
-        assert_eq!(
-            summary.consumed_bytes, 31,
-            "exactly one 31-byte trailer should be consumed; got {}",
+            summary.consumed_bytes, 87,
+            "expected 14 + 42 + 31 = 87 landmark bytes; got {}",
             summary.consumed_bytes
         );
-        assert_eq!(summary.leftover_bytes, data.len() as u64 - 31);
+        assert_eq!(summary.leftover_bytes, data.len() as u64 - 87);
     }
 
     #[test]

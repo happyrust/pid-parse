@@ -525,6 +525,83 @@ pub fn scan_da_record_trailers_with_trace(data: &[u8], trace: &mut ParserTraceBu
     hits
 }
 
+/// Phase 12b-1i extends [`scan_da_record_trailers_with_trace`] with two
+/// additional fixed-layout landmarks visible inside every
+/// `P&IDAttributes` record body:
+///
+/// - The 14-byte ASCII `P&IDAttributes` class-name run at the head of
+///   the record (offset returned by [`find_pidattributes_record_starts`]).
+/// - The 10-byte ASCII `DrawingID\0` tag plus the 32-character
+///   uppercase-hex `drawing_id` that follows it (when present and well-
+///   formed; the heuristic mirrors [`read_drawing_id_before`]).
+///
+/// All three landmark families are consumed as `TraceConfidence::Decoded`
+/// because the byte sequences are exact strings or fixed-shape trailer
+/// magic — no field semantics are guessed beyond what the existing
+/// decoders already recovered.
+///
+/// Returns the total count of landmark ranges claimed; the heuristic
+/// record body bytes between landmarks remain leftover so future
+/// Phase 11a-probe work can light them up incrementally.
+pub fn scan_da_landmarks_with_trace(data: &[u8], trace: &mut ParserTraceBuilder) -> usize {
+    const CLASS_NAME: &[u8] = b"P&IDAttributes";
+    const DRAWING_ID_TAG: &[u8] = b"DrawingID\0";
+    const DRAWING_ID_HEX_LEN: usize = 32;
+
+    let starts = find_pidattributes_record_starts(data);
+    let trailers = extract_record_trailers(data);
+    let total = data.len() as u64;
+    let mut hits = 0usize;
+
+    for &s in &starts {
+        let end = s + CLASS_NAME.len();
+        if end as u64 <= total {
+            trace.consume(
+                ByteRange::new(s as u64, end as u64),
+                TraceConfidence::Decoded,
+            );
+            hits += 1;
+        }
+    }
+
+    for t in &trailers {
+        let start = t.trailer_offset as u64;
+        let end = start + 31;
+        if end <= total {
+            trace.consume(ByteRange::new(start, end), TraceConfidence::Decoded);
+            hits += 1;
+        }
+    }
+
+    for w in 0..starts.len() {
+        let body_start = starts[w];
+        let body_end = starts.get(w + 1).copied().unwrap_or(data.len());
+        if body_end <= body_start {
+            continue;
+        }
+        let slice = &data[body_start..body_end];
+        let Some(rel_pos) = find_last(slice, DRAWING_ID_TAG) else {
+            continue;
+        };
+        let abs_tag_start = body_start + rel_pos;
+        let abs_id_end = abs_tag_start + DRAWING_ID_TAG.len() + DRAWING_ID_HEX_LEN;
+        if abs_id_end > data.len() {
+            continue;
+        }
+        let id_bytes = &data[abs_tag_start + DRAWING_ID_TAG.len()..abs_id_end];
+        if !id_bytes.iter().all(u8::is_ascii_hexdigit) {
+            continue;
+        }
+        trace.consume(
+            ByteRange::new(abs_tag_start as u64, abs_id_end as u64),
+            TraceConfidence::Decoded,
+        );
+        hits += 1;
+    }
+
+    hits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -795,5 +872,81 @@ mod tests {
         let trace = trace.build("/Unclustered Dynamic Attributes", data.len() as u64);
         assert_eq!(trace.consumed_bytes(), 0);
         assert_eq!(trace.leftover_bytes(), data.len() as u64);
+    }
+
+    /// Build a synthetic record body that adds a `DrawingID\0` + 32-hex
+    /// landmark on top of the basic trailer fixture.
+    fn make_synthetic_da_body_with_drawing_id() -> Vec<u8> {
+        let mut data = vec![0x00];
+        data.extend_from_slice(b"P&IDAttributes");
+        data.extend_from_slice(&[0xAB; 4]);
+        data.extend_from_slice(b"DrawingID\0");
+        data.extend_from_slice(b"0F7B8ABD0C4E493FA3C7F06FD03AD6AA");
+        data.extend_from_slice(&[0xCD; 4]);
+        let mut trailer = Vec::with_capacity(31);
+        trailer.extend_from_slice(&[0x89, 0x00]);
+        trailer.extend_from_slice(&100u32.to_le_bytes());
+        trailer.extend_from_slice(&7u32.to_le_bytes());
+        trailer.extend_from_slice(&[0u8; 8]);
+        trailer.extend_from_slice(&0x0000_03B7u32.to_le_bytes());
+        trailer.extend_from_slice(&[0xFF, 0xFF]);
+        trailer.extend_from_slice(&0x0000_00EAu32.to_le_bytes());
+        trailer.extend_from_slice(&[0x14, 0x00, 0x00]);
+        data.extend_from_slice(&trailer);
+        data
+    }
+
+    #[test]
+    fn trace_aware_da_landmarks_scan_covers_class_name_drawing_id_and_trailer() {
+        let data = make_synthetic_da_body_with_drawing_id();
+        let mut trace = ParserTraceBuilder::new("scan_da_landmarks");
+        let hits = scan_da_landmarks_with_trace(&data, &mut trace);
+        // 1 class-name landmark + 1 trailer landmark + 1 DrawingID
+        // landmark = 3 hits.
+        assert_eq!(hits, 3);
+        let trace = trace.build("/Unclustered Dynamic Attributes", data.len() as u64);
+        // 14 (class name) + 10 (DrawingID tag) + 32 (hex) + 31 (trailer)
+        // = 87 bytes consumed.
+        assert_eq!(trace.consumed_bytes(), 87);
+        assert_eq!(trace.leftover_bytes(), data.len() as u64 - 87);
+    }
+
+    #[test]
+    fn trace_aware_da_landmarks_skip_drawing_id_with_non_hex_payload() {
+        // Same body shape but the supposed UID isn't valid hex —
+        // landmark scan must skip the DrawingID range without consuming
+        // it, so only class-name (14) + trailer (31) = 45 bytes claim.
+        let mut data = vec![0x00];
+        data.extend_from_slice(b"P&IDAttributes");
+        data.extend_from_slice(&[0xAB; 4]);
+        data.extend_from_slice(b"DrawingID\0");
+        data.extend_from_slice(b"NOT-HEX-XXXXXXXXXXXXXXXXXXXXXXXX");
+        data.extend_from_slice(&[0xCD; 4]);
+        let mut trailer = Vec::with_capacity(31);
+        trailer.extend_from_slice(&[0x89, 0x00]);
+        trailer.extend_from_slice(&100u32.to_le_bytes());
+        trailer.extend_from_slice(&7u32.to_le_bytes());
+        trailer.extend_from_slice(&[0u8; 8]);
+        trailer.extend_from_slice(&0x0000_03B7u32.to_le_bytes());
+        trailer.extend_from_slice(&[0xFF, 0xFF]);
+        trailer.extend_from_slice(&0x0000_00EAu32.to_le_bytes());
+        trailer.extend_from_slice(&[0x14, 0x00, 0x00]);
+        data.extend_from_slice(&trailer);
+
+        let mut trace = ParserTraceBuilder::new("scan_da_landmarks");
+        let hits = scan_da_landmarks_with_trace(&data, &mut trace);
+        assert_eq!(hits, 2, "DrawingID landmark should be skipped");
+        let trace = trace.build("/Unclustered Dynamic Attributes", data.len() as u64);
+        assert_eq!(trace.consumed_bytes(), 14 + 31);
+    }
+
+    #[test]
+    fn trace_aware_da_landmarks_returns_zero_on_garbage_streams() {
+        let data = vec![0xCDu8; 64];
+        let mut trace = ParserTraceBuilder::new("scan_da_landmarks");
+        let hits = scan_da_landmarks_with_trace(&data, &mut trace);
+        assert_eq!(hits, 0);
+        let trace = trace.build("/Unclustered Dynamic Attributes", data.len() as u64);
+        assert_eq!(trace.consumed_bytes(), 0);
     }
 }
