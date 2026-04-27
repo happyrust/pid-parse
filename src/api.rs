@@ -29,12 +29,24 @@ pub struct PidParser {
     options: ParseOptions,
 }
 
+/// High-level parse profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseProfile {
+    /// Full-fidelity parse. This is the default and preserves all current
+    /// parser behavior.
+    Full,
+    /// Lightweight inventory/triage parse that skips expensive semantic and
+    /// derived passes.
+    Light,
+}
+
 /// Tunables that control how aggressively `PidParser` decodes a `.pid`.
 ///
 /// All fields default to "maximal fidelity" — full XML parse, full
 /// `JSite` properties, full unknown-stream retention. Shrink them
 /// when a bulk scan only needs a subset of the model:
 ///
+/// - `profile` — high-level full vs light parse profile.
 /// - `scan_strings` — per-stream UTF-16 string probes.
 /// - `parse_xml` — `SmartPlant`-embedded XML fragments.
 /// - `parse_jsite_properties` — `JSite` dynamic property blobs.
@@ -46,6 +58,10 @@ pub struct PidParser {
 ///   collected during scan.
 #[derive(Debug, Clone)]
 pub struct ParseOptions {
+    /// High-level parse profile. [`ParseProfile::Full`] preserves existing
+    /// behavior; [`ParseProfile::Light`] skips expensive semantic and derived
+    /// passes for inventory-style callers.
+    pub profile: ParseProfile,
     /// Enable per-stream UTF-16 / ASCII string probes.
     pub scan_strings: bool,
     /// Enable `SmartPlant`-embedded XML fragment decoding
@@ -66,11 +82,29 @@ pub struct ParseOptions {
 impl Default for ParseOptions {
     fn default() -> Self {
         Self {
+            profile: ParseProfile::Full,
             scan_strings: true,
             parse_xml: true,
             parse_jsite_properties: true,
             keep_unknown_streams: true,
             max_preview_strings: 64,
+        }
+    }
+}
+
+impl ParseOptions {
+    /// Build an explicit light parse profile for bulk inventory / triage.
+    ///
+    /// This keeps stream inventory and package raw bytes, but disables XML
+    /// body parsing and `JSite` property decoding by default. The reader also
+    /// skips heavier semantic and derived passes while this profile is active.
+    pub fn light() -> Self {
+        Self {
+            profile: ParseProfile::Light,
+            parse_xml: false,
+            parse_jsite_properties: false,
+            max_preview_strings: 16,
+            ..Self::default()
         }
     }
 }
@@ -258,6 +292,41 @@ mod tests {
                 .iter()
                 .any(|s| s.path == "/MysteryTopLevel"),
             "default parser should retain top-level unknown stream diagnostics"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn light_profile_keeps_inventory_and_raw_streams_but_skips_derived_passes() {
+        let bytes = build_minimal_cfb_bytes();
+        let path = write_temp_pid(&bytes);
+        let parser = PidParser::with_options(ParseOptions::light());
+
+        let pkg = parser.parse_package(&path).expect("parse");
+
+        assert_eq!(parser.options.profile, ParseProfile::Light);
+        assert!(
+            pkg.get_stream("/TaggedTxtData/Drawing").is_some(),
+            "light package parsing must retain raw streams for callers"
+        );
+        assert!(
+            pkg.parsed
+                .streams
+                .iter()
+                .any(|stream| stream.path == "/TaggedTxtData/Drawing"),
+            "light parsing should keep the stream inventory"
+        );
+        assert!(
+            pkg.parsed.drawing_meta.is_none(),
+            "light parsing should skip tagged-text XML bodies"
+        );
+        assert!(
+            pkg.parsed.cross_reference.is_none(),
+            "light parsing should skip derived cross-reference graph"
+        );
+        assert!(
+            pkg.parsed.layout.is_none(),
+            "light parsing should skip derived layout"
         );
         let _ = std::fs::remove_file(&path);
     }

@@ -8,7 +8,7 @@
 //! — [`crate::api::PidParser`] is a thin facade over these
 //! functions.
 
-use crate::api::ParseOptions;
+use crate::api::{ParseOptions, ParseProfile};
 use crate::error::PidError;
 use crate::model::{PidDocument, StreamEntry};
 use crate::package::{PidPackage, RawStream, StorageTimestamps};
@@ -57,6 +57,7 @@ fn parse_pid_package_from_cfb<R: Read + std::io::Seek>(
     source_path: Option<PathBuf>,
     options: &ParseOptions,
 ) -> Result<PidPackage, PidError> {
+    let light_profile = options.profile == ParseProfile::Light;
     let tree = crate::cfb::tree::build_tree(cfb, "/")?;
     // Capture the root CLSID + all non-root storage CLSIDs before we hand
     // the cfb off to the collectors — `walk()` / `root_entry()` borrow the
@@ -125,26 +126,28 @@ fn parse_pid_package_from_cfb<R: Read + std::io::Seek>(
 
     crate::streams::summary::parse_summary_streams(cfb, &mut doc)?;
 
-    if options.parse_xml {
+    if options.parse_xml && !light_profile {
         crate::streams::tagged_text::parse_tagged_text_streams(cfb, &mut doc, options)?;
     }
 
-    if options.parse_jsite_properties {
+    if options.parse_jsite_properties && !light_profile {
         crate::streams::jsite::parse_jsites(cfb, &mut doc, options)?;
     }
 
     crate::streams::cluster::parse_clusters(cfb, &mut doc, options)?;
-    crate::streams::dynamic_attrs::parse_dynamic_attrs(cfb, &mut doc, options)?;
-    crate::streams::psm_tables::parse_psm_tables(cfb, &mut doc, options)?;
-    crate::streams::doc_registry::parse_doc_registry(cfb, &mut doc, options)?;
-    capture_doc_version2(cfb, &mut doc)?;
-    populate_sheet_endpoints(cfb, &mut doc)?;
+    if !light_profile {
+        crate::streams::dynamic_attrs::parse_dynamic_attrs(cfb, &mut doc, options)?;
+        crate::streams::psm_tables::parse_psm_tables(cfb, &mut doc, options)?;
+        crate::streams::doc_registry::parse_doc_registry(cfb, &mut doc, options)?;
+        capture_doc_version2(cfb, &mut doc)?;
+        populate_sheet_endpoints(cfb, &mut doc)?;
 
-    build_object_inventory(&mut doc);
-    build_object_graph(&mut doc);
+        build_object_inventory(&mut doc);
+        build_object_graph(&mut doc);
 
-    doc.cross_reference = Some(crate::crossref::build_graph(&doc));
-    crate::layout::derive_layout(&mut doc);
+        doc.cross_reference = Some(crate::crossref::build_graph(&doc));
+        crate::layout::derive_layout(&mut doc);
+    }
 
     Ok(PidPackage::new(source_path, raw_streams, doc)
         .with_root_clsid(root_clsid)

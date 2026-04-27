@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### parser API：新增显式 `ParseProfile::Light`
+
+`docs/light-parse-design.md` 与
+`docs/plans/2026-04-27-light-parse-design.md` 落地
+`docs/plans/2026-04-26-parser-api-consistency-fixes.md` Task 8：
+
+- `ParseOptions` 新增 `profile: ParseProfile`，默认仍是
+  `ParseProfile::Full`，保持既有 full-fidelity 行为。
+- 新增 `ParseOptions::light()`，面向 bulk inventory / triage 场景；
+  light profile 保留 CFB tree、stream inventory 与 package raw streams，
+  跳过 tagged-text XML、`JSite` properties、dynamic attrs、cross-reference
+  与 layout 等较重语义/派生 pass。
+- 新增 API 回归测试，确认 light package parse 仍保留 raw stream 和
+  stream inventory，同时跳过 XML meta、cross-reference 与 layout。
+
 ### parser：Sheet endpoint extraction 失败进入可见诊断
 
 `docs/plans/2026-04-27-sheet-endpoint-diagnostics.md` 落地
