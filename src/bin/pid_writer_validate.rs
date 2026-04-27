@@ -17,7 +17,7 @@
 //! Exit codes: 0 = all streams match, 1 = mismatch, 2 = parse / IO failure.
 
 use pid_parse::package::PidPackage;
-use pid_parse::writer::{EncodedString, PidWriter, WritePlan};
+use pid_parse::writer::{apply_plan_to_package, EncodedString, PidWriter, WritePlan};
 use pid_parse::PidParser;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -672,23 +672,11 @@ pub fn run_validate_with_plan(
         .parse_package(input)
         .map_err(|e| ValidateError::SourceParse(e.to_string()))?;
 
-    // Build the "expected" package by applying the plan in-memory. We mirror
-    // `PidWriter::write_to`'s internal ordering: metadata updates first,
-    // then stream replacements, then sheet patches. Keep these in sync with
-    // `pid_parse::writer::PidWriter::write_to` if that pipeline changes.
+    // Build the "expected" package through the same helper that writer entry
+    // points use, so validator expectations cannot drift from write order.
     let mut expected = original.clone();
-    pid_parse::writer::metadata_write::apply_metadata_updates(
-        &mut expected,
-        &plan.metadata_updates,
-    )
-    .map_err(|e| ValidateError::Edit(format!("metadata_updates: {e}")))?;
-    for repl in &plan.stream_replacements {
-        expected.replace_stream(repl.path.clone(), repl.new_data.clone());
-    }
-    for patch in &plan.sheet_patches {
-        pid_parse::writer::sheet_patch::apply_sheet_patch_to_package(&mut expected, patch)
-            .map_err(|e| ValidateError::Edit(format!("sheet_patch {}: {e}", patch.sheet_path)))?;
-    }
+    apply_plan_to_package(&mut expected, plan)
+        .map_err(|e| ValidateError::Edit(format!("apply_plan: {e}")))?;
 
     PidWriter::write_to(&original, plan, output)
         .map_err(|e| ValidateError::Write(e.to_string()))?;

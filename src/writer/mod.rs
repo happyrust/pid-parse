@@ -86,11 +86,13 @@ impl PidWriter {
     }
 }
 
-/// Internal: mutate `package` in-place according to `plan`. Shared by
-/// [`PidWriter::write_to`] and [`PidWriter::write_to_bytes`] so any
-/// future pipeline change (metadata → `stream_replacements` → `sheet_patches`)
-/// lands in both paths automatically.
-fn apply_plan_to_package(package: &mut PidPackage, plan: &WritePlan) -> Result<(), PidError> {
+/// Mutate `package` in-place according to `plan`.
+///
+/// This is the canonical writer plan application order: metadata updates,
+/// then `stream_replacements`, then `sheet_patches`. [`PidWriter::write_to`],
+/// [`PidWriter::write_to_bytes`], and validation tooling share this helper so
+/// future pipeline changes land in one place.
+pub fn apply_plan_to_package(package: &mut PidPackage, plan: &WritePlan) -> Result<(), PidError> {
     metadata_write::apply_metadata_updates(package, &plan.metadata_updates)?;
     for repl in &plan.stream_replacements {
         package.replace_stream(repl.path.clone(), repl.new_data.clone());

@@ -109,6 +109,19 @@ fn parse_pid_package_from_cfb<R: Read + std::io::Seek>(
         streams,
         ..PidDocument::default()
     };
+    if options.keep_unknown_streams {
+        doc.unknown_streams = crate::inspect::unidentified_top_level_streams(&doc)
+            .into_iter()
+            .map(|stream| crate::model::UnknownStream {
+                path: stream.path.clone(),
+                size: stream.size,
+                magic_u32_le: stream.magic_u32_le,
+                magic_tag: stream
+                    .magic_u32_le
+                    .and_then(crate::parsers::magic::magic_tag),
+            })
+            .collect();
+    }
 
     crate::streams::summary::parse_summary_streams(cfb, &mut doc)?;
 

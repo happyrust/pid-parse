@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### writer：validator 复用同一套 `WritePlan` 应用顺序
+
+`docs/plans/2026-04-27-validator-writer-pipeline-reuse.md` 落地
+`docs/plans/2026-04-26-parser-api-consistency-fixes.md` Task 4：
+
+- `writer::apply_plan_to_package` 从内部 helper 提升为有文档的公开
+  helper，作为 metadata updates → `stream_replacements` →
+  `sheet_patches` 的唯一 canonical 应用顺序。
+- `pid_writer_validate --apply-plan` 构造 expected package 时改为调用
+  同一个 helper，不再手写一份 metadata / stream replacement /
+  sheet patch 顺序，避免未来 writer pipeline 改动时 validator 预期漂移。
+- CLI 报告形状与 edited-path 分类不变。
+
+### parser API：明确 `keep_unknown_streams` 只控制解码诊断视图
+
+`docs/plans/2026-04-27-keep-unknown-streams-contract.md` 落地
+`docs/plans/2026-04-26-parser-api-consistency-fixes.md` Task 3：
+
+- `ParseOptions::keep_unknown_streams` 的契约收敛为控制 decoded
+  diagnostics：`PidDocument.unknown_streams` 与嵌入式 `JSite`
+  raw-stream summaries。
+- `PidPackage` 的 raw stream retention 不受该选项影响；即使
+  `keep_unknown_streams == false`，writer passthrough 仍可拿到未知流
+  原始字节并保持 byte-preserving。
+- reader 现在基于 `inspect::unidentified_top_level_streams` 填充
+  `UnknownStream { path, size, magic_u32_le, magic_tag }`，并新增
+  `keep_unknown_streams` 契约测试覆盖 `true` / `false` 两条路径。
+
 ### parser API：`PidPackage::from_bytes` 改为纯内存解析
 
 `docs/plans/2026-04-27-from-bytes-pure-memory-parse.md` 落地

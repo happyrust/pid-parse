@@ -118,8 +118,9 @@ pub struct PidDocument {
 
     /// Every top-level stream whose name didn't match any registered
     /// decoder (see [`crate::inspect::KNOWN_TOP_LEVEL_STREAM_NAMES`]).
-    /// Retained so [`crate::writer::PidWriter`] can round-trip them
-    /// byte-for-byte even when we don't (yet) know what they mean.
+    /// This is a decoded diagnostic inventory controlled by
+    /// [`crate::api::ParseOptions::keep_unknown_streams`]; package-side raw
+    /// bytes are retained separately for writer passthrough.
     pub unknown_streams: Vec<UnknownStream>,
 
     /// P&ID object inventory derived from Dynamic Attributes records.
@@ -802,8 +803,8 @@ pub struct SheetStream {
 }
 
 /// Top-level stream the reader encountered but does not (yet)
-/// interpret. Bytes are preserved via the package-side raw store so
-/// [`crate::writer::PidWriter`] can still round-trip them.
+/// interpret. This stores classification metadata only; bytes are
+/// preserved via the package-side raw store.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnknownStream {
     /// Full `/`-joined CFB path of the stream.

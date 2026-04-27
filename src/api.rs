@@ -38,8 +38,10 @@ pub struct PidParser {
 /// - `scan_strings` — per-stream UTF-16 string probes.
 /// - `parse_xml` — `SmartPlant`-embedded XML fragments.
 /// - `parse_jsite_properties` — `JSite` dynamic property blobs.
-/// - `keep_unknown_streams` — retain unrecognized streams for audit
-///   / round-trip.
+/// - `keep_unknown_streams` — retain decoded diagnostics for unknown
+///   streams (`PidDocument::unknown_streams` and embedded `JSite` raw-stream
+///   summaries). Package-side raw bytes are always retained for writer
+///   passthrough.
 /// - `max_preview_strings` — cap on the per-stream string preview
 ///   collected during scan.
 #[derive(Debug, Clone)]
@@ -52,8 +54,10 @@ pub struct ParseOptions {
     /// Enable decoding of `JSite` dynamic property blobs (can be
     /// expensive on big files with many sites).
     pub parse_jsite_properties: bool,
-    /// Retain streams that don't match any registered decoder, so
-    /// [`crate::writer::PidWriter`] can still round-trip them.
+    /// Retain decoded diagnostics for streams that don't match any
+    /// registered decoder. This does not control package-side raw byte
+    /// retention; [`crate::writer::PidWriter`] passthrough remains
+    /// byte-preserving even when this is `false`.
     pub keep_unknown_streams: bool,
     /// Upper bound on preview strings kept per stream during scans.
     pub max_preview_strings: usize,
@@ -149,12 +153,32 @@ mod tests {
         cfb.into_inner().into_inner()
     }
 
+    fn build_cfb_bytes_with_unknown_top_level_stream() -> Vec<u8> {
+        use std::io::Cursor;
+        let mut cfb = ::cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+        cfb.create_storage("/TaggedTxtData").unwrap();
+        let mut drawing = cfb.create_stream("/TaggedTxtData/Drawing").unwrap();
+        drawing.write_all(b"<Drawing />").unwrap();
+        drop(drawing);
+        let mut mystery = cfb.create_stream("/MysteryTopLevel").unwrap();
+        mystery.write_all(b"root-unknown-payload").unwrap();
+        drop(mystery);
+        cfb.flush().unwrap();
+        cfb.into_inner().into_inner()
+    }
+
     fn unique_temp_path() -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
         let pid = std::process::id();
         std::env::temp_dir().join(format!("pid-parse-from-bytes-test-{pid}-{nanos}.pid"))
+    }
+
+    fn write_temp_pid(bytes: &[u8]) -> std::path::PathBuf {
+        let path = unique_temp_path();
+        std::fs::write(&path, bytes).unwrap();
+        path
     }
 
     #[test]
@@ -195,6 +219,45 @@ mod tests {
             a.streams.keys().collect::<Vec<_>>(),
             b.streams.keys().collect::<Vec<_>>(),
             "from_path and parse_package must produce equivalent stream lists"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn keep_unknown_streams_false_keeps_package_raw_streams() {
+        let bytes = build_cfb_bytes_with_unknown_top_level_stream();
+        let path = write_temp_pid(&bytes);
+        let parser = PidParser::with_options(ParseOptions {
+            keep_unknown_streams: false,
+            ..ParseOptions::default()
+        });
+
+        let pkg = parser.parse_package(&path).expect("parse");
+
+        assert!(
+            pkg.get_stream("/MysteryTopLevel").is_some(),
+            "package raw streams must remain available for writer passthrough"
+        );
+        assert!(
+            pkg.parsed.unknown_streams.is_empty(),
+            "keep_unknown_streams=false should suppress decoded unknown diagnostics"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn keep_unknown_streams_true_populates_unknown_stream_inventory() {
+        let bytes = build_cfb_bytes_with_unknown_top_level_stream();
+        let path = write_temp_pid(&bytes);
+
+        let pkg = PidParser::new().parse_package(&path).expect("parse");
+
+        assert!(
+            pkg.parsed
+                .unknown_streams
+                .iter()
+                .any(|s| s.path == "/MysteryTopLevel"),
+            "default parser should retain top-level unknown stream diagnostics"
         );
         let _ = std::fs::remove_file(&path);
     }
