@@ -769,6 +769,7 @@ mod tests {
             attribute_records: vec![],
             probe_summary: None,
             endpoint_records: vec![],
+            endpoint_decode_error: None,
         });
 
         let cov = build_cluster_coverage(&doc);
@@ -863,6 +864,7 @@ mod tests {
             attribute_records: vec![],
             probe_summary: None,
             endpoint_records: vec![],
+            endpoint_decode_error: None,
         });
 
         let cov = build_cluster_coverage(&doc);
@@ -1155,6 +1157,7 @@ mod tests {
                 endpoint_a,
                 endpoint_b,
             }],
+            endpoint_decode_error: None,
         }
     }
 
@@ -1631,6 +1634,7 @@ mod tests {
             attribute_records: vec![],
             probe_summary: None,
             endpoint_records: vec![],
+            endpoint_decode_error: None,
         });
         doc.sheet_streams.push(SheetStream {
             name: "SheetOrphan".into(),
@@ -1649,6 +1653,7 @@ mod tests {
                 endpoint_a: 10,
                 endpoint_b: 20,
             }],
+            endpoint_decode_error: None,
         });
         doc.dynamic_attributes = Some(mk_da_blob(vec![
             mk_attribute_record("Instrument", Some("SRC1"), "decoded"),

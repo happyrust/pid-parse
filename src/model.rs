@@ -800,6 +800,11 @@ pub struct SheetStream {
     /// pair of the two objects it connects.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub endpoint_records: Vec<SheetEndpointRecord>,
+    /// Soft failure captured while trying to extract endpoint-pair records
+    /// from this sheet. `None` means extraction either succeeded or had no
+    /// relationship fields to look for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint_decode_error: Option<String>,
 }
 
 /// Top-level stream the reader encountered but does not (yet)

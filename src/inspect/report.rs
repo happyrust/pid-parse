@@ -878,8 +878,12 @@ pub fn generate_report(doc: &PidDocument) -> String {
             if !xr.sheet_provenance.is_empty() {
                 writeln!(out, "  Sheet provenance refs:").ok();
                 for entry in xr.sheet_provenance.iter().take(5) {
-                    writeln!(
-                        out,
+                    let endpoint_error = doc
+                        .sheet_streams
+                        .iter()
+                        .find(|sheet| sheet.path == entry.sheet_path)
+                        .and_then(|sheet| sheet.endpoint_decode_error.as_deref());
+                    let base = format!(
                         "    {} endpoint_records={} declared={} match_index={} relationships={} fully_traced={}",
                         entry.sheet_path,
                         entry.endpoint_record_count,
@@ -888,8 +892,12 @@ pub fn generate_report(doc: &PidDocument) -> String {
                             .matched_declared_index.map_or_else(|| "-".into(), |i| i.to_string()),
                         entry.linked_relationship_count,
                         entry.fully_traced_relationship_count
-                    )
-                    .ok();
+                    );
+                    if let Some(error) = endpoint_error {
+                        writeln!(out, "{base} endpoint_error={error:?}").ok();
+                    } else {
+                        writeln!(out, "{base}").ok();
+                    }
                 }
                 if xr.sheet_provenance.len() > 5 {
                     writeln!(out, "    ... ({} more)", xr.sheet_provenance.len() - 5).ok();
@@ -1398,6 +1406,52 @@ mod tests {
         );
         assert!(
             report.contains("/SheetOrphan endpoint_records=1 declared=false match_index=- relationships=0 fully_traced=0"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_shows_sheet_endpoint_decode_error() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(crate::model::SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 0,
+            extracted_texts: vec![],
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: vec![],
+            probe_summary: None,
+            endpoint_records: vec![],
+            endpoint_decode_error: Some(
+                "failed to reopen sheet stream for endpoint records: missing".into(),
+            ),
+        });
+        doc.cross_reference = Some(crate::model::CrossReferenceGraph {
+            sheet_provenance: vec![crate::model::SheetProvenanceRef {
+                sheet_path: "/Sheet6".into(),
+                endpoint_record_count: 0,
+                declared_in_psm: true,
+                matched_declared_index: Some(0),
+                linked_relationship_count: 0,
+                fully_traced_relationship_count: 0,
+            }],
+            sheet_provenance_coverage: crate::model::SheetProvenanceCoverage {
+                total_sheets: 1,
+                declared_sheets: 1,
+                orphan_sheets: 0,
+                sheets_with_endpoint_records: 0,
+                empty_declared_sheets: 1,
+            },
+            ..Default::default()
+        });
+
+        let report = generate_report(&doc);
+        assert!(
+            report.contains(
+                "/Sheet6 endpoint_records=0 declared=true match_index=0 relationships=0 fully_traced=0 endpoint_error=\"failed to reopen sheet stream for endpoint records: missing\""
+            ),
             "{report}"
         );
     }

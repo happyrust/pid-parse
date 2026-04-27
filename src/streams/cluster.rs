@@ -122,6 +122,7 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
             attribute_records,
             probe_summary,
             endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
         });
     }
 

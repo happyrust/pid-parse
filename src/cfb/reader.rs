@@ -182,15 +182,27 @@ fn populate_sheet_endpoints<R: Read + std::io::Seek>(
         return Ok(());
     }
     for sheet in &mut doc.sheet_streams {
-        if let Ok(mut s) = cfb.open_stream(&sheet.path) {
-            let mut data = Vec::new();
-            s.read_to_end(&mut data)?;
-            sheet.endpoint_records = crate::parsers::sheet_endpoint_records::parse_endpoint_records(
-                &sheet.path,
-                &data,
-                &rel_field_xs,
-            );
+        let mut s = match cfb.open_stream(&sheet.path) {
+            Ok(s) => s,
+            Err(e) => {
+                sheet.endpoint_decode_error = Some(format!(
+                    "failed to reopen sheet stream for endpoint records: {e}"
+                ));
+                continue;
+            }
+        };
+        let mut data = Vec::new();
+        if let Err(e) = s.read_to_end(&mut data) {
+            sheet.endpoint_decode_error = Some(format!(
+                "failed to read sheet stream for endpoint records: {e}"
+            ));
+            continue;
         }
+        sheet.endpoint_records = crate::parsers::sheet_endpoint_records::parse_endpoint_records(
+            &sheet.path,
+            &data,
+            &rel_field_xs,
+        );
     }
     Ok(())
 }

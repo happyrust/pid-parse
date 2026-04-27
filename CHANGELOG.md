@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### parser：Sheet endpoint extraction 失败进入可见诊断
+
+`docs/plans/2026-04-27-sheet-endpoint-diagnostics.md` 落地
+`docs/plans/2026-04-26-parser-api-consistency-fixes.md` Task 5：
+
+- `SheetStream` 新增 `endpoint_decode_error` 诊断字段，记录 endpoint
+  record extraction 阶段的 per-sheet soft failure。
+- `populate_sheet_endpoints` 不再静默跳过 `open_stream` 失败；re-open
+  或 read 失败会写入诊断并继续解析其它 sheet，避免单个 Sheet 问题
+  把整个 package parse 变成 hard failure。
+- `inspect` report 的 Sheet provenance refs 会在对应 sheet 行追加
+  `endpoint_error="..."`，让 endpoint 丢失原因可在文本报告里定位。
+
 ### writer：validator 复用同一套 `WritePlan` 应用顺序
 
 `docs/plans/2026-04-27-validator-writer-pipeline-reuse.md` 落地
