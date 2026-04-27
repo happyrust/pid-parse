@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### docs：刷新当前架构图与原理说明
+
+- 新增 `docs/current-architecture-principles.md`，用读取路径、
+  `PidDocument` / `PidPackage` 分层、Probe / Decode、byte-audit、
+  writer、backup / publish 边线和质量门禁说明当前解析器架构。
+- 新增 `docs/diagrams/pid-parse-current-architecture.svg` 与 PNG 导出，
+  作为 `architecture-guide.md` 中当前架构图的可引用版本。
+- 更新 `docs/architecture-guide.md` 的架构图链接，补充 SVG 与原理说明
+  入口，避免仍指向旧版 `pid-parse-architecture.png`。
+
+纯文档与图示更新，不改 lib API、CLI surface 和 parser / writer 行为。
+
 ## [0.11.7] — 2026-04-27
 
 ### parser API：新增显式 `ParseProfile::Light`

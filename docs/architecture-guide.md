@@ -32,10 +32,14 @@
 - **读写往返**：通过 `PidPackage` + `PidWriter` 实现元数据编辑和文件回写
 - **检查报告**：文本报告、JSON 导出、Mermaid 图、diff 对比、字节审计
 
-![架构图](diagrams/pid-parse-architecture.png)
+![当前架构图](diagrams/pid-parse-current-architecture.png)
 
 当前架构图的可打开 HTML 版本：
 [`docs/diagrams/pid-parse-current-architecture.html`](diagrams/pid-parse-current-architecture.html)。
+
+当前架构图的 SVG 版本与配套原理说明：
+[`docs/diagrams/pid-parse-current-architecture.svg`](diagrams/pid-parse-current-architecture.svg)、
+[`docs/current-architecture-principles.md`](current-architecture-principles.md)。
 
 ---
 
