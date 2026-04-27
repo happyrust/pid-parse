@@ -16,7 +16,7 @@
 use crate::error::PidError;
 use crate::model::PidDocument;
 use crate::package::PidPackage;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Front-door parser for `SmartPlant` `.pid` compound files.
 ///
@@ -118,37 +118,16 @@ impl PidPackage {
     /// `.pid` file. Useful when the bytes come from HTTP, an archive, or
     /// an embedded resource and you would rather not touch disk.
     ///
-    /// Implementation note: v0.5.3 writes the bytes to a unique temp
-    /// file, parses it, and removes the temp file. A zero-disk pure
-    /// in-memory path is on the Phase 10a roadmap — it requires making
-    /// `cfb::reader::parse_pid_package` generic over `Read + Seek`,
-    /// which is a bigger refactor than fits in this patch. Consumers can
-    /// treat this method as the authoritative "bytes in → package out"
-    /// entry-point regardless; the internal scratch file is invisible
-    /// on success.
+    /// Implementation note: v0.11.6+ parses the bytes through an
+    /// in-memory `Cursor<Vec<u8>>`, so no scratch file is created and the
+    /// returned package has `source_path == None`.
     ///
-    /// Errors: any `PidError::Io` from the temp file write, or any
-    /// parse error surfaced by [`PidParser::parse_package`].
+    /// Errors: any parse error surfaced by the CFB reader.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PidError> {
-        let scratch = unique_temp_path();
-        std::fs::write(&scratch, bytes)?;
-        let result = PidParser::new().parse_package(&scratch);
-        // Best-effort cleanup; ignore failure (e.g. antivirus lock) — the
-        // package was already parsed.
-        let _ = std::fs::remove_file(&scratch);
-        result
+        let parser = PidParser::new();
+        let cursor = std::io::Cursor::new(bytes.to_vec());
+        crate::cfb::reader::parse_pid_package_from_reader(cursor, &parser.options)
     }
-}
-
-/// Private helper: produce a unique temp-file path using PID + nanos.
-/// Mirrors the convention used by `tests/writer_validate_cli.rs` so
-/// scratch files land in the same place / naming scheme.
-fn unique_temp_path() -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    let pid = std::process::id();
-    std::env::temp_dir().join(format!("pid-parse-from-bytes-{pid}-{nanos}.pid"))
 }
 
 #[cfg(test)]
@@ -170,6 +149,14 @@ mod tests {
         cfb.into_inner().into_inner()
     }
 
+    fn unique_temp_path() -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let pid = std::process::id();
+        std::env::temp_dir().join(format!("pid-parse-from-bytes-test-{pid}-{nanos}.pid"))
+    }
+
     #[test]
     fn from_bytes_parses_a_minimal_synthetic_pid() {
         let bytes = build_minimal_cfb_bytes();
@@ -177,6 +164,16 @@ mod tests {
         assert!(
             pkg.get_stream("/TaggedTxtData/Drawing").is_some(),
             "Drawing stream should survive byte-level parse"
+        );
+    }
+
+    #[test]
+    fn from_bytes_marks_package_as_memory_sourced() {
+        let bytes = build_minimal_cfb_bytes();
+        let pkg = PidPackage::from_bytes(&bytes).expect("parse");
+        assert!(
+            pkg.source_path.is_none(),
+            "from_bytes should parse directly from memory, not expose a scratch file path"
         );
     }
 

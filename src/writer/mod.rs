@@ -7,13 +7,31 @@
 //! - **Metadata-only updates**: replace `/TaggedTxtData/Drawing` and
 //!   `/TaggedTxtData/General` XML bodies.
 //! - **`SummaryInformation` / `DocumentSummaryInformation`** string-property
-//!   edits via `MetadataUpdates.summary_updates` (see [`summary_write`]).
-//! - **Stream replacements**: verbatim byte replacement of any stream.
-//! - **Experimental Sheet byte-range patches** (see [`sheet_patch`]).
+//!   edits via `MetadataUpdates.summary_updates` (default UTF-8/UTF-16LE
+//!   inference) and `summary_updates_encoded` (Phase 10i, v0.8.0+, with
+//!   explicit `encoding_rs` label). Deletions handled via
+//!   `summary_deletions` (Phase 9n, v0.5.2+). See [`summary_write`].
+//! - **Stream replacements**: verbatim byte replacement of any stream
+//!   (`stream_replacements`).
+//! - **Experimental Sheet byte-range patches** (`sheet_patches`,
+//!   see [`sheet_patch`]).
 //!
-//! See `docs/writer-layer-plan.md` for remaining constraints (no CLSID /
-//! timestamp preservation; BOM / UTF-16 encoding is the caller's
-//! responsibility; property-set writing is scoped to string types only).
+//! Fidelity (current state):
+//! - **Root CLSID 保留** (Phase 9a, v0.4.x+).
+//! - **Non-root storage CLSID 保留** (Phase 9e, v0.5.x+).
+//! - **Storage timestamps 与 `state_bits`**：读取 + 参与 `diff_packages`
+//!   报告，但 writer 输出端**不保留** —— `cfb::create` 会刷新为当前
+//!   时间，`state_bits` 在写回路径上保持不变（passthrough）但目录
+//!   物理顺序按 lexicographic path 重写。
+//! - **目录物理顺序**：按规范化路径排序，不保留源顺序。
+//! - **BOM / UTF-16 encoding**：仍由 caller 负责（`metadata_updates`
+//!   的 XML 字符串原样写入）。
+//! - **Property-set writing**：仅作用于字符串属性（`VT_LPSTR` /
+//!   `VT_LPWSTR`）；FILETIME / I4 等非字符串属性永远字节级 passthrough。
+//!
+//! See `docs/writer-layer-plan.md` for the multi-phase roadmap and
+//! `docs/writer-quickstart.md` §6.5 for the raw-stream-vs-`parsed`
+//! refresh contract.
 pub mod cfb_write;
 pub mod metadata_helpers;
 pub mod metadata_write;

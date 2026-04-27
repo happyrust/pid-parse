@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### parser API：`PidPackage::from_bytes` 改为纯内存解析
+
+`docs/plans/2026-04-27-from-bytes-pure-memory-parse.md` 落地
+`docs/plans/2026-04-26-parser-api-consistency-fixes.md` Task 7：
+
+- `PidPackage::from_bytes` 不再写入临时 `.pid` 文件，而是通过
+  `Cursor<Vec<u8>>` 直接交给 CFB reader 解析；内存来源的 package
+  明确返回 `source_path == None`，避免把 scratch path 泄漏给调用方。
+- `src/cfb/reader.rs` 抽出 reader-generic 的内部解析核心，
+  `parse_pid_package(path)` 仍是路径入口，新增
+  `parse_pid_package_from_reader` 支撑内存 / 自定义 reader 输入。
+- 新增 `from_bytes_marks_package_as_memory_sourced` 回归测试，覆盖
+  内存解析身份语义；原有 `from_bytes` invalid-data 与
+  `from_path` 等价行为测试继续通过。
+
+### docs：同步 writer 能力说明
+
+- `src/writer/mod.rs` / `src/writer/summary_write.rs` 的 module
+  comment 补齐当前 summary update / deletion / encoded update、CLSID
+  与 `state_bits` 保真边界，避免文档仍停留在早期 writer 限制。
+- `examples/byte_audit_demo.rs` 应用 rustfmt 折行，恢复全量格式 gate。
+
 ## [0.11.6] — 2026-04-26
 
 ### docs：明确 `replace_stream` / `set_xml_tag` 不刷新 `parsed` 的契约

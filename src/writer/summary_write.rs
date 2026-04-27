@@ -8,15 +8,27 @@
 //! (FILETIME, I4, etc.) are preserved verbatim — we never decode and
 //! re-encode them.
 //!
-//! Scope (see `docs/plans/2026-04-21-phase-9l-summary-info-writer.md`):
+//! Scope (see `docs/plans/2026-04-21-phase-9l-summary-info-writer.md` and
+//! the multi-phase trail in CHANGELOG):
 //! - **Can** edit `VT_LPSTR` / `VT_LPWSTR` properties by symbolic name
 //!   (e.g. `"title"`, `"author"`, `"comments"`, `"category"`, …).
 //! - **Can** append a supported property that was not in the source.
-//! - **Cannot** edit non-string properties (returns
-//!   `ReadOnlyPropType`).
-//! - **Cannot** delete properties (future).
-//! - **Cannot** cross encoding boundaries: writing non-ASCII into an
-//!   existing `VT_LPSTR` property returns `EncodingMismatch`.
+//! - **Can** delete properties via `MetadataUpdates.summary_deletions`
+//!   (Phase 9n, v0.5.2+) — symbolic key, silent no-op when the key
+//!   isn't present in the source property-set.
+//! - **Can** apply code-page-aware updates via
+//!   `MetadataUpdates.summary_updates_encoded` (Phase 10i, v0.8.0+) when
+//!   the caller wants explicit `encoding_rs` control over `VT_LPSTR`
+//!   payload bytes (e.g. `"windows-1252"`, `"GBK"`, `"Shift_JIS"`).
+//!   `VT_LPWSTR` targets ignore the encoding hint (UTF-16LE is
+//!   unambiguous).
+//! - **Cannot** edit non-string properties (returns `ReadOnlyPropType`).
+//! - **Cannot** cross encoding boundaries silently: writing non-ASCII
+//!   into an existing `VT_LPSTR` property via the default
+//!   `summary_updates` channel returns `EncodingMismatch`. Use
+//!   `summary_updates_encoded` to opt into explicit code-page encoding,
+//!   or rely on Phase 10g (v0.7.0+) which encodes new `VT_LPSTR` values
+//!   as UTF-8 by default.
 //!
 //! All errors are wrapped into `PidError::ParseFailure { context: "summary
 //! writer", message }` so the public `PidError` surface is unchanged.

@@ -87,8 +87,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn print_per_stream(report: &pid_parse::ByteAuditReport) {
     for (path, summary) in &report.per_stream {
         let status = match &summary.parser_name {
-            Some(name) => format!("{}/{} consumed ({})", summary.consumed_bytes, summary.total_bytes, name),
-            None => format!("{}/{} leftover (no parser)", summary.leftover_bytes, summary.total_bytes),
+            Some(name) => format!(
+                "{}/{} consumed ({})",
+                summary.consumed_bytes, summary.total_bytes, name
+            ),
+            None => format!(
+                "{}/{} leftover (no parser)",
+                summary.leftover_bytes, summary.total_bytes
+            ),
         };
         println!("  {:42}: {status}", path);
     }

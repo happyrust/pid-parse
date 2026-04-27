@@ -14,7 +14,7 @@ use crate::model::{PidDocument, StreamEntry};
 use crate::package::{PidPackage, RawStream, StorageTimestamps};
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// CFB-spec epoch: 1601-01-01 UTC. `cfb` returns this value for storages
@@ -37,7 +37,27 @@ pub fn parse_pid_file(path: &Path, options: &ParseOptions) -> Result<PidDocument
 /// consumed by [`crate::writer::PidWriter`] for round-trip writes.
 pub fn parse_pid_package(path: &Path, options: &ParseOptions) -> Result<PidPackage, PidError> {
     let mut cfb = ::cfb::open(path)?;
-    let tree = crate::cfb::tree::build_tree(&cfb, "/")?;
+    parse_pid_package_from_cfb(&mut cfb, Some(path.to_path_buf()), options)
+}
+
+/// Parse a `.pid` compound file from any in-memory or custom reader.
+///
+/// The returned package has `source_path == None` because the bytes did
+/// not come from a stable filesystem path.
+pub fn parse_pid_package_from_reader<R: Read + std::io::Seek>(
+    reader: R,
+    options: &ParseOptions,
+) -> Result<PidPackage, PidError> {
+    let mut cfb = ::cfb::CompoundFile::open(reader)?;
+    parse_pid_package_from_cfb(&mut cfb, None, options)
+}
+
+fn parse_pid_package_from_cfb<R: Read + std::io::Seek>(
+    cfb: &mut ::cfb::CompoundFile<R>,
+    source_path: Option<PathBuf>,
+    options: &ParseOptions,
+) -> Result<PidPackage, PidError> {
+    let tree = crate::cfb::tree::build_tree(cfb, "/")?;
     // Capture the root CLSID + all non-root storage CLSIDs before we hand
     // the cfb off to the collectors — `walk()` / `root_entry()` borrow the
     // compound-file, so they must run before the `&mut cfb` borrows below.
@@ -82,7 +102,7 @@ pub fn parse_pid_package(path: &Path, options: &ParseOptions) -> Result<PidPacka
             state_bits.insert(path_str, sb);
         }
     }
-    let (streams, raw_streams) = collect_streams_and_bytes(&mut cfb, options)?;
+    let (streams, raw_streams) = collect_streams_and_bytes(cfb, options)?;
 
     let mut doc = PidDocument {
         cfb_tree: tree,
@@ -90,22 +110,22 @@ pub fn parse_pid_package(path: &Path, options: &ParseOptions) -> Result<PidPacka
         ..PidDocument::default()
     };
 
-    crate::streams::summary::parse_summary_streams(&mut cfb, &mut doc)?;
+    crate::streams::summary::parse_summary_streams(cfb, &mut doc)?;
 
     if options.parse_xml {
-        crate::streams::tagged_text::parse_tagged_text_streams(&mut cfb, &mut doc, options)?;
+        crate::streams::tagged_text::parse_tagged_text_streams(cfb, &mut doc, options)?;
     }
 
     if options.parse_jsite_properties {
-        crate::streams::jsite::parse_jsites(&mut cfb, &mut doc, options)?;
+        crate::streams::jsite::parse_jsites(cfb, &mut doc, options)?;
     }
 
-    crate::streams::cluster::parse_clusters(&mut cfb, &mut doc, options)?;
-    crate::streams::dynamic_attrs::parse_dynamic_attrs(&mut cfb, &mut doc, options)?;
-    crate::streams::psm_tables::parse_psm_tables(&mut cfb, &mut doc, options)?;
-    crate::streams::doc_registry::parse_doc_registry(&mut cfb, &mut doc, options)?;
-    capture_doc_version2(&mut cfb, &mut doc)?;
-    populate_sheet_endpoints(&mut cfb, &mut doc)?;
+    crate::streams::cluster::parse_clusters(cfb, &mut doc, options)?;
+    crate::streams::dynamic_attrs::parse_dynamic_attrs(cfb, &mut doc, options)?;
+    crate::streams::psm_tables::parse_psm_tables(cfb, &mut doc, options)?;
+    crate::streams::doc_registry::parse_doc_registry(cfb, &mut doc, options)?;
+    capture_doc_version2(cfb, &mut doc)?;
+    populate_sheet_endpoints(cfb, &mut doc)?;
 
     build_object_inventory(&mut doc);
     build_object_graph(&mut doc);
@@ -113,7 +133,7 @@ pub fn parse_pid_package(path: &Path, options: &ParseOptions) -> Result<PidPacka
     doc.cross_reference = Some(crate::crossref::build_graph(&doc));
     crate::layout::derive_layout(&mut doc);
 
-    Ok(PidPackage::new(Some(path.to_path_buf()), raw_streams, doc)
+    Ok(PidPackage::new(source_path, raw_streams, doc)
         .with_root_clsid(root_clsid)
         .with_storage_clsids(storage_clsids)
         .with_storage_timestamps(storage_timestamps)
