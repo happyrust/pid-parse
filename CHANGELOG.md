@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.11.7] — 2026-04-27
+
 ### parser API：新增显式 `ParseProfile::Light`
 
 `docs/light-parse-design.md` 与
