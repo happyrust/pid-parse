@@ -1,0 +1,91 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<PlantConfiguration>
+  <ISO15926>
+    <Symbology>
+      <Mapping Key="Style" Value="LineType">
+        <action Style="Equipment - New" LineType="Solid"/>
+        <action Style="Equipment - Future" LineType="Long Dash"/>
+        <action Style="Equipment - Existing" LineType="Solid"/>
+        <action Style="Nozzle - New" LineType="Solid"/>
+        <action Style="Nozzle - Future" LineType="Long Dash"/>
+        <action Style="Nozzle - Existing" LineType="Solid"/>
+        <action Style="Piping Component - New" LineType="Solid"/>
+        <action Style="Piping Component - Future" LineType="Long Dash"/>
+        <action Style="Piping Component - Existing" LineType="Solid"/>
+        <action Style="Primary Piping - New" LineType="Solid"/>
+        <action Style="Primary Piping - Future" LineType="Long Dash"/>
+        <action Style="Primary Piping - Existing" LineType="Solid"/>
+        <action Style="Secondary Piping - New" LineType="Solid"/>
+        <action Style="Secondary Piping - Future" LineType="Long Dash"/>
+        <action Style="Secondary Piping - Existing" LineType="Solid"/>
+        <action Style="Hose - New" LineType="Solid"/>
+        <action Style="Hose - Future" LineType="Long Dash"/>
+        <action Style="Hose - Existing" LineType="Solid"/>
+        <action Style="Utility Primary - New" LineType="Solid"/>
+        <action Style="Utility Primary - Future" LineType="Long Dash"/>
+        <action Style="Utility Primary - Existing" LineType="Solid"/>
+        <action Style="Utility Secondary - New" LineType="Solid"/>
+        <action Style="Utility Secondary - Future" LineType="Long Dash"/>
+        <action Style="Utility Secondary - Existing" LineType="Solid"/>
+        <action Style="Utility Hose - New" LineType="Solid"/>
+        <action Style="Utility Hose - Future" LineType="Long Dash"/>
+        <action Style="Utility Hose - Existing" LineType="Solid"/>
+        <action Style="Jacket Utility - New" LineType="Solid"/>
+        <action Style="Jacket Utility - Future" LineType="Long Dash"/>
+        <action Style="Jacket Utility - Existing" LineType="Solid"/>
+        <action Style="Piping OPC" LineType="Solid"/>
+        <action Style="Capillary" LineType="Dotted"/>
+        <action Style="Connect To Process" LineType="Solid"/>
+        <action Style="Electric" LineType="Dashed"/>
+        <action Style="Electric Binary" LineType="Dashed"/>
+        <action Style="Guided Electromagnetic" LineType="Dashed"/>
+        <action Style="Hydraulic" LineType="Dashed"/>
+        <action Style="Mechanical" LineType="Solid"/>
+        <action Style="Pneumatic" LineType="Solid"/>
+        <action Style="Pneumatic Binary" LineType="Solid"/>
+        <action Style="Software" LineType="Dash + Short Dash"/>
+        <action Style="Serial" LineType="Short Dash"/>
+        <action Style="Unguided Electromagnetic" LineType="Long Dash + Short Dash, CenterLine"/>
+        <action Style="Off-Line Instrument" LineType="Solid"/>
+        <action Style="In-Line Instrument - New" LineType="Solid"/>
+        <action Style="In-Line Instrument - Future" LineType="Long Dash"/>
+        <action Style="In-Line Instrument - Existing" LineType="Solid"/>
+        <action Style="Instrument OPC" LineType="Solid"/>
+        <action Style="Revision Cloud Large" LineType=""/>
+        <action Style="Revision Cloud Small" LineType=""/>
+        <action Style="Construction Status" LineType="Solid"/>
+        <action Style="Dashed" LineType="Dashed"/>
+        <action Style="Dash" LineType="Dashed"/>
+        <action Style="Double Chain" LineType="Long Dash + Short Dash, CenterLine"/>
+        <action Style="Undefined" LineType="Solid"/>
+      </Mapping>
+    </Symbology>
+    <HeatTracingMedia>
+      <Mapping Key="Style" Value="LineType">
+        <action Style="N" LineType=""/>
+        <action Style="E" LineType="Dashed"/>
+        <action Style="FA" LineType="Short Dash"/>
+        <action Style="FB" LineType="Short Dash"/>
+        <action Style="FC" LineType="Short Dash"/>
+        <action Style="I" LineType="Short Dash"/>
+        <action Style="MI" LineType="Short Dash"/>
+        <action Style="SKE" LineType="Short Dash"/>
+        <action Style="SH" LineType="Dash + Short Dash"/>
+        <action Style="SL" LineType="Dash + Short Dash"/>
+        <action Style="SM" LineType="Dash + Short Dash"/>
+        <action Style="SN" LineType="Dash + Short Dash"/>
+        <action Style="SS" LineType="Dash + Short Dash"/>
+        <action Style="ST" LineType="Dash + Short Dash"/>
+        <action Style="FAJ" LineType="Solid"/>
+        <action Style="FBJ" LineType="Solid"/>
+        <action Style="FCJ" LineType="Solid"/>
+        <action Style="SHJ" LineType="Solid"/>
+        <action Style="SLJ" LineType="Solid"/>
+        <action Style="SMJ" LineType="Solid"/>
+        <action Style="SNJ" LineType="Solid"/>
+        <action Style="SSJ" LineType="Solid"/>
+      </Mapping>
+    </HeatTracingMedia>
+    <Typicals Included="No" />
+  </ISO15926>
+</PlantConfiguration>

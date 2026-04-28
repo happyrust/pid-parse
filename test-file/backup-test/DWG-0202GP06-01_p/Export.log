@@ -1,0 +1,256 @@
+
+Connected to: Oracle Database 12c Enterprise Edition Release 12.1.0.2.0 - 64bit Production
+With the Partitioning, OLAP, Advanced Analytics and Real Application Testing options
+Export done in AL32UTF8 character set and AL16UTF16 NCHAR character set
+
+About to export specified users ...
+. exporting pre-schema procedural objects and actions
+. exporting foreign function library names for user QSMCQTAZ13_PLANTPIDD 
+. exporting foreign function library names for user QSMCQTAZ13_PLANTD 
+. exporting foreign function library names for user QSMCQTAZ13_PLANT 
+. exporting foreign function library names for user QSMCQTAZ13_PLANTPID 
+. exporting PUBLIC type synonyms
+. exporting private type synonyms
+. exporting PUBLIC type synonyms
+. exporting private type synonyms
+. exporting PUBLIC type synonyms
+. exporting private type synonyms
+. exporting PUBLIC type synonyms
+. exporting private type synonyms
+. exporting object type definitions for user QSMCQTAZ13_PLANTPIDD 
+. exporting object type definitions for user QSMCQTAZ13_PLANTD 
+. exporting object type definitions for user QSMCQTAZ13_PLANT 
+. exporting object type definitions for user QSMCQTAZ13_PLANTPID 
+About to export QSMCQTAZ13_PLANTPIDD's objects ...
+. exporting database links
+. exporting sequence numbers
+. exporting cluster definitions
+. about to export QSMCQTAZ13_PLANTPIDD's tables via Conventional Path ...
+. . exporting table                   APPLICATIONS          5 rows exported
+. . exporting table                     ATTRIBUTES       1015 rows exported
+. . exporting table                       CATEGORY         23 rows exported
+. . exporting table                 CATEGORYFILTER        223 rows exported
+. . exporting table                      CODELISTS       3384 rows exported
+. . exporting table                     CORRELATTS         38 rows exported
+. . exporting table                       ENTITIES         80 rows exported
+. . exporting table                   ENUMERATIONS        133 rows exported
+. . exporting table                 FILTERCRITERIA        401 rows exported
+. . exporting table               FILTERDEFINITION        242 rows exported
+. . exporting table           FILTEREDRELATIONSHIP        383 rows exported
+. . exporting table                 FILTERINSTANCE        247 rows exported
+. . exporting table                     INTERSECTS          1 rows exported
+. . exporting table                           ITEM         80 rows exported
+. . exporting table               ITEMATTRIBUTIONS      29925 rows exported
+. . exporting table                         MAX_ID         24 rows exported
+. . exporting table                  RELATIONSHIPS        101 rows exported
+. . exporting table           SOURCEDESTOBJECTRELS        512 rows exported
+. . exporting table                        SPSORTS         88 rows exported
+. . exporting table                 SPTPATTRIBUTES        701 rows exported
+. . exporting table                    SPTPLAYOUTS         69 rows exported
+. . exporting table                      SPTPVIEWS         81 rows exported
+. . exporting table                     UNIQUEATTS       1542 rows exported
+. . exporting table                        VERSION          1 rows exported
+. . exporting table                    VERSIONINFO          4 rows exported
+. exporting synonyms
+. exporting views
+. exporting stored procedures
+. exporting operators
+About to export QSMCQTAZ13_PLANTD's objects ...
+. exporting database links
+. exporting sequence numbers
+. exporting cluster definitions
+. about to export QSMCQTAZ13_PLANTD's tables via Conventional Path ...
+. . exporting table                   APPLICATIONS          5 rows exported
+. . exporting table                     ATTRIBUTES         85 rows exported
+. . exporting table                       CATEGORY          0 rows exported
+. . exporting table                 CATEGORYFILTER          0 rows exported
+. . exporting table                      CODELISTS        130 rows exported
+. . exporting table                     CORRELATTS         12 rows exported
+. . exporting table                       ENTITIES         20 rows exported
+. . exporting table                   ENUMERATIONS         13 rows exported
+. . exporting table                 FILTERCRITERIA          0 rows exported
+. . exporting table               FILTERDEFINITION          0 rows exported
+. . exporting table           FILTEREDRELATIONSHIP          0 rows exported
+. . exporting table                 FILTERINSTANCE          0 rows exported
+. . exporting table                     INTERSECTS          0 rows exported
+. . exporting table                           ITEM         20 rows exported
+. . exporting table               ITEMATTRIBUTIONS        354 rows exported
+. . exporting table                         MAX_ID         24 rows exported
+. . exporting table                  RELATIONSHIPS         18 rows exported
+. . exporting table           SOURCEDESTOBJECTRELS         16 rows exported
+. . exporting table                        SPSORTS          0 rows exported
+. . exporting table                 SPTPATTRIBUTES          0 rows exported
+. . exporting table                    SPTPLAYOUTS          0 rows exported
+. . exporting table                      SPTPVIEWS         20 rows exported
+. . exporting table                     UNIQUEATTS        131 rows exported
+. . exporting table                        VERSION          6 rows exported
+. . exporting table                    VERSIONINFO          4 rows exported
+. exporting synonyms
+. exporting views
+. exporting stored procedures
+. exporting operators
+About to export QSMCQTAZ13_PLANT's objects ...
+. exporting database links
+. exporting sequence numbers
+. exporting cluster definitions
+. about to export QSMCQTAZ13_PLANT's tables via Conventional Path ...
+. . exporting table                         MAX_ID         20 rows exported
+. . exporting table                      SPIDCACHE          0 rows exported
+. . exporting table                 T_ACTIVEWSSITE          1 rows exported
+. . exporting table                   T_APPPROJECT          1 rows exported
+. . exporting table                         T_AREA          1 rows exported
+. . exporting table                  T_DRAWINGSITE          7 rows exported
+. . exporting table            T_DRAWINGSUBSCRIBER          0 rows exported
+. . exporting table                      T_FORMATS        385 rows exported
+. . exporting table                  T_FORMATTYPES         41 rows exported
+. . exporting table              T_HIERARCHYLEVELS          3 rows exported
+. . exporting table                 T_INTERSITEOPC          0 rows exported
+. . exporting table                        T_PLANT          1 rows exported
+. . exporting table                   T_PLANTGROUP          4 rows exported
+. . exporting table                 T_PLANTSETTING         14 rows exported
+. . exporting table                      T_PROJECT          1 rows exported
+. . exporting table            T_PROJECTPLANTGROUP          4 rows exported
+. . exporting table                   T_ROLEACCESS         16 rows exported
+. . exporting table      T_SHOWFIELDTYPEATTRIBUTES          0 rows exported
+. . exporting table               T_SHOWFIELDTYPES          0 rows exported
+. . exporting table                T_SHOWFIELDUIDS          0 rows exported
+. . exporting table                         T_UNIT          2 rows exported
+. . exporting table                       T_WSSITE          1 rows exported
+. exporting synonyms
+. exporting views
+. exporting stored procedures
+. exporting operators
+About to export QSMCQTAZ13_PLANTPID's objects ...
+. exporting database links
+. exporting sequence numbers
+. exporting cluster definitions
+. about to export QSMCQTAZ13_PLANTPID's tables via Conventional Path ...
+. . exporting table                         MAX_ID         80 rows exported
+. . exporting table                      SPIDCACHE          0 rows exported
+. . exporting table                    T_AREABREAK          0 rows exported
+. . exporting table           T_AREABREAKATTRIBUTE          0 rows exported
+. . exporting table                 T_BOUNDEDSHAPE          0 rows exported
+. . exporting table           T_BOUNDEDSHAPEVERTEX          0 rows exported
+. . exporting table                         T_CASE          2 rows exported
+. . exporting table                  T_CASECONTROL          0 rows exported
+. . exporting table                  T_CASEPROCESS          3 rows exported
+. . exporting table                    T_CONNECTOR        129 rows exported
+. . exporting table              T_CONNECTORVERTEX         53 rows exported
+. . exporting table                      T_DRAWING          7 rows exported
+. . exporting table               T_DRAWINGPROJECT          7 rows exported
+. . exporting table               T_DRAWINGVERSION         14 rows exported
+. . exporting table                  T_DUCTINGCOMP          0 rows exported
+. . exporting table                 T_DUCTINGPOINT          0 rows exported
+. . exporting table                      T_DUCTRUN          0 rows exported
+. . exporting table               T_EQUIPCOMPONENT          0 rows exported
+. . exporting table                    T_EQUIPMENT          4 rows exported
+. . exporting table               T_EQUIPMENTOTHER          3 rows exported
+. . exporting table                    T_EXCHANGER          0 rows exported
+. . exporting table                T_GLOBALDRAWING          7 rows exported
+. . exporting table                      T_HISTORY        333 rows exported
+. . exporting table             T_HYDRAULICCIRCUIT          0 rows exported
+. . exporting table                T_INCONSISTENCY         39 rows exported
+. . exporting table                   T_INLINECOMP         51 rows exported
+. . exporting table                T_INSTRFAILMODE          1 rows exported
+. . exporting table                T_INSTRFUNCTION         22 rows exported
+. . exporting table                    T_INSTRLOOP          0 rows exported
+. . exporting table                  T_INSTROPTION          0 rows exported
+. . exporting table                   T_INSTRUMENT         22 rows exported
+. . exporting table                     T_ITEMNOTE         16 rows exported
+. . exporting table                        T_LABEL          0 rows exported
+. . exporting table                 T_LABELPERSIST         64 rows exported
+. . exporting table                 T_LEADERVERTEX         64 rows exported
+. . exporting table            T_LLAMAMODIFICATION          3 rows exported
+. . exporting table                     T_LOCATION          0 rows exported
+. . exporting table                   T_MECHANICAL          0 rows exported
+. . exporting table                    T_MODELITEM        422 rows exported
+. . exporting table               T_MODELITEMCLAIM          0 rows exported
+. . exporting table        T_MODELITEMCLAIMOFFLINE          0 rows exported
+. . exporting table            T_MODELITEMCLAIMREP          0 rows exported
+. . exporting table              T_MODELITEMLOOKUP          0 rows exported
+. . exporting table                         T_NOTE         16 rows exported
+. . exporting table                       T_NOZZLE         10 rows exported
+. . exporting table                          T_OPC         16 rows exported
+. . exporting table                T_OPTIONAUTOGAP         44 rows exported
+. . exporting table                T_OPTIONDISPSET         11 rows exported
+. . exporting table          T_OPTIONDISPSETFOLDER          3 rows exported
+. . exporting table                 T_OPTIONFORMAT         39 rows exported
+. . exporting table              T_OPTIONHEATTRACE         22 rows exported
+. . exporting table                T_OPTIONSETTING         66 rows exported
+. . exporting table              T_OPTIONSYMBOLOGY         77 rows exported
+. . exporting table                      T_PACKAGE          0 rows exported
+. . exporting table                     T_PIPELINE         15 rows exported
+. . exporting table                      T_PIPERUN         50 rows exported
+. . exporting table                   T_PIPINGCOMP         43 rows exported
+. . exporting table                  T_PIPINGPOINT         93 rows exported
+. . exporting table                    T_PLANTITEM        146 rows exported
+. . exporting table               T_PLANTITEMGROUP          0 rows exported
+. . exporting table           T_PLANTITEMGROUPJOIN          0 rows exported
+. . exporting table          T_PLANTITEMGROUPOTHER          0 rows exported
+. . exporting table                T_PROPERTYBREAK         30 rows exported
+. . exporting table                 T_RELATIONSHIP        284 rows exported
+. . exporting table               T_REPRESENTATION        403 rows exported
+. . exporting table         T_REPRESENTATIONLOOKUP          0 rows exported
+. . exporting table                     T_REVISION          0 rows exported
+. . exporting table                         T_ROOM          0 rows exported
+. . exporting table                T_ROOMCOMPONENT          0 rows exported
+. . exporting table                T_RULEREFERENCE        268 rows exported
+. . exporting table                  T_SAFETYCLASS          0 rows exported
+. . exporting table                  T_SIGNALPOINT        151 rows exported
+. . exporting table                    T_SIGNALRUN          2 rows exported
+. . exporting table                   T_SMARTFRAME          7 rows exported
+. . exporting table            T_SMARTFRAMESTORAGE          7 rows exported
+. . exporting table                       T_SOURCE          0 rows exported
+. . exporting table                       T_STATUS          0 rows exported
+. . exporting table                       T_SYMBOL        210 rows exported
+. . exporting table                       T_SYSTEM          0 rows exported
+. . exporting table                         T_TASK          0 rows exported
+. . exporting table             T_TASKITEMPROPERTY          0 rows exported
+. . exporting table                       T_VESSEL          1 rows exported
+. exporting synonyms
+. exporting views
+. exporting stored procedures
+. exporting operators
+. exporting referential integrity constraints
+. exporting triggers
+. exporting indextypes
+. exporting bitmap, functional and extensible indexes
+. exporting posttables actions
+. exporting materialized views
+. exporting snapshot logs
+. exporting job queues
+. exporting refresh groups and children
+. exporting dimensions
+. exporting referential integrity constraints
+. exporting triggers
+. exporting indextypes
+. exporting bitmap, functional and extensible indexes
+. exporting posttables actions
+. exporting materialized views
+. exporting snapshot logs
+. exporting job queues
+. exporting refresh groups and children
+. exporting dimensions
+. exporting referential integrity constraints
+. exporting triggers
+. exporting indextypes
+. exporting bitmap, functional and extensible indexes
+. exporting posttables actions
+. exporting materialized views
+. exporting snapshot logs
+. exporting job queues
+. exporting refresh groups and children
+. exporting dimensions
+. exporting referential integrity constraints
+. exporting triggers
+. exporting indextypes
+. exporting bitmap, functional and extensible indexes
+. exporting posttables actions
+. exporting materialized views
+. exporting snapshot logs
+. exporting job queues
+. exporting refresh groups and children
+. exporting dimensions
+. exporting post-schema procedural objects and actions
+. exporting statistics
+Export terminated successfully without warnings.

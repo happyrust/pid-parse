@@ -1,0 +1,28 @@
+<?xml version ="1.0" encoding="UTF-8"?>
+<Container CompSchema="DocVersioningComponent" Scope="Data" SoftwareVersion="10.00.31.0023" IsValidated="False" SchemaVersion="04.02.17.01" Plant="TEST02" Project="" DocUID="D9635C3C898840D1990B7E8BEE1D55DA" DocName="A01" Version="" ToolID="SMARTPLANTPID" ToolSignature="AAAD" SDECIMAL=".">
+   <DocumentVersion>
+      <IObject UID="3937034585A866941E0CDBAEF2065D34" Name="A01 Version"/>
+      <IDocumentVersion DocRevision="0" DocVersionDate="2026/04/20" DocVersion="1"/>
+      <IFileComposition/>
+   </DocumentVersion>
+   <Rel>
+      <IObject UID="F730D31BF367F528A1203D24722552A1"/>
+      <IRel UID1="D9635C3C898840D1990B7E8BEE1D55DA" UID2="3937034585A866941E0CDBAEF2065D34" DefUID="VersionedDoc"/>
+   </Rel>
+   <DocumentRevision>
+      <IObject UID="1AF6FBD1DF21B3E704BAACAA1F091984" Name="A01 Revision"/>
+      <IDocumentRevision MajorRev_ForRevise="0" MinorRev_ForRevise=""/>
+   </DocumentRevision>
+   <Rel>
+      <IObject UID="D2DDD1044F0722FFD789A167CDD3F909"/>
+      <IRel UID1="1AF6FBD1DF21B3E704BAACAA1F091984" UID2="D9635C3C898840D1990B7E8BEE1D55DA" DefUID="RevisedDocument"/>
+   </Rel>
+   <File>
+      <IObject UID="AAADC317979198A43C0DECACEB99146F" Name="A01.pid" Description=""/>
+      <IFile FilePath=""/>
+   </File>
+   <Rel>
+      <IObject UID="2DA61D63773741AD00527888DA185B84"/>
+      <IRel UID1="AAADC317979198A43C0DECACEB99146F" UID2="3937034585A866941E0CDBAEF2065D34" DefUID="FileComposition"/>
+   </Rel>
+  </Container>

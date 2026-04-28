@@ -1,0 +1,192 @@
+<?xml version ="1.0" encoding="UTF-8"?>
+<Container CompSchema="PIDComponent" Scope="Data" SoftwareVersion="10.00.31.0023" IsValidated="False" SchemaVersion="04.02.17.01" LoginUser="" LoginPWD="" Plant="TEST02" Project="" DocUID="D9635C3C898840D1990B7E8BEE1D55DA" DocName="A01" Version="" ToolID="SMARTPLANTPID" ToolSignature="AAAD" SDECIMAL=".">
+   <PIDDrawing>
+      <IObject UID="D9635C3C898840D1990B7E8BEE1D55DA" Name="A01" Description=""/>
+      <IDocument DocCategory="P&amp;ID Documents" DocTitle="A01" DocType="P&amp;ID" DocSubtype=""/>
+      <IDocVersionComposition/>
+      <IDwgRepresentationComposition/>
+      <IPIDDrawing/>
+      <ISchematicDwg/>
+      <IPBSItem/>
+   </PIDDrawing>
+   <PIDProcessVessel>
+      <IObject UID="C57494A1B154442C9DF0F4BA713E88EC" ItemTag="V 010121A" Description=""/>
+      <IPIDProcessVesselOcc/>
+      <IProcessVesselOcc/>
+      <IEquipment EqTypeDescription="Horizontal Drum"/>
+      <IEquipmentOcc/>
+      <IPBSItem ConstructionStatus="@NewConstruction" ConstructionStatus2="@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}"/>
+      <IPBSItemCollection/>
+      <IPlannedMatl/>
+      <IProcessEquipment/>
+      <IProcessEquipmentOcc/>
+      <IProcessVessel/>
+      <IDrawingItem/>
+      <IPIDProcessVessel/>
+      <ISpecifiedMatlItem/>
+      <IPIDTypical IsTypical="False"/>
+   </PIDProcessVessel>
+   <PIDNozzle>
+      <IObject UID="7465E81219DB49B492BDF60A055AA391"/>
+      <IPBSItem ConstructionStatus="@NewConstruction" ConstructionStatus2="@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}"/>
+      <IPipingPortComposition/>
+      <IPlannedMatl/>
+      <IDrawingItem/>
+      <INozzleOcc/>
+      <INozzle/>
+      <IEquipmentComponent ProcEqpCompTypeDescription="Flanged Nozzle"/>
+      <IEquipmentComponentOcc/>
+      <IFabricatedItem/>
+      <IHeatTracedItem HTraceRqmt=""/>
+      <IPBSItemCollection/>
+      <IProcessPointCollection/>
+      <ISignalPortComposition/>
+      <IPartOcc/>
+      <IDocumentItem/>
+      <IElecPowerConsumer/>
+      <IPart/>
+      <INoteCollection/>
+      <IProcessDataCaseComposition/>
+      <IPipeCrossSectionItem/>
+      <IPipingSpecifiedItem/>
+      <IPIDTypical IsTypical="False"/>
+   </PIDNozzle>
+   <PIDPipeline>
+      <IObject UID="185EF98B03E844158E3BD8E82806E6CF" ItemTag="PH- 0102102-DN250 mm-B5-P-40.000 in"/>
+      <IPBSItem/>
+      <IPlannedFacility/>
+      <IPBSItemCollection/>
+      <IPipeline/>
+      <IPipingConnectorComposition/>
+      <IFluidSystem/>
+      <INoteCollection/>
+      <IExpandableThing/>
+      <IPIDTypical/>
+   </PIDPipeline>
+   <PIDPipingConnector>
+      <IObject UID="8B6386EF73A497F1A03D67B6A046D596" ItemTag="PH-0102102-250 mm-B5"/>
+      <IPBSItem ConstructionStatus="@NewConstruction" ConstructionStatus2="@{78398AB4-9F3D-11D6-BDA7-00104BCC2B69}"/>
+      <IPlannedFacility/>
+      <IConnector/>
+      <IDrawingItem/>
+      <IPBSItemCollection/>
+      <IPipingConnector/>
+      <IFabricatedItem/>
+      <IHeatTracedItem HTraceRqmt=""/>
+      <IProcessPointCollection/>
+      <IDocumentItem/>
+      <IElecPowerConsumer/>
+      <INoteCollection/>
+      <IProcessDataCaseComposition/>
+      <IExpandableThing/>
+      <INamedPipingConnector PipingConnectorPrefix="" PipingConnectorSeqNo="0102102" PipingConnectorSuff=""/>
+      <IPipeCrossSectionItem NominalDiameter="250 mm"/>
+      <IPipingSpecifiedItem PipingMaterialsClass="B5"/>
+      <ISlopedPipingItem/>
+      <IInsulatedItem/>
+      <IJacketedItem/>
+      <IPIDTypical IsTypical="False"/>
+   </PIDPipingConnector>
+   <PIDPipingPort>
+      <IObject UID="8B6386EF73A497F1A03D67B6A046D596.1" Name="1"/>
+      <IConnection/>
+      <IPipingPort/>
+      <IPipingConnection/>
+      <IPort/>
+      <IPipeCrossSectionItem NominalDiameter="250 mm"/>
+   </PIDPipingPort>
+   <PIDPipingPort>
+      <IObject UID="8B6386EF73A497F1A03D67B6A046D596.2" Name="2"/>
+      <IConnection/>
+      <IPipingPort/>
+      <IPipingConnection/>
+      <IPort/>
+      <IPipeCrossSectionItem NominalDiameter="250 mm"/>
+   </PIDPipingPort>
+   <PIDProcessPoint>
+      <IObject UID="8B6386EF73A497F1A03D67B6A046D596.PPT"/>
+      <IProcessPoint/>
+      <IFacilityPoint/>
+      <IProcessPointCaseComposition/>
+      <IBulkMaxProcessPoint PhaseTemperatureMax="" PressureMax=""/>
+      <IBulkMinProcessPoint PhaseTemperatureMin="" PressureMin=""/>
+      <IBulkNormProcessPoint MolecularWeightNorm="" CpCvRatioNorm=""/>
+      <IBulkBaseProcessPoint PhaseTemperatureBase="" PressureBase=""/>
+   </PIDProcessPoint>
+   <PIDRepresentation>
+      <IObject UID="CA8A0A9DD1784E3BB6913445CE3F6375"/>
+      <IDrawingRepresentation GraphicOID="24601"/>
+   </PIDRepresentation>
+   <PIDRepresentation>
+      <IObject UID="C33E5BD9B9CC4287B244A925A7A1F29B"/>
+      <IDrawingRepresentation GraphicOID="24606"/>
+   </PIDRepresentation>
+   <PIDRepresentation>
+      <IObject UID="AC9DFB6629974E428402C938E60F4B9C"/>
+      <IDrawingRepresentation GraphicOID="24613"/>
+   </PIDRepresentation>
+   <PIDRepresentation>
+      <IObject UID="4B38DB541B1342F99A39838AC9871E3C"/>
+      <IDrawingRepresentation GraphicOID="24615"/>
+   </PIDRepresentation>
+   <Rel>
+      <IObject UID="FFCDFD56E3442FF59711462285322EA1"/>
+      <IRel UID1="C57494A1B154442C9DF0F4BA713E88EC" UID2="CA8A0A9DD1784E3BB6913445CE3F6375" DefUID="DwgRepresentationComposition"/>
+   </Rel>
+   <Rel>
+      <IObject UID="79D298D9F0566C9B821CD40CF45E3E87"/>
+      <IRel UID1="7465E81219DB49B492BDF60A055AA391" UID2="C33E5BD9B9CC4287B244A925A7A1F29B" DefUID="DwgRepresentationComposition"/>
+   </Rel>
+   <Rel>
+      <IObject UID="6E9A7D8022983C5D16C1EC3B0A465AA5"/>
+      <IRel UID1="185EF98B03E844158E3BD8E82806E6CF" UID2="AC9DFB6629974E428402C938E60F4B9C" DefUID="DwgRepresentationComposition"/>
+   </Rel>
+   <Rel>
+      <IObject UID="084A25D3F26C843E2DBB5263CD1CD089"/>
+      <IRel UID1="185EF98B03E844158E3BD8E82806E6CF" UID2="4B38DB541B1342F99A39838AC9871E3C" DefUID="DwgRepresentationComposition"/>
+   </Rel>
+   <Rel>
+      <IObject UID="D0D931AB54E9C42F72F44E4C45AE6049"/>
+      <IRel UID1="D9635C3C898840D1990B7E8BEE1D55DA" UID2="CA8A0A9DD1784E3BB6913445CE3F6375" DefUID="DrawingItems"/>
+   </Rel>
+   <Rel>
+      <IObject UID="873DED96E73B857949465B86C62D52EC"/>
+      <IRel UID1="D9635C3C898840D1990B7E8BEE1D55DA" UID2="C33E5BD9B9CC4287B244A925A7A1F29B" DefUID="DrawingItems"/>
+   </Rel>
+   <Rel>
+      <IObject UID="318DA204EC31E744FD287F7AB189145D"/>
+      <IRel UID1="D9635C3C898840D1990B7E8BEE1D55DA" UID2="AC9DFB6629974E428402C938E60F4B9C" DefUID="DrawingItems"/>
+   </Rel>
+   <Rel>
+      <IObject UID="A9E4DD0B8263B9E8EADDEBA3CDB17989"/>
+      <IRel UID1="D9635C3C898840D1990B7E8BEE1D55DA" UID2="4B38DB541B1342F99A39838AC9871E3C" DefUID="DrawingItems"/>
+   </Rel>
+   <Rel>
+      <IObject UID="515B07B144BEEA645BE2AD0EE4853C20"/>
+      <IRel UID1="7465E81219DB49B492BDF60A055AA391" UID2="C57494A1B154442C9DF0F4BA713E88EC" DefUID="EquipmentComponentComposition"/>
+   </Rel>
+   <Rel>
+      <IObject UID="CE430B08E46C8C1F65AF4AF1D29C9C8C"/>
+      <IRel UID1="185EF98B03E844158E3BD8E82806E6CF" UID2="8B6386EF73A497F1A03D67B6A046D596" DefUID="PipingConnectors"/>
+   </Rel>
+   <Rel>
+      <IObject UID="2B5BA0068B6A11C51AE29951A90DD023"/>
+      <IRel UID1="8B6386EF73A497F1A03D67B6A046D596" UID2="8B6386EF73A497F1A03D67B6A046D596.1" DefUID="PipingPortComposition"/>
+   </Rel>
+   <Rel>
+      <IObject UID="0446C0701218DB0C0BBB846FB3F8513A"/>
+      <IRel UID1="8B6386EF73A497F1A03D67B6A046D596" UID2="8B6386EF73A497F1A03D67B6A046D596.2" DefUID="PipingPortComposition"/>
+   </Rel>
+   <Rel>
+      <IObject UID="F6186D232D8A985CA763EB739AB676DB"/>
+      <IRel UID1="8B6386EF73A497F1A03D67B6A046D596" UID2="8B6386EF73A497F1A03D67B6A046D596.PPT" DefUID="ProcessPointCollection"/>
+   </Rel>
+   <Rel>
+      <IObject UID="0E817566D0615C3DC3F875C0EBDCC360"/>
+      <IRel UID1="8B6386EF73A497F1A03D67B6A046D596.1" UID2="7465E81219DB49B492BDF60A055AA391" DefUID="PipingEnd1Conn"/>
+   </Rel>
+   <Rel>
+      <IObject UID="C15A513AB4631A02A665CD98C606EC66"/>
+      <IRel UID1="8B6386EF73A497F1A03D67B6A046D596.2" UID2="8B6386EF73A497F1A03D67B6A046D596.PPT" DefUID="PipingEnd2Conn"/>
+   </Rel>
+  </Container>

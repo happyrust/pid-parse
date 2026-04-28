@@ -1,0 +1,285 @@
+﻿<?xml version ="1.0" encoding="UTF-8"?>
+<Container CompSchema="PBSComponent" Scope="ToolSchema" SoftwareVersion="04.02.00.16" SchemaVersion="07.02.00" SDECIMAL=".">
+   <SPMapClassDef>
+      <IObject UID="{D7382D63-F844-4091-93BC48A22EEC28B}" Name="Area" Description="Area"/>
+      <IMapObject/>
+      <IMapClassDef UnmappedRetrieveMapProperties="{28C1BFBD-4466-42D0-AFA41CB264ABEAF}~{3EEE564B-2651-42F8-AD757723A340D8D}"/>
+   </SPMapClassDef>
+   <SPMapPropertyDef>
+      <IObject UID="{9AAFCF34-CCFC-4877-8A6F6686BDAD3FFB}" Name="Name" Description="Name"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{824B8324-B76-49D9-9F8B25305A63C8D1}"/>
+      <IRel UID1="{D7382D63-F844-4091-93BC48A22EEC28B}" UID2="{9AAFCF34-CCFC-4877-8A6F6686BDAD3FFB}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{3EEE564B-2651-42F8-AD757723A340D8D}" Name="PlantGroupType" Description="Plant Group Type"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{1F39B4E5-AC02-4689-88E6ED102C46DCA0}"/>
+      <IRel UID1="{D7382D63-F844-4091-93BC48A22EEC28B}" UID2="{3EEE564B-2651-42F8-AD757723A340D8D}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{FA4CCA77-AFCC-46C1-803C6C44126133C3}" Name="Description" Description="Description"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{BD2CB77E-9AD7-483E-8C4C8EBEA86F9422}"/>
+      <IRel UID1="{D7382D63-F844-4091-93BC48A22EEC28B}" UID2="{FA4CCA77-AFCC-46C1-803C6C44126133C3}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{28C1BFBD-4466-42D0-AFA41CB264ABEAF}" Name="DateCreated" Description="Date Created"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{3BB5938B-1551-4DDF-BE735DC66AD1A0E1}"/>
+      <IRel UID1="{D7382D63-F844-4091-93BC48A22EEC28B}" UID2="{28C1BFBD-4466-42D0-AFA41CB264ABEAF}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapClassDef>
+      <IObject UID="{CC233D3-3DAE-4955-A321219727992B21}" Name="Plant" Description="Plant"/>
+      <IMapObject/>
+      <IMapClassDef UnmappedRetrieveMapProperties="{A54BA032-8336-4365-B8BE425B74F7B14}~{DAE5EE9B-8398-4A7A-B05C8CEAE15EF82F}"/>
+   </SPMapClassDef>
+   <SPMapPropertyDef>
+      <IObject UID="{380451F5-8539-4FA3-B656EFAD9DABAF}" Name="Name" Description="Name"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{9BCAA704-8B7F-4B17-BE987D8574678D2E}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{380451F5-8539-4FA3-B656EFAD9DABAF}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{DAE5EE9B-8398-4A7A-B05C8CEAE15EF82F}" Name="PlantGroupType" Description="Plant Group Type"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{F9A9EC7B-AF4C-481D-B7F973422515DA1}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{DAE5EE9B-8398-4A7A-B05C8CEAE15EF82F}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{34528B46-AE37-4547-BF311ECA7D95EFA}" Name="Description" Description="Description"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{A4EB97C2-7D26-4953-ABDBD3F7B93F9E88}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{34528B46-AE37-4547-BF311ECA7D95EFA}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{A54BA032-8336-4365-B8BE425B74F7B14}" Name="DateCreated" Description="Date Created"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{873438B2-8FDE-4057-9EE7CF11AC801820}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{A54BA032-8336-4365-B8BE425B74F7B14}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapClassDef>
+      <IObject UID="{2417C011-72-4F90-AF89C2871546D5C1}" Name="Unit" Description="Unit"/>
+      <IMapObject/>
+      <IMapClassDef UnmappedRetrieveMapProperties="{E69923D9-5416-44C8-81DC8D95885DC34}~{93578511-63D0-4D93-88793E222C8546}"/>
+   </SPMapClassDef>
+   <SPMapPropertyDef>
+      <IObject UID="{26BDCFBE-EC76-4B30-B7672753971EE373}" Name="UnitCode" Description="Unit Code"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{D45D3085-93D4-4CA3-A5A06D517E7A1620}"/>
+      <IRel UID1="{2417C011-72-4F90-AF89C2871546D5C1}" UID2="{26BDCFBE-EC76-4B30-B7672753971EE373}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{C86BF6B8-3249-40C1-AE19D560C02347BB}" Name="Name" Description="Name"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{8B0C1485-6C79-4519-832844C328678F9F}"/>
+      <IRel UID1="{2417C011-72-4F90-AF89C2871546D5C1}" UID2="{C86BF6B8-3249-40C1-AE19D560C02347BB}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{93578511-63D0-4D93-88793E222C8546}" Name="PlantGroupType" Description="Plant Group Type"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{3AF40398-A459-4C06-B3B58D53A2AC2C2D}"/>
+      <IRel UID1="{2417C011-72-4F90-AF89C2871546D5C1}" UID2="{93578511-63D0-4D93-88793E222C8546}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{1DFD25DC-F0F3-40C0-B4AE8BD9D790BA8}" Name="Description" Description="Description"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{1DC0DA68-CECE-4F50-8FBFE27B183B3334}"/>
+      <IRel UID1="{2417C011-72-4F90-AF89C2871546D5C1}" UID2="{1DFD25DC-F0F3-40C0-B4AE8BD9D790BA8}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{E69923D9-5416-44C8-81DC8D95885DC34}" Name="DateCreated" Description="Date Created"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{4249C3C1-5F15-4E16-8093C060362A19E0}"/>
+      <IRel UID1="{2417C011-72-4F90-AF89C2871546D5C1}" UID2="{E69923D9-5416-44C8-81DC8D95885DC34}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{E6FED985-5453-499A-B406-4043F1AE0FBE}"/>
+      <IRel UID1="IFunctionalArea" UID2="{D7382D63-F844-4091-93BC48A22EEC28B}" DefUID="ClassToMapClass"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{E8FED4F2-E27D-49DA-8BBB-689C7968B5AE}"/>
+      <IRel UID1="IObject" UID2="{D7382D63-F844-4091-93BC48A22EEC28B}" DefUID="ClassToMapClass"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{183A458F-089D-4D61-BE9E-225B7A10EA90}"/>
+      <IRel UID1="Name" UID2="{9AAFCF34-CCFC-4877-8A6F6686BDAD3FFB}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{B759F3A1-70BF-4362-A243-BF3C26803973}"/>
+      <IRel UID1="Description" UID2="{FA4CCA77-AFCC-46C1-803C6C44126133C3}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{BDCDA099-01DD-4892-9C3A-BFC4C2CDCBFF}"/>
+      <IRel UID1="IObject" UID2="{CC233D3-3DAE-4955-A321219727992B21}" DefUID="ClassToMapClass"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{0C51765B-875E-483E-9480-CF7EE1734CCC}"/>
+      <IRel UID1="IPlant" UID2="{CC233D3-3DAE-4955-A321219727992B21}" DefUID="ClassToMapClass"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{18F583CC-3A8C-48E6-B407-5CD99259D6D5}"/>
+      <IRel UID1="Name" UID2="{380451F5-8539-4FA3-B656EFAD9DABAF}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{9E47D922-E034-4888-A48C-FCCA2C56F536}"/>
+      <IRel UID1="Description" UID2="{34528B46-AE37-4547-BF311ECA7D95EFA}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{BE4B7EEC-A559-410A-BF40-8A6388129F76}"/>
+      <IRel UID1="IFunctionalUnit" UID2="{2417C011-72-4F90-AF89C2871546D5C1}" DefUID="ClassToMapClass"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{B9F34238-48CE-45F5-B544-A86F34249A76}"/>
+      <IRel UID1="IObject" UID2="{2417C011-72-4F90-AF89C2871546D5C1}" DefUID="ClassToMapClass"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{0E74403E-5ED5-4BDD-A674-982BE4D26616}"/>
+      <IRel UID1="Description" UID2="{1DFD25DC-F0F3-40C0-B4AE8BD9D790BA8}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{11E83659-2C48-4D3C-8BAD-248EC7A4E3D7}"/>
+      <IRel UID1="Name" UID2="{C86BF6B8-3249-40C1-AE19D560C02347BB}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{973764E9-4426-4BD3-A92D-052E24AFE81C}"/>
+      <IRel UID1="UnitCode" UID2="{26BDCFBE-EC76-4B30-B7672753971EE373}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <SPMapPropertyDef>
+      <IObject UID="{3B5FE0C3-5D48-4507-8D1E-FDB9D309647E}" Name="CompanyName"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <SPMapPropertyDef>
+      <IObject UID="{4F2A1BB5-34D5-43AD-AD50-48F8390C2685}" Name="DivisionLocation"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <SPMapPropertyDef>
+      <IObject UID="{2CF7658E-0CCA-49C5-9B68-3070387D4B20}" Name="DivisionName"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <SPMapPropertyDef>
+      <IObject UID="{C826FA44-6BA9-4A62-A448-6F8D10F9BABA}" Name="SiteLocation"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <SPMapPropertyDef>
+      <IObject UID="{661FBB41-3E1B-43BC-BF23-0818074F0C76}" Name="SiteName"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <SPMapPropertyDef>
+      <IObject UID="{CFB07005-B621-4238-BADE-08F04D389E2F}" Name="SiteSubdivision"/>
+      <IMapObject/>
+      <IMapPropDef/>
+      <IMapPropertyDef/>
+   </SPMapPropertyDef>
+   <Rel>
+      <IObject UID="{1467C910-059A-4343-9022-89EBDB18F5AE}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{3B5FE0C3-5D48-4507-8D1E-FDB9D309647E}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{EC365178-FD19-458F-8FAE-F32BE4D6248F}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{4F2A1BB5-34D5-43AD-AD50-48F8390C2685}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{05240C0E-86CB-4C19-B6FF-BD520151860A}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{2CF7658E-0CCA-49C5-9B68-3070387D4B20}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{00149AA5-CC1B-44A2-8FDA-7C22E950C966}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{C826FA44-6BA9-4A62-A448-6F8D10F9BABA}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{879B52FD-FF9B-42A9-83F9-EECA697AA977}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{661FBB41-3E1B-43BC-BF23-0818074F0C76}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{4D4C254D-1CF6-4677-AA51-B35D35F15894}"/>
+      <IRel UID1="{CC233D3-3DAE-4955-A321219727992B21}" UID2="{CFB07005-B621-4238-BADE-08F04D389E2F}" DefUID="MapClassMapProperties"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{5CBB9D9E-32C3-4CC5-914B-C9FC96BA5D2C}"/>
+      <IRel UID1="CompanyName" UID2="{3B5FE0C3-5D48-4507-8D1E-FDB9D309647E}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{8C295E53-EA2A-4969-A59F-10F6CF8E39EB}"/>
+      <IRel UID1="DivisionLocation" UID2="{4F2A1BB5-34D5-43AD-AD50-48F8390C2685}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{7FA93CAF-6B19-4008-A8E1-5244F6D73EFC}"/>
+      <IRel UID1="DivisionName" UID2="{2CF7658E-0CCA-49C5-9B68-3070387D4B20}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{17292850-B381-4A65-8E00-20D002A31577}"/>
+      <IRel UID1="SiteLocation" UID2="{C826FA44-6BA9-4A62-A448-6F8D10F9BABA}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <Rel>
+      <IObject UID="{FCE57019-C82F-4520-A3C0-95244B0C5CAA}"/>
+      <IRel UID1="SiteName" UID2="{661FBB41-3E1B-43BC-BF23-0818074F0C76}" DefUID="PropertyToMapProperty"/>
+   </Rel>
+   <SPMapSoftware>
+      <IObject UID="SPEMMap" Name="SPEMMap" Description="SmartPlant Engineering Manager Map Software Object"/>
+      <ISchemaDependentItem SupportedSchemaVersions="03.08,04.02"/>
+      <IMapSoftware/>
+   </SPMapSoftware>
+  </Container>

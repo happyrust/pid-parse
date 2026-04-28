@@ -1,0 +1,19 @@
+{
+  "filegroup_name": "PRIMARY",
+  "files": [
+    {
+      "logical_name": "SP3DTrain_RDB_SCHEMA_dat",
+      "physical_path": "C:\\Program Files\\Microsoft SQL Server\\MSSQL10_50.MSSQLSERVER\\MSSQL\\DATA\\\\SP3DTrain_RDB_SCHEMAdat.mdf",
+      "record_offset": 752
+    },
+    {
+      "logical_name": "SP3DTrain_RDB_SCHEMA_log",
+      "physical_path": "C:\\Program Files\\Microsoft SQL Server\\MSSQL10_50.MSSQLSERVER\\MSSQL\\DATA\\\\SP3DTrain_RDB_SCHEMAlog.ldf",
+      "record_offset": 2028
+    }
+  ],
+  "records": [
+    752,
+    2028
+  ]
+}

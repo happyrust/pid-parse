@@ -1,0 +1,28 @@
+﻿<?xml version ="1.0" encoding="UTF-8"?>
+<Container CompSchema="DocVersioningComponent" Scope="Data" SoftwareVersion="10.00.31.0023" IsValidated="False" SchemaVersion="04.02.17.01" Plant="P01" Project="" DocUID="9D1F3F232C47409D8C54EFB22FC3682A" DocName="DWG-0202GP06-01" Version="" ToolID="SMARTPLANTPID" ToolSignature="AAAD" SDECIMAL=".">
+   <DocumentVersion>
+      <IObject UID="7FFEA5B1427044AE922C315D1DEEE1C6" Name="DWG-0202GP06-01 Version"/>
+      <IDocumentVersion DocRevision="0" DocVersionDate="2026/04/02" DocVersion="1"/>
+      <IFileComposition/>
+   </DocumentVersion>
+   <Rel>
+      <IObject UID="99B95779AC574D3AA54838A700CA32D4"/>
+      <IRel UID1="9D1F3F232C47409D8C54EFB22FC3682A" UID2="7FFEA5B1427044AE922C315D1DEEE1C6" DefUID="VersionedDoc"/>
+   </Rel>
+   <DocumentRevision>
+      <IObject UID="8B78FB136F914FEB87675F022F6EBF07" Name="DWG-0202GP06-01 Revision"/>
+      <IDocumentRevision MajorRev_ForRevise="0" MinorRev_ForRevise=""/>
+   </DocumentRevision>
+   <Rel>
+      <IObject UID="A220D1F9C2904BDD86D325D86D400C6"/>
+      <IRel UID1="8B78FB136F914FEB87675F022F6EBF07" UID2="9D1F3F232C47409D8C54EFB22FC3682A" DefUID="RevisedDocument"/>
+   </Rel>
+   <File>
+      <IObject UID="AAAD6128ADC7-CAA-4CDF-B7404DC8D798EC1" Name="DWG-0202GP06-01.pid" Description=""/>
+      <IFile FilePath="C:\Users\yangjinxing_hb\Desktop/XML文件"/>
+   </File>
+   <Rel>
+      <IObject UID="AAAD2CAB3AFD-3A5E-43EB-97978CF349E38890"/>
+      <IRel UID1="AAAD6128ADC7-CAA-4CDF-B7404DC8D798EC1" UID2="7FFEA5B1427044AE922C315D1DEEE1C6" DefUID="FileComposition"/>
+   </Rel>
+  </Container>
