@@ -7,7 +7,7 @@
 ```bash
 cargo fmt --all               # 自 v0.3.11 起 CI 对 fmt drift 硬失败
 cargo clippy --all-targets -- -D warnings  # v0.3.6 起 0 warnings
-cargo test                    # 本地有 test-file/ 时跑 172; CI 环境下自动跳过真实样本测试
+cargo test                    # test-file/ 已纳入仓库，本地与 CI 均跑全量；fixture 缺失时仍 graceful skip
 ```
 
 三件都通过才值得 push。`.github/workflows/ci.yml` 做的就是这三项。
@@ -25,7 +25,8 @@ git commit -m "..."
 
 ## 真实样本测试
 
-真实 `.pid` 文件（SmartPlant 导出）放在 `test-file/` 目录，已加入 `.gitignore`。测试里**必须优雅跳过** fixture 缺失情况：
+真实 `.pid` 文件（SmartPlant 导出）放在 `test-file/` 目录，**已纳入仓库**。
+测试里**仍必须优雅跳过** fixture 缺失情况，以兼容 sparse-checkout / shallow-clone / 子集分发等场景：
 
 ```rust
 let fixture = "test-file/DWG-0201GP06-01.pid";

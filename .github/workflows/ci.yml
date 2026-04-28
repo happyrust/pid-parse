@@ -11,9 +11,10 @@ env:
   RUSTFLAGS: -Dwarnings
 
 jobs:
-  # Fast feedback: build + unit/module tests with no real `.pid` fixtures.
-  # `test-file/` is gitignored, so these jobs run the full offline suite
-  # (unit tests + integration tests with memory CFB fixtures).
+  # Fast feedback: build + unit/module tests + real-file integration tests.
+  # `test-file/` is committed to the repo, so CI runs the full suite
+  # (unit tests + integration tests with both memory CFB fixtures and
+  # real SmartPlant `.pid` exports).
   test:
     name: test (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
@@ -38,11 +39,13 @@ jobs:
         # breakage in the GPL-3.0 parser is caught in the same job.
         run: cargo build --locked --workspace --all-targets
 
-      - name: cargo test (offline suite, workspace)
-        # Real `.pid` fixtures live in `test-file/` and are gitignored,
-        # so the real-file tests gracefully skip when the directory is
-        # absent — see `writer_real_files.rs` / `parse_real_files.rs`.
-        # --workspace picks up vendored oxidized-mdf unit tests too.
+      - name: cargo test (full suite, workspace)
+        # Real `.pid` fixtures now live in `test-file/` inside the repo,
+        # so the real-file tests run by default. They still keep their
+        # graceful-skip path (see `writer_real_files.rs` /
+        # `parse_real_files.rs`) for sparse-checkout / shallow-clone
+        # scenarios. --workspace picks up vendored oxidized-mdf unit
+        # tests too.
         run: cargo test --locked --workspace --all-targets
 
       - name: cargo build --examples
@@ -73,10 +76,11 @@ jobs:
         # history. See `AGENTS.md` for the runbook.
         run: bash .github/scripts/check-missing-docs.sh
 
-      - name: byte-audit baselines (optional private fixtures)
-        # Committed baselines can be checked locally when gitignored
-        # `test-file/*.pid` fixtures are available. Public CI skips
-        # cleanly when no baselines or private fixtures are present.
+      - name: byte-audit baselines (optional)
+        # Committed baselines under `docs/baselines/*.byte-audit.json`
+        # are compared against `test-file/*.pid` (now in-repo).
+        # Skips cleanly when no baselines are present or when a
+        # baseline has no matching fixture (e.g. partial checkouts).
         run: bash .github/scripts/check-byte-audit-baselines.sh
 
   # Independent gate: scan Cargo.lock for known security advisories

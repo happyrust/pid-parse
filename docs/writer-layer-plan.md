@@ -13,7 +13,7 @@
 - `@d:/work/plant-code/cad/pid-parse/src/cfb/reader.rs:394-430` — `collect_streams` 现仅产出 `StreamEntry`，字节丢弃
 - `@d:/work/plant-code/cad/pid-parse/src/error.rs:1-23` — `PidError` 枚举
 - `@d:/work/plant-code/cad/pid-parse/tests/parse_real_files.rs:1-8` — 约定从 `test-file/` 读取真实 fixture
-- `@d:/work/plant-code/cad/pid-parse/.gitignore:1-6` — `test-file/` 被忽略
+- `@d:/work/plant-code/cad/pid-parse/.gitignore:1-6` — `test-file/` 历史上曾被忽略，现已纳入仓库
 - `cfb = "0.10"`（`@d:/work/plant-code/cad/pid-parse/Cargo.toml:9`），写入使用 `::cfb::create` / `create_storage` / `create_stream`。
 
 ## 实施计划

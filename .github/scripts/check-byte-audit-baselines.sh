@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Optional byte-audit baseline runner.
 #
-# Baseline JSON files are commit-safe, but real `.pid` fixtures often live
-# under gitignored `test-file/`. This script therefore runs comparisons when
-# both sides exist and skips gracefully in public CI when private fixtures are
-# absent.
+# Baseline JSON files (`docs/baselines/*.byte-audit.json`) are commit-safe,
+# and real `.pid` fixtures now live under in-repo `test-file/` as well.
+# This script runs comparisons when both sides exist and still skips
+# gracefully when a baseline has no matching fixture (e.g. partial
+# checkouts or extra baselines for not-yet-committed samples).
 
 set -euo pipefail
 
