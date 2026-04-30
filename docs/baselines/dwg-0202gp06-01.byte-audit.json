@@ -1,0 +1,4912 @@
+{
+  "traces": [
+    {
+      "parser_name": "parse_summary_property_set",
+      "stream_path": "/\u0005DocumentSummaryInformation",
+      "total_bytes": 432,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 100
+        },
+        {
+          "start": 108,
+          "end": 112
+        },
+        {
+          "start": 116,
+          "end": 120
+        },
+        {
+          "start": 124,
+          "end": 225
+        },
+        {
+          "start": 284,
+          "end": 288
+        },
+        {
+          "start": 292,
+          "end": 296
+        },
+        {
+          "start": 300,
+          "end": 310
+        },
+        {
+          "start": 312,
+          "end": 354
+        },
+        {
+          "start": 356,
+          "end": 430
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 100,
+          "end": 108
+        },
+        {
+          "start": 112,
+          "end": 116
+        },
+        {
+          "start": 120,
+          "end": 124
+        },
+        {
+          "start": 225,
+          "end": 284
+        },
+        {
+          "start": 288,
+          "end": 292
+        },
+        {
+          "start": 296,
+          "end": 300
+        },
+        {
+          "start": 310,
+          "end": 312
+        },
+        {
+          "start": 354,
+          "end": 356
+        },
+        {
+          "start": 430,
+          "end": 432
+        }
+      ],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 100
+          },
+          {
+            "start": 124,
+            "end": 225
+          },
+          {
+            "start": 300,
+            "end": 310
+          },
+          {
+            "start": 312,
+            "end": 354
+          },
+          {
+            "start": 356,
+            "end": 430
+          }
+        ],
+        "probed": [
+          {
+            "start": 108,
+            "end": 112
+          },
+          {
+            "start": 116,
+            "end": 120
+          },
+          {
+            "start": 284,
+            "end": 288
+          },
+          {
+            "start": 292,
+            "end": 296
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_summary_property_set",
+      "stream_path": "/\u0005SummaryInformation",
+      "total_bytes": 296,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 136
+        },
+        {
+          "start": 136,
+          "end": 140
+        },
+        {
+          "start": 144,
+          "end": 148
+        },
+        {
+          "start": 152,
+          "end": 183
+        },
+        {
+          "start": 184,
+          "end": 218
+        },
+        {
+          "start": 220,
+          "end": 259
+        },
+        {
+          "start": 260,
+          "end": 295
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 140,
+          "end": 144
+        },
+        {
+          "start": 148,
+          "end": 152
+        },
+        {
+          "start": 183,
+          "end": 184
+        },
+        {
+          "start": 218,
+          "end": 220
+        },
+        {
+          "start": 259,
+          "end": 260
+        },
+        {
+          "start": 295,
+          "end": 296
+        }
+      ],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 136
+          },
+          {
+            "start": 152,
+            "end": 183
+          },
+          {
+            "start": 184,
+            "end": 218
+          },
+          {
+            "start": 220,
+            "end": 259
+          },
+          {
+            "start": 260,
+            "end": 295
+          }
+        ],
+        "probed": [
+          {
+            "start": 136,
+            "end": 140
+          },
+          {
+            "start": 144,
+            "end": 148
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_app_object",
+      "stream_path": "/AppObject",
+      "total_bytes": 673,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 168
+        },
+        {
+          "start": 168,
+          "end": 169
+        },
+        {
+          "start": 169,
+          "end": 321
+        },
+        {
+          "start": 321,
+          "end": 322
+        },
+        {
+          "start": 322,
+          "end": 344
+        },
+        {
+          "start": 344,
+          "end": 345
+        },
+        {
+          "start": 345,
+          "end": 511
+        },
+        {
+          "start": 511,
+          "end": 512
+        },
+        {
+          "start": 512,
+          "end": 672
+        },
+        {
+          "start": 672,
+          "end": 673
+        }
+      ],
+      "leftover_ranges": [],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 168
+          },
+          {
+            "start": 169,
+            "end": 321
+          },
+          {
+            "start": 322,
+            "end": 344
+          },
+          {
+            "start": 345,
+            "end": 511
+          },
+          {
+            "start": 512,
+            "end": 672
+          }
+        ],
+        "probed": [
+          {
+            "start": 168,
+            "end": 169
+          },
+          {
+            "start": 321,
+            "end": 322
+          },
+          {
+            "start": 344,
+            "end": 345
+          },
+          {
+            "start": 511,
+            "end": 512
+          },
+          {
+            "start": 672,
+            "end": 673
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_doc_version2",
+      "stream_path": "/DocVersion2",
+      "total_bytes": 39,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 4,
+          "end": 12
+        },
+        {
+          "start": 12,
+          "end": 13
+        },
+        {
+          "start": 13,
+          "end": 17
+        },
+        {
+          "start": 17,
+          "end": 22
+        },
+        {
+          "start": 22,
+          "end": 26
+        },
+        {
+          "start": 26,
+          "end": 31
+        },
+        {
+          "start": 31,
+          "end": 35
+        },
+        {
+          "start": 35,
+          "end": 39
+        }
+      ],
+      "leftover_ranges": [],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 12,
+            "end": 13
+          },
+          {
+            "start": 17,
+            "end": 22
+          },
+          {
+            "start": 26,
+            "end": 31
+          },
+          {
+            "start": 35,
+            "end": 39
+          }
+        ],
+        "probed": [
+          {
+            "start": 4,
+            "end": 12
+          },
+          {
+            "start": 13,
+            "end": 17
+          },
+          {
+            "start": 22,
+            "end": 26
+          },
+          {
+            "start": 31,
+            "end": 35
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_doc_version3",
+      "stream_path": "/DocVersion3",
+      "total_bytes": 144,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 144
+        }
+      ],
+      "leftover_ranges": [],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 144
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_cluster_header",
+      "stream_path": "/Dynamic Attributes Metadata",
+      "total_bytes": 28,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 16
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 16,
+          "end": 28
+        }
+      ],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 16
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite23/JProperties",
+      "total_bytes": 8,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 5
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 5,
+          "end": 8
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 5
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite2471/JProperties",
+      "total_bytes": 248,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 166
+        },
+        {
+          "start": 168,
+          "end": 246
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 166,
+          "end": 168
+        },
+        {
+          "start": 246,
+          "end": 248
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 166
+          },
+          {
+            "start": 168,
+            "end": 246
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite2475/JProperties",
+      "total_bytes": 264,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 10,
+          "end": 174
+        },
+        {
+          "start": 176,
+          "end": 262
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 10
+        },
+        {
+          "start": 174,
+          "end": 176
+        },
+        {
+          "start": 262,
+          "end": 264
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 10,
+            "end": 174
+          },
+          {
+            "start": 176,
+            "end": 262
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite4484/JProperties",
+      "total_bytes": 296,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 190
+        },
+        {
+          "start": 192,
+          "end": 294
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 190,
+          "end": 192
+        },
+        {
+          "start": 294,
+          "end": 296
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 190
+          },
+          {
+            "start": 192,
+            "end": 294
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite4488/JProperties",
+      "total_bytes": 348,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 216
+        },
+        {
+          "start": 218,
+          "end": 346
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 216,
+          "end": 218
+        },
+        {
+          "start": 346,
+          "end": 348
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 216
+          },
+          {
+            "start": 218,
+            "end": 346
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite4490/JProperties",
+      "total_bytes": 392,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 238
+        },
+        {
+          "start": 240,
+          "end": 390
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 238,
+          "end": 240
+        },
+        {
+          "start": 390,
+          "end": 392
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 238
+          },
+          {
+            "start": 240,
+            "end": 390
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite4505/JProperties",
+      "total_bytes": 292,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 188
+        },
+        {
+          "start": 190,
+          "end": 290
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 188,
+          "end": 190
+        },
+        {
+          "start": 290,
+          "end": 292
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 188
+          },
+          {
+            "start": 190,
+            "end": 290
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite4509/JProperties",
+      "total_bytes": 336,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 210
+        },
+        {
+          "start": 212,
+          "end": 334
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 210,
+          "end": 212
+        },
+        {
+          "start": 334,
+          "end": 336
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 210
+          },
+          {
+            "start": 212,
+            "end": 334
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite4541/JProperties",
+      "total_bytes": 284,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 184
+        },
+        {
+          "start": 186,
+          "end": 282
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 184,
+          "end": 186
+        },
+        {
+          "start": 282,
+          "end": 284
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 184
+          },
+          {
+            "start": 186,
+            "end": 282
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite4543/JProperties",
+      "total_bytes": 276,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 180
+        },
+        {
+          "start": 182,
+          "end": 274
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 180,
+          "end": 182
+        },
+        {
+          "start": 274,
+          "end": 276
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 180
+          },
+          {
+            "start": 182,
+            "end": 274
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite5222/JProperties",
+      "total_bytes": 228,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 156
+        },
+        {
+          "start": 158,
+          "end": 226
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 156,
+          "end": 158
+        },
+        {
+          "start": 226,
+          "end": 228
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 156
+          },
+          {
+            "start": 158,
+            "end": 226
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite7361/JProperties",
+      "total_bytes": 284,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        },
+        {
+          "start": 6,
+          "end": 184
+        },
+        {
+          "start": 186,
+          "end": 282
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 6
+        },
+        {
+          "start": 184,
+          "end": 186
+        },
+        {
+          "start": 282,
+          "end": 284
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          },
+          {
+            "start": 6,
+            "end": 184
+          },
+          {
+            "start": 186,
+            "end": 282
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_jproperties",
+      "stream_path": "/JSite793/JProperties",
+      "total_bytes": 8,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 4
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 4,
+          "end": 8
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 0,
+            "end": 4
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_tagged_stg_list",
+      "stream_path": "/JTaggedTxtStgList",
+      "total_bytes": 70,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 70
+        }
+      ],
+      "leftover_ranges": [],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 70
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_psm_cluster0",
+      "stream_path": "/PSMcluster0",
+      "total_bytes": 37430,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 16
+        },
+        {
+          "start": 16,
+          "end": 35
+        },
+        {
+          "start": 35,
+          "end": 135
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 135,
+          "end": 37430
+        }
+      ],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 16
+          },
+          {
+            "start": 35,
+            "end": 135
+          }
+        ],
+        "probed": [
+          {
+            "start": 16,
+            "end": 35
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_psm_cluster_table",
+      "stream_path": "/PSMclustertable",
+      "total_bytes": 296,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 8
+        },
+        {
+          "start": 8,
+          "end": 27
+        },
+        {
+          "start": 27,
+          "end": 51
+        },
+        {
+          "start": 51,
+          "end": 66
+        },
+        {
+          "start": 66,
+          "end": 92
+        },
+        {
+          "start": 92,
+          "end": 107
+        },
+        {
+          "start": 107,
+          "end": 163
+        },
+        {
+          "start": 163,
+          "end": 174
+        },
+        {
+          "start": 174,
+          "end": 188
+        },
+        {
+          "start": 188,
+          "end": 203
+        },
+        {
+          "start": 203,
+          "end": 265
+        },
+        {
+          "start": 265,
+          "end": 276
+        },
+        {
+          "start": 276,
+          "end": 296
+        }
+      ],
+      "leftover_ranges": [],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 8
+          },
+          {
+            "start": 27,
+            "end": 51
+          },
+          {
+            "start": 66,
+            "end": 92
+          },
+          {
+            "start": 107,
+            "end": 163
+          },
+          {
+            "start": 174,
+            "end": 188
+          },
+          {
+            "start": 203,
+            "end": 265
+          },
+          {
+            "start": 276,
+            "end": 296
+          }
+        ],
+        "probed": [
+          {
+            "start": 8,
+            "end": 27
+          },
+          {
+            "start": 51,
+            "end": 66
+          },
+          {
+            "start": 92,
+            "end": 107
+          },
+          {
+            "start": 163,
+            "end": 174
+          },
+          {
+            "start": 188,
+            "end": 203
+          },
+          {
+            "start": 265,
+            "end": 276
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_psm_roots",
+      "stream_path": "/PSMroots",
+      "total_bytes": 234,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 230
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 230,
+          "end": 234
+        }
+      ],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 230
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_psm_segment_table",
+      "stream_path": "/PSMsegmenttable",
+      "total_bytes": 12,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 8
+        },
+        {
+          "start": 8,
+          "end": 12
+        }
+      ],
+      "leftover_ranges": [],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 8
+          }
+        ],
+        "probed": [
+          {
+            "start": 8,
+            "end": 12
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "probe_sheet_stream",
+      "stream_path": "/Sheet6",
+      "total_bytes": 23731,
+      "consumed_ranges": [
+        {
+          "start": 281,
+          "end": 291
+        },
+        {
+          "start": 314,
+          "end": 340
+        },
+        {
+          "start": 395,
+          "end": 405
+        },
+        {
+          "start": 411,
+          "end": 423
+        },
+        {
+          "start": 470,
+          "end": 480
+        },
+        {
+          "start": 523,
+          "end": 531
+        },
+        {
+          "start": 552,
+          "end": 564
+        },
+        {
+          "start": 653,
+          "end": 663
+        },
+        {
+          "start": 957,
+          "end": 969
+        },
+        {
+          "start": 976,
+          "end": 1002
+        },
+        {
+          "start": 1088,
+          "end": 1114
+        },
+        {
+          "start": 1262,
+          "end": 1288
+        },
+        {
+          "start": 1374,
+          "end": 1400
+        },
+        {
+          "start": 2019,
+          "end": 2045
+        },
+        {
+          "start": 2465,
+          "end": 2491
+        },
+        {
+          "start": 2983,
+          "end": 3009
+        },
+        {
+          "start": 3519,
+          "end": 3545
+        },
+        {
+          "start": 3687,
+          "end": 3713
+        },
+        {
+          "start": 3799,
+          "end": 3825
+        },
+        {
+          "start": 3973,
+          "end": 3999
+        },
+        {
+          "start": 4085,
+          "end": 4111
+        },
+        {
+          "start": 5150,
+          "end": 5176
+        },
+        {
+          "start": 5284,
+          "end": 5310
+        },
+        {
+          "start": 5396,
+          "end": 5422
+        },
+        {
+          "start": 5746,
+          "end": 5772
+        },
+        {
+          "start": 5818,
+          "end": 5844
+        },
+        {
+          "start": 6284,
+          "end": 6310
+        },
+        {
+          "start": 6520,
+          "end": 6546
+        },
+        {
+          "start": 7034,
+          "end": 7060
+        },
+        {
+          "start": 7162,
+          "end": 7188
+        },
+        {
+          "start": 7711,
+          "end": 7737
+        },
+        {
+          "start": 7903,
+          "end": 7929
+        },
+        {
+          "start": 8015,
+          "end": 8041
+        },
+        {
+          "start": 8313,
+          "end": 8339
+        },
+        {
+          "start": 8673,
+          "end": 8699
+        },
+        {
+          "start": 8912,
+          "end": 8938
+        },
+        {
+          "start": 9656,
+          "end": 9682
+        },
+        {
+          "start": 9954,
+          "end": 9980
+        },
+        {
+          "start": 10026,
+          "end": 10052
+        },
+        {
+          "start": 10142,
+          "end": 10168
+        },
+        {
+          "start": 10294,
+          "end": 10320
+        },
+        {
+          "start": 11042,
+          "end": 11068
+        },
+        {
+          "start": 11458,
+          "end": 11484
+        },
+        {
+          "start": 12200,
+          "end": 12226
+        },
+        {
+          "start": 12482,
+          "end": 12508
+        },
+        {
+          "start": 12767,
+          "end": 12793
+        },
+        {
+          "start": 12953,
+          "end": 12979
+        },
+        {
+          "start": 13256,
+          "end": 13262
+        },
+        {
+          "start": 13435,
+          "end": 13461
+        },
+        {
+          "start": 13855,
+          "end": 13881
+        },
+        {
+          "start": 14005,
+          "end": 14031
+        },
+        {
+          "start": 14356,
+          "end": 14382
+        },
+        {
+          "start": 14540,
+          "end": 14566
+        },
+        {
+          "start": 15107,
+          "end": 15133
+        },
+        {
+          "start": 15404,
+          "end": 15430
+        },
+        {
+          "start": 15745,
+          "end": 15771
+        },
+        {
+          "start": 16115,
+          "end": 16141
+        },
+        {
+          "start": 16365,
+          "end": 16391
+        },
+        {
+          "start": 16594,
+          "end": 16620
+        },
+        {
+          "start": 16794,
+          "end": 16820
+        },
+        {
+          "start": 16906,
+          "end": 16932
+        },
+        {
+          "start": 17264,
+          "end": 17290
+        },
+        {
+          "start": 18173,
+          "end": 18199
+        },
+        {
+          "start": 18475,
+          "end": 18501
+        },
+        {
+          "start": 19097,
+          "end": 19123
+        },
+        {
+          "start": 19207,
+          "end": 19233
+        },
+        {
+          "start": 19943,
+          "end": 19969
+        },
+        {
+          "start": 20473,
+          "end": 20479
+        },
+        {
+          "start": 20671,
+          "end": 20679
+        },
+        {
+          "start": 20781,
+          "end": 20807
+        },
+        {
+          "start": 20947,
+          "end": 20973
+        },
+        {
+          "start": 21868,
+          "end": 21875
+        },
+        {
+          "start": 22582,
+          "end": 22589
+        },
+        {
+          "start": 23324,
+          "end": 23350
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 0,
+          "end": 281
+        },
+        {
+          "start": 291,
+          "end": 314
+        },
+        {
+          "start": 340,
+          "end": 395
+        },
+        {
+          "start": 405,
+          "end": 411
+        },
+        {
+          "start": 423,
+          "end": 470
+        },
+        {
+          "start": 480,
+          "end": 523
+        },
+        {
+          "start": 531,
+          "end": 552
+        },
+        {
+          "start": 564,
+          "end": 653
+        },
+        {
+          "start": 663,
+          "end": 957
+        },
+        {
+          "start": 969,
+          "end": 976
+        },
+        {
+          "start": 1002,
+          "end": 1088
+        },
+        {
+          "start": 1114,
+          "end": 1262
+        },
+        {
+          "start": 1288,
+          "end": 1374
+        },
+        {
+          "start": 1400,
+          "end": 2019
+        },
+        {
+          "start": 2045,
+          "end": 2465
+        },
+        {
+          "start": 2491,
+          "end": 2983
+        },
+        {
+          "start": 3009,
+          "end": 3519
+        },
+        {
+          "start": 3545,
+          "end": 3687
+        },
+        {
+          "start": 3713,
+          "end": 3799
+        },
+        {
+          "start": 3825,
+          "end": 3973
+        },
+        {
+          "start": 3999,
+          "end": 4085
+        },
+        {
+          "start": 4111,
+          "end": 5150
+        },
+        {
+          "start": 5176,
+          "end": 5284
+        },
+        {
+          "start": 5310,
+          "end": 5396
+        },
+        {
+          "start": 5422,
+          "end": 5746
+        },
+        {
+          "start": 5772,
+          "end": 5818
+        },
+        {
+          "start": 5844,
+          "end": 6284
+        },
+        {
+          "start": 6310,
+          "end": 6520
+        },
+        {
+          "start": 6546,
+          "end": 7034
+        },
+        {
+          "start": 7060,
+          "end": 7162
+        },
+        {
+          "start": 7188,
+          "end": 7711
+        },
+        {
+          "start": 7737,
+          "end": 7903
+        },
+        {
+          "start": 7929,
+          "end": 8015
+        },
+        {
+          "start": 8041,
+          "end": 8313
+        },
+        {
+          "start": 8339,
+          "end": 8673
+        },
+        {
+          "start": 8699,
+          "end": 8912
+        },
+        {
+          "start": 8938,
+          "end": 9656
+        },
+        {
+          "start": 9682,
+          "end": 9954
+        },
+        {
+          "start": 9980,
+          "end": 10026
+        },
+        {
+          "start": 10052,
+          "end": 10142
+        },
+        {
+          "start": 10168,
+          "end": 10294
+        },
+        {
+          "start": 10320,
+          "end": 11042
+        },
+        {
+          "start": 11068,
+          "end": 11458
+        },
+        {
+          "start": 11484,
+          "end": 12200
+        },
+        {
+          "start": 12226,
+          "end": 12482
+        },
+        {
+          "start": 12508,
+          "end": 12767
+        },
+        {
+          "start": 12793,
+          "end": 12953
+        },
+        {
+          "start": 12979,
+          "end": 13256
+        },
+        {
+          "start": 13262,
+          "end": 13435
+        },
+        {
+          "start": 13461,
+          "end": 13855
+        },
+        {
+          "start": 13881,
+          "end": 14005
+        },
+        {
+          "start": 14031,
+          "end": 14356
+        },
+        {
+          "start": 14382,
+          "end": 14540
+        },
+        {
+          "start": 14566,
+          "end": 15107
+        },
+        {
+          "start": 15133,
+          "end": 15404
+        },
+        {
+          "start": 15430,
+          "end": 15745
+        },
+        {
+          "start": 15771,
+          "end": 16115
+        },
+        {
+          "start": 16141,
+          "end": 16365
+        },
+        {
+          "start": 16391,
+          "end": 16594
+        },
+        {
+          "start": 16620,
+          "end": 16794
+        },
+        {
+          "start": 16820,
+          "end": 16906
+        },
+        {
+          "start": 16932,
+          "end": 17264
+        },
+        {
+          "start": 17290,
+          "end": 18173
+        },
+        {
+          "start": 18199,
+          "end": 18475
+        },
+        {
+          "start": 18501,
+          "end": 19097
+        },
+        {
+          "start": 19123,
+          "end": 19207
+        },
+        {
+          "start": 19233,
+          "end": 19943
+        },
+        {
+          "start": 19969,
+          "end": 20473
+        },
+        {
+          "start": 20479,
+          "end": 20671
+        },
+        {
+          "start": 20679,
+          "end": 20781
+        },
+        {
+          "start": 20807,
+          "end": 20947
+        },
+        {
+          "start": 20973,
+          "end": 21868
+        },
+        {
+          "start": 21875,
+          "end": 22582
+        },
+        {
+          "start": 22589,
+          "end": 23324
+        },
+        {
+          "start": 23350,
+          "end": 23731
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 281,
+            "end": 291
+          },
+          {
+            "start": 314,
+            "end": 340
+          },
+          {
+            "start": 395,
+            "end": 405
+          },
+          {
+            "start": 411,
+            "end": 423
+          },
+          {
+            "start": 470,
+            "end": 480
+          },
+          {
+            "start": 523,
+            "end": 531
+          },
+          {
+            "start": 552,
+            "end": 564
+          },
+          {
+            "start": 653,
+            "end": 663
+          },
+          {
+            "start": 957,
+            "end": 969
+          },
+          {
+            "start": 976,
+            "end": 1002
+          },
+          {
+            "start": 1088,
+            "end": 1114
+          },
+          {
+            "start": 1262,
+            "end": 1288
+          },
+          {
+            "start": 1374,
+            "end": 1400
+          },
+          {
+            "start": 2019,
+            "end": 2045
+          },
+          {
+            "start": 2465,
+            "end": 2491
+          },
+          {
+            "start": 2983,
+            "end": 3009
+          },
+          {
+            "start": 3519,
+            "end": 3545
+          },
+          {
+            "start": 3687,
+            "end": 3713
+          },
+          {
+            "start": 3799,
+            "end": 3825
+          },
+          {
+            "start": 3973,
+            "end": 3999
+          },
+          {
+            "start": 4085,
+            "end": 4111
+          },
+          {
+            "start": 5150,
+            "end": 5176
+          },
+          {
+            "start": 5284,
+            "end": 5310
+          },
+          {
+            "start": 5396,
+            "end": 5422
+          },
+          {
+            "start": 5746,
+            "end": 5772
+          },
+          {
+            "start": 5818,
+            "end": 5844
+          },
+          {
+            "start": 6284,
+            "end": 6310
+          },
+          {
+            "start": 6520,
+            "end": 6546
+          },
+          {
+            "start": 7034,
+            "end": 7060
+          },
+          {
+            "start": 7162,
+            "end": 7188
+          },
+          {
+            "start": 7711,
+            "end": 7737
+          },
+          {
+            "start": 7903,
+            "end": 7929
+          },
+          {
+            "start": 8015,
+            "end": 8041
+          },
+          {
+            "start": 8313,
+            "end": 8339
+          },
+          {
+            "start": 8673,
+            "end": 8699
+          },
+          {
+            "start": 8912,
+            "end": 8938
+          },
+          {
+            "start": 9656,
+            "end": 9682
+          },
+          {
+            "start": 9954,
+            "end": 9980
+          },
+          {
+            "start": 10026,
+            "end": 10052
+          },
+          {
+            "start": 10142,
+            "end": 10168
+          },
+          {
+            "start": 10294,
+            "end": 10320
+          },
+          {
+            "start": 11042,
+            "end": 11068
+          },
+          {
+            "start": 11458,
+            "end": 11484
+          },
+          {
+            "start": 12200,
+            "end": 12226
+          },
+          {
+            "start": 12482,
+            "end": 12508
+          },
+          {
+            "start": 12767,
+            "end": 12793
+          },
+          {
+            "start": 12953,
+            "end": 12979
+          },
+          {
+            "start": 13256,
+            "end": 13262
+          },
+          {
+            "start": 13435,
+            "end": 13461
+          },
+          {
+            "start": 13855,
+            "end": 13881
+          },
+          {
+            "start": 14005,
+            "end": 14031
+          },
+          {
+            "start": 14356,
+            "end": 14382
+          },
+          {
+            "start": 14540,
+            "end": 14566
+          },
+          {
+            "start": 15107,
+            "end": 15133
+          },
+          {
+            "start": 15404,
+            "end": 15430
+          },
+          {
+            "start": 15745,
+            "end": 15771
+          },
+          {
+            "start": 16115,
+            "end": 16141
+          },
+          {
+            "start": 16365,
+            "end": 16391
+          },
+          {
+            "start": 16594,
+            "end": 16620
+          },
+          {
+            "start": 16794,
+            "end": 16820
+          },
+          {
+            "start": 16906,
+            "end": 16932
+          },
+          {
+            "start": 17264,
+            "end": 17290
+          },
+          {
+            "start": 18173,
+            "end": 18199
+          },
+          {
+            "start": 18475,
+            "end": 18501
+          },
+          {
+            "start": 19097,
+            "end": 19123
+          },
+          {
+            "start": 19207,
+            "end": 19233
+          },
+          {
+            "start": 19943,
+            "end": 19969
+          },
+          {
+            "start": 20473,
+            "end": 20479
+          },
+          {
+            "start": 20671,
+            "end": 20679
+          },
+          {
+            "start": 20781,
+            "end": 20807
+          },
+          {
+            "start": 20947,
+            "end": 20973
+          },
+          {
+            "start": 21868,
+            "end": 21875
+          },
+          {
+            "start": 22582,
+            "end": 22589
+          },
+          {
+            "start": 23324,
+            "end": 23350
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "probe_sheet_stream",
+      "stream_path": "/Sheet6615",
+      "total_bytes": 316,
+      "consumed_ranges": [
+        {
+          "start": 133,
+          "end": 143
+        },
+        {
+          "start": 173,
+          "end": 183
+        },
+        {
+          "start": 189,
+          "end": 203
+        },
+        {
+          "start": 229,
+          "end": 245
+        },
+        {
+          "start": 249,
+          "end": 259
+        },
+        {
+          "start": 289,
+          "end": 301
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 0,
+          "end": 133
+        },
+        {
+          "start": 143,
+          "end": 173
+        },
+        {
+          "start": 183,
+          "end": 189
+        },
+        {
+          "start": 203,
+          "end": 229
+        },
+        {
+          "start": 245,
+          "end": 249
+        },
+        {
+          "start": 259,
+          "end": 289
+        },
+        {
+          "start": 301,
+          "end": 316
+        }
+      ],
+      "ranges_by_confidence": {
+        "probed": [
+          {
+            "start": 133,
+            "end": 143
+          },
+          {
+            "start": 173,
+            "end": 183
+          },
+          {
+            "start": 189,
+            "end": 203
+          },
+          {
+            "start": 229,
+            "end": 245
+          },
+          {
+            "start": 249,
+            "end": 259
+          },
+          {
+            "start": 289,
+            "end": 301
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_cluster_header",
+      "stream_path": "/StyleCluster",
+      "total_bytes": 22121,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 16
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 16,
+          "end": 22121
+        }
+      ],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 16
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_drawing_xml",
+      "stream_path": "/TaggedTxtData/Drawing",
+      "total_bytes": 3674,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 3674
+        }
+      ],
+      "leftover_ranges": [],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 3674
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "parse_general_xml",
+      "stream_path": "/TaggedTxtData/General",
+      "total_bytes": 193,
+      "consumed_ranges": [
+        {
+          "start": 0,
+          "end": 193
+        }
+      ],
+      "leftover_ranges": [],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 0,
+            "end": 193
+          }
+        ]
+      }
+    },
+    {
+      "parser_name": "scan_da_landmarks",
+      "stream_path": "/Unclustered Dynamic Attributes",
+      "total_bytes": 34364,
+      "consumed_ranges": [
+        {
+          "start": 158,
+          "end": 172
+        },
+        {
+          "start": 763,
+          "end": 805
+        },
+        {
+          "start": 989,
+          "end": 1034
+        },
+        {
+          "start": 1158,
+          "end": 1200
+        },
+        {
+          "start": 1249,
+          "end": 1294
+        },
+        {
+          "start": 1412,
+          "end": 1454
+        },
+        {
+          "start": 1585,
+          "end": 1630
+        },
+        {
+          "start": 1748,
+          "end": 1790
+        },
+        {
+          "start": 1877,
+          "end": 1922
+        },
+        {
+          "start": 2149,
+          "end": 2194
+        },
+        {
+          "start": 2421,
+          "end": 2466
+        },
+        {
+          "start": 2587,
+          "end": 2629
+        },
+        {
+          "start": 2716,
+          "end": 2761
+        },
+        {
+          "start": 2988,
+          "end": 3033
+        },
+        {
+          "start": 3371,
+          "end": 3416
+        },
+        {
+          "start": 3540,
+          "end": 3582
+        },
+        {
+          "start": 3631,
+          "end": 3676
+        },
+        {
+          "start": 3794,
+          "end": 3836
+        },
+        {
+          "start": 3923,
+          "end": 3968
+        },
+        {
+          "start": 4086,
+          "end": 4128
+        },
+        {
+          "start": 4329,
+          "end": 4374
+        },
+        {
+          "start": 4492,
+          "end": 4534
+        },
+        {
+          "start": 4621,
+          "end": 4666
+        },
+        {
+          "start": 4787,
+          "end": 4829
+        },
+        {
+          "start": 4983,
+          "end": 5028
+        },
+        {
+          "start": 5255,
+          "end": 5300
+        },
+        {
+          "start": 5527,
+          "end": 5572
+        },
+        {
+          "start": 5693,
+          "end": 5735
+        },
+        {
+          "start": 5822,
+          "end": 5867
+        },
+        {
+          "start": 6094,
+          "end": 6139
+        },
+        {
+          "start": 6433,
+          "end": 6478
+        },
+        {
+          "start": 6602,
+          "end": 6644
+        },
+        {
+          "start": 6924,
+          "end": 6969
+        },
+        {
+          "start": 7093,
+          "end": 7135
+        },
+        {
+          "start": 7184,
+          "end": 7229
+        },
+        {
+          "start": 7353,
+          "end": 7395
+        },
+        {
+          "start": 7444,
+          "end": 7489
+        },
+        {
+          "start": 7716,
+          "end": 7761
+        },
+        {
+          "start": 7882,
+          "end": 7924
+        },
+        {
+          "start": 8307,
+          "end": 8352
+        },
+        {
+          "start": 8473,
+          "end": 8515
+        },
+        {
+          "start": 8704,
+          "end": 8749
+        },
+        {
+          "start": 8873,
+          "end": 8915
+        },
+        {
+          "start": 9008,
+          "end": 9053
+        },
+        {
+          "start": 9280,
+          "end": 9325
+        },
+        {
+          "start": 9443,
+          "end": 9485
+        },
+        {
+          "start": 9699,
+          "end": 9744
+        },
+        {
+          "start": 9971,
+          "end": 10016
+        },
+        {
+          "start": 10345,
+          "end": 10390
+        },
+        {
+          "start": 10514,
+          "end": 10556
+        },
+        {
+          "start": 10672,
+          "end": 10717
+        },
+        {
+          "start": 10835,
+          "end": 10877
+        },
+        {
+          "start": 11098,
+          "end": 11143
+        },
+        {
+          "start": 11414,
+          "end": 11459
+        },
+        {
+          "start": 11577,
+          "end": 11619
+        },
+        {
+          "start": 11706,
+          "end": 11751
+        },
+        {
+          "start": 11872,
+          "end": 11914
+        },
+        {
+          "start": 12001,
+          "end": 12046
+        },
+        {
+          "start": 12273,
+          "end": 12318
+        },
+        {
+          "start": 12545,
+          "end": 12590
+        },
+        {
+          "start": 12708,
+          "end": 12750
+        },
+        {
+          "start": 13027,
+          "end": 13072
+        },
+        {
+          "start": 13190,
+          "end": 13232
+        },
+        {
+          "start": 13315,
+          "end": 13360
+        },
+        {
+          "start": 13478,
+          "end": 13520
+        },
+        {
+          "start": 13797,
+          "end": 13842
+        },
+        {
+          "start": 13966,
+          "end": 14008
+        },
+        {
+          "start": 14124,
+          "end": 14169
+        },
+        {
+          "start": 14287,
+          "end": 14329
+        },
+        {
+          "start": 14581,
+          "end": 14626
+        },
+        {
+          "start": 14750,
+          "end": 14792
+        },
+        {
+          "start": 14841,
+          "end": 14886
+        },
+        {
+          "start": 15010,
+          "end": 15052
+        },
+        {
+          "start": 15101,
+          "end": 15146
+        },
+        {
+          "start": 15264,
+          "end": 15306
+        },
+        {
+          "start": 15396,
+          "end": 15441
+        },
+        {
+          "start": 15565,
+          "end": 15607
+        },
+        {
+          "start": 15698,
+          "end": 15743
+        },
+        {
+          "start": 15970,
+          "end": 16015
+        },
+        {
+          "start": 16136,
+          "end": 16178
+        },
+        {
+          "start": 16332,
+          "end": 16377
+        },
+        {
+          "start": 16604,
+          "end": 16649
+        },
+        {
+          "start": 16773,
+          "end": 16815
+        },
+        {
+          "start": 16978,
+          "end": 17023
+        },
+        {
+          "start": 17147,
+          "end": 17189
+        },
+        {
+          "start": 17352,
+          "end": 17397
+        },
+        {
+          "start": 17521,
+          "end": 17563
+        },
+        {
+          "start": 17612,
+          "end": 17657
+        },
+        {
+          "start": 17884,
+          "end": 17929
+        },
+        {
+          "start": 18047,
+          "end": 18089
+        },
+        {
+          "start": 18246,
+          "end": 18291
+        },
+        {
+          "start": 18518,
+          "end": 18563
+        },
+        {
+          "start": 18684,
+          "end": 18726
+        },
+        {
+          "start": 18813,
+          "end": 18858
+        },
+        {
+          "start": 18976,
+          "end": 19018
+        },
+        {
+          "start": 19105,
+          "end": 19150
+        },
+        {
+          "start": 19268,
+          "end": 19310
+        },
+        {
+          "start": 19399,
+          "end": 19444
+        },
+        {
+          "start": 19568,
+          "end": 19610
+        },
+        {
+          "start": 19659,
+          "end": 19704
+        },
+        {
+          "start": 19998,
+          "end": 20043
+        },
+        {
+          "start": 20164,
+          "end": 20206
+        },
+        {
+          "start": 20427,
+          "end": 20472
+        },
+        {
+          "start": 20898,
+          "end": 20943
+        },
+        {
+          "start": 21061,
+          "end": 21103
+        },
+        {
+          "start": 21316,
+          "end": 21361
+        },
+        {
+          "start": 21485,
+          "end": 21527
+        },
+        {
+          "start": 21643,
+          "end": 21688
+        },
+        {
+          "start": 21812,
+          "end": 21854
+        },
+        {
+          "start": 22025,
+          "end": 22070
+        },
+        {
+          "start": 22194,
+          "end": 22236
+        },
+        {
+          "start": 22285,
+          "end": 22330
+        },
+        {
+          "start": 22451,
+          "end": 22493
+        },
+        {
+          "start": 22580,
+          "end": 22625
+        },
+        {
+          "start": 22743,
+          "end": 22785
+        },
+        {
+          "start": 22939,
+          "end": 22984
+        },
+        {
+          "start": 23108,
+          "end": 23150
+        },
+        {
+          "start": 23199,
+          "end": 23244
+        },
+        {
+          "start": 23362,
+          "end": 23404
+        },
+        {
+          "start": 23492,
+          "end": 23537
+        },
+        {
+          "start": 23764,
+          "end": 23809
+        },
+        {
+          "start": 23927,
+          "end": 23969
+        },
+        {
+          "start": 24126,
+          "end": 24171
+        },
+        {
+          "start": 24289,
+          "end": 24331
+        },
+        {
+          "start": 24419,
+          "end": 24464
+        },
+        {
+          "start": 24588,
+          "end": 24630
+        },
+        {
+          "start": 24800,
+          "end": 24845
+        },
+        {
+          "start": 24969,
+          "end": 25011
+        },
+        {
+          "start": 25060,
+          "end": 25105
+        },
+        {
+          "start": 25229,
+          "end": 25271
+        },
+        {
+          "start": 25413,
+          "end": 25458
+        },
+        {
+          "start": 25576,
+          "end": 25618
+        },
+        {
+          "start": 25771,
+          "end": 25816
+        },
+        {
+          "start": 26043,
+          "end": 26088
+        },
+        {
+          "start": 26206,
+          "end": 26248
+        },
+        {
+          "start": 26485,
+          "end": 26530
+        },
+        {
+          "start": 26757,
+          "end": 26802
+        },
+        {
+          "start": 26920,
+          "end": 26962
+        },
+        {
+          "start": 27048,
+          "end": 27093
+        },
+        {
+          "start": 27387,
+          "end": 27432
+        },
+        {
+          "start": 27659,
+          "end": 27704
+        },
+        {
+          "start": 27822,
+          "end": 27864
+        },
+        {
+          "start": 27950,
+          "end": 27995
+        },
+        {
+          "start": 28113,
+          "end": 28155
+        },
+        {
+          "start": 28243,
+          "end": 28288
+        },
+        {
+          "start": 28582,
+          "end": 28627
+        },
+        {
+          "start": 28751,
+          "end": 28793
+        },
+        {
+          "start": 28970,
+          "end": 29015
+        },
+        {
+          "start": 29139,
+          "end": 29181
+        },
+        {
+          "start": 29230,
+          "end": 29275
+        },
+        {
+          "start": 29399,
+          "end": 29441
+        },
+        {
+          "start": 29490,
+          "end": 29535
+        },
+        {
+          "start": 29653,
+          "end": 29695
+        },
+        {
+          "start": 29783,
+          "end": 29828
+        },
+        {
+          "start": 29946,
+          "end": 29988
+        },
+        {
+          "start": 30076,
+          "end": 30121
+        },
+        {
+          "start": 30245,
+          "end": 30287
+        },
+        {
+          "start": 30336,
+          "end": 30381
+        },
+        {
+          "start": 30499,
+          "end": 30541
+        },
+        {
+          "start": 30725,
+          "end": 30770
+        },
+        {
+          "start": 30894,
+          "end": 30936
+        },
+        {
+          "start": 31052,
+          "end": 31097
+        },
+        {
+          "start": 31218,
+          "end": 31260
+        },
+        {
+          "start": 31479,
+          "end": 31524
+        },
+        {
+          "start": 31648,
+          "end": 31690
+        },
+        {
+          "start": 31871,
+          "end": 31916
+        },
+        {
+          "start": 32040,
+          "end": 32082
+        },
+        {
+          "start": 32263,
+          "end": 32308
+        },
+        {
+          "start": 32432,
+          "end": 32474
+        },
+        {
+          "start": 32655,
+          "end": 32700
+        },
+        {
+          "start": 32824,
+          "end": 32866
+        },
+        {
+          "start": 33047,
+          "end": 33092
+        },
+        {
+          "start": 33216,
+          "end": 33258
+        },
+        {
+          "start": 33439,
+          "end": 33484
+        },
+        {
+          "start": 33608,
+          "end": 33650
+        },
+        {
+          "start": 33811,
+          "end": 33856
+        },
+        {
+          "start": 33980,
+          "end": 34022
+        },
+        {
+          "start": 34071,
+          "end": 34116
+        },
+        {
+          "start": 34234,
+          "end": 34276
+        }
+      ],
+      "leftover_ranges": [
+        {
+          "start": 0,
+          "end": 158
+        },
+        {
+          "start": 172,
+          "end": 763
+        },
+        {
+          "start": 805,
+          "end": 989
+        },
+        {
+          "start": 1034,
+          "end": 1158
+        },
+        {
+          "start": 1200,
+          "end": 1249
+        },
+        {
+          "start": 1294,
+          "end": 1412
+        },
+        {
+          "start": 1454,
+          "end": 1585
+        },
+        {
+          "start": 1630,
+          "end": 1748
+        },
+        {
+          "start": 1790,
+          "end": 1877
+        },
+        {
+          "start": 1922,
+          "end": 2149
+        },
+        {
+          "start": 2194,
+          "end": 2421
+        },
+        {
+          "start": 2466,
+          "end": 2587
+        },
+        {
+          "start": 2629,
+          "end": 2716
+        },
+        {
+          "start": 2761,
+          "end": 2988
+        },
+        {
+          "start": 3033,
+          "end": 3371
+        },
+        {
+          "start": 3416,
+          "end": 3540
+        },
+        {
+          "start": 3582,
+          "end": 3631
+        },
+        {
+          "start": 3676,
+          "end": 3794
+        },
+        {
+          "start": 3836,
+          "end": 3923
+        },
+        {
+          "start": 3968,
+          "end": 4086
+        },
+        {
+          "start": 4128,
+          "end": 4329
+        },
+        {
+          "start": 4374,
+          "end": 4492
+        },
+        {
+          "start": 4534,
+          "end": 4621
+        },
+        {
+          "start": 4666,
+          "end": 4787
+        },
+        {
+          "start": 4829,
+          "end": 4983
+        },
+        {
+          "start": 5028,
+          "end": 5255
+        },
+        {
+          "start": 5300,
+          "end": 5527
+        },
+        {
+          "start": 5572,
+          "end": 5693
+        },
+        {
+          "start": 5735,
+          "end": 5822
+        },
+        {
+          "start": 5867,
+          "end": 6094
+        },
+        {
+          "start": 6139,
+          "end": 6433
+        },
+        {
+          "start": 6478,
+          "end": 6602
+        },
+        {
+          "start": 6644,
+          "end": 6924
+        },
+        {
+          "start": 6969,
+          "end": 7093
+        },
+        {
+          "start": 7135,
+          "end": 7184
+        },
+        {
+          "start": 7229,
+          "end": 7353
+        },
+        {
+          "start": 7395,
+          "end": 7444
+        },
+        {
+          "start": 7489,
+          "end": 7716
+        },
+        {
+          "start": 7761,
+          "end": 7882
+        },
+        {
+          "start": 7924,
+          "end": 8307
+        },
+        {
+          "start": 8352,
+          "end": 8473
+        },
+        {
+          "start": 8515,
+          "end": 8704
+        },
+        {
+          "start": 8749,
+          "end": 8873
+        },
+        {
+          "start": 8915,
+          "end": 9008
+        },
+        {
+          "start": 9053,
+          "end": 9280
+        },
+        {
+          "start": 9325,
+          "end": 9443
+        },
+        {
+          "start": 9485,
+          "end": 9699
+        },
+        {
+          "start": 9744,
+          "end": 9971
+        },
+        {
+          "start": 10016,
+          "end": 10345
+        },
+        {
+          "start": 10390,
+          "end": 10514
+        },
+        {
+          "start": 10556,
+          "end": 10672
+        },
+        {
+          "start": 10717,
+          "end": 10835
+        },
+        {
+          "start": 10877,
+          "end": 11098
+        },
+        {
+          "start": 11143,
+          "end": 11414
+        },
+        {
+          "start": 11459,
+          "end": 11577
+        },
+        {
+          "start": 11619,
+          "end": 11706
+        },
+        {
+          "start": 11751,
+          "end": 11872
+        },
+        {
+          "start": 11914,
+          "end": 12001
+        },
+        {
+          "start": 12046,
+          "end": 12273
+        },
+        {
+          "start": 12318,
+          "end": 12545
+        },
+        {
+          "start": 12590,
+          "end": 12708
+        },
+        {
+          "start": 12750,
+          "end": 13027
+        },
+        {
+          "start": 13072,
+          "end": 13190
+        },
+        {
+          "start": 13232,
+          "end": 13315
+        },
+        {
+          "start": 13360,
+          "end": 13478
+        },
+        {
+          "start": 13520,
+          "end": 13797
+        },
+        {
+          "start": 13842,
+          "end": 13966
+        },
+        {
+          "start": 14008,
+          "end": 14124
+        },
+        {
+          "start": 14169,
+          "end": 14287
+        },
+        {
+          "start": 14329,
+          "end": 14581
+        },
+        {
+          "start": 14626,
+          "end": 14750
+        },
+        {
+          "start": 14792,
+          "end": 14841
+        },
+        {
+          "start": 14886,
+          "end": 15010
+        },
+        {
+          "start": 15052,
+          "end": 15101
+        },
+        {
+          "start": 15146,
+          "end": 15264
+        },
+        {
+          "start": 15306,
+          "end": 15396
+        },
+        {
+          "start": 15441,
+          "end": 15565
+        },
+        {
+          "start": 15607,
+          "end": 15698
+        },
+        {
+          "start": 15743,
+          "end": 15970
+        },
+        {
+          "start": 16015,
+          "end": 16136
+        },
+        {
+          "start": 16178,
+          "end": 16332
+        },
+        {
+          "start": 16377,
+          "end": 16604
+        },
+        {
+          "start": 16649,
+          "end": 16773
+        },
+        {
+          "start": 16815,
+          "end": 16978
+        },
+        {
+          "start": 17023,
+          "end": 17147
+        },
+        {
+          "start": 17189,
+          "end": 17352
+        },
+        {
+          "start": 17397,
+          "end": 17521
+        },
+        {
+          "start": 17563,
+          "end": 17612
+        },
+        {
+          "start": 17657,
+          "end": 17884
+        },
+        {
+          "start": 17929,
+          "end": 18047
+        },
+        {
+          "start": 18089,
+          "end": 18246
+        },
+        {
+          "start": 18291,
+          "end": 18518
+        },
+        {
+          "start": 18563,
+          "end": 18684
+        },
+        {
+          "start": 18726,
+          "end": 18813
+        },
+        {
+          "start": 18858,
+          "end": 18976
+        },
+        {
+          "start": 19018,
+          "end": 19105
+        },
+        {
+          "start": 19150,
+          "end": 19268
+        },
+        {
+          "start": 19310,
+          "end": 19399
+        },
+        {
+          "start": 19444,
+          "end": 19568
+        },
+        {
+          "start": 19610,
+          "end": 19659
+        },
+        {
+          "start": 19704,
+          "end": 19998
+        },
+        {
+          "start": 20043,
+          "end": 20164
+        },
+        {
+          "start": 20206,
+          "end": 20427
+        },
+        {
+          "start": 20472,
+          "end": 20898
+        },
+        {
+          "start": 20943,
+          "end": 21061
+        },
+        {
+          "start": 21103,
+          "end": 21316
+        },
+        {
+          "start": 21361,
+          "end": 21485
+        },
+        {
+          "start": 21527,
+          "end": 21643
+        },
+        {
+          "start": 21688,
+          "end": 21812
+        },
+        {
+          "start": 21854,
+          "end": 22025
+        },
+        {
+          "start": 22070,
+          "end": 22194
+        },
+        {
+          "start": 22236,
+          "end": 22285
+        },
+        {
+          "start": 22330,
+          "end": 22451
+        },
+        {
+          "start": 22493,
+          "end": 22580
+        },
+        {
+          "start": 22625,
+          "end": 22743
+        },
+        {
+          "start": 22785,
+          "end": 22939
+        },
+        {
+          "start": 22984,
+          "end": 23108
+        },
+        {
+          "start": 23150,
+          "end": 23199
+        },
+        {
+          "start": 23244,
+          "end": 23362
+        },
+        {
+          "start": 23404,
+          "end": 23492
+        },
+        {
+          "start": 23537,
+          "end": 23764
+        },
+        {
+          "start": 23809,
+          "end": 23927
+        },
+        {
+          "start": 23969,
+          "end": 24126
+        },
+        {
+          "start": 24171,
+          "end": 24289
+        },
+        {
+          "start": 24331,
+          "end": 24419
+        },
+        {
+          "start": 24464,
+          "end": 24588
+        },
+        {
+          "start": 24630,
+          "end": 24800
+        },
+        {
+          "start": 24845,
+          "end": 24969
+        },
+        {
+          "start": 25011,
+          "end": 25060
+        },
+        {
+          "start": 25105,
+          "end": 25229
+        },
+        {
+          "start": 25271,
+          "end": 25413
+        },
+        {
+          "start": 25458,
+          "end": 25576
+        },
+        {
+          "start": 25618,
+          "end": 25771
+        },
+        {
+          "start": 25816,
+          "end": 26043
+        },
+        {
+          "start": 26088,
+          "end": 26206
+        },
+        {
+          "start": 26248,
+          "end": 26485
+        },
+        {
+          "start": 26530,
+          "end": 26757
+        },
+        {
+          "start": 26802,
+          "end": 26920
+        },
+        {
+          "start": 26962,
+          "end": 27048
+        },
+        {
+          "start": 27093,
+          "end": 27387
+        },
+        {
+          "start": 27432,
+          "end": 27659
+        },
+        {
+          "start": 27704,
+          "end": 27822
+        },
+        {
+          "start": 27864,
+          "end": 27950
+        },
+        {
+          "start": 27995,
+          "end": 28113
+        },
+        {
+          "start": 28155,
+          "end": 28243
+        },
+        {
+          "start": 28288,
+          "end": 28582
+        },
+        {
+          "start": 28627,
+          "end": 28751
+        },
+        {
+          "start": 28793,
+          "end": 28970
+        },
+        {
+          "start": 29015,
+          "end": 29139
+        },
+        {
+          "start": 29181,
+          "end": 29230
+        },
+        {
+          "start": 29275,
+          "end": 29399
+        },
+        {
+          "start": 29441,
+          "end": 29490
+        },
+        {
+          "start": 29535,
+          "end": 29653
+        },
+        {
+          "start": 29695,
+          "end": 29783
+        },
+        {
+          "start": 29828,
+          "end": 29946
+        },
+        {
+          "start": 29988,
+          "end": 30076
+        },
+        {
+          "start": 30121,
+          "end": 30245
+        },
+        {
+          "start": 30287,
+          "end": 30336
+        },
+        {
+          "start": 30381,
+          "end": 30499
+        },
+        {
+          "start": 30541,
+          "end": 30725
+        },
+        {
+          "start": 30770,
+          "end": 30894
+        },
+        {
+          "start": 30936,
+          "end": 31052
+        },
+        {
+          "start": 31097,
+          "end": 31218
+        },
+        {
+          "start": 31260,
+          "end": 31479
+        },
+        {
+          "start": 31524,
+          "end": 31648
+        },
+        {
+          "start": 31690,
+          "end": 31871
+        },
+        {
+          "start": 31916,
+          "end": 32040
+        },
+        {
+          "start": 32082,
+          "end": 32263
+        },
+        {
+          "start": 32308,
+          "end": 32432
+        },
+        {
+          "start": 32474,
+          "end": 32655
+        },
+        {
+          "start": 32700,
+          "end": 32824
+        },
+        {
+          "start": 32866,
+          "end": 33047
+        },
+        {
+          "start": 33092,
+          "end": 33216
+        },
+        {
+          "start": 33258,
+          "end": 33439
+        },
+        {
+          "start": 33484,
+          "end": 33608
+        },
+        {
+          "start": 33650,
+          "end": 33811
+        },
+        {
+          "start": 33856,
+          "end": 33980
+        },
+        {
+          "start": 34022,
+          "end": 34071
+        },
+        {
+          "start": 34116,
+          "end": 34234
+        },
+        {
+          "start": 34276,
+          "end": 34364
+        }
+      ],
+      "ranges_by_confidence": {
+        "decoded": [
+          {
+            "start": 158,
+            "end": 172
+          },
+          {
+            "start": 763,
+            "end": 805
+          },
+          {
+            "start": 989,
+            "end": 1034
+          },
+          {
+            "start": 1158,
+            "end": 1200
+          },
+          {
+            "start": 1249,
+            "end": 1294
+          },
+          {
+            "start": 1412,
+            "end": 1454
+          },
+          {
+            "start": 1585,
+            "end": 1630
+          },
+          {
+            "start": 1748,
+            "end": 1790
+          },
+          {
+            "start": 1877,
+            "end": 1922
+          },
+          {
+            "start": 2149,
+            "end": 2194
+          },
+          {
+            "start": 2421,
+            "end": 2466
+          },
+          {
+            "start": 2587,
+            "end": 2629
+          },
+          {
+            "start": 2716,
+            "end": 2761
+          },
+          {
+            "start": 2988,
+            "end": 3033
+          },
+          {
+            "start": 3371,
+            "end": 3416
+          },
+          {
+            "start": 3540,
+            "end": 3582
+          },
+          {
+            "start": 3631,
+            "end": 3676
+          },
+          {
+            "start": 3794,
+            "end": 3836
+          },
+          {
+            "start": 3923,
+            "end": 3968
+          },
+          {
+            "start": 4086,
+            "end": 4128
+          },
+          {
+            "start": 4329,
+            "end": 4374
+          },
+          {
+            "start": 4492,
+            "end": 4534
+          },
+          {
+            "start": 4621,
+            "end": 4666
+          },
+          {
+            "start": 4787,
+            "end": 4829
+          },
+          {
+            "start": 4983,
+            "end": 5028
+          },
+          {
+            "start": 5255,
+            "end": 5300
+          },
+          {
+            "start": 5527,
+            "end": 5572
+          },
+          {
+            "start": 5693,
+            "end": 5735
+          },
+          {
+            "start": 5822,
+            "end": 5867
+          },
+          {
+            "start": 6094,
+            "end": 6139
+          },
+          {
+            "start": 6433,
+            "end": 6478
+          },
+          {
+            "start": 6602,
+            "end": 6644
+          },
+          {
+            "start": 6924,
+            "end": 6969
+          },
+          {
+            "start": 7093,
+            "end": 7135
+          },
+          {
+            "start": 7184,
+            "end": 7229
+          },
+          {
+            "start": 7353,
+            "end": 7395
+          },
+          {
+            "start": 7444,
+            "end": 7489
+          },
+          {
+            "start": 7716,
+            "end": 7761
+          },
+          {
+            "start": 7882,
+            "end": 7924
+          },
+          {
+            "start": 8307,
+            "end": 8352
+          },
+          {
+            "start": 8473,
+            "end": 8515
+          },
+          {
+            "start": 8704,
+            "end": 8749
+          },
+          {
+            "start": 8873,
+            "end": 8915
+          },
+          {
+            "start": 9008,
+            "end": 9053
+          },
+          {
+            "start": 9280,
+            "end": 9325
+          },
+          {
+            "start": 9443,
+            "end": 9485
+          },
+          {
+            "start": 9699,
+            "end": 9744
+          },
+          {
+            "start": 9971,
+            "end": 10016
+          },
+          {
+            "start": 10345,
+            "end": 10390
+          },
+          {
+            "start": 10514,
+            "end": 10556
+          },
+          {
+            "start": 10672,
+            "end": 10717
+          },
+          {
+            "start": 10835,
+            "end": 10877
+          },
+          {
+            "start": 11098,
+            "end": 11143
+          },
+          {
+            "start": 11414,
+            "end": 11459
+          },
+          {
+            "start": 11577,
+            "end": 11619
+          },
+          {
+            "start": 11706,
+            "end": 11751
+          },
+          {
+            "start": 11872,
+            "end": 11914
+          },
+          {
+            "start": 12001,
+            "end": 12046
+          },
+          {
+            "start": 12273,
+            "end": 12318
+          },
+          {
+            "start": 12545,
+            "end": 12590
+          },
+          {
+            "start": 12708,
+            "end": 12750
+          },
+          {
+            "start": 13027,
+            "end": 13072
+          },
+          {
+            "start": 13190,
+            "end": 13232
+          },
+          {
+            "start": 13315,
+            "end": 13360
+          },
+          {
+            "start": 13478,
+            "end": 13520
+          },
+          {
+            "start": 13797,
+            "end": 13842
+          },
+          {
+            "start": 13966,
+            "end": 14008
+          },
+          {
+            "start": 14124,
+            "end": 14169
+          },
+          {
+            "start": 14287,
+            "end": 14329
+          },
+          {
+            "start": 14581,
+            "end": 14626
+          },
+          {
+            "start": 14750,
+            "end": 14792
+          },
+          {
+            "start": 14841,
+            "end": 14886
+          },
+          {
+            "start": 15010,
+            "end": 15052
+          },
+          {
+            "start": 15101,
+            "end": 15146
+          },
+          {
+            "start": 15264,
+            "end": 15306
+          },
+          {
+            "start": 15396,
+            "end": 15441
+          },
+          {
+            "start": 15565,
+            "end": 15607
+          },
+          {
+            "start": 15698,
+            "end": 15743
+          },
+          {
+            "start": 15970,
+            "end": 16015
+          },
+          {
+            "start": 16136,
+            "end": 16178
+          },
+          {
+            "start": 16332,
+            "end": 16377
+          },
+          {
+            "start": 16604,
+            "end": 16649
+          },
+          {
+            "start": 16773,
+            "end": 16815
+          },
+          {
+            "start": 16978,
+            "end": 17023
+          },
+          {
+            "start": 17147,
+            "end": 17189
+          },
+          {
+            "start": 17352,
+            "end": 17397
+          },
+          {
+            "start": 17521,
+            "end": 17563
+          },
+          {
+            "start": 17612,
+            "end": 17657
+          },
+          {
+            "start": 17884,
+            "end": 17929
+          },
+          {
+            "start": 18047,
+            "end": 18089
+          },
+          {
+            "start": 18246,
+            "end": 18291
+          },
+          {
+            "start": 18518,
+            "end": 18563
+          },
+          {
+            "start": 18684,
+            "end": 18726
+          },
+          {
+            "start": 18813,
+            "end": 18858
+          },
+          {
+            "start": 18976,
+            "end": 19018
+          },
+          {
+            "start": 19105,
+            "end": 19150
+          },
+          {
+            "start": 19268,
+            "end": 19310
+          },
+          {
+            "start": 19399,
+            "end": 19444
+          },
+          {
+            "start": 19568,
+            "end": 19610
+          },
+          {
+            "start": 19659,
+            "end": 19704
+          },
+          {
+            "start": 19998,
+            "end": 20043
+          },
+          {
+            "start": 20164,
+            "end": 20206
+          },
+          {
+            "start": 20427,
+            "end": 20472
+          },
+          {
+            "start": 20898,
+            "end": 20943
+          },
+          {
+            "start": 21061,
+            "end": 21103
+          },
+          {
+            "start": 21316,
+            "end": 21361
+          },
+          {
+            "start": 21485,
+            "end": 21527
+          },
+          {
+            "start": 21643,
+            "end": 21688
+          },
+          {
+            "start": 21812,
+            "end": 21854
+          },
+          {
+            "start": 22025,
+            "end": 22070
+          },
+          {
+            "start": 22194,
+            "end": 22236
+          },
+          {
+            "start": 22285,
+            "end": 22330
+          },
+          {
+            "start": 22451,
+            "end": 22493
+          },
+          {
+            "start": 22580,
+            "end": 22625
+          },
+          {
+            "start": 22743,
+            "end": 22785
+          },
+          {
+            "start": 22939,
+            "end": 22984
+          },
+          {
+            "start": 23108,
+            "end": 23150
+          },
+          {
+            "start": 23199,
+            "end": 23244
+          },
+          {
+            "start": 23362,
+            "end": 23404
+          },
+          {
+            "start": 23492,
+            "end": 23537
+          },
+          {
+            "start": 23764,
+            "end": 23809
+          },
+          {
+            "start": 23927,
+            "end": 23969
+          },
+          {
+            "start": 24126,
+            "end": 24171
+          },
+          {
+            "start": 24289,
+            "end": 24331
+          },
+          {
+            "start": 24419,
+            "end": 24464
+          },
+          {
+            "start": 24588,
+            "end": 24630
+          },
+          {
+            "start": 24800,
+            "end": 24845
+          },
+          {
+            "start": 24969,
+            "end": 25011
+          },
+          {
+            "start": 25060,
+            "end": 25105
+          },
+          {
+            "start": 25229,
+            "end": 25271
+          },
+          {
+            "start": 25413,
+            "end": 25458
+          },
+          {
+            "start": 25576,
+            "end": 25618
+          },
+          {
+            "start": 25771,
+            "end": 25816
+          },
+          {
+            "start": 26043,
+            "end": 26088
+          },
+          {
+            "start": 26206,
+            "end": 26248
+          },
+          {
+            "start": 26485,
+            "end": 26530
+          },
+          {
+            "start": 26757,
+            "end": 26802
+          },
+          {
+            "start": 26920,
+            "end": 26962
+          },
+          {
+            "start": 27048,
+            "end": 27093
+          },
+          {
+            "start": 27387,
+            "end": 27432
+          },
+          {
+            "start": 27659,
+            "end": 27704
+          },
+          {
+            "start": 27822,
+            "end": 27864
+          },
+          {
+            "start": 27950,
+            "end": 27995
+          },
+          {
+            "start": 28113,
+            "end": 28155
+          },
+          {
+            "start": 28243,
+            "end": 28288
+          },
+          {
+            "start": 28582,
+            "end": 28627
+          },
+          {
+            "start": 28751,
+            "end": 28793
+          },
+          {
+            "start": 28970,
+            "end": 29015
+          },
+          {
+            "start": 29139,
+            "end": 29181
+          },
+          {
+            "start": 29230,
+            "end": 29275
+          },
+          {
+            "start": 29399,
+            "end": 29441
+          },
+          {
+            "start": 29490,
+            "end": 29535
+          },
+          {
+            "start": 29653,
+            "end": 29695
+          },
+          {
+            "start": 29783,
+            "end": 29828
+          },
+          {
+            "start": 29946,
+            "end": 29988
+          },
+          {
+            "start": 30076,
+            "end": 30121
+          },
+          {
+            "start": 30245,
+            "end": 30287
+          },
+          {
+            "start": 30336,
+            "end": 30381
+          },
+          {
+            "start": 30499,
+            "end": 30541
+          },
+          {
+            "start": 30725,
+            "end": 30770
+          },
+          {
+            "start": 30894,
+            "end": 30936
+          },
+          {
+            "start": 31052,
+            "end": 31097
+          },
+          {
+            "start": 31218,
+            "end": 31260
+          },
+          {
+            "start": 31479,
+            "end": 31524
+          },
+          {
+            "start": 31648,
+            "end": 31690
+          },
+          {
+            "start": 31871,
+            "end": 31916
+          },
+          {
+            "start": 32040,
+            "end": 32082
+          },
+          {
+            "start": 32263,
+            "end": 32308
+          },
+          {
+            "start": 32432,
+            "end": 32474
+          },
+          {
+            "start": 32655,
+            "end": 32700
+          },
+          {
+            "start": 32824,
+            "end": 32866
+          },
+          {
+            "start": 33047,
+            "end": 33092
+          },
+          {
+            "start": 33216,
+            "end": 33258
+          },
+          {
+            "start": 33439,
+            "end": 33484
+          },
+          {
+            "start": 33608,
+            "end": 33650
+          },
+          {
+            "start": 33811,
+            "end": 33856
+          },
+          {
+            "start": 33980,
+            "end": 34022
+          },
+          {
+            "start": 34071,
+            "end": 34116
+          },
+          {
+            "start": 34234,
+            "end": 34276
+          }
+        ]
+      }
+    }
+  ],
+  "total_file_bytes": 206431,
+  "overall_consumed": 18883,
+  "overall_leftover": 187548,
+  "overall_coverage_ratio": 0.09147366,
+  "per_stream": {
+    "/\u0005DocumentSummaryInformation": {
+      "path": "/\u0005DocumentSummaryInformation",
+      "total_bytes": 432,
+      "consumed_bytes": 343,
+      "leftover_bytes": 89,
+      "coverage_ratio": 0.7939815,
+      "parser_name": "parse_summary_property_set"
+    },
+    "/\u0005SummaryInformation": {
+      "path": "/\u0005SummaryInformation",
+      "total_bytes": 296,
+      "consumed_bytes": 283,
+      "leftover_bytes": 13,
+      "coverage_ratio": 0.9560811,
+      "parser_name": "parse_summary_property_set"
+    },
+    "/AppObject": {
+      "path": "/AppObject",
+      "total_bytes": 673,
+      "consumed_bytes": 673,
+      "leftover_bytes": 0,
+      "coverage_ratio": 1.0,
+      "parser_name": "parse_app_object"
+    },
+    "/DocVersion2": {
+      "path": "/DocVersion2",
+      "total_bytes": 39,
+      "consumed_bytes": 39,
+      "leftover_bytes": 0,
+      "coverage_ratio": 1.0,
+      "parser_name": "parse_doc_version2"
+    },
+    "/DocVersion3": {
+      "path": "/DocVersion3",
+      "total_bytes": 144,
+      "consumed_bytes": 144,
+      "leftover_bytes": 0,
+      "coverage_ratio": 1.0,
+      "parser_name": "parse_doc_version3"
+    },
+    "/Dynamic Attributes Metadata": {
+      "path": "/Dynamic Attributes Metadata",
+      "total_bytes": 28,
+      "consumed_bytes": 16,
+      "leftover_bytes": 12,
+      "coverage_ratio": 0.5714286,
+      "parser_name": "parse_cluster_header"
+    },
+    "/JSite23/\u0001Ole": {
+      "path": "/JSite23/\u0001Ole",
+      "total_bytes": 341,
+      "consumed_bytes": 0,
+      "leftover_bytes": 341,
+      "coverage_ratio": 0.0
+    },
+    "/JSite23/JProperties": {
+      "path": "/JSite23/JProperties",
+      "total_bytes": 8,
+      "consumed_bytes": 5,
+      "leftover_bytes": 3,
+      "coverage_ratio": 0.625,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite2471/JProperties": {
+      "path": "/JSite2471/JProperties",
+      "total_bytes": 248,
+      "consumed_bytes": 242,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.9758065,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite2475/JProperties": {
+      "path": "/JSite2475/JProperties",
+      "total_bytes": 264,
+      "consumed_bytes": 254,
+      "leftover_bytes": 10,
+      "coverage_ratio": 0.9621212,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite4484/JProperties": {
+      "path": "/JSite4484/JProperties",
+      "total_bytes": 296,
+      "consumed_bytes": 290,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.9797297,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite4488/JProperties": {
+      "path": "/JSite4488/JProperties",
+      "total_bytes": 348,
+      "consumed_bytes": 342,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.98275864,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite4490/JProperties": {
+      "path": "/JSite4490/JProperties",
+      "total_bytes": 392,
+      "consumed_bytes": 386,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.9846939,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite4505/JProperties": {
+      "path": "/JSite4505/JProperties",
+      "total_bytes": 292,
+      "consumed_bytes": 286,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.9794521,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite4509/JProperties": {
+      "path": "/JSite4509/JProperties",
+      "total_bytes": 336,
+      "consumed_bytes": 330,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.98214287,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite4541/JProperties": {
+      "path": "/JSite4541/JProperties",
+      "total_bytes": 284,
+      "consumed_bytes": 278,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.97887325,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite4543/JProperties": {
+      "path": "/JSite4543/JProperties",
+      "total_bytes": 276,
+      "consumed_bytes": 270,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.9782609,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite5222/JProperties": {
+      "path": "/JSite5222/JProperties",
+      "total_bytes": 228,
+      "consumed_bytes": 222,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.9736842,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite7361/JProperties": {
+      "path": "/JSite7361/JProperties",
+      "total_bytes": 284,
+      "consumed_bytes": 278,
+      "leftover_bytes": 6,
+      "coverage_ratio": 0.97887325,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite793/AppObject": {
+      "path": "/JSite793/AppObject",
+      "total_bytes": 4,
+      "consumed_bytes": 0,
+      "leftover_bytes": 4,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/DocVersion2": {
+      "path": "/JSite793/DocVersion2",
+      "total_bytes": 21,
+      "consumed_bytes": 0,
+      "leftover_bytes": 21,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/DocVersion3": {
+      "path": "/JSite793/DocVersion3",
+      "total_bytes": 48,
+      "consumed_bytes": 0,
+      "leftover_bytes": 48,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/Dynamic Attributes Metadata": {
+      "path": "/JSite793/Dynamic Attributes Metadata",
+      "total_bytes": 28,
+      "consumed_bytes": 0,
+      "leftover_bytes": 28,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/JProperties": {
+      "path": "/JSite793/JProperties",
+      "total_bytes": 8,
+      "consumed_bytes": 4,
+      "leftover_bytes": 4,
+      "coverage_ratio": 0.5,
+      "parser_name": "parse_jproperties"
+    },
+    "/JSite793/JSitesList": {
+      "path": "/JSite793/JSitesList",
+      "total_bytes": 8,
+      "consumed_bytes": 0,
+      "leftover_bytes": 8,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/PSMcluster0": {
+      "path": "/JSite793/PSMcluster0",
+      "total_bytes": 39319,
+      "consumed_bytes": 0,
+      "leftover_bytes": 39319,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/PSMclustertable": {
+      "path": "/JSite793/PSMclustertable",
+      "total_bytes": 167,
+      "consumed_bytes": 0,
+      "leftover_bytes": 167,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/PSMroots": {
+      "path": "/JSite793/PSMroots",
+      "total_bytes": 618,
+      "consumed_bytes": 0,
+      "leftover_bytes": 618,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/PSMsegmenttable": {
+      "path": "/JSite793/PSMsegmenttable",
+      "total_bytes": 14,
+      "consumed_bytes": 0,
+      "leftover_bytes": 14,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/PSMspacemap/0x00000000": {
+      "path": "/JSite793/PSMspacemap/0x00000000",
+      "total_bytes": 5682,
+      "consumed_bytes": 0,
+      "leftover_bytes": 5682,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/PSMspacemap/0x00002000": {
+      "path": "/JSite793/PSMspacemap/0x00002000",
+      "total_bytes": 12,
+      "consumed_bytes": 0,
+      "leftover_bytes": 12,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/PSMspacemap/0x00004000": {
+      "path": "/JSite793/PSMspacemap/0x00004000",
+      "total_bytes": 12,
+      "consumed_bytes": 0,
+      "leftover_bytes": 12,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/PSMspacemap/0x00006000": {
+      "path": "/JSite793/PSMspacemap/0x00006000",
+      "total_bytes": 1642,
+      "consumed_bytes": 0,
+      "leftover_bytes": 1642,
+      "coverage_ratio": 0.0
+    },
+    "/JSite793/StyleCluster": {
+      "path": "/JSite793/StyleCluster",
+      "total_bytes": 19050,
+      "consumed_bytes": 0,
+      "leftover_bytes": 19050,
+      "coverage_ratio": 0.0
+    },
+    "/JSitesList": {
+      "path": "/JSitesList",
+      "total_bytes": 72,
+      "consumed_bytes": 0,
+      "leftover_bytes": 72,
+      "coverage_ratio": 0.0
+    },
+    "/JTaggedTxtStgList": {
+      "path": "/JTaggedTxtStgList",
+      "total_bytes": 70,
+      "consumed_bytes": 70,
+      "leftover_bytes": 0,
+      "coverage_ratio": 1.0,
+      "parser_name": "parse_tagged_stg_list"
+    },
+    "/PSMcluster0": {
+      "path": "/PSMcluster0",
+      "total_bytes": 37430,
+      "consumed_bytes": 135,
+      "leftover_bytes": 37295,
+      "coverage_ratio": 0.0036067325,
+      "parser_name": "parse_psm_cluster0"
+    },
+    "/PSMclustertable": {
+      "path": "/PSMclustertable",
+      "total_bytes": 296,
+      "consumed_bytes": 296,
+      "leftover_bytes": 0,
+      "coverage_ratio": 1.0,
+      "parser_name": "parse_psm_cluster_table"
+    },
+    "/PSMroots": {
+      "path": "/PSMroots",
+      "total_bytes": 234,
+      "consumed_bytes": 230,
+      "leftover_bytes": 4,
+      "coverage_ratio": 0.982906,
+      "parser_name": "parse_psm_roots"
+    },
+    "/PSMsegmenttable": {
+      "path": "/PSMsegmenttable",
+      "total_bytes": 12,
+      "consumed_bytes": 12,
+      "leftover_bytes": 0,
+      "coverage_ratio": 1.0,
+      "parser_name": "parse_psm_segment_table"
+    },
+    "/PSMspacemap/0x00000000": {
+      "path": "/PSMspacemap/0x00000000",
+      "total_bytes": 11626,
+      "consumed_bytes": 0,
+      "leftover_bytes": 11626,
+      "coverage_ratio": 0.0
+    },
+    "/PSMspacemap/0x00002000": {
+      "path": "/PSMspacemap/0x00002000",
+      "total_bytes": 12,
+      "consumed_bytes": 0,
+      "leftover_bytes": 12,
+      "coverage_ratio": 0.0
+    },
+    "/PSMspacemap/0x00004000": {
+      "path": "/PSMspacemap/0x00004000",
+      "total_bytes": 12,
+      "consumed_bytes": 0,
+      "leftover_bytes": 12,
+      "coverage_ratio": 0.0
+    },
+    "/PSMspacemap/0x00006000": {
+      "path": "/PSMspacemap/0x00006000",
+      "total_bytes": 426,
+      "consumed_bytes": 0,
+      "leftover_bytes": 426,
+      "coverage_ratio": 0.0
+    },
+    "/Sheet6": {
+      "path": "/Sheet6",
+      "total_bytes": 23731,
+      "consumed_bytes": 1704,
+      "leftover_bytes": 22027,
+      "coverage_ratio": 0.071804814,
+      "parser_name": "probe_sheet_stream"
+    },
+    "/Sheet6615": {
+      "path": "/Sheet6615",
+      "total_bytes": 316,
+      "consumed_bytes": 72,
+      "leftover_bytes": 244,
+      "coverage_ratio": 0.2278481,
+      "parser_name": "probe_sheet_stream"
+    },
+    "/StyleCluster": {
+      "path": "/StyleCluster",
+      "total_bytes": 22121,
+      "consumed_bytes": 16,
+      "leftover_bytes": 22105,
+      "coverage_ratio": 0.0007232946,
+      "parser_name": "parse_cluster_header"
+    },
+    "/TaggedTxtData/Drawing": {
+      "path": "/TaggedTxtData/Drawing",
+      "total_bytes": 3674,
+      "consumed_bytes": 3674,
+      "leftover_bytes": 0,
+      "coverage_ratio": 1.0,
+      "parser_name": "parse_drawing_xml"
+    },
+    "/TaggedTxtData/General": {
+      "path": "/TaggedTxtData/General",
+      "total_bytes": 193,
+      "consumed_bytes": 193,
+      "leftover_bytes": 0,
+      "coverage_ratio": 1.0,
+      "parser_name": "parse_general_xml"
+    },
+    "/TaggedTxtData/Revision": {
+      "path": "/TaggedTxtData/Revision",
+      "total_bytes": 0,
+      "consumed_bytes": 0,
+      "leftover_bytes": 0,
+      "coverage_ratio": 0.0
+    },
+    "/Unclustered Dynamic Attributes": {
+      "path": "/Unclustered Dynamic Attributes",
+      "total_bytes": 34364,
+      "consumed_bytes": 7796,
+      "leftover_bytes": 26568,
+      "coverage_ratio": 0.22686532,
+      "parser_name": "scan_da_landmarks"
+    }
+  },
+  "unregistered_paths": [
+    "/JSite23/\u0001Ole",
+    "/JSite793/AppObject",
+    "/JSite793/DocVersion2",
+    "/JSite793/DocVersion3",
+    "/JSite793/Dynamic Attributes Metadata",
+    "/JSite793/JSitesList",
+    "/JSite793/PSMcluster0",
+    "/JSite793/PSMclustertable",
+    "/JSite793/PSMroots",
+    "/JSite793/PSMsegmenttable",
+    "/JSite793/PSMspacemap/0x00000000",
+    "/JSite793/PSMspacemap/0x00002000",
+    "/JSite793/PSMspacemap/0x00004000",
+    "/JSite793/PSMspacemap/0x00006000",
+    "/JSite793/StyleCluster",
+    "/JSitesList",
+    "/PSMspacemap/0x00000000",
+    "/PSMspacemap/0x00002000",
+    "/PSMspacemap/0x00004000",
+    "/PSMspacemap/0x00006000",
+    "/TaggedTxtData/Revision"
+  ]
+}
