@@ -24,8 +24,9 @@
 
 use crate::byte_audit::{ByteRange, ParserTraceBuilder, TraceConfidence};
 use crate::model::{
-    PsmClusterEntry, PsmClusterRecordProbe, PsmClusterTable, PsmRootEntry, PsmRoots,
-    PsmSegmentEntry, PsmSegmentRecordProbe, PsmSegmentTable,
+    DecodedFieldRange, PsmClusterEntry, PsmClusterRecordDecoded, PsmClusterRecordProbe,
+    PsmClusterTable, PsmRootEntry, PsmRoots, PsmSegmentEntry, PsmSegmentRecordProbe,
+    PsmSegmentTable,
 };
 
 /// `u32` LE magic that begins a `/PSMroots` stream (ASCII `'root'`).
@@ -45,6 +46,13 @@ fn read_u32_le(data: &[u8], pos: usize) -> Option<u32> {
         data[pos + 2],
         data[pos + 3],
     ]))
+}
+
+fn read_u16_le(data: &[u8], pos: usize) -> Option<u16> {
+    if pos + 2 > data.len() {
+        return None;
+    }
+    Some(u16::from_le_bytes([data[pos], data[pos + 1]]))
 }
 
 fn read_utf16le_name(data: &[u8], start: usize, char_count: usize) -> Option<String> {
@@ -251,10 +259,16 @@ pub fn parse_psm_cluster_table_with_trace(
         }
     }
     let trailing_bytes = data.len().saturating_sub(record_start);
+    let decoded_records = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| decode_cluster_record(index, entry))
+        .collect();
     Some(PsmClusterTable {
         size: data.len() as u64,
         count,
         entries,
+        decoded_records,
         trailing_bytes,
     })
 }
@@ -418,6 +432,98 @@ fn build_cluster_record_probe(record: &[u8], prefix: &[u8], name: &str) -> PsmCl
         trailer_hex,
         name_char_count: name.chars().count(),
     }
+}
+
+fn decode_cluster_record(index: usize, entry: &PsmClusterEntry) -> PsmClusterRecordDecoded {
+    let prefix = entry.prefix_bytes.as_slice();
+    let special_first_record = index == 0 && prefix.len() >= 19;
+
+    let name_len_pos = if special_first_record { 4 } else { 0 };
+    let ordinal_pos = if special_first_record { 9 } else { 5 };
+    let marker_pos = if special_first_record { 11 } else { 7 };
+    let payload_pos = if special_first_record { 15 } else { 11 };
+
+    let name_bytes_with_nul = read_u32_le(prefix, name_len_pos);
+    let candidate_ordinal = read_u16_le(prefix, ordinal_pos);
+    let candidate_non_sheet_marker = prefix.get(marker_pos).copied();
+    let candidate_non_sheet_payload_index = if candidate_non_sheet_marker == Some(1) {
+        read_u32_le(prefix, payload_pos)
+    } else {
+        None
+    };
+
+    let mut field_ranges = Vec::new();
+    push_field_range(
+        &mut field_ranges,
+        entry.record_offset,
+        name_len_pos,
+        4,
+        "name_bytes_with_nul",
+        name_bytes_with_nul.is_some(),
+    );
+    push_field_range(
+        &mut field_ranges,
+        entry.record_offset,
+        ordinal_pos,
+        2,
+        "candidate_ordinal",
+        candidate_ordinal.is_some(),
+    );
+    push_field_range(
+        &mut field_ranges,
+        entry.record_offset,
+        marker_pos,
+        1,
+        "candidate_non_sheet_marker",
+        candidate_non_sheet_marker.is_some(),
+    );
+    push_field_range(
+        &mut field_ranges,
+        entry.record_offset,
+        payload_pos,
+        4,
+        "candidate_non_sheet_payload_index",
+        candidate_non_sheet_payload_index.is_some(),
+    );
+
+    PsmClusterRecordDecoded {
+        index,
+        name: entry.name.clone(),
+        record_offset: entry.record_offset,
+        record_len: entry.record_len,
+        prefix_len: prefix.len(),
+        name_bytes_with_nul,
+        candidate_ordinal,
+        candidate_non_sheet_marker,
+        candidate_non_sheet_payload_index,
+        confidence: "medium".to_string(),
+        field_ranges,
+        unknown_prefix_bytes: Vec::new(),
+    }
+}
+
+fn push_field_range(
+    ranges: &mut Vec<DecodedFieldRange>,
+    record_offset: usize,
+    relative_start: usize,
+    len: usize,
+    field_name: &str,
+    present: bool,
+) {
+    if !present {
+        return;
+    }
+    let Some(start) = record_offset.checked_add(relative_start) else {
+        return;
+    };
+    let Some(end) = start.checked_add(len) else {
+        return;
+    };
+    ranges.push(DecodedFieldRange {
+        field_name: field_name.to_string(),
+        start,
+        end,
+    });
 }
 
 #[cfg(test)]
@@ -622,6 +728,70 @@ mod tests {
         // Trailer hex should contain the last 8 bytes — verify length is
         // shaped as 23 chars = 8 tokens joined by single spaces.
         assert_eq!(probe.trailer_hex.split_whitespace().count(), 8);
+    }
+
+    #[test]
+    fn cluster_table_decoded_records_capture_conservative_prefix_candidates() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLST_MAGIC.to_le_bytes());
+        data.extend_from_slice(&3u32.to_le_bytes());
+
+        data.extend_from_slice(&[
+            0x10, 0x00, 0x00, 0x00, // record-0 special leading field
+            0x18, 0x00, 0x00, 0x00, // name bytes including NUL
+            0x01, 0x00, 0x00, // candidate ordinal 0
+            0x01, // non-sheet marker candidate
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // non-sheet payload index candidate
+        ]);
+        data.extend(utf16_bytes("PSMcluster0"));
+        data.extend_from_slice(&[0, 0]);
+
+        data.extend_from_slice(&[
+            0x1A, 0x00, 0x00, 0x00, // name bytes including NUL
+            0x01, // constant marker observed across records 1..N
+            0x01, 0x00, // candidate ordinal 1
+            0x01, // non-sheet marker candidate
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // non-sheet payload index candidate
+        ]);
+        data.extend(utf16_bytes("StyleCluster"));
+        data.extend_from_slice(&[0, 0]);
+
+        data.extend_from_slice(&[
+            0x0E, 0x00, 0x00, 0x00, // name bytes including NUL
+            0x01, // constant marker observed across records 1..N
+            0x03, 0x00, // candidate ordinal 3
+            0x00, // sheet marker candidate
+            0x00, 0x00, 0x00,
+        ]);
+        data.extend(utf16_bytes("Sheet6"));
+        data.extend_from_slice(&[0, 0]);
+
+        let t = parse_psm_cluster_table(&data).expect("valid");
+        assert_eq!(t.decoded_records.len(), 3);
+
+        let first = &t.decoded_records[0];
+        assert_eq!(first.name, "PSMcluster0");
+        assert_eq!(first.name_bytes_with_nul, Some(24));
+        assert_eq!(first.candidate_ordinal, Some(0));
+        assert_eq!(first.candidate_non_sheet_marker, Some(1));
+        assert_eq!(first.candidate_non_sheet_payload_index, Some(0));
+        assert_eq!(first.confidence, "medium");
+
+        let style = &t.decoded_records[1];
+        assert_eq!(style.name, "StyleCluster");
+        assert_eq!(style.name_bytes_with_nul, Some(26));
+        assert_eq!(style.candidate_ordinal, Some(1));
+        assert_eq!(style.candidate_non_sheet_marker, Some(1));
+        assert_eq!(style.candidate_non_sheet_payload_index, Some(1));
+        assert!(style.unknown_prefix_bytes.is_empty());
+
+        let sheet = &t.decoded_records[2];
+        assert_eq!(sheet.name, "Sheet6");
+        assert_eq!(sheet.name_bytes_with_nul, Some(14));
+        assert_eq!(sheet.candidate_ordinal, Some(3));
+        assert_eq!(sheet.candidate_non_sheet_marker, Some(0));
+        assert_eq!(sheet.candidate_non_sheet_payload_index, None);
+        assert!(sheet.unknown_prefix_bytes.is_empty());
     }
 
     #[test]

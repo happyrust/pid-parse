@@ -333,6 +333,26 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 write!(out, ", prefix=[{}]", hex.join(" ")).ok();
             }
             writeln!(out, ")").ok();
+            if let Some(decoded) = t.decoded_records.get(entry_idx) {
+                writeln!(
+                    out,
+                    "    decoded: confidence={} name_bytes_with_nul={} ordinal={} non_sheet_marker={} payload_index={}",
+                    decoded.confidence,
+                    decoded
+                        .name_bytes_with_nul
+                        .map_or_else(|| "-".into(), |v| v.to_string()),
+                    decoded
+                        .candidate_ordinal
+                        .map_or_else(|| "-".into(), |v| v.to_string()),
+                    decoded
+                        .candidate_non_sheet_marker
+                        .map_or_else(|| "-".into(), |v| v.to_string()),
+                    decoded
+                        .candidate_non_sheet_payload_index
+                        .map_or_else(|| "-".into(), |v| v.to_string()),
+                )
+                .ok();
+            }
             if entry_idx < 3 {
                 if let Some(probe) = e.probe.as_ref() {
                     writeln!(
@@ -1476,12 +1496,51 @@ mod tests {
                     name_char_count: 11,
                 }),
             }],
+            decoded_records: vec![],
             trailing_bytes: 0,
         });
 
         let report = generate_report(&doc);
         assert!(
             report.contains("probe: first_u32_le=0x44332211 last_u32_le=0xDEADBEEF chars=11 trailer=[AA BB CC DD EE FF 00 00]"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_shows_psm_cluster_decoded_candidate_summary() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(crate::model::PsmClusterTable {
+            size: 64,
+            count: 1,
+            entries: vec![crate::model::PsmClusterEntry {
+                name: "StyleCluster".into(),
+                name_offset: 0x20,
+                record_offset: 0x08,
+                record_len: 0x29,
+                prefix_bytes: vec![],
+                probe: None,
+            }],
+            decoded_records: vec![crate::model::PsmClusterRecordDecoded {
+                index: 0,
+                name: "StyleCluster".into(),
+                record_offset: 0x08,
+                record_len: 0x29,
+                prefix_len: 15,
+                name_bytes_with_nul: Some(26),
+                candidate_ordinal: Some(1),
+                candidate_non_sheet_marker: Some(1),
+                candidate_non_sheet_payload_index: Some(1),
+                confidence: "medium".into(),
+                field_ranges: vec![],
+                unknown_prefix_bytes: vec![],
+            }],
+            trailing_bytes: 0,
+        });
+
+        let report = generate_report(&doc);
+        assert!(
+            report.contains("decoded: confidence=medium name_bytes_with_nul=26 ordinal=1 non_sheet_marker=1 payload_index=1"),
             "{report}"
         );
     }

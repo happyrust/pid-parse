@@ -733,6 +733,7 @@ mod tests {
                         probe: None,
                     },
                 ],
+                decoded_records: vec![],
                 trailing_bytes: 0,
             });
         }
@@ -804,6 +805,7 @@ mod tests {
                 prefix_bytes: vec![0xAA, 0xBB],
                 probe: None,
             }],
+            decoded_records: vec![],
             trailing_bytes: 0,
         });
 
@@ -840,6 +842,7 @@ mod tests {
                     probe: None,
                 },
             ],
+            decoded_records: vec![],
             trailing_bytes: 0,
         });
         doc.clusters.push(ClusterInfo {
@@ -1619,6 +1622,7 @@ mod tests {
                     probe: None,
                 },
             ],
+            decoded_records: vec![],
             trailing_bytes: 0,
         });
         doc.sheet_streams

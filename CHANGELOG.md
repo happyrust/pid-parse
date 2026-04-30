@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### parser：`PSMclustertable` decoded record 候选视图（Phase 11a）
+
+`docs/plans/2026-05-06-phase-11a-psmclustertable-records.md` 与
+`docs/analysis/2026-05-06-psmclustertable-evidence.md` 第一轮执行落地：
+
+- 基于 DWG-0201 / DWG-0202 / 中文样本三份真实 fixture 的 probe matrix，
+  新增 additive `PsmClusterTable.decoded_records` 视图；旧 `entries` /
+  `probe` 保留，既有 consumer 不受影响。
+- 新增 `PsmClusterRecordDecoded` / `DecodedFieldRange`，只暴露证据已支撑
+  的保守候选字段：`name_bytes_with_nul`、`candidate_ordinal`、
+  `candidate_non_sheet_marker`、`candidate_non_sheet_payload_index`。
+  证据不足的 `segment_count` / `declared_segment_count` 暂不命名。
+- `pid_inspect` 文本 report 在 `PSMclustertable` 段输出 decoded candidate
+  摘要，方便后续逆向把 probe 与候选字段对照。
+- 新增 synthetic parser 单测、report 单测与真实 fixture 回归，锁住
+  DWG-0201 / DWG-0202 的 decoded record 平行结构与 `Sheet6615` 额外
+  sheet record 候选字段。
+
+当前 coverage 仍保持 conservative：本次只是候选 decoded 视图，不把
+`PSMclustertable` 宣称为 FullyDecoded；后续需 crossref consistency 与
+更多字段语义证据再决定是否升级 byte-audit confidence。
+
 ### docs：刷新当前架构图与原理说明
 
 - 新增 `docs/current-architecture-principles.md`，用读取路径、

@@ -1031,9 +1031,67 @@ pub struct PsmClusterTable {
     pub count: u32,
     /// Parsed entries in on-disk order.
     pub entries: Vec<PsmClusterEntry>,
+    /// Conservative decoded view for each cluster record, derived from
+    /// observed stable prefix slots across real fixtures. This is additive:
+    /// callers that only need the legacy name/probe view can keep using
+    /// [`PsmClusterTable::entries`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decoded_records: Vec<PsmClusterRecordDecoded>,
     /// Bytes after the last record that could not be attributed to any entry.
     #[serde(default)]
     pub trailing_bytes: usize,
+}
+
+/// Conservative decoded candidate fields for one `PSMclustertable` record.
+///
+/// Field names intentionally keep the `candidate_` prefix where SmartPlant
+/// semantics are not fully proven yet. They are stable byte-layout evidence,
+/// not final business meaning.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct PsmClusterRecordDecoded {
+    /// Zero-based order in the on-disk table.
+    pub index: usize,
+    /// Decoded cluster name copied from the legacy [`PsmClusterEntry`] view.
+    pub name: String,
+    /// Offset inside the `PSMclustertable` stream where this record starts.
+    pub record_offset: usize,
+    /// Total byte length of this record.
+    pub record_len: usize,
+    /// Number of bytes before the UTF-16LE name run.
+    pub prefix_len: usize,
+    /// Candidate UTF-16LE name byte length including the terminating NUL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_bytes_with_nul: Option<u32>,
+    /// Candidate cluster ordinal observed in stable prefix slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_ordinal: Option<u16>,
+    /// Candidate marker that splits sheet (`0`) from non-sheet (`1`) rows
+    /// in the sampled fixtures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_non_sheet_marker: Option<u8>,
+    /// Candidate trailing payload index present on sampled non-sheet rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_non_sheet_payload_index: Option<u32>,
+    /// Confidence string for this decoded view. Phase 11a starts at
+    /// `"medium"` until field semantics are proven across more fixtures.
+    pub confidence: String,
+    /// Source byte ranges for the decoded candidate fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub field_ranges: Vec<DecodedFieldRange>,
+    /// Prefix bytes not covered by the conservative candidate layout.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unknown_prefix_bytes: Vec<u8>,
+}
+
+/// Byte range for a decoded candidate field inside a raw stream.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DecodedFieldRange {
+    /// Field name as exposed by the decoded candidate view.
+    pub field_name: String,
+    /// Start offset inside the source stream, inclusive.
+    pub start: usize,
+    /// End offset inside the source stream, exclusive.
+    pub end: usize,
 }
 
 /// One declared cluster entry inside a [`PsmClusterTable`].

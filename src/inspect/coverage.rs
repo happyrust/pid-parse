@@ -481,6 +481,7 @@ mod tests {
             size: 0,
             count: 0,
             entries: vec![],
+            decoded_records: vec![],
             trailing_bytes: 0,
         });
         doc.psm_segment_table = Some(PsmSegmentTable {

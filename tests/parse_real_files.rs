@@ -1085,6 +1085,70 @@ fn psm_cluster_record_probes_match_entry_slice() {
 }
 
 #[test]
+fn psm_cluster_decoded_records_match_observed_prefix_candidates() {
+    for fixture in ["DWG-0201GP06-01.pid", "DWG-0202GP06-01.pid"] {
+        let Some(doc) = parse_test_file(fixture) else {
+            return;
+        };
+        let table = doc
+            .psm_cluster_table
+            .as_ref()
+            .expect("PSMclustertable decoded");
+
+        assert_eq!(
+            table.decoded_records.len(),
+            table.entries.len(),
+            "{fixture}: decoded record view should stay parallel to entries"
+        );
+
+        for (entry, decoded) in table.entries.iter().zip(&table.decoded_records) {
+            assert_eq!(
+                decoded.name, entry.name,
+                "{fixture}: decoded name should mirror legacy entry"
+            );
+            assert_eq!(
+                decoded.record_offset, entry.record_offset,
+                "{fixture}: decoded offset should mirror legacy entry"
+            );
+            assert_eq!(
+                decoded.record_len, entry.record_len,
+                "{fixture}: decoded length should mirror legacy entry"
+            );
+        }
+
+        let first = &table.decoded_records[0];
+        assert_eq!(first.name, "PSMcluster0");
+        assert_eq!(first.name_bytes_with_nul, Some(24));
+        assert_eq!(first.candidate_ordinal, Some(0));
+        assert_eq!(first.candidate_non_sheet_marker, Some(1));
+        assert_eq!(first.candidate_non_sheet_payload_index, Some(0));
+        assert_eq!(first.confidence, "medium");
+
+        let sheet6 = table
+            .decoded_records
+            .iter()
+            .find(|r| r.name == "Sheet6")
+            .expect("Sheet6 decoded record");
+        assert_eq!(sheet6.name_bytes_with_nul, Some(14));
+        assert_eq!(sheet6.candidate_ordinal, Some(3));
+        assert_eq!(sheet6.candidate_non_sheet_marker, Some(0));
+        assert_eq!(sheet6.candidate_non_sheet_payload_index, None);
+
+        if fixture == "DWG-0202GP06-01.pid" {
+            let sheet6615 = table
+                .decoded_records
+                .iter()
+                .find(|r| r.name == "Sheet6615")
+                .expect("DWG-0202 has the extra Sheet6615 record");
+            assert_eq!(sheet6615.name_bytes_with_nul, Some(20));
+            assert_eq!(sheet6615.candidate_ordinal, Some(5));
+            assert_eq!(sheet6615.candidate_non_sheet_marker, Some(0));
+            assert_eq!(sheet6615.candidate_non_sheet_payload_index, None);
+        }
+    }
+}
+
+#[test]
 fn psm_segment_record_probes_align_with_flags() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;
