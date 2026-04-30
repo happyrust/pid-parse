@@ -83,4 +83,20 @@ mod tests {
             "schema should emit AttributeValue definition"
         );
     }
+
+    #[test]
+    fn schema_exposes_psm_segment_owner_candidates() {
+        let text = pid_document_schema_pretty().expect("pretty JSON");
+        for needle in [
+            "PsmSegmentEntry",
+            "candidate_owner_cluster_index",
+            "candidate_owner_cluster_name",
+        ] {
+            assert!(
+                text.contains(needle),
+                "schema should mention `{needle}` but did not; output starts with:\n{}",
+                &text[..text.len().min(500)]
+            );
+        }
+    }
 }

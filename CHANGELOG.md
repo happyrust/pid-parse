@@ -17,6 +17,13 @@
 - coverage inventory 对 `PSMsegmenttable` 的说明更新为
   `segment flags + owner candidate mapping; SmartPlant field semantics still pending`，
   继续保持 `PartiallyDecoded`，不把候选映射升级为稳定业务语义。
+- JSON schema 回归测试锁定 `PsmSegmentEntry` 与新增 candidate owner 字段会出现在
+  `pid_inspect --schema` 输出中。
+- 真实 fixture soft-skip 回归扩展 `psm_segment_record_probes_align_with_flags`：
+  结构化 candidate owner 字段必须与旧 probe `owner_cluster_hint` 的 1:1
+  positional 映射一致。
+- byte-audit aggregate 回归锁定 `/PSMclustertable` 同时保留 decoded header/name、
+  probed prefix 与 trailing leftover 分桶。
 - 本轮新增/更新 parser、report、coverage 单测，并通过全量 `cargo test`。
 
 ### parser：`PSMclustertable` decoded record 候选视图（Phase 11a）

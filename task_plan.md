@@ -15,15 +15,19 @@ Phase 2
 - **Status:** complete
 
 ### Phase 2：PSM 结构化补齐
-- [ ] 收敛 `PSMclustertable` per-record 字段语义
+- [x] 收敛 `PSMclustertable` per-record 字段语义
   - [x] `decoded_records.unknown_prefix_bytes` 改为真实记录候选字段之外的前缀字节
-- [ ] 收敛 `PSMsegmenttable` 记录结构与 segment/cluster 关联
+- [x] 收敛 `PSMsegmenttable` 记录结构与 segment/cluster 关联
   - [x] 为 `PsmSegmentEntry` 增加保守的 `candidate_owner_cluster_index/name`
-- [ ] 给 byte-audit 增加 decoded/probed/leftover trace
-- [ ] 更新 coverage、报告、JSON schema 与回归测试
+- [x] 给 byte-audit 增加 decoded/probed/leftover trace
+  - [x] aggregate 测试锁定 `/PSMclustertable` decoded/probed/leftover 分桶
+  - [x] 评估 candidate 字段 confidence：保持 prefix `Probed`，不升级为 `Decoded`
+- [x] 更新 coverage、报告、JSON schema 与回归测试
   - [x] 文本 report 输出 segment `owner_candidate=index:name`
   - [x] coverage note 说明 segment flags + owner candidate mapping
-- **Status:** in_progress
+  - [x] schema 测试锁定 `PsmSegmentEntry` candidate owner 字段
+  - [x] 真实 fixture soft-skip 测试校验 candidate owner 与 probe hint 一致
+- **Status:** complete
 
 ### Phase 3：Sheet 几何与端点深化
 - [ ] 将现有 Sheet text run / endpoint record / coordinate hint 归一化

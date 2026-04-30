@@ -565,6 +565,43 @@ mod tests {
     }
 
     #[test]
+    fn psm_cluster_table_audit_keeps_decoded_probed_and_leftover_buckets() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&0x7473_6C63u32.to_le_bytes()); // CLST_MAGIC
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]); // record prefix
+        data.extend_from_slice(&utf16le("PSMcluster0"));
+        data.extend_from_slice(&[0, 0]); // null terminator
+        data.extend_from_slice(&[0xDE, 0xAD]); // trailing garbage
+
+        let pkg = pkg_with_streams(&[("/PSMclustertable", data.clone())]);
+        let report = byte_audit_report(&pkg);
+
+        let summary = &report.per_stream["/PSMclustertable"];
+        assert_eq!(
+            summary.parser_name.as_deref(),
+            Some("parse_psm_cluster_table")
+        );
+        assert_eq!(summary.leftover_bytes, 2);
+
+        let trace = report
+            .traces
+            .iter()
+            .find(|trace| trace.stream_path == "/PSMclustertable")
+            .expect("PSMclustertable trace exists");
+        assert!(trace
+            .ranges_by_confidence
+            .contains_key(&TraceConfidence::Decoded));
+        assert!(trace
+            .ranges_by_confidence
+            .contains_key(&TraceConfidence::Probed));
+        assert_eq!(
+            trace.leftover_ranges,
+            vec![ByteRange::new((data.len() - 2) as u64, data.len() as u64)]
+        );
+    }
+
+    #[test]
     fn summary_streams_are_registered_and_fully_consumed() {
         // Minimal PropertySetStream: 28-byte prefix + 20-byte section
         // header + 16-byte section body (size + 1 prop + VT_LPSTR).

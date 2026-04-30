@@ -1203,6 +1203,13 @@ fn psm_segment_record_probes_align_with_flags() {
         .iter()
         .filter_map(|e| e.probe.as_ref()?.owner_cluster_hint.as_ref())
         .count();
+    let candidate_owner_count = table
+        .entries
+        .iter()
+        .filter(|e| {
+            e.candidate_owner_cluster_index.is_some() && e.candidate_owner_cluster_name.is_some()
+        })
+        .count();
 
     if cluster_count == table.entries.len() && cluster_count > 0 {
         assert_eq!(
@@ -1210,6 +1217,12 @@ fn psm_segment_record_probes_align_with_flags() {
             table.entries.len(),
             "when cluster and segment counts match, every segment probe \
              must carry an owner_cluster_hint"
+        );
+        assert_eq!(
+            candidate_owner_count,
+            table.entries.len(),
+            "when cluster and segment counts match, every segment entry \
+             must carry a structured candidate owner"
         );
         let expected_hints: Vec<_> = doc
             .psm_cluster_table
@@ -1233,10 +1246,32 @@ fn psm_segment_record_probes_align_with_flags() {
             actual_hints, expected_hints,
             "1:1 positional hint mapping broken",
         );
+        let actual_candidate_owners: Vec<_> = table
+            .entries
+            .iter()
+            .map(|e| {
+                (
+                    e.candidate_owner_cluster_index
+                        .expect("owner index populated per precondition above"),
+                    e.candidate_owner_cluster_name
+                        .clone()
+                        .expect("owner name populated per precondition above"),
+                )
+            })
+            .collect();
+        let expected_candidate_owners: Vec<_> = expected_hints.into_iter().enumerate().collect();
+        assert_eq!(
+            actual_candidate_owners, expected_candidate_owners,
+            "structured 1:1 candidate owner mapping broken",
+        );
     } else {
         assert_eq!(
             hint_count, 0,
             "when counts disagree, all owner_cluster_hint slots must be None",
+        );
+        assert_eq!(
+            candidate_owner_count, 0,
+            "when counts disagree, all structured candidate owner slots must be None",
         );
     }
 }
