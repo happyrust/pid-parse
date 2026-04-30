@@ -1044,7 +1044,7 @@ pub struct PsmClusterTable {
 
 /// Conservative decoded candidate fields for one `PSMclustertable` record.
 ///
-/// Field names intentionally keep the `candidate_` prefix where SmartPlant
+/// Field names intentionally keep the `candidate_` prefix where `SmartPlant`
 /// semantics are not fully proven yet. They are stable byte-layout evidence,
 /// not final business meaning.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

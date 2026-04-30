@@ -143,7 +143,7 @@ pub enum PsmClusterDecodedConsistencyStatus {
 /// Structural self-consistency summary for `PSMclustertable` decoded
 /// candidate records.
 ///
-/// This does not claim SmartPlant business semantics. It only checks whether
+/// This does not claim `SmartPlant` business semantics. It only checks whether
 /// the additive decoded candidate view stays aligned with legacy entries and
 /// with the conservative sheet/non-sheet marker evidence from Phase 11a.
 #[derive(Debug, Clone, PartialEq, Eq)]
