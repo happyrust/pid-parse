@@ -408,10 +408,17 @@ pub fn generate_report(doc: &PidDocument) -> String {
         .ok();
         if !t.entries.is_empty() {
             for (entry_idx, e) in t.entries.iter().take(20).enumerate() {
+                let owner_candidate = match (
+                    e.candidate_owner_cluster_index,
+                    e.candidate_owner_cluster_name.as_deref(),
+                ) {
+                    (Some(index), Some(name)) => format!(" owner_candidate={index}:{name}"),
+                    _ => String::new(),
+                };
                 writeln!(
                     out,
-                    "  [{}] @+{:04X} flag=0x{:02X}",
-                    e.index, e.offset, e.flag
+                    "  [{}] @+{:04X} flag=0x{:02X}{}",
+                    e.index, e.offset, e.flag, owner_candidate
                 )
                 .ok();
                 if entry_idx < 3 {
@@ -1609,6 +1616,8 @@ mod tests {
                     index: 0,
                     offset: 8,
                     flag: 0x01,
+                    candidate_owner_cluster_index: Some(0),
+                    candidate_owner_cluster_name: Some("PSMcluster0".into()),
                     probe: Some(crate::model::PsmSegmentRecordProbe {
                         flag_hex: "01".into(),
                         neighbor_window_hex: "04 00 00 00 01 01 01".into(),
@@ -1620,6 +1629,8 @@ mod tests {
                     index: 1,
                     offset: 9,
                     flag: 0x01,
+                    candidate_owner_cluster_index: Some(1),
+                    candidate_owner_cluster_name: Some("StyleCluster".into()),
                     probe: Some(crate::model::PsmSegmentRecordProbe {
                         flag_hex: "01".into(),
                         neighbor_window_hex: "00 00 00 01 01 01".into(),
@@ -1631,6 +1642,8 @@ mod tests {
                     index: 2,
                     offset: 10,
                     flag: 0x01,
+                    candidate_owner_cluster_index: None,
+                    candidate_owner_cluster_name: None,
                     probe: Some(crate::model::PsmSegmentRecordProbe {
                         flag_hex: "01".into(),
                         neighbor_window_hex: "00 00 01 01 01".into(),
@@ -1642,6 +1655,8 @@ mod tests {
                     index: 3,
                     offset: 11,
                     flag: 0x01,
+                    candidate_owner_cluster_index: None,
+                    candidate_owner_cluster_name: None,
                     probe: Some(crate::model::PsmSegmentRecordProbe {
                         flag_hex: "01".into(),
                         neighbor_window_hex: "00 01 01 01".into(),
@@ -1660,8 +1675,16 @@ mod tests {
             "first entry probe missing/malformed in report:\n{report}"
         );
         assert!(
+            report.contains("[0] @+0008 flag=0x01 owner_candidate=0:PSMcluster0"),
+            "first entry candidate owner missing/malformed in report:\n{report}"
+        );
+        assert!(
             report.contains("probe: flag=01 window=[00 00 00 01 01 01] owner_hint=StyleCluster"),
             "second entry probe missing/malformed:\n{report}"
+        );
+        assert!(
+            report.contains("[1] @+0009 flag=0x01 owner_candidate=1:StyleCluster"),
+            "second entry candidate owner missing/malformed:\n{report}"
         );
         assert!(
             report.contains("probe: flag=01 window=[00 00 01 01 01] owner_hint=-"),

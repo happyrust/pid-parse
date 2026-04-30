@@ -1175,6 +1175,14 @@ pub struct PsmSegmentEntry {
     pub offset: usize,
     /// The raw flag byte for this segment.
     pub flag: u8,
+    /// Candidate positional link into `PSMclustertable`, populated only
+    /// when segment and cluster entry counts match exactly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_owner_cluster_index: Option<usize>,
+    /// Candidate owner cluster name from `PSMclustertable`, populated
+    /// alongside [`Self::candidate_owner_cluster_index`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_owner_cluster_name: Option<String>,
     /// Phase 11b-probe: byte-level probe summary for this segment. Purely
     /// derived from the raw stream and carries no semantic claims (e.g.
     /// does not name `kind` / `role`). Present so reverse-engineering

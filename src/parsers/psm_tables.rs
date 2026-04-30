@@ -327,6 +327,8 @@ pub fn parse_psm_segment_table_with_trace(
                 index: i,
                 offset,
                 flag,
+                candidate_owner_cluster_index: None,
+                candidate_owner_cluster_name: None,
                 probe: Some(build_segment_record_probe(data, offset, flag)),
             }
         })
@@ -368,7 +370,14 @@ pub fn apply_segment_owner_hints(
     if segment_table.entries.len() != ct.entries.len() {
         return;
     }
-    for (segment, cluster) in segment_table.entries.iter_mut().zip(ct.entries.iter()) {
+    for (index, (segment, cluster)) in segment_table
+        .entries
+        .iter_mut()
+        .zip(ct.entries.iter())
+        .enumerate()
+    {
+        segment.candidate_owner_cluster_index = Some(index);
+        segment.candidate_owner_cluster_name = Some(cluster.name.clone());
         if let Some(probe) = segment.probe.as_mut() {
             probe.owner_cluster_hint = Some(cluster.name.clone());
         }
@@ -485,6 +494,8 @@ fn decode_cluster_record(index: usize, entry: &PsmClusterEntry) -> PsmClusterRec
         "candidate_non_sheet_payload_index",
         candidate_non_sheet_payload_index.is_some(),
     );
+    let unknown_prefix_bytes =
+        collect_unknown_prefix_bytes(prefix, entry.record_offset, &field_ranges);
 
     PsmClusterRecordDecoded {
         index,
@@ -498,8 +509,26 @@ fn decode_cluster_record(index: usize, entry: &PsmClusterEntry) -> PsmClusterRec
         candidate_non_sheet_payload_index,
         confidence: "medium".to_string(),
         field_ranges,
-        unknown_prefix_bytes: Vec::new(),
+        unknown_prefix_bytes,
     }
+}
+
+fn collect_unknown_prefix_bytes(
+    prefix: &[u8],
+    record_offset: usize,
+    field_ranges: &[DecodedFieldRange],
+) -> Vec<u8> {
+    prefix
+        .iter()
+        .enumerate()
+        .filter_map(|(relative, &byte)| {
+            let absolute = record_offset.checked_add(relative)?;
+            let covered = field_ranges
+                .iter()
+                .any(|range| absolute >= range.start && absolute < range.end);
+            (!covered).then_some(byte)
+        })
+        .collect()
 }
 
 fn push_field_range(
@@ -776,6 +805,14 @@ mod tests {
         assert_eq!(first.candidate_non_sheet_marker, Some(1));
         assert_eq!(first.candidate_non_sheet_payload_index, Some(0));
         assert_eq!(first.confidence, "medium");
+        assert_eq!(
+            first.unknown_prefix_bytes,
+            vec![
+                0x10, 0x00, 0x00, 0x00, // special first-record leading field
+                0x01, // byte between name length and ordinal
+                0x00, 0x00, 0x00, // gap between marker and payload index
+            ]
+        );
 
         let style = &t.decoded_records[1];
         assert_eq!(style.name, "StyleCluster");
@@ -783,7 +820,13 @@ mod tests {
         assert_eq!(style.candidate_ordinal, Some(1));
         assert_eq!(style.candidate_non_sheet_marker, Some(1));
         assert_eq!(style.candidate_non_sheet_payload_index, Some(1));
-        assert!(style.unknown_prefix_bytes.is_empty());
+        assert_eq!(
+            style.unknown_prefix_bytes,
+            vec![
+                0x01, // constant marker between name length and ordinal
+                0x00, 0x00, 0x00, // gap between marker and payload index
+            ]
+        );
 
         let sheet = &t.decoded_records[2];
         assert_eq!(sheet.name, "Sheet6");
@@ -791,7 +834,13 @@ mod tests {
         assert_eq!(sheet.candidate_ordinal, Some(3));
         assert_eq!(sheet.candidate_non_sheet_marker, Some(0));
         assert_eq!(sheet.candidate_non_sheet_payload_index, None);
-        assert!(sheet.unknown_prefix_bytes.is_empty());
+        assert_eq!(
+            sheet.unknown_prefix_bytes,
+            vec![
+                0x01, // constant marker between name length and ordinal
+                0x00, 0x00, 0x00, // trailing unclaimed prefix bytes
+            ]
+        );
     }
 
     #[test]
@@ -856,6 +905,16 @@ mod tests {
                 Some("PSMcluster0".to_string()),
                 Some("StyleCluster".to_string())
             ]
+        );
+        assert_eq!(seg.entries[0].candidate_owner_cluster_index, Some(0));
+        assert_eq!(
+            seg.entries[0].candidate_owner_cluster_name.as_deref(),
+            Some("PSMcluster0")
+        );
+        assert_eq!(seg.entries[1].candidate_owner_cluster_index, Some(1));
+        assert_eq!(
+            seg.entries[1].candidate_owner_cluster_name.as_deref(),
+            Some("StyleCluster")
         );
     }
 

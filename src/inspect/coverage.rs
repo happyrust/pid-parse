@@ -378,7 +378,10 @@ fn known_stream_state(
             PartiallyDecoded,
             Some("streams::psm_tables".into()),
             Some("psm_segment_table".into()),
-            Some("segment record shape partially mapped; no stable field naming yet".into()),
+            Some(
+                "segment flags + owner candidate mapping; SmartPlant field semantics still pending"
+                    .into(),
+            ),
         ),
         "DocVersion2" => (
             FullyDecoded,
@@ -738,6 +741,22 @@ mod tests {
         assert!(
             note.contains("decoded record candidates"),
             "coverage note should stay conservative about candidate decoded records; got: {note}",
+        );
+    }
+
+    #[test]
+    fn coverage_note_mentions_psm_segment_owner_candidates() {
+        let mut doc = doc_with_paths(&["/PSMsegmenttable"]);
+        populate_all_known_fields(&mut doc);
+
+        let report = coverage_report(&doc);
+        let entry = find(&report, "PSMsegmenttable");
+
+        assert_eq!(entry.status, ParseCoverageStatus::PartiallyDecoded);
+        let note = entry.note.as_deref().unwrap_or("");
+        assert!(
+            note.contains("owner candidate"),
+            "coverage note should mention segment owner candidates; got: {note}",
         );
     }
 

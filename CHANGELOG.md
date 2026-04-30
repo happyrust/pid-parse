@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### parser：PSM 表结构化候选字段收敛（Phase 2）
+
+- `PSMclustertable` 的 `PsmClusterRecordDecoded::unknown_prefix_bytes`
+  不再固定为空，改为根据 decoded `field_ranges` 反推出候选字段之外的
+  prefix bytes，方便后续真实 fixture 横向比对保留位、常量位与未知字段。
+- `PSMsegmenttable` 的 `PsmSegmentEntry` 新增保守候选关联字段：
+  `candidate_owner_cluster_index` 与 `candidate_owner_cluster_name`。仅当
+  segment entry 数量与 `PSMclustertable` entry 数量完全一致时填充；
+  cluster table 缺失或数量不一致时保持 `None`。
+- `pid_inspect` 文本 report 在 segment 行输出
+  `owner_candidate=index:name`，同时保留旧 probe `owner_hint`，区分结构化
+  candidate 字段与 probe 线索。
+- coverage inventory 对 `PSMsegmenttable` 的说明更新为
+  `segment flags + owner candidate mapping; SmartPlant field semantics still pending`，
+  继续保持 `PartiallyDecoded`，不把候选映射升级为稳定业务语义。
+- 本轮新增/更新 parser、report、coverage 单测，并通过全量 `cargo test`。
+
 ### parser：`PSMclustertable` decoded record 候选视图（Phase 11a）
 
 `docs/plans/2026-05-06-phase-11a-psmclustertable-records.md` 与
