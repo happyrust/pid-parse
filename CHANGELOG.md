@@ -24,6 +24,25 @@
 `PSMclustertable` 宣称为 FullyDecoded；后续需 crossref consistency 与
 更多字段语义证据再决定是否升级 byte-audit confidence。
 
+### crossref：`PSMclustertable` decoded candidate consistency（Phase 11a-2）
+
+`docs/plans/2026-05-06-phase-11a-2-psmclustertable-consistency.md` 第一轮执行：
+
+- 新增 `psm_cluster_decoded_consistency()`，对 `PsmClusterTable.decoded_records`
+  做结构自洽检查：decoded view 是否与 legacy `entries` 平行、名称与
+  record range 是否一致、候选 ordinal 是否单调、`Sheet*` 行是否保持
+  sheet marker、sheet-marker 行是否不携带 non-sheet payload index。
+- 新增 `PsmClusterDecodedConsistency` /
+  `PsmClusterDecodedConsistencyStatus`，只表达工程一致性，不承诺
+  SmartPlant 业务语义。
+- 新增 happy-path 单测锁定 parallel candidate view；后续 warning paths、
+  report 输出与 coverage policy 将继续在 11a-2 后续任务中补齐。
+- 新增 `docs/plans/2026-05-07-phase-11b-psmsegmenttable-records.md`，为
+  11a-2 之后的 `PSMsegmenttable` conservative record view 预留执行计划。
+
+本轮仍不把 `PSMclustertable` 升为 FullyDecoded，也不刷新 byte-audit
+baseline。
+
 ### docs：刷新当前架构图与原理说明
 
 - 新增 `docs/current-architecture-principles.md`，用读取路径、

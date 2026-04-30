@@ -127,6 +127,135 @@ fn build_cluster_coverage(doc: &PidDocument) -> ClusterCoverage {
     }
 }
 
+/// Health state for [`PsmClusterDecodedConsistency`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PsmClusterDecodedConsistencyStatus {
+    /// Decoded candidate records are structurally parallel to the legacy
+    /// `PSMclustertable` entry view.
+    Consistent,
+    /// Decoded candidates exist, but one or more structural checks emitted
+    /// warnings.
+    Warning,
+    /// The cluster table exists but has no decoded candidate records.
+    MissingDecodedRecords,
+}
+
+/// Structural self-consistency summary for `PSMclustertable` decoded
+/// candidate records.
+///
+/// This does not claim SmartPlant business semantics. It only checks whether
+/// the additive decoded candidate view stays aligned with legacy entries and
+/// with the conservative sheet/non-sheet marker evidence from Phase 11a.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PsmClusterDecodedConsistency {
+    /// `PSMclustertable` declared record count.
+    pub declared_count: u32,
+    /// Number of legacy entries parsed from the table.
+    pub entries_len: usize,
+    /// Number of additive decoded candidate records.
+    pub decoded_len: usize,
+    /// Whether decoded names match legacy entry names in order.
+    pub names_match_entries: bool,
+    /// Whether decoded record offsets and lengths mirror legacy entries.
+    pub record_ranges_match_entries: bool,
+    /// Whether present candidate ordinal values are monotonically increasing.
+    pub ordinals_monotonic_for_decoded: bool,
+    /// Whether rows named `Sheet*` carry the observed sheet marker `0`.
+    pub sheet_marker_matches_sheet_names: bool,
+    /// Whether sheet-marker rows avoid the non-sheet payload index field.
+    pub payload_index_only_on_non_sheet_candidates: bool,
+    /// Aggregate status derived from the checks above.
+    pub status: PsmClusterDecodedConsistencyStatus,
+    /// Human-readable structural warnings.
+    pub warnings: Vec<String>,
+}
+
+/// Summarize structural health of `PSMclustertable` decoded candidates.
+pub fn psm_cluster_decoded_consistency(doc: &PidDocument) -> Option<PsmClusterDecodedConsistency> {
+    let table = doc.psm_cluster_table.as_ref()?;
+    let entries_len = table.entries.len();
+    let decoded_len = table.decoded_records.len();
+
+    let names_match_entries = decoded_len == entries_len
+        && table
+            .entries
+            .iter()
+            .zip(&table.decoded_records)
+            .all(|(entry, decoded)| entry.name == decoded.name);
+    let record_ranges_match_entries = decoded_len == entries_len
+        && table
+            .entries
+            .iter()
+            .zip(&table.decoded_records)
+            .all(|(entry, decoded)| {
+                entry.record_offset == decoded.record_offset
+                    && entry.record_len == decoded.record_len
+            });
+
+    let ordinals: Vec<u16> = table
+        .decoded_records
+        .iter()
+        .filter_map(|record| record.candidate_ordinal)
+        .collect();
+    let ordinals_monotonic_for_decoded = ordinals.windows(2).all(|pair| pair[0] <= pair[1]);
+
+    let sheet_marker_matches_sheet_names = table
+        .decoded_records
+        .iter()
+        .filter(|record| record.name.starts_with("Sheet"))
+        .all(|record| record.candidate_non_sheet_marker == Some(0));
+    let payload_index_only_on_non_sheet_candidates = table.decoded_records.iter().all(|record| {
+        record.candidate_non_sheet_marker != Some(0)
+            || record.candidate_non_sheet_payload_index.is_none()
+    });
+
+    let mut warnings = Vec::new();
+    if decoded_len == 0 {
+        warnings.push("decoded_records is empty".to_string());
+    }
+    if decoded_len != entries_len {
+        warnings.push(format!(
+            "decoded record count {decoded_len} does not match legacy entry count {entries_len}"
+        ));
+    }
+    if !names_match_entries {
+        warnings.push("decoded record names do not mirror legacy entries".to_string());
+    }
+    if !record_ranges_match_entries {
+        warnings.push("decoded record ranges do not mirror legacy entries".to_string());
+    }
+    if !ordinals_monotonic_for_decoded {
+        warnings.push("candidate ordinals are not monotonic".to_string());
+    }
+    if !sheet_marker_matches_sheet_names {
+        warnings.push("Sheet* decoded records do not all carry marker 0".to_string());
+    }
+    if !payload_index_only_on_non_sheet_candidates {
+        warnings.push("sheet-marker records unexpectedly carry payload index".to_string());
+    }
+
+    let status = if decoded_len == 0 {
+        PsmClusterDecodedConsistencyStatus::MissingDecodedRecords
+    } else if warnings.is_empty() {
+        PsmClusterDecodedConsistencyStatus::Consistent
+    } else {
+        PsmClusterDecodedConsistencyStatus::Warning
+    };
+
+    Some(PsmClusterDecodedConsistency {
+        declared_count: table.count,
+        entries_len,
+        decoded_len,
+        names_match_entries,
+        record_ranges_match_entries,
+        ordinals_monotonic_for_decoded,
+        sheet_marker_matches_sheet_names,
+        payload_index_only_on_non_sheet_candidates,
+        status,
+        warnings,
+    })
+}
+
 /// Accumulator bucket used while aggregating `JSite` entries into
 /// `SymbolUsage`: `(symbol_name, unique_jsite_names, references)`.
 type SymbolUsageBucket = (Option<String>, BTreeSet<String>, Vec<SymbolReference>);
@@ -656,8 +785,8 @@ mod tests {
     use crate::model::{
         AttributeField, AttributeRecord, ClusterInfo, ClusterKind, DynamicAttributesBlob,
         IndexedString, JProperties, JSite, ObjectGraph, PidDocument, PidObject, PidRelationship,
-        PsmClusterEntry, PsmClusterTable, PsmRootEntry, PsmRoots, SheetEndpointRecord, SheetStream,
-        StorageNode,
+        PsmClusterEntry, PsmClusterRecordDecoded, PsmClusterTable, PsmRootEntry, PsmRoots,
+        SheetEndpointRecord, SheetStream, StorageNode,
     };
 
     fn mk_storage(name: &str, kind: EntryKind) -> StorageNode {
@@ -883,6 +1012,76 @@ mod tests {
                 found_index: 0,
             }
         );
+    }
+
+    #[test]
+    fn psm_cluster_decoded_consistency_accepts_parallel_candidate_view() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(PsmClusterTable {
+            size: 64,
+            count: 2,
+            entries: vec![
+                PsmClusterEntry {
+                    name: "PSMcluster0".into(),
+                    name_offset: 0x20,
+                    record_offset: 0x08,
+                    record_len: 0x2B,
+                    prefix_bytes: vec![],
+                    probe: None,
+                },
+                PsmClusterEntry {
+                    name: "Sheet6".into(),
+                    name_offset: 0x60,
+                    record_offset: 0x40,
+                    record_len: 0x19,
+                    prefix_bytes: vec![],
+                    probe: None,
+                },
+            ],
+            decoded_records: vec![
+                PsmClusterRecordDecoded {
+                    index: 0,
+                    name: "PSMcluster0".into(),
+                    record_offset: 0x08,
+                    record_len: 0x2B,
+                    prefix_len: 19,
+                    name_bytes_with_nul: Some(24),
+                    candidate_ordinal: Some(0),
+                    candidate_non_sheet_marker: Some(1),
+                    candidate_non_sheet_payload_index: Some(0),
+                    confidence: "medium".into(),
+                    field_ranges: vec![],
+                    unknown_prefix_bytes: vec![],
+                },
+                PsmClusterRecordDecoded {
+                    index: 1,
+                    name: "Sheet6".into(),
+                    record_offset: 0x40,
+                    record_len: 0x19,
+                    prefix_len: 11,
+                    name_bytes_with_nul: Some(14),
+                    candidate_ordinal: Some(1),
+                    candidate_non_sheet_marker: Some(0),
+                    candidate_non_sheet_payload_index: None,
+                    confidence: "medium".into(),
+                    field_ranges: vec![],
+                    unknown_prefix_bytes: vec![],
+                },
+            ],
+            trailing_bytes: 0,
+        });
+
+        let consistency = psm_cluster_decoded_consistency(&doc).expect("cluster table consistency");
+        assert_eq!(
+            consistency.status,
+            PsmClusterDecodedConsistencyStatus::Consistent
+        );
+        assert!(consistency.names_match_entries);
+        assert!(consistency.record_ranges_match_entries);
+        assert!(consistency.ordinals_monotonic_for_decoded);
+        assert!(consistency.sheet_marker_matches_sheet_names);
+        assert!(consistency.payload_index_only_on_non_sheet_candidates);
+        assert!(consistency.warnings.is_empty());
     }
 
     #[test]
