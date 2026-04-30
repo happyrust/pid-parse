@@ -145,23 +145,32 @@ when integrating the framework into a downstream service or CI tool.
 
 ## Baseline Rules
 
-Once real `.pid` fixtures are available under `test-file/`, baseline checks
-should compare the current JSON report to a committed reference.
+Real `.pid` fixtures live under `test-file/` in this repo, and committed
+baselines under `docs/baselines/` provide the reference snapshot. CI runs the
+runner on every PR.
 
-Optional runner:
+Runner:
 
 ```bash
 bash .github/scripts/check-byte-audit-baselines.sh
 ```
 
-The runner scans `docs/baselines/*.byte-audit.json` and derives matching
-private fixture paths as `test-file/<name>.pid`. For example,
-`docs/baselines/DWG-0201GP06-01.byte-audit.json` compares against
-`test-file/DWG-0201GP06-01.pid`.
+The runner scans `docs/baselines/*.byte-audit.json` and resolves the matching
+fixture path through one of two routes:
+
+1. **Sidecar (preferred, since Phase 12c)** — if
+   `docs/baselines/<slug>.fixture.txt` exists, the first non-empty trimmed
+   line is treated as the fixture path (relative to repo root). This lets
+   baseline filenames stay ASCII while the underlying fixture path can contain
+   non-ASCII characters (e.g. Chinese filenames), avoiding cross-platform / CI
+   shell escaping issues.
+2. **Legacy fallback** — otherwise the runner derives
+   `test-file/<slug>.pid` from the baseline stem.
 
 Public CI runs the same script. It exits successfully when no baselines exist,
-or when a baseline's matching private fixture is absent, so the repository can
-carry baseline tooling without committing plant data.
+or when a baseline's resolved fixture is absent, so the repository can carry
+baseline tooling for sparse-checkout / shallow-clone scenarios without
+failing.
 
 The library-level comparator is available as
 `pid_parse::byte_audit::compare_byte_audit_reports(baseline, current)`. It
@@ -180,18 +189,47 @@ Recommended rules:
 5. `leftover_bytes` may stay non-zero for probe-level parsers. Treat it as
    work inventory, not automatically as failure.
 
-## Current Limitations
+## Baseline Workflow (Phase 12c+)
 
-This checkout may not contain private real `.pid` fixtures under `test-file/`.
-When fixtures are absent, real-file tests soft-skip and no meaningful byte
-baseline can be produced.
+### Naming convention
 
-The safe next step after restoring fixtures is:
+Baseline filenames are ASCII slugs. Sidecars carry the real fixture path so
+non-ASCII fixture names work cross-platform.
+
+| File | Purpose |
+|---|---|
+| `docs/baselines/<slug>.byte-audit.json` | Baseline snapshot. |
+| `docs/baselines/<slug>.fixture.txt` | One-line sidecar with fixture path. |
+| `docs/baselines/README.md` | slug ↔ fixture mapping table + how-to. |
+
+### Adding / refreshing a baseline
 
 ```bash
-cargo run --bin pid_inspect -- test-file/DWG-0201GP06-01.pid --byte-audit --json > docs/baselines/DWG-0201GP06-01.byte-audit.json
-cargo run --bin pid_inspect -- test-file/DWG-0201GP06-01.pid --probe-sheet-chunks Sheet6 --json > docs/baselines/DWG-0201GP06-01.Sheet6.probe.json
+SLUG=my-new-fixture
+FIXTURE="test-file/MyNewFixture.pid"   # may contain non-ASCII
+
+cargo run --locked --bin pid_inspect -- "$FIXTURE" --byte-audit --json \
+    > "docs/baselines/$SLUG.byte-audit.json"
+echo "$FIXTURE" > "docs/baselines/$SLUG.fixture.txt"
+
+bash .github/scripts/check-byte-audit-baselines.sh   # expect 0 regressions
 ```
 
-Only commit baselines after reviewing that they do not contain sensitive plant
-data that should stay out of the repository.
+Windows PowerShell 5.x emits UTF-16LE on `>` redirection by default. Use
+`Out-File -Encoding utf8NoBOM` or run the command under Git Bash / WSL / cmd.
+
+### When to refresh
+
+Any PR that legitimately changes the byte-audit output (new `_with_trace`
+parser, expanded consumed range, framework schema bump) must refresh the
+relevant baselines in the same PR. PR description should explain why each
+delta is an improvement, not a regression.
+
+### Privacy / public-vs-private fixtures
+
+Baseline JSON files contain only stream paths (SmartPlant standard
+namespaces) and byte counts; they do not embed business data. Fixtures
+themselves may carry plant data — keep private fixtures out of public commits
+via `.gitignore`, and rely on the runner's soft-skip behaviour for sparse
+checkouts. Private CI runners holding the fixtures will exercise the full
+comparison.

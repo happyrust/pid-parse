@@ -6,6 +6,15 @@
 # This script runs comparisons when both sides exist and still skips
 # gracefully when a baseline has no matching fixture (e.g. partial
 # checkouts or extra baselines for not-yet-committed samples).
+#
+# Fixture path resolution (Phase 12c, 2026-04-29):
+#   1. If `docs/baselines/<slug>.fixture.txt` exists, the first non-empty
+#      trimmed line is treated as the fixture path (relative to the repo
+#      root). This sidecar lets baseline filenames stay ASCII while the
+#      underlying fixture path can contain non-ASCII characters (e.g.
+#      Chinese filenames), avoiding cross-platform / CI shell escaping
+#      issues.
+#   2. Otherwise the legacy convention `test-file/<slug>.pid` is used.
 
 set -euo pipefail
 
@@ -22,10 +31,21 @@ skipped=0
 
 for baseline in "${baselines[@]}"; do
   name=$(basename "${baseline}" .byte-audit.json)
-  fixture="test-file/${name}.pid"
+  sidecar="docs/baselines/${name}.fixture.txt"
+
+  if [[ -f "${sidecar}" ]]; then
+    fixture=$(head -n 1 "${sidecar}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    if [[ -z "${fixture}" ]]; then
+      echo "byte-audit baselines: skip '${baseline}' (sidecar '${sidecar}' is empty)."
+      skipped=$((skipped + 1))
+      continue
+    fi
+  else
+    fixture="test-file/${name}.pid"
+  fi
 
   if [[ ! -f "${fixture}" ]]; then
-    echo "byte-audit baselines: skip '${baseline}' (missing private fixture '${fixture}')."
+    echo "byte-audit baselines: skip '${baseline}' (missing fixture '${fixture}')."
     skipped=$((skipped + 1))
     continue
   fi
