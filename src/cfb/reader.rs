@@ -10,7 +10,7 @@
 
 use crate::api::{ParseOptions, ParseProfile};
 use crate::error::PidError;
-use crate::model::{PidDocument, StreamEntry};
+use crate::model::{PidDocument, SheetEndpoint, SheetGeometry, SheetStream, StreamEntry};
 use crate::package::{PidPackage, RawStream, StorageTimestamps};
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -206,8 +206,30 @@ fn populate_sheet_endpoints<R: Read + std::io::Seek>(
             &data,
             &rel_field_xs,
         );
+        sync_sheet_geometry_endpoints(sheet);
     }
     Ok(())
+}
+
+fn sync_sheet_geometry_endpoints(sheet: &mut SheetStream) {
+    if sheet.endpoint_records.is_empty() {
+        if let Some(geometry) = &mut sheet.geometry {
+            geometry.endpoints.clear();
+        }
+        return;
+    }
+
+    let geometry = sheet.geometry.get_or_insert_with(SheetGeometry::default);
+    geometry.endpoints = sheet
+        .endpoint_records
+        .iter()
+        .map(|record| SheetEndpoint {
+            offset: record.offset,
+            rel_field_x: record.rel_field_x,
+            endpoint_a: record.endpoint_a,
+            endpoint_b: record.endpoint_b,
+        })
+        .collect();
 }
 
 fn capture_doc_version2<R: Read + std::io::Seek>(
@@ -570,4 +592,63 @@ fn collect_streams_and_bytes<R: Read + std::io::Seek>(
     }
 
     Ok((entries, raw_map))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        SheetCoordinateHintDto, SheetEndpointRecord, SheetGeometry, SheetStream, SheetText,
+    };
+
+    #[test]
+    fn sync_sheet_geometry_endpoints_copies_endpoint_records() {
+        let mut sheet = SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 0,
+            extracted_texts: vec![],
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: vec![],
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                texts: vec![SheetText {
+                    offset: 8,
+                    encoding: "utf16_le".into(),
+                    text: "PUMP-101".into(),
+                    byte_len: 16,
+                }],
+                endpoints: vec![],
+                coordinate_hints: vec![SheetCoordinateHintDto {
+                    offset: 32,
+                    x: 1200,
+                    y: -450,
+                }],
+                object_geometry_hints: vec![],
+            }),
+            endpoint_records: vec![SheetEndpointRecord {
+                sheet_path: "/Sheet6".into(),
+                offset: 0x40,
+                rel_field_x: 100,
+                endpoint_a: 42,
+                endpoint_b: 77,
+            }],
+            endpoint_decode_error: None,
+        };
+
+        sync_sheet_geometry_endpoints(&mut sheet);
+
+        let geometry = sheet.geometry.as_ref().expect("geometry");
+        assert_eq!(geometry.texts.len(), 1);
+        assert_eq!(geometry.texts[0].text, "PUMP-101");
+        assert_eq!(geometry.coordinate_hints.len(), 1);
+        assert_eq!(geometry.coordinate_hints[0].x, 1200);
+        assert_eq!(geometry.endpoints.len(), 1);
+        assert_eq!(geometry.endpoints[0].offset, 0x40);
+        assert_eq!(geometry.endpoints[0].rel_field_x, 100);
+        assert_eq!(geometry.endpoints[0].endpoint_a, 42);
+        assert_eq!(geometry.endpoints[0].endpoint_b, 77);
+    }
 }

@@ -2,6 +2,61 @@
 
 ## [Unreleased]
 
+### H7CAD：PID 真实几何显示与证据门禁（Phase 7）
+
+- 新增 normalized geometry contract，将 Sheet coordinate hints 作为
+  `PidGraphicKind::Point` + `PidGeometryConfidence::Inferred` 暴露给
+  H7CAD；text / endpoint 仍保持 `ProbeOnly Unknown`，避免把未证明的
+  关系或拓扑误渲染为 CAD 几何。
+- H7CAD 已能消费 inferred points 并在 PID 导入 / 截图 / SVG 导出路径中显示
+  `PID_GEOMETRY_POINTS`，同时保持 endpoint line 不渲染。
+- 新增 `SheetObjectGeometryHint` 空基线与 `/Sheet6` guardrail：
+  `object_geometry_hints` 在 source-proven object-coordinate mapping 前保持为空。
+- 建立 field-x window、record-shape、stable marker、coordinate-quality、
+  `GraphicIdentityNearby` 等 investigation 链路；当前真实样本结论仍为
+  `max_score=45`、`over_threshold=0`，不能 promotion 为 `Line + Inferred`。
+- 新增 Text placement investigation：`sheet_text_window_candidates`、
+  text-quality filter 与 scoring report。`/Sheet6` 当前为
+  `text_quality_passed=0`、`max_score=-50`、`over_threshold=0`，
+  因此不生成 `Text + Inferred`。
+- 新增中文 planning / PR 拆分文档与路线图：
+  - PR1 normalized geometry contract
+  - PR2 H7CAD inferred point rendering
+  - PR3 Sheet6 guardrails
+  - PR4 field-x evidence
+  - PR5 GraphicIdentityNearby
+  - PR6 Text placement investigation
+- 验证通过：
+  - `cargo fmt --all -- --check`
+  - `cargo build --locked --workspace --all-targets`
+  - `cargo clippy --locked --workspace --all-targets -- -D warnings`
+  - `cargo test --locked --workspace --all-targets`
+  - `cargo test --lib -- --nocapture`（742 passed）
+  - `cargo test --test parse_real_files -- --nocapture`（51 passed）
+  - `cargo rustdoc --lib --locked -- -W missing-docs`
+
+### import-view：关系边接入 Sheet provenance（Phase 4）
+
+- `PidImportView.relationships` 现在会从 `CrossReferenceGraph.relationship_endpoint_links`
+  带出 `sheet_path`、`sheet_offset`、`source_field_x`、`target_field_x`，
+  为下游 canonical edge 消费提供轻量 provenance。
+
+### parser：Sheet geometry DTO 合同起步（Phase 3）
+
+- 新增 `SheetGeometry` / `SheetText` / `SheetEndpoint` /
+  `SheetCoordinateHintDto` 作为 Sheet text、endpoint、coordinate hint 的稳定
+  JSON contract 入口。
+- `SheetStream` 新增可选 `geometry` 字段；当前先作为 DTO surface 落地，
+  不宣称完整 CAD geometry decoded。
+- `Sheet*` 读取阶段会把 `sheet_probe` 的 text runs 与 coordinate hints
+  归一化填充到 `SheetStream.geometry`，endpoint 仍等待下一切片同步。
+- endpoint record 解析完成后会同步填充 `SheetStream.geometry.endpoints`，
+  使 text、coordinate hint、endpoint 三类 Sheet 证据进入同一个 DTO 入口。
+- synthetic 回归锁定 endpoint 同步不会覆盖已归一化的 text 与 coordinate hint。
+- Phase 3 当前 DTO 起步范围收敛完成：未命名字节仍留在 probe 层，
+  `SheetGeometry` 不宣称完整 CAD geometry decoded。
+- 新增 schema 回归测试锁定 Sheet DTO 名称进入 `pid_inspect --schema` 输出。
+
 ### parser：PSM 表结构化候选字段收敛（Phase 2）
 
 - `PSMclustertable` 的 `PsmClusterRecordDecoded::unknown_prefix_bytes`

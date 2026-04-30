@@ -1,7 +1,14 @@
 use pid_parse::{
-    parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions},
+    parsers::sheet_probe::{
+        field_x_window_features, field_x_window_identities, field_x_windows, probe_sheet_stream,
+        score_field_x_window_features, score_field_x_window_features_with_identities,
+        score_field_x_windows, score_sheet_text_window_candidates,
+        sheet_identity_index_from_trailers, sheet_text_window_candidates,
+        stable_chunk_shape_support, stable_marker_support, SheetProbeOptions,
+    },
     PidParser,
 };
+use std::collections::{BTreeMap, HashSet};
 
 /// Parse a real `.pid` fixture from `test-file/`. Returns `None` when the
 /// fixture isn't present (typical for CI and for contributors without
@@ -868,6 +875,847 @@ fn sheet_probe_evidence_populates_on_real_sheet_fixture() {
             || !report.text_runs.is_empty()
             || !report.coordinate_hints.is_empty(),
         "real Sheet6 should expose at least one report-level evidence signal"
+    );
+}
+
+#[test]
+fn normalized_geometry_probe_baseline_on_real_fixture() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+
+    let geometry = pid_parse::build_normalized_geometry(&doc);
+    let expected_probe_entities: usize = doc
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            let text_count = sheet
+                .geometry
+                .as_ref()
+                .filter(|geometry| !geometry.texts.is_empty())
+                .map_or(sheet.extracted_texts.len(), |geometry| geometry.texts.len());
+            let coordinate_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.coordinate_hints.len());
+            let endpoint_count = sheet
+                .geometry
+                .as_ref()
+                .filter(|geometry| !geometry.endpoints.is_empty())
+                .map_or(sheet.endpoint_records.len(), |geometry| {
+                    geometry.endpoints.len()
+                });
+            text_count + coordinate_count + endpoint_count
+        })
+        .sum();
+
+    assert!(
+        expected_probe_entities > 0,
+        "real fixture should expose Sheet probe evidence for normalized geometry"
+    );
+    assert_eq!(
+        geometry.entities.len(),
+        expected_probe_entities,
+        "normalized geometry should account for every Sheet probe item exactly once"
+    );
+    let inferred_points = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Point { .. })
+        })
+        .count();
+    let probe_unknowns = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::ProbeOnly
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Unknown { .. })
+        })
+        .count();
+    let expected_coordinate_hints: usize = doc
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.coordinate_hints.len())
+        })
+        .sum();
+
+    assert_eq!(
+        inferred_points, expected_coordinate_hints,
+        "coordinate hints should be promoted to inferred positioned points"
+    );
+    assert_eq!(
+        inferred_points + probe_unknowns,
+        geometry.entities.len(),
+        "only coordinate hints should become inferred points; text and endpoint evidence stays ProbeOnly Unknown"
+    );
+}
+
+#[test]
+fn sheet6_object_geometry_hints_baseline_is_empty_until_mapping_is_proven() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = doc
+        .sheet_streams
+        .iter()
+        .find(|sheet| sheet.path == "/Sheet6")
+    else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+
+    let object_geometry_hint_count = sheet
+        .geometry
+        .as_ref()
+        .map_or(0, |geometry| geometry.object_geometry_hints.len());
+
+    assert_eq!(
+        object_geometry_hint_count, 0,
+        "object geometry hints must stay empty until field_x-to-coordinate mapping is source-proven"
+    );
+}
+
+#[test]
+fn sheet6_text_window_report_keeps_text_probe_only_until_position_is_proven() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let candidates = sheet_text_window_candidates(
+        &report.text_runs,
+        &report.coordinate_hints,
+        &report.chunks,
+        128,
+    );
+    let scores = score_sheet_text_window_candidates(&candidates);
+    let same_chunk = candidates
+        .iter()
+        .filter(|candidate| candidate.same_chunk)
+        .count();
+    let quality_passed = candidates
+        .iter()
+        .filter(|candidate| candidate.quality_passed)
+        .count();
+    let text_quality_passed = scores
+        .iter()
+        .filter(|score| {
+            score.reasons.iter().any(|reason| {
+                matches!(
+                    reason,
+                    pid_parse::parsers::sheet_probe::SheetTextWindowScoreReason::TextQualityPassed
+                )
+            })
+        })
+        .count();
+    let max_score = scores
+        .iter()
+        .map(|score| score.score)
+        .max()
+        .unwrap_or_default();
+    let over_threshold = scores.iter().filter(|score| score.score >= 70).count();
+    let top: Vec<_> = scores
+        .iter()
+        .take(8)
+        .map(|score| {
+            (
+                score.score,
+                score.candidate.text_offset,
+                score.candidate.text.as_str(),
+                score.candidate.coordinate_offset,
+                score.candidate.x,
+                score.candidate.y,
+                score.candidate.byte_distance,
+                score.candidate.same_chunk,
+                score.candidate.quality_passed,
+            )
+        })
+        .collect();
+    eprintln!(
+        "Sheet6 text window report: text_runs={}, coordinates={}, candidates={}, same_chunk={}, quality_passed={}, text_quality_passed={}, max_score={}, over_threshold={}, top={top:?}",
+        report.text_runs.len(),
+        report.coordinate_hints.len(),
+        candidates.len(),
+        same_chunk,
+        quality_passed,
+        text_quality_passed,
+        max_score,
+        over_threshold
+    );
+
+    assert!(
+        !report.text_runs.is_empty(),
+        "Sheet6 should expose text runs for text placement investigation"
+    );
+    let normalized = pid_parse::build_normalized_geometry(&pkg.parsed);
+    let inferred_text_count = normalized
+        .entities
+        .iter()
+        .filter(|entity| matches!(entity.kind, pid_parse::PidGraphicKind::Text { .. }))
+        .count();
+    let text_probe_unknowns = normalized
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.source.stream_path.as_deref() == Some("/Sheet6")
+                && entity.confidence == pid_parse::PidGeometryConfidence::ProbeOnly
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Unknown { .. })
+                && entity
+                    .source
+                    .record_id
+                    .as_deref()
+                    .is_some_and(|record_id| record_id.starts_with("text-probe:"))
+        })
+        .count();
+    assert_eq!(
+        inferred_text_count, 0,
+        "text window report must not promote Sheet text to positioned geometry"
+    );
+    assert_eq!(
+        over_threshold, 0,
+        "text window scoring must not find promotable text placement candidates in Sheet6 yet"
+    );
+    assert!(
+        text_probe_unknowns > 0,
+        "Sheet6 text should remain ProbeOnly Unknown until text position is proven"
+    );
+}
+
+#[test]
+fn sheet6_field_x_window_probe_finds_sample_endpoint_ids() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+
+    let windows = field_x_windows(&sheet.data, &[229, 326, 740, 139], 32);
+    for field_x in [229, 326, 740, 139] {
+        let hits: Vec<_> = windows
+            .iter()
+            .filter(|window| window.field_x == field_x)
+            .map(|window| {
+                (
+                    window.offset,
+                    window.endpoint_record_start,
+                    window.window_start,
+                    window.window_end,
+                    window.nearby_coordinates.len(),
+                )
+            })
+            .collect();
+        eprintln!("field_x {field_x} windows: {hits:?}");
+    }
+
+    assert!(
+        windows.iter().any(|window| window.field_x == 229),
+        "expected field_x 229 to appear in /Sheet6 bytes"
+    );
+    assert!(
+        windows.iter().any(|window| window.field_x == 740),
+        "expected field_x 740 to appear in /Sheet6 bytes"
+    );
+    assert!(windows.iter().all(|window| {
+        window.window_start <= window.offset
+            && window.offset + 4 <= window.window_end
+            && window.window_end <= sheet.data.len()
+    }));
+}
+
+#[test]
+fn sheet6_field_x_window_scoring_reports_non_endpoint_candidates() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(graph) = pkg.parsed.object_graph.as_ref() else {
+        eprintln!("skipping: object graph not built for fixture");
+        return;
+    };
+
+    let object_field_xs: HashSet<_> = graph
+        .objects
+        .iter()
+        .filter_map(|object| object.field_x)
+        .collect();
+    let windows = field_x_windows(&sheet.data, &[229, 326, 740, 139], 32);
+    let scores = score_field_x_windows(&windows, &object_field_xs);
+
+    let positive_non_endpoint = scores
+        .iter()
+        .filter(|score| score.score > 0 && score.candidate_position.is_some())
+        .count();
+    let endpoint_references = scores.iter().filter(|score| score.score == -100).count();
+    let max_score = scores
+        .iter()
+        .map(|score| score.score)
+        .max()
+        .unwrap_or_default();
+    let promotable = scores.iter().filter(|score| score.score >= 70).count();
+    eprintln!(
+        "field_x scoring summary: total={}, positive_non_endpoint={}, endpoint_references={}, max_score={}, promotable={}",
+        scores.len(),
+        positive_non_endpoint,
+        endpoint_references,
+        max_score,
+        promotable
+    );
+
+    assert!(
+        positive_non_endpoint > 0,
+        "expected at least one non-endpoint field_x window with a coordinate candidate"
+    );
+    assert!(
+        endpoint_references > 0,
+        "expected endpoint-record references to be identified and downranked"
+    );
+    assert_eq!(
+        promotable, 0,
+        "real fixture candidates should not cross promotion threshold until record shape is proven"
+    );
+    let object_geometry_hint_count: usize = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.object_geometry_hints.len())
+        })
+        .sum();
+    assert_eq!(
+        object_geometry_hint_count, 0,
+        "scoring reports must not populate object geometry hints"
+    );
+}
+
+#[test]
+fn sheet6_all_endpoint_field_x_window_scoring_report() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(graph) = pkg.parsed.object_graph.as_ref() else {
+        eprintln!("skipping: object graph not built for fixture");
+        return;
+    };
+    let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
+        eprintln!("skipping: cross reference not built for fixture");
+        return;
+    };
+
+    let object_field_xs: HashSet<_> = graph
+        .objects
+        .iter()
+        .filter_map(|object| object.field_x)
+        .collect();
+    let mut endpoint_field_xs: Vec<_> = cross
+        .relationship_endpoint_links
+        .iter()
+        .filter(|link| link.sheet_path.as_deref() == Some("/Sheet6"))
+        .flat_map(|link| [link.source_field_x, link.target_field_x])
+        .flatten()
+        .collect();
+    endpoint_field_xs.sort_unstable();
+    endpoint_field_xs.dedup();
+
+    let windows = field_x_windows(&sheet.data, &endpoint_field_xs, 32);
+    let scores = score_field_x_windows(&windows, &object_field_xs);
+    let positive_non_endpoint = scores
+        .iter()
+        .filter(|score| score.score > 0 && score.candidate_position.is_some())
+        .count();
+    let endpoint_references = scores.iter().filter(|score| score.score == -100).count();
+    let max_score = scores
+        .iter()
+        .map(|score| score.score)
+        .max()
+        .unwrap_or_default();
+    let promotable = scores.iter().filter(|score| score.score >= 70).count();
+
+    eprintln!(
+        "all endpoint field_x scoring summary: fields={}, windows={}, positive_non_endpoint={}, endpoint_references={}, max_score={}, promotable={}",
+        endpoint_field_xs.len(),
+        scores.len(),
+        positive_non_endpoint,
+        endpoint_references,
+        max_score,
+        promotable
+    );
+
+    assert!(
+        !endpoint_field_xs.is_empty(),
+        "real fixture should expose endpoint field_x values"
+    );
+    assert!(
+        !scores.is_empty(),
+        "field_x window scoring should inspect at least one endpoint field_x hit"
+    );
+    let object_geometry_hint_count: usize = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.object_geometry_hints.len())
+        })
+        .sum();
+    assert_eq!(
+        object_geometry_hint_count, 0,
+        "scoring reports must not populate object geometry hints"
+    );
+}
+
+#[test]
+fn sheet6_field_x_window_identity_report() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
+        eprintln!("skipping: cross reference not built for fixture");
+        return;
+    };
+    let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
+        eprintln!("skipping: dynamic attributes not built for fixture");
+        return;
+    };
+
+    let mut endpoint_field_xs: Vec<_> = cross
+        .relationship_endpoint_links
+        .iter()
+        .filter(|link| link.sheet_path.as_deref() == Some("/Sheet6"))
+        .flat_map(|link| [link.source_field_x, link.target_field_x])
+        .flatten()
+        .collect();
+    endpoint_field_xs.sort_unstable();
+    endpoint_field_xs.dedup();
+
+    let windows = field_x_windows(&sheet.data, &endpoint_field_xs, 96);
+    let identity_index = sheet_identity_index_from_trailers(&da.record_trailers);
+    let identities = field_x_window_identities(&sheet.data, &windows, &identity_index);
+    let same_object = identities
+        .iter()
+        .filter(|identity| identity.resolves_to_same_object)
+        .count();
+    let wrong_object = identities
+        .iter()
+        .filter(|identity| {
+            identity.resolves_to_field_x.is_some() && !identity.resolves_to_same_object
+        })
+        .count();
+    let mut kinds = BTreeMap::new();
+    for identity in &identities {
+        *kinds
+            .entry(format!("{:?}", identity.kind))
+            .or_insert(0usize) += 1;
+    }
+
+    eprintln!(
+        "field_x identity summary: fields={}, windows={}, identities={}, same_object={}, wrong_object={}, kinds={:?}",
+        endpoint_field_xs.len(),
+        windows.len(),
+        identities.len(),
+        same_object,
+        wrong_object,
+        kinds
+    );
+
+    assert!(
+        !windows.is_empty(),
+        "identity report should inspect at least one Sheet6 endpoint field_x window"
+    );
+    let object_geometry_hint_count: usize = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.object_geometry_hints.len())
+        })
+        .sum();
+    assert_eq!(
+        object_geometry_hint_count, 0,
+        "identity reports must not populate object geometry hints"
+    );
+}
+
+#[test]
+fn sheet6_graphic_identity_scoring_keeps_object_hints_empty_until_proven() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
+        eprintln!("skipping: cross reference not built for fixture");
+        return;
+    };
+    let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
+        eprintln!("skipping: dynamic attributes not built for fixture");
+        return;
+    };
+
+    let mut endpoint_field_xs: Vec<_> = cross
+        .relationship_endpoint_links
+        .iter()
+        .filter(|link| link.sheet_path.as_deref() == Some("/Sheet6"))
+        .flat_map(|link| [link.source_field_x, link.target_field_x])
+        .flatten()
+        .collect();
+    endpoint_field_xs.sort_unstable();
+    endpoint_field_xs.dedup();
+
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let windows = field_x_windows(&sheet.data, &endpoint_field_xs, 96);
+    let features = field_x_window_features(&sheet.data, &windows, &report.chunks);
+    let object_field_xs: HashSet<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+    let identity_index = sheet_identity_index_from_trailers(&da.record_trailers);
+    let identities = field_x_window_identities(&sheet.data, &windows, &identity_index);
+    let scores =
+        score_field_x_window_features_with_identities(&features, &object_field_xs, &identities);
+    let identity_supported = scores
+        .iter()
+        .filter(|score| {
+            score.reasons.iter().any(|reason| {
+                matches!(
+                    reason,
+                    pid_parse::parsers::sheet_probe::SheetFieldXWindowScoreReason::GraphicIdentityNearby {
+                        ..
+                    }
+                )
+            })
+        })
+        .count();
+    let max_score = scores
+        .iter()
+        .map(|score| score.score)
+        .max()
+        .unwrap_or_default();
+    let over_threshold = scores.iter().filter(|score| score.score >= 70).count();
+
+    eprintln!(
+        "graphic identity scoring summary: scores={}, identity_supported={}, max_score={}, over_threshold={}",
+        scores.len(),
+        identity_supported,
+        max_score,
+        over_threshold
+    );
+
+    assert!(
+        !scores.is_empty(),
+        "identity scoring should inspect real Sheet6 windows"
+    );
+    assert_eq!(
+        over_threshold, 0,
+        "same-object identity does not yet intersect promotable feature evidence"
+    );
+    let object_geometry_hint_count: usize = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.object_geometry_hints.len())
+        })
+        .sum();
+    assert_eq!(
+        object_geometry_hint_count, 0,
+        "identity scoring must not populate object geometry hints until the full promotion gate is proven"
+    );
+}
+
+#[test]
+fn all_sheets_graphic_identity_scoring_report_keeps_object_hints_empty() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
+        eprintln!("skipping: cross reference not built for fixture");
+        return;
+    };
+    let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
+        eprintln!("skipping: dynamic attributes not built for fixture");
+        return;
+    };
+
+    let identity_index = sheet_identity_index_from_trailers(&da.record_trailers);
+    let object_field_xs: HashSet<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut sheets_seen = 0usize;
+    let mut windows_seen = 0usize;
+    let mut identities_seen = 0usize;
+    let mut same_object_seen = 0usize;
+    let mut wrong_object_seen = 0usize;
+    let mut identity_supported = 0usize;
+    let mut over_threshold = 0usize;
+    let mut max_score = i32::MIN;
+
+    for sheet in &pkg.parsed.sheet_streams {
+        let mut field_xs: Vec<_> = cross
+            .relationship_endpoint_links
+            .iter()
+            .filter(|link| link.sheet_path.as_deref() == Some(sheet.path.as_str()))
+            .flat_map(|link| [link.source_field_x, link.target_field_x])
+            .flatten()
+            .collect();
+        field_xs.sort_unstable();
+        field_xs.dedup();
+        if field_xs.is_empty() {
+            continue;
+        }
+        let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+            continue;
+        };
+
+        let report = probe_sheet_stream(
+            sheet.name.as_str(),
+            sheet.path.as_str(),
+            &raw_sheet.data,
+            &SheetProbeOptions::default(),
+        );
+        let windows = field_x_windows(&raw_sheet.data, &field_xs, 96);
+        let features = field_x_window_features(&raw_sheet.data, &windows, &report.chunks);
+        let identities = field_x_window_identities(&raw_sheet.data, &windows, &identity_index);
+        let scores =
+            score_field_x_window_features_with_identities(&features, &object_field_xs, &identities);
+
+        sheets_seen += 1;
+        windows_seen += windows.len();
+        identities_seen += identities.len();
+        same_object_seen += identities
+            .iter()
+            .filter(|identity| identity.resolves_to_same_object)
+            .count();
+        wrong_object_seen += identities
+            .iter()
+            .filter(|identity| {
+                identity.resolves_to_field_x.is_some() && !identity.resolves_to_same_object
+            })
+            .count();
+        identity_supported += scores
+            .iter()
+            .filter(|score| {
+                score.reasons.iter().any(|reason| {
+                    matches!(
+                        reason,
+                        pid_parse::parsers::sheet_probe::SheetFieldXWindowScoreReason::GraphicIdentityNearby {
+                            ..
+                        }
+                    )
+                })
+            })
+            .count();
+        over_threshold += scores.iter().filter(|score| score.score >= 70).count();
+        max_score = max_score.max(
+            scores
+                .iter()
+                .map(|score| score.score)
+                .max()
+                .unwrap_or_default(),
+        );
+    }
+
+    eprintln!(
+        "all-sheet identity scoring summary: sheets={}, windows={}, identities={}, same_object={}, wrong_object={}, identity_supported={}, max_score={}, over_threshold={}",
+        sheets_seen,
+        windows_seen,
+        identities_seen,
+        same_object_seen,
+        wrong_object_seen,
+        identity_supported,
+        max_score,
+        over_threshold
+    );
+
+    assert!(
+        sheets_seen > 0,
+        "all-sheet identity scoring should inspect at least one Sheet"
+    );
+    let object_geometry_hint_count: usize = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.object_geometry_hints.len())
+        })
+        .sum();
+    assert_eq!(
+        object_geometry_hint_count, 0,
+        "all-sheet identity scoring must not populate object geometry hints"
+    );
+}
+
+#[test]
+fn sheet6_field_x_window_features_report_chunk_shapes() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
+        eprintln!("skipping: cross reference not built for fixture");
+        return;
+    };
+
+    let mut endpoint_field_xs: Vec<_> = cross
+        .relationship_endpoint_links
+        .iter()
+        .filter(|link| link.sheet_path.as_deref() == Some("/Sheet6"))
+        .flat_map(|link| [link.source_field_x, link.target_field_x])
+        .flatten()
+        .collect();
+    endpoint_field_xs.sort_unstable();
+    endpoint_field_xs.dedup();
+
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let windows = field_x_windows(&sheet.data, &endpoint_field_xs, 32);
+    let features = field_x_window_features(&sheet.data, &windows, &report.chunks);
+    let object_field_xs: HashSet<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+    let feature_scores = score_field_x_window_features(&features, &object_field_xs);
+    let max_feature_score = feature_scores
+        .iter()
+        .map(|score| score.score)
+        .max()
+        .unwrap_or_default();
+    let promotable_feature_scores = feature_scores
+        .iter()
+        .filter(|score| score.score >= 70)
+        .count();
+    let mut top_feature_scores: Vec<_> = feature_scores
+        .iter()
+        .filter(|score| score.score >= 70)
+        .map(|score| {
+            (
+                score.field_x,
+                score.offset,
+                score.score,
+                score
+                    .candidate_position
+                    .as_ref()
+                    .map(|position| (position.offset, position.x, position.y)),
+                score.reasons.clone(),
+            )
+        })
+        .collect();
+    top_feature_scores
+        .sort_by(|left, right| right.2.cmp(&left.2).then_with(|| left.1.cmp(&right.1)));
+    let mut groups: Vec<_> = stable_chunk_shape_support(&features).into_iter().collect();
+    groups.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    let mut marker_groups: Vec<_> = stable_marker_support(&features).into_iter().collect();
+    marker_groups.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    eprintln!(
+        "top chunk-shape groups: {:?}",
+        groups.iter().take(10).collect::<Vec<_>>()
+    );
+    eprintln!(
+        "top marker groups: {:?}",
+        marker_groups.iter().take(10).collect::<Vec<_>>()
+    );
+    eprintln!(
+        "feature scoring summary: max_score={}, promotable={}",
+        max_feature_score, promotable_feature_scores
+    );
+    eprintln!(
+        "top feature scores: {:?}",
+        top_feature_scores.iter().take(10).collect::<Vec<_>>()
+    );
+
+    assert!(
+        !features.is_empty(),
+        "field_x window feature extraction should inspect real Sheet6 windows"
+    );
+    assert!(
+        groups.first().is_some_and(|(_, support)| *support > 0),
+        "expected at least one chunk-relative shape group"
+    );
+    assert!(
+        marker_groups
+            .first()
+            .is_some_and(|(_, support)| *support > 0),
+        "expected at least one marker group"
     );
 }
 

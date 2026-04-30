@@ -8,7 +8,7 @@
 //! The schema is derived automatically from every `#[derive(JsonSchema)]`
 //! model type, so it stays in sync with the Rust source.
 
-use crate::model::PidDocument;
+use crate::{geometry::NormalizedPidGeometry, model::PidDocument};
 use schemars::Schema;
 
 /// Produce the JSON Schema for a `PidDocument`.
@@ -25,6 +25,20 @@ pub fn pid_document_schema() -> Schema {
 /// but returns the result already typed as `Result<String, _>`.
 pub fn pid_document_schema_pretty() -> Result<String, serde_json::Error> {
     serde_json::to_string_pretty(&pid_document_schema())
+}
+
+/// Produce the JSON Schema for [`NormalizedPidGeometry`].
+///
+/// This schema is separate from [`pid_document_schema`] because normalized
+/// render geometry is a derived projection rather than a stored field on
+/// [`PidDocument`].
+pub fn normalized_geometry_schema() -> Schema {
+    schemars::schema_for!(NormalizedPidGeometry)
+}
+
+/// Convenience: produce the normalized geometry schema as pretty JSON.
+pub fn normalized_geometry_schema_pretty() -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&normalized_geometry_schema())
 }
 
 #[cfg(test)]
@@ -95,6 +109,42 @@ mod tests {
             assert!(
                 text.contains(needle),
                 "schema should mention `{needle}` but did not; output starts with:\n{}",
+                &text[..text.len().min(500)]
+            );
+        }
+    }
+
+    #[test]
+    fn schema_exposes_sheet_geometry_dtos() {
+        let text = pid_document_schema_pretty().expect("pretty JSON");
+        for needle in [
+            "SheetGeometry",
+            "SheetText",
+            "SheetEndpoint",
+            "SheetObjectGeometryHint",
+        ] {
+            assert!(
+                text.contains(needle),
+                "schema should mention `{needle}` but did not; output starts with:\n{}",
+                &text[..text.len().min(500)]
+            );
+        }
+    }
+
+    #[test]
+    fn normalized_geometry_schema_exposes_graphic_contract() {
+        let text = normalized_geometry_schema_pretty().expect("pretty JSON");
+        for needle in [
+            "NormalizedPidGeometry",
+            "PidGraphicEntity",
+            "PidGraphicKind",
+            "Point",
+            "PidGraphicProvenance",
+            "PidGeometryConfidence",
+        ] {
+            assert!(
+                text.contains(needle),
+                "geometry schema should mention `{needle}` but did not; output starts with:\n{}",
                 &text[..text.len().min(500)]
             );
         }

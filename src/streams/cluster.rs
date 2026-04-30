@@ -8,8 +8,14 @@
 
 use crate::api::ParseOptions;
 use crate::error::PidError;
-use crate::model::{ClusterInfo, ClusterKind, ClusterProbeInfo, PidDocument, SheetStream};
-use crate::parsers::{cluster_header, dynamic_attr_records, magic};
+use crate::model::{
+    ClusterInfo, ClusterKind, ClusterProbeInfo, PidDocument, SheetCoordinateHintDto, SheetGeometry,
+    SheetStream, SheetText,
+};
+use crate::parsers::{
+    cluster_header, dynamic_attr_records, magic,
+    sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
+};
 use std::io::Read;
 
 /// Decode every top-level cluster-family stream (`PSMcluster*`,
@@ -94,7 +100,7 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
         .collect();
 
     for (name, path, size, preview) in sheet_paths {
-        let (magic_u32_le, magic_tag, header, attribute_records, probe_summary) =
+        let (magic_u32_le, magic_tag, header, attribute_records, probe_summary, geometry) =
             if let Ok(mut stream) = cfb.open_stream(&path) {
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
@@ -105,10 +111,13 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
                 let tag = m.and_then(magic::magic_tag);
                 let hdr = cluster_header::parse_header(&data);
                 let (records, summary) = dynamic_attr_records::parse_attribute_records(&data);
+                let sheet_probe =
+                    sheet_probe::probe_sheet_stream(&name, &path, &data, &Default::default());
+                let geometry = sheet_geometry_from_probe(&sheet_probe);
 
-                (m, tag, hdr, records, Some(summary))
+                (m, tag, hdr, records, Some(summary), geometry)
             } else {
-                (None, None, None, Vec::new(), None)
+                (None, None, None, Vec::new(), None, None)
             };
 
         doc.sheet_streams.push(SheetStream {
@@ -121,6 +130,7 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
             header,
             attribute_records,
             probe_summary,
+            geometry,
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
         });
@@ -201,6 +211,46 @@ fn find_entry1_before(data: &[u8], entry2_pos: usize) -> Option<usize> {
     None
 }
 
+fn sheet_geometry_from_probe(report: &SheetProbeReport) -> Option<SheetGeometry> {
+    let texts: Vec<_> = report
+        .text_runs
+        .iter()
+        .map(|run| SheetText {
+            offset: run.offset,
+            encoding: sheet_text_encoding_label(&run.encoding).to_string(),
+            text: run.text.clone(),
+            byte_len: run.byte_len,
+        })
+        .collect();
+    let coordinate_hints: Vec<_> = report
+        .coordinate_hints
+        .iter()
+        .map(|hint| SheetCoordinateHintDto {
+            offset: hint.offset,
+            x: hint.x,
+            y: hint.y,
+        })
+        .collect();
+
+    if texts.is_empty() && coordinate_hints.is_empty() {
+        None
+    } else {
+        Some(SheetGeometry {
+            texts,
+            endpoints: Vec::new(),
+            coordinate_hints,
+            object_geometry_hints: Vec::new(),
+        })
+    }
+}
+
+fn sheet_text_encoding_label(encoding: &SheetTextEncoding) -> &'static str {
+    match encoding {
+        SheetTextEncoding::Ascii => "ascii",
+        SheetTextEncoding::Utf16Le => "utf16_le",
+    }
+}
+
 fn classify_cluster(name: &str) -> ClusterKind {
     match name {
         "PSMcluster0" => ClusterKind::PsmCluster,
@@ -209,5 +259,47 @@ fn classify_cluster(name: &str) -> ClusterKind {
         "Unclustered Dynamic Attributes" => ClusterKind::UnclusteredDynamicAttributes,
         n if n.starts_with("Sheet") => ClusterKind::Sheet,
         _ => ClusterKind::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parsers::sheet_probe::{
+        SheetCoordinateHint, SheetProbeReport, SheetTextEncoding, SheetTextRun,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn geometry_from_sheet_probe_normalizes_text_and_coordinate_hints() {
+        let report = SheetProbeReport {
+            sheet_name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 64,
+            candidate_boundaries: Vec::new(),
+            chunks: Vec::new(),
+            record_type_counts: BTreeMap::new(),
+            text_runs: vec![SheetTextRun {
+                offset: 8,
+                encoding: SheetTextEncoding::Utf16Le,
+                text: "PUMP-101".into(),
+                byte_len: 16,
+            }],
+            coordinate_hints: vec![SheetCoordinateHint {
+                offset: 32,
+                x: 1200,
+                y: -450,
+            }],
+        };
+
+        let geometry = sheet_geometry_from_probe(&report).expect("geometry evidence");
+
+        assert_eq!(geometry.texts.len(), 1);
+        assert_eq!(geometry.texts[0].encoding, "utf16_le");
+        assert_eq!(geometry.texts[0].text, "PUMP-101");
+        assert_eq!(geometry.coordinate_hints.len(), 1);
+        assert_eq!(geometry.coordinate_hints[0].x, 1200);
+        assert_eq!(geometry.coordinate_hints[0].y, -450);
+        assert!(geometry.endpoints.is_empty());
     }
 }

@@ -79,6 +79,14 @@ pub struct PidVisualRelationship {
     pub source_drawing_id: Option<String>,
     /// Target endpoint drawing id if the relationship resolved it.
     pub target_drawing_id: Option<String>,
+    /// Sheet stream that backs this relationship's endpoint record.
+    pub sheet_path: Option<String>,
+    /// Byte offset of the matching endpoint record inside [`Self::sheet_path`].
+    pub sheet_offset: Option<usize>,
+    /// Source endpoint `field_x` from the matching Sheet endpoint record.
+    pub source_field_x: Option<u32>,
+    /// Target endpoint `field_x` from the matching Sheet endpoint record.
+    pub target_field_x: Option<u32>,
 }
 
 /// Reverse-index summary of how a symbol is used across `JSite`
@@ -126,12 +134,26 @@ pub fn build_import_view(doc: &PidDocument) -> PidImportView {
     let objects = object_graph
         .map(|graph| graph.objects.iter().map(visual_object_from).collect())
         .unwrap_or_default();
+    let relationship_links: BTreeMap<&str, _> = cross
+        .map(|cross| {
+            cross
+                .relationship_endpoint_links
+                .iter()
+                .map(|link| (link.relationship_guid.as_str(), link))
+                .collect()
+        })
+        .unwrap_or_default();
     let relationships = object_graph
         .map(|graph| {
             graph
                 .relationships
                 .iter()
-                .map(visual_relationship_from)
+                .map(|relationship| {
+                    visual_relationship_from(
+                        relationship,
+                        relationship_links.get(relationship.guid.as_str()).copied(),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -181,12 +203,19 @@ fn visual_object_from(object: &PidObject) -> PidVisualObject {
     }
 }
 
-fn visual_relationship_from(relationship: &PidRelationship) -> PidVisualRelationship {
+fn visual_relationship_from(
+    relationship: &PidRelationship,
+    link: Option<&crate::model::RelationshipEndpointLink>,
+) -> PidVisualRelationship {
     PidVisualRelationship {
         guid: relationship.guid.clone(),
         model_id: relationship.model_id.clone(),
         source_drawing_id: relationship.source_drawing_id.clone(),
         target_drawing_id: relationship.target_drawing_id.clone(),
+        sheet_path: link.and_then(|link| link.sheet_path.clone()),
+        sheet_offset: link.and_then(|link| link.sheet_offset),
+        source_field_x: link.and_then(|link| link.source_field_x),
+        target_field_x: link.and_then(|link| link.target_field_x),
     }
 }
 
@@ -310,7 +339,7 @@ fn build_unresolved(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{CrossReferenceGraph, PidDocument};
+    use crate::model::{CrossReferenceGraph, PidDocument, RelationshipEndpointLink};
 
     #[test]
     fn build_import_view_collects_objects_symbols_and_unresolved() {
@@ -354,6 +383,18 @@ mod tests {
                     found_as_storage: false,
                     found_as_stream: false,
                 }],
+                relationship_endpoint_links: vec![RelationshipEndpointLink {
+                    relationship_guid: "R1".into(),
+                    relationship_record_id: Some(7),
+                    rel_field_x: Some(100),
+                    source_field_x: Some(42),
+                    target_field_x: Some(77),
+                    source_drawing_id: Some("OBJ-1".into()),
+                    target_drawing_id: None,
+                    sheet_path: Some("/Sheet6".into()),
+                    sheet_offset: Some(0x40),
+                    missing_sheet_record: false,
+                }],
                 ..Default::default()
             }),
             ..Default::default()
@@ -362,6 +403,10 @@ mod tests {
         let view = build_import_view(&doc);
         assert_eq!(view.project_number.as_deref(), Some("P-01"));
         assert_eq!(view.objects.len(), 1);
+        assert_eq!(view.relationships[0].sheet_path.as_deref(), Some("/Sheet6"));
+        assert_eq!(view.relationships[0].sheet_offset, Some(0x40));
+        assert_eq!(view.relationships[0].source_field_x, Some(42));
+        assert_eq!(view.relationships[0].target_field_x, Some(77));
         assert_eq!(view.symbols.len(), 1);
         assert_eq!(view.unresolved.len(), 2);
     }

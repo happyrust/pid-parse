@@ -795,6 +795,11 @@ pub struct SheetStream {
     /// Probe summary: heuristic scan metadata (`body_start_offset`, `marker_count`, etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub probe_summary: Option<ProbeSummary>,
+    /// Stable DTO surface for normalized Sheet evidence. Populated
+    /// incrementally as Sheet text, endpoint and coordinate probes
+    /// graduate into contract-backed views.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<SheetGeometry>,
     /// Endpoint-pair records decoded from the sheet. Each entry maps a
     /// Relationship's `field_x` to the `(endpoint_a, endpoint_b)` `field_x`
     /// pair of the two objects it connects.
@@ -805,6 +810,84 @@ pub struct SheetStream {
     /// relationship fields to look for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoint_decode_error: Option<String>,
+}
+
+/// Stable Sheet-level DTO that groups normalized text, endpoint and
+/// coordinate evidence without claiming full CAD geometry decode.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct SheetGeometry {
+    /// Text runs normalized from the Sheet probe layer.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub texts: Vec<SheetText>,
+    /// Endpoint records normalized from the Sheet endpoint parser.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub endpoints: Vec<SheetEndpoint>,
+    /// Coordinate-like pairs retained as hints until record semantics
+    /// are proven across more fixtures.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub coordinate_hints: Vec<SheetCoordinateHintDto>,
+    /// Future object-to-geometry mapping evidence. Empty until a Sheet
+    /// probe can prove that an object `field_x` owns source-backed
+    /// geometry coordinates.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub object_geometry_hints: Vec<SheetObjectGeometryHint>,
+}
+
+/// Stable text run DTO for Sheet streams.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SheetText {
+    /// Byte offset where the text run begins inside the Sheet stream.
+    pub offset: usize,
+    /// Encoding family (`"ascii"` or `"utf16_le"`).
+    pub encoding: String,
+    /// Decoded printable text.
+    pub text: String,
+    /// Number of bytes consumed by the run in the source Sheet stream.
+    pub byte_len: usize,
+}
+
+/// Stable endpoint DTO for Sheet streams.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SheetEndpoint {
+    /// Byte offset in the Sheet stream where this endpoint record starts.
+    pub offset: usize,
+    /// Relationship's `field_x` value.
+    pub rel_field_x: u32,
+    /// Source endpoint `field_x`.
+    pub endpoint_a: u32,
+    /// Target endpoint `field_x`.
+    pub endpoint_b: u32,
+}
+
+/// Stable coordinate-hint DTO for Sheet streams.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SheetCoordinateHintDto {
+    /// Byte offset of the first coordinate-like value.
+    pub offset: usize,
+    /// First coordinate-like value.
+    pub x: i32,
+    /// Second coordinate-like value.
+    pub y: i32,
+}
+
+/// Candidate mapping from an object `field_x` to source-backed Sheet
+/// geometry evidence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SheetObjectGeometryHint {
+    /// Byte offset where this candidate mapping starts inside the Sheet stream.
+    pub offset: usize,
+    /// Object Dynamic Attributes `field_x` this mapping appears to describe.
+    pub field_x: u32,
+    /// Optional coordinate associated with the object, when the probe can
+    /// prove it came from the same source record.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub position: Option<SheetCoordinateHintDto>,
+    /// Optional GraphicOID-like value surfaced near this mapping.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub graphic_oid: Option<u32>,
+    /// Short diagnostic note describing why this is still a hint.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub note: Option<String>,
 }
 
 /// Top-level stream the reader encountered but does not (yet)

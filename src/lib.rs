@@ -91,6 +91,7 @@ pub mod byte_audit;
 pub mod cfb;
 pub mod crossref;
 pub mod error;
+pub mod geometry;
 pub mod import_view;
 pub mod inspect;
 pub mod layout;
@@ -108,6 +109,7 @@ pub use byte_audit::{
     StreamAuditSummary, TraceConfidence,
 };
 pub use error::PidError;
+pub use geometry::*;
 pub use import_view::*;
 pub use layout::*;
 pub use model::*;

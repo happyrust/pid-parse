@@ -4,7 +4,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit [--byte-audit-baseline <audit.json>]]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]"
+            "Usage: pid_inspect <file.pid> [--json] [--schema] [--geometry-json]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit [--byte-audit-baseline <audit.json>]]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]"
         );
         std::process::exit(1);
     }
@@ -12,6 +12,7 @@ fn main() {
     let path = &args[1];
     let json_mode = args.iter().any(|a| a == "--json");
     let schema_mode = args.iter().any(|a| a == "--schema");
+    let geometry_json = args.iter().any(|a| a == "--geometry-json");
     let probe_cluster = args.iter().any(|a| a == "--probe-cluster");
     let probe_dynamic = args.iter().any(|a| a == "--probe-dynamic");
     let probe_sheet = args.iter().any(|a| a == "--probe-sheet");
@@ -89,6 +90,18 @@ fn main() {
         }
     };
     let doc = &pkg.parsed;
+
+    if geometry_json {
+        let geometry = pid_parse::build_normalized_geometry(doc);
+        match serde_json::to_string_pretty(&geometry) {
+            Ok(json) => println!("{json}"),
+            Err(e) => {
+                eprintln!("Geometry JSON serialization error: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
 
     if json_mode {
         if coverage_flag {

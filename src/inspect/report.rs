@@ -1464,6 +1464,7 @@ mod tests {
             header: None,
             attribute_records: vec![],
             probe_summary: None,
+            geometry: None,
             endpoint_records: vec![],
             endpoint_decode_error: Some(
                 "failed to reopen sheet stream for endpoint records: missing".into(),

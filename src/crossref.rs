@@ -898,6 +898,7 @@ mod tests {
             header: None,
             attribute_records: vec![],
             probe_summary: None,
+            geometry: None,
             endpoint_records: vec![],
             endpoint_decode_error: None,
         });
@@ -995,6 +996,7 @@ mod tests {
             header: None,
             attribute_records: vec![],
             probe_summary: None,
+            geometry: None,
             endpoint_records: vec![],
             endpoint_decode_error: None,
         });
@@ -1479,6 +1481,7 @@ mod tests {
             header: None,
             attribute_records: vec![],
             probe_summary: None,
+            geometry: None,
             endpoint_records: vec![SheetEndpointRecord {
                 sheet_path: format!("/{name}"),
                 offset,
@@ -1963,6 +1966,7 @@ mod tests {
             header: None,
             attribute_records: vec![],
             probe_summary: None,
+            geometry: None,
             endpoint_records: vec![],
             endpoint_decode_error: None,
         });
@@ -1976,6 +1980,7 @@ mod tests {
             header: None,
             attribute_records: vec![],
             probe_summary: None,
+            geometry: None,
             endpoint_records: vec![SheetEndpointRecord {
                 sheet_path: "/SheetOrphan".into(),
                 offset: 0x200,

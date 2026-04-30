@@ -105,6 +105,47 @@ fn build_sheet_probe_fixture(path: &std::path::Path) {
     cfb.flush().unwrap();
 }
 
+#[test]
+fn geometry_json_flag_emits_normalized_probe_entities() {
+    let fixture = unique_tmp("geometry-json");
+    build_sheet_probe_fixture(&fixture);
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--geometry-json")
+        .output()
+        .expect("spawn pid_inspect --geometry-json");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
+        output.status.code()
+    );
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("--geometry-json must emit valid JSON");
+    let entities = parsed["entities"]
+        .as_array()
+        .expect("entities should be an array");
+    assert!(
+        entities
+            .iter()
+            .any(|entity| entity["confidence"] == "probe_only"
+                && entity["kind"]["kind"] == "unknown"
+                && entity["id"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("/Sheet6:"))),
+        "expected Sheet6 probe evidence in normalized geometry JSON; stdout:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("--- Summary ---"),
+        "--geometry-json should not emit the legacy text report; stdout:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+}
+
 fn write_byte_audit_baseline(
     fixture: &std::path::Path,
     baseline_path: &std::path::Path,

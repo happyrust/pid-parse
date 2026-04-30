@@ -25,7 +25,7 @@
 //! are reserved for future heuristics and are not yet emitted.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 /// Tunable thresholds for the sheet-probe heuristics; all downstream
 /// functions read their cut-offs from this struct. [`Default`] values
@@ -117,6 +117,71 @@ pub enum SheetTextEncoding {
     Utf16Le,
 }
 
+/// Investigation-only candidate linking a text run to a nearby coordinate hint.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetTextWindowCandidate {
+    /// Byte offset where the text run begins.
+    pub text_offset: usize,
+    /// Number of bytes consumed by the text run.
+    pub text_byte_len: usize,
+    /// Encoding family used by the text run.
+    pub text_encoding: SheetTextEncoding,
+    /// Decoded text payload.
+    pub text: String,
+    /// Byte offset of the nearby coordinate pair.
+    pub coordinate_offset: usize,
+    /// Candidate insertion X coordinate.
+    pub x: i32,
+    /// Candidate insertion Y coordinate.
+    pub y: i32,
+    /// Whether text and coordinate fit inside the same probed Sheet chunk.
+    pub same_chunk: bool,
+    /// Minimum byte distance between the text run and coordinate pair.
+    pub byte_distance: usize,
+    /// Whether the coordinate pair passes structural-value filters.
+    pub quality_passed: bool,
+    /// Start offset of the common chunk, when `same_chunk` is true.
+    pub chunk_start: Option<usize>,
+    /// End offset of the common chunk, when `same_chunk` is true.
+    pub chunk_end: Option<usize>,
+}
+
+/// Investigation-only score for a text-to-coordinate candidate.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetTextWindowScore {
+    /// Candidate being scored.
+    pub candidate: SheetTextWindowCandidate,
+    /// Investigation score. This never directly promotes text geometry.
+    pub score: i32,
+    /// Explainable scoring reasons.
+    pub reasons: Vec<SheetTextWindowScoreReason>,
+}
+
+/// Explainable scoring reason for [`SheetTextWindowScore`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SheetTextWindowScoreReason {
+    /// Text looks like an engineering label or annotation, not binary noise.
+    TextQualityPassed,
+    /// Text looks too much like binary payload decoded as text.
+    TextQualityRejected,
+    /// Text and coordinate fall inside the same Sheet chunk.
+    SameChunk,
+    /// Coordinate is near the text byte run.
+    NearbyCoordinate {
+        /// Minimum byte distance between the text and coordinate ranges.
+        distance: usize,
+    },
+    /// Coordinate passed structural-value filters.
+    HighQualityCoordinate,
+    /// Multiple text runs share the same text-to-coordinate byte delta.
+    RepeatedTextCoordinateDelta {
+        /// Signed byte delta from text offset to coordinate offset.
+        delta: isize,
+        /// Distinct text runs supporting this delta.
+        support: usize,
+    },
+}
+
 /// Plausible adjacent integer pair that may represent a Sheet
 /// coordinate. Kept as a hint until multiple fixtures confirm the
 /// surrounding record layout.
@@ -128,6 +193,197 @@ pub struct SheetCoordinateHint {
     pub x: i32,
     /// Second coordinate-like value.
     pub y: i32,
+}
+
+/// Experimental byte-window hit for an object `field_x` inside a Sheet stream.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetFieldXWindow {
+    /// Object `field_x` value that matched in little-endian form.
+    pub field_x: u32,
+    /// Byte offset where the matched `field_x` starts.
+    pub offset: usize,
+    /// Start offset of a surrounding endpoint-record signature, if this hit
+    /// appears to be part of one.
+    pub endpoint_record_start: Option<usize>,
+    /// Inclusive start of the inspected byte window.
+    pub window_start: usize,
+    /// Exclusive end of the inspected byte window.
+    pub window_end: usize,
+    /// Plausible coordinate pairs found inside the same bounded window.
+    pub nearby_coordinates: Vec<SheetCoordinateHint>,
+}
+
+/// Investigation-only score for a [`SheetFieldXWindow`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetFieldXWindowScore {
+    /// Object `field_x` value being scored.
+    pub field_x: u32,
+    /// Byte offset where the matched `field_x` starts.
+    pub offset: usize,
+    /// Investigation score. This never directly promotes geometry.
+    pub score: i32,
+    /// Explainable scoring reasons.
+    pub reasons: Vec<SheetFieldXWindowScoreReason>,
+    /// Nearest candidate position from the same window, if any.
+    pub candidate_position: Option<SheetCoordinateHint>,
+}
+
+/// Investigation-only features derived from a [`SheetFieldXWindow`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetFieldXWindowFeatures {
+    /// Object `field_x` value being analyzed.
+    pub field_x: u32,
+    /// Byte offset where the matched `field_x` starts.
+    pub offset: usize,
+    /// Start offset of a surrounding endpoint-record signature, if present.
+    pub endpoint_record_start: Option<usize>,
+    /// Start offset of the containing Sheet chunk, if found.
+    pub chunk_start: Option<usize>,
+    /// End offset of the containing Sheet chunk, if found.
+    pub chunk_end: Option<usize>,
+    /// Signed byte delta from chunk start to the `field_x` hit.
+    pub field_delta_from_chunk: Option<isize>,
+    /// Signed byte delta from chunk start to the selected coordinate candidate.
+    pub coordinate_delta_from_chunk: Option<isize>,
+    /// Nearest non-overlapping coordinate candidate in the window, if any.
+    pub candidate_position: Option<SheetCoordinateHint>,
+    /// Stable marker candidates reserved for the next evidence pass.
+    pub stable_markers: Vec<SheetWindowMarker>,
+}
+
+/// Marker-like value observed near a [`SheetFieldXWindow`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetWindowMarker {
+    /// Byte offset where the marker-like value starts.
+    pub offset: usize,
+    /// Signed byte delta from the `field_x` hit to this marker.
+    pub delta_from_field: isize,
+    /// Marker value interpreted as little-endian `u32`.
+    pub value_u32: u32,
+}
+
+/// Source-backed identity values for an object-like DA trailer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetObjectIdentity {
+    /// Dynamic Attributes `field_x` value.
+    pub field_x: u32,
+    /// DA trailer `record_id`.
+    pub record_id: u32,
+    /// DA trailer `class_id`.
+    pub class_id: u32,
+    /// Optional 32-hex `DrawingID` resolved from the DA record.
+    pub drawing_id: Option<String>,
+}
+
+/// Investigation index used to resolve Sheet-window identity candidates
+/// back to source-backed DA records.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetIdentityIndex {
+    /// Object identities keyed by `field_x`.
+    pub by_field_x: BTreeMap<u32, SheetObjectIdentity>,
+    drawing_id_to_field_x: BTreeMap<String, u32>,
+}
+
+impl SheetIdentityIndex {
+    /// Resolve a `DrawingID` to the owning `field_x`, case-insensitively.
+    pub fn field_x_for_drawing_id(&self, drawing_id: &str) -> Option<u32> {
+        self.drawing_id_to_field_x
+            .get(&drawing_id.to_ascii_lowercase())
+            .copied()
+    }
+}
+
+/// Kind of source-backed identity found near a field-x window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SheetFieldXWindowIdentityKind {
+    /// ASCII 32-hex `DrawingID`.
+    DrawingIdAscii,
+    /// UTF-16LE 32-hex `DrawingID`.
+    DrawingIdUtf16Le,
+    /// DA trailer `record_id`.
+    TrailerRecordId,
+    /// DA trailer `class_id`.
+    TrailerClassId,
+    /// High-entropy marker that has not resolved to source identity.
+    UnknownMarker,
+}
+
+/// Value carried by a [`SheetFieldXWindowIdentity`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SheetFieldXWindowIdentityValue {
+    /// Text identity value, such as `DrawingID`.
+    Text(String),
+    /// Numeric identity value, such as DA trailer `record_id`.
+    U32(u32),
+}
+
+/// Investigation-only identity evidence found near a field-x window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetFieldXWindowIdentity {
+    /// Field-x value of the inspected window.
+    pub field_x: u32,
+    /// Byte offset where the identity value starts.
+    pub offset: usize,
+    /// Signed byte delta from the field-x hit to the identity value.
+    pub delta_from_field: isize,
+    /// Identity kind.
+    pub kind: SheetFieldXWindowIdentityKind,
+    /// Identity value.
+    pub value: SheetFieldXWindowIdentityValue,
+    /// Resolved owning field-x, when the value maps to a known object.
+    pub resolves_to_field_x: Option<u32>,
+    /// Whether the identity resolves to the same object as the window.
+    pub resolves_to_same_object: bool,
+}
+
+/// Explainable reason attached to a [`SheetFieldXWindowScore`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SheetFieldXWindowScoreReason {
+    /// Hit is part of an endpoint-record signature, so it is relationship
+    /// evidence rather than object geometry.
+    EndpointRecordReference,
+    /// The hit is not inside an endpoint-record signature.
+    NonEndpointHit,
+    /// The `field_x` resolves to a known object record.
+    ObjectFieldResolves,
+    /// The window contains a coordinate candidate at this byte delta from the
+    /// matched `field_x`.
+    CoordinateCandidateAtDelta {
+        /// Signed byte delta from the `field_x` hit to the coordinate pair.
+        delta: isize,
+    },
+    /// The same coordinate delta appears for multiple distinct object fields.
+    RepeatedDeltaAcrossFields {
+        /// Signed byte delta from the `field_x` hit to the coordinate pair.
+        delta: isize,
+        /// Number of distinct `field_x` values supporting this delta.
+        support: usize,
+    },
+    /// The field and candidate coordinate share a repeated chunk-relative shape.
+    StableChunkShape {
+        /// Signed byte delta from chunk start to the `field_x` hit.
+        field_delta: isize,
+        /// Signed byte delta from chunk start to the candidate coordinate.
+        coordinate_delta: isize,
+        /// Number of distinct `field_x` values supporting this shape.
+        support: usize,
+    },
+    /// The window has a repeated non-generic marker nearby.
+    StableMarkerNearby {
+        /// Signed byte delta from the `field_x` hit to the marker.
+        delta: isize,
+        /// Marker-like value interpreted as little-endian `u32`.
+        value_u32: u32,
+        /// Number of distinct `field_x` values supporting this marker shape.
+        support: usize,
+    },
+    /// The window has a source-backed identity that resolves to the same object.
+    GraphicIdentityNearby {
+        /// Identity kind that resolved to the same object.
+        kind: SheetFieldXWindowIdentityKind,
+        /// Signed byte delta from the `field_x` hit to the identity value.
+        delta: isize,
+    },
 }
 
 /// One byte offset inside the sheet that at least one heuristic thinks
@@ -249,6 +505,786 @@ pub fn probe_sheet_stream(
         text_runs,
         coordinate_hints,
     }
+}
+
+/// Find raw Sheet byte windows where object `field_x` values appear.
+///
+/// This is investigation-only. A hit does not prove geometry ownership;
+/// callers must still inspect the surrounding record shape before promoting
+/// anything to `SheetObjectGeometryHint`.
+pub fn field_x_windows(
+    data: &[u8],
+    field_xs: &[u32],
+    window_radius: usize,
+) -> Vec<SheetFieldXWindow> {
+    if data.len() < 4 || field_xs.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let end = data.len() - 4;
+    for offset in 0..=end {
+        let value = u32_le(data, offset);
+        if !field_xs.contains(&value) {
+            continue;
+        }
+        let window_start = offset.saturating_sub(window_radius);
+        let window_end = (offset + 4 + window_radius).min(data.len());
+        out.push(SheetFieldXWindow {
+            field_x: value,
+            offset,
+            endpoint_record_start: endpoint_record_signature_start(data, offset),
+            window_start,
+            window_end,
+            nearby_coordinates: coordinate_hints_in_range(data, window_start, window_end),
+        });
+    }
+    out
+}
+
+/// Score field-x windows for investigation without promoting geometry.
+pub fn score_field_x_windows(
+    windows: &[SheetFieldXWindow],
+    object_field_xs: &HashSet<u32>,
+) -> Vec<SheetFieldXWindowScore> {
+    let repeated_delta_support = repeated_delta_support(windows, object_field_xs);
+    windows
+        .iter()
+        .map(|window| {
+            if window.endpoint_record_start.is_some() {
+                return SheetFieldXWindowScore {
+                    field_x: window.field_x,
+                    offset: window.offset,
+                    score: -100,
+                    reasons: vec![SheetFieldXWindowScoreReason::EndpointRecordReference],
+                    candidate_position: None,
+                };
+            }
+
+            let mut score = 10;
+            let mut reasons = vec![SheetFieldXWindowScoreReason::NonEndpointHit];
+            if object_field_xs.contains(&window.field_x) {
+                score += 10;
+                reasons.push(SheetFieldXWindowScoreReason::ObjectFieldResolves);
+            }
+            let candidate_position = repeated_delta_candidate(window, &repeated_delta_support)
+                .or_else(|| nearest_coordinate(window));
+            if let Some(position) = &candidate_position {
+                let delta = offset_delta(position.offset, window.offset);
+                score += 5;
+                reasons.push(SheetFieldXWindowScoreReason::CoordinateCandidateAtDelta { delta });
+                if let Some(support) = repeated_delta_support.get(&delta).copied() {
+                    if support >= 2 {
+                        score += 40;
+                        reasons.push(SheetFieldXWindowScoreReason::RepeatedDeltaAcrossFields {
+                            delta,
+                            support,
+                        });
+                    }
+                }
+            }
+
+            SheetFieldXWindowScore {
+                field_x: window.field_x,
+                offset: window.offset,
+                score,
+                reasons,
+                candidate_position,
+            }
+        })
+        .collect()
+}
+
+/// Extract investigation features for field-x windows relative to Sheet chunks.
+pub fn field_x_window_features(
+    data: &[u8],
+    windows: &[SheetFieldXWindow],
+    chunks: &[SheetChunk],
+) -> Vec<SheetFieldXWindowFeatures> {
+    windows
+        .iter()
+        .map(|window| {
+            let chunk = chunks
+                .iter()
+                .find(|chunk| chunk.start <= window.offset && window.offset + 4 <= chunk.end);
+            let candidate_position = nearest_coordinate(window);
+            SheetFieldXWindowFeatures {
+                field_x: window.field_x,
+                offset: window.offset,
+                endpoint_record_start: window.endpoint_record_start,
+                chunk_start: chunk.map(|chunk| chunk.start),
+                chunk_end: chunk.map(|chunk| chunk.end),
+                field_delta_from_chunk: chunk.map(|chunk| offset_delta(window.offset, chunk.start)),
+                coordinate_delta_from_chunk: chunk.and_then(|chunk| {
+                    candidate_position
+                        .as_ref()
+                        .map(|position| offset_delta(position.offset, chunk.start))
+                }),
+                candidate_position,
+                stable_markers: marker_candidates(data, window),
+            }
+        })
+        .collect()
+}
+
+/// Find nearby coordinate hints for decoded text runs without promoting geometry.
+pub fn sheet_text_window_candidates(
+    text_runs: &[SheetTextRun],
+    coordinates: &[SheetCoordinateHint],
+    chunks: &[SheetChunk],
+    radius: usize,
+) -> Vec<SheetTextWindowCandidate> {
+    let mut candidates = Vec::new();
+    for text in text_runs {
+        let text_end = text.offset.saturating_add(text.byte_len);
+        for coordinate in coordinates {
+            let coordinate_end = coordinate.offset.saturating_add(8);
+            let byte_distance =
+                byte_range_distance(text.offset, text_end, coordinate.offset, coordinate_end);
+            if byte_distance > radius {
+                continue;
+            }
+            let text_chunk = chunk_containing_range(chunks, text.offset, text_end);
+            let coordinate_chunk =
+                chunk_containing_range(chunks, coordinate.offset, coordinate_end);
+            let same_chunk = text_chunk
+                .zip(coordinate_chunk)
+                .is_some_and(|(left, right)| left.start == right.start && left.end == right.end);
+            candidates.push(SheetTextWindowCandidate {
+                text_offset: text.offset,
+                text_byte_len: text.byte_len,
+                text_encoding: text.encoding.clone(),
+                text: text.text.clone(),
+                coordinate_offset: coordinate.offset,
+                x: coordinate.x,
+                y: coordinate.y,
+                same_chunk,
+                byte_distance,
+                quality_passed: is_high_quality_coordinate_candidate(coordinate),
+                chunk_start: same_chunk
+                    .then(|| text_chunk.expect("same chunk has text chunk").start),
+                chunk_end: same_chunk.then(|| text_chunk.expect("same chunk has text chunk").end),
+            });
+        }
+    }
+    candidates.sort_by_key(|candidate| {
+        (
+            candidate.text_offset,
+            candidate.byte_distance,
+            candidate.coordinate_offset,
+        )
+    });
+    candidates
+}
+
+/// Return whether a decoded text run is plausible enough for placement scoring.
+pub fn is_high_quality_text_candidate(text: &str) -> bool {
+    let trimmed = text.trim();
+    let char_count = trimmed.chars().count();
+    if !(2..=128).contains(&char_count) {
+        return false;
+    }
+    if trimmed.contains('\u{fffd}') {
+        return false;
+    }
+
+    let ascii_alnum = trimmed.chars().filter(char::is_ascii_alphanumeric).count();
+    if ascii_alnum == 0 {
+        return false;
+    }
+    if trimmed
+        .chars()
+        .any(|ch| !ch.is_ascii() && !is_cjk_text_char(ch))
+    {
+        return false;
+    }
+
+    let tag_like = trimmed
+        .chars()
+        .filter(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '-' | '_' | '/' | '.' | ' ' | '#' | '(' | ')' | '&' | '+' | ':'
+                )
+        })
+        .count();
+    tag_like * 100 / char_count >= 70
+}
+
+fn is_cjk_text_char(ch: char) -> bool {
+    ('\u{4e00}'..='\u{9fff}').contains(&ch)
+        || ('\u{3400}'..='\u{4dbf}').contains(&ch)
+        || ('\u{f900}'..='\u{faff}').contains(&ch)
+}
+
+/// Score text placement candidates without promoting them to render geometry.
+pub fn score_sheet_text_window_candidates(
+    candidates: &[SheetTextWindowCandidate],
+) -> Vec<SheetTextWindowScore> {
+    let repeated_delta_support = text_coordinate_delta_support(candidates);
+    let mut scores: Vec<_> = candidates
+        .iter()
+        .map(|candidate| {
+            let mut score = 0;
+            let mut reasons = Vec::new();
+            if is_high_quality_text_candidate(&candidate.text) {
+                score += 20;
+                reasons.push(SheetTextWindowScoreReason::TextQualityPassed);
+            } else {
+                score -= 100;
+                reasons.push(SheetTextWindowScoreReason::TextQualityRejected);
+            }
+            if candidate.same_chunk {
+                score += 20;
+                reasons.push(SheetTextWindowScoreReason::SameChunk);
+            }
+            if candidate.byte_distance <= 32 {
+                score += 10;
+                reasons.push(SheetTextWindowScoreReason::NearbyCoordinate {
+                    distance: candidate.byte_distance,
+                });
+            }
+            if candidate.quality_passed {
+                score += 20;
+                reasons.push(SheetTextWindowScoreReason::HighQualityCoordinate);
+            }
+            let delta = offset_delta(candidate.coordinate_offset, candidate.text_offset);
+            if let Some(support) = repeated_delta_support.get(&delta).copied() {
+                if support >= 2 {
+                    score += 30;
+                    reasons.push(SheetTextWindowScoreReason::RepeatedTextCoordinateDelta {
+                        delta,
+                        support,
+                    });
+                }
+            }
+
+            SheetTextWindowScore {
+                candidate: candidate.clone(),
+                score,
+                reasons,
+            }
+        })
+        .collect();
+    scores.sort_by_key(|score| {
+        (
+            std::cmp::Reverse(score.score),
+            score.candidate.text_offset,
+            score.candidate.coordinate_offset,
+        )
+    });
+    scores
+}
+
+/// Score extracted window features with stronger repeated record-shape evidence.
+pub fn score_field_x_window_features(
+    features: &[SheetFieldXWindowFeatures],
+    object_field_xs: &HashSet<u32>,
+) -> Vec<SheetFieldXWindowScore> {
+    let chunk_support = stable_chunk_shape_support(features);
+    let marker_support = stable_marker_support(features);
+    features
+        .iter()
+        .map(|feature| {
+            if feature.endpoint_record_start.is_some() {
+                return SheetFieldXWindowScore {
+                    field_x: feature.field_x,
+                    offset: feature.offset,
+                    score: -100,
+                    reasons: vec![SheetFieldXWindowScoreReason::EndpointRecordReference],
+                    candidate_position: None,
+                };
+            }
+
+            let mut score = 10;
+            let mut reasons = vec![SheetFieldXWindowScoreReason::NonEndpointHit];
+            if object_field_xs.contains(&feature.field_x) {
+                score += 10;
+                reasons.push(SheetFieldXWindowScoreReason::ObjectFieldResolves);
+            }
+            if let Some(position) = &feature.candidate_position {
+                score += 5;
+                reasons.push(SheetFieldXWindowScoreReason::CoordinateCandidateAtDelta {
+                    delta: offset_delta(position.offset, feature.offset),
+                });
+            }
+            if let (Some(field_delta), Some(coordinate_delta)) = (
+                feature.field_delta_from_chunk,
+                feature.coordinate_delta_from_chunk,
+            ) {
+                if let Some(support) = chunk_support
+                    .get(&(field_delta, coordinate_delta))
+                    .copied()
+                    .filter(|support| *support >= 3)
+                {
+                    score += 25;
+                    reasons.push(SheetFieldXWindowScoreReason::StableChunkShape {
+                        field_delta,
+                        coordinate_delta,
+                        support,
+                    });
+                }
+            }
+            for marker in &feature.stable_markers {
+                if let Some(support) = marker_support
+                    .get(&(marker.delta_from_field, marker.value_u32))
+                    .copied()
+                    .filter(|support| *support >= 3)
+                {
+                    score += 20;
+                    reasons.push(SheetFieldXWindowScoreReason::StableMarkerNearby {
+                        delta: marker.delta_from_field,
+                        value_u32: marker.value_u32,
+                        support,
+                    });
+                    break;
+                }
+            }
+
+            SheetFieldXWindowScore {
+                field_x: feature.field_x,
+                offset: feature.offset,
+                score,
+                reasons,
+                candidate_position: feature.candidate_position.clone(),
+            }
+        })
+        .collect()
+}
+
+/// Score extracted window features with additional same-object identity evidence.
+pub fn score_field_x_window_features_with_identities(
+    features: &[SheetFieldXWindowFeatures],
+    object_field_xs: &HashSet<u32>,
+    identities: &[SheetFieldXWindowIdentity],
+) -> Vec<SheetFieldXWindowScore> {
+    let mut scores = score_field_x_window_features(features, object_field_xs);
+    for score in &mut scores {
+        if score.score < 0 {
+            continue;
+        }
+        if let Some(identity) = identities
+            .iter()
+            .find(|identity| identity_supports_score(identity, score))
+        {
+            score.score += 35;
+            score
+                .reasons
+                .push(SheetFieldXWindowScoreReason::GraphicIdentityNearby {
+                    kind: identity.kind.clone(),
+                    delta: identity.delta_from_field,
+                });
+        }
+    }
+    scores
+}
+
+/// Build a source-backed identity index from DA record trailers.
+///
+/// Trailers without a `DrawingID` are skipped for now: relationship trailers
+/// can still carry useful `field_x` values, but they do not prove object
+/// identity for geometry ownership.
+pub fn sheet_identity_index_from_trailers(
+    trailers: &[crate::model::DaRecordTrailer],
+) -> SheetIdentityIndex {
+    let mut index = SheetIdentityIndex::default();
+    for trailer in trailers {
+        let Some(drawing_id) = trailer.drawing_id.clone() else {
+            continue;
+        };
+        index.by_field_x.insert(
+            trailer.field_x,
+            SheetObjectIdentity {
+                field_x: trailer.field_x,
+                record_id: trailer.record_id,
+                class_id: trailer.class_id,
+                drawing_id: Some(drawing_id.clone()),
+            },
+        );
+        index
+            .drawing_id_to_field_x
+            .entry(drawing_id.to_ascii_lowercase())
+            .or_insert(trailer.field_x);
+    }
+    index
+}
+
+/// Scan field-x windows for source-backed identity values.
+pub fn field_x_window_identities(
+    data: &[u8],
+    windows: &[SheetFieldXWindow],
+    identity_index: &SheetIdentityIndex,
+) -> Vec<SheetFieldXWindowIdentity> {
+    let mut identities = Vec::new();
+    for window in windows {
+        let mut text_offset = window.window_start;
+        while text_offset + 32 <= window.window_end && text_offset + 32 <= data.len() {
+            let bytes = &data[text_offset..text_offset + 32];
+            if is_ascii_hex_32(bytes) {
+                let value = String::from_utf8_lossy(bytes).into_owned();
+                if let Some(field_x) = identity_index.field_x_for_drawing_id(&value) {
+                    identities.push(SheetFieldXWindowIdentity {
+                        field_x: window.field_x,
+                        offset: text_offset,
+                        delta_from_field: (text_offset as isize) - (window.offset as isize),
+                        kind: SheetFieldXWindowIdentityKind::DrawingIdAscii,
+                        value: SheetFieldXWindowIdentityValue::Text(value),
+                        resolves_to_field_x: Some(field_x),
+                        resolves_to_same_object: field_x == window.field_x,
+                    });
+                }
+            }
+            text_offset += 1;
+        }
+
+        let mut utf16_offset = window.window_start;
+        while utf16_offset + 64 <= window.window_end && utf16_offset + 64 <= data.len() {
+            let bytes = &data[utf16_offset..utf16_offset + 64];
+            if let Some(value) = utf16_le_hex_32(bytes) {
+                if let Some(field_x) = identity_index.field_x_for_drawing_id(&value) {
+                    identities.push(SheetFieldXWindowIdentity {
+                        field_x: window.field_x,
+                        offset: utf16_offset,
+                        delta_from_field: (utf16_offset as isize) - (window.offset as isize),
+                        kind: SheetFieldXWindowIdentityKind::DrawingIdUtf16Le,
+                        value: SheetFieldXWindowIdentityValue::Text(value),
+                        resolves_to_field_x: Some(field_x),
+                        resolves_to_same_object: field_x == window.field_x,
+                    });
+                }
+            }
+            utf16_offset += 1;
+        }
+
+        let mut offset = window.window_start;
+        while offset + 4 <= window.window_end && offset + 4 <= data.len() {
+            let value = u32_le(data, offset);
+            if let Some(identity) = identity_index
+                .by_field_x
+                .values()
+                .find(|identity| identity.record_id == value)
+            {
+                identities.push(SheetFieldXWindowIdentity {
+                    field_x: window.field_x,
+                    offset,
+                    delta_from_field: (offset as isize) - (window.offset as isize),
+                    kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                    value: SheetFieldXWindowIdentityValue::U32(value),
+                    resolves_to_field_x: Some(identity.field_x),
+                    resolves_to_same_object: identity.field_x == window.field_x,
+                });
+            }
+            offset += 1;
+        }
+    }
+    identities
+}
+
+fn is_ascii_hex_32(bytes: &[u8]) -> bool {
+    bytes.len() == 32 && bytes.iter().all(u8::is_ascii_hexdigit)
+}
+
+fn utf16_le_hex_32(bytes: &[u8]) -> Option<String> {
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut text = String::with_capacity(32);
+    for pair in bytes.chunks_exact(2) {
+        if pair[1] != 0 || !pair[0].is_ascii_hexdigit() {
+            return None;
+        }
+        text.push(char::from(pair[0]));
+    }
+    Some(text)
+}
+
+fn identity_supports_score(
+    identity: &SheetFieldXWindowIdentity,
+    score: &SheetFieldXWindowScore,
+) -> bool {
+    identity.resolves_to_same_object
+        && identity.field_x == score.field_x
+        && identity_field_offset(identity) == Some(score.offset)
+}
+
+fn identity_field_offset(identity: &SheetFieldXWindowIdentity) -> Option<usize> {
+    if identity.delta_from_field >= 0 {
+        identity
+            .offset
+            .checked_sub(identity.delta_from_field as usize)
+    } else {
+        identity
+            .offset
+            .checked_add((-identity.delta_from_field) as usize)
+    }
+}
+
+fn chunk_containing_range(chunks: &[SheetChunk], start: usize, end: usize) -> Option<&SheetChunk> {
+    chunks
+        .iter()
+        .find(|chunk| chunk.start <= start && end <= chunk.end)
+}
+
+fn byte_range_distance(
+    left_start: usize,
+    left_end: usize,
+    right_start: usize,
+    right_end: usize,
+) -> usize {
+    if left_end < right_start {
+        right_start - left_end
+    } else {
+        left_start.saturating_sub(right_end)
+    }
+}
+
+fn text_coordinate_delta_support(
+    candidates: &[SheetTextWindowCandidate],
+) -> BTreeMap<isize, usize> {
+    let mut text_offsets_by_delta: BTreeMap<isize, HashSet<usize>> = BTreeMap::new();
+    for candidate in candidates {
+        if !candidate.same_chunk
+            || !candidate.quality_passed
+            || !is_high_quality_text_candidate(&candidate.text)
+        {
+            continue;
+        }
+        text_offsets_by_delta
+            .entry(offset_delta(
+                candidate.coordinate_offset,
+                candidate.text_offset,
+            ))
+            .or_default()
+            .insert(candidate.text_offset);
+    }
+    text_offsets_by_delta
+        .into_iter()
+        .map(|(delta, text_offsets)| (delta, text_offsets.len()))
+        .collect()
+}
+
+/// Return whether a coordinate-like pair is strong enough for object mapping.
+pub fn is_high_quality_coordinate_candidate(hint: &SheetCoordinateHint) -> bool {
+    let abs_x = checked_abs_i32(hint.x);
+    let abs_y = checked_abs_i32(hint.y);
+    if abs_x <= 16 && abs_y <= 16 {
+        return false;
+    }
+    if abs_x < 1_000 && abs_y < 1_000 {
+        return false;
+    }
+    if is_structural_coordinate_value(hint.x) || is_structural_coordinate_value(hint.y) {
+        return false;
+    }
+    true
+}
+
+/// Count distinct object fields supporting each chunk-relative shape.
+pub fn stable_chunk_shape_support(
+    features: &[SheetFieldXWindowFeatures],
+) -> BTreeMap<(isize, isize), usize> {
+    let mut fields_by_shape: BTreeMap<(isize, isize), HashSet<u32>> = BTreeMap::new();
+    for feature in features {
+        if feature.endpoint_record_start.is_some() {
+            continue;
+        }
+        let (Some(field_delta), Some(coordinate_delta)) = (
+            feature.field_delta_from_chunk,
+            feature.coordinate_delta_from_chunk,
+        ) else {
+            continue;
+        };
+        fields_by_shape
+            .entry((field_delta, coordinate_delta))
+            .or_default()
+            .insert(feature.field_x);
+    }
+
+    fields_by_shape
+        .into_iter()
+        .map(|(shape, fields)| (shape, fields.len()))
+        .collect()
+}
+
+/// Count distinct object fields supporting each non-generic marker shape.
+pub fn stable_marker_support(
+    features: &[SheetFieldXWindowFeatures],
+) -> BTreeMap<(isize, u32), usize> {
+    let mut fields_by_marker: BTreeMap<(isize, u32), HashSet<u32>> = BTreeMap::new();
+    for feature in features {
+        if feature.endpoint_record_start.is_some() {
+            continue;
+        }
+        for marker in &feature.stable_markers {
+            if is_structural_marker_value(marker.value_u32) {
+                continue;
+            }
+            fields_by_marker
+                .entry((marker.delta_from_field, marker.value_u32))
+                .or_default()
+                .insert(feature.field_x);
+        }
+    }
+
+    fields_by_marker
+        .into_iter()
+        .map(|(marker, fields)| (marker, fields.len()))
+        .collect()
+}
+
+fn is_structural_marker_value(value: u32) -> bool {
+    value <= 16
+        || matches!(value, 65_536 | 393_216 | 524_288)
+        || (value.is_power_of_two() && value <= 1_048_576)
+}
+
+fn is_structural_coordinate_value(value: i32) -> bool {
+    let abs = checked_abs_i32(value);
+    matches!(
+        value,
+        -65_536 | -65_535 | 0 | 1 | 2 | 4 | 6 | 8 | 16 | 65_535 | 65_536 | 65_537
+    ) || matches!(
+        abs,
+        32_768 | 65_536 | 131_072 | 262_144 | 524_288 | 1_048_576
+    ) || ((abs as u32).is_power_of_two() && abs <= 1_048_576)
+        || is_small_aligned_structural_value(abs)
+        || is_packed_field_like_value(abs)
+}
+
+fn checked_abs_i32(value: i32) -> i32 {
+    value.checked_abs().unwrap_or(i32::MAX)
+}
+
+fn is_small_aligned_structural_value(abs: i32) -> bool {
+    abs > 0 && abs <= 65_536 && abs % 256 == 0
+}
+
+fn is_packed_field_like_value(abs: i32) -> bool {
+    if abs <= 0 {
+        return false;
+    }
+    let value = abs as u32;
+    let high = value >> 16;
+    let low = value & 0xFFFF;
+    (1..=8).contains(&high) && (low <= 4096 || low >= 61_440)
+}
+
+fn marker_candidates(data: &[u8], window: &SheetFieldXWindow) -> Vec<SheetWindowMarker> {
+    let mut markers = Vec::new();
+    let mut offset = window.window_start;
+    while offset + 4 <= window.window_end && offset + 4 <= data.len() {
+        if offset != window.offset && offset.is_multiple_of(4) {
+            let value_u32 = u32_le(data, offset);
+            if value_u32 != 0 && value_u32 != window.field_x {
+                markers.push(SheetWindowMarker {
+                    offset,
+                    delta_from_field: offset_delta(offset, window.offset),
+                    value_u32,
+                });
+            }
+        }
+        offset += 1;
+    }
+    markers
+}
+
+fn nearest_coordinate(window: &SheetFieldXWindow) -> Option<SheetCoordinateHint> {
+    non_overlapping_coordinates(window)
+        .filter(|hint| is_high_quality_coordinate_candidate(hint))
+        .min_by_key(|hint| hint.offset.abs_diff(window.offset))
+        .cloned()
+}
+
+fn repeated_delta_candidate(
+    window: &SheetFieldXWindow,
+    repeated_delta_support: &BTreeMap<isize, usize>,
+) -> Option<SheetCoordinateHint> {
+    non_overlapping_coordinates(window)
+        .filter(|hint| is_high_quality_coordinate_candidate(hint))
+        .filter(|hint| {
+            repeated_delta_support
+                .get(&offset_delta(hint.offset, window.offset))
+                .is_some_and(|support| *support >= 2)
+        })
+        .min_by_key(|hint| hint.offset.abs_diff(window.offset))
+        .cloned()
+}
+
+fn non_overlapping_coordinates(
+    window: &SheetFieldXWindow,
+) -> impl Iterator<Item = &SheetCoordinateHint> {
+    window
+        .nearby_coordinates
+        .iter()
+        .filter(|hint| hint.offset + 8 <= window.offset || hint.offset >= window.offset + 4)
+}
+
+fn repeated_delta_support(
+    windows: &[SheetFieldXWindow],
+    object_field_xs: &HashSet<u32>,
+) -> BTreeMap<isize, usize> {
+    let mut field_xs_by_delta: BTreeMap<isize, HashSet<u32>> = BTreeMap::new();
+    for window in windows {
+        if window.endpoint_record_start.is_some() || !object_field_xs.contains(&window.field_x) {
+            continue;
+        }
+        for hint in non_overlapping_coordinates(window)
+            .filter(|hint| is_high_quality_coordinate_candidate(hint))
+        {
+            field_xs_by_delta
+                .entry(offset_delta(hint.offset, window.offset))
+                .or_default()
+                .insert(window.field_x);
+        }
+    }
+
+    field_xs_by_delta
+        .into_iter()
+        .map(|(delta, field_xs)| (delta, field_xs.len()))
+        .collect()
+}
+
+fn offset_delta(lhs: usize, rhs: usize) -> isize {
+    if lhs >= rhs {
+        (lhs - rhs) as isize
+    } else {
+        -((rhs - lhs) as isize)
+    }
+}
+
+fn endpoint_record_signature_start(data: &[u8], field_offset: usize) -> Option<usize> {
+    const ENDPOINT_RECORD_LEN: usize = 26;
+    const DISCRIMINATOR: u32 = 0x0000_0006;
+    const ENDPOINT_TYPE_TAG: u16 = 0x0002;
+    const ENDPOINT_DELIMITER: u16 = 0x0001;
+
+    for start in [
+        Some(field_offset),
+        field_offset.checked_sub(16),
+        field_offset.checked_sub(22),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if start + ENDPOINT_RECORD_LEN > data.len() {
+            continue;
+        }
+        if u32_le(data, start + 4) != DISCRIMINATOR {
+            continue;
+        }
+        if !data[start + 8..start + 14].iter().all(|&b| b == 0) {
+            continue;
+        }
+        if u16_le(data, start + 14) != ENDPOINT_TYPE_TAG {
+            continue;
+        }
+        if u16_le(data, start + 20) != ENDPOINT_DELIMITER {
+            continue;
+        }
+        return Some(start);
+    }
+    None
 }
 
 /// Collect every candidate boundary offset along with the heuristics that
@@ -434,6 +1470,10 @@ fn u32_le(data: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
 }
 
+fn u16_le(data: &[u8], off: usize) -> u16 {
+    u16::from_le_bytes([data[off], data[off + 1]])
+}
+
 fn i32_le(data: &[u8], off: usize) -> i32 {
     i32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
 }
@@ -543,11 +1583,20 @@ fn is_plausible_utf16_text_char(ch: u16) -> bool {
 
 fn coordinate_hints(data: &[u8]) -> Vec<SheetCoordinateHint> {
     const MAX_HINTS: usize = 64;
+
+    coordinate_hints_in_range(data, 0, data.len())
+        .into_iter()
+        .take(MAX_HINTS)
+        .collect()
+}
+
+fn coordinate_hints_in_range(data: &[u8], start: usize, end: usize) -> Vec<SheetCoordinateHint> {
     const MAX_ABS_COORD: i32 = 1_000_000;
 
     let mut out = Vec::new();
-    let mut i = 0usize;
-    while i + 8 <= data.len() && out.len() < MAX_HINTS {
+    let mut i = start.min(data.len());
+    let end = end.min(data.len());
+    while i + 8 <= end {
         if !i.is_multiple_of(4) {
             i += 1;
             continue;
@@ -861,6 +1910,621 @@ mod tests {
             .coordinate_hints
             .iter()
             .any(|hint| { hint.offset == coord_offset && hint.x == 1200 && hint.y == -450 }));
+    }
+
+    #[test]
+    fn text_window_candidates_link_text_to_nearby_quality_coordinates_without_promotion() {
+        let text = SheetTextRun {
+            offset: 16,
+            encoding: SheetTextEncoding::Ascii,
+            text: "PUMP-101".to_string(),
+            byte_len: 8,
+        };
+        let coordinate = SheetCoordinateHint {
+            offset: 40,
+            x: 1200,
+            y: -450,
+        };
+        let chunks = vec![SheetChunk {
+            start: 0,
+            end: 96,
+            len: 96,
+            ascii_preview: vec![],
+            utf16_preview: vec![],
+            zero_ratio: 0.0,
+            aligned_u32_density: 0.0,
+            repeated_u32_hits: 0,
+            kind_hint: SheetChunkKindHint::Mixed,
+        }];
+
+        let candidates = sheet_text_window_candidates(&[text], &[coordinate], &chunks, 32);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].text_offset, 16);
+        assert_eq!(candidates[0].text, "PUMP-101");
+        assert_eq!(candidates[0].coordinate_offset, 40);
+        assert_eq!(candidates[0].x, 1200);
+        assert_eq!(candidates[0].y, -450);
+        assert!(candidates[0].same_chunk);
+        assert_eq!(candidates[0].byte_distance, 16);
+        assert!(candidates[0].quality_passed);
+        assert_eq!(candidates[0].chunk_start, Some(0));
+        assert_eq!(candidates[0].chunk_end, Some(96));
+    }
+
+    #[test]
+    fn text_window_scoring_rejects_binary_like_text_before_position_scoring() {
+        assert!(is_high_quality_text_candidate("PUMP-101"));
+        assert!(is_high_quality_text_candidate("LINE A-101"));
+        assert!(!is_high_quality_text_candidate("봽렎卆툦"));
+        assert!(!is_high_quality_text_candidate(" 060101럀"));
+
+        let good = SheetTextWindowCandidate {
+            text_offset: 16,
+            text_byte_len: 8,
+            text_encoding: SheetTextEncoding::Ascii,
+            text: "PUMP-101".to_string(),
+            coordinate_offset: 40,
+            x: 1200,
+            y: -450,
+            same_chunk: true,
+            byte_distance: 16,
+            quality_passed: true,
+            chunk_start: Some(0),
+            chunk_end: Some(96),
+        };
+        let binary_like = SheetTextWindowCandidate {
+            text_offset: 80,
+            text_byte_len: 8,
+            text_encoding: SheetTextEncoding::Utf16Le,
+            text: "봽렎卆툦".to_string(),
+            coordinate_offset: 104,
+            x: 1200,
+            y: -450,
+            same_chunk: true,
+            byte_distance: 16,
+            quality_passed: true,
+            chunk_start: Some(0),
+            chunk_end: Some(128),
+        };
+
+        let scores = score_sheet_text_window_candidates(&[binary_like, good]);
+
+        assert_eq!(scores[0].candidate.text, "PUMP-101");
+        assert!(scores[0].score > 0);
+        assert!(scores[0]
+            .reasons
+            .contains(&SheetTextWindowScoreReason::TextQualityPassed));
+        assert_eq!(scores[1].candidate.text, "봽렎卆툦");
+        assert!(scores[1].score < 0);
+        assert!(scores[1]
+            .reasons
+            .contains(&SheetTextWindowScoreReason::TextQualityRejected));
+    }
+
+    #[test]
+    fn field_x_windows_capture_nearby_coordinate_candidates_without_promoting_geometry() {
+        let mut data = vec![0xAAu8; 16];
+        let field_x_offset = data.len();
+        data.extend_from_slice(&229u32.to_le_bytes());
+        data.extend_from_slice(&[0x00; 4]);
+        let coordinate_offset = data.len();
+        data.extend_from_slice(&1200i32.to_le_bytes());
+        data.extend_from_slice(&(-450i32).to_le_bytes());
+        data.extend_from_slice(&[0xBB; 16]);
+
+        let windows = field_x_windows(&data, &[229, 740], 16);
+
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].field_x, 229);
+        assert_eq!(windows[0].offset, field_x_offset);
+        assert_eq!(windows[0].endpoint_record_start, None);
+        assert!(windows[0]
+            .nearby_coordinates
+            .iter()
+            .any(|hint| hint.offset == coordinate_offset && hint.x == 1200 && hint.y == -450));
+    }
+
+    #[test]
+    fn field_x_windows_mark_hits_inside_endpoint_record_signatures() {
+        let mut data = vec![0xAAu8; 12];
+        let endpoint_record_start = data.len();
+        data.extend_from_slice(&949u32.to_le_bytes());
+        data.extend_from_slice(&0x0000_0006u32.to_le_bytes());
+        data.extend_from_slice(&[0u8; 6]);
+        data.extend_from_slice(&0x0002u16.to_le_bytes());
+        data.extend_from_slice(&229u32.to_le_bytes());
+        data.extend_from_slice(&0x0001u16.to_le_bytes());
+        data.extend_from_slice(&326u32.to_le_bytes());
+
+        let windows = field_x_windows(&data, &[949, 229, 326], 8);
+
+        assert_eq!(windows.len(), 3);
+        assert!(windows
+            .iter()
+            .all(|window| window.endpoint_record_start == Some(endpoint_record_start)));
+    }
+
+    #[test]
+    fn score_field_x_windows_downranks_endpoint_record_references() {
+        let mut data = vec![0xAAu8; 12];
+        data.extend_from_slice(&949u32.to_le_bytes());
+        data.extend_from_slice(&0x0000_0006u32.to_le_bytes());
+        data.extend_from_slice(&[0u8; 6]);
+        data.extend_from_slice(&0x0002u16.to_le_bytes());
+        data.extend_from_slice(&229u32.to_le_bytes());
+        data.extend_from_slice(&0x0001u16.to_le_bytes());
+        data.extend_from_slice(&326u32.to_le_bytes());
+        let windows = field_x_windows(&data, &[229], 8);
+        let object_fields = HashSet::from([229]);
+
+        let scores = score_field_x_windows(&windows, &object_fields);
+
+        assert_eq!(scores.len(), 1);
+        assert_eq!(scores[0].score, -100);
+        assert_eq!(scores[0].candidate_position, None);
+        assert_eq!(
+            scores[0].reasons,
+            vec![SheetFieldXWindowScoreReason::EndpointRecordReference]
+        );
+    }
+
+    #[test]
+    fn score_field_x_windows_scores_non_endpoint_candidates_without_promoting() {
+        let mut data = vec![0xAAu8; 16];
+        data.extend_from_slice(&229u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 4]);
+        let coordinate_offset = data.len();
+        data.extend_from_slice(&1200i32.to_le_bytes());
+        data.extend_from_slice(&(-450i32).to_le_bytes());
+        let windows = field_x_windows(&data, &[229], 16);
+        let object_fields = HashSet::from([229]);
+
+        let scores = score_field_x_windows(&windows, &object_fields);
+
+        assert_eq!(scores.len(), 1);
+        assert_eq!(scores[0].score, 25);
+        assert_eq!(
+            scores[0].candidate_position,
+            Some(SheetCoordinateHint {
+                offset: coordinate_offset,
+                x: 1200,
+                y: -450,
+            })
+        );
+        assert_eq!(
+            scores[0].reasons,
+            vec![
+                SheetFieldXWindowScoreReason::NonEndpointHit,
+                SheetFieldXWindowScoreReason::ObjectFieldResolves,
+                SheetFieldXWindowScoreReason::CoordinateCandidateAtDelta { delta: 8 },
+            ]
+        );
+    }
+
+    #[test]
+    fn score_field_x_windows_marks_repeated_coordinate_delta_across_fields() {
+        let mut data = vec![0xAAu8; 16];
+        data.extend_from_slice(&101u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 4]);
+        data.extend_from_slice(&1200i32.to_le_bytes());
+        data.extend_from_slice(&(-450i32).to_le_bytes());
+        data.extend_from_slice(&[0xAA; 8]);
+        data.extend_from_slice(&202u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 4]);
+        data.extend_from_slice(&2400i32.to_le_bytes());
+        data.extend_from_slice(&(-900i32).to_le_bytes());
+        let windows = field_x_windows(&data, &[101, 202], 16);
+        let object_fields = HashSet::from([101, 202]);
+
+        let scores = score_field_x_windows(&windows, &object_fields);
+
+        assert_eq!(scores.len(), 2);
+        assert!(scores.iter().all(|score| {
+            score.score == 65
+                && score.reasons.contains(
+                    &SheetFieldXWindowScoreReason::RepeatedDeltaAcrossFields {
+                        delta: 8,
+                        support: 2,
+                    },
+                )
+        }));
+    }
+
+    #[test]
+    fn field_x_window_features_map_hits_and_coordinates_to_containing_chunks() {
+        let mut data = vec![0xAAu8; 16];
+        data.extend_from_slice(&101u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 4]);
+        data.extend_from_slice(&1200i32.to_le_bytes());
+        data.extend_from_slice(&(-450i32).to_le_bytes());
+        data.extend_from_slice(&[0xAA; 16]);
+        let windows = field_x_windows(&data, &[101], 16);
+        let chunks = vec![SheetChunk {
+            start: 8,
+            end: 40,
+            len: 32,
+            ascii_preview: Vec::new(),
+            utf16_preview: Vec::new(),
+            zero_ratio: 0.0,
+            aligned_u32_density: 0.0,
+            repeated_u32_hits: 0,
+            kind_hint: SheetChunkKindHint::BinaryDense,
+        }];
+
+        let features = field_x_window_features(&data, &windows, &chunks);
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].field_x, 101);
+        assert_eq!(features[0].chunk_start, Some(8));
+        assert_eq!(features[0].chunk_end, Some(40));
+        assert_eq!(features[0].field_delta_from_chunk, Some(8));
+        assert_eq!(features[0].coordinate_delta_from_chunk, Some(16));
+        assert_eq!(
+            features[0].candidate_position,
+            Some(SheetCoordinateHint {
+                offset: 24,
+                x: 1200,
+                y: -450,
+            })
+        );
+        assert!(features[0]
+            .stable_markers
+            .iter()
+            .any(|marker| marker.offset == 24 && marker.value_u32 == 1200));
+    }
+
+    #[test]
+    fn stable_chunk_shape_support_counts_distinct_non_endpoint_fields() {
+        let features = vec![
+            feature_for_support(101, None, Some(10), Some(20), vec![]),
+            feature_for_support(101, None, Some(10), Some(20), vec![]),
+            feature_for_support(202, None, Some(10), Some(20), vec![]),
+            feature_for_support(303, Some(64), Some(10), Some(20), vec![]),
+        ];
+
+        let support = stable_chunk_shape_support(&features);
+
+        assert_eq!(support.get(&(10, 20)), Some(&2));
+    }
+
+    #[test]
+    fn stable_marker_support_filters_structural_constants_and_endpoint_hits() {
+        let features = vec![
+            feature_for_support(
+                101,
+                None,
+                Some(10),
+                Some(20),
+                vec![(2, 65_536), (6, 8), (4, 123_456)],
+            ),
+            feature_for_support(202, None, Some(10), Some(20), vec![(4, 123_456)]),
+            feature_for_support(303, Some(64), Some(10), Some(20), vec![(4, 123_456)]),
+        ];
+
+        let support = stable_marker_support(&features);
+
+        assert_eq!(support.get(&(2, 65_536)), None);
+        assert_eq!(support.get(&(4, 123_456)), Some(&2));
+    }
+
+    #[test]
+    fn high_quality_coordinate_filter_rejects_structural_pairs() {
+        for (x, y) in [
+            (1536, 0),
+            (6, 8),
+            (0, 65_536),
+            (65_537, -65_535),
+            (56, 664),
+            (35_328, 1_536),
+            (196_727, 196_712),
+            (131_067, 970),
+        ] {
+            assert!(
+                !is_high_quality_coordinate_candidate(&SheetCoordinateHint { offset: 0, x, y }),
+                "expected ({x}, {y}) to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn high_quality_coordinate_filter_accepts_drawing_like_pairs() {
+        assert!(is_high_quality_coordinate_candidate(&SheetCoordinateHint {
+            offset: 0,
+            x: 1200,
+            y: -450,
+        }));
+    }
+
+    #[test]
+    fn score_field_x_window_features_adds_stable_shape_and_marker_reasons() {
+        let features = vec![
+            feature_for_support(101, None, Some(10), Some(20), vec![(-28, 3_194_542_878)]),
+            feature_for_support(202, None, Some(10), Some(20), vec![(-28, 3_194_542_878)]),
+            feature_for_support(303, None, Some(10), Some(20), vec![(-28, 3_194_542_878)]),
+        ];
+        let object_fields = HashSet::from([101, 202, 303]);
+
+        let scores = score_field_x_window_features(&features, &object_fields);
+
+        assert!(scores.iter().all(|score| {
+            score.score == 70
+                && score
+                    .reasons
+                    .contains(&SheetFieldXWindowScoreReason::StableChunkShape {
+                        field_delta: 10,
+                        coordinate_delta: 20,
+                        support: 3,
+                    })
+                && score
+                    .reasons
+                    .contains(&SheetFieldXWindowScoreReason::StableMarkerNearby {
+                        delta: -28,
+                        value_u32: 3_194_542_878,
+                        support: 3,
+                    })
+        }));
+    }
+
+    #[test]
+    fn identity_index_maps_field_x_to_source_ids() {
+        let index = sheet_identity_index_from_trailers(&[
+            trailer_with_identity(35, 0x6009, 0x109, Some("0123456789ABCDEF0123456789ABCDEF")),
+            trailer_with_identity(37, 0x600B, 0x0F6, None),
+        ]);
+
+        let identity = index.by_field_x.get(&35).expect("object identity");
+        assert_eq!(identity.field_x, 35);
+        assert_eq!(identity.record_id, 0x6009);
+        assert_eq!(identity.class_id, 0x109);
+        assert_eq!(
+            identity.drawing_id.as_deref(),
+            Some("0123456789ABCDEF0123456789ABCDEF")
+        );
+        assert_eq!(
+            index.field_x_for_drawing_id("0123456789abcdef0123456789abcdef"),
+            Some(35)
+        );
+        assert!(
+            !index.by_field_x.contains_key(&37),
+            "relationship trailers without DrawingID are not object identities"
+        );
+    }
+
+    #[test]
+    fn field_x_window_identities_find_same_object_record_id() {
+        let mut data = vec![0xAAu8; 16];
+        let field_x_offset = data.len();
+        data.extend_from_slice(&35u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 4]);
+        let record_id_offset = data.len();
+        data.extend_from_slice(&0x6009u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 16]);
+        let windows = field_x_windows(&data, &[35], 16);
+        let index = sheet_identity_index_from_trailers(&[trailer_with_identity(
+            35,
+            0x6009,
+            0x109,
+            Some("0123456789ABCDEF0123456789ABCDEF"),
+        )]);
+
+        let identities = field_x_window_identities(&data, &windows, &index);
+
+        assert_eq!(
+            identities,
+            vec![SheetFieldXWindowIdentity {
+                field_x: 35,
+                offset: record_id_offset,
+                delta_from_field: (record_id_offset as isize) - (field_x_offset as isize),
+                kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                value: SheetFieldXWindowIdentityValue::U32(0x6009),
+                resolves_to_field_x: Some(35),
+                resolves_to_same_object: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn field_x_window_identities_reject_wrong_object_record_id() {
+        let mut data = vec![0xAAu8; 16];
+        let field_x_offset = data.len();
+        data.extend_from_slice(&35u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 4]);
+        let record_id_offset = data.len();
+        data.extend_from_slice(&0x7001u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 16]);
+        let windows = field_x_windows(&data, &[35], 16);
+        let index = sheet_identity_index_from_trailers(&[trailer_with_identity(
+            99,
+            0x7001,
+            0x109,
+            Some("FEDCBA9876543210FEDCBA9876543210"),
+        )]);
+
+        let identities = field_x_window_identities(&data, &windows, &index);
+
+        assert_eq!(
+            identities,
+            vec![SheetFieldXWindowIdentity {
+                field_x: 35,
+                offset: record_id_offset,
+                delta_from_field: (record_id_offset as isize) - (field_x_offset as isize),
+                kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                value: SheetFieldXWindowIdentityValue::U32(0x7001),
+                resolves_to_field_x: Some(99),
+                resolves_to_same_object: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn field_x_window_identities_resolve_ascii_drawing_id_case_insensitively() {
+        let mut data = vec![0xAAu8; 16];
+        let field_x_offset = data.len();
+        data.extend_from_slice(&35u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 4]);
+        let drawing_id_offset = data.len();
+        data.extend_from_slice(b"0123456789abcdef0123456789abcdef");
+        data.extend_from_slice(&[0xAA; 16]);
+        let windows = field_x_windows(&data, &[35], 48);
+        let index = sheet_identity_index_from_trailers(&[trailer_with_identity(
+            35,
+            0x6009,
+            0x109,
+            Some("0123456789ABCDEF0123456789ABCDEF"),
+        )]);
+
+        let identities = field_x_window_identities(&data, &windows, &index);
+
+        assert_eq!(
+            identities,
+            vec![SheetFieldXWindowIdentity {
+                field_x: 35,
+                offset: drawing_id_offset,
+                delta_from_field: (drawing_id_offset as isize) - (field_x_offset as isize),
+                kind: SheetFieldXWindowIdentityKind::DrawingIdAscii,
+                value: SheetFieldXWindowIdentityValue::Text(
+                    "0123456789abcdef0123456789abcdef".to_string()
+                ),
+                resolves_to_field_x: Some(35),
+                resolves_to_same_object: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn field_x_window_identities_resolve_utf16_drawing_id() {
+        let mut data = vec![0xAAu8; 16];
+        let field_x_offset = data.len();
+        data.extend_from_slice(&35u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 4]);
+        let drawing_id_offset = data.len();
+        for ch in "0123456789abcdef0123456789abcdef".encode_utf16() {
+            data.extend_from_slice(&ch.to_le_bytes());
+        }
+        data.extend_from_slice(&[0xAA; 16]);
+        let windows = field_x_windows(&data, &[35], 96);
+        let index = sheet_identity_index_from_trailers(&[trailer_with_identity(
+            35,
+            0x6009,
+            0x109,
+            Some("0123456789ABCDEF0123456789ABCDEF"),
+        )]);
+
+        let identities = field_x_window_identities(&data, &windows, &index);
+
+        assert_eq!(
+            identities,
+            vec![SheetFieldXWindowIdentity {
+                field_x: 35,
+                offset: drawing_id_offset,
+                delta_from_field: (drawing_id_offset as isize) - (field_x_offset as isize),
+                kind: SheetFieldXWindowIdentityKind::DrawingIdUtf16Le,
+                value: SheetFieldXWindowIdentityValue::Text(
+                    "0123456789abcdef0123456789abcdef".to_string()
+                ),
+                resolves_to_field_x: Some(35),
+                resolves_to_same_object: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn score_field_x_window_features_adds_graphic_identity_nearby_only_when_resolved() {
+        let features = vec![
+            feature_for_support(101, None, Some(10), Some(20), vec![]),
+            feature_for_support(202, None, Some(10), Some(20), vec![]),
+        ];
+        let identities = vec![
+            SheetFieldXWindowIdentity {
+                field_x: 101,
+                offset: 20,
+                delta_from_field: 4,
+                kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                value: SheetFieldXWindowIdentityValue::U32(0x6009),
+                resolves_to_field_x: Some(101),
+                resolves_to_same_object: true,
+            },
+            SheetFieldXWindowIdentity {
+                field_x: 202,
+                offset: 20,
+                delta_from_field: 4,
+                kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                value: SheetFieldXWindowIdentityValue::U32(0x7001),
+                resolves_to_field_x: Some(999),
+                resolves_to_same_object: false,
+            },
+        ];
+        let object_fields = HashSet::from([101, 202]);
+
+        let scores =
+            score_field_x_window_features_with_identities(&features, &object_fields, &identities);
+
+        let score_101 = scores.iter().find(|score| score.field_x == 101).unwrap();
+        let score_202 = scores.iter().find(|score| score.field_x == 202).unwrap();
+        assert_eq!(score_101.score, 60);
+        assert!(score_101
+            .reasons
+            .contains(&SheetFieldXWindowScoreReason::GraphicIdentityNearby {
+                kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                delta: 4,
+            }));
+        assert_eq!(score_202.score, 25);
+        assert!(!score_202.reasons.iter().any(|reason| {
+            matches!(
+                reason,
+                SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }
+            )
+        }));
+    }
+
+    fn feature_for_support(
+        field_x: u32,
+        endpoint_record_start: Option<usize>,
+        field_delta_from_chunk: Option<isize>,
+        coordinate_delta_from_chunk: Option<isize>,
+        markers: Vec<(isize, u32)>,
+    ) -> SheetFieldXWindowFeatures {
+        SheetFieldXWindowFeatures {
+            field_x,
+            offset: 16,
+            endpoint_record_start,
+            chunk_start: Some(8),
+            chunk_end: Some(40),
+            field_delta_from_chunk,
+            coordinate_delta_from_chunk,
+            candidate_position: coordinate_delta_from_chunk.map(|delta| SheetCoordinateHint {
+                offset: 8usize.saturating_add_signed(delta),
+                x: 1200,
+                y: -450,
+            }),
+            stable_markers: markers
+                .into_iter()
+                .map(|(delta_from_field, value_u32)| SheetWindowMarker {
+                    offset: 16usize.saturating_add_signed(delta_from_field),
+                    delta_from_field,
+                    value_u32,
+                })
+                .collect(),
+        }
+    }
+
+    fn trailer_with_identity(
+        field_x: u32,
+        record_id: u32,
+        class_id: u32,
+        drawing_id: Option<&str>,
+    ) -> crate::model::DaRecordTrailer {
+        crate::model::DaRecordTrailer {
+            record_start: 0,
+            trailer_offset: 16,
+            size: 42,
+            record_id,
+            field_x,
+            class_id,
+            drawing_id: drawing_id.map(str::to_string),
+            relationship_guid: None,
+        }
     }
 
     #[test]

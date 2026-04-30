@@ -25,6 +25,10 @@
 - Writer passthrough round-trip、metadata XML、Summary、任意 stream replacement、experimental Sheet patch。
 
 ## Partial / Probe 能力
+- `SheetGeometry` / `SheetText` / `SheetEndpoint` / `SheetCoordinateHintDto` 已作为 schema DTO 入口落地到 `SheetStream.geometry`，当前是稳定 contract surface，不代表完整 CAD geometry decoded；`sheet_probe` 的 text runs、coordinate hints 与 endpoint records 已归一化填充。
+- Sheet geometry synthetic 回归确认 endpoint 同步会保留先前 probe 归一化出的 text 与 coordinate hint，不会覆盖整个 `SheetGeometry`。
+- Phase 3 当前 DTO 起步范围已完成：Sheet text、coordinate hint、endpoint 三类证据进入稳定 DTO；未命名字节仍停留在 probe 层，不升级为 decoded。
+- Phase 4 已开始：`PidImportView.relationships` 从 cross-reference endpoint links 带出 sheet path、sheet offset 与 source/target `field_x`，作为 canonical edge 的轻量 provenance。
 - `PSMclustertable`、`PSMsegmenttable`：已部分结构化，但 record 字段语义与关联关系未完全闭环。
 - `PSMclustertable` decoded record 已暴露候选字段之外的 `unknown_prefix_bytes`，便于真实 fixture 横向对比，避免把保留位/未知常量误命名为稳定语义。
 - `PSMsegmenttable` entry 已暴露保守候选 owner cluster index/name；只有 segment entry 数量与 cluster table entry 数量完全一致时才填充，数量不一致或 cluster table 缺失时保持 `None`。
@@ -63,3 +67,34 @@
 - `src/import_view.rs`
 - `src/bin/pid_inspect.rs`
 - `src/bin/pid_publish_xml.rs`
+
+## H7CAD PID 真实几何显示最新结论
+- H7CAD 当前可安全显示 PID 中的 `Inferred Point`，来源是 Sheet coordinate hints，并保留 byte provenance。
+- 当前不应渲染 endpoint line：endpoint records 只证明 relationship/object `field_x` 语义连接，不证明 CAD 坐标。
+- `/Sheet6` object-coordinate mapping 经过 field-x window、stable chunk shape、stable marker、coordinate-quality filters 后仍无 promotable candidate，最终 feature report 保持 `max_score=45`、`promotable=0`。
+- `GraphicIdentityNearby` 路线已进一步验证：
+  - identity report：`fields=57`、`windows=6025`、`identities=425`、`same_object=11`、`wrong_object=414`。
+  - identity scoring：`identity_supported=0`、`max_score=45`、`over_threshold=0`。
+  - 结论：same-object identity 有真实信号，但没有与非端点 feature scoring candidate 相交，仍不能填充 `SheetObjectGeometryHint`。
+- PR 拆分建议：
+  - PR1：normalized geometry contract。
+  - PR2：H7CAD inferred point rendering。
+  - PR3：Sheet6 evidence guardrails + `SheetObjectGeometryHint` 空基线。
+  - PR4：field-x window / feature / coordinate-quality investigation。
+  - PR5：GraphicIdentityNearby identity index / scanner / scoring investigation。
+
+## Text placement 证据路线结论
+- `Text placement` 已作为 line 之前的低风险路线推进：先调查 text run 与 nearby coordinate，不改变 H7CAD 行为。
+- Phase A 已实现 `sheet_text_window_candidates`，只输出 investigation-only candidate；`/Sheet6` report：
+  - `text_runs=9`
+  - `coordinates=64`
+  - `candidates=121`
+  - `same_chunk=25`
+  - `coordinate_quality_passed=2`
+- Phase B 已实现 text-quality filter 与 scoring；收紧后 `/Sheet6` report：
+  - `text_quality_passed=0`
+  - `max_score=-50`
+  - `over_threshold=0`
+  - normalized geometry 仍无 `PidGraphicKind::Text`
+- 关键风险：当前 top text run 多为疑似二进制误识别的 CJK/韩文字符串；`" 060101럀"` 这类“数字 + Hangul 尾字”已被 filter 拒绝。
+- 结论：当前 `/Sheet6` 仍不能 promotion 为 `Text + Inferred`；后续需要更多真实 fixture 或改进 text extraction 后再继续。
