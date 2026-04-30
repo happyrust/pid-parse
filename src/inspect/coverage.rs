@@ -369,7 +369,10 @@ fn known_stream_state(
             PartiallyDecoded,
             Some("streams::psm_tables".into()),
             Some("psm_cluster_table".into()),
-            Some("record count + ids known; per-record field semantics still audit-only".into()),
+            Some(
+                "names + decoded record candidates; SmartPlant field semantics still pending"
+                    .into(),
+            ),
         ),
         "PSMsegmenttable" => (
             PartiallyDecoded,
@@ -432,9 +435,9 @@ fn known_stream_state(
 mod tests {
     use super::*;
     use crate::model::{
-        AppObjectRegistry, DocVersion2, PidDocument, PsmClusterTable, PsmRootEntry, PsmRoots,
-        PsmSegmentTable, StreamEntry, SummaryInfo, TaggedTextStorageList, VersionHistory,
-        VersionRecord,
+        AppObjectRegistry, DocVersion2, PidDocument, PsmClusterEntry, PsmClusterRecordDecoded,
+        PsmClusterTable, PsmRootEntry, PsmRoots, PsmSegmentTable, StreamEntry, SummaryInfo,
+        TaggedTextStorageList, VersionHistory, VersionRecord,
     };
     use std::collections::BTreeMap;
 
@@ -694,6 +697,47 @@ mod tests {
         assert!(
             note.contains("psm_cluster_table"),
             "downgrade note should name the empty field; got: {note}",
+        );
+    }
+
+    #[test]
+    fn coverage_keeps_psm_cluster_table_partial_with_candidate_decoded_records() {
+        let mut doc = doc_with_paths(&["/PSMclustertable"]);
+        doc.psm_cluster_table = Some(PsmClusterTable {
+            size: 64,
+            count: 1,
+            entries: vec![PsmClusterEntry {
+                name: "Sheet6".into(),
+                name_offset: 0x20,
+                record_offset: 0x08,
+                record_len: 0x19,
+                prefix_bytes: vec![],
+                probe: None,
+            }],
+            decoded_records: vec![PsmClusterRecordDecoded {
+                index: 0,
+                name: "Sheet6".into(),
+                record_offset: 0x08,
+                record_len: 0x19,
+                prefix_len: 11,
+                name_bytes_with_nul: Some(14),
+                candidate_ordinal: Some(0),
+                candidate_non_sheet_marker: Some(0),
+                candidate_non_sheet_payload_index: None,
+                confidence: "medium".into(),
+                field_ranges: vec![],
+                unknown_prefix_bytes: vec![],
+            }],
+            trailing_bytes: 0,
+        });
+
+        let report = coverage_report(&doc);
+        let entry = find(&report, "PSMclustertable");
+        assert_eq!(entry.status, ParseCoverageStatus::PartiallyDecoded);
+        let note = entry.note.as_deref().unwrap_or("");
+        assert!(
+            note.contains("decoded record candidates"),
+            "coverage note should stay conservative about candidate decoded records; got: {note}",
         );
     }
 

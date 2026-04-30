@@ -43,6 +43,16 @@
 本轮仍不把 `PSMclustertable` 升为 FullyDecoded，也不刷新 byte-audit
 baseline。
 
+### inspect：`PSMclustertable` consistency guardrail 收口（Phase 11a-2b）
+
+- 补齐 decoded candidate consistency 的 warning / missing path 测试，锁住名称、
+  sheet marker 与 decoded records 缺失时的诊断行为。
+- `pid_inspect` 文本 report 在 `PSMclustertable` 段输出 decoded consistency
+  summary，让 consistency guardrail 不只停留在 crossref API。
+- coverage policy 测试明确 `PSMclustertable` 继续保持 `PartiallyDecoded`；
+  decoded record candidates 只是工程候选视图，不宣称 SmartPlant 字段语义已
+  fully decoded。
+
 ### docs：刷新当前架构图与原理说明
 
 - 新增 `docs/current-architecture-principles.md`，用读取路径、

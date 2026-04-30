@@ -1085,6 +1085,133 @@ mod tests {
     }
 
     #[test]
+    fn psm_cluster_decoded_consistency_warns_on_name_mismatch() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(PsmClusterTable {
+            size: 64,
+            count: 1,
+            entries: vec![PsmClusterEntry {
+                name: "PSMcluster0".into(),
+                name_offset: 0x20,
+                record_offset: 0x08,
+                record_len: 0x2B,
+                prefix_bytes: vec![],
+                probe: None,
+            }],
+            decoded_records: vec![PsmClusterRecordDecoded {
+                index: 0,
+                name: "WrongCluster".into(),
+                record_offset: 0x08,
+                record_len: 0x2B,
+                prefix_len: 19,
+                name_bytes_with_nul: Some(24),
+                candidate_ordinal: Some(0),
+                candidate_non_sheet_marker: Some(1),
+                candidate_non_sheet_payload_index: Some(0),
+                confidence: "medium".into(),
+                field_ranges: vec![],
+                unknown_prefix_bytes: vec![],
+            }],
+            trailing_bytes: 0,
+        });
+
+        let consistency = psm_cluster_decoded_consistency(&doc).expect("cluster table consistency");
+        assert_eq!(
+            consistency.status,
+            PsmClusterDecodedConsistencyStatus::Warning
+        );
+        assert!(!consistency.names_match_entries);
+        assert!(
+            consistency
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("names")),
+            "{:?}",
+            consistency.warnings
+        );
+    }
+
+    #[test]
+    fn psm_cluster_decoded_consistency_warns_on_sheet_payload() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(PsmClusterTable {
+            size: 64,
+            count: 1,
+            entries: vec![PsmClusterEntry {
+                name: "Sheet6".into(),
+                name_offset: 0x20,
+                record_offset: 0x08,
+                record_len: 0x19,
+                prefix_bytes: vec![],
+                probe: None,
+            }],
+            decoded_records: vec![PsmClusterRecordDecoded {
+                index: 0,
+                name: "Sheet6".into(),
+                record_offset: 0x08,
+                record_len: 0x19,
+                prefix_len: 11,
+                name_bytes_with_nul: Some(14),
+                candidate_ordinal: Some(0),
+                candidate_non_sheet_marker: Some(0),
+                candidate_non_sheet_payload_index: Some(9),
+                confidence: "medium".into(),
+                field_ranges: vec![],
+                unknown_prefix_bytes: vec![],
+            }],
+            trailing_bytes: 0,
+        });
+
+        let consistency = psm_cluster_decoded_consistency(&doc).expect("cluster table consistency");
+        assert_eq!(
+            consistency.status,
+            PsmClusterDecodedConsistencyStatus::Warning
+        );
+        assert!(!consistency.payload_index_only_on_non_sheet_candidates);
+        assert!(
+            consistency
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("payload")),
+            "{:?}",
+            consistency.warnings
+        );
+    }
+
+    #[test]
+    fn psm_cluster_decoded_consistency_reports_missing_decoded_records() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(PsmClusterTable {
+            size: 64,
+            count: 1,
+            entries: vec![PsmClusterEntry {
+                name: "PSMcluster0".into(),
+                name_offset: 0x20,
+                record_offset: 0x08,
+                record_len: 0x2B,
+                prefix_bytes: vec![],
+                probe: None,
+            }],
+            decoded_records: vec![],
+            trailing_bytes: 0,
+        });
+
+        let consistency = psm_cluster_decoded_consistency(&doc).expect("cluster table consistency");
+        assert_eq!(
+            consistency.status,
+            PsmClusterDecodedConsistencyStatus::MissingDecodedRecords
+        );
+        assert!(
+            consistency
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("decoded_records is empty")),
+            "{:?}",
+            consistency.warnings
+        );
+    }
+
+    #[test]
     fn symbol_usage_groups_jsites_by_path() {
         let mut doc = PidDocument::default();
         doc.jsites

@@ -6,6 +6,7 @@
 //! consumer that wants a one-line / one-screen overview of a parsed
 //! `.pid`.
 
+use crate::crossref::{psm_cluster_decoded_consistency, PsmClusterDecodedConsistencyStatus};
 use crate::model::PidDocument;
 use crate::package::PidPackage;
 use crate::parsers::magic;
@@ -379,6 +380,19 @@ pub fn generate_report(doc: &PidDocument) -> String {
                 t.count
             )
             .ok();
+        }
+        if let Some(consistency) = psm_cluster_decoded_consistency(doc) {
+            let status = match consistency.status {
+                PsmClusterDecodedConsistencyStatus::Consistent => "consistent",
+                PsmClusterDecodedConsistencyStatus::Warning => "warning",
+                PsmClusterDecodedConsistencyStatus::MissingDecodedRecords => {
+                    "missing_decoded_records"
+                }
+            };
+            writeln!(out, "  decoded consistency: {status}").ok();
+            for warning in consistency.warnings.iter().take(5) {
+                writeln!(out, "    - {warning}").ok();
+            }
         }
         if t.trailing_bytes > 0 {
             writeln!(out, "  ({} trailing bytes)", t.trailing_bytes).ok();
@@ -1541,6 +1555,44 @@ mod tests {
         let report = generate_report(&doc);
         assert!(
             report.contains("decoded: confidence=medium name_bytes_with_nul=26 ordinal=1 non_sheet_marker=1 payload_index=1"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_shows_psm_cluster_decoded_consistency_summary() {
+        let mut doc = PidDocument::default();
+        doc.psm_cluster_table = Some(crate::model::PsmClusterTable {
+            size: 64,
+            count: 1,
+            entries: vec![crate::model::PsmClusterEntry {
+                name: "Sheet6".into(),
+                name_offset: 0x20,
+                record_offset: 0x08,
+                record_len: 0x19,
+                prefix_bytes: vec![],
+                probe: None,
+            }],
+            decoded_records: vec![crate::model::PsmClusterRecordDecoded {
+                index: 0,
+                name: "Sheet6".into(),
+                record_offset: 0x08,
+                record_len: 0x19,
+                prefix_len: 11,
+                name_bytes_with_nul: Some(14),
+                candidate_ordinal: Some(0),
+                candidate_non_sheet_marker: Some(0),
+                candidate_non_sheet_payload_index: None,
+                confidence: "medium".into(),
+                field_ranges: vec![],
+                unknown_prefix_bytes: vec![],
+            }],
+            trailing_bytes: 0,
+        });
+
+        let report = generate_report(&doc);
+        assert!(
+            report.contains("decoded consistency: consistent"),
             "{report}"
         );
     }
