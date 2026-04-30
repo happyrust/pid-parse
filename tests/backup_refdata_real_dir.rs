@@ -12,11 +12,9 @@
 //! with an explicit hint so the suite stays green for a fresh
 //! checkout.
 //!
-//! Counts and per-id format / size assertions are exact rather
-//! than `>=`: the manifest of one specific export run is part of
-//! the contract Step 2 (`src/backup/refdata.rs`) maintains, and
-//! any drift will surface as a failing equality, not a fuzzy
-//! "more / fewer than expected" hint.
+//! Counts and per-id format / filename assertions are exact. Size is
+//! checked against the current on-disk metadata so private and
+//! sanitized fixtures can differ without hiding scanner regressions.
 
 use std::path::Path;
 
@@ -70,31 +68,36 @@ fn scan_real_test02_refdata_inventory_matches_on_disk_shape() {
     let by_id: std::collections::BTreeMap<u32, &pid_parse::backup::RefDataEntry> =
         entries.iter().map(|e| (e.id, e)).collect();
 
-    let cases: &[(u32, RefDataFormat, u64, &str)] = &[
+    let cases: &[(u32, RefDataFormat, &str)] = &[
         // The `SmartPlant` Rules CSV — `"Begin Rules",120,…`
         // sits right at the start of the file.
-        (680, RefDataFormat::AsciiText, 332_275, "RefData~4~680"),
+        (680, RefDataFormat::AsciiText, "RefData~4~680"),
         // The five `.zip` payloads.
-        (681, RefDataFormat::Zip, 5_365_701, "RefData~4~681.zip"),
-        (682, RefDataFormat::Zip, 352_974, "RefData~4~682.zip"),
-        (684, RefDataFormat::Zip, 519_563, "RefData~4~684.zip"),
-        (685, RefDataFormat::Zip, 316, "RefData~4~685.zip"),
-        (804, RefDataFormat::Zip, 4_357_748, "RefData~4~804.zip"),
-        (809, RefDataFormat::Zip, 166_744, "RefData~4~809.zip"),
+        (681, RefDataFormat::Zip, "RefData~4~681.zip"),
+        (682, RefDataFormat::Zip, "RefData~4~682.zip"),
+        (684, RefDataFormat::Zip, "RefData~4~684.zip"),
+        (685, RefDataFormat::Zip, "RefData~4~685.zip"),
+        (804, RefDataFormat::Zip, "RefData~4~804.zip"),
+        (809, RefDataFormat::Zip, "RefData~4~809.zip"),
         // OLE / CFB compound file (no extension).
-        (683, RefDataFormat::Cfb, 122_880, "RefData~4~683"),
+        (683, RefDataFormat::Cfb, "RefData~4~683"),
         // ZIP without `.zip` suffix.
-        (703, RefDataFormat::Zip, 9_435, "RefData~4~703"),
+        (703, RefDataFormat::Zip, "RefData~4~703"),
         // `<ProjectInsulationSpecifications>` XML.
-        (709, RefDataFormat::Xml, 27_958, "RefData~4~709"),
+        (709, RefDataFormat::Xml, "RefData~4~709"),
     ];
 
-    for (id, expected_format, expected_size, expected_name) in cases {
+    for (id, expected_format, expected_name) in cases {
         let entry = by_id
             .get(id)
             .unwrap_or_else(|| panic!("RefData id {id} missing"));
+        let expected_size = dir
+            .join(expected_name)
+            .metadata()
+            .unwrap_or_else(|err| panic!("metadata for {expected_name}: {err}"))
+            .len();
         assert_eq!(entry.format, *expected_format, "format for id {id}");
-        assert_eq!(entry.size, *expected_size, "size for id {id}");
+        assert_eq!(entry.size, expected_size, "size for id {id}");
         assert_eq!(entry.file_name, *expected_name, "file_name for id {id}");
     }
 }
