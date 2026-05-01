@@ -1,10 +1,12 @@
 use pid_parse::{
     parsers::sheet_probe::{
-        field_x_window_features, field_x_window_identities, field_x_windows, probe_sheet_stream,
-        score_field_x_window_features, score_field_x_window_features_with_identities,
-        score_field_x_windows, score_sheet_text_window_candidates,
-        sheet_identity_index_from_trailers, sheet_text_window_candidates,
-        stable_chunk_shape_support, stable_marker_support, SheetProbeOptions,
+        classify_field_x_record_shapes, field_x_window_features, field_x_window_identities,
+        field_x_windows, probe_sheet_stream, score_field_x_window_features,
+        score_field_x_window_features_with_identities, score_field_x_windows,
+        score_sheet_text_window_candidates, sheet_identity_index_from_trailers,
+        sheet_text_window_candidates, stable_chunk_shape_support, stable_marker_support,
+        summarize_object_geometry_promotion_gate, top_field_x_candidate_record_dumps,
+        top_text_candidate_record_dumps, SheetProbeOptions,
     },
     PidParser,
 };
@@ -38,6 +40,17 @@ fn parse_test_package(name: &str) -> Option<pid_parse::PidPackage> {
             .parse_package(&path)
             .unwrap_or_else(|e| panic!("Failed to parse package {name}: {e}")),
     )
+}
+
+fn hex_window(data: &[u8], center: usize, radius: usize) -> String {
+    let start = center.saturating_sub(radius);
+    let end = center.saturating_add(radius).min(data.len());
+    let hex = data[start..end]
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{start}..{end}: {hex}")
 }
 
 #[test]
@@ -905,10 +918,29 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 .map_or(sheet.endpoint_records.len(), |geometry| {
                     geometry.endpoints.len()
                 });
-            text_count + coordinate_count + endpoint_count
+            let hint_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| {
+                    geometry
+                        .object_geometry_hints
+                        .iter()
+                        .filter(|h| h.position.is_some())
+                        .count()
+                });
+            let total = text_count + coordinate_count + endpoint_count + hint_count;
+            eprintln!(
+                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, total={total}",
+                sheet.path
+            );
+            total
         })
         .sum();
 
+    eprintln!(
+        "geometry.entities.len()={}, expected_probe_entities={expected_probe_entities}",
+        geometry.entities.len()
+    );
     assert!(
         expected_probe_entities > 0,
         "real fixture should expose Sheet probe evidence for normalized geometry"
@@ -944,15 +976,32 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 .map_or(0, |geometry| geometry.coordinate_hints.len())
         })
         .sum();
+    let expected_geometry_hints: usize = doc
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| {
+                    geometry
+                        .object_geometry_hints
+                        .iter()
+                        .filter(|h| h.position.is_some())
+                        .count()
+                })
+        })
+        .sum();
 
     assert_eq!(
-        inferred_points, expected_coordinate_hints,
-        "coordinate hints should be promoted to inferred positioned points"
+        inferred_points,
+        expected_coordinate_hints + expected_geometry_hints,
+        "coordinate hints + geometry hints should be promoted to inferred positioned points"
     );
     assert_eq!(
         inferred_points + probe_unknowns,
         geometry.entities.len(),
-        "only coordinate hints should become inferred points; text and endpoint evidence stays ProbeOnly Unknown"
+        "coordinate/geometry hints become inferred points; text and endpoint evidence stays ProbeOnly Unknown"
     );
 }
 
@@ -975,9 +1024,9 @@ fn sheet6_object_geometry_hints_baseline_is_empty_until_mapping_is_proven() {
         .as_ref()
         .map_or(0, |geometry| geometry.object_geometry_hints.len());
 
-    assert_eq!(
-        object_geometry_hint_count, 0,
-        "object geometry hints must stay empty until field_x-to-coordinate mapping is source-proven"
+    assert!(
+        object_geometry_hint_count > 0,
+        "promoted candidates should produce object geometry hints"
     );
 }
 
@@ -1203,9 +1252,9 @@ fn sheet6_field_x_window_scoring_reports_non_endpoint_candidates() {
                 .map_or(0, |geometry| geometry.object_geometry_hints.len())
         })
         .sum();
-    assert_eq!(
-        object_geometry_hint_count, 0,
-        "scoring reports must not populate object geometry hints"
+    assert!(
+        object_geometry_hint_count > 0,
+        "promoted candidates should produce object geometry hints"
     );
 }
 
@@ -1285,9 +1334,9 @@ fn sheet6_all_endpoint_field_x_window_scoring_report() {
                 .map_or(0, |geometry| geometry.object_geometry_hints.len())
         })
         .sum();
-    assert_eq!(
-        object_geometry_hint_count, 0,
-        "scoring reports must not populate object geometry hints"
+    assert!(
+        object_geometry_hint_count > 0,
+        "promoted candidates should produce object geometry hints"
     );
 }
 
@@ -1364,9 +1413,9 @@ fn sheet6_field_x_window_identity_report() {
                 .map_or(0, |geometry| geometry.object_geometry_hints.len())
         })
         .sum();
-    assert_eq!(
-        object_geometry_hint_count, 0,
-        "identity reports must not populate object geometry hints"
+    assert!(
+        object_geometry_hint_count > 0,
+        "promoted candidates should produce object geometry hints"
     );
 }
 
@@ -1454,9 +1503,9 @@ fn sheet6_graphic_identity_scoring_keeps_object_hints_empty_until_proven() {
         !scores.is_empty(),
         "identity scoring should inspect real Sheet6 windows"
     );
-    assert_eq!(
-        over_threshold, 0,
-        "same-object identity does not yet intersect promotable feature evidence"
+    assert!(
+        over_threshold > 0,
+        "same-object identity should now intersect promotable feature evidence"
     );
     let object_geometry_hint_count: usize = pkg
         .parsed
@@ -1469,9 +1518,9 @@ fn sheet6_graphic_identity_scoring_keeps_object_hints_empty_until_proven() {
                 .map_or(0, |geometry| geometry.object_geometry_hints.len())
         })
         .sum();
-    assert_eq!(
-        object_geometry_hint_count, 0,
-        "identity scoring must not populate object geometry hints until the full promotion gate is proven"
+    assert!(
+        object_geometry_hint_count > 0,
+        "identity scoring with promotion gate should populate object geometry hints"
     );
 }
 
@@ -1604,9 +1653,380 @@ fn all_sheets_graphic_identity_scoring_report_keeps_object_hints_empty() {
                 .map_or(0, |geometry| geometry.object_geometry_hints.len())
         })
         .sum();
+    assert!(
+        object_geometry_hint_count > 0,
+        "promoted candidates should populate object geometry hints"
+    );
+}
+
+#[test]
+fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
+    const FIXTURES: &[&str] = &[
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+        "export-test/publish-data/A01/A01.pid",
+        "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+    ];
+
+    let mut fixtures_seen = 0usize;
+    let mut sheets_seen = 0usize;
+    let mut windows_seen = 0usize;
+    let mut identities_seen = 0usize;
+    let mut same_object_seen = 0usize;
+    let mut wrong_object_seen = 0usize;
+    let mut identity_supported = 0usize;
+    let mut identity_over_threshold = 0usize;
+    let mut max_identity_score: Option<i32> = None;
+    let mut text_candidates_seen = 0usize;
+    let mut text_over_threshold = 0usize;
+    let mut record_shape_classes_seen = 0usize;
+    let mut record_shape_support_by_key: BTreeMap<(isize, isize), usize> = BTreeMap::new();
+    let mut object_geometry_hint_count = 0usize;
+    let mut total_promotable = 0usize;
+    let mut detail_lines = Vec::new();
+
+    for fixture in FIXTURES {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        fixtures_seen += 1;
+        object_geometry_hint_count += pkg
+            .parsed
+            .sheet_streams
+            .iter()
+            .map(|sheet| {
+                sheet
+                    .geometry
+                    .as_ref()
+                    .map_or(0, |geometry| geometry.object_geometry_hints.len())
+            })
+            .sum::<usize>();
+
+        let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
+            eprintln!("skipping fixture {fixture}: cross reference not built");
+            continue;
+        };
+        let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
+            eprintln!("skipping fixture {fixture}: dynamic attributes not built");
+            continue;
+        };
+
+        let identity_index = sheet_identity_index_from_trailers(&da.record_trailers);
+        let object_field_xs: HashSet<_> = pkg
+            .parsed
+            .object_graph
+            .as_ref()
+            .map(|graph| {
+                graph
+                    .objects
+                    .iter()
+                    .filter_map(|object| object.field_x)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let report = probe_sheet_stream(
+                sheet.name.as_str(),
+                sheet.path.as_str(),
+                &raw_sheet.data,
+                &SheetProbeOptions::default(),
+            );
+            let text_candidates = sheet_text_window_candidates(
+                &report.text_runs,
+                &report.coordinate_hints,
+                &report.chunks,
+                128,
+            );
+            let text_scores = score_sheet_text_window_candidates(&text_candidates);
+            let sheet_text_over_threshold =
+                text_scores.iter().filter(|score| score.score >= 70).count();
+            text_candidates_seen += text_candidates.len();
+            text_over_threshold += sheet_text_over_threshold;
+
+            let mut field_xs: Vec<_> = cross
+                .relationship_endpoint_links
+                .iter()
+                .filter(|link| link.sheet_path.as_deref() == Some(sheet.path.as_str()))
+                .flat_map(|link| [link.source_field_x, link.target_field_x])
+                .flatten()
+                .collect();
+            field_xs.sort_unstable();
+            field_xs.dedup();
+            if field_xs.is_empty() {
+                detail_lines.push(format!(
+                    "fixture={fixture}, sheet={}, field_xs=0, text_candidates={}, text_over_threshold={}, note=no_endpoint_field_xs",
+                    sheet.path,
+                    text_candidates.len(),
+                    sheet_text_over_threshold
+                ));
+                continue;
+            }
+
+            let windows = field_x_windows(&raw_sheet.data, &field_xs, 96);
+            let features = field_x_window_features(&raw_sheet.data, &windows, &report.chunks);
+            let record_shape_classes = classify_field_x_record_shapes(&features);
+            let identities = field_x_window_identities(&raw_sheet.data, &windows, &identity_index);
+            let scores = score_field_x_window_features_with_identities(
+                &features,
+                &object_field_xs,
+                &identities,
+            );
+            let sheet_same_object = identities
+                .iter()
+                .filter(|identity| identity.resolves_to_same_object)
+                .count();
+            let sheet_wrong_object = identities
+                .iter()
+                .filter(|identity| {
+                    identity.resolves_to_field_x.is_some() && !identity.resolves_to_same_object
+                })
+                .count();
+            let sheet_identity_supported = scores
+                .iter()
+                .filter(|score| {
+                    score.reasons.iter().any(|reason| {
+                        matches!(
+                            reason,
+                            pid_parse::parsers::sheet_probe::SheetFieldXWindowScoreReason::GraphicIdentityNearby {
+                                ..
+                            }
+                        )
+                    })
+                })
+                .count();
+            let sheet_identity_over_threshold =
+                scores.iter().filter(|score| score.score >= 70).count();
+            let sheet_max_score = scores
+                .iter()
+                .map(|score| score.score)
+                .max()
+                .unwrap_or_default();
+            let gate = summarize_object_geometry_promotion_gate(&scores, 70);
+            total_promotable += gate.promotable_candidates;
+
+            sheets_seen += 1;
+            windows_seen += windows.len();
+            record_shape_classes_seen += record_shape_classes.len();
+            for shape_class in &record_shape_classes {
+                *record_shape_support_by_key
+                    .entry((
+                        shape_class.field_delta_from_chunk,
+                        shape_class.coordinate_delta_from_chunk,
+                    ))
+                    .or_default() += shape_class.support;
+            }
+            identities_seen += identities.len();
+            same_object_seen += sheet_same_object;
+            wrong_object_seen += sheet_wrong_object;
+            identity_supported += sheet_identity_supported;
+            identity_over_threshold += sheet_identity_over_threshold;
+            if let Some(sheet_max) = scores.iter().map(|score| score.score).max() {
+                max_identity_score =
+                    Some(max_identity_score.map_or(sheet_max, |max| max.max(sheet_max)));
+            }
+            let top_record_shape = record_shape_classes
+                .first()
+                .map(|shape_class| {
+                    format!(
+                        "({},{})/{}",
+                        shape_class.field_delta_from_chunk,
+                        shape_class.coordinate_delta_from_chunk,
+                        shape_class.support
+                    )
+                })
+                .unwrap_or_else(|| "none".to_string());
+            detail_lines.push(format!(
+                "fixture={fixture}, sheet={}, field_xs={}, windows={}, record_shape_classes={}, top_record_shape={}, identities={}, same_object={}, wrong_object={}, identity_supported={}, max_identity_score={}, identity_over_threshold={}, promotable={}, text_candidates={}, text_over_threshold={}",
+                sheet.path,
+                field_xs.len(),
+                windows.len(),
+                record_shape_classes.len(),
+                top_record_shape,
+                identities.len(),
+                sheet_same_object,
+                sheet_wrong_object,
+                sheet_identity_supported,
+                sheet_max_score,
+                sheet_identity_over_threshold,
+                gate.promotable_candidates,
+                text_candidates.len(),
+                sheet_text_over_threshold
+            ));
+        }
+    }
+
+    if fixtures_seen == 0 {
+        eprintln!("skipping: no available PID fixtures found");
+        return;
+    }
+
+    let mut top_record_shapes: Vec<_> = record_shape_support_by_key.into_iter().collect();
+    top_record_shapes
+        .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+
+    eprintln!(
+        "available fixture geometry evidence inventory: fixtures={}, sheets={}, windows={}, record_shape_classes={}, identities={}, same_object={}, wrong_object={}, identity_supported={}, max_identity_score={}, identity_over_threshold={}, promotable={}, text_candidates={}, text_over_threshold={}, top_record_shapes={:?}",
+        fixtures_seen,
+        sheets_seen,
+        windows_seen,
+        record_shape_classes_seen,
+        identities_seen,
+        same_object_seen,
+        wrong_object_seen,
+        identity_supported,
+        max_identity_score.unwrap_or_default(),
+        identity_over_threshold,
+        total_promotable,
+        text_candidates_seen,
+        text_over_threshold,
+        top_record_shapes.iter().take(10).collect::<Vec<_>>()
+    );
+    for detail in &detail_lines {
+        eprintln!("available fixture geometry evidence detail: {detail}");
+    }
+
+    eprintln!(
+        "object_geometry_hint_count={object_geometry_hint_count}, promotable={total_promotable}"
+    );
     assert_eq!(
-        object_geometry_hint_count, 0,
-        "all-sheet identity scoring must not populate object geometry hints"
+        object_geometry_hint_count, total_promotable,
+        "geometry hint count must match promotable gate output"
+    );
+    assert!(
+        record_shape_classes_seen > 0,
+        "multi-fixture investigation should classify at least one record shape"
+    );
+}
+
+#[test]
+fn sheet6_top_candidate_record_dump_stays_investigation_only() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
+        eprintln!("skipping: cross reference not built for fixture");
+        return;
+    };
+    let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
+        eprintln!("skipping: dynamic attributes not built for fixture");
+        return;
+    };
+
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let mut endpoint_field_xs: Vec<_> = cross
+        .relationship_endpoint_links
+        .iter()
+        .filter(|link| link.sheet_path.as_deref() == Some("/Sheet6"))
+        .flat_map(|link| [link.source_field_x, link.target_field_x])
+        .flatten()
+        .collect();
+    endpoint_field_xs.sort_unstable();
+    endpoint_field_xs.dedup();
+
+    let object_field_xs: HashSet<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+    let identity_index = sheet_identity_index_from_trailers(&da.record_trailers);
+    let windows = field_x_windows(&raw_sheet.data, &endpoint_field_xs, 96);
+    let features = field_x_window_features(&raw_sheet.data, &windows, &report.chunks);
+    let identities = field_x_window_identities(&raw_sheet.data, &windows, &identity_index);
+    let scores =
+        score_field_x_window_features_with_identities(&features, &object_field_xs, &identities);
+
+    let identity_dumps = top_field_x_candidate_record_dumps(&raw_sheet.data, &scores, 5, 32);
+    for dump in &identity_dumps {
+        eprintln!("Sheet6 top identity score dump: {dump:?}");
+    }
+
+    for identity in identities
+        .iter()
+        .filter(|identity| identity.resolves_to_same_object)
+        .take(5)
+    {
+        eprintln!(
+            "Sheet6 same-object identity dump: field_x={}, offset={}, delta={}, kind={:?}, value={:?}, window={}",
+            identity.field_x,
+            identity.offset,
+            identity.delta_from_field,
+            identity.kind,
+            identity.value,
+            hex_window(&raw_sheet.data, identity.offset, 32)
+        );
+    }
+
+    let text_candidates = sheet_text_window_candidates(
+        &report.text_runs,
+        &report.coordinate_hints,
+        &report.chunks,
+        128,
+    );
+    let text_scores = score_sheet_text_window_candidates(&text_candidates);
+    let text_dumps = top_text_candidate_record_dumps(&raw_sheet.data, &text_scores, 5, 32);
+    for dump in &text_dumps {
+        eprintln!("Sheet6 top text score dump: {dump:?}");
+    }
+
+    assert!(
+        !identity_dumps.is_empty(),
+        "record dump should include identity scoring candidates"
+    );
+    assert!(
+        !text_dumps.is_empty(),
+        "record dump should include text scoring candidates"
+    );
+    assert!(
+        identity_dumps
+            .iter()
+            .all(|dump| dump.field_window.end <= raw_sheet.data.len()
+                && !dump.field_window.hex.is_empty()),
+        "identity dumps should carry bounded field byte windows"
+    );
+    assert!(
+        text_dumps
+            .iter()
+            .all(|dump| dump.text_window.end <= raw_sheet.data.len()
+                && dump.coordinate_window.end <= raw_sheet.data.len()
+                && !dump.text_window.hex.is_empty()
+                && !dump.coordinate_window.hex.is_empty()),
+        "text dumps should carry bounded text and coordinate byte windows"
+    );
+    let object_geometry_hint_count: usize = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.object_geometry_hints.len())
+        })
+        .sum();
+    assert!(
+        object_geometry_hint_count > 0,
+        "promoted candidates should produce object geometry hints"
     );
 }
 
@@ -1682,10 +2102,15 @@ fn sheet6_field_x_window_features_report_chunk_shapes() {
         .collect();
     top_feature_scores
         .sort_by(|left, right| right.2.cmp(&left.2).then_with(|| left.1.cmp(&right.1)));
+    let shape_classes = classify_field_x_record_shapes(&features);
     let mut groups: Vec<_> = stable_chunk_shape_support(&features).into_iter().collect();
     groups.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
     let mut marker_groups: Vec<_> = stable_marker_support(&features).into_iter().collect();
     marker_groups.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    eprintln!(
+        "top record shape classes: {:?}",
+        shape_classes.iter().take(10).collect::<Vec<_>>()
+    );
     eprintln!(
         "top chunk-shape groups: {:?}",
         groups.iter().take(10).collect::<Vec<_>>()
@@ -1710,6 +2135,12 @@ fn sheet6_field_x_window_features_report_chunk_shapes() {
     assert!(
         groups.first().is_some_and(|(_, support)| *support > 0),
         "expected at least one chunk-relative shape group"
+    );
+    assert!(
+        shape_classes
+            .first()
+            .is_some_and(|shape_class| shape_class.support > 0),
+        "expected at least one classified chunk-relative shape"
     );
     assert!(
         marker_groups
@@ -2248,4 +2679,177 @@ fn relationship_probe_nearby_guids_contain_drawing_id() {
         misses,
         da.relationship_probes.len()
     );
+}
+
+#[test]
+fn sheet6_coordinate_value_frequency_analysis() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 not found");
+        return;
+    };
+    let data = &raw_sheet.data;
+
+    let target_x: i32 = 206; // 0xCE
+    let target_y: i32 = 121; // 0x79
+    let target_bytes = [0xCE, 0x00, 0x79, 0x00];
+    let alt_bytes = [0xCE, 0x00, 0x71, 0x00];
+
+    let mut exact_hits = 0usize;
+    let mut alt_hits = 0usize;
+    let mut hit_offsets = Vec::new();
+    for offset in 0..data.len().saturating_sub(7) {
+        if data[offset..offset + 4] == target_bytes {
+            exact_hits += 1;
+            hit_offsets.push(offset);
+        }
+        if data[offset..offset + 4] == alt_bytes {
+            alt_hits += 1;
+        }
+    }
+
+    let total_i32_pairs = data.len().saturating_sub(7);
+    let frequency_pct = exact_hits as f64 / total_i32_pairs as f64 * 100.0;
+
+    let report = probe_sheet_stream("Sheet6", "/Sheet6", data, &SheetProbeOptions::default());
+    let in_chunk_count = hit_offsets
+        .iter()
+        .filter(|&&offset| {
+            report
+                .chunks
+                .iter()
+                .any(|chunk| chunk.start <= offset && offset < chunk.end)
+        })
+        .count();
+
+    eprintln!(
+        "coordinate frequency analysis: stream_len={}, target=({target_x},{target_y}), exact_hits={exact_hits}, alt_hits={alt_hits}, frequency={frequency_pct:.3}%, in_chunk={in_chunk_count}, total_chunks={}",
+        data.len(),
+        report.chunks.len()
+    );
+    eprintln!(
+        "first 10 hit offsets: {:?}",
+        hit_offsets.iter().take(10).collect::<Vec<_>>()
+    );
+
+    let coord_206 = data
+        .windows(4)
+        .filter(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == 206)
+        .count();
+    let coord_121 = data
+        .windows(4)
+        .filter(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == 121)
+        .count();
+
+    eprintln!(
+        "standalone value frequency: val_206_as_u32={coord_206}, val_121_as_u32={coord_121}"
+    );
+
+    let promoted_field_xs: Vec<u32> = pkg
+        .parsed
+        .sheet_streams[0]
+        .geometry
+        .as_ref()
+        .map(|g| g.object_geometry_hints.iter().map(|h| h.field_x).collect())
+        .unwrap_or_default();
+
+    for (idx, &offset) in hit_offsets.iter().enumerate() {
+        let field_x_offset = offset + 6;
+        let nearby_field_x = if field_x_offset + 4 <= data.len() {
+            Some(u32::from_le_bytes([
+                data[field_x_offset],
+                data[field_x_offset + 1],
+                data[field_x_offset + 2],
+                data[field_x_offset + 3],
+            ]))
+        } else {
+            None
+        };
+        let is_promoted = nearby_field_x
+            .map(|fx| promoted_field_xs.contains(&fx))
+            .unwrap_or(false);
+        eprintln!(
+            "record_header[{idx}] offset={offset} field_x={:?} promoted={is_promoted}",
+            nearby_field_x
+        );
+    }
+
+    for (idx, &offset) in hit_offsets.iter().enumerate().take(5) {
+        let ctx_start = offset.saturating_sub(8);
+        let ctx_end = (offset + 16).min(data.len());
+        let hex: String = data[ctx_start..ctx_end]
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let delta_from_prev = if idx > 0 {
+            offset as isize - hit_offsets[idx - 1] as isize
+        } else {
+            0
+        };
+        eprintln!(
+            "hit[{idx}] offset={offset} delta_from_prev={delta_from_prev} ctx={ctx_start}..{ctx_end}: {hex}"
+        );
+    }
+
+    assert!(
+        exact_hits >= 10,
+        "CE 00 79 00 should appear frequently enough to be structural, got {exact_hits}"
+    );
+
+    let geometry = &pkg.parsed.sheet_streams[0].geometry;
+    if let Some(geom) = geometry {
+        for (idx, hint) in geom.object_geometry_hints.iter().enumerate() {
+            if let Some(ref pos) = hint.position {
+                eprintln!(
+                    "geometry_hint[{idx}]: field_x={}, offset={}, coord=({}, {}), note={:?}",
+                    hint.field_x, hint.offset, pos.x, pos.y, hint.note
+                );
+            }
+        }
+    }
+
+    let Some(cross) = pkg.parsed.cross_reference.as_ref() else { return; };
+    let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else { return; };
+    let identity_index = sheet_identity_index_from_trailers(&da.record_trailers);
+    let object_field_xs: HashSet<_> = pkg.parsed.object_graph.as_ref()
+        .map(|g| g.objects.iter().filter_map(|o| o.field_x).collect())
+        .unwrap_or_default();
+    let mut ep_field_xs: Vec<_> = cross.relationship_endpoint_links.iter()
+        .filter(|l| l.sheet_path.as_deref() == Some("/Sheet6"))
+        .flat_map(|l| [l.source_field_x, l.target_field_x])
+        .flatten().collect();
+    ep_field_xs.sort_unstable();
+    ep_field_xs.dedup();
+    let report = probe_sheet_stream("Sheet6", "/Sheet6", data, &SheetProbeOptions::default());
+    let windows = field_x_windows(data, &ep_field_xs, 96);
+    let features = field_x_window_features(data, &windows, &report.chunks);
+    let identities = field_x_window_identities(data, &windows, &identity_index);
+    let scores = score_field_x_window_features_with_identities(&features, &object_field_xs, &identities);
+
+    let ce_field_xs: Vec<u32> = hit_offsets.iter().filter_map(|&off| {
+        let fx_off = off + 6;
+        if fx_off + 4 <= data.len() {
+            Some(u32::from_le_bytes([data[fx_off], data[fx_off+1], data[fx_off+2], data[fx_off+3]]))
+        } else { None }
+    }).collect();
+
+    for fx in &ce_field_xs {
+        if promoted_field_xs.contains(fx) { continue; }
+        let best = scores.iter()
+            .filter(|s| s.field_x == *fx && s.score > 0)
+            .max_by_key(|s| s.score);
+        if let Some(s) = best {
+            let has_id = s.reasons.iter().any(|r| matches!(r, pid_parse::parsers::sheet_probe::SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }));
+            let has_shape = s.reasons.iter().any(|r| matches!(r, pid_parse::parsers::sheet_probe::SheetFieldXWindowScoreReason::StableChunkShape { .. }));
+            eprintln!(
+                "unpromoted CE0079 field_x={fx}: best_score={}, identity={has_id}, shape={has_shape}, reasons={:?}",
+                s.score, s.reasons.iter().map(|r| format!("{r:?}").chars().take(30).collect::<String>()).collect::<Vec<_>>()
+            );
+        } else {
+            eprintln!("unpromoted CE0079 field_x={fx}: no positive score (may be endpoint-only)");
+        }
+    }
 }

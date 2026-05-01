@@ -98,3 +98,42 @@
   - normalized geometry 仍无 `PidGraphicKind::Text`
 - 关键风险：当前 top text run 多为疑似二进制误识别的 CJK/韩文字符串；`" 060101럀"` 这类“数字 + Hangul 尾字”已被 filter 拒绝。
 - 结论：当前 `/Sheet6` 仍不能 promotion 为 `Text + Inferred`；后续需要更多真实 fixture 或改进 text extraction 后再继续。
+
+## 多 fixture geometry evidence inventory
+- 已新增 investigation-only 横向报告 `available_pid_fixtures_geometry_evidence_inventory_stays_probe_only`，覆盖当前可用的 5 个 PID fixture，包括非 ASCII 文件名 fixture。
+- 当前报告结果：
+  - `fixtures=5`
+  - `sheets=3`
+  - `windows=6337`
+  - `record_shape_classes=328`
+  - `identities=437`
+  - `same_object=17`
+  - `wrong_object=420`
+  - `identity_supported=0`
+  - `max_identity_score=45`
+  - `identity_over_threshold=0`
+  - `text_candidates=578`
+  - `text_over_threshold=0`
+- top aggregate record shapes 当前为 `(12,-18)`、`(14,38)`、`(68,5)`，分别累计 support 4/4/4；这些是 grammar 复查入口，仍未达到 source-proven promotion gate。
+- per-fixture / per-sheet 明细已输出：
+  - `DWG-0201GP06-01.pid /Sheet6`：`field_xs=57`、`windows=6025`、`record_shape_classes=272`、`same_object=11`、`wrong_object=414`。
+  - `DWG-0202GP06-01.pid /Sheet6`：`field_xs=28`、`windows=156`、`record_shape_classes=28`、`same_object=3`、`wrong_object=3`。
+  - `工艺管道及仪表流程-1.pid /Sheet6`：无 endpoint field_x，当前只贡献 text candidates。
+  - A01 publish fixture 多个 JSite Sheet 暂无 endpoint field_x，当前只贡献 text candidates / skip 明细。
+- 结论：多 fixture 横向扫描增加了样本覆盖，但仍没有 source-proven geometry promotion 证据；`object_geometry_hints` 继续保持空基线。
+
+## H7CAD 工作树状态
+- `D:/work/plant-code/cad/H7CAD-pid-real-geometry-display` 包含 H7CAD inferred point 渲染实现：`.pid` 打开后保留拓扑预览，并叠加 `PID_GEOMETRY_POINTS`。
+- `D:/work/plant-code/cad/H7CAD` 主工作树当前仍是旧链路：`open_pid -> derive_layout -> pid_document_to_preview`，未接 `build_normalized_geometry` / `geometry_stats`。
+- `normalized_geometry_real_fixture_renders_expected_points` 在 geometry 工作树通过，基线为 `normalized=132`、`inferred_points=64`、`probe_unknowns=68`、`rendered=64`、`point_layer=64`。
+
+## Top candidate record dump helper
+- 已新增 `top_field_x_candidate_record_dumps` 和 `top_text_candidate_record_dumps`，输出 rank、score、reasons、offset 以及 bounded hex byte windows，服务 Sheet record grammar 人工审查。
+- helper 只做 investigation dump，不填充 `SheetObjectGeometryHint`，不改变 Line/Text/Symbol promotion gate。
+- `sheet6_top_candidate_record_dump_stays_investigation_only` 使用真实 `/Sheet6` fixture 验证 dump 非空、byte window 有界，并继续断言 `object_geometry_hints=0`。
+
+## Sheet record shape classifier
+- 已新增 `classify_field_x_record_shapes` 与 `SheetFieldXRecordShapeClass`，按 `(field_delta_from_chunk, coordinate_delta_from_chunk)` 聚合 non-endpoint `field_x` window features，统计 distinct `field_x` support，并保留示例 field / coordinate offset。
+- `/Sheet6` 当前 top shape classes 为 `(14, 38)` 和 `(46, 70)`，support 均为 2；这说明存在可复查的重复 record shape，但还不是 source-proven geometry。
+- `sheet6_field_x_window_features_report_chunk_shapes` 已接入 classifier，仍保持 `max_score=45`、`promotable=0`，不填充 `SheetObjectGeometryHint`。
+- 多 fixture inventory 已接入 classifier 汇总：当前 `record_shape_classes=328`，top aggregate shapes 最高累计 support 为 4，但 identity/text promotion threshold 仍为 0。

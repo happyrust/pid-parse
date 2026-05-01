@@ -4,7 +4,7 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 7
+Phase 8
 
 ## 阶段
 
@@ -73,6 +73,15 @@ Phase 7
 - [ ] 获取更多真实 PID fixture，或改善 text extraction 后再继续 Text placement
 - **Status:** in_progress
 
+### Phase 8：完整解析推进路线
+- [x] 新增多 fixture geometry evidence inventory，确认当前 4 个 fixture 仍无 promotion 证据
+- [x] 形成下一阶段中文开发方案：fixture 扩容、Sheet record grammar、object-coordinate promotion gate、Text/Symbol 渲染升级
+- [x] 增加 per-fixture / per-sheet 明细输出
+- [x] 建立 top identity/text candidate record dump helper
+- [x] 建立第一版 Sheet record shape classifier
+- [ ] 在 source-proven gate 达标后，再填充 `SheetObjectGeometryHint` 并升级 H7CAD Line/Text/Symbol layer
+- **Status:** in_progress
+
 ## 决策
 | 决策 | 理由 |
 |---|---|
@@ -83,6 +92,7 @@ Phase 7
 | H7CAD 只渲染已证明的 inferred points | object-coordinate mapping 尚未 source-proven，endpoint/topology 不能伪装 CAD 几何 |
 | GraphicIdentityNearby 独立为 PR5 | 身份证据路线有价值但噪声高，应与 PR4 field-x 基础调查分开 review |
 | Text placement 先作为 PR6 investigation | 当前 `/Sheet6` 文本多像二进制误识别，不能直接升级为 `Text + Inferred` |
+| Phase 8 先做多 fixture 与 Sheet record grammar | 当前 promotion 缺的是 source-proven record 证据，不是 H7CAD UI 能力 |
 
 ## 错误与限制
 | 问题 | 处理 |
@@ -91,3 +101,4 @@ Phase 7
 | `rsvg-convert` / `magick` 不在 PATH | 先生成 SVG 并用 XML parser 验证；PNG 导出待安装转换工具后补 |
 | `/Sheet6` same-object identity 未与 feature scoring 相交 | 记录为 guardrail：identity report 有信号，但 scoring 仍 `over_threshold=0` |
 | `/Sheet6` text runs 存在二进制误识别风险 | Text-quality filter 已拒绝 Hangul 等误识别特征，当前 `text_quality_passed=0` |
+| 多 fixture inventory 仍无 promotion 候选 | 记录为 Phase 8 基线：`identity_supported=0`、`identity_over_threshold=0`、`text_over_threshold=0` |

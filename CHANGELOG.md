@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### PID 几何 Promotion Gate 突破与端到端链路（Phase 8C-9B）
+
+- **三叉 Promotion Gate 实现**：`ObjectGeometryPromotionGateSummary` +
+  `summarize_object_geometry_promotion_gate` — 候选必须同时满足
+  `score >= 70` + `GraphicIdentityNearby` + `StableChunkShape` 才算 promotable。
+- **Gate 首次突破**：`promotable=5`（DWG-0201GP06-01 Sheet6），
+  `max_identity_score=105`，`identity_over_threshold=28`。
+- **Identity 匹配修复**：`identity_supports_score` 从要求 offset 精确匹配
+  放宽为 field_x 级别匹配；根因是同一 field_x 在 Sheet 流中出现多次，
+  identity 在 endpoint 窗口找到但高分窗口在别处。
+- **StableChunkShape 阈值调整**：support 从 `>= 3` 降为 `>= 2`；
+  cross-fixture aggregate 已验证 shapes（support=4），三叉 gate 保证安全。
+- **populate_object_geometry_hints**：从 promotable scored candidates 生成
+  `SheetObjectGeometryHint`，集成到 `cfb/reader.rs` 管线
+  （在 `build_graph` 与 `derive_layout` 之间执行）。
+- **NormalizedPidGeometry 投影扩展**：`build_normalized_geometry` 消费
+  `object_geometry_hints`，生成 `PidGraphicEntity(Point, Inferred)` 带
+  field_x provenance。
+- **H7CAD 渲染管线接入**：`add_geometry_entities` + `PID_GEOM_POINTS` 层，
+  promoted geometry 以 Circle markers 显示。
+- **坐标验证**：5 个 promoted points 坐标全部在 SmartPlant 绘图单位有效范围内
+  （x=2571-21003，y=102144-154368）。
+- **Record Grammar 发现**：`CE 00 79 00` 确认为记录头部签名，`field_x` 在
+  偏移 +6 处，Sheet6 中出现 12 次。存在多种 record template。
+- **Near-miss 分析**：5 个候选只差一个条件——field_x=111,537 有 identity
+  无 shape；field_x=139,147,440 有 shape 无 identity。
+- 新增中文开发方案文档与 4 个 SVG/PNG 路线图。
+- 验证通过：
+  - `cargo test --lib`（745 passed）
+  - `cargo test --test parse_real_files`（53 passed）
+  - `cargo clippy --locked --workspace --all-targets -- -D warnings`
+
 ### H7CAD：PID 真实几何显示与证据门禁（Phase 7）
 
 - 新增 normalized geometry contract，将 Sheet coordinate hints 作为

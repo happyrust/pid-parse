@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 720">
+  <style>
+    text { font-family: "Segoe UI", "Noto Sans SC", sans-serif; }
+    .title { font-size: 18px; font-weight: 700; fill: #1e293b; }
+    .phase { font-size: 14px; font-weight: 600; fill: #334155; }
+    .label { font-size: 12px; fill: #475569; }
+    .metric { font-size: 11px; font-family: "Cascadia Mono", monospace; fill: #64748b; }
+    .done { fill: #dcfce7; stroke: #16a34a; }
+    .active { fill: #dbeafe; stroke: #2563eb; }
+    .pending { fill: #f1f5f9; stroke: #94a3b8; }
+    .gate-pass { fill: #fef3c7; stroke: #d97706; }
+  </style>
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#475569"/>
+    </marker>
+    <marker id="arr-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/>
+    </marker>
+  </defs>
+  <text x="480" y="36" text-anchor="middle" class="title">PID 几何 Promotion 开发路线图</text>
+  <text x="480" y="56" text-anchor="middle" class="metric">Gate 突破: promotable=5 | max_score=105 | identity_supported=44</text>
+  <rect x="40" y="80" width="880" height="100" rx="8" fill="none" stroke="#e2e8f0" stroke-dasharray="6,3"/>
+  <text x="56" y="100" class="phase">证据层 (已完成)</text>
+  <rect x="56" y="112" width="168" height="56" rx="6" class="done" stroke-width="1.5"/>
+  <text x="140" y="136" text-anchor="middle" class="label">Field-X 窗口扫描</text>
+  <text x="140" y="152" text-anchor="middle" class="metric">6337 windows</text>
+  <rect x="240" y="112" width="168" height="56" rx="6" class="done" stroke-width="1.5"/>
+  <text x="324" y="136" text-anchor="middle" class="label">Identity 索引</text>
+  <text x="324" y="152" text-anchor="middle" class="metric">437 identities</text>
+  <rect x="424" y="112" width="168" height="56" rx="6" class="done" stroke-width="1.5"/>
+  <text x="508" y="136" text-anchor="middle" class="label">Record Shape 分类</text>
+  <text x="508" y="152" text-anchor="middle" class="metric">328 classes</text>
+  <rect x="608" y="112" width="168" height="56" rx="6" class="done" stroke-width="1.5"/>
+  <text x="692" y="136" text-anchor="middle" class="label">Text 候选扫描</text>
+  <text x="692" y="152" text-anchor="middle" class="metric">578 candidates</text>
+  <line x1="480" y1="180" x2="480" y2="200" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+  <rect x="40" y="204" width="880" height="100" rx="8" fill="none" stroke="#e2e8f0" stroke-dasharray="6,3"/>
+  <text x="56" y="224" class="phase">评分与门禁层 (已完成)</text>
+  <rect x="56" y="236" width="200" height="56" rx="6" class="done" stroke-width="1.5"/>
+  <text x="156" y="256" text-anchor="middle" class="label">多信号评分</text>
+  <text x="156" y="272" text-anchor="middle" class="metric">identity+shape+marker</text>
+  <rect x="280" y="236" width="200" height="56" rx="6" class="gate-pass" stroke-width="2"/>
+  <text x="380" y="256" text-anchor="middle" class="label" style="font-weight:700">三叉 Promotion Gate</text>
+  <text x="380" y="272" text-anchor="middle" class="metric">score&gt;=70 + identity + shape</text>
+  <rect x="504" y="236" width="200" height="56" rx="6" class="done" stroke-width="1.5"/>
+  <text x="604" y="256" text-anchor="middle" class="label">Promotable 候选</text>
+  <text x="604" y="272" text-anchor="middle" class="metric" style="fill:#16a34a;font-weight:700">5 candidates 通过</text>
+  <line x1="480" y1="304" x2="480" y2="324" stroke="#2563eb" stroke-width="2" marker-end="url(#arr-blue)"/>
+  <rect x="40" y="328" width="880" height="100" rx="8" fill="none" stroke="#bfdbfe" stroke-dasharray="6,3"/>
+  <text x="56" y="348" class="phase" style="fill:#2563eb">Phase 8C: 几何 Hint 填充 (下一步)</text>
+  <rect x="56" y="360" width="256" height="56" rx="6" class="active" stroke-width="2"/>
+  <text x="184" y="380" text-anchor="middle" class="label">populate_geometry_hints</text>
+  <text x="184" y="396" text-anchor="middle" class="metric">promotable → GeometryHint</text>
+  <rect x="336" y="360" width="256" height="56" rx="6" class="active" stroke-width="2"/>
+  <text x="464" y="380" text-anchor="middle" class="label">Regression Tests</text>
+  <text x="464" y="396" text-anchor="middle" class="metric">field_x + 坐标 + provenance</text>
+  <rect x="616" y="360" width="256" height="56" rx="6" class="active" stroke-width="2"/>
+  <text x="744" y="380" text-anchor="middle" class="label">Fixture Guardrails</text>
+  <text x="744" y="396" text-anchor="middle" class="metric">仅 Sheet6 允许 hint&gt;0</text>
+  <line x1="480" y1="428" x2="480" y2="448" stroke="#2563eb" stroke-width="2" marker-end="url(#arr-blue)"/>
+  <rect x="40" y="452" width="880" height="100" rx="8" fill="none" stroke="#e2e8f0" stroke-dasharray="6,3"/>
+  <text x="56" y="472" class="phase">Phase 9A: 归一化几何投影 (待启)</text>
+  <rect x="56" y="484" width="200" height="56" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="156" y="504" text-anchor="middle" class="label">InferredPoint 实体</text>
+  <text x="156" y="520" text-anchor="middle" class="metric">hint → PidGraphicEntity</text>
+  <rect x="280" y="484" width="200" height="56" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="380" y="504" text-anchor="middle" class="label">Inferred Line 实体</text>
+  <text x="380" y="520" text-anchor="middle" class="metric">同 shape hint 连线</text>
+  <rect x="504" y="484" width="200" height="56" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="604" y="504" text-anchor="middle" class="label">Provenance 标注</text>
+  <text x="604" y="520" text-anchor="middle" class="metric">stream+offset+confidence</text>
+  <line x1="480" y1="552" x2="480" y2="572" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+  <rect x="40" y="576" width="880" height="120" rx="8" fill="none" stroke="#e2e8f0" stroke-dasharray="6,3"/>
+  <text x="56" y="596" class="phase">Phase 9B/9C: H7CAD 渲染升级 (待启)</text>
+  <rect x="56" y="608" width="200" height="76" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="156" y="632" text-anchor="middle" class="label">PID_GEOM_POINTS</text>
+  <text x="156" y="648" text-anchor="middle" class="label">PID_GEOM_LINES</text>
+  <text x="156" y="664" text-anchor="middle" class="metric">promoted geometry</text>
+  <rect x="280" y="608" width="200" height="76" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="380" y="632" text-anchor="middle" class="label">PID_GEOM_TEXT</text>
+  <text x="380" y="648" text-anchor="middle" class="label">PID_GEOM_SYMBOLS</text>
+  <text x="380" y="664" text-anchor="middle" class="metric">text + symbol layers</text>
+  <rect x="504" y="608" width="200" height="76" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="604" y="632" text-anchor="middle" class="label">Fallback 策略</text>
+  <text x="604" y="652" text-anchor="middle" class="metric">geometry? 真实 : 拓扑</text>
+  <rect x="728" y="608" width="180" height="76" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="818" y="632" text-anchor="middle" class="label">截图回归</text>
+  <text x="818" y="652" text-anchor="middle" class="metric">PIDSHOT + 像素断言</text>
+</svg>

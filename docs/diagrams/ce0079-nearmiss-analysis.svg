@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520">
+  <style>
+    text { font-family: sans-serif; }
+    .t { font-size: 18px; font-weight: 700; fill: #1e293b; }
+    .s { font-size: 13px; fill: #475569; }
+    .p { font-size: 13px; font-weight: 600; fill: #334155; }
+    .l { font-size: 12px; fill: #475569; }
+    .m { font-size: 11px; font-family: monospace; fill: #64748b; }
+    .ok { fill: #dcfce7; stroke: #16a34a; }
+    .nm { fill: #fef9c3; stroke: #ca8a04; }
+    .lo { fill: #fee2e2; stroke: #dc2626; }
+    .act { fill: #dbeafe; stroke: #2563eb; }
+  </style>
+  <text x="480" y="32" text-anchor="middle" class="t">CE0079 Near-Miss 分析与提升策略</text>
+  <text x="480" y="52" text-anchor="middle" class="s">12 个 CE0079 记录头 | 2 promoted | 5 near-miss | 5 distant</text>
+  <rect x="40" y="68" width="280" height="180" rx="8" fill="none" stroke="#16a34a" stroke-width="2"/>
+  <text x="180" y="88" text-anchor="middle" class="p" style="fill:#16a34a">已 Promoted (2)</text>
+  <rect x="56" y="108" width="248" height="48" rx="4" class="ok" stroke-width="1.5"/>
+  <text x="180" y="128" text-anchor="middle" class="l">field_x=239 score=105</text>
+  <text x="180" y="144" text-anchor="middle" class="m">全部满足</text>
+  <rect x="56" y="168" width="248" height="48" rx="4" class="ok" stroke-width="1.5"/>
+  <text x="180" y="188" text-anchor="middle" class="l">field_x=467 score=95</text>
+  <text x="180" y="204" text-anchor="middle" class="m">全部满足</text>
+  <rect x="340" y="68" width="280" height="380" rx="8" fill="none" stroke="#ca8a04" stroke-width="2"/>
+  <text x="480" y="88" text-anchor="middle" class="p" style="fill:#ca8a04">Near-Miss (5) — 差一条腿</text>
+  <rect x="356" y="108" width="248" height="48" rx="4" class="nm" stroke-width="1.5"/>
+  <text x="480" y="128" text-anchor="middle" class="l">field_x=111 score=75</text>
+  <text x="480" y="144" text-anchor="middle" class="m">有identity 无shape</text>
+  <rect x="356" y="168" width="248" height="48" rx="4" class="nm" stroke-width="1.5"/>
+  <text x="480" y="188" text-anchor="middle" class="l">field_x=537 score=75</text>
+  <text x="480" y="204" text-anchor="middle" class="m">有identity 无shape</text>
+  <rect x="356" y="228" width="248" height="48" rx="4" class="nm" stroke-width="1.5"/>
+  <text x="480" y="248" text-anchor="middle" class="l">field_x=139 score=70</text>
+  <text x="480" y="264" text-anchor="middle" class="m">有shape 无identity</text>
+  <rect x="356" y="288" width="248" height="48" rx="4" class="nm" stroke-width="1.5"/>
+  <text x="480" y="308" text-anchor="middle" class="l">field_x=147 score=70</text>
+  <text x="480" y="324" text-anchor="middle" class="m">有shape 无identity</text>
+  <rect x="356" y="348" width="248" height="48" rx="4" class="nm" stroke-width="1.5"/>
+  <text x="480" y="368" text-anchor="middle" class="l">field_x=440 score=70</text>
+  <text x="480" y="384" text-anchor="middle" class="m">有shape 无identity</text>
+  <rect x="640" y="68" width="280" height="180" rx="8" fill="none" stroke="#dc2626" stroke-dasharray="4,2"/>
+  <text x="780" y="88" text-anchor="middle" class="p" style="fill:#dc2626">Distant (5) — 差两条腿</text>
+  <rect x="656" y="108" width="248" height="36" rx="4" class="lo" stroke-width="1"/>
+  <text x="780" y="130" text-anchor="middle" class="m">fx=35 score=40 无id+无shape</text>
+  <rect x="656" y="156" width="248" height="36" rx="4" class="lo" stroke-width="1"/>
+  <text x="780" y="178" text-anchor="middle" class="m">fx=157 score=40 无id+无shape</text>
+  <rect x="656" y="204" width="248" height="36" rx="4" class="lo" stroke-width="1"/>
+  <text x="780" y="226" text-anchor="middle" class="m">fx=433 score=40 无id+无shape</text>
+  <rect x="40" y="460" width="880" height="48" rx="6" class="act" stroke-width="2"/>
+  <text x="480" y="484" text-anchor="middle" class="l" style="font-weight:600">提升策略: fixture 扩容增加 shape support (解锁 111,537) + identity index 增强 (解锁 139,147,440)</text>
+  <text x="480" y="500" text-anchor="middle" class="m">预期: promotable 5 → 10 | 覆盖率 42% → 83% of CE0079 records</text>
+</svg>

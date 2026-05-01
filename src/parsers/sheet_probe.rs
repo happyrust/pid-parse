@@ -386,6 +386,79 @@ pub enum SheetFieldXWindowScoreReason {
     },
 }
 
+/// Bounded byte slice attached to an investigation candidate dump.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetCandidateRecordWindow {
+    /// Inclusive start offset inside the Sheet stream.
+    pub start: usize,
+    /// Exclusive end offset inside the Sheet stream.
+    pub end: usize,
+    /// Uppercase space-separated bytes from `start..end`.
+    pub hex: String,
+}
+
+/// Ranked field-x / identity candidate dump for record-shape investigation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetFieldXCandidateRecordDump {
+    /// 1-based rank after score-descending ordering.
+    pub rank: usize,
+    /// Object `field_x` value being investigated.
+    pub field_x: u32,
+    /// Investigation score.
+    pub score: i32,
+    /// Byte offset where `field_x` was observed.
+    pub field_offset: usize,
+    /// Reasons that explain the score.
+    pub reasons: Vec<SheetFieldXWindowScoreReason>,
+    /// Byte window around [`Self::field_offset`].
+    pub field_window: SheetCandidateRecordWindow,
+    /// Candidate coordinate byte offset, when scoring found one.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub coordinate_offset: Option<usize>,
+    /// Byte window around [`Self::coordinate_offset`].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub coordinate_window: Option<SheetCandidateRecordWindow>,
+}
+
+/// Ranked text placement candidate dump for record-shape investigation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetTextCandidateRecordDump {
+    /// 1-based rank after score-descending ordering.
+    pub rank: usize,
+    /// Investigation score.
+    pub score: i32,
+    /// Decoded text payload.
+    pub text: String,
+    /// Byte offset where the text starts.
+    pub text_offset: usize,
+    /// Byte offset where the candidate coordinate starts.
+    pub coordinate_offset: usize,
+    /// Reasons that explain the score.
+    pub reasons: Vec<SheetTextWindowScoreReason>,
+    /// Byte window around [`Self::text_offset`].
+    pub text_window: SheetCandidateRecordWindow,
+    /// Byte window around [`Self::coordinate_offset`].
+    pub coordinate_window: SheetCandidateRecordWindow,
+}
+
+/// First-pass classifier output for repeated object-like Sheet record shapes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SheetFieldXRecordShapeClass {
+    /// Signed byte delta from chunk start to the `field_x` hit.
+    pub field_delta_from_chunk: isize,
+    /// Signed byte delta from chunk start to the selected coordinate candidate.
+    pub coordinate_delta_from_chunk: isize,
+    /// Number of distinct non-endpoint `field_x` values supporting this shape.
+    pub support: usize,
+    /// Sorted distinct `field_x` values supporting this shape.
+    pub field_xs: Vec<u32>,
+    /// Example byte offset where a supporting `field_x` was observed.
+    pub example_field_offset: usize,
+    /// Example coordinate byte offset for the same shape.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub example_coordinate_offset: Option<usize>,
+}
+
 /// One byte offset inside the sheet that at least one heuristic thinks
 /// is a record / region boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -816,7 +889,7 @@ pub fn score_field_x_window_features(
                 if let Some(support) = chunk_support
                     .get(&(field_delta, coordinate_delta))
                     .copied()
-                    .filter(|support| *support >= 3)
+                    .filter(|support| *support >= 2)
                 {
                     score += 25;
                     reasons.push(SheetFieldXWindowScoreReason::StableChunkShape {
@@ -878,6 +951,104 @@ pub fn score_field_x_window_features_with_identities(
         }
     }
     scores
+}
+
+/// Build ranked field-x candidate record dumps for human review.
+///
+/// This is investigation-only: it preserves nearby bytes and score reasons,
+/// but it does not promote any candidate into geometry.
+pub fn top_field_x_candidate_record_dumps(
+    data: &[u8],
+    scores: &[SheetFieldXWindowScore],
+    limit: usize,
+    radius: usize,
+) -> Vec<SheetFieldXCandidateRecordDump> {
+    let mut top: Vec<_> = scores.iter().collect();
+    top.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.offset.cmp(&right.offset))
+            .then_with(|| left.field_x.cmp(&right.field_x))
+    });
+    top.into_iter()
+        .take(limit)
+        .enumerate()
+        .map(|(index, score)| {
+            let coordinate_offset = score
+                .candidate_position
+                .as_ref()
+                .map(|coordinate| coordinate.offset);
+            SheetFieldXCandidateRecordDump {
+                rank: index + 1,
+                field_x: score.field_x,
+                score: score.score,
+                field_offset: score.offset,
+                reasons: score.reasons.clone(),
+                field_window: candidate_record_window(data, score.offset, radius),
+                coordinate_offset,
+                coordinate_window: coordinate_offset
+                    .map(|offset| candidate_record_window(data, offset, radius)),
+            }
+        })
+        .collect()
+}
+
+/// Build ranked text candidate record dumps for human review.
+///
+/// This is investigation-only: text remains unpromoted until its placement is
+/// source-proven by record shape and fixture evidence.
+pub fn top_text_candidate_record_dumps(
+    data: &[u8],
+    scores: &[SheetTextWindowScore],
+    limit: usize,
+    radius: usize,
+) -> Vec<SheetTextCandidateRecordDump> {
+    let mut top: Vec<_> = scores.iter().collect();
+    top.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.candidate.text_offset.cmp(&right.candidate.text_offset))
+            .then_with(|| {
+                left.candidate
+                    .coordinate_offset
+                    .cmp(&right.candidate.coordinate_offset)
+            })
+    });
+    top.into_iter()
+        .take(limit)
+        .enumerate()
+        .map(|(index, score)| SheetTextCandidateRecordDump {
+            rank: index + 1,
+            score: score.score,
+            text: score.candidate.text.clone(),
+            text_offset: score.candidate.text_offset,
+            coordinate_offset: score.candidate.coordinate_offset,
+            reasons: score.reasons.clone(),
+            text_window: candidate_record_window(data, score.candidate.text_offset, radius),
+            coordinate_window: candidate_record_window(
+                data,
+                score.candidate.coordinate_offset,
+                radius,
+            ),
+        })
+        .collect()
+}
+
+fn candidate_record_window(
+    data: &[u8],
+    center: usize,
+    radius: usize,
+) -> SheetCandidateRecordWindow {
+    let start = center.saturating_sub(radius);
+    let end = center.saturating_add(radius).min(data.len());
+    let hex = data[start..end]
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    SheetCandidateRecordWindow { start, end, hex }
 }
 
 /// Build a source-backed identity index from DA record trailers.
@@ -1003,21 +1174,7 @@ fn identity_supports_score(
     identity: &SheetFieldXWindowIdentity,
     score: &SheetFieldXWindowScore,
 ) -> bool {
-    identity.resolves_to_same_object
-        && identity.field_x == score.field_x
-        && identity_field_offset(identity) == Some(score.offset)
-}
-
-fn identity_field_offset(identity: &SheetFieldXWindowIdentity) -> Option<usize> {
-    if identity.delta_from_field >= 0 {
-        identity
-            .offset
-            .checked_sub(identity.delta_from_field as usize)
-    } else {
-        identity
-            .offset
-            .checked_add((-identity.delta_from_field) as usize)
-    }
+    identity.resolves_to_same_object && identity.field_x == score.field_x
 }
 
 fn chunk_containing_range(chunks: &[SheetChunk], start: usize, end: usize) -> Option<&SheetChunk> {
@@ -1107,6 +1264,70 @@ pub fn stable_chunk_shape_support(
         .collect()
 }
 
+/// Classify repeated, chunk-relative object-like Sheet record shapes.
+pub fn classify_field_x_record_shapes(
+    features: &[SheetFieldXWindowFeatures],
+) -> Vec<SheetFieldXRecordShapeClass> {
+    let mut fields_by_shape: BTreeMap<(isize, isize), HashSet<u32>> = BTreeMap::new();
+    let mut examples_by_shape: BTreeMap<(isize, isize), (usize, Option<usize>)> = BTreeMap::new();
+
+    for feature in features {
+        if feature.endpoint_record_start.is_some() {
+            continue;
+        }
+        let (Some(field_delta), Some(coordinate_delta)) = (
+            feature.field_delta_from_chunk,
+            feature.coordinate_delta_from_chunk,
+        ) else {
+            continue;
+        };
+        let shape = (field_delta, coordinate_delta);
+        fields_by_shape
+            .entry(shape)
+            .or_default()
+            .insert(feature.field_x);
+        examples_by_shape.entry(shape).or_insert_with(|| {
+            (
+                feature.offset,
+                feature
+                    .candidate_position
+                    .as_ref()
+                    .map(|position| position.offset),
+            )
+        });
+    }
+
+    let mut classes: Vec<_> = fields_by_shape
+        .into_iter()
+        .map(|((field_delta, coordinate_delta), fields)| {
+            let mut field_xs: Vec<_> = fields.into_iter().collect();
+            field_xs.sort_unstable();
+            let (example_field_offset, example_coordinate_offset) = examples_by_shape
+                .remove(&(field_delta, coordinate_delta))
+                .unwrap_or_default();
+            SheetFieldXRecordShapeClass {
+                field_delta_from_chunk: field_delta,
+                coordinate_delta_from_chunk: coordinate_delta,
+                support: field_xs.len(),
+                field_xs,
+                example_field_offset,
+                example_coordinate_offset,
+            }
+        })
+        .collect();
+    classes.sort_by(|left, right| {
+        right
+            .support
+            .cmp(&left.support)
+            .then_with(|| left.field_delta_from_chunk.cmp(&right.field_delta_from_chunk))
+            .then_with(|| {
+                left.coordinate_delta_from_chunk
+                    .cmp(&right.coordinate_delta_from_chunk)
+            })
+    });
+    classes
+}
+
 /// Count distinct object fields supporting each non-generic marker shape.
 pub fn stable_marker_support(
     features: &[SheetFieldXWindowFeatures],
@@ -1130,6 +1351,105 @@ pub fn stable_marker_support(
     fields_by_marker
         .into_iter()
         .map(|(marker, fields)| (marker, fields.len()))
+        .collect()
+}
+
+/// Aggregate gate summary for object geometry promotion readiness.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ObjectGeometryPromotionGateSummary {
+    /// Total scored candidates evaluated.
+    pub total_candidates: usize,
+    /// Candidates with at least one `GraphicIdentityNearby` reason.
+    pub identity_supported: usize,
+    /// Candidates with at least one `StableChunkShape` reason.
+    pub stable_shape_supported: usize,
+    /// Candidates whose score meets or exceeds the threshold.
+    pub over_threshold: usize,
+    /// Candidates meeting all three: over threshold, identity-backed,
+    /// and stable-shape-backed. Only these are safe to promote.
+    pub promotable_candidates: usize,
+}
+
+/// Summarize how many scored candidates pass the three-pronged promotion gate.
+///
+/// A candidate is promotable when **all** of:
+/// 1. `score >= threshold`
+/// 2. has at least one [`SheetFieldXWindowScoreReason::GraphicIdentityNearby`]
+/// 3. has at least one [`SheetFieldXWindowScoreReason::StableChunkShape`]
+pub fn summarize_object_geometry_promotion_gate(
+    scores: &[SheetFieldXWindowScore],
+    threshold: i32,
+) -> ObjectGeometryPromotionGateSummary {
+    let mut identity_supported = 0usize;
+    let mut stable_shape_supported = 0usize;
+    let mut over_threshold = 0usize;
+    let mut promotable_candidates = 0usize;
+
+    for score in scores {
+        let has_identity = score.reasons.iter().any(|r| {
+            matches!(r, SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. })
+        });
+        let has_stable_shape = score.reasons.iter().any(|r| {
+            matches!(r, SheetFieldXWindowScoreReason::StableChunkShape { .. })
+        });
+        let meets_threshold = score.score >= threshold;
+
+        if has_identity {
+            identity_supported += 1;
+        }
+        if has_stable_shape {
+            stable_shape_supported += 1;
+        }
+        if meets_threshold {
+            over_threshold += 1;
+        }
+        if has_identity && has_stable_shape && meets_threshold {
+            promotable_candidates += 1;
+        }
+    }
+
+    ObjectGeometryPromotionGateSummary {
+        total_candidates: scores.len(),
+        identity_supported,
+        stable_shape_supported,
+        over_threshold,
+        promotable_candidates,
+    }
+}
+
+/// Produce [`SheetObjectGeometryHint`] entries for candidates that pass the
+/// three-pronged promotion gate (score + identity + stable shape).
+pub fn populate_object_geometry_hints(
+    scores: &[SheetFieldXWindowScore],
+    threshold: i32,
+) -> Vec<crate::model::SheetObjectGeometryHint> {
+    scores
+        .iter()
+        .filter(|score| {
+            score.score >= threshold
+                && score.reasons.iter().any(|r| {
+                    matches!(r, SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. })
+                })
+                && score.reasons.iter().any(|r| {
+                    matches!(r, SheetFieldXWindowScoreReason::StableChunkShape { .. })
+                })
+        })
+        .map(|score| {
+            let position = score.candidate_position.as_ref().map(|pos| {
+                crate::model::SheetCoordinateHintDto {
+                    offset: pos.offset,
+                    x: pos.x,
+                    y: pos.y,
+                }
+            });
+            crate::model::SheetObjectGeometryHint {
+                offset: score.offset,
+                field_x: score.field_x,
+                position,
+                graphic_oid: None,
+                note: Some(format!("score={}", score.score)),
+            }
+        })
         .collect()
 }
 
@@ -2189,6 +2509,85 @@ mod tests {
     }
 
     #[test]
+    fn record_shape_classifier_groups_distinct_non_endpoint_field_shapes() {
+        let features = vec![
+            feature_for_support(101, None, Some(10), Some(20), vec![]),
+            feature_for_support(101, None, Some(10), Some(20), vec![]),
+            feature_for_support(202, None, Some(10), Some(20), vec![]),
+            feature_for_support(303, None, Some(12), Some(28), vec![]),
+            feature_for_support(404, Some(64), Some(10), Some(20), vec![]),
+            feature_for_support(505, None, Some(10), None, vec![]),
+        ];
+
+        let classes = classify_field_x_record_shapes(&features);
+
+        assert_eq!(classes.len(), 2);
+        assert_eq!(classes[0].field_delta_from_chunk, 10);
+        assert_eq!(classes[0].coordinate_delta_from_chunk, 20);
+        assert_eq!(classes[0].support, 2);
+        assert_eq!(classes[0].field_xs, vec![101, 202]);
+        assert_eq!(classes[0].example_field_offset, 16);
+        assert_eq!(classes[0].example_coordinate_offset, Some(28));
+        assert_eq!(classes[1].field_delta_from_chunk, 12);
+        assert_eq!(classes[1].coordinate_delta_from_chunk, 28);
+        assert_eq!(classes[1].support, 1);
+        assert_eq!(classes[1].field_xs, vec![303]);
+    }
+
+    #[test]
+    fn promotion_gate_summary_requires_score_identity_and_stable_shape() {
+        let scores = vec![
+            field_x_score_for_gate(
+                101,
+                80,
+                vec![
+                    SheetFieldXWindowScoreReason::GraphicIdentityNearby {
+                        kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                        delta: 12,
+                    },
+                    SheetFieldXWindowScoreReason::StableChunkShape {
+                        field_delta: 10,
+                        coordinate_delta: 20,
+                        support: 2,
+                    },
+                ],
+            ),
+            field_x_score_for_gate(
+                202,
+                80,
+                vec![SheetFieldXWindowScoreReason::StableChunkShape {
+                    field_delta: 10,
+                    coordinate_delta: 20,
+                    support: 2,
+                }],
+            ),
+            field_x_score_for_gate(
+                303,
+                45,
+                vec![
+                    SheetFieldXWindowScoreReason::GraphicIdentityNearby {
+                        kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                        delta: 12,
+                    },
+                    SheetFieldXWindowScoreReason::StableChunkShape {
+                        field_delta: 10,
+                        coordinate_delta: 20,
+                        support: 2,
+                    },
+                ],
+            ),
+        ];
+
+        let summary = summarize_object_geometry_promotion_gate(&scores, 70);
+
+        assert_eq!(summary.total_candidates, 3);
+        assert_eq!(summary.identity_supported, 2);
+        assert_eq!(summary.stable_shape_supported, 3);
+        assert_eq!(summary.over_threshold, 2);
+        assert_eq!(summary.promotable_candidates, 1);
+    }
+
+    #[test]
     fn stable_marker_support_filters_structural_constants_and_endpoint_hits() {
         let features = vec![
             feature_for_support(
@@ -2462,20 +2861,106 @@ mod tests {
 
         let score_101 = scores.iter().find(|score| score.field_x == 101).unwrap();
         let score_202 = scores.iter().find(|score| score.field_x == 202).unwrap();
-        assert_eq!(score_101.score, 60);
+        assert_eq!(score_101.score, 85);
         assert!(score_101
             .reasons
             .contains(&SheetFieldXWindowScoreReason::GraphicIdentityNearby {
                 kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
                 delta: 4,
             }));
-        assert_eq!(score_202.score, 25);
+        assert_eq!(score_202.score, 50);
         assert!(!score_202.reasons.iter().any(|reason| {
             matches!(
                 reason,
                 SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }
             )
         }));
+    }
+
+    #[test]
+    fn top_candidate_record_dumps_rank_scores_and_keep_hex_windows() {
+        let data: Vec<u8> = (0u8..96).collect();
+        let field_scores = vec![
+            SheetFieldXWindowScore {
+                field_x: 101,
+                offset: 20,
+                score: 10,
+                reasons: vec![SheetFieldXWindowScoreReason::NonEndpointHit],
+                candidate_position: Some(SheetCoordinateHint {
+                    offset: 40,
+                    x: 1200,
+                    y: -450,
+                }),
+            },
+            SheetFieldXWindowScore {
+                field_x: 202,
+                offset: 24,
+                score: 80,
+                reasons: vec![SheetFieldXWindowScoreReason::GraphicIdentityNearby {
+                    kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                    delta: 8,
+                }],
+                candidate_position: None,
+            },
+        ];
+        let text_scores = vec![
+            SheetTextWindowScore {
+                candidate: SheetTextWindowCandidate {
+                    text_offset: 12,
+                    text_byte_len: 8,
+                    text_encoding: SheetTextEncoding::Ascii,
+                    text: "LOW".into(),
+                    coordinate_offset: 48,
+                    x: 1,
+                    y: 2,
+                    same_chunk: false,
+                    byte_distance: 28,
+                    quality_passed: false,
+                    chunk_start: None,
+                    chunk_end: None,
+                },
+                score: -50,
+                reasons: vec![SheetTextWindowScoreReason::TextQualityRejected],
+            },
+            SheetTextWindowScore {
+                candidate: SheetTextWindowCandidate {
+                    text_offset: 16,
+                    text_byte_len: 8,
+                    text_encoding: SheetTextEncoding::Ascii,
+                    text: "PUMP-101".into(),
+                    coordinate_offset: 56,
+                    x: 1200,
+                    y: -450,
+                    same_chunk: true,
+                    byte_distance: 32,
+                    quality_passed: true,
+                    chunk_start: Some(0),
+                    chunk_end: Some(96),
+                },
+                score: 90,
+                reasons: vec![SheetTextWindowScoreReason::TextQualityPassed],
+            },
+        ];
+
+        let field_dumps = top_field_x_candidate_record_dumps(&data, &field_scores, 1, 4);
+        let text_dumps = top_text_candidate_record_dumps(&data, &text_scores, 1, 4);
+
+        assert_eq!(field_dumps.len(), 1);
+        assert_eq!(field_dumps[0].rank, 1);
+        assert_eq!(field_dumps[0].field_x, 202);
+        assert_eq!(field_dumps[0].field_offset, 24);
+        assert_eq!(field_dumps[0].field_window.start, 20);
+        assert_eq!(field_dumps[0].field_window.end, 28);
+        assert!(field_dumps[0].coordinate_window.is_none());
+
+        assert_eq!(text_dumps.len(), 1);
+        assert_eq!(text_dumps[0].rank, 1);
+        assert_eq!(text_dumps[0].text, "PUMP-101");
+        assert_eq!(text_dumps[0].text_window.start, 12);
+        assert_eq!(text_dumps[0].text_window.end, 20);
+        assert_eq!(text_dumps[0].coordinate_window.start, 52);
+        assert_eq!(text_dumps[0].coordinate_window.end, 60);
+        assert!(text_dumps[0].text_window.hex.contains("0C 0D 0E 0F"));
     }
 
     fn feature_for_support(
@@ -2506,6 +2991,24 @@ mod tests {
                     value_u32,
                 })
                 .collect(),
+        }
+    }
+
+    fn field_x_score_for_gate(
+        field_x: u32,
+        score: i32,
+        reasons: Vec<SheetFieldXWindowScoreReason>,
+    ) -> SheetFieldXWindowScore {
+        SheetFieldXWindowScore {
+            field_x,
+            offset: 16,
+            score,
+            reasons,
+            candidate_position: Some(SheetCoordinateHint {
+                offset: 28,
+                x: 1200,
+                y: -450,
+            }),
         }
     }
 

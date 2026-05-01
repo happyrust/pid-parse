@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560">
+  <style>
+    text { font-family: sans-serif; }
+    .title { font-size: 18px; font-weight: 700; fill: #1e293b; }
+    .phase { font-size: 13px; font-weight: 600; fill: #334155; }
+    .label { font-size: 12px; fill: #475569; }
+    .metric { font-size: 11px; font-family: monospace; fill: #64748b; }
+    .done { fill: #dcfce7; stroke: #16a34a; }
+    .warn { fill: #fef3c7; stroke: #d97706; }
+    .active { fill: #dbeafe; stroke: #2563eb; }
+    .pending { fill: #f1f5f9; stroke: #94a3b8; }
+  </style>
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#475569"/>
+    </marker>
+    <marker id="ab" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#2563eb"/>
+    </marker>
+  </defs>
+  <text x="480" y="32" text-anchor="middle" class="title">Phase 8B: Sheet Record Grammar 反推路线图</text>
+  <rect x="40" y="52" width="400" height="80" rx="6" class="done" stroke-width="1.5"/>
+  <text x="240" y="76" text-anchor="middle" class="phase">已完成: 端到端管线</text>
+  <text x="240" y="96" text-anchor="middle" class="metric">gate=5 | hints=5 | H7CAD Circle</text>
+  <text x="240" y="112" text-anchor="middle" class="metric">但 4/5 坐标 = (206,121) 疑似常量</text>
+  <rect x="480" y="52" width="440" height="80" rx="6" class="warn" stroke-width="2"/>
+  <text x="700" y="76" text-anchor="middle" class="phase">阻塞点</text>
+  <text x="700" y="96" text-anchor="middle" class="label">坐标可能为结构字段 | text 全误识别</text>
+  <text x="700" y="112" text-anchor="middle" class="metric">需要 record grammar 才能区分</text>
+  <line x1="480" y1="132" x2="480" y2="155" stroke="#2563eb" stroke-width="2" marker-end="url(#ab)"/>
+  <rect x="40" y="160" width="880" height="120" rx="8" fill="none" stroke="#bfdbfe" stroke-dasharray="6,3"/>
+  <text x="56" y="180" class="phase" style="fill:#2563eb">Phase 8B: 三条调查路线 (并行)</text>
+  <rect x="56" y="192" width="272" height="76" rx="6" class="active" stroke-width="2"/>
+  <text x="192" y="216" text-anchor="middle" class="label">8B-1: 结构字段过滤</text>
+  <text x="192" y="232" text-anchor="middle" class="metric">统计 CE0079 频次</text>
+  <text x="192" y="248" text-anchor="middle" class="metric">高频+非obj → 过滤</text>
+  <rect x="344" y="192" width="272" height="76" rx="6" class="active" stroke-width="2"/>
+  <text x="480" y="216" text-anchor="middle" class="label">8B-2: Record 签名探测</text>
+  <text x="480" y="232" text-anchor="middle" class="metric">扫描头部模式: 0156/FA00</text>
+  <text x="480" y="248" text-anchor="middle" class="metric">推导 record 长度</text>
+  <rect x="632" y="192" width="272" height="76" rx="6" class="active" stroke-width="2"/>
+  <text x="768" y="216" text-anchor="middle" class="label">8B-3: 坐标范围验证</text>
+  <text x="768" y="232" text-anchor="middle" class="metric">SmartPlant twips: 0-50000</text>
+  <text x="768" y="248" text-anchor="middle" class="metric">值&lt;300+重复 → enum/flag</text>
+  <line x1="192" y1="280" x2="192" y2="305" stroke="#475569" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="480" y1="280" x2="480" y2="305" stroke="#475569" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="768" y1="280" x2="768" y2="305" stroke="#475569" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="40" y="310" width="880" height="90" rx="8" fill="none" stroke="#e2e8f0" stroke-dasharray="6,3"/>
+  <text x="56" y="330" class="phase">预期产出</text>
+  <rect x="56" y="340" width="272" height="48" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="192" y="362" text-anchor="middle" class="label">增强 is_structural 过滤器</text>
+  <text x="192" y="376" text-anchor="middle" class="metric">排除确认的结构常量</text>
+  <rect x="344" y="340" width="272" height="48" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="480" y="362" text-anchor="middle" class="label">Record header 假说</text>
+  <text x="480" y="376" text-anchor="middle" class="metric">类型 + 长度 + 字段映射</text>
+  <rect x="632" y="340" width="272" height="48" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="768" y="362" text-anchor="middle" class="label">坐标可信度评估</text>
+  <text x="768" y="376" text-anchor="middle" class="metric">有效 vs 结构 分类</text>
+  <line x1="480" y1="400" x2="480" y2="425" stroke="#475569" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="120" y="430" width="720" height="100" rx="8" fill="none" stroke="#16a34a" stroke-dasharray="6,3"/>
+  <text x="480" y="450" text-anchor="middle" class="phase" style="fill:#16a34a">解锁下一阶段</text>
+  <rect x="136" y="462" width="220" height="56" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="246" y="486" text-anchor="middle" class="label">真实坐标 → Line 几何</text>
+  <text x="246" y="502" text-anchor="middle" class="metric">PidGraphicKind::Line</text>
+  <rect x="372" y="462" width="220" height="56" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="482" y="486" text-anchor="middle" class="label">文本字段定位 → Text</text>
+  <text x="482" y="502" text-anchor="middle" class="metric">PidGraphicKind::Text</text>
+  <rect x="608" y="462" width="220" height="56" rx="6" class="pending" stroke-width="1.5"/>
+  <text x="718" y="486" text-anchor="middle" class="label">H7CAD 分层渲染升级</text>
+  <text x="718" y="502" text-anchor="middle" class="metric">GEOM_LINES + GEOM_TEXT</text>
+</svg>

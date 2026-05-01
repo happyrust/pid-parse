@@ -240,6 +240,33 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     confidence: PidGeometryConfidence::Inferred,
                 });
             }
+
+            for (index, hint) in geometry.object_geometry_hints.iter().enumerate() {
+                if let Some(ref pos) = hint.position {
+                    entities.push(PidGraphicEntity {
+                        id: format!("{}:geometry-hint:{index}", sheet.path),
+                        drawing_id: None,
+                        graphic_oid: hint.graphic_oid,
+                        kind: PidGraphicKind::Point {
+                            position: PidPoint {
+                                x: f64::from(pos.x),
+                                y: f64::from(pos.y),
+                            },
+                        },
+                        source: PidGraphicProvenance {
+                            stream_path: Some(sheet.path.clone()),
+                            byte_range: Some(PidByteRange {
+                                start: hint.offset,
+                                end: hint.offset + 8,
+                            }),
+                            record_id: Some(format!("geometry-hint:{index}")),
+                            field_x: Some(hint.field_x),
+                            note: hint.note.clone(),
+                        },
+                        confidence: PidGeometryConfidence::Inferred,
+                    });
+                }
+            }
         } else {
             for (index, text) in sheet.extracted_texts.iter().enumerate() {
                 entities.push(PidGraphicEntity {

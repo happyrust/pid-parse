@@ -146,6 +146,7 @@ fn parse_pid_package_from_cfb<R: Read + std::io::Seek>(
         build_object_graph(&mut doc);
 
         doc.cross_reference = Some(crate::crossref::build_graph(&doc));
+        populate_geometry_hints(&raw_streams, &mut doc);
         crate::layout::derive_layout(&mut doc);
     }
 
@@ -230,6 +231,83 @@ fn sync_sheet_geometry_endpoints(sheet: &mut SheetStream) {
             endpoint_b: record.endpoint_b,
         })
         .collect();
+}
+
+fn populate_geometry_hints(
+    raw_streams: &BTreeMap<String, RawStream>,
+    doc: &mut PidDocument,
+) {
+    use std::collections::HashSet;
+
+    let Some(ref cross) = doc.cross_reference else {
+        return;
+    };
+    let Some(ref da) = doc.dynamic_attributes else {
+        return;
+    };
+
+    let identity_index =
+        crate::parsers::sheet_probe::sheet_identity_index_from_trailers(&da.record_trailers);
+    let object_field_xs: HashSet<u32> = doc
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for sheet in &mut doc.sheet_streams {
+        let Some(raw) = raw_streams.get(&sheet.path) else {
+            continue;
+        };
+
+        let mut field_xs: Vec<_> = cross
+            .relationship_endpoint_links
+            .iter()
+            .filter(|link| link.sheet_path.as_deref() == Some(sheet.path.as_str()))
+            .flat_map(|link| [link.source_field_x, link.target_field_x])
+            .flatten()
+            .collect();
+        field_xs.sort_unstable();
+        field_xs.dedup();
+
+        if field_xs.is_empty() {
+            continue;
+        }
+
+        let report = crate::parsers::sheet_probe::probe_sheet_stream(
+            &sheet.name,
+            &sheet.path,
+            &raw.data,
+            &Default::default(),
+        );
+        let windows = crate::parsers::sheet_probe::field_x_windows(&raw.data, &field_xs, 96);
+        let features =
+            crate::parsers::sheet_probe::field_x_window_features(&raw.data, &windows, &report.chunks);
+        let identities = crate::parsers::sheet_probe::field_x_window_identities(
+            &raw.data,
+            &windows,
+            &identity_index,
+        );
+        let scores = crate::parsers::sheet_probe::score_field_x_window_features_with_identities(
+            &features,
+            &object_field_xs,
+            &identities,
+        );
+
+        let hints =
+            crate::parsers::sheet_probe::populate_object_geometry_hints(&scores, 70);
+
+        if !hints.is_empty() {
+            if let Some(geometry) = &mut sheet.geometry {
+                geometry.object_geometry_hints = hints;
+            }
+        }
+    }
 }
 
 fn capture_doc_version2<R: Read + std::io::Seek>(

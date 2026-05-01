@@ -92,6 +92,14 @@
 - 导出 PNG：`docs/diagrams/h7cad-pid-text-placement-roadmap.png`。
 - 生成 PR1-PR6 拆分路线图：`docs/diagrams/h7cad-pid-pr-split-roadmap.svg`。
 - 导出 PNG：`docs/diagrams/h7cad-pid-pr-split-roadmap.png`。
+- 按推荐方案执行非破坏性下一步：保留已推送 `main`，进入多 fixture evidence inventory。
+- 新增 `available_pid_fixtures_geometry_evidence_inventory_stays_probe_only`，横向扫描当前可用 5 个 PID fixture，并包含非 ASCII 文件名 fixture。
+- 确认多 fixture 结果仍不支持 geometry promotion：`identity_supported=0`、`identity_over_threshold=0`、`text_over_threshold=0`。
+- 按用户要求继续使用 planning-with-files 与 diagram skill，新增 Phase 8 完整解析推进路线。
+- 新增中文方案：`docs/plans/2026-05-02-h7cad-pid-complete-parse-next-stage-plan-cn.md`。
+- 新增路线图：`docs/diagrams/h7cad-pid-complete-parse-next-stage.svg` 与 `.png`。
+- 更新 `task_plan.md` 当前阶段为 Phase 8，并记录 fixture 扩容、Sheet record grammar、promotion gate、H7CAD Line/Text/Symbol layer 的后续任务。
+- 按 Phase 8 第一项继续扩展 inventory：新增 per-fixture / per-sheet 明细输出，区分无 endpoint `field_x` 的 Sheet。
 
 ### 验证
 | 检查项 | 结果 |
@@ -117,9 +125,64 @@
 | `rsvg-convert -w 1920 docs/diagrams/h7cad-pid-real-geometry-roadmap.svg -o docs/diagrams/h7cad-pid-real-geometry-roadmap.png` | 通过，有字体 fallback 警告 |
 | `rsvg-convert docs/diagrams/h7cad-pid-text-placement-roadmap.svg -o NUL && rsvg-convert -w 1920 docs/diagrams/h7cad-pid-text-placement-roadmap.svg -o docs/diagrams/h7cad-pid-text-placement-roadmap.png` | 通过，有字体 fallback 警告 |
 | `rsvg-convert docs/diagrams/h7cad-pid-pr-split-roadmap.svg -o NUL && rsvg-convert -w 1920 docs/diagrams/h7cad-pid-pr-split-roadmap.svg -o docs/diagrams/h7cad-pid-pr-split-roadmap.png` | 通过，有字体 fallback 警告 |
+| `cargo test --test parse_real_files available_pid_fixtures_geometry_evidence_inventory_stays_probe_only -- --nocapture` | 通过，fixtures=4, sheets=3, windows=6337, identities=437, same_object=17, wrong_object=420, identity_supported=0, max_identity_score=45, identity_over_threshold=0, text_candidates=537, text_over_threshold=0 |
+| `cargo test --test parse_real_files all_sheets_graphic_identity_scoring_report_keeps_object_hints_empty -- --nocapture` | 通过，sheets=1, identity_supported=0, over_threshold=0 |
+| `cargo test --test parse_real_files sheet6_text_window_report_keeps_text_probe_only_until_position_is_proven -- --nocapture` | 通过，max_score=-50, over_threshold=0 |
+| ReadLints `tests/parse_real_files.rs` | 无错误 |
+| `rsvg-convert docs/diagrams/h7cad-pid-complete-parse-next-stage.svg -o NUL` | 通过，有字体 fallback 警告 |
+| `rsvg-convert -w 1920 docs/diagrams/h7cad-pid-complete-parse-next-stage.svg -o docs/diagrams/h7cad-pid-complete-parse-next-stage.png` | 通过，有字体 fallback 警告 |
+| `cargo test --test parse_real_files available_pid_fixtures_geometry_evidence_inventory_stays_probe_only -- --nocapture` | 通过，fixtures=5, sheets=3, windows=6337, identities=437, same_object=17, wrong_object=420, identity_supported=0, max_identity_score=45, identity_over_threshold=0, text_candidates=578, text_over_threshold=0；输出 per-fixture / per-sheet 明细 |
+| ReadLints `tests/parse_real_files.rs` | 无错误 |
 
 ### 下一步
-- 等用户明确授权后执行 hunk staging / 临时分支拆分。
-- 按 PR1-PR5 分别验证并准备 review。
-- 获取更多真实 PID fixture，或改善 text extraction 后再继续 Text placement。
+- 增加 top identity/text candidate record dump helper。
+- 建立第一版 Sheet record shape classifier。
+- 如仍需要 review 形态，需先确认是否从 `b0481c5` 重建 PR1-PR6 分支；否则继续保留 `main` 合并提交。
 - 继续禁止从 endpoint/topology 推导 line。
+
+## Session: 2026-05-02
+
+### 当前状态
+- **Phase:** 8 - 完整解析推进路线
+- **状态:** top candidate record dump helper 与第一版 Sheet record shape classifier 已完成；仍保持 no-promotion gate。
+
+### 已完成
+- 重读 `task_plan.md` / `findings.md` / `progress.md`，确认当前计划文件仍是项目根目录的主工作记忆。
+- 使用 diagram skill 的 flat-icon 风格要求，准备刷新 Phase 8 路线图。
+- 更新 `docs/plans/2026-05-02-h7cad-pid-complete-parse-next-stage-plan-cn.md`：
+  - 将 fixture 覆盖从“4 个 ASCII 路径 fixture”更新为“5 个 PID fixture，含非 ASCII 文件名与 publish fixture”。
+  - 将近期任务清单前两项标为完成。
+- 更新 `findings.md`，补充 H7CAD 主工作树与 `H7CAD-pid-real-geometry-display` 工作树的差异，避免后续误以为主 `H7CAD/` 已接入 `build_normalized_geometry`。
+- 按 TDD 增加 top identity/text candidate record dump helper：
+  - RED：`top_candidate_record_dumps_rank_scores_and_keep_hex_windows` 先因缺少 helper 编译失败。
+  - GREEN：新增 `SheetCandidateRecordWindow`、`SheetFieldXCandidateRecordDump`、`SheetTextCandidateRecordDump` 与两个 top dump helper。
+  - 集成：`sheet6_top_candidate_record_dump_stays_investigation_only` 改为复用 helper，继续保持 `object_geometry_hints=0`。
+- 按 TDD 建立第一版 Sheet record shape classifier：
+  - RED：`record_shape_classifier_groups_distinct_non_endpoint_field_shapes` 先因缺少 classifier 编译失败。
+  - GREEN：新增 `SheetFieldXRecordShapeClass` 与 `classify_field_x_record_shapes`，按 chunk-relative field/coordinate deltas 聚合 distinct non-endpoint `field_x` support。
+  - 集成：`sheet6_field_x_window_features_report_chunk_shapes` 输出 top record shape classes；当前 `/Sheet6` top shapes 为 `(14,38)`、`(46,70)`，support 均为 2，仍保持 `promotable=0`。
+- 扩展多 fixture inventory：输出 `record_shape_classes`、per-sheet `top_record_shape` 与 aggregate `top_record_shapes`；当前 5 fixture 合计 `record_shape_classes=328`，top aggregate shapes 最高累计 support 为 4，仍无 promotion threshold 命中。
+
+### 验证
+| 检查项 | 结果 |
+|---|---|
+| `python C:/Users/Administrator/.codex/skills/planning-with-files/scripts/session-catchup.py D:/work/plant-code/cad/pid-parse` | 通过，无输出 |
+| `cargo test -p H7CAD normalized_geometry_real_fixture_renders_expected_points -- --nocapture` | 通过，`normalized=132`、`rendered=64`、`inferred_points=64`、`probe_unknowns=68`、`point_layer=64` |
+| `cargo test --test parse_real_files available_pid_fixtures_geometry_evidence_inventory_stays_probe_only -- --nocapture` | 通过，`fixtures=5`、`sheets=3`、`identity_supported=0`、`identity_over_threshold=0`、`text_over_threshold=0` |
+| `rsvg-convert docs/diagrams/h7cad-pid-complete-parse-next-stage.svg -o NUL && rsvg-convert -w 1920 ... -o ...png` | 通过，PNG 已刷新；仍有字体 fallback 警告 |
+| `cargo test --lib parsers::sheet_probe::tests::top_candidate_record_dumps_rank_scores_and_keep_hex_windows -- --nocapture` | RED 阶段按预期缺少 helper；实现后通过 |
+| `cargo test --test parse_real_files sheet6_top_candidate_record_dump_stays_investigation_only -- --nocapture` | 通过，输出结构化 top identity/text dumps，仍无 geometry hint promotion |
+| `cargo test --lib parsers::sheet_probe -- --nocapture` | 通过，29 passed |
+| `cargo fmt --all && cargo fmt --all -- --check` | 通过 |
+| `cargo test record_shape_classifier_groups_distinct_non_endpoint_field_shapes` | RED 阶段按预期缺少 classifier；实现后通过 |
+| `cargo test sheet6_field_x_window_features_report_chunk_shapes -- --nocapture` | 通过，输出 top record shape classes，`max_score=45`、`promotable=0` |
+| `cargo test --test parse_real_files available_pid_fixtures_geometry_evidence_inventory_stays_probe_only -- --nocapture` | 通过，`record_shape_classes=328`、top aggregate shapes support 最高为 4，`identity_over_threshold=0`、`text_over_threshold=0` |
+
+### 错误与限制
+| 问题 | 处理 |
+|---|---|
+| 首次 session-catchup 使用 `%USERPROFILE%` 未被当前 shell 展开，Python 误拼到工作目录下 | 改用绝对路径 `C:/Users/Administrator/.../session-catchup.py` 后通过 |
+| `rsvg-convert` 找不到指定中文字体组合时输出 Pango fallback warning | SVG/PNG 导出成功；当前作为视觉字体差异记录，不影响计划文件有效性 |
+
+### 下一步
+- 在 source-proven gate 达标后，再填充 `SheetObjectGeometryHint` 并升级 H7CAD Line/Text/Symbol layer。

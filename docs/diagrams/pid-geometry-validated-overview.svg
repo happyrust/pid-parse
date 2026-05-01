@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 640">
+  <style>
+    text { font-family: sans-serif; }
+    .title { font-size: 18px; font-weight: 700; fill: #1e293b; }
+    .sub { font-size: 13px; fill: #475569; }
+    .phase { font-size: 13px; font-weight: 600; fill: #334155; }
+    .label { font-size: 12px; fill: #475569; }
+    .m { font-size: 11px; font-family: monospace; fill: #64748b; }
+    .ok { fill: #dcfce7; stroke: #16a34a; }
+    .act { fill: #dbeafe; stroke: #2563eb; }
+    .pend { fill: #f1f5f9; stroke: #94a3b8; }
+    .hi { fill: #fef3c7; stroke: #d97706; }
+  </style>
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#475569"/>
+    </marker>
+  </defs>
+  <text x="480" y="32" text-anchor="middle" class="title">PID 几何解析进度总览 (已验证)</text>
+  <text x="480" y="52" text-anchor="middle" class="sub">5 个 promoted points 坐标有效 | CE0079 = 记录头部签名 | 端到端链路完成</text>
+  <rect x="40" y="68" width="880" height="80" rx="8" fill="none" stroke="#16a34a" stroke-width="2"/>
+  <text x="56" y="88" class="phase" style="fill:#16a34a">已验证交付 (Phase 8C-9B)</text>
+  <rect x="56" y="100" width="160" height="36" rx="4" class="ok" stroke-width="1.5"/>
+  <text x="136" y="122" text-anchor="middle" class="m">gate: promotable=5</text>
+  <rect x="228" y="100" width="160" height="36" rx="4" class="ok" stroke-width="1.5"/>
+  <text x="308" y="122" text-anchor="middle" class="m">hints: 5 有效坐标</text>
+  <rect x="400" y="100" width="160" height="36" rx="4" class="ok" stroke-width="1.5"/>
+  <text x="480" y="122" text-anchor="middle" class="m">geometry: 5 InferredPt</text>
+  <rect x="572" y="100" width="160" height="36" rx="4" class="ok" stroke-width="1.5"/>
+  <text x="652" y="122" text-anchor="middle" class="m">H7CAD: GEOM_POINTS</text>
+  <rect x="744" y="100" width="160" height="36" rx="4" class="hi" stroke-width="1.5"/>
+  <text x="824" y="122" text-anchor="middle" class="m">坐标: SP单位有效</text>
+  <rect x="40" y="160" width="880" height="72" rx="6" fill="none" stroke="#e2e8f0" stroke-dasharray="4,2"/>
+  <text x="56" y="180" class="phase">坐标验证详情</text>
+  <rect x="56" y="192" width="168" height="28" rx="4" class="ok" stroke-width="1"/>
+  <text x="140" y="204" text-anchor="middle" class="m" style="font-size:10px">field_x=326: x=21003 y=102144</text>
+  <rect x="232" y="192" width="168" height="28" rx="4" class="ok" stroke-width="1"/>
+  <text x="316" y="204" text-anchor="middle" class="m" style="font-size:10px">field_x=239: x=20491 y=103168</text>
+  <rect x="408" y="192" width="168" height="28" rx="4" class="ok" stroke-width="1"/>
+  <text x="492" y="204" text-anchor="middle" class="m" style="font-size:10px">field_x=452: x=20747 y=119808</text>
+  <rect x="584" y="192" width="168" height="28" rx="4" class="ok" stroke-width="1"/>
+  <text x="668" y="204" text-anchor="middle" class="m" style="font-size:10px">field_x=467: x=20747 y=119808</text>
+  <rect x="760" y="192" width="168" height="28" rx="4" class="ok" stroke-width="1"/>
+  <text x="844" y="204" text-anchor="middle" class="m" style="font-size:10px">field_x=602: x=2571  y=154368</text>
+  <line x1="480" y1="232" x2="480" y2="252" stroke="#475569" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="40" y="256" width="880" height="68" rx="6" fill="none" stroke="#d97706" stroke-dasharray="4,2"/>
+  <text x="56" y="276" class="phase" style="fill:#d97706">关键发现</text>
+  <rect x="56" y="288" width="280" height="28" rx="4" class="hi" stroke-width="1.5"/>
+  <text x="196" y="306" text-anchor="middle" class="m">CE 00 79 00 = Record Header 签名</text>
+  <rect x="352" y="288" width="280" height="28" rx="4" class="hi" stroke-width="1.5"/>
+  <text x="492" y="306" text-anchor="middle" class="m">后跟 field_x 值: 35,68,111,139...</text>
+  <rect x="648" y="288" width="256" height="28" rx="4" class="hi" stroke-width="1.5"/>
+  <text x="776" y="306" text-anchor="middle" class="m">出现 12 次 | 全在 chunk 内</text>
+  <line x1="480" y1="324" x2="480" y2="344" stroke="#2563eb" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="40" y="348" width="880" height="136" rx="8" fill="none" stroke="#bfdbfe" stroke-dasharray="6,3"/>
+  <text x="56" y="368" class="phase" style="fill:#2563eb">下一阶段 (优先级排序)</text>
+  <rect x="56" y="380" width="280" height="88" rx="6" class="act" stroke-width="2"/>
+  <text x="196" y="400" text-anchor="middle" class="label" style="font-weight:600">P1: Record Grammar 解码</text>
+  <text x="196" y="418" text-anchor="middle" class="m">利用 CE0079 签名</text>
+  <text x="196" y="434" text-anchor="middle" class="m">解析 header/body/trailer</text>
+  <text x="196" y="450" text-anchor="middle" class="m">扩大 promotable 覆盖</text>
+  <rect x="352" y="380" width="280" height="88" rx="6" class="pend" stroke-width="1.5"/>
+  <text x="492" y="400" text-anchor="middle" class="label" style="font-weight:600">P2: Line 几何生成</text>
+  <text x="492" y="418" text-anchor="middle" class="m">同 shape class 的 points 连线</text>
+  <text x="492" y="434" text-anchor="middle" class="m">PidGraphicKind::Line</text>
+  <text x="492" y="450" text-anchor="middle" class="m">H7CAD PID_GEOM_LINES 层</text>
+  <rect x="648" y="380" width="256" height="88" rx="6" class="pend" stroke-width="1.5"/>
+  <text x="776" y="400" text-anchor="middle" class="label" style="font-weight:600">P3: Fixture 扩容</text>
+  <text x="776" y="418" text-anchor="middle" class="m">更多 PID 样本</text>
+  <text x="776" y="434" text-anchor="middle" class="m">交叉验证坐标</text>
+  <text x="776" y="450" text-anchor="middle" class="m">确认 record grammar</text>
+  <rect x="40" y="500" width="880" height="120" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="56" y="524" class="phase">当前统计基线</text>
+  <text x="56" y="540" class="m">fixtures: <tspan style="font-weight:700;fill:#1e293b">5</tspan></text>
+  <text x="232" y="540" class="m">sheets: <tspan style="font-weight:700;fill:#1e293b">3</tspan></text>
+  <text x="408" y="540" class="m">windows: <tspan style="font-weight:700;fill:#1e293b">6337</tspan></text>
+  <text x="584" y="540" class="m">identities: <tspan style="font-weight:700;fill:#1e293b">437</tspan></text>
+  <text x="760" y="540" class="m">same_obj: <tspan style="font-weight:700;fill:#1e293b">17</tspan></text>
+  <text x="56" y="572" class="m">id_supported: <tspan style="font-weight:700;fill:#1e293b">44</tspan></text>
+  <text x="232" y="572" class="m">max_score: <tspan style="font-weight:700;fill:#1e293b">105</tspan></text>
+  <text x="408" y="572" class="m">over_thresh: <tspan style="font-weight:700;fill:#1e293b">28</tspan></text>
+  <text x="584" y="572" class="m">promotable: <tspan style="font-weight:700;fill:#1e293b">5</tspan></text>
+  <text x="760" y="572" class="m">hints: <tspan style="font-weight:700;fill:#1e293b">5</tspan></text>
+</svg>
