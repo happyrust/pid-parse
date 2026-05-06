@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### PID 几何 Fixture Baseline 与 Provenance Guardrail（Phase 9A/9C）
+
+- **显式 fixture registry**：`parse_real_files` 新增 geometry fixture registry，
+  将 DWG、中文路径、publish A01 / DWG fixture 纳入同一基线，并保留
+  `GEOMETRY_FIXTURE_TARGET_MIN_AVAILABLE=8` 的扩容目标。
+- **Availability summary**：新增 `registered`、`target_min_available`、
+  `available`、`missing` 统计，并输出 human-readable report line，方便
+  inventory 测试直接暴露当前 5/8 fixture 缺口。
+- **Promotion provenance**：promoted `SheetObjectGeometryHint` 的 note 现在保留
+  `score`、identity evidence 与 stable shape evidence，避免只留下不可解释分数。
+- **Normalized geometry 回归**：新增 source note regression，确认 promoted hint
+  投影到 `PidGraphicEntity(Point, Inferred)` 后仍保留
+  `PidGraphicProvenance.note`，供 H7CAD / renderer 读取 promotion gate 摘要。
+- **下一步开发方案**：新增中文 Phase 9A fixture 扩展执行方案，明确 8-12 个真实
+  `.pid` fixture 的选择标准、TDD 切片、验证命令与当前外部样本阻塞。
+
 ### PID 几何 Promotion Gate 突破与端到端链路（Phase 8C-9B）
 
 - **三叉 Promotion Gate 实现**：`ObjectGeometryPromotionGateSummary` +

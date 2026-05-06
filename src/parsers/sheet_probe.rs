@@ -1447,10 +1447,36 @@ pub fn populate_object_geometry_hints(
                 field_x: score.field_x,
                 position,
                 graphic_oid: None,
-                note: Some(format!("score={}", score.score)),
+                note: Some(object_geometry_hint_note(score)),
             }
         })
         .collect()
+}
+
+fn object_geometry_hint_note(score: &SheetFieldXWindowScore) -> String {
+    let mut parts = vec![format!("score={}", score.score)];
+    if score
+        .reasons
+        .iter()
+        .any(|reason| matches!(reason, SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }))
+    {
+        parts.push("identity=graphic_nearby".to_string());
+    }
+    if let Some((field_delta, coordinate_delta, support)) =
+        score.reasons.iter().find_map(|reason| match reason {
+            SheetFieldXWindowScoreReason::StableChunkShape {
+                field_delta,
+                coordinate_delta,
+                support,
+            } => Some((*field_delta, *coordinate_delta, *support)),
+            _ => None,
+        })
+    {
+        parts.push(format!(
+            "stable_shape=field_delta:{field_delta},coordinate_delta:{coordinate_delta},support:{support}"
+        ));
+    }
+    parts.join(";")
 }
 
 fn is_structural_marker_value(value: u32) -> bool {

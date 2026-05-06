@@ -186,3 +186,170 @@
 
 ### 下一步
 - 在 source-proven gate 达标后，再填充 `SheetObjectGeometryHint` 并升级 H7CAD Line/Text/Symbol layer。
+
+## Session: 2026-05-06
+
+### 当前状态
+- **Phase:** 9 - 下一阶段开发计划制定
+- **状态:** 已基于当前解析能力与几何证据基线，产出新的中文开发计划；下一步进入 fixture baseline hardening。
+
+### 已完成
+- 复核 `docs/prd-pid-parse-current-state.md`、`ARCHITECTURE.md`、`README.md`、`task_plan.md`、`findings.md`、`progress.md`。
+- 复核核心源码契约：
+  - `src/model.rs`：`PidDocument` 聚合 CFB、metadata、JSite、cluster、dynamic attributes、Sheet、PSM、object graph、cross-reference、layout。
+  - `src/import_view.rs`：`PidImportView.relationships` 已暴露 Sheet endpoint provenance。
+  - `src/geometry.rs`：当前 normalized geometry 只 promotion coordinate hint 为 inferred point，text/endpoint 仍是 probe-only unknown。
+- 确认当前支持进度：
+  - `.pid` 容器/metadata/object graph/crossref/layout/writer 已具备稳定工程骨架。
+  - MDF-first publish XML A01 主线成熟度高，DWG 侧仍需 fixture/enrichment 闭环。
+  - Sheet 深层几何仍未 source-proven，5 fixture inventory 仍无 Line/Text/Symbol promotion 证据。
+- 新增开发计划：`docs/plans/2026-05-06-pid-parse-development-plan-cn.md`。
+- 更新 `task_plan.md`：新增 Phase 9，并把当前阶段切到“下一阶段开发计划制定”。
+- 更新 `findings.md`：记录 Phase 9 顺序、promotion 铁律与 fixture baseline 优先级。
+
+### 验证
+| 检查项 | 结果 |
+|---|---|
+| planning-with-files `session-catchup.py` | 通过，无输出 |
+| 代码/文档读取核对 | 通过 |
+| 测试执行 | 未执行；本轮仅制定计划与更新 Markdown |
+
+### 错误与限制
+| 问题 | 处理 |
+|---|---|
+| 首次 `check_messages` 未带 `turn_complete` 导致 MCP validation error | 重试时显式传入 `turn_complete=true` 后成功 |
+| terminals 目录探测路径不存在 | 不影响本次计划制定；后续 shell 命令仍在项目根目录正常执行 |
+| 读取 `progress.md` offset 220 超出文件长度 | 改用已读取的 189 行完整内容作为进度依据 |
+
+### 下一步
+- 执行 Phase 9A：扩展 fixture registry 与 inventory baseline，目标 8-12 个真实 PID fixture。
+- 对 top aggregate record shapes `(12,-18)`、`(14,38)`、`(68,5)` 建立稳定审查报告。
+- 为 `SheetObjectGeometryHint` 保持 no-promotion guardrail，直到 source-proven gate 达标。
+
+### Phase 9A 实现进展
+- 按 TDD 新增 `geometry_fixture_registry_documents_phase9a_targets` 红测：
+  - RED：缺少 `geometry_fixture_cases()` 与 `GEOMETRY_FIXTURE_TARGET_MIN_AVAILABLE`，编译失败。
+  - GREEN：新增 `GeometryFixtureCase`、显式 fixture registry、目标最小 fixture 数 `8`。
+- 将 `available_pid_fixtures_geometry_evidence_inventory_stays_probe_only` 改为复用 `geometry_fixture_cases()`。
+- inventory detail 现在输出 `category`，区分 `dwg`、`non_ascii`、`publish_a01`、`publish_dwg`。
+- 重新实测发现当前代码已非旧 no-promotion 基线：
+  - `fixtures=5`
+  - `sheets=3`
+  - `record_shape_classes=328`
+  - `identity_supported=44`
+  - `identity_over_threshold=28`
+  - `promotable=5`
+  - `object_geometry_hint_count=5`
+  - `text_over_threshold=0`
+- 已同步更新 `docs/plans/2026-05-06-pid-parse-development-plan-cn.md`、`task_plan.md`、`findings.md`，将 Phase 9C 从 no-promotion 改为 promotion gate hardening。
+
+### Phase 9A 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --test parse_real_files geometry_fixture_registry_documents_phase9a_targets -- --nocapture` | RED 阶段按预期缺少 registry；实现后通过 |
+| `cargo test --test parse_real_files available_pid_fixtures_geometry_evidence_inventory_stays_probe_only -- --nocapture` | 通过，输出 fixture category 与当前 promotion baseline |
+| `cargo test --test parse_real_files geometry_fixture_registry_documents_phase9a_targets -- --nocapture && cargo test --test parse_real_files available_pid_fixtures_geometry_evidence_inventory_stays_probe_only -- --nocapture` | 通过 |
+| `ReadLints` | 无错误 |
+| `cargo fmt --all -- --check` | 失败；输出包含多处本轮未改的既有未格式化片段，未运行全量 `cargo fmt` 以避免改动用户已有代码 |
+
+### Phase 9A 错误与限制
+| 问题 | 处理 |
+|---|---|
+| 首次尝试用两个 TESTNAME 过滤参数运行 `cargo test` 失败 | Cargo 只支持一个 TESTNAME；改为两条 focused test 顺序执行后通过 |
+| `cargo fmt --all -- --check` 发现 `src/cfb/reader.rs`、`src/parsers/sheet_probe.rs`、`tests/parse_real_files.rs` 多处既有格式漂移 | 只手动整理本轮新增 registry 测试块，未运行全量格式化以避免修改无关代码 |
+
+### Phase 9A 下一步
+- 为 promoted `SheetObjectGeometryHint` 增加 provenance-focused regression。
+- 为 registry 增加 fixture availability summary，明确当前 5/目标 8 的缺口。
+- 继续扩展 fixture registry 到 8-12 个真实 PID fixture。
+
+### Phase 9C 实现进展
+- 按 TDD 新增 `promoted_object_geometry_hints_explain_promotion_gate`：
+  - 初始红测假设 `field_x` 必须直接命中 `ObjectGraph.objects.field_x`，失败后确认该假设过强；当前 same-object 证据来自 DA trailer identity resolver。
+  - 调整红测为锁定 source Sheet offset、coordinate offset、promotion note。
+  - RED：note 只有 `score=95`，缺少 identity/stable shape 说明。
+  - GREEN：`populate_object_geometry_hints()` 改用 `object_geometry_hint_note()`，输出 `score=...;identity=graphic_nearby;stable_shape=...`。
+- 更新 `docs/plans/2026-05-06-pid-parse-development-plan-cn.md`、`task_plan.md`、`findings.md`，记录 provenance guardrail 已完成。
+
+### Phase 9C 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --test parse_real_files promoted_object_geometry_hints_explain_promotion_gate -- --nocapture` | RED 阶段按预期缺少 promotion note 证据；实现后通过 |
+| `cargo test --test parse_real_files geometry_fixture_registry_documents_phase9a_targets -- --nocapture && cargo test --test parse_real_files available_pid_fixtures_geometry_evidence_inventory_stays_probe_only -- --nocapture && cargo test --test parse_real_files promoted_object_geometry_hints_explain_promotion_gate -- --nocapture` | 通过 |
+
+### Phase 9C 下一步
+- 给 normalized geometry projection 增加 promoted hint source note 回归，确认 H7CAD/renderer 能读到 promotion gate 摘要。
+- 为 registry 增加 fixture availability summary。
+
+### Phase 9A Availability Summary 实现进展
+- 按 TDD 新增 `geometry_fixture_availability_summary_tracks_target_gap`：
+  - RED：缺少 `geometry_fixture_availability_summary()`，编译失败。
+  - GREEN：新增 `GeometryFixtureAvailabilitySummary`，输出 `registered`、`target_min_available`、`available`、`missing`。
+- 当前 summary 用 `test-file/<fixture.path>` 判断 fixture 是否可用，并继续保留 `GEOMETRY_FIXTURE_TARGET_MIN_AVAILABLE=8` 的目标缺口。
+
+### Phase 9A Availability Summary 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --test parse_real_files geometry_fixture_availability_summary_tracks_target_gap -- --nocapture` | RED 阶段按预期缺少 helper；实现后通过 |
+| registry / availability / inventory / promotion provenance 四个 focused tests 顺序执行 | 通过 |
+
+### Phase 9A Availability Summary 下一步
+- 将 availability summary 接入 inventory report 输出，方便人工阅读当前 registered/available/missing/target 状态。
+- 继续收集并登记更多真实 PID fixture。
+
+### Phase 9A Availability Report 实现进展
+- 按 TDD 新增 `geometry_fixture_availability_report_line_is_human_readable`：
+  - RED：缺少 `geometry_fixture_availability_report_line()`，编译失败。
+  - GREEN：新增 report line helper，输出 `registered`、`target_min_available`、`available`、`missing`。
+- 将 report line 接入 `available_pid_fixtures_geometry_evidence_inventory_stays_probe_only` 输出。
+- 当前 inventory 输出头：
+  - `geometry fixture availability: registered=5, target_min_available=8, available=5, missing=[]`
+
+### Phase 9A Availability Report 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --test parse_real_files geometry_fixture_availability_report_line_is_human_readable -- --nocapture` | RED 阶段按预期缺少 helper；实现后通过 |
+| `cargo test --test parse_real_files available_pid_fixtures_geometry_evidence_inventory_stays_probe_only -- --nocapture` | 通过，输出 availability report line |
+| registry / availability / report line / inventory / promotion provenance 五个 focused tests 顺序执行 | 通过 |
+
+### Phase 9A Availability Report 下一步
+- 继续扩展 fixture registry 到 8-12 个真实 PID fixture。
+- 给 normalized geometry projection 增加 promoted hint source note 回归。
+
+### Phase 9C Normalized Projection Source Note 回归进展
+- 新增 `normalized_geometry_projection_preserves_promoted_hint_source_notes`：
+  - 覆盖真实 fixture `DWG-0201GP06-01.pid`。
+  - 对每个带 position 的 promoted `SheetObjectGeometryHint`，确认 `build_normalized_geometry()` 生成的 inferred point 保留 `stream_path`、`field_x`、position 与 source note。
+  - 锁定 source note 包含 `score=`、`identity`、`stable_shape` promotion gate 摘要。
+- 运行后测试直接通过，说明生产代码已将 `hint.note` 复制到 `PidGraphicProvenance.note`；本轮无需修改 `src/geometry.rs`。
+- 已同步更新 `docs/plans/2026-05-06-pid-parse-development-plan-cn.md`、`task_plan.md`、`findings.md`。
+
+### Phase 9C Normalized Projection Source Note 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --test parse_real_files normalized_geometry_projection_preserves_promoted_hint_source_notes -- --nocapture` | 通过 |
+| `cargo test --test parse_real_files geometry_fixture_availability_report_line_is_human_readable -- --nocapture; cargo test --test parse_real_files promoted_object_geometry_hints_explain_promotion_gate -- --nocapture; cargo test --test parse_real_files normalized_geometry_projection_preserves_promoted_hint_source_notes -- --nocapture` | 通过 |
+| `ReadLints` on edited files | 无错误 |
+| `cargo fmt --all -- --check` | 失败；仍包含既有 `src/cfb/reader.rs`、`src/parsers/sheet_probe.rs`、`tests/parse_real_files.rs` 格式漂移，未运行全量 `cargo fmt` 以避免改动无关代码 |
+
+### Phase 9C 下一步
+- 继续扩展 fixture registry 到 8-12 个真实 PID fixture。
+- 视新增 fixture 结果补充新的 promotion gate focused regression。
+
+### Phase 9A Fixture Expansion 方案补充
+- 已新增中文执行方案：`docs/plans/2026-05-06-phase-9a-fixture-expansion-plan-cn.md`。
+- 方案明确当前 Phase 4 的真实阻塞：本地 registry 只有 5 个 `.pid` fixture，目标 8-12 需要新增外部真实样本。
+- 方案给出 fixture 选择标准、registry 元数据建议、TDD 切片、验证命令与不做事项。
+- 下一步需要二选一：
+  - 提供额外真实 `.pid` fixture 后继续扩展 registry。
+  - 或确认先提交当前 5-fixture 基线，再等待后续样本。
+
+### Phase 9A Fixture 扩容复查
+- 使用本地 `test-file` 递归枚举 `.pid` fixture，当前仅发现：
+  - `test-file\工艺管道及仪表流程-1.pid`
+  - `test-file\DWG-0201GP06-01.pid`
+  - `test-file\DWG-0202GP06-01.pid`
+  - `test-file\export-test\publish-data\A01\A01.pid`
+  - `test-file\export-test\publish-data\DWG-0202GP06-01\DWG-0202GP06-01.pid`
+- 这些路径均已在 `geometry_fixture_cases()` registry 中；当前没有额外本地真实 PID 样本可登记。
+- Phase 9A 的 8-12 fixture 目标现在被 fixture 供给阻塞，需用户提供更多真实 PID 文件后继续。

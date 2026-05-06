@@ -53,6 +53,76 @@ fn hex_window(data: &[u8], center: usize, radius: usize) -> String {
     format!("{start}..{end}: {hex}")
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GeometryFixtureCase {
+    path: &'static str,
+    category: &'static str,
+}
+
+const GEOMETRY_FIXTURE_TARGET_MIN_AVAILABLE: usize = 8;
+
+fn geometry_fixture_cases() -> &'static [GeometryFixtureCase] {
+    &[
+        GeometryFixtureCase {
+            path: "DWG-0201GP06-01.pid",
+            category: "dwg",
+        },
+        GeometryFixtureCase {
+            path: "DWG-0202GP06-01.pid",
+            category: "dwg",
+        },
+        GeometryFixtureCase {
+            path: "工艺管道及仪表流程-1.pid",
+            category: "non_ascii",
+        },
+        GeometryFixtureCase {
+            path: "export-test/publish-data/A01/A01.pid",
+            category: "publish_a01",
+        },
+        GeometryFixtureCase {
+            path: "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+            category: "publish_dwg",
+        },
+    ]
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GeometryFixtureAvailabilitySummary {
+    registered: usize,
+    target_min_available: usize,
+    available: usize,
+    missing: Vec<&'static str>,
+}
+
+fn geometry_fixture_availability_summary() -> GeometryFixtureAvailabilitySummary {
+    let mut available = 0usize;
+    let mut missing = Vec::new();
+    for fixture in geometry_fixture_cases() {
+        let path = format!("test-file/{}", fixture.path);
+        if std::path::Path::new(&path).exists() {
+            available += 1;
+        } else {
+            missing.push(fixture.path);
+        }
+    }
+
+    GeometryFixtureAvailabilitySummary {
+        registered: geometry_fixture_cases().len(),
+        target_min_available: GEOMETRY_FIXTURE_TARGET_MIN_AVAILABLE,
+        available,
+        missing,
+    }
+}
+
+fn geometry_fixture_availability_report_line(
+    summary: &GeometryFixtureAvailabilitySummary,
+) -> String {
+    format!(
+        "geometry fixture availability: registered={}, target_min_available={}, available={}, missing={:?}",
+        summary.registered, summary.target_min_available, summary.available, summary.missing
+    )
+}
+
 #[test]
 fn container_structure_has_streams() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
@@ -1660,15 +1730,67 @@ fn all_sheets_graphic_identity_scoring_report_keeps_object_hints_empty() {
 }
 
 #[test]
-fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
-    const FIXTURES: &[&str] = &[
-        "DWG-0201GP06-01.pid",
-        "DWG-0202GP06-01.pid",
-        "工艺管道及仪表流程-1.pid",
-        "export-test/publish-data/A01/A01.pid",
-        "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
-    ];
+fn geometry_fixture_registry_documents_phase9a_targets() {
+    let fixtures = geometry_fixture_cases();
+    let paths: HashSet<_> = fixtures.iter().map(|fixture| fixture.path).collect();
 
+    assert_eq!(
+        fixtures.len(),
+        paths.len(),
+        "geometry fixture registry should not contain duplicate paths"
+    );
+    assert!(
+        fixtures.len() < GEOMETRY_FIXTURE_TARGET_MIN_AVAILABLE,
+        "current registry should still document the Phase 9A fixture expansion gap"
+    );
+    assert!(
+        fixtures
+            .iter()
+            .any(|fixture| fixture.category == "non_ascii"),
+        "registry should explicitly cover non-ASCII fixture paths"
+    );
+    assert!(
+        fixtures
+            .iter()
+            .any(|fixture| fixture.category == "publish_a01"),
+        "registry should include A01 publish fixture coverage"
+    );
+    assert!(
+        fixtures
+            .iter()
+            .any(|fixture| fixture.category == "publish_dwg"),
+        "registry should include DWG publish fixture coverage"
+    );
+}
+
+#[test]
+fn geometry_fixture_availability_summary_tracks_target_gap() {
+    let summary = geometry_fixture_availability_summary();
+
+    assert_eq!(summary.registered, geometry_fixture_cases().len());
+    assert_eq!(
+        summary.target_min_available,
+        GEOMETRY_FIXTURE_TARGET_MIN_AVAILABLE
+    );
+    assert_eq!(summary.available + summary.missing.len(), summary.registered);
+    assert!(
+        summary.registered < summary.target_min_available,
+        "Phase 9A should keep the target gap explicit until more fixtures are registered"
+    );
+}
+
+#[test]
+fn geometry_fixture_availability_report_line_is_human_readable() {
+    let line = geometry_fixture_availability_report_line(&geometry_fixture_availability_summary());
+
+    assert!(line.contains("registered=5"));
+    assert!(line.contains("target_min_available=8"));
+    assert!(line.contains("available="));
+    assert!(line.contains("missing="));
+}
+
+#[test]
+fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
     let mut fixtures_seen = 0usize;
     let mut sheets_seen = 0usize;
     let mut windows_seen = 0usize;
@@ -1685,9 +1807,12 @@ fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
     let mut object_geometry_hint_count = 0usize;
     let mut total_promotable = 0usize;
     let mut detail_lines = Vec::new();
+    let availability = geometry_fixture_availability_summary();
 
-    for fixture in FIXTURES {
-        let Some(pkg) = parse_test_package(fixture) else {
+    eprintln!("{}", geometry_fixture_availability_report_line(&availability));
+
+    for fixture in geometry_fixture_cases() {
+        let Some(pkg) = parse_test_package(fixture.path) else {
             continue;
         };
         fixtures_seen += 1;
@@ -1704,11 +1829,17 @@ fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
             .sum::<usize>();
 
         let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
-            eprintln!("skipping fixture {fixture}: cross reference not built");
+            eprintln!(
+                "skipping fixture {} ({}): cross reference not built",
+                fixture.path, fixture.category
+            );
             continue;
         };
         let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
-            eprintln!("skipping fixture {fixture}: dynamic attributes not built");
+            eprintln!(
+                "skipping fixture {} ({}): dynamic attributes not built",
+                fixture.path, fixture.category
+            );
             continue;
         };
 
@@ -1759,7 +1890,9 @@ fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
             field_xs.dedup();
             if field_xs.is_empty() {
                 detail_lines.push(format!(
-                    "fixture={fixture}, sheet={}, field_xs=0, text_candidates={}, text_over_threshold={}, note=no_endpoint_field_xs",
+                    "fixture={}, category={}, sheet={}, field_xs=0, text_candidates={}, text_over_threshold={}, note=no_endpoint_field_xs",
+                    fixture.path,
+                    fixture.category,
                     sheet.path,
                     text_candidates.len(),
                     sheet_text_over_threshold
@@ -1841,7 +1974,9 @@ fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
                 })
                 .unwrap_or_else(|| "none".to_string());
             detail_lines.push(format!(
-                "fixture={fixture}, sheet={}, field_xs={}, windows={}, record_shape_classes={}, top_record_shape={}, identities={}, same_object={}, wrong_object={}, identity_supported={}, max_identity_score={}, identity_over_threshold={}, promotable={}, text_candidates={}, text_over_threshold={}",
+                "fixture={}, category={}, sheet={}, field_xs={}, windows={}, record_shape_classes={}, top_record_shape={}, identities={}, same_object={}, wrong_object={}, identity_supported={}, max_identity_score={}, identity_over_threshold={}, promotable={}, text_candidates={}, text_over_threshold={}",
+                fixture.path,
+                fixture.category,
                 sheet.path,
                 field_xs.len(),
                 windows.len(),
@@ -1900,6 +2035,121 @@ fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
     assert!(
         record_shape_classes_seen > 0,
         "multi-fixture investigation should classify at least one record shape"
+    );
+}
+
+#[test]
+fn promoted_object_geometry_hints_explain_promotion_gate() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let mut hints_seen = 0usize;
+
+    for sheet in &pkg.parsed.sheet_streams {
+        let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+            continue;
+        };
+        let Some(geometry) = &sheet.geometry else {
+            continue;
+        };
+
+        for hint in &geometry.object_geometry_hints {
+            hints_seen += 1;
+            assert!(
+                hint.offset < raw_sheet.data.len(),
+                "promoted hint offset should point into the source Sheet stream"
+            );
+            let position = hint
+                .position
+                .as_ref()
+                .expect("promoted hint should carry a coordinate position");
+            assert!(
+                position.offset + 8 <= raw_sheet.data.len(),
+                "promoted hint coordinate offset should point into the source Sheet stream"
+            );
+            let note = hint
+                .note
+                .as_deref()
+                .expect("promoted hint should explain the promotion gate");
+            assert!(
+                note.contains("score="),
+                "promotion note should include score: {note}"
+            );
+            assert!(
+                note.contains("identity"),
+                "promotion note should mention identity evidence: {note}"
+            );
+            assert!(
+                note.contains("stable_shape"),
+                "promotion note should mention stable shape evidence: {note}"
+            );
+        }
+    }
+
+    assert!(
+        hints_seen > 0,
+        "fixture should expose promoted object geometry hints"
+    );
+}
+
+#[test]
+fn normalized_geometry_projection_preserves_promoted_hint_source_notes() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+
+    let normalized = pid_parse::build_normalized_geometry(&doc);
+    let mut promoted_hints_checked = 0usize;
+
+    for sheet in &doc.sheet_streams {
+        let Some(geometry) = &sheet.geometry else {
+            continue;
+        };
+
+        for hint in geometry
+            .object_geometry_hints
+            .iter()
+            .filter(|hint| hint.position.is_some())
+        {
+            let note = hint
+                .note
+                .as_deref()
+                .expect("promoted hint should carry a promotion gate note");
+            let position = hint
+                .position
+                .as_ref()
+                .expect("filtered hints should carry a position");
+
+            let projected = normalized.entities.iter().find(|entity| {
+                entity.source.stream_path.as_deref() == Some(sheet.path.as_str())
+                    && entity.source.field_x == Some(hint.field_x)
+                    && entity.source.note.as_deref() == Some(note)
+                    && entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+                    && matches!(
+                        &entity.kind,
+                        pid_parse::PidGraphicKind::Point { position: point }
+                            if point.x == f64::from(position.x)
+                                && point.y == f64::from(position.y)
+                    )
+            });
+
+            assert!(
+                projected.is_some(),
+                "normalized geometry should preserve promoted hint source note: {note}"
+            );
+            assert!(
+                note.contains("score=")
+                    && note.contains("identity")
+                    && note.contains("stable_shape"),
+                "projected source note should retain promotion gate evidence: {note}"
+            );
+            promoted_hints_checked += 1;
+        }
+    }
+
+    assert!(
+        promoted_hints_checked > 0,
+        "fixture should expose promoted hints to project into normalized geometry"
     );
 }
 

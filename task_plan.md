@@ -4,7 +4,7 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 8
+Phase 9 - 下一阶段开发计划制定
 
 ## 阶段
 
@@ -82,6 +82,25 @@ Phase 8
 - [ ] 在 source-proven gate 达标后，再填充 `SheetObjectGeometryHint` 并升级 H7CAD Line/Text/Symbol layer
 - **Status:** in_progress
 
+### Phase 9：2026-05-06 下一阶段开发计划
+- [x] 复核当前解析能力：`.pid` 容器、metadata、object graph、crossref、layout、writer、publish XML
+- [x] 复核当前几何基线：5 fixture inventory 已有 5 个 object-coordinate promotion，Text/Symbol 仍无 promotion
+- [x] 新增中文开发计划：`docs/plans/2026-05-06-pid-parse-development-plan-cn.md`
+- [x] 将开发计划拆成 6 个执行阶段：
+  - [x] Phase 9A fixture baseline hardening
+  - [x] Phase 9B Sheet record grammar reverse engineering
+  - [x] Phase 9C object-coordinate promotion gate
+  - [x] Phase 9D Text/Symbol source-proven rendering
+  - [x] Phase 9E canonical graph integration
+  - [x] Phase 9F publish XML gate closure
+- [ ] 执行 Phase 9A：扩展 fixture registry 与 inventory baseline
+- [x] Phase 9A 首个切片：新增显式 geometry fixture registry，并让 inventory 复用 registry
+- [x] Phase 9A 第二个切片：新增 fixture availability summary，显式记录 registered/available/missing/target
+- [x] Phase 9A 第三个切片：将 availability summary 格式化为 report line 并接入 inventory 输出
+- [x] Phase 9C 首个切片：为 promoted `SheetObjectGeometryHint` 增加 provenance-focused regression，并让 note 输出 score/identity/stable_shape
+- [x] Phase 9C 第二个切片：为 normalized geometry projection 增加 source note 回归，确认 promoted hint note 进入 `PidGraphicProvenance`
+- **Status:** in_progress
+
 ## 决策
 | 决策 | 理由 |
 |---|---|
@@ -93,6 +112,7 @@ Phase 8
 | GraphicIdentityNearby 独立为 PR5 | 身份证据路线有价值但噪声高，应与 PR4 field-x 基础调查分开 review |
 | Text placement 先作为 PR6 investigation | 当前 `/Sheet6` 文本多像二进制误识别，不能直接升级为 `Text + Inferred` |
 | Phase 8 先做多 fixture 与 Sheet record grammar | 当前 promotion 缺的是 source-proven record 证据，不是 H7CAD UI 能力 |
+| Phase 9 先补 fixture baseline 再扩大 promotion | 当前 5 fixture 横向扫描已有 `object_geometry_hint_count=5`，但 Text/Symbol 仍 `text_over_threshold=0`，下一步应先硬化 registry 与 gate |
 
 ## 错误与限制
 | 问题 | 处理 |
@@ -102,3 +122,4 @@ Phase 8
 | `/Sheet6` same-object identity 未与 feature scoring 相交 | 记录为 guardrail：identity report 有信号，但 scoring 仍 `over_threshold=0` |
 | `/Sheet6` text runs 存在二进制误识别风险 | Text-quality filter 已拒绝 Hangul 等误识别特征，当前 `text_quality_passed=0` |
 | 多 fixture inventory 仍无 promotion 候选 | 记录为 Phase 8 基线：`identity_supported=0`、`identity_over_threshold=0`、`text_over_threshold=0` |
+| 读取 `progress.md` offset 220 超出文件长度 | 已确认文件只有 189 行，改用已读取内容作为当前进度依据 |

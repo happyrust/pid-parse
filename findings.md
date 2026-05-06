@@ -49,6 +49,27 @@
 3. canonical semantic graph 应在 PSM / Sheet 事实层更稳后再收敛，否则会把 probe 结果固化进 API。
 4. Publish XML A01 主线应保持现有 parity gates，DWG 侧作为独立闭环推进。
 
+## 2026-05-06 下一阶段开发计划结论
+- 新计划文件：`docs/plans/2026-05-06-pid-parse-development-plan-cn.md`。
+- 当前主判断：`.pid` 容器/metadata/object graph/crossref/layout/writer/publish XML 已经可作为工程骨架使用；Sheet 深层几何仍是最大未闭环区域。
+- 当前几何状态：5 fixture / 3 sheet 横向扫描已有最小 object-coordinate promotion，最新实测为 `identity_supported=44`、`identity_over_threshold=28`、`promotable=5`、`object_geometry_hint_count=5`、`text_over_threshold=0`；Text/Symbol 仍无 promotion。
+- 下一阶段顺序：
+  1. fixture baseline hardening。
+  2. Sheet record grammar reverse engineering。
+  3. object-coordinate promotion gate hardening。
+  4. Text/Symbol source-proven rendering。
+  5. canonical graph integration。
+  6. publish XML gate closure。
+- 关键决策：Phase 9A 必须先扩 fixture 到 8-12 个，再扩大 Line/Text/Symbol promotion；否则会把当前 probe 噪声固化进 H7CAD UI 或 normalized graph。
+- promotion 铁律：relationship endpoint 只证明语义连接，不证明 CAD 坐标；`SheetObjectGeometryHint` 必须与 promotion gate output 对齐，且每个 hint 都要保留 stream/offset/field_x/confidence/reason。
+- Phase 9A 首个实现切片：`tests/parse_real_files.rs` 新增 `geometry_fixture_cases()` 显式 registry 与 `GEOMETRY_FIXTURE_TARGET_MIN_AVAILABLE=8`，现有 inventory 已复用 registry 并输出 fixture category。
+- Phase 9A 第二个实现切片：`geometry_fixture_availability_summary()` 输出 registered / target_min_available / available / missing，锁定当前 registry 与 8+ fixture 目标之间的缺口。
+- Phase 9A 第三个实现切片：`geometry_fixture_availability_report_line()` 已接入 inventory 输出；当前报告头为 `registered=5, target_min_available=8, available=5, missing=[]`。
+- Phase 9C 首个实现切片：`populate_object_geometry_hints()` 的 note 已从单纯 `score=N` 升级为包含 `identity=graphic_nearby` 与 `stable_shape=...` 的 promotion gate 摘要；`promoted_object_geometry_hints_explain_promotion_gate` 锁定 offset、position 与 note provenance。
+- Phase 9C 第二个实现切片：`normalized_geometry_projection_preserves_promoted_hint_source_notes` 锁定 `build_normalized_geometry()` 会把 promoted hint 的 `score/identity/stable_shape` note 复制到 `PidGraphicProvenance.note`；生产代码已具备该行为，本轮只补回归。
+- Fixture 扩容复查：本地 `test-file` 下当前只找到 5 个 `.pid` fixture，均已在 `geometry_fixture_cases()` registry 中；Phase 9A 的 8-12 fixture 目标需要新增外部真实 PID 样本后才能继续。
+- Phase 9A fixture 扩展方案已补充到 `docs/plans/2026-05-06-phase-9a-fixture-expansion-plan-cn.md`；下一步需要新增真实 `.pid` fixture，或确认先提交当前 5-fixture 基线。
+
 ## 风险
 - 真实 `.pid` / MDF fixture 可能私有，测试会 soft-skip；需要明确哪些门禁是 hard gate，哪些是 local-only gate。
 - `vendor/oxidized-mdf` 为 GPL-3.0；对外分发二进制时需要合规方案。
