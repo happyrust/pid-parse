@@ -133,10 +133,12 @@ fn geometry_json_flag_emits_normalized_probe_entities() {
             .iter()
             .any(|entity| entity["confidence"] == "probe_only"
                 && entity["kind"]["kind"] == "unknown"
+                && entity["coordinate_context"]["units"]["state"] == "unknown"
+                && entity["coordinate_context"]["page_transform"]["state"] == "unavailable"
                 && entity["id"]
                     .as_str()
                     .is_some_and(|id| id.contains("/Sheet6:"))),
-        "expected Sheet6 probe evidence in normalized geometry JSON; stdout:\n{stdout}"
+        "expected Sheet6 probe evidence with explicit coordinate context in normalized geometry JSON; stdout:\n{stdout}"
     );
     assert!(
         !stdout.contains("--- Summary ---"),

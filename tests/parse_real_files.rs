@@ -1129,6 +1129,72 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
             "endpoint probe provenance should stay bounded to the proven 26-byte signature"
         );
     }
+
+    assert!(
+        geometry
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("coordinate units and page transforms are unavailable")),
+        "normalized geometry should report explicit transform-unavailable diagnostics"
+    );
+
+    for entity in &geometry.entities {
+        assert!(
+            entity.source.stream_path.is_some(),
+            "Sheet-derived geometry entities must carry a source stream path"
+        );
+        let range = entity
+            .source
+            .byte_range
+            .expect("real Sheet evidence entities should carry bounded byte provenance");
+        let stream_path = entity
+            .source
+            .stream_path
+            .as_deref()
+            .expect("byte-backed entity should have a stream path");
+        let sheet = doc
+            .sheet_streams
+            .iter()
+            .find(|sheet| sheet.path == stream_path)
+            .expect("entity source stream should resolve to a parsed Sheet stream");
+        assert!(
+            range.start < range.end && range.end as u64 <= sheet.size,
+            "entity {} range {:?} must be within {} size {}",
+            entity.id,
+            range,
+            sheet.path,
+            sheet.size
+        );
+        assert!(
+            matches!(
+                entity.coordinate_context.units,
+                pid_parse::PidDrawingUnits::Unknown { .. }
+            ),
+            "units should be explicit unknown until Sheet unit metadata is decoded"
+        );
+        assert!(
+            matches!(
+                entity.coordinate_context.page_transform,
+                pid_parse::PidPageTransform::Unavailable { .. }
+            ),
+            "page transform should be explicit unavailable until metadata is decoded"
+        );
+    }
+
+    for entity in geometry.entities.iter().filter(|entity| {
+        entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+            && matches!(entity.kind, pid_parse::PidGraphicKind::Point { .. })
+    }) {
+        assert_eq!(
+            entity.coordinate_context.coordinate_space,
+            pid_parse::PidCoordinateSpace::SourceSheet,
+            "raw source coordinates should remain in source Sheet space before viewport conversion"
+        );
+        assert!(
+            entity.source.byte_range.is_some(),
+            "inferred coordinate entities must have bounded source byte provenance"
+        );
+    }
 }
 
 #[test]

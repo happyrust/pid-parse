@@ -10,6 +10,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 const SHEET_ENDPOINT_RECORD_LEN: usize = 26;
+const UNKNOWN_UNITS_DIAGNOSTIC: &str =
+    "Sheet coordinate units are not decoded from coordinate/page metadata records yet";
 
 /// Visualization-ready geometry extracted from a [`PidDocument`].
 ///
@@ -46,10 +48,108 @@ pub struct PidGraphicEntity {
     pub graphic_oid: Option<u32>,
     /// Concrete geometry payload.
     pub kind: PidGraphicKind,
+    /// Coordinate-space, unit, and page-transform interpretation for
+    /// coordinates carried by [`Self::kind`].
+    #[serde(default)]
+    pub coordinate_context: PidCoordinateContext,
     /// Where this entity came from inside the `.pid` file.
     pub source: PidGraphicProvenance,
     /// How strongly the parser understands the entity payload.
     pub confidence: PidGeometryConfidence,
+}
+
+/// Coordinate interpretation attached to a normalized graphic entity.
+///
+/// This keeps source/model coordinates separate from any future renderer
+/// viewport conversion.  When the parser cannot decode units or page
+/// transform records, the unavailable states are explicit instead of
+/// silently treating raw values as pixels or page-space coordinates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PidCoordinateContext {
+    /// Coordinate space of numeric points stored in the entity payload.
+    pub coordinate_space: PidCoordinateSpace,
+    /// Drawing units for numeric coordinates, or an explicit unknown state.
+    pub units: PidDrawingUnits,
+    /// Page/model transform metadata, or an explicit unavailable state.
+    pub page_transform: PidPageTransform,
+}
+
+impl Default for PidCoordinateContext {
+    fn default() -> Self {
+        Self {
+            coordinate_space: PidCoordinateSpace::Unknown,
+            units: PidDrawingUnits::Unknown {
+                diagnostic: UNKNOWN_UNITS_DIAGNOSTIC.to_string(),
+            },
+            page_transform: PidPageTransform::Unavailable {
+                diagnostic: "Sheet page transform metadata is unavailable; source coordinates are preserved without viewport conversion".to_string(),
+            },
+        }
+    }
+}
+
+/// Coordinate space represented by a normalized geometry payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PidCoordinateSpace {
+    /// Raw coordinate-like values as stored in a Sheet stream.
+    SourceSheet,
+    /// `SmartPlant` model/drawing coordinates after source semantics are known.
+    Model,
+    /// Page-space coordinates after applying a decoded page transform.
+    Page,
+    /// Renderer viewport coordinates; normalized geometry should not emit
+    /// this until an explicit renderer conversion has occurred.
+    Viewport,
+    /// Coordinate interpretation is not decoded for this evidence item.
+    Unknown,
+}
+
+/// Drawing units attached to normalized geometry coordinates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PidDrawingUnits {
+    /// Units were decoded from source metadata.
+    Known {
+        /// Unit label, for example `"mm"` or `"in"`.
+        unit: String,
+    },
+    /// Units are currently unavailable and must not be guessed.
+    Unknown {
+        /// Diagnostic explaining why units are unavailable.
+        diagnostic: String,
+    },
+}
+
+/// Page transform metadata for Sheet-derived geometry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PidPageTransform {
+    /// Source-to-page transform was decoded.
+    Available {
+        /// Transform origin in source/model coordinates.
+        origin: PidPoint,
+        /// X/Y scale factors from source/model coordinates to page space.
+        scale: [f64; 2],
+        /// Page bounds after applying the transform.
+        page_bounds: PidPageBounds,
+        /// 2D affine transform matrix `[m11, m12, m21, m22, dx, dy]`.
+        matrix: [f64; 6],
+    },
+    /// Transform metadata is unavailable and must not be fabricated.
+    Unavailable {
+        /// Diagnostic explaining why page transform metadata is unavailable.
+        diagnostic: String,
+    },
+}
+
+/// Axis-aligned page bounds for a decoded page transform.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PidPageBounds {
+    /// Minimum page-space corner.
+    pub min: PidPoint,
+    /// Maximum page-space corner.
+    pub max: PidPoint,
 }
 
 /// Geometry payload for a [`PidGraphicEntity`].
@@ -227,6 +327,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     kind: PidGraphicKind::Unknown {
                         note: format!("sheet text probe: {}", text.text),
                     },
+                    coordinate_context: undecoded_sheet_coordinate_context(&sheet.path),
                     source: PidGraphicProvenance {
                         stream_path: Some(sheet.path.clone()),
                         byte_range: source_range(text.offset, text.byte_len, sheet.size),
@@ -240,52 +341,91 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
             }
 
             for (index, hint) in geometry.coordinate_hints.iter().enumerate() {
+                let byte_range = source_range(hint.offset, 8, sheet.size);
+                let (kind, confidence, note) = if byte_range.is_some() {
+                    (
+                        PidGraphicKind::Point {
+                            position: PidPoint {
+                                x: f64::from(hint.x),
+                                y: f64::from(hint.y),
+                            },
+                        },
+                        PidGeometryConfidence::Inferred,
+                        "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet".to_string(),
+                    )
+                } else {
+                    (
+                        PidGraphicKind::Unknown {
+                            note: format!(
+                                "out-of-bounds coordinate hint: x={} y={} at offset {}",
+                                hint.x, hint.y, hint.offset
+                            ),
+                        },
+                        PidGeometryConfidence::ProbeOnly,
+                        "coordinate pair is not promoted because its byte range is outside the Sheet stream".to_string(),
+                    )
+                };
                 entities.push(PidGraphicEntity {
                     id: format!("{}:coordinate-hint:{index}", sheet.path),
                     drawing_id: None,
                     graphic_oid: None,
-                    kind: PidGraphicKind::Point {
-                        position: PidPoint {
-                            x: f64::from(hint.x),
-                            y: f64::from(hint.y),
-                        },
-                    },
+                    kind,
+                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
                     source: PidGraphicProvenance {
                         stream_path: Some(sheet.path.clone()),
-                        byte_range: source_range(hint.offset, 8, sheet.size),
+                        byte_range,
                         record_id: Some(format!("coordinate-hint:{index}")),
                         record_kind: Some(SheetRecordKind::Unknown),
                         field_x: None,
-                        note: Some(
-                            "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
-                                .to_string(),
-                        ),
+                        note: Some(note),
                     },
-                    confidence: PidGeometryConfidence::Inferred,
+                    confidence,
                 });
             }
 
             for (index, hint) in geometry.object_geometry_hints.iter().enumerate() {
                 if let Some(ref pos) = hint.position {
+                    let byte_range = source_range(pos.offset, 8, sheet.size);
+                    let (kind, confidence, note) = if byte_range.is_some() {
+                        (
+                            PidGraphicKind::Point {
+                                position: PidPoint {
+                                    x: f64::from(pos.x),
+                                    y: f64::from(pos.y),
+                                },
+                            },
+                            PidGeometryConfidence::Inferred,
+                            hint.note.clone(),
+                        )
+                    } else {
+                        (
+                            PidGraphicKind::Unknown {
+                                note: format!(
+                                    "out-of-bounds object geometry hint: field_x={} x={} y={} at offset {}",
+                                    hint.field_x, pos.x, pos.y, pos.offset
+                                ),
+                            },
+                            PidGeometryConfidence::ProbeOnly,
+                            Some(
+                                "object geometry hint is not promoted because its coordinate byte range is outside the Sheet stream".to_string(),
+                            ),
+                        )
+                    };
                     entities.push(PidGraphicEntity {
                         id: format!("{}:geometry-hint:{index}", sheet.path),
                         drawing_id: None,
                         graphic_oid: hint.graphic_oid,
-                        kind: PidGraphicKind::Point {
-                            position: PidPoint {
-                                x: f64::from(pos.x),
-                                y: f64::from(pos.y),
-                            },
-                        },
+                        kind,
+                        coordinate_context: sheet_source_coordinate_context(&sheet.path),
                         source: PidGraphicProvenance {
                             stream_path: Some(sheet.path.clone()),
-                            byte_range: source_range(hint.offset, 8, sheet.size),
+                            byte_range,
                             record_id: Some(format!("geometry-hint:{index}")),
                             record_kind: Some(SheetRecordKind::Unknown),
                             field_x: Some(hint.field_x),
-                            note: hint.note.clone(),
+                            note,
                         },
-                        confidence: PidGeometryConfidence::Inferred,
+                        confidence,
                     });
                 }
             }
@@ -298,6 +438,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     kind: PidGraphicKind::Unknown {
                         note: format!("sheet text probe: {text}"),
                     },
+                    coordinate_context: undecoded_sheet_coordinate_context(&sheet.path),
                     source: PidGraphicProvenance {
                         stream_path: Some(sheet.path.clone()),
                         byte_range: None,
@@ -358,6 +499,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         "sheet endpoint probe: rel_field_x={rel_field_x} endpoints {endpoint_a} -> {endpoint_b}"
                     ),
                 },
+                coordinate_context: undecoded_sheet_coordinate_context(&sheet.path),
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
                     byte_range: source_range(offset, SHEET_ENDPOINT_RECORD_LEN, sheet.size),
@@ -376,9 +518,43 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         warnings.push(format!(
             "{probe_count} Sheet evidence item(s) emitted; renderers should still gate by kind and confidence"
         ));
+        warnings.push(
+            "Sheet coordinate units and page transforms are unavailable; source coordinates remain unconverted and every entity carries explicit coordinate_context diagnostics"
+                .to_string(),
+        );
     }
 
     NormalizedPidGeometry { entities, warnings }
+}
+
+fn sheet_source_coordinate_context(sheet_path: &str) -> PidCoordinateContext {
+    PidCoordinateContext {
+        coordinate_space: PidCoordinateSpace::SourceSheet,
+        units: unknown_sheet_units(),
+        page_transform: unavailable_sheet_transform(sheet_path),
+    }
+}
+
+fn undecoded_sheet_coordinate_context(sheet_path: &str) -> PidCoordinateContext {
+    PidCoordinateContext {
+        coordinate_space: PidCoordinateSpace::Unknown,
+        units: unknown_sheet_units(),
+        page_transform: unavailable_sheet_transform(sheet_path),
+    }
+}
+
+fn unknown_sheet_units() -> PidDrawingUnits {
+    PidDrawingUnits::Unknown {
+        diagnostic: UNKNOWN_UNITS_DIAGNOSTIC.to_string(),
+    }
+}
+
+fn unavailable_sheet_transform(sheet_path: &str) -> PidPageTransform {
+    PidPageTransform::Unavailable {
+        diagnostic: format!(
+            "Sheet page transform metadata is not decoded for {sheet_path}; source coordinates are preserved without viewport conversion"
+        ),
+    }
 }
 
 fn source_range(start: usize, len: usize, stream_size: u64) -> Option<PidByteRange> {
@@ -687,6 +863,157 @@ mod tests {
     }
 
     #[test]
+    fn sheet_entities_declare_coordinate_units_and_transform_state() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 256,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                texts: vec![SheetText {
+                    offset: 12,
+                    encoding: "ascii".into(),
+                    text: "TAG".into(),
+                    byte_len: 3,
+                }],
+                endpoints: vec![SheetEndpoint {
+                    offset: 80,
+                    rel_field_x: 200,
+                    endpoint_a: 201,
+                    endpoint_b: 202,
+                }],
+                coordinate_hints: vec![SheetCoordinateHintDto {
+                    offset: 40,
+                    x: 1200,
+                    y: -450,
+                }],
+                object_geometry_hints: Vec::new(),
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 3);
+        assert!(geometry.warnings.iter().any(|warning| {
+            warning.contains("coordinate units and page transforms are unavailable")
+        }));
+        for entity in &geometry.entities {
+            assert_eq!(
+                entity.coordinate_context.units,
+                PidDrawingUnits::Unknown {
+                    diagnostic:
+                        "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+                            .into()
+                }
+            );
+            assert!(matches!(
+                entity.coordinate_context.page_transform,
+                PidPageTransform::Unavailable { ref diagnostic }
+                    if diagnostic.contains("source coordinates are preserved without viewport conversion")
+            ));
+        }
+
+        let point_entity = geometry
+            .entities
+            .iter()
+            .find(|entity| matches!(entity.kind, PidGraphicKind::Point { .. }))
+            .expect("coordinate hint should produce a point");
+        assert_eq!(
+            point_entity.coordinate_context.coordinate_space,
+            PidCoordinateSpace::SourceSheet
+        );
+        assert!(matches!(
+            point_entity.kind,
+            PidGraphicKind::Point {
+                position: PidPoint {
+                    x: 1200.0,
+                    y: -450.0
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn inferred_entities_require_bounded_sheet_provenance() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 43,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                texts: Vec::new(),
+                endpoints: Vec::new(),
+                coordinate_hints: vec![SheetCoordinateHintDto {
+                    offset: 40,
+                    x: 1200,
+                    y: -450,
+                }],
+                object_geometry_hints: Vec::new(),
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 1);
+        let entity = &geometry.entities[0];
+        assert_eq!(entity.source.byte_range, None);
+        assert_eq!(entity.confidence, PidGeometryConfidence::ProbeOnly);
+        assert!(matches!(entity.kind, PidGraphicKind::Unknown { .. }));
+        assert!(
+            geometry
+                .entities
+                .iter()
+                .filter(|entity| entity.confidence == PidGeometryConfidence::Inferred)
+                .all(|entity| entity.source.byte_range.is_some()),
+            "inferred entities must have bounded byte provenance"
+        );
+    }
+
+    #[test]
+    fn available_page_transform_json_exposes_bounds_and_matrix() {
+        let context = PidCoordinateContext {
+            coordinate_space: PidCoordinateSpace::Model,
+            units: PidDrawingUnits::Known { unit: "mm".into() },
+            page_transform: PidPageTransform::Available {
+                origin: PidPoint { x: 10.0, y: 20.0 },
+                scale: [2.0, 2.0],
+                page_bounds: PidPageBounds {
+                    min: PidPoint { x: 0.0, y: 0.0 },
+                    max: PidPoint { x: 100.0, y: 200.0 },
+                },
+                matrix: [2.0, 0.0, 0.0, 2.0, -20.0, -40.0],
+            },
+        };
+
+        let value = serde_json::to_value(&context).expect("coordinate context JSON");
+
+        assert_eq!(value["coordinate_space"], "model");
+        assert_eq!(value["units"]["state"], "known");
+        assert_eq!(value["units"]["unit"], "mm");
+        assert_eq!(value["page_transform"]["state"], "available");
+        assert_eq!(value["page_transform"]["origin"]["x"], 10.0);
+        assert_eq!(value["page_transform"]["scale"][0], 2.0);
+        assert_eq!(value["page_transform"]["page_bounds"]["max"]["y"], 200.0);
+        assert_eq!(value["page_transform"]["matrix"][4], -20.0);
+    }
+
+    #[test]
     fn graphic_entity_carries_provenance_and_confidence() {
         let entity = PidGraphicEntity {
             id: "sheet6:line:0".into(),
@@ -696,6 +1023,7 @@ mod tests {
                 start: PidPoint { x: 1.0, y: 2.0 },
                 end: PidPoint { x: 3.0, y: 4.0 },
             },
+            coordinate_context: PidCoordinateContext::default(),
             source: PidGraphicProvenance {
                 stream_path: Some("/Sheet6".into()),
                 byte_range: Some(PidByteRange { start: 10, end: 30 }),
@@ -774,6 +1102,7 @@ mod tests {
                 id: "decoded".into(),
                 drawing_id: None,
                 graphic_oid: None,
+                coordinate_context: PidCoordinateContext::default(),
                 source: PidGraphicProvenance {
                     stream_path: Some("/Sheet6".into()),
                     byte_range: Some(PidByteRange { start: 10, end: 30 }),
@@ -801,6 +1130,7 @@ mod tests {
                     start: PidPoint { x: 1.0, y: 2.0 },
                     end: PidPoint { x: 3.0, y: 4.0 },
                 },
+                coordinate_context: PidCoordinateContext::default(),
                 source: PidGraphicProvenance {
                     stream_path: Some("/Sheet6".into()),
                     byte_range: Some(PidByteRange {
