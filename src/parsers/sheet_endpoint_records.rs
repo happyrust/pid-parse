@@ -5,7 +5,7 @@
 //! Each P&IDAttributes `Relationship.<GUID>` record in
 //! `/Unclustered Dynamic Attributes` carries a `field_x` identifier in its
 //! trailer (see [`crate::model::DaRecordTrailer`]). For every relationship,
-//! Sheet streams (`/Sheet*`) contain a 28-byte header record that lists the
+//! Sheet streams (`/Sheet*`) contain a 26-byte header record that lists the
 //! two endpoints as a pair of `field_x` values. Resolving those back to the
 //! owning object's `drawing_id` yields the relationship's source/target.
 //!
@@ -32,6 +32,8 @@ use crate::model::SheetEndpointRecord;
 
 /// Constant `u32` at offset `+4` that marks an endpoint record.
 const DISCRIMINATOR: u32 = 0x0000_0006;
+/// Proven byte length of the endpoint-pair signature.
+const ENDPOINT_RECORD_LEN: usize = 26;
 /// `u16` type tag at offset `+16` that marks an endpoint record.
 const ENDPOINT_TYPE_TAG: u16 = 0x0002;
 /// `u16` delimiter between the two endpoint `field_x` values.
@@ -49,10 +51,10 @@ pub fn parse_endpoint_records(
     rel_field_xs: &HashSet<u32>,
 ) -> Vec<SheetEndpointRecord> {
     let mut out = Vec::new();
-    if data.len() < 26 {
+    if data.len() < ENDPOINT_RECORD_LEN {
         return out;
     }
-    let end = data.len() - 26;
+    let end = data.len() - ENDPOINT_RECORD_LEN;
     let mut i = 0usize;
     while i <= end {
         let field_x = u32_le(data, i);
@@ -85,8 +87,8 @@ pub fn parse_endpoint_records(
             endpoint_a,
             endpoint_b,
         });
-        // A real endpoint record occupies at least 26 bytes, skip past it.
-        i += 26;
+        // A real endpoint record occupies the proven 26-byte signature.
+        i += ENDPOINT_RECORD_LEN;
     }
     out
 }
@@ -114,10 +116,10 @@ fn u16_le(data: &[u8], p: usize) -> u16 {
 /// Returns the count of records claimed; callers may ignore it but the
 /// number is useful for unit assertions.
 pub fn scan_endpoint_records_with_trace(data: &[u8], trace: &mut ParserTraceBuilder) -> usize {
-    if data.len() < 26 {
+    if data.len() < ENDPOINT_RECORD_LEN {
         return 0;
     }
-    let end = data.len() - 26;
+    let end = data.len() - ENDPOINT_RECORD_LEN;
     let mut hits = 0usize;
     let mut i = 0usize;
     while i <= end {
@@ -138,11 +140,11 @@ pub fn scan_endpoint_records_with_trace(data: &[u8], trace: &mut ParserTraceBuil
             continue;
         }
         trace.consume(
-            ByteRange::new(i as u64, (i + 26) as u64),
+            ByteRange::new(i as u64, (i + ENDPOINT_RECORD_LEN) as u64),
             TraceConfidence::Probed,
         );
         hits += 1;
-        i += 26;
+        i += ENDPOINT_RECORD_LEN;
     }
     hits
 }
@@ -303,5 +305,35 @@ mod tests {
         assert_eq!(hits, 0);
         let trace = trace.build("/Sheet6", buf.len() as u64);
         assert_eq!(trace.consumed_bytes(), 0);
+    }
+
+    #[test]
+    fn truncated_endpoint_prefixes_never_decode_or_claim_bytes() {
+        let full = endpoint_bytes(0x03B7, 0x02E4, 0x008B);
+        assert_eq!(
+            full.len(),
+            ENDPOINT_RECORD_LEN,
+            "test fixture must model the tight signature"
+        );
+        let mut rel_set = HashSet::new();
+        rel_set.insert(0x03B7);
+
+        for len in 0..full.len() {
+            let bytes = &full[..len];
+            assert!(
+                parse_endpoint_records("/Sheet6", bytes, &rel_set).is_empty(),
+                "truncated prefix len={len} must not decode"
+            );
+
+            let mut trace = ParserTraceBuilder::new("scan_endpoint_records");
+            let hits = scan_endpoint_records_with_trace(bytes, &mut trace);
+            assert_eq!(hits, 0, "truncated prefix len={len} must not trace");
+            let trace = trace.build("/Sheet6", bytes.len() as u64);
+            assert_eq!(
+                trace.consumed_bytes(),
+                0,
+                "truncated prefix len={len} must not claim bytes"
+            );
+        }
     }
 }

@@ -233,10 +233,7 @@ fn sync_sheet_geometry_endpoints(sheet: &mut SheetStream) {
         .collect();
 }
 
-fn populate_geometry_hints(
-    raw_streams: &BTreeMap<String, RawStream>,
-    doc: &mut PidDocument,
-) {
+fn populate_geometry_hints(raw_streams: &BTreeMap<String, RawStream>, doc: &mut PidDocument) {
     use std::collections::HashSet;
 
     let Some(ref cross) = doc.cross_reference else {
@@ -286,8 +283,11 @@ fn populate_geometry_hints(
             &Default::default(),
         );
         let windows = crate::parsers::sheet_probe::field_x_windows(&raw.data, &field_xs, 96);
-        let features =
-            crate::parsers::sheet_probe::field_x_window_features(&raw.data, &windows, &report.chunks);
+        let features = crate::parsers::sheet_probe::field_x_window_features(
+            &raw.data,
+            &windows,
+            &report.chunks,
+        );
         let identities = crate::parsers::sheet_probe::field_x_window_identities(
             &raw.data,
             &windows,
@@ -299,8 +299,7 @@ fn populate_geometry_hints(
             &identities,
         );
 
-        let hints =
-            crate::parsers::sheet_probe::populate_object_geometry_hints(&scores, 70);
+        let hints = crate::parsers::sheet_probe::populate_object_geometry_hints(&scores, 70);
 
         if !hints.is_empty() {
             if let Some(geometry) = &mut sheet.geometry {

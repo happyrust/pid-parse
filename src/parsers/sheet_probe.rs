@@ -1319,7 +1319,10 @@ pub fn classify_field_x_record_shapes(
         right
             .support
             .cmp(&left.support)
-            .then_with(|| left.field_delta_from_chunk.cmp(&right.field_delta_from_chunk))
+            .then_with(|| {
+                left.field_delta_from_chunk
+                    .cmp(&right.field_delta_from_chunk)
+            })
             .then_with(|| {
                 left.coordinate_delta_from_chunk
                     .cmp(&right.coordinate_delta_from_chunk)
@@ -1387,11 +1390,15 @@ pub fn summarize_object_geometry_promotion_gate(
 
     for score in scores {
         let has_identity = score.reasons.iter().any(|r| {
-            matches!(r, SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. })
+            matches!(
+                r,
+                SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }
+            )
         });
-        let has_stable_shape = score.reasons.iter().any(|r| {
-            matches!(r, SheetFieldXWindowScoreReason::StableChunkShape { .. })
-        });
+        let has_stable_shape = score
+            .reasons
+            .iter()
+            .any(|r| matches!(r, SheetFieldXWindowScoreReason::StableChunkShape { .. }));
         let meets_threshold = score.score >= threshold;
 
         if has_identity {
@@ -1428,20 +1435,26 @@ pub fn populate_object_geometry_hints(
         .filter(|score| {
             score.score >= threshold
                 && score.reasons.iter().any(|r| {
-                    matches!(r, SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. })
+                    matches!(
+                        r,
+                        SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }
+                    )
                 })
-                && score.reasons.iter().any(|r| {
-                    matches!(r, SheetFieldXWindowScoreReason::StableChunkShape { .. })
-                })
+                && score
+                    .reasons
+                    .iter()
+                    .any(|r| matches!(r, SheetFieldXWindowScoreReason::StableChunkShape { .. }))
         })
         .map(|score| {
-            let position = score.candidate_position.as_ref().map(|pos| {
-                crate::model::SheetCoordinateHintDto {
-                    offset: pos.offset,
-                    x: pos.x,
-                    y: pos.y,
-                }
-            });
+            let position =
+                score
+                    .candidate_position
+                    .as_ref()
+                    .map(|pos| crate::model::SheetCoordinateHintDto {
+                        offset: pos.offset,
+                        x: pos.x,
+                        y: pos.y,
+                    });
             crate::model::SheetObjectGeometryHint {
                 offset: score.offset,
                 field_x: score.field_x,
@@ -1455,11 +1468,12 @@ pub fn populate_object_geometry_hints(
 
 fn object_geometry_hint_note(score: &SheetFieldXWindowScore) -> String {
     let mut parts = vec![format!("score={}", score.score)];
-    if score
-        .reasons
-        .iter()
-        .any(|reason| matches!(reason, SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }))
-    {
+    if score.reasons.iter().any(|reason| {
+        matches!(
+            reason,
+            SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }
+        )
+    }) {
         parts.push("identity=graphic_nearby".to_string());
     }
     if let Some((field_delta, coordinate_delta, support)) =
@@ -2218,6 +2232,27 @@ mod tests {
     }
 
     #[test]
+    fn record_type_counts_remain_probe_evidence_only() {
+        let data = [
+            0x89, 0xCE, 0x00, 0xAA, 0x89, 0xCE, 0x00, 0xBB, 0x89, 0x02, 0x00, 0xCC,
+        ];
+        let opts = SheetProbeOptions::default();
+
+        let report = probe_sheet_stream("SheetX", "/SheetX", &data, &opts);
+
+        assert_eq!(report.record_type_counts.get("0x00CE"), Some(&2));
+        assert_eq!(report.record_type_counts.get("0x0002"), Some(&1));
+        assert!(
+            report.text_runs.is_empty(),
+            "marker counts must not manufacture decoded text evidence"
+        );
+        assert!(
+            report.coordinate_hints.is_empty(),
+            "marker counts must not manufacture coordinate semantics"
+        );
+    }
+
+    #[test]
     fn captures_text_runs_with_offsets() {
         let mut data = vec![0x00u8, 0xFF, 0xAA, 0x01];
         data.extend_from_slice(b"ASCII-TAGS");
@@ -2389,6 +2424,30 @@ mod tests {
         assert!(windows
             .iter()
             .all(|window| window.endpoint_record_start == Some(endpoint_record_start)));
+    }
+
+    #[test]
+    fn field_x_windows_do_not_mark_truncated_endpoint_signatures() {
+        let mut data = vec![0xAAu8; 12];
+        data.extend_from_slice(&949u32.to_le_bytes());
+        data.extend_from_slice(&0x0000_0006u32.to_le_bytes());
+        data.extend_from_slice(&[0u8; 6]);
+        data.extend_from_slice(&0x0002u16.to_le_bytes());
+        data.extend_from_slice(&229u32.to_le_bytes());
+        data.extend_from_slice(&0x0001u16.to_le_bytes());
+        data.extend_from_slice(&326u32.to_le_bytes());
+        data.pop();
+        assert_eq!(data.len(), 12 + 25);
+
+        let windows = field_x_windows(&data, &[949, 229], 8);
+
+        assert!(
+            !windows.is_empty(),
+            "truncated bytes should still be searchable as field_x probe evidence"
+        );
+        assert!(windows
+            .iter()
+            .all(|window| window.endpoint_record_start.is_none()));
     }
 
     #[test]

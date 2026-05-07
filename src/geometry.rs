@@ -9,6 +9,8 @@ use crate::model::PidDocument;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+const SHEET_ENDPOINT_RECORD_LEN: usize = 26;
+
 /// Visualization-ready geometry extracted from a [`PidDocument`].
 ///
 /// Unlike [`crate::model::PidLayoutModel`], this type is reserved for
@@ -201,10 +203,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     },
                     source: PidGraphicProvenance {
                         stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(PidByteRange {
-                            start: text.offset,
-                            end: text.offset + text.byte_len,
-                        }),
+                        byte_range: source_range(text.offset, text.byte_len, sheet.size),
                         record_id: Some(format!("text-probe:{index}")),
                         field_x: None,
                         note: Some("text position is not decoded yet".to_string()),
@@ -226,10 +225,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     },
                     source: PidGraphicProvenance {
                         stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(PidByteRange {
-                            start: hint.offset,
-                            end: hint.offset + 8,
-                        }),
+                        byte_range: source_range(hint.offset, 8, sheet.size),
                         record_id: Some(format!("coordinate-hint:{index}")),
                         field_x: None,
                         note: Some(
@@ -255,10 +251,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         },
                         source: PidGraphicProvenance {
                             stream_path: Some(sheet.path.clone()),
-                            byte_range: Some(PidByteRange {
-                                start: hint.offset,
-                                end: hint.offset + 8,
-                            }),
+                            byte_range: source_range(hint.offset, 8, sheet.size),
                             record_id: Some(format!("geometry-hint:{index}")),
                             field_x: Some(hint.field_x),
                             note: hint.note.clone(),
@@ -337,10 +330,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                 },
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
-                    byte_range: Some(PidByteRange {
-                        start: offset,
-                        end: offset + 74,
-                    }),
+                    byte_range: source_range(offset, SHEET_ENDPOINT_RECORD_LEN, sheet.size),
                     record_id: Some(format!("endpoint-probe:{index}")),
                     field_x: Some(rel_field_x),
                     note: Some("endpoint positions are not decoded yet".to_string()),
@@ -360,12 +350,23 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
     NormalizedPidGeometry { entities, warnings }
 }
 
+fn source_range(start: usize, len: usize, stream_size: u64) -> Option<PidByteRange> {
+    if len == 0 {
+        return None;
+    }
+    let end = start.checked_add(len)?;
+    if u64::try_from(end).ok()? > stream_size {
+        return None;
+    }
+    Some(PidByteRange { start, end })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{
-        SheetCoordinateHintDto, SheetEndpoint, SheetEndpointRecord, SheetGeometry, SheetStream,
-        SheetText,
+        SheetCoordinateHintDto, SheetEndpoint, SheetEndpointRecord, SheetGeometry,
+        SheetObjectGeometryHint, SheetStream, SheetText,
     };
 
     #[test]
@@ -431,10 +432,7 @@ mod tests {
         assert_eq!(geometry.entities[1].source.field_x, Some(100));
         assert_eq!(
             geometry.entities[1].source.byte_range,
-            Some(PidByteRange {
-                start: 40,
-                end: 114
-            })
+            Some(PidByteRange { start: 40, end: 66 })
         );
     }
 
@@ -503,10 +501,150 @@ mod tests {
             geometry.entities[2].source.byte_range,
             Some(PidByteRange {
                 start: 80,
-                end: 154
+                end: 106
             })
         );
         assert_eq!(geometry.entities[2].source.field_x, Some(200));
+    }
+
+    #[test]
+    fn coordinate_hints_and_probe_evidence_never_use_decoded_confidence() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 256,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                texts: vec![SheetText {
+                    offset: 8,
+                    encoding: "ascii".into(),
+                    text: "TAG".into(),
+                    byte_len: 3,
+                }],
+                endpoints: vec![SheetEndpoint {
+                    offset: 64,
+                    rel_field_x: 700,
+                    endpoint_a: 701,
+                    endpoint_b: 702,
+                }],
+                coordinate_hints: vec![SheetCoordinateHintDto {
+                    offset: 24,
+                    x: 1200,
+                    y: -450,
+                }],
+                object_geometry_hints: vec![SheetObjectGeometryHint {
+                    offset: 88,
+                    field_x: 703,
+                    position: Some(SheetCoordinateHintDto {
+                        offset: 96,
+                        x: 2400,
+                        y: -900,
+                    }),
+                    graphic_oid: Some(17),
+                    note: Some(
+                        "score=80;identity=graphic_nearby;stable_shape=field_delta:10,coordinate_delta:20,support:3"
+                            .into(),
+                    ),
+                }],
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 4);
+        assert!(
+            geometry
+                .entities
+                .iter()
+                .all(|entity| entity.confidence != PidGeometryConfidence::Decoded),
+            "coordinate hints and probe records must not become Decoded without typed semantics"
+        );
+        let inferred_points = geometry
+            .entities
+            .iter()
+            .filter(|entity| {
+                entity.confidence == PidGeometryConfidence::Inferred
+                    && matches!(entity.kind, PidGraphicKind::Point { .. })
+            })
+            .count();
+        let probe_unknowns = geometry
+            .entities
+            .iter()
+            .filter(|entity| {
+                entity.confidence == PidGeometryConfidence::ProbeOnly
+                    && matches!(entity.kind, PidGraphicKind::Unknown { .. })
+            })
+            .count();
+        assert_eq!(inferred_points, 2);
+        assert_eq!(probe_unknowns, 2);
+        assert!(geometry.entities.iter().all(|entity| {
+            !matches!(
+                entity.kind,
+                PidGraphicKind::Line { .. }
+                    | PidGraphicKind::Polyline { .. }
+                    | PidGraphicKind::Arc { .. }
+                    | PidGraphicKind::Circle { .. }
+                    | PidGraphicKind::Text { .. }
+                    | PidGraphicKind::SymbolInstance { .. }
+            )
+        }));
+    }
+
+    #[test]
+    fn truncated_probe_ranges_are_not_claimed() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 30,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                texts: vec![SheetText {
+                    offset: 28,
+                    encoding: "ascii".into(),
+                    text: "TOO-LONG".into(),
+                    byte_len: 8,
+                }],
+                endpoints: vec![SheetEndpoint {
+                    offset: 12,
+                    rel_field_x: 200,
+                    endpoint_a: 201,
+                    endpoint_b: 202,
+                }],
+                coordinate_hints: vec![SheetCoordinateHintDto {
+                    offset: 24,
+                    x: 1200,
+                    y: -450,
+                }],
+                object_geometry_hints: Vec::new(),
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 3);
+        assert!(
+            geometry
+                .entities
+                .iter()
+                .all(|entity| entity.source.byte_range.is_none()),
+            "truncated evidence must remain visible but should not claim out-of-bounds byte ranges"
+        );
     }
 
     #[test]

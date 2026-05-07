@@ -1884,11 +1884,11 @@ pub struct PidRelationship {
 /// ```text
 ///   +0  u32  rel_field_x       ← matches relationship's DA trailer field_x
 ///   +4  u32  0x00000006        ← constant discriminator
-///   +8  [u8;8] zero padding
-///   +16 u16  type = 0x0002     ← endpoint-record marker
-///   +18 u32  endpoint_a        ← source field_x
-///   +22 u16  0x0001
-///   +24 u32  endpoint_b        ← target field_x
+///   +8  [u8;6] zero padding
+///   +14 u16  type = 0x0002     ← endpoint-record marker
+///   +16 u32  endpoint_a        ← source field_x
+///   +20 u16  0x0001
+///   +22 u32  endpoint_b        ← target field_x
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SheetEndpointRecord {

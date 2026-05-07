@@ -123,6 +123,26 @@ fn geometry_fixture_availability_report_line(
     )
 }
 
+fn print_geometry_fixture_availability() -> GeometryFixtureAvailabilitySummary {
+    let summary = geometry_fixture_availability_summary();
+    eprintln!("{}", geometry_fixture_availability_report_line(&summary));
+    if summary.missing.is_empty() {
+        eprintln!(
+            "geometry fixture availability: no registered fixtures missing; target gap={}",
+            summary
+                .target_min_available
+                .saturating_sub(summary.available)
+        );
+    } else {
+        for missing in &summary.missing {
+            eprintln!(
+                "geometry fixture availability: missing fixture `{missing}` — real geometry evidence for this case is NOT validated on this run"
+            );
+        }
+    }
+    summary
+}
+
 #[test]
 fn container_structure_has_streams() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
@@ -963,6 +983,7 @@ fn sheet_probe_evidence_populates_on_real_sheet_fixture() {
 
 #[test]
 fn normalized_geometry_probe_baseline_on_real_fixture() {
+    print_geometry_fixture_availability();
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;
     };
@@ -1050,16 +1071,13 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         .sheet_streams
         .iter()
         .map(|sheet| {
-            sheet
-                .geometry
-                .as_ref()
-                .map_or(0, |geometry| {
-                    geometry
-                        .object_geometry_hints
-                        .iter()
-                        .filter(|h| h.position.is_some())
-                        .count()
-                })
+            sheet.geometry.as_ref().map_or(0, |geometry| {
+                geometry
+                    .object_geometry_hints
+                    .iter()
+                    .filter(|h| h.position.is_some())
+                    .count()
+            })
         })
         .sum();
 
@@ -1073,6 +1091,44 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         geometry.entities.len(),
         "coordinate/geometry hints become inferred points; text and endpoint evidence stays ProbeOnly Unknown"
     );
+    assert!(
+        geometry
+            .entities
+            .iter()
+            .all(|entity| entity.confidence != pid_parse::PidGeometryConfidence::Decoded),
+        "real fixture baseline must not use Decoded confidence for probe-only Sheet evidence"
+    );
+    assert!(
+        geometry.entities.iter().all(|entity| {
+            !matches!(
+                entity.kind,
+                pid_parse::PidGraphicKind::Line { .. }
+                    | pid_parse::PidGraphicKind::Polyline { .. }
+                    | pid_parse::PidGraphicKind::Arc { .. }
+                    | pid_parse::PidGraphicKind::Circle { .. }
+                    | pid_parse::PidGraphicKind::Text { .. }
+                    | pid_parse::PidGraphicKind::SymbolInstance { .. }
+            )
+        }),
+        "probe-only and hint evidence must not become renderable geometry without typed records"
+    );
+    for entity in geometry.entities.iter().filter(|entity| {
+        entity
+            .source
+            .record_id
+            .as_deref()
+            .is_some_and(|record_id| record_id.starts_with("endpoint-probe:"))
+    }) {
+        let range = entity
+            .source
+            .byte_range
+            .expect("endpoint probes should carry exact byte provenance");
+        assert_eq!(
+            range.end - range.start,
+            26,
+            "endpoint probe provenance should stay bounded to the proven 26-byte signature"
+        );
+    }
 }
 
 #[test]
@@ -1765,14 +1821,17 @@ fn geometry_fixture_registry_documents_phase9a_targets() {
 
 #[test]
 fn geometry_fixture_availability_summary_tracks_target_gap() {
-    let summary = geometry_fixture_availability_summary();
+    let summary = print_geometry_fixture_availability();
 
     assert_eq!(summary.registered, geometry_fixture_cases().len());
     assert_eq!(
         summary.target_min_available,
         GEOMETRY_FIXTURE_TARGET_MIN_AVAILABLE
     );
-    assert_eq!(summary.available + summary.missing.len(), summary.registered);
+    assert_eq!(
+        summary.available + summary.missing.len(),
+        summary.registered
+    );
     assert!(
         summary.registered < summary.target_min_available,
         "Phase 9A should keep the target gap explicit until more fixtures are registered"
@@ -1807,9 +1866,7 @@ fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
     let mut object_geometry_hint_count = 0usize;
     let mut total_promotable = 0usize;
     let mut detail_lines = Vec::new();
-    let availability = geometry_fixture_availability_summary();
-
-    eprintln!("{}", geometry_fixture_availability_report_line(&availability));
+    let _availability = print_geometry_fixture_availability();
 
     for fixture in geometry_fixture_cases() {
         let Some(pkg) = parse_test_package(fixture.path) else {
@@ -1996,7 +2053,13 @@ fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
     }
 
     if fixtures_seen == 0 {
-        eprintln!("skipping: no available PID fixtures found");
+        eprintln!(
+            "skipping: no available PID fixtures found; registered={:?} — real geometry evidence inventory is NOT validated on this run",
+            geometry_fixture_cases()
+                .iter()
+                .map(|fixture| fixture.path)
+                .collect::<Vec<_>>()
+        );
         return;
     }
 
@@ -2993,13 +3056,9 @@ fn sheet6_coordinate_value_frequency_analysis() {
         .filter(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == 121)
         .count();
 
-    eprintln!(
-        "standalone value frequency: val_206_as_u32={coord_206}, val_121_as_u32={coord_121}"
-    );
+    eprintln!("standalone value frequency: val_206_as_u32={coord_206}, val_121_as_u32={coord_121}");
 
-    let promoted_field_xs: Vec<u32> = pkg
-        .parsed
-        .sheet_streams[0]
+    let promoted_field_xs: Vec<u32> = pkg.parsed.sheet_streams[0]
         .geometry
         .as_ref()
         .map(|g| g.object_geometry_hints.iter().map(|h| h.field_x).collect())
@@ -3061,34 +3120,58 @@ fn sheet6_coordinate_value_frequency_analysis() {
         }
     }
 
-    let Some(cross) = pkg.parsed.cross_reference.as_ref() else { return; };
-    let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else { return; };
+    let Some(cross) = pkg.parsed.cross_reference.as_ref() else {
+        return;
+    };
+    let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
+        return;
+    };
     let identity_index = sheet_identity_index_from_trailers(&da.record_trailers);
-    let object_field_xs: HashSet<_> = pkg.parsed.object_graph.as_ref()
+    let object_field_xs: HashSet<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
         .map(|g| g.objects.iter().filter_map(|o| o.field_x).collect())
         .unwrap_or_default();
-    let mut ep_field_xs: Vec<_> = cross.relationship_endpoint_links.iter()
+    let mut ep_field_xs: Vec<_> = cross
+        .relationship_endpoint_links
+        .iter()
         .filter(|l| l.sheet_path.as_deref() == Some("/Sheet6"))
         .flat_map(|l| [l.source_field_x, l.target_field_x])
-        .flatten().collect();
+        .flatten()
+        .collect();
     ep_field_xs.sort_unstable();
     ep_field_xs.dedup();
     let report = probe_sheet_stream("Sheet6", "/Sheet6", data, &SheetProbeOptions::default());
     let windows = field_x_windows(data, &ep_field_xs, 96);
     let features = field_x_window_features(data, &windows, &report.chunks);
     let identities = field_x_window_identities(data, &windows, &identity_index);
-    let scores = score_field_x_window_features_with_identities(&features, &object_field_xs, &identities);
+    let scores =
+        score_field_x_window_features_with_identities(&features, &object_field_xs, &identities);
 
-    let ce_field_xs: Vec<u32> = hit_offsets.iter().filter_map(|&off| {
-        let fx_off = off + 6;
-        if fx_off + 4 <= data.len() {
-            Some(u32::from_le_bytes([data[fx_off], data[fx_off+1], data[fx_off+2], data[fx_off+3]]))
-        } else { None }
-    }).collect();
+    let ce_field_xs: Vec<u32> = hit_offsets
+        .iter()
+        .filter_map(|&off| {
+            let fx_off = off + 6;
+            if fx_off + 4 <= data.len() {
+                Some(u32::from_le_bytes([
+                    data[fx_off],
+                    data[fx_off + 1],
+                    data[fx_off + 2],
+                    data[fx_off + 3],
+                ]))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     for fx in &ce_field_xs {
-        if promoted_field_xs.contains(fx) { continue; }
-        let best = scores.iter()
+        if promoted_field_xs.contains(fx) {
+            continue;
+        }
+        let best = scores
+            .iter()
             .filter(|s| s.field_x == *fx && s.score > 0)
             .max_by_key(|s| s.score);
         if let Some(s) = best {
