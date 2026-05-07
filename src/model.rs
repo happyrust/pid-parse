@@ -74,6 +74,13 @@ pub struct PidDocument {
     /// matches CFB traversal; sheet byte-range patches from the
     /// writer operate against these.
     pub sheet_streams: Vec<SheetStream>,
+    /// Public contract for typed and unknown Sheet record categories.
+    ///
+    /// This is a static schema surface for downstream consumers that need
+    /// to correlate [`SheetStream`] / normalized geometry provenance with
+    /// record categories before all record decoders exist.
+    #[serde(default)]
+    pub sheet_record_schema: SheetRecordSchema,
 
     /// Optional `/PSMroots` decode — the top-level list of named
     /// style / drawing property collections.
@@ -199,6 +206,7 @@ impl Default for PidDocument {
             clusters: vec![],
             dynamic_attributes: None,
             sheet_streams: vec![],
+            sheet_record_schema: SheetRecordSchema::default(),
             psm_roots: None,
             psm_cluster_table: None,
             psm_segment_table: None,
@@ -1902,6 +1910,233 @@ pub struct SheetEndpointRecord {
     pub endpoint_a: u32,
     /// Target endpoint `field_x` (references the target object's DA record).
     pub endpoint_b: u32,
+}
+
+/// Public schema catalog for Sheet record categories.
+///
+/// The entries are emitted in every [`PidDocument`] so schema/codegen
+/// consumers can discover stable record identifiers, typed vs. unknown
+/// status, and the normalized geometry kinds that must reference those
+/// categories when they become decoded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SheetRecordSchema {
+    /// Schema version for the Sheet record contract surface.
+    pub version: u32,
+    /// Typed and unknown Sheet record categories known to the parser.
+    pub entries: Vec<SheetRecordSchemaEntry>,
+}
+
+impl Default for SheetRecordSchema {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            entries: default_sheet_record_schema_entries(),
+        }
+    }
+}
+
+/// One Sheet record category in the downstream public contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SheetRecordSchemaEntry {
+    /// Stable identifier used by DTO and normalized geometry provenance.
+    pub id: String,
+    /// Machine-readable Sheet record category.
+    pub kind: SheetRecordKind,
+    /// Whether this entry names decoded field semantics or an explicit
+    /// unknown/probe bucket.
+    pub status: SheetRecordSchemaStatus,
+    /// Human-readable summary of the record category.
+    pub description: String,
+    /// Provenance fields consumers can expect when records of this category
+    /// are surfaced.
+    pub provenance: SheetRecordProvenanceContract,
+    /// Field names whose byte offsets/semantics are typed by this contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typed_fields: Vec<String>,
+    /// Normalized geometry kinds that must trace back to this record category
+    /// when emitted with decoded confidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decoded_geometry_kinds: Vec<SheetDecodedGeometryKind>,
+}
+
+/// Sheet record categories exposed by the public schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SheetRecordKind {
+    /// Straight primitive line segment record.
+    PrimitiveLine,
+    /// Ordered primitive polyline vertex record.
+    PrimitivePolyline,
+    /// Primitive circle record.
+    PrimitiveCircle,
+    /// Primitive circular arc record.
+    PrimitiveArc,
+    /// Symbol instance placement record.
+    SymbolPlacement,
+    /// Text placement/style record.
+    TextPlacementStyle,
+    /// Strict relationship endpoint-pair record.
+    EndpointPair,
+    /// Coordinate system, units, page bounds, or transform metadata record.
+    CoordinatePageMetadata,
+    /// Unrecognized or not-yet-decoded Sheet record variant.
+    Unknown,
+}
+
+/// Decode status of a Sheet record schema entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SheetRecordSchemaStatus {
+    /// Record layout and exposed fields are typed by the parser contract.
+    Typed,
+    /// Record bytes are retained only as conservative unknown/probe evidence.
+    Unknown,
+}
+
+/// Normalized geometry kinds that can be produced by decoded Sheet records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SheetDecodedGeometryKind {
+    /// [`crate::geometry::PidGraphicKind::Line`].
+    Line,
+    /// [`crate::geometry::PidGraphicKind::Polyline`].
+    Polyline,
+    /// [`crate::geometry::PidGraphicKind::Circle`].
+    Circle,
+    /// [`crate::geometry::PidGraphicKind::Arc`].
+    Arc,
+    /// [`crate::geometry::PidGraphicKind::Text`].
+    Text,
+    /// [`crate::geometry::PidGraphicKind::SymbolInstance`].
+    SymbolInstance,
+}
+
+/// Provenance requirements for a Sheet record schema entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SheetRecordProvenanceContract {
+    /// Record instances expose the source Sheet stream path.
+    pub stream_path: bool,
+    /// Record instances expose a bounded half-open byte range when
+    /// byte-backed.
+    pub byte_range: bool,
+    /// Record instances expose a stable record identifier/kind.
+    pub record_identity: bool,
+    /// Record instances may expose DA/Sheet `field_x` linkage.
+    pub field_x: bool,
+}
+
+fn default_sheet_record_schema_entries() -> Vec<SheetRecordSchemaEntry> {
+    vec![
+        sheet_record_schema_entry(
+            "primitive_line",
+            SheetRecordKind::PrimitiveLine,
+            SheetRecordSchemaStatus::Typed,
+            "Decoded Sheet line primitive; emitted only when start/end coordinates and source bytes are proven.",
+            &["start", "end"],
+            &[SheetDecodedGeometryKind::Line],
+            false,
+        ),
+        sheet_record_schema_entry(
+            "primitive_polyline",
+            SheetRecordKind::PrimitivePolyline,
+            SheetRecordSchemaStatus::Typed,
+            "Decoded Sheet polyline primitive with ordered vertices and closed/open state.",
+            &["points", "closed"],
+            &[SheetDecodedGeometryKind::Polyline],
+            false,
+        ),
+        sheet_record_schema_entry(
+            "primitive_circle",
+            SheetRecordKind::PrimitiveCircle,
+            SheetRecordSchemaStatus::Typed,
+            "Decoded Sheet circle primitive with center and positive radius.",
+            &["center", "radius"],
+            &[SheetDecodedGeometryKind::Circle],
+            false,
+        ),
+        sheet_record_schema_entry(
+            "primitive_arc",
+            SheetRecordKind::PrimitiveArc,
+            SheetRecordSchemaStatus::Typed,
+            "Decoded Sheet arc primitive with center, radius, and radian angle semantics.",
+            &["center", "radius", "start_angle", "end_angle"],
+            &[SheetDecodedGeometryKind::Arc],
+            false,
+        ),
+        sheet_record_schema_entry(
+            "symbol_placement",
+            SheetRecordKind::SymbolPlacement,
+            SheetRecordSchemaStatus::Typed,
+            "Decoded symbol instance placement with insertion point, rotation, scale, and identity linkage.",
+            &["insertion", "rotation", "scale", "symbol_path"],
+            &[SheetDecodedGeometryKind::SymbolInstance],
+            true,
+        ),
+        sheet_record_schema_entry(
+            "text_placement_style",
+            SheetRecordKind::TextPlacementStyle,
+            SheetRecordSchemaStatus::Typed,
+            "Decoded text placement and style with value, insertion, height, rotation, and font contract.",
+            &["value", "insertion", "height", "rotation", "font"],
+            &[SheetDecodedGeometryKind::Text],
+            false,
+        ),
+        sheet_record_schema_entry(
+            "endpoint_pair",
+            SheetRecordKind::EndpointPair,
+            SheetRecordSchemaStatus::Typed,
+            "Strict 26-byte relationship endpoint-pair record mapping a relationship field_x to source/target endpoint field_x values.",
+            &["rel_field_x", "endpoint_a", "endpoint_b"],
+            &[],
+            true,
+        ),
+        sheet_record_schema_entry(
+            "coordinate_page_metadata",
+            SheetRecordKind::CoordinatePageMetadata,
+            SheetRecordSchemaStatus::Typed,
+            "Coordinate system, units, page bounds, origin, scale, and page/model transform metadata.",
+            &["coordinate_space", "units", "origin", "scale", "page_bounds", "transform"],
+            &[],
+            false,
+        ),
+        sheet_record_schema_entry(
+            "unknown",
+            SheetRecordKind::Unknown,
+            SheetRecordSchemaStatus::Unknown,
+            "Conservative bucket for unrecognized Sheet records retained as probe/unknown evidence without decoded renderable geometry.",
+            &[],
+            &[],
+            true,
+        ),
+    ]
+}
+
+fn sheet_record_schema_entry(
+    id: &str,
+    kind: SheetRecordKind,
+    status: SheetRecordSchemaStatus,
+    description: &str,
+    typed_fields: &[&str],
+    decoded_geometry_kinds: &[SheetDecodedGeometryKind],
+    field_x: bool,
+) -> SheetRecordSchemaEntry {
+    SheetRecordSchemaEntry {
+        id: id.to_string(),
+        kind,
+        status,
+        description: description.to_string(),
+        provenance: SheetRecordProvenanceContract {
+            stream_path: true,
+            byte_range: true,
+            record_identity: true,
+            field_x,
+        },
+        typed_fields: typed_fields
+            .iter()
+            .map(|field| (*field).to_string())
+            .collect(),
+        decoded_geometry_kinds: decoded_geometry_kinds.to_vec(),
+    }
 }
 
 // ---- Readable layout model ---------------------------------------------------

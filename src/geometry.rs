@@ -5,7 +5,7 @@
 //! points because they carry source byte ranges, but they are still not
 //! line / text / symbol geometry.
 
-use crate::model::PidDocument;
+use crate::model::{PidDocument, SheetRecordKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -123,6 +123,25 @@ pub enum PidGraphicKind {
     },
 }
 
+impl PidGraphicKind {
+    /// Sheet record kind required when this payload is emitted with decoded
+    /// confidence.
+    ///
+    /// Probe-only and inferred payloads return `None` because they do not yet
+    /// prove a renderable Sheet record layout.
+    pub fn decoded_sheet_record_kind(&self) -> Option<SheetRecordKind> {
+        match self {
+            Self::Line { .. } => Some(SheetRecordKind::PrimitiveLine),
+            Self::Polyline { .. } => Some(SheetRecordKind::PrimitivePolyline),
+            Self::Arc { .. } => Some(SheetRecordKind::PrimitiveArc),
+            Self::Circle { .. } => Some(SheetRecordKind::PrimitiveCircle),
+            Self::Text { .. } => Some(SheetRecordKind::TextPlacementStyle),
+            Self::SymbolInstance { .. } => Some(SheetRecordKind::SymbolPlacement),
+            Self::Point { .. } | Self::Unknown { .. } => None,
+        }
+    }
+}
+
 /// Two-dimensional point in source drawing units.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PidPoint {
@@ -144,6 +163,13 @@ pub struct PidGraphicProvenance {
     /// Parser-level record identifier, if the source structure has one.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub record_id: Option<String>,
+    /// Public Sheet record kind that owns [`Self::record_id`], when known.
+    ///
+    /// Decoded renderable geometry must use a typed kind from
+    /// [`crate::model::SheetRecordSchema`]; probe-only evidence may explicitly
+    /// use [`SheetRecordKind::Unknown`].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub record_kind: Option<SheetRecordKind>,
     /// Dynamic Attributes / Sheet `field_x` value associated with the entity.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub field_x: Option<u32>,
@@ -205,6 +231,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         stream_path: Some(sheet.path.clone()),
                         byte_range: source_range(text.offset, text.byte_len, sheet.size),
                         record_id: Some(format!("text-probe:{index}")),
+                        record_kind: Some(SheetRecordKind::Unknown),
                         field_x: None,
                         note: Some("text position is not decoded yet".to_string()),
                     },
@@ -227,6 +254,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         stream_path: Some(sheet.path.clone()),
                         byte_range: source_range(hint.offset, 8, sheet.size),
                         record_id: Some(format!("coordinate-hint:{index}")),
+                        record_kind: Some(SheetRecordKind::Unknown),
                         field_x: None,
                         note: Some(
                             "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
@@ -253,6 +281,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                             stream_path: Some(sheet.path.clone()),
                             byte_range: source_range(hint.offset, 8, sheet.size),
                             record_id: Some(format!("geometry-hint:{index}")),
+                            record_kind: Some(SheetRecordKind::Unknown),
                             field_x: Some(hint.field_x),
                             note: hint.note.clone(),
                         },
@@ -273,6 +302,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         stream_path: Some(sheet.path.clone()),
                         byte_range: None,
                         record_id: Some(format!("text-probe:{index}")),
+                        record_kind: Some(SheetRecordKind::Unknown),
                         field_x: None,
                         note: Some("text position is not decoded yet".to_string()),
                     },
@@ -332,6 +362,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     stream_path: Some(sheet.path.clone()),
                     byte_range: source_range(offset, SHEET_ENDPOINT_RECORD_LEN, sheet.size),
                     record_id: Some(format!("endpoint-probe:{index}")),
+                    record_kind: Some(SheetRecordKind::EndpointPair),
                     field_x: Some(rel_field_x),
                     note: Some("endpoint positions are not decoded yet".to_string()),
                 },
@@ -430,6 +461,14 @@ mod tests {
                 && entity.confidence == PidGeometryConfidence::ProbeOnly
         }));
         assert_eq!(geometry.entities[1].source.field_x, Some(100));
+        assert_eq!(
+            geometry.entities[0].source.record_kind,
+            Some(SheetRecordKind::Unknown)
+        );
+        assert_eq!(
+            geometry.entities[1].source.record_kind,
+            Some(SheetRecordKind::EndpointPair)
+        );
         assert_eq!(
             geometry.entities[1].source.byte_range,
             Some(PidByteRange { start: 40, end: 66 })
@@ -661,6 +700,7 @@ mod tests {
                 stream_path: Some("/Sheet6".into()),
                 byte_range: Some(PidByteRange { start: 10, end: 30 }),
                 record_id: Some("rec-1".into()),
+                record_kind: Some(SheetRecordKind::PrimitiveLine),
                 field_x: Some(7),
                 note: None,
             },
@@ -669,5 +709,117 @@ mod tests {
 
         assert_eq!(entity.graphic_oid, Some(42));
         assert_eq!(entity.confidence, PidGeometryConfidence::Decoded);
+    }
+
+    #[test]
+    fn decoded_renderable_kinds_map_to_typed_sheet_record_kinds() {
+        let cases = [
+            (
+                PidGraphicKind::Line {
+                    start: PidPoint { x: 0.0, y: 0.0 },
+                    end: PidPoint { x: 1.0, y: 1.0 },
+                },
+                SheetRecordKind::PrimitiveLine,
+            ),
+            (
+                PidGraphicKind::Polyline {
+                    points: vec![PidPoint { x: 0.0, y: 0.0 }, PidPoint { x: 1.0, y: 1.0 }],
+                    closed: false,
+                },
+                SheetRecordKind::PrimitivePolyline,
+            ),
+            (
+                PidGraphicKind::Circle {
+                    center: PidPoint { x: 2.0, y: 3.0 },
+                    radius: 4.0,
+                },
+                SheetRecordKind::PrimitiveCircle,
+            ),
+            (
+                PidGraphicKind::Arc {
+                    center: PidPoint { x: 2.0, y: 3.0 },
+                    radius: 4.0,
+                    start_angle: 0.0,
+                    end_angle: 1.0,
+                },
+                SheetRecordKind::PrimitiveArc,
+            ),
+            (
+                PidGraphicKind::Text {
+                    insertion: PidPoint { x: 5.0, y: 6.0 },
+                    value: "TAG".into(),
+                    height: 2.5,
+                    rotation: 0.0,
+                },
+                SheetRecordKind::TextPlacementStyle,
+            ),
+            (
+                PidGraphicKind::SymbolInstance {
+                    insertion: PidPoint { x: 7.0, y: 8.0 },
+                    symbol_path: Some("Piping/Valve".into()),
+                    rotation: 0.0,
+                    scale: [1.0, 1.0],
+                },
+                SheetRecordKind::SymbolPlacement,
+            ),
+        ];
+
+        for (kind, expected_record_kind) in cases {
+            assert_eq!(
+                kind.decoded_sheet_record_kind(),
+                Some(expected_record_kind),
+                "decoded geometry kind must map to the public Sheet schema contract"
+            );
+            let entity = PidGraphicEntity {
+                id: "decoded".into(),
+                drawing_id: None,
+                graphic_oid: None,
+                source: PidGraphicProvenance {
+                    stream_path: Some("/Sheet6".into()),
+                    byte_range: Some(PidByteRange { start: 10, end: 30 }),
+                    record_id: Some("sheet-record".into()),
+                    record_kind: kind.decoded_sheet_record_kind(),
+                    field_x: None,
+                    note: None,
+                },
+                kind,
+                confidence: PidGeometryConfidence::Decoded,
+            };
+            assert_eq!(entity.source.record_kind, Some(expected_record_kind));
+            assert_ne!(entity.source.record_kind, Some(SheetRecordKind::Unknown));
+        }
+    }
+
+    #[test]
+    fn decoded_geometry_json_exposes_record_id_and_typed_kind() {
+        let geometry = NormalizedPidGeometry {
+            entities: vec![PidGraphicEntity {
+                id: "sheet6:line:0".into(),
+                drawing_id: None,
+                graphic_oid: None,
+                kind: PidGraphicKind::Line {
+                    start: PidPoint { x: 1.0, y: 2.0 },
+                    end: PidPoint { x: 3.0, y: 4.0 },
+                },
+                source: PidGraphicProvenance {
+                    stream_path: Some("/Sheet6".into()),
+                    byte_range: Some(PidByteRange {
+                        start: 100,
+                        end: 124,
+                    }),
+                    record_id: Some("sheet.primitive.line:0".into()),
+                    record_kind: Some(SheetRecordKind::PrimitiveLine),
+                    field_x: None,
+                    note: None,
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            }],
+            warnings: Vec::new(),
+        };
+
+        let value = serde_json::to_value(&geometry).expect("geometry JSON");
+        let source = &value["entities"][0]["source"];
+        assert_eq!(source["record_id"], "sheet.primitive.line:0");
+        assert_eq!(source["record_kind"], "primitive_line");
     }
 }

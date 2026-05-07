@@ -132,6 +132,37 @@ mod tests {
     }
 
     #[test]
+    fn schema_exposes_sheet_record_contract_entries() {
+        let text = pid_document_schema_pretty().expect("pretty JSON");
+        for needle in [
+            "sheet_record_schema",
+            "SheetRecordSchema",
+            "SheetRecordSchemaEntry",
+            "SheetRecordKind",
+            "SheetRecordSchemaStatus",
+            "SheetRecordProvenanceContract",
+            "SheetDecodedGeometryKind",
+            "decoded_geometry_kinds",
+            "provenance",
+            "primitive_line",
+            "primitive_polyline",
+            "primitive_circle",
+            "primitive_arc",
+            "symbol_placement",
+            "text_placement_style",
+            "endpoint_pair",
+            "coordinate_page_metadata",
+            "unknown",
+        ] {
+            assert!(
+                text.contains(needle),
+                "schema should mention `{needle}` but did not; output starts with:\n{}",
+                &text[..text.len().min(500)]
+            );
+        }
+    }
+
+    #[test]
     fn normalized_geometry_schema_exposes_graphic_contract() {
         let text = normalized_geometry_schema_pretty().expect("pretty JSON");
         for needle in [
@@ -141,11 +172,66 @@ mod tests {
             "Point",
             "PidGraphicProvenance",
             "PidGeometryConfidence",
+            "record_kind",
+            "SheetRecordKind",
+            "primitive_line",
+            "symbol_placement",
+            "text_placement_style",
         ] {
             assert!(
                 text.contains(needle),
                 "geometry schema should mention `{needle}` but did not; output starts with:\n{}",
                 &text[..text.len().min(500)]
+            );
+        }
+    }
+
+    #[test]
+    fn default_sheet_record_contract_maps_all_decoded_geometry_kinds() {
+        use crate::model::{SheetDecodedGeometryKind, SheetRecordKind, SheetRecordSchemaStatus};
+
+        let schema = crate::model::PidDocument::default().sheet_record_schema;
+        let mappings: Vec<_> = schema
+            .entries
+            .iter()
+            .flat_map(|entry| {
+                entry
+                    .decoded_geometry_kinds
+                    .iter()
+                    .map(move |kind| (*kind, entry.kind, entry.status))
+            })
+            .collect();
+
+        for (geometry_kind, record_kind) in [
+            (
+                SheetDecodedGeometryKind::Line,
+                SheetRecordKind::PrimitiveLine,
+            ),
+            (
+                SheetDecodedGeometryKind::Polyline,
+                SheetRecordKind::PrimitivePolyline,
+            ),
+            (
+                SheetDecodedGeometryKind::Circle,
+                SheetRecordKind::PrimitiveCircle,
+            ),
+            (SheetDecodedGeometryKind::Arc, SheetRecordKind::PrimitiveArc),
+            (
+                SheetDecodedGeometryKind::Text,
+                SheetRecordKind::TextPlacementStyle,
+            ),
+            (
+                SheetDecodedGeometryKind::SymbolInstance,
+                SheetRecordKind::SymbolPlacement,
+            ),
+        ] {
+            assert!(
+                mappings.iter().any(|(actual_geometry_kind, actual_record_kind, status)| {
+                    *actual_geometry_kind == geometry_kind
+                        && *actual_record_kind == record_kind
+                        && *status == SheetRecordSchemaStatus::Typed
+                }),
+                "missing typed Sheet record schema entry for {geometry_kind:?} -> {record_kind:?}; mappings={mappings:?}"
             );
         }
     }
