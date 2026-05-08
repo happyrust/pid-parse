@@ -2235,6 +2235,65 @@ fn f64_coordinate_domain_analysis_for_page_mapping() {
 }
 
 #[test]
+fn sheet_record_text_field_investigation() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .find(|s| s.path == "/Sheet6")
+    else {
+        return;
+    };
+    let Some(raw) = pkg.streams.get(&sheet.path) else {
+        return;
+    };
+    let Some(geometry) = &sheet.geometry else {
+        return;
+    };
+    let mut text_fragments_found = 0usize;
+    for hint in geometry
+        .object_geometry_hints
+        .iter()
+        .filter(|h| h.position.is_some() || h.f64_position.is_some())
+        .take(10)
+    {
+        let start = hint.offset;
+        let end = (start + 64).min(raw.data.len());
+        let window = &raw.data[start..end];
+        let mut fragments = Vec::new();
+        let mut ascii_run = Vec::new();
+        for &b in window {
+            if b.is_ascii_graphic() || b == b' ' {
+                ascii_run.push(b);
+            } else {
+                if ascii_run.len() >= 3 {
+                    fragments.push(String::from_utf8_lossy(&ascii_run).to_string());
+                }
+                ascii_run.clear();
+            }
+        }
+        if ascii_run.len() >= 3 {
+            fragments.push(String::from_utf8_lossy(&ascii_run).to_string());
+        }
+        text_fragments_found += fragments.len();
+        let hex: String = window
+            .iter()
+            .take(32)
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        eprintln!(
+            "hint field_x={}, offset={}, hex[0..32]={}, text_fragments={:?}",
+            hint.field_x, hint.offset, hex, fragments
+        );
+    }
+    eprintln!("total text fragments found: {text_fragments_found}");
+}
+
+#[test]
 fn dwg0201_produces_inferred_endpoint_lines() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;
