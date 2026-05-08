@@ -1,12 +1,13 @@
 use pid_parse::{
     parsers::sheet_probe::{
         classify_field_x_record_shapes, field_x_window_features, field_x_window_identities,
-        field_x_windows, probe_sheet_stream, score_field_x_window_features,
-        score_field_x_window_features_with_identities, score_field_x_windows,
-        score_sheet_text_window_candidates, sheet_identity_index_from_trailers,
-        sheet_text_window_candidates, stable_chunk_shape_support, stable_marker_support,
+        field_x_windows, probe_sheet_stream, repeated_f64_pair_candidate_before_field_x,
+        score_field_x_window_features, score_field_x_window_features_with_identities,
+        score_field_x_windows, score_sheet_text_window_candidates,
+        sheet_identity_index_from_trailers, sheet_text_window_candidates,
+        stable_chunk_shape_support, stable_marker_support,
         summarize_object_geometry_promotion_gate, top_field_x_candidate_record_dumps,
-        top_text_candidate_record_dumps, SheetProbeOptions,
+        top_text_candidate_record_dumps, SheetFieldXWindowScoreReason, SheetProbeOptions,
     },
     PidParser,
 };
@@ -141,6 +142,153 @@ fn print_geometry_fixture_availability() -> GeometryFixtureAvailabilitySummary {
         }
     }
     summary
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct NormalizedGeometryInventory {
+    decoded_points: usize,
+    inferred_points: usize,
+    decoded_lines: usize,
+    inferred_lines: usize,
+    probe_only_unknowns: usize,
+    other_entities: usize,
+}
+
+impl NormalizedGeometryInventory {
+    fn total(self) -> usize {
+        self.decoded_points
+            + self.inferred_points
+            + self.decoded_lines
+            + self.inferred_lines
+            + self.probe_only_unknowns
+            + self.other_entities
+    }
+}
+
+fn normalized_geometry_inventory(doc: &pid_parse::PidDocument) -> NormalizedGeometryInventory {
+    let geometry = pid_parse::build_normalized_geometry(doc);
+    let mut inventory = NormalizedGeometryInventory::default();
+    for entity in &geometry.entities {
+        match (&entity.kind, entity.confidence) {
+            (
+                pid_parse::PidGraphicKind::Point { .. },
+                pid_parse::PidGeometryConfidence::Decoded,
+            ) => inventory.decoded_points += 1,
+            (
+                pid_parse::PidGraphicKind::Point { .. },
+                pid_parse::PidGeometryConfidence::Inferred,
+            ) => inventory.inferred_points += 1,
+            (pid_parse::PidGraphicKind::Line { .. }, pid_parse::PidGeometryConfidence::Decoded) => {
+                inventory.decoded_lines += 1
+            }
+            (
+                pid_parse::PidGraphicKind::Line { .. },
+                pid_parse::PidGeometryConfidence::Inferred,
+            ) => inventory.inferred_lines += 1,
+            (
+                pid_parse::PidGraphicKind::Unknown { .. },
+                pid_parse::PidGeometryConfidence::ProbeOnly,
+            ) => inventory.probe_only_unknowns += 1,
+            _ => inventory.other_entities += 1,
+        }
+    }
+    assert_eq!(
+        inventory.total(),
+        geometry.entities.len(),
+        "inventory buckets should account for every normalized geometry entity"
+    );
+    inventory
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct EndpointPairGeometryDiagnostic {
+    endpoint_pairs: usize,
+    fully_promoted_with_byte_ranges: usize,
+    endpoint_range_missing: usize,
+    position_range_missing: usize,
+    only_endpoint_a_promoted: usize,
+    only_endpoint_b_promoted: usize,
+    neither_endpoint_promoted: usize,
+}
+
+fn endpoint_pair_geometry_diagnostic(
+    doc: &pid_parse::PidDocument,
+) -> EndpointPairGeometryDiagnostic {
+    const ENDPOINT_RECORD_LEN: usize = 26;
+    let mut diagnostic = EndpointPairGeometryDiagnostic::default();
+
+    for sheet in &doc.sheet_streams {
+        let object_positions = sheet.geometry.as_ref().map(|geometry| {
+            geometry
+                .object_geometry_hints
+                .iter()
+                .filter_map(|hint| {
+                    if let Some(pos) = &hint.position {
+                        Some((hint.field_x, (pos.offset, 8usize)))
+                    } else if let Some(f64_pos) = &hint.f64_position {
+                        Some((hint.field_x, (f64_pos.offset, 16usize)))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<BTreeMap<_, _>>()
+        });
+        let Some(object_positions) = object_positions else {
+            continue;
+        };
+        let endpoint_records: Vec<_> = sheet.geometry.as_ref().map_or_else(
+            || {
+                sheet
+                    .endpoint_records
+                    .iter()
+                    .map(|endpoint| (endpoint.offset, endpoint.endpoint_a, endpoint.endpoint_b))
+                    .collect()
+            },
+            |geometry| {
+                geometry
+                    .endpoints
+                    .iter()
+                    .map(|endpoint| (endpoint.offset, endpoint.endpoint_a, endpoint.endpoint_b))
+                    .collect()
+            },
+        );
+
+        for (offset, endpoint_a, endpoint_b) in endpoint_records {
+            diagnostic.endpoint_pairs += 1;
+            let sheet_size = usize::try_from(sheet.size).unwrap_or(usize::MAX);
+            let endpoint_range_ok = offset
+                .checked_add(ENDPOINT_RECORD_LEN)
+                .is_some_and(|end| end <= sheet_size);
+            let endpoint_a_position = object_positions.get(&endpoint_a).copied();
+            let endpoint_b_position = object_positions.get(&endpoint_b).copied();
+
+            match (endpoint_a_position, endpoint_b_position) {
+                (Some((a_offset, a_len)), Some((b_offset, b_len))) => {
+                    let a_range_ok = a_offset
+                        .checked_add(a_len)
+                        .is_some_and(|end| end <= sheet_size);
+                    let b_range_ok = b_offset
+                        .checked_add(b_len)
+                        .is_some_and(|end| end <= sheet_size);
+                    if endpoint_range_ok && a_range_ok && b_range_ok {
+                        diagnostic.fully_promoted_with_byte_ranges += 1;
+                    } else {
+                        if !endpoint_range_ok {
+                            diagnostic.endpoint_range_missing += 1;
+                        }
+                        if !a_range_ok || !b_range_ok {
+                            diagnostic.position_range_missing += 1;
+                        }
+                    }
+                }
+                (Some(_), None) => diagnostic.only_endpoint_a_promoted += 1,
+                (None, Some(_)) => diagnostic.only_endpoint_b_promoted += 1,
+                (None, None) => diagnostic.neither_endpoint_promoted += 1,
+            }
+        }
+    }
+
+    diagnostic
 }
 
 #[test]
@@ -1016,7 +1164,7 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                     geometry
                         .object_geometry_hints
                         .iter()
-                        .filter(|h| h.position.is_some())
+                        .filter(|h| h.position.is_some() || h.f64_position.is_some())
                         .count()
                 });
             let total = text_count + coordinate_count + endpoint_count + hint_count;
@@ -1049,6 +1197,14 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Point { .. })
         })
         .count();
+    let inferred_lines = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+        })
+        .count();
     let probe_unknowns = geometry
         .entities
         .iter()
@@ -1075,9 +1231,43 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 geometry
                     .object_geometry_hints
                     .iter()
-                    .filter(|h| h.position.is_some())
+                    .filter(|h| h.position.is_some() || h.f64_position.is_some())
                     .count()
             })
+        })
+        .sum();
+    let expected_inferred_lines: usize = doc
+        .sheet_streams
+        .iter()
+        .map(|sheet| {
+            let Some(geometry) = sheet.geometry.as_ref() else {
+                return 0;
+            };
+            let promoted_field_xs: HashSet<_> = geometry
+                .object_geometry_hints
+                .iter()
+                .filter(|hint| hint.position.is_some() || hint.f64_position.is_some())
+                .map(|hint| hint.field_x)
+                .collect();
+            let endpoint_pairs: Vec<_> = if geometry.endpoints.is_empty() {
+                sheet
+                    .endpoint_records
+                    .iter()
+                    .map(|endpoint| (endpoint.endpoint_a, endpoint.endpoint_b))
+                    .collect()
+            } else {
+                geometry
+                    .endpoints
+                    .iter()
+                    .map(|endpoint| (endpoint.endpoint_a, endpoint.endpoint_b))
+                    .collect()
+            };
+            endpoint_pairs
+                .into_iter()
+                .filter(|(endpoint_a, endpoint_b)| {
+                    promoted_field_xs.contains(endpoint_a) && promoted_field_xs.contains(endpoint_b)
+                })
+                .count()
         })
         .sum();
 
@@ -1087,9 +1277,13 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         "coordinate hints + geometry hints should be promoted to inferred positioned points"
     );
     assert_eq!(
-        inferred_points + probe_unknowns,
+        inferred_lines, expected_inferred_lines,
+        "endpoint pairs with both endpoints promoted should become inferred lines"
+    );
+    assert_eq!(
+        inferred_points + inferred_lines + probe_unknowns,
         geometry.entities.len(),
-        "coordinate/geometry hints become inferred points; text and endpoint evidence stays ProbeOnly Unknown"
+        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; remaining text and endpoint evidence stays ProbeOnly Unknown"
     );
     assert!(
         geometry
@@ -1102,16 +1296,33 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         geometry.entities.iter().all(|entity| {
             !matches!(
                 entity.kind,
-                pid_parse::PidGraphicKind::Line { .. }
-                    | pid_parse::PidGraphicKind::Polyline { .. }
+                pid_parse::PidGraphicKind::Polyline { .. }
                     | pid_parse::PidGraphicKind::Arc { .. }
                     | pid_parse::PidGraphicKind::Circle { .. }
                     | pid_parse::PidGraphicKind::Text { .. }
                     | pid_parse::PidGraphicKind::SymbolInstance { .. }
             )
         }),
-        "probe-only and hint evidence must not become renderable geometry without typed records"
+        "probe-only and hint evidence must not become typed text/symbol/curve geometry without decoded records"
     );
+    for entity in geometry.entities.iter().filter(|entity| {
+        entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+            && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+    }) {
+        assert_eq!(
+            entity.source.record_kind,
+            Some(pid_parse::SheetRecordKind::EndpointPair),
+            "inferred lines should be backed by endpoint-pair provenance"
+        );
+        assert!(
+            entity
+                .source
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("endpoint pair promoted")),
+            "inferred lines should explain the endpoint promotion"
+        );
+    }
     for entity in geometry.entities.iter().filter(|entity| {
         entity
             .source
@@ -1198,7 +1409,7 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
 }
 
 #[test]
-fn sheet6_object_geometry_hints_baseline_is_empty_until_mapping_is_proven() {
+fn sheet6_object_geometry_hints_are_populated_by_promotion_gate() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;
     };
@@ -1612,7 +1823,7 @@ fn sheet6_field_x_window_identity_report() {
 }
 
 #[test]
-fn sheet6_graphic_identity_scoring_keeps_object_hints_empty_until_proven() {
+fn sheet6_graphic_identity_scoring_populates_object_hints_when_gate_passes() {
     let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
         return;
     };
@@ -1717,7 +1928,7 @@ fn sheet6_graphic_identity_scoring_keeps_object_hints_empty_until_proven() {
 }
 
 #[test]
-fn all_sheets_graphic_identity_scoring_report_keeps_object_hints_empty() {
+fn all_sheets_graphic_identity_scoring_report_populates_promoted_object_hints() {
     let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
         return;
     };
@@ -1915,7 +2126,778 @@ fn geometry_fixture_availability_report_line_is_human_readable() {
 }
 
 #[test]
-fn available_pid_fixtures_geometry_evidence_inventory_stays_probe_only() {
+fn f64_coordinate_domain_analysis_for_page_mapping() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+
+    if let Some(drawing) = &doc.drawing_meta {
+        eprintln!("drawing_meta tags:");
+        for (key, value) in &drawing.tags {
+            eprintln!("  {key} = {value}");
+        }
+    }
+    if let Some(general) = &doc.general_meta {
+        eprintln!("general_meta tags:");
+        for (key, value) in &general.tags {
+            eprintln!("  {key} = {value}");
+        }
+    }
+
+    let geometry = pid_parse::build_normalized_geometry(&doc);
+    let mut f64_xs: Vec<f64> = Vec::new();
+    let mut f64_ys: Vec<f64> = Vec::new();
+    let mut i32_xs: Vec<i32> = Vec::new();
+    let mut i32_ys: Vec<i32> = Vec::new();
+
+    for sheet in &doc.sheet_streams {
+        if let Some(geom) = &sheet.geometry {
+            for hint in &geom.object_geometry_hints {
+                if let Some(pos) = &hint.position {
+                    i32_xs.push(pos.x);
+                    i32_ys.push(pos.y);
+                }
+                if let Some(f64_pos) = &hint.f64_position {
+                    f64_xs.push(f64_pos.x);
+                    f64_ys.push(f64_pos.y);
+                }
+            }
+            for hint in &geom.coordinate_hints {
+                i32_xs.push(hint.x);
+                i32_ys.push(hint.y);
+            }
+        }
+    }
+
+    if !f64_xs.is_empty() {
+        f64_xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        f64_ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        eprintln!(
+            "f64 coordinate domain: x=[{:.6}..{:.6}], y=[{:.6}..{:.6}], count={}",
+            f64_xs[0],
+            f64_xs[f64_xs.len() - 1],
+            f64_ys[0],
+            f64_ys[f64_ys.len() - 1],
+            f64_xs.len()
+        );
+        eprintln!(
+            "f64 x sample: {:?}",
+            f64_xs
+                .iter()
+                .take(10)
+                .map(|v| format!("{v:.6}"))
+                .collect::<Vec<_>>()
+        );
+        eprintln!(
+            "f64 y sample: {:?}",
+            f64_ys
+                .iter()
+                .take(10)
+                .map(|v| format!("{v:.6}"))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    if !i32_xs.is_empty() {
+        i32_xs.sort();
+        i32_ys.sort();
+        eprintln!(
+            "i32 coordinate domain: x=[{}..{}], y=[{}..{}], count={}",
+            i32_xs[0],
+            i32_xs[i32_xs.len() - 1],
+            i32_ys[0],
+            i32_ys[i32_ys.len() - 1],
+            i32_xs.len()
+        );
+    }
+
+    let line_entities: Vec<_> = geometry
+        .entities
+        .iter()
+        .filter(|e| matches!(e.kind, pid_parse::PidGraphicKind::Line { .. }))
+        .collect();
+    if !line_entities.is_empty() {
+        eprintln!("inferred line coordinate samples:");
+        for (i, entity) in line_entities.iter().take(5).enumerate() {
+            if let pid_parse::PidGraphicKind::Line { start, end } = &entity.kind {
+                eprintln!(
+                    "  line[{i}]: ({:.6},{:.6}) -> ({:.6},{:.6})",
+                    start.x, start.y, end.x, end.y
+                );
+            }
+        }
+    }
+
+    assert!(
+        !f64_xs.is_empty() || !i32_xs.is_empty(),
+        "should have coordinate data for analysis"
+    );
+}
+
+#[test]
+fn dwg0201_produces_inferred_endpoint_lines() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let geometry = pid_parse::build_normalized_geometry(&doc);
+    let inferred_lines: Vec<_> = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+        })
+        .collect();
+    let inferred_points: Vec<_> = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Point { .. })
+        })
+        .collect();
+    eprintln!(
+        "DWG-0201GP06-01 geometry: inferred_points={}, inferred_lines={}",
+        inferred_points.len(),
+        inferred_lines.len()
+    );
+    assert!(
+        !inferred_lines.is_empty(),
+        "DWG-0201GP06-01 should produce inferred endpoint lines from f64 pair/triple coordinates"
+    );
+    for line in &inferred_lines {
+        assert_eq!(line.confidence, pid_parse::PidGeometryConfidence::Inferred);
+        assert!(
+            line.source
+                .record_kind
+                .as_ref()
+                .is_some_and(|k| *k == pid_parse::SheetRecordKind::EndpointPair),
+            "inferred line should have EndpointPair record kind"
+        );
+        assert!(
+            line.source
+                .note
+                .as_ref()
+                .is_some_and(|n| n.contains("endpoint pair promoted to inferred line")),
+            "inferred line note should describe endpoint pair promotion"
+        );
+    }
+}
+
+#[test]
+fn geometry_fixture_inventory_reports_normalized_geometry_counts() {
+    let _availability = print_geometry_fixture_availability();
+    let mut fixtures_seen = 0usize;
+    let mut line_producing_fixtures = Vec::new();
+
+    for fixture in geometry_fixture_cases() {
+        let Some(doc) = parse_test_file(fixture.path) else {
+            continue;
+        };
+        fixtures_seen += 1;
+        let inventory = normalized_geometry_inventory(&doc);
+        if inventory.inferred_lines + inventory.decoded_lines > 0 {
+            line_producing_fixtures.push(fixture.path);
+        }
+        eprintln!(
+            "geometry fixture inventory: fixture={}, category={}, decoded_points={}, inferred_points={}, decoded_lines={}, inferred_lines={}, probe_only_unknowns={}, other_entities={}",
+            fixture.path,
+            fixture.category,
+            inventory.decoded_points,
+            inventory.inferred_points,
+            inventory.decoded_lines,
+            inventory.inferred_lines,
+            inventory.probe_only_unknowns,
+            inventory.other_entities
+        );
+    }
+
+    if fixtures_seen == 0 {
+        eprintln!("skipping: no available PID fixtures found for geometry inventory");
+        return;
+    }
+    eprintln!(
+        "geometry fixture inventory summary: fixtures_seen={}, line_producing_fixtures={:?}",
+        fixtures_seen, line_producing_fixtures
+    );
+    assert!(
+        fixtures_seen > 0,
+        "at least one available fixture should be inventoried when this test does not skip"
+    );
+}
+
+#[test]
+fn endpoint_pair_geometry_diagnostics_explain_dwg0201_line_gap() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+
+    let diagnostic = endpoint_pair_geometry_diagnostic(&doc);
+    let inventory = normalized_geometry_inventory(&doc);
+    eprintln!(
+        "endpoint pair geometry diagnostic: endpoint_pairs={}, fully_promoted_with_byte_ranges={}, endpoint_range_missing={}, position_range_missing={}, only_a={}, only_b={}, neither={}, inferred_lines={}",
+        diagnostic.endpoint_pairs,
+        diagnostic.fully_promoted_with_byte_ranges,
+        diagnostic.endpoint_range_missing,
+        diagnostic.position_range_missing,
+        diagnostic.only_endpoint_a_promoted,
+        diagnostic.only_endpoint_b_promoted,
+        diagnostic.neither_endpoint_promoted,
+        inventory.inferred_lines
+    );
+
+    assert!(
+        diagnostic.endpoint_pairs > 0,
+        "DWG-0201GP06-01 should expose endpoint pairs for line-gap diagnostics"
+    );
+    assert_eq!(
+        inventory.inferred_lines, diagnostic.fully_promoted_with_byte_ranges,
+        "inferred line count should match endpoint pairs whose two endpoint positions and byte ranges are all available"
+    );
+    assert!(
+        inventory.inferred_lines > 0,
+        "DWG-0201GP06-01 should produce inferred endpoint lines after f64 pair + triple gate"
+    );
+    assert!(
+        diagnostic.only_endpoint_a_promoted
+            + diagnostic.only_endpoint_b_promoted
+            + diagnostic.neither_endpoint_promoted
+            + diagnostic.endpoint_range_missing
+            + diagnostic.position_range_missing
+            > 0,
+        "diagnostic should explain why endpoint pairs did not become line geometry"
+    );
+}
+
+#[test]
+fn endpoint_field_x_diagnostics_report_promoted_and_missing_distribution() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+
+    let object_field_xs: HashSet<_> = doc
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut endpoint_ref_counts: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut promoted_endpoint_ref_counts: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut missing_endpoint_ref_counts: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut missing_known_object_ref_count = 0usize;
+
+    for sheet in &doc.sheet_streams {
+        let Some(geometry) = sheet.geometry.as_ref() else {
+            continue;
+        };
+        let promoted_field_xs: HashSet<_> = geometry
+            .object_geometry_hints
+            .iter()
+            .filter(|hint| hint.position.is_some())
+            .map(|hint| hint.field_x)
+            .collect();
+        let endpoint_records: Vec<_> = if geometry.endpoints.is_empty() {
+            sheet
+                .endpoint_records
+                .iter()
+                .map(|endpoint| (endpoint.endpoint_a, endpoint.endpoint_b))
+                .collect()
+        } else {
+            geometry
+                .endpoints
+                .iter()
+                .map(|endpoint| (endpoint.endpoint_a, endpoint.endpoint_b))
+                .collect()
+        };
+
+        for (endpoint_a, endpoint_b) in endpoint_records {
+            for field_x in [endpoint_a, endpoint_b] {
+                *endpoint_ref_counts.entry(field_x).or_default() += 1;
+                if promoted_field_xs.contains(&field_x) {
+                    *promoted_endpoint_ref_counts.entry(field_x).or_default() += 1;
+                } else {
+                    *missing_endpoint_ref_counts.entry(field_x).or_default() += 1;
+                    if object_field_xs.contains(&field_x) {
+                        missing_known_object_ref_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let endpoint_refs: usize = endpoint_ref_counts.values().sum();
+    let promoted_refs: usize = promoted_endpoint_ref_counts.values().sum();
+    let missing_refs: usize = missing_endpoint_ref_counts.values().sum();
+    let mut top_missing: Vec<_> = missing_endpoint_ref_counts.iter().collect();
+    top_missing.sort_by(|left, right| right.1.cmp(left.1).then_with(|| left.0.cmp(right.0)));
+    let top_missing: Vec<_> = top_missing
+        .into_iter()
+        .take(10)
+        .map(|(field_x, count)| {
+            format!(
+                "{field_x}:{count}:known_object={}",
+                object_field_xs.contains(field_x)
+            )
+        })
+        .collect();
+
+    eprintln!(
+        "endpoint field_x diagnostic: unique_endpoint_fields={}, endpoint_refs={}, promoted_refs={}, missing_refs={}, missing_known_object_refs={}, top_missing={:?}",
+        endpoint_ref_counts.len(),
+        endpoint_refs,
+        promoted_refs,
+        missing_refs,
+        missing_known_object_ref_count,
+        top_missing
+    );
+
+    assert!(endpoint_refs > 0, "fixture should expose endpoint refs");
+    assert!(
+        promoted_refs > 0,
+        "fixture should have at least one endpoint ref whose field_x is promoted"
+    );
+    assert!(
+        missing_refs > 0,
+        "fixture should have missing endpoint refs explaining the line gap"
+    );
+    assert_eq!(
+        endpoint_refs,
+        promoted_refs + missing_refs,
+        "promoted + missing endpoint refs should partition all endpoint refs"
+    );
+}
+
+#[test]
+fn endpoint_missing_known_field_xs_report_promotion_gate_scores() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
+        eprintln!("skipping: dynamic attributes not built");
+        return;
+    };
+
+    let object_field_xs: HashSet<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut missing_known_counts: BTreeMap<u32, usize> = BTreeMap::new();
+
+    for sheet in &pkg.parsed.sheet_streams {
+        let Some(geometry) = sheet.geometry.as_ref() else {
+            continue;
+        };
+        let promoted_field_xs: HashSet<_> = geometry
+            .object_geometry_hints
+            .iter()
+            .filter(|hint| hint.position.is_some() || hint.f64_position.is_some())
+            .map(|hint| hint.field_x)
+            .collect();
+        let endpoint_records: Vec<_> = if geometry.endpoints.is_empty() {
+            sheet
+                .endpoint_records
+                .iter()
+                .map(|endpoint| (endpoint.endpoint_a, endpoint.endpoint_b))
+                .collect()
+        } else {
+            geometry
+                .endpoints
+                .iter()
+                .map(|endpoint| (endpoint.endpoint_a, endpoint.endpoint_b))
+                .collect()
+        };
+
+        for (endpoint_a, endpoint_b) in endpoint_records {
+            for field_x in [endpoint_a, endpoint_b] {
+                if object_field_xs.contains(&field_x) && !promoted_field_xs.contains(&field_x) {
+                    *missing_known_counts.entry(field_x).or_default() += 1;
+                }
+            }
+        }
+    }
+
+    let mut top_missing: Vec<_> = missing_known_counts.into_iter().collect();
+    top_missing.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    let target_field_xs: HashSet<u32> = top_missing
+        .iter()
+        .take(10)
+        .map(|(field_x, _)| *field_x)
+        .collect();
+    assert!(
+        !target_field_xs.is_empty(),
+        "fixture should have known-object endpoint field_x values missing promotion"
+    );
+
+    let identity_index = sheet_identity_index_from_trailers(&da.record_trailers);
+    let mut inspected = 0usize;
+    let mut below_threshold_or_no_window = 0usize;
+
+    for sheet in &pkg.parsed.sheet_streams {
+        let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+            continue;
+        };
+        let Some(geometry) = sheet.geometry.as_ref() else {
+            continue;
+        };
+        let mut sheet_targets: Vec<u32> = if geometry.endpoints.is_empty() {
+            sheet
+                .endpoint_records
+                .iter()
+                .flat_map(|endpoint| [endpoint.endpoint_a, endpoint.endpoint_b])
+                .filter(|field_x| target_field_xs.contains(field_x))
+                .collect()
+        } else {
+            geometry
+                .endpoints
+                .iter()
+                .flat_map(|endpoint| [endpoint.endpoint_a, endpoint.endpoint_b])
+                .filter(|field_x| target_field_xs.contains(field_x))
+                .collect()
+        };
+        sheet_targets.sort_unstable();
+        sheet_targets.dedup();
+        if sheet_targets.is_empty() {
+            continue;
+        }
+
+        let report = probe_sheet_stream(
+            sheet.name.as_str(),
+            sheet.path.as_str(),
+            &raw_sheet.data,
+            &SheetProbeOptions::default(),
+        );
+        let windows = field_x_windows(&raw_sheet.data, &sheet_targets, 96);
+        let features = field_x_window_features(&raw_sheet.data, &windows, &report.chunks);
+        let identities = field_x_window_identities(&raw_sheet.data, &windows, &identity_index);
+        let scores =
+            score_field_x_window_features_with_identities(&features, &object_field_xs, &identities);
+
+        for field_x in sheet_targets {
+            inspected += 1;
+            let best = scores
+                .iter()
+                .filter(|score| score.field_x == field_x)
+                .max_by(|left, right| left.score.cmp(&right.score));
+            if let Some(best) = best {
+                if best.score < 70 {
+                    below_threshold_or_no_window += 1;
+                }
+                eprintln!(
+                    "missing known endpoint field_x score detail: sheet={}, field_x={}, best_score={}, reasons={:?}, candidate_position={:?}",
+                    sheet.path,
+                    field_x,
+                    best.score,
+                    best.reasons,
+                    best.candidate_position
+                );
+            } else {
+                below_threshold_or_no_window += 1;
+                eprintln!(
+                    "missing known endpoint field_x score detail: sheet={}, field_x={}, no_window=true",
+                    sheet.path, field_x
+                );
+            }
+        }
+    }
+
+    assert!(
+        inspected > 0,
+        "top missing field_x values should be inspected"
+    );
+    assert!(
+        below_threshold_or_no_window > 0,
+        "at least one inspected missing field_x should be below threshold or absent from Sheet windows"
+    );
+}
+
+#[test]
+fn sheet6_missing_endpoint_field_xs_compare_coordinate_search_radii() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(da) = pkg.parsed.dynamic_attributes.as_ref() else {
+        eprintln!("skipping: dynamic attributes not built");
+        return;
+    };
+    let Some(sheet) = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .find(|sheet| sheet.path == "/Sheet6")
+    else {
+        eprintln!("skipping: /Sheet6 not found");
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+        eprintln!("skipping: raw /Sheet6 stream not found");
+        return;
+    };
+
+    let object_field_xs: HashSet<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+    let identity_index = sheet_identity_index_from_trailers(&da.record_trailers);
+    let target_field_xs: Vec<u32> = (630..=639).collect();
+    let report = probe_sheet_stream(
+        sheet.name.as_str(),
+        sheet.path.as_str(),
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+
+    let mut inspected = 0usize;
+    let mut any_candidate_position = false;
+    for radius in [96usize, 192, 384] {
+        let windows = field_x_windows(&raw_sheet.data, &target_field_xs, radius);
+        let features = field_x_window_features(&raw_sheet.data, &windows, &report.chunks);
+        let identities = field_x_window_identities(&raw_sheet.data, &windows, &identity_index);
+        let scores =
+            score_field_x_window_features_with_identities(&features, &object_field_xs, &identities);
+        let dumps = top_field_x_candidate_record_dumps(&raw_sheet.data, &scores, 10, 32);
+        let candidate_positions = scores
+            .iter()
+            .filter(|score| score.candidate_position.is_some())
+            .count();
+        any_candidate_position |= candidate_positions > 0;
+        inspected += scores.len();
+        eprintln!(
+            "sheet6 missing endpoint radius diagnostic: radius={}, windows={}, scores={}, candidate_positions={}",
+            radius,
+            windows.len(),
+            scores.len(),
+            candidate_positions
+        );
+        for dump in dumps {
+            eprintln!(
+                "sheet6 missing endpoint dump: radius={}, field_x={}, score={}, field_offset={}, coordinate_offset={:?}, reasons={:?}, field_window={}..{} {}",
+                radius,
+                dump.field_x,
+                dump.score,
+                dump.field_offset,
+                dump.coordinate_offset,
+                dump.reasons,
+                dump.field_window.start,
+                dump.field_window.end,
+                dump.field_window.hex
+            );
+        }
+    }
+
+    assert!(inspected > 0, "expected field_x scores for Sheet6 targets");
+    assert!(
+        !any_candidate_position,
+        "current diagnostic documents that wider search radii still do not surface candidate positions for field_x 630..639"
+    );
+}
+
+#[test]
+fn sheet6_missing_endpoint_field_xs_have_preceding_f64_coordinate_pairs() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .find(|sheet| sheet.path == "/Sheet6")
+    else {
+        eprintln!("skipping: /Sheet6 not found");
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+        eprintln!("skipping: raw /Sheet6 stream not found");
+        return;
+    };
+
+    let target_field_xs: Vec<u32> = (630..=639).collect();
+    let windows = field_x_windows(&raw_sheet.data, &target_field_xs, 96);
+    let report = probe_sheet_stream(
+        sheet.name.as_str(),
+        sheet.path.as_str(),
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let features = field_x_window_features(&raw_sheet.data, &windows, &report.chunks);
+    let object_field_xs: HashSet<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+    let scores = score_field_x_window_features(&features, &object_field_xs);
+    let mut candidates = Vec::new();
+    for window in &windows {
+        if let Some(candidate) =
+            repeated_f64_pair_candidate_before_field_x(&raw_sheet.data, window.offset)
+        {
+            candidates.push((
+                window.field_x,
+                window.offset,
+                candidate.coordinate_offset,
+                candidate.x,
+                candidate.y,
+            ));
+        }
+    }
+
+    for (field_x, field_offset, coordinate_offset, x, y) in &candidates {
+        eprintln!(
+            "sheet6 repeated f64 candidate: field_x={}, field_offset={}, coordinate_offset={}, x={:.6}, y={:.6}",
+            field_x, field_offset, coordinate_offset, x, y
+        );
+    }
+
+    assert_eq!(
+        candidates.len(),
+        target_field_xs.len(),
+        "each target field_x should match the repeated marker + preceding f64 pair experiment"
+    );
+    let candidate_offsets: HashSet<_> = candidates
+        .iter()
+        .map(|(_, field_offset, _, _, _)| *field_offset)
+        .collect();
+    assert!(
+        scores
+            .iter()
+            .filter(|score| candidate_offsets.contains(&score.offset))
+            .all(|score| score.reasons.contains(
+                &SheetFieldXWindowScoreReason::RepeatedF64PairBeforeField {
+                    coordinate_delta: -22,
+                    marker_delta: -6,
+                    support: 10,
+                },
+            )),
+        "all repeated f64 candidate scores should expose the diagnostic reason"
+    );
+}
+
+#[test]
+fn sheet6_endpoint_a_missing_field_xs_f64_byte_window_investigation() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(sheet) = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .find(|sheet| sheet.path == "/Sheet6")
+    else {
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+        return;
+    };
+    let Some(geometry) = &sheet.geometry else {
+        return;
+    };
+
+    let promoted_field_xs: HashSet<_> = geometry
+        .object_geometry_hints
+        .iter()
+        .filter(|hint| hint.position.is_some() || hint.f64_position.is_some())
+        .map(|hint| hint.field_x)
+        .collect();
+    let endpoint_b_for_only_b: Vec<u32> = geometry
+        .endpoints
+        .iter()
+        .filter(|ep| {
+            !promoted_field_xs.contains(&ep.endpoint_a)
+                && promoted_field_xs.contains(&ep.endpoint_b)
+        })
+        .map(|ep| ep.endpoint_a)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    eprintln!(
+        "endpoint_a field_xs missing promotion (from only_b pairs): {:?}",
+        {
+            let mut sorted = endpoint_b_for_only_b.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            sorted
+        }
+    );
+
+    let target_field_xs: Vec<u32> = {
+        let mut sorted = endpoint_b_for_only_b.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        sorted
+    };
+    let windows = field_x_windows(&raw_sheet.data, &target_field_xs, 96);
+
+    let mut with_f64_pair = 0usize;
+    let mut without_f64_pair = 0usize;
+    for window in &windows {
+        if let Some(candidate) =
+            repeated_f64_pair_candidate_before_field_x(&raw_sheet.data, window.offset)
+        {
+            with_f64_pair += 1;
+            eprintln!(
+                "  field_x={} offset={} HAS f64 pair: x={:.6} y={:.6} coord_offset={}",
+                window.field_x,
+                window.offset,
+                candidate.x,
+                candidate.y,
+                candidate.coordinate_offset
+            );
+        } else {
+            without_f64_pair += 1;
+            let start = window.offset.saturating_sub(30);
+            let end = (window.offset + 10).min(raw_sheet.data.len());
+            let hex: String = raw_sheet.data[start..end]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            eprintln!(
+                "  field_x={} offset={} NO f64 pair; nearby bytes [{start}..{end}]: {hex}",
+                window.field_x, window.offset
+            );
+        }
+    }
+    eprintln!(
+        "f64 pair coverage for endpoint_a missing field_xs: with={with_f64_pair}, without={without_f64_pair}, total_windows={}",
+        windows.len()
+    );
+
+    assert!(
+        windows.len() > 0,
+        "should find windows for missing endpoint_a field_xs"
+    );
+}
+
+#[test]
+fn available_pid_fixtures_geometry_evidence_inventory_tracks_promoted_hints() {
     let mut fixtures_seen = 0usize;
     let mut sheets_seen = 0usize;
     let mut windows_seen = 0usize;
@@ -2188,14 +3170,24 @@ fn promoted_object_geometry_hints_explain_promotion_gate() {
                 hint.offset < raw_sheet.data.len(),
                 "promoted hint offset should point into the source Sheet stream"
             );
-            let position = hint
-                .position
-                .as_ref()
-                .expect("promoted hint should carry a coordinate position");
+            let has_i32_position = hint.position.is_some();
+            let has_f64_position = hint.f64_position.is_some();
             assert!(
-                position.offset + 8 <= raw_sheet.data.len(),
-                "promoted hint coordinate offset should point into the source Sheet stream"
+                has_i32_position || has_f64_position,
+                "promoted hint should carry a coordinate position (i32 or f64)"
             );
+            if let Some(position) = &hint.position {
+                assert!(
+                    position.offset + 8 <= raw_sheet.data.len(),
+                    "promoted hint i32 coordinate offset should point into the source Sheet stream"
+                );
+            }
+            if let Some(f64_pos) = &hint.f64_position {
+                assert!(
+                    f64_pos.offset + 16 <= raw_sheet.data.len(),
+                    "promoted hint f64 coordinate offset should point into the source Sheet stream"
+                );
+            }
             let note = hint
                 .note
                 .as_deref()
@@ -2204,13 +3196,12 @@ fn promoted_object_geometry_hints_explain_promotion_gate() {
                 note.contains("score="),
                 "promotion note should include score: {note}"
             );
+            let is_primary_gate = note.contains("identity") && note.contains("stable_shape");
+            let is_f64_gate = note.contains("coordinate_source=f64_pair_before_marker")
+                || note.contains("coordinate_source=nearest_coordinate_hint");
             assert!(
-                note.contains("identity"),
-                "promotion note should mention identity evidence: {note}"
-            );
-            assert!(
-                note.contains("stable_shape"),
-                "promotion note should mention stable shape evidence: {note}"
+                is_primary_gate || is_f64_gate,
+                "promotion note should indicate either primary gate or f64/coordinate source: {note}"
             );
         }
     }
@@ -2238,16 +3229,19 @@ fn normalized_geometry_projection_preserves_promoted_hint_source_notes() {
         for hint in geometry
             .object_geometry_hints
             .iter()
-            .filter(|hint| hint.position.is_some())
+            .filter(|hint| hint.position.is_some() || hint.f64_position.is_some())
         {
             let note = hint
                 .note
                 .as_deref()
                 .expect("promoted hint should carry a promotion gate note");
-            let position = hint
-                .position
-                .as_ref()
-                .expect("filtered hints should carry a position");
+            let (expected_x, expected_y) = if let Some(pos) = &hint.position {
+                (f64::from(pos.x), f64::from(pos.y))
+            } else if let Some(f64_pos) = &hint.f64_position {
+                (f64_pos.x, f64_pos.y)
+            } else {
+                panic!("filtered hint should carry either i32 or f64 position");
+            };
 
             let projected = normalized.entities.iter().find(|entity| {
                 entity.source.stream_path.as_deref() == Some(sheet.path.as_str())
@@ -2257,8 +3251,8 @@ fn normalized_geometry_projection_preserves_promoted_hint_source_notes() {
                     && matches!(
                         &entity.kind,
                         pid_parse::PidGraphicKind::Point { position: point }
-                            if point.x == f64::from(position.x)
-                                && point.y == f64::from(position.y)
+                            if point.x == expected_x
+                                && point.y == expected_y
                     )
             });
 
@@ -2266,10 +3260,11 @@ fn normalized_geometry_projection_preserves_promoted_hint_source_notes() {
                 projected.is_some(),
                 "normalized geometry should preserve promoted hint source note: {note}"
             );
+            let has_primary_gate_evidence =
+                note.contains("identity") && note.contains("stable_shape");
+            let has_coordinate_source = note.contains("coordinate_source=");
             assert!(
-                note.contains("score=")
-                    && note.contains("identity")
-                    && note.contains("stable_shape"),
+                note.contains("score=") && (has_primary_gate_evidence || has_coordinate_source),
                 "projected source note should retain promotion gate evidence: {note}"
             );
             promoted_hints_checked += 1;

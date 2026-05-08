@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SmartPlant P&amp;ID .pid File Format</title>
+  <style>
+    :root {
+      --bg: #08111f;
+      --panel: rgba(15, 23, 42, 0.88);
+      --panel-2: rgba(15, 23, 42, 0.68);
+      --line: rgba(148, 163, 184, 0.34);
+      --text: #e5eefb;
+      --muted: #94a3b8;
+      --cyan: #22d3ee;
+      --blue: #60a5fa;
+      --violet: #a78bfa;
+      --emerald: #34d399;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --orange: #fb923c;
+      --slate: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #020617;
+      font-family: "Microsoft YaHei UI", "Segoe UI", Arial, sans-serif;
+      color: var(--text);
+    }
+
+    .canvas {
+      width: 1920px;
+      height: 1080px;
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(34, 211, 238, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(34, 211, 238, 0.04) 1px, transparent 1px),
+        radial-gradient(circle at 16% 20%, rgba(34, 211, 238, 0.16), transparent 28%),
+        radial-gradient(circle at 82% 14%, rgba(167, 139, 250, 0.13), transparent 24%),
+        linear-gradient(135deg, #08111f 0%, #0f172a 58%, #111827 100%);
+      background-size: 32px 32px, 32px 32px, auto, auto, auto;
+      padding: 52px 64px;
+    }
+
+    .header {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 28px;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--cyan);
+      font: 700 20px/1.1 "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 58px;
+      line-height: 1.02;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 14px 0 0;
+      max-width: 1080px;
+      color: #bfdbfe;
+      font-size: 24px;
+      line-height: 1.35;
+    }
+
+    .badge {
+      border: 1px solid rgba(34, 211, 238, 0.42);
+      color: #cffafe;
+      border-radius: 8px;
+      padding: 14px 18px;
+      background: rgba(8, 47, 73, 0.42);
+      font: 700 19px/1.2 "Cascadia Mono", Consolas, monospace;
+      text-align: right;
+      box-shadow: 0 0 32px rgba(34, 211, 238, 0.08);
+    }
+
+    .main-grid {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: 500px 520px 1fr;
+      gap: 24px;
+      height: 690px;
+    }
+
+    .panel {
+      position: relative;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 10px;
+      background: var(--panel);
+      box-shadow: 0 24px 80px rgba(2, 6, 23, 0.35);
+      padding: 22px;
+      overflow: hidden;
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-top: 2px solid var(--accent, var(--cyan));
+      opacity: 0.9;
+      pointer-events: none;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 18px;
+      color: #f8fafc;
+      font: 800 24px/1.1 "Cascadia Mono", "Microsoft YaHei UI", monospace;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: var(--accent, var(--cyan));
+      box-shadow: 0 0 18px var(--accent, var(--cyan));
+      flex: 0 0 auto;
+    }
+
+    .tree {
+      position: relative;
+      display: grid;
+      gap: 8px;
+      padding-left: 14px;
+    }
+
+    .tree::before {
+      content: "";
+      position: absolute;
+      left: 19px;
+      top: 44px;
+      bottom: 16px;
+      border-left: 1px solid rgba(34, 211, 238, 0.35);
+    }
+
+    .file-card {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      border: 1px solid rgba(34, 211, 238, 0.48);
+      background: rgba(8, 47, 73, 0.46);
+      border-radius: 8px;
+      padding: 13px 14px;
+      margin-bottom: 8px;
+    }
+
+    .file-icon {
+      width: 44px;
+      height: 54px;
+      border-radius: 5px;
+      background: linear-gradient(160deg, #e0f2fe 0 76%, #7dd3fc 77%);
+      color: #0f172a;
+      display: grid;
+      place-items: center;
+      font: 900 16px/1 "Cascadia Mono", monospace;
+      box-shadow: 0 0 24px rgba(34, 211, 238, 0.18);
+    }
+
+    .file-text strong {
+      display: block;
+      font: 800 23px/1.1 "Cascadia Mono", Consolas, monospace;
+      color: #f8fafc;
+    }
+
+    .file-text span {
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .tree-row {
+      position: relative;
+      margin-left: 18px;
+      border: 1px solid rgba(96, 165, 250, 0.28);
+      background: rgba(15, 23, 42, 0.72);
+      border-radius: 7px;
+      padding: 7px 10px 7px 14px;
+      color: #dbeafe;
+      font: 600 17px/1.15 "Cascadia Mono", Consolas, monospace;
+      white-space: nowrap;
+    }
+
+    .tree-row::before {
+      content: "";
+      position: absolute;
+      left: -18px;
+      top: 50%;
+      width: 18px;
+      border-top: 1px solid rgba(34, 211, 238, 0.35);
+    }
+
+    .layers {
+      display: grid;
+      gap: 12px;
+    }
+
+    .layer {
+      display: grid;
+      grid-template-columns: 58px 1fr;
+      gap: 13px;
+      align-items: stretch;
+      min-height: 102px;
+    }
+
+    .layer-num {
+      border: 1px solid color-mix(in srgb, var(--c) 70%, white 0%);
+      background: color-mix(in srgb, var(--c) 17%, transparent);
+      color: var(--c);
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      font: 900 24px/1 "Cascadia Mono", Consolas, monospace;
+    }
+
+    .layer-body {
+      border: 1px solid color-mix(in srgb, var(--c) 48%, transparent);
+      background: color-mix(in srgb, var(--c) 10%, rgba(15, 23, 42, 0.76));
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .layer-body strong {
+      display: block;
+      color: #f8fafc;
+      font-size: 20px;
+      line-height: 1.1;
+      margin-bottom: 8px;
+    }
+
+    .layer-body span {
+      display: block;
+      color: #cbd5e1;
+      font: 600 15px/1.35 "Cascadia Mono", "Microsoft YaHei UI", monospace;
+    }
+
+    .object-card {
+      border: 1px solid rgba(52, 211, 153, 0.52);
+      background: linear-gradient(180deg, rgba(6, 78, 59, 0.34), rgba(15, 23, 42, 0.72));
+      border-radius: 10px;
+      padding: 18px;
+      min-height: 575px;
+      position: relative;
+    }
+
+    .object-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(52, 211, 153, 0.28);
+      padding-bottom: 13px;
+      margin-bottom: 16px;
+    }
+
+    .object-head strong {
+      font: 900 32px/1 "Cascadia Mono", Consolas, monospace;
+      color: #d1fae5;
+    }
+
+    .object-head span {
+      color: #86efac;
+      font: 700 16px/1 "Cascadia Mono", Consolas, monospace;
+    }
+
+    .object-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 11px;
+    }
+
+    .object-item {
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      background: rgba(2, 6, 23, 0.42);
+      border-radius: 8px;
+      padding: 12px 12px;
+      min-height: 74px;
+    }
+
+    .object-item b {
+      display: block;
+      color: #f8fafc;
+      font: 800 18px/1.1 "Cascadia Mono", Consolas, monospace;
+      margin-bottom: 6px;
+    }
+
+    .object-item small {
+      display: block;
+      color: #a7f3d0;
+      font-size: 14px;
+      line-height: 1.25;
+    }
+
+    .graph {
+      margin-top: 18px;
+      border: 1px dashed rgba(52, 211, 153, 0.42);
+      border-radius: 8px;
+      height: 150px;
+      position: relative;
+      background: rgba(4, 120, 87, 0.08);
+    }
+
+    .node {
+      position: absolute;
+      width: 98px;
+      height: 36px;
+      border-radius: 999px;
+      border: 1px solid rgba(52, 211, 153, 0.7);
+      background: rgba(6, 78, 59, 0.65);
+      display: grid;
+      place-items: center;
+      font: 800 13px/1 "Cascadia Mono", Consolas, monospace;
+      color: #d1fae5;
+    }
+
+    .n1 { left: 22px; top: 22px; }
+    .n2 { left: 202px; top: 22px; }
+    .n3 { left: 382px; top: 22px; }
+    .n4 { left: 112px; top: 92px; }
+    .n5 { left: 292px; top: 92px; }
+
+    .arrow-svg {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .pipeline {
+      position: relative;
+      z-index: 2;
+      margin-top: 24px;
+      border: 1px solid rgba(251, 146, 60, 0.38);
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.88);
+      padding: 18px 22px 20px;
+      height: 190px;
+      overflow: hidden;
+    }
+
+    .pipeline-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #fed7aa;
+      font: 900 23px/1 "Cascadia Mono", Consolas, monospace;
+      margin-bottom: 16px;
+    }
+
+    .pipe-row {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 15px;
+      position: relative;
+    }
+
+    .pipe-box {
+      position: relative;
+      border: 1px solid rgba(251, 146, 60, 0.42);
+      background: rgba(30, 41, 59, 0.74);
+      border-radius: 8px;
+      min-height: 72px;
+      padding: 12px 10px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: #fff7ed;
+      font: 900 18px/1.15 "Cascadia Mono", Consolas, monospace;
+    }
+
+    .pipe-box:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      right: -15px;
+      top: 50%;
+      width: 15px;
+      border-top: 2px solid rgba(251, 146, 60, 0.65);
+    }
+
+    .pipe-box:not(:last-child)::before {
+      content: "";
+      position: absolute;
+      right: -16px;
+      top: calc(50% - 5px);
+      border-left: 9px solid rgba(251, 146, 60, 0.75);
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+      z-index: 3;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+      padding-left: 374px;
+    }
+
+    .chip {
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      background: rgba(120, 53, 15, 0.34);
+      color: #fde68a;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font: 800 14px/1 "Cascadia Mono", Consolas, monospace;
+    }
+
+    .legend {
+      position: absolute;
+      right: 64px;
+      bottom: 32px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      color: #cbd5e1;
+      font: 700 14px/1 "Cascadia Mono", Consolas, monospace;
+    }
+
+    .legend span {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      white-space: nowrap;
+    }
+
+    .legend i {
+      width: 10px;
+      height: 10px;
+      display: inline-block;
+      border-radius: 3px;
+      background: var(--c);
+    }
+
+    .waterline {
+      position: absolute;
+      left: 64px;
+      bottom: 32px;
+      color: rgba(148, 163, 184, 0.65);
+      font: 700 14px/1 "Cascadia Mono", Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <main class="canvas" aria-label="SmartPlant P&ID .pid file format infographic">
+    <header class="header">
+      <div>
+        <p class="eyebrow">PID-PARSE / SMARTPLANT P&amp;ID</p>
+        <h1>SmartPlant P&amp;ID .pid 文件格式</h1>
+        <p class="subtitle">分层 CFB 容器、元数据流、对象 Storage、Cluster、动态属性，以及离线 Publish XML 管线</p>
+      </div>
+      <div class="badge">.pid → PidDocument<br>Export.mdf → _Data.xml / _Meta.xml</div>
+    </header>
+
+    <section class="main-grid">
+      <article class="panel" style="--accent: var(--cyan);">
+        <h2 class="panel-title"><span class="dot"></span>OLE / CFBF 容器树</h2>
+        <div class="file-card">
+          <div class="file-icon">PID</div>
+          <div class="file-text">
+            <strong>drawing.pid</strong>
+            <span>Compound File Binary container</span>
+          </div>
+        </div>
+        <div class="tree">
+          <div class="tree-row">Root Entry</div>
+          <div class="tree-row">SummaryInformation</div>
+          <div class="tree-row">DocumentSummaryInformation</div>
+          <div class="tree-row">TaggedTxtData / Drawing</div>
+          <div class="tree-row">TaggedTxtData / General</div>
+          <div class="tree-row">JSite0 ... JSiteN</div>
+          <div class="tree-row">PSMcluster0</div>
+          <div class="tree-row">StyleCluster</div>
+          <div class="tree-row">Dynamic Attributes Metadata</div>
+          <div class="tree-row">Unclustered Dynamic Attributes</div>
+          <div class="tree-row">Sheet0 ... SheetN</div>
+          <div class="tree-row">PSMroots</div>
+        </div>
+      </article>
+
+      <article class="panel" style="--accent: var(--violet);">
+        <h2 class="panel-title"><span class="dot"></span>解析解释层</h2>
+        <div class="layers">
+          <div class="layer" style="--c: var(--cyan);">
+            <div class="layer-num">L1</div>
+            <div class="layer-body">
+              <strong>OLE / CFBF Container</strong>
+              <span>stream path + size + preview</span>
+            </div>
+          </div>
+          <div class="layer" style="--c: var(--violet);">
+            <div class="layer-num">L2</div>
+            <div class="layer-body">
+              <strong>Tagged Metadata</strong>
+              <span>DrawingMeta / GeneralMeta</span>
+            </div>
+          </div>
+          <div class="layer" style="--c: var(--emerald);">
+            <div class="layer-num">L3</div>
+            <div class="layer-body">
+              <strong>JSite Objects</strong>
+              <span>.sym references + OLE links</span>
+            </div>
+          </div>
+          <div class="layer" style="--c: var(--amber);">
+            <div class="layer-num">L4</div>
+            <div class="layer-body">
+              <strong>Clusters and Sheets</strong>
+              <span>cluster index + sheet records</span>
+            </div>
+          </div>
+          <div class="layer" style="--c: var(--rose);">
+            <div class="layer-num">L5</div>
+            <div class="layer-body">
+              <strong>Dynamic Attributes</strong>
+              <span>ASCII / UTF-16LE strings + relationships</span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel" style="--accent: var(--emerald);">
+        <h2 class="panel-title"><span class="dot"></span>富化输出</h2>
+        <div class="object-card">
+          <div class="object-head">
+            <strong>PidDocument</strong>
+            <span>enriched parser result</span>
+          </div>
+          <div class="object-grid">
+            <div class="object-item"><b>SummaryInfo</b><small>OLE 标准摘要</small></div>
+            <div class="object-item"><b>DrawingMeta</b><small>图纸 UID / 图号 / 模板</small></div>
+            <div class="object-item"><b>JSite[]</b><small>符号实例与链接</small></div>
+            <div class="object-item"><b>ClusterInfo[]</b><small>cluster 与 sheet 线索</small></div>
+            <div class="object-item"><b>DynamicAttributeBlob</b><small>动态属性记录</small></div>
+            <div class="object-item"><b>Layout Model</b><small>布局推导结果</small></div>
+          </div>
+          <div class="graph">
+            <svg class="arrow-svg" viewBox="0 0 560 150" preserveAspectRatio="none">
+              <defs>
+                <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 Z" fill="#34d399"></path>
+                </marker>
+              </defs>
+              <path d="M120 40 H198" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrow)"></path>
+              <path d="M300 40 H378" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrow)"></path>
+              <path d="M252 58 L170 90" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrow)"></path>
+              <path d="M302 58 L350 90" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrow)"></path>
+            </svg>
+            <div class="node n1">Object</div>
+            <div class="node n2">CrossRef</div>
+            <div class="node n3">Layout</div>
+            <div class="node n4">Stream</div>
+            <div class="node n5">Relation</div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="pipeline">
+      <div class="pipeline-title"><span class="dot" style="background: var(--orange); box-shadow: 0 0 18px var(--orange);"></span>离线 Publish XML 管线</div>
+      <div class="pipe-row">
+        <div class="pipe-box">Export.dmp</div>
+        <div class="pipe-box">MTF envelope<br>strip</div>
+        <div class="pipe-box" style="border-color: rgba(251, 146, 60, 0.88); color: #fed7aa;">Export.mdf</div>
+        <div class="pipe-box">oxidized-mdf</div>
+        <div class="pipe-box">SQLite<br>staging</div>
+        <div class="pipe-box">PublishDrawing<br>DTO</div>
+        <div class="pipe-box">_Data.xml</div>
+        <div class="pipe-box">_Meta.xml</div>
+      </div>
+      <div class="chips">
+        <span class="chip">T_Drawing</span>
+        <span class="chip">T_ModelItem</span>
+        <span class="chip">T_Representation</span>
+        <span class="chip">T_Relationship</span>
+        <span class="chip">T_PipingPoint</span>
+        <span class="chip">attributes</span>
+        <span class="chip">codelists</span>
+      </div>
+    </section>
+
+    <div class="waterline">格式口径：.pid 只读解析与 Export.mdf publish 管线分离</div>
+    <div class="legend">
+      <span><i style="--c: var(--cyan);"></i>CFB</span>
+      <span><i style="--c: var(--violet);"></i>Metadata</span>
+      <span><i style="--c: var(--emerald);"></i>Object</span>
+      <span><i style="--c: var(--amber);"></i>Cluster</span>
+      <span><i style="--c: var(--rose);"></i>Dynamic Attr</span>
+      <span><i style="--c: var(--orange);"></i>Publish</span>
+    </div>
+  </main>
+</body>
+</html>

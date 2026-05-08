@@ -56,27 +56,45 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 
 **目标**：将 `SheetObjectGeometryHint` 转为 `PidGraphicEntity` 实体。
 
+**2026-05-08 实现状态**：
+
+- 已完成 `SheetObjectGeometryHint.position` 到 `PidGraphicKind::Point + Inferred` 的投影。
+- 已完成最小 `PidGraphicKind::Line + Inferred` 投影：仅当 endpoint pair 的 `endpoint_a` / `endpoint_b` 都能解析到 promoted `SheetObjectGeometryHint.position`，且 endpoint record 与两端 position 都有有效 byte provenance 时生成线段。
+- 线段 `source.record_kind` 保持 `EndpointPair`，`confidence` 保持 `Inferred`；`source.note` 记录两端 `field_x` 与 position byte range。
+- 缺任一端 promoted position 或 byte range 越界时，endpoint 继续输出 `Unknown + ProbeOnly`，不把 relationship endpoint 误当作 CAD line。
+
 **任务**：
 
 1. 在 `geometry.rs` 中扩展 `build_normalized_geometry`：
    - 遍历 `sheet_streams[].geometry.object_geometry_hints`
-   - 为有坐标的 hint 生成 `PidGraphicKind::InferredPoint`
+   - 为有坐标的 hint 生成 `PidGraphicKind::Point`
    - 保留 provenance：source stream path、offset、confidence
 
-2. 对有坐标配对的 hints 尝试 `PidGraphicKind::Line`：
-   - 同一 record shape class 内的 hints 间连线
+2. 对 endpoint pair 两端都有 promoted position 的记录生成 `PidGraphicKind::Line`：
+   - `endpoint_a` / `endpoint_b` 必须都解析到 `SheetObjectGeometryHint.position`
+   - endpoint record byte range 与两端 position byte range 都必须有效
    - confidence = `Inferred`，不是 `Decoded`
-   - 来源标注为 `sheet_geometry_hint`
+   - 来源标注为 `EndpointPair`，并在 note 中列出两端 position ranges
 
-3. Schema 更新：
-   - `PidGraphicProvenance` 增加 `SheetGeometryHint` 变体
-   - schema snapshot 测试更新
+3. Schema / 合同更新：
+   - `PidGraphicKind::Line` 现在可与 `PidGeometryConfidence::Inferred` 一起出现
+   - 调用方必须同时检查 `PidGraphicEntity.confidence` 和 `source.record_kind`
+   - schema 测试继续覆盖 `NormalizedPidGeometry` 的图元合同
 
 **验收**：
 
 ```powershell
 cargo test --lib geometry schema -- --nocapture
 cargo test --test parse_real_files normalized_geometry -- --nocapture
+cargo test --test parse_real_files geometry -- --nocapture
+cargo clippy --locked --workspace --all-targets -- -D warnings
+```
+
+本地完整测试在 Windows 默认 `target` 目录遇到短暂 exe 文件锁时，可使用独立 target 目录复现：
+
+```powershell
+$env:CARGO_TARGET_DIR="D:\work\plant-code\cad\pid-parse\target\cursor-full-test"
+cargo test --locked --workspace --all-targets -j 1
 ```
 
 ### Phase 9B：H7CAD 渲染路径升级

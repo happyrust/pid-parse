@@ -4,7 +4,7 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 9 - 下一阶段开发计划制定
+Phase 11 - 坐标系验证、Text 渲染与几何质量加固
 
 ## 阶段
 
@@ -101,6 +101,25 @@ Phase 9 - 下一阶段开发计划制定
 - [x] Phase 9C 第二个切片：为 normalized geometry projection 增加 source note 回归，确认 promoted hint note 进入 `PidGraphicProvenance`
 - **Status:** in_progress
 
+### Phase 10：2026-05-09 f64 Record Shape 坐标源与 Endpoint Line 闭环
+- [x] Slice 1：f64 pair 坐标候选 DTO 与 extraction helper（已存在，扩展 shape 携带 x/y）
+- [x] Slice 2：f64 pair 候选接入 promotion gate fallback（新增 f64 pair gate，promotable 5→20）
+- [x] Slice 3：endpoint pair line 产生验证（inferred_points 69→80，但 inferred_lines 仍为 0；endpoint pair 两端不对称）
+- [ ] Slice 4：坐标尺度验证与多 fixture 横向确认
+- [ ] Slice 5：H7CAD 端到端 line 消费
+- [ ] Slice 6：全量回归加固与文档更新
+- **Status:** complete
+- **Plan:** `docs/plans/2026-05-09-phase-10-f64-coordinate-source-endpoint-line-plan-cn.md`
+
+### Phase 11：2026-05-09 坐标系验证、Text 渲染与几何质量加固
+- [ ] Slice 1：f64 坐标值域分析与页面映射研究
+- [ ] Slice 2：剩余 endpoint pair 覆盖扩展（34/59 → 40+/59）
+- [ ] Slice 3：Text placement gate 重新评估
+- [ ] Slice 4：H7CAD 坐标映射集成
+- [ ] Slice 5：质量回归与文档
+- **Status:** pending
+- **Plan:** `docs/plans/2026-05-09-phase-11-coordinate-validation-text-rendering-plan-cn.md`
+
 ## 决策
 | 决策 | 理由 |
 |---|---|
@@ -113,6 +132,7 @@ Phase 9 - 下一阶段开发计划制定
 | Text placement 先作为 PR6 investigation | 当前 `/Sheet6` 文本多像二进制误识别，不能直接升级为 `Text + Inferred` |
 | Phase 8 先做多 fixture 与 Sheet record grammar | 当前 promotion 缺的是 source-proven record 证据，不是 H7CAD UI 能力 |
 | Phase 9 先补 fixture baseline 再扩大 promotion | 当前 5 fixture 横向扫描已有 `object_geometry_hint_count=5`，但 Text/Symbol 仍 `text_over_threshold=0`，下一步应先硬化 registry 与 gate |
+| Phase 10 优先利用 f64 pair 突破 endpoint line 零线困局 | Phase 9A fixture 扩容被外部样本供给阻塞；Phase 9C 诊断链已发现 repeated f64 pair 坐标候选，可在现有 5 fixture 上闭环 endpoint line |
 
 ## 错误与限制
 | 问题 | 处理 |

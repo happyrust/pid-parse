@@ -195,6 +195,54 @@ pub struct SheetCoordinateHint {
     pub y: i32,
 }
 
+/// Conservative f64 pair observed before an object `field_x`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct SheetFieldXF64PairCandidate {
+    /// Byte offset of the first `f64` in the pair.
+    pub coordinate_offset: usize,
+    /// Byte offset of the marker immediately before `field_x`.
+    pub marker_offset: usize,
+    /// Signed byte delta from `field_x` to [`Self::coordinate_offset`].
+    pub coordinate_delta_from_field: isize,
+    /// Signed byte delta from `field_x` to [`Self::marker_offset`].
+    pub marker_delta_from_field: isize,
+    /// First finite `f64` value.
+    pub x: f64,
+    /// Second finite `f64` value.
+    pub y: f64,
+}
+
+/// Repeated-record f64 pair shape used for score diagnostics.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct SheetFieldXF64PairShape {
+    /// Byte offset of the first `f64` in the pair.
+    pub coordinate_offset: usize,
+    /// Byte offset of the marker immediately before `field_x`.
+    pub marker_offset: usize,
+    /// Signed byte delta from `field_x` to the first `f64`.
+    pub coordinate_delta_from_field: isize,
+    /// Signed byte delta from `field_x` to the marker.
+    pub marker_delta_from_field: isize,
+    /// First finite `f64` value.
+    pub x: f64,
+    /// Second finite `f64` value.
+    pub y: f64,
+}
+
+impl SheetFieldXF64PairShape {
+    /// Convert this shape into a full [`SheetFieldXF64PairCandidate`].
+    pub fn into_candidate(self) -> SheetFieldXF64PairCandidate {
+        SheetFieldXF64PairCandidate {
+            coordinate_offset: self.coordinate_offset,
+            marker_offset: self.marker_offset,
+            coordinate_delta_from_field: self.coordinate_delta_from_field,
+            marker_delta_from_field: self.marker_delta_from_field,
+            x: self.x,
+            y: self.y,
+        }
+    }
+}
+
 /// Experimental byte-window hit for an object `field_x` inside a Sheet stream.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SheetFieldXWindow {
@@ -214,7 +262,7 @@ pub struct SheetFieldXWindow {
 }
 
 /// Investigation-only score for a [`SheetFieldXWindow`].
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SheetFieldXWindowScore {
     /// Object `field_x` value being scored.
     pub field_x: u32,
@@ -226,10 +274,13 @@ pub struct SheetFieldXWindowScore {
     pub reasons: Vec<SheetFieldXWindowScoreReason>,
     /// Nearest candidate position from the same window, if any.
     pub candidate_position: Option<SheetCoordinateHint>,
+    /// Conservative f64 pair position from repeated record shape, if any.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub f64_pair_candidate: Option<SheetFieldXF64PairCandidate>,
 }
 
 /// Investigation-only features derived from a [`SheetFieldXWindow`].
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SheetFieldXWindowFeatures {
     /// Object `field_x` value being analyzed.
     pub field_x: u32,
@@ -247,6 +298,9 @@ pub struct SheetFieldXWindowFeatures {
     pub coordinate_delta_from_chunk: Option<isize>,
     /// Nearest non-overlapping coordinate candidate in the window, if any.
     pub candidate_position: Option<SheetCoordinateHint>,
+    /// Conservative f64 pair shape preceding this `field_x`, if present.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub repeated_f64_pair_shape: Option<SheetFieldXF64PairShape>,
     /// Stable marker candidates reserved for the next evidence pass.
     pub stable_markers: Vec<SheetWindowMarker>,
 }
@@ -383,6 +437,15 @@ pub enum SheetFieldXWindowScoreReason {
         kind: SheetFieldXWindowIdentityKind,
         /// Signed byte delta from the `field_x` hit to the identity value.
         delta: isize,
+    },
+    /// The window matches the repeated f64-pair-before-field shape.
+    RepeatedF64PairBeforeField {
+        /// Signed byte delta from `field_x` to the first `f64`.
+        coordinate_delta: isize,
+        /// Signed byte delta from `field_x` to the marker.
+        marker_delta: isize,
+        /// Number of distinct `field_x` values supporting this shape.
+        support: usize,
     },
 }
 
@@ -631,6 +694,7 @@ pub fn score_field_x_windows(
                     score: -100,
                     reasons: vec![SheetFieldXWindowScoreReason::EndpointRecordReference],
                     candidate_position: None,
+                    f64_pair_candidate: None,
                 };
             }
 
@@ -663,6 +727,7 @@ pub fn score_field_x_windows(
                 score,
                 reasons,
                 candidate_position,
+                f64_pair_candidate: None,
             }
         })
         .collect()
@@ -694,6 +759,19 @@ pub fn field_x_window_features(
                         .map(|position| offset_delta(position.offset, chunk.start))
                 }),
                 candidate_position,
+                repeated_f64_pair_shape: repeated_f64_pair_candidate_before_field_x(
+                    data,
+                    window.offset,
+                )
+                .or_else(|| repeated_f64_triple_candidate_before_field_x(data, window.offset))
+                .map(|candidate| SheetFieldXF64PairShape {
+                    coordinate_offset: candidate.coordinate_offset,
+                    marker_offset: candidate.marker_offset,
+                    coordinate_delta_from_field: candidate.coordinate_delta_from_field,
+                    marker_delta_from_field: candidate.marker_delta_from_field,
+                    x: candidate.x,
+                    y: candidate.y,
+                }),
                 stable_markers: marker_candidates(data, window),
             }
         })
@@ -857,6 +935,7 @@ pub fn score_field_x_window_features(
 ) -> Vec<SheetFieldXWindowScore> {
     let chunk_support = stable_chunk_shape_support(features);
     let marker_support = stable_marker_support(features);
+    let f64_pair_support = stable_f64_pair_shape_support(features);
     features
         .iter()
         .map(|feature| {
@@ -867,6 +946,7 @@ pub fn score_field_x_window_features(
                     score: -100,
                     reasons: vec![SheetFieldXWindowScoreReason::EndpointRecordReference],
                     candidate_position: None,
+                    f64_pair_candidate: None,
                 };
             }
 
@@ -914,6 +994,25 @@ pub fn score_field_x_window_features(
                     break;
                 }
             }
+            let mut f64_pair = None;
+            if let Some(shape) = feature.repeated_f64_pair_shape {
+                let support_key = (
+                    shape.coordinate_delta_from_field,
+                    shape.marker_delta_from_field,
+                );
+                if let Some(support) = f64_pair_support
+                    .get(&support_key)
+                    .copied()
+                    .filter(|support| *support >= 3)
+                {
+                    reasons.push(SheetFieldXWindowScoreReason::RepeatedF64PairBeforeField {
+                        coordinate_delta: shape.coordinate_delta_from_field,
+                        marker_delta: shape.marker_delta_from_field,
+                        support,
+                    });
+                    f64_pair = Some(shape.into_candidate());
+                }
+            }
 
             SheetFieldXWindowScore {
                 field_x: feature.field_x,
@@ -921,6 +1020,7 @@ pub fn score_field_x_window_features(
                 score,
                 reasons,
                 candidate_position: feature.candidate_position.clone(),
+                f64_pair_candidate: f64_pair,
             }
         })
         .collect()
@@ -1357,6 +1457,33 @@ pub fn stable_marker_support(
         .collect()
 }
 
+/// Count distinct object fields supporting the same repeated f64-pair shape.
+pub fn stable_f64_pair_shape_support(
+    features: &[SheetFieldXWindowFeatures],
+) -> BTreeMap<(isize, isize), usize> {
+    let mut fields_by_shape: BTreeMap<(isize, isize), HashSet<u32>> = BTreeMap::new();
+    for feature in features {
+        if feature.endpoint_record_start.is_some() {
+            continue;
+        }
+        let Some(shape) = feature.repeated_f64_pair_shape else {
+            continue;
+        };
+        fields_by_shape
+            .entry((
+                shape.coordinate_delta_from_field,
+                shape.marker_delta_from_field,
+            ))
+            .or_default()
+            .insert(feature.field_x);
+    }
+
+    fields_by_shape
+        .into_iter()
+        .map(|(shape, fields)| (shape, fields.len()))
+        .collect()
+}
+
 /// Aggregate gate summary for object geometry promotion readiness.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ObjectGeometryPromotionGateSummary {
@@ -1410,7 +1537,7 @@ pub fn summarize_object_geometry_promotion_gate(
         if meets_threshold {
             over_threshold += 1;
         }
-        if has_identity && has_stable_shape && meets_threshold {
+        if (has_identity && has_stable_shape && meets_threshold) || passes_f64_pair_gate(score) {
             promotable_candidates += 1;
         }
     }
@@ -1424,27 +1551,15 @@ pub fn summarize_object_geometry_promotion_gate(
     }
 }
 
-/// Produce [`SheetObjectGeometryHint`] entries for candidates that pass the
-/// three-pronged promotion gate (score + identity + stable shape).
+/// Produce [`crate::model::SheetObjectGeometryHint`] entries for candidates
+/// that pass the primary promotion gate or the f64-pair fallback gate.
 pub fn populate_object_geometry_hints(
     scores: &[SheetFieldXWindowScore],
     threshold: i32,
 ) -> Vec<crate::model::SheetObjectGeometryHint> {
     scores
         .iter()
-        .filter(|score| {
-            score.score >= threshold
-                && score.reasons.iter().any(|r| {
-                    matches!(
-                        r,
-                        SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }
-                    )
-                })
-                && score
-                    .reasons
-                    .iter()
-                    .any(|r| matches!(r, SheetFieldXWindowScoreReason::StableChunkShape { .. }))
-        })
+        .filter(|score| passes_primary_gate(score, threshold) || passes_f64_pair_gate(score))
         .map(|score| {
             let position =
                 score
@@ -1455,15 +1570,60 @@ pub fn populate_object_geometry_hints(
                         x: pos.x,
                         y: pos.y,
                     });
+            let f64_position = if position.is_none() {
+                score.f64_pair_candidate.as_ref().map(|pair| {
+                    crate::model::SheetF64CoordinateHintDto {
+                        offset: pair.coordinate_offset,
+                        x: pair.x,
+                        y: pair.y,
+                    }
+                })
+            } else {
+                None
+            };
             crate::model::SheetObjectGeometryHint {
                 offset: score.offset,
                 field_x: score.field_x,
                 position,
+                f64_position,
                 graphic_oid: None,
                 note: Some(object_geometry_hint_note(score)),
             }
         })
         .collect()
+}
+
+fn passes_primary_gate(score: &SheetFieldXWindowScore, threshold: i32) -> bool {
+    score.score >= threshold
+        && score.reasons.iter().any(|r| {
+            matches!(
+                r,
+                SheetFieldXWindowScoreReason::GraphicIdentityNearby { .. }
+            )
+        })
+        && score
+            .reasons
+            .iter()
+            .any(|r| matches!(r, SheetFieldXWindowScoreReason::StableChunkShape { .. }))
+}
+
+/// Alternative gate for f64-pair-backed coordinates from repeated record shapes.
+///
+/// Requires: object field resolves + stable marker + f64 pair with support >= 3.
+fn passes_f64_pair_gate(score: &SheetFieldXWindowScore) -> bool {
+    let has_object_field = score
+        .reasons
+        .iter()
+        .any(|r| matches!(r, SheetFieldXWindowScoreReason::ObjectFieldResolves));
+    let has_f64_pair = score.f64_pair_candidate.is_some()
+        && score.reasons.iter().any(|r| {
+            matches!(
+                r,
+                SheetFieldXWindowScoreReason::RepeatedF64PairBeforeField { support, .. }
+                if *support >= 3
+            )
+        });
+    has_object_field && has_f64_pair
 }
 
 fn object_geometry_hint_note(score: &SheetFieldXWindowScore) -> String {
@@ -1489,6 +1649,13 @@ fn object_geometry_hint_note(score: &SheetFieldXWindowScore) -> String {
         parts.push(format!(
             "stable_shape=field_delta:{field_delta},coordinate_delta:{coordinate_delta},support:{support}"
         ));
+    }
+    let has_i32_position = score.candidate_position.is_some();
+    let has_f64_fallback = !has_i32_position && score.f64_pair_candidate.is_some();
+    if has_i32_position {
+        parts.push("coordinate_source=nearest_coordinate_hint".to_string());
+    } else if has_f64_fallback {
+        parts.push("coordinate_source=f64_pair_before_marker".to_string());
     }
     parts.join(";")
 }
@@ -1554,6 +1721,99 @@ fn nearest_coordinate(window: &SheetFieldXWindow) -> Option<SheetCoordinateHint>
         .filter(|hint| is_high_quality_coordinate_candidate(hint))
         .min_by_key(|hint| hint.offset.abs_diff(window.offset))
         .cloned()
+}
+
+/// Decode the conservative repeated-record f64 pair before a `field_x` hit.
+pub fn repeated_f64_pair_candidate_before_field_x(
+    data: &[u8],
+    field_offset: usize,
+) -> Option<SheetFieldXF64PairCandidate> {
+    const MARKER_BEFORE_FIELD_X: [u8; 6] = [0x5E, 0x00, 0x22, 0x00, 0x00, 0x00];
+    const COORDINATE_DELTA_FROM_FIELD: usize = 22;
+    const MARKER_DELTA_FROM_FIELD: usize = 6;
+
+    if field_offset < COORDINATE_DELTA_FROM_FIELD || field_offset + 4 > data.len() {
+        return None;
+    }
+    let marker_offset = field_offset.checked_sub(MARKER_DELTA_FROM_FIELD)?;
+    if data.get(marker_offset..field_offset) != Some(MARKER_BEFORE_FIELD_X.as_slice()) {
+        return None;
+    }
+    let coordinate_offset = field_offset.checked_sub(COORDINATE_DELTA_FROM_FIELD)?;
+    let x = f64::from_le_bytes(
+        data.get(coordinate_offset..coordinate_offset + 8)?
+            .try_into()
+            .ok()?,
+    );
+    let y = f64::from_le_bytes(
+        data.get(coordinate_offset + 8..coordinate_offset + 16)?
+            .try_into()
+            .ok()?,
+    );
+    if !x.is_finite() || !y.is_finite() || x.abs() > 1.0e9 || y.abs() > 1.0e9 {
+        return None;
+    }
+
+    Some(SheetFieldXF64PairCandidate {
+        coordinate_offset,
+        marker_offset,
+        coordinate_delta_from_field: offset_delta(coordinate_offset, field_offset),
+        marker_delta_from_field: offset_delta(marker_offset, field_offset),
+        x,
+        y,
+    })
+}
+
+/// Decode the repeated-record f64 values before a `FA 00` / `CE 00` marker.
+///
+/// Two marker families are recognized:
+/// - `FA 00 XX 00 00 00`: three preceding f64 values; the 2nd and 3rd
+///   f64 are used as `(x, y)`.
+/// - `CE 00 XX 00 00 00`: two preceding f64 values + 8 zero bytes;
+///   the 1st and 2nd f64 are used as `(x, y)`.
+pub fn repeated_f64_triple_candidate_before_field_x(
+    data: &[u8],
+    field_offset: usize,
+) -> Option<SheetFieldXF64PairCandidate> {
+    const MARKER_DELTA_FROM_FIELD: usize = 6;
+    const TRIPLE_DELTA_FROM_FIELD: usize = 30;
+
+    if field_offset < TRIPLE_DELTA_FROM_FIELD || field_offset + 4 > data.len() {
+        return None;
+    }
+    let marker_offset = field_offset.checked_sub(MARKER_DELTA_FROM_FIELD)?;
+    let marker_bytes = data.get(marker_offset..field_offset)?;
+    let marker_head = marker_bytes[0];
+    if marker_head != 0xFA && marker_head != 0xCE {
+        return None;
+    }
+    if marker_bytes[1] != 0x00 {
+        return None;
+    }
+    if marker_bytes[3] != 0x00 || marker_bytes[4] != 0x00 || marker_bytes[5] != 0x00 {
+        return None;
+    }
+
+    let triple_offset = field_offset.checked_sub(TRIPLE_DELTA_FROM_FIELD)?;
+    let (x_offset, y_offset) = if marker_head == 0xFA {
+        (triple_offset + 8, triple_offset + 16)
+    } else {
+        (triple_offset, triple_offset + 8)
+    };
+    let x = f64::from_le_bytes(data.get(x_offset..x_offset + 8)?.try_into().ok()?);
+    let y = f64::from_le_bytes(data.get(y_offset..y_offset + 8)?.try_into().ok()?);
+    if !x.is_finite() || !y.is_finite() || x.abs() > 1.0e9 || y.abs() > 1.0e9 {
+        return None;
+    }
+
+    Some(SheetFieldXF64PairCandidate {
+        coordinate_offset: x_offset,
+        marker_offset,
+        coordinate_delta_from_field: offset_delta(x_offset, field_offset),
+        marker_delta_from_field: offset_delta(marker_offset, field_offset),
+        x,
+        y,
+    })
 }
 
 fn repeated_delta_candidate(
@@ -2976,6 +3236,7 @@ mod tests {
                     x: 1200,
                     y: -450,
                 }),
+                f64_pair_candidate: None,
             },
             SheetFieldXWindowScore {
                 field_x: 202,
@@ -2986,6 +3247,7 @@ mod tests {
                     delta: 8,
                 }],
                 candidate_position: None,
+                f64_pair_candidate: None,
             },
         ];
         let text_scores = vec![
@@ -3068,6 +3330,7 @@ mod tests {
                 x: 1200,
                 y: -450,
             }),
+            repeated_f64_pair_shape: None,
             stable_markers: markers
                 .into_iter()
                 .map(|(delta_from_field, value_u32)| SheetWindowMarker {
@@ -3094,6 +3357,7 @@ mod tests {
                 x: 1200,
                 y: -450,
             }),
+            f64_pair_candidate: None,
         }
     }
 

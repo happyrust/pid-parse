@@ -878,9 +878,20 @@ pub struct SheetCoordinateHintDto {
     pub y: i32,
 }
 
+/// Coordinate pair from a repeated-record f64 shape inside a Sheet stream.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct SheetF64CoordinateHintDto {
+    /// Byte offset of the first `f64` in the pair.
+    pub offset: usize,
+    /// First `f64` coordinate value.
+    pub x: f64,
+    /// Second `f64` coordinate value.
+    pub y: f64,
+}
+
 /// Candidate mapping from an object `field_x` to source-backed Sheet
 /// geometry evidence.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct SheetObjectGeometryHint {
     /// Byte offset where this candidate mapping starts inside the Sheet stream.
     pub offset: usize,
@@ -890,6 +901,10 @@ pub struct SheetObjectGeometryHint {
     /// prove it came from the same source record.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub position: Option<SheetCoordinateHintDto>,
+    /// Optional f64 coordinate pair from a repeated record shape, used as
+    /// fallback when [`Self::position`] is absent.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub f64_position: Option<SheetF64CoordinateHintDto>,
     /// Optional GraphicOID-like value surfaced near this mapping.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub graphic_oid: Option<u32>,

@@ -8,6 +8,7 @@
 use crate::model::{PidDocument, SheetRecordKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 const SHEET_ENDPOINT_RECORD_LEN: usize = 26;
 const UNKNOWN_UNITS_DIAGNOSTIC: &str =
@@ -227,8 +228,9 @@ impl PidGraphicKind {
     /// Sheet record kind required when this payload is emitted with decoded
     /// confidence.
     ///
-    /// Probe-only and inferred payloads return `None` because they do not yet
-    /// prove a renderable Sheet record layout.
+    /// Callers must still check [`PidGraphicEntity::confidence`]. An inferred
+    /// line may be backed by endpoint-pair provenance even though decoded
+    /// primitive lines require [`SheetRecordKind::PrimitiveLine`].
     pub fn decoded_sheet_record_kind(&self) -> Option<SheetRecordKind> {
         match self {
             Self::Line { .. } => Some(SheetRecordKind::PrimitiveLine),
@@ -299,6 +301,13 @@ pub enum PidGeometryConfidence {
     ProbeOnly,
 }
 
+struct ResolvedObjectPosition {
+    offset: usize,
+    x: f64,
+    y: f64,
+    byte_len: usize,
+}
+
 /// Build the normalized source-backed geometry projection for `doc`.
 ///
 /// Current behavior is intentionally conservative: Sheet coordinate pairs
@@ -318,6 +327,38 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
     }
 
     for sheet in &doc.sheet_streams {
+        let object_positions: BTreeMap<u32, ResolvedObjectPosition> = sheet
+            .geometry
+            .as_ref()
+            .map(|geometry| {
+                geometry
+                    .object_geometry_hints
+                    .iter()
+                    .filter_map(|hint| {
+                        hint.position
+                            .as_ref()
+                            .map(|pos| ResolvedObjectPosition {
+                                offset: pos.offset,
+                                x: f64::from(pos.x),
+                                y: f64::from(pos.y),
+                                byte_len: 8,
+                            })
+                            .or_else(|| {
+                                hint.f64_position
+                                    .as_ref()
+                                    .map(|f64_pos| ResolvedObjectPosition {
+                                        offset: f64_pos.offset,
+                                        x: f64_pos.x,
+                                        y: f64_pos.y,
+                                        byte_len: 16,
+                                    })
+                            })
+                            .map(|resolved| (hint.field_x, resolved))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         if let Some(geometry) = &sheet.geometry {
             for (index, text) in geometry.texts.iter().enumerate() {
                 entities.push(PidGraphicEntity {
@@ -427,6 +468,49 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         },
                         confidence,
                     });
+                } else if let Some(ref f64_pos) = hint.f64_position {
+                    let byte_range = source_range(f64_pos.offset, 16, sheet.size);
+                    let (kind, confidence, note) = if byte_range.is_some() {
+                        (
+                            PidGraphicKind::Point {
+                                position: PidPoint {
+                                    x: f64_pos.x,
+                                    y: f64_pos.y,
+                                },
+                            },
+                            PidGeometryConfidence::Inferred,
+                            hint.note.clone(),
+                        )
+                    } else {
+                        (
+                            PidGraphicKind::Unknown {
+                                note: format!(
+                                    "out-of-bounds f64 geometry hint: field_x={} x={:.6} y={:.6} at offset {}",
+                                    hint.field_x, f64_pos.x, f64_pos.y, f64_pos.offset
+                                ),
+                            },
+                            PidGeometryConfidence::ProbeOnly,
+                            Some(
+                                "f64 geometry hint is not promoted because its byte range is outside the Sheet stream".to_string(),
+                            ),
+                        )
+                    };
+                    entities.push(PidGraphicEntity {
+                        id: format!("{}:geometry-hint:{index}", sheet.path),
+                        drawing_id: None,
+                        graphic_oid: hint.graphic_oid,
+                        kind,
+                        coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                        source: PidGraphicProvenance {
+                            stream_path: Some(sheet.path.clone()),
+                            byte_range,
+                            record_id: Some(format!("geometry-hint:{index}")),
+                            record_kind: Some(SheetRecordKind::Unknown),
+                            field_x: Some(hint.field_x),
+                            note,
+                        },
+                        confidence,
+                    });
                 }
             }
         } else {
@@ -490,6 +574,49 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         for (index, (offset, rel_field_x, endpoint_a, endpoint_b)) in
             endpoint_records.into_iter().enumerate()
         {
+            let endpoint_range = source_range(offset, SHEET_ENDPOINT_RECORD_LEN, sheet.size);
+            if let (Some(start), Some(end), Some(byte_range), Some(start_range), Some(end_range)) = (
+                object_positions.get(&endpoint_a),
+                object_positions.get(&endpoint_b),
+                endpoint_range,
+                object_positions
+                    .get(&endpoint_a)
+                    .and_then(|pos| source_range(pos.offset, pos.byte_len, sheet.size)),
+                object_positions
+                    .get(&endpoint_b)
+                    .and_then(|pos| source_range(pos.offset, pos.byte_len, sheet.size)),
+            ) {
+                entities.push(PidGraphicEntity {
+                    id: format!("{}:endpoint-line:{index}", sheet.path),
+                    drawing_id: None,
+                    graphic_oid: None,
+                    kind: PidGraphicKind::Line {
+                        start: PidPoint {
+                            x: start.x,
+                            y: start.y,
+                        },
+                        end: PidPoint {
+                            x: end.x,
+                            y: end.y,
+                        },
+                    },
+                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                    source: PidGraphicProvenance {
+                        stream_path: Some(sheet.path.clone()),
+                        byte_range: Some(byte_range),
+                        record_id: Some(format!("endpoint-line:{index}")),
+                        record_kind: Some(SheetRecordKind::EndpointPair),
+                        field_x: Some(rel_field_x),
+                        note: Some(format!(
+                            "endpoint pair promoted to inferred line; endpoint_a_field_x={endpoint_a} position_range={}..{}; endpoint_b_field_x={endpoint_b} position_range={}..{}",
+                            start_range.start, start_range.end, end_range.start, end_range.end
+                        )),
+                    },
+                    confidence: PidGeometryConfidence::Inferred,
+                });
+                continue;
+            }
+
             entities.push(PidGraphicEntity {
                 id: format!("{}:endpoint-probe:{index}", sheet.path),
                 drawing_id: None,
@@ -502,7 +629,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                 coordinate_context: undecoded_sheet_coordinate_context(&sheet.path),
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
-                    byte_range: source_range(offset, SHEET_ENDPOINT_RECORD_LEN, sheet.size),
+                    byte_range: endpoint_range,
                     record_id: Some(format!("endpoint-probe:{index}")),
                     record_kind: Some(SheetRecordKind::EndpointPair),
                     field_x: Some(rel_field_x),
@@ -723,6 +850,133 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_pair_with_promoted_endpoint_positions_becomes_inferred_line() {
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 256,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                texts: Vec::new(),
+                endpoints: vec![SheetEndpoint {
+                    offset: 80,
+                    rel_field_x: 200,
+                    endpoint_a: 201,
+                    endpoint_b: 202,
+                }],
+                coordinate_hints: Vec::new(),
+                object_geometry_hints: vec![
+                    SheetObjectGeometryHint {
+                        offset: 120,
+                        field_x: 201,
+                        position: Some(SheetCoordinateHintDto {
+                            offset: 128,
+                            x: 100,
+                            y: 200,
+                        }),
+                        f64_position: None,
+                        graphic_oid: None,
+                        note: Some("score=80 identity=graphic_nearby stable_shape".into()),
+                    },
+                    SheetObjectGeometryHint {
+                        offset: 140,
+                        field_x: 202,
+                        position: Some(SheetCoordinateHintDto {
+                            offset: 148,
+                            x: 300,
+                            y: 400,
+                        }),
+                        f64_position: None,
+                        graphic_oid: None,
+                        note: Some("score=80 identity=graphic_nearby stable_shape".into()),
+                    },
+                ],
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.entities.len(), 3);
+        let line = geometry
+            .entities
+            .iter()
+            .find(|entity| entity.id == "/Sheet6:endpoint-line:0")
+            .expect("endpoint pair should become an inferred line");
+        assert_eq!(line.confidence, PidGeometryConfidence::Inferred);
+        assert_eq!(line.source.record_kind, Some(SheetRecordKind::EndpointPair));
+        assert_eq!(
+            line.source.byte_range,
+            Some(PidByteRange {
+                start: 80,
+                end: 106
+            })
+        );
+        assert!(line
+            .source
+            .note
+            .as_deref()
+            .is_some_and(|note| note.contains("endpoint_a_field_x=201")
+                && note.contains("endpoint_b_field_x=202")));
+        assert!(matches!(
+            line.kind,
+            PidGraphicKind::Line {
+                start: PidPoint { x: 100.0, y: 200.0 },
+                end: PidPoint { x: 300.0, y: 400.0 },
+            }
+        ));
+        assert!(!geometry
+            .entities
+            .iter()
+            .any(|entity| entity.id == "/Sheet6:endpoint-probe:0"));
+    }
+
+    #[test]
+    fn inferred_endpoint_line_json_exposes_confidence_and_endpoint_provenance() {
+        let entity = PidGraphicEntity {
+            id: "/Sheet6:endpoint-line:0".into(),
+            drawing_id: None,
+            graphic_oid: None,
+            kind: PidGraphicKind::Line {
+                start: PidPoint { x: 1.0, y: 2.0 },
+                end: PidPoint { x: 3.0, y: 4.0 },
+            },
+            coordinate_context: sheet_source_coordinate_context("/Sheet6"),
+            source: PidGraphicProvenance {
+                stream_path: Some("/Sheet6".into()),
+                byte_range: Some(PidByteRange {
+                    start: 80,
+                    end: 106,
+                }),
+                record_id: Some("endpoint-line:0".into()),
+                record_kind: Some(SheetRecordKind::EndpointPair),
+                field_x: Some(200),
+                note: Some("endpoint pair promoted to inferred line".into()),
+            },
+            confidence: PidGeometryConfidence::Inferred,
+        };
+
+        let value = serde_json::to_value(&entity).expect("entity JSON");
+
+        assert_eq!(value["kind"]["kind"], "line");
+        assert_eq!(value["confidence"], "inferred");
+        assert_eq!(value["source"]["record_kind"], "endpoint_pair");
+        assert_eq!(value["source"]["field_x"], 200);
+        assert_eq!(value["source"]["byte_range"]["start"], 80);
+        assert_eq!(
+            value["coordinate_context"]["coordinate_space"],
+            "source_sheet"
+        );
+    }
+
+    #[test]
     fn coordinate_hints_and_probe_evidence_never_use_decoded_confidence() {
         let mut doc = PidDocument::default();
         doc.sheet_streams.push(SheetStream {
@@ -761,6 +1015,7 @@ mod tests {
                         x: 2400,
                         y: -900,
                     }),
+                    f64_position: None,
                     graphic_oid: Some(17),
                     note: Some(
                         "score=80;identity=graphic_nearby;stable_shape=field_delta:10,coordinate_delta:20,support:3"

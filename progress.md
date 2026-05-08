@@ -353,3 +353,125 @@
   - `test-file\export-test\publish-data\DWG-0202GP06-01\DWG-0202GP06-01.pid`
 - 这些路径均已在 `geometry_fixture_cases()` registry 中；当前没有额外本地真实 PID 样本可登记。
 - Phase 9A 的 8-12 fixture 目标现在被 fixture 供给阻塞，需用户提供更多真实 PID 文件后继续。
+
+## Session: 2026-05-09
+
+### 当前状态
+- **Phase:** 10 - f64 Record Shape 坐标源与 Endpoint Line 闭环
+- **状态:** 方案制定完成，待执行
+
+### 已完成
+- 全面复核项目当前实现进度：75 源码文件、26 集成测试、806+ 测试用例。
+- 分析 Phase 9 各子阶段状态：
+  - 9A fixture baseline hardening 被 fixture 供给阻塞（5/8 目标）。
+  - 9B Sheet record grammar RE 未深入。
+  - 9C promotion gate hardening 诊断链揭示关键突破：repeated f64 pair 坐标候选。
+  - 9D/9E/9F 待开始。
+- 识别核心突破口：Phase 9C 已发现 `/Sheet6` missing endpoint field_x 前 22 字节有 repeated f64 pair 坐标值，且呈连续递增非随机形态。
+- 制定 Phase 10 开发方案：6 个 Slice，从 f64 pair extraction → promotion gate fallback → endpoint line 产生 → 多 fixture 横向验证 → H7CAD 消费 → 全量回归。
+- 方案文件：`docs/plans/2026-05-09-phase-10-f64-coordinate-source-endpoint-line-plan-cn.md`。
+- 更新 `task_plan.md`：新增 Phase 10，切换当前阶段。
+- 更新 `findings.md`：记录 f64 pair 坐标候选突破。
+
+### Phase 10 Slice 1-3 实现进展
+- Slice 1：`SheetFieldXF64PairCandidate` 与 `repeated_f64_pair_candidate_before_field_x` 已存在；扩展 `SheetFieldXF64PairShape` 携带 `x, y` 值，新增 `into_candidate()` 方法。
+- Slice 2：
+  - 新增 `f64_pair_candidate: Option<SheetFieldXF64PairCandidate>` 到 `SheetFieldXWindowScore`。
+  - `score_field_x_window_features` 现在在 f64 pair 支持 >= 3 时填充 `f64_pair_candidate`。
+  - 新增 `SheetF64CoordinateHintDto` DTO 到 `model.rs`。
+  - 新增 `f64_position: Option<SheetF64CoordinateHintDto>` 到 `SheetObjectGeometryHint`。
+  - 新增 `passes_f64_pair_gate()` 作为 `populate_object_geometry_hints` 的替代 promotion gate。
+  - 替代 gate 条件：`ObjectFieldResolves + RepeatedF64PairBeforeField(support >= 3)`。
+  - promotion note 包含 `coordinate_source=f64_pair_before_marker` 或 `coordinate_source=nearest_coordinate_hint`。
+  - `build_normalized_geometry` 新增统一 `ResolvedObjectPosition`，同时支持 i32 和 f64 坐标源，用于 endpoint pair line 推断。
+- Slice 3 结果：
+  - `DWG-0201GP06-01.pid`：`promotable` 从 5 → 16（+11 f64 pair gate）。
+  - `DWG-0202GP06-01.pid`：`promotable` 从 0 → 2（新）。
+  - `inferred_points` 从 69 → 80（+11）。
+  - `inferred_lines` 仍为 0：endpoint pair 两端不同时 promoted（`only_b=39` 但 `only_a=5`）。
+  - 结论：f64 pair gate 显著扩展了单端 promoted 覆盖，但 endpoint pair line 需要进一步扩展对端 promotion 覆盖。
+
+### Phase 10 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo build --locked -j 1` | 通过 |
+| `cargo test --locked -j 1 --lib` | 通过，759 passed |
+| `cargo test --locked -j 1 --test parse_real_files` | 通过，65 passed |
+| `cargo clippy --locked -j 1 -- -D warnings` | 通过 |
+| `cargo fmt --all -- --check` | 通过 |
+| `object_geometry_hint_count=20, promotable=20` | 对齐 |
+
+### Phase 10 Slice 3B-6 实现进展
+- Slice 3B：诊断 endpoint pair 两端不对称原因。
+  - `only_b=39` 的 endpoint_b 为 630-640（f64 pair gate 覆盖）。
+  - endpoint_a 值（646, 661, 665, 673 等）不含 `5E 00 22 00 00 00` marker pattern，无法触发 f64 pair gate。
+  - 这些 endpoint_a field_x 的 best_score=40，缺少 `GraphicIdentityNearby` 和 `StableChunkShape`。
+  - 结论：endpoint line 需要进一步扩展对端 marker 模式覆盖，非当前 Phase 10 scope。
+- Slice 4：多 fixture 横向验证。
+  - DWG-0201GP06-01.pid：inferred_points 69→80（+11 f64 pair）。
+  - DWG-0202GP06-01.pid：inferred_points 69→71（+2 f64 pair）。
+  - 其他 3 fixture 无 endpoint field_x，无变化。
+- Slice 5：取消（当前无 inferred_lines 可供 H7CAD 消费）。
+- Slice 6：全量回归。
+  - cargo build 通过。
+  - cargo test --lib：759 passed。
+  - cargo test --test parse_real_files：65 passed。
+  - cargo clippy -D warnings 通过。
+  - cargo fmt --check 通过。
+  - cargo rustdoc --lib -- -W missing-docs 通过。
+
+### Phase 10B: f64 Triple Pattern 实现进展
+- 发现 endpoint_a field_xs 使用不同的 marker pattern：`FA 00 XX 00 00 00`（vs 原有 `5E 00 22 00 00 00`）。
+- 新 pattern 前有 3 个 f64 值（24 字节），其中第 1 个是稳定基线（≈ 0.2245，与 endpoint_b 的 y 坐标一致），第 2-3 个是坐标候选。
+- 新增 `repeated_f64_triple_candidate_before_field_x` 公共 extraction helper。
+- 将新 extraction 集成到 `field_x_window_features` 的 f64 pair shape 搜索中（作为 fallback）。
+- 结果：
+  - `DWG-0201GP06-01.pid`：`inferred_points` 69→106，`inferred_lines` 0→**34**。
+  - `DWG-0202GP06-01.pid`：`inferred_points` 69→74，`inferred_lines` 0→**3**。
+  - 3 个 fixture 现在产生 line-producing geometry。
+
+### Phase 10B 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo build --locked -j 1` | 通过 |
+| `cargo test --locked -j 1 --lib` | 通过，759 passed |
+| `cargo test --locked -j 1 --test parse_real_files` | 通过，66 passed |
+| `cargo clippy --locked -j 1 -- -D warnings` | 通过 |
+| `cargo fmt --all -- --check` | 通过 |
+| `cargo rustdoc --lib --locked -- -W missing-docs` | 通过 |
+| line-producing fixtures | DWG-0201GP06-01.pid (34), DWG-0202GP06-01.pid (3), publish DWG (3) |
+
+### Phase 10 Slice 5: H7CAD 端到端 line 消费
+- H7CAD `cargo check --locked` 通过。
+- `pid_import_real_sample_geometry_consumes_source_backed_layers` 自动接收到 pid-parse 新 geometry 输出，无需修改 H7CAD 代码。
+- H7CAD 端到端结果：`points=42, lines=34, skipped_probe=34, skipped_broad=64`。
+- 34 条 inferred endpoint lines 成功渲染到 `PID_GEOM_LINES` layer。
+
+### Phase 11 Slice 1: 坐标值域分析
+- f64 坐标域：`x ∈ [0.082, 0.475], y ∈ [0.000, 0.275]`，确认为 0-1 归一化页面坐标。
+- 模板：`Template = XIONGANA2.pid`（A2 纸 594×420mm）。
+- i32 坐标域：`x ∈ [0, 983056], y ∈ [-327679, 983056]`，独立坐标系。
+- 新增 `f64_coordinate_domain_analysis_for_page_mapping` 诊断测试。
+
+### Phase 11 Slice 2: 剩余 endpoint pair 覆盖扩展
+- 初始 34/59 fully promoted（57.6%）。
+- `only_a=11` 中有 4 对的 endpoint_b=0（空端点 / null），不是真实 line gap。
+- `only_b=13` 中大多数缺失 endpoint_a 为低编号 field_xs（35, 68, 111, 139, 147, 157, 169, 229, 433, 440, 490），使用不同 record shape。
+- 剩余真实 gap 约 21 对，需要另一轮逆向调查来覆盖低编号 field_x 的 record shape。
+- 发现第三种 marker pattern `CE 00 XX 00 00 00`：2 f64 + 8 零字节 + marker + field_x。
+- 扩展 `repeated_f64_triple_candidate_before_field_x` 支持 `FA 00` 和 `CE 00` 两种 marker。
+- CE marker 的 f64 使用第 1-2 个值（非第 2-3 个），因为第 3 个是零填充。
+- 结果：`fully_promoted` 34→**49/59**（83.1%），`inferred_lines` 34→**49**，`neither` 1→**0**。
+- `probe_only_unknowns` 从 34 降到 19。
+- 进一步分析：剩余 10 对 gap 中 4 对 endpoint_b=0（null），6 对涉及 field_x=659/671/35/68 不在 object_field_xs 中，属于 scope 边界。
+- 排除 null 后有效覆盖率：49/55 = **89.1%**。
+
+### Phase 11 Slice 3: Text placement 重评估
+- `text_quality_passed=0, max_score=-50` — 与 Phase 7/8 结论一致。
+- Top text candidates 仍是二进制数据误识别（`"060101럀"`, `"휱爿낳큷툪?"`），非工程标注。
+- 结论：Text promotion 需要 text extraction 层面的根本改进（新 record shape 中的 text 字段识别），非当前 scope。
+
+### 下一步
+- 如有新真实 PID fixture 可供使用，优先扩展 registry（Phase 9A 仍待闭环）。
+- 调查 f64 record shape 中是否包含 text field index 或 text record reference。
+- H7CAD 坐标映射：f64 归一化坐标 × 页面尺寸 → 物理坐标。

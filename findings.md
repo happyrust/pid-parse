@@ -153,6 +153,40 @@
 - helper 只做 investigation dump，不填充 `SheetObjectGeometryHint`，不改变 Line/Text/Symbol promotion gate。
 - `sheet6_top_candidate_record_dump_stays_investigation_only` 使用真实 `/Sheet6` fixture 验证 dump 非空、byte window 有界，并继续断言 `object_geometry_hints=0`。
 
+## Phase 10 关键发现：f64 Pair 坐标候选突破 Endpoint Line 零线困局
+- Phase 9C 诊断链揭示当前 5 个 fixture 的 `inferred_lines=0` 根因：known object field_x 的 `nearest_coordinate` 搜索未覆盖 repeated record shape 中的 f64 pair。
+- `DWG-0201GP06-01.pid /Sheet6` 的 `field_x=630..639` 诊断：
+  - 每个 field_x 的 marker `5E 00 22 00 00 00 <field_x-le>` 前 22 字节处均可解析出有限 f64 pair。
+  - 坐标值呈连续递增：`x ∈ [0.082, 0.244]`，`y` 稳定在 `0.224561`，非随机噪声。
+  - `RepeatedF64PairBeforeField` 已作为 diagnostic reason 进入 score explainability。
+- 下一步（Phase 10）：将 f64 pair 从诊断 reason 升级为保守坐标候选源，作为 `nearest_coordinate` 的 fallback，期望至少让一个 fixture 产生 `inferred_lines > 0`。
+- 关键约束：f64 pair 坐标值域可能存在单位转换/坐标系偏移，在 multi-fixture 横向验证前保持 `Inferred` confidence，不升级为 `Decoded`。
+- 方案文件：`docs/plans/2026-05-09-phase-10-f64-coordinate-source-endpoint-line-plan-cn.md`。
+- 实现结果（Slice 1-3）：
+  - `SheetFieldXF64PairShape` 扩展携带 `x, y`；`SheetFieldXWindowScore` 新增 `f64_pair_candidate`。
+  - 新增替代 promotion gate：`ObjectFieldResolves + RepeatedF64PairBeforeField(support >= 3)` → f64 pair position。
+  - `DWG-0201GP06-01.pid` promotable 从 5→16，inferred_points 从 69→80。
+  - `DWG-0202GP06-01.pid` promotable 从 0→2。
+  - 但 `inferred_lines` 仍为 0：endpoint pair 需双端 promoted，当前 `only_a=5, only_b=39`，无一对完全重合。
+  - 结论：f64 pair gate 有效扩展了单对象定位覆盖，但 endpoint line 需要进一步扩展对端覆盖。
+- Phase 10B 实现（f64 triple pattern）：
+  - 发现 endpoint_a field_xs 使用 `FA 00 XX 00 00 00` marker（vs 原有 `5E 00 22 00 00 00`），前有 3 个 f64 值。
+  - 新增 `repeated_f64_triple_candidate_before_field_x` extraction helper。
+  - 最终结果：`DWG-0201GP06-01.pid` 产生 **34 条 inferred lines**，`DWG-0202GP06-01.pid` 产生 **3 条 inferred lines**。
+  - 3 个 fixture 现在是 line-producing fixture。
+  - promotable 从 5→总计远超 20（含 triple pattern 覆盖）。
+- Phase 11 Slice 2 进一步扩展：
+  - 发现第三种 marker `CE 00 XX 00 00 00`（2 f64 + 8 零字节 + marker），覆盖低编号 field_x。
+  - `fully_promoted` 34→49/59（83.1%），`inferred_lines` 34→49，`neither` 1→0。
+  - 三种 marker 现在覆盖：`5E 00 22`（pair）、`FA 00`（triple-xy23）、`CE 00`（triple-xy12）。
+  - 剩余 10 对 gap 分析：4 对 endpoint_b=0（null 终止点，永远无线）；6 对中 4 个 missing field_x（659, 671, 35, 68）不在 object_field_xs 中，无法通过 `ObjectFieldResolves` 条件。
+  - 结论：当前 52 个 promoted 对象覆盖了所有 object graph 中可图形化的 endpoint 对象；剩余 gap 来自非对象图成员，属于 scope 边界。
+- Phase 11 坐标值域分析：
+  - f64 坐标域：`x ∈ [0.082, 0.475], y ∈ [0.000, 0.275]`，确认为 0-1 范围归一化页面坐标。
+  - i32 坐标域：`x ∈ [0, 983056], y ∈ [-327679, 983056]`，不同坐标系（可能是 twips/EMU）。
+  - 模板信息：`Template = XIONGANA2.pid`（A2 纸 594×420mm）。
+  - 两种坐标系之间的映射关系尚未建立；f64 归一化坐标 × 页面尺寸 = 物理坐标（推测）。
+
 ## Sheet record shape classifier
 - 已新增 `classify_field_x_record_shapes` 与 `SheetFieldXRecordShapeClass`，按 `(field_delta_from_chunk, coordinate_delta_from_chunk)` 聚合 non-endpoint `field_x` window features，统计 distinct `field_x` support，并保留示例 field / coordinate offset。
 - `/Sheet6` 当前 top shape classes 为 `(14, 38)` 和 `(46, 70)`，support 均为 2；这说明存在可复查的重复 record shape，但还不是 source-proven geometry。

@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### f64 坐标源突破与 Endpoint Line 闭环（Phase 10/10B/11）
+
+- **三种 f64 marker pattern 发现与实现**：
+  - `5E 00 22 00 00 00`（pair）：2 个 f64 坐标，覆盖 endpoint_b 类 field_x（630-640）。
+  - `FA 00 XX 00 00 00`（triple-xy23）：3 个 f64 值，取第 2-3 个作为坐标，覆盖高编号 endpoint_a field_x。
+  - `CE 00 XX 00 00 00`（triple-xy12）：2 个 f64 + 8 零字节，取第 1-2 个作为坐标，覆盖低编号 field_x。
+- **替代 Promotion Gate**：新增 `passes_f64_pair_gate`——当 `ObjectFieldResolves` +
+  `RepeatedF64PairBeforeField(support >= 3)` 同时满足时，使用 f64 坐标源作为替代
+  promotion 路径，不降低任何已有 gate 条件。
+- **SheetF64CoordinateHintDto**：新增 f64 坐标 DTO，`SheetObjectGeometryHint` 新增
+  `f64_position` 字段作为 `position`（i32）的 fallback。
+- **ResolvedObjectPosition**：`build_normalized_geometry` 新增统一 position 类型，同时
+  支持 i32 和 f64 坐标源用于 endpoint pair line 推断。
+- **坐标源 provenance**：promotion note 包含 `coordinate_source=f64_pair_before_marker`
+  或 `coordinate_source=nearest_coordinate_hint`，供 H7CAD / renderer 区分坐标来源。
+- **几何成果**：
+  - promotable 对象：5 → **67**（13.4×）。
+  - DWG-0201GP06-01.pid：`inferred_points` 69→117，`inferred_lines` 0→**49**。
+  - DWG-0202GP06-01.pid：`inferred_points` 69→76，`inferred_lines` 0→**3**。
+  - Endpoint pair 覆盖率：0% → **83.1%**（排除 null 端点后 89.1%）。
+  - 3/5 fixture 成为 line-producing fixture。
+- **坐标域分析**：f64 坐标确认为 0-1 归一化页面坐标，模板为 A2 纸（594×420mm）；
+  i32 坐标系独立，映射关系待后续建立。
+- **H7CAD 端到端验证**：`pid_import_real_sample_geometry` 自动消费 53 points + 49 lines。
+- **Gap 分析**：剩余 10 对 endpoint pair 中 4 对 endpoint_b=0（null 终止点），
+  6 对涉及非 object graph 成员 field_x，属于 scope 边界。
+- 新增 4 个中文开发方案文档。
+- 验证通过：`cargo test --lib`（759 passed），`cargo test --test parse_real_files`（68 passed），
+  clippy、fmt、rustdoc 全绿。
+
 ### PID 几何 Fixture Baseline 与 Provenance Guardrail（Phase 9A/9C）
 
 - **显式 fixture registry**：`parse_real_files` 新增 geometry fixture registry，
