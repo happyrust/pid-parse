@@ -264,12 +264,10 @@ fn endpoint_pair_geometry_diagnostic(
 
             match (endpoint_a_position, endpoint_b_position) {
                 (Some((a_offset, a_len)), Some((b_offset, b_len))) => {
-                    let a_range_ok = a_offset
-                        .checked_add(a_len)
-                        .is_some_and(|end| end <= sheet_size);
-                    let b_range_ok = b_offset
-                        .checked_add(b_len)
-                        .is_some_and(|end| end <= sheet_size);
+                    let a_range_ok =
+                        a_offset.checked_add(a_len).is_some_and(|end| end <= sheet_size);
+                    let b_range_ok =
+                        b_offset.checked_add(b_len).is_some_and(|end| end <= sheet_size);
                     if endpoint_range_ok && a_range_ok && b_range_ok {
                         diagnostic.fully_promoted_with_byte_ranges += 1;
                     } else {
@@ -2294,6 +2292,96 @@ fn sheet_record_text_field_investigation() {
 }
 
 #[test]
+fn da_trailer_tag_text_association_for_promoted_objects() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(da) = &doc.dynamic_attributes else {
+        eprintln!("skipping: dynamic attributes not available");
+        return;
+    };
+
+    let promoted_field_xs: Vec<u32> = doc
+        .sheet_streams
+        .iter()
+        .flat_map(|s| {
+            s.geometry
+                .iter()
+                .flat_map(|g| g.object_geometry_hints.iter())
+                .filter(|h| h.position.is_some() || h.f64_position.is_some())
+                .map(|h| h.field_x)
+        })
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut associated = 0usize;
+    let mut no_attrs = 0usize;
+    for &field_x in &promoted_field_xs {
+        let trailer = da
+            .record_trailers
+            .iter()
+            .find(|t| t.field_x == field_x && t.class_id != 0xF6);
+        let attrs: Vec<_> = da
+            .attribute_records
+            .iter()
+            .flat_map(|r| r.attributes.iter())
+            .filter(|a| {
+                matches!(
+                    a.name.as_str(),
+                    "ItemTag" | "Name" | "SP_LineNumberTag" | "TagSequenceNo" | "TagSuffix"
+                )
+            })
+            .take(5)
+            .collect();
+        if let Some(t) = trailer {
+            let record = da.attribute_records.iter().find(|r| {
+                r.attributes
+                    .iter()
+                    .any(|a| a.name == "DrawingID" || a.name == "ModelItemType")
+            });
+            let tag_text = record
+                .and_then(|r| r.attributes.iter().find(|a| a.name == "ItemTag"))
+                .map(|a| format!("{:?}", a.value));
+            if tag_text.is_some() {
+                associated += 1;
+            } else {
+                no_attrs += 1;
+            }
+            eprintln!(
+                "  field_x={field_x} trailer_record_id={} drawing_id={:?} tag={:?}",
+                t.record_id,
+                t.drawing_id.as_deref().unwrap_or("?"),
+                tag_text.as_deref().unwrap_or("(none)")
+            );
+        } else {
+            no_attrs += 1;
+            eprintln!("  field_x={field_x} no_matching_trailer");
+        }
+    }
+
+    let mut all_attr_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for r in &da.attribute_records {
+        for a in &r.attributes {
+            all_attr_names.insert(a.name.clone());
+        }
+    }
+    eprintln!(
+        "DA tag association: promoted={}, associated={associated}, no_attrs={no_attrs}",
+        promoted_field_xs.len()
+    );
+    eprintln!(
+        "available DA attribute names ({} unique): {:?}",
+        all_attr_names.len(),
+        all_attr_names.iter().take(30).collect::<Vec<_>>()
+    );
+    assert!(
+        !promoted_field_xs.is_empty(),
+        "should have promoted field_xs for association"
+    );
+}
+
+#[test]
 fn dwg0201_produces_inferred_endpoint_lines() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;
@@ -2325,7 +2413,10 @@ fn dwg0201_produces_inferred_endpoint_lines() {
         "DWG-0201GP06-01 should produce inferred endpoint lines from f64 pair/triple coordinates"
     );
     for line in &inferred_lines {
-        assert_eq!(line.confidence, pid_parse::PidGeometryConfidence::Inferred);
+        assert_eq!(
+            line.confidence,
+            pid_parse::PidGeometryConfidence::Inferred
+        );
         assert!(
             line.source
                 .record_kind
@@ -2334,10 +2425,8 @@ fn dwg0201_produces_inferred_endpoint_lines() {
             "inferred line should have EndpointPair record kind"
         );
         assert!(
-            line.source
-                .note
-                .as_ref()
-                .is_some_and(|n| n.contains("endpoint pair promoted to inferred line")),
+            line.source.note.as_ref().is_some_and(|n| n
+                .contains("endpoint pair promoted to inferred line")),
             "inferred line note should describe endpoint pair promotion"
         );
     }
@@ -2923,11 +3012,7 @@ fn sheet6_endpoint_a_missing_field_xs_f64_byte_window_investigation() {
             with_f64_pair += 1;
             eprintln!(
                 "  field_x={} offset={} HAS f64 pair: x={:.6} y={:.6} coord_offset={}",
-                window.field_x,
-                window.offset,
-                candidate.x,
-                candidate.y,
-                candidate.coordinate_offset
+                window.field_x, window.offset, candidate.x, candidate.y, candidate.coordinate_offset
             );
         } else {
             without_f64_pair += 1;
