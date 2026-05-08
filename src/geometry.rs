@@ -24,6 +24,9 @@ const UNKNOWN_UNITS_DIAGNOSTIC: &str =
 pub struct NormalizedPidGeometry {
     /// Source-backed graphic entities in drawing order where known.
     pub entities: Vec<PidGraphicEntity>,
+    /// Inferred page dimensions in mm, if the template name could be parsed.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub page_dimensions_mm: Option<(f64, f64)>,
     /// Non-fatal diagnostics explaining missing or skipped geometry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
@@ -308,6 +311,28 @@ struct ResolvedObjectPosition {
     byte_len: usize,
 }
 
+/// Inferred page dimensions from the drawing template name.
+fn infer_page_dimensions(doc: &PidDocument) -> Option<(f64, f64)> {
+    let template = doc
+        .drawing_meta
+        .as_ref()
+        .and_then(|meta| meta.tags.get("Template"))?;
+    let upper = template.to_uppercase();
+    if upper.contains("A0") {
+        Some((1189.0, 841.0))
+    } else if upper.contains("A1") {
+        Some((841.0, 594.0))
+    } else if upper.contains("A2") {
+        Some((594.0, 420.0))
+    } else if upper.contains("A3") {
+        Some((420.0, 297.0))
+    } else if upper.contains("A4") {
+        Some((297.0, 210.0))
+    } else {
+        None
+    }
+}
+
 /// Build the normalized source-backed geometry projection for `doc`.
 ///
 /// Current behavior is intentionally conservative: Sheet coordinate pairs
@@ -317,6 +342,13 @@ struct ResolvedObjectPosition {
 pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
     let mut warnings = Vec::new();
     let mut entities = Vec::new();
+    let page_dims = infer_page_dimensions(doc);
+    if page_dims.is_none() {
+        warnings.push(
+            "coordinate units and page transforms are unavailable; geometry uses raw values"
+                .to_string(),
+        );
+    }
     let sheet_count = doc.sheet_streams.len();
     if sheet_count == 0 {
         warnings.push("no Sheet streams available for geometry decode".to_string());
@@ -651,7 +683,11 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         );
     }
 
-    NormalizedPidGeometry { entities, warnings }
+    NormalizedPidGeometry {
+        entities,
+        page_dimensions_mm: page_dims,
+        warnings,
+    }
 }
 
 fn sheet_source_coordinate_context(sheet_path: &str) -> PidCoordinateContext {
@@ -724,8 +760,10 @@ mod tests {
         let geometry = build_normalized_geometry(&doc);
 
         assert!(geometry.is_empty());
-        assert_eq!(geometry.warnings.len(), 1);
-        assert!(geometry.warnings[0].contains("1 Sheet stream"));
+        assert!(geometry
+            .warnings
+            .iter()
+            .any(|w| w.contains("1 Sheet stream")));
     }
 
     #[test]
@@ -1377,6 +1415,7 @@ mod tests {
     #[test]
     fn decoded_geometry_json_exposes_record_id_and_typed_kind() {
         let geometry = NormalizedPidGeometry {
+            page_dimensions_mm: None,
             entities: vec![PidGraphicEntity {
                 id: "sheet6:line:0".into(),
                 drawing_id: None,

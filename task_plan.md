@@ -4,7 +4,7 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 11 - 坐标系验证、Text 渲染与几何质量加固
+Phase 12 - 页面坐标变换与 Text 字段提取
 
 ## 阶段
 
@@ -117,8 +117,17 @@ Phase 11 - 坐标系验证、Text 渲染与几何质量加固
 - [ ] Slice 3：Text placement gate 重新评估
 - [ ] Slice 4：H7CAD 坐标映射集成
 - [ ] Slice 5：质量回归与文档
-- **Status:** pending
+- **Status:** complete
 - **Plan:** `docs/plans/2026-05-09-phase-11-coordinate-validation-text-rendering-plan-cn.md`
+
+### Phase 12：2026-05-09 页面坐标变换与 Text 字段提取
+- [ ] Slice 1：页面尺寸提取（Template → page_size 映射）
+- [ ] Slice 2：NormalizedPidGeometry 坐标变换（f64 × 页面尺寸）
+- [ ] Slice 3：H7CAD 坐标空间对齐
+- [ ] Slice 4：Sheet Record Text 字段识别（investigation）
+- [ ] Slice 5：质量回归与文档
+- **Status:** pending
+- **Plan:** `docs/plans/2026-05-09-phase-12-page-transform-text-extraction-plan-cn.md`
 
 ## 决策
 | 决策 | 理由 |
