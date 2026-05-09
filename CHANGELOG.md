@@ -50,6 +50,9 @@
 - 新增受控 `.pid` 操作 diff 采集协议，定义 line、polyline、circle、arc、text、
   symbol 的 before/after fixture、metadata sidecar、stream diff 与 promotion
   criteria，用于后续在不猜测 byte layout 的前提下推进 typed decoder。
+- 新增 `controlled_pid_diff_pairs_report_stream_level_evidence_when_available`
+  soft-skip 回归：本地存在 `test-file/controlled-diff` pair 时验证 metadata
+  sidecar、解析 before/after package，并输出首个 modified stream 的 mismatch context。
 - 新增中文 Phase 14 全几何解析计划与 PrimitiveLine 阻塞证据文档，记录 promotion
   前必须满足 source-backed byte range、record kind、coordinate semantics 的证据门槛。
 - 验证通过：focused `sheet_records` 单测、真实 fixture investigation 回归、

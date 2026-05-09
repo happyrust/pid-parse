@@ -19,6 +19,8 @@ use pid_parse::{
     PidParser,
 };
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Parse a real `.pid` fixture from `test-file/`. Returns `None` when the
 /// fixture isn't present (typical for CI and for contributors without
@@ -59,6 +61,145 @@ fn hex_window(data: &[u8], center: usize, radius: usize) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     format!("{start}..{end}: {hex}")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ControlledPidDiffCase {
+    name: String,
+    before_path: PathBuf,
+    after_path: PathBuf,
+    metadata_path: PathBuf,
+}
+
+fn controlled_pid_diff_cases() -> Vec<ControlledPidDiffCase> {
+    let root = Path::new("test-file/controlled-diff");
+    let before_root = root.join("before");
+    let after_root = root.join("after");
+    let metadata_root = root.join("metadata");
+    let Ok(entries) = fs::read_dir(&before_root) else {
+        return Vec::new();
+    };
+
+    let mut cases = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let before_path = entry.path();
+            let extension = before_path.extension().and_then(|value| value.to_str());
+            if extension != Some("pid") {
+                return None;
+            }
+            let name = before_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(str::to_owned)?;
+            let after_path = after_root.join(format!("{name}.pid"));
+            if !after_path.exists() {
+                return None;
+            }
+            let metadata_path = metadata_root.join(format!("{name}.json"));
+            Some(ControlledPidDiffCase {
+                name,
+                before_path,
+                after_path,
+                metadata_path,
+            })
+        })
+        .collect::<Vec<_>>();
+    cases.sort_by(|left, right| left.name.cmp(&right.name));
+    cases
+}
+
+#[test]
+fn controlled_pid_diff_pairs_report_stream_level_evidence_when_available() {
+    let cases = controlled_pid_diff_cases();
+    if cases.is_empty() {
+        eprintln!("skipping: no controlled PID diff pairs found under test-file/controlled-diff");
+        return;
+    }
+
+    let parser = PidParser::new();
+    let mut case_summaries = Vec::new();
+    for case in cases {
+        assert!(
+            case.metadata_path.exists(),
+            "controlled diff case `{}` must include metadata sidecar {}",
+            case.name,
+            case.metadata_path.display()
+        );
+        let metadata = fs::read_to_string(&case.metadata_path).unwrap_or_else(|err| {
+            panic!(
+                "failed to read controlled diff metadata {}: {err}",
+                case.metadata_path.display()
+            )
+        });
+        let metadata_json: serde_json::Value =
+            serde_json::from_str(&metadata).unwrap_or_else(|err| {
+                panic!(
+                    "controlled diff metadata {} must be valid JSON: {err}",
+                    case.metadata_path.display()
+                )
+            });
+        assert!(
+            metadata_json.get("operation").is_some() && metadata_json.get("expected").is_some(),
+            "controlled diff metadata {} must include operation and expected payload",
+            case.metadata_path.display()
+        );
+
+        let before = parser
+            .parse_package(&case.before_path)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to parse controlled diff before file {}: {err}",
+                    case.before_path.display()
+                )
+            });
+        let after = parser
+            .parse_package(&case.after_path)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to parse controlled diff after file {}: {err}",
+                    case.after_path.display()
+                )
+            });
+        let diff = pid_parse::diff_packages(&before, &after);
+        let stream_diff_count = diff.only_in_a.len() + diff.only_in_b.len() + diff.modified.len();
+        let modified_sheet_streams = diff
+            .modified
+            .iter()
+            .filter(|stream| stream.path.starts_with("/Sheet"))
+            .count();
+        let first_modified = diff.modified.first().map(|stream| {
+            (
+                stream.path.clone(),
+                stream.len_a,
+                stream.len_b,
+                stream.first_mismatch_offset,
+                stream.context_before.clone(),
+                stream.context_after.clone(),
+            )
+        });
+        eprintln!(
+            "controlled PID diff case `{}`: stream_diff_count={}, modified_sheet_streams={}, only_in_before={}, only_in_after={}, metadata={}, first_modified={:?}",
+            case.name,
+            stream_diff_count,
+            modified_sheet_streams,
+            diff.only_in_a.len(),
+            diff.only_in_b.len(),
+            case.metadata_path.display(),
+            first_modified
+        );
+        assert!(
+            stream_diff_count > 0,
+            "controlled diff case `{}` must change at least one CFB stream",
+            case.name
+        );
+        case_summaries.push((case.name, stream_diff_count, modified_sheet_streams));
+    }
+
+    assert!(
+        !case_summaries.is_empty(),
+        "controlled diff discovery should produce at least one case before assertions run"
+    );
 }
 
 #[derive(Debug, Clone, Copy)]

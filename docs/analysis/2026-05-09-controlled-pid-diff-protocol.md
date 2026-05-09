@@ -77,6 +77,18 @@ Once files exist locally, the next parser work should:
 - correlate changed ranges with the operation metadata;
 - add an investigation regression before any typed decoder promotion.
 
+The regression harness now looks for local cases under `test-file/controlled-diff`
+and soft-skips when none are present:
+
+```powershell
+cargo test --locked -j 1 --test parse_real_files controlled_pid_diff_pairs_report_stream_level_evidence_when_available -- --nocapture
+```
+
+For every discovered `before/<case>.pid` + `after/<case>.pid` pair, the harness
+requires `metadata/<case>.json`, parses both packages, computes stream-level
+diffs, and prints the first modified stream with mismatch context. It does not
+promote any geometry by itself.
+
 ## Promotion Criteria
 
 A controlled diff can support a decoder only when it proves:
