@@ -47,6 +47,9 @@
   drawing/template/operation-log 与可用于 Bridge/Design Validation 导入，
   未提供 Sheet geometry primitive byte layout；后续应优先采集受控操作 diff
   pair、SPPID Bridge export ZIP 或 mapper 输出，而不是放宽 decoder 门禁。
+- 新增受控 `.pid` 操作 diff 采集协议，定义 line、polyline、circle、arc、text、
+  symbol 的 before/after fixture、metadata sidecar、stream diff 与 promotion
+  criteria，用于后续在不猜测 byte layout 的前提下推进 typed decoder。
 - 新增中文 Phase 14 全几何解析计划与 PrimitiveLine 阻塞证据文档，记录 promotion
   前必须满足 source-backed byte range、record kind、coordinate semantics 的证据门槛。
 - 验证通过：focused `sheet_records` 单测、真实 fixture investigation 回归、
