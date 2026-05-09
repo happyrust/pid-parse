@@ -95,11 +95,13 @@ The same intake path is available from the inspection CLI:
 
 ```powershell
 pid_inspect --controlled-diff-dir test-file/controlled-diff
+pid_inspect --controlled-diff-dir test-file/controlled-diff --json
 ```
 
 The CLI prints one summary per case plus the first modified stream and mismatch
-context. It exits with an error when metadata is invalid, when a pair cannot be
-parsed, or when a pair has no stream-level changes.
+context. With `--json`, it emits a structured report for scripting or CI. It
+exits with an error when metadata is invalid, when a pair cannot be parsed, or
+when a pair has no stream-level changes.
 
 ## Promotion Criteria
 

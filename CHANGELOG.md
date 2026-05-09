@@ -58,6 +58,9 @@
 - `pid_inspect` 新增 `--controlled-diff-dir <dir>`，可直接扫描受控
   before/after `.pid` pair，输出 stream diff summary 与首个 modified stream
   context，作为采集到新证据后的本地 intake 工具。
+- `pid_inspect --controlled-diff-dir` 支持 `--json` 输出结构化报告，暴露
+  case、operation、stream diff 计数、Sheet stream 修改数、首个 mismatch context
+  与 `promoted_geometry=false`，便于脚本或 CI 消费 evidence。
 - 新增中文 Phase 14 全几何解析计划与 PrimitiveLine 阻塞证据文档，记录 promotion
   前必须满足 source-backed byte range、record kind、coordinate semantics 的证据门槛。
 - 验证通过：focused `sheet_records` 单测、真实 fixture investigation 回归、

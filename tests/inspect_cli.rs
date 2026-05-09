@@ -178,6 +178,45 @@ fn controlled_diff_dir_reports_stream_level_evidence() {
 }
 
 #[test]
+fn controlled_diff_dir_json_reports_stream_level_evidence() {
+    let root = unique_tmp_dir("controlled-diff-json");
+    let before_dir = root.join("before");
+    let after_dir = root.join("after");
+    let metadata_dir = root.join("metadata");
+    std::fs::create_dir_all(&before_dir).expect("before dir");
+    std::fs::create_dir_all(&after_dir).expect("after dir");
+    std::fs::create_dir_all(&metadata_dir).expect("metadata dir");
+
+    build_controlled_diff_fixture(&before_dir.join("one-circle.pid"), b"circle-before");
+    build_controlled_diff_fixture(&after_dir.join("one-circle.pid"), b"circle-after");
+    std::fs::write(
+        metadata_dir.join("one-circle.json"),
+        r#"{"case":"one-circle","operation":"place_circle","expected":{"center":[0,0],"radius":10},"notes":"synthetic"}"#,
+    )
+    .expect("metadata");
+
+    let output = Command::new(binary_path())
+        .arg("--controlled-diff-dir")
+        .arg(&root)
+        .arg("--json")
+        .output()
+        .expect("spawn pid_inspect --controlled-diff-dir --json");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|err| panic!("invalid JSON {err}: {stdout}"));
+    assert_eq!(json["promoted_geometry"], false);
+    assert_eq!(json["cases"][0]["case"], "one-circle");
+    assert_eq!(json["cases"][0]["operation"], "place_circle");
+    assert_eq!(json["cases"][0]["notes"], "synthetic");
+    assert_eq!(json["cases"][0]["first_modified"]["path"], "/Sheet6");
+}
+
+#[test]
 fn geometry_json_flag_emits_normalized_probe_entities() {
     let fixture = unique_tmp("geometry-json");
     build_sheet_probe_fixture(&fixture);
