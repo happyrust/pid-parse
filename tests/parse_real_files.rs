@@ -18,6 +18,7 @@ use pid_parse::{
     },
     PidParser,
 };
+use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -69,6 +70,15 @@ struct ControlledPidDiffCase {
     before_path: PathBuf,
     after_path: PathBuf,
     metadata_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ControlledPidDiffMetadata {
+    case: String,
+    operation: String,
+    expected: serde_json::Value,
+    #[serde(default)]
+    notes: Option<String>,
 }
 
 fn controlled_pid_diff_cases() -> Vec<ControlledPidDiffCase> {
@@ -132,16 +142,27 @@ fn controlled_pid_diff_pairs_report_stream_level_evidence_when_available() {
                 case.metadata_path.display()
             )
         });
-        let metadata_json: serde_json::Value =
+        let metadata: ControlledPidDiffMetadata =
             serde_json::from_str(&metadata).unwrap_or_else(|err| {
                 panic!(
                     "controlled diff metadata {} must be valid JSON: {err}",
                     case.metadata_path.display()
                 )
             });
+        assert_eq!(
+            metadata.case.as_str(),
+            case.name.as_str(),
+            "controlled diff metadata {} case field must match the before/after filename stem",
+            case.metadata_path.display()
+        );
         assert!(
-            metadata_json.get("operation").is_some() && metadata_json.get("expected").is_some(),
-            "controlled diff metadata {} must include operation and expected payload",
+            !metadata.operation.trim().is_empty(),
+            "controlled diff metadata {} must include a non-empty operation",
+            case.metadata_path.display()
+        );
+        assert!(
+            !metadata.expected.is_null(),
+            "controlled diff metadata {} must include expected payload",
             case.metadata_path.display()
         );
 
@@ -193,7 +214,13 @@ fn controlled_pid_diff_pairs_report_stream_level_evidence_when_available() {
             "controlled diff case `{}` must change at least one CFB stream",
             case.name
         );
-        case_summaries.push((case.name, stream_diff_count, modified_sheet_streams));
+        case_summaries.push((
+            case.name,
+            metadata.operation,
+            metadata.notes,
+            stream_diff_count,
+            modified_sheet_streams,
+        ));
     }
 
     assert!(

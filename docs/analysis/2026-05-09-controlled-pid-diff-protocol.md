@@ -85,9 +85,11 @@ cargo test --locked -j 1 --test parse_real_files controlled_pid_diff_pairs_repor
 ```
 
 For every discovered `before/<case>.pid` + `after/<case>.pid` pair, the harness
-requires `metadata/<case>.json`, parses both packages, computes stream-level
-diffs, and prints the first modified stream with mismatch context. It does not
-promote any geometry by itself.
+requires `metadata/<case>.json`, parses the metadata as structured JSON, checks
+that `case` matches the filename stem, requires a non-empty `operation`, requires
+an `expected` payload, parses both packages, computes stream-level diffs, and
+prints the first modified stream with mismatch context. It does not promote any
+geometry by itself.
 
 ## Promotion Criteria
 

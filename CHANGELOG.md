@@ -53,6 +53,8 @@
 - 新增 `controlled_pid_diff_pairs_report_stream_level_evidence_when_available`
   soft-skip 回归：本地存在 `test-file/controlled-diff` pair 时验证 metadata
   sidecar、解析 before/after package，并输出首个 modified stream 的 mismatch context。
+- 收紧 controlled diff metadata intake：sidecar 需结构化解析，`case` 必须匹配
+  before/after 文件名，`operation` 非空且 `expected` payload 存在。
 - 新增中文 Phase 14 全几何解析计划与 PrimitiveLine 阻塞证据文档，记录 promotion
   前必须满足 source-backed byte range、record kind、coordinate semantics 的证据门槛。
 - 验证通过：focused `sheet_records` 单测、真实 fixture investigation 回归、
