@@ -25,9 +25,21 @@
   `PolylineLike` / `CircleArcLike` / `MixedNumeric` / `InsufficientNumeric`；
   refined filtering 后 `/Sheet6` 仅剩 1 个 compact vertex-chain review candidate，
   大范围 mixed payload 明确标注需 subrecord split，不提升为 decoded polyline/circle/arc。
+- 新增 CoordinatePageMetadata investigation report：输出 i32/f64 坐标域 bounds、
+  normalized f64 pair 计数、页面尺寸标量匹配统计与 no-promotion notes。当前 5 个
+  fixture / 7 个 Sheet 汇总为 `normalized_f64_pair_count=1397`、
+  `page_dimension_scalar_matches=0`，因此 page transform 仍保持 unavailable。
+- 收紧 curve primitive `PolylineLike` 判定：新增非重叠 i32 point sequence、相对
+  marker range 的 4 字节 alignment evidence，并要求 3+ aligned points 才进入
+  polyline review；`DWG-0201 /Sheet6` 与 `marker_type=15/range_len=148` 候选均降级为
+  `MixedNumeric`。
+- 新增跨 fixture Sheet geometry evidence aggregate：当前 `curve_groups=97`、
+  `mixed_numeric=43`、`polyline_like=0`，所有 curve/page metadata 证据继续保持
+  probe-only，不输出 decoded polyline/circle/arc 或 available page transform。
 - 新增中文 Phase 14 全几何解析计划与 PrimitiveLine 阻塞证据文档，记录 promotion
   前必须满足 source-backed byte range、record kind、coordinate semantics 的证据门槛。
 - 验证通过：focused `sheet_records` 单测、真实 fixture investigation 回归、
+  marker15 subfield review、cross-fixture aggregate、
   `cargo fmt --all -- --check`、clippy lib/test `-D warnings`、rustdoc missing-docs、
   ReadLints。
 

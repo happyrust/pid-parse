@@ -10,14 +10,15 @@ use pid_parse::{
         top_text_candidate_record_dumps, SheetFieldXWindowScoreReason, SheetProbeOptions,
     },
     parsers::sheet_records::{
-        curve_primitive_investigation_report, primitive_line_investigation_report,
-        sheet_record_shape_inventory, symbol_placement_investigation_report,
-        text_placement_investigation_report, SheetCurvePrimitiveCandidateKind,
+        coordinate_page_metadata_investigation_report, curve_primitive_investigation_report,
+        primitive_line_investigation_report, sheet_record_shape_inventory,
+        symbol_placement_investigation_report, text_placement_investigation_report,
+        SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
         SheetRecordShapeKind, SheetSymbolPlacementObject,
     },
     PidParser,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Parse a real `.pid` fixture from `test-file/`. Returns `None` when the
 /// fixture isn't present (typical for CI and for contributors without
@@ -2745,6 +2746,425 @@ fn sheet_record_shape_inventory_reports_geometry_candidates() {
 }
 
 #[test]
+fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_record_proven() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(graph) = pkg.parsed.object_graph.as_ref() else {
+        eprintln!("skipping: object graph not built for fixture");
+        return;
+    };
+
+    let field_xs: Vec<_> = graph
+        .objects
+        .iter()
+        .filter_map(|object| object.field_x)
+        .collect();
+    let probe = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let inventory = sheet_record_shape_inventory(&raw_sheet.data, &probe, &field_xs);
+    let normalized = pid_parse::build_normalized_geometry(&pkg.parsed);
+    let report = coordinate_page_metadata_investigation_report(
+        &raw_sheet.data,
+        &inventory,
+        normalized.page_dimensions_mm,
+    );
+    let normalized_f64_candidates = report
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.candidate_kind
+                == SheetCoordinatePageMetadataCandidateKind::NormalizedF64CoordinateLike
+        })
+        .count();
+    let page_dimension_candidates = report
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.candidate_kind
+                == SheetCoordinatePageMetadataCandidateKind::PageDimensionScalarLike
+        })
+        .count();
+    let i32_domain_candidates = report
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.candidate_kind
+                == SheetCoordinatePageMetadataCandidateKind::I32CoordinateDomainLike
+        })
+        .count();
+    let unavailable_context_entities = normalized
+        .entities
+        .iter()
+        .filter(|entity| {
+            matches!(
+                entity.coordinate_context.page_transform,
+                pid_parse::PidPageTransform::Unavailable { .. }
+            )
+        })
+        .count();
+
+    eprintln!(
+        "coordinate page metadata investigation: candidates={}, normalized_f64_candidates={}, page_dimension_candidates={}, i32_domain_candidates={}, normalized_f64_pair_count={}, page_dimension_scalar_matches={}, i32_bounds={:?}, f64_bounds={:?}, page_dimensions_mm={:?}, top={:?}",
+        report.candidates.len(),
+        normalized_f64_candidates,
+        page_dimension_candidates,
+        i32_domain_candidates,
+        report.normalized_f64_pair_count,
+        report.page_dimension_scalar_matches,
+        report.coordinate_hint_bounds,
+        report.f64_coordinate_bounds,
+        normalized.page_dimensions_mm,
+        report.candidates.iter().take(8).collect::<Vec<_>>()
+    );
+
+    assert!(
+        !report.candidates.is_empty(),
+        "Sheet6 should expose marker ranges for coordinate/page metadata investigation"
+    );
+    assert!(
+        report.coordinate_hint_bounds.is_some(),
+        "Sheet6 should expose i32 coordinate-domain bounds as evidence"
+    );
+    assert!(
+        report.f64_coordinate_bounds.is_some() || report.normalized_f64_pair_count > 0,
+        "Sheet6 should expose f64 coordinate-domain evidence for page mapping investigation"
+    );
+    assert!(
+        normalized_f64_candidates + page_dimension_candidates + i32_domain_candidates > 0,
+        "coordinate/page metadata investigation should classify at least one numeric evidence group"
+    );
+    assert_eq!(
+        unavailable_context_entities,
+        normalized.entities.len(),
+        "CoordinatePageMetadata investigation must not make page transforms available"
+    );
+    assert!(
+        normalized.warnings.iter().any(|warning| {
+            warning.contains("coordinate units and page transforms are unavailable")
+        }),
+        "normalized geometry should keep explicit transform-unavailable warning"
+    );
+    assert!(
+        report.candidates.iter().all(|candidate| {
+            candidate
+                .investigation_notes
+                .iter()
+                .any(|note| note == "probe_only_no_coordinate_page_metadata_promotion")
+                && candidate.example_range_start <= candidate.example_offset
+                && candidate.example_offset < candidate.example_range_end
+                && candidate.example_range_end <= raw_sheet.data.len()
+        }),
+        "coordinate/page metadata candidates should carry bounded no-promotion evidence"
+    );
+}
+
+#[test]
+fn sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promotion() {
+    let mut fixtures_seen = 0usize;
+    let mut sheets_seen = 0usize;
+    let mut coordinate_metadata_candidates = 0usize;
+    let mut normalized_f64_pair_count = 0usize;
+    let mut page_dimension_scalar_matches = 0usize;
+    let mut curve_groups = 0usize;
+    let mut marker_49215_groups = 0usize;
+    let mut polyline_like = 0usize;
+    let mut mixed_numeric = 0usize;
+    let mut short_i32_sequences = 0usize;
+
+    for fixture in geometry_fixture_cases() {
+        let Some(pkg) = parse_test_package(fixture.path) else {
+            continue;
+        };
+        fixtures_seen += 1;
+        let field_xs: Vec<_> = pkg
+            .parsed
+            .object_graph
+            .as_ref()
+            .map(|graph| {
+                graph
+                    .objects
+                    .iter()
+                    .filter_map(|object| object.field_x)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let normalized = pid_parse::build_normalized_geometry(&pkg.parsed);
+
+        for sheet in pkg
+            .parsed
+            .sheet_streams
+            .iter()
+            .filter(|sheet| sheet.path.starts_with("/Sheet"))
+        {
+            let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            sheets_seen += 1;
+            let probe = probe_sheet_stream(
+                &sheet.name,
+                &sheet.path,
+                &raw_sheet.data,
+                &SheetProbeOptions::default(),
+            );
+            let inventory = sheet_record_shape_inventory(&raw_sheet.data, &probe, &field_xs);
+            let coordinate_report = coordinate_page_metadata_investigation_report(
+                &raw_sheet.data,
+                &inventory,
+                normalized.page_dimensions_mm,
+            );
+            let curve_report = curve_primitive_investigation_report(&raw_sheet.data, &inventory);
+
+            coordinate_metadata_candidates += coordinate_report.candidates.len();
+            normalized_f64_pair_count += coordinate_report.normalized_f64_pair_count;
+            page_dimension_scalar_matches += coordinate_report.page_dimension_scalar_matches;
+            curve_groups += curve_report.groups.len();
+            marker_49215_groups += curve_report
+                .groups
+                .iter()
+                .filter(|group| group.marker_type == Some(49215))
+                .count();
+            polyline_like += curve_report
+                .groups
+                .iter()
+                .filter(|group| {
+                    group.candidate_kind == SheetCurvePrimitiveCandidateKind::PolylineLike
+                })
+                .count();
+            mixed_numeric += curve_report
+                .groups
+                .iter()
+                .filter(|group| {
+                    group.candidate_kind == SheetCurvePrimitiveCandidateKind::MixedNumeric
+                })
+                .count();
+            short_i32_sequences += curve_report
+                .groups
+                .iter()
+                .filter(|group| {
+                    group.i32_point_sequence.as_ref().is_some_and(|sequence| {
+                        sequence.point_count < 3
+                            && group
+                                .investigation_notes
+                                .iter()
+                                .any(|note| note == "short_i32_point_sequence_needs_more_vertices")
+                    })
+                })
+                .count();
+
+            assert!(
+                coordinate_report.candidates.iter().all(|candidate| {
+                    candidate
+                        .investigation_notes
+                        .iter()
+                        .any(|note| note == "probe_only_no_coordinate_page_metadata_promotion")
+                }),
+                "coordinate metadata report must not promote page transform for {} {}",
+                fixture.path,
+                sheet.path
+            );
+            assert!(
+                curve_report.groups.iter().all(|group| {
+                    group
+                        .investigation_notes
+                        .iter()
+                        .any(|note| note == "probe_only_no_curve_geometry_promotion")
+                }),
+                "curve report must not promote primitive geometry for {} {}",
+                fixture.path,
+                sheet.path
+            );
+            assert!(
+                curve_report
+                    .groups
+                    .iter()
+                    .filter(|group| {
+                        group.candidate_kind == SheetCurvePrimitiveCandidateKind::PolylineLike
+                    })
+                    .all(|group| {
+                        group.i32_point_sequence.as_ref().is_some_and(|sequence| {
+                            sequence.point_count >= 3
+                                && sequence.byte_stride == 8
+                                && sequence.relative_alignment_mod4 == 0
+                                && !sequence.sample_points.is_empty()
+                        })
+                    }),
+                "PolylineLike groups require 3+ aligned non-overlapping i32 points for {} {}",
+                fixture.path,
+                sheet.path
+            );
+        }
+    }
+
+    eprintln!(
+        "cross-fixture Sheet geometry investigation: fixtures_seen={}, sheets_seen={}, coordinate_metadata_candidates={}, normalized_f64_pair_count={}, page_dimension_scalar_matches={}, curve_groups={}, marker_49215_groups={}, polyline_like={}, mixed_numeric={}, short_i32_sequences={}",
+        fixtures_seen,
+        sheets_seen,
+        coordinate_metadata_candidates,
+        normalized_f64_pair_count,
+        page_dimension_scalar_matches,
+        curve_groups,
+        marker_49215_groups,
+        polyline_like,
+        mixed_numeric,
+        short_i32_sequences
+    );
+
+    if fixtures_seen == 0 {
+        eprintln!("skipping: no available PID fixtures found for cross-fixture investigation");
+        return;
+    }
+    assert!(
+        sheets_seen > 0,
+        "available geometry fixtures should expose Sheet streams"
+    );
+    assert!(
+        coordinate_metadata_candidates + curve_groups > 0,
+        "cross-fixture investigation should surface Sheet evidence without decoded promotion"
+    );
+    assert!(
+        mixed_numeric >= polyline_like,
+        "mixed numeric evidence should remain visible while PolylineLike requires stronger point-sequence proof"
+    );
+}
+
+#[test]
+fn marker15_polyline_like_subfield_review_keeps_unaligned_sequences_probe_only() {
+    let mut fixtures_seen = 0usize;
+    let mut candidates = Vec::new();
+    let mut shape_counts: BTreeMap<(Option<u16>, usize), usize> = BTreeMap::new();
+    let mut candidate_logical_drawings = BTreeSet::new();
+
+    for fixture in geometry_fixture_cases() {
+        let Some(pkg) = parse_test_package(fixture.path) else {
+            continue;
+        };
+        fixtures_seen += 1;
+        let field_xs: Vec<_> = pkg
+            .parsed
+            .object_graph
+            .as_ref()
+            .map(|graph| {
+                graph
+                    .objects
+                    .iter()
+                    .filter_map(|object| object.field_x)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for sheet in pkg
+            .parsed
+            .sheet_streams
+            .iter()
+            .filter(|sheet| sheet.path.starts_with("/Sheet"))
+        {
+            let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let probe = probe_sheet_stream(
+                &sheet.name,
+                &sheet.path,
+                &raw_sheet.data,
+                &SheetProbeOptions::default(),
+            );
+            let inventory = sheet_record_shape_inventory(&raw_sheet.data, &probe, &field_xs);
+            let curve_report = curve_primitive_investigation_report(&raw_sheet.data, &inventory);
+
+            for group in curve_report
+                .groups
+                .iter()
+                .filter(|group| group.marker_type == Some(15) && group.range_len == 148)
+            {
+                let sequence = group
+                    .i32_point_sequence
+                    .as_ref()
+                    .expect("marker15/range148 groups should expose point-sequence evidence");
+                let logical_drawing = std::path::Path::new(fixture.path)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or(fixture.path)
+                    .to_string();
+                candidate_logical_drawings.insert(logical_drawing.clone());
+                *shape_counts
+                    .entry((group.marker_type, group.range_len))
+                    .or_default() += 1;
+                candidates.push((
+                    fixture.path.to_string(),
+                    logical_drawing,
+                    sheet.path.clone(),
+                    group.candidate_kind,
+                    group.marker_type,
+                    group.range_len,
+                    group.numeric_pair_count,
+                    sequence.relative_offset,
+                    sequence.relative_alignment_mod4,
+                    sequence.point_count,
+                    sequence.sample_points.clone(),
+                ));
+            }
+        }
+    }
+
+    let repeated_shapes = shape_counts
+        .iter()
+        .filter(|(_, count)| **count > 1)
+        .collect::<Vec<_>>();
+    eprintln!(
+        "marker15/range148 subfield review: fixtures_seen={}, candidates={}, logical_drawings={}, candidate_logical_drawings={:?}, shape_counts={:?}, repeated_shapes={:?}, details={:?}",
+        fixtures_seen,
+        candidates.len(),
+        candidate_logical_drawings.len(),
+        candidate_logical_drawings,
+        shape_counts,
+        repeated_shapes,
+        candidates
+    );
+
+    if fixtures_seen == 0 {
+        eprintln!("skipping: no available PID fixtures found for polyline-like investigation");
+        return;
+    }
+    assert!(
+        !candidates.is_empty(),
+        "cross-fixture investigation should expose marker15/range148 point-sequence candidates"
+    );
+    assert!(
+        candidates.iter().all(
+            |(
+                _,
+                _,
+                _,
+                candidate_kind,
+                _,
+                range_len,
+                numeric_pair_count,
+                _,
+                alignment_mod4,
+                point_count,
+                sample_points,
+            )| {
+                (16..=512).contains(range_len)
+                    && *numeric_pair_count >= *point_count
+                    && *point_count >= 3
+                    && *alignment_mod4 != 0
+                    && *candidate_kind != SheetCurvePrimitiveCandidateKind::PolylineLike
+                    && !sample_points.is_empty()
+            }
+        ),
+        "marker15/range148 sequences should stay unaligned subfield evidence, not PolylineLike: {candidates:?}"
+    );
+}
+
+#[test]
 fn symbol_placement_investigation_links_symbol_objects_to_sheet_evidence() {
     let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
         return;
@@ -3010,6 +3430,16 @@ fn curve_primitive_investigation_reports_unsupported_curve_candidates() {
         .iter()
         .filter(|group| group.compact_vertex_chain_candidate)
         .count();
+    let i32_point_sequence_candidates = curve_report
+        .groups
+        .iter()
+        .filter(|group| {
+            group
+                .i32_point_sequence
+                .as_ref()
+                .is_some_and(|sequence| sequence.point_count >= 2)
+        })
+        .count();
     let large_mixed_payloads = curve_report
         .groups
         .iter()
@@ -3029,13 +3459,14 @@ fn curve_primitive_investigation_reports_unsupported_curve_candidates() {
     let normalized = normalized_geometry_inventory(&pkg.parsed);
 
     eprintln!(
-        "curve primitive investigation: groups={}, numeric_groups={}, polyline_like={}, circle_arc_like={}, mixed_numeric={}, compact_vertex_chain_candidates={}, large_mixed_payloads={}, decoded_polylines={}, decoded_circles={}, decoded_arcs={}, top={:?}",
+        "curve primitive investigation: groups={}, numeric_groups={}, polyline_like={}, circle_arc_like={}, mixed_numeric={}, compact_vertex_chain_candidates={}, i32_point_sequence_candidates={}, large_mixed_payloads={}, decoded_polylines={}, decoded_circles={}, decoded_arcs={}, top={:?}",
         curve_report.groups.len(),
         numeric_groups,
         polyline_like,
         circle_arc_like,
         mixed_numeric,
         compact_vertex_chain_candidates,
+        i32_point_sequence_candidates,
         large_mixed_payloads,
         normalized.decoded_polylines,
         normalized.decoded_circles,
@@ -3059,6 +3490,29 @@ fn curve_primitive_investigation_reports_unsupported_curve_candidates() {
         polyline_like, compact_vertex_chain_candidates,
         "PolylineLike should be reserved for compact vertex-chain review candidates"
     );
+    assert_eq!(
+        polyline_like, 0,
+        "DWG-0201 /Sheet6 compact curve candidates currently lack enough non-overlapping vertices for PolylineLike promotion review"
+    );
+    assert!(
+        i32_point_sequence_candidates >= compact_vertex_chain_candidates,
+        "compact vertex-chain candidates should expose non-overlapping i32 point-sequence evidence"
+    );
+    assert!(
+        i32_point_sequence_candidates > compact_vertex_chain_candidates,
+        "short local i32 sequences should remain mixed metadata evidence until 3+ non-overlapping points are proven"
+    );
+    assert!(curve_report
+        .groups
+        .iter()
+        .filter(|group| group.candidate_kind == SheetCurvePrimitiveCandidateKind::PolylineLike)
+        .all(
+            |group| group.i32_point_sequence.as_ref().is_some_and(|sequence| {
+                sequence.point_count >= 2
+                    && sequence.byte_stride == 8
+                    && !sequence.sample_points.is_empty()
+            })
+        ));
     assert!(
         large_mixed_payloads > 0,
         "large numeric payloads should carry a subrecord-split investigation note"
