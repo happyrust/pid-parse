@@ -9,6 +9,12 @@ use pid_parse::{
         summarize_object_geometry_promotion_gate, top_field_x_candidate_record_dumps,
         top_text_candidate_record_dumps, SheetFieldXWindowScoreReason, SheetProbeOptions,
     },
+    parsers::sheet_records::{
+        curve_primitive_investigation_report, primitive_line_investigation_report,
+        sheet_record_shape_inventory, symbol_placement_investigation_report,
+        text_placement_investigation_report, SheetCurvePrimitiveCandidateKind,
+        SheetRecordShapeKind, SheetSymbolPlacementObject,
+    },
     PidParser,
 };
 use std::collections::{BTreeMap, HashSet};
@@ -148,8 +154,27 @@ fn print_geometry_fixture_availability() -> GeometryFixtureAvailabilitySummary {
 struct NormalizedGeometryInventory {
     decoded_points: usize,
     inferred_points: usize,
+    probe_only_points: usize,
     decoded_lines: usize,
     inferred_lines: usize,
+    probe_only_lines: usize,
+    decoded_polylines: usize,
+    inferred_polylines: usize,
+    probe_only_polylines: usize,
+    decoded_arcs: usize,
+    inferred_arcs: usize,
+    probe_only_arcs: usize,
+    decoded_circles: usize,
+    inferred_circles: usize,
+    probe_only_circles: usize,
+    decoded_texts: usize,
+    inferred_texts: usize,
+    probe_only_texts: usize,
+    decoded_symbols: usize,
+    inferred_symbols: usize,
+    probe_only_symbols: usize,
+    decoded_unknowns: usize,
+    inferred_unknowns: usize,
     probe_only_unknowns: usize,
     other_entities: usize,
 }
@@ -158,8 +183,27 @@ impl NormalizedGeometryInventory {
     fn total(self) -> usize {
         self.decoded_points
             + self.inferred_points
+            + self.probe_only_points
             + self.decoded_lines
             + self.inferred_lines
+            + self.probe_only_lines
+            + self.decoded_polylines
+            + self.inferred_polylines
+            + self.probe_only_polylines
+            + self.decoded_arcs
+            + self.inferred_arcs
+            + self.probe_only_arcs
+            + self.decoded_circles
+            + self.inferred_circles
+            + self.probe_only_circles
+            + self.decoded_texts
+            + self.inferred_texts
+            + self.probe_only_texts
+            + self.decoded_symbols
+            + self.inferred_symbols
+            + self.probe_only_symbols
+            + self.decoded_unknowns
+            + self.inferred_unknowns
             + self.probe_only_unknowns
             + self.other_entities
     }
@@ -178,6 +222,10 @@ fn normalized_geometry_inventory(doc: &pid_parse::PidDocument) -> NormalizedGeom
                 pid_parse::PidGraphicKind::Point { .. },
                 pid_parse::PidGeometryConfidence::Inferred,
             ) => inventory.inferred_points += 1,
+            (
+                pid_parse::PidGraphicKind::Point { .. },
+                pid_parse::PidGeometryConfidence::ProbeOnly,
+            ) => inventory.probe_only_points += 1,
             (pid_parse::PidGraphicKind::Line { .. }, pid_parse::PidGeometryConfidence::Decoded) => {
                 inventory.decoded_lines += 1
             }
@@ -186,10 +234,78 @@ fn normalized_geometry_inventory(doc: &pid_parse::PidDocument) -> NormalizedGeom
                 pid_parse::PidGeometryConfidence::Inferred,
             ) => inventory.inferred_lines += 1,
             (
+                pid_parse::PidGraphicKind::Line { .. },
+                pid_parse::PidGeometryConfidence::ProbeOnly,
+            ) => inventory.probe_only_lines += 1,
+            (
+                pid_parse::PidGraphicKind::Polyline { .. },
+                pid_parse::PidGeometryConfidence::Decoded,
+            ) => inventory.decoded_polylines += 1,
+            (
+                pid_parse::PidGraphicKind::Polyline { .. },
+                pid_parse::PidGeometryConfidence::Inferred,
+            ) => inventory.inferred_polylines += 1,
+            (
+                pid_parse::PidGraphicKind::Polyline { .. },
+                pid_parse::PidGeometryConfidence::ProbeOnly,
+            ) => inventory.probe_only_polylines += 1,
+            (pid_parse::PidGraphicKind::Arc { .. }, pid_parse::PidGeometryConfidence::Decoded) => {
+                inventory.decoded_arcs += 1
+            }
+            (pid_parse::PidGraphicKind::Arc { .. }, pid_parse::PidGeometryConfidence::Inferred) => {
+                inventory.inferred_arcs += 1
+            }
+            (
+                pid_parse::PidGraphicKind::Arc { .. },
+                pid_parse::PidGeometryConfidence::ProbeOnly,
+            ) => inventory.probe_only_arcs += 1,
+            (
+                pid_parse::PidGraphicKind::Circle { .. },
+                pid_parse::PidGeometryConfidence::Decoded,
+            ) => inventory.decoded_circles += 1,
+            (
+                pid_parse::PidGraphicKind::Circle { .. },
+                pid_parse::PidGeometryConfidence::Inferred,
+            ) => inventory.inferred_circles += 1,
+            (
+                pid_parse::PidGraphicKind::Circle { .. },
+                pid_parse::PidGeometryConfidence::ProbeOnly,
+            ) => inventory.probe_only_circles += 1,
+            (pid_parse::PidGraphicKind::Text { .. }, pid_parse::PidGeometryConfidence::Decoded) => {
+                inventory.decoded_texts += 1
+            }
+            (
+                pid_parse::PidGraphicKind::Text { .. },
+                pid_parse::PidGeometryConfidence::Inferred,
+            ) => inventory.inferred_texts += 1,
+            (
+                pid_parse::PidGraphicKind::Text { .. },
+                pid_parse::PidGeometryConfidence::ProbeOnly,
+            ) => inventory.probe_only_texts += 1,
+            (
+                pid_parse::PidGraphicKind::SymbolInstance { .. },
+                pid_parse::PidGeometryConfidence::Decoded,
+            ) => inventory.decoded_symbols += 1,
+            (
+                pid_parse::PidGraphicKind::SymbolInstance { .. },
+                pid_parse::PidGeometryConfidence::Inferred,
+            ) => inventory.inferred_symbols += 1,
+            (
+                pid_parse::PidGraphicKind::SymbolInstance { .. },
+                pid_parse::PidGeometryConfidence::ProbeOnly,
+            ) => inventory.probe_only_symbols += 1,
+            (
+                pid_parse::PidGraphicKind::Unknown { .. },
+                pid_parse::PidGeometryConfidence::Decoded,
+            ) => inventory.decoded_unknowns += 1,
+            (
+                pid_parse::PidGraphicKind::Unknown { .. },
+                pid_parse::PidGeometryConfidence::Inferred,
+            ) => inventory.inferred_unknowns += 1,
+            (
                 pid_parse::PidGraphicKind::Unknown { .. },
                 pid_parse::PidGeometryConfidence::ProbeOnly,
             ) => inventory.probe_only_unknowns += 1,
-            _ => inventory.other_entities += 1,
         }
     }
     assert_eq!(
@@ -223,13 +339,14 @@ fn endpoint_pair_geometry_diagnostic(
                 .object_geometry_hints
                 .iter()
                 .filter_map(|hint| {
-                    if let Some(pos) = &hint.position {
-                        Some((hint.field_x, (pos.offset, 8usize)))
-                    } else if let Some(f64_pos) = &hint.f64_position {
-                        Some((hint.field_x, (f64_pos.offset, 16usize)))
-                    } else {
-                        None
-                    }
+                    hint.position
+                        .as_ref()
+                        .map(|pos| (hint.field_x, (pos.offset, 8usize)))
+                        .or_else(|| {
+                            hint.f64_position
+                                .as_ref()
+                                .map(|f64_pos| (hint.field_x, (f64_pos.offset, 16usize)))
+                        })
                 })
                 .collect::<BTreeMap<_, _>>()
         });
@@ -264,10 +381,12 @@ fn endpoint_pair_geometry_diagnostic(
 
             match (endpoint_a_position, endpoint_b_position) {
                 (Some((a_offset, a_len)), Some((b_offset, b_len))) => {
-                    let a_range_ok =
-                        a_offset.checked_add(a_len).is_some_and(|end| end <= sheet_size);
-                    let b_range_ok =
-                        b_offset.checked_add(b_len).is_some_and(|end| end <= sheet_size);
+                    let a_range_ok = a_offset
+                        .checked_add(a_len)
+                        .is_some_and(|end| end <= sheet_size);
+                    let b_range_ok = b_offset
+                        .checked_add(b_len)
+                        .is_some_and(|end| end <= sheet_size);
                     if endpoint_range_ok && a_range_ok && b_range_ok {
                         diagnostic.fully_promoted_with_byte_ranges += 1;
                     } else {
@@ -1453,6 +1572,26 @@ fn sheet6_text_window_report_keeps_text_probe_only_until_position_is_proven() {
         128,
     );
     let scores = score_sheet_text_window_candidates(&candidates);
+    let field_xs: Vec<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+    let inventory = sheet_record_shape_inventory(&raw_sheet.data, &report, &field_xs);
+    let text_placement_report =
+        text_placement_investigation_report(&raw_sheet.data, &report, &inventory, 128);
+    let field_x_linked = text_placement_report
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.nearest_field_x.is_some())
+        .count();
     let same_chunk = candidates
         .iter()
         .filter(|candidate| candidate.same_chunk)
@@ -1496,20 +1635,52 @@ fn sheet6_text_window_report_keeps_text_probe_only_until_position_is_proven() {
         })
         .collect();
     eprintln!(
-        "Sheet6 text window report: text_runs={}, coordinates={}, candidates={}, same_chunk={}, quality_passed={}, text_quality_passed={}, max_score={}, over_threshold={}, top={top:?}",
+        "Sheet6 text window report: text_runs={}, coordinates={}, candidates={}, text_placement_raw_candidates={}, text_placement_candidates={}, text_placement_rejected={}, field_x_linked={}, same_chunk={}, quality_passed={}, text_quality_passed={}, max_score={}, over_threshold={}, top={top:?}, placement_top={:?}",
         report.text_runs.len(),
         report.coordinate_hints.len(),
         candidates.len(),
+        text_placement_report.raw_candidate_count,
+        text_placement_report.candidates.len(),
+        text_placement_report.rejected_candidate_count,
+        field_x_linked,
         same_chunk,
         quality_passed,
         text_quality_passed,
         max_score,
-        over_threshold
+        over_threshold,
+        text_placement_report
+            .candidates
+            .iter()
+            .take(5)
+            .collect::<Vec<_>>()
     );
 
     assert!(
         !report.text_runs.is_empty(),
         "Sheet6 should expose text runs for text placement investigation"
+    );
+    assert_eq!(
+        text_placement_report.raw_candidate_count,
+        scores.len(),
+        "text placement investigation should account for all text scores before filtering"
+    );
+    assert_eq!(
+        text_placement_report.rejected_candidate_count,
+        scores
+            .len()
+            .saturating_sub(text_placement_report.candidates.len()),
+        "text placement investigation should explicitly count binary-like rejected candidates"
+    );
+    assert!(
+        text_placement_report.candidates.iter().all(|candidate| {
+            !candidate.text_hex.is_empty()
+                && !candidate.coordinate_hex.is_empty()
+                && candidate
+                    .notes
+                    .iter()
+                    .any(|note| note == "probe_only_no_text_geometry_promotion")
+        }),
+        "text placement investigation candidates should carry bounded evidence without promotion"
     );
     let normalized = pid_parse::build_normalized_geometry(&pkg.parsed);
     let inferred_text_count = normalized
@@ -2322,18 +2493,6 @@ fn da_trailer_tag_text_association_for_promoted_objects() {
             .record_trailers
             .iter()
             .find(|t| t.field_x == field_x && t.class_id != 0xF6);
-        let attrs: Vec<_> = da
-            .attribute_records
-            .iter()
-            .flat_map(|r| r.attributes.iter())
-            .filter(|a| {
-                matches!(
-                    a.name.as_str(),
-                    "ItemTag" | "Name" | "SP_LineNumberTag" | "TagSequenceNo" | "TagSuffix"
-                )
-            })
-            .take(5)
-            .collect();
         if let Some(t) = trailer {
             let record = da.attribute_records.iter().find(|r| {
                 r.attributes
@@ -2413,10 +2572,7 @@ fn dwg0201_produces_inferred_endpoint_lines() {
         "DWG-0201GP06-01 should produce inferred endpoint lines from f64 pair/triple coordinates"
     );
     for line in &inferred_lines {
-        assert_eq!(
-            line.confidence,
-            pid_parse::PidGeometryConfidence::Inferred
-        );
+        assert_eq!(line.confidence, pid_parse::PidGeometryConfidence::Inferred);
         assert!(
             line.source
                 .record_kind
@@ -2425,8 +2581,10 @@ fn dwg0201_produces_inferred_endpoint_lines() {
             "inferred line should have EndpointPair record kind"
         );
         assert!(
-            line.source.note.as_ref().is_some_and(|n| n
-                .contains("endpoint pair promoted to inferred line")),
+            line.source
+                .note
+                .as_ref()
+                .is_some_and(|n| n.contains("endpoint pair promoted to inferred line")),
             "inferred line note should describe endpoint pair promotion"
         );
     }
@@ -2448,13 +2606,32 @@ fn geometry_fixture_inventory_reports_normalized_geometry_counts() {
             line_producing_fixtures.push(fixture.path);
         }
         eprintln!(
-            "geometry fixture inventory: fixture={}, category={}, decoded_points={}, inferred_points={}, decoded_lines={}, inferred_lines={}, probe_only_unknowns={}, other_entities={}",
+            "geometry fixture inventory: fixture={}, category={}, points(d/i/p)={}/{}/{}, lines(d/i/p)={}/{}/{}, polylines(d/i/p)={}/{}/{}, arcs(d/i/p)={}/{}/{}, circles(d/i/p)={}/{}/{}, texts(d/i/p)={}/{}/{}, symbols(d/i/p)={}/{}/{}, unknowns(d/i/p)={}/{}/{}, other_entities={}",
             fixture.path,
             fixture.category,
             inventory.decoded_points,
             inventory.inferred_points,
+            inventory.probe_only_points,
             inventory.decoded_lines,
             inventory.inferred_lines,
+            inventory.probe_only_lines,
+            inventory.decoded_polylines,
+            inventory.inferred_polylines,
+            inventory.probe_only_polylines,
+            inventory.decoded_arcs,
+            inventory.inferred_arcs,
+            inventory.probe_only_arcs,
+            inventory.decoded_circles,
+            inventory.inferred_circles,
+            inventory.probe_only_circles,
+            inventory.decoded_texts,
+            inventory.inferred_texts,
+            inventory.probe_only_texts,
+            inventory.decoded_symbols,
+            inventory.inferred_symbols,
+            inventory.probe_only_symbols,
+            inventory.decoded_unknowns,
+            inventory.inferred_unknowns,
             inventory.probe_only_unknowns,
             inventory.other_entities
         );
@@ -2471,6 +2648,535 @@ fn geometry_fixture_inventory_reports_normalized_geometry_counts() {
     assert!(
         fixtures_seen > 0,
         "at least one available fixture should be inventoried when this test does not skip"
+    );
+}
+
+#[test]
+fn sheet_record_shape_inventory_reports_geometry_candidates() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(graph) = pkg.parsed.object_graph.as_ref() else {
+        eprintln!("skipping: object graph not built for fixture");
+        return;
+    };
+
+    let field_xs: Vec<_> = graph
+        .objects
+        .iter()
+        .filter_map(|object| object.field_x)
+        .collect();
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let inventory = sheet_record_shape_inventory(&raw_sheet.data, &report, &field_xs);
+    let marker_records = inventory
+        .records
+        .iter()
+        .filter(|record| record.kind == SheetRecordShapeKind::Marker)
+        .count();
+    let field_windows = inventory
+        .records
+        .iter()
+        .filter(|record| record.kind == SheetRecordShapeKind::FieldXWindow)
+        .count();
+    let f64_windows = inventory
+        .records
+        .iter()
+        .filter(|record| record.f64_coordinate_offset.is_some())
+        .count();
+    let text_runs = inventory
+        .records
+        .iter()
+        .filter(|record| record.kind == SheetRecordShapeKind::TextRun)
+        .count();
+    let coordinate_hints = inventory
+        .records
+        .iter()
+        .filter(|record| record.kind == SheetRecordShapeKind::CoordinateHint)
+        .count();
+
+    eprintln!(
+        "sheet record shape inventory: records={}, marker_records={}, field_windows={}, f64_windows={}, text_runs={}, coordinate_hints={}, record_type_counts={:?}",
+        inventory.records.len(),
+        marker_records,
+        field_windows,
+        f64_windows,
+        text_runs,
+        coordinate_hints,
+        inventory.record_type_counts
+    );
+
+    assert!(
+        marker_records > 0,
+        "Sheet6 should expose marker records for shape inventory"
+    );
+    assert!(
+        field_windows > 0,
+        "Sheet6 should expose object field_x windows for shape inventory"
+    );
+    assert!(
+        f64_windows > 0,
+        "Sheet6 should retain repeated f64 coordinate evidence in shape inventory"
+    );
+    assert!(
+        text_runs > 0,
+        "Sheet6 should retain text-run evidence in shape inventory"
+    );
+    assert!(
+        coordinate_hints > 0,
+        "Sheet6 should retain coordinate-hint evidence in shape inventory"
+    );
+    assert!(
+        inventory.records.iter().all(|record| {
+            record.range_start <= record.offset
+                && record.offset < record.range_end
+                && record.range_end <= raw_sheet.data.len()
+        }),
+        "all shape inventory ranges should stay within /Sheet6"
+    );
+}
+
+#[test]
+fn symbol_placement_investigation_links_symbol_objects_to_sheet_evidence() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(graph) = pkg.parsed.object_graph.as_ref() else {
+        eprintln!("skipping: object graph not built for fixture");
+        return;
+    };
+
+    let field_xs: Vec<_> = graph
+        .objects
+        .iter()
+        .filter_map(|object| object.field_x)
+        .collect();
+    let object_drawing_ids: HashSet<_> = graph
+        .objects
+        .iter()
+        .map(|object| object.drawing_id.to_ascii_lowercase())
+        .collect();
+    let mut symbol_path_by_drawing_id = BTreeMap::new();
+    for jsite in &pkg.parsed.jsites {
+        let Some(symbol_path) = &jsite.symbol_path else {
+            continue;
+        };
+        for value in jsite
+            .properties
+            .guids
+            .iter()
+            .chain(jsite.properties.strings.iter())
+            .chain(jsite.properties.key_values.values())
+        {
+            let normalized = value.to_ascii_lowercase();
+            if object_drawing_ids.contains(&normalized) {
+                symbol_path_by_drawing_id
+                    .entry(normalized)
+                    .or_insert_with(|| symbol_path.clone());
+            }
+        }
+    }
+    let symbol_objects: Vec<_> = graph
+        .objects
+        .iter()
+        .filter(|object| object.drawing_item_type.as_deref() == Some("Symbol"))
+        .filter_map(|object| {
+            Some(SheetSymbolPlacementObject {
+                field_x: object.field_x?,
+                drawing_id: object.drawing_id.clone(),
+                item_type: object.item_type.clone(),
+                drawing_item_type: object.drawing_item_type.clone(),
+                symbol_path: symbol_path_by_drawing_id
+                    .get(&object.drawing_id.to_ascii_lowercase())
+                    .cloned(),
+            })
+        })
+        .collect();
+    let symbol_objects_with_bound_path = symbol_objects
+        .iter()
+        .filter(|object| object.symbol_path.is_some())
+        .count();
+    let mut symbol_paths: Vec<_> = pkg
+        .parsed
+        .jsites
+        .iter()
+        .filter_map(|jsite| jsite.symbol_path.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    symbol_paths.sort();
+    let jsite_symbol_refs: Vec<_> = pkg
+        .parsed
+        .jsites
+        .iter()
+        .filter_map(|jsite| {
+            jsite
+                .symbol_path
+                .as_ref()
+                .map(|symbol_path| (jsite.name.as_str(), symbol_path.as_str()))
+        })
+        .collect();
+    let psm_root_jsite_refs: Vec<_> = pkg
+        .parsed
+        .psm_roots
+        .as_ref()
+        .map(|roots| {
+            roots
+                .entries
+                .iter()
+                .filter(|entry| entry.name.starts_with("JSite"))
+                .map(|entry| (entry.name.as_str(), entry.id, entry.offset))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let jsite_symbol_names: HashSet<_> = jsite_symbol_refs.iter().map(|(name, _)| *name).collect();
+    let psm_symbol_jsite_matches = psm_root_jsite_refs
+        .iter()
+        .filter(|(name, _, _)| jsite_symbol_names.contains(*name))
+        .count();
+    let psm_root_probe_pairs: Vec<_> = psm_root_jsite_refs
+        .iter()
+        .filter(|(name, _, _)| jsite_symbol_names.contains(*name))
+        .take(5)
+        .copied()
+        .collect();
+    let order_candidate_count = symbol_objects.len().min(jsite_symbol_refs.len());
+    let order_counts_match = symbol_objects.len() == jsite_symbol_refs.len();
+    let order_probe_pairs: Vec<_> = symbol_objects
+        .iter()
+        .zip(jsite_symbol_refs.iter())
+        .take(5)
+        .map(|(object, (jsite_name, symbol_path))| {
+            (
+                object.field_x,
+                object.drawing_id.as_str(),
+                *jsite_name,
+                *symbol_path,
+            )
+        })
+        .collect();
+
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let inventory = sheet_record_shape_inventory(&raw_sheet.data, &report, &field_xs);
+    let symbol_report = symbol_placement_investigation_report(
+        &raw_sheet.data,
+        &inventory,
+        &symbol_objects,
+        &symbol_paths,
+    );
+    let positioned_candidates = symbol_report
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.position_offset.is_some())
+        .count();
+    let catalog_unlinked = symbol_report
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            candidate
+                .notes
+                .iter()
+                .any(|note| note.starts_with("symbol_path_catalog_unlinked_count="))
+        })
+        .count();
+    let object_symbol_path_bound = symbol_report
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            candidate
+                .notes
+                .iter()
+                .any(|note| note == "object_symbol_path_bound")
+        })
+        .count();
+
+    eprintln!(
+        "symbol placement investigation: symbol_objects={}, symbol_paths={}, jsite_symbol_refs={}, psm_root_jsite_refs={}, psm_symbol_jsite_matches={}, psm_root_probe_pairs={:?}, order_counts_match={}, order_candidate_count={}, order_probe_pairs={:?}, jsite_object_symbol_path_matches={}, symbol_objects_with_bound_path={}, candidates={}, positioned_candidates={}, object_symbol_path_bound={}, catalog_unlinked={}, top={:?}",
+        symbol_objects.len(),
+        symbol_report.symbol_path_catalog_count,
+        jsite_symbol_refs.len(),
+        psm_root_jsite_refs.len(),
+        psm_symbol_jsite_matches,
+        psm_root_probe_pairs,
+        order_counts_match,
+        order_candidate_count,
+        order_probe_pairs,
+        symbol_path_by_drawing_id.len(),
+        symbol_objects_with_bound_path,
+        symbol_report.candidates.len(),
+        positioned_candidates,
+        object_symbol_path_bound,
+        catalog_unlinked,
+        symbol_report.candidates.iter().take(5).collect::<Vec<_>>()
+    );
+
+    assert!(
+        !symbol_objects.is_empty(),
+        "fixture should expose DA objects whose DrawingItemType is Symbol"
+    );
+    assert!(
+        symbol_report.symbol_path_catalog_count > 0,
+        "fixture should expose JSite symbol paths for symbol placement investigation"
+    );
+    assert!(
+        order_candidate_count > 0,
+        "fixture should expose non-empty JSite/order evidence for symbol binding investigation"
+    );
+    assert!(
+        psm_symbol_jsite_matches > 0 || catalog_unlinked == symbol_report.candidates.len(),
+        "when PSMroots has no symbol-carrying JSite bridge, symbol candidates must stay catalog-unlinked"
+    );
+    assert!(
+        !symbol_report.candidates.is_empty(),
+        "symbol placement investigation should link at least one symbol object to Sheet field_x evidence"
+    );
+    assert_eq!(
+        object_symbol_path_bound,
+        symbol_objects_with_bound_path.min(symbol_report.candidates.len()),
+        "direct object-level symbol paths should be preserved when JSite properties prove them"
+    );
+    assert!(
+        symbol_report.candidates.iter().all(|candidate| {
+            candidate
+                .notes
+                .iter()
+                .any(|note| note == "probe_only_no_symbol_geometry_promotion")
+        }),
+        "symbol placement investigation must not promote SymbolInstance geometry"
+    );
+}
+
+#[test]
+fn curve_primitive_investigation_reports_unsupported_curve_candidates() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(graph) = pkg.parsed.object_graph.as_ref() else {
+        eprintln!("skipping: object graph not built for fixture");
+        return;
+    };
+
+    let field_xs: Vec<_> = graph
+        .objects
+        .iter()
+        .filter_map(|object| object.field_x)
+        .collect();
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let inventory = sheet_record_shape_inventory(&raw_sheet.data, &report, &field_xs);
+    let curve_report = curve_primitive_investigation_report(&raw_sheet.data, &inventory);
+    let polyline_like = curve_report
+        .groups
+        .iter()
+        .filter(|group| group.candidate_kind == SheetCurvePrimitiveCandidateKind::PolylineLike)
+        .count();
+    let circle_arc_like = curve_report
+        .groups
+        .iter()
+        .filter(|group| group.candidate_kind == SheetCurvePrimitiveCandidateKind::CircleArcLike)
+        .count();
+    let mixed_numeric = curve_report
+        .groups
+        .iter()
+        .filter(|group| group.candidate_kind == SheetCurvePrimitiveCandidateKind::MixedNumeric)
+        .count();
+    let compact_vertex_chain_candidates = curve_report
+        .groups
+        .iter()
+        .filter(|group| group.compact_vertex_chain_candidate)
+        .count();
+    let large_mixed_payloads = curve_report
+        .groups
+        .iter()
+        .filter(|group| {
+            group.range_len > 512
+                && group
+                    .investigation_notes
+                    .iter()
+                    .any(|note| note == "mixed_or_large_numeric_payload_needs_subrecord_split")
+        })
+        .count();
+    let numeric_groups = curve_report
+        .groups
+        .iter()
+        .filter(|group| group.candidate_i32_pairs > 0 || group.candidate_f64_pairs > 0)
+        .count();
+    let normalized = normalized_geometry_inventory(&pkg.parsed);
+
+    eprintln!(
+        "curve primitive investigation: groups={}, numeric_groups={}, polyline_like={}, circle_arc_like={}, mixed_numeric={}, compact_vertex_chain_candidates={}, large_mixed_payloads={}, decoded_polylines={}, decoded_circles={}, decoded_arcs={}, top={:?}",
+        curve_report.groups.len(),
+        numeric_groups,
+        polyline_like,
+        circle_arc_like,
+        mixed_numeric,
+        compact_vertex_chain_candidates,
+        large_mixed_payloads,
+        normalized.decoded_polylines,
+        normalized.decoded_circles,
+        normalized.decoded_arcs,
+        curve_report.groups.iter().take(8).collect::<Vec<_>>()
+    );
+
+    assert!(
+        !curve_report.groups.is_empty(),
+        "Sheet6 should expose marker-range groups for curve primitive investigation"
+    );
+    assert!(
+        numeric_groups > 0,
+        "curve primitive investigation should surface numeric marker groups without decoding them"
+    );
+    assert!(
+        mixed_numeric > 0,
+        "large or noisy numeric payloads should be classified as mixed, not promoted to vertex chains"
+    );
+    assert_eq!(
+        polyline_like, compact_vertex_chain_candidates,
+        "PolylineLike should be reserved for compact vertex-chain review candidates"
+    );
+    assert!(
+        large_mixed_payloads > 0,
+        "large numeric payloads should carry a subrecord-split investigation note"
+    );
+    assert_eq!(
+        normalized.decoded_polylines + normalized.decoded_circles + normalized.decoded_arcs,
+        0,
+        "curve primitive investigation must not promote decoded curve geometry"
+    );
+    assert!(
+        curve_report.groups.iter().all(|group| {
+            group
+                .investigation_notes
+                .iter()
+                .any(|note| note == "probe_only_no_curve_geometry_promotion")
+                && group.example_range_start <= group.example_offset
+                && group.example_offset < group.example_range_end
+                && group.example_range_end <= raw_sheet.data.len()
+        }),
+        "curve primitive groups should carry bounded no-promotion evidence"
+    );
+}
+
+#[test]
+fn primitive_line_investigation_groups_non_endpoint_marker_shapes() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let Some(raw_sheet) = pkg.streams.get("/Sheet6") else {
+        eprintln!("skipping: /Sheet6 stream not found in fixture");
+        return;
+    };
+    let Some(graph) = pkg.parsed.object_graph.as_ref() else {
+        eprintln!("skipping: object graph not built for fixture");
+        return;
+    };
+
+    let field_xs: Vec<_> = graph
+        .objects
+        .iter()
+        .filter_map(|object| object.field_x)
+        .collect();
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let inventory = sheet_record_shape_inventory(&raw_sheet.data, &report, &field_xs);
+    let primitive_line_report = primitive_line_investigation_report(&raw_sheet.data, &inventory);
+    let numeric_groups = primitive_line_report
+        .groups
+        .iter()
+        .filter(|group| group.candidate_i32_pairs >= 2 || group.candidate_f64_pairs >= 1)
+        .count();
+    let sample_groups = primitive_line_report
+        .groups
+        .iter()
+        .filter(|group| !group.numeric_samples.is_empty())
+        .count();
+    let top_group = primitive_line_report
+        .groups
+        .first()
+        .expect("primitive line investigation groups should not be empty");
+
+    eprintln!(
+        "primitive line investigation groups: total_groups={}, numeric_groups={}, sample_groups={}, top={:?}",
+        primitive_line_report.groups.len(),
+        numeric_groups,
+        sample_groups,
+        primitive_line_report.groups.iter().take(8).collect::<Vec<_>>()
+    );
+
+    assert!(
+        !primitive_line_report.groups.is_empty(),
+        "Sheet6 should expose marker range groups for primitive-line investigation"
+    );
+    assert!(
+        top_group.investigation_score > 0 && !top_group.investigation_notes.is_empty(),
+        "primitive-line investigation should rank groups with evidence notes: {top_group:?}"
+    );
+    let compact_start_end_candidates = primitive_line_report
+        .groups
+        .iter()
+        .filter(|group| matches!(group.marker_type, Some(26684 | 27169)))
+        .collect::<Vec<_>>();
+    assert!(
+        compact_start_end_candidates.iter().any(|group| {
+            group.numeric_sample_relative_offsets.len() >= 3
+                && !group.numeric_sample_offset_deltas.is_empty()
+                && !group.example_hex_prefix.is_empty()
+        }),
+        "compact start/end candidate groups should expose offset deltas and hex prefixes: {compact_start_end_candidates:?}"
+    );
+    assert!(
+        compact_start_end_candidates.iter().any(|group| {
+            group.investigation_notes.iter().any(|note| {
+                note == "no_coordinate_hint_sample_match"
+                    || note.starts_with("coordinate_hint_matches=")
+            })
+        }),
+        "compact groups should record whether numeric samples match existing coordinate hints: {compact_start_end_candidates:?}"
+    );
+    assert!(
+        numeric_groups > 0,
+        "primitive-line investigation should surface numeric marker groups without decoding them"
+    );
+    assert!(
+        sample_groups > 0,
+        "primitive-line investigation should include bounded numeric samples"
+    );
+    assert!(
+        primitive_line_report.groups.iter().all(|group| {
+            group.example_range_start <= group.example_offset
+                && group.example_offset < group.example_range_end
+                && group.example_range_end <= raw_sheet.data.len()
+        }),
+        "primitive-line investigation examples should be bounded"
     );
 }
 
@@ -3012,7 +3718,11 @@ fn sheet6_endpoint_a_missing_field_xs_f64_byte_window_investigation() {
             with_f64_pair += 1;
             eprintln!(
                 "  field_x={} offset={} HAS f64 pair: x={:.6} y={:.6} coord_offset={}",
-                window.field_x, window.offset, candidate.x, candidate.y, candidate.coordinate_offset
+                window.field_x,
+                window.offset,
+                candidate.x,
+                candidate.y,
+                candidate.coordinate_offset
             );
         } else {
             without_f64_pair += 1;
@@ -3035,7 +3745,7 @@ fn sheet6_endpoint_a_missing_field_xs_f64_byte_window_investigation() {
     );
 
     assert!(
-        windows.len() > 0,
+        !windows.is_empty(),
         "should find windows for missing endpoint_a field_xs"
     );
 }

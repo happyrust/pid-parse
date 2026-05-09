@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### SPPID Sheet 全几何解析调查与证据门禁（Phase 14）
+
+- 新增 `parsers::sheet_records` investigation 层，将 Sheet marker range、
+  `field_x` window、text run、coordinate hint 汇总为稳定 record-shape inventory，
+  作为 probe 到 typed decoder 之间的保守证据层。
+- 扩展 normalized geometry fixture inventory，按 decoded / inferred / probe-only
+  统计 point、line、polyline、arc、circle、text、symbol、unknown，持续量化几何覆盖缺口。
+- 新增 PrimitiveLine investigation report：按 marker/range/numeric shape 分组，
+  输出 score、numeric samples、relative offsets、offset deltas、hex prefix、
+  coordinate-hint / field_x correlation；当前真实 fixture 仍未证明独立 primitive-line
+  start/end record，因此不提升为 decoded line。
+- 新增 TextPlacementStyle investigation report：关联 text-window score、nearest
+  `field_x` evidence 与 bounded hex；只保留 `TextQualityPassed` 候选，并显式统计
+  raw / rejected 数量。`/Sheet6` 当前 121 个候选全部因 binary-like UTF16 被拒绝，
+  text 仍保持 probe-only。
+- 新增 SymbolPlacement investigation report：关联 DA Symbol objects、Sheet `field_x`
+  evidence、position candidates 与 JSite symbol catalog；验证 DrawingID direct match、
+  JSite order heuristic、PSMroots bridge 均不足以绑定 object-level `symbol_path`，
+  因此不提升为 decoded `SymbolInstance`。
+- 新增 curve primitive investigation report：按 marker-range numeric shape 粗分
+  `PolylineLike` / `CircleArcLike` / `MixedNumeric` / `InsufficientNumeric`；
+  refined filtering 后 `/Sheet6` 仅剩 1 个 compact vertex-chain review candidate，
+  大范围 mixed payload 明确标注需 subrecord split，不提升为 decoded polyline/circle/arc。
+- 新增中文 Phase 14 全几何解析计划与 PrimitiveLine 阻塞证据文档，记录 promotion
+  前必须满足 source-backed byte range、record kind、coordinate semantics 的证据门槛。
+- 验证通过：focused `sheet_records` 单测、真实 fixture investigation 回归、
+  `cargo fmt --all -- --check`、clippy lib/test `-D warnings`、rustdoc missing-docs、
+  ReadLints。
+
 ### f64 坐标源突破与 Endpoint Line 闭环（Phase 10/10B/11）
 
 - **三种 f64 marker pattern 发现与实现**：

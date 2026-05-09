@@ -26,6 +26,7 @@ pub mod psm_tables;
 pub mod relationship_probe;
 pub mod sheet_endpoint_records;
 pub mod sheet_probe;
+pub mod sheet_records;
 pub mod string_scan;
 pub mod summary;
 pub mod tagged_stg_list;
