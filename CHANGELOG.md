@@ -61,6 +61,8 @@
 - `pid_inspect --controlled-diff-dir` 支持 `--json` 输出结构化报告，暴露
   case、operation、stream diff 计数、Sheet stream 修改数、首个 mismatch context
   与 `promoted_geometry=false`，便于脚本或 CI 消费 evidence。
+- 扩展 controlled diff CLI 回归：`--json` 空目录输出空 cases 报告，metadata
+  `case` 与文件名不匹配时以参数错误退出，避免错误 sidecar 被当成可用证据。
 - 新增中文 Phase 14 全几何解析计划与 PrimitiveLine 阻塞证据文档，记录 promotion
   前必须满足 source-backed byte range、record kind、coordinate semantics 的证据门槛。
 - 验证通过：focused `sheet_records` 单测、真实 fixture investigation 回归、

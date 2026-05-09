@@ -217,6 +217,63 @@ fn controlled_diff_dir_json_reports_stream_level_evidence() {
 }
 
 #[test]
+fn controlled_diff_dir_json_empty_directory_reports_no_cases() {
+    let root = unique_tmp_dir("controlled-diff-empty");
+
+    let output = Command::new(binary_path())
+        .arg("--controlled-diff-dir")
+        .arg(&root)
+        .arg("--json")
+        .output()
+        .expect("spawn pid_inspect --controlled-diff-dir --json empty");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|err| panic!("invalid JSON {err}: {stdout}"));
+    assert_eq!(json["promoted_geometry"], false);
+    assert_eq!(
+        json["cases"].as_array().map(Vec::len),
+        Some(0),
+        "empty controlled diff dir should emit empty cases, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn controlled_diff_dir_rejects_metadata_case_mismatch() {
+    let root = unique_tmp_dir("controlled-diff-bad-metadata");
+    let before_dir = root.join("before");
+    let after_dir = root.join("after");
+    let metadata_dir = root.join("metadata");
+    std::fs::create_dir_all(&before_dir).expect("before dir");
+    std::fs::create_dir_all(&after_dir).expect("after dir");
+    std::fs::create_dir_all(&metadata_dir).expect("metadata dir");
+
+    build_controlled_diff_fixture(&before_dir.join("one-arc.pid"), b"arc-before");
+    build_controlled_diff_fixture(&after_dir.join("one-arc.pid"), b"arc-after");
+    std::fs::write(
+        metadata_dir.join("one-arc.json"),
+        r#"{"case":"wrong-name","operation":"place_arc","expected":{"center":[0,0],"radius":10}}"#,
+    )
+    .expect("metadata");
+
+    let output = Command::new(binary_path())
+        .arg("--controlled-diff-dir")
+        .arg(&root)
+        .output()
+        .expect("spawn pid_inspect --controlled-diff-dir bad metadata");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("case field"),
+        "stderr should explain metadata case mismatch, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn geometry_json_flag_emits_normalized_probe_entities() {
     let fixture = unique_tmp("geometry-json");
     build_sheet_probe_fixture(&fixture);
