@@ -151,6 +151,66 @@ fn print_geometry_fixture_availability() -> GeometryFixtureAvailabilitySummary {
     summary
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct PageDimensionScalarHit {
+    offset: usize,
+    encoding: &'static str,
+    value: f64,
+    context_hex: String,
+}
+
+fn page_dimension_scalar_hits(
+    data: &[u8],
+    page_dimensions_mm: (f64, f64),
+) -> Vec<PageDimensionScalarHit> {
+    let (width, height) = page_dimensions_mm;
+    let mut hits = data
+        .windows(8)
+        .enumerate()
+        .filter(|(relative_offset, _)| relative_offset % 4 == 0)
+        .filter_map(|(offset, window)| {
+            let value = f64::from_le_bytes([
+                window[0], window[1], window[2], window[3], window[4], window[5], window[6],
+                window[7],
+            ]);
+            scalar_matches_dimension(value, width, height).then_some(PageDimensionScalarHit {
+                offset,
+                encoding: "f64",
+                value,
+                context_hex: hex_window(data, offset, 16),
+            })
+        })
+        .collect::<Vec<_>>();
+    hits.extend(
+        data.windows(4)
+            .enumerate()
+            .filter(|(relative_offset, _)| relative_offset % 4 == 0)
+            .filter_map(|(offset, window)| {
+                let value = i32::from_le_bytes([window[0], window[1], window[2], window[3]]);
+                scalar_matches_dimension(f64::from(value), width, height).then_some(
+                    PageDimensionScalarHit {
+                        offset,
+                        encoding: "i32",
+                        value: f64::from(value),
+                        context_hex: hex_window(data, offset, 16),
+                    },
+                )
+            }),
+    );
+    hits
+}
+
+fn scalar_matches_dimension(value: f64, width: f64, height: f64) -> bool {
+    value.is_finite() && ((value - width).abs() <= 1.0e-6 || (value - height).abs() <= 1.0e-6)
+}
+
+fn stream_contains_ascii_token(data: &[u8], token: &str) -> bool {
+    !token.is_empty()
+        && data
+            .windows(token.len())
+            .any(|window| window == token.as_bytes())
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct NormalizedGeometryInventory {
     decoded_points: usize,
@@ -2868,6 +2928,123 @@ fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_reco
 }
 
 #[test]
+fn non_sheet_stream_page_metadata_scan_keeps_transform_unavailable_without_complete_scalar_source()
+{
+    let mut fixtures_seen = 0usize;
+    let mut scanned_streams = 0usize;
+    let mut template_stream_hits = 0usize;
+    let mut page_dimension_scalar_hits_total = 0usize;
+    let mut complete_page_dimension_streams = 0usize;
+    let mut scalar_hit_streams = Vec::new();
+    let mut template_hit_streams = Vec::new();
+    let mut unavailable_context_entities = 0usize;
+    let mut total_entities = 0usize;
+
+    for fixture in geometry_fixture_cases() {
+        let Some(pkg) = parse_test_package(fixture.path) else {
+            continue;
+        };
+        let normalized = pid_parse::build_normalized_geometry(&pkg.parsed);
+        let Some(page_dimensions_mm) = normalized.page_dimensions_mm else {
+            continue;
+        };
+        fixtures_seen += 1;
+        total_entities += normalized.entities.len();
+        unavailable_context_entities += normalized
+            .entities
+            .iter()
+            .filter(|entity| {
+                matches!(
+                    entity.coordinate_context.page_transform,
+                    pid_parse::PidPageTransform::Unavailable { .. }
+                )
+            })
+            .count();
+
+        let template = pkg
+            .parsed
+            .drawing_meta
+            .as_ref()
+            .and_then(|meta| meta.tags.get("Template"))
+            .or(pkg
+                .parsed
+                .drawing_meta
+                .as_ref()
+                .and_then(|meta| meta.template_name.as_ref()))
+            .or(pkg
+                .parsed
+                .summary
+                .as_ref()
+                .and_then(|summary| summary.template.as_ref()))
+            .cloned()
+            .unwrap_or_default();
+
+        for (path, raw_stream) in &pkg.streams {
+            if path.starts_with("/Sheet") {
+                continue;
+            }
+            scanned_streams += 1;
+            let scalar_hits = page_dimension_scalar_hits(&raw_stream.data, page_dimensions_mm);
+            if !scalar_hits.is_empty() {
+                let has_width = scalar_hits
+                    .iter()
+                    .any(|hit| (hit.value - page_dimensions_mm.0).abs() <= 1.0e-6);
+                let has_height = scalar_hits
+                    .iter()
+                    .any(|hit| (hit.value - page_dimensions_mm.1).abs() <= 1.0e-6);
+                if has_width && has_height {
+                    complete_page_dimension_streams += 1;
+                }
+                page_dimension_scalar_hits_total += scalar_hits.len();
+                scalar_hit_streams.push((fixture.path.to_string(), path.clone(), scalar_hits));
+            }
+            if stream_contains_ascii_token(&raw_stream.data, &template) {
+                template_stream_hits += 1;
+                template_hit_streams.push((
+                    fixture.path.to_string(),
+                    path.clone(),
+                    template.clone(),
+                ));
+            }
+        }
+    }
+
+    eprintln!(
+        "non-Sheet page metadata scan: fixtures_seen={}, scanned_streams={}, template_stream_hits={}, page_dimension_scalar_hits={}, complete_page_dimension_streams={}, scalar_hit_streams={:?}, template_hit_streams={:?}, unavailable_context_entities={}/{}",
+        fixtures_seen,
+        scanned_streams,
+        template_stream_hits,
+        page_dimension_scalar_hits_total,
+        complete_page_dimension_streams,
+        scalar_hit_streams,
+        template_hit_streams,
+        unavailable_context_entities,
+        total_entities
+    );
+
+    if fixtures_seen == 0 {
+        eprintln!("skipping: no available PID fixtures with inferred page dimensions");
+        return;
+    }
+    assert!(
+        scanned_streams > 0,
+        "available fixtures should expose non-Sheet streams for independent metadata scanning"
+    );
+    assert!(
+        template_stream_hits > 0,
+        "metadata streams should retain template-name evidence used only for page-size inference"
+    );
+    assert_eq!(
+        complete_page_dimension_streams, 0,
+        "non-Sheet scalar hits must include both page width and height before they can be considered a transform source"
+    );
+    assert_eq!(
+        unavailable_context_entities, total_entities,
+        "template or scalar scan evidence must not make page transforms available"
+    );
+}
+
+#[test]
 fn sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promotion() {
     let mut fixtures_seen = 0usize;
     let mut sheets_seen = 0usize;
@@ -5381,7 +5558,7 @@ fn sheet6_coordinate_value_frequency_analysis() {
 
     let mut exact_hits = 0usize;
     let mut alt_hits = 0usize;
-    let mut hit_offsets = Vec::new();
+    let mut hit_offsets: Vec<usize> = Vec::new();
     for offset in 0..data.len().saturating_sub(7) {
         if data[offset..offset + 4] == target_bytes {
             exact_hits += 1;

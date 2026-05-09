@@ -36,6 +36,13 @@
 - 新增跨 fixture Sheet geometry evidence aggregate：当前 `curve_groups=97`、
   `mixed_numeric=43`、`polyline_like=0`，所有 curve/page metadata 证据继续保持
   probe-only，不输出 decoded polyline/circle/arc 或 available page transform。
+- 新增非 Sheet stream 页面 metadata 扫描回归：模板名仅在 `/TaggedTxtData/Drawing`
+  中提供纸型推断证据；当前非 Sheet 标量只命中 `DWG-0201 /JSite329/PSMcluster0`
+  的单个 `i32 420.0`，没有完整宽高、origin、scale 或 matrix，因此 page transform
+  继续保持 unavailable。
+- 新增 page transform evidence blocker 文档，明确 `PidPageTransform::Available`
+  promotion 前必须证明 bounded source、完整 page bounds / units / origin / scale
+  或 affine matrix，避免将模板纸型推断误当成页面变换解码。
 - 新增中文 Phase 14 全几何解析计划与 PrimitiveLine 阻塞证据文档，记录 promotion
   前必须满足 source-backed byte range、record kind、coordinate semantics 的证据门槛。
 - 验证通过：focused `sheet_records` 单测、真实 fixture investigation 回归、
