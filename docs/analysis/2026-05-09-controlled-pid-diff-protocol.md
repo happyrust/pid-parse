@@ -91,6 +91,16 @@ an `expected` payload, parses both packages, computes stream-level diffs, and
 prints the first modified stream with mismatch context. It does not promote any
 geometry by itself.
 
+The same intake path is available from the inspection CLI:
+
+```powershell
+pid_inspect --controlled-diff-dir test-file/controlled-diff
+```
+
+The CLI prints one summary per case plus the first modified stream and mismatch
+context. It exits with an error when metadata is invalid, when a pair cannot be
+parsed, or when a pair has no stream-level changes.
+
 ## Promotion Criteria
 
 A controlled diff can support a decoder only when it proves:

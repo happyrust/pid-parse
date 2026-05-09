@@ -1,10 +1,13 @@
 use pid_parse::{PidParser, PidWriter, WritePlan};
+use serde::Deserialize;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--schema] [--geometry-json]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit [--byte-audit-baseline <audit.json>]]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]"
+            "Usage: pid_inspect <file.pid> [--json] [--schema] [--geometry-json]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit [--byte-audit-baseline <audit.json>]]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]\n                    [--controlled-diff-dir <dir>]"
         );
         std::process::exit(1);
     }
@@ -31,10 +34,15 @@ fn main() {
     let set_xml_tag_args = flag_triple(&args, "--set-xml-tag");
     let output = flag_value(&args, "--output");
     let diff_other = flag_value(&args, "--diff");
+    let controlled_diff_dir = flag_value(&args, "--controlled-diff-dir");
     let verify = args.iter().any(|a| a == "--verify");
 
     // Writer / diff modes are handled up-front because they don't print
     // the standard report and always exit after completing.
+    if let Some(dir) = controlled_diff_dir {
+        run_controlled_diff_dir(&dir);
+        return;
+    }
     if let Some(other) = diff_other {
         run_diff(path, &other);
         return;
@@ -403,6 +411,177 @@ fn flag_triple(args: &[String], flag: &str) -> Option<(String, String, String)> 
         }
     };
     Some((fetch(1, "stream"), fetch(2, "tag"), fetch(3, "value")))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ControlledPidDiffCase {
+    name: String,
+    before_path: PathBuf,
+    after_path: PathBuf,
+    metadata_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ControlledPidDiffMetadata {
+    case: String,
+    operation: String,
+    expected: serde_json::Value,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+fn controlled_pid_diff_cases(root: &Path) -> Vec<ControlledPidDiffCase> {
+    let before_root = root.join("before");
+    let after_root = root.join("after");
+    let metadata_root = root.join("metadata");
+    let Ok(entries) = fs::read_dir(&before_root) else {
+        return Vec::new();
+    };
+
+    let mut cases = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let before_path = entry.path();
+            let extension = before_path.extension().and_then(|value| value.to_str());
+            if extension != Some("pid") {
+                return None;
+            }
+            let name = before_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(str::to_owned)?;
+            let after_path = after_root.join(format!("{name}.pid"));
+            if !after_path.exists() {
+                eprintln!(
+                    "skipping controlled diff case `{name}`: missing after file {}",
+                    after_path.display()
+                );
+                return None;
+            }
+            Some(ControlledPidDiffCase {
+                metadata_path: metadata_root.join(format!("{name}.json")),
+                name,
+                before_path,
+                after_path,
+            })
+        })
+        .collect::<Vec<_>>();
+    cases.sort_by(|left, right| left.name.cmp(&right.name));
+    cases
+}
+
+fn run_controlled_diff_dir(root: &str) {
+    let root = Path::new(root);
+    let cases = controlled_pid_diff_cases(root);
+    if cases.is_empty() {
+        eprintln!(
+            "No controlled PID diff pairs found under {} (expected before/*.pid + after/*.pid)",
+            root.display()
+        );
+        return;
+    }
+
+    let parser = PidParser::new();
+    println!("Controlled PID diff directory: {}", root.display());
+    println!("Cases: {}", cases.len());
+    for case in cases {
+        let metadata = load_controlled_diff_metadata(&case);
+        let before = parser
+            .parse_package(&case.before_path)
+            .unwrap_or_else(|err| {
+                eprintln!(
+                    "Parse before error for {}: {err}",
+                    case.before_path.display()
+                );
+                std::process::exit(1);
+            });
+        let after = parser
+            .parse_package(&case.after_path)
+            .unwrap_or_else(|err| {
+                eprintln!("Parse after error for {}: {err}", case.after_path.display());
+                std::process::exit(1);
+            });
+        let diff = pid_parse::diff_packages(&before, &after);
+        let stream_diff_count = diff.only_in_a.len() + diff.only_in_b.len() + diff.modified.len();
+        let modified_sheet_streams = diff
+            .modified
+            .iter()
+            .filter(|stream| stream.path.starts_with("/Sheet"))
+            .count();
+        let notes = metadata
+            .notes
+            .as_deref()
+            .map(|value| format!(" notes={value:?}"))
+            .unwrap_or_default();
+        println!(
+            "\ncase={} operation={} stream_diffs={} modified_sheet_streams={} only_in_before={} only_in_after={}{}",
+            case.name,
+            metadata.operation,
+            stream_diff_count,
+            modified_sheet_streams,
+            diff.only_in_a.len(),
+            diff.only_in_b.len(),
+            notes
+        );
+        if let Some(stream) = diff.modified.first() {
+            println!(
+                "first_modified path={} len_before={} len_after={} first_mismatch_offset={}",
+                stream.path, stream.len_a, stream.len_b, stream.first_mismatch_offset
+            );
+            println!("before_context {}", stream.context_before);
+            println!("after_context  {}", stream.context_after);
+        }
+        if stream_diff_count == 0 {
+            eprintln!(
+                "controlled diff case `{}` has no stream-level changes; evidence is not usable",
+                case.name
+            );
+            std::process::exit(3);
+        }
+    }
+    println!("\nNo geometry promotion was performed.");
+}
+
+fn load_controlled_diff_metadata(case: &ControlledPidDiffCase) -> ControlledPidDiffMetadata {
+    let metadata = fs::read_to_string(&case.metadata_path).unwrap_or_else(|err| {
+        eprintln!(
+            "Failed to read controlled diff metadata {}: {err}",
+            case.metadata_path.display()
+        );
+        std::process::exit(2);
+    });
+    let metadata: ControlledPidDiffMetadata =
+        serde_json::from_str(&metadata).unwrap_or_else(|err| {
+            eprintln!(
+                "Controlled diff metadata {} must be valid JSON: {err}",
+                case.metadata_path.display()
+            );
+            std::process::exit(2);
+        });
+    if metadata.case != case.name {
+        eprintln!(
+            "Controlled diff metadata {} case field {:?} must match filename stem {:?}",
+            case.metadata_path.display(),
+            metadata.case,
+            case.name
+        );
+        std::process::exit(2);
+    }
+    if metadata.operation.trim().is_empty() {
+        eprintln!(
+            "Controlled diff metadata {} must include a non-empty operation",
+            case.metadata_path.display()
+        );
+        std::process::exit(2);
+    }
+    if metadata.expected.is_null() {
+        eprintln!(
+            "Controlled diff metadata {} must include expected payload",
+            case.metadata_path.display()
+        );
+        std::process::exit(2);
+    }
+    metadata
 }
 
 fn run_probe_sheet_chunks(path: &str, target: Option<&str>, json_mode: bool) {

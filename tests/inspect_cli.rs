@@ -27,6 +27,21 @@ fn unique_tmp(label: &str) -> PathBuf {
     p
 }
 
+fn unique_tmp_dir(label: &str) -> PathBuf {
+    let mut p = std::env::temp_dir();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    p.push(format!(
+        "pid-parse-inspect-cli-{}-{}-{}",
+        std::process::id(),
+        label,
+        nanos
+    ));
+    p
+}
+
 /// Produce a single legal 48-byte `DocVersion3` record so the parser's
 /// `parse_doc_version3` heuristic accepts it and populates
 /// `doc.version_history`. Without a valid record the Phase 10b dynamic
@@ -103,6 +118,63 @@ fn build_sheet_probe_fixture(path: &std::path::Path) {
     s.write_all(&[0x22u8; 32]).unwrap();
     drop(s);
     cfb.flush().unwrap();
+}
+
+fn build_controlled_diff_fixture(path: &std::path::Path, sheet_payload: &[u8]) {
+    let file = std::fs::File::create(path).expect("create controlled fixture");
+    let mut cfb = ::cfb::CompoundFile::create(file).expect("cfb create");
+    let mut s = cfb.create_stream("/Sheet6").unwrap();
+    s.write_all(sheet_payload).unwrap();
+    drop(s);
+    cfb.create_storage_all("/TaggedTxtData").expect("storage");
+    let mut s = cfb.create_stream("/TaggedTxtData/Drawing").unwrap();
+    s.write_all(b"<Drawing><Template>UNIT_TEST</Template></Drawing>")
+        .unwrap();
+    drop(s);
+    cfb.flush().unwrap();
+}
+
+#[test]
+fn controlled_diff_dir_reports_stream_level_evidence() {
+    let root = unique_tmp_dir("controlled-diff");
+    let before_dir = root.join("before");
+    let after_dir = root.join("after");
+    let metadata_dir = root.join("metadata");
+    std::fs::create_dir_all(&before_dir).expect("before dir");
+    std::fs::create_dir_all(&after_dir).expect("after dir");
+    std::fs::create_dir_all(&metadata_dir).expect("metadata dir");
+
+    build_controlled_diff_fixture(&before_dir.join("one-line.pid"), b"before-sheet-bytes");
+    build_controlled_diff_fixture(&after_dir.join("one-line.pid"), b"after-sheet-bytes");
+    std::fs::write(
+        metadata_dir.join("one-line.json"),
+        r#"{"case":"one-line","operation":"place_line","expected":{"start":[0,0],"end":[1,0]}}"#,
+    )
+    .expect("metadata");
+
+    let output = Command::new(binary_path())
+        .arg("--controlled-diff-dir")
+        .arg(&root)
+        .output()
+        .expect("spawn pid_inspect --controlled-diff-dir");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("case=one-line operation=place_line"),
+        "stdout should include case summary, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("first_modified path=/Sheet6"),
+        "stdout should include first modified stream, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("No geometry promotion was performed."),
+        "stdout should state no promotion, got:\n{stdout}"
+    );
 }
 
 #[test]
