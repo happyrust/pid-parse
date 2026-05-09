@@ -43,6 +43,10 @@
 - 新增 page transform evidence blocker 文档，明确 `PidPageTransform::Available`
   promotion 前必须证明 bounded source、完整 page bounds / units / origin / scale
   或 affine matrix，避免将模板纸型推断误当成页面变换解码。
+- 新增外部 SPPID format evidence 检索记录：公开资料只证明 `.pid` 含
+  drawing/template/operation-log 与可用于 Bridge/Design Validation 导入，
+  未提供 Sheet geometry primitive byte layout；后续应优先采集受控操作 diff
+  pair、SPPID Bridge export ZIP 或 mapper 输出，而不是放宽 decoder 门禁。
 - 新增中文 Phase 14 全几何解析计划与 PrimitiveLine 阻塞证据文档，记录 promotion
   前必须满足 source-backed byte range、record kind、coordinate semantics 的证据门槛。
 - 验证通过：focused `sheet_records` 单测、真实 fixture investigation 回归、
