@@ -31,6 +31,13 @@ const PUBLISH_TABLES: &[&str] = &[
     "T_Nozzle",
     "T_Connector",
     "T_PipeRun",
+    // `T_Pipeline` shares its `SP_ID` with the owning PipeRun in
+    // the simplified single-Pipeline-per-PipeRun model SPPID uses
+    // for Publish XML. Staging it here lets `subtables_for_item_type`
+    // attach `OperFluidCode` / `FluidSystem` / `TagSequenceNo` /
+    // `TagSuffix` onto the PipeRun's `PublishObject.fields` so the
+    // PIDPipeline writer arm can read them.
+    "T_Pipeline",
     "T_InlineComp",
     "T_PipingComp",
     "T_Instrument",

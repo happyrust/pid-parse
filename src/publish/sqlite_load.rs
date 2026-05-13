@@ -246,9 +246,38 @@ pub fn load_piping_points_for_objects(
     Ok(out)
 }
 
+/// `T_ModelItem` columns surfaced into [`PublishObject::fields`] in
+/// addition to the four named fields (`uid`, `item_type_name`,
+/// `description`, `is_typical`). These mirror SPPID's per-object
+/// audit / lifecycle columns:
+///
+/// * `IsUnchecked` — "1" when `SmartPlant` has not yet verified
+///   the row against the connected publish source.
+/// * `ModelItemType` — numeric type discriminator that complements
+///   the textual `ItemTypeName` (e.g. used by `SmartPlant` when
+///   `ItemTypeName` is empty for non-publishable subtypes).
+/// * `UpdateCount` — monotonic row revision counter, useful for
+///   diff / audit pipelines.
+/// * `ItemStatus` — "0" / "1" / etc., the publish lifecycle
+///   marker (draft / published / obsolete).
+///
+/// Empty-string / NULL values are filtered out so the `fields` map
+/// stays tight, matching the existing business-subtable convention.
+/// Subtable columns with the same name still win because they are
+/// merged later by [`attach_business_columns`].
+const MODEL_ITEM_AUDIT_COLUMNS: &[&str] =
+    &["IsUnchecked", "ModelItemType", "UpdateCount", "ItemStatus"];
+
 /// Load every `T_ModelItem` row whose `SP_ID` is in the given set.
 /// Returns rows in the same order as the input set's iteration
 /// (`BTreeSet` ⇒ lexicographic).
+///
+/// In addition to the four named fields, every non-empty value of
+/// the four audit columns (`IsUnchecked` / `ModelItemType` /
+/// `UpdateCount` / `ItemStatus`) is surfaced into
+/// [`PublishObject::fields`] so downstream consumers can read the
+/// publish lifecycle / row-revision data without going back to
+/// `SQLite`.
 pub fn load_objects_by_uids(
     conn: &Connection,
     uids: &BTreeSet<String>,
@@ -262,7 +291,8 @@ pub fn load_objects_by_uids(
     // we bind parametrically, not interpolated.
     let placeholders = vec!["?"; uids.len()].join(",");
     let sql = format!(
-        "SELECT SP_ID, ItemTypeName, Description, SP_IsTypical \
+        "SELECT SP_ID, ItemTypeName, Description, SP_IsTypical, \
+                IsUnchecked, ModelItemType, UpdateCount, ItemStatus \
          FROM T_ModelItem WHERE SP_ID IN ({placeholders}) ORDER BY SP_ID"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -271,12 +301,21 @@ pub fn load_objects_by_uids(
     let mut rows = stmt.query(params_vec.as_slice())?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
+        let mut fields = std::collections::BTreeMap::new();
+        for (col_idx, col_name) in MODEL_ITEM_AUDIT_COLUMNS.iter().enumerate() {
+            let value: Option<String> = row.get(4 + col_idx)?;
+            if let Some(v) = value {
+                if !v.is_empty() {
+                    fields.insert((*col_name).to_string(), v);
+                }
+            }
+        }
         out.push(PublishObject {
             uid: row.get(0)?,
             item_type_name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
             description: row.get(2)?,
             is_typical: row.get(3)?,
-            fields: std::collections::BTreeMap::new(),
+            fields,
         });
     }
     Ok(out)
@@ -429,7 +468,12 @@ pub(super) fn subtables_for_item_type(item_type_name: &str) -> &'static [&'stati
             "T_Vessel",
         ],
         "Nozzle" => &["T_PlantItem", "T_EquipComponent", "T_Nozzle"],
-        "PipeRun" => &["T_PlantItem", "T_Connector", "T_PipeRun"],
+        // `T_Pipeline` carries the line-level business fields
+        // (`OperFluidCode` / `FluidSystem` / `TagSequenceNo` /
+        // `TagSuffix`) that the PIDPipeline writer arm renders.
+        // SPPID stores them under the same `SP_ID` as the owning
+        // PipeRun, so the chain is just another column merge.
+        "PipeRun" => &["T_PlantItem", "T_Connector", "T_PipeRun", "T_Pipeline"],
         "PipingPoint" => &["T_PipingPoint"],
         "PipingComp" => &["T_PlantItem", "T_InlineComp", "T_PipingComp"],
         "Instrument" | "InstrFunction" => &["T_PlantItem", "T_Instrument", "T_InstrFunction"],
@@ -1256,5 +1300,229 @@ mod tests {
             &["T_PlantItem", "T_Equipment", "T_ProcessEquipment", "T_Vessel"],
             "Vessel loader chain must include the optional T_ProcessEquipment layer for DWG EqType fields",
         );
+    }
+
+    #[test]
+    fn pipe_run_subtable_chain_includes_t_pipeline_for_line_level_fields() {
+        assert_eq!(
+            subtables_for_item_type("PipeRun"),
+            &["T_PlantItem", "T_Connector", "T_PipeRun", "T_Pipeline"],
+            "PipeRun loader chain must end at T_Pipeline so the PIDPipeline writer arm can render OperFluidCode / FluidSystem / TagSequenceNo / TagSuffix",
+        );
+    }
+
+    /// End-to-end on synthetic `SQLite`: a `PipeRun` with a matching
+    /// `T_Pipeline` row gets the four line-level business fields
+    /// merged into its `fields` map. Guards the new chain entry
+    /// in `subtables_for_item_type("PipeRun")` against silent
+    /// regressions if someone reorders or removes the table.
+    #[test]
+    fn load_drawing_graph_attaches_t_pipeline_fields_onto_pipe_run_object() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute(
+            "CREATE TABLE T_Drawing (\
+                SP_ID TEXT PRIMARY KEY, Name TEXT, DocumentCategory TEXT, \
+                DocumentType TEXT, Template TEXT, Path TEXT, DateCreated TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO T_Drawing VALUES ('DWG-1', 'A01', NULL, NULL, NULL, NULL, NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE T_Representation (\
+                SP_ID TEXT, SP_ModelItemID TEXT, SP_DrawingID TEXT, \
+                GraphicOID TEXT, FileName TEXT, RepresentationType TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO T_Representation VALUES ('REP-1', 'PIPE-1', 'DWG-1', NULL, NULL, NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE T_Relationship (\
+                SP_ID TEXT, SP_DrawingID TEXT, SP_Item1ID TEXT, SP_Item2ID TEXT, \
+                GraphicOID TEXT, Item1Location TEXT, Item2Location TEXT, IsBinary TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE T_ModelItem (\
+                SP_ID TEXT PRIMARY KEY, Description TEXT, IsUnchecked TEXT, \
+                ModelItemType TEXT, UpdateCount TEXT, ItemStatus TEXT, \
+                ItemTypeName TEXT, SP_IsTypical TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO T_ModelItem VALUES \
+             ('PIPE-1', 'Process Pipe', NULL, NULL, NULL, NULL, 'PipeRun', NULL)",
+            [],
+        )
+        .unwrap();
+        // The four subtables in the PipeRun chain — only T_Pipeline
+        // gets populated here, the rest are required-empty so
+        // `attach_business_columns` can soft-skip past them.
+        conn.execute("CREATE TABLE T_PlantItem (SP_ID TEXT)", [])
+            .unwrap();
+        conn.execute(
+            "CREATE TABLE T_Connector (SP_ID TEXT, SP_ConnectItem1ID TEXT, SP_ConnectItem2ID TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE T_PipeRun (SP_ID TEXT, NominalDiameter TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO T_PipeRun VALUES ('PIPE-1', '250')", [])
+            .unwrap();
+        conn.execute(
+            "CREATE TABLE T_Pipeline (\
+                SP_ID TEXT, OperFluidCode TEXT, TagSequenceNo TEXT, \
+                TagSuffix TEXT, FluidSystem TEXT)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO T_Pipeline VALUES ('PIPE-1', 'PW', '101', 'A', 'CWS')",
+            [],
+        )
+        .unwrap();
+
+        let drawing = load_drawing_graph(&conn, "DWG-1").expect("ok");
+        let pipe = drawing
+            .objects
+            .iter()
+            .find(|o| o.uid == "PIPE-1")
+            .expect("pipe run object present");
+
+        // T_PipeRun fields surface…
+        assert_eq!(
+            pipe.fields.get("NominalDiameter").map(String::as_str),
+            Some("250"),
+        );
+        // …and the new T_Pipeline tail extends the same map.
+        assert_eq!(
+            pipe.fields.get("OperFluidCode").map(String::as_str),
+            Some("PW"),
+        );
+        assert_eq!(
+            pipe.fields.get("TagSequenceNo").map(String::as_str),
+            Some("101"),
+        );
+        assert_eq!(pipe.fields.get("TagSuffix").map(String::as_str), Some("A"),);
+        assert_eq!(
+            pipe.fields.get("FluidSystem").map(String::as_str),
+            Some("CWS"),
+        );
+    }
+
+    // -------------------------------------------------------------
+    // load_objects_by_uids: T_ModelItem audit-column surfacing
+    // -------------------------------------------------------------
+
+    /// Seed an in-memory `SQLite` connection with the full
+    /// `T_ModelItem` shape (8 columns) so audit-column tests can
+    /// insert their own rows.
+    fn setup_model_item_db_with_audit_cols() -> Connection {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute(
+            "CREATE TABLE T_ModelItem (\
+                SP_ID TEXT PRIMARY KEY, \
+                Description TEXT, \
+                IsUnchecked TEXT, \
+                ModelItemType TEXT, \
+                UpdateCount TEXT, \
+                ItemStatus TEXT, \
+                ItemTypeName TEXT, \
+                SP_IsTypical TEXT)",
+            [],
+        )
+        .expect("create T_ModelItem");
+        conn
+    }
+
+    #[test]
+    fn load_objects_by_uids_surfaces_t_model_item_audit_columns_in_fields_map() {
+        let conn = setup_model_item_db_with_audit_cols();
+        conn.execute(
+            "INSERT INTO T_ModelItem VALUES \
+             ('OBJ-1', 'Horizontal Drum', '0', '15', '7', '1', 'Vessel', NULL)",
+            [],
+        )
+        .unwrap();
+        let mut uids = BTreeSet::new();
+        uids.insert("OBJ-1".to_string());
+        let objects = load_objects_by_uids(&conn, &uids).expect("ok");
+        assert_eq!(objects.len(), 1);
+        let obj = &objects[0];
+        assert_eq!(obj.uid, "OBJ-1");
+        assert_eq!(obj.item_type_name, "Vessel");
+        assert_eq!(obj.description.as_deref(), Some("Horizontal Drum"));
+        // The four T_ModelItem audit columns must land in fields.
+        assert_eq!(obj.fields.get("IsUnchecked").map(String::as_str), Some("0"));
+        assert_eq!(
+            obj.fields.get("ModelItemType").map(String::as_str),
+            Some("15"),
+        );
+        assert_eq!(obj.fields.get("UpdateCount").map(String::as_str), Some("7"));
+        assert_eq!(obj.fields.get("ItemStatus").map(String::as_str), Some("1"));
+        assert_eq!(obj.fields.len(), 4);
+    }
+
+    #[test]
+    fn load_objects_by_uids_filters_empty_and_null_audit_columns() {
+        let conn = setup_model_item_db_with_audit_cols();
+        // Row with empty / NULL audit columns must NOT pollute the
+        // fields map — keeps it tight for downstream consumers
+        // that iterate fields to render diagnostic tables.
+        conn.execute(
+            "INSERT INTO T_ModelItem VALUES \
+             ('OBJ-2', NULL, '', NULL, '', NULL, 'PipeRun', NULL)",
+            [],
+        )
+        .unwrap();
+        let mut uids = BTreeSet::new();
+        uids.insert("OBJ-2".to_string());
+        let objects = load_objects_by_uids(&conn, &uids).expect("ok");
+        assert_eq!(objects.len(), 1);
+        let obj = &objects[0];
+        assert_eq!(obj.item_type_name, "PipeRun");
+        assert!(
+            obj.fields.is_empty(),
+            "empty / NULL audit columns must not land in fields; got: {:?}",
+            obj.fields,
+        );
+    }
+
+    #[test]
+    fn load_objects_by_uids_keeps_partial_audit_columns() {
+        let conn = setup_model_item_db_with_audit_cols();
+        // Real SPPID exports often have a mix: UpdateCount + ItemStatus
+        // populated but IsUnchecked / ModelItemType left NULL.
+        conn.execute(
+            "INSERT INTO T_ModelItem VALUES \
+             ('OBJ-3', 'Nozzle 1', NULL, NULL, '42', '1', 'Nozzle', '1')",
+            [],
+        )
+        .unwrap();
+        let mut uids = BTreeSet::new();
+        uids.insert("OBJ-3".to_string());
+        let objects = load_objects_by_uids(&conn, &uids).expect("ok");
+        let obj = &objects[0];
+        assert_eq!(obj.is_typical.as_deref(), Some("1"));
+        assert_eq!(obj.fields.len(), 2);
+        assert_eq!(
+            obj.fields.get("UpdateCount").map(String::as_str),
+            Some("42"),
+        );
+        assert_eq!(obj.fields.get("ItemStatus").map(String::as_str), Some("1"));
+        assert!(!obj.fields.contains_key("IsUnchecked"));
+        assert!(!obj.fields.contains_key("ModelItemType"));
     }
 }
