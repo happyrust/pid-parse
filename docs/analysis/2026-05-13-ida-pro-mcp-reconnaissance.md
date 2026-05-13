@@ -12,6 +12,14 @@ stream byte parser.** They are all higher-level layers (VB6 COM dispatch,
 MFC OLE/COM wrappers, drawing-level workshare management, COM type
 libraries, automation-property documentation).
 
+**Import-level conclusive evidence (added 2026-05-13 second pass)**:
+All 8 SPPID binaries return **zero** matches when queried for
+`*Stream*` / `*Storage*` / `ole32::*` imports. The only `ole32` hit
+across all eight is `CoDisconnectObject` in `sppidautomationwrap.dll`
+(COM cleanup, not stream I/O). This proves at the import-table level
+that these binaries do not call CFB stream APIs directly; they must
+delegate to a separate binary the user has not yet supplied.
+
 The actual `.pid`-file Sheet primitive reader lives in a binary we have
 **not yet acquired** — most likely the RAD2D 2D-CAD-engine core
 implementation that the SmartPlant P&ID install loads at runtime. Until
