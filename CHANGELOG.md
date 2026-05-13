@@ -2,6 +2,97 @@
 
 ## [Unreleased]
 
+### Phase 14 goal package via plannotator + Slice A 启动 stop-and-ask
+
+- 用 `plannotator-setup-goal` skill 把"实现 SPPID `.pid` 完整解析"的高
+  层目标收窄成可执行 goal package：`goals/phase14-sppid-sheet-geometry/`
+  下 5 份文档（`brief.md` / `plan.md` / `verification.md` / `blockers.md`
+  / `goal-prompt.md` + `progress.jsonl` + `slice-a-runbook.md`）全部
+  通过 `plannotator annotate --gate` 用户审阅。Scope 锁定为 Phase 14
+  只升级一类 Sheet primitive 到 `PidGeometryConfidence::Decoded`，
+  PrimitiveLine 为先锋类（49 条 inferred line 作回归地板）。
+- `plan.md` 列出 11 条 acceptance criteria (AC1–AC11) 与 evidence
+  pinpoint 表，`verification.md` 列出 12 条命令矩阵 + 半手工 IDA
+  核查规则，`blockers.md` 显式记录 B1（rad2d.dll / pidobjectmanager.dll
+  入仓）硬阻塞、Q1–Q3 deferred questions、7 条 stop-and-ask 触发条
+  件、5 条不可逆动作授权门，全部嵌入 mermaid 流程图 / gantt 时间线。
+- 新增 `goals/phase14-sppid-sheet-geometry/slice-a-runbook.md`：把
+  B1 解锁后 Slice A "IDA 调用点定位" 拆成 8 步可执行 runbook（拷贝
+  DLL → IDA attach → survey_binary → find_regex Sheet → xrefs_to →
+  decompile → confirm `OpenStream` → 落文档），含 3 个 stop-and-ask
+  触发与 0.5–2h 时间预算。
+- 用户「开始执行」后 Slice A 第 1 步即触发 stop-and-ask：执行
+  `imports_query` 跨 8 个已加载 SPPID 二进制，全部返回 `*Stream*` /
+  `*Storage*` / `ole32::*` stream API 零命中，唯一 ole32 引用为
+  `sppidautomationwrap.dll` 的 `CoDisconnectObject`（COM 清理）。这把
+  B1 的证据等级从 string-level（"无 Sheet 字符串命中"）升级到
+  import-level（"零 CFB stream API 调用面"），同时 append `slice_a_attempt`
+  evidence 到 `goals/.../progress.jsonl`。
+
+### Publish 管线 schema gap 闭环（T_ModelItem audit + T_Pipeline）
+
+- `src/publish/sqlite_load.rs` `load_objects_by_uids` 现在读 `T_ModelItem`
+  的 8 列完整 schema，把先前忽略的 `IsUnchecked` / `ModelItemType` /
+  `UpdateCount` / `ItemStatus` 4 列 audit 字段塞进 `PublishObject.fields`，
+  空字符串 / NULL 自动过滤以保持 fields map 紧凑。匹配 SQL Server
+  TEST02 fixture 与 Oracle DWG-flavour DDL 共有的 schema。
+- `src/publish/mdf_load.rs` `PUBLISH_TABLES` 增加 `T_Pipeline`，
+  `subtables_for_item_type("PipeRun")` 子表链末尾加 `T_Pipeline`。配合
+  Writer A19 已有的 `obj.fields["OperFluidCode"]` / `obj.fields["FluidSystem"]`
+  读取路径，PIPELINE 业务字段从 loader 到 `<IFluidSystem FluidCode="…"
+  FluidSystem="…"/>` 输出端到端打通——之前 Writer 路径就绪但 loader
+  从未填过这两个槽位（旧注释误把它们归到 T_PipeRun）。
+- 新增 5 个单测：T_ModelItem audit 列下沉 / 空 NULL 过滤 / 部分填充 /
+  PipeRun 子表链尾包含 T_Pipeline / 合成 SQLite 端到端验证。
+
+### SPPID 备份格式识别 + Oracle 12c exp 诊断
+
+- `pid_backup_extract` 现在能识别 Oracle Database 12c `exp` 格式
+  （magic `\x03\x03iEXPORT:V`），失败信息清晰指出该 dump 不是 SQL
+  Server MTF 备份，需要 Oracle `imp` / `impdp` 工具或对应字段提取
+  通道，且指向 `examples/oracle_exp_schema.rs` 做 DDL-only 检查。
+  避免之前的 `tag '????'` 谜之报错。
+- 新增 `examples/oracle_exp_schema.rs`：扫 Oracle exp `.dmp` 文件
+  内嵌的 `CREATE TABLE` 明文 DDL。在 DWG-0202GP06-01 fixture 上抽出
+  126 个 T_* 表的完整列定义，与 TEST02 SQL Server schema 交叉验证
+  publish 管线缺口（T_PIPERUN 在 DWG 有 293 列、TEST02 约 15 列，
+  确认 AGENTS.md 提及的 "DWG canonical-field enrichment" 方向真实
+  存在）。
+- 新增 `docs/analysis/2026-05-13-ida-pro-mcp-reconnaissance.md`：在
+  8 个 SPPID 二进制（sppid.dll / sppidautomation*.{dll,exe} /
+  sppidautomationwrap.dll / sppiddwgprocess.dll / smartplantpid.exe /
+  ipidobjectmanagerinf.dll / llama.dll）做完整 IDA Pro MCP 侦察的结论：
+  全部为 VB6 / MFC / COM 调度层，**无一**承载 Sheet primitive 字节
+  解析器。需额外提供 `rad2d.dll` / `pidobjectmanager.dll` 才能推
+  Phase 14 反向工程。文档列出 3 条候选 plan（A 获取 DLL / B controlled
+  diff / C 先 commit 现有改动），并记录 Oracle exp row 数据 heuristic
+  扫描失败的教训（2 字节 LE-length + UTF-16LE 假设在 T_MODELITEM 区
+  段只找到 1 个噪声字符 `P`）。
+- 新增 4 个单测：MTF TAPE 头 / 未知噪声 / Oracle exp dump / 短输入
+  容错。
+
+### Phase 14 inspect 层：`controlled_diff` 模块独立化
+
+- 按 `docs/plans/2026-05-09-controlled-diff-evidence-report-plan.md`
+  把 `pid_inspect --controlled-diff-dir` 的 evidence 构造逻辑从二进制
+  内部下沉到 `pid_parse::inspect::controlled_diff` 库模块：4 个 DTO
+  （`ControlledDiffMetadata` / `ControlledDiffStreamReport` /
+  `ControlledDiffCaseReport` / `ControlledDiffEvidenceReport`）+ 2 个
+  纯 builder（`build_case_report` / `build_evidence_report`）。CLI
+  保留文件系统扫描与 stdout 渲染，库模块只做纯 DTO 构建。
+- **Phase 14 防晋升类型不变式**：`ControlledDiffEvidenceReport.promoted_geometry`
+  由 `build_evidence_report` 硬编码为 `false`，调用者无法翻转。
+  把"controlled diff 仅作为 investigation evidence"从文档规则升级
+  为类型系统不变式。
+- 新增 5 个单测 + 1 个 doc-test 覆盖 plan.md "First Red Test" 全部
+  契约点：metadata propagate / deterministic 计数 / first_modified
+  surface /Sheet6 + 非空 hex context / 多 case 聚合时 promoted_geometry
+  保持 false / `only_in_before` 与 `only_in_after` 分别计数 /
+  non-Sheet 修改不污染 modified_sheet_streams。
+- `pid_inspect --controlled-diff-dir` refactor 后 4 个 CLI 集成测试
+  全部保持通过；JSON 输出新增 `expected` 字段，原 `metadata_path`
+  字段下沉为 stdout 渲染时人读用，不再写进 JSON。
+
 ### SPPID Sheet 全几何解析调查与证据门禁（Phase 14）
 
 - 新增 `parsers::sheet_records` investigation 层，将 Sheet marker range、
