@@ -15,6 +15,7 @@
 //! - [`mermaid`]  — render the CFB tree / object graph as mermaid.
 //! - [`report`]   — assemble a text / JSON report suitable for CI.
 
+pub mod controlled_diff;
 pub mod coverage;
 pub mod diff;
 pub mod mermaid;

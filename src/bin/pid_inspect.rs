@@ -1,5 +1,9 @@
+use pid_parse::inspect::controlled_diff::{
+    build_evidence_report, ControlledDiffCaseReport, ControlledDiffEvidenceReport,
+    ControlledDiffMetadata, ControlledDiffStreamReport,
+};
 use pid_parse::{PidParser, PidWriter, WritePlan};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -430,36 +434,9 @@ struct ControlledPidDiffMetadata {
     notes: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct ControlledPidDiffDirReport {
-    root: String,
-    cases: Vec<ControlledPidDiffCaseReport>,
-    promoted_geometry: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ControlledPidDiffCaseReport {
-    case: String,
-    operation: String,
-    metadata_path: String,
-    stream_diffs: usize,
-    modified_sheet_streams: usize,
-    only_in_before: usize,
-    only_in_after: usize,
-    first_modified: Option<ControlledPidDiffStreamReport>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    notes: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ControlledPidDiffStreamReport {
-    path: String,
-    len_before: usize,
-    len_after: usize,
-    first_mismatch_offset: usize,
-    before_context: String,
-    after_context: String,
-}
+// The DTO + evidence builder live in `pid_parse::inspect::controlled_diff`.
+// Filesystem types remain local (`ControlledPidDiffCase` /
+// `ControlledPidDiffMetadata`) so disk I/O stays out of the library.
 
 fn controlled_pid_diff_cases(root: &Path) -> Vec<ControlledPidDiffCase> {
     let before_root = root.join("before");
@@ -502,32 +479,35 @@ fn controlled_pid_diff_cases(root: &Path) -> Vec<ControlledPidDiffCase> {
 }
 
 fn run_controlled_diff_dir(root: &str, json_mode: bool) {
-    let root = Path::new(root);
-    let cases = controlled_pid_diff_cases(root);
+    let root_path = Path::new(root);
+    let cases = controlled_pid_diff_cases(root_path);
     if cases.is_empty() {
         if json_mode {
-            print_controlled_diff_json(&ControlledPidDiffDirReport {
-                root: root.display().to_string(),
-                cases: Vec::new(),
-                promoted_geometry: false,
-            });
+            let empty = build_evidence_report(root_path.display().to_string(), std::iter::empty());
+            print_controlled_diff_json(&empty);
             return;
         }
         eprintln!(
             "No controlled PID diff pairs found under {} (expected before/*.pid + after/*.pid)",
-            root.display()
+            root_path.display()
         );
         return;
     }
 
     let parser = PidParser::new();
-    let mut reports = Vec::new();
     if !json_mode {
-        println!("Controlled PID diff directory: {}", root.display());
+        println!("Controlled PID diff directory: {}", root_path.display());
         println!("Cases: {}", cases.len());
     }
+
+    // Parse all packages up front so the inspect-module builder can
+    // take borrowed references. We also pre-build the per-case
+    // reports here (rather than via `build_evidence_report` on the
+    // owned slice) so we can short-circuit the
+    // "zero stream-level changes" exit before aggregating the rest.
+    let mut case_reports: Vec<ControlledDiffCaseReport> = Vec::with_capacity(cases.len());
     for case in cases {
-        let metadata = load_controlled_diff_metadata(&case);
+        let metadata_struct = load_controlled_diff_metadata(&case);
         let before = parser
             .parse_package(&case.before_path)
             .unwrap_or_else(|err| {
@@ -543,69 +523,56 @@ fn run_controlled_diff_dir(root: &str, json_mode: bool) {
                 eprintln!("Parse after error for {}: {err}", case.after_path.display());
                 std::process::exit(1);
             });
-        let diff = pid_parse::diff_packages(&before, &after);
-        let stream_diff_count = diff.only_in_a.len() + diff.only_in_b.len() + diff.modified.len();
-        let modified_sheet_streams = diff
-            .modified
-            .iter()
-            .filter(|stream| stream.path.starts_with("/Sheet"))
-            .count();
-        let first_modified = diff
-            .modified
-            .first()
-            .map(|stream| ControlledPidDiffStreamReport {
-                path: stream.path.clone(),
-                len_before: stream.len_a,
-                len_after: stream.len_b,
-                first_mismatch_offset: stream.first_mismatch_offset,
-                before_context: stream.context_before.clone(),
-                after_context: stream.context_after.clone(),
-            });
-        let report = ControlledPidDiffCaseReport {
-            case: case.name,
-            operation: metadata.operation,
-            metadata_path: case.metadata_path.display().to_string(),
-            stream_diffs: stream_diff_count,
-            modified_sheet_streams,
-            only_in_before: diff.only_in_a.len(),
-            only_in_after: diff.only_in_b.len(),
-            first_modified,
-            notes: metadata.notes,
+
+        let inspect_metadata = ControlledDiffMetadata {
+            case: case.name.clone(),
+            operation: metadata_struct.operation,
+            expected: metadata_struct.expected,
+            notes: metadata_struct.notes,
         };
+        let report = pid_parse::inspect::controlled_diff::build_case_report(
+            &before,
+            &after,
+            inspect_metadata,
+        );
         if !json_mode {
-            print_controlled_diff_case(&report);
+            print_controlled_diff_case(&report, &case.metadata_path);
         }
-        if stream_diff_count == 0 {
+        if report.stream_diffs == 0 {
             eprintln!(
                 "controlled diff case `{}` has no stream-level changes; evidence is not usable",
                 report.case
             );
             std::process::exit(3);
         }
-        reports.push(report);
+        case_reports.push(report);
     }
-    let report = ControlledPidDiffDirReport {
-        root: root.display().to_string(),
-        cases: reports,
+    let evidence = ControlledDiffEvidenceReport {
+        root: root_path.display().to_string(),
+        cases: case_reports,
         promoted_geometry: false,
     };
     if json_mode {
-        print_controlled_diff_json(&report);
+        print_controlled_diff_json(&evidence);
     } else {
         println!("\nNo geometry promotion was performed.");
     }
 }
 
-fn print_controlled_diff_case(report: &ControlledPidDiffCaseReport) {
+/// Render a per-case report on stdout. The `metadata_path` is a
+/// CLI-only concern (the inspect-module DTO is filesystem-free), so
+/// the renderer is the one that prints it for human triage.
+fn print_controlled_diff_case(report: &ControlledDiffCaseReport, metadata_path: &Path) {
     let notes = report
         .notes
         .as_deref()
         .map(|value| format!(" notes={value:?}"))
         .unwrap_or_default();
     println!(
-        "\ncase={} operation={} stream_diffs={} modified_sheet_streams={} only_in_before={} only_in_after={}{}",
+        "\ncase={} operation={} metadata={} stream_diffs={} modified_sheet_streams={} only_in_before={} only_in_after={}{}",
         report.case,
         report.operation,
+        metadata_path.display(),
         report.stream_diffs,
         report.modified_sheet_streams,
         report.only_in_before,
@@ -613,16 +580,20 @@ fn print_controlled_diff_case(report: &ControlledPidDiffCaseReport) {
         notes
     );
     if let Some(stream) = &report.first_modified {
-        println!(
-            "first_modified path={} len_before={} len_after={} first_mismatch_offset={}",
-            stream.path, stream.len_before, stream.len_after, stream.first_mismatch_offset
-        );
-        println!("before_context {}", stream.before_context);
-        println!("after_context  {}", stream.after_context);
+        print_controlled_diff_first_modified(stream);
     }
 }
 
-fn print_controlled_diff_json(report: &ControlledPidDiffDirReport) {
+fn print_controlled_diff_first_modified(stream: &ControlledDiffStreamReport) {
+    println!(
+        "first_modified path={} len_before={} len_after={} first_mismatch_offset={}",
+        stream.path, stream.len_before, stream.len_after, stream.first_mismatch_offset
+    );
+    println!("before_context {}", stream.before_context);
+    println!("after_context  {}", stream.after_context);
+}
+
+fn print_controlled_diff_json(report: &ControlledDiffEvidenceReport) {
     match serde_json::to_string_pretty(report) {
         Ok(json) => println!("{json}"),
         Err(e) => {
