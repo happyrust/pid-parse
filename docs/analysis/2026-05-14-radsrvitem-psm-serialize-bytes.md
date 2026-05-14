@@ -240,7 +240,59 @@ DTO 与 `geometry.rs::build_normalized_geometry` 的 `radius =
 - `v13` 通过 `sub_564E0D90` 获取 (推测 sweep angle)
 - 弧长公式 `(v13 * v7) / (2 * sin(...))` —— 弧长 = chord / (2*sin(α/2)) 的标准弦长公式
 
-### GArc2d 完整字段语义（基于 4 个辅助函数反编译收敛）
+### GEllipse2d / GArc2d 类层级（最新发现 — Slice H 后修正）
+
+通过反编译时跟踪错误字符串 xref 发现 **`sub_56524280` 实际是
+`GEllipse2d::Validate`**（不是 GArc2d 的内部辅助）：
+
+| Error string | Owner function | Class |
+|---|---|---|
+| `"GEllipse2d: uninitialized data"` (`0x56668b88`) | `sub_56524280` | **GEllipse2d::Validate** |
+| `"GEllipse2d: Degenerate axis"` | 同上 | 同 |
+| `"GEllipse2d: Unknown orientation flag"` | 同上 | 同 |
+| `"GEllipse2d: majorAxis is not along x axis"` | 同上 | 同 |
+| `"GArc2d: uninitialized data"` (`0x56668b38`) | `sub_56524150` | GArc2d::Validate |
+| **`"IMElVal2dInfo"`** | `sub_56524280` 末尾 | IMA Element Validate 2D Info（共用） |
+
+**`GArc2d := GEllipse2d + sweep`** 的派生关系：
+
+```
+GArc2d 64-byte 结构 = GEllipse2d 48-byte 结构 + sweep angles 16 bytes
+
+Offset  Field (corrected)
+0..47   GEllipse2d (parent class)
+        0..7    double  center.x
+        8..15   double  center.y
+        16..23  double  ???_a    (e.g. semi-major or axis vec x)
+        24..31  double  ???_b    (e.g. axis vec y or rotation)
+        32..39  double  ???_c    (e.g. semi-minor or eccentricity)
+        40      u8      orientation_flag
+        41..47  padding 7 bytes
+48..55  double  sweep_start_angle (GArc2d-only)
+56..63  double  sweep_end_angle   (GArc2d-only)
+```
+
+**关键含义**：
+
+1. `"GEllipse2d: majorAxis is not along x axis"` 暗示 GEllipse2d
+   要求**主轴沿 X 方向**。如果 `a2+16/24` 是 (axis.x, axis.y)，那么
+   `a2+24 = axis.y` 必须 = 0（即主轴沿 X）。但实测 DWG-0202 多个
+   0x0030 records 有 `axis.y = π/2`，这些**不应该**通过 GEllipse2d
+   验证。说明这些 records 可能不是 GArc2d / GEllipse2d，而是
+   **其他 PSM type 凑巧通过我的 0x0030 验证**。
+2. Slice H 重命名的 `axis_ratio` (a2+32) 语义实际是 GEllipse2d 的
+   字段 c，可能是 **eccentricity** 或 **semi-minor axis 长度** 而非
+   `axis_b / axis_a` 比值。`sub_56539060` (`IMElIsCir2d`) 的
+   `|a1+32 - 1.0| < tol` 检查可能是检查 eccentricity = 1 → degenerate
+   ellipse (退化为线段)，**不是圆判定**。圆判定可能在别处。
+3. `igCircle2d` (IGDS 0x59) 没有 RTTI 错误字符串证明其有独立 Validate，
+   可能继承 GArc2d 但 axis_ratio / sweep 强制为特定值。
+4. 当前 Slice H 重命名 (`axis_ratio` / `sweep_direction`) 在 byte
+   位置正确，但**几何语义解读应作为 hypothesis 而非 ground truth**。
+   下一 milestone 需深入 GEllipse2d 内部计算流（`v9 = a2[32] * v8`
+   等）确认真实语义。
+
+### GArc2d 完整字段语义（基于 4 个辅助函数反编译收敛 — 部分待修正）
 
 通过反编译 4 个 GArc2d 内部辅助函数：
 
