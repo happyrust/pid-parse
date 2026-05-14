@@ -10,14 +10,15 @@ use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
     ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedIgLine2dRecord, DecodedIgLineString2dRecord,
-    DecodedPrimitiveArcRecord, DecodedPrimitiveLineRecord, PidDocument, SheetCoordinateHintDto,
-    SheetGeometry, SheetStream, SheetText,
+    DecodedIgPoint2dRecord, DecodedPrimitiveArcRecord, DecodedPrimitiveLineRecord, PidDocument,
+    SheetCoordinateHintDto, SheetGeometry, SheetStream, SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
     sheet_records::{
-        decode_iglines, decode_iglinestrings, decode_primitive_arcs, decode_primitive_lines,
+        decode_iglines, decode_iglinestrings, decode_igpoints, decode_primitive_arcs,
+        decode_primitive_lines,
     },
 };
 use std::io::Read;
@@ -256,6 +257,10 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         .into_iter()
         .map(DecodedIgLineString2dRecord::from)
         .collect();
+    let decoded_igpoints: Vec<DecodedIgPoint2dRecord> = decode_igpoints(raw_data)
+        .into_iter()
+        .map(DecodedIgPoint2dRecord::from)
+        .collect();
 
     if texts.is_empty()
         && coordinate_hints.is_empty()
@@ -263,6 +268,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         && decoded_primitive_arcs.is_empty()
         && decoded_iglines.is_empty()
         && decoded_iglinestrings.is_empty()
+        && decoded_igpoints.is_empty()
     {
         None
     } else {
@@ -275,6 +281,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             decoded_primitive_arcs,
             decoded_iglines,
             decoded_iglinestrings,
+            decoded_igpoints,
         })
     }
 }

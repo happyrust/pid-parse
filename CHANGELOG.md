@@ -2,6 +2,61 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice L：igPoint2d (PSM 0x005E) decoder — Intergraph Sigma 标准 point 落地
+
+继续 Slice J-K 模板复用，落地第 6 个 IGDS 标准类 decoder。**零 hypothesis**
+字段布局，`examples/probe_igpoint2d_shape.rs` 跨 4 fixture 字节 dump 验证：
+
+```
+PSM 0x005E (igPoint2d) record:
+PSM header (6 bytes):
+  0..1   u16   type_code = 0x005E
+  2..5   u32   bytes_to_follow = 34
+
+Payload (34 bytes):
+  0..3   u32   oid
+  4..7   u32   parent_ref
+  8..11  u32   remaining_header (variable: 0x08 / 0x12)
+  12..13 u16   sub_type_word
+  14..17 u32   index
+  18..25 f64   x
+  26..33 f64   y
+```
+
+最简单的 IGDS class — 1 point (x, y) = 2 doubles。fixture 所有 records
+`bytes_to_follow=34` 100% 一致。
+
+落地清单（参 Slice J/K 模板）：
+
+- `decode_igpoints` / `decode_igpoint_at` API + `SheetIgPoint2dDecoded`
+  DTO + `PSM_TYPE_CODE_IGPOINT2D=0x005E` + `IGPOINT2D_PAYLOAD_LEN=34` 常量
+- `DecodedIgPoint2dRecord` model DTO + `From<SheetIgPoint2dDecoded>`
+- `SheetGeometry.decoded_igpoints: Vec<DecodedIgPoint2dRecord>` 新字段
+- `streams/cluster.rs::sheet_geometry_from_probe` 同步填充
+- `geometry.rs::build_normalized_geometry` emit `PidGraphicKind::Point`
+  with `confidence: Decoded` + `record_kind: CoordinatePageMetadata`
+- 7 个 SheetGeometry 构造点联动加 `decoded_igpoints: Vec::new()`
+- 6 道 unit test + 1 integration test (`igpoints_decoder_emits_decoded_points_with_provenance`)
+- `parser_panic_safety.rs` adversarial matrix 扩展
+- baseline 算式 + decoded_points / decoded_igpoint_count
+- anti-promotion 断言扩展允许 `Decoded Point`
+- schema ratchet 加 `DecodedIgPoint2dRecord` / `decoded_igpoints` 2 个新 needle
+- 5 道 gate 全绿（826 unit + 86 integration tests）
+
+跨 fixture 实测: **146 decoded points** (DWG-0201:75 + DWG-0202:31 +
+工艺管道-1:36 + A01:4)。
+
+**Phase 14 decoded geometry 累计跨 fixture 量化进展（Slice L 后）**:
+
+| Decoder (Slice) | 跨 fixture 总 hits | Sigma class |
+|---|---|---|
+| GLine2d (Slice D-E) | 3 | SmartPlant 扩展线 |
+| GArc2d (Slice F-I) | 48 | 弧/椭圆 |
+| igLine2d (Slice J) | 284 | Intergraph 标准线 |
+| igLineString2d (Slice K) | 119 | Intergraph 标准 polyline |
+| **igPoint2d (Slice L)** | **146** | **Intergraph 标准 point** |
+| **TOTAL** | **600** | (本会话起步 0) |
+
 ### Phase 14 Slice K：igLineString2d (PSM 0x0084) decoder — Intergraph Sigma 标准 polyline 落地
 
 延续 Slice J 模板，落地第 5 个 IGDS 标准类 decoder。复用 Slice D 七层

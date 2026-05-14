@@ -149,6 +149,9 @@ mod tests {
             "decoded_iglinestrings",
             "vertex_xs",
             "vertex_ys",
+            // Phase 14 Slice L: igPoint2d (PSM 0x005E) DTO.
+            "DecodedIgPoint2dRecord",
+            "decoded_igpoints",
         ] {
             assert!(
                 text.contains(needle),

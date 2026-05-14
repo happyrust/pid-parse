@@ -1943,6 +1943,16 @@ const IGLINESTRING2D_MAX_VERTEX_COUNT: u32 = 10_000;
 /// layout `*(_BYTE *)(a2 + 8)`): `form <= 6`.
 const IGLINESTRING2D_FORM_MAX: u8 = 6;
 
+/// PSM type code that identifies a standard Intergraph Sigma
+/// `igPoint2d` record on disk (IGDS class tag `0x5E = 94`).
+///
+/// Cross-fixture histogram surfaces 145 hits on `Sheet*` streams.
+pub const PSM_TYPE_CODE_IGPOINT2D: u16 = 0x005E;
+
+/// Byte length of one PSM `igPoint2d` payload: 18-byte sub-header
+/// + 16 bytes (`f64 x, f64 y`) = **34 bytes**.
+pub const IGPOINT2D_PAYLOAD_LEN: usize = 34;
+
 /// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
 ///
 /// Empirically validated against all three Sheet-bearing fixtures in
@@ -2853,6 +2863,148 @@ pub fn decode_iglinestring_at(data: &[u8], offset: usize) -> Option<SheetIgLineS
         form,
         scope,
         vertices,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 14 Slice L: PSM-encoded igPoint2d decoder
+// ---------------------------------------------------------------------------
+
+/// One decoded PSM `igPoint2d` record — Intergraph Sigma's
+/// standard 2D point primitive (PSM type `0x005E`, IGDS class
+/// tag `0x5E`).
+///
+/// **Byte layout** (revealed via fixture byte dump in
+/// `examples/probe_igpoint2d_shape.rs`; total 40 bytes =
+/// 6-byte PSM header + 34-byte payload):
+///
+/// ```text
+/// PSM header (6 bytes):
+///   0..1   u16   type_code = 0x005E
+///   2..5   u32   bytes_to_follow = 34
+///
+/// Payload (34 bytes):
+///   0..3   u32   oid
+///   4..7   u32   parent_ref
+///   8..11  u32   remaining_header (variable: 0x08, 0x12)
+///   12..13 u16   sub_type_word
+///   14..17 u32   index
+///   18..25 f64   x
+///   26..33 f64   y
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgPoint2dDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_IGPOINT2D`].
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header; always 34.
+    pub bytes_to_follow: u32,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / sub-oid.
+    pub index: u32,
+    /// Point `(x, y)`.
+    pub point: (f64, f64),
+}
+
+/// Decode every PSM-encoded `igPoint2d` record in a `Sheet*`
+/// stream's bytes.
+///
+/// Walk every byte offset and verify:
+/// 1. `type_code == 0x005E`
+/// 2. `bytes_to_follow == 34`
+/// 3. 2 doubles finite + in domain `[-1e9, 1e9]`
+///
+/// Panic-free and bounds-checked.
+pub fn decode_igpoints(data: &[u8]) -> Vec<SheetIgPoint2dDecoded> {
+    let mut out = Vec::new();
+    if data.len() < 6 + IGPOINT2D_PAYLOAD_LEN {
+        return out;
+    }
+    let max_offset = data.len() - (6 + IGPOINT2D_PAYLOAD_LEN);
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_igpoint_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `igPoint2d` record starting at
+/// `offset`. Returns `None` on validation failure.
+pub fn decode_igpoint_at(data: &[u8], offset: usize) -> Option<SheetIgPoint2dDecoded> {
+    let header_end = offset.checked_add(6)?;
+    let payload_end = header_end.checked_add(IGPOINT2D_PAYLOAD_LEN)?;
+    if payload_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_IGPOINT2D {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    if bytes_to_follow as usize != IGPOINT2D_PAYLOAD_LEN {
+        return None;
+    }
+
+    let payload = data.get(header_end..payload_end)?;
+    let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
+    let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
+
+    let x = f64::from_le_bytes([
+        payload[18],
+        payload[19],
+        payload[20],
+        payload[21],
+        payload[22],
+        payload[23],
+        payload[24],
+        payload[25],
+    ]);
+    let y = f64::from_le_bytes([
+        payload[26],
+        payload[27],
+        payload[28],
+        payload[29],
+        payload[30],
+        payload[31],
+        payload[32],
+        payload[33],
+    ]);
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
+    if x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT || y.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+        return None;
+    }
+
+    Some(SheetIgPoint2dDecoded {
+        byte_range: offset..payload_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        parent_ref,
+        sub_type_word,
+        index,
+        point: (x, y),
     })
 }
 
@@ -3977,6 +4129,87 @@ mod tests {
         let _ = decode_iglinestrings(&noise);
         assert!(decode_iglinestrings(&vec![0u8; 4096]).is_empty());
         assert!(decode_iglinestrings(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 14 Slice L: PSM igPoint2d decoder tests
+    // -----------------------------------------------------------------
+
+    fn build_synthetic_igpoint2d_record(
+        oid: u32,
+        parent_ref: u32,
+        sub_type_word: u16,
+        index: u32,
+        x: f64,
+        y: f64,
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(6 + IGPOINT2D_PAYLOAD_LEN);
+        out.extend_from_slice(&PSM_TYPE_CODE_IGPOINT2D.to_le_bytes());
+        out.extend_from_slice(&(IGPOINT2D_PAYLOAD_LEN as u32).to_le_bytes());
+        out.extend_from_slice(&oid.to_le_bytes());
+        out.extend_from_slice(&parent_ref.to_le_bytes());
+        out.extend_from_slice(&18u32.to_le_bytes()); // remaining_header
+        out.extend_from_slice(&sub_type_word.to_le_bytes());
+        out.extend_from_slice(&index.to_le_bytes());
+        out.extend_from_slice(&x.to_le_bytes());
+        out.extend_from_slice(&y.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn igpoint2d_decodes_canonical_point() {
+        let record = build_synthetic_igpoint2d_record(130, 6, 0x0010, 13, 0.1737, 0.2199);
+        let decoded = decode_igpoints(&record);
+        assert_eq!(decoded.len(), 1);
+        let p = &decoded[0];
+        assert_eq!(p.type_code, PSM_TYPE_CODE_IGPOINT2D);
+        assert_eq!(p.bytes_to_follow, 34);
+        assert_eq!(p.oid, 130);
+        assert_eq!(p.parent_ref, 6);
+        assert_eq!(p.sub_type_word, 0x0010);
+        assert_eq!(p.index, 13);
+        assert!((p.point.0 - 0.1737).abs() < 1e-9);
+        assert!((p.point.1 - 0.2199).abs() < 1e-9);
+    }
+
+    #[test]
+    fn igpoint2d_rejects_wrong_type_code() {
+        let mut record = build_synthetic_igpoint2d_record(1, 1, 0x10, 0, 0.0, 0.0);
+        record[0] = 0x18;
+        record[1] = 0x00;
+        assert!(decode_igpoints(&record).is_empty());
+    }
+
+    #[test]
+    fn igpoint2d_rejects_wrong_bytes_to_follow() {
+        let mut record = build_synthetic_igpoint2d_record(1, 1, 0x10, 0, 0.0, 0.0);
+        record[2] = 33;
+        assert!(decode_igpoints(&record).is_empty());
+    }
+
+    #[test]
+    fn igpoint2d_rejects_nan() {
+        let mut record = build_synthetic_igpoint2d_record(1, 1, 0x10, 0, 0.0, 0.0);
+        // x at record offset 6 + 18 = 24
+        record[24..32].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(decode_igpoints(&record).is_empty());
+    }
+
+    #[test]
+    fn igpoint2d_decoder_is_panic_safe_on_short_input() {
+        let record = build_synthetic_igpoint2d_record(1, 1, 0x10, 0, 0.5, 0.5);
+        for trunc_len in 0..record.len() {
+            assert!(decode_igpoints(&record[..trunc_len]).is_empty());
+        }
+        assert!(decode_igpoints(&[]).is_empty());
+    }
+
+    #[test]
+    fn igpoint2d_decoder_is_panic_safe_on_random_noise() {
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_igpoints(&noise);
+        assert!(decode_igpoints(&vec![0u8; 4096]).is_empty());
+        assert!(decode_igpoints(&vec![0xFFu8; 4096]).is_empty());
     }
 
     #[test]

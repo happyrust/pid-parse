@@ -723,6 +723,47 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     confidence: PidGeometryConfidence::Decoded,
                 });
             }
+            for (index, record) in geometry.decoded_igpoints.iter().enumerate() {
+                let Some(byte_range) = source_range(
+                    record.byte_start,
+                    record.byte_end.saturating_sub(record.byte_start),
+                    sheet.size,
+                ) else {
+                    continue;
+                };
+                entities.push(PidGraphicEntity {
+                    id: format!("{}:igpoint2d:{index}", sheet.path),
+                    drawing_id: None,
+                    graphic_oid: Some(record.oid),
+                    kind: PidGraphicKind::Point {
+                        position: PidPoint {
+                            x: record.x,
+                            y: record.y,
+                        },
+                    },
+                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                    source: PidGraphicProvenance {
+                        stream_path: Some(sheet.path.clone()),
+                        byte_range: Some(byte_range),
+                        record_id: Some(format!("igpoint2d:{index}")),
+                        record_kind: Some(SheetRecordKind::CoordinatePageMetadata),
+                        field_x: None,
+                        note: Some(format!(
+                            "PSM igPoint2d record (Intergraph Sigma standard point, \
+                             type 0x005E, IGDS class tag 0x5E); oid={} parent_ref={} \
+                             sub_type=0x{:04X} index={} position=({:.4}, {:.4}); \
+                             byte layout from fixture dump",
+                            record.oid,
+                            record.parent_ref,
+                            record.sub_type_word,
+                            record.index,
+                            record.x,
+                            record.y,
+                        )),
+                    },
+                    confidence: PidGeometryConfidence::Decoded,
+                });
+            }
             for (index, record) in geometry.decoded_iglinestrings.iter().enumerate() {
                 let Some(byte_range) = source_range(
                     record.byte_start,
@@ -1068,6 +1109,7 @@ mod tests {
                 decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
+                decoded_igpoints: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1159,6 +1201,7 @@ mod tests {
                 decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
+                decoded_igpoints: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1288,6 +1331,7 @@ mod tests {
                 decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
+                decoded_igpoints: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1370,6 +1414,7 @@ mod tests {
                 decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
+                decoded_igpoints: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1423,6 +1468,7 @@ mod tests {
                 decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
+                decoded_igpoints: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1496,6 +1542,7 @@ mod tests {
                 decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
+                decoded_igpoints: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,

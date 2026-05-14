@@ -879,6 +879,13 @@ pub struct SheetGeometry {
     /// (Phase 14 Slice K).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_iglinestrings: Vec<DecodedIgLineString2dRecord>,
+    /// PSM-decoded `igPoint2d` records (PSM type `0x005E`, IGDS
+    /// class tag `0x5E`) — Intergraph Sigma's standard 2D point
+    /// primitive, emitted by
+    /// [`crate::parsers::sheet_records::decode_igpoints`]
+    /// (Phase 14 Slice L).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igpoints: Vec<DecodedIgPoint2dRecord>,
 }
 
 /// Stable, model-shaped DTO that mirrors
@@ -1195,6 +1202,53 @@ impl DecodedIgLineString2dRecord {
             total += (dx * dx + dy * dy).sqrt();
         }
         total
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgPoint2dDecoded`] —
+/// PSM type `0x005E` Intergraph Sigma standard 2D point.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgPoint2dRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x005E`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header (always 34).
+    pub bytes_to_follow: u32,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / sub-oid.
+    pub index: u32,
+    /// Point `x` coordinate.
+    pub x: f64,
+    /// Point `y` coordinate.
+    pub y: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgPoint2dDecoded> for DecodedIgPoint2dRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgPoint2dDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            x: d.point.0,
+            y: d.point.1,
+        }
     }
 }
 
