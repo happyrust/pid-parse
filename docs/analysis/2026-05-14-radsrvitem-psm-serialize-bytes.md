@@ -240,6 +240,72 @@ DTO 与 `geometry.rs::build_normalized_geometry` 的 `radius =
 - `v13` 通过 `sub_564E0D90` 获取 (推测 sweep angle)
 - 弧长公式 `(v13 * v7) / (2 * sin(...))` —— 弧长 = chord / (2*sin(α/2)) 的标准弦长公式
 
+### ⚠️ 关键 caveat：实测 byte dump 颠覆 Slice F/G/H 字段语义假设
+
+通过 `examples/probe_garc2d_bytes.rs` 直接 dump 5 个 fixture hit offsets
+的原始字节后发现：
+
+```
+offset 0x001195 (DWG-0201 /Sheet6):
+  a2+0   center.x : 0.28251   (valid f64, page-normalized coord)
+  a2+8   center.y : 0.08183   (valid f64)
+  a2+16  axis.x   : 0.28251   (valid f64)
+  a2+24  axis.y   : 4.71239   (= 3π/2 — 角度?向量分量?不合理 magnitude)
+  a2+32  bytes    : [0x4D, 0x00, 0x6E, 0x00, 0x00, 0x00, 0x3E, 0x02]
+                 = packed (u16=0x004D, u16=0x006E, u16=0x0000, u16=0x023E)
+                 = denormalized f64 7.17e-298  (NOT a real double!)
+  a2+40  byte     : 0x00
+  a2+48  bytes    : [0x00, 0x00, 0x10, 0x00, 0x5E, 0x00, 0x00, 0x00]
+                 = packed (u32=0x00100000, u32=0x0000005E)
+                 = denormalized f64 1.99e-312  (NOT a real double!)
+  a2+56  bytes    : [0x02, 0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00]
+                 = packed (u16=0x0002, u16=0x0002, u16=0x0001, u16=0x0001)
+                 = denormalized f64 1.39e-309  (NOT a real double!)
+```
+
+**结论**：
+
+- `a2+32` / `a2+48` / `a2+56` 在 fixture records 中**不是 f64**，而是
+  **packed u16/u32 整型字段**。我的 decoder 接受的 66 records **大概率不是
+  真正的 GArc2d**。type code = 0x0030 + 0..31 字节（center.xy + axis）凑巧
+  匹配 GArc2d shape，但 32..63 字节实际是另一种 packed 结构。
+- `axis.y = π/2 / π / 3π/2` 等"异常"值 + `axis.x ≈ 0.24` 暗示 `a2+16/24`
+  可能是 **(radius, rotation_angle)** packed 而非 (axis.x, axis.y) vector。
+- **真正的 GArc2d records 可能是另一个 PSM type code**（不是 0x0030），
+  或者在 14-bit mask 下 0x0030 包含多个不同的 PSM types 共用 byte
+  shape 但 32..63 区域 layout 不同。
+- Slice F/G/H 的 decoder + DTO + tests + integration 全部基于 8-double
+  hypothesis，**byte 0..31 的字段语义可能正确，但 32..63 的解读
+  完全不对**。需要在下一 milestone：
+  1. 反编译 PSMSerializeIn 找哪些 PSM type code 对应真正的 GArc2d
+  2. 或反编译 IGDSFactoryArc 构造函数 + Register 调用找其 PSM type
+  3. 或用 Plan B controlled-diff 协议造已知 arc fixture 对比 byte 流
+
+**当前 decoder 状态**：
+
+- byte-level 解析仍 panic-safe（adversarial 输入不崩）
+- type code 过滤仍工作（只接受 0x0030）
+- 但 **66 decoded "arcs" 中大部分可能是 false positive**，几何字段
+  解读不准
+- Schema + provenance + integration test 仍有效（contract 完整），
+  下游消费者得到字段值后可自行判定语义
+
+**为什么 Slice F-H 测试仍通过**：
+
+- 单元 tests 用 synthetic data（手工构造的 8 × f64 payload），那些
+  data 完美匹配假设布局
+- Integration test 仅断言 axis_a_magnitude / axis_ratio / sweep
+  范围"合理"，denormalized doubles 都 happen 落在 (0, 1e3] 容差内
+- byte_range / oid / type_code 等元数据字段正确
+
+**下一里程碑必修正**：
+
+- 重新审视 fixture 上 type code 分布（也许 0x0030 是 placeholder，
+  真正 arc 在其他 type code）
+- 反编译 IGDSFactoryArc 构造函数找 `RegisterClassObject(..., type_code)`
+  调用拿真实 PSM type
+- 重写 `decode_primitive_arcs` 用正确字段假设 + 跨 fixture 校验
+
 ### GEllipse2d / GArc2d 类层级（最新发现 — Slice H 后修正）
 
 通过反编译时跟踪错误字符串 xref 发现 **`sub_56524280` 实际是
