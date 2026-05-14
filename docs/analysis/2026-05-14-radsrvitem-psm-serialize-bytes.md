@@ -126,22 +126,125 @@ if (v40 != v20 - v35)
 metadata / index entries）。其他 type_code 走通用路径（不在 switch 内）
 通过对象 Save 虚函数动态确定大小。
 
-## 几何 primitive 类对应（待 Slice C 进一步证实）
+## 几何 primitive 类布局（GLine2d / GArc2d 已反编译确认）
 
-`radsrvitem.dll` 字符串里发现的 **Intergraph Sigma 2D geometry** 类家
-族，应当对应一种或多种 PSM type_code：
+### GLine2d (48 bytes = 6 × f64)
 
-| Sigma 类 | 推测 PidGraphicKind | 字段（典型 Sigma 2D） |
+**反编译来源**：`sub_56524C50` @ `0x56524C50`（size 0x17f）——
+`GLine2d::Validate()` 类似函数，引用 `"GLine2d: uninitialized data"`
+字符串 @ `0x56669004`。
+
+```c
+// validate sub_56524C50 内部:
+if (sub_564D15A0(a2[0]) || sub_564D15A0(a2[1]) ||
+    sub_564D15A0(a2[2]) || sub_564D15A0(a2[3]) ||
+    sub_564D15A0(a2[4]) || sub_564D15A0(a2[5]))
+    return INVALID_NAN_FLAG;  // 0x1
+v9 = fabs(sqrt(a2[2]^2 + a2[3]^2) - 1.0);
+if (v9 > tol) return NOT_UNIT_VECTOR_FLAG;  // 0x8
+if (a2[4] > a2[5]) return PARAM_REVERSED_FLAG;  // 0x200000
+```
+
+**字段表**：
+
+| Offset | Type | Field | 含义 |
+|---|---|---|---|
+| 0..7 | f64 LE | `origin.x` | 起点 X |
+| 8..15 | f64 LE | `origin.y` | 起点 Y |
+| 16..23 | f64 LE | `direction.x` | 方向向量 X (单位) |
+| 24..31 | f64 LE | `direction.y` | 方向向量 Y (单位) |
+| 32..39 | f64 LE | `param_start` | 参数起 t |
+| 40..47 | f64 LE | `param_end` | 参数终 t (必须 > start) |
+
+**几何语义**：`point(t) = origin + t * direction`，参数定义域 `[param_start, param_end]`。
+**不是** start-point + end-point 形式！而是 **origin + unit direction + scalar range**
+的参数化表示。这一点对解码器编写很重要——直接从字节读到的不是 "line A→B"
+而是 "from origin go along direction for [start, end]"。
+
+转换公式：
+```
+endpoint_a = origin + param_start * direction
+endpoint_b = origin + param_end * direction
+length = param_end - param_start
+```
+
+### GArc2d (64 bytes = 8 × f64)
+
+**反编译来源**：`sub_56524150` @ `0x56524150`（size 0x128）——
+`GArc2d::Validate()` 类似函数，引用 `"GArc2d: uninitialized data"`
+字符串 @ `0x56668b38`。
+
+```c
+// validate sub_56524150 内部:
+v6[0] = _mm_loadu_si128((const __m128i *)a2);          // bytes 0..15
+v6[1] = _mm_loadu_si128((const __m128i *)(a2 + 16));   // bytes 16..31
+v6[2] = _mm_loadu_si128((const __m128i *)(a2 + 32));   // bytes 32..47
+v6[3] = _mm_loadu_si128((const __m128i *)(a2 + 48));   // bytes 48..63
+// 同时检查 *(double *)(a2 + 56) 和 *(double *)(a2 + 48) 是否 NaN
+```
+
+**推测字段表**（Intergraph Sigma 椭圆弧表示）：
+
+| Offset | Type | Field | 含义（推测） |
+|---|---|---|---|
+| 0..7 | f64 LE | `center.x` | 弧心 X |
+| 8..15 | f64 LE | `center.y` | 弧心 Y |
+| 16..23 | f64 LE | `axis1.x` | 主轴向量 X |
+| 24..31 | f64 LE | `axis1.y` | 主轴向量 Y |
+| 32..39 | f64 LE | `axis2.x` | 次轴向量 X (椭圆用，圆退化为 0) |
+| 40..47 | f64 LE | `axis2.y` | 次轴向量 Y |
+| 48..55 | f64 LE | `param_start` | 起始角 / 参数 |
+| 56..63 | f64 LE | `param_end` | 终止角 / 参数 |
+
+`a2+48` 和 `a2+56` 的 NaN 检查印证 `param_start` 和 `param_end` 在
+offsets 48 和 56。8 个 doubles 共 64 字节。
+
+### 其他类（Slice C 后续）
+
+| Sigma 类 | 推测 PidGraphicKind | 字段（待反编译验证） |
 |---|---|---|
-| `igLine2d` / `IGDSFactoryLine` | `Line` | 2 × `GPosition` (start, end) = 2 × 16 bytes |
-| `igCircle2d` / (factory 未列) | `Circle` | center (`GPosition`) + radius (f64) |
-| `igArc2d` / `IGDSFactoryArc` | `Arc` | center + radius + start_angle + sweep |
-| `igEllipticalArc2d` / `IGDSFactoryEllipArc` | `Arc` (椭圆) | center + 2 axes + start/sweep |
-| `igLineString2d` / `IGDSFactoryLineString` | `Polyline` | 顶点数 + vertex 数组 |
-| `igBSplineCurve2d` | （新发现） | NURBS / B-spline 参数 |
+| `igCircle2d` | `Circle` | 4 doubles? center(2) + radius_x(1) + radius_y(1)，或退化 GArc2d (radius=axis1.len) |
+| `igLineString2d` | `Polyline` | vertex_count(i32) + vertex_count × 2 × f64 |
+| `igEllipticalArc2d` | (椭圆 Arc) | 8 doubles，可能 = GArc2d |
+| `igBSplineCurve2d` | NURBS | degree + knots + control points + weights |
+| `IGDSFactoryRectangle` / `Rectangle` | `Rectangle`（**新发现**） | 4 doubles? corner + width + height |
+| `IGDSFactoryBspCurve` | B-spline | 同 igBSplineCurve2d |
+| `IGDSFactoryCmplxStr` / `Cmplx Str` | 复合字符串（complex string） | 子图元 list |
+| `IGDSFactoryText` / `IGDSFactoryTextPointRectShape` | `Text` | position + style + UTF-16 string |
 
-进一步 evidence 需要 reverse 这些类的 Save 虚函数（typically vtable
-slot offset 12 or 16 from 上面 `Step 5` 的 `vfunc + 12/16/20/24`）。
+## IGDSFactory* vtable 调查（slot 4-6 是属性 setter）
+
+通过 RTTI string xrefs 拿到 IGDSFactoryLine 的两个 vtable：
+
+```
+COL @ 0x566714B4 -> primary vtable @ 0x5666A94C
+  [0..2]  共享 IUnknown 方法 (QueryInterface/AddRef/Release)
+  [3]     0x565A93F0 (共享, 推测 GetTypeId 或类似)
+  [4]     0x565A93C0 -- *(this + 70) = a2;   // setter
+  [5]     0x565A93A0 -- *(this + 74) = a2;   // setter
+  [6]     0x565A9330 -- *(this + 78) = a2;   // setter
+```
+
+**确认**：IGDSFactory* 是**属性 builder pattern** —— 通过一连串 setter
+累积 line weight / color / style 之类的参数，**不是** Save 入口。Save
+经 Sigma `IJTypedGeometry2d::Save` 或 PSMSerializeOut 写入对象本身
+（已知字段布局 = GLine2d 6 doubles / GArc2d 8 doubles + 可选属性）。
+
+实际 Sheet 流上每个 primitive 的字节流大致为：
+
+```
+18 bytes  PSM record header (type + bytes_to_follow + oid + aux)
+N bytes   inner_payload (N = GLine2d 48B / GArc2d 64B / 其他)
+[var]     可选属性 (color / line weight / layer 等)
+```
+
+进一步 evidence 需要：
+
+1. 找 `IJTypedGeometry2d::Save` 方法（在 vtable 高位 slot）
+2. 或者直接在 `DWG-0201GP06-01.pid /Sheet6` 上拿一条已知 line record
+   按 6 × f64 解出验证
+3. type_code ↔ class 映射来自 `guidtab.h`，IDA 里可能能找到 type
+   table data array
 
 ## 错误字符串证据列表（IDA 引用）
 
