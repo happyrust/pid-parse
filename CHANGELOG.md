@@ -2,6 +2,60 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice P：`pid_inspect --geometry-summary` CLI 用户友好统计
+
+`pid_inspect` CLI 加 `--geometry-summary` flag，向用户暴露 8 PSM
+decoder family 的实测统计 + sample decoded texts/symbol oids。Phase 14
+的成果第一次有可执行的 user-facing UX。
+
+实测样例 (`DWG-0201GP06-01.pid`):
+
+```
+=== Sheet stream geometry summary ===
+Total entities: 385
+
+Decoded (PSM record decoders, Phase 14):
+  Lines (GLine2d / igLine2d):              26
+  Arcs (GArc2d):                            11
+  Polylines (igLineString2d):               39
+  Points (igPoint2d):                       75
+  Texts (igTextBox, UTF-16LE):              45
+  SymbolInstances (igSymbol2d):             4
+  Total decoded:                            200
+
+Inferred (probe-derived):
+  Points (coordinate hints):                117
+  Lines (endpoint pairs):                   49
+
+ProbeOnly (raw evidence, undecoded):
+  Unknown:                                  19
+
+Sample decoded texts:
+  "LIA"
+  "LG"
+  " 060101"
+  "LIT"
+  "污水外运"
+  " * "
+
+Sample decoded symbol oids: 157, 239, 602, 617
+```
+
+**DWG-0201 现输出 200 decoded entities** (vs Slice D-E baseline 仅
+2 decoded GLine2d lines), 100× 增长。包含中文文本 "污水外运" 完美解码。
+
+落地清单:
+
+- `src/bin/pid_inspect.rs`:
+  * `--geometry-summary` flag (string match with existing flags)
+  * `print_geometry_summary` 函数: 按 PidGeometryConfidence × kind
+    matrix 统计 + sample texts/symbol oids 输出
+  * usage string 更新
+- `cargo build --bin pid_inspect` 1 次通过, 0 warnings
+
+5 道 gate 全绿: build/test (840 unit + 88 integration) + clippy + fmt +
+missing-docs ratchet.
+
 ### Phase 14 Slice N：igSymbol2d (PSM 0x00CE) decoder — Intergraph Sigma 标准符号实例落地
 
 第 8 个 IGDS 标准类 decoder。`SmartPlant` 设备/仪表/阀门符号

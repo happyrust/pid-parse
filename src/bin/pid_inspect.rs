@@ -11,7 +11,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--schema] [--geometry-json]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit [--byte-audit-baseline <audit.json>]]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]\n                    [--controlled-diff-dir <dir>]"
+            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--geometry-json] [--geometry-summary]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit [--byte-audit-baseline <audit.json>]]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]\n                    [--controlled-diff-dir <dir>]"
         );
         std::process::exit(1);
     }
@@ -20,6 +20,7 @@ fn main() {
     let json_mode = args.iter().any(|a| a == "--json");
     let schema_mode = args.iter().any(|a| a == "--schema");
     let geometry_json = args.iter().any(|a| a == "--geometry-json");
+    let geometry_summary = args.iter().any(|a| a == "--geometry-summary");
     let probe_cluster = args.iter().any(|a| a == "--probe-cluster");
     let probe_dynamic = args.iter().any(|a| a == "--probe-dynamic");
     let probe_sheet = args.iter().any(|a| a == "--probe-sheet");
@@ -112,6 +113,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        return;
+    }
+
+    if geometry_summary {
+        let geometry = pid_parse::build_normalized_geometry(doc);
+        print_geometry_summary(&geometry);
         return;
     }
 
@@ -751,6 +758,121 @@ fn print_sheet_chunk_reports(reports: &[pid_parse::parsers::sheet_probe::SheetPr
             }
         }
         println!();
+    }
+}
+
+/// Human-friendly geometry summary for the `--geometry-summary` flag.
+/// Counts entities by kind × confidence and prints sample decoded text /
+/// symbol names to give a quick at-a-glance view of what Phase 14 decoded.
+fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
+    use pid_parse::{PidGeometryConfidence, PidGraphicKind};
+
+    let mut decoded_lines = 0usize;
+    let mut decoded_arcs = 0usize;
+    let mut decoded_polylines = 0usize;
+    let mut decoded_points = 0usize;
+    let mut decoded_texts = 0usize;
+    let mut decoded_symbols = 0usize;
+    let mut inferred_lines = 0usize;
+    let mut inferred_points = 0usize;
+    let mut probe_only_unknown = 0usize;
+    let mut other = 0usize;
+
+    let mut sample_decoded_texts: Vec<String> = Vec::new();
+    let mut sample_decoded_symbol_oids: Vec<u32> = Vec::new();
+
+    for entity in &geometry.entities {
+        match (&entity.confidence, &entity.kind) {
+            (PidGeometryConfidence::Decoded, PidGraphicKind::Line { .. }) => {
+                decoded_lines += 1;
+            }
+            (PidGeometryConfidence::Decoded, PidGraphicKind::Arc { .. }) => {
+                decoded_arcs += 1;
+            }
+            (PidGeometryConfidence::Decoded, PidGraphicKind::Polyline { .. }) => {
+                decoded_polylines += 1;
+            }
+            (PidGeometryConfidence::Decoded, PidGraphicKind::Point { .. }) => {
+                decoded_points += 1;
+            }
+            (PidGeometryConfidence::Decoded, PidGraphicKind::Text { value, .. }) => {
+                decoded_texts += 1;
+                if sample_decoded_texts.len() < 8 {
+                    sample_decoded_texts.push(value.clone());
+                }
+            }
+            (PidGeometryConfidence::Decoded, PidGraphicKind::SymbolInstance { .. }) => {
+                decoded_symbols += 1;
+                if let Some(oid) = entity.graphic_oid {
+                    if sample_decoded_symbol_oids.len() < 5 {
+                        sample_decoded_symbol_oids.push(oid);
+                    }
+                }
+            }
+            (PidGeometryConfidence::Inferred, PidGraphicKind::Line { .. }) => {
+                inferred_lines += 1;
+            }
+            (PidGeometryConfidence::Inferred, PidGraphicKind::Point { .. }) => {
+                inferred_points += 1;
+            }
+            (PidGeometryConfidence::ProbeOnly, PidGraphicKind::Unknown { .. }) => {
+                probe_only_unknown += 1;
+            }
+            _ => {
+                other += 1;
+            }
+        }
+    }
+
+    let total = geometry.entities.len();
+    println!("=== Sheet stream geometry summary ===");
+    println!("Total entities: {total}");
+    println!();
+    println!("Decoded (PSM record decoders, Phase 14):");
+    println!("  Lines (GLine2d / igLine2d):              {decoded_lines}");
+    println!("  Arcs (GArc2d):                            {decoded_arcs}");
+    println!("  Polylines (igLineString2d):               {decoded_polylines}");
+    println!("  Points (igPoint2d):                       {decoded_points}");
+    println!("  Texts (igTextBox, UTF-16LE):              {decoded_texts}");
+    println!("  SymbolInstances (igSymbol2d):             {decoded_symbols}");
+    println!(
+        "  Total decoded:                            {}",
+        decoded_lines
+            + decoded_arcs
+            + decoded_polylines
+            + decoded_points
+            + decoded_texts
+            + decoded_symbols
+    );
+    println!();
+    println!("Inferred (probe-derived):");
+    println!("  Points (coordinate hints):                {inferred_points}");
+    println!("  Lines (endpoint pairs):                   {inferred_lines}");
+    println!();
+    println!("ProbeOnly (raw evidence, undecoded):");
+    println!("  Unknown:                                  {probe_only_unknown}");
+    if other > 0 {
+        println!();
+        println!("Other:                                    {other}");
+    }
+
+    if !sample_decoded_texts.is_empty() {
+        println!();
+        println!("Sample decoded texts:");
+        for t in &sample_decoded_texts {
+            println!("  {t:?}");
+        }
+    }
+    if !sample_decoded_symbol_oids.is_empty() {
+        println!();
+        println!(
+            "Sample decoded symbol oids: {}",
+            sample_decoded_symbol_oids
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 }
 
