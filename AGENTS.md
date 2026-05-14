@@ -34,58 +34,91 @@ publish XML pipeline (`Export.mdf → oxidized-mdf → drawing graph → _Data.x
 | `tests/publish_a01_raw_residual.rs` | Residual value scanning | `test-file/…/Export.mdf` |
 | `tests/parse_real_files.rs::primitive_line_decoder_emits_decoded_lines_with_provenance` | Phase 14 GLine2d cross-fixture | `test-file/*.pid` |
 | `tests/parse_real_files.rs::primitive_arc_decoder_emits_decoded_arcs_with_provenance` | Phase 14 GArc2d cross-fixture | `test-file/*.pid` |
+| `tests/parse_real_files.rs::iglines_decoder_emits_decoded_iglines_with_provenance` | Phase 14 Slice J igLine2d (PSM 0x0018) | `test-file/*.pid` |
+| `tests/parse_real_files.rs::iglinestrings_decoder_emits_decoded_polylines_with_provenance` | Phase 14 Slice K igLineString2d (PSM 0x0084) | `test-file/*.pid` |
+| `tests/parse_real_files.rs::igpoints_decoder_emits_decoded_points_with_provenance` | Phase 14 Slice L igPoint2d (PSM 0x005E) | `test-file/*.pid` |
+| `tests/parse_real_files.rs::igtextboxes_decoder_emits_decoded_texts_with_provenance` | Phase 14 Slice M igTextBox (PSM 0x004D) | `test-file/*.pid` |
+| `tests/parse_real_files.rs::igsymbols_decoder_emits_decoded_symbols_with_provenance` | Phase 14 Slice N igSymbol2d (PSM 0x00CE) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_arcs_without_regression` | Phase 14 Slice G AC8 guard | `DWG-0201GP06-01.pid` |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
 
-## Phase 14 SmartPlant Sheet geometry decoder
+## Phase 14 SmartPlant Sheet geometry decoder — 8 PSM type families
 
-`src/parsers/sheet_records.rs` ships PSM-record decoders for two
-SmartPlant `Sheet*` stream primitives:
+`src/parsers/sheet_records.rs` ships PSM-record decoders for **8
+SmartPlant `Sheet*` stream primitives**:
 
-- `decode_primitive_lines(&[u8]) -> Vec<SheetPrimitiveLineDecoded>` —
-  PSM type code `0x3FE6` (`GLine2d`); 6 × f64 parametric line
-  representation `origin + t * direction` for
-  `t ∈ [param_start, param_end]`. Validated to unit direction
-  vector and sorted params. **Accuracy verified against fixture
-  byte content.**
-- `decode_primitive_arcs(&[u8]) -> Vec<SheetPrimitiveArcDecoded>` —
-  PSM type code `0x0030` (`GArc2d` ≥ `GEllipse2d` parent + sweep).
-  Validates `axis_a.y ≈ 0` (GEllipse2d "majorAxis along X"),
-  `axis_ratio ∈ [0, 1+1e-6]`, `sweep_direction ∈ {0, 1}`. **Byte
-  positions IDA-confirmed; some geometric field semantics
-  (e.g. `axis_ratio` interpretation) remain hypothesis pending
-  further reverse-engineering.** See
-  `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
-  for full evidence chain (IGDS class tag table, PSM dispatch,
-  GEllipse2d / GArc2d class hierarchy, fixture byte dump
-  caveat).
+| Slice | PSM Type | Decoder | DTO | Sigma Class |
+|---|---|---|---|---|
+| D-E | `0x3FE6` | `decode_primitive_lines` | `SheetPrimitiveLineDecoded` | `GLine2d` (SmartPlant ext.) |
+| F-I | `0x0030` | `decode_primitive_arcs` | `SheetPrimitiveArcDecoded` | `GArc2d` ≥ `GEllipse2d` |
+| J | `0x0018` | `decode_iglines` | `SheetIgLine2dDecoded` | `igLine2d` (IGDS standard) |
+| K | `0x0084` | `decode_iglinestrings` | `SheetIgLineString2dDecoded` | `igLineString2d` (IGDS standard) |
+| L | `0x005E` | `decode_igpoints` | `SheetIgPoint2dDecoded` | `igPoint2d` (IGDS standard) |
+| M | `0x004D` | `decode_igtextboxes` | `SheetIgTextBoxDecoded` | `igTextBox` (IGDS, UTF-16LE) |
+| N | `0x00CE` | `decode_igsymbols` | `SheetIgSymbol2dDecoded` | `igSymbol2d` (IGDS, SmartPlant symbols) |
+
+**769 decoded geometry entities cross-fixture** (3 GLine2d + 48 GArc2d
++ 284 igLine2d + 119 polyline + 146 point + 142 text + 27 symbol).
+All decoders are panic-safe (validated via
+`tests/parser_panic_safety.rs` adversarial matrix) and bounds-checked.
 
 Decoded records flow through `streams/cluster.rs` →
-`model::SheetGeometry::decoded_primitive_{lines,arcs}` →
-`geometry::build_normalized_geometry` to emit
-`PidGraphicEntity { confidence: Decoded, kind: Line | Arc, source:
-PidGraphicProvenance { stream_path, byte_range, record_kind,
-graphic_oid, note } }`. The `note` carries the full IDA-evidence
-chain back to `radsrvitem.dll` for downstream provenance.
+`model::SheetGeometry::decoded_{primitive_lines, primitive_arcs,
+iglines, iglinestrings, igpoints, igtextboxes, igsymbols}` →
+`geometry::build_normalized_geometry` to emit `PidGraphicEntity {
+confidence: Decoded, kind: Line | Arc | Polyline | Point | Text |
+SymbolInstance, source: PidGraphicProvenance { stream_path,
+byte_range, record_kind, graphic_oid, note } }`. The `note` carries
+the byte-level evidence chain.
 
-`pid_inspect <fixture> --geometry-json` exposes the full decoded
-+ inferred + probe-only entity catalogue with byte-level
-provenance. On `DWG-0201GP06-01.pid`: 13 decoded (2 lines + 11
-arcs) + 166 inferred (49 lines + 117 points) + 19 probe-only
-entities.
+**Key insight (Slice J discovery)**: Intergraph Sigma uses its IGDS
+class tags directly as PSM type codes for standard primitives.
+SmartPlant extends with `GLine2d` (`0x3FE6`) and `GArc2d`
+(`0x0030`), but the bulk of geometry is standard IGDS records using
+IGDS class tags as PSM type codes. This unlocked Slices J–N
+without needing `radsrvitem.dll` decompilation.
+
+**Caveats**:
+- `GArc2d` (Slice F-I): byte positions IDA-confirmed but some
+  geometric field semantics (e.g. `axis_ratio` interpretation) remain
+  hypothesis. See `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
+- SmartPlant fixtures don't use standard IGDS `igCircle2d` (0x0059),
+  `igRectangle2d` (0x0020), `igArc2d` (0x0061), or
+  `igEllipticalArc2d` (0x007E) — zero hits cross-fixture.
+- `0x0010` (638 hits) appears to be embedded sub-records / attribute
+  fragments inside other record types, not a standalone geometry
+  type.
 
 Phase 14 milestones are tracked in
-`goals/phase14-sppid-sheet-geometry/progress.jsonl`. Next
-milestone: resolve the GArc2d geometric field semantics caveat
-or extend the decoder family with `GLineString2d` / `GCircle2d`
-/ `GText` / etc.
+`goals/phase14-sppid-sheet-geometry/progress.jsonl`. See
+`docs/plans/2026-05-14-phase14-decoder-suite-final-summary.md`
+for the full Phase 14 summary report.
+
+### Reusable seven-layer decoder template
+
+Each new decoder follows the same template (validated 6× in this
+phase):
+
+1. **Probe**: `examples/probe_<type>_shape.rs` dumps fixture bytes
+2. **Layout discovery** via byte dump
+3. **Decoder API**: `decode_<type>s` + `decode_<type>_at` +
+   `Sheet<Type>Decoded` DTO + public constants
+4. **Validation rules**: type code + size consistency + finite
+   coords + non-degenerate values
+5. **Unit tests**: 6–12 covering canonical + every validation
+   rejection + panic safety
+6. **Model DTO**: `Decoded<Type>Record` + `From` + `SheetGeometry`
+   field + schema ratchet
+7. **Pipeline**: `cluster.rs` + `geometry.rs` emit
+   `PidGraphicEntity { confidence: Decoded, ..., source: full
+   provenance }`
 
 ## Common commands
 
 ```bash
-cargo test                                        # 881+ tests (798 unit + 83 integration, 2 DWG-gated skipped)
+cargo test                                        # 928+ tests (840 unit + 88 integration, 2 DWG-gated skipped)
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
 cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (31 tests)
 ```
