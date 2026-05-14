@@ -240,6 +240,68 @@ DTO 与 `geometry.rs::build_normalized_geometry` 的 `radius =
 - `v13` 通过 `sub_564E0D90` 获取 (推测 sweep angle)
 - 弧长公式 `(v13 * v7) / (2 * sin(...))` —— 弧长 = chord / (2*sin(α/2)) 的标准弦长公式
 
+### GArc2d 完整字段语义（基于 4 个辅助函数反编译收敛）
+
+通过反编译 4 个 GArc2d 内部辅助函数：
+
+1. **`sub_56524280`** (Validate 内部检查)：`*(a2+32) * v8 = angle * radius` 算弧长；`*(BYTE *)(a2 + 40) > 1u` 检查 form flag
+2. **`sub_5658F950`** (`IMAr3dAr2d` 弧长计算)：调 `libm_sse2_sin_precise` + 弦长公式
+3. **`sub_56539060`** (`IMElIsCir2d` 圆判定)：`v3 = *(a1+32) - 1.0; *a2 = (tolerance >= |v3|)` —— `a1+32 ≈ 1.0` 即为圆
+4. **`sub_564E0D90`** (`IMArGtSwA2d` 计算扫描角)：用 `*(BYTE *)(a1 + 40)` 区分 CW/CCW，配合 v15/v16 (从 `sub_56537290` 取的两个 doubles) 用 `2π - delta` 公式得 sweep
+
+收敛后的**真实**字段表：
+
+| Offset | Type | 字段语义 (修正版) | 早期 DTO 字段名 |
+|---|---|---|---|
+| 0..7 | f64 LE | `center.x` | `center.0` ✓ |
+| 8..15 | f64 LE | `center.y` | `center.1` ✓ |
+| 16..23 | f64 LE | `axis_a` (semi-major axis 长度 或 axis_a.x) | `axis1.0` |
+| 24..31 | f64 LE | `rotation` (radians) **OR** `axis_a.y` | `axis1.1` (实测 = π/2/π/3π/2 大概率是 rotation) |
+| 32..39 | f64 LE | `axis_ratio` = `axis_b / axis_a` ∈ [0, 1]，= 1.0 表示**圆** | `axis2.0` |
+| 40 | u8 | `sweep_direction`: 0=CW, 1=CCW | (掩在 `axis2.1` 高位的 BYTE) |
+| 41..47 | padding | 7 bytes | (掩在 `axis2.1` 中) |
+| 48..55 | f64 LE | `sweep_start_angle` (radians) | `param_start` ✓ |
+| 56..63 | f64 LE | `sweep_end_angle` (radians) | `param_end` ✓ |
+
+**关键映射变化**：
+
+- 早期 DTO 把 a2+32..47 16 字节当作 `axis2 = (f64, f64)`（次轴向量）。
+  实际是 `axis_ratio (f64) + sweep_direction (u8) + 7B padding`。当 axis_b
+  = axis_a (即圆) 时 axis_ratio = 1.0，**早期 `axis2 = (0, 0)` 的判断
+  其实是 axis_ratio = 0 + padding，对应 axis_b = 0 即退化为直线**。
+  真正的 "is_circle" 检查应为 `axis_ratio ≈ 1.0` 而非 `axis2 = (0, 0)`。
+- 早期 `param_start`/`param_end` 命名实际就是 `sweep_start_angle`/
+  `sweep_end_angle`（radians），byte offset 正确。
+- 实测 DWG-0202 `axis1.y` 为 `π/2`/`π`/`3π/2` 印证 a2+24..31 是
+  rotation angle 而非 axis 向量分量；这才是为什么部分 hits 看起来
+  axis1 magnitude 异常大（√(0.22² + π²) ≈ 3.15）。
+
+**decoder 影响**：
+
+- `SheetPrimitiveArcDecoded` byte-level 解析正确，字段命名是 Slice F
+  早期推测，**重命名是下一里程碑的工作**（涉及 model DTO + cluster.rs
+  + geometry.rs + tests + schema ratchet 联动更新）
+- `geometry.rs::build_normalized_geometry` 的 `radius =
+  axis1_magnitude()` 当前给出错误结果（when axis_a.y 实际是 rotation）。
+  正确公式应为 `radius = axis_a (a2+16..23 单值)`，`rotation` 提供
+  椭圆的旋转，`semi_minor = axis_a * axis_ratio`。
+- `is_circular()` 当前依据 `|axis2| < 1e-6` 判定，正确判定应为
+  `|axis_ratio - 1.0| < tolerance`。
+- 实测 15 decoded arcs in DWG-0201 中，部分实际是椭圆 arc（axis_ratio
+  < 1），需重新分类计数后才能区分圆/椭圆。
+
+**Phase 14 下一里程碑必做**:
+
+1. 反编译 `sub_56537290` 确认 v15/v16 取的是 a2+48 和 a2+56 (即上表
+   sweep_start_angle / sweep_end_angle)
+2. 反编译 `sub_5644E160` 真实行为 (单值 sqrt 还是 vector magnitude)
+   以确定 a2+16/24 是 (axis_a 单值, rotation) 还是 (axis_a.x, axis_a.y)
+3. 完整重命名 `SheetPrimitiveArcDecoded` 字段为 `center` /
+   `axis_a` (or `axis_a_xy`) / `rotation` (or `axis_a_y`) / `axis_ratio` /
+   `sweep_direction` / `sweep_start_angle` / `sweep_end_angle`
+4. 修 `geometry.rs` radius 计算 + 把 `PidGraphicKind::Circle` (当
+   axis_ratio ≈ 1) 分离出来 vs `PidGraphicKind::Arc`
+
 ### GLineString2d 内存布局（已反编译，磁盘格式待证）
 
 **反编译来源**：`sub_56524DD0` @ `0x56524DD0`（size 0x137）——
