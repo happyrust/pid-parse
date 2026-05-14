@@ -1953,6 +1953,24 @@ pub const PSM_TYPE_CODE_IGPOINT2D: u16 = 0x005E;
 /// + 16 bytes (`f64 x, f64 y`) = **34 bytes**.
 pub const IGPOINT2D_PAYLOAD_LEN: usize = 34;
 
+/// PSM type code that identifies a standard Intergraph Sigma
+/// `igTextBox` record on disk (IGDS class tag `0x4D = 77`).
+///
+/// Cross-fixture histogram surfaces 175 hits — text annotations on
+/// `Sheet*` streams.
+pub const PSM_TYPE_CODE_IGTEXTBOX: u16 = 0x004D;
+
+/// Constant byte overhead of an `igTextBox` payload: 32-byte
+/// sub-header + 36-byte trailing geometry/style data. Total
+/// payload size is `68 + text_length * 2` where `text_length` is
+/// the number of UTF-16LE chars in the inline text.
+pub const IGTEXTBOX_PAYLOAD_OVERHEAD: usize = 68;
+
+/// Maximum `text_length` (UTF-16LE chars) accepted. Real
+/// `SmartPlant` fixture texts are short labels (e.g. tag names);
+/// cap at 1024 chars to reject obvious noise.
+const IGTEXTBOX_MAX_TEXT_LENGTH: u16 = 1024;
+
 /// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
 ///
 /// Empirically validated against all three Sheet-bearing fixtures in
@@ -3005,6 +3023,189 @@ pub fn decode_igpoint_at(data: &[u8], offset: usize) -> Option<SheetIgPoint2dDec
         sub_type_word,
         index,
         point: (x, y),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 14 Slice M: PSM-encoded igTextBox decoder
+// ---------------------------------------------------------------------------
+
+/// One decoded PSM `igTextBox` record — Intergraph Sigma's
+/// standard text annotation primitive (PSM type `0x004D`, IGDS
+/// class tag `0x4D`).
+///
+/// **Byte layout** (revealed via fixture byte dump in
+/// `examples/probe_igtextbox_shape.rs`; total = 6-byte PSM header
+/// + `68 + text_length * 2`-byte payload):
+///
+/// ```text
+/// PSM header (6 bytes):
+///   0..1   u16   type_code = 0x004D
+///   2..5   u32   bytes_to_follow = 68 + text_length * 2
+///
+/// Payload (68 + text_length * 2 bytes):
+///   0..3    u32   oid
+///   4..7    u32   parent_ref
+///   8..11   u32   remaining_header
+///   12..13  u16   sub_type_word
+///   14..17  u32   index
+///   18..29  12 bytes  sub-fields (length flags + sub-index)
+///   30..31  u16   text_length (UTF-16LE chars, redundant with
+///                 bytes_to_follow-derived length)
+///   32..    UTF-16LE chars × text_length × 2 bytes
+///   then    24 bytes  3 × f64 (insertion point + scale or similar)
+///   then    12 bytes  trailer
+/// ```
+///
+/// Text content is decoded from UTF-16LE to a Rust `String`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgTextBoxDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_IGTEXTBOX`].
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header.
+    pub bytes_to_follow: u32,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / sub-oid.
+    pub index: u32,
+    /// Inline text length (UTF-16LE chars).
+    pub text_length: u16,
+    /// Decoded text content (lossy UTF-16LE → UTF-8 conversion).
+    pub text: String,
+    /// First trailing f64 triple (presumed `insertion.x`).
+    pub trailing_double_1: f64,
+    /// Second trailing f64 (`insertion.y`).
+    pub trailing_double_2: f64,
+    /// Third trailing f64 (often `1.0` — scale or marker).
+    pub trailing_double_3: f64,
+}
+
+/// Decode every PSM-encoded `igTextBox` record in a `Sheet*` stream.
+///
+/// Validation:
+/// 1. `type_code == 0x004D`;
+/// 2. `bytes_to_follow >= 68` and consistent `text_length`;
+/// 3. `(bytes_to_follow - 68) % 2 == 0` and the resulting derived
+///    `text_length` matches the inline `text_length` at payload
+///    offset 30;
+/// 4. `text_length <= 1024` (reject obvious noise);
+/// 5. 3 trailing doubles finite + in domain.
+pub fn decode_igtextboxes(data: &[u8]) -> Vec<SheetIgTextBoxDecoded> {
+    let mut out = Vec::new();
+    if data.len() < 6 + IGTEXTBOX_PAYLOAD_OVERHEAD {
+        return out;
+    }
+    let max_offset = data.len() - (6 + IGTEXTBOX_PAYLOAD_OVERHEAD);
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_igtextbox_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `igTextBox` record starting at
+/// `offset`. Returns `None` on validation failure.
+pub fn decode_igtextbox_at(data: &[u8], offset: usize) -> Option<SheetIgTextBoxDecoded> {
+    let header_end = offset.checked_add(6)?;
+    if header_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_IGTEXTBOX {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    let btf = bytes_to_follow as usize;
+    if btf < IGTEXTBOX_PAYLOAD_OVERHEAD {
+        return None;
+    }
+    if !(btf - IGTEXTBOX_PAYLOAD_OVERHEAD).is_multiple_of(2) {
+        return None;
+    }
+    let derived_text_len_words = ((btf - IGTEXTBOX_PAYLOAD_OVERHEAD) / 2) as u16;
+    if derived_text_len_words > IGTEXTBOX_MAX_TEXT_LENGTH {
+        return None;
+    }
+
+    let payload_end = header_end.checked_add(btf)?;
+    if payload_end > data.len() {
+        return None;
+    }
+    let payload = data.get(header_end..payload_end)?;
+
+    let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
+    let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
+    // Inline text_length at payload offset 30 (u16).
+    let inline_text_length = u16::from_le_bytes([payload[30], payload[31]]);
+    if inline_text_length != derived_text_len_words {
+        return None;
+    }
+
+    // UTF-16LE text starts at payload offset 32.
+    let text_byte_len = (inline_text_length as usize) * 2;
+    let text_end = 32 + text_byte_len;
+    if text_end + 36 > payload.len() {
+        return None;
+    }
+    let mut u16_chars = Vec::with_capacity(inline_text_length as usize);
+    for i in 0..inline_text_length as usize {
+        let pos = 32 + i * 2;
+        u16_chars.push(u16::from_le_bytes([payload[pos], payload[pos + 1]]));
+    }
+    let text = String::from_utf16_lossy(&u16_chars);
+
+    // 3 trailing doubles immediately after the text.
+    let mut trailing = [0f64; 3];
+    for (i, slot) in trailing.iter_mut().enumerate() {
+        let pos = text_end + i * 8;
+        let chunk = payload.get(pos..pos + 8)?;
+        *slot = f64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]);
+    }
+    if !trailing.iter().all(|x| x.is_finite()) {
+        return None;
+    }
+    if trailing
+        .iter()
+        .any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
+    {
+        return None;
+    }
+
+    Some(SheetIgTextBoxDecoded {
+        byte_range: offset..payload_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        parent_ref,
+        sub_type_word,
+        index,
+        text_length: inline_text_length,
+        text,
+        trailing_double_1: trailing[0],
+        trailing_double_2: trailing[1],
+        trailing_double_3: trailing[2],
     })
 }
 
@@ -4210,6 +4411,117 @@ mod tests {
         let _ = decode_igpoints(&noise);
         assert!(decode_igpoints(&vec![0u8; 4096]).is_empty());
         assert!(decode_igpoints(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 14 Slice M: PSM igTextBox decoder tests
+    // -----------------------------------------------------------------
+
+    fn build_synthetic_igtextbox_record(text: &str, oid: u32, parent_ref: u32) -> Vec<u8> {
+        let u16_chars: Vec<u16> = text.encode_utf16().collect();
+        let text_length = u16_chars.len() as u16;
+        let payload_len = IGTEXTBOX_PAYLOAD_OVERHEAD + u16_chars.len() * 2;
+        let mut out = Vec::with_capacity(6 + payload_len);
+        out.extend_from_slice(&PSM_TYPE_CODE_IGTEXTBOX.to_le_bytes());
+        out.extend_from_slice(&(payload_len as u32).to_le_bytes());
+        // Payload:
+        out.extend_from_slice(&oid.to_le_bytes()); // 0..4 oid
+        out.extend_from_slice(&parent_ref.to_le_bytes()); // 4..8 parent
+        out.extend_from_slice(&12u32.to_le_bytes()); // 8..12 remaining_header
+        out.extend_from_slice(&0x0010u16.to_le_bytes()); // 12..14 sub_type
+        out.extend_from_slice(&0u32.to_le_bytes()); // 14..18 index
+                                                    // 18..30: 12 bytes of sub-fields (we just zero them; decoder
+                                                    // doesn't validate these bytes).
+        out.extend_from_slice(&[0u8; 12]);
+        // 30..32: inline text_length.
+        out.extend_from_slice(&text_length.to_le_bytes());
+        // 32..32+text_length*2: UTF-16LE text.
+        for c in u16_chars {
+            out.extend_from_slice(&c.to_le_bytes());
+        }
+        // 36 bytes of trailing data (3 f64 + 12 bytes).
+        out.extend_from_slice(&0.5f64.to_le_bytes()); // ins.x
+        out.extend_from_slice(&0.5f64.to_le_bytes()); // ins.y
+        out.extend_from_slice(&1.0f64.to_le_bytes()); // scale
+        out.extend_from_slice(&[0u8; 12]); // trailer
+        out
+    }
+
+    #[test]
+    fn igtextbox_decodes_canonical_ascii_text() {
+        let record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+        let decoded = decode_igtextboxes(&record);
+        assert_eq!(decoded.len(), 1);
+        let t = &decoded[0];
+        assert_eq!(t.type_code, PSM_TYPE_CODE_IGTEXTBOX);
+        assert_eq!(t.oid, 100);
+        assert_eq!(t.parent_ref, 50);
+        assert_eq!(t.text_length, 8);
+        assert_eq!(t.text, "PUMP-101");
+        assert!((t.trailing_double_1 - 0.5).abs() < 1e-9);
+        assert!((t.trailing_double_2 - 0.5).abs() < 1e-9);
+        assert!((t.trailing_double_3 - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn igtextbox_decodes_chinese_unicode_text() {
+        let record = build_synthetic_igtextbox_record("流量计", 200, 100);
+        let decoded = decode_igtextboxes(&record);
+        assert_eq!(decoded.len(), 1);
+        let t = &decoded[0];
+        assert_eq!(t.text, "流量计");
+        assert_eq!(t.text_length, 3);
+    }
+
+    #[test]
+    fn igtextbox_rejects_wrong_type_code() {
+        let mut record = build_synthetic_igtextbox_record("X", 1, 1);
+        record[0] = 0x18;
+        record[1] = 0x00;
+        assert!(decode_igtextboxes(&record).is_empty());
+    }
+
+    #[test]
+    fn igtextbox_rejects_inconsistent_text_length() {
+        let mut record = build_synthetic_igtextbox_record("HELLO", 1, 1);
+        // Overwrite inline text_length at payload offset 30 (record offset 6+30=36).
+        record[36..38].copy_from_slice(&999u16.to_le_bytes());
+        assert!(decode_igtextboxes(&record).is_empty());
+    }
+
+    #[test]
+    fn igtextbox_rejects_zero_length_overhead_violation() {
+        // bytes_to_follow < 68 (constant overhead) is rejected.
+        let mut record = vec![];
+        record.extend_from_slice(&PSM_TYPE_CODE_IGTEXTBOX.to_le_bytes());
+        record.extend_from_slice(&50u32.to_le_bytes()); // way less than 68
+        record.extend_from_slice(&[0u8; 50]);
+        assert!(decode_igtextboxes(&record).is_empty());
+    }
+
+    #[test]
+    fn igtextbox_rejects_nan_trailing_double() {
+        let mut record = build_synthetic_igtextbox_record("ABC", 1, 1);
+        let text_end = 6 + 32 + 3 * 2; // record header + payload header + text
+        record[text_end..text_end + 8].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(decode_igtextboxes(&record).is_empty());
+    }
+
+    #[test]
+    fn igtextbox_decoder_is_panic_safe_on_short_input() {
+        let record = build_synthetic_igtextbox_record("X", 1, 1);
+        for trunc_len in 0..record.len() {
+            assert!(decode_igtextboxes(&record[..trunc_len]).is_empty());
+        }
+        assert!(decode_igtextboxes(&[]).is_empty());
+    }
+
+    #[test]
+    fn igtextbox_decoder_is_panic_safe_on_random_noise() {
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_igtextboxes(&noise);
+        assert!(decode_igtextboxes(&vec![0u8; 4096]).is_empty());
+        assert!(decode_igtextboxes(&vec![0xFFu8; 4096]).is_empty());
     }
 
     #[test]

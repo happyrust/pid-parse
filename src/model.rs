@@ -886,6 +886,13 @@ pub struct SheetGeometry {
     /// (Phase 14 Slice L).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igpoints: Vec<DecodedIgPoint2dRecord>,
+    /// PSM-decoded `igTextBox` records (PSM type `0x004D`, IGDS
+    /// class tag `0x4D`) — Intergraph Sigma's standard text
+    /// annotation primitive, emitted by
+    /// [`crate::parsers::sheet_records::decode_igtextboxes`]
+    /// (Phase 14 Slice M).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igtextboxes: Vec<DecodedIgTextBoxRecord>,
 }
 
 /// Stable, model-shaped DTO that mirrors
@@ -1248,6 +1255,62 @@ impl From<crate::parsers::sheet_records::SheetIgPoint2dDecoded> for DecodedIgPoi
             index: d.index,
             x: d.point.0,
             y: d.point.1,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgTextBoxDecoded`] —
+/// PSM type `0x004D` Intergraph Sigma standard text annotation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgTextBoxRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x004D`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header.
+    pub bytes_to_follow: u32,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / sub-oid.
+    pub index: u32,
+    /// Inline text length (UTF-16LE chars).
+    pub text_length: u16,
+    /// Decoded text (lossy UTF-16LE → UTF-8).
+    pub text: String,
+    /// First trailing f64 (insertion.x).
+    pub trailing_double_1: f64,
+    /// Second trailing f64 (insertion.y).
+    pub trailing_double_2: f64,
+    /// Third trailing f64 (often `1.0`, possibly scale).
+    pub trailing_double_3: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgTextBoxDecoded> for DecodedIgTextBoxRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgTextBoxDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            text_length: d.text_length,
+            text: d.text,
+            trailing_double_1: d.trailing_double_1,
+            trailing_double_2: d.trailing_double_2,
+            trailing_double_3: d.trailing_double_3,
         }
     }
 }

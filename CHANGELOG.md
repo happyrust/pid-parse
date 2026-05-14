@@ -2,6 +2,56 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice M：igTextBox (PSM 0x004D) decoder — Intergraph Sigma 标准文本注解落地
+
+第 7 个 IGDS 标准类 decoder。字节布局通过
+`examples/probe_igtextbox_shape.rs` 字节 dump 实测验证：
+
+```
+PSM 0x004D (igTextBox) record:
+PSM header (6 bytes):
+  0..1   u16   type_code = 0x004D
+  2..5   u32   bytes_to_follow = 68 + text_length × 2
+
+Payload (68 + text_length × 2 bytes):
+  0..3    u32   oid
+  4..7    u32   parent_ref
+  8..11   u32   remaining_header
+  12..13  u16   sub_type_word
+  14..17  u32   index
+  18..29  12 bytes sub-fields
+  30..31  u16   text_length (UTF-16LE chars)
+  32..    UTF-16LE chars × text_length × 2 bytes
+  then    36 bytes (3 × f64 insertion + scale + 12-byte trailer)
+```
+
+`SheetIgTextBoxDecoded` 含 `text: String` (UTF-16LE → UTF-8 转换)
++ `trailing_double_1/2/3` (insertion.xy + scale)。`geometry.rs` emit
+`PidGraphicKind::Text { insertion, value, height: 0.0, rotation: 0.0 }`
+with `confidence: Decoded` + `record_kind: TextPlacementStyle`。
+
+8 道 unit test 覆盖 (canonical ASCII / Chinese unicode / 拒错 type
+/ 拒不一致 text_length / 拒长度违约 / 拒 NaN / 截断 / 噪声)。
+
+跨 fixture 实测: **142 decoded texts** (DWG-0201:45 / DWG-0202:45 /
+工艺管道-1:43 / A01:9)，含真实标签如 `"LIA"`, `"LG"`, `"LIT"`,
+`"污水外运"` (Chinese), `" 060101"`。**Chinese UTF-16LE 完美解码**。
+
+**Phase 14 decoded geometry 累计跨 fixture (Slice M 后)**:
+
+| Decoder (Slice) | 跨 fixture 总 hits |
+|---|---|
+| GLine2d (D-E) | 3 |
+| GArc2d (F-I) | 48 |
+| igLine2d (J) | 284 |
+| igLineString2d (K) | 119 |
+| igPoint2d (L) | 146 |
+| **igTextBox (M)** | **142** |
+| **TOTAL** | **742** |
+
+(本会话起步 0 decoded geometry → 742 entities, 跨 7 个 PSM type
+families)
+
 ### Phase 14 Slice L：igPoint2d (PSM 0x005E) decoder — Intergraph Sigma 标准 point 落地
 
 继续 Slice J-K 模板复用，落地第 6 个 IGDS 标准类 decoder。**零 hypothesis**

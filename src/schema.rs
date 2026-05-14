@@ -152,6 +152,11 @@ mod tests {
             // Phase 14 Slice L: igPoint2d (PSM 0x005E) DTO.
             "DecodedIgPoint2dRecord",
             "decoded_igpoints",
+            // Phase 14 Slice M: igTextBox (PSM 0x004D) DTO.
+            "DecodedIgTextBoxRecord",
+            "decoded_igtextboxes",
+            "text_length",
+            "trailing_double_1",
         ] {
             assert!(
                 text.contains(needle),
