@@ -183,21 +183,62 @@ v6[3] = _mm_loadu_si128((const __m128i *)(a2 + 48));   // bytes 48..63
 // 同时检查 *(double *)(a2 + 56) 和 *(double *)(a2 + 48) 是否 NaN
 ```
 
-**推测字段表**（Intergraph Sigma 椭圆弧表示）：
+**初版推测字段表**（Slice F 落地时使用，几何语义部分错位待修）：
 
-| Offset | Type | Field | 含义（推测） |
+| Offset | Type | 字段 (decoder DTO 字段名) | 早期语义 (待修) |
 |---|---|---|---|
-| 0..7 | f64 LE | `center.x` | 弧心 X |
-| 8..15 | f64 LE | `center.y` | 弧心 Y |
-| 16..23 | f64 LE | `axis1.x` | 主轴向量 X |
-| 24..31 | f64 LE | `axis1.y` | 主轴向量 Y |
-| 32..39 | f64 LE | `axis2.x` | 次轴向量 X (椭圆用，圆退化为 0) |
-| 40..47 | f64 LE | `axis2.y` | 次轴向量 Y |
-| 48..55 | f64 LE | `param_start` | 起始角 / 参数 |
-| 56..63 | f64 LE | `param_end` | 终止角 / 参数 |
+| 0..7 | f64 LE | `center.x` | 弧心 X ✓ |
+| 8..15 | f64 LE | `center.y` | 弧心 Y ✓ |
+| 16..23 | f64 LE | `axis1.x` | 推测主轴 X (实际可能 = 单一 radius，待证) |
+| 24..31 | f64 LE | `axis1.y` | 推测主轴 Y (实测 = π/2/π/3π/2 异常值，应为 rotation 或别字段) |
+| 32..39 | f64 LE | `axis2.x` | 推测次轴 X (`sub_56524280` 揭示是 angle，用于 `sin/cos`) |
+| 40..47 | f64 LE | `axis2.y` | 推测次轴 Y (`sub_56524280` 揭示 byte 40 是 BYTE form，41..47 是 padding) |
+| 48..55 | f64 LE | `param_start` | 起始角 / 参数 (待证) |
+| 56..63 | f64 LE | `param_end` | 终止角 / 参数 (待证) |
 
-`a2+48` 和 `a2+56` 的 NaN 检查印证 `param_start` 和 `param_end` 在
-offsets 48 和 56。8 个 doubles 共 64 字节。
+**`sub_56524280` 反编译揭示语义错位**（@ `0x56524280`，
+`GArc2d::Validate` 内部辅助）：
+
+```c
+// NaN check 跳过 a2+24 (skip d[3])，直接到 a2+32 = angle:
+if (NaN(a2[0]) || NaN(a2[8]) || NaN(a2[16]) ||
+    NaN(a2[24]) || NaN(a2[32])) goto fail;
+
+v14 = sub_5644E160(a2 + 16);  // sqrt 操作 (sub_5644E160 调
+                              // libm_sse2_sqrt_precise) — 可能是
+                              // sqrt(a2[16..23]) 或 sqrt(a²+b²)，
+                              // 行为有歧义
+v9 = *(double *)(a2 + 32) * v8;  // angle * radius 计算弧长
+if (*(_BYTE *)(a2 + 40) > 1u) {  // BYTE form (0/1) 检查
+    *a3 |= 0x10000000u;
+}
+```
+
+**结论**：
+
+- `a2+32` 是 **angle (rad)**，被 `sub_5658F950` 经 `sin/cos` 计算弧长
+- `a2+40` 是 **BYTE form flag** (`0` or `1`)，不是 double 的高字节
+- `a2+16..31` 16 字节可能是 (`radius`, `radius_secondary`) 或 (`axis_a.x`, `axis_a.y`) 向量
+- `a2+48`, `a2+56` 是真正的两个 doubles (param/end_angle/sweep)
+
+实测 axis1.y 多次出现 π/2 / π / 3π/2 (DWG-0202 多个 hits) 印证
+`a2+24..31` 不是简单几何向量分量，更可能是 **rotation angle**。
+
+**decoder 现状**：`SheetPrimitiveArcDecoded` 字段命名 (`axis1.x/y`,
+`axis2.x/y`) 是 Slice F 早期推测，**语义未必正确**，但 decoder
+本身是 conservative 验证 (all finite + magnitude in domain + param
+sorted)，正常 fixture record 通过率高，**byte-level 不需要修改**。
+未来 milestone 重命名字段为 `radius` / `rotation` / `start_angle` /
+`form_flag` / `end_angle` 等更准确的语义后，`SheetPrimitiveArcDecoded`
+DTO 与 `geometry.rs::build_normalized_geometry` 的 `radius =
+|axis1|` mapping 都需联动更新。
+
+**`sub_5658F950` 反编译辅助证据**（@ `0x5658F950`）：
+
+- 调 `libm_sse2_sin_precise` 计算 sin (角度运算)
+- 错误字符串 `"IMAr3dAr2d"` (Intergraph IMA Ar3d/Ar2d 库标识)
+- `v13` 通过 `sub_564E0D90` 获取 (推测 sweep angle)
+- 弧长公式 `(v13 * v7) / (2 * sin(...))` —— 弧长 = chord / (2*sin(α/2)) 的标准弦长公式
 
 ### GLineString2d 内存布局（已反编译，磁盘格式待证）
 
