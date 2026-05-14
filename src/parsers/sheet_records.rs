@@ -1919,6 +1919,30 @@ pub const IGLINE2D_PAYLOAD_LEN: usize = 50;
 /// doesn't equal 12 are rejected as not real `igLine2d`.
 const IGLINE2D_REMAINING_HEADER: u32 = 12;
 
+/// PSM type code that identifies a standard Intergraph Sigma
+/// `igLineString2d` (polyline) record on disk.
+///
+/// Equals the IGDS class tag for `igLineString2d` (`0x84 = 132`).
+/// The fixture histogram surfaces 131 cross-fixture hits — the
+/// canonical polyline representation in `SmartPlant` `Sheet*`
+/// streams.
+pub const PSM_TYPE_CODE_IGLINESTRING2D: u16 = 0x0084;
+
+/// Minimum byte length of one PSM `igLineString2d` payload: 18
+/// bytes sub-header + 4 (`vertex_count`) + 2 (`form` + `scope`) +
+/// `vertex_count × 16` (vertices). With `vertex_count >= 2`, the
+/// minimum is `24 + 2 * 16 = 56` bytes.
+pub const IGLINESTRING2D_MIN_PAYLOAD_LEN: usize = 24 + 2 * 16;
+
+/// Maximum vertex count we'll accept on a decoded `igLineString2d`.
+/// Real fixtures have ≤ 10; capping at 10,000 catches both
+/// legitimate worst-case usage and obvious noise.
+const IGLINESTRING2D_MAX_VERTEX_COUNT: u32 = 10_000;
+
+/// `form` byte upper bound from `GLineString2d::Validate` (memory
+/// layout `*(_BYTE *)(a2 + 8)`): `form <= 6`.
+const IGLINESTRING2D_FORM_MAX: u8 = 6;
+
 /// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
 ///
 /// Empirically validated against all three Sheet-bearing fixtures in
@@ -2593,6 +2617,242 @@ pub fn decode_igline_at(data: &[u8], offset: usize) -> Option<SheetIgLine2dDecod
         index,
         start,
         end,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 14 Slice K: PSM-encoded igLineString2d (polyline) decoder
+// ---------------------------------------------------------------------------
+
+/// One decoded PSM `igLineString2d` record — Intergraph Sigma's
+/// standard 2D polyline primitive (PSM type `0x0084`, IGDS class
+/// tag `0x84`).
+///
+/// **Byte layout** (fully revealed via fixture byte dump in
+/// `examples/probe_iglinestring2d_shape.rs`; total
+/// `6 + 24 + vc*16` bytes where `vc = vertex_count`):
+///
+/// ```text
+/// PSM header (6 bytes):
+///   0..1   u16 LE   type_code = 0x0084
+///   2..5   u32 LE   bytes_to_follow = 24 + vc * 16
+///
+/// Payload (24 + vc * 16 bytes):
+///   0..3   u32 LE   oid
+///   4..7   u32 LE   parent_ref
+///   8..11  u32 LE   remaining_header (variable: 0x08, 0x0C, 0x11)
+///   12..13 u16 LE   sub_type_word
+///   14..17 u32 LE   index
+///   18..21 u32 LE   vertex_count (>= 2)
+///   22     u8       form  (0..=6)
+///   23     u8       scope (0..=4 or == 6)
+///   24..   vc × 16 bytes  (f64 LE x, f64 LE y) per vertex
+/// ```
+///
+/// Each polyline has at least 2 vertices. `form` / `scope` byte
+/// upper bounds come from `radsrvitem.dll!sub_56524DD0`
+/// (`GLineString2d::Validate`) decompile.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgLineString2dDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always
+    /// [`PSM_TYPE_CODE_IGLINESTRING2D`] (`0x0084`).
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header (`= 24 + vc*16`).
+    pub bytes_to_follow: u32,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Sub-type discriminator at payload bytes 12..13.
+    pub sub_type_word: u16,
+    /// Index / sub-oid at payload bytes 14..17.
+    pub index: u32,
+    /// `form` byte (memory-layout `*(_BYTE *)(a2 + 8)`, 0..=6).
+    pub form: u8,
+    /// `scope` byte (memory-layout `*(_BYTE *)(a2 + 9)`, 0..=4 or
+    /// `== 6`).
+    pub scope: u8,
+    /// Polyline vertices in source order.
+    pub vertices: Vec<(f64, f64)>,
+}
+
+impl SheetIgLineString2dDecoded {
+    /// Number of vertices in this polyline (`= self.vertices.len()`).
+    pub fn vertex_count(&self) -> usize {
+        self.vertices.len()
+    }
+
+    /// Cumulative polyline length (sum of segment lengths).
+    pub fn total_length(&self) -> f64 {
+        self.vertices
+            .windows(2)
+            .map(|w| {
+                let dx = w[1].0 - w[0].0;
+                let dy = w[1].1 - w[0].1;
+                (dx * dx + dy * dy).sqrt()
+            })
+            .sum()
+    }
+}
+
+/// Decode every PSM-encoded `igLineString2d` record in a `Sheet*`
+/// stream's bytes.
+///
+/// Walk every byte offset and verify:
+///
+/// 1. PSM `type_code` == [`PSM_TYPE_CODE_IGLINESTRING2D`];
+/// 2. `bytes_to_follow >= IGLINESTRING2D_MIN_PAYLOAD_LEN` (56);
+/// 3. `(bytes_to_follow - 24) % 16 == 0` (vertex bytes evenly
+///    divisible);
+/// 4. `vertex_count = (bytes_to_follow - 24) / 16` and the inline
+///    `vertex_count` field at payload offset 18 match;
+/// 5. `vertex_count` in `[2, IGLINESTRING2D_MAX_VERTEX_COUNT]`;
+/// 6. `form <= 6`;
+/// 7. `scope <= 4` or `scope == 6`;
+/// 8. All vertex coordinates finite and in domain `[-1e9, 1e9]`;
+/// 9. Not all vertices identical (non-degenerate polyline).
+pub fn decode_iglinestrings(data: &[u8]) -> Vec<SheetIgLineString2dDecoded> {
+    let mut out = Vec::new();
+    if data.len() < 6 + IGLINESTRING2D_MIN_PAYLOAD_LEN {
+        return out;
+    }
+    let max_offset = data.len() - (6 + IGLINESTRING2D_MIN_PAYLOAD_LEN);
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_iglinestring_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `igLineString2d` record starting at
+/// `offset`. Returns `None` when any validation rule in
+/// [`decode_iglinestrings`] fails. Bounds-checked and panic-free.
+pub fn decode_iglinestring_at(data: &[u8], offset: usize) -> Option<SheetIgLineString2dDecoded> {
+    let header_end = offset.checked_add(6)?;
+    if header_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_IGLINESTRING2D {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    let btf = bytes_to_follow as usize;
+    if btf < IGLINESTRING2D_MIN_PAYLOAD_LEN {
+        return None;
+    }
+    if !(btf - 24).is_multiple_of(16) {
+        return None;
+    }
+    let computed_vc = ((btf - 24) / 16) as u32;
+    if !(2..=IGLINESTRING2D_MAX_VERTEX_COUNT).contains(&computed_vc) {
+        return None;
+    }
+
+    let payload_end = header_end.checked_add(btf)?;
+    if payload_end > data.len() {
+        return None;
+    }
+    let payload = data.get(header_end..payload_end)?;
+
+    let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    // remaining_header at +8..11 — variable across records, not validated
+    // strictly; rejected only if absurdly large.
+    let remaining_header = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
+    if remaining_header > 0xFFFF {
+        return None;
+    }
+    let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
+    let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
+    let inline_vc = u32::from_le_bytes([payload[18], payload[19], payload[20], payload[21]]);
+    if inline_vc != computed_vc {
+        return None;
+    }
+    let form = payload[22];
+    let scope = payload[23];
+    if form > IGLINESTRING2D_FORM_MAX {
+        return None;
+    }
+    if scope > 4 && scope != 6 {
+        return None;
+    }
+
+    // Parse vertices.
+    let mut vertices = Vec::with_capacity(computed_vc as usize);
+    let mut all_same = true;
+    let first_coord = (
+        f64::from_le_bytes([
+            payload[24],
+            payload[25],
+            payload[26],
+            payload[27],
+            payload[28],
+            payload[29],
+            payload[30],
+            payload[31],
+        ]),
+        f64::from_le_bytes([
+            payload[32],
+            payload[33],
+            payload[34],
+            payload[35],
+            payload[36],
+            payload[37],
+            payload[38],
+            payload[39],
+        ]),
+    );
+    for i in 0..computed_vc as usize {
+        let pos = 24 + i * 16;
+        let chunk = payload.get(pos..pos + 16)?;
+        let x = f64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]);
+        let y = f64::from_le_bytes([
+            chunk[8], chunk[9], chunk[10], chunk[11], chunk[12], chunk[13], chunk[14], chunk[15],
+        ]);
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        if x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT || y.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+            return None;
+        }
+        if i > 0 && ((x - first_coord.0).abs() > 1e-12 || (y - first_coord.1).abs() > 1e-12) {
+            all_same = false;
+        }
+        vertices.push((x, y));
+    }
+    // Reject degenerate (all-vertex-identical) polyline.
+    if all_same {
+        return None;
+    }
+
+    Some(SheetIgLineString2dDecoded {
+        byte_range: offset..payload_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        parent_ref,
+        sub_type_word,
+        index,
+        form,
+        scope,
+        vertices,
     })
 }
 
@@ -3474,6 +3734,249 @@ mod tests {
         assert_eq!(decoded[0].sub_type_word, 0x10);
         assert_eq!(decoded[1].sub_type_word, 0x65);
         assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 14 Slice K: PSM igLineString2d (polyline) decoder tests
+    // -----------------------------------------------------------------
+
+    /// Build a synthetic `igLineString2d` record with the given
+    /// vertex list. Total = 6 PSM header + 24 sub-header + vc*16.
+    #[allow(clippy::too_many_arguments)]
+    fn build_synthetic_iglinestring2d_record(
+        oid: u32,
+        parent_ref: u32,
+        remaining_header: u32,
+        sub_type_word: u16,
+        index: u32,
+        form: u8,
+        scope: u8,
+        vertices: &[(f64, f64)],
+    ) -> Vec<u8> {
+        let vc = vertices.len() as u32;
+        let payload_len = 24 + vertices.len() * 16;
+        let mut out = Vec::with_capacity(6 + payload_len);
+        out.extend_from_slice(&PSM_TYPE_CODE_IGLINESTRING2D.to_le_bytes());
+        out.extend_from_slice(&(payload_len as u32).to_le_bytes());
+        out.extend_from_slice(&oid.to_le_bytes());
+        out.extend_from_slice(&parent_ref.to_le_bytes());
+        out.extend_from_slice(&remaining_header.to_le_bytes());
+        out.extend_from_slice(&sub_type_word.to_le_bytes());
+        out.extend_from_slice(&index.to_le_bytes());
+        out.extend_from_slice(&vc.to_le_bytes());
+        out.push(form);
+        out.push(scope);
+        for (x, y) in vertices {
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn iglinestring2d_decodes_canonical_two_vertex_polyline() {
+        let record = build_synthetic_iglinestring2d_record(
+            494,
+            482,
+            0x11,
+            0x0010,
+            1,
+            1,
+            2,
+            &[(0.1, 0.2), (0.3, 0.4)],
+        );
+        let decoded = decode_iglinestrings(&record);
+        assert_eq!(decoded.len(), 1);
+        let pl = &decoded[0];
+        assert_eq!(pl.type_code, PSM_TYPE_CODE_IGLINESTRING2D);
+        assert_eq!(pl.bytes_to_follow, 56);
+        assert_eq!(pl.oid, 494);
+        assert_eq!(pl.parent_ref, 482);
+        assert_eq!(pl.sub_type_word, 0x0010);
+        assert_eq!(pl.index, 1);
+        assert_eq!(pl.form, 1);
+        assert_eq!(pl.scope, 2);
+        assert_eq!(pl.vertex_count(), 2);
+        assert_eq!(pl.vertices[0], (0.1, 0.2));
+        assert_eq!(pl.vertices[1], (0.3, 0.4));
+        assert!((pl.total_length() - (0.2_f64.hypot(0.2))).abs() < 1e-9);
+    }
+
+    #[test]
+    fn iglinestring2d_decodes_three_vertex_polyline() {
+        let record = build_synthetic_iglinestring2d_record(
+            275,
+            417,
+            0x08,
+            0x0010,
+            30,
+            1,
+            1,
+            &[(0.0, 0.0), (0.1, 0.0), (0.1, 0.1)],
+        );
+        let decoded = decode_iglinestrings(&record);
+        assert_eq!(decoded.len(), 1);
+        let pl = &decoded[0];
+        assert_eq!(pl.vertex_count(), 3);
+        assert_eq!(pl.bytes_to_follow, 24 + 3 * 16);
+        // Total length: 0.1 + 0.1 = 0.2.
+        assert!((pl.total_length() - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn iglinestring2d_rejects_wrong_type_code() {
+        let mut record = build_synthetic_iglinestring2d_record(
+            1,
+            1,
+            0x11,
+            0x10,
+            0,
+            1,
+            1,
+            &[(0.0, 0.0), (1.0, 1.0)],
+        );
+        record[0] = 0x18; // make it look like igLine2d
+        record[1] = 0x00;
+        assert!(decode_iglinestrings(&record).is_empty());
+    }
+
+    #[test]
+    fn iglinestring2d_rejects_inconsistent_vertex_count() {
+        let mut record = build_synthetic_iglinestring2d_record(
+            1,
+            1,
+            0x11,
+            0x10,
+            0,
+            1,
+            1,
+            &[(0.0, 0.0), (1.0, 1.0)],
+        );
+        // Overwrite inline vc at payload offset 18 (= record offset 24).
+        record[24..28].copy_from_slice(&5u32.to_le_bytes());
+        assert!(decode_iglinestrings(&record).is_empty());
+    }
+
+    #[test]
+    fn iglinestring2d_rejects_form_out_of_range() {
+        let record = build_synthetic_iglinestring2d_record(
+            1,
+            1,
+            0x11,
+            0x10,
+            0,
+            7,
+            1,
+            &[(0.0, 0.0), (1.0, 1.0)],
+        );
+        assert!(decode_iglinestrings(&record).is_empty());
+    }
+
+    #[test]
+    fn iglinestring2d_rejects_scope_out_of_range() {
+        let record = build_synthetic_iglinestring2d_record(
+            1,
+            1,
+            0x11,
+            0x10,
+            0,
+            1,
+            5, // invalid: > 4 and != 6
+            &[(0.0, 0.0), (1.0, 1.0)],
+        );
+        assert!(decode_iglinestrings(&record).is_empty());
+    }
+
+    #[test]
+    fn iglinestring2d_accepts_scope_6() {
+        let record = build_synthetic_iglinestring2d_record(
+            1,
+            1,
+            0x11,
+            0x10,
+            0,
+            1,
+            6, // accepted special case
+            &[(0.0, 0.0), (1.0, 1.0)],
+        );
+        assert_eq!(decode_iglinestrings(&record).len(), 1);
+    }
+
+    #[test]
+    fn iglinestring2d_rejects_single_vertex_polyline() {
+        // Vertex count = 1 is invalid (GLineString2d::Validate
+        // requires >= 2).
+        let mut record = vec![];
+        record.extend_from_slice(&PSM_TYPE_CODE_IGLINESTRING2D.to_le_bytes());
+        record.extend_from_slice(&(24u32 + 16).to_le_bytes());
+        record.extend_from_slice(&[0u8; 18]);
+        record.extend_from_slice(&1u32.to_le_bytes()); // vc=1
+        record.push(1); // form
+        record.push(1); // scope
+        record.extend_from_slice(&0.5f64.to_le_bytes());
+        record.extend_from_slice(&0.5f64.to_le_bytes());
+        assert!(decode_iglinestrings(&record).is_empty());
+    }
+
+    #[test]
+    fn iglinestring2d_rejects_degenerate_all_same_vertices() {
+        let record = build_synthetic_iglinestring2d_record(
+            1,
+            1,
+            0x11,
+            0x10,
+            0,
+            1,
+            1,
+            &[(0.5, 0.5), (0.5, 0.5)],
+        );
+        assert!(decode_iglinestrings(&record).is_empty());
+    }
+
+    #[test]
+    fn iglinestring2d_rejects_nan_vertex() {
+        let mut record = build_synthetic_iglinestring2d_record(
+            1,
+            1,
+            0x11,
+            0x10,
+            0,
+            1,
+            1,
+            &[(0.0, 0.0), (1.0, 1.0)],
+        );
+        // First vertex.x at record offset 6 + 24 = 30.
+        record[30..38].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(decode_iglinestrings(&record).is_empty());
+    }
+
+    #[test]
+    fn iglinestring2d_decoder_is_panic_safe_on_short_input() {
+        let record = build_synthetic_iglinestring2d_record(
+            1,
+            1,
+            0x11,
+            0x10,
+            0,
+            1,
+            1,
+            &[(0.0, 0.0), (1.0, 1.0)],
+        );
+        for trunc_len in 0..record.len() {
+            assert!(
+                decode_iglinestrings(&record[..trunc_len]).is_empty(),
+                "truncated input length {trunc_len} must not decode"
+            );
+        }
+        assert!(decode_iglinestrings(&[]).is_empty());
+    }
+
+    #[test]
+    fn iglinestring2d_decoder_is_panic_safe_on_random_noise() {
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_iglinestrings(&noise);
+        assert!(decode_iglinestrings(&vec![0u8; 4096]).is_empty());
+        assert!(decode_iglinestrings(&vec![0xFFu8; 4096]).is_empty());
     }
 
     #[test]

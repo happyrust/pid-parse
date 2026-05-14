@@ -872,6 +872,13 @@ pub struct SheetGeometry {
     /// fixtures (Phase 14 Slice J).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_iglines: Vec<DecodedIgLine2dRecord>,
+    /// PSM-decoded `igLineString2d` records (PSM type `0x0084`,
+    /// IGDS class tag `0x84`) — Intergraph Sigma's standard 2D
+    /// polyline primitive, emitted by
+    /// [`crate::parsers::sheet_records::decode_iglinestrings`]
+    /// (Phase 14 Slice K).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_iglinestrings: Vec<DecodedIgLineString2dRecord>,
 }
 
 /// Stable, model-shaped DTO that mirrors
@@ -1112,6 +1119,82 @@ impl DecodedIgLine2dRecord {
         let dx = self.end_x - self.start_x;
         let dy = self.end_y - self.start_y;
         (dx * dx + dy * dy).sqrt()
+    }
+}
+
+/// Stable, model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgLineString2dDecoded`]
+/// — PSM type `0x0084` polyline. See
+/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
+/// for the full byte layout.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgLineString2dRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x0084`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header.
+    pub bytes_to_follow: u32,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / sub-oid.
+    pub index: u32,
+    /// `form` byte from the payload (0..=6).
+    pub form: u8,
+    /// `scope` byte from the payload (0..=4 or `== 6`).
+    pub scope: u8,
+    /// Polyline vertex `x` coordinates in source order.
+    pub vertex_xs: Vec<f64>,
+    /// Polyline vertex `y` coordinates in source order.
+    pub vertex_ys: Vec<f64>,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgLineString2dDecoded>
+    for DecodedIgLineString2dRecord
+{
+    fn from(d: crate::parsers::sheet_records::SheetIgLineString2dDecoded) -> Self {
+        let (vertex_xs, vertex_ys) = d.vertices.into_iter().unzip();
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            form: d.form,
+            scope: d.scope,
+            vertex_xs,
+            vertex_ys,
+        }
+    }
+}
+
+impl DecodedIgLineString2dRecord {
+    /// Number of vertices in this polyline.
+    pub fn vertex_count(&self) -> usize {
+        self.vertex_xs.len()
+    }
+
+    /// Cumulative polyline length.
+    pub fn total_length(&self) -> f64 {
+        let mut total = 0.0;
+        for i in 1..self.vertex_xs.len() {
+            let dx = self.vertex_xs[i] - self.vertex_xs[i - 1];
+            let dy = self.vertex_ys[i] - self.vertex_ys[i - 1];
+            total += (dx * dx + dy * dy).sqrt();
+        }
+        total
     }
 }
 

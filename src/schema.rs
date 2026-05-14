@@ -144,6 +144,11 @@ mod tests {
             "sub_type_word",
             "start_x",
             "end_x",
+            // Phase 14 Slice K: igLineString2d (PSM 0x0084) polyline DTO.
+            "DecodedIgLineString2dRecord",
+            "decoded_iglinestrings",
+            "vertex_xs",
+            "vertex_ys",
         ] {
             assert!(
                 text.contains(needle),

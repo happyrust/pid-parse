@@ -707,6 +707,7 @@ mod tests {
                 decoded_primitive_lines: vec![],
                 decoded_primitive_arcs: vec![],
                 decoded_iglines: vec![],
+                decoded_iglinestrings: vec![],
             }),
             endpoint_records: vec![SheetEndpointRecord {
                 sheet_path: "/Sheet6".into(),

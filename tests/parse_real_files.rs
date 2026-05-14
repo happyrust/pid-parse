@@ -11,12 +11,12 @@ use pid_parse::{
     },
     parsers::sheet_records::{
         coordinate_page_metadata_investigation_report, curve_primitive_investigation_report,
-        decode_iglines, decode_primitive_arcs, decode_primitive_lines,
+        decode_iglines, decode_iglinestrings, decode_primitive_arcs, decode_primitive_lines,
         primitive_line_investigation_report, sheet_record_shape_inventory,
         symbol_placement_investigation_report, text_placement_investigation_report,
         SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
         SheetRecordShapeKind, SheetSymbolPlacementObject, PSM_TYPE_CODE_GARC2D,
-        PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_IGLINE2D,
+        PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D,
     },
     PidParser,
 };
@@ -1532,15 +1532,20 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 .geometry
                 .as_ref()
                 .map_or(0, |geometry| geometry.decoded_iglines.len());
+            let decoded_iglinestring_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.decoded_iglinestrings.len());
             let total = text_count
                 + coordinate_count
                 + endpoint_count
                 + hint_count
                 + decoded_line_count
                 + decoded_arc_count
-                + decoded_igline_count;
+                + decoded_igline_count
+                + decoded_iglinestring_count;
             eprintln!(
-                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_arc={decoded_arc_count}, decoded_igline={decoded_igline_count}, total={total}",
+                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_arc={decoded_arc_count}, decoded_igline={decoded_igline_count}, decoded_iglinestring={decoded_iglinestring_count}, total={total}",
                 sheet.path
             );
             total
@@ -1584,13 +1589,12 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Unknown { .. })
         })
         .count();
-    // Phase 14 Slice E/G/J: PSM-decoded `GLine2d` / `GArc2d` /
-    // `igLine2d` records produce `PidGeometryConfidence::Decoded`
-    // `PidGraphicKind::Line` / `Arc` entities. They are additive
-    // to the inferred-points + inferred-lines + probe-unknowns
-    // total below. (`igLine2d` records emit as `Line` kind, just
-    // like `GLine2d` — the distinction is in `record_kind` /
-    // `note`.)
+    // Phase 14 Slice E/G/J/K: PSM-decoded `GLine2d` / `GArc2d` /
+    // `igLine2d` / `igLineString2d` records produce
+    // `PidGeometryConfidence::Decoded` `PidGraphicKind::Line` /
+    // `Arc` / `Polyline` entities. They are additive to the
+    // inferred-points + inferred-lines + probe-unknowns total
+    // below.
     let decoded_lines = geometry
         .entities
         .iter()
@@ -1605,6 +1609,14 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         .filter(|entity| {
             entity.confidence == pid_parse::PidGeometryConfidence::Decoded
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Arc { .. })
+        })
+        .count();
+    let decoded_polylines = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Polyline { .. })
         })
         .count();
     let expected_coordinate_hints: usize = doc
@@ -1675,35 +1687,45 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         "endpoint pairs with both endpoints promoted should become inferred lines"
     );
     assert_eq!(
-        inferred_points + inferred_lines + probe_unknowns + decoded_lines + decoded_arcs,
+        inferred_points
+            + inferred_lines
+            + probe_unknowns
+            + decoded_lines
+            + decoded_arcs
+            + decoded_polylines,
         geometry.entities.len(),
-        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d / GArc2d records become decoded lines / arcs; remaining text and endpoint evidence stays ProbeOnly Unknown"
+        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d/igLine2d records become decoded lines; GArc2d records become decoded arcs; igLineString2d records become decoded polylines; remaining text and endpoint evidence stays ProbeOnly Unknown"
     );
-    // Phase 14 Slice E/G: `PidGeometryConfidence::Decoded` is
-    // legitimate for PSM-decoded `GLine2d` `PrimitiveLine` and
-    // `GArc2d` `PrimitiveArc` records. All other (Point / Polyline
-    // / Circle / Text / SymbolInstance / Unknown) entities must
-    // still not claim Decoded confidence.
+    // Phase 14 Slice E/G/J/K: `PidGeometryConfidence::Decoded` is
+    // legitimate for PSM-decoded `GLine2d` / `igLine2d` /
+    // `GArc2d` / `igLineString2d` records (Line / Arc / Polyline
+    // kinds). Other kinds (Point / Circle / Text / SymbolInstance
+    // / Unknown) must still not claim Decoded confidence.
     assert!(
         geometry.entities.iter().all(|entity| {
             entity.confidence != pid_parse::PidGeometryConfidence::Decoded
                 || matches!(
                     entity.kind,
-                    pid_parse::PidGraphicKind::Line { .. } | pid_parse::PidGraphicKind::Arc { .. }
+                    pid_parse::PidGraphicKind::Line { .. }
+                        | pid_parse::PidGraphicKind::Arc { .. }
+                        | pid_parse::PidGraphicKind::Polyline { .. }
                 )
         }),
-        "Decoded confidence currently only applies to PSM GLine2d / GArc2d entities"
+        "Decoded confidence currently only applies to PSM GLine2d / igLine2d / GArc2d / igLineString2d entities"
     );
-    // Phase 14 Slice G: `PidGraphicKind::Arc` is now legitimate
-    // when backed by a PSM-decoded `GArc2d` record (i.e.
-    // `confidence == Decoded`). The other typed curve / text /
-    // symbol kinds still cannot be emitted without decoded record
-    // backing.
+    // Phase 14 Slice G/K: `PidGraphicKind::Arc` (Slice G) and
+    // `Polyline` (Slice K) are now legitimate when backed by a
+    // PSM-decoded record (i.e. `confidence == Decoded`). Other
+    // typed curve / text / symbol kinds still cannot be emitted
+    // without decoded record backing.
     assert!(
         geometry.entities.iter().all(|entity| {
-            let arc_allowed = matches!(entity.kind, pid_parse::PidGraphicKind::Arc { .. })
-                && entity.confidence == pid_parse::PidGeometryConfidence::Decoded;
-            arc_allowed
+            let typed_decoded = matches!(
+                entity.kind,
+                pid_parse::PidGraphicKind::Arc { .. }
+                    | pid_parse::PidGraphicKind::Polyline { .. }
+            ) && entity.confidence == pid_parse::PidGeometryConfidence::Decoded;
+            typed_decoded
                 || !matches!(
                     entity.kind,
                     pid_parse::PidGraphicKind::Polyline { .. }
@@ -1713,7 +1735,7 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                         | pid_parse::PidGraphicKind::SymbolInstance { .. }
                 )
         }),
-        "probe-only and hint evidence must not become typed text/symbol/curve geometry without decoded records (Arc is the exception for PSM GArc2d-decoded records)"
+        "probe-only and hint evidence must not become typed text/symbol/curve geometry without decoded records (Arc/Polyline are the exception for PSM-decoded records)"
     );
     for entity in geometry.entities.iter().filter(|entity| {
         entity.confidence == pid_parse::PidGeometryConfidence::Inferred
@@ -4123,16 +4145,14 @@ fn curve_primitive_investigation_reports_unsupported_curve_candidates() {
     // The curve primitive **investigation** layer itself never
     // promotes decoded geometry — its output is always
     // `probe_only_no_curve_geometry_promotion`. Decoded curves are
-    // emitted by a separate PSM decoder family (`decode_primitive_arcs`,
-    // future `decode_primitive_polylines` etc.) and surface
-    // through `SheetGeometry::decoded_primitive_*` fields and
-    // `build_normalized_geometry`. Phase 14 Slice G allows
-    // `decoded_arcs > 0`; polylines / circles remain at zero
-    // until their own decoders ship.
+    // emitted by a separate PSM decoder family (`decode_primitive_arcs`
+    // Slice F/G, `decode_iglinestrings` Slice K) and surface
+    // through `SheetGeometry::decoded_primitive_*` /
+    // `decoded_iglinestrings` fields and `build_normalized_geometry`.
+    // Circles still don't have their own decoder; assert zero.
     assert_eq!(
-        normalized.decoded_polylines + normalized.decoded_circles,
-        0,
-        "curve primitive investigation must not promote decoded polyline / circle geometry"
+        normalized.decoded_circles, 0,
+        "curve primitive investigation must not promote decoded circle geometry"
     );
     assert!(
         curve_report.groups.iter().all(|group| {
@@ -6308,6 +6328,92 @@ fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
         "decode_primitive_lines must emit at least one decoded line on the \
         Sheet-bearing fixture set, got {total_decoded}. \
         Per-fixture summary: {per_fixture_summary:?}"
+    );
+}
+
+/// Phase 14 Slice K: cross-fixture validation that
+/// `decode_iglinestrings` actually emits decoded Intergraph Sigma
+/// `igLineString2d` polylines (PSM type `0x0084`) from real
+/// `Sheet*` streams.
+///
+/// Empirical baselines from
+/// `examples/probe_iglinestring2d_shape.rs`: DWG-0201:0,
+/// DWG-0202:32+, 工艺管道-1:57+, A01:3. After decoder validation
+/// (vertex_count >= 2, form/scope constraints, finite non-degenerate
+/// coords), at least 30 records should survive cross-fixture.
+#[test]
+fn iglinestrings_decoder_emits_decoded_polylines_with_provenance() {
+    let fixtures = [
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+        "export-test/publish-data/A01/A01.pid",
+    ];
+    let mut total_decoded = 0usize;
+    let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
+    let mut sample_lines: Vec<String> = Vec::new();
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture_count = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let bytes = raw.data.as_slice();
+            let decoded = decode_iglinestrings(bytes);
+            for pl in &decoded {
+                assert!(
+                    pl.byte_range.end <= bytes.len(),
+                    "polyline byte_range {:?} exceeds stream {} bytes ({})",
+                    pl.byte_range,
+                    sheet.path,
+                    bytes.len()
+                );
+                assert_eq!(pl.type_code, PSM_TYPE_CODE_IGLINESTRING2D);
+                assert!(pl.vertex_count() >= 2);
+                assert!(pl.form <= 6);
+                assert!(pl.scope <= 4 || pl.scope == 6);
+                for (x, y) in &pl.vertices {
+                    assert!(x.is_finite() && y.is_finite());
+                }
+                if sample_lines.len() < 5 {
+                    sample_lines.push(format!(
+                        "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} parent={} sub_type=0x{:04X} \
+                        form={} scope={} vc={} total_length={:.4}",
+                        sheet.path,
+                        pl.byte_range.start,
+                        pl.byte_range.end,
+                        pl.oid,
+                        pl.parent_ref,
+                        pl.sub_type_word,
+                        pl.form,
+                        pl.scope,
+                        pl.vertex_count(),
+                        pl.total_length(),
+                    ));
+                }
+            }
+            per_fixture_count += decoded.len();
+        }
+        per_fixture_summary.push((fixture.to_string(), per_fixture_count));
+        total_decoded += per_fixture_count;
+    }
+    eprintln!("--- Phase 14 Slice K: PSM igLineString2d decoder cross-fixture summary ---");
+    for (name, count) in &per_fixture_summary {
+        eprintln!("  {name}: {count} decoded igLineString2d records");
+    }
+    for sample in &sample_lines {
+        eprintln!("  sample: {sample}");
+    }
+    eprintln!("  total decoded polylines: {total_decoded}");
+    if per_fixture_summary.is_empty() {
+        return;
+    }
+    assert!(
+        total_decoded >= 30,
+        "decode_iglinestrings should emit >= 30 polylines cross-fixture, got {total_decoded}"
     );
 }
 

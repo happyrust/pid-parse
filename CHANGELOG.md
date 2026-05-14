@@ -2,6 +2,79 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice K：igLineString2d (PSM 0x0084) decoder — Intergraph Sigma 标准 polyline 落地
+
+延续 Slice J 模板，落地第 5 个 IGDS 标准类 decoder。复用 Slice D 七层
+模板，**零 hypothesis** 字段布局（通过
+`examples/probe_iglinestring2d_shape.rs` 实测 4 fixture 字节 dump 验证）：
+
+```
+PSM header (6 bytes):
+  0..1   u16   type_code = 0x0084
+  2..5   u32   bytes_to_follow = 24 + vc × 16
+
+Payload (24 + vc × 16 bytes):
+  0..3   u32   oid
+  4..7   u32   parent_ref
+  8..11  u32   remaining_header (variable: 0x08 / 0x0C / 0x11)
+  12..13 u16   sub_type_word (e.g. 0x0010 / 0x0014)
+  14..17 u32   index
+  18..21 u32   vertex_count (>= 2)
+  22     u8    form  (0..=6)
+  23     u8    scope (0..=4 or == 6)
+  24..   vc × 16 bytes: (f64 LE x, f64 LE y) per vertex
+```
+
+落地清单（参 Slice J 模板）：
+
+- `src/parsers/sheet_records.rs`: `decode_iglinestrings` /
+  `decode_iglinestring_at` 公开 API + `SheetIgLineString2dDecoded` DTO
+  + `vertex_count()` / `total_length()` 便利方法 + 常量
+  `PSM_TYPE_CODE_IGLINESTRING2D=0x0084` /
+  `IGLINESTRING2D_MIN_PAYLOAD_LEN=56` / `IGLINESTRING2D_MAX_VERTEX_COUNT=10000`
+  / `IGLINESTRING2D_FORM_MAX=6`。validate 9 条 (type/btf/vc 一致性
+  /vertex_count >= 2/form <= 6/scope <= 4 || == 6/coord 有限/coord
+  in domain/非退化全相同)。12 道 unit test 覆盖正反例。
+- `src/model.rs`: `DecodedIgLineString2dRecord` stable DTO +
+  `From<SheetIgLineString2dDecoded>` + `vertex_count()` /
+  `total_length()` + `SheetGeometry.decoded_iglinestrings` 新字段。
+  vertex array 在 model 用 `vertex_xs: Vec<f64>` + `vertex_ys:
+  Vec<f64>` 分离以友好 JSON Schema。
+- `src/streams/cluster.rs`: 同步调 `decode_iglinestrings(raw_data)`
+  填充。7 个 SheetGeometry 构造点联动加 `decoded_iglinestrings: Vec::new()`。
+- `src/geometry.rs::build_normalized_geometry`: 在 igLine2d emit 块前
+  emit `PidGraphicKind::Polyline { points, closed: false }` entities
+  with `confidence: Decoded` + `record_kind: PrimitivePolyline` +
+  `note` 引用 IGDS 0x84 + Intergraph Sigma standard polyline。
+- `tests/parser_panic_safety.rs`: `decode_iglinestrings` /
+  `decode_iglinestring_at` 加入 adversarial matrix。
+- `tests/parse_real_files.rs`:
+  * 新 `iglinestrings_decoder_emits_decoded_polylines_with_provenance`
+    集成测试: 跨 fixture **119 decoded polylines** (DWG-0201:39 +
+    DWG-0202:28 + 工艺管道-1:49 + A01:3), 断言 ≥ 30。
+  * baseline 算式加 decoded_iglinestring_count + decoded_polylines。
+  * anti-promotion 断言扩展允许 `Decoded Polyline` (Slice K 例外, 同
+    Slice G 的 Arc)。
+  * `curve_primitive_investigation` 测试断言改为
+    `decoded_circles == 0` (decoded_polylines 现非零, 不再是
+    "investigation 不 promote" 的反面证据)。
+- `src/schema.rs` ratchet: 加 `DecodedIgLineString2dRecord` /
+  `decoded_iglinestrings` / `vertex_xs` / `vertex_ys` 4 个新 needle。
+- 5 道 gate 全绿 (**820 unit + 85 integration tests + clippy + fmt
+  + missing-docs ratchet=0**)。
+
+**Phase 14 decoded geometry 累计跨 fixture 量化进展**:
+
+| Decoder (Slice) | 跨 fixture 总 hits |
+|---|---|
+| GLine2d (Slice D-E) | 3 |
+| GArc2d (Slice F-I) | 48 |
+| igLine2d (Slice J) | 284 |
+| **igLineString2d (Slice K)** | **119** |
+| **TOTAL** | **454 decoded geometry entities** |
+
+(本 session 起步时 0 decoded geometry。)
+
 ### Phase 14 Slice J：igLine2d (PSM 0x0018) decoder — Intergraph Sigma 标准线落地
 
 **100× 真实数据集扩展**：在 `examples/probe_psm_type_code_histogram.rs`

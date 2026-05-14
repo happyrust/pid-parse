@@ -9,14 +9,16 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
-    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedIgLine2dRecord, DecodedPrimitiveArcRecord,
-    DecodedPrimitiveLineRecord, PidDocument, SheetCoordinateHintDto, SheetGeometry, SheetStream,
-    SheetText,
+    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedIgLine2dRecord, DecodedIgLineString2dRecord,
+    DecodedPrimitiveArcRecord, DecodedPrimitiveLineRecord, PidDocument, SheetCoordinateHintDto,
+    SheetGeometry, SheetStream, SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
-    sheet_records::{decode_iglines, decode_primitive_arcs, decode_primitive_lines},
+    sheet_records::{
+        decode_iglines, decode_iglinestrings, decode_primitive_arcs, decode_primitive_lines,
+    },
 };
 use std::io::Read;
 
@@ -250,12 +252,17 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         .into_iter()
         .map(DecodedIgLine2dRecord::from)
         .collect();
+    let decoded_iglinestrings: Vec<DecodedIgLineString2dRecord> = decode_iglinestrings(raw_data)
+        .into_iter()
+        .map(DecodedIgLineString2dRecord::from)
+        .collect();
 
     if texts.is_empty()
         && coordinate_hints.is_empty()
         && decoded_primitive_lines.is_empty()
         && decoded_primitive_arcs.is_empty()
         && decoded_iglines.is_empty()
+        && decoded_iglinestrings.is_empty()
     {
         None
     } else {
@@ -267,6 +274,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             decoded_primitive_lines,
             decoded_primitive_arcs,
             decoded_iglines,
+            decoded_iglinestrings,
         })
     }
 }
