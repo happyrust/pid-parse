@@ -400,7 +400,44 @@ v3 = (**v34)(v34, dword_56661994, &v42);  // QI(IID_IJPersist)
 
 **guidtab.h 查询表**：错误消息 `"OID=%d nType= %d in guidtab.h"`
 证实存在 `type code -> class GUID -> factory` 静态映射表。`sub_564689C0`
-是该表的 lookup 函数。要拿 polyline / circle / text 等的 PSM type
+是该表的 lookup 函数, 表的根指针在 `dword_567DDC90` (.data 段)。
+
+#### PersistTypeTable<PersistComTypeEntry> 类发现
+
+构造函数 `sub_56455720` (vtable @ `0x5665FA1C`) 显示表的 C++ 类是
+**`PersistTypeTable<PersistComTypeEntry>`**:
+
+```c++
+class PersistTypeTable<PersistComTypeEntry> {
+    // vtable at 0x5665FA1C
+    _DWORD vtable_ptr;       // +0
+    _DWORD field_4;          // +4   = 0 (zeroed by ctor)
+    _DWORD field_8;          // +8   = 0
+    _DWORD field_12;         // +12  -> entry_array (4 * entry_count u32 ptrs)
+    _WORD  field_18;         // +18  entry_count (max index)
+    // ...
+};
+
+struct PersistComTypeEntry {
+    // Layout inferred from sub_564689C0 + PSMSerializeIn usage:
+    _WORD  field_16;    // +16  matching PSM type code (u16)
+    _WORD  field_18;    // +18  chain link (next entry index or 0)
+    // Plus probably:
+    // +0:  IGDS class tag
+    // +4:  16-byte CLSID GUID
+    // +20: factory function ptr (IClassFactory * or similar)
+    // +24: extras
+};
+```
+
+`dword_567DDC90` 是表实例的 root pointer，构造由 CRT 启动时 `sub_56441330`
+调用，销毁通过 `atexit(sub_5665D290)` 注册。
+
+**条目注册由各 `IGDSFactory*` 模块 init 完成**（推测），分散在
+binary 中。每个 IGDSFactory 类构造时调
+`dword_567DDC90->Register(type_code, factory)` 注入一条 entry。
+
+要拿 polyline / circle / text 等的 PSM type
 code, 可：
 
 1. 反编译 `sub_564689C0` 找表数据指针 (likely 一个 RVA 数组)
