@@ -293,9 +293,79 @@ decode：
 
 **下一 milestone 推荐 (cumulative ROI 排序)**：
 
-1. **`decode_igline2d` (PSM type 0x0018)**: 反编译 IDA 找 igLine2d 类
-   字段布局 (可能简单 4 doubles: start.xy + end.xy)，跨 fixture 309
-   hits 验证
+1. **`decode_igline2d` (PSM type 0x0018)**: **字段布局已通过 fixture byte
+   dump 揭示**（无需 IDA 反编译）！见下节 "igLine2d 字节布局已揭示"。
+
+### igLine2d (PSM type 0x0018) 字节布局已揭示
+
+通过 `examples/probe_igline2d_shape.rs` 对实际 fixture 字节 dump，
+**完整 layout 已可见**：
+
+```text
+PSM header (6 bytes):
+  0..1    u16   type_code = 0x0018
+  2..5    u32   bytes_to_follow = 50
+
+Payload (50 bytes):
+  0..3    u32   oid                    (e.g. 177 / 525 / 526 ...)
+  4..7    u32   parent_ref             (e.g. 0x000004BC = 1212)
+  8..11   u32   remaining_header = 0x0C = 12  (常量, 推测下面的 sub-header 长度)
+  12..13  u16   sub_type_word          (e.g. 0x0010, 不同 record 类型可能不同)
+  14..17  u32   index/sub_oid          (e.g. 86 / 101 ...)
+  18..25  f64   start.x  (LE)
+  26..33  f64   start.y  (LE)
+  34..41  f64   end.x    (LE)
+  42..49  f64   end.y    (LE)
+```
+
+**实测 HIT 验证** (DWG-0201 /Sheet6 @ 0x00063b):
+
+```
+raw payload (50 bytes):
++00: B1 00 00 00 BC 04 00 00 0C 00 00 00 10 00 56 00
++16: 00 00 A5 8E C9 46 E0 38 DE 3F 51 40 ED 5C 91 EA
++32: D8 3F A7 88 0D C8 BE 5C E2 3F 51 40 ED 5C 91 EA
++48: D8 3F
+
+解析:
+  oid=177, parent_ref=1212, sub_type=0x10, index=86
+  start = (0.4719, 0.3897)
+  end   = (0.5736, 0.3897)
+  → 水平线段, 页归一化坐标, 长度 ≈ 0.10
+```
+
+**对比 GLine2d (PSM 0x3FE6) vs igLine2d (PSM 0x0018)**:
+
+| 维度 | GLine2d 0x3FE6 (Slice D) | igLine2d 0x0018 (Slice J 准备中) |
+|---|---|---|
+| 字段表示 | **参数式** `origin + t·direction` | **笛卡尔** `(start, end)` |
+| 几何 doubles | 6 (origin.xy + direction.xy + param 范围) | 4 (start.xy + end.xy) |
+| header overhead | 18 字节 (假设含 oid + aux) | 6 字节 PSM + 18 字节 sub-header = 24 总 |
+| Cross-fixture 实测 | 3 records | **309 records** (100× 多!) |
+| 用途 | SmartPlant 扩展封装 | Intergraph Sigma 标准 line |
+
+**Slice J 落地路径**:
+
+1. 加 `PSM_TYPE_CODE_IGLINE2D = 0x0018` 常量
+2. 加 `IGLINE2D_PAYLOAD_LEN = 50` 常量 (含 sub-header + 4 doubles)
+3. 加 `SheetIgLine2dDecoded` DTO with `byte_range / type_code / oid /
+   parent_ref / sub_type / index / start / end`
+4. 加 `decode_iglines(&[u8])` 公开入口
+5. validation: type_code == 0x0018 + bytes_to_follow == 50 +
+   remaining_header == 12 + sub_type 在已知 enum + 4 doubles finite +
+   非全零
+6. 在 `model.rs` 加 `DecodedIgLine2dRecord` stable DTO
+7. `streams/cluster.rs` 填充 `SheetGeometry::decoded_iglines`
+8. `geometry.rs::build_normalized_geometry` emit `PidGraphicKind::Line`
+   with `confidence: Decoded`
+9. cross-fixture integration test + panic-safety + schema ratchet
+
+预期跨 fixture 输出 (基于 probe 实测):
+- DWG-0201: 24 decoded igLines
+- DWG-0202: 42 decoded igLines
+- 工艺管道-1: 243 decoded igLines
+- A01: 0 (没有 0x0018 records)
+- **总: 309 igLines + 3 GLine2d = 312 decoded lines total** (vs 当前 3)
 2. **`decode_iglinestring2d` (PSM type 0x0084)**: 复用 Slice C 已反编
    译的 GLineString2d 内存布局假设 (variable vertex_count + form +
    scope + vertex array)，跨 fixture 131 hits 验证
