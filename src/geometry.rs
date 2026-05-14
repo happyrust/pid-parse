@@ -671,12 +671,12 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
             });
         }
 
-        // Phase 14 Slice E: emit `Decoded` `PidGraphicKind::Line`
-        // entities for every PSM-decoded `GLine2d` `PrimitiveLine`
-        // record in this sheet. These run **in addition to** the
-        // EndpointPair-derived inferred lines above so existing
-        // inferred geometry never regresses; consumers should pick
-        // the right entity by `confidence` + `record_kind`.
+        // Phase 14 Slice E/G: emit `Decoded` entities for every
+        // PSM-decoded `GLine2d` / `GArc2d` record in this sheet.
+        // These run **in addition to** the EndpointPair-derived
+        // inferred lines above so existing inferred geometry never
+        // regresses; consumers should pick the right entity by
+        // `confidence` + `record_kind`.
         if let Some(geometry) = &sheet.geometry {
             for (index, record) in geometry.decoded_primitive_lines.iter().enumerate() {
                 let Some(byte_range) = source_range(
@@ -718,6 +718,68 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                             record.direction_y,
                             record.param_start,
                             record.param_end,
+                        )),
+                    },
+                    confidence: PidGeometryConfidence::Decoded,
+                });
+            }
+            for (index, record) in geometry.decoded_primitive_arcs.iter().enumerate() {
+                let Some(byte_range) = source_range(
+                    record.byte_start,
+                    record.byte_end.saturating_sub(record.byte_start),
+                    sheet.size,
+                ) else {
+                    continue;
+                };
+                // Slice G first-pass mapping from the parametric
+                // `GArc2d` form to `PidGraphicKind::Arc`: use
+                // `|axis1|` as radius (this is exact for circular
+                // arcs and a usable approximation for ellipse arcs
+                // when axis2 != 0). Carry the full parametric
+                // payload in `source.note` so downstream renderers
+                // can reconstruct ellipse geometry when needed.
+                let radius = record.axis1_magnitude();
+                entities.push(PidGraphicEntity {
+                    id: format!("{}:primitive-arc:{index}", sheet.path),
+                    drawing_id: None,
+                    graphic_oid: Some(record.oid),
+                    kind: PidGraphicKind::Arc {
+                        center: PidPoint {
+                            x: record.center_x,
+                            y: record.center_y,
+                        },
+                        radius,
+                        start_angle: record.param_start,
+                        end_angle: record.param_end,
+                    },
+                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                    source: PidGraphicProvenance {
+                        stream_path: Some(sheet.path.clone()),
+                        byte_range: Some(byte_range),
+                        record_id: Some(format!("primitive-arc:{index}")),
+                        record_kind: Some(SheetRecordKind::PrimitiveArc),
+                        field_x: None,
+                        note: Some(format!(
+                            "PSM GArc2d record decoded from radsrvitem.dll byte layout (\
+                             18-byte header + 8 x f64 payload); oid={} type_code=0x{:04X} \
+                             type_flags=0x{:X} bytes_to_follow={} center=({:.4}, {:.4}) \
+                             axis1=({:.5}, {:.5})|{:.5} axis2=({:.5}, {:.5})|{:.5} \
+                             param=[{:.4}, {:.4}] circular={}",
+                            record.oid,
+                            record.type_code,
+                            record.type_flags,
+                            record.bytes_to_follow,
+                            record.center_x,
+                            record.center_y,
+                            record.axis1_x,
+                            record.axis1_y,
+                            radius,
+                            record.axis2_x,
+                            record.axis2_y,
+                            record.axis2_magnitude(),
+                            record.param_start,
+                            record.param_end,
+                            record.is_circular(),
                         )),
                     },
                     confidence: PidGeometryConfidence::Decoded,
@@ -903,6 +965,7 @@ mod tests {
                 }],
                 object_geometry_hints: Vec::new(),
                 decoded_primitive_lines: Vec::new(),
+                decoded_primitive_arcs: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -991,6 +1054,7 @@ mod tests {
                     },
                 ],
                 decoded_primitive_lines: Vec::new(),
+                decoded_primitive_arcs: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1117,6 +1181,7 @@ mod tests {
                     ),
                 }],
                 decoded_primitive_lines: Vec::new(),
+                decoded_primitive_arcs: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1196,6 +1261,7 @@ mod tests {
                 }],
                 object_geometry_hints: Vec::new(),
                 decoded_primitive_lines: Vec::new(),
+                decoded_primitive_arcs: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1246,6 +1312,7 @@ mod tests {
                 }],
                 object_geometry_hints: Vec::new(),
                 decoded_primitive_lines: Vec::new(),
+                decoded_primitive_arcs: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1316,6 +1383,7 @@ mod tests {
                 }],
                 object_geometry_hints: Vec::new(),
                 decoded_primitive_lines: Vec::new(),
+                decoded_primitive_arcs: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,

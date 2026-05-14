@@ -1854,7 +1854,7 @@ fn primitive_line_numeric_samples(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 14 Slice D: PSM-encoded GLine2d decoder (decoded geometry path)
+// Phase 14 Slices D/F: PSM-encoded geometry decoder family
 // ---------------------------------------------------------------------------
 
 /// Byte length of one PSM record header in
@@ -1881,6 +1881,14 @@ pub const PSM_RECORD_HEADER_LEN: usize = 18;
 /// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
 pub const GLINE2D_PAYLOAD_LEN: usize = 48;
 
+/// Byte length of one in-memory `GArc2d` payload:
+/// 8 × `f64` LE = 64 bytes.
+///
+/// Layout reverse-engineered from `radsrvitem.dll`
+/// `GArc2d::Validate` (`sub_56524150` @ 0x56524150). Documented in
+/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
+pub const GARC2D_PAYLOAD_LEN: usize = 64;
+
 /// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
 ///
 /// Empirically validated against all three Sheet-bearing fixtures in
@@ -1905,6 +1913,35 @@ const GLINE2D_UNIT_VECTOR_TOLERANCE: f64 = 1e-3;
 /// Sentinel beyond which an origin / parameter / direction value
 /// is treated as garbage (uninitialized memory, out-of-domain).
 const GLINE2D_COORDINATE_DOMAIN_LIMIT: f64 = 1e9;
+
+/// PSM type code that identifies a `GArc2d` `PrimitiveArc` /
+/// `PrimitiveCircle` record.
+///
+/// Empirically validated against three Sheet-bearing fixtures
+/// (`DWG-0201GP06-01.pid`, `DWG-0202GP06-01.pid`,
+/// `工艺管道及仪表流程-1.pid`): every record whose 18-byte PSM
+/// header is followed by 64 bytes matching the `GArc2d` validation
+/// rules (8 finite doubles + non-trivial `axis1` + ordered param
+/// range) carries `type_code == 0x0030` (= decimal 48). The
+/// authoritative `type → GUID` lookup table lives in `SmartPlant`'s
+/// `guidtab.h` (named explicitly in `PSMSerializeIn`'s error
+/// message `"... OID=%d nType= %d in guidtab.h"`).
+pub const PSM_TYPE_CODE_GARC2D: u16 = 0x0030;
+
+/// Minimum acceptable magnitude for the `axis1` vector of a
+/// decoded `GArc2d`. The IDA-decoded `GArc2d::Validate` checks the
+/// inner `sub_56524280` predicate for degenerate axes; in practice
+/// `SmartPlant` writes axis magnitudes from `~0.05` (small symbol
+/// circles) up to `~1.0` (page-spanning arcs). Anything smaller is
+/// either uninitialised memory or a degenerate record we should
+/// reject.
+const GARC2D_AXIS1_MIN_MAGNITUDE: f64 = 1e-6;
+
+/// Maximum acceptable magnitude for either axis of a decoded
+/// `GArc2d`. Real fixtures stay well under `1e3`; values like
+/// `131072.0` or `92.99` are byte-coincident noise pretending to
+/// be an arc.
+const GARC2D_AXIS_MAX_MAGNITUDE: f64 = 1e3;
 
 /// One decoded PSM `GLine2d` `PrimitiveLine` record.
 ///
@@ -2011,6 +2048,182 @@ pub fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
         off += 1;
     }
     out
+}
+
+/// One decoded PSM `GArc2d` `PrimitiveArc` (or `PrimitiveCircle`,
+/// when `axis2` is zero) record.
+///
+/// `radsrvitem.dll!GArc2d::Validate` (`sub_56524150`) decompilation
+/// shows the 64-byte payload holds 8 × `f64` LE in this order:
+/// `(center.x, center.y, axis1.x, axis1.y, axis2.x, axis2.y,
+/// param_start, param_end)`. `axis2 ~ 0` collapses the ellipse arc
+/// to a circular arc / circle. Producing
+/// [`crate::geometry::PidGeometryConfidence::Decoded`] is the
+/// responsibility of `geometry.rs`; this module only decodes bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetPrimitiveArcDecoded {
+    /// Byte range covering the full PSM record (header + payload +
+    /// any trailing attribute bytes captured by `bytes_to_follow`).
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_GARC2D`]
+    /// (`0x0030` = decimal 48) for records this decoder emits.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// `bytes_to_follow` field from the PSM header.
+    pub bytes_to_follow: u32,
+    /// `oid` field from the PSM header (`SmartPlant`'s object
+    /// identifier for this geometry).
+    pub oid: u32,
+    /// Arc center `(x, y)`.
+    pub center: (f64, f64),
+    /// Primary axis vector `(x, y)`. Length encodes the radius (or
+    /// semi-major axis for an ellipse arc); direction encodes the
+    /// orientation.
+    pub axis1: (f64, f64),
+    /// Secondary axis vector `(x, y)`. `(0, 0)` for a pure
+    /// circular arc / circle. Length encodes the semi-minor axis
+    /// for an ellipse arc.
+    pub axis2: (f64, f64),
+    /// Parameter range start. `param_start < param_end` guaranteed.
+    pub param_start: f64,
+    /// Parameter range end.
+    pub param_end: f64,
+}
+
+impl SheetPrimitiveArcDecoded {
+    /// Length of the primary axis (`= |axis1|`). Equals the radius
+    /// for a pure circular arc.
+    pub fn axis1_magnitude(&self) -> f64 {
+        (self.axis1.0 * self.axis1.0 + self.axis1.1 * self.axis1.1).sqrt()
+    }
+
+    /// Length of the secondary axis (`= |axis2|`). `~0.0` indicates
+    /// a circular (rather than elliptical) arc.
+    pub fn axis2_magnitude(&self) -> f64 {
+        (self.axis2.0 * self.axis2.0 + self.axis2.1 * self.axis2.1).sqrt()
+    }
+
+    /// `true` when `axis2 ~ (0, 0)`, i.e. the arc is circular
+    /// (or a closed full circle). The threshold matches
+    /// `GARC2D_AXIS1_MIN_MAGNITUDE` so a degenerate axis is treated
+    /// as zero.
+    pub fn is_circular(&self) -> bool {
+        self.axis2_magnitude() < GARC2D_AXIS1_MIN_MAGNITUDE
+    }
+}
+
+/// Decode every PSM-encoded `GArc2d` `PrimitiveArc` /
+/// `PrimitiveCircle` record in a `Sheet*` stream's bytes.
+///
+/// Walk every byte offset; at each offset, check whether an
+/// 18-byte PSM header followed by 64 bytes of `GArc2d` payload
+/// satisfies all of:
+///
+/// 1. PSM type code (header bytes 0..2 LE, masked to 14 bits) ==
+///    [`PSM_TYPE_CODE_GARC2D`];
+/// 2. `bytes_to_follow` (header bytes 2..6 LE) is `>=` 64 and fits
+///    within the remaining stream;
+/// 3. All eight payload `f64`s are finite, with
+///    `|x| <= GLINE2D_COORDINATE_DOMAIN_LIMIT`;
+/// 4. `|axis1|` is in `[GARC2D_AXIS1_MIN_MAGNITUDE,
+///    GARC2D_AXIS_MAX_MAGNITUDE]` (rejects zero/uninit and obvious
+///    noise);
+/// 5. `|axis2|` is in `[0, GARC2D_AXIS_MAX_MAGNITUDE]` (allows the
+///    circular special case);
+/// 6. `param_start < param_end` strictly.
+///
+/// The decoder is **conservative** and panic-free: adversarial
+/// bytes either fail validation and are skipped, or never decode
+/// at all.
+pub fn decode_primitive_arcs(data: &[u8]) -> Vec<SheetPrimitiveArcDecoded> {
+    let mut out = Vec::new();
+    if data.len() < PSM_RECORD_HEADER_LEN + GARC2D_PAYLOAD_LEN {
+        return out;
+    }
+    let max_offset = data.len() - (PSM_RECORD_HEADER_LEN + GARC2D_PAYLOAD_LEN);
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_primitive_arc_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `GArc2d` record starting at `offset`
+/// in `data`. Returns `None` when any of the validation rules in
+/// [`decode_primitive_arcs`] fail. Bounds-checked: passing
+/// `offset >= data.len()` or a truncated tail returns `None`.
+pub fn decode_primitive_arc_at(data: &[u8], offset: usize) -> Option<SheetPrimitiveArcDecoded> {
+    let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
+    let payload_end = header_end.checked_add(GARC2D_PAYLOAD_LEN)?;
+    if payload_end > data.len() {
+        return None;
+    }
+
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_GARC2D {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    let bytes_to_follow_usize = bytes_to_follow as usize;
+    if bytes_to_follow_usize < GARC2D_PAYLOAD_LEN {
+        return None;
+    }
+    let record_end = offset.checked_add(6 + bytes_to_follow_usize)?;
+    if record_end > data.len() {
+        return None;
+    }
+    let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
+
+    let payload = data.get(header_end..payload_end)?;
+    let mut d = [0f64; 8];
+    for (i, slot) in d.iter_mut().enumerate() {
+        let chunk = payload.get(i * 8..i * 8 + 8)?;
+        *slot = f64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]);
+    }
+    if !d.iter().all(|x| x.is_finite()) {
+        return None;
+    }
+    if d.iter().any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT) {
+        return None;
+    }
+    let axis1_mag = (d[2] * d[2] + d[3] * d[3]).sqrt();
+    if !(GARC2D_AXIS1_MIN_MAGNITUDE..=GARC2D_AXIS_MAX_MAGNITUDE).contains(&axis1_mag) {
+        return None;
+    }
+    let axis2_mag = (d[4] * d[4] + d[5] * d[5]).sqrt();
+    if axis2_mag > GARC2D_AXIS_MAX_MAGNITUDE {
+        return None;
+    }
+    let param_start = d[6];
+    let param_end = d[7];
+    if param_start >= param_end {
+        return None;
+    }
+
+    Some(SheetPrimitiveArcDecoded {
+        byte_range: offset..record_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        center: (d[0], d[1]),
+        axis1: (d[2], d[3]),
+        axis2: (d[4], d[5]),
+        param_start,
+        param_end,
+    })
 }
 
 /// Try to decode a single PSM `GLine2d` `PrimitiveLine` starting at
@@ -2635,6 +2848,178 @@ mod tests {
         assert_eq!(decoded[1].oid, 8);
         // The two records must have non-overlapping byte ranges.
         assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 14 Slice F: PSM GArc2d decoder tests
+    // -----------------------------------------------------------------
+
+    /// Build a single synthetic PSM `GArc2d` record: 18-byte header
+    /// (type=0x0030, `bytes_to_follow`=64, oid=`oid`) + 8 × f64
+    /// payload.
+    fn build_synthetic_garc2d_record(
+        oid: u32,
+        center: (f64, f64),
+        axis1: (f64, f64),
+        axis2: (f64, f64),
+        param_start: f64,
+        param_end: f64,
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(PSM_RECORD_HEADER_LEN + GARC2D_PAYLOAD_LEN);
+        let type_word: u16 = PSM_TYPE_CODE_GARC2D;
+        out.extend_from_slice(&type_word.to_le_bytes());
+        out.extend_from_slice(&(GARC2D_PAYLOAD_LEN as u32).to_le_bytes());
+        out.extend_from_slice(&oid.to_le_bytes());
+        out.extend_from_slice(&[0u8; 8]);
+        for v in [
+            center.0,
+            center.1,
+            axis1.0,
+            axis1.1,
+            axis2.0,
+            axis2.1,
+            param_start,
+            param_end,
+        ] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn primitive_arc_decodes_canonical_circle_record() {
+        // Canonical circle: center (0.25, 0.5), axis1 = (0.1, 0)
+        // (radius 0.1), axis2 = (0, 0) (circular), sweep [0, 1].
+        let record =
+            build_synthetic_garc2d_record(99, (0.25, 0.5), (0.1, 0.0), (0.0, 0.0), 0.0, 1.0);
+        let decoded = decode_primitive_arcs(&record);
+        assert_eq!(decoded.len(), 1);
+        let arc = &decoded[0];
+        assert_eq!(arc.type_code, PSM_TYPE_CODE_GARC2D);
+        assert_eq!(arc.oid, 99);
+        assert_eq!(arc.bytes_to_follow, 64);
+        assert_eq!(arc.center, (0.25, 0.5));
+        assert!((arc.axis1.0 - 0.1).abs() < 1e-12 && arc.axis1.1.abs() < 1e-12);
+        assert!(arc.axis2.0.abs() < 1e-12 && arc.axis2.1.abs() < 1e-12);
+        assert_eq!(arc.param_start, 0.0);
+        assert_eq!(arc.param_end, 1.0);
+        assert!((arc.axis1_magnitude() - 0.1).abs() < 1e-12);
+        assert!(arc.axis2_magnitude() < 1e-12);
+        assert!(arc.is_circular());
+        assert_eq!(arc.byte_range.start, 0);
+        assert_eq!(arc.byte_range.end, 6 + 64);
+    }
+
+    #[test]
+    fn primitive_arc_decodes_canonical_ellipse_record() {
+        // Canonical ellipse: axis2 non-zero.
+        let record =
+            build_synthetic_garc2d_record(100, (0.5, 0.5), (0.2, 0.0), (0.0, 0.1), 0.0, 0.5);
+        let decoded = decode_primitive_arcs(&record);
+        assert_eq!(decoded.len(), 1);
+        let arc = &decoded[0];
+        assert!(!arc.is_circular());
+        assert!((arc.axis1_magnitude() - 0.2).abs() < 1e-12);
+        assert!((arc.axis2_magnitude() - 0.1).abs() < 1e-12);
+    }
+
+    #[test]
+    fn primitive_arc_rejects_wrong_type_code() {
+        let mut record =
+            build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (0.0, 0.0), 0.0, 1.0);
+        // Overwrite type to GLine2d's 0x3FE6.
+        record[0] = 0xE6;
+        record[1] = 0x3F;
+        assert!(decode_primitive_arcs(&record).is_empty());
+    }
+
+    #[test]
+    fn primitive_arc_rejects_zero_axis1() {
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 0.0, 1.0);
+        assert!(decode_primitive_arcs(&record).is_empty());
+    }
+
+    #[test]
+    fn primitive_arc_rejects_oversize_axis() {
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (1e6, 0.0), (0.0, 0.0), 0.0, 1.0);
+        assert!(decode_primitive_arcs(&record).is_empty());
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (1e6, 0.0), 0.0, 1.0);
+        assert!(decode_primitive_arcs(&record).is_empty());
+    }
+
+    #[test]
+    fn primitive_arc_rejects_reversed_param_range() {
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (0.0, 0.0), 1.0, 0.5);
+        assert!(decode_primitive_arcs(&record).is_empty());
+    }
+
+    #[test]
+    fn primitive_arc_rejects_nan_payload() {
+        let mut record =
+            build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (0.0, 0.0), 0.0, 1.0);
+        let nan_bytes = f64::NAN.to_le_bytes();
+        let center_off = PSM_RECORD_HEADER_LEN;
+        record[center_off..center_off + 8].copy_from_slice(&nan_bytes);
+        assert!(decode_primitive_arcs(&record).is_empty());
+    }
+
+    #[test]
+    fn primitive_arc_decoder_is_panic_safe_on_short_input() {
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (0.0, 0.0), 0.0, 1.0);
+        for trunc_len in 0..record.len() {
+            assert!(
+                decode_primitive_arcs(&record[..trunc_len]).is_empty(),
+                "truncated arc input of length {trunc_len} must not decode"
+            );
+        }
+        assert!(decode_primitive_arcs(&[]).is_empty());
+    }
+
+    #[test]
+    fn primitive_arc_decoder_is_panic_safe_on_random_noise() {
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_primitive_arcs(&noise);
+        assert!(decode_primitive_arcs(&vec![0u8; 4096]).is_empty());
+        assert!(decode_primitive_arcs(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    #[test]
+    fn primitive_arc_decodes_two_back_to_back_records() {
+        let mut data =
+            build_synthetic_garc2d_record(7, (0.1, 0.1), (0.2, 0.0), (0.0, 0.0), 0.0, 0.5);
+        data.extend(build_synthetic_garc2d_record(
+            8,
+            (0.3, 0.3),
+            (0.15, 0.0),
+            (0.0, 0.1),
+            0.0,
+            0.8,
+        ));
+        let decoded = decode_primitive_arcs(&data);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].oid, 7);
+        assert_eq!(decoded[1].oid, 8);
+        assert!(decoded[0].is_circular());
+        assert!(!decoded[1].is_circular());
+        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
+    }
+
+    #[test]
+    fn primitive_arc_byte_range_covers_attribute_tail() {
+        let mut record = Vec::new();
+        record.extend_from_slice(&PSM_TYPE_CODE_GARC2D.to_le_bytes());
+        record.extend_from_slice(&(64u32 + 100).to_le_bytes());
+        record.extend_from_slice(&55u32.to_le_bytes());
+        record.extend_from_slice(&[0u8; 8]);
+        for v in [0.5f64, 0.5, 0.2, 0.0, 0.0, 0.0, 0.0, 1.0] {
+            record.extend_from_slice(&v.to_le_bytes());
+        }
+        record.extend_from_slice(&[0xAB; 100]);
+
+        let decoded = decode_primitive_arcs(&record);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].byte_range.end, 6 + 164);
+        assert_eq!(decoded[0].bytes_to_follow, 164);
     }
 
     #[test]

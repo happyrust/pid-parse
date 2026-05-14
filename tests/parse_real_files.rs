@@ -11,10 +11,11 @@ use pid_parse::{
     },
     parsers::sheet_records::{
         coordinate_page_metadata_investigation_report, curve_primitive_investigation_report,
-        decode_primitive_lines, primitive_line_investigation_report, sheet_record_shape_inventory,
-        symbol_placement_investigation_report, text_placement_investigation_report,
-        SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
-        SheetRecordShapeKind, SheetSymbolPlacementObject, PSM_TYPE_CODE_GLINE2D,
+        decode_primitive_arcs, decode_primitive_lines, primitive_line_investigation_report,
+        sheet_record_shape_inventory, symbol_placement_investigation_report,
+        text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
+        SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSymbolPlacementObject,
+        PSM_TYPE_CODE_GARC2D, PSM_TYPE_CODE_GLINE2D,
     },
     PidParser,
 };
@@ -1513,21 +1514,26 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                         .filter(|h| h.position.is_some() || h.f64_position.is_some())
                         .count()
                 });
-            // Phase 14 Slice E: PSM-decoded `GLine2d` records produce
-            // one additional `PidGeometryConfidence::Decoded` line
-            // entity each, on top of the probe / inferred totals
-            // above. Count them so the assertion below stays exact.
+            // Phase 14 Slice E/G: PSM-decoded `GLine2d` / `GArc2d`
+            // records each produce one additional
+            // `PidGeometryConfidence::Decoded` entity (`Line` or
+            // `Arc`) on top of the probe / inferred totals above.
             let decoded_line_count = sheet
                 .geometry
                 .as_ref()
                 .map_or(0, |geometry| geometry.decoded_primitive_lines.len());
+            let decoded_arc_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.decoded_primitive_arcs.len());
             let total = text_count
                 + coordinate_count
                 + endpoint_count
                 + hint_count
-                + decoded_line_count;
+                + decoded_line_count
+                + decoded_arc_count;
             eprintln!(
-                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, total={total}",
+                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_arc={decoded_arc_count}, total={total}",
                 sheet.path
             );
             total
@@ -1571,16 +1577,24 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Unknown { .. })
         })
         .count();
-    // Phase 14 Slice E: PSM-decoded `GLine2d` PrimitiveLine records
+    // Phase 14 Slice E/G: PSM-decoded `GLine2d` / `GArc2d` records
     // produce `PidGeometryConfidence::Decoded` `PidGraphicKind::Line`
-    // entities. They are additive to the inferred-points + inferred-
-    // lines + probe-unknowns total below.
+    // / `Arc` entities. They are additive to the inferred-points +
+    // inferred-lines + probe-unknowns total below.
     let decoded_lines = geometry
         .entities
         .iter()
         .filter(|entity| {
             entity.confidence == pid_parse::PidGeometryConfidence::Decoded
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+        })
+        .count();
+    let decoded_arcs = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Arc { .. })
         })
         .count();
     let expected_coordinate_hints: usize = doc
@@ -1651,32 +1665,45 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         "endpoint pairs with both endpoints promoted should become inferred lines"
     );
     assert_eq!(
-        inferred_points + inferred_lines + probe_unknowns + decoded_lines,
+        inferred_points + inferred_lines + probe_unknowns + decoded_lines + decoded_arcs,
         geometry.entities.len(),
-        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d records become decoded lines; remaining text and endpoint evidence stays ProbeOnly Unknown"
+        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d / GArc2d records become decoded lines / arcs; remaining text and endpoint evidence stays ProbeOnly Unknown"
     );
-    // Phase 14 Slice E: `PidGeometryConfidence::Decoded` is now
-    // legitimate for PSM-decoded `GLine2d` `PrimitiveLine` records.
-    // All non-line entities still must not claim Decoded confidence.
+    // Phase 14 Slice E/G: `PidGeometryConfidence::Decoded` is
+    // legitimate for PSM-decoded `GLine2d` `PrimitiveLine` and
+    // `GArc2d` `PrimitiveArc` records. All other (Point / Polyline
+    // / Circle / Text / SymbolInstance / Unknown) entities must
+    // still not claim Decoded confidence.
     assert!(
         geometry.entities.iter().all(|entity| {
             entity.confidence != pid_parse::PidGeometryConfidence::Decoded
-                || matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+                || matches!(
+                    entity.kind,
+                    pid_parse::PidGraphicKind::Line { .. } | pid_parse::PidGraphicKind::Arc { .. }
+                )
         }),
-        "Decoded confidence currently only applies to PSM GLine2d PrimitiveLine entities"
+        "Decoded confidence currently only applies to PSM GLine2d / GArc2d entities"
     );
+    // Phase 14 Slice G: `PidGraphicKind::Arc` is now legitimate
+    // when backed by a PSM-decoded `GArc2d` record (i.e.
+    // `confidence == Decoded`). The other typed curve / text /
+    // symbol kinds still cannot be emitted without decoded record
+    // backing.
     assert!(
         geometry.entities.iter().all(|entity| {
-            !matches!(
-                entity.kind,
-                pid_parse::PidGraphicKind::Polyline { .. }
-                    | pid_parse::PidGraphicKind::Arc { .. }
-                    | pid_parse::PidGraphicKind::Circle { .. }
-                    | pid_parse::PidGraphicKind::Text { .. }
-                    | pid_parse::PidGraphicKind::SymbolInstance { .. }
-            )
+            let arc_allowed = matches!(entity.kind, pid_parse::PidGraphicKind::Arc { .. })
+                && entity.confidence == pid_parse::PidGeometryConfidence::Decoded;
+            arc_allowed
+                || !matches!(
+                    entity.kind,
+                    pid_parse::PidGraphicKind::Polyline { .. }
+                        | pid_parse::PidGraphicKind::Arc { .. }
+                        | pid_parse::PidGraphicKind::Circle { .. }
+                        | pid_parse::PidGraphicKind::Text { .. }
+                        | pid_parse::PidGraphicKind::SymbolInstance { .. }
+                )
         }),
-        "probe-only and hint evidence must not become typed text/symbol/curve geometry without decoded records"
+        "probe-only and hint evidence must not become typed text/symbol/curve geometry without decoded records (Arc is the exception for PSM GArc2d-decoded records)"
     );
     for entity in geometry.entities.iter().filter(|entity| {
         entity.confidence == pid_parse::PidGeometryConfidence::Inferred
@@ -2938,6 +2965,99 @@ fn dwg0201_emits_decoded_primitive_lines_without_inferred_regression() {
     }
 }
 
+/// Phase 14 Slice G: DWG-0201 must produce both the existing
+/// inferred-line floor + decoded `Line` entities (Slice E) **and**
+/// at least one decoded `Arc` entity from PSM `GArc2d` records.
+#[test]
+fn dwg0201_emits_decoded_primitive_arcs_without_regression() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let geometry = pid_parse::build_normalized_geometry(&doc);
+    let inferred_lines: Vec<_> = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+        })
+        .collect();
+    let decoded_lines: Vec<_> = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+        })
+        .collect();
+    let decoded_arcs: Vec<_> = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Arc { .. })
+        })
+        .collect();
+    eprintln!(
+        "DWG-0201 Slice G: inferred_lines={}, decoded_lines={}, decoded_arcs={}",
+        inferred_lines.len(),
+        decoded_lines.len(),
+        decoded_arcs.len()
+    );
+    // AC8 floors preserved.
+    assert!(
+        inferred_lines.len() >= 49,
+        "DWG-0201 inferred line floor regressed: got {}, expected >= 49",
+        inferred_lines.len()
+    );
+    assert!(
+        !decoded_lines.is_empty(),
+        "Slice D/E baseline lost: DWG-0201 should still emit >= 1 decoded line"
+    );
+    // Slice G: new acceptance criterion.
+    assert!(
+        !decoded_arcs.is_empty(),
+        "DWG-0201 should emit at least one PSM-decoded GArc2d arc"
+    );
+    for arc in &decoded_arcs {
+        assert_eq!(
+            arc.source.stream_path.as_deref(),
+            Some("/Sheet6"),
+            "decoded arc must carry Sheet6 stream_path"
+        );
+        assert!(arc.source.byte_range.is_some());
+        assert_eq!(
+            arc.source.record_kind,
+            Some(pid_parse::SheetRecordKind::PrimitiveArc)
+        );
+        assert!(arc
+            .source
+            .note
+            .as_ref()
+            .is_some_and(|n| { n.contains("PSM GArc2d") && n.contains("radsrvitem.dll") }));
+        assert!(arc.graphic_oid.is_some(), "decoded arc carries PSM oid");
+        if let pid_parse::PidGraphicKind::Arc {
+            center,
+            radius,
+            start_angle,
+            end_angle,
+        } = &arc.kind
+        {
+            assert!(center.x.is_finite() && center.y.is_finite());
+            assert!(*radius > 0.0 && radius.is_finite());
+            assert!(start_angle.is_finite() && end_angle.is_finite());
+            assert!(
+                start_angle < end_angle,
+                "decoded arc start_angle < end_angle: got [{}, {}]",
+                start_angle,
+                end_angle
+            );
+        } else {
+            panic!("decoded arc kind must be PidGraphicKind::Arc");
+        }
+    }
+}
+
 #[test]
 fn geometry_fixture_inventory_reports_normalized_geometry_counts() {
     let _availability = print_geometry_fixture_availability();
@@ -3981,10 +4101,19 @@ fn curve_primitive_investigation_reports_unsupported_curve_candidates() {
         large_mixed_payloads > 0,
         "large numeric payloads should carry a subrecord-split investigation note"
     );
+    // The curve primitive **investigation** layer itself never
+    // promotes decoded geometry — its output is always
+    // `probe_only_no_curve_geometry_promotion`. Decoded curves are
+    // emitted by a separate PSM decoder family (`decode_primitive_arcs`,
+    // future `decode_primitive_polylines` etc.) and surface
+    // through `SheetGeometry::decoded_primitive_*` fields and
+    // `build_normalized_geometry`. Phase 14 Slice G allows
+    // `decoded_arcs > 0`; polylines / circles remain at zero
+    // until their own decoders ship.
     assert_eq!(
-        normalized.decoded_polylines + normalized.decoded_circles + normalized.decoded_arcs,
+        normalized.decoded_polylines + normalized.decoded_circles,
         0,
-        "curve primitive investigation must not promote decoded curve geometry"
+        "curve primitive investigation must not promote decoded polyline / circle geometry"
     );
     assert!(
         curve_report.groups.iter().all(|group| {
@@ -6158,6 +6287,128 @@ fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
     assert!(
         total_decoded >= 1,
         "decode_primitive_lines must emit at least one decoded line on the \
+        Sheet-bearing fixture set, got {total_decoded}. \
+        Per-fixture summary: {per_fixture_summary:?}"
+    );
+}
+
+/// Phase 14 Slice F: cross-fixture validation that
+/// `decode_primitive_arcs` actually emits decoded `GArc2d` records
+/// from real `Sheet*` streams.
+///
+/// Empirical baselines from `examples/probe_psm_garc2d.rs`:
+///
+/// - `DWG-0201GP06-01.pid` /Sheet6 → 3 hits with strict
+///   `axis1_magnitude in [1e-6, 1e3]` + sorted params (mostly
+///   circular: `axis2 == 0`).
+/// - `DWG-0202GP06-01.pid` /Sheet6 → 10+ hits (mostly circular,
+///   symbol-instrumentation arcs).
+/// - `工艺管道及仪表流程-1.pid` /Sheet6 → 21+ hits.
+/// - `A01.pid` /Sheet6 → 0 hits (template doesn't ship arc
+///   geometry beyond the line reference).
+///
+/// The test asserts the aggregate decoded count across all
+/// Sheet-bearing fixtures is `>= 1`, plus every emitted record
+/// carries the documented provenance fields and geometry
+/// invariants (`axis1_magnitude > 0`, `param_start < param_end`,
+/// `axis2_magnitude >= 0`).
+#[test]
+fn primitive_arc_decoder_emits_decoded_arcs_with_provenance() {
+    let fixtures = [
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+        "export-test/publish-data/A01/A01.pid",
+    ];
+    let mut total_decoded = 0usize;
+    let mut per_fixture_summary: Vec<(String, usize, usize)> = Vec::new(); // (name, arcs, circles)
+    let mut sample_arcs: Vec<String> = Vec::new();
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture_arc_count = 0usize;
+        let mut per_fixture_circle_count = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let bytes = raw.data.as_slice();
+            let decoded = decode_primitive_arcs(bytes);
+            for arc in &decoded {
+                assert!(
+                    arc.byte_range.end <= bytes.len(),
+                    "arc byte_range {:?} exceeds stream {} bytes ({})",
+                    arc.byte_range,
+                    sheet.path,
+                    bytes.len()
+                );
+                assert_eq!(arc.type_code, PSM_TYPE_CODE_GARC2D);
+                let axis1_mag = arc.axis1_magnitude();
+                assert!(
+                    (1e-6..=1e3).contains(&axis1_mag),
+                    "arc axis1 magnitude out of expected range: {axis1_mag} for {arc:?}"
+                );
+                let axis2_mag = arc.axis2_magnitude();
+                assert!(
+                    axis2_mag <= 1e3,
+                    "arc axis2 magnitude out of expected range: {axis2_mag} for {arc:?}"
+                );
+                assert!(arc.param_start < arc.param_end);
+                assert!(arc.center.0.is_finite() && arc.center.1.is_finite());
+                if arc.is_circular() {
+                    per_fixture_circle_count += 1;
+                }
+                if sample_arcs.len() < 5 {
+                    sample_arcs.push(format!(
+                        "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} circular={} \
+                        center=({:+.4},{:+.4}) axis1=({:+.4},{:+.4})|{:.4} \
+                        axis2=({:+.4},{:+.4})|{:.4} param=[{:+.4},{:+.4}]",
+                        sheet.path,
+                        arc.byte_range.start,
+                        arc.byte_range.end,
+                        arc.oid,
+                        arc.is_circular(),
+                        arc.center.0,
+                        arc.center.1,
+                        arc.axis1.0,
+                        arc.axis1.1,
+                        axis1_mag,
+                        arc.axis2.0,
+                        arc.axis2.1,
+                        axis2_mag,
+                        arc.param_start,
+                        arc.param_end,
+                    ));
+                }
+            }
+            per_fixture_arc_count += decoded.len();
+        }
+        per_fixture_summary.push((
+            fixture.to_string(),
+            per_fixture_arc_count,
+            per_fixture_circle_count,
+        ));
+        total_decoded += per_fixture_arc_count;
+    }
+    eprintln!("--- Phase 14 Slice F: PSM GArc2d decoder cross-fixture summary ---");
+    for (name, arcs, circles) in &per_fixture_summary {
+        eprintln!("  {name}: {arcs} decoded arcs ({circles} circular)");
+    }
+    for sample in &sample_arcs {
+        eprintln!("  sample: {sample}");
+    }
+    eprintln!("  total decoded arcs across present fixtures: {total_decoded}");
+    if per_fixture_summary.is_empty() {
+        eprintln!(
+            "skipping: no Sheet-bearing fixture present (CI / contributors \
+            without SmartPlant samples)"
+        );
+        return;
+    }
+    assert!(
+        total_decoded >= 1,
+        "decode_primitive_arcs must emit at least one decoded arc on the \
         Sheet-bearing fixture set, got {total_decoded}. \
         Per-fixture summary: {per_fixture_summary:?}"
     );

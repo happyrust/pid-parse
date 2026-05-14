@@ -2,6 +2,66 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice F/G：PSM `GArc2d` 解码器 + Arc geometry 上线
+
+- `src/parsers/sheet_records.rs` 加 `decode_primitive_arcs(&[u8])` /
+  `decode_primitive_arc_at(&[u8], usize)` 两个公开入口，配套
+  `SheetPrimitiveArcDecoded` DTO (`byte_range` + PSM 头部 +
+  `center` / `axis1` / `axis2` / `param_start` / `param_end`) +
+  `axis1_magnitude()` / `axis2_magnitude()` / `is_circular()` 便利
+  方法。常量 `GARC2D_PAYLOAD_LEN = 64`、`PSM_TYPE_CODE_GARC2D = 0x0030`
+  公开供下游 fixture 测试引用。
+- type code `0x0030 = 48` 来自 `examples/probe_psm_garc2d.rs` 跨 3
+  fixture 实测：DWG-0201 3/5 / DWG-0202 10/14 / 工艺管道-1 21/25 个
+  arc hits 全部走这个 type code（其他 0x0000 / 0x0001 是 false
+  positive byte 重合）。字段布局来自 `radsrvitem.dll!sub_56524150`
+  (`GArc2d::Validate`) 反编译: 8 × f64 = `(center.x, center.y,
+  axis1.x, axis1.y, axis2.x, axis2.y, param_start, param_end)`。
+- 5 条 validation: type_code == 0x0030, bytes_to_follow >= 64 不越
+  界, 8 doubles finite + `|x| <= 1e9`, axis1_magnitude 在
+  `[1e-6, 1e3]` (拒零和巨噪声), axis2 magnitude <= 1e3 (允许 0 即
+  circular case), param_start < param_end。
+- `src/model.rs` 加 `DecodedPrimitiveArcRecord` stable DTO + 镜像 12
+  字段 + `axis1_magnitude/axis2_magnitude/is_circular` 便利方法 +
+  `SheetGeometry.decoded_primitive_arcs` 新字段。
+- `src/streams/cluster.rs::sheet_geometry_from_probe` 同步调
+  `decode_primitive_arcs(raw_data)` 填充 SheetGeometry。
+- `src/geometry.rs::build_normalized_geometry` 在 line emit 块后
+  emit `PidGraphicKind::Arc` entities (`center` / `radius =
+  |axis1|` / `start_angle = param_start` / `end_angle = param_end`)
+  with `confidence: Decoded` + `record_kind: PrimitiveArc` +
+  `note` 含完整参数化 payload 含 `is_circular` 标记。第一版映射
+  对圆形 arc 精确, 对椭圆 arc 用 `|axis1|` 作 radius 是 usable
+  approximation, ellipse 完整 axis2 信息保留在 note。
+- 跨 fixture 实测 (`primitive_arc_decoder_emits_decoded_arcs_with_provenance`):
+  DWG-0201 15 arcs (全 circular) / DWG-0202 19 (全 circular) /
+  工艺管道-1 32 (全 circular) / A01 0。全部带 provenance triplet
+  + axis1 magnitude 在 [1e-6, 1e3]。
+- `src/parsers/sheet_records.rs::tests` 加 11 道单元测试覆盖
+  正反例: canonical circle + ellipse / 拒错 type / 零 axis1 /
+  超大 axis / 反向 param / NaN / 截断 / 噪声 / 双连续 / attribute
+  tail byte_range。
+- `tests/parser_panic_safety.rs` 加 `decode_primitive_arcs` /
+  `decode_primitive_arc_at` 进 panic-safety matrix。
+- `tests/parse_real_files.rs` 加
+  `dwg0201_emits_decoded_primitive_arcs_without_regression` 断言
+  DWG-0201 上 inferred_lines >= 49 + decoded_lines >= 1 (Slice D/E
+  floor) + decoded_arcs >= 1 (Slice G new) + 全套 provenance + arc
+  geometry invariants (radius > 0, start < end, finite center)。
+- `tests/parse_real_files.rs::normalized_geometry_probe_baseline_on_real_fixture`
+  算式更新加 `decoded_arc_count`。"Decoded 仅 Line" 松绑为 "Decoded
+  Line 或 Arc"。"无 Polyline/Arc/Circle/Text/SymbolInstance" 松绑允许
+  Arc when `confidence == Decoded` (Phase 14 Slice G 例外)。
+- `tests/parse_real_files.rs::curve_primitive_investigation_reports_unsupported_curve_candidates`
+  从 "decoded_polylines + decoded_circles + decoded_arcs == 0" 改为
+  "decoded_polylines + decoded_circles == 0" —— Slice G 后 decoded
+  arcs 由独立 PSM decoder emit, 不再是 0; investigation 层(probe
+  level)依然不 promote 几何, 该断言精确反映分层。
+- `examples/probe_psm_garc2d.rs` 一次性 byte-level probe 工具
+  落地证据收集。
+- 5 道 gate 全绿 (build / test 797 unit + 83 integration / clippy
+  `-D warnings` / fmt / missing-docs ratchet=0)。
+
 ### Phase 14 Slice E：解码 line 接入 geometry pipeline + 不回归保护
 
 - `src/model.rs` 加 `DecodedPrimitiveLineRecord` stable DTO（与

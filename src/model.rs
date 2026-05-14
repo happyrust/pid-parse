@@ -852,6 +852,18 @@ pub struct SheetGeometry {
     /// converts these records on-demand.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_primitive_lines: Vec<DecodedPrimitiveLineRecord>,
+    /// PSM-decoded `GArc2d` primitive arc / circle records emitted
+    /// by
+    /// [`crate::parsers::sheet_records::decode_primitive_arcs`]
+    /// for this sheet's raw stream bytes. Each entry is a stable
+    /// model-shaped projection of the parser-level
+    /// `SheetPrimitiveArcDecoded` DTO with full provenance.
+    /// Conversion to a
+    /// [`crate::geometry::PidGeometryConfidence::Decoded`]
+    /// `PidGraphicKind::Arc` entity is the responsibility of
+    /// [`crate::geometry::build_normalized_geometry`].
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_primitive_arcs: Vec<DecodedPrimitiveArcRecord>,
 }
 
 /// Stable, model-shaped DTO that mirrors
@@ -932,6 +944,87 @@ impl DecodedPrimitiveLineRecord {
             self.origin_x + self.param_end * self.direction_x,
             self.origin_y + self.param_end * self.direction_y,
         )
+    }
+}
+
+/// Stable, model-shaped DTO that mirrors
+/// [`crate::parsers::sheet_records::SheetPrimitiveArcDecoded`].
+///
+/// Mirrors the parser-level DTO's 12 fields (header + 8 doubles)
+/// with explicit `byte_start` / `byte_end` instead of
+/// [`std::ops::Range<usize>`] for `JsonSchema` friendliness.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedPrimitiveArcRecord {
+    /// Inclusive byte-range start covering the full PSM record.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x0030` (the `GArc2d` PSM
+    /// type code) for records this decoder emits.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// `bytes_to_follow` field from the PSM header.
+    pub bytes_to_follow: u32,
+    /// `oid` field from the PSM header.
+    pub oid: u32,
+    /// Arc center `x`.
+    pub center_x: f64,
+    /// Arc center `y`.
+    pub center_y: f64,
+    /// Primary axis vector `x`.
+    pub axis1_x: f64,
+    /// Primary axis vector `y`.
+    pub axis1_y: f64,
+    /// Secondary axis vector `x`. `0` for a pure circular arc.
+    pub axis2_x: f64,
+    /// Secondary axis vector `y`. `0` for a pure circular arc.
+    pub axis2_y: f64,
+    /// Parameter range start. `param_start < param_end` is
+    /// guaranteed at decode time.
+    pub param_start: f64,
+    /// Parameter range end.
+    pub param_end: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetPrimitiveArcDecoded> for DecodedPrimitiveArcRecord {
+    fn from(d: crate::parsers::sheet_records::SheetPrimitiveArcDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            center_x: d.center.0,
+            center_y: d.center.1,
+            axis1_x: d.axis1.0,
+            axis1_y: d.axis1.1,
+            axis2_x: d.axis2.0,
+            axis2_y: d.axis2.1,
+            param_start: d.param_start,
+            param_end: d.param_end,
+        }
+    }
+}
+
+impl DecodedPrimitiveArcRecord {
+    /// Magnitude of the primary axis. For a circular arc this is
+    /// the radius.
+    pub fn axis1_magnitude(&self) -> f64 {
+        (self.axis1_x * self.axis1_x + self.axis1_y * self.axis1_y).sqrt()
+    }
+
+    /// Magnitude of the secondary axis. `~0` indicates a circular
+    /// (rather than elliptical) arc.
+    pub fn axis2_magnitude(&self) -> f64 {
+        (self.axis2_x * self.axis2_x + self.axis2_y * self.axis2_y).sqrt()
+    }
+
+    /// `true` when `axis2 ~ (0, 0)`, i.e. circular rather than
+    /// elliptical.
+    pub fn is_circular(&self) -> bool {
+        self.axis2_magnitude() < 1e-6
     }
 }
 

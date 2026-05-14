@@ -9,13 +9,14 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
-    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedPrimitiveLineRecord, PidDocument,
-    SheetCoordinateHintDto, SheetGeometry, SheetStream, SheetText,
+    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedPrimitiveArcRecord,
+    DecodedPrimitiveLineRecord, PidDocument, SheetCoordinateHintDto, SheetGeometry, SheetStream,
+    SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
-    sheet_records::decode_primitive_lines,
+    sheet_records::{decode_primitive_arcs, decode_primitive_lines},
 };
 use std::io::Read;
 
@@ -233,16 +234,24 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         })
         .collect();
 
-    // Phase 14 Slice E: walk the raw stream for PSM-encoded
-    // `GLine2d` `PrimitiveLine` records. The decoder is conservative
-    // — it emits zero records when the stream uses a different
-    // record shape (typical for older fixtures) and never panics.
+    // Phase 14 Slice E/G: walk the raw stream for PSM-encoded
+    // `GLine2d` / `GArc2d` records. Both decoders are conservative
+    // — they emit zero records when the stream uses a different
+    // record shape (typical for older fixtures) and never panic.
     let decoded_primitive_lines: Vec<DecodedPrimitiveLineRecord> = decode_primitive_lines(raw_data)
         .into_iter()
         .map(DecodedPrimitiveLineRecord::from)
         .collect();
+    let decoded_primitive_arcs: Vec<DecodedPrimitiveArcRecord> = decode_primitive_arcs(raw_data)
+        .into_iter()
+        .map(DecodedPrimitiveArcRecord::from)
+        .collect();
 
-    if texts.is_empty() && coordinate_hints.is_empty() && decoded_primitive_lines.is_empty() {
+    if texts.is_empty()
+        && coordinate_hints.is_empty()
+        && decoded_primitive_lines.is_empty()
+        && decoded_primitive_arcs.is_empty()
+    {
         None
     } else {
         Some(SheetGeometry {
@@ -251,6 +260,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             coordinate_hints,
             object_geometry_hints: Vec::new(),
             decoded_primitive_lines,
+            decoded_primitive_arcs,
         })
     }
 }

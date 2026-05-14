@@ -34,7 +34,10 @@ use pid_parse::parsers::psm_tables::{
 use pid_parse::parsers::relationship_probe::probe_relationships;
 use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
-use pid_parse::parsers::sheet_records::{decode_primitive_line_at, decode_primitive_lines};
+use pid_parse::parsers::sheet_records::{
+    decode_primitive_arc_at, decode_primitive_arcs, decode_primitive_line_at,
+    decode_primitive_lines,
+};
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
 
@@ -175,6 +178,14 @@ fn exercise_all_parsers(input: &[u8]) {
     if !input.is_empty() {
         let _ = decode_primitive_line_at(input, input.len() - 1);
         let _ = decode_primitive_line_at(input, input.len());
+    }
+
+    // Phase 14 Slice F: PSM `GArc2d` PrimitiveArc decoder.
+    let _ = decode_primitive_arcs(input);
+    let _ = decode_primitive_arc_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_primitive_arc_at(input, input.len() - 1);
+        let _ = decode_primitive_arc_at(input, input.len());
     }
 }
 
