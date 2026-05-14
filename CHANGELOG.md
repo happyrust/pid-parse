@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Phase 14 Plan B：控制 `.pid` diff fixture 采集协议 v1
+
+- 新增 `docs/protocols/2026-05-13-controlled-pid-diff-collection.md`
+  约 400 行中文协议：覆盖 SmartPlant P&ID 6 类原子操作（`place_line`
+  / `place_polyline` / `place_circle` / `place_arc` / `place_text` /
+  `place_symbol`）的 step-by-step 操作员手册，含 line + circle 完
+  整演示、metadata sidecar JSON schema 与
+  `pid_parse::inspect::controlled_diff::ControlledDiffMetadata` 字
+  段逐项对照、`pid_inspect --controlled-diff-dir` 自检 stdout/JSON
+  example、故障排查节、数据安全节。SmartPlant 版本锁 12.x。
+- 新增 `goals/phase14-plan-b-controlled-diff-protocol/` 第二个
+  plannotator goal package（DRAFT — 浏览器面板离线时 5 道 gate 未
+  跑），与 `goals/phase14-sppid-sheet-geometry/`（IDA 反向路径）形
+  成 Phase 14 双证据链。该 Plan B goal 独立不阻塞 B1。
+- 新增 `test-file/controlled-diff/{before,after,metadata}/`
+  目录骨架与 `.gitkeep` 占位 + `README.md` 入口说明。`.gitignore`
+  加规则 `test-file/controlled-diff/{before,after}/*.pid` 阻止
+  plant 真实 `.pid` 入 git，保护 plant-proprietary 数据。
+- `tests/inspect_cli.rs` 新增
+  `controlled_diff_protocol_synthetic_two_case_walkthrough`：合成
+  2 case (line + circle) 走协议目录约定，断言 `--controlled-diff-dir
+  --json` 产 2 cases、`promoted_geometry=false`、each
+  `first_modified.path=/Sheet6`、`expected` payload verbatim round-trip。
+
 ### Phase 14 goal package via plannotator + Slice A 启动 stop-and-ask
 
 - 用 `plannotator-setup-goal` skill 把"实现 SPPID `.pid` 完整解析"的高
