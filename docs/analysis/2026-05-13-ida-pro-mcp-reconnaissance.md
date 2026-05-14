@@ -7,6 +7,32 @@
 
 ## TL;DR
 
+**Update 2026-05-14**: B1 unblocked. User supplied additional
+SmartPlant runtime binaries to the WeChat bin folder. Static PE
+import-table scan across 18 new candidate DLLs found exactly one
+match for the CFB storage API surface:
+
+| DLL | Size | `StgOpenStorageEx` import | Verdict |
+|---|---|---|---|
+| **`radsrvitem.dll`** | **3.7 MB** | ✓ ordinal `0x1B4` from `ole32.dll` | **Sheet primitive byte parser entry point** |
+| `radsrv.dll` / `radnetbridge.dll` / `sppidwrap.dll` / `j2dsrv.dll` | varies | only generic `ole32.dll` (no Stg/Stream) | COM-only, not Sheet I/O |
+| 13 others (ubspm2d1, pidobjmgrai, RadNetAutomation, etc.) | varies | none | Higher-level than Sheet I/O |
+
+`radsrvitem.dll` is the binary the original IDA reconnaissance was
+looking for — Intergraph's RAD2D family ships its Compound File I/O
+in a `radsrv*` server-side binary, not in a `rad2d.dll` per se. The
+original Phase 14 plan called for `rad2d.dll` / `pidobjectmanager.dll`
+but `radsrvitem.dll` is the actual implementation.
+
+Next step is to open `radsrvitem.dll` in IDA Pro at a new port and
+resume slice A from step 2 of
+`goals/phase14-sppid-sheet-geometry/slice-a-runbook.md`.
+
+---
+
+**Original 2026-05-13 finding (kept for context — still valid for the
+8 prior binaries)**:
+
 **None of the 8 SPPID DLLs / EXEs currently in IDA Pro contain the Sheet
 stream byte parser.** They are all higher-level layers (VB6 COM dispatch,
 MFC OLE/COM wrappers, drawing-level workshare management, COM type
