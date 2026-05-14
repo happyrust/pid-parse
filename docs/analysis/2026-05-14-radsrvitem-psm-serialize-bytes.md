@@ -199,12 +199,79 @@ v6[3] = _mm_loadu_si128((const __m128i *)(a2 + 48));   // bytes 48..63
 `a2+48` 和 `a2+56` 的 NaN 检查印证 `param_start` 和 `param_end` 在
 offsets 48 和 56。8 个 doubles 共 64 字节。
 
-### 其他类（Slice C 后续）
+### GLineString2d 内存布局（已反编译，磁盘格式待证）
+
+**反编译来源**：`sub_56524DD0` @ `0x56524DD0`（size 0x137）——
+`GLineString2d::Validate` 类似函数，引用 4 条错误字符串：
+- `"GLineString2d: NULL pointer"` @ `0x56669068`
+- `"GLineString2d: LineString needs more than one point"` @ `0x56669084`
+- `"GLineString2d: uninitialized data"` @ `0x566690b8`
+- `"GLineString2d: scope out of range"` @ `0x566690dc`
+- `"GLineString2d: form out of range"` @ `0x56669100`
+
+**内存字段布局（32-bit binary, 12 bytes 不含 padding）**：
+
+```c
+struct GLineString2d {                       // 内存布局
+    GPosition* vertex_array;  // a2 + 0  (4 bytes)
+    uint32_t   vertex_count;  // a2 + 4  (4 bytes, must >= 2)
+    uint8_t    form;          // a2 + 8  (1 byte, must <= 6)
+    uint8_t    scope;         // a2 + 9  (1 byte, must <= 4 or == 6)
+    uint16_t   _padding;      // a2 + 10 (2 bytes alignment)
+};
+```
+
+**Validate flags**:
+- `0x20000` = vertex_array_ptr == NULL
+- `0x40000` = vertex_count < 2
+- `0x1` = 某顶点 x/y NaN
+- `0x1000000` = form > 6 或 scope > 4 && scope != 6
+
+**磁盘格式（待反编译 `PSMSerializeOut` GLineString2d 分支验证）**：
+推测 18-byte PSM 头 + 内联 payload：
+
+```
+PSM header (18B): type_code + bytes_to_follow + oid + aux
+payload:
+  4B  vertex_count (u32 LE)
+  1B  form
+  1B  scope
+  2B  padding (alignment)
+  vertex_count * 16B  顶点数组 (f64 LE x, y)
+[可选 attribute tail]
+```
+
+`examples/probe_psm_polyline.rs` 跨 3 fixture 扫描，按此推测布局 +
+`type_code != 0x3FE6 && != 0x0030` 排除已知 type code，得到：
+
+- DWG-0201 /Sheet6: 3 hits, 全 type_code=0x0001, vertex_count=4
+- DWG-0202 /Sheet6: 1 hit, type_code=0x0001, vertex_count=4
+- 工艺管道-1 /Sheet6: 0 hits
+
+**问题**：所有 hits 的前 2 个顶点都是 `(0, 0)`，第 3 个顶点才是真实坐标。
+说明：
+1. 磁盘布局可能与推测不同（vertex_count 可能不在 payload 头）
+2. 0x0001 type code 可能是其他记录类型的 false positive
+3. SmartPlant 工程图可能很少使用 polyline (多用 line + arc)
+
+**下一步证据需求**：
+1. IDA 反编译 `PSMSerializeOut` 的 GLineString2d 分支（找到调用
+   `vptr_io::write_u32(vertex_count)` 等的具体代码）
+2. 或者在 PSMSerializeIn 的 switch / dispatch table 中找 GLineString2d
+   对应的 type_code
+3. 用 controlled-diff 协议（Plan B）造一个含已知 polyline 的 fixture
+   做字节比对
+
+在拿到这些证据前，**不**实现 `decode_primitive_polylines` decoder，
+避免基于 unverified hypothesis 写代码。Slice D-G 的 GLine2d/GArc2d
+是在 IDA 反编译 + 跨 fixture 实测双重证据下落地的。
+
+### 其他类（待 Phase 14 后续）
 
 | Sigma 类 | 推测 PidGraphicKind | 字段（待反编译验证） |
 |---|---|---|
 | `igCircle2d` | `Circle` | 4 doubles? center(2) + radius_x(1) + radius_y(1)，或退化 GArc2d (radius=axis1.len) |
-| `igLineString2d` | `Polyline` | vertex_count(i32) + vertex_count × 2 × f64 |
+| `igLineString2d` | `Polyline` | 见上节，磁盘格式待证 |
 | `igEllipticalArc2d` | (椭圆 Arc) | 8 doubles，可能 = GArc2d |
 | `igBSplineCurve2d` | NURBS | degree + knots + control points + weights |
 | `IGDSFactoryRectangle` / `Rectangle` | `Rectangle`（**新发现**） | 4 doubles? corner + width + height |
