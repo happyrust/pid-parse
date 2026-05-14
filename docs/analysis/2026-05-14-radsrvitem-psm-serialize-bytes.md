@@ -240,6 +240,68 @@ DTO 与 `geometry.rs::build_normalized_geometry` 的 `radius =
 - `v13` 通过 `sub_564E0D90` 获取 (推测 sweep angle)
 - 弧长公式 `(v13 * v7) / (2 * sin(...))` —— 弧长 = chord / (2*sin(α/2)) 的标准弦长公式
 
+### 🎯 重大发现：PSM type code histogram 揭示 IGDS tag 直接对应
+
+通过 `examples/probe_psm_type_code_histogram.rs` 跨 4 fixture 扫描所有
+plausible PSM record header (`bytes_to_follow` 8..100,000) 的 14-bit
+type code 分布发现：**很多 PSM type codes 直接等于 IGDS class tag**！
+
+Top cross-fixture (≥ 2 fixtures, ≥ 3 hits 总数):
+
+| PSM type code | IGDS class tag | Sigma class | Cross-fixture hits |
+|---|---|---|---|
+| **`0x0018` (24)** | **0x18** | **`igLine2d`** | **309** |
+| `0x005E` (94) | 0x5E | `igPoint2d` | 145 |
+| **`0x0084` (132)** | **0x84** | **`igLineString2d`** | **131** |
+| `0x0030` (48) | (没匹配) | (待证) | 115 |
+| **`0x00CE` (206)** | **0xCE** | **`igSymbol2d`** | 103 |
+| `0x004D` (77) | 0x4D | `igTextBox` | 175 |
+| `0x0056` (86) | (没匹配) | ? | 51 |
+| `0x0084` (132) | 0x84 | `igLineString2d` | 131 |
+| `0x000C` (12) | (没匹配) | ? | 45 |
+
+**Phase 14 早期假设修正**：
+
+- 早期文档说 "IGDS class tag ≠ PSM record type code" 不完全准确。**事实是
+  很多 PSM type codes 直接 = IGDS class tag**（如 0x0018=igLine2d 309
+  hits，0x0084=igLineString2d 131 hits，0x00CE=igSymbol2d 103 hits）。
+- 但 GLine2d 在我反编译的 `radsrvitem.dll!sub_56524C50` 上确认 PSM type
+  code 是 `0x3FE6 = 16358`，**不是** IGDS tag 0x18。说明：
+  - 某些类 (如 GLine2d, GArc2d) 用**特殊 PSM type code** 配对，可能是
+    SmartPlant 特殊封装的 IGDS extension
+  - 标准 IGDS 类 (igLine2d, igLineString2d, igSymbol2d 等) 用 **IGDS
+    tag 直接作 PSM type code**
+- 0x0030 既不是 IGDS 标准 class tag (24/89/97 等都不是 48)，也不是
+  GArc2d 的 SmartPlant 封装类型 (那应该有自己的 high-value type code
+  like 0x3FE6)。**0x0030 真实归属待证**。
+
+**对 Phase 14 后续 decoder 家族的影响**：
+
+DWG-0201 /Sheet6 实际有大量真正的 SmartPlant geometry records 等待
+decode：
+
+- **309 cross-fixture `igLine2d` records** (type 0x0018) — 比 Slice D
+  的 3 条 GLine2d decoded lines (type 0x3FE6) **多 100 倍**！需要全新
+  `decode_igline2d` 实现
+- **131 cross-fixture `igLineString2d` records** (type 0x0084) —
+  polyline decoder 的真实起点！比 GLineString2d 内存布局推测 (Slice
+  C) 更直接的实证起点
+- **103 cross-fixture `igSymbol2d` records** (type 0x00CE) — symbol
+  placement decoder
+- **145 cross-fixture `igPoint2d` records** (type 0x005E) — 简单 point
+  decoder
+
+**下一 milestone 推荐 (cumulative ROI 排序)**：
+
+1. **`decode_igline2d` (PSM type 0x0018)**: 反编译 IDA 找 igLine2d 类
+   字段布局 (可能简单 4 doubles: start.xy + end.xy)，跨 fixture 309
+   hits 验证
+2. **`decode_iglinestring2d` (PSM type 0x0084)**: 复用 Slice C 已反编
+   译的 GLineString2d 内存布局假设 (variable vertex_count + form +
+   scope + vertex array)，跨 fixture 131 hits 验证
+3. **澄清 0x0030 真正归属**: 反编译 IGDSFactoryArc 构造 / PSMSerializeIn
+   switch 找其真实 type code
+
 ### ⚠️ 关键 caveat：实测 byte dump 颠覆 Slice F/G/H 字段语义假设
 
 通过 `examples/probe_garc2d_bytes.rs` 直接 dump 5 个 fixture hit offsets
