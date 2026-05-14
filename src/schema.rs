@@ -122,6 +122,14 @@ mod tests {
             "SheetText",
             "SheetEndpoint",
             "SheetObjectGeometryHint",
+            // Phase 14 Slice D-G: PSM-decoded primitive DTOs land in
+            // the public schema alongside probe-level DTOs so JSON
+            // consumers can deserialize the `decoded_primitive_*`
+            // fields without manual schema patching.
+            "DecodedPrimitiveLineRecord",
+            "DecodedPrimitiveArcRecord",
+            "decoded_primitive_lines",
+            "decoded_primitive_arcs",
         ] {
             assert!(
                 text.contains(needle),

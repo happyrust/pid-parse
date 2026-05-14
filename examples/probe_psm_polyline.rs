@@ -43,20 +43,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
     use std::io::Read;
     stream.read_to_end(&mut bytes)?;
-    eprintln!("fixture: {} {stream_name} bytes: {}", fixture.display(), bytes.len());
+    eprintln!(
+        "fixture: {} {stream_name} bytes: {}",
+        fixture.display(),
+        bytes.len()
+    );
 
     let header_len = 18;
     let min_payload = 8 + 2 * 16; // 8 bytes prefix + 2 vertices
     let mut hits = 0;
     let mut type_code_counter = std::collections::BTreeMap::<u16, usize>::new();
-    let mut hits_by_count: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+    let mut hits_by_count: std::collections::BTreeMap<u32, usize> =
+        std::collections::BTreeMap::new();
     let max_offset = bytes.len().saturating_sub(header_len + min_payload);
 
     for off in 0..=max_offset {
         let type_word = u16::from_le_bytes([bytes[off], bytes[off + 1]]);
         let type_code = type_word & 0x3FFF;
         let bytes_to_follow = u32::from_le_bytes([
-            bytes[off + 2], bytes[off + 3], bytes[off + 4], bytes[off + 5],
+            bytes[off + 2],
+            bytes[off + 3],
+            bytes[off + 4],
+            bytes[off + 5],
         ]);
         if bytes_to_follow < min_payload as u32 {
             continue;
@@ -74,7 +82,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         let vertex_count = u32::from_le_bytes([
-            bytes[vc_off], bytes[vc_off + 1], bytes[vc_off + 2], bytes[vc_off + 3],
+            bytes[vc_off],
+            bytes[vc_off + 1],
+            bytes[vc_off + 2],
+            bytes[vc_off + 3],
         ]);
         if !(2..=10000).contains(&vertex_count) {
             continue;
@@ -101,12 +112,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for i in 0..vertex_count as usize {
             let pos = vertices_start + i * 16;
             let x = f64::from_le_bytes([
-                bytes[pos], bytes[pos+1], bytes[pos+2], bytes[pos+3],
-                bytes[pos+4], bytes[pos+5], bytes[pos+6], bytes[pos+7],
+                bytes[pos],
+                bytes[pos + 1],
+                bytes[pos + 2],
+                bytes[pos + 3],
+                bytes[pos + 4],
+                bytes[pos + 5],
+                bytes[pos + 6],
+                bytes[pos + 7],
             ]);
             let y = f64::from_le_bytes([
-                bytes[pos+8], bytes[pos+9], bytes[pos+10], bytes[pos+11],
-                bytes[pos+12], bytes[pos+13], bytes[pos+14], bytes[pos+15],
+                bytes[pos + 8],
+                bytes[pos + 9],
+                bytes[pos + 10],
+                bytes[pos + 11],
+                bytes[pos + 12],
+                bytes[pos + 13],
+                bytes[pos + 14],
+                bytes[pos + 15],
             ]);
             if !x.is_finite() || !y.is_finite() || x.abs() > 1e9 || y.abs() > 1e9 {
                 all_ok = false;
@@ -129,14 +152,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for i in 0..vertex_count.min(3) as usize {
                 let pos = vertices_start + i * 16;
                 let x = f64::from_le_bytes([
-                    bytes[pos], bytes[pos+1], bytes[pos+2], bytes[pos+3],
-                    bytes[pos+4], bytes[pos+5], bytes[pos+6], bytes[pos+7],
+                    bytes[pos],
+                    bytes[pos + 1],
+                    bytes[pos + 2],
+                    bytes[pos + 3],
+                    bytes[pos + 4],
+                    bytes[pos + 5],
+                    bytes[pos + 6],
+                    bytes[pos + 7],
                 ]);
                 let y = f64::from_le_bytes([
-                    bytes[pos+8], bytes[pos+9], bytes[pos+10], bytes[pos+11],
-                    bytes[pos+12], bytes[pos+13], bytes[pos+14], bytes[pos+15],
+                    bytes[pos + 8],
+                    bytes[pos + 9],
+                    bytes[pos + 10],
+                    bytes[pos + 11],
+                    bytes[pos + 12],
+                    bytes[pos + 13],
+                    bytes[pos + 14],
+                    bytes[pos + 15],
                 ]);
-                if i > 0 { sample.push_str(" "); }
+                if i > 0 {
+                    sample.push(' ');
+                }
                 sample.push_str(&format!("({:+.4},{:+.4})", x, y));
             }
             println!(
