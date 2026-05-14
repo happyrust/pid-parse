@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice E：解码 line 接入 geometry pipeline + 不回归保护
+
+- `src/model.rs` 加 `DecodedPrimitiveLineRecord` stable DTO（与
+  parser-level `SheetPrimitiveLineDecoded` 对照，字段全展开为
+  `byte_start/byte_end/type_code/type_flags/bytes_to_follow/oid/origin_x/y/direction_x/y/param_start/param_end`，
+  带 `From<SheetPrimitiveLineDecoded>` + `endpoint_a/b` 便利方法）
+  与 `SheetGeometry.decoded_primitive_lines: Vec<DecodedPrimitiveLineRecord>`
+  新字段（serde 带 `default + skip_serializing_if = "Vec::is_empty"`
+  保留向前/向后兼容）。
+- `src/streams/cluster.rs::sheet_geometry_from_probe` 在 SheetGeometry
+  构建路径同时跑 `decode_primitive_lines(&raw_data)` 把每一条 record
+  转 model DTO 放进新字段。空 fixture / 老 record shape 不阻止
+  `SheetGeometry` 仍然 `Some`（之前要 text 或 coord 非空才 Some，
+  现在 decoded line 也算）。
+- `src/geometry.rs::build_normalized_geometry` 在每个 Sheet 循环里加
+  一个新 emit 块，按 `decoded_primitive_lines` 产 `PidGraphicEntity`
+  with `kind: PidGraphicKind::Line { start, end }` + `confidence:
+  PidGeometryConfidence::Decoded` + `source.record_kind:
+  SheetRecordKind::PrimitiveLine` + `graphic_oid: Some(record.oid)` +
+  `note` 含 `"PSM GLine2d record decoded from radsrvitem.dll ..."`
+  完整 byte 层证据，**追加在现有 inferred/endpoint emit 之后**——
+  inferred entities 不动，49 line floor 完整保留（DWG-0201 AC8）。
+- `tests/parse_real_files.rs` 新增
+  `dwg0201_emits_decoded_primitive_lines_without_inferred_regression`：
+  断言 DWG-0201 上 `inferred_lines >= 49` + `decoded_lines >= 1`，
+  并 spot check 第一个 decoded line 的 provenance triplet
+  (stream_path == `/Sheet6`, byte_range 非空, record_kind ==
+  PrimitiveLine), graphic_oid 非空, note 提到 `PSM GLine2d` +
+  `radsrvitem.dll`, geometry 不退化为单点。
+- `tests/parse_real_files.rs::normalized_geometry_probe_baseline_on_real_fixture`
+  baseline 算式更新：原 `text + coord + endpoint + hint` 改为
+  `+ decoded_line_count`。原 "Decoded confidence not allowed in real
+  fixture baseline" 断言松绑：允许 Decoded **当且仅当**
+  `kind: PidGraphicKind::Line`（Phase 14 当前唯一可 Decoded 的几何
+  类型）。这保留了 Decoded 的边界约束但让 Slice E 上线通过。
+- 6 个其他 SheetGeometry 构造点（cfb/reader.rs 测试 + geometry.rs 6
+  处单元测试） 加 `decoded_primitive_lines: Vec::new()` 字段。
+- 5 道 gate 全绿：build / test (Slice E 加 1 test → 81 integration)
+  / clippy `-D warnings` / fmt / missing-docs ratchet=0。
+- Phase 14 AC8 ✅ 完成 → **11/11 AC 全闭环**。`pid-parse` 现在能在
+  DWG-0201 上同时输出 2 条 `Decoded` line + 49+ 条 `Inferred` line
+  + 64 inferred points + 53 promoted hints + N probe-only entities，
+  全部带完整 provenance triplet。
+
 ### Phase 14 Slice D：PSM `GLine2d` PrimitiveLine 解码器（Decoded 几何上线）
 
 - `src/parsers/sheet_records.rs` 加 `decode_primitive_lines(&[u8])` /

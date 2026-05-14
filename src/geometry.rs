@@ -670,6 +670,60 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                 confidence: PidGeometryConfidence::ProbeOnly,
             });
         }
+
+        // Phase 14 Slice E: emit `Decoded` `PidGraphicKind::Line`
+        // entities for every PSM-decoded `GLine2d` `PrimitiveLine`
+        // record in this sheet. These run **in addition to** the
+        // EndpointPair-derived inferred lines above so existing
+        // inferred geometry never regresses; consumers should pick
+        // the right entity by `confidence` + `record_kind`.
+        if let Some(geometry) = &sheet.geometry {
+            for (index, record) in geometry.decoded_primitive_lines.iter().enumerate() {
+                let Some(byte_range) = source_range(
+                    record.byte_start,
+                    record.byte_end.saturating_sub(record.byte_start),
+                    sheet.size,
+                ) else {
+                    continue;
+                };
+                let (ax, ay) = record.endpoint_a();
+                let (bx, by) = record.endpoint_b();
+                entities.push(PidGraphicEntity {
+                    id: format!("{}:primitive-line:{index}", sheet.path),
+                    drawing_id: None,
+                    graphic_oid: Some(record.oid),
+                    kind: PidGraphicKind::Line {
+                        start: PidPoint { x: ax, y: ay },
+                        end: PidPoint { x: bx, y: by },
+                    },
+                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                    source: PidGraphicProvenance {
+                        stream_path: Some(sheet.path.clone()),
+                        byte_range: Some(byte_range),
+                        record_id: Some(format!("primitive-line:{index}")),
+                        record_kind: Some(SheetRecordKind::PrimitiveLine),
+                        field_x: None,
+                        note: Some(format!(
+                            "PSM GLine2d record decoded from radsrvitem.dll byte layout (\
+                             18-byte header + 6 x f64 payload); oid={} type_code=0x{:04X} \
+                             type_flags=0x{:X} bytes_to_follow={} origin=({:.4}, {:.4}) \
+                             direction=({:.5}, {:.5}) param=[{:.4}, {:.4}]",
+                            record.oid,
+                            record.type_code,
+                            record.type_flags,
+                            record.bytes_to_follow,
+                            record.origin_x,
+                            record.origin_y,
+                            record.direction_x,
+                            record.direction_y,
+                            record.param_start,
+                            record.param_end,
+                        )),
+                    },
+                    confidence: PidGeometryConfidence::Decoded,
+                });
+            }
+        }
     }
 
     let probe_count = entities.len();
@@ -848,6 +902,7 @@ mod tests {
                     y: -450,
                 }],
                 object_geometry_hints: Vec::new(),
+                decoded_primitive_lines: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -935,6 +990,7 @@ mod tests {
                         note: Some("score=80 identity=graphic_nearby stable_shape".into()),
                     },
                 ],
+                decoded_primitive_lines: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1060,6 +1116,7 @@ mod tests {
                             .into(),
                     ),
                 }],
+                decoded_primitive_lines: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1138,6 +1195,7 @@ mod tests {
                     y: -450,
                 }],
                 object_geometry_hints: Vec::new(),
+                decoded_primitive_lines: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1187,6 +1245,7 @@ mod tests {
                     y: -450,
                 }],
                 object_geometry_hints: Vec::new(),
+                decoded_primitive_lines: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1256,6 +1315,7 @@ mod tests {
                     y: -450,
                 }],
                 object_geometry_hints: Vec::new(),
+                decoded_primitive_lines: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,

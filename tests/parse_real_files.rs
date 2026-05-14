@@ -1513,9 +1513,21 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                         .filter(|h| h.position.is_some() || h.f64_position.is_some())
                         .count()
                 });
-            let total = text_count + coordinate_count + endpoint_count + hint_count;
+            // Phase 14 Slice E: PSM-decoded `GLine2d` records produce
+            // one additional `PidGeometryConfidence::Decoded` line
+            // entity each, on top of the probe / inferred totals
+            // above. Count them so the assertion below stays exact.
+            let decoded_line_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.decoded_primitive_lines.len());
+            let total = text_count
+                + coordinate_count
+                + endpoint_count
+                + hint_count
+                + decoded_line_count;
             eprintln!(
-                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, total={total}",
+                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, total={total}",
                 sheet.path
             );
             total
@@ -1557,6 +1569,18 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         .filter(|entity| {
             entity.confidence == pid_parse::PidGeometryConfidence::ProbeOnly
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Unknown { .. })
+        })
+        .count();
+    // Phase 14 Slice E: PSM-decoded `GLine2d` PrimitiveLine records
+    // produce `PidGeometryConfidence::Decoded` `PidGraphicKind::Line`
+    // entities. They are additive to the inferred-points + inferred-
+    // lines + probe-unknowns total below.
+    let decoded_lines = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
         })
         .count();
     let expected_coordinate_hints: usize = doc
@@ -1627,16 +1651,19 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         "endpoint pairs with both endpoints promoted should become inferred lines"
     );
     assert_eq!(
-        inferred_points + inferred_lines + probe_unknowns,
+        inferred_points + inferred_lines + probe_unknowns + decoded_lines,
         geometry.entities.len(),
-        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; remaining text and endpoint evidence stays ProbeOnly Unknown"
+        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d records become decoded lines; remaining text and endpoint evidence stays ProbeOnly Unknown"
     );
+    // Phase 14 Slice E: `PidGeometryConfidence::Decoded` is now
+    // legitimate for PSM-decoded `GLine2d` `PrimitiveLine` records.
+    // All non-line entities still must not claim Decoded confidence.
     assert!(
-        geometry
-            .entities
-            .iter()
-            .all(|entity| entity.confidence != pid_parse::PidGeometryConfidence::Decoded),
-        "real fixture baseline must not use Decoded confidence for probe-only Sheet evidence"
+        geometry.entities.iter().all(|entity| {
+            entity.confidence != pid_parse::PidGeometryConfidence::Decoded
+                || matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+        }),
+        "Decoded confidence currently only applies to PSM GLine2d PrimitiveLine entities"
     );
     assert!(
         geometry.entities.iter().all(|entity| {
@@ -2816,6 +2843,98 @@ fn dwg0201_produces_inferred_endpoint_lines() {
                 .is_some_and(|n| n.contains("endpoint pair promoted to inferred line")),
             "inferred line note should describe endpoint pair promotion"
         );
+    }
+}
+
+/// Phase 14 Slice E: DWG-0201 must produce **both** the existing
+/// EndpointPair-inferred lines (the 49-line floor) and at least one
+/// PSM-decoded `GLine2d` `Decoded` line from `build_normalized_geometry`.
+///
+/// The decoded line's provenance triplet (stream path + byte range
+/// `SheetRecordKind::PrimitiveLine`) is asserted alongside,
+/// plus the parametric geometry sanity checks (unit direction
+/// vector and `param_start < param_end`).
+#[test]
+fn dwg0201_emits_decoded_primitive_lines_without_inferred_regression() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let geometry = pid_parse::build_normalized_geometry(&doc);
+    let inferred_lines: Vec<_> = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+        })
+        .collect();
+    let decoded_lines: Vec<_> = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
+        })
+        .collect();
+    eprintln!(
+        "DWG-0201GP06-01 Slice E: inferred_lines={}, decoded_lines={}",
+        inferred_lines.len(),
+        decoded_lines.len()
+    );
+    // Slice E AC8: existing inferred lines must not regress.
+    assert!(
+        inferred_lines.len() >= 49,
+        "DWG-0201 inferred line floor regressed: got {}, expected >= 49",
+        inferred_lines.len()
+    );
+    // Slice E AC5/AC7: at least one Decoded line emitted.
+    assert!(
+        !decoded_lines.is_empty(),
+        "DWG-0201 should emit at least one PSM-decoded GLine2d PrimitiveLine"
+    );
+    for line in &decoded_lines {
+        // AC9 provenance triplet.
+        assert!(
+            line.source.stream_path.as_deref() == Some("/Sheet6"),
+            "decoded line must carry Sheet6 stream_path: {:?}",
+            line.source.stream_path
+        );
+        assert!(
+            line.source.byte_range.is_some(),
+            "decoded line must carry byte_range provenance"
+        );
+        assert_eq!(
+            line.source.record_kind,
+            Some(pid_parse::SheetRecordKind::PrimitiveLine),
+            "decoded line record_kind must be PrimitiveLine"
+        );
+        // Note must mention radsrvitem (the IDA reverse engineering
+        // source) so consumers can trace evidence back to the
+        // analysis doc.
+        assert!(
+            line.source
+                .note
+                .as_ref()
+                .is_some_and(|n| n.contains("PSM GLine2d") && n.contains("radsrvitem.dll")),
+            "decoded line note should describe PSM GLine2d origin from radsrvitem: {:?}",
+            line.source.note
+        );
+        // graphic_oid populated from PSM header.
+        assert!(
+            line.graphic_oid.is_some(),
+            "decoded line should carry PSM oid as graphic_oid"
+        );
+        // Geometry invariants on the decoded line.
+        if let pid_parse::PidGraphicKind::Line { start, end } = &line.kind {
+            assert!(start.x.is_finite() && start.y.is_finite());
+            assert!(end.x.is_finite() && end.y.is_finite());
+            assert!(
+                (start.x - end.x).abs() > 1e-6 || (start.y - end.y).abs() > 1e-6,
+                "decoded line endpoints must not collapse to a single point"
+            );
+        } else {
+            panic!("decoded line kind must be PidGraphicKind::Line");
+        }
     }
 }
 

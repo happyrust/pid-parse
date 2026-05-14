@@ -839,6 +839,100 @@ pub struct SheetGeometry {
     /// geometry coordinates.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub object_geometry_hints: Vec<SheetObjectGeometryHint>,
+    /// PSM-decoded `GLine2d` primitive line records emitted by
+    /// [`crate::parsers::sheet_records::decode_primitive_lines`]
+    /// for this sheet's raw stream bytes. Each entry is a stable
+    /// model-shaped projection of the parser-level
+    /// `SheetPrimitiveLineDecoded` DTO with full provenance
+    /// (`byte_range` + PSM `type_code` + parametric geometry).
+    /// Producing
+    /// [`crate::geometry::PidGeometryConfidence::Decoded`]
+    /// `PidGraphicKind::Line` entities is the responsibility of
+    /// [`crate::geometry::build_normalized_geometry`], which
+    /// converts these records on-demand.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_primitive_lines: Vec<DecodedPrimitiveLineRecord>,
+}
+
+/// Stable, model-shaped DTO that mirrors
+/// [`crate::parsers::sheet_records::SheetPrimitiveLineDecoded`].
+///
+/// The parser-level DTO uses [`std::ops::Range<usize>`] for byte
+/// ranges, but the model surface keeps `byte_start` / `byte_end`
+/// as explicit `usize`s to stay aligned with the rest of the
+/// stable `Sheet*` DTO family (and to keep `JsonSchema` output
+/// compact). Conversion is via
+/// [`From<crate::parsers::sheet_records::SheetPrimitiveLineDecoded>`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedPrimitiveLineRecord {
+    /// Inclusive byte-range start covering the **full** PSM record
+    /// (header + 48-byte `GLine2d` payload + any trailing attribute
+    /// bytes captured by `bytes_to_follow`).
+    pub byte_start: usize,
+    /// Exclusive byte-range end (`byte_start + 6 + bytes_to_follow`).
+    pub byte_end: usize,
+    /// PSM 14-bit type code from the record header. Always
+    /// `0x3FE6` (the `GLine2d` PSM type code) for records this
+    /// decoder emits.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// `bytes_to_follow` field from the PSM header.
+    pub bytes_to_follow: u32,
+    /// `oid` field from the PSM header (`SmartPlant`'s object identifier).
+    pub oid: u32,
+    /// Local-space origin `x`. `point(t) = origin + t * direction`.
+    pub origin_x: f64,
+    /// Local-space origin `y`.
+    pub origin_y: f64,
+    /// Unit direction vector `x` component.
+    pub direction_x: f64,
+    /// Unit direction vector `y` component.
+    pub direction_y: f64,
+    /// Parameter range start `t`. `param_start < param_end` is
+    /// guaranteed at decode time.
+    pub param_start: f64,
+    /// Parameter range end `t`.
+    pub param_end: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetPrimitiveLineDecoded> for DecodedPrimitiveLineRecord {
+    fn from(d: crate::parsers::sheet_records::SheetPrimitiveLineDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            origin_x: d.origin.0,
+            origin_y: d.origin.1,
+            direction_x: d.direction.0,
+            direction_y: d.direction.1,
+            param_start: d.param_start,
+            param_end: d.param_end,
+        }
+    }
+}
+
+impl DecodedPrimitiveLineRecord {
+    /// Cartesian endpoint A computed from the parametric form
+    /// (`origin + param_start * direction`).
+    pub fn endpoint_a(&self) -> (f64, f64) {
+        (
+            self.origin_x + self.param_start * self.direction_x,
+            self.origin_y + self.param_start * self.direction_y,
+        )
+    }
+
+    /// Cartesian endpoint B computed from the parametric form
+    /// (`origin + param_end * direction`).
+    pub fn endpoint_b(&self) -> (f64, f64) {
+        (
+            self.origin_x + self.param_end * self.direction_x,
+            self.origin_y + self.param_end * self.direction_y,
+        )
+    }
 }
 
 /// Stable text run DTO for Sheet streams.

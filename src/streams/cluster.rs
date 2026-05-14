@@ -9,12 +9,13 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
-    ClusterInfo, ClusterKind, ClusterProbeInfo, PidDocument, SheetCoordinateHintDto, SheetGeometry,
-    SheetStream, SheetText,
+    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedPrimitiveLineRecord, PidDocument,
+    SheetCoordinateHintDto, SheetGeometry, SheetStream, SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
+    sheet_records::decode_primitive_lines,
 };
 use std::io::Read;
 
@@ -113,7 +114,7 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
                 let (records, summary) = dynamic_attr_records::parse_attribute_records(&data);
                 let sheet_probe =
                     sheet_probe::probe_sheet_stream(&name, &path, &data, &Default::default());
-                let geometry = sheet_geometry_from_probe(&sheet_probe);
+                let geometry = sheet_geometry_from_probe(&sheet_probe, &data);
 
                 (m, tag, hdr, records, Some(summary), geometry)
             } else {
@@ -211,7 +212,7 @@ fn find_entry1_before(data: &[u8], entry2_pos: usize) -> Option<usize> {
     None
 }
 
-fn sheet_geometry_from_probe(report: &SheetProbeReport) -> Option<SheetGeometry> {
+fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Option<SheetGeometry> {
     let texts: Vec<_> = report
         .text_runs
         .iter()
@@ -232,7 +233,16 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport) -> Option<SheetGeometry>
         })
         .collect();
 
-    if texts.is_empty() && coordinate_hints.is_empty() {
+    // Phase 14 Slice E: walk the raw stream for PSM-encoded
+    // `GLine2d` `PrimitiveLine` records. The decoder is conservative
+    // — it emits zero records when the stream uses a different
+    // record shape (typical for older fixtures) and never panics.
+    let decoded_primitive_lines: Vec<DecodedPrimitiveLineRecord> = decode_primitive_lines(raw_data)
+        .into_iter()
+        .map(DecodedPrimitiveLineRecord::from)
+        .collect();
+
+    if texts.is_empty() && coordinate_hints.is_empty() && decoded_primitive_lines.is_empty() {
         None
     } else {
         Some(SheetGeometry {
@@ -240,6 +250,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport) -> Option<SheetGeometry>
             endpoints: Vec::new(),
             coordinate_hints,
             object_geometry_hints: Vec::new(),
+            decoded_primitive_lines,
         })
     }
 }
@@ -292,7 +303,7 @@ mod tests {
             }],
         };
 
-        let geometry = sheet_geometry_from_probe(&report).expect("geometry evidence");
+        let geometry = sheet_geometry_from_probe(&report, &[]).expect("geometry evidence");
 
         assert_eq!(geometry.texts.len(), 1);
         assert_eq!(geometry.texts[0].encoding, "utf16_le");
