@@ -32,13 +32,60 @@ publish XML pipeline (`Export.mdf → oxidized-mdf → drawing graph → _Data.x
 | `tests/publish_xml_cli.rs` | End-to-end CLI | `test-file/…/Export.mdf` |
 | `tests/publish_meta_parity.rs` | Meta XML shape + DWG compare | A01 ref + optional DWG fixture |
 | `tests/publish_a01_raw_residual.rs` | Residual value scanning | `test-file/…/Export.mdf` |
+| `tests/parse_real_files.rs::primitive_line_decoder_emits_decoded_lines_with_provenance` | Phase 14 GLine2d cross-fixture | `test-file/*.pid` |
+| `tests/parse_real_files.rs::primitive_arc_decoder_emits_decoded_arcs_with_provenance` | Phase 14 GArc2d cross-fixture | `test-file/*.pid` |
+| `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
+| `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_arcs_without_regression` | Phase 14 Slice G AC8 guard | `DWG-0201GP06-01.pid` |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
+
+## Phase 14 SmartPlant Sheet geometry decoder
+
+`src/parsers/sheet_records.rs` ships PSM-record decoders for two
+SmartPlant `Sheet*` stream primitives:
+
+- `decode_primitive_lines(&[u8]) -> Vec<SheetPrimitiveLineDecoded>` —
+  PSM type code `0x3FE6` (`GLine2d`); 6 × f64 parametric line
+  representation `origin + t * direction` for
+  `t ∈ [param_start, param_end]`. Validated to unit direction
+  vector and sorted params. **Accuracy verified against fixture
+  byte content.**
+- `decode_primitive_arcs(&[u8]) -> Vec<SheetPrimitiveArcDecoded>` —
+  PSM type code `0x0030` (`GArc2d` ≥ `GEllipse2d` parent + sweep).
+  Validates `axis_a.y ≈ 0` (GEllipse2d "majorAxis along X"),
+  `axis_ratio ∈ [0, 1+1e-6]`, `sweep_direction ∈ {0, 1}`. **Byte
+  positions IDA-confirmed; some geometric field semantics
+  (e.g. `axis_ratio` interpretation) remain hypothesis pending
+  further reverse-engineering.** See
+  `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
+  for full evidence chain (IGDS class tag table, PSM dispatch,
+  GEllipse2d / GArc2d class hierarchy, fixture byte dump
+  caveat).
+
+Decoded records flow through `streams/cluster.rs` →
+`model::SheetGeometry::decoded_primitive_{lines,arcs}` →
+`geometry::build_normalized_geometry` to emit
+`PidGraphicEntity { confidence: Decoded, kind: Line | Arc, source:
+PidGraphicProvenance { stream_path, byte_range, record_kind,
+graphic_oid, note } }`. The `note` carries the full IDA-evidence
+chain back to `radsrvitem.dll` for downstream provenance.
+
+`pid_inspect <fixture> --geometry-json` exposes the full decoded
++ inferred + probe-only entity catalogue with byte-level
+provenance. On `DWG-0201GP06-01.pid`: 13 decoded (2 lines + 11
+arcs) + 166 inferred (49 lines + 117 points) + 19 probe-only
+entities.
+
+Phase 14 milestones are tracked in
+`goals/phase14-sppid-sheet-geometry/progress.jsonl`. Next
+milestone: resolve the GArc2d geometric field semantics caveat
+or extend the decoder family with `GLineString2d` / `GCircle2d`
+/ `GText` / etc.
 
 ## Common commands
 
 ```bash
-cargo test                                        # 806 tests (607 unit + 199 integration, 2 DWG-gated skipped)
+cargo test                                        # 881+ tests (798 unit + 83 integration, 2 DWG-gated skipped)
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
 cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (31 tests)
 ```
