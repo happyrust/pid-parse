@@ -350,9 +350,9 @@ record 头部 bytes 0..2 的 14-bit field) **不是同一个标识系统**：
 | `IGDSFactoryCmplxStr` / `Cmplx Str` | 复合字符串（complex string） | 子图元 list |
 | `IGDSFactoryText` / `IGDSFactoryTextPointRectShape` | `Text` | position + style + UTF-16 string |
 
-### PSMSerializeOut dispatch 结构 (反编译总结)
+### PSMSerializeOut / PSMSerializeIn dispatch 双结构 (反编译总结)
 
-`sub_56491E80` (PSMSerializeOut) 反编译揭示：
+#### PSMSerializeOut (`sub_56491E80`)
 
 ```c
 v22 = ((unsigned int)v6[2] >> 6) & 0x3FFF;  // PSM type code = bits[6..20]
@@ -373,8 +373,53 @@ if (v22 == 280) { write 59 bytes }   // 头部 type=280, 59-byte payload
 
 277 与 `igDimension`、279 与 `igBalloon`、280 与 `igLeader` 是 IGDS
 tag, **不是** PSM type code (类似 0x3FE6 vs 0x18 的关系)。固定大小
-277/16B 是某 PSM type 而非 IGDS tag。下一会话需对 PSMSerializeIn 做
-同样分析以拿到 PSM type code 全表。
+277/16B 是某 PSM type 而非 IGDS tag。
+
+#### PSMSerializeIn (`sub_564915E0`)
+
+读路径**对称**于 PSMSerializeOut：
+
+```c
+v36 = read u16 type word        // PSM type code
+v40 = read u32 bytes_to_follow  // payload 长度
+v37 = read u32 oid              // 对象 ID
+v35 = current stream offset
+
+// 查表: type code -> class 链 (循环走 *(v43 + 18) 走表)
+v3 = sub_564689C0(v36, &v43);
+while (v12 = *(_WORD *)(v43 + 18), v12 != 0) {
+    v3 = sub_564689C0(v12, &v43);
+    // ...
+}
+
+// 拿到 class -> 创建 IJPersist 实例 -> 走 vtable dispatch
+v3 = (**v34)(v34, dword_56661994, &v42);  // QI(IID_IJPersist)
+// 然后:
+// (*(*v42)[5])(...) 或 (*(*v42)[6])(...) 调 Load 反序列化
+```
+
+**guidtab.h 查询表**：错误消息 `"OID=%d nType= %d in guidtab.h"`
+证实存在 `type code -> class GUID -> factory` 静态映射表。`sub_564689C0`
+是该表的 lookup 函数。要拿 polyline / circle / text 等的 PSM type
+code, 可：
+
+1. 反编译 `sub_564689C0` 找表数据指针 (likely 一个 RVA 数组)
+2. 在 `.rdata` 中 dump 该表 (含 (PSM type code, GUID, factory_ptr) 三元组)
+3. 通过 factory_ptr 找到对象创建函数 → 该对象的 vtable → Save/Load 虚函数
+
+**结论**: PSMSerializeOut 与 PSMSerializeIn 不含 polyline/circle/text
+的具体 layout —— 它们只做调度。每个 geometry 类的磁盘字段布局只能
+通过反编译 **该类的 IJPersist::Save 虚函数** 拿到。
+
+下一 session 复现路径:
+- IDA 找 igLineString2d / igCircle2d / igEllipticalArc2d 的 vtable
+- vtable 中找 Save slot (通常是高位 slot)
+- 反编译 Save 拿到字段布局 + PSM type code
+- 用模板 (Slice D-G) 落地 decoder
+
+或 Plan B 路径:
+- 用 controlled-diff 协议造 polyline-only / circle-only fixture
+- 对比 before/after byte diff 反推 layout
 
 ## IGDSFactory* vtable 调查（slot 4-6 是属性 setter）
 
