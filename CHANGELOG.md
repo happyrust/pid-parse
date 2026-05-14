@@ -2,6 +2,71 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice N：igSymbol2d (PSM 0x00CE) decoder — Intergraph Sigma 标准符号实例落地
+
+第 8 个 IGDS 标准类 decoder。`SmartPlant` 设备/仪表/阀门符号
+实例化在 `Sheet*` 流的 byte-level 落地。字节布局通过
+`examples/probe_igsymbol2d_shape.rs` dump 验证：
+
+```
+PSM 0x00CE (igSymbol2d) record:
+PSM header (6 bytes):
+  0..1   u16   type_code = 0x00CE
+  2..5   u32   bytes_to_follow ∈ {113, 121, 115, 123, ...}
+
+Payload (≥ 113 bytes):
+  0..3    u32   oid
+  4..7    u32   parent_ref
+  8..11   u32   remaining_header
+  12..13  u16   sub_type_word
+  14..39  26 bytes  sub-fields (flags + references + sub-IDs)
+  40..47  f64   transform[0]
+  48..55  f64   transform[1]
+  56..63  f64   transform[2]
+  64..71  f64   transform[3]
+  72..79  f64   insertion.x
+  80..87  f64   insertion.y
+  88..    variable tail (symbol library + class ID + flags)
+```
+
+落地清单：
+
+- `decode_igsymbols` / `decode_igsymbol_at` API +
+  `SheetIgSymbol2dDecoded` DTO + 3 公开常量
+- `DecodedIgSymbol2dRecord` model DTO + `From` + 8 字段
+  (transform_00/01/10/11 + insertion_x/y + oid/parent_ref)
+- `SheetGeometry.decoded_igsymbols` 新字段
+- `streams/cluster.rs::sheet_geometry_from_probe` 同步填充
+- `geometry.rs::build_normalized_geometry` emit
+  `PidGraphicKind::SymbolInstance` with `confidence: Decoded` +
+  `record_kind: SymbolPlacement` + `insertion / symbol_path: None /
+  rotation: 0.0 / scale: [transform_00, transform_11]`
+- 7 个 SheetGeometry 构造点联动加 `decoded_igsymbols: Vec::new()`
+- 6 道 unit test + 1 cross-fixture integration test
+- panic-safety matrix 扩展
+- baseline 算式 + decoded_igsymbol_count + decoded_symbols
+- anti-promotion 断言扩展允许 `Decoded SymbolInstance`
+- schema ratchet 加 4 个新 needle
+- 5 道 gate 全绿 (840 unit + 88 integration tests)
+
+跨 fixture 实测: **27 decoded symbols** (DWG-0201 + DWG-0202 +
+工艺管道-1)，每条带完整 byte-level provenance。decoder 严格于
+naive histogram count (103 hits) — validation 拒绝 size 边界 / NaN /
+out-of-domain coords 的 false positives。
+
+**Phase 14 decoded geometry 累计跨 fixture (Slice N 后, 8 families)**:
+
+| Decoder (Slice) | 跨 fixture 总 hits |
+|---|---|
+| GLine2d (D-E) | 3 |
+| GArc2d (F-I) | 48 |
+| igLine2d (J) | 284 |
+| igLineString2d (K) | 119 |
+| igPoint2d (L) | 146 |
+| igTextBox (M) | 142 |
+| **igSymbol2d (N)** | **27** |
+| **TOTAL** | **769** |
+
 ### Phase 14 Slice M：igTextBox (PSM 0x004D) decoder — Intergraph Sigma 标准文本注解落地
 
 第 7 个 IGDS 标准类 decoder。字节布局通过

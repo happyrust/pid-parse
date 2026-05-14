@@ -1971,6 +1971,20 @@ pub const IGTEXTBOX_PAYLOAD_OVERHEAD: usize = 68;
 /// cap at 1024 chars to reject obvious noise.
 const IGTEXTBOX_MAX_TEXT_LENGTH: u16 = 1024;
 
+/// PSM type code that identifies a standard Intergraph Sigma
+/// `igSymbol2d` record on disk (IGDS class tag `0xCE = 206`).
+///
+/// Cross-fixture histogram surfaces 103 hits — `SmartPlant` symbol
+/// instantiations (equipment, instruments, valves).
+pub const PSM_TYPE_CODE_IGSYMBOL2D: u16 = 0x00CE;
+
+/// Minimum byte length of one PSM `igSymbol2d` payload. Real
+/// fixtures show 113-byte (most common) and 121-byte variants.
+pub const IGSYMBOL2D_MIN_PAYLOAD_LEN: usize = 113;
+
+/// Maximum byte length we'll accept on a decoded `igSymbol2d`.
+const IGSYMBOL2D_MAX_PAYLOAD_LEN: usize = 200;
+
 /// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
 ///
 /// Empirically validated against all three Sheet-bearing fixtures in
@@ -3206,6 +3220,151 @@ pub fn decode_igtextbox_at(data: &[u8], offset: usize) -> Option<SheetIgTextBoxD
         trailing_double_1: trailing[0],
         trailing_double_2: trailing[1],
         trailing_double_3: trailing[2],
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 14 Slice N: PSM-encoded igSymbol2d decoder
+// ---------------------------------------------------------------------------
+
+/// One decoded PSM `igSymbol2d` record — Intergraph Sigma's
+/// standard symbol-instance primitive (PSM type `0x00CE`, IGDS
+/// class tag `0xCE`).
+///
+/// In `SmartPlant` `Sheet*` streams these are the placed instances
+/// of equipment / instrument / valve symbols. Fixture byte dump
+/// (`examples/probe_igsymbol2d_shape.rs`) shows two common sizes:
+/// 113 bytes (most common) and 121 bytes (with an extra 8-byte
+/// scalar). Layout extracted conservatively:
+///
+/// ```text
+/// PSM header (6 bytes):
+///   0..1   u16   type_code = 0x00CE
+///   2..5   u32   bytes_to_follow ∈ {113, 115, 121, 123, ...}
+///
+/// Payload (variable, ≥ 113 bytes):
+///   0..3    u32   oid
+///   4..7    u32   parent_ref
+///   8..11   u32   remaining_header
+///   12..13  u16   sub_type_word
+///   14..39  26 bytes  sub-fields (flags, references, sub-IDs)
+///   40..47  f64   transform[0] (typically scale_x or rotation_cos)
+///   48..55  f64   transform[1]
+///   56..63  f64   transform[2]
+///   64..71  f64   transform[3]
+///   72..79  f64   insertion.x
+///   80..87  f64   insertion.y
+///   88..    variable tail (symbol library ref + class ID + flags)
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgSymbol2dDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_IGSYMBOL2D`].
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header.
+    pub bytes_to_follow: u32,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference (often the symbol library or page).
+    pub parent_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// 4-element `f64` transform matrix at payload offsets 40..71.
+    /// Without `radsrvitem.dll` decompile this is named generically;
+    /// for canonical un-rotated/un-scaled symbols it's
+    /// `[1.0, 0.0, 0.0, 1.0]`.
+    pub transform: [f64; 4],
+    /// Insertion point (extracted from payload offsets 72..87).
+    pub insertion: (f64, f64),
+}
+
+/// Decode every PSM-encoded `igSymbol2d` record.
+///
+/// Validation:
+/// 1. `type_code == 0x00CE`;
+/// 2. `bytes_to_follow ∈ [113, 200]`;
+/// 3. 6 doubles at payload offsets 40..87 finite + in domain.
+pub fn decode_igsymbols(data: &[u8]) -> Vec<SheetIgSymbol2dDecoded> {
+    let mut out = Vec::new();
+    if data.len() < 6 + IGSYMBOL2D_MIN_PAYLOAD_LEN {
+        return out;
+    }
+    let max_offset = data.len() - (6 + IGSYMBOL2D_MIN_PAYLOAD_LEN);
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_igsymbol_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `igSymbol2d` record starting at
+/// `offset`. Returns `None` on validation failure.
+pub fn decode_igsymbol_at(data: &[u8], offset: usize) -> Option<SheetIgSymbol2dDecoded> {
+    let header_end = offset.checked_add(6)?;
+    if header_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_IGSYMBOL2D {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    let btf = bytes_to_follow as usize;
+    if !(IGSYMBOL2D_MIN_PAYLOAD_LEN..=IGSYMBOL2D_MAX_PAYLOAD_LEN).contains(&btf) {
+        return None;
+    }
+    let payload_end = header_end.checked_add(btf)?;
+    if payload_end > data.len() {
+        return None;
+    }
+    let payload = data.get(header_end..payload_end)?;
+
+    let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
+
+    // Read 6 doubles starting at payload offset 40: 4 for transform,
+    // 2 for insertion.
+    let mut doubles = [0f64; 6];
+    for (i, slot) in doubles.iter_mut().enumerate() {
+        let pos = 40 + i * 8;
+        let chunk = payload.get(pos..pos + 8)?;
+        *slot = f64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]);
+    }
+    if !doubles.iter().all(|x| x.is_finite()) {
+        return None;
+    }
+    if doubles
+        .iter()
+        .any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
+    {
+        return None;
+    }
+
+    Some(SheetIgSymbol2dDecoded {
+        byte_range: offset..payload_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        parent_ref,
+        sub_type_word,
+        transform: [doubles[0], doubles[1], doubles[2], doubles[3]],
+        insertion: (doubles[4], doubles[5]),
     })
 }
 
@@ -4522,6 +4681,99 @@ mod tests {
         let _ = decode_igtextboxes(&noise);
         assert!(decode_igtextboxes(&vec![0u8; 4096]).is_empty());
         assert!(decode_igtextboxes(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 14 Slice N: PSM igSymbol2d decoder tests
+    // -----------------------------------------------------------------
+
+    fn build_synthetic_igsymbol2d_record(
+        oid: u32,
+        parent_ref: u32,
+        transform: [f64; 4],
+        insertion: (f64, f64),
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(6 + IGSYMBOL2D_MIN_PAYLOAD_LEN);
+        out.extend_from_slice(&PSM_TYPE_CODE_IGSYMBOL2D.to_le_bytes());
+        out.extend_from_slice(&(IGSYMBOL2D_MIN_PAYLOAD_LEN as u32).to_le_bytes());
+        // Payload bytes 0..40: oid + parent_ref + 8B remaining +
+        // 2B sub_type + 26 bytes of sub-fields (zeroed)
+        out.extend_from_slice(&oid.to_le_bytes()); // 0..4
+        out.extend_from_slice(&parent_ref.to_le_bytes()); // 4..8
+        out.extend_from_slice(&8u32.to_le_bytes()); // 8..12 remaining_header
+        out.extend_from_slice(&0x0010u16.to_le_bytes()); // 12..14 sub_type
+        out.extend_from_slice(&[0u8; 26]); // 14..40 sub-fields
+                                           // 40..72: 4 transform doubles
+        for v in &transform {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        // 72..88: insertion x, y
+        out.extend_from_slice(&insertion.0.to_le_bytes());
+        out.extend_from_slice(&insertion.1.to_le_bytes());
+        // 88..113: 25 bytes of trailing (symbol library ref + flags)
+        out.extend_from_slice(&[0u8; 25]);
+        out
+    }
+
+    #[test]
+    fn igsymbol2d_decodes_canonical_unrotated_symbol() {
+        let record = build_synthetic_igsymbol2d_record(
+            500,
+            6,
+            [1.0, 0.0, 0.0, 1.0], // identity transform
+            (0.3, 0.4),
+        );
+        let decoded = decode_igsymbols(&record);
+        assert_eq!(decoded.len(), 1);
+        let s = &decoded[0];
+        assert_eq!(s.type_code, PSM_TYPE_CODE_IGSYMBOL2D);
+        assert_eq!(s.bytes_to_follow, 113);
+        assert_eq!(s.oid, 500);
+        assert_eq!(s.parent_ref, 6);
+        assert_eq!(s.transform, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(s.insertion, (0.3, 0.4));
+    }
+
+    #[test]
+    fn igsymbol2d_rejects_wrong_type_code() {
+        let mut record = build_synthetic_igsymbol2d_record(1, 1, [1.0, 0.0, 0.0, 1.0], (0.0, 0.0));
+        record[0] = 0x18;
+        record[1] = 0x00;
+        assert!(decode_igsymbols(&record).is_empty());
+    }
+
+    #[test]
+    fn igsymbol2d_rejects_undersized_bytes_to_follow() {
+        let mut record = vec![];
+        record.extend_from_slice(&PSM_TYPE_CODE_IGSYMBOL2D.to_le_bytes());
+        record.extend_from_slice(&100u32.to_le_bytes());
+        record.extend_from_slice(&[0u8; 100]);
+        assert!(decode_igsymbols(&record).is_empty());
+    }
+
+    #[test]
+    fn igsymbol2d_rejects_nan_transform_element() {
+        let mut record = build_synthetic_igsymbol2d_record(1, 1, [1.0, 0.0, 0.0, 1.0], (0.0, 0.0));
+        // transform[0] at record offset 6 + 40 = 46
+        record[46..54].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(decode_igsymbols(&record).is_empty());
+    }
+
+    #[test]
+    fn igsymbol2d_decoder_is_panic_safe_on_short_input() {
+        let record = build_synthetic_igsymbol2d_record(1, 1, [1.0, 0.0, 0.0, 1.0], (0.5, 0.5));
+        for trunc_len in 0..record.len() {
+            assert!(decode_igsymbols(&record[..trunc_len]).is_empty());
+        }
+        assert!(decode_igsymbols(&[]).is_empty());
+    }
+
+    #[test]
+    fn igsymbol2d_decoder_is_panic_safe_on_random_noise() {
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_igsymbols(&noise);
+        assert!(decode_igsymbols(&vec![0u8; 4096]).is_empty());
+        assert!(decode_igsymbols(&vec![0xFFu8; 4096]).is_empty());
     }
 
     #[test]

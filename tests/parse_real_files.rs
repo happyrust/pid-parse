@@ -11,13 +11,14 @@ use pid_parse::{
     },
     parsers::sheet_records::{
         coordinate_page_metadata_investigation_report, curve_primitive_investigation_report,
-        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igtextboxes,
-        decode_primitive_arcs, decode_primitive_lines, primitive_line_investigation_report,
-        sheet_record_shape_inventory, symbol_placement_investigation_report,
-        text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
-        SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSymbolPlacementObject,
-        PSM_TYPE_CODE_GARC2D, PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_IGLINE2D,
-        PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGTEXTBOX,
+        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
+        decode_igtextboxes, decode_primitive_arcs, decode_primitive_lines,
+        primitive_line_investigation_report, sheet_record_shape_inventory,
+        symbol_placement_investigation_report, text_placement_investigation_report,
+        SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
+        SheetRecordShapeKind, SheetSymbolPlacementObject, PSM_TYPE_CODE_GARC2D,
+        PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D,
+        PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX,
     },
     PidParser,
 };
@@ -1545,6 +1546,10 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 .geometry
                 .as_ref()
                 .map_or(0, |geometry| geometry.decoded_igtextboxes.len());
+            let decoded_igsymbol_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.decoded_igsymbols.len());
             let total = text_count
                 + coordinate_count
                 + endpoint_count
@@ -1554,9 +1559,10 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 + decoded_igline_count
                 + decoded_iglinestring_count
                 + decoded_igpoint_count
-                + decoded_igtextbox_count;
+                + decoded_igtextbox_count
+                + decoded_igsymbol_count;
             eprintln!(
-                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_arc={decoded_arc_count}, decoded_igline={decoded_igline_count}, decoded_iglinestring={decoded_iglinestring_count}, decoded_igpoint={decoded_igpoint_count}, decoded_igtextbox={decoded_igtextbox_count}, total={total}",
+                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_arc={decoded_arc_count}, decoded_igline={decoded_igline_count}, decoded_iglinestring={decoded_iglinestring_count}, decoded_igpoint={decoded_igpoint_count}, decoded_igtextbox={decoded_igtextbox_count}, decoded_igsymbol={decoded_igsymbol_count}, total={total}",
                 sheet.path
             );
             total
@@ -1646,6 +1652,17 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Text { .. })
         })
         .count();
+    let decoded_symbols = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+                && matches!(
+                    entity.kind,
+                    pid_parse::PidGraphicKind::SymbolInstance { .. }
+                )
+        })
+        .count();
     let expected_coordinate_hints: usize = doc
         .sheet_streams
         .iter()
@@ -1721,15 +1738,16 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
             + decoded_arcs
             + decoded_polylines
             + decoded_points
-            + decoded_texts,
+            + decoded_texts
+            + decoded_symbols,
         geometry.entities.len(),
-        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d/igLine2d records become decoded lines; GArc2d records become decoded arcs; igLineString2d records become decoded polylines; igPoint2d records become decoded points; igTextBox records become decoded texts; remaining probe evidence stays ProbeOnly Unknown"
+        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d/igLine2d records become decoded lines; GArc2d records become decoded arcs; igLineString2d records become decoded polylines; igPoint2d records become decoded points; igTextBox records become decoded texts; igSymbol2d records become decoded symbol instances; remaining probe evidence stays ProbeOnly Unknown"
     );
-    // Phase 14 Slice E/G/J/K/L/M: `PidGeometryConfidence::Decoded`
+    // Phase 14 Slice E/G/J/K/L/M/N: `PidGeometryConfidence::Decoded`
     // is legitimate for PSM-decoded GLine2d / igLine2d / GArc2d /
-    // igLineString2d / igPoint2d / igTextBox records (Line / Arc
-    // / Polyline / Point / Text kinds). Circle / SymbolInstance /
-    // Unknown must still not claim Decoded confidence.
+    // igLineString2d / igPoint2d / igTextBox / igSymbol2d records
+    // (Line / Arc / Polyline / Point / Text / SymbolInstance kinds).
+    // Circle / Unknown must still not claim Decoded confidence.
     assert!(
         geometry.entities.iter().all(|entity| {
             entity.confidence != pid_parse::PidGeometryConfidence::Decoded
@@ -1740,15 +1758,16 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                         | pid_parse::PidGraphicKind::Polyline { .. }
                         | pid_parse::PidGraphicKind::Point { .. }
                         | pid_parse::PidGraphicKind::Text { .. }
+                        | pid_parse::PidGraphicKind::SymbolInstance { .. }
                 )
         }),
-        "Decoded confidence currently only applies to PSM GLine2d / igLine2d / GArc2d / igLineString2d / igPoint2d / igTextBox entities"
+        "Decoded confidence currently only applies to PSM GLine2d / igLine2d / GArc2d / igLineString2d / igPoint2d / igTextBox / igSymbol2d entities"
     );
-    // Phase 14 Slice G/K/M: `PidGraphicKind::Arc` (Slice G),
-    // `Polyline` (Slice K) and `Text` (Slice M) are legitimate
-    // when backed by PSM-decoded records (i.e.
-    // `confidence == Decoded`). Other typed curve / symbol kinds
-    // still cannot be emitted without decoded record backing.
+    // Phase 14 Slice G/K/M/N: `PidGraphicKind::Arc` (Slice G),
+    // `Polyline` (Slice K), `Text` (Slice M) and `SymbolInstance`
+    // (Slice N) are legitimate when backed by PSM-decoded records
+    // (`confidence == Decoded`). Other typed kinds still cannot
+    // be emitted without decoded record backing.
     assert!(
         geometry.entities.iter().all(|entity| {
             let typed_decoded = matches!(
@@ -1756,6 +1775,7 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 pid_parse::PidGraphicKind::Arc { .. }
                     | pid_parse::PidGraphicKind::Polyline { .. }
                     | pid_parse::PidGraphicKind::Text { .. }
+                    | pid_parse::PidGraphicKind::SymbolInstance { .. }
             ) && entity.confidence == pid_parse::PidGeometryConfidence::Decoded;
             typed_decoded
                 || !matches!(
@@ -1767,7 +1787,7 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                         | pid_parse::PidGraphicKind::SymbolInstance { .. }
                 )
         }),
-        "probe-only and hint evidence must not become typed curve/text/symbol geometry without decoded records (Arc/Polyline/Text are exceptions for PSM-decoded records)"
+        "probe-only and hint evidence must not become typed curve/text/symbol geometry without decoded records (Arc/Polyline/Text/Symbol are exceptions for PSM-decoded records)"
     );
     for entity in geometry.entities.iter().filter(|entity| {
         entity.confidence == pid_parse::PidGeometryConfidence::Inferred
@@ -6367,6 +6387,73 @@ fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
         "decode_primitive_lines must emit at least one decoded line on the \
         Sheet-bearing fixture set, got {total_decoded}. \
         Per-fixture summary: {per_fixture_summary:?}"
+    );
+}
+
+/// Phase 14 Slice N: cross-fixture validation that
+/// `decode_igsymbols` emits decoded `igSymbol2d` symbol instances
+/// (PSM type `0x00CE`) from real `Sheet*` streams.
+#[test]
+fn igsymbols_decoder_emits_decoded_symbols_with_provenance() {
+    let fixtures = [
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+        "export-test/publish-data/A01/A01.pid",
+    ];
+    let mut total_decoded = 0usize;
+    let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
+    let mut sample_lines: Vec<String> = Vec::new();
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture_count = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let bytes = raw.data.as_slice();
+            let decoded = decode_igsymbols(bytes);
+            for s in &decoded {
+                assert!(s.byte_range.end <= bytes.len());
+                assert_eq!(s.type_code, PSM_TYPE_CODE_IGSYMBOL2D);
+                assert!(s.bytes_to_follow >= 113);
+                assert!(s.insertion.0.is_finite() && s.insertion.1.is_finite());
+                if sample_lines.len() < 5 {
+                    sample_lines.push(format!(
+                        "{fixture} oid={} parent={} insertion=({:.4}, {:.4}) \
+                         transform=[{:.2}, {:.2}, {:.2}, {:.2}]",
+                        s.oid,
+                        s.parent_ref,
+                        s.insertion.0,
+                        s.insertion.1,
+                        s.transform[0],
+                        s.transform[1],
+                        s.transform[2],
+                        s.transform[3],
+                    ));
+                }
+            }
+            per_fixture_count += decoded.len();
+        }
+        per_fixture_summary.push((fixture.to_string(), per_fixture_count));
+        total_decoded += per_fixture_count;
+    }
+    eprintln!("--- Phase 14 Slice N: PSM igSymbol2d decoder cross-fixture summary ---");
+    for (name, count) in &per_fixture_summary {
+        eprintln!("  {name}: {count} decoded igSymbol2d records");
+    }
+    for s in &sample_lines {
+        eprintln!("  sample: {s}");
+    }
+    eprintln!("  total decoded symbols: {total_decoded}");
+    if per_fixture_summary.is_empty() {
+        return;
+    }
+    assert!(
+        total_decoded >= 20,
+        "decode_igsymbols should emit >= 20 symbols cross-fixture, got {total_decoded}"
     );
 }
 

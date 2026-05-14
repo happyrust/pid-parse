@@ -893,6 +893,14 @@ pub struct SheetGeometry {
     /// (Phase 14 Slice M).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igtextboxes: Vec<DecodedIgTextBoxRecord>,
+    /// PSM-decoded `igSymbol2d` records (PSM type `0x00CE`, IGDS
+    /// class tag `0xCE`) — Intergraph Sigma's standard symbol
+    /// instance primitive (`SmartPlant` equipment / instrument /
+    /// valve placements), emitted by
+    /// [`crate::parsers::sheet_records::decode_igsymbols`]
+    /// (Phase 14 Slice N).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igsymbols: Vec<DecodedIgSymbol2dRecord>,
 }
 
 /// Stable, model-shaped DTO that mirrors
@@ -1311,6 +1319,63 @@ impl From<crate::parsers::sheet_records::SheetIgTextBoxDecoded> for DecodedIgTex
             trailing_double_1: d.trailing_double_1,
             trailing_double_2: d.trailing_double_2,
             trailing_double_3: d.trailing_double_3,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgSymbol2dDecoded`] —
+/// PSM type `0x00CE` `SmartPlant` symbol instance.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgSymbol2dRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x00CE`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header.
+    pub bytes_to_follow: u32,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// First element of the 2×2 transform matrix at payload
+    /// offsets 40..47 (often `cos(rotation) * scale_x`).
+    pub transform_00: f64,
+    /// Second element of the transform matrix.
+    pub transform_01: f64,
+    /// Third element of the transform matrix.
+    pub transform_10: f64,
+    /// Fourth element of the transform matrix.
+    pub transform_11: f64,
+    /// Insertion point `x`.
+    pub insertion_x: f64,
+    /// Insertion point `y`.
+    pub insertion_y: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSymbol2dRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgSymbol2dDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sub_type_word: d.sub_type_word,
+            transform_00: d.transform[0],
+            transform_01: d.transform[1],
+            transform_10: d.transform[2],
+            transform_11: d.transform[3],
+            insertion_x: d.insertion.0,
+            insertion_y: d.insertion.1,
         }
     }
 }

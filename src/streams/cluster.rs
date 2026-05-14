@@ -10,16 +10,16 @@ use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
     ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedIgLine2dRecord, DecodedIgLineString2dRecord,
-    DecodedIgPoint2dRecord, DecodedIgTextBoxRecord, DecodedPrimitiveArcRecord,
-    DecodedPrimitiveLineRecord, PidDocument, SheetCoordinateHintDto, SheetGeometry, SheetStream,
-    SheetText,
+    DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord, DecodedIgTextBoxRecord,
+    DecodedPrimitiveArcRecord, DecodedPrimitiveLineRecord, PidDocument, SheetCoordinateHintDto,
+    SheetGeometry, SheetStream, SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
     sheet_records::{
-        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igtextboxes,
-        decode_primitive_arcs, decode_primitive_lines,
+        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
+        decode_igtextboxes, decode_primitive_arcs, decode_primitive_lines,
     },
 };
 use std::io::Read;
@@ -266,6 +266,10 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         .into_iter()
         .map(DecodedIgTextBoxRecord::from)
         .collect();
+    let decoded_igsymbols: Vec<DecodedIgSymbol2dRecord> = decode_igsymbols(raw_data)
+        .into_iter()
+        .map(DecodedIgSymbol2dRecord::from)
+        .collect();
 
     if texts.is_empty()
         && coordinate_hints.is_empty()
@@ -275,6 +279,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         && decoded_iglinestrings.is_empty()
         && decoded_igpoints.is_empty()
         && decoded_igtextboxes.is_empty()
+        && decoded_igsymbols.is_empty()
     {
         None
     } else {
@@ -289,6 +294,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             decoded_iglinestrings,
             decoded_igpoints,
             decoded_igtextboxes,
+            decoded_igsymbols,
         })
     }
 }

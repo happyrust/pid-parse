@@ -723,6 +723,53 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     confidence: PidGeometryConfidence::Decoded,
                 });
             }
+            for (index, record) in geometry.decoded_igsymbols.iter().enumerate() {
+                let Some(byte_range) = source_range(
+                    record.byte_start,
+                    record.byte_end.saturating_sub(record.byte_start),
+                    sheet.size,
+                ) else {
+                    continue;
+                };
+                entities.push(PidGraphicEntity {
+                    id: format!("{}:igsymbol2d:{index}", sheet.path),
+                    drawing_id: None,
+                    graphic_oid: Some(record.oid),
+                    kind: PidGraphicKind::SymbolInstance {
+                        insertion: PidPoint {
+                            x: record.insertion_x,
+                            y: record.insertion_y,
+                        },
+                        symbol_path: None,
+                        rotation: 0.0,
+                        scale: [record.transform_00, record.transform_11],
+                    },
+                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                    source: PidGraphicProvenance {
+                        stream_path: Some(sheet.path.clone()),
+                        byte_range: Some(byte_range),
+                        record_id: Some(format!("igsymbol2d:{index}")),
+                        record_kind: Some(SheetRecordKind::SymbolPlacement),
+                        field_x: None,
+                        note: Some(format!(
+                            "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, \
+                             type 0x00CE, IGDS class tag 0xCE); oid={} parent_ref={} \
+                             sub_type=0x{:04X} insertion=({:.4}, {:.4}) transform=[{:.4}, \
+                             {:.4}, {:.4}, {:.4}]; byte layout from fixture dump",
+                            record.oid,
+                            record.parent_ref,
+                            record.sub_type_word,
+                            record.insertion_x,
+                            record.insertion_y,
+                            record.transform_00,
+                            record.transform_01,
+                            record.transform_10,
+                            record.transform_11,
+                        )),
+                    },
+                    confidence: PidGeometryConfidence::Decoded,
+                });
+            }
             for (index, record) in geometry.decoded_igtextboxes.iter().enumerate() {
                 let Some(byte_range) = source_range(
                     record.byte_start,
@@ -1159,6 +1206,7 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igsymbols: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1252,6 +1300,7 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igsymbols: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1383,6 +1432,7 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igsymbols: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1467,6 +1517,7 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igsymbols: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1522,6 +1573,7 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igsymbols: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1597,6 +1649,7 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igsymbols: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,

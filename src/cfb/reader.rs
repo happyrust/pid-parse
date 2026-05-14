@@ -710,6 +710,7 @@ mod tests {
                 decoded_iglinestrings: vec![],
                 decoded_igpoints: vec![],
                 decoded_igtextboxes: vec![],
+                decoded_igsymbols: vec![],
             }),
             endpoint_records: vec![SheetEndpointRecord {
                 sheet_path: "/Sheet6".into(),
