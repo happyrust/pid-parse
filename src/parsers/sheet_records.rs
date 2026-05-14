@@ -1889,6 +1889,36 @@ pub const GLINE2D_PAYLOAD_LEN: usize = 48;
 /// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
 pub const GARC2D_PAYLOAD_LEN: usize = 64;
 
+/// PSM type code that identifies a standard Intergraph Sigma
+/// `igLine2d` record on disk.
+///
+/// Equals the Intergraph IGDS class tag for `igLine2d` (`0x18 = 24`,
+/// looked up by `radsrvitem.dll!sub_56448F70`). The fixture
+/// histogram in `examples/probe_psm_type_code_histogram.rs` shows
+/// 309 cross-fixture hits for this type code on `Sheet*` streams,
+/// far more than the 3 `GLine2d` (PSM `0x3FE6`) records — `igLine2d`
+/// is the canonical Sigma 2D line representation, while `GLine2d`
+/// (PSM `0x3FE6`) is `SmartPlant`'s extended parametric wrapper.
+pub const PSM_TYPE_CODE_IGLINE2D: u16 = 0x0018;
+
+/// Byte length of one PSM `igLine2d` payload (after the 6-byte
+/// `(type_code, bytes_to_follow)` header): 18 bytes of sub-header
+/// (`oid` + `parent_ref` + `remaining=12` + `sub_type_word` +
+/// `index`) + 32 bytes of `(start.x, start.y, end.x, end.y)`
+/// f64-LE = **50 bytes total**.
+///
+/// Layout revealed by `examples/probe_igline2d_shape.rs` fixture
+/// byte dump; see
+/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
+/// section "igLine2d 字节布局已揭示" for the full evidence.
+pub const IGLINE2D_PAYLOAD_LEN: usize = 50;
+
+/// Magic constant inside the `igLine2d` payload's sub-header at
+/// byte offset 8..11: `remaining_header == 12` (4 bytes for
+/// `sub_type_word + index`). Records whose `remaining_header`
+/// doesn't equal 12 are rejected as not real `igLine2d`.
+const IGLINE2D_REMAINING_HEADER: u32 = 12;
+
 /// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
 ///
 /// Empirically validated against all three Sheet-bearing fixtures in
@@ -2380,6 +2410,189 @@ pub fn decode_primitive_line_at(data: &[u8], offset: usize) -> Option<SheetPrimi
         direction: (dir_x, dir_y),
         param_start,
         param_end,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 14 Slice J: PSM-encoded igLine2d decoder
+// ---------------------------------------------------------------------------
+
+/// One decoded PSM `igLine2d` record — Intergraph Sigma's standard
+/// 2D line primitive (PSM type `0x0018`, IGDS class tag `0x18`).
+///
+/// **Byte layout** (fully revealed via fixture byte dump in
+/// `examples/probe_igline2d_shape.rs`; total 56 bytes = 6-byte PSM
+/// header + 50-byte payload):
+///
+/// ```text
+/// PSM header (6 bytes):
+///   0..1   u16 LE   type_code = 0x0018
+///   2..5   u32 LE   bytes_to_follow = 50
+///
+/// Payload (50 bytes):
+///   0..3   u32 LE   oid
+///   4..7   u32 LE   parent_ref
+///   8..11  u32 LE   remaining_header == 12 (constant)
+///   12..13 u16 LE   sub_type_word
+///   14..17 u32 LE   index / sub_oid
+///   18..25 f64 LE   start.x
+///   26..33 f64 LE   start.y
+///   34..41 f64 LE   end.x
+///   42..49 f64 LE   end.y
+/// ```
+///
+/// 4-double Cartesian `(start, end)` representation. Compare to
+/// the parametric 6-double `GLine2d` (PSM `0x3FE6`) family, which
+/// is `SmartPlant`'s extended wrapper of the same geometric concept.
+/// `igLine2d` is by far the more common form in real fixtures
+/// (309 vs 3 cross-fixture hits).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgLine2dDecoded {
+    /// Byte range covering the full PSM record (6-byte header +
+    /// 50-byte payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_IGLINE2D`]
+    /// (`0x0018` = decimal 24, matching IGDS class tag for
+    /// `igLine2d`).
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header; always 50 for valid
+    /// records.
+    pub bytes_to_follow: u32,
+    /// Object identifier (payload bytes 0..3).
+    pub oid: u32,
+    /// Parent reference (payload bytes 4..7) — typically the
+    /// `PrimitiveCluster` or owning entity. Semantic precise meaning
+    /// is hypothesis; the byte field is reliably present.
+    pub parent_ref: u32,
+    /// Sub-type discriminator (payload bytes 12..13). Seen values
+    /// include `0x0010`, `0x0001`, `0x0065`, `0x0032`, `0x0023`,
+    /// `0x001F`, `0x002B`; semantics not yet decoded.
+    pub sub_type_word: u16,
+    /// Index / sub-oid (payload bytes 14..17).
+    pub index: u32,
+    /// Start point of the line segment.
+    pub start: (f64, f64),
+    /// End point of the line segment.
+    pub end: (f64, f64),
+}
+
+impl SheetIgLine2dDecoded {
+    /// Length of the line segment (`= ‖end − start‖`).
+    pub fn length(&self) -> f64 {
+        let dx = self.end.0 - self.start.0;
+        let dy = self.end.1 - self.start.1;
+        (dx * dx + dy * dy).sqrt()
+    }
+}
+
+/// Decode every PSM-encoded `igLine2d` record in a `Sheet*`
+/// stream's bytes.
+///
+/// Walk every byte offset; at each offset check whether a 6-byte
+/// `(type_code, bytes_to_follow)` PSM header is followed by 50
+/// bytes of `igLine2d` payload satisfying all of:
+///
+/// 1. PSM `type_code` == [`PSM_TYPE_CODE_IGLINE2D`] (`0x0018`);
+/// 2. `bytes_to_follow` == 50 (igLine2d records are fixed-size);
+/// 3. Payload `remaining_header` field (bytes 8..11) ==
+///    [`IGLINE2D_REMAINING_HEADER`] (`12`);
+/// 4. All four geometry `f64`s are finite and in domain
+///    `[-1e9, 1e9]`;
+/// 5. `start != end` (line must be non-degenerate; collapse
+///    rejected to avoid noise).
+///
+/// Panic-free and bounds-checked: adversarial bytes simply fail
+/// validation and are skipped.
+pub fn decode_iglines(data: &[u8]) -> Vec<SheetIgLine2dDecoded> {
+    let mut out = Vec::new();
+    if data.len() < 6 + IGLINE2D_PAYLOAD_LEN {
+        return out;
+    }
+    let max_offset = data.len() - (6 + IGLINE2D_PAYLOAD_LEN);
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_igline_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `igLine2d` record starting at
+/// `offset` in `data`. Returns `None` when any of the validation
+/// rules in [`decode_iglines`] fail. Bounds-checked; tolerant of
+/// truncated input.
+pub fn decode_igline_at(data: &[u8], offset: usize) -> Option<SheetIgLine2dDecoded> {
+    let header_end = offset.checked_add(6)?;
+    let payload_end = header_end.checked_add(IGLINE2D_PAYLOAD_LEN)?;
+    if payload_end > data.len() {
+        return None;
+    }
+
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_IGLINE2D {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    if bytes_to_follow as usize != IGLINE2D_PAYLOAD_LEN {
+        return None;
+    }
+
+    let payload = data.get(header_end..payload_end)?;
+    let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let remaining_header = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
+    if remaining_header != IGLINE2D_REMAINING_HEADER {
+        return None;
+    }
+    let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
+    let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
+
+    // Parse 4 f64 doubles at offsets 18, 26, 34, 42.
+    let mut d = [0f64; 4];
+    for (i, slot) in d.iter_mut().enumerate() {
+        let pos = 18 + i * 8;
+        let chunk = payload.get(pos..pos + 8)?;
+        *slot = f64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]);
+    }
+    if !d.iter().all(|x| x.is_finite()) {
+        return None;
+    }
+    if d.iter().any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT) {
+        return None;
+    }
+
+    let start = (d[0], d[1]);
+    let end = (d[2], d[3]);
+    // Reject degenerate (zero-length) lines.
+    let dx = end.0 - start.0;
+    let dy = end.1 - start.1;
+    if dx.abs() < 1e-12 && dy.abs() < 1e-12 {
+        return None;
+    }
+
+    Some(SheetIgLine2dDecoded {
+        byte_range: offset..payload_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        parent_ref,
+        sub_type_word,
+        index,
+        start,
+        end,
     })
 }
 
@@ -3118,6 +3331,149 @@ mod tests {
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].byte_range.end, 6 + 164);
         assert_eq!(decoded[0].bytes_to_follow, 164);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 14 Slice J: PSM igLine2d decoder tests
+    // -----------------------------------------------------------------
+
+    /// Build a synthetic PSM `igLine2d` record (56 bytes total):
+    /// 6-byte PSM header + 50-byte payload.
+    fn build_synthetic_igline2d_record(
+        oid: u32,
+        parent_ref: u32,
+        sub_type_word: u16,
+        index: u32,
+        start: (f64, f64),
+        end: (f64, f64),
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(6 + IGLINE2D_PAYLOAD_LEN);
+        out.extend_from_slice(&PSM_TYPE_CODE_IGLINE2D.to_le_bytes());
+        out.extend_from_slice(&(IGLINE2D_PAYLOAD_LEN as u32).to_le_bytes());
+        // Payload starts here.
+        out.extend_from_slice(&oid.to_le_bytes());
+        out.extend_from_slice(&parent_ref.to_le_bytes());
+        out.extend_from_slice(&IGLINE2D_REMAINING_HEADER.to_le_bytes());
+        out.extend_from_slice(&sub_type_word.to_le_bytes());
+        out.extend_from_slice(&index.to_le_bytes());
+        out.extend_from_slice(&start.0.to_le_bytes());
+        out.extend_from_slice(&start.1.to_le_bytes());
+        out.extend_from_slice(&end.0.to_le_bytes());
+        out.extend_from_slice(&end.1.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn igline2d_decodes_canonical_horizontal_segment() {
+        let record = build_synthetic_igline2d_record(
+            177,
+            1212,
+            0x0010,
+            86,
+            (0.4719, 0.3897),
+            (0.5736, 0.3897),
+        );
+        let decoded = decode_iglines(&record);
+        assert_eq!(decoded.len(), 1);
+        let line = &decoded[0];
+        assert_eq!(line.type_code, PSM_TYPE_CODE_IGLINE2D);
+        assert_eq!(line.bytes_to_follow, 50);
+        assert_eq!(line.oid, 177);
+        assert_eq!(line.parent_ref, 1212);
+        assert_eq!(line.sub_type_word, 0x0010);
+        assert_eq!(line.index, 86);
+        assert!((line.start.0 - 0.4719).abs() < 1e-9);
+        assert!((line.start.1 - 0.3897).abs() < 1e-9);
+        assert!((line.end.0 - 0.5736).abs() < 1e-9);
+        assert!((line.end.1 - 0.3897).abs() < 1e-9);
+        assert_eq!(line.byte_range.start, 0);
+        assert_eq!(line.byte_range.end, 6 + 50);
+        assert!((line.length() - 0.1017).abs() < 1e-3);
+    }
+
+    #[test]
+    fn igline2d_rejects_wrong_type_code() {
+        let mut record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
+        record[0] = 0xE6;
+        record[1] = 0x3F;
+        assert!(decode_iglines(&record).is_empty());
+    }
+
+    #[test]
+    fn igline2d_rejects_wrong_bytes_to_follow() {
+        let mut record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
+        // Overwrite bytes_to_follow with 49 (not exactly 50).
+        record[2] = 49;
+        assert!(decode_iglines(&record).is_empty());
+    }
+
+    #[test]
+    fn igline2d_rejects_wrong_remaining_header() {
+        let mut record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
+        // Overwrite remaining_header at payload offset 8 (record offset 14).
+        record[6 + 8] = 11; // change 0x0C to 0x0B
+        assert!(decode_iglines(&record).is_empty());
+    }
+
+    #[test]
+    fn igline2d_rejects_degenerate_zero_length_line() {
+        let record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.5, 0.5), (0.5, 0.5));
+        assert!(decode_iglines(&record).is_empty());
+    }
+
+    #[test]
+    fn igline2d_rejects_nan_coordinate() {
+        let mut record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.0, 0.0), (1.0, 1.0));
+        let nan_bytes = f64::NAN.to_le_bytes();
+        // start.x is at record offset 6 + 18 = 24.
+        record[24..32].copy_from_slice(&nan_bytes);
+        assert!(decode_iglines(&record).is_empty());
+    }
+
+    #[test]
+    fn igline2d_rejects_out_of_domain_coordinate() {
+        let record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (1e10, 0.0), (1.0, 1.0));
+        assert!(decode_iglines(&record).is_empty());
+    }
+
+    #[test]
+    fn igline2d_decoder_is_panic_safe_on_short_input() {
+        let record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.0, 0.0), (1.0, 1.0));
+        for trunc_len in 0..record.len() {
+            assert!(
+                decode_iglines(&record[..trunc_len]).is_empty(),
+                "truncated input length {trunc_len} must not decode"
+            );
+        }
+        assert!(decode_iglines(&[]).is_empty());
+    }
+
+    #[test]
+    fn igline2d_decoder_is_panic_safe_on_random_noise() {
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_iglines(&noise);
+        assert!(decode_iglines(&vec![0u8; 4096]).is_empty());
+        assert!(decode_iglines(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    #[test]
+    fn igline2d_decodes_two_back_to_back_records() {
+        let mut data = build_synthetic_igline2d_record(7, 100, 0x10, 1, (0.1, 0.1), (0.2, 0.1));
+        data.extend(build_synthetic_igline2d_record(
+            8,
+            100,
+            0x65,
+            2,
+            (0.3, 0.3),
+            (0.3, 0.5),
+        ));
+        let decoded = decode_iglines(&data);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].oid, 7);
+        assert_eq!(decoded[1].oid, 8);
+        assert_eq!(decoded[0].sub_type_word, 0x10);
+        assert_eq!(decoded[1].sub_type_word, 0x65);
+        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
     }
 
     #[test]

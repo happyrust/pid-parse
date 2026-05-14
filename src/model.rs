@@ -864,6 +864,14 @@ pub struct SheetGeometry {
     /// [`crate::geometry::build_normalized_geometry`].
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_primitive_arcs: Vec<DecodedPrimitiveArcRecord>,
+    /// PSM-decoded `igLine2d` records (PSM type `0x0018`, IGDS
+    /// class tag `0x18`) — Intergraph Sigma's standard 2D line
+    /// primitive, emitted by
+    /// [`crate::parsers::sheet_records::decode_iglines`]. By far
+    /// the most common line representation in real `SmartPlant`
+    /// fixtures (Phase 14 Slice J).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_iglines: Vec<DecodedIgLine2dRecord>,
 }
 
 /// Stable, model-shaped DTO that mirrors
@@ -1032,6 +1040,78 @@ impl DecodedPrimitiveArcRecord {
     /// `radsrvitem.dll!sub_56539060` (`IMElIsCir2d`) criterion.
     pub fn is_circular(&self) -> bool {
         (self.axis_ratio - 1.0).abs() < 1e-6
+    }
+}
+
+/// Stable, model-shaped DTO that mirrors
+/// [`crate::parsers::sheet_records::SheetIgLine2dDecoded`]
+/// — PSM type `0x0018` Intergraph Sigma 2D standard line.
+///
+/// Layout: PSM 6-byte header + 50-byte payload. Payload fields are
+/// `oid` (u32), `parent_ref` (u32), `remaining_header` (u32 = 12,
+/// validated), `sub_type_word` (u16), `index` (u32), then four
+/// `f64` LE for `start.x`, `start.y`, `end.x`, `end.y`. See
+/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
+/// section "igLine2d 字节布局已揭示" for the full layout and
+/// fixture-verified evidence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgLine2dRecord {
+    /// Inclusive byte-range start covering the full PSM record.
+    pub byte_start: usize,
+    /// Exclusive byte-range end (`= byte_start + 6 + 50 = byte_start + 56`).
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x0018` for records this
+    /// decoder emits.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header; always 50 for valid
+    /// records.
+    pub bytes_to_follow: u32,
+    /// Object identifier (payload bytes 0..3).
+    pub oid: u32,
+    /// Parent reference (payload bytes 4..7).
+    pub parent_ref: u32,
+    /// Sub-type discriminator (payload bytes 12..13).
+    pub sub_type_word: u16,
+    /// Index / sub-oid (payload bytes 14..17).
+    pub index: u32,
+    /// Start point `x` (payload offset 18).
+    pub start_x: f64,
+    /// Start point `y` (payload offset 26).
+    pub start_y: f64,
+    /// End point `x` (payload offset 34).
+    pub end_x: f64,
+    /// End point `y` (payload offset 42).
+    pub end_y: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgLine2dDecoded> for DecodedIgLine2dRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgLine2dDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            start_x: d.start.0,
+            start_y: d.start.1,
+            end_x: d.end.0,
+            end_y: d.end.1,
+        }
+    }
+}
+
+impl DecodedIgLine2dRecord {
+    /// Length of the line segment.
+    pub fn length(&self) -> f64 {
+        let dx = self.end_x - self.start_x;
+        let dy = self.end_y - self.start_y;
+        (dx * dx + dy * dy).sqrt()
     }
 }
 

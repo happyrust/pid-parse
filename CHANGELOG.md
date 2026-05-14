@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice J：igLine2d (PSM 0x0018) decoder — Intergraph Sigma 标准线落地
+
+**100× 真实数据集扩展**：在 `examples/probe_psm_type_code_histogram.rs`
+跨 4 fixture 扫描发现 `PSM type code 0x0018 = igLine2d` 有 309
+records cross-fixture（vs Slice D 的 3 个 SmartPlant `GLine2d` 封装
+records）后，落地 igLine2d decoder：
+
+- `src/parsers/sheet_records.rs` 加 `decode_iglines` /
+  `decode_igline_at` 公开入口 + `SheetIgLine2dDecoded` DTO (含
+  `byte_range` + PSM 头部 + `oid` + `parent_ref` + `sub_type_word` +
+  `index` + `start` + `end`) + `length()` 便利方法。常量
+  `PSM_TYPE_CODE_IGLINE2D = 0x0018`、`IGLINE2D_PAYLOAD_LEN = 50` /
+  内部 `IGLINE2D_REMAINING_HEADER = 12`。
+- **字节布局完全实测验证**（无需 IDA 反编译）：通过
+  `examples/probe_igline2d_shape.rs` dump 真实 fixture record 字节
+  揭示 6-byte PSM header + 50-byte payload =
+  `(oid + parent_ref + remaining_header=12 + sub_type_word + index +
+   start.xy + end.xy)`。Validate 强约束：`bytes_to_follow == 50` /
+  `remaining_header == 12` / 4 doubles finite + in domain /
+  start != end。
+- `src/model.rs` 加 `DecodedIgLine2dRecord` stable DTO 配套
+  `From<SheetIgLine2dDecoded>` + `length()` 便利方法 +
+  `SheetGeometry.decoded_iglines: Vec<DecodedIgLine2dRecord>` 新字段。
+- `src/streams/cluster.rs::sheet_geometry_from_probe` 同步调
+  `decode_iglines(raw_data)` 填充。`SheetGeometry` 7 个构造点（geometry.rs
+  6 + cfb/reader.rs 1）联动加 `decoded_iglines: Vec::new()`。
+- `src/geometry.rs::build_normalized_geometry` 在 line/arc emit 块前
+  emit `PidGraphicKind::Line` entities with `confidence: Decoded`
+  + `record_kind: PrimitiveLine` + `note` 引用 IGDS 0x18 + Intergraph
+  Sigma standard line。
+- `src/parsers/sheet_records.rs::tests` 加 10 道单元测试覆盖
+  canonical horizontal segment / 拒错 type / 拒错 bytes_to_follow /
+  拒错 remaining_header / 拒退化零长 / 拒 NaN / 拒越界 / 截断 /
+  噪声 / 双连续。
+- `tests/parser_panic_safety.rs` 加 `decode_iglines` /
+  `decode_igline_at` 进 panic-safety matrix。
+- `tests/parse_real_files.rs` 新增
+  `iglines_decoder_emits_decoded_iglines_with_provenance` 跨 fixture
+  集成测试：跨 fixture **284 decoded igLines** (DWG-0201:24 +
+  DWG-0202:42 + 工艺管道-1:218 + A01:0)，断言 ≥ 100 cross-fixture，
+  每条 provenance 完整。
+- `tests/parse_real_files.rs::normalized_geometry_probe_baseline_on_real_fixture`
+  加 `decoded_igline_count` 算式联动。
+- `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression`
+  断言 filter 加 `.note.contains("PSM GLine2d")` 区分 Slice E 原始
+  GLine2d entities 与 Slice J igLine2d entities（都是 `Line` kind）。
+- `src/schema.rs::tests::schema_exposes_sheet_geometry_dtos`
+  ratchet 加 6 个新 needle：`DecodedIgLine2dRecord` /
+  `decoded_iglines` / `parent_ref` / `sub_type_word` / `start_x` /
+  `end_x`。
+- 5 道 gate 全绿（808 unit + 84 integration tests + clippy + fmt +
+  missing-docs ratchet=0）。
+
+**跨 fixture 量化影响**：DWG-0201GP06-01.pid 现输出 **26 decoded
+Line entities** (2 GLine2d + 24 igLine2d) — 比 Slice D-E 的 2 条线
+**多 13 倍**！全部带完整 byte-level provenance + IDA-confirmed
+fixture-verified evidence。
+
 ### Phase 14 Slice I：GArc2d decoder 加严 (GEllipse2d "majorAxis 沿 X" 约束落地)
 
 实测 fixture byte dump 揭示部分 0x0030 records 字段 `axis_a.y` 不为 0

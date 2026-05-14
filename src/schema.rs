@@ -137,6 +137,13 @@ mod tests {
             "sweep_direction",
             "sweep_start_angle",
             "sweep_end_angle",
+            // Phase 14 Slice J: igLine2d (PSM 0x0018) DTO.
+            "DecodedIgLine2dRecord",
+            "decoded_iglines",
+            "parent_ref",
+            "sub_type_word",
+            "start_x",
+            "end_x",
         ] {
             assert!(
                 text.contains(needle),
