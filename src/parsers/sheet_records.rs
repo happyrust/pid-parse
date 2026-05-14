@@ -1943,6 +1943,13 @@ const GARC2D_AXIS1_MIN_MAGNITUDE: f64 = 1e-6;
 /// be an arc.
 const GARC2D_AXIS_MAX_MAGNITUDE: f64 = 1e3;
 
+/// Tolerance for `axis_ratio` upper bound. `axis_ratio` represents
+/// `axis_b / |axis_a|` and is mathematically in `[0, 1]`, but the
+/// `radsrvitem.dll!sub_56539060` (`IMElIsCir2d`) circle test uses
+/// a tolerance of `~1e-6`, so we allow up to `1.0 + 1e-6` for
+/// rounding-error robustness.
+const GARC2D_AXIS_RATIO_TOLERANCE: f64 = 1e-6;
+
 /// One decoded PSM `GLine2d` `PrimitiveLine` record.
 ///
 /// Phase 14 anti-promotion guarantee: this DTO carries the **raw
@@ -2051,13 +2058,26 @@ pub fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
 }
 
 /// One decoded PSM `GArc2d` `PrimitiveArc` (or `PrimitiveCircle`,
-/// when `axis2` is zero) record.
+/// when `axis_ratio` ≈ 1.0) record.
 ///
-/// `radsrvitem.dll!GArc2d::Validate` (`sub_56524150`) decompilation
-/// shows the 64-byte payload holds 8 × `f64` LE in this order:
-/// `(center.x, center.y, axis1.x, axis1.y, axis2.x, axis2.y,
-/// param_start, param_end)`. `axis2 ~ 0` collapses the ellipse arc
-/// to a circular arc / circle. Producing
+/// `radsrvitem.dll!GArc2d::Validate` (`sub_56524150`) + its 4
+/// internal helpers (`sub_56524280` / `sub_5658F950` /
+/// `sub_56539060` / `sub_564E0D90` / `sub_56537290`) decompilation
+/// collectively confirm the 64-byte payload layout:
+///
+/// ```text
+///  0..7    f64    center.x
+///  8..15   f64    center.y
+/// 16..23   f64    axis_a.x          (primary axis vector x)
+/// 24..31   f64    axis_a.y          (primary axis vector y)
+/// 32..39   f64    axis_ratio        (axis_b / |axis_a|, = 1 → circle)
+/// 40       u8     sweep_direction   (0 = CW, 1 = CCW)
+/// 41..47   pad    7 bytes           (alignment)
+/// 48..55   f64    sweep_start_angle (radians)
+/// 56..63   f64    sweep_end_angle   (radians)
+/// ```
+///
+/// Producing
 /// [`crate::geometry::PidGeometryConfidence::Decoded`] is the
 /// responsibility of `geometry.rs`; this module only decodes bytes.
 #[derive(Debug, Clone, PartialEq)]
@@ -2077,39 +2097,46 @@ pub struct SheetPrimitiveArcDecoded {
     pub oid: u32,
     /// Arc center `(x, y)`.
     pub center: (f64, f64),
-    /// Primary axis vector `(x, y)`. Length encodes the radius (or
-    /// semi-major axis for an ellipse arc); direction encodes the
+    /// Primary axis vector `(x, y)`. Length (`|axis_a|`) encodes
+    /// the semi-major axis of the ellipse (or the radius for a
+    /// circular arc); direction (`atan2(y, x)`) encodes the
     /// orientation.
-    pub axis1: (f64, f64),
-    /// Secondary axis vector `(x, y)`. `(0, 0)` for a pure
-    /// circular arc / circle. Length encodes the semi-minor axis
-    /// for an ellipse arc.
-    pub axis2: (f64, f64),
-    /// Parameter range start. `param_start < param_end` guaranteed.
-    pub param_start: f64,
-    /// Parameter range end.
-    pub param_end: f64,
+    pub axis_a: (f64, f64),
+    /// Ratio of the secondary axis to the primary axis
+    /// (`axis_b / axis_a_magnitude`). `~1.0` means the arc is
+    /// circular; `< 1.0` means the arc is elliptical with
+    /// `axis_b = axis_ratio * axis_a_magnitude`.
+    pub axis_ratio: f64,
+    /// Sweep direction flag at byte offset 40 in the payload:
+    /// `0` = clockwise (CW), `1` = counter-clockwise (CCW).
+    /// Extracted from the raw byte; the remaining 7 bytes of the
+    /// 8-byte slot are padding and discarded.
+    pub sweep_direction: u8,
+    /// Sweep start angle in radians.
+    pub sweep_start_angle: f64,
+    /// Sweep end angle in radians.
+    pub sweep_end_angle: f64,
 }
 
 impl SheetPrimitiveArcDecoded {
-    /// Length of the primary axis (`= |axis1|`). Equals the radius
-    /// for a pure circular arc.
-    pub fn axis1_magnitude(&self) -> f64 {
-        (self.axis1.0 * self.axis1.0 + self.axis1.1 * self.axis1.1).sqrt()
+    /// Length of the primary axis (`= |axis_a|`). Equals the
+    /// **radius** for a circular arc, the **semi-major axis** for
+    /// an elliptical arc.
+    pub fn axis_a_magnitude(&self) -> f64 {
+        (self.axis_a.0 * self.axis_a.0 + self.axis_a.1 * self.axis_a.1).sqrt()
     }
 
-    /// Length of the secondary axis (`= |axis2|`). `~0.0` indicates
-    /// a circular (rather than elliptical) arc.
-    pub fn axis2_magnitude(&self) -> f64 {
-        (self.axis2.0 * self.axis2.0 + self.axis2.1 * self.axis2.1).sqrt()
+    /// Semi-minor axis length = `axis_ratio * |axis_a|`. Equals
+    /// `|axis_a|` for a circle, `< |axis_a|` for an ellipse.
+    pub fn semi_minor_axis(&self) -> f64 {
+        self.axis_a_magnitude() * self.axis_ratio
     }
 
-    /// `true` when `axis2 ~ (0, 0)`, i.e. the arc is circular
-    /// (or a closed full circle). The threshold matches
-    /// `GARC2D_AXIS1_MIN_MAGNITUDE` so a degenerate axis is treated
-    /// as zero.
+    /// `true` when `|axis_ratio - 1.0| < 1e-6`, i.e. the arc is
+    /// circular (not elliptical). This is the
+    /// `radsrvitem.dll!sub_56539060` (`IMElIsCir2d`) criterion.
     pub fn is_circular(&self) -> bool {
-        self.axis2_magnitude() < GARC2D_AXIS1_MIN_MAGNITUDE
+        (self.axis_ratio - 1.0).abs() < 1e-6
     }
 }
 
@@ -2124,14 +2151,17 @@ impl SheetPrimitiveArcDecoded {
 ///    [`PSM_TYPE_CODE_GARC2D`];
 /// 2. `bytes_to_follow` (header bytes 2..6 LE) is `>=` 64 and fits
 ///    within the remaining stream;
-/// 3. All eight payload `f64`s are finite, with
-///    `|x| <= GLINE2D_COORDINATE_DOMAIN_LIMIT`;
-/// 4. `|axis1|` is in `[GARC2D_AXIS1_MIN_MAGNITUDE,
+/// 3. All seven payload `f64`s (`center.xy` + `axis_a.xy` +
+///    `axis_ratio` + `sweep_start_angle` + `sweep_end_angle`) are
+///    finite, with `|x| <= GLINE2D_COORDINATE_DOMAIN_LIMIT`;
+/// 4. `|axis_a|` is in `[GARC2D_AXIS1_MIN_MAGNITUDE,
 ///    GARC2D_AXIS_MAX_MAGNITUDE]` (rejects zero/uninit and obvious
 ///    noise);
-/// 5. `|axis2|` is in `[0, GARC2D_AXIS_MAX_MAGNITUDE]` (allows the
-///    circular special case);
-/// 6. `param_start < param_end` strictly.
+/// 5. `axis_ratio` is in `[0, 1 + GARC2D_AXIS_RATIO_TOLERANCE]`
+///    (ellipse arcs have `axis_b / |axis_a|` ≤ 1; some rounding
+///    error tolerated);
+/// 6. `sweep_direction` ≤ 1 (only `0` = CW and `1` = CCW are valid);
+/// 7. `sweep_start_angle < sweep_end_angle` strictly.
 ///
 /// The decoder is **conservative** and panic-free: adversarial
 /// bytes either fail validation and are skipped, or never decode
@@ -2184,31 +2214,56 @@ pub fn decode_primitive_arc_at(data: &[u8], offset: usize) -> Option<SheetPrimit
     }
     let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
 
+    // GArc2d payload (corrected per radsrvitem.dll Validate +
+    // helpers decompile):
+    //   bytes 0..7   center.x
+    //   bytes 8..15  center.y
+    //   bytes 16..23 axis_a.x
+    //   bytes 24..31 axis_a.y
+    //   bytes 32..39 axis_ratio
+    //   byte 40      sweep_direction (u8)
+    //   bytes 41..47 padding (discarded)
+    //   bytes 48..55 sweep_start_angle
+    //   bytes 56..63 sweep_end_angle
     let payload = data.get(header_end..payload_end)?;
-    let mut d = [0f64; 8];
-    for (i, slot) in d.iter_mut().enumerate() {
-        let chunk = payload.get(i * 8..i * 8 + 8)?;
+    let mut doubles = [0f64; 7];
+    let offsets = [0usize, 8, 16, 24, 32, 48, 56];
+    for (i, slot) in doubles.iter_mut().enumerate() {
+        let pos = offsets[i];
+        let chunk = payload.get(pos..pos + 8)?;
         *slot = f64::from_le_bytes([
             chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
         ]);
     }
-    if !d.iter().all(|x| x.is_finite()) {
+    let sweep_direction: u8 = *payload.get(40)?;
+
+    if !doubles.iter().all(|x| x.is_finite()) {
         return None;
     }
-    if d.iter().any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT) {
+    if doubles
+        .iter()
+        .any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
+    {
         return None;
     }
-    let axis1_mag = (d[2] * d[2] + d[3] * d[3]).sqrt();
-    if !(GARC2D_AXIS1_MIN_MAGNITUDE..=GARC2D_AXIS_MAX_MAGNITUDE).contains(&axis1_mag) {
+
+    let center = (doubles[0], doubles[1]);
+    let axis_a = (doubles[2], doubles[3]);
+    let axis_ratio = doubles[4];
+    let sweep_start_angle = doubles[5];
+    let sweep_end_angle = doubles[6];
+
+    let axis_a_mag = (axis_a.0 * axis_a.0 + axis_a.1 * axis_a.1).sqrt();
+    if !(GARC2D_AXIS1_MIN_MAGNITUDE..=GARC2D_AXIS_MAX_MAGNITUDE).contains(&axis_a_mag) {
         return None;
     }
-    let axis2_mag = (d[4] * d[4] + d[5] * d[5]).sqrt();
-    if axis2_mag > GARC2D_AXIS_MAX_MAGNITUDE {
+    if !(0.0..=1.0 + GARC2D_AXIS_RATIO_TOLERANCE).contains(&axis_ratio) {
         return None;
     }
-    let param_start = d[6];
-    let param_end = d[7];
-    if param_start >= param_end {
+    if sweep_direction > 1 {
+        return None;
+    }
+    if sweep_start_angle >= sweep_end_angle {
         return None;
     }
 
@@ -2218,11 +2273,12 @@ pub fn decode_primitive_arc_at(data: &[u8], offset: usize) -> Option<SheetPrimit
         type_flags,
         bytes_to_follow,
         oid,
-        center: (d[0], d[1]),
-        axis1: (d[2], d[3]),
-        axis2: (d[4], d[5]),
-        param_start,
-        param_end,
+        center,
+        axis_a,
+        axis_ratio,
+        sweep_direction,
+        sweep_start_angle,
+        sweep_end_angle,
     })
 }
 
@@ -2854,16 +2910,17 @@ mod tests {
     // Phase 14 Slice F: PSM GArc2d decoder tests
     // -----------------------------------------------------------------
 
-    /// Build a single synthetic PSM `GArc2d` record: 18-byte header
-    /// (type=0x0030, `bytes_to_follow`=64, oid=`oid`) + 8 × f64
-    /// payload.
+    /// Build a single synthetic PSM `GArc2d` record per the
+    /// corrected payload layout (`center` + `axis_a` + `axis_ratio`
+    /// + `sweep_direction` byte + 7B padding + sweep angles).
     fn build_synthetic_garc2d_record(
         oid: u32,
         center: (f64, f64),
-        axis1: (f64, f64),
-        axis2: (f64, f64),
-        param_start: f64,
-        param_end: f64,
+        axis_a: (f64, f64),
+        axis_ratio: f64,
+        sweep_direction: u8,
+        sweep_start_angle: f64,
+        sweep_end_angle: f64,
     ) -> Vec<u8> {
         let mut out = Vec::with_capacity(PSM_RECORD_HEADER_LEN + GARC2D_PAYLOAD_LEN);
         let type_word: u16 = PSM_TYPE_CODE_GARC2D;
@@ -2871,27 +2928,29 @@ mod tests {
         out.extend_from_slice(&(GARC2D_PAYLOAD_LEN as u32).to_le_bytes());
         out.extend_from_slice(&oid.to_le_bytes());
         out.extend_from_slice(&[0u8; 8]);
-        for v in [
-            center.0,
-            center.1,
-            axis1.0,
-            axis1.1,
-            axis2.0,
-            axis2.1,
-            param_start,
-            param_end,
-        ] {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
+        out.extend_from_slice(&center.0.to_le_bytes());
+        out.extend_from_slice(&center.1.to_le_bytes());
+        out.extend_from_slice(&axis_a.0.to_le_bytes());
+        out.extend_from_slice(&axis_a.1.to_le_bytes());
+        out.extend_from_slice(&axis_ratio.to_le_bytes());
+        out.push(sweep_direction);
+        out.extend_from_slice(&[0u8; 7]);
+        out.extend_from_slice(&sweep_start_angle.to_le_bytes());
+        out.extend_from_slice(&sweep_end_angle.to_le_bytes());
         out
     }
 
     #[test]
     fn primitive_arc_decodes_canonical_circle_record() {
-        // Canonical circle: center (0.25, 0.5), axis1 = (0.1, 0)
-        // (radius 0.1), axis2 = (0, 0) (circular), sweep [0, 1].
-        let record =
-            build_synthetic_garc2d_record(99, (0.25, 0.5), (0.1, 0.0), (0.0, 0.0), 0.0, 1.0);
+        let record = build_synthetic_garc2d_record(
+            99,
+            (0.25, 0.5),
+            (0.1, 0.0),
+            1.0,
+            1,
+            0.0,
+            std::f64::consts::TAU,
+        );
         let decoded = decode_primitive_arcs(&record);
         assert_eq!(decoded.len(), 1);
         let arc = &decoded[0];
@@ -2899,12 +2958,13 @@ mod tests {
         assert_eq!(arc.oid, 99);
         assert_eq!(arc.bytes_to_follow, 64);
         assert_eq!(arc.center, (0.25, 0.5));
-        assert!((arc.axis1.0 - 0.1).abs() < 1e-12 && arc.axis1.1.abs() < 1e-12);
-        assert!(arc.axis2.0.abs() < 1e-12 && arc.axis2.1.abs() < 1e-12);
-        assert_eq!(arc.param_start, 0.0);
-        assert_eq!(arc.param_end, 1.0);
-        assert!((arc.axis1_magnitude() - 0.1).abs() < 1e-12);
-        assert!(arc.axis2_magnitude() < 1e-12);
+        assert!((arc.axis_a.0 - 0.1).abs() < 1e-12 && arc.axis_a.1.abs() < 1e-12);
+        assert!((arc.axis_ratio - 1.0).abs() < 1e-12);
+        assert_eq!(arc.sweep_direction, 1);
+        assert_eq!(arc.sweep_start_angle, 0.0);
+        assert!((arc.sweep_end_angle - std::f64::consts::TAU).abs() < 1e-12);
+        assert!((arc.axis_a_magnitude() - 0.1).abs() < 1e-12);
+        assert!((arc.semi_minor_axis() - 0.1).abs() < 1e-12);
         assert!(arc.is_circular());
         assert_eq!(arc.byte_range.start, 0);
         assert_eq!(arc.byte_range.end, 6 + 64);
@@ -2912,51 +2972,57 @@ mod tests {
 
     #[test]
     fn primitive_arc_decodes_canonical_ellipse_record() {
-        // Canonical ellipse: axis2 non-zero.
-        let record =
-            build_synthetic_garc2d_record(100, (0.5, 0.5), (0.2, 0.0), (0.0, 0.1), 0.0, 0.5);
+        let record = build_synthetic_garc2d_record(100, (0.5, 0.5), (0.2, 0.0), 0.5, 0, 0.0, 0.5);
         let decoded = decode_primitive_arcs(&record);
         assert_eq!(decoded.len(), 1);
         let arc = &decoded[0];
         assert!(!arc.is_circular());
-        assert!((arc.axis1_magnitude() - 0.2).abs() < 1e-12);
-        assert!((arc.axis2_magnitude() - 0.1).abs() < 1e-12);
+        assert!((arc.axis_a_magnitude() - 0.2).abs() < 1e-12);
+        assert!((arc.semi_minor_axis() - 0.1).abs() < 1e-12);
+        assert_eq!(arc.sweep_direction, 0);
     }
 
     #[test]
     fn primitive_arc_rejects_wrong_type_code() {
-        let mut record =
-            build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (0.0, 0.0), 0.0, 1.0);
-        // Overwrite type to GLine2d's 0x3FE6.
+        let mut record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 1, 0.0, 1.0);
         record[0] = 0xE6;
         record[1] = 0x3F;
         assert!(decode_primitive_arcs(&record).is_empty());
     }
 
     #[test]
-    fn primitive_arc_rejects_zero_axis1() {
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 0.0, 1.0);
+    fn primitive_arc_rejects_zero_axis_a() {
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.0, 0.0), 1.0, 1, 0.0, 1.0);
         assert!(decode_primitive_arcs(&record).is_empty());
     }
 
     #[test]
-    fn primitive_arc_rejects_oversize_axis() {
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (1e6, 0.0), (0.0, 0.0), 0.0, 1.0);
+    fn primitive_arc_rejects_oversize_axis_or_invalid_ratio() {
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (1e6, 0.0), 1.0, 1, 0.0, 1.0);
         assert!(decode_primitive_arcs(&record).is_empty());
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (1e6, 0.0), 0.0, 1.0);
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 2.0, 1, 0.0, 1.0);
+        assert!(decode_primitive_arcs(&record).is_empty());
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), -0.5, 1, 0.0, 1.0);
         assert!(decode_primitive_arcs(&record).is_empty());
     }
 
     #[test]
-    fn primitive_arc_rejects_reversed_param_range() {
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (0.0, 0.0), 1.0, 0.5);
+    fn primitive_arc_rejects_invalid_sweep_direction() {
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 2, 0.0, 1.0);
+        assert!(decode_primitive_arcs(&record).is_empty());
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 0xFF, 0.0, 1.0);
+        assert!(decode_primitive_arcs(&record).is_empty());
+    }
+
+    #[test]
+    fn primitive_arc_rejects_reversed_sweep_range() {
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 1, 1.0, 0.5);
         assert!(decode_primitive_arcs(&record).is_empty());
     }
 
     #[test]
     fn primitive_arc_rejects_nan_payload() {
-        let mut record =
-            build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (0.0, 0.0), 0.0, 1.0);
+        let mut record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 1, 0.0, 1.0);
         let nan_bytes = f64::NAN.to_le_bytes();
         let center_off = PSM_RECORD_HEADER_LEN;
         record[center_off..center_off + 8].copy_from_slice(&nan_bytes);
@@ -2965,7 +3031,7 @@ mod tests {
 
     #[test]
     fn primitive_arc_decoder_is_panic_safe_on_short_input() {
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), (0.0, 0.0), 0.0, 1.0);
+        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 1, 0.0, 1.0);
         for trunc_len in 0..record.len() {
             assert!(
                 decode_primitive_arcs(&record[..trunc_len]).is_empty(),
@@ -2985,13 +3051,13 @@ mod tests {
 
     #[test]
     fn primitive_arc_decodes_two_back_to_back_records() {
-        let mut data =
-            build_synthetic_garc2d_record(7, (0.1, 0.1), (0.2, 0.0), (0.0, 0.0), 0.0, 0.5);
+        let mut data = build_synthetic_garc2d_record(7, (0.1, 0.1), (0.2, 0.0), 1.0, 1, 0.0, 0.5);
         data.extend(build_synthetic_garc2d_record(
             8,
             (0.3, 0.3),
             (0.15, 0.0),
-            (0.0, 0.1),
+            0.5,
+            0,
             0.0,
             0.8,
         ));
@@ -3011,7 +3077,13 @@ mod tests {
         record.extend_from_slice(&(64u32 + 100).to_le_bytes());
         record.extend_from_slice(&55u32.to_le_bytes());
         record.extend_from_slice(&[0u8; 8]);
-        for v in [0.5f64, 0.5, 0.2, 0.0, 0.0, 0.0, 0.0, 1.0] {
+        // Manually emit 64-byte payload matching new corrected layout.
+        for v in [0.5f64, 0.5, 0.2, 0.0, 1.0] {
+            record.extend_from_slice(&v.to_le_bytes());
+        }
+        record.push(1);
+        record.extend_from_slice(&[0u8; 7]);
+        for v in [0.0f64, 1.0] {
             record.extend_from_slice(&v.to_le_bytes());
         }
         record.extend_from_slice(&[0xAB; 100]);

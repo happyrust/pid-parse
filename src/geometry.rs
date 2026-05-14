@@ -733,12 +733,12 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                 };
                 // Slice G first-pass mapping from the parametric
                 // `GArc2d` form to `PidGraphicKind::Arc`: use
-                // `|axis1|` as radius (this is exact for circular
-                // arcs and a usable approximation for ellipse arcs
-                // when axis2 != 0). Carry the full parametric
-                // payload in `source.note` so downstream renderers
-                // can reconstruct ellipse geometry when needed.
-                let radius = record.axis1_magnitude();
+                // `|axis_a|` as radius (exact for circular arcs,
+                // i.e. when `axis_ratio ≈ 1`; for ellipses this is
+                // the semi-major axis length, with the semi-minor
+                // = `axis_ratio * |axis_a|` carried in
+                // `source.note` for downstream renderers).
+                let radius = record.axis_a_magnitude();
                 entities.push(PidGraphicEntity {
                     id: format!("{}:primitive-arc:{index}", sheet.path),
                     drawing_id: None,
@@ -749,8 +749,8 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                             y: record.center_y,
                         },
                         radius,
-                        start_angle: record.param_start,
-                        end_angle: record.param_end,
+                        start_angle: record.sweep_start_angle,
+                        end_angle: record.sweep_end_angle,
                     },
                     coordinate_context: sheet_source_coordinate_context(&sheet.path),
                     source: PidGraphicProvenance {
@@ -761,24 +761,26 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         field_x: None,
                         note: Some(format!(
                             "PSM GArc2d record decoded from radsrvitem.dll byte layout (\
-                             18-byte header + 8 x f64 payload); oid={} type_code=0x{:04X} \
-                             type_flags=0x{:X} bytes_to_follow={} center=({:.4}, {:.4}) \
-                             axis1=({:.5}, {:.5})|{:.5} axis2=({:.5}, {:.5})|{:.5} \
-                             param=[{:.4}, {:.4}] circular={}",
+                             18-byte header + 7 x f64 + 1 x u8 sweep_direction + 7B padding); \
+                             oid={} type_code=0x{:04X} type_flags=0x{:X} \
+                             bytes_to_follow={} center=({:.4}, {:.4}) \
+                             axis_a=({:.5}, {:.5})|{:.5} axis_ratio={:.6} \
+                             semi_minor={:.5} sweep_direction={} \
+                             sweep_angle=[{:.4}, {:.4}] rad circular={}",
                             record.oid,
                             record.type_code,
                             record.type_flags,
                             record.bytes_to_follow,
                             record.center_x,
                             record.center_y,
-                            record.axis1_x,
-                            record.axis1_y,
+                            record.axis_a_x,
+                            record.axis_a_y,
                             radius,
-                            record.axis2_x,
-                            record.axis2_y,
-                            record.axis2_magnitude(),
-                            record.param_start,
-                            record.param_end,
+                            record.axis_ratio,
+                            record.semi_minor_axis(),
+                            record.sweep_direction,
+                            record.sweep_start_angle,
+                            record.sweep_end_angle,
                             record.is_circular(),
                         )),
                     },

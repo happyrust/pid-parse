@@ -2,6 +2,84 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice H：GArc2d 字段语义重命名 (反编译收敛后)
+
+Slice F/G 落地的 `SheetPrimitiveArcDecoded` / `DecodedPrimitiveArcRecord`
+字段命名是 **早期推测的几何向量语义**（`axis1.x/y`, `axis2.x/y`,
+`param_start/param_end`）。本里程碑通过反编译 `radsrvitem.dll!
+GArc2d::Validate` 的 4 个内部辅助函数（`sub_56524280` / `sub_5658F950`
+/ `sub_56539060` / `sub_564E0D90` / `sub_56537290`）收敛得到字段真实
+语义后，**联动重命名 + 修正语义**：
+
+- `axis1.x/y` → **`axis_a.x/y`** (Slice F/G 命名其实是对的——`a2+16..31`
+  确实是 2D 向量经 `sub_5644E160` 计算 magnitude；只是名字模糊)
+- `axis2.x/y` → **`axis_ratio` (`f64`) + `sweep_direction` (`u8`)** —
+  Slice F/G 早期推测的"次轴向量"实际是 8 字节 `axis_ratio` (`f64`) +
+  1 字节 `sweep_direction` (`u8`) + 7 字节 padding。这是**关键
+  语义错位修正**。
+- `param_start/param_end` → **`sweep_start_angle/sweep_end_angle`** —
+  byte offsets 不变（48..55 + 56..63），命名更准确（radians 的扫描角度）。
+- `axis1_magnitude()` → **`axis_a_magnitude()`**
+- `axis2_magnitude()` → **`semi_minor_axis()`**（`= axis_ratio * |axis_a|`）
+- `is_circular()` 语义从 `|axis2| < 1e-6` 改为 `|axis_ratio - 1.0| <
+  1e-6`，对齐 `radsrvitem.dll!sub_56539060` (`IMElIsCir2d`) 的 IDA
+  反编译条件。
+
+decoder validation 同步增强：
+
+- 加 `axis_ratio` 必须在 `[0, 1 + GARC2D_AXIS_RATIO_TOLERANCE]` 域
+  内（轴比理论上 ≤ 1）
+- 加 `sweep_direction` 必须 `≤ 1`（仅 0=CW, 1=CCW 合法）
+- 加常量 `GARC2D_AXIS_RATIO_TOLERANCE = 1e-6`
+
+落地点（**byte-level 解析不变**，仅命名 + 部分 validation 收紧）：
+
+- `src/parsers/sheet_records.rs::SheetPrimitiveArcDecoded` + 关联
+  `decode_primitive_arcs` + `decode_primitive_arc_at` 全部重命名
+- `src/parsers/sheet_records.rs::tests` 11 道 unit test 更新 builder
+  签名（`(center, axis_a, axis_ratio, sweep_direction, sweep_start,
+  sweep_end)`）+ 反向 cases (rejects_oversize_axis_or_invalid_ratio +
+  rejects_invalid_sweep_direction 替代旧 rejects_zero_axis1 等)
+- `src/model.rs::DecodedPrimitiveArcRecord` 字段 + `From` impl 联动
+- `src/streams/cluster.rs` 自动追随 `From` impl，不需要单独改
+- `src/geometry.rs::build_normalized_geometry` 的 arc emit 块更新：
+  `radius = record.axis_a_magnitude()` (保持)，`start_angle =
+  record.sweep_start_angle`，`end_angle = record.sweep_end_angle`，
+  `note` 字符串完整重写含 axis_a / axis_ratio / sweep_direction /
+  sweep_start_angle / sweep_end_angle 五项参数化字段 + `semi_minor`
+  便利字段 + `circular` 标记。
+- `tests/parse_real_files.rs::primitive_arc_decoder_emits_decoded_arcs_with_provenance`
+  断言全部联动：`arc.axis_a_magnitude()` 范围、`arc.axis_ratio` ∈
+  `[0, 1+1e-6]`、`arc.sweep_direction <= 1`、`arc.sweep_start_angle <
+  arc.sweep_end_angle`、sample 文本更新含新字段。
+- `src/schema.rs::tests::schema_exposes_sheet_geometry_dtos`
+  schema ratchet 加 `axis_a_x` / `axis_ratio` / `sweep_direction` /
+  `sweep_start_angle` / `sweep_end_angle` 5 个新 needle，公共 JSON
+  schema 自动派生新字段名供下游 TS/Python/C# 代码生成。
+- 5 道 gate 全绿（798 unit + 83 integration tests）。
+
+**跨 fixture 实测影响**：byte 流不变，type code 0x0030 record 数量
+不变（**still 3+15+19+32+0 = 66 decoded arcs**）；唯一变化是
+`is_circular()` 现在基于 `axis_ratio ≈ 1.0` 而非旧的 `|axis2| ≈ 0`：
+
+```
+DWG-0201GP06-01.pid: 15 decoded arcs (0 marked circular — axis_ratio 全 ≈ 0)
+DWG-0202GP06-01.pid: 19 decoded arcs (0 marked circular)
+工艺管道及仪表流程-1.pid: 32 decoded arcs (0 marked circular)
+A01.pid: 0 decoded arcs
+```
+
+**遗留语义谜题**：`axis_ratio = 0` 意味着 axis_b = 0 即弧退化为线段，
+但 SmartPlant 实际工程图上明显有大量真圆 (instrument circles)。这暗示
+`a2+32` 字段的语义解读 **可能不是简单的 `axis_b / axis_a` 比值**，
+而是 (e.g.) eccentricity / aspect_ratio inverse / 其他几何参数。
+`sub_56539060` 的 `|a1+32 - 1.0| ≤ tol` 在所有 fixture 0x0030 records
+上都返回 false，矛盾于 SmartPlant 实际有真圆的事实。
+
+此为 Phase 14 后续 milestone 待深究的 finer point。当前 DTO 字段命名
+准确反映 byte 层位置和 IDA-confirmed 角色（axis_ratio、sweep_direction、
+sweep_*_angle），即使 axis_ratio 的几何语义解读尚未完全 nailed down。
+
 ### Phase 14 后续：IDA 反编译知识沉淀 + 公共 schema ratchet
 
 延续 Phase 14 Slice D-G 工作，把 SmartPlant `.pid` 反向工程的剩余证据

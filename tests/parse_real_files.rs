@@ -6344,17 +6344,22 @@ fn primitive_arc_decoder_emits_decoded_arcs_with_provenance() {
                     bytes.len()
                 );
                 assert_eq!(arc.type_code, PSM_TYPE_CODE_GARC2D);
-                let axis1_mag = arc.axis1_magnitude();
+                let axis_a_mag = arc.axis_a_magnitude();
                 assert!(
-                    (1e-6..=1e3).contains(&axis1_mag),
-                    "arc axis1 magnitude out of expected range: {axis1_mag} for {arc:?}"
+                    (1e-6..=1e3).contains(&axis_a_mag),
+                    "arc axis_a magnitude out of expected range: {axis_a_mag} for {arc:?}"
                 );
-                let axis2_mag = arc.axis2_magnitude();
                 assert!(
-                    axis2_mag <= 1e3,
-                    "arc axis2 magnitude out of expected range: {axis2_mag} for {arc:?}"
+                    (0.0..=1.0 + 1e-6).contains(&arc.axis_ratio),
+                    "arc axis_ratio out of [0, 1] domain: {} for {arc:?}",
+                    arc.axis_ratio
                 );
-                assert!(arc.param_start < arc.param_end);
+                assert!(
+                    arc.sweep_direction <= 1,
+                    "arc sweep_direction must be 0 or 1, got {} for {arc:?}",
+                    arc.sweep_direction
+                );
+                assert!(arc.sweep_start_angle < arc.sweep_end_angle);
                 assert!(arc.center.0.is_finite() && arc.center.1.is_finite());
                 if arc.is_circular() {
                     per_fixture_circle_count += 1;
@@ -6362,8 +6367,8 @@ fn primitive_arc_decoder_emits_decoded_arcs_with_provenance() {
                 if sample_arcs.len() < 5 {
                     sample_arcs.push(format!(
                         "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} circular={} \
-                        center=({:+.4},{:+.4}) axis1=({:+.4},{:+.4})|{:.4} \
-                        axis2=({:+.4},{:+.4})|{:.4} param=[{:+.4},{:+.4}]",
+                        center=({:+.4},{:+.4}) axis_a=({:+.4},{:+.4})|{:.4} \
+                        axis_ratio={:.4} sweep_dir={} sweep=[{:+.4},{:+.4}]",
                         sheet.path,
                         arc.byte_range.start,
                         arc.byte_range.end,
@@ -6371,14 +6376,13 @@ fn primitive_arc_decoder_emits_decoded_arcs_with_provenance() {
                         arc.is_circular(),
                         arc.center.0,
                         arc.center.1,
-                        arc.axis1.0,
-                        arc.axis1.1,
-                        axis1_mag,
-                        arc.axis2.0,
-                        arc.axis2.1,
-                        axis2_mag,
-                        arc.param_start,
-                        arc.param_end,
+                        arc.axis_a.0,
+                        arc.axis_a.1,
+                        axis_a_mag,
+                        arc.axis_ratio,
+                        arc.sweep_direction,
+                        arc.sweep_start_angle,
+                        arc.sweep_end_angle,
                     ));
                 }
             }

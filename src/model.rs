@@ -972,19 +972,24 @@ pub struct DecodedPrimitiveArcRecord {
     pub center_x: f64,
     /// Arc center `y`.
     pub center_y: f64,
-    /// Primary axis vector `x`.
-    pub axis1_x: f64,
+    /// Primary axis vector `x`. `|axis_a|` is the semi-major axis
+    /// length (the **radius** for a circular arc); direction
+    /// (`atan2(y, x)`) is the orientation.
+    pub axis_a_x: f64,
     /// Primary axis vector `y`.
-    pub axis1_y: f64,
-    /// Secondary axis vector `x`. `0` for a pure circular arc.
-    pub axis2_x: f64,
-    /// Secondary axis vector `y`. `0` for a pure circular arc.
-    pub axis2_y: f64,
-    /// Parameter range start. `param_start < param_end` is
-    /// guaranteed at decode time.
-    pub param_start: f64,
-    /// Parameter range end.
-    pub param_end: f64,
+    pub axis_a_y: f64,
+    /// Ratio `axis_b / |axis_a|` ∈ `[0, 1]`. `~1.0` means
+    /// **circular** (`radsrvitem.dll!IMElIsCir2d` criterion);
+    /// `< 1` means elliptical with `axis_b = axis_ratio * |axis_a|`.
+    pub axis_ratio: f64,
+    /// Sweep direction flag at byte offset 40 of the payload:
+    /// `0` = clockwise (CW), `1` = counter-clockwise (CCW).
+    pub sweep_direction: u8,
+    /// Sweep start angle in radians.
+    pub sweep_start_angle: f64,
+    /// Sweep end angle in radians. Guaranteed
+    /// `> sweep_start_angle` at decode time.
+    pub sweep_end_angle: f64,
 }
 
 impl From<crate::parsers::sheet_records::SheetPrimitiveArcDecoded> for DecodedPrimitiveArcRecord {
@@ -998,33 +1003,35 @@ impl From<crate::parsers::sheet_records::SheetPrimitiveArcDecoded> for DecodedPr
             oid: d.oid,
             center_x: d.center.0,
             center_y: d.center.1,
-            axis1_x: d.axis1.0,
-            axis1_y: d.axis1.1,
-            axis2_x: d.axis2.0,
-            axis2_y: d.axis2.1,
-            param_start: d.param_start,
-            param_end: d.param_end,
+            axis_a_x: d.axis_a.0,
+            axis_a_y: d.axis_a.1,
+            axis_ratio: d.axis_ratio,
+            sweep_direction: d.sweep_direction,
+            sweep_start_angle: d.sweep_start_angle,
+            sweep_end_angle: d.sweep_end_angle,
         }
     }
 }
 
 impl DecodedPrimitiveArcRecord {
-    /// Magnitude of the primary axis. For a circular arc this is
-    /// the radius.
-    pub fn axis1_magnitude(&self) -> f64 {
-        (self.axis1_x * self.axis1_x + self.axis1_y * self.axis1_y).sqrt()
+    /// Length of the primary axis (`= |axis_a|`). For a circular
+    /// arc this is the **radius**; for an ellipse, the
+    /// **semi-major axis** length.
+    pub fn axis_a_magnitude(&self) -> f64 {
+        (self.axis_a_x * self.axis_a_x + self.axis_a_y * self.axis_a_y).sqrt()
     }
 
-    /// Magnitude of the secondary axis. `~0` indicates a circular
-    /// (rather than elliptical) arc.
-    pub fn axis2_magnitude(&self) -> f64 {
-        (self.axis2_x * self.axis2_x + self.axis2_y * self.axis2_y).sqrt()
+    /// Semi-minor axis length = `axis_ratio * |axis_a|`. Equals
+    /// the primary axis magnitude for a circle.
+    pub fn semi_minor_axis(&self) -> f64 {
+        self.axis_a_magnitude() * self.axis_ratio
     }
 
-    /// `true` when `axis2 ~ (0, 0)`, i.e. circular rather than
-    /// elliptical.
+    /// `true` when `|axis_ratio - 1.0| < 1e-6`, i.e. the arc is
+    /// circular (not elliptical). Mirrors the
+    /// `radsrvitem.dll!sub_56539060` (`IMElIsCir2d`) criterion.
     pub fn is_circular(&self) -> bool {
-        self.axis2_magnitude() < 1e-6
+        (self.axis_ratio - 1.0).abs() < 1e-6
     }
 }
 

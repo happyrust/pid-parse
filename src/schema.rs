@@ -122,7 +122,7 @@ mod tests {
             "SheetText",
             "SheetEndpoint",
             "SheetObjectGeometryHint",
-            // Phase 14 Slice D-G: PSM-decoded primitive DTOs land in
+            // Phase 14 Slice D-H: PSM-decoded primitive DTOs land in
             // the public schema alongside probe-level DTOs so JSON
             // consumers can deserialize the `decoded_primitive_*`
             // fields without manual schema patching.
@@ -130,6 +130,13 @@ mod tests {
             "DecodedPrimitiveArcRecord",
             "decoded_primitive_lines",
             "decoded_primitive_arcs",
+            // Phase 14 Slice H: GArc2d corrected field names
+            // (axis_a + axis_ratio + sweep_direction + sweep_*).
+            "axis_a_x",
+            "axis_ratio",
+            "sweep_direction",
+            "sweep_start_angle",
+            "sweep_end_angle",
         ] {
             assert!(
                 text.contains(needle),
