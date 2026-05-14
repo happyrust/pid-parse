@@ -266,6 +266,77 @@ payload:
 避免基于 unverified hypothesis 写代码。Slice D-G 的 GLine2d/GArc2d
 是在 IDA 反编译 + 跨 fixture 实测双重证据下落地的。
 
+### Intergraph Sigma IGDS class tag 主映射表 (新发现)
+
+**反编译来源**：`sub_56448F70` @ `0x56448F70`（size 0x18f）——
+拿 `_WORD *a1` 第一个 word 作 switch key，返回 class name 字符串。
+**这是 IGDS class tag → name 的权威映射**，可用于在 IDA 中识别
+geometry 类。
+
+| IGDS tag (hex) | IGDS tag (dec) | Class name |
+|---|---|---|
+| `0x06` | 6 | `igPointOnRelation2d` |
+| `0x0F` | 15 | `igParallelRelation2d` |
+| `0x13` | 19 | `igBoundary2d` |
+| `0x15` | 21 | `igPerpendicularRelation2d` |
+| `0x17` | 23 | `_TangentRelation2d` |
+| `0x18` | 24 | **`igLine2d`** |
+| `0x19` | 25 | `igKeyPointRelation2d` |
+| `0x20` | 32 | `igRectangle2d` |
+| `0x21` | 33 | `igComplexString2d` |
+| `0x3D` | 61 | `igSmartFrame2d` |
+| `0x40` | 64 | `igConcentricRelation2d` |
+| `0x4D` | 77 | `igTextBox` |
+| `0x59` | 89 | **`igCircle2d`** |
+| `0x5D` | 93 | `igBSplineCurve2d` |
+| `0x5E` | 94 | `igPoint2d` |
+| `0x61` | 97 | **`igArc2d`** |
+| `0x63` | 99 | `igEllipse2d` |
+| `0x69` | 105 | `igSymmetricRelation2d` |
+| `0x6A` | 106 | `igEqualRelation2d` |
+| `0x6B` | 107 | `igColinearRelation2d` |
+| `0x77` | 119 | `igFixRelation2d` |
+| `0x7B` | 123 | `igGroup` |
+| `0x7E` | 126 | `igEllipticalArc2d` |
+| `0x84` | 132 | **`igLineString2d`** |
+| `0x85` | 133 | `igTangentRelation2d` |
+| `0xCE` | 206 | `igSymbol2d` |
+| 277 | 277 | `igDimension` |
+| 279 | 279 | `igBalloon` |
+| 280 | 280 | `igLeader` |
+
+### 关键区分：IGDS class tag ≠ PSM record type code
+
+**注意**：IGDS class tag (上表) 与 **PSM record type code** (磁盘
+record 头部 bytes 0..2 的 14-bit field) **不是同一个标识系统**：
+
+- IGDS class tag 是 Intergraph Sigma 几何引擎的**内部 C++ 类标识**，
+  存在内存对象 `*(a2 + 0)` 处供动态调度
+- PSM record type code 是**磁盘序列化标识**，存在 record 头 bytes 0..2
+
+实测对照：
+
+| Geometry class | IGDS tag | PSM type code | 来源 |
+|---|---|---|---|
+| `igLine2d` | `0x18` (24) | `0x3FE6` (16358) | Slice D + IDA |
+| `igArc2d` | `0x61` (97) | `0x0030` (48) | Slice F + IDA |
+| `igLineString2d` | `0x84` (132) | **未知** | 待 PSMSerializeIn 反编译 |
+| `igCircle2d` | `0x59` (89) | 未知 | 可能与 GArc2d 共用 |
+| `igEllipticalArc2d` | `0x7E` (126) | 未知 | 可能 = GArc2d |
+| `igRectangle2d` | `0x20` (32) | 未知 |  |
+| `igPoint2d` | `0x5E` (94) | 未知 |  |
+| `igSymbol2d` | `0xCE` (206) | 未知 |  |
+
+要打通 IGDS tag ↔ PSM type code 映射，下一会话可：
+
+1. 反编译 `sub_564915E0` (`PSMSerializeIn`) 的 switch 找 type code
+   分发表（fast-path 5 个固定大小 type code 已知：276/277/278/279/280
+   = `igDimension`/`igDimension`/`?`/`igBalloon`/`igLeader`，需对照
+   confirm）
+2. 跟踪 `PSMSerializeOut` 的 vtable dispatch 找到 IJPersist 接口
+   Save 方法的 per-class 实现
+3. 用 controlled-diff 协议造一个 polyline-only fixture 抓 record 字节
+
 ### 其他类（待 Phase 14 后续）
 
 | Sigma 类 | 推测 PidGraphicKind | 字段（待反编译验证） |
@@ -278,6 +349,32 @@ payload:
 | `IGDSFactoryBspCurve` | B-spline | 同 igBSplineCurve2d |
 | `IGDSFactoryCmplxStr` / `Cmplx Str` | 复合字符串（complex string） | 子图元 list |
 | `IGDSFactoryText` / `IGDSFactoryTextPointRectShape` | `Text` | position + style + UTF-16 string |
+
+### PSMSerializeOut dispatch 结构 (反编译总结)
+
+`sub_56491E80` (PSMSerializeOut) 反编译揭示：
+
+```c
+v22 = ((unsigned int)v6[2] >> 6) & 0x3FFF;  // PSM type code = bits[6..20]
+
+// 5 个 fast-path 固定大小 type code (内嵌写出):
+if (v22 == 276) { write 35 bytes }   // 头部 type=276, 35-byte payload
+if (v22 == 277) { write 16 bytes }   // 头部 type=277, 16-byte payload
+if (v22 == 278) { write 53 bytes }   // 头部 type=278, 53-byte payload
+if (v22 == 279) { write 8  bytes }   // 头部 type=279, 8-byte payload
+if (v22 == 280) { write 59 bytes }   // 头部 type=280, 59-byte payload
+
+// 所有其他 type 走 vtable dispatch:
+// 1. QI(record, IID_IJPersist) -> v37  (IJPersist 接口)
+// 2. (*v37->vtable[5])(...)  OR  (*v37->vtable[6])(...) 调 Save
+// 3. Save 实现因类而异: GLine2d::Save 写 6 doubles,
+//    GArc2d::Save 写 8 doubles + form/scope, 等等
+```
+
+277 与 `igDimension`、279 与 `igBalloon`、280 与 `igLeader` 是 IGDS
+tag, **不是** PSM type code (类似 0x3FE6 vs 0x18 的关系)。固定大小
+277/16B 是某 PSM type 而非 IGDS tag。下一会话需对 PSMSerializeIn 做
+同样分析以拿到 PSM type code 全表。
 
 ## IGDSFactory* vtable 调查（slot 4-6 是属性 setter）
 
