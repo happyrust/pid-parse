@@ -1950,6 +1950,19 @@ const GARC2D_AXIS_MAX_MAGNITUDE: f64 = 1e3;
 /// rounding-error robustness.
 const GARC2D_AXIS_RATIO_TOLERANCE: f64 = 1e-6;
 
+/// Tolerance enforcing the `GEllipse2d` "major-axis along X"
+/// constraint (`radsrvitem.dll!sub_56524280` error string
+/// `"GEllipse2d: majorAxis is not along x axis"`). For a canonical
+/// `GArc2d` record `axis_a.y` should be ≈ 0; records with
+/// `|axis_a.y| > 1e-6` are rejected as likely false positives
+/// (e.g. records of a different PSM type that happen to share the
+/// 0x0030 14-bit type code and the first 32 bytes of the `GArc2d`
+/// payload shape but encode `axis_a.y` slot with non-geometric
+/// data — see fixture byte dump in
+/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
+/// section "fixture byte dump 颠覆 `GArc2d` 字段假设").
+const GARC2D_MAJOR_AXIS_ALONG_X_TOLERANCE: f64 = 1e-6;
+
 /// One decoded PSM `GLine2d` `PrimitiveLine` record.
 ///
 /// Phase 14 anti-promotion guarantee: this DTO carries the **raw
@@ -2157,11 +2170,17 @@ impl SheetPrimitiveArcDecoded {
 /// 4. `|axis_a|` is in `[GARC2D_AXIS1_MIN_MAGNITUDE,
 ///    GARC2D_AXIS_MAX_MAGNITUDE]` (rejects zero/uninit and obvious
 ///    noise);
-/// 5. `axis_ratio` is in `[0, 1 + GARC2D_AXIS_RATIO_TOLERANCE]`
+/// 5. `axis_a.y` is ≈ 0 (within
+///    `GARC2D_MAJOR_AXIS_ALONG_X_TOLERANCE`), enforcing the
+///    `radsrvitem.dll!sub_56524280` `GEllipse2d` "major-axis along X"
+///    constraint. Records that fail are likely PSM-type-collisions
+///    sharing the 0x0030 14-bit type but encoding `axis_a.y` slot
+///    with non-geometric data.
+/// 6. `axis_ratio` is in `[0, 1 + GARC2D_AXIS_RATIO_TOLERANCE]`
 ///    (ellipse arcs have `axis_b / |axis_a|` ≤ 1; some rounding
 ///    error tolerated);
-/// 6. `sweep_direction` ≤ 1 (only `0` = CW and `1` = CCW are valid);
-/// 7. `sweep_start_angle < sweep_end_angle` strictly.
+/// 7. `sweep_direction` ≤ 1 (only `0` = CW and `1` = CCW are valid);
+/// 8. `sweep_start_angle < sweep_end_angle` strictly.
 ///
 /// The decoder is **conservative** and panic-free: adversarial
 /// bytes either fail validation and are skipped, or never decode
@@ -2255,6 +2274,13 @@ pub fn decode_primitive_arc_at(data: &[u8], offset: usize) -> Option<SheetPrimit
 
     let axis_a_mag = (axis_a.0 * axis_a.0 + axis_a.1 * axis_a.1).sqrt();
     if !(GARC2D_AXIS1_MIN_MAGNITUDE..=GARC2D_AXIS_MAX_MAGNITUDE).contains(&axis_a_mag) {
+        return None;
+    }
+    // GEllipse2d's "majorAxis along x" constraint (radsrvitem.dll!sub_56524280):
+    // axis_a should point along the X axis (axis_a.y ≈ 0).
+    // Records that fail this check are rejected as likely false
+    // positives.
+    if axis_a.1.abs() > GARC2D_MAJOR_AXIS_ALONG_X_TOLERANCE {
         return None;
     }
     if !(0.0..=1.0 + GARC2D_AXIS_RATIO_TOLERANCE).contains(&axis_ratio) {

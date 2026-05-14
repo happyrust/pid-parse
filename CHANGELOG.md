@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice I：GArc2d decoder 加严 (GEllipse2d "majorAxis 沿 X" 约束落地)
+
+实测 fixture byte dump 揭示部分 0x0030 records 字段 `axis_a.y` 不为 0
+(出现 π/2/π/3π/2 等异常值)，违反 `radsrvitem.dll!sub_56524280` 的
+`GEllipse2d` `"majorAxis is not along x axis"` 约束。这些 records 大
+概率是**其他 PSM type collision 凑巧通过 0x0030 + 前 32 字节匹配**，
+非真实 GArc2d。
+
+落地新 validation：
+
+- 加常量 `GARC2D_MAJOR_AXIS_ALONG_X_TOLERANCE = 1e-6`
+- `decode_primitive_arc_at` 新增检查 `|axis_a.y| <= 1e-6`，拒绝
+  axis_a.y ≠ 0 的 record
+
+**跨 fixture 实测影响**：
+
+- DWG-0201GP06-01.pid: **15 → 11** decoded arcs (-4)
+- DWG-0202GP06-01.pid: **19 → 10** decoded arcs (-9)
+- 工艺管道及仪表流程-1.pid: **32 → 27** decoded arcs (-5)
+- A01.pid: 0 (unchanged)
+- **总计: 66 → 48 decoded arcs (-27%, 18 false positives rejected)**
+
+剩余 48 records 全部满足 `axis_a = (radius, 0)` 即 majorAxis 沿 X 轴，
+符合 GEllipse2d 文档化约束。但其几何字段（`axis_ratio` / `sweep_*`
+/ `sweep_direction`）的语义解读仍是 hypothesis（fixture byte dump
+显示 a2+32..63 在多数 records 中是 packed integer fields 非 doubles），
+**byte-level 解析正确，几何语义解读待下一 milestone 修正**。
+
+5 道 gate 全绿（798 unit + 83 integration）。
+
 ### Phase 14 Slice H：GArc2d 字段语义重命名 (反编译收敛后)
 
 Slice F/G 落地的 `SheetPrimitiveArcDecoded` / `DecodedPrimitiveArcRecord`
