@@ -2,6 +2,94 @@
 
 ## [Unreleased]
 
+### Phase 14 后续：IDA 反编译知识沉淀 + 公共 schema ratchet
+
+延续 Phase 14 Slice D-G 工作，把 SmartPlant `.pid` 反向工程的剩余证据
+链完整文档化，为下一会话或下一里程碑提供 actionable 起点：
+
+- **Intergraph Sigma IGDS class tag 主映射表**：反编译
+  `sub_56448F70` (@`0x56448F70`, size `0x18f`) 拿到 **28 个内存 C++
+  类标识 → 类名** 全表，覆盖
+  `igLine2d=0x18` / `igArc2d=0x61` / `igLineString2d=0x84` /
+  `igCircle2d=0x59` / `igEllipticalArc2d=0x7E` / `igRectangle2d=0x20` /
+  `igSymbol2d=0xCE` / `igPoint2d=0x5E` / `igEllipse2d=0x63` /
+  `igBSplineCurve2d=0x5D` 等几何类，以及
+  `igDimension=277` / `igBalloon=279` / `igLeader=280` 等标注类。
+- **IGDS vs PSM 双 ID 系统辨析**：IGDS class tag 是
+  **内存对象内部 C++ 类标识**，PSM record type code 是
+  **磁盘序列化标识**。实测 GLine2d IGDS=`0x18` PSM=`0x3FE6`，GArc2d
+  IGDS=`0x61` PSM=`0x0030`，两套不重合。未来 decoder 调试必须以
+  PSM type code 为准（disk bytes 0..2 的低 14 位）。
+- **PSMSerializeOut/In 对称 dispatch 架构**：反编译揭示读写路径都用
+  IJPersist::Save/Load vtable 动态分发；只有 5 个 fast-path 固定大小
+  type code (`276`/35B、`277`/16B、`278`/53B、`279`/8B、`280`/59B)
+  在 dispatcher 内嵌写出，所有几何类均走虚函数。
+- **`PersistTypeTable<PersistComTypeEntry>` 类 + `guidtab.h` 表结构
+  识别**：表的 root pointer 在全局 `dword_567DDC90`（C++ 类 vtable
+  `0x5665FA1C`），由 `sub_56441330` CRT 启动时构造并 `atexit` 注册
+  析构。每个 entry 含 `+16` matching PSM type code (u16) + `+18`
+  chain link + 可能 IGDS tag/CLSID/factory 指针。条目通过各
+  `IGDSFactory*` 模块 init 分散注册到表中。
+- **`docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`**
+  扩展四节：IGDS class tag 主映射表 (28 行)、IGDS vs PSM 系统对照表、
+  PSMSerializeOut/In 双 dispatch 架构说明、`PersistTypeTable` C++ 类
+  与 guidtab.h 表结构 + 分散注册机制说明。`progress.jsonl` append 6
+  条新 evidence：`psm_serialize_out_decompiled` / `psm_serialize_in_dispatch_via_ijpersist`
+  / `igds_class_tag_lookup_table_discovered` / `persisttypetable_class_identified`
+  / `glinestring2d_probe_inconclusive` / `slice_f_g_complete`。
+
+#### 公共 schema ratchet (Slice E/G DTO 进 JSON schema)
+
+- `src/schema.rs::tests::schema_exposes_sheet_geometry_dtos` 新增 4 个
+  断言 needle：`DecodedPrimitiveLineRecord` / `DecodedPrimitiveArcRecord` /
+  `decoded_primitive_lines` / `decoded_primitive_arcs`。schemars 自动从
+  `#[derive(JsonSchema)]` 派生，但显式断言防止未来重构意外把
+  `Decoded*` DTOs 从 `pid_document_schema_pretty()` 输出排除，影响
+  下游 TS/Python/C# 代码生成消费者。
+- `examples/probe_psm_polyline.rs` 通过 `cargo fmt` 自动重排格式 +
+  `push_str(" ") -> push(' ')` 过 clippy `single_char_add_str` lint。
+
+#### Phase 14 整体里程碑总结
+
+至此 Phase 14（SmartPlant `.pid` Sheet 几何 PSM 解码）完成 13 个核心
+阶段：B1 解锁 → PSM 18B 头部反编译 → GLine2d 48B + GArc2d 64B 字段
+反编译 → Slice D/F decoder API 上线 → Slice E/G geometry pipeline 接入 +
+不回归保护 → GLineString2d 内存布局反编译 → IGDS 主表 + PSM/IGDS 双
+系统辨析 → PersistTypeTable + guidtab.h 表结构 → 公共 schema ratchet。
+
+DWG-0201GP06-01.pid 实测输出：
+
+| Layer | Count |
+|---|---|
+| `Decoded` `Line` (PSM `0x3FE6`) | 2 |
+| `Decoded` `Arc` (PSM `0x0030`) | 15 |
+| `Inferred` `Line` (EndpointPair) | 49+ |
+| `Inferred` `Point` (coord/hint) | 117 |
+| `ProbeOnly` `Unknown` (text/endpoint) | ~50 |
+| **Total entities** | **202+** |
+
+跨 4 fixture 累计 **3 decoded lines + 66 decoded arcs**，全部带
+`stream_path` + `byte_range` + `record_kind` + `graphic_oid` + `note`
+五件套 provenance，note 引用 `radsrvitem.dll` IDA 反编译证据链。
+
+下一会话 actionable 起点（任选）：
+
+1. 反编译各 geometry 类 `JStyleBase::IJPersistImp::Save` 类似的虚函数
+   拿到 polyline/circle/text 磁盘字段布局
+2. 反编译 `IGDSFactoryLineString` (`0x5666AA2C` vtable) 的构造函数
+   或 register 调用拿到 PSM type code
+3. IDA 调试器运行时 dump `dword_567DDC90` 表 → 拿 PSM type code 全表
+4. Plan B controlled-diff 协议造 polyline-only / circle-only fixture
+   做 before/after byte diff 反推 layout
+
+落地候选 decoder 家族：`decode_primitive_polylines` (`igLineString2d` 0x84) /
+`decode_primitive_circles` (`igCircle2d` 0x59) / `decode_primitive_texts`
+(`IGDSFactoryText`) / `decode_primitive_symbols` (`igSymbol2d` 0xCE) /
+`decode_primitive_rectangles` (`igRectangle2d` 0x20)。每一个都可复用
+Slice D-G 已经验证过的七层模板（IDA Validate → probe → decoder API + DTO →
+unit tests → model DTO → streams.rs 填充 → geometry.rs emit → regression
+guard → 5 道闸门 + schema ratchet → docs+progress evidence）。
+
 ### Phase 14 Slice F/G：PSM `GArc2d` 解码器 + Arc geometry 上线
 
 - `src/parsers/sheet_records.rs` 加 `decode_primitive_arcs(&[u8])` /
