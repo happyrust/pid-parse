@@ -242,6 +242,109 @@ fn controlled_diff_dir_json_empty_directory_reports_no_cases() {
     );
 }
 
+/// AC6 for `goals/phase14-plan-b-controlled-diff-protocol/plan.md`:
+/// run the protocol walkthrough on synthetic CFB fixtures
+/// representing two operation classes (line + circle) at once,
+/// confirm both cases surface in the JSON evidence report, both
+/// `first_modified` slices point at `/Sheet6`, and
+/// `promoted_geometry` stays `false` aggregate-wide.
+///
+/// This test does NOT use a real SmartPlant `.pid` fixture — the
+/// `inspect_cli` test suite must stay self-contained per the
+/// project test conventions. The synthetic CFB only proves the
+/// **protocol's directory + sidecar shape** flows through
+/// `pid_inspect --controlled-diff-dir` cleanly; real-byte
+/// validation is a separate (operator-driven) workstream covered
+/// by the protocol document itself.
+#[test]
+fn controlled_diff_protocol_synthetic_two_case_walkthrough() {
+    let root = unique_tmp_dir("controlled-diff-protocol-walkthrough");
+    let before_dir = root.join("before");
+    let after_dir = root.join("after");
+    let metadata_dir = root.join("metadata");
+    std::fs::create_dir_all(&before_dir).expect("before dir");
+    std::fs::create_dir_all(&after_dir).expect("after dir");
+    std::fs::create_dir_all(&metadata_dir).expect("metadata dir");
+
+    // Case 1: place_line. Distinct sheet bytes between before / after.
+    build_controlled_diff_fixture(&before_dir.join("line-01.pid"), b"protocol-line-before");
+    build_controlled_diff_fixture(&after_dir.join("line-01.pid"), b"protocol-line-AFTER!");
+    std::fs::write(
+        metadata_dir.join("line-01.json"),
+        r#"{"case":"line-01","operation":"place_line","expected":{"start":[0.30,0.40],"end":[0.45,0.40],"coordinate_space":"normalized_page","tool":"PipeRun","template":"A2-W-New.pid","smartplant_version":"12.0 SP1"},"notes":"protocol synthetic"}"#,
+    )
+    .expect("line-01 metadata");
+
+    // Case 2: place_circle. Different sheet bytes again.
+    build_controlled_diff_fixture(
+        &before_dir.join("circle-default.pid"),
+        b"protocol-circle-before",
+    );
+    build_controlled_diff_fixture(
+        &after_dir.join("circle-default.pid"),
+        b"protocol-circle-AFTER!",
+    );
+    std::fs::write(
+        metadata_dir.join("circle-default.json"),
+        r#"{"case":"circle-default","operation":"place_circle","expected":{"center":[0.50,0.50],"radius":0.08,"coordinate_space":"normalized_page","tool":"MiscAnnotations.Circle","template":"A2-W-New.pid","smartplant_version":"12.0 SP1"},"notes":"protocol synthetic"}"#,
+    )
+    .expect("circle-default metadata");
+
+    let output = Command::new(binary_path())
+        .arg("--controlled-diff-dir")
+        .arg(&root)
+        .arg("--json")
+        .output()
+        .expect("spawn pid_inspect --controlled-diff-dir --json");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|err| panic!("invalid JSON {err}: {stdout}"));
+
+    assert_eq!(
+        json["promoted_geometry"], false,
+        "protocol walkthrough must never promote geometry (phase 14 type invariant)"
+    );
+
+    let cases = json["cases"]
+        .as_array()
+        .expect("cases must be a JSON array");
+    assert_eq!(
+        cases.len(),
+        2,
+        "expected 2 cases (line + circle), got\n{stdout}"
+    );
+
+    // Cases come back in case-name lex order: circle-default first, then line-01.
+    assert_eq!(cases[0]["case"], "circle-default");
+    assert_eq!(cases[0]["operation"], "place_circle");
+    assert_eq!(cases[0]["first_modified"]["path"], "/Sheet6");
+    assert_eq!(cases[0]["modified_sheet_streams"], 1);
+    assert_eq!(cases[0]["only_in_before"], 0);
+    assert_eq!(cases[0]["only_in_after"], 0);
+    // The `expected` payload propagates verbatim through the
+    // pipeline — operators rely on this for cross-referencing
+    // SmartPlant intent against parsed bytes downstream.
+    assert_eq!(
+        cases[0]["expected"]["tool"], "MiscAnnotations.Circle",
+        "expected payload must round-trip verbatim, got\n{stdout}"
+    );
+    assert_eq!(cases[0]["notes"], "protocol synthetic");
+
+    assert_eq!(cases[1]["case"], "line-01");
+    assert_eq!(cases[1]["operation"], "place_line");
+    assert_eq!(cases[1]["first_modified"]["path"], "/Sheet6");
+    assert_eq!(cases[1]["modified_sheet_streams"], 1);
+    assert_eq!(
+        cases[1]["expected"]["tool"], "PipeRun",
+        "line expected payload must round-trip verbatim",
+    );
+}
+
 #[test]
 fn controlled_diff_dir_rejects_metadata_case_mismatch() {
     let root = unique_tmp_dir("controlled-diff-bad-metadata");

@@ -4,3 +4,10 @@
 .cursorignore
 .factory/
 .commit_msg.txt
+
+# Plant-proprietary controlled-diff fixtures (see
+# docs/protocols/2026-05-13-controlled-pid-diff-collection.md).
+# Only the .gitkeep / README.md tracking the directory layout
+# may enter git; .pid files MUST NOT.
+test-file/controlled-diff/before/*.pid
+test-file/controlled-diff/after/*.pid
