@@ -2,6 +2,99 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice D：PSM `GLine2d` PrimitiveLine 解码器（Decoded 几何上线）
+
+- `src/parsers/sheet_records.rs` 加 `decode_primitive_lines(&[u8])` /
+  `decode_primitive_line_at(&[u8], usize)` 两个公开入口，配套
+  `SheetPrimitiveLineDecoded` DTO（`byte_range` + PSM `type_code` /
+  `type_flags` / `bytes_to_follow` / `oid` + 参数化几何
+  `origin` / `direction` / `param_start` / `param_end`），以及
+  `endpoint_a()` / `endpoint_b()` 笛卡尔便利方法。常量
+  `PSM_RECORD_HEADER_LEN = 18`、`GLINE2D_PAYLOAD_LEN = 48`、
+  `PSM_TYPE_CODE_GLINE2D = 0x3FE6` 一并公开供 `parser_panic_safety` 等
+  下游测试引用。
+- 字节布局完全来自 IDA 反编译：18-byte PSM header 来自
+  `radsrvitem.dll!PSMSerializeOut/In`，48-byte GLine2d payload
+  来自 `radsrvitem.dll!sub_56524C50` (`GLine2d::Validate`)。文档
+  `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
+  扩展含字段表 + Validate 反编译伪码 + 实测对账结果。
+- 解码器是**保守的**：只接受 5 条 validation 全部通过的 record
+  —— `type_code == 0x3FE6`、`bytes_to_follow >= 48` 且不越界、6 个
+  doubles 全 finite 且 `|x| <= 1e9`、direction 单位向量误差
+  `< 1e-3` 且不退化为 0、`param_start < param_end`。明确不做
+  几何到 `PidGeometryConfidence::Decoded` 的 promotion——这是 Slice
+  E 的工作。
+- `tests/parse_real_files.rs` 新增
+  `primitive_line_decoder_emits_decoded_lines_with_provenance`
+  跨 fixture 集成测试：DWG-0201 /Sheet6 = 2 hit、A01 /Sheet6 = 1 hit、
+  DWG-0202 + 工艺管道 = 0 hit（fixture 用更老/不同的 record shape），
+  全部 record 带 stream path + byte range + record kind 三件套
+  provenance，所有断言（byte_range 不越界、direction 单位、param 顺序
+  与全 finite）通过。
+- `src/parsers/sheet_records.rs::tests` 加 10 道单元测试覆盖
+  decoder 正反例：canonical synthetic + 拒绝错 type / 非单位
+  direction / 零 direction / 反向 param 范围 / NaN 坐标 / 截断输入 /
+  对抗噪声 / 双连续记录 / `byte_range` 包整条 record（含 attribute tail）。
+- `tests/parser_panic_safety.rs` 把
+  `decode_primitive_lines` / `decode_primitive_line_at` 加入 panic-safety
+  matrix（涵盖空/极短/0x00/0xFF/byte-cycle/xorshift32/UTF-8-lossy 等
+  adversarial corpus + truncation sweep）。所有现有 panic-safety 测试 + 新
+  decoder 全绿。
+- `examples/probe_psm_gline2d.rs` 落地一次性 byte-level probe（产生
+  Slice D 的核心证据）：参数化 origin 接受范围、unit-vector tolerance、
+  domain limit 与生产 decoder 同步。可手动对任意 `.pid` + Sheet 流跑：
+  `cargo run --release --example probe_psm_gline2d -- <path> /Sheet6`。
+- 5 道 gate 全绿（build / test / clippy `-D warnings` / fmt / missing-docs
+  ratchet=0）。`primitive_line_decoder_emits_decoded_lines_with_provenance`
+  在工作区 fixture 上 1 fixture 0 hit / 2 fixture 各 1-2 hit，总 3 条
+  decoded line 全部 provenance triplet 完整、几何 invariant 通过。
+
+### Phase 14 Slice A-C：radsrvitem.dll PSM 头部 + GLine2d/GArc2d 字段反编译
+
+- B1 (rad2d.dll / pidobjectmanagerinf.dll IDA reverse) **解除**：用户
+  提供 `E:\weixin\…\bin` 目录后，agent 用 `dumpbin /imports` 静态扫
+  18 个候选 DLL，发现 `radsrvitem.dll` (3.7 MB) 是**唯一**导入
+  `StgOpenStorageEx` 的二进制——即 SmartPlant Sheet I/O 入口。后续
+  IDA batch (`-A -B`) 预生成 `.i64` 文件后 GUI 打开避开模态对话框，
+  挂上 ida-pro-mcp 端口 13346 在线分析。
+- Slice A: 反编译 `PSMSerializeOut` (`0x56491E80`) 与 `PSMSerializeIn`
+  (`0x564915E0`) 解码 PSM record byte 布局 —— `[2B type_code (top
+  2 bits flags)] + [4B bytes_to_follow] + [4B oid] + [8B aux]` 共 18
+  字节头部。`PSMSerializeIn` 的 switch (5 个 case) 揭示 5 种固定大小
+  type code：276/35B、277/16B、278/53B、279/8B、280/59B（共 171 字节
+  固定 fast path）；其他 type 走 variable-length 通过 `guidtab.h`
+  GUID 表派发。**14-bit type code** + 顶 2 bits 是 record flags。
+- Slice A 余波：在 `radsrvitem.dll` 字符串里扫到完整 Intergraph
+  Sigma 2D 几何家族（`igLine2d` / `igArc2d` / `igCircle2d` /
+  `igEllipticalArc2d` / `igLineString2d` / `igBSplineCurve2d`）+
+  对应 `IGDSFactory*` builder 类家族 + 接口
+  `IJGeometry` / `IJTypedGeometry2d` / `IJKeyPoint` / `IJPoint2d`。
+- Slice C: 反编译 `GLine2d::Validate` (`sub_56524C50` @ 0x56524C50, 0x17F
+  bytes) → 字段表 48 bytes = 6 × `f64` LE
+  `(origin.xy, direction.xy unit, param_start, param_end)`。几何
+  语义是参数化 `point(t) = origin + t * direction`，不是 start→end
+  对，解码器消费侧必须显式换算 endpoint。Validate flags：
+  `0x1` = NaN/invalid，`0x8` = direction 非单位向量，
+  `0x200000` = `param_start > param_end`。
+- Slice C: 反编译 `GArc2d::Validate` (`sub_56524150` @ 0x56524150, 0x128
+  bytes) → 字段表 64 bytes = 8 × `f64` LE，offsets 48 与 56 的 NaN
+  检查印证 `param_start` / `param_end` 位置。推测字段为
+  `(center.xy, axis1.xy, axis2.xy, param_start, param_end)`——Intergraph
+  椭圆弧表示，圆退化为 axis2 = 0。
+- Slice C **意外发现**：通过 RTTI `.?AVIGDSFactoryLine@@` xref 拿到
+  `IGDSFactoryLine` 的 primary vtable (0x5666A94C)。Slot 0-2 是
+  `IUnknown` 共享，slot 3 共享，**slot 4-6 是一行 setter
+  (`*(this+70)=a2`, `*(this+74)=a2`, `*(this+78)=a2`)**——证实
+  `IGDSFactory*` 是属性 builder pattern 不是 Save 入口，几何对象
+  Save 经 `IJTypedGeometry2d` 接口 / `PSMSerializeOut` 走对象本身。
+- 文档 `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
+  扩展含 PSM header 表 + GLine2d 6×f64 字段表 + GArc2d 8×f64 字段表
+  + IGDSFactory vtable 调查 + 完整 Sheet primitive byte 流推测
+  + 后续 Slice C/D 路径建议。
+- `goals/phase14-sppid-sheet-geometry/progress.jsonl` 追加 4 条
+  evidence（slice_a_psm_decompiled / b1_unlocked_radsrvitem /
+  rtti_factory_decompiled / slice_c_breakthrough）。
+
 ### Phase 14 Plan B：控制 `.pid` diff fixture 采集协议 v1
 
 - 新增 `docs/protocols/2026-05-13-controlled-pid-diff-collection.md`

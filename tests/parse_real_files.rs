@@ -11,10 +11,10 @@ use pid_parse::{
     },
     parsers::sheet_records::{
         coordinate_page_metadata_investigation_report, curve_primitive_investigation_report,
-        primitive_line_investigation_report, sheet_record_shape_inventory,
+        decode_primitive_lines, primitive_line_investigation_report, sheet_record_shape_inventory,
         symbol_placement_investigation_report, text_placement_investigation_report,
         SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
-        SheetRecordShapeKind, SheetSymbolPlacementObject,
+        SheetRecordShapeKind, SheetSymbolPlacementObject, PSM_TYPE_CODE_GLINE2D,
     },
     PidParser,
 };
@@ -5899,4 +5899,147 @@ fn sheet6_coordinate_value_frequency_analysis() {
             eprintln!("unpromoted CE0079 field_x={fx}: no positive score (may be endpoint-only)");
         }
     }
+}
+
+/// Phase 14 Slice D: cross-fixture validation that
+/// `decode_primitive_lines` actually emits decoded `GLine2d`
+/// records on real `Sheet*` streams.
+///
+/// Empirical baselines reverse-engineered from
+/// `examples/probe_psm_gline2d.rs` against the three Sheet-bearing
+/// fixtures:
+///
+/// - `DWG-0201GP06-01.pid` / `/Sheet6` → 2 hits (page-spanning
+///   horizontal lines, type 0x3FE6, bytes_to_follow 948 each).
+/// - `工艺管道及仪表流程-1.pid` / `/Sheet6` → 0 hits with strict
+///   unit-vector tolerance (file uses a different / older record
+///   shape).
+/// - `A01.pid` / `/Sheet6` → 1 hit (template horizontal reference
+///   line at (0,0)→(1,0) with `bytes_to_follow == 204`).
+///
+/// The test:
+///
+/// 1. Walks every `Sheet*` stream of every fixture present in
+///    `test-file/`.
+/// 2. Asserts the **aggregate** decoded count across all
+///    `Sheet*` streams of all fixtures is `>= 1` (so the test
+///    fails closed when the decoder regresses to zero, and stays
+///    contributor-friendly when only A01 is present).
+/// 3. Asserts every emitted line carries the documented
+///    provenance triplet (stream path + byte range + record
+///    kind) and the unit-vector / `param_start < param_end`
+///    invariants.
+#[test]
+fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
+    let fixtures = [
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+        "export-test/publish-data/A01/A01.pid",
+    ];
+    let mut total_decoded = 0usize;
+    let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
+    let mut sample_lines: Vec<String> = Vec::new();
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture_count = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let bytes = raw.data.as_slice();
+            let decoded = decode_primitive_lines(bytes);
+            for line in &decoded {
+                // Provenance: byte range fits the stream.
+                assert!(
+                    line.byte_range.end <= bytes.len(),
+                    "decoded line byte_range {:?} exceeds stream {} bytes ({})",
+                    line.byte_range,
+                    sheet.path,
+                    bytes.len()
+                );
+                assert!(
+                    line.byte_range.start < line.byte_range.end,
+                    "decoded line byte_range must be non-empty: {:?}",
+                    line.byte_range
+                );
+                // Type code: GLine2d only.
+                assert_eq!(
+                    line.type_code, PSM_TYPE_CODE_GLINE2D,
+                    "decoder must only emit GLine2d records"
+                );
+                // Direction vector is unit (within 1e-3, matching the
+                // decoder's relaxed tolerance).
+                let dir_len2 =
+                    line.direction.0 * line.direction.0 + line.direction.1 * line.direction.1;
+                let dir_len = dir_len2.sqrt();
+                assert!(
+                    (dir_len - 1.0).abs() < 1e-3,
+                    "decoded direction must be unit vector, got len={dir_len} for record {:?}",
+                    line
+                );
+                // Param range is sorted.
+                assert!(
+                    line.param_start < line.param_end,
+                    "decoded params must satisfy start < end, got [{}, {}]",
+                    line.param_start,
+                    line.param_end,
+                );
+                // All decoded fields finite.
+                assert!(line.origin.0.is_finite() && line.origin.1.is_finite());
+                assert!(line.direction.0.is_finite() && line.direction.1.is_finite());
+                assert!(line.param_start.is_finite() && line.param_end.is_finite());
+
+                if sample_lines.len() < 5 {
+                    let (ax, ay) = line.endpoint_a();
+                    let (bx, by) = line.endpoint_b();
+                    sample_lines.push(format!(
+                        "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} \
+                        origin=({:+.4},{:+.4}) dir=({:+.5},{:+.5}) \
+                        param=[{:+.4},{:+.4}] A=({:+.4},{:+.4}) B=({:+.4},{:+.4})",
+                        sheet.path,
+                        line.byte_range.start,
+                        line.byte_range.end,
+                        line.oid,
+                        line.origin.0,
+                        line.origin.1,
+                        line.direction.0,
+                        line.direction.1,
+                        line.param_start,
+                        line.param_end,
+                        ax,
+                        ay,
+                        bx,
+                        by,
+                    ));
+                }
+            }
+            per_fixture_count += decoded.len();
+        }
+        per_fixture_summary.push((fixture.to_string(), per_fixture_count));
+        total_decoded += per_fixture_count;
+    }
+    eprintln!("--- Phase 14 Slice D: PSM GLine2d decoder cross-fixture summary ---");
+    for (name, count) in &per_fixture_summary {
+        eprintln!("  {name}: {count} decoded GLine2d records");
+    }
+    for sample in &sample_lines {
+        eprintln!("  sample: {sample}");
+    }
+    eprintln!("  total decoded across present fixtures: {total_decoded}");
+    if per_fixture_summary.is_empty() {
+        eprintln!(
+            "skipping: no Sheet-bearing fixture present (CI / contributors \
+            without SmartPlant samples)"
+        );
+        return;
+    }
+    assert!(
+        total_decoded >= 1,
+        "decode_primitive_lines must emit at least one decoded line on the \
+        Sheet-bearing fixture set, got {total_decoded}. \
+        Per-fixture summary: {per_fixture_summary:?}"
+    );
 }

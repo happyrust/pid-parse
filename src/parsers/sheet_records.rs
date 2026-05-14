@@ -1853,6 +1853,241 @@ fn primitive_line_numeric_samples(
     samples
 }
 
+// ---------------------------------------------------------------------------
+// Phase 14 Slice D: PSM-encoded GLine2d decoder (decoded geometry path)
+// ---------------------------------------------------------------------------
+
+/// Byte length of one PSM record header in
+/// [`decode_primitive_lines`].
+///
+/// Layout reverse-engineered from `radsrvitem.dll`
+/// `PSMSerializeOut` (0x56491E80) / `PSMSerializeIn` (0x564915E0)
+/// in
+/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`:
+///
+/// ```text
+/// 0..2    uint16_le  type_code         // 14-bit, top 2 bits flags
+/// 2..6    uint32_le  bytes_to_follow   // payload length excl. these 6
+/// 6..10   uint32_le  oid               // object identifier
+/// 10..18  8 bytes    aux               // type-specific aux payload prefix
+/// ```
+pub const PSM_RECORD_HEADER_LEN: usize = 18;
+
+/// Byte length of one in-memory `GLine2d` payload:
+/// 6 × `f64` LE = 48 bytes.
+///
+/// Layout reverse-engineered from `radsrvitem.dll`
+/// `GLine2d::Validate` (`sub_56524C50` @ 0x56524C50). Documented in
+/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
+pub const GLINE2D_PAYLOAD_LEN: usize = 48;
+
+/// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
+///
+/// Empirically validated against all three Sheet-bearing fixtures in
+/// the project registry (`DWG-0201GP06-01.pid`,
+/// `工艺管道及仪表流程-1.pid`, `A01.pid`): every record whose
+/// 18-byte PSM header is followed by 48 bytes matching the `GLine2d`
+/// validation rules (all-finite doubles, unit direction vector,
+/// `param_start < param_end`) carries `type_code == 0x3FE6`. The
+/// authoritative `type → GUID` lookup table lives in `SmartPlant`'s
+/// `guidtab.h` (named explicitly in `PSMSerializeIn`'s error
+/// message `"... OID=%d nType= %d in guidtab.h"`).
+pub const PSM_TYPE_CODE_GLINE2D: u16 = 0x3FE6;
+
+/// Unit-vector tolerance used when accepting a candidate `GLine2d`
+/// record. The IDA-decoded `GLine2d::Validate` uses a strict
+/// tolerance (`sub_56472D30()` returns ~1e-9 for normalized 2D),
+/// but real `SmartPlant` writes can have direction vectors rounded
+/// through coordinate transforms; 1e-3 catches every fixture record
+/// we have without bringing in obvious false positives.
+const GLINE2D_UNIT_VECTOR_TOLERANCE: f64 = 1e-3;
+
+/// Sentinel beyond which an origin / parameter / direction value
+/// is treated as garbage (uninitialized memory, out-of-domain).
+const GLINE2D_COORDINATE_DOMAIN_LIMIT: f64 = 1e9;
+
+/// One decoded PSM `GLine2d` `PrimitiveLine` record.
+///
+/// Phase 14 anti-promotion guarantee: this DTO carries the **raw
+/// parametric** geometry (`origin + t * direction` for
+/// `t ∈ [param_start, param_end]`), not Cartesian `start`/`end`
+/// endpoints, and exposes a [`Self::byte_range`] covering the full
+/// PSM record. Producing
+/// [`crate::geometry::PidGeometryConfidence::Decoded`] is the
+/// responsibility of `geometry.rs`; this module only decodes
+/// bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetPrimitiveLineDecoded {
+    /// Byte range covering the **entire** PSM record (header +
+    /// inner payload + any trailing attribute bytes the writer
+    /// included in `bytes_to_follow`).
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code from the record header. Always
+    /// [`PSM_TYPE_CODE_GLINE2D`] for records this decoder emits.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    /// Documented as the `0x8000` / `0x4000` bits in
+    /// `PSMSerializeIn`'s skip-record branch.
+    pub type_flags: u16,
+    /// `bytes_to_follow` field from the PSM header. The decoder
+    /// uses this as the trailing edge of [`Self::byte_range`].
+    pub bytes_to_follow: u32,
+    /// `oid` field from the PSM header (the object identifier
+    /// `SmartPlant` assigns to this geometry).
+    pub oid: u32,
+    /// Local-space origin: `point(t) = origin + t * direction`.
+    pub origin: (f64, f64),
+    /// Unit direction vector. `sqrt(direction_x^2 + direction_y^2)`
+    /// is guaranteed within 1e-3 of 1.0 at decode time (a private
+    /// `GLINE2D_UNIT_VECTOR_TOLERANCE` constant in this module).
+    pub direction: (f64, f64),
+    /// Parameter range start. `param_start < param_end` is
+    /// guaranteed at decode time.
+    pub param_start: f64,
+    /// Parameter range end.
+    pub param_end: f64,
+}
+
+impl SheetPrimitiveLineDecoded {
+    /// Cartesian endpoint A computed from the parametric form
+    /// (`origin + param_start * direction`).
+    pub fn endpoint_a(&self) -> (f64, f64) {
+        (
+            self.origin.0 + self.param_start * self.direction.0,
+            self.origin.1 + self.param_start * self.direction.1,
+        )
+    }
+
+    /// Cartesian endpoint B computed from the parametric form
+    /// (`origin + param_end * direction`).
+    pub fn endpoint_b(&self) -> (f64, f64) {
+        (
+            self.origin.0 + self.param_end * self.direction.0,
+            self.origin.1 + self.param_end * self.direction.1,
+        )
+    }
+}
+
+/// Decode every PSM-encoded `GLine2d` `PrimitiveLine` record in a
+/// `Sheet*` stream's bytes.
+///
+/// Walk every byte offset; at each offset, check whether an 18-byte
+/// PSM header followed by 48 bytes of `GLine2d` payload satisfies
+/// all of:
+///
+/// 1. PSM type code (header bytes 0..2 LE, masked to 14 bits) ==
+///    [`PSM_TYPE_CODE_GLINE2D`];
+/// 2. `bytes_to_follow` (header bytes 2..6 LE) is `>=` 48 and fits
+///    within the remaining stream;
+/// 3. All six payload `f64`s are finite (rejecting NaN / inf /
+///    sub-domain values: `|x| <= 1e9`, a private
+///    `GLINE2D_COORDINATE_DOMAIN_LIMIT` in this module);
+/// 4. `(direction.x, direction.y)` has unit length within `1e-3`
+///    (a private `GLINE2D_UNIT_VECTOR_TOLERANCE`) and is not the
+///    zero vector;
+/// 5. `param_start < param_end` strictly.
+///
+/// The decoder is **conservative**: it accepts only records whose
+/// inner payload matches the validation rules captured by the
+/// reverse-engineered `GLine2d::Validate`. Adversarial bytes pass
+/// through without panics; the output is bounded by the input
+/// length.
+pub fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
+    let mut out = Vec::new();
+    if data.len() < PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN {
+        return out;
+    }
+    let max_offset = data.len() - (PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN);
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_primitive_line_at(data, off) {
+            // Advance past the entire record (per bytes_to_follow + 6
+            // header overhead) to avoid emitting overlapping records.
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `GLine2d` `PrimitiveLine` starting at
+/// `offset` in `data`. Returns `None` when any of the validation
+/// rules in [`decode_primitive_lines`] fail. Bounds-checked: passing
+/// `offset >= data.len()` or a truncated tail simply returns `None`.
+pub fn decode_primitive_line_at(data: &[u8], offset: usize) -> Option<SheetPrimitiveLineDecoded> {
+    let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
+    let payload_end = header_end.checked_add(GLINE2D_PAYLOAD_LEN)?;
+    if payload_end > data.len() {
+        return None;
+    }
+
+    // PSM header.
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_GLINE2D {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    let bytes_to_follow_usize = bytes_to_follow as usize;
+    // bytes_to_follow must cover at least the 48-byte payload.
+    if bytes_to_follow_usize < GLINE2D_PAYLOAD_LEN {
+        return None;
+    }
+    // The full record (header + bytes_to_follow trailer) must fit.
+    let record_end = offset.checked_add(6 + bytes_to_follow_usize)?;
+    if record_end > data.len() {
+        return None;
+    }
+    let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
+
+    // 6-double GLine2d payload at offset + 18.
+    let payload = data.get(header_end..payload_end)?;
+    let mut d = [0f64; 6];
+    for (i, slot) in d.iter_mut().enumerate() {
+        let chunk = payload.get(i * 8..i * 8 + 8)?;
+        *slot = f64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]);
+    }
+    if !d.iter().all(|x| x.is_finite()) {
+        return None;
+    }
+    if d.iter().any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT) {
+        return None;
+    }
+    let dir_x = d[2];
+    let dir_y = d[3];
+    if dir_x.abs() < 1e-12 && dir_y.abs() < 1e-12 {
+        return None;
+    }
+    let unit_err = ((dir_x * dir_x + dir_y * dir_y).sqrt() - 1.0).abs();
+    if unit_err > GLINE2D_UNIT_VECTOR_TOLERANCE {
+        return None;
+    }
+    let param_start = d[4];
+    let param_end = d[5];
+    if param_start >= param_end {
+        return None;
+    }
+
+    Some(SheetPrimitiveLineDecoded {
+        byte_range: offset..record_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        origin: (d[0], d[1]),
+        direction: (dir_x, dir_y),
+        param_start,
+        param_end,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2228,5 +2463,206 @@ mod tests {
             "f64 sample relative offsets should preserve byte alignment: {:?}",
             report.groups
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 14 Slice D: PSM GLine2d decoder tests
+    // -----------------------------------------------------------------
+
+    /// Build a single synthetic PSM `GLine2d` record:
+    /// 18-byte header (type=0x3FE6, `bytes_to_follow`=48, oid=`oid`)
+    /// + 6×f64 `GLine2d` payload (origin, direction, params).
+    fn build_synthetic_gline2d_record(
+        oid: u32,
+        origin: (f64, f64),
+        direction: (f64, f64),
+        param_start: f64,
+        param_end: f64,
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN);
+        // type_code (14-bit) at bits 0..14 of the LE u16, top 2 bits = 0 flags.
+        let type_word: u16 = PSM_TYPE_CODE_GLINE2D;
+        out.extend_from_slice(&type_word.to_le_bytes());
+        // bytes_to_follow = 48 (just the payload, no attribute tail).
+        out.extend_from_slice(&(GLINE2D_PAYLOAD_LEN as u32).to_le_bytes());
+        // oid
+        out.extend_from_slice(&oid.to_le_bytes());
+        // 8-byte aux (set to fixed pattern for inspection).
+        out.extend_from_slice(&[0u8; 8]);
+        // 6 doubles
+        for v in [
+            origin.0,
+            origin.1,
+            direction.0,
+            direction.1,
+            param_start,
+            param_end,
+        ] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn primitive_line_decodes_canonical_synthetic_record() {
+        // Canonical synthetic line: origin at (0,0), unit horizontal
+        // direction, params [0, 1.0]. Endpoints A=(0,0) B=(1,0).
+        let record = build_synthetic_gline2d_record(42, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
+        let decoded = decode_primitive_lines(&record);
+        assert_eq!(decoded.len(), 1, "expected exactly one decoded line");
+        let line = &decoded[0];
+        assert_eq!(line.type_code, PSM_TYPE_CODE_GLINE2D);
+        assert_eq!(line.type_flags, 0);
+        assert_eq!(line.bytes_to_follow, 48);
+        assert_eq!(line.oid, 42);
+        assert_eq!(line.origin, (0.0, 0.0));
+        assert!((line.direction.0 - 1.0).abs() < 1e-12);
+        assert!(line.direction.1.abs() < 1e-12);
+        assert_eq!(line.param_start, 0.0);
+        assert_eq!(line.param_end, 1.0);
+        assert_eq!(line.byte_range.start, 0);
+        // byte_range covers header (6 prefix) + bytes_to_follow (48).
+        assert_eq!(line.byte_range.end, 6 + 48);
+        // Endpoint helpers.
+        assert_eq!(line.endpoint_a(), (0.0, 0.0));
+        let (bx, by) = line.endpoint_b();
+        assert!((bx - 1.0).abs() < 1e-12);
+        assert!(by.abs() < 1e-12);
+    }
+
+    #[test]
+    fn primitive_line_rejects_wrong_type_code() {
+        // Same bytes but with a non-GLine2d type code.
+        let mut record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
+        // Overwrite type with 0x1234 (not the GLine2d type).
+        record[0] = 0x34;
+        record[1] = 0x12;
+        let decoded = decode_primitive_lines(&record);
+        assert!(decoded.is_empty(), "wrong type_code must be rejected");
+    }
+
+    #[test]
+    fn primitive_line_rejects_non_unit_direction() {
+        // direction = (2.0, 0.0): length 2, not unit.
+        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (2.0, 0.0), 0.0, 1.0);
+        assert!(
+            decode_primitive_lines(&record).is_empty(),
+            "non-unit direction vector must be rejected"
+        );
+    }
+
+    #[test]
+    fn primitive_line_rejects_zero_direction() {
+        // direction = (0.0, 0.0): zero vector.
+        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (0.0, 0.0), 0.0, 1.0);
+        assert!(
+            decode_primitive_lines(&record).is_empty(),
+            "zero direction vector must be rejected"
+        );
+    }
+
+    #[test]
+    fn primitive_line_rejects_reversed_param_range() {
+        // param_start == param_end.
+        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.0, 1.0);
+        assert!(
+            decode_primitive_lines(&record).is_empty(),
+            "param_start >= param_end must be rejected"
+        );
+        // param_start > param_end.
+        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.5, 0.5);
+        assert!(
+            decode_primitive_lines(&record).is_empty(),
+            "reversed param range must be rejected"
+        );
+    }
+
+    #[test]
+    fn primitive_line_rejects_nan_coordinate() {
+        let mut record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
+        // Overwrite origin.x with NaN bytes (any non-finite).
+        let nan_bytes = f64::NAN.to_le_bytes();
+        let origin_off = PSM_RECORD_HEADER_LEN;
+        record[origin_off..origin_off + 8].copy_from_slice(&nan_bytes);
+        assert!(
+            decode_primitive_lines(&record).is_empty(),
+            "NaN coordinate must be rejected"
+        );
+    }
+
+    #[test]
+    fn primitive_line_decoder_is_panic_safe_on_truncated_input() {
+        // Build a complete record, then truncate at various sizes.
+        let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
+        for trunc_len in 0..record.len() {
+            // Must not panic, must return empty / no decoded line.
+            let decoded = decode_primitive_lines(&record[..trunc_len]);
+            assert!(
+                decoded.is_empty(),
+                "truncated input of length {trunc_len} must not decode anything"
+            );
+        }
+        // Empty input also fine.
+        assert!(decode_primitive_lines(&[]).is_empty());
+    }
+
+    #[test]
+    fn primitive_line_decoder_is_panic_safe_on_random_noise() {
+        // Adversarial deterministic noise: incrementing bytes.
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        // Just running without panic is the test; whatever it decodes
+        // is acceptable (must be `Vec`, not panic).
+        let _decoded = decode_primitive_lines(&noise);
+        // All-zeros: nothing valid.
+        assert!(decode_primitive_lines(&vec![0u8; 4096]).is_empty());
+        // All-0xFF: nothing valid (type_code = 0x3FFF != GLine2d).
+        assert!(decode_primitive_lines(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    #[test]
+    fn primitive_line_decodes_two_back_to_back_records() {
+        let mut data = build_synthetic_gline2d_record(7, (0.10, 0.10), (1.0, 0.0), 0.0, 0.5);
+        data.extend(build_synthetic_gline2d_record(
+            8,
+            (0.20, 0.30),
+            (0.0, 1.0),
+            0.0,
+            0.8,
+        ));
+        let decoded = decode_primitive_lines(&data);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].oid, 7);
+        assert_eq!(decoded[1].oid, 8);
+        // The two records must have non-overlapping byte ranges.
+        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
+    }
+
+    #[test]
+    fn primitive_line_byte_range_covers_full_record_when_attribute_tail_present() {
+        // Build a record with bytes_to_follow = 48 (payload) + 200
+        // (mock attribute tail).
+        let mut record = Vec::new();
+        let type_word: u16 = PSM_TYPE_CODE_GLINE2D;
+        record.extend_from_slice(&type_word.to_le_bytes());
+        // bytes_to_follow = 48 + 200 = 248.
+        record.extend_from_slice(&248u32.to_le_bytes());
+        // oid
+        record.extend_from_slice(&123u32.to_le_bytes());
+        // 8-byte aux
+        record.extend_from_slice(&[0u8; 8]);
+        // GLine2d payload
+        for v in [0.0f64, 0.0, 1.0, 0.0, 0.0, 1.0] {
+            record.extend_from_slice(&v.to_le_bytes());
+        }
+        // 200 bytes of mock attribute tail
+        record.extend_from_slice(&[0xAB; 200]);
+
+        let decoded = decode_primitive_lines(&record);
+        assert_eq!(decoded.len(), 1);
+        let line = &decoded[0];
+        assert_eq!(line.byte_range.start, 0);
+        // byte_range covers full record: 6 (type+bytes_to_follow) + 248.
+        assert_eq!(line.byte_range.end, 6 + 248);
+        assert_eq!(line.bytes_to_follow, 248);
     }
 }
