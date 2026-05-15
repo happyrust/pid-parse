@@ -35,10 +35,11 @@ use pid_parse::parsers::relationship_probe::probe_relationships;
 use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
-    decode_igline_at, decode_iglines, decode_iglinestring_at, decode_iglinestrings,
-    decode_igpoint_at, decode_igpoints, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
-    decode_igtextboxes, decode_primitive_arc_at, decode_primitive_arcs, decode_primitive_line_at,
-    decode_primitive_lines,
+    decode_graphic_group_at, decode_graphic_groups, decode_igline_at, decode_iglines,
+    decode_iglinestring_at, decode_iglinestrings, decode_igpoint_at, decode_igpoints,
+    decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at, decode_igtextboxes,
+    decode_jstyle_override_at, decode_jstyle_overrides, decode_primitive_arc_at,
+    decode_primitive_arcs, decode_primitive_line_at, decode_primitive_lines,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -228,6 +229,23 @@ fn exercise_all_parsers(input: &[u8]) {
     if !input.is_empty() {
         let _ = decode_igsymbol_at(input, input.len() - 1);
         let _ = decode_igsymbol_at(input, input.len());
+    }
+
+    // Phase 15 Slice C: PSM `0x00FA` GraphicGroup decoder.
+    let _ = decode_graphic_groups(input);
+    let _ = decode_graphic_group_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_graphic_group_at(input, input.len() - 1);
+        let _ = decode_graphic_group_at(input, input.len());
+    }
+
+    // Phase 16 Slice D: PSM `0x0030` JStyleOverride decoder (real
+    // RAD `style.dll` `JStyleOverride` Version-3 IO).
+    let _ = decode_jstyle_overrides(input);
+    let _ = decode_jstyle_override_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_jstyle_override_at(input, input.len() - 1);
+        let _ = decode_jstyle_override_at(input, input.len());
     }
 }
 

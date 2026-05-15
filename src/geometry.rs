@@ -220,6 +220,41 @@ pub enum PidGraphicKind {
         /// X/Y scale factors.
         scale: [f64; 2],
     },
+    /// Annotation record decoded from PSM type `0x0030` (`JStyleOverride`,
+    /// RAD `style.dll` CLSID `{47FCC338-...}`). Phase 16 Slice C/F:
+    /// `SmartPlant` overloads the RAD `JStyleOverride` class as a tagged
+    /// instrument / annotation placement object. The exact field
+    /// semantics for `+0..15` remain ambiguous between IDA Version 3
+    /// schema (4×u32) and probe v5 cross-fixture evidence (2×f64
+    /// `anchor`); the variant carries the probe-derived `anchor`
+    /// interpretation but exposes only fields with strong
+    /// double-evidence support.
+    Annotation {
+        /// Inferred anchor point from payload bytes `+0..15`
+        /// interpreted as `(f64, f64)`. Cross-fixture probe shows
+        /// these values consistently fall in the normalized
+        /// coordinate range `[0, 1]`; the IDA Version-3 schema reads
+        /// the same bytes as four `u32` fields, so this anchor
+        /// remains a probe-derived interpretation pending
+        /// disambiguation.
+        anchor: PidPoint,
+        /// Rotation angle in radians from payload bytes `+24..31`
+        /// (IDA Version-3 `field_2_f64`). Cross-fixture observations
+        /// cluster around `{0, π/2, 3π/2, 2π}`, consistent with the
+        /// orthogonal orientations used by `SmartPlant` instrument
+        /// symbols.
+        rotation_angle: f64,
+        /// Secondary anchor / radius candidate from payload bytes
+        /// `+16..23` (IDA Version-3 `field_1_f64`). About 39 % of
+        /// cross-fixture records have this value byte-identical to
+        /// `anchor.x`, suggesting either a radius (when the
+        /// instrument is positioned at `(r, _)`) or a secondary
+        /// anchor coordinate.
+        secondary_radius: f64,
+        /// Human-readable diagnostic explanation, including
+        /// `bytes_to_follow` and tail-length information.
+        note: String,
+    },
     /// Evidence was found, but the shape is not decoded enough to render.
     Unknown {
         /// Human-readable explanation for diagnostics.
@@ -242,6 +277,7 @@ impl PidGraphicKind {
             Self::Circle { .. } => Some(SheetRecordKind::PrimitiveCircle),
             Self::Text { .. } => Some(SheetRecordKind::TextPlacementStyle),
             Self::SymbolInstance { .. } => Some(SheetRecordKind::SymbolPlacement),
+            Self::Annotation { .. } => Some(SheetRecordKind::JStyleOverride),
             Self::Point { .. } | Self::Unknown { .. } => None,
         }
     }
@@ -1021,6 +1057,79 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     confidence: PidGeometryConfidence::Decoded,
                 });
             }
+            // Phase 16 Slice F: emit `decoded_jstyle_overrides`
+            // (PSM `0x0030` = RAD `JStyleOverride`) as
+            // `PidGraphicKind::Annotation`. The IDA Version-3 schema
+            // (`style.dll!sub_1000F030`) writes the payload as
+            // `4 × u32 + 4 × f64 + 3 × u32 + 2 × u16`; cross-fixture
+            // probe v5 evidence shows that joining the first 8 bytes
+            // and bytes `+8..15` as `f64` produces consistently
+            // normalized coordinates, so we expose them as the
+            // inferred `anchor` while keeping the rest in the audit
+            // collection.
+            for (index, record) in geometry.decoded_jstyle_overrides.iter().enumerate() {
+                let Some(byte_range) = source_range(
+                    record.byte_start,
+                    record.byte_end.saturating_sub(record.byte_start),
+                    sheet.size,
+                ) else {
+                    continue;
+                };
+                let a_bytes = record.field_a_u32.to_le_bytes();
+                let b_bytes = record.field_b_u32.to_le_bytes();
+                let c_bytes = record.field_c_u32.to_le_bytes();
+                let d_bytes = record.field_d_u32.to_le_bytes();
+                let anchor_x = f64::from_le_bytes([
+                    a_bytes[0], a_bytes[1], a_bytes[2], a_bytes[3], b_bytes[0], b_bytes[1],
+                    b_bytes[2], b_bytes[3],
+                ]);
+                let anchor_y = f64::from_le_bytes([
+                    c_bytes[0], c_bytes[1], c_bytes[2], c_bytes[3], d_bytes[0], d_bytes[1],
+                    d_bytes[2], d_bytes[3],
+                ]);
+                if !anchor_x.is_finite() || !anchor_y.is_finite() {
+                    continue;
+                }
+                entities.push(PidGraphicEntity {
+                    id: format!("{}:jstyle-override:{index}", sheet.path),
+                    drawing_id: None,
+                    graphic_oid: Some(record.oid),
+                    kind: PidGraphicKind::Annotation {
+                        anchor: PidPoint {
+                            x: anchor_x,
+                            y: anchor_y,
+                        },
+                        rotation_angle: record.field_2_f64,
+                        secondary_radius: record.field_1_f64,
+                        note: format!(
+                            "PSM JStyleOverride (RAD style.dll CLSID {{47FCC338-...}}) \
+                             V3 IO record; oid={} bytes_to_follow={} tail_len={}",
+                            record.oid,
+                            record.bytes_to_follow,
+                            record.raw_attribute_tail.len(),
+                        ),
+                    },
+                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                    source: PidGraphicProvenance {
+                        stream_path: Some(sheet.path.clone()),
+                        byte_range: Some(byte_range),
+                        record_id: Some(format!("jstyle-override:{index}")),
+                        record_kind: Some(SheetRecordKind::JStyleOverride),
+                        field_x: None,
+                        note: Some(format!(
+                            "PSM 0x0030 JStyleOverride record decoded from \
+                             style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): \
+                             oid={} bytes_to_follow={} field_1={:.6} \
+                             rotation_angle={:.6} (rad)",
+                            record.oid,
+                            record.bytes_to_follow,
+                            record.field_1_f64,
+                            record.field_2_f64,
+                        )),
+                    },
+                    confidence: PidGeometryConfidence::Decoded,
+                });
+            }
         }
     }
 
@@ -1207,6 +1316,8 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_graphic_groups: Vec::new(),
+                decoded_jstyle_overrides: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1301,6 +1412,8 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_graphic_groups: Vec::new(),
+                decoded_jstyle_overrides: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1433,6 +1546,8 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_graphic_groups: Vec::new(),
+                decoded_jstyle_overrides: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1518,6 +1633,8 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_graphic_groups: Vec::new(),
+                decoded_jstyle_overrides: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1574,6 +1691,8 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_graphic_groups: Vec::new(),
+                decoded_jstyle_overrides: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1650,6 +1769,8 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_graphic_groups: Vec::new(),
+                decoded_jstyle_overrides: Vec::new(),
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,

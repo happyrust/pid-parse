@@ -1985,6 +1985,24 @@ pub const IGSYMBOL2D_MIN_PAYLOAD_LEN: usize = 113;
 /// Maximum byte length we'll accept on a decoded `igSymbol2d`.
 const IGSYMBOL2D_MAX_PAYLOAD_LEN: usize = 200;
 
+/// PSM type code for suspected `GraphicGroup` / `GraphicPersist` records.
+///
+/// Phase 15 probe evidence (`examples/probe_psm_0x00fa_shape.rs` and
+/// `docs/analysis/2026-05-14-psm-0x00fa-graphic-group-layout.md`)
+/// shows these records are standalone variable-size PSM records whose
+/// payload starts with `oid`, `parent_ref`, a small kind/count word,
+/// and a sub-type discriminator, followed by a reference-like raw tail.
+pub const PSM_TYPE_CODE_GRAPHIC_GROUP: u16 = 0x00FA;
+
+/// Minimum `0x00FA` payload size observed in current fixtures.
+pub const GRAPHIC_GROUP_MIN_PAYLOAD_LEN: usize = 44;
+
+/// Maximum `0x00FA` payload size accepted by the conservative decoder.
+///
+/// Current fixtures top out at 200 bytes. The cap leaves room for
+/// variant growth while rejecting obvious wide-scan false positives.
+const GRAPHIC_GROUP_MAX_PAYLOAD_LEN: usize = 512;
+
 /// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
 ///
 /// Empirically validated against all three Sheet-bearing fixtures in
@@ -2563,7 +2581,7 @@ impl SheetIgLine2dDecoded {
 /// 1. PSM `type_code` == [`PSM_TYPE_CODE_IGLINE2D`] (`0x0018`);
 /// 2. `bytes_to_follow` == 50 (igLine2d records are fixed-size);
 /// 3. Payload `remaining_header` field (bytes 8..11) ==
-///    [`IGLINE2D_REMAINING_HEADER`] (`12`);
+///    `IGLINE2D_REMAINING_HEADER` (`12`);
 /// 4. All four geometry `f64`s are finite and in domain
 ///    `[-1e9, 1e9]`;
 /// 5. `start != end` (line must be non-degenerate; collapse
@@ -3365,6 +3383,434 @@ pub fn decode_igsymbol_at(data: &[u8], offset: usize) -> Option<SheetIgSymbol2dD
         sub_type_word,
         transform: [doubles[0], doubles[1], doubles[2], doubles[3]],
         insertion: (doubles[4], doubles[5]),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 15 Slice C: PSM-encoded GraphicGroup / GraphicPersist decoder
+// ---------------------------------------------------------------------------
+
+/// One decoded PSM `0x00FA` `GraphicGroup` / `GraphicPersist` record.
+///
+/// This DTO intentionally exposes only the stable header fields proven
+/// by fixture byte dumps. The variable tail is retained as raw bytes
+/// because candidate child-OID extraction is still an audit-layer
+/// hypothesis, not a stable schema contract.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetGraphicGroupDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_GRAPHIC_GROUP`].
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header.
+    pub bytes_to_follow: u32,
+    /// Graphic group object identifier.
+    pub oid: u32,
+    /// Parent reference. Current fixtures consistently use `6`
+    /// (`PID_Page`), so the first decoder version validates it.
+    pub parent_ref: u32,
+    /// Small kind/count-like word at payload offsets 14..15.
+    pub group_kind_word: u16,
+    /// Sub-type / version-like discriminator at payload offsets 16..17.
+    pub sub_type_word: u16,
+    /// Raw variable tail from payload offset 18 onward.
+    pub raw_reference_payload: Vec<u8>,
+}
+
+/// Decode every conservative PSM `0x00FA` `GraphicGroup` record.
+///
+/// Validation:
+/// 1. `type_code == 0x00FA` and type flags are zero;
+/// 2. `bytes_to_follow` is even and in `[44, 512]`;
+/// 3. payload exists, `oid != 0`, `parent_ref == 6`;
+/// 4. payload bytes 8..13 are zero in the current fixture family;
+/// 5. `group_kind_word` is a small non-zero discriminator.
+pub fn decode_graphic_groups(data: &[u8]) -> Vec<SheetGraphicGroupDecoded> {
+    let mut out = Vec::new();
+    if data.len() < 6 + GRAPHIC_GROUP_MIN_PAYLOAD_LEN {
+        return out;
+    }
+    let max_offset = data.len() - (6 + GRAPHIC_GROUP_MIN_PAYLOAD_LEN);
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_graphic_group_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode one conservative PSM `0x00FA` `GraphicGroup` record at
+/// `offset`. Returns `None` on validation failure.
+pub fn decode_graphic_group_at(data: &[u8], offset: usize) -> Option<SheetGraphicGroupDecoded> {
+    let header_end = offset.checked_add(6)?;
+    if header_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_GRAPHIC_GROUP {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    if type_flags != 0 {
+        return None;
+    }
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    let btf = bytes_to_follow as usize;
+    if !(GRAPHIC_GROUP_MIN_PAYLOAD_LEN..=GRAPHIC_GROUP_MAX_PAYLOAD_LEN).contains(&btf) {
+        return None;
+    }
+    if !btf.is_multiple_of(2) {
+        return None;
+    }
+    let payload_end = header_end.checked_add(btf)?;
+    if payload_end > data.len() {
+        return None;
+    }
+    let payload = data.get(header_end..payload_end)?;
+    let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    if oid == 0 {
+        return None;
+    }
+    let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    if parent_ref != 6 {
+        return None;
+    }
+    if payload.get(8..14)? != [0u8; 6].as_slice() {
+        return None;
+    }
+    let group_kind_word = u16::from_le_bytes([payload[14], payload[15]]);
+    if group_kind_word == 0 || group_kind_word > 16 {
+        return None;
+    }
+    let sub_type_word = u16::from_le_bytes([payload[16], payload[17]]);
+    let raw_reference_payload = payload.get(18..)?.to_vec();
+
+    Some(SheetGraphicGroupDecoded {
+        byte_range: offset..payload_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        parent_ref,
+        group_kind_word,
+        sub_type_word,
+        raw_reference_payload,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 16 Slice D: PSM-encoded `JStyleOverride` decoder (PSM type `0x0030`)
+//
+// **Re-identification of Phase 14 §6.1 future-slice.**
+//
+// The PSM type code `0x0030` does **not** map to IGDS `GArc2d`. IDA
+// reverse engineering (see `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`)
+// proves that:
+//
+// 1. The PSM lookup table at `radsrvitem.dll!dword_5667B068[48]` resolves
+//    `type_code == 0x0030` to CLSID
+//    `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`.
+// 2. The RAD framework CLSID registry in `JUTIL.dll` (file offset
+//    `0x35680`) maps that CLSID to `style.dll` class **"JSL Override
+//    Style"** (RAD friendly name).
+// 3. The implementing C++ class name is **`JStyleOverride`** (from
+//    `style.dll` RTTI), with inheritance chain `JStyleOverride →
+//    JStyleR2d → JStyleBase`.
+// 4. The on-disk serialization for the SmartPlant fixture set is the
+//    **Version 3** path (`style.dll!sub_1000F030`), which writes exactly
+//    13 `IOContext::DoIO` calls totalling **64 bytes**, matching the
+//    fixture PSM payload exactly.
+//
+// Authoritative Version-3 byte layout:
+//
+// ```text
+// disk +0..3   u32 (host this+22)
+// disk +4..7   u32 (host this+24)
+// disk +8..11  u32 (host this+25)
+// disk +12..15 u32 (host this+38)
+// disk +16..23 f64 (host this+26)
+// disk +24..31 f64 (host this+28) — `rotation_angle` candidate
+// disk +32..39 f64 (host this+30)
+// disk +40..47 f64 (host this+34)
+// disk +48..51 u32 (host this+32)
+// disk +52..55 u32 (host this+47)
+// disk +56..59 u32 (host this+48)
+// disk +60..61 u16 (host this+36)
+// disk +62..63 u16 (host byte+146)
+// ```
+//
+// The decoder is **strictly additive**: it does *not* replace the
+// Phase 14 `decode_primitive_arcs` (`SheetPrimitiveArcDecoded`) family
+// in this slice. The two decoders coexist so the existing Phase 14
+// cross-fixture baseline is preserved while the new decoder is
+// validated. A follow-up phase (Phase 17) will deprecate the misnamed
+// Phase 14 decoder once the JStyleOverride pipeline reaches feature
+// parity with downstream consumers.
+
+/// Inner PSM payload length emitted by `JStyleOverride`
+/// `IJPersistImp::Save` Version-3 path (`style.dll!sub_1000F030`).
+/// Fixture PSM records always have `bytes_to_follow >= 64`; any
+/// surplus belongs to the optional attribute / linkage tail
+/// (`bytes_to_follow - 64`), which is *not* part of the `JStyleOverride`
+/// payload itself.
+pub const JSTYLE_OVERRIDE_PAYLOAD_LEN: usize = 64;
+/// Minimum `bytes_to_follow` a `JStyleOverride` record can ship with
+/// (= the 64-byte Version-3 payload alone). Larger values are valid
+/// (fixture commonly ships 128 / 145 / 224 / 384 etc.) — the surplus
+/// is the optional attribute tail.
+pub const JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW: u32 = 64;
+/// Upper bound on `bytes_to_follow` — guards against header-noise
+/// hits. Fixture maximum observed is 384.
+pub const JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW: u32 = 4096;
+/// Coordinate-style f64 fields (`+16..23`, `+24..31`, `+32..39`,
+/// `+40..47`) must satisfy `|x| <= JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT`
+/// to discard adversarial / out-of-range noise. The fixture-observed
+/// maximum across all 4 doubles is ~10 (rotation angle `2π`), but the
+/// limit is set generously to avoid rejecting future records that
+/// might encode larger magnitudes (e.g. world-space coordinates).
+pub const JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT: f64 = 1.0e6;
+
+/// One decoded PSM `0x0030` `JStyleOverride` record (RAD `style.dll`
+/// CLSID `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`,
+/// IDA-confirmed Version-3 IO path
+/// `style.dll!sub_1000F030`).
+///
+/// All 13 fields written by the Save / Load Version-3 path are
+/// exposed verbatim (4×u32 prefix + 4×f64 mid + 3×u32 + 2×u16). The
+/// surplus attribute tail (`bytes_to_follow > 64`) is retained as
+/// `raw_attribute_tail` for audit; its internal layout (plant tag,
+/// linkage references, `1.0` markers, etc.) is documented as
+/// hypothesis in
+/// `docs/analysis/2026-05-15-garc2d-packed-int-tail.md` §11 but is
+/// not part of the stable contract.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetJStyleOverrideDecoded {
+    /// Byte range covering the full PSM record (header + payload +
+    /// any attribute tail captured by `bytes_to_follow`).
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always `0x0030`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header. `>= 64`. Values above
+    /// 64 indicate an optional attribute tail.
+    pub bytes_to_follow: u32,
+    /// `oid` from the PSM header.
+    pub oid: u32,
+    /// Version-3 disk field at payload `+0..3` (host `this+22`).
+    pub field_a_u32: u32,
+    /// Version-3 disk field at payload `+4..7` (host `this+24`).
+    pub field_b_u32: u32,
+    /// Version-3 disk field at payload `+8..11` (host `this+25`).
+    pub field_c_u32: u32,
+    /// Version-3 disk field at payload `+12..15` (host `this+38`).
+    pub field_d_u32: u32,
+    /// Version-3 disk field at payload `+16..23` (host `this+26`),
+    /// f64.
+    pub field_1_f64: f64,
+    /// Version-3 disk field at payload `+24..31` (host `this+28`),
+    /// f64. **Rotation-angle candidate** — cross-fixture probe
+    /// shows values cluster around `{0, π/2, 3π/2, 2π}`.
+    pub field_2_f64: f64,
+    /// Version-3 disk field at payload `+32..39` (host `this+30`),
+    /// f64.
+    pub field_3_f64: f64,
+    /// Version-3 disk field at payload `+40..47` (host `this+34`),
+    /// f64.
+    pub field_4_f64: f64,
+    /// Version-3 disk field at payload `+48..51` (host `this+32`).
+    pub field_e_u32: u32,
+    /// Version-3 disk field at payload `+52..55` (host `this+47`).
+    pub field_f_u32: u32,
+    /// Version-3 disk field at payload `+56..59` (host `this+48`).
+    pub field_g_u32: u32,
+    /// Version-3 disk field at payload `+60..61` (host `this+36`).
+    pub field_h_u16: u16,
+    /// Version-3 disk field at payload `+62..63` (host byte 146).
+    pub field_i_u16: u16,
+    /// Raw attribute tail bytes (`bytes_to_follow - 64`). Retained
+    /// for audit only; internal layout is hypothesis pending more
+    /// fixture coverage.
+    pub raw_attribute_tail: Vec<u8>,
+}
+
+/// Decode every conservative PSM `0x0030` `JStyleOverride` record in
+/// a `Sheet*` stream's bytes (RAD `JStyleOverride`
+/// `IJPersistImp::Save` Version-3 path).
+///
+/// Walks every byte offset; at each offset, runs
+/// [`decode_jstyle_override_at`] and accepts any record that passes
+/// header + payload validation. Adversarial input is panic-safe via
+/// the per-offset `Option` boundary and bounded `Vec` allocations.
+pub fn decode_jstyle_overrides(data: &[u8]) -> Vec<SheetJStyleOverrideDecoded> {
+    let mut out = Vec::new();
+    if data.len() < PSM_RECORD_HEADER_LEN + JSTYLE_OVERRIDE_PAYLOAD_LEN {
+        return out;
+    }
+    let max_offset = data.len() - (PSM_RECORD_HEADER_LEN + JSTYLE_OVERRIDE_PAYLOAD_LEN);
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_jstyle_override_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode one PSM `0x0030` `JStyleOverride` record at `offset`.
+///
+/// Validation (only fields with IDA + cross-fixture probe evidence):
+///
+/// 1. PSM 14-bit type code == `0x0030` and type flags are zero.
+/// 2. `bytes_to_follow` ∈ `[JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW,
+///    JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW]`.
+/// 3. The record body fits in `data`.
+/// 4. All four payload f64 fields are finite and within
+///    `|x| <= JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT`.
+///
+/// Unlike the misnamed Phase 14 `decode_primitive_arcs`, this decoder
+/// does **not** apply the spurious `axis_a.y ≈ 0` constraint (which
+/// caused ~51 % false-negatives by rejecting `rotation_angle != 0`
+/// records).
+pub fn decode_jstyle_override_at(data: &[u8], offset: usize) -> Option<SheetJStyleOverrideDecoded> {
+    let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
+    if header_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_GARC2D {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    if type_flags != 0 {
+        return None;
+    }
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    if !(JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW..=JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW)
+        .contains(&bytes_to_follow)
+    {
+        return None;
+    }
+    let btf_usize = bytes_to_follow as usize;
+    let record_end = offset
+        .checked_add(6)
+        .and_then(|p| p.checked_add(btf_usize))?;
+    if record_end > data.len() {
+        return None;
+    }
+    let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
+
+    let payload_start = offset + PSM_RECORD_HEADER_LEN;
+    let payload_end = payload_start + JSTYLE_OVERRIDE_PAYLOAD_LEN;
+    if payload_end > data.len() {
+        return None;
+    }
+    let payload = data.get(payload_start..payload_end)?;
+
+    let field_a_u32 = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    let field_b_u32 = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let field_c_u32 = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
+    let field_d_u32 = u32::from_le_bytes([payload[12], payload[13], payload[14], payload[15]]);
+
+    let field_1_f64 = f64::from_le_bytes([
+        payload[16],
+        payload[17],
+        payload[18],
+        payload[19],
+        payload[20],
+        payload[21],
+        payload[22],
+        payload[23],
+    ]);
+    let field_2_f64 = f64::from_le_bytes([
+        payload[24],
+        payload[25],
+        payload[26],
+        payload[27],
+        payload[28],
+        payload[29],
+        payload[30],
+        payload[31],
+    ]);
+    let field_3_f64 = f64::from_le_bytes([
+        payload[32],
+        payload[33],
+        payload[34],
+        payload[35],
+        payload[36],
+        payload[37],
+        payload[38],
+        payload[39],
+    ]);
+    let field_4_f64 = f64::from_le_bytes([
+        payload[40],
+        payload[41],
+        payload[42],
+        payload[43],
+        payload[44],
+        payload[45],
+        payload[46],
+        payload[47],
+    ]);
+
+    if !field_1_f64.is_finite()
+        || !field_2_f64.is_finite()
+        || !field_3_f64.is_finite()
+        || !field_4_f64.is_finite()
+    {
+        return None;
+    }
+    if field_1_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
+        || field_2_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
+        || field_3_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
+        || field_4_f64.abs() > JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT
+    {
+        return None;
+    }
+
+    let field_e_u32 = u32::from_le_bytes([payload[48], payload[49], payload[50], payload[51]]);
+    let field_f_u32 = u32::from_le_bytes([payload[52], payload[53], payload[54], payload[55]]);
+    let field_g_u32 = u32::from_le_bytes([payload[56], payload[57], payload[58], payload[59]]);
+    let field_h_u16 = u16::from_le_bytes([payload[60], payload[61]]);
+    let field_i_u16 = u16::from_le_bytes([payload[62], payload[63]]);
+
+    let raw_attribute_tail = data.get(payload_end..record_end)?.to_vec();
+
+    Some(SheetJStyleOverrideDecoded {
+        byte_range: offset..record_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        field_a_u32,
+        field_b_u32,
+        field_c_u32,
+        field_d_u32,
+        field_1_f64,
+        field_2_f64,
+        field_3_f64,
+        field_4_f64,
+        field_e_u32,
+        field_f_u32,
+        field_g_u32,
+        field_h_u16,
+        field_i_u16,
+        raw_attribute_tail,
     })
 }
 
@@ -4774,6 +5220,139 @@ mod tests {
         let _ = decode_igsymbols(&noise);
         assert!(decode_igsymbols(&vec![0u8; 4096]).is_empty());
         assert!(decode_igsymbols(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 15 Slice C: PSM 0x00FA GraphicGroup decoder tests
+    // -----------------------------------------------------------------
+
+    fn build_synthetic_graphic_group_record(
+        oid: u32,
+        parent_ref: u32,
+        group_kind_word: u16,
+        sub_type_word: u16,
+        raw_reference_payload: &[u8],
+    ) -> Vec<u8> {
+        let bytes_to_follow = 18 + raw_reference_payload.len();
+        assert!(bytes_to_follow >= GRAPHIC_GROUP_MIN_PAYLOAD_LEN);
+        let mut out = Vec::with_capacity(6 + bytes_to_follow);
+        out.extend_from_slice(&PSM_TYPE_CODE_GRAPHIC_GROUP.to_le_bytes());
+        out.extend_from_slice(&(bytes_to_follow as u32).to_le_bytes());
+        out.extend_from_slice(&oid.to_le_bytes());
+        out.extend_from_slice(&parent_ref.to_le_bytes());
+        out.extend_from_slice(&[0u8; 6]);
+        out.extend_from_slice(&group_kind_word.to_le_bytes());
+        out.extend_from_slice(&sub_type_word.to_le_bytes());
+        out.extend_from_slice(raw_reference_payload);
+        out
+    }
+
+    #[test]
+    fn graphic_group_decodes_canonical_header_and_raw_tail() {
+        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
+        let record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+
+        let decoded = decode_graphic_groups(&record);
+        assert_eq!(decoded.len(), 1);
+        let group = &decoded[0];
+        assert_eq!(group.byte_range, 0..record.len());
+        assert_eq!(group.type_code, PSM_TYPE_CODE_GRAPHIC_GROUP);
+        assert_eq!(group.type_flags, 0);
+        assert_eq!(group.bytes_to_follow, GRAPHIC_GROUP_MIN_PAYLOAD_LEN as u32);
+        assert_eq!(group.oid, 42);
+        assert_eq!(group.parent_ref, 6);
+        assert_eq!(group.group_kind_word, 2);
+        assert_eq!(group.sub_type_word, 0x01A1);
+        assert_eq!(group.raw_reference_payload, raw_tail);
+    }
+
+    #[test]
+    fn graphic_group_rejects_wrong_type_code() {
+        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
+        let mut record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+        record[0] = 0x18;
+        record[1] = 0x00;
+
+        assert!(decode_graphic_groups(&record).is_empty());
+    }
+
+    #[test]
+    fn graphic_group_rejects_nonzero_type_flags() {
+        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
+        let mut record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+        let flagged_type = PSM_TYPE_CODE_GRAPHIC_GROUP | 0x4000;
+        record[0..2].copy_from_slice(&flagged_type.to_le_bytes());
+
+        assert!(decode_graphic_groups(&record).is_empty());
+    }
+
+    #[test]
+    fn graphic_group_rejects_invalid_size_and_truncation() {
+        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
+        let mut record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+        record[2..6].copy_from_slice(&43u32.to_le_bytes());
+        assert!(decode_graphic_groups(&record).is_empty());
+
+        let record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+        assert!(decode_graphic_groups(&record[..record.len() - 1]).is_empty());
+    }
+
+    #[test]
+    fn graphic_group_rejects_invalid_header_fields() {
+        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
+        assert!(decode_graphic_groups(&build_synthetic_graphic_group_record(
+            0, 6, 2, 0x01A1, &raw_tail
+        ))
+        .is_empty());
+        assert!(decode_graphic_groups(&build_synthetic_graphic_group_record(
+            42, 7, 2, 0x01A1, &raw_tail
+        ))
+        .is_empty());
+        assert!(decode_graphic_groups(&build_synthetic_graphic_group_record(
+            42, 6, 0, 0x01A1, &raw_tail
+        ))
+        .is_empty());
+    }
+
+    #[test]
+    fn graphic_group_rejects_nonzero_reserved_prefix() {
+        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
+        let mut record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+        record[6 + 8] = 1;
+
+        assert!(decode_graphic_groups(&record).is_empty());
+    }
+
+    #[test]
+    fn graphic_group_decoder_is_panic_safe_on_short_input() {
+        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
+        let record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+        for trunc_len in 0..record.len() {
+            assert!(decode_graphic_groups(&record[..trunc_len]).is_empty());
+        }
+        assert!(decode_graphic_groups(&[]).is_empty());
+    }
+
+    #[test]
+    fn graphic_group_decoder_is_panic_safe_on_random_noise() {
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_graphic_groups(&noise);
+        assert!(decode_graphic_groups(&vec![0u8; 4096]).is_empty());
+        assert!(decode_graphic_groups(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    #[test]
+    fn graphic_group_decodes_two_back_to_back_records() {
+        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
+        let first = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+        let second = build_synthetic_graphic_group_record(43, 6, 1, 0x00B8, &raw_tail);
+        let mut data = first;
+        data.extend_from_slice(&second);
+
+        let decoded = decode_graphic_groups(&data);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].oid, 42);
+        assert_eq!(decoded[1].oid, 43);
     }
 
     #[test]

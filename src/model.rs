@@ -901,6 +901,26 @@ pub struct SheetGeometry {
     /// (Phase 14 Slice N).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igsymbols: Vec<DecodedIgSymbol2dRecord>,
+    /// Audit-only PSM `0x00FA` `GraphicGroup` / `GraphicPersist` records
+    /// emitted by
+    /// [`crate::parsers::sheet_records::decode_graphic_groups`].
+    ///
+    /// These records preserve the stable envelope and raw reference
+    /// payload for inspection. They intentionally do not produce
+    /// normalized geometry entities and do not expose a stable
+    /// `child_oids` field until the variable tail is proven across
+    /// size/sub-type buckets.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_graphic_groups: Vec<DecodedGraphicGroupRecord>,
+    /// PSM-decoded `JStyleOverride` records (PSM type `0x0030`,
+    /// RAD `style.dll` CLSID `{47FCC338-...}`) emitted by
+    /// [`crate::parsers::sheet_records::decode_jstyle_overrides`].
+    /// Phase 16 Slice D additive collection — coexists with the
+    /// misnamed Phase 14 `decoded_primitive_arcs` until downstream
+    /// consumers migrate. See
+    /// `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_jstyle_overrides: Vec<DecodedJStyleOverrideRecord>,
 }
 
 /// Stable, model-shaped DTO that mirrors
@@ -1376,6 +1396,140 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
             transform_11: d.transform[3],
             insertion_x: d.insertion.0,
             insertion_y: d.insertion.1,
+        }
+    }
+}
+
+/// Audit-only model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetGraphicGroupDecoded`] —
+/// PSM type `0x00FA` `GraphicGroup` / `GraphicPersist` records.
+///
+/// Only the stable 18-byte payload prefix and raw variable tail are
+/// exposed. Candidate child references remain probe/audit evidence and
+/// are not represented as a stable field.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DecodedGraphicGroupRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x00FA`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header.
+    pub bytes_to_follow: u32,
+    /// Graphic group object identifier.
+    pub oid: u32,
+    /// Parent reference. Current fixtures consistently use `6`.
+    pub parent_ref: u32,
+    /// Small kind/count-like word at payload offsets 14..15.
+    pub group_kind_word: u16,
+    /// Sub-type / version-like discriminator at payload offsets 16..17.
+    pub sub_type_word: u16,
+    /// Raw variable tail from payload offset 18 onward.
+    pub raw_reference_payload: Vec<u8>,
+}
+
+impl From<crate::parsers::sheet_records::SheetGraphicGroupDecoded> for DecodedGraphicGroupRecord {
+    fn from(d: crate::parsers::sheet_records::SheetGraphicGroupDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            group_kind_word: d.group_kind_word,
+            sub_type_word: d.sub_type_word,
+            raw_reference_payload: d.raw_reference_payload,
+        }
+    }
+}
+
+/// Stable, model-shaped DTO that mirrors
+/// [`crate::parsers::sheet_records::SheetJStyleOverrideDecoded`] —
+/// PSM type `0x0030` (RAD `JStyleOverride` class, `style.dll` CLSID
+/// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`) Version-3 IO record.
+///
+/// Phase 16 Slice D additive DTO: replaces the misnamed Phase 14
+/// `DecodedPrimitiveArcRecord` family with field names that match
+/// the authoritative `style.dll!sub_1000F030` IO sequence.
+/// See `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md` for
+/// the byte-level evidence chain.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedJStyleOverrideRecord {
+    /// Inclusive byte-range start covering the full PSM record.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x0030`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header (`>= 64`).
+    pub bytes_to_follow: u32,
+    /// `oid` from the PSM header.
+    pub oid: u32,
+    /// Version-3 disk field at payload `+0..3`.
+    pub field_a_u32: u32,
+    /// Version-3 disk field at payload `+4..7`.
+    pub field_b_u32: u32,
+    /// Version-3 disk field at payload `+8..11`.
+    pub field_c_u32: u32,
+    /// Version-3 disk field at payload `+12..15`.
+    pub field_d_u32: u32,
+    /// Version-3 disk field at payload `+16..23` (f64).
+    pub field_1_f64: f64,
+    /// Version-3 disk field at payload `+24..31` (f64).
+    /// Cross-fixture probe shows values cluster around
+    /// `{0, π/2, 3π/2, 2π}` — rotation-angle candidate.
+    pub field_2_f64: f64,
+    /// Version-3 disk field at payload `+32..39` (f64).
+    pub field_3_f64: f64,
+    /// Version-3 disk field at payload `+40..47` (f64).
+    pub field_4_f64: f64,
+    /// Version-3 disk field at payload `+48..51`.
+    pub field_e_u32: u32,
+    /// Version-3 disk field at payload `+52..55`.
+    pub field_f_u32: u32,
+    /// Version-3 disk field at payload `+56..59`.
+    pub field_g_u32: u32,
+    /// Version-3 disk field at payload `+60..61`.
+    pub field_h_u16: u16,
+    /// Version-3 disk field at payload `+62..63`.
+    pub field_i_u16: u16,
+    /// Optional attribute / linkage tail (`bytes_to_follow - 64`
+    /// bytes). Audit-only; internal layout is hypothesis.
+    pub raw_attribute_tail: Vec<u8>,
+}
+
+impl From<crate::parsers::sheet_records::SheetJStyleOverrideDecoded>
+    for DecodedJStyleOverrideRecord
+{
+    fn from(d: crate::parsers::sheet_records::SheetJStyleOverrideDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            field_a_u32: d.field_a_u32,
+            field_b_u32: d.field_b_u32,
+            field_c_u32: d.field_c_u32,
+            field_d_u32: d.field_d_u32,
+            field_1_f64: d.field_1_f64,
+            field_2_f64: d.field_2_f64,
+            field_3_f64: d.field_3_f64,
+            field_4_f64: d.field_4_f64,
+            field_e_u32: d.field_e_u32,
+            field_f_u32: d.field_f_u32,
+            field_g_u32: d.field_g_u32,
+            field_h_u16: d.field_h_u16,
+            field_i_u16: d.field_i_u16,
+            raw_attribute_tail: d.raw_attribute_tail,
         }
     }
 }
@@ -2533,6 +2687,11 @@ pub enum SheetRecordKind {
     EndpointPair,
     /// Coordinate system, units, page bounds, or transform metadata record.
     CoordinatePageMetadata,
+    /// `JStyleOverride` record decoded from PSM type `0x0030`
+    /// (RAD `style.dll` CLSID `{47FCC338-...}`). `SmartPlant`
+    /// repurposes this class as a tagged instrument / annotation
+    /// placement object. Backs [`crate::geometry::PidGraphicKind::Annotation`].
+    JStyleOverride,
     /// Unrecognized or not-yet-decoded Sheet record variant.
     Unknown,
 }

@@ -11,14 +11,16 @@ use pid_parse::{
     },
     parsers::sheet_records::{
         coordinate_page_metadata_investigation_report, curve_primitive_investigation_report,
-        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
-        decode_igtextboxes, decode_primitive_arcs, decode_primitive_lines,
-        primitive_line_investigation_report, sheet_record_shape_inventory,
+        decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints,
+        decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_arcs,
+        decode_primitive_lines, primitive_line_investigation_report, sheet_record_shape_inventory,
         symbol_placement_investigation_report, text_placement_investigation_report,
         SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
-        SheetRecordShapeKind, SheetSymbolPlacementObject, PSM_TYPE_CODE_GARC2D,
-        PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D,
-        PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX,
+        SheetRecordShapeKind, SheetSymbolPlacementObject, GRAPHIC_GROUP_MIN_PAYLOAD_LEN,
+        JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW, JSTYLE_OVERRIDE_PAYLOAD_LEN, PSM_TYPE_CODE_GARC2D,
+        PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_GRAPHIC_GROUP, PSM_TYPE_CODE_IGLINE2D,
+        PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D,
+        PSM_TYPE_CODE_IGTEXTBOX,
     },
     PidParser,
 };
@@ -539,6 +541,11 @@ fn normalized_geometry_inventory(doc: &pid_parse::PidDocument) -> NormalizedGeom
                 pid_parse::PidGraphicKind::Unknown { .. },
                 pid_parse::PidGeometryConfidence::ProbeOnly,
             ) => inventory.probe_only_unknowns += 1,
+            // Phase 16: `Annotation` entities are emitted by the
+            // `decoded_jstyle_overrides` collection. They live in
+            // `other_entities` until a dedicated Annotation bucket
+            // ships (Phase 17 candidate).
+            (pid_parse::PidGraphicKind::Annotation { .. }, _) => inventory.other_entities += 1,
         }
     }
     assert_eq!(
@@ -1550,6 +1557,13 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 .geometry
                 .as_ref()
                 .map_or(0, |geometry| geometry.decoded_igsymbols.len());
+            // Phase 16 Slice F: `decoded_jstyle_overrides` emits
+            // `PidGraphicKind::Annotation` entities on top of the
+            // probe / Phase 14 totals above.
+            let decoded_jstyle_override_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.decoded_jstyle_overrides.len());
             let total = text_count
                 + coordinate_count
                 + endpoint_count
@@ -1560,9 +1574,10 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 + decoded_iglinestring_count
                 + decoded_igpoint_count
                 + decoded_igtextbox_count
-                + decoded_igsymbol_count;
+                + decoded_igsymbol_count
+                + decoded_jstyle_override_count;
             eprintln!(
-                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_arc={decoded_arc_count}, decoded_igline={decoded_igline_count}, decoded_iglinestring={decoded_iglinestring_count}, decoded_igpoint={decoded_igpoint_count}, decoded_igtextbox={decoded_igtextbox_count}, decoded_igsymbol={decoded_igsymbol_count}, total={total}",
+                "sheet={}, text={text_count}, coord={coordinate_count}, ep={endpoint_count}, hint={hint_count}, decoded_line={decoded_line_count}, decoded_arc={decoded_arc_count}, decoded_igline={decoded_igline_count}, decoded_iglinestring={decoded_iglinestring_count}, decoded_igpoint={decoded_igpoint_count}, decoded_igtextbox={decoded_igtextbox_count}, decoded_igsymbol={decoded_igsymbol_count}, decoded_jstyle_override={decoded_jstyle_override_count}, total={total}",
                 sheet.path
             );
             total
@@ -1663,6 +1678,16 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 )
         })
         .count();
+    // Phase 16 Slice F: `decoded_jstyle_overrides` records emit
+    // `PidGraphicKind::Annotation` entities at Decoded confidence.
+    let decoded_annotations = geometry
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Annotation { .. })
+        })
+        .count();
     let expected_coordinate_hints: usize = doc
         .sheet_streams
         .iter()
@@ -1739,9 +1764,10 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
             + decoded_polylines
             + decoded_points
             + decoded_texts
-            + decoded_symbols,
+            + decoded_symbols
+            + decoded_annotations,
         geometry.entities.len(),
-        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d/igLine2d records become decoded lines; GArc2d records become decoded arcs; igLineString2d records become decoded polylines; igPoint2d records become decoded points; igTextBox records become decoded texts; igSymbol2d records become decoded symbol instances; remaining probe evidence stays ProbeOnly Unknown"
+        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d/igLine2d records become decoded lines; GArc2d records become decoded arcs; igLineString2d records become decoded polylines; igPoint2d records become decoded points; igTextBox records become decoded texts; igSymbol2d records become decoded symbol instances; PSM-decoded JStyleOverride records become decoded annotations; remaining probe evidence stays ProbeOnly Unknown"
     );
     // Phase 14 Slice E/G/J/K/L/M/N: `PidGeometryConfidence::Decoded`
     // is legitimate for PSM-decoded GLine2d / igLine2d / GArc2d /
@@ -1759,9 +1785,10 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                         | pid_parse::PidGraphicKind::Point { .. }
                         | pid_parse::PidGraphicKind::Text { .. }
                         | pid_parse::PidGraphicKind::SymbolInstance { .. }
+                        | pid_parse::PidGraphicKind::Annotation { .. }
                 )
         }),
-        "Decoded confidence currently only applies to PSM GLine2d / igLine2d / GArc2d / igLineString2d / igPoint2d / igTextBox / igSymbol2d entities"
+        "Decoded confidence currently only applies to PSM GLine2d / igLine2d / GArc2d / igLineString2d / igPoint2d / igTextBox / igSymbol2d / JStyleOverride entities"
     );
     // Phase 14 Slice G/K/M/N: `PidGraphicKind::Arc` (Slice G),
     // `Polyline` (Slice K), `Text` (Slice M) and `SymbolInstance`
@@ -6387,6 +6414,251 @@ fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
         "decode_primitive_lines must emit at least one decoded line on the \
         Sheet-bearing fixture set, got {total_decoded}. \
         Per-fixture summary: {per_fixture_summary:?}"
+    );
+}
+
+/// Phase 15 Slice C: fixture-level ratchet for the conservative
+/// PSM `0x00FA` GraphicGroup / GraphicPersist parser.
+///
+/// This intentionally stays at parser level. It locks the stable record
+/// envelope and count evidence from `examples/probe_psm_0x00fa_shape.rs`
+/// without promoting candidate child OIDs into the public model/schema.
+/// The conservative decoder currently emits 352 records across the
+/// four-fixture set: one fewer than the broad bounded probe count
+/// because the decoder applies additional header validation.
+#[test]
+fn graphic_group_decoder_ratchets_fixture_counts_and_header_fields() {
+    let fixtures = [
+        ("DWG-0201GP06-01.pid", 135usize),
+        ("DWG-0202GP06-01.pid", 84usize),
+        ("工艺管道及仪表流程-1.pid", 125usize),
+        ("export-test/publish-data/A01/A01.pid", 8usize),
+    ];
+    let mut total_decoded = 0usize;
+    let mut total_expected = 0usize;
+    let mut per_fixture_summary: Vec<(String, usize, usize)> = Vec::new();
+    let mut sample_groups: Vec<String> = Vec::new();
+
+    for (fixture, expected_count) in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture_count = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let bytes = raw.data.as_slice();
+            let decoded = decode_graphic_groups(bytes);
+            let model_decoded_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.decoded_graphic_groups.len());
+            assert_eq!(
+                model_decoded_count,
+                decoded.len(),
+                "SheetGeometry audit collection must mirror parser-level GraphicGroup count for {} {}",
+                fixture,
+                sheet.path
+            );
+            for group in &decoded {
+                assert!(
+                    group.byte_range.end <= bytes.len(),
+                    "GraphicGroup byte_range {:?} exceeds stream {} bytes ({})",
+                    group.byte_range,
+                    sheet.path,
+                    bytes.len()
+                );
+                assert!(
+                    group.byte_range.start < group.byte_range.end,
+                    "GraphicGroup byte_range must be non-empty: {:?}",
+                    group.byte_range
+                );
+                assert_eq!(group.type_code, PSM_TYPE_CODE_GRAPHIC_GROUP);
+                assert_eq!(group.type_flags, 0);
+                assert!(
+                    group.bytes_to_follow as usize >= GRAPHIC_GROUP_MIN_PAYLOAD_LEN,
+                    "GraphicGroup bytes_to_follow below conservative floor: {:?}",
+                    group
+                );
+                assert_eq!(group.bytes_to_follow % 2, 0);
+                assert_ne!(group.oid, 0);
+                assert_eq!(group.parent_ref, 6);
+                assert!((1..=16).contains(&group.group_kind_word));
+                assert_eq!(
+                    18 + group.raw_reference_payload.len(),
+                    group.bytes_to_follow as usize,
+                    "raw reference tail must cover payload bytes after stable 18-byte prefix"
+                );
+
+                if sample_groups.len() < 6 {
+                    sample_groups.push(format!(
+                        "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} kind={} sub_type=0x{:04X} tail_len={}",
+                        sheet.path,
+                        group.byte_range.start,
+                        group.byte_range.end,
+                        group.oid,
+                        group.group_kind_word,
+                        group.sub_type_word,
+                        group.raw_reference_payload.len(),
+                    ));
+                }
+            }
+            per_fixture_count += decoded.len();
+        }
+
+        per_fixture_summary.push((fixture.to_string(), per_fixture_count, expected_count));
+        total_decoded += per_fixture_count;
+        total_expected += expected_count;
+    }
+
+    eprintln!("--- Phase 15 Slice C: PSM GraphicGroup decoder fixture ratchet ---");
+    for (name, actual, expected) in &per_fixture_summary {
+        eprintln!("  {name}: {actual} decoded GraphicGroup records (expected {expected})");
+    }
+    for sample in &sample_groups {
+        eprintln!("  sample: {sample}");
+    }
+    eprintln!("  total decoded GraphicGroup records: {total_decoded}");
+
+    if per_fixture_summary.is_empty() {
+        eprintln!(
+            "skipping: no Sheet-bearing fixture present (CI / contributors \
+            without SmartPlant samples)"
+        );
+        return;
+    }
+
+    for (fixture, actual, expected) in &per_fixture_summary {
+        assert_eq!(
+            actual, expected,
+            "GraphicGroup fixture count drift for {fixture}: expected {expected}, got {actual}. \
+            Re-run `cargo run --release --example probe_psm_0x00fa_shape` before updating this ratchet."
+        );
+    }
+    assert_eq!(
+        total_decoded, total_expected,
+        "GraphicGroup aggregate count drift. Per-fixture summary: {per_fixture_summary:?}"
+    );
+}
+
+/// Phase 16 Slice D: cross-fixture sanity test for the additive
+/// `decode_jstyle_overrides` parser (PSM type `0x0030`, RAD
+/// `JStyleOverride` Version-3 IO, `style.dll` CLSID
+/// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`).
+///
+/// The IDA-confirmed schema accepts records that the misnamed
+/// Phase 14 `decode_primitive_arcs` rejects (e.g. the `+24..31`
+/// rotation_angle != 0 case). probe v5 reports 98 raw 0x0030 hits
+/// across the four-fixture set; this conservative typed decoder is
+/// expected to land in `[60, 110]` after dropping the spurious
+/// Phase 14 `axis_a.y ≈ 0` constraint. The exact count is **not**
+/// ratcheted here — Slice D is intentionally sanity-only so the
+/// downstream pipeline can pick up the new collection without
+/// freezing a number that Slice E/F evidence may move.
+#[test]
+fn jstyle_override_decoder_emits_audit_records_with_provenance() {
+    let fixtures = [
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+        "export-test/publish-data/A01/A01.pid",
+    ];
+    let mut total_decoded = 0usize;
+    let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
+    let mut sample_records: Vec<String> = Vec::new();
+
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture_count = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let bytes = raw.data.as_slice();
+            let decoded = decode_jstyle_overrides(bytes);
+            let model_decoded_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.decoded_jstyle_overrides.len());
+            assert_eq!(
+                model_decoded_count,
+                decoded.len(),
+                "SheetGeometry::decoded_jstyle_overrides must mirror parser-level count for {} {}",
+                fixture,
+                sheet.path
+            );
+            for rec in &decoded {
+                assert!(rec.byte_range.end <= bytes.len(), "byte_range overflow");
+                assert!(rec.byte_range.start < rec.byte_range.end);
+                assert_eq!(rec.type_code, PSM_TYPE_CODE_GARC2D);
+                assert_eq!(rec.type_flags, 0);
+                assert!(
+                    rec.bytes_to_follow >= JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW,
+                    "bytes_to_follow below floor: {:?}",
+                    rec
+                );
+                assert!(rec.field_1_f64.is_finite() && rec.field_2_f64.is_finite());
+                assert!(rec.field_3_f64.is_finite() && rec.field_4_f64.is_finite());
+                // `bytes_to_follow` covers `oid(4) + aux(8) + payload(64) +
+                // attribute_tail`, so tail length = btf - 76.
+                let expected_tail_len =
+                    rec.bytes_to_follow as usize - (JSTYLE_OVERRIDE_PAYLOAD_LEN + 12);
+                assert_eq!(
+                    rec.raw_attribute_tail.len(),
+                    expected_tail_len,
+                    "raw_attribute_tail length must equal bytes_to_follow - 76 \
+                     (oid + aux + payload subtracted)"
+                );
+
+                if sample_records.len() < 6 {
+                    sample_records.push(format!(
+                        "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} btf={} f64#2={:.4} (rotation candidate)",
+                        sheet.path,
+                        rec.byte_range.start,
+                        rec.byte_range.end,
+                        rec.oid,
+                        rec.bytes_to_follow,
+                        rec.field_2_f64
+                    ));
+                }
+            }
+            per_fixture_count += decoded.len();
+        }
+        per_fixture_summary.push((fixture.to_string(), per_fixture_count));
+        total_decoded += per_fixture_count;
+    }
+
+    eprintln!(
+        "--- Phase 16 Slice D: JStyleOverride decoder cross-fixture (RAD style.dll CLSID 47FCC338) ---"
+    );
+    for (name, actual) in &per_fixture_summary {
+        eprintln!("  {name}: {actual} decoded JStyleOverride records");
+    }
+    for sample in &sample_records {
+        eprintln!("  sample: {sample}");
+    }
+    eprintln!("  total decoded JStyleOverride records: {total_decoded}");
+
+    if per_fixture_summary.is_empty() {
+        eprintln!(
+            "skipping: no Sheet-bearing fixture present (CI / contributors \
+            without SmartPlant samples)"
+        );
+        return;
+    }
+
+    // Sanity: at least one fixture must produce a record. The probe
+    // v5 evidence shows ~98 hits cross-fixture; the typed decoder is
+    // expected to be conservatively close. We assert a generous
+    // range to avoid premature ratchet drift.
+    assert!(
+        (1..=200).contains(&total_decoded),
+        "JStyleOverride decoder produced an unexpected aggregate count {total_decoded}; \
+         Per-fixture summary: {per_fixture_summary:?}. \
+         Cross-check with `cargo run --release --example probe_garc2d_packed_bytes`."
     );
 }
 

@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Phase 14 Slice Q：属性/分组记录探针 — 揭示 PSM 0x00FA 为 GraphicGroup
+
+延续 Slice O 的"剩余未解 PSM types"分类，专攻最具实用价值的目标：
+**geometry record 后的 attribute/style/color/layer 数据**。
+
+**关键发现 (`examples/probe_igline2d_attribute_tail.rs`)**: igLine2d
+records 是**密集打包**的, NO inline attribute tail。geometry
+records 后立即是下一个 geometry record (igLine2d/igPoint2d/igSymbol2d
+等)。
+
+**关键发现 (`examples/probe_psm_0x00fa_shape.rs`)**: PSM 0x00FA
+(250 cross-fixture hits) 是**GraphicGroup / GraphicPersist 记录**,
+将 geometry oid 关联到 parent_ref + child OID 列表。结构推测:
+
+```
+0..3   u32   oid (group OID)
+4..7   u32   parent_ref (typically 6 = PID_Page)
+8..15  8 bytes zeros
+16..17 u16   sub-type / version
+18..   variable OID references list
+```
+
+记录大小变长 (44, 54, 66, 98, 104, 122, 164, 200 bytes 等).
+
+**未实施完整 decoder 的原因**: 变长 OID list 结构复杂, sub-type 语义
+需要更多 fixture byte dump 分析才能可靠 validate。Probe 例子已落地
+作为未来 Slice 的基础工件。
+
+**Phase 14 Final Summary 文档同步更新** 第 6.2 节, 记录 attribute
+tail 实质为独立 0x00FA records 而非 inline tail.
+
+落地清单:
+
+- examples/probe_igline2d_attribute_tail.rs: 揭示 geometry records
+  密集打包
+- examples/probe_psm_0x00fa_shape.rs: 揭示 0x00FA = GraphicGroup
+- docs/plans/2026-05-14-phase14-decoder-suite-final-summary.md
+  第 6.2 节更新
+
+5 道 gate 全绿 (840 unit + 88 integration tests + clippy + fmt +
+missing-docs ratchet=0).
+
 ### Phase 14 Slice P：`pid_inspect --geometry-summary` CLI 用户友好统计
 
 `pid_inspect` CLI 加 `--geometry-summary` flag，向用户暴露 8 PSM

@@ -9,17 +9,19 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
-    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedIgLine2dRecord, DecodedIgLineString2dRecord,
-    DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord, DecodedIgTextBoxRecord,
-    DecodedPrimitiveArcRecord, DecodedPrimitiveLineRecord, PidDocument, SheetCoordinateHintDto,
-    SheetGeometry, SheetStream, SheetText,
+    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedGraphicGroupRecord, DecodedIgLine2dRecord,
+    DecodedIgLineString2dRecord, DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord,
+    DecodedIgTextBoxRecord, DecodedJStyleOverrideRecord, DecodedPrimitiveArcRecord,
+    DecodedPrimitiveLineRecord, PidDocument, SheetCoordinateHintDto, SheetGeometry, SheetStream,
+    SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
     sheet_records::{
-        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
-        decode_igtextboxes, decode_primitive_arcs, decode_primitive_lines,
+        decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints,
+        decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_arcs,
+        decode_primitive_lines,
     },
 };
 use std::io::Read;
@@ -270,6 +272,15 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         .into_iter()
         .map(DecodedIgSymbol2dRecord::from)
         .collect();
+    let decoded_graphic_groups: Vec<DecodedGraphicGroupRecord> = decode_graphic_groups(raw_data)
+        .into_iter()
+        .map(DecodedGraphicGroupRecord::from)
+        .collect();
+    let decoded_jstyle_overrides: Vec<DecodedJStyleOverrideRecord> =
+        decode_jstyle_overrides(raw_data)
+            .into_iter()
+            .map(DecodedJStyleOverrideRecord::from)
+            .collect();
 
     if texts.is_empty()
         && coordinate_hints.is_empty()
@@ -280,6 +291,8 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         && decoded_igpoints.is_empty()
         && decoded_igtextboxes.is_empty()
         && decoded_igsymbols.is_empty()
+        && decoded_graphic_groups.is_empty()
+        && decoded_jstyle_overrides.is_empty()
     {
         None
     } else {
@@ -295,6 +308,8 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             decoded_igpoints,
             decoded_igtextboxes,
             decoded_igsymbols,
+            decoded_graphic_groups,
+            decoded_jstyle_overrides,
         })
     }
 }
