@@ -229,10 +229,31 @@ extraction against ground-truth fixtures.
 
 ### 6.2 Attribute tail decoding
 
-After every geometry record, an optional attribute tail may
-contain color / line-style / layer / level references. Currently
-these are not parsed. Slice N1 candidate: parse common attribute
-tail patterns at the end of `igLine2d` and `igSymbol2d` records.
+**Slice Q discovery (2026-05-14)**: Probing the bytes immediately
+after each `igLine2d` record revealed that geometry records are
+densely packed (back-to-back), with **no inline attribute tail**.
+Instead, attributes / grouping are encoded as separate records of
+PSM type `0x00FA` (250 cross-fixture hits) and `0x0010` (sub-record
+fragments).
+
+PSM 0x00FA appears to be a **GraphicGroup / GraphicPersist** record
+with the structure:
+
+```text
+0..3   u32   oid (group OID, often matches preceding geometry)
+4..7   u32   parent_ref (typically 6 = PID_Page)
+8..15  8 bytes zeros / placeholder
+16..17 u16   sub-type / version (0x0001 / 0x0002 / 0x0007)
+18..   variable OID references list (each child OID + trailing 0)
+```
+
+Records have variable sizes (most common: 44, 54, 66, 98, 104, 122,
+164, 200 bytes), suggesting variable-length OID lists.
+
+Implementing a full `decode_graphic_groups` decoder requires more
+fixture-byte-dump analysis to understand the OID list structure,
+sub-type semantics, and reliable validation rules. Probe results
+saved in `examples/probe_psm_0x00fa_shape.rs` for future slices.
 
 ### 6.3 0x0010 sub-record families
 
