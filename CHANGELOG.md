@@ -2,6 +2,104 @@
 
 ## [Unreleased]
 
+### Phase 16: PSM 0x0030 = `JStyleOverride` 反向工程 + `decode_jstyle_overrides` + `PidGraphicKind::Annotation`
+
+**重大发现**: PSM type code `0x0030` 真实身份**不是 IGDS `GArc2d`**, 而是
+**RAD `style.dll` `JStyleOverride` 类** (CLSID `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`).
+SmartPlant P&ID 把该 RAD 类**重用为 tagged instrument / annotation
+placement** record. 完整反向链跨 5 个 IDA 实例 (radsrvitem.dll →
+J2DSrv.dll → JUTIL.dll → style.dll), 通过 PowerShell + IDA 双重证据收敛.
+
+**Authoritative on-disk schema (Version 3)**: `style.dll!sub_1000F030`
+13 个 `IOContext::DoIO` 调用 = **64 字节 payload**, 完美匹配跨 fixture
+PSM 字节数. 字段表见 `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`.
+
+**关键修正**: Phase 14 `decode_primitive_arcs` 的 `axis_a.y ≈ 0` 约束
+**错误地拒绝了 ~51% 的真 record** (rotation_angle ∈ {π/2, 3π/2, 2π}
+的仪表方向). 新 `decode_jstyle_overrides` 跨 fixture 输出 **98 条**
+(vs Phase 14 错误的 48 条), 找回全部 50 条丢失 record.
+
+**严格 additive 实现**: Phase 14 `decode_primitive_arcs` 系列保持不动,
+新 `SheetGeometry::decoded_jstyle_overrides` collection 与之共存,
+下游消费者可在 Phase 17 之前自由迁移.
+
+**Schema 冲突 (§11) 已 CLOSED**: probe v5 把磁盘 `+0..15` 解读为 2 个
+f64 anchor (跨 fixture 100% 落在归一化范围), IDA V3 schema 解读为 4 个
+独立 u32. `JStyleOverride::Clone` (sub_10010640) 的 `qmemcpy(v5+22,
+this+22, 0x58)` 证明 RAD 层是 untyped byte IO; SmartPlant 把 RAD 的
+byte slots 当 `union { u32; f64 }` 用. 两种解读**同时正确**.
+
+落地清单:
+
+- `src/parsers/sheet_records.rs`: `SheetJStyleOverrideDecoded` DTO,
+  `decode_jstyle_overrides`, `decode_jstyle_override_at`,
+  4 个 const (`JSTYLE_OVERRIDE_PAYLOAD_LEN=64` 等)
+- `src/model.rs`: `DecodedJStyleOverrideRecord` stable DTO +
+  `From` impl + `SheetGeometry::decoded_jstyle_overrides` 字段 +
+  `SheetRecordKind::JStyleOverride` variant
+- `src/geometry.rs`: `PidGraphicKind::Annotation { anchor, rotation_angle,
+  secondary_radius, note }` 新 variant + emission path (跨 fixture 98
+  `PidGraphicEntity { kind: Annotation, confidence: Decoded }`) +
+  `PidGraphicKind::decoded_sheet_record_kind` impl 更新
+- `src/streams/cluster.rs`: pipeline integration
+- `src/cfb/reader.rs`: `SheetGeometry` init
+- `tests/parser_panic_safety.rs`: adversarial matrix entry
+- `tests/parse_real_files.rs`:
+  `jstyle_override_decoder_emits_audit_records_with_provenance`
+  (跨 fixture sanity test 98 records) +
+  `normalized_geometry_probe_baseline_on_real_fixture` 3 处更新
+- `examples/probe_garc2d_packed_bytes.rs`: 4 轮迭代最终版
+  (btf 桶分析 + cross-record OID reference + +24..31 rotation hypothesis)
+- `docs/analysis/2026-05-15-garc2d-packed-int-tail.md`: 11 节
+  完整证据链 (4 轮 probe + IDA cross-DLL CLSID dispatch chain)
+- `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`: 权威字段表
+  + IDA 地址索引 + §11 schema 冲突 CLOSED 文档
+- `docs/plans/2026-05-16-phase16-jstyleoverride-final-summary.md`:
+  276 行 final summary, 作为下次会话 entry point
+- `goals/phase16-j2dsrv-record-decode/`: 完整 goal-package (6 文件,
+  50+ progress.jsonl entries)
+
+5 道 pre-commit gate 全绿: build / test --workspace --all-targets /
+clippy -D warnings / fmt / missing-docs baseline=0. Phase 14
+(GLine2d=3, GArc2d=48, igLine2d=284, igLineString2d=119, igPoint2d=146,
+igTextBox=142, igSymbol2d=27) + Phase 15 (GraphicGroup=352) baseline
+全部保持.
+
+### Phase 15: PSM 0x00FA `GraphicGroup` audit-only decoder
+
+延续 Phase 14 Slice Q 的探测, 把 PSM `0x00FA` GraphicGroup /
+GraphicPersist records 从 probe-only 提升为 conservative typed
+decoder, 暴露稳定 header + raw variable tail (child OID list 不
+固化为稳定字段, 留作 audit). 跨 4 fixture 共 **352 条**:
+DWG-0201=135, DWG-0202=84, 工艺管道-1=125, A01=8.
+
+**关键约束**: decoder 严格保守, 拒绝 type_flags ≠ 0, btf 不在
+[44, 512] 区间, btf 不为偶数, parent_ref ≠ 6 (`PID_Page`),
+payload bytes 8..13 非零, 或 `group_kind_word` 不在 [1, 16]
+等等. 该约束让 conservative 计数 352 比 broad probe 计数 353 少 1.
+
+`tests/parse_real_files.rs::graphic_group_decoder_ratchets_fixture_counts_and_header_fields`
+负责跨 fixture ratchet. `SheetGeometry::decoded_graphic_groups`
+是 audit-only collection, `geometry.rs::build_normalized_geometry`
+**不**从 GraphicGroup records 生成 `PidGraphicEntity` (group 与
+geometry primitive 的关联需要更多证据才能稳定化).
+
+落地清单:
+
+- `src/parsers/sheet_records.rs`: `SheetGraphicGroupDecoded` DTO +
+  `decode_graphic_groups` + `decode_graphic_group_at`
+- `src/model.rs`: `DecodedGraphicGroupRecord` stable DTO +
+  `SheetGeometry::decoded_graphic_groups` 字段
+- `src/streams/cluster.rs` + `src/cfb/reader.rs` + `src/geometry.rs`:
+  pipeline integration
+- `tests/parser_panic_safety.rs`: adversarial matrix entry
+- `tests/parse_real_files.rs`: cross-fixture ratchet (352 records)
+- `docs/analysis/2026-05-14-psm-0x00fa-graphic-group-layout.md`
+- `docs/plans/2026-05-14-phase15-graphic-group-final-summary.md`
+- `goals/phase15-graphic-group-records/`: 完整 goal-package
+
+5 道 pre-commit gate 全绿.
+
 ### Phase 14 Slice Q：属性/分组记录探针 — 揭示 PSM 0x00FA 为 GraphicGroup
 
 延续 Slice O 的"剩余未解 PSM types"分类，专攻最具实用价值的目标：
