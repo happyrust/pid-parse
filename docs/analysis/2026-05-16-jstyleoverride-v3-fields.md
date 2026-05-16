@@ -79,7 +79,7 @@ sub_1000F030 序列化 13 个字段，磁盘 64B
 | +60..61 | "various" | u16 H | u16 |
 | +62..63 | "various" | u16 I | u16 |
 
-### 关键冲突 (待 controlled-diff 解决)
+### 关键冲突 (已收敛 — 2026-05-16 IDA 进一步取证)
 
 probe v5 把 fixture `+0..7` 解读为 f64 = 0.281208 (像归一化 center.x)，把 `+8..15` 解读为 f64 = 0.362367 (像归一化 center.y)。这些值字节模式形如标准化 f64：
 
@@ -89,15 +89,46 @@ dump[0] +0..7 bytes: B8 6A B7 AD 4E FF D1 3F (LE)
               u32 split: A=0xADB76AB8, B=0x3FD1FF4E
 ```
 
-按 IDA Version 3 schema，这是 2 个独立 u32 字段，但**字节模式天然形如 f64**。三种可能：
+按 IDA Version 3 schema，这是 2 个独立 u32 字段。**冲突已收敛**：
 
-1. **RAD 内存 alias**：`this+22` 和 `this+23` 在内存中作为 f64 的两个 32-bit halves。但 V3 的 DoIO 跳过 `this+23`（只 IO `this+22` 和 `this+24`），所以这个假说不成立。
-2. **fixture 使用更高版本 (V4/V5)**：可能存在另一个 dispatch path（slot 53 = 0x10070568 远地址，可能是 V4 handler），fixture 实际走该路径。需进一步反编译 vtable slot 53。
-3. **fixture 的 u32 字段值碰巧形如归一化 f64**：4 个 u32 字段恰好是 oid / count / flag 类整数，字节模式恰巧落在 f64 normalized 区间。可能性最低。
+- **`vtable slot 53 = 0x10070568` 也是 `.data` 段全零非函数**（与 slot 9 一样），所以**不存在 V4 path 假说**，fixture 必然走 V3。
+- **JStyleOverride 的 Clone 方法 `sub_10010640` 内部使用 `qmemcpy(v5+22, this+22, 0x58)` 整块拷贝 88 字节**，**完全不区分字段类型**。RAD 层把 `this+22..this+22+88` 视为 untyped byte block；V3 `IOContext::DoIO` 按 `DoIO(4, ptr)` / `DoIO(8, ptr)` 分块写，本质上是 raw byte IO。
+- **`search_text "anchor"` 在 style.dll 中返回 0 命中**。RAD 层语义里没有 "anchor" / "position" 这种概念——RAD 只关心字节序列化，不解读几何含义。
 
-最稳的下一步取证：
-- 反编译 vtable slot 53 (sub_10070568 / 远地址)
-- 用 fixture controlled-diff 协议造已知 plant tag 的 record，对比字节
+**结论**：IDA V3 的 4×u32 schema 描述的是 **RAD untyped byte-IO 接口**；probe v5 的 2×f64 anchor 描述的是 **SmartPlant 实际填充字段语义**。两者**都正确**，只是处于不同抽象层：
+
+| Layer | view of disk +0..15 | 由谁定义 |
+|---|---|---|
+| RAD `JStyleOverride::IJPersistImp` IO | 4 × u32 (untyped) | style.dll 7.0.0.108 |
+| SmartPlant P&ID instrument placement | 2 × f64 (anchor.x, anchor.y) | SmartPlant filling the union |
+
+SmartPlant 把 RAD 暴露的 untyped byte slot 当作 `union { u32; f64 }` 用，写入 IEEE 754 f64 字节模式。下游消费者（如本 crate）可以从同一段字节读出 4 u32 或 2 f64，根据上下文决定。
+
+Phase 16 Slice F (`PidGraphicKind::Annotation`) 采用 **SmartPlant 层的 f64 解读**作为 `anchor` 字段，因为下游用户关心的是几何位置；同时 `SheetGeometry::decoded_jstyle_overrides` audit collection 保留 RAD 的 4 u32 view（`field_a_u32 ... field_d_u32`），供需要的下游消费者使用。
+
+**冲突状态：CLOSED**。
+
+### 取证补充：JStyleOverride::Clone 内存布局印证
+
+`sub_10010640` (JStyleOverride main vtable slot 18) 反编译：
+
+```c
+int __thiscall sub_10010640(_DWORD *this, int a2, _DWORD *a3)
+{
+    _DWORD *v4 = (_DWORD *)(AllocPersistMem(204, 0, 0, 0, 0, 0) + 4);
+    _DWORD *v5 = v4 ? sub_10010590(v4, a2) : 0;  // sub_10010590 = JStyleOverride ctor
+    if (!v5) return -2147024882;
+    (*(void (__stdcall **)(_DWORD *))(*v5 + 4))(v5);  // AddRef
+    v5[14] = *(this + 14);                              // version word copy
+    qmemcpy(v5 + 22, this + 22, 0x58u);                 // ★ 88 bytes untyped block copy
+    v5[37] = 0;
+    v5[49] = 0;
+    *a3 = v5;
+    return 0;
+}
+```
+
+`qmemcpy(v5 + 22, this + 22, 0x58u)` 一次拷贝 88 字节（22 个 DWORD），覆盖 `this+22 ... this+50` 全部字段。这是 RAD 层"不解读字段类型"的直接证据。
 
 ## 反向工程 IDA 地址索引
 
