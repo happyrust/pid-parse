@@ -161,6 +161,9 @@ mod tests {
             // Phase 18: PSM 0x0010 sub-record audit-only DTO.
             "DecodedSubRecord0x0010Record",
             "decoded_sub_records_0x0010",
+            // Phase 19: PSM 0x0010 leading_word audit field
+            // (= payload[0..2] as little-endian u16).
+            "leading_word",
         ] {
             assert!(
                 text.contains(needle),

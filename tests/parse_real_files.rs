@@ -7036,3 +7036,124 @@ fn sub_records_0x0010_decoder_emits_audit_records_with_provenance() {
         "0x0010 aggregate count drift. Per-fixture summary: {per_fixture_summary:?}"
     );
 }
+
+/// Phase 19: cross-fixture ratchet for the `leading_word` audit field
+/// (`payload[0..2]` as little-endian `u16`) on the Phase 18 PSM
+/// `0x0010` sub-record audit collection.
+///
+/// Probe baseline from `examples/probe_psm_0x0010_sub_kind.rs` over
+/// 578 records: `0x0002 = 164 (28%)`, `0x0003 = 21 (3.6%)`,
+/// `0x0001 = 18 (3.1%)`. The Phase 18 decoder may admit a few extra
+/// records vs the probe (582 vs 578) because the probe carries a small
+/// off-by-N at the stream tail; this ratchet uses the decoder count
+/// as ground truth and reconciles per-word numbers accordingly.
+///
+/// Invariants asserted:
+/// - `leading_word == None` count = 0 (decoder min payload = 8 ≥ 2).
+/// - The three Phase-19-probe-confirmed top words remain the top 3
+///   when ranked by count.
+/// - Top word `0x0002` covers ≥ 25% of all records.
+/// - Total record count matches the Phase 18 ratchet (= 582).
+///
+/// This ratchet does **not** assert sub-kind semantics; `leading_word`
+/// is byte-position-named only (see
+/// `goals/phase19-psm-0x0010-leading-word-audit/`).
+#[test]
+fn sub_records_0x0010_leading_word_distribution_matches_phase19_probe() {
+    let fixtures = [
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+        "export-test/publish-data/A01/A01.pid",
+    ];
+    let mut total_records = 0usize;
+    let mut none_count = 0usize;
+    let mut leading_word_hist: std::collections::BTreeMap<u16, usize> =
+        std::collections::BTreeMap::new();
+    let mut per_fixture_totals: Vec<(String, usize)> = Vec::new();
+
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let decoded = decode_sub_records_0x0010(raw.data.as_slice());
+            for rec in &decoded {
+                total_records += 1;
+                per_fixture += 1;
+                match rec.leading_word {
+                    None => none_count += 1,
+                    Some(w) => *leading_word_hist.entry(w).or_insert(0) += 1,
+                }
+            }
+        }
+        per_fixture_totals.push((fixture.to_string(), per_fixture));
+    }
+
+    if per_fixture_totals.is_empty() {
+        eprintln!(
+            "skipping: no Sheet-bearing fixture present (CI / contributors \
+            without SmartPlant samples)"
+        );
+        return;
+    }
+
+    let mut top_words: Vec<(u16, usize)> =
+        leading_word_hist.iter().map(|(w, c)| (*w, *c)).collect();
+    top_words.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+
+    eprintln!("--- Phase 19: PSM 0x0010 leading_word distribution ---");
+    for (name, count) in &per_fixture_totals {
+        eprintln!("  {name}: {count} records");
+    }
+    eprintln!("  total records: {total_records}");
+    eprintln!("  None (payload.len() < 2): {none_count}");
+    eprintln!("  top 6 leading_word values:");
+    for (word, count) in top_words.iter().take(6) {
+        let pct = (*count as f64) * 100.0 / (total_records.max(1) as f64);
+        eprintln!("    0x{word:04X} : {count:>4}  ({pct:.1}%)");
+    }
+
+    // Hard invariants:
+    // 1. Decoder admits min 8-byte payload, so leading_word is never None.
+    assert_eq!(
+        none_count, 0,
+        "Phase 18 decoder min bytes_to_follow = 8 ≥ 2, so leading_word must never be None"
+    );
+    // 2. Total must match Phase 18 ratchet count.
+    assert_eq!(
+        total_records, 582,
+        "Phase 19 leading_word ratchet must observe exactly Phase 18's 582 records"
+    );
+    // 3. The three Phase-19-probe-confirmed dominant words are present
+    //    and rank in the top 3 by count.
+    let top3: Vec<u16> = top_words.iter().take(3).map(|(w, _)| *w).collect();
+    assert_eq!(
+        top3,
+        vec![0x0002, 0x0003, 0x0001],
+        "Phase 19 top-3 leading_word ranking changed: got {top3:?}, expected [0x0002, 0x0003, 0x0001]. \
+        Re-run `cargo run --release --example probe_psm_0x0010_sub_kind` to diagnose."
+    );
+    // 4. Top word coverage ≥ 25% (probe measured 28%).
+    let top_count = top_words[0].1;
+    let top_pct = (top_count as f64) * 100.0 / (total_records as f64);
+    assert!(
+        top_pct >= 25.0,
+        "Phase 19 leading_word == 0x0002 coverage must be ≥ 25%, got {top_pct:.1}% \
+        ({top_count}/{total_records})"
+    );
+    // 5. Per-fixture sanity: each non-empty fixture must contribute
+    //    ≥ 1 record (Phase 18 already enforces specific per-fixture
+    //    counts; we don't re-assert them here to avoid double-locking).
+    for (fixture, count) in &per_fixture_totals {
+        assert!(
+            *count >= 1,
+            "fixture {fixture} contributed 0 records to leading_word histogram \
+            but Phase 18 ratchet expected non-zero"
+        );
+    }
+}

@@ -2,6 +2,103 @@
 
 ## [Unreleased]
 
+### Phase 19: PSM `0x0010` `leading_word` audit field (partial sub-kind discriminator)
+
+Phase 18 landed the 0x0010 sub-record family as an audit-only collection
+(582 cross-fixture records). The original Phase 19 plan was to sweep the
+RAD `47FCC330..47FCC33E` CLSID sibling range under PSM `0x29..0x35`, but
+a fresh probe (`examples/probe_rad_siblings_0x0029_0x0035.rs`) showed
+that only `0x0030` (the existing JStyleOverride family) has hits on
+`/Sheet6` across all four fixtures (115 total; everything else: 0).
+The "1:1 CLSID-range → PSM-type-code mapping" hypothesis is therefore
+**falsified**; see
+`docs/analysis/2026-05-17-phase19-rad-sibling-probe-null-result.md` for
+the full null-result table.
+
+Pivoted to a more useful Phase 19 angle: add a single typed audit field
+to the existing Phase 18 DTO. A second probe
+(`examples/probe_psm_0x0010_sub_kind.rs`) over 578 records confirmed
+that `payload[0..2]` as little-endian `u16` is a **partial** sub-kind
+discriminator:
+
+- `leading_word == 0x0002` covers **164 records (28.2%)**, spread across
+  ~40 size buckets including many that are 100% mono-valued
+  (size=41, 36, 27, 47, 76, etc.).
+- `leading_word == 0x0003` covers **21 records (3.6%)**.
+- `leading_word == 0x0001` covers **18 records (3.1%)**.
+- Other notable values include `0x4C1C`/`0x4E1C` (size=16 bucket
+  dominant) and `0x8EA5` (size=86 bucket 85% dominant).
+
+However, several large size buckets (size=31 with 182 records, plus 70 /
+13 / 16 / 43) are heterogeneous at `+0` and likely encode coordinates or
+OIDs rather than a sub-kind tag in the leading bytes. A single fixed
+offset therefore **cannot** cleanly partition the whole family —
+which is exactly why this phase exposes the raw word under a
+position-named field (`leading_word`) rather than a semantically-named
+field like `sub_kind`. Phase 14 GArc2d's premature naming demonstrated
+the cost of getting this wrong.
+
+Additions:
+
+- `src/parsers/sheet_records.rs`: `SheetSubRecord0x0010Decoded.leading_word:
+  Option<u16>` field (= `u16::from_le_bytes([payload[0], payload[1]])`
+  when `payload.len() >= 2`, else `None`). The decoder min payload is
+  8 bytes so the `None` case is currently unreachable through the public
+  decoder; the `Option<>` exists for schema honesty and to protect a
+  future refactor.
+- `src/parsers/sheet_records.rs`: 2 new parser unit tests
+  (`sub_record_0x0010_leading_word_matches_first_two_payload_bytes_le`
+  with the probe-confirmed 0x0002/0x0003/0x4E1C inputs, and
+  `sub_record_0x0010_leading_word_is_none_for_sub_two_byte_payload`
+  for the contract).
+- `src/model.rs`: `DecodedSubRecord0x0010Record.leading_word: Option<u16>`
+  mirror + `From` impl propagation + `JsonSchema` derive coverage.
+- `src/schema.rs`: schema-needle ratchet adds `leading_word`.
+- `tests/parse_real_files.rs`:
+  `sub_records_0x0010_leading_word_distribution_matches_phase19_probe`
+  cross-fixture ratchet. Asserts total = 582 (matches Phase 18),
+  `None` count = 0, top-3 ranking = `[0x0002, 0x0003, 0x0001]`, and
+  `0x0002` coverage ≥ 25%.
+- `examples/probe_psm_0x0010_sub_kind.rs`: per-size-bucket discriminator
+  histogram probe (used to gather the Phase 19 evidence).
+- `examples/probe_rad_siblings_0x0029_0x0035.rs`: RAD sibling sweep
+  probe whose null result motivated the angle pivot.
+- `docs/analysis/2026-05-17-phase19-rad-sibling-probe-null-result.md`:
+  null-result evidence breadcrumb.
+- `goals/phase19-psm-0x0010-leading-word-audit/`: full goal package
+  (brief / plan / verification / blockers / goal-prompt / progress.jsonl).
+
+Audit-only design choices (per
+`goals/phase19-psm-0x0010-leading-word-audit/`):
+
+- **No sub-kind field naming.** Field name describes byte position
+  only (`leading_word`); no `sub_kind` / `record_kind` / `family_tag`
+  / `discriminator` etc. Phase 14 GArc2d lesson reinforced.
+- **Phase 18 strictly additive.** All Phase 18 fields (`byte_range /
+  type_code / type_flags / bytes_to_follow / raw_payload`) preserved.
+  Phase 18 ratchet still emits exactly 582 records.
+- **No per-size discriminator offsets.** Size 31 / 70 / 13 / 16 / 43
+  buckets remain audit-only at `+0`; deeper reverse engineering
+  (different discriminator offset per bucket, or IDA-confirmed
+  sub-kind class identity) is deferred.
+- **No `PidGraphicKind` variant.** Sub-records still don't promote to
+  normalized geometry.
+- **No reference resolver.** `JStyleOverride.referenced_oid_{a,c}` →
+  `0x0010` lookups remain deferred.
+
+Future work (Phase 20+): IDA-confirmed sub-kind discriminator
+(possibly at varying offsets per record class), promotion of the
+audit DTO into per-sub-kind typed records, and a JStyleOverride /
+GraphicGroup → 0x0010 reference resolver.
+
+5 道 pre-commit gate 全绿: build / test --workspace --all-targets /
+clippy -D warnings / fmt / missing-docs baseline=0. Phase 14
+(GLine2d=3, igLine2d=284, igLineString2d=119, igPoint2d=146,
+igTextBox=142, igSymbol2d=27) + Phase 15 (GraphicGroup=352) +
+Phase 16 (JStyleOverride=98) + Phase 17 (PrimitiveArc surface
+removed) + Phase 18 (`decoded_sub_records_0x0010`=582) baselines
+all preserved.
+
 ### Phase 18: PSM `0x0010` sub-record family audit-only decoder
 
 Phase 14 §6.3 categorized PSM type `0x0010` as "embedded sub-records /

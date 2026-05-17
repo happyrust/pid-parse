@@ -1389,6 +1389,16 @@ pub struct DecodedSubRecord0x0010Record {
     /// discrimination and per-field decoding are deferred to a
     /// future phase.
     pub raw_payload: Vec<u8>,
+    /// Audit-only Phase 19 field: `payload[0..2]` as little-endian
+    /// `u16`; `None` when `raw_payload.len() < 2`.
+    ///
+    /// Mirrors
+    /// [`crate::parsers::sheet_records::SheetSubRecord0x0010Decoded::leading_word`].
+    /// This is **not** a named sub-kind discriminator; the field name
+    /// describes only the byte position. Promotion to a typed
+    /// `sub_kind` field is deferred pending IDA confirmation.
+    #[serde(default)]
+    pub leading_word: Option<u16>,
 }
 
 impl From<crate::parsers::sheet_records::SheetSubRecord0x0010Decoded>
@@ -1402,6 +1412,7 @@ impl From<crate::parsers::sheet_records::SheetSubRecord0x0010Decoded>
             type_flags: d.type_flags,
             bytes_to_follow: d.bytes_to_follow,
             raw_payload: d.raw_payload,
+            leading_word: d.leading_word,
         }
     }
 }

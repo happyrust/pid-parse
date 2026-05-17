@@ -3594,6 +3594,19 @@ pub struct SheetSubRecord0x0010Decoded {
     /// discrimination and per-field decoding are deferred to a
     /// future phase.
     pub raw_payload: Vec<u8>,
+    /// Audit-only Phase 19 field: `payload[0..2]` as little-endian
+    /// `u16`. `None` when `raw_payload.len() < 2`.
+    ///
+    /// This is **not** a named sub-kind discriminator — Phase 19 probe
+    /// (`examples/probe_psm_0x0010_sub_kind.rs`) showed that while
+    /// `leading_word == 0x0002` accounts for ~28% of records and many
+    /// size buckets are mono-valued at this position, several large
+    /// buckets (size 31, 70, 13, 16, 43) are heterogeneous at +0 and
+    /// likely encode coordinates or OIDs in the leading bytes rather
+    /// than a sub-kind tag. The field name therefore describes only
+    /// the byte position, not any semantic role; promotion to a typed
+    /// `sub_kind` field is deferred pending IDA confirmation.
+    pub leading_word: Option<u16>,
 }
 
 /// Decode every PSM `0x0010` sub-record in a Sheet stream's bytes.
@@ -3658,12 +3671,16 @@ pub fn decode_sub_record_0x0010_at(
         return None;
     }
     let raw_payload = data.get(header_end..payload_end)?.to_vec();
+    let leading_word = raw_payload
+        .get(0..2)
+        .map(|slot| u16::from_le_bytes([slot[0], slot[1]]));
     Some(SheetSubRecord0x0010Decoded {
         byte_range: offset..payload_end,
         type_code,
         type_flags,
         bytes_to_follow,
         raw_payload,
+        leading_word,
     })
 }
 
@@ -5074,6 +5091,9 @@ mod tests {
         assert_eq!(rec.type_flags, 0);
         assert_eq!(rec.bytes_to_follow as usize, payload.len());
         assert_eq!(rec.raw_payload, payload);
+        // Phase 19: leading_word = u16::from_le_bytes([payload[0],
+        // payload[1]]) = LE(0x00, 0x01) = 0x0100.
+        assert_eq!(rec.leading_word, Some(0x0100));
     }
 
     #[test]
@@ -5185,5 +5205,64 @@ mod tests {
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].type_flags, 0b11);
         assert_eq!(decoded[0].type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 19: PSM 0x0010 leading_word audit field
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn sub_record_0x0010_leading_word_matches_first_two_payload_bytes_le() {
+        // Payload starts with the Phase-19-probe-confirmed dominant
+        // leading word 0x0002 (28% of cross-fixture records).
+        let mut payload = vec![0x02u8, 0x00];
+        payload.extend(std::iter::repeat_n(0xAAu8, 14));
+        let record = build_synthetic_sub_record_0x0010(0, &payload);
+        let decoded = decode_sub_records_0x0010(&record);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].leading_word, Some(0x0002));
+
+        // Same exercise with 0x0003 (the second-most-common leading
+        // word per Phase 19 probe, 3.6% of records).
+        let mut payload = vec![0x03u8, 0x00];
+        payload.extend(std::iter::repeat_n(0xBBu8, 14));
+        let record = build_synthetic_sub_record_0x0010(0, &payload);
+        let decoded = decode_sub_records_0x0010(&record);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].leading_word, Some(0x0003));
+
+        // Non-trivial byte-order check: payload starts with 0x1C 0x4E
+        // → LE u16 = 0x4E1C (one of the size-16 bucket dominant words).
+        let mut payload = vec![0x1Cu8, 0x4E];
+        payload.extend(std::iter::repeat_n(0xCCu8, 14));
+        let record = build_synthetic_sub_record_0x0010(0, &payload);
+        let decoded = decode_sub_records_0x0010(&record);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].leading_word, Some(0x4E1C));
+    }
+
+    #[test]
+    fn sub_record_0x0010_leading_word_is_none_for_sub_two_byte_payload() {
+        // The decoder enforces bytes_to_follow >= 8, so the only way
+        // to observe `leading_word == None` is to construct the DTO
+        // manually with a < 2 byte raw_payload. This tests that the
+        // schema honors that contract (and protects against a future
+        // refactor that drops the Option<>).
+        let dto = SheetSubRecord0x0010Decoded {
+            byte_range: 0..6,
+            type_code: PSM_TYPE_CODE_SUB_RECORD_0X0010,
+            type_flags: 0,
+            bytes_to_follow: 0,
+            raw_payload: Vec::new(),
+            leading_word: None,
+        };
+        assert_eq!(dto.leading_word, None);
+        let dto_one = SheetSubRecord0x0010Decoded {
+            leading_word: None,
+            raw_payload: vec![0x42],
+            bytes_to_follow: 1,
+            ..dto.clone()
+        };
+        assert_eq!(dto_one.leading_word, None);
     }
 }

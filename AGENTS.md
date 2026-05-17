@@ -95,6 +95,13 @@ without needing `radsrvitem.dll` decompilation.
   `PidGraphicKind` emission. Referenced from JStyleOverride
   `+38..41` / `+56..59`. Sub-kind discrimination deferred to a
   follow-up phase pending IDA confirmation of the real RAD class.
+  Phase 19 adds one audit-only field `leading_word: Option<u16>` =
+  `payload[0..2]` as LE u16. Cross-fixture distribution
+  `0x0002 = 164 (28%) / 0x0003 = 21 / 0x0001 = 18`; ~30 size buckets
+  are 100% mono-valued at `+0`, but size 31 (182 records) / 70 / 13 /
+  16 / 43 are heterogeneous at `+0` and need a different
+  discriminator strategy (deferred). Field name describes byte
+  position only — **not** a semantic `sub_kind`.
 
 Phase 14 milestones are tracked in
 `goals/phase14-sppid-sheet-geometry/progress.jsonl`. See
