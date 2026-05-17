@@ -39,7 +39,7 @@ use pid_parse::parsers::sheet_records::{
     decode_iglinestring_at, decode_iglinestrings, decode_igpoint_at, decode_igpoints,
     decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at, decode_igtextboxes,
     decode_jstyle_override_at, decode_jstyle_overrides, decode_primitive_line_at,
-    decode_primitive_lines,
+    decode_primitive_lines, decode_sub_record_0x0010_at, decode_sub_records_0x0010,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -238,6 +238,14 @@ fn exercise_all_parsers(input: &[u8]) {
     if !input.is_empty() {
         let _ = decode_jstyle_override_at(input, input.len() - 1);
         let _ = decode_jstyle_override_at(input, input.len());
+    }
+
+    // Phase 18: PSM `0x0010` sub-record family audit-only decoder.
+    let _ = decode_sub_records_0x0010(input);
+    let _ = decode_sub_record_0x0010_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_sub_record_0x0010_at(input, input.len() - 1);
+        let _ = decode_sub_record_0x0010_at(input, input.len());
     }
 }
 

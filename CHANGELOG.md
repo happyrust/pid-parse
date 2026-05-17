@@ -2,6 +2,84 @@
 
 ## [Unreleased]
 
+### Phase 18: PSM `0x0010` sub-record family audit-only decoder
+
+Phase 14 §6.3 categorized PSM type `0x0010` as "embedded sub-records /
+attribute fragments inside other record types". Probe v5 found 638
+cross-fixture scan hits (most prevalent unexplained type), and Phase 16
+JStyleOverride reverse-engineering confirmed these records are referenced
+from JStyleOverride `+38..41` (`referenced_oid_a`) and `+56..59`
+(`referenced_oid_c`) — see
+`docs/analysis/2026-05-15-garc2d-packed-int-tail.md` §11.
+
+Phase 18 lands a conservative typed audit-only decoder, sealed to the
+**Phase 15 GraphicGroup template** (6-byte PSM header `type_word +
+bytes_to_follow`, not the 18-byte IGDS header used by Phase 14 typed
+primitives; no `oid` field). The decoder is intentionally permissive —
+it admits every record whose header satisfies
+`type_code == 0x0010` and `bytes_to_follow ∈ [8, 100_000]` — so audit
+consumers see the same population that probe sees, minus the
+overlapping false positives that the non-advancing probe scan
+double-counts.
+
+Cross-fixture decoded baseline:
+
+- `DWG-0201GP06-01.pid`: 161
+- `DWG-0202GP06-01.pid`: 104
+- `工艺管道及仪表流程-1.pid`: 306
+- `export-test/publish-data/A01/A01.pid`: 11
+- **total: 582** (probe non-advancing scan reports 638 with overlaps)
+
+Additions:
+
+- `src/parsers/sheet_records.rs`: `SheetSubRecord0x0010Decoded` parser
+  DTO, `decode_sub_records_0x0010`, `decode_sub_record_0x0010_at`, and
+  three public constants (`PSM_TYPE_CODE_SUB_RECORD_0X0010 = 0x0010`,
+  `SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW = 8`,
+  `SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW = 100_000`). 12 unit tests
+  cover canonical decode, wrong type_code, sub-min / over-max
+  `bytes_to_follow`, truncated payload, empty input, all-zero /
+  all-`0xFF` noise, back-to-back records, and `type_flags`
+  preservation.
+- `src/model.rs`: `DecodedSubRecord0x0010Record` stable DTO (mirrors
+  parser DTO; **no `oid` field** because 0x0010 uses the 6-byte header
+  convention) + `From` impl + `SheetGeometry::decoded_sub_records_0x0010`
+  audit collection.
+- `src/schema.rs`: schema needles ratchet `DecodedSubRecord0x0010Record`
+  + `decoded_sub_records_0x0010`.
+- `src/streams/cluster.rs`: sheet pipeline populates the new audit
+  collection alongside Phase 14/15/16 decoders.
+- `src/cfb/reader.rs` + `src/geometry.rs`: 7 test-fixture
+  `SheetGeometry` initializations updated for the new field.
+- `tests/parse_real_files.rs`:
+  `sub_records_0x0010_decoder_emits_audit_records_with_provenance`
+  cross-fixture ratchet (582 total, per-fixture pinned).
+- `tests/parser_panic_safety.rs`: adversarial matrix entries for
+  `decode_sub_records_0x0010` + `decode_sub_record_0x0010_at`.
+
+Audit-only design choices (per `goals/phase18-psm-0x0010-sub-record/`):
+
+- No sub-kind field naming. The polymorphic payload (sizes 13..99+,
+  multiple discriminator patterns) needs IDA reverse engineering before
+  naming fields, and Phase 14 GArc2d's premature naming demonstrated
+  the failure mode.
+- No `PidGraphicKind` variant. 0x0010 is a sub-record; it does not
+  promote to normalized geometry.
+- No cross-record reference resolver. JStyleOverride → 0x0010 oid
+  lookups are deferred to a follow-up phase.
+
+Future work (Phase 19+): identify the real RAD class behind 0x0010,
+reverse the sub-kind discriminator, lift the audit DTO into per-sub-kind
+typed records, and add a JStyleOverride/GraphicGroup → 0x0010 reference
+resolver.
+
+5 道 pre-commit gate 全绿: build / test --workspace --all-targets /
+clippy -D warnings / fmt / missing-docs baseline=0. Phase 14
+(GLine2d=3, igLine2d=284, igLineString2d=119, igPoint2d=146,
+igTextBox=142, igSymbol2d=27) + Phase 15 (GraphicGroup=352) +
+Phase 16 (JStyleOverride=98) + Phase 17 (PrimitiveArc surface
+removed) baseline 全部保持。
+
 ### Phase 17: remove legacy `PrimitiveArc` / `decode_primitive_arcs` surface
 
 Phase 16 proved PSM type `0x0030` is RAD `JStyleOverride`, not IGDS

@@ -712,6 +712,7 @@ mod tests {
                 decoded_igsymbols: vec![],
                 decoded_graphic_groups: vec![],
                 decoded_jstyle_overrides: vec![],
+                decoded_sub_records_0x0010: vec![],
             }),
             endpoint_records: vec![SheetEndpointRecord {
                 sheet_path: "/Sheet6".into(),

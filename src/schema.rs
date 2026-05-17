@@ -158,6 +158,9 @@ mod tests {
             "decoded_jstyle_overrides",
             "field_a_u32",
             "raw_attribute_tail",
+            // Phase 18: PSM 0x0010 sub-record audit-only DTO.
+            "DecodedSubRecord0x0010Record",
+            "decoded_sub_records_0x0010",
         ] {
             assert!(
                 text.contains(needle),

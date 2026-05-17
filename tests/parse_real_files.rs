@@ -13,14 +13,16 @@ use pid_parse::{
         coordinate_page_metadata_investigation_report, curve_primitive_investigation_report,
         decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints,
         decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
-        primitive_line_investigation_report, sheet_record_shape_inventory,
-        symbol_placement_investigation_report, text_placement_investigation_report,
-        SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
-        SheetRecordShapeKind, SheetSymbolPlacementObject, GRAPHIC_GROUP_MIN_PAYLOAD_LEN,
-        JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW, JSTYLE_OVERRIDE_PAYLOAD_LEN, PSM_TYPE_CODE_GLINE2D,
-        PSM_TYPE_CODE_GRAPHIC_GROUP, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D,
-        PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX,
-        PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+        decode_sub_records_0x0010, primitive_line_investigation_report,
+        sheet_record_shape_inventory, symbol_placement_investigation_report,
+        text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
+        SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSymbolPlacementObject,
+        GRAPHIC_GROUP_MIN_PAYLOAD_LEN, JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW,
+        JSTYLE_OVERRIDE_PAYLOAD_LEN, PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_GRAPHIC_GROUP,
+        PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D,
+        PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+        PSM_TYPE_CODE_SUB_RECORD_0X0010, SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW,
+        SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
     },
     PidParser,
 };
@@ -6900,5 +6902,137 @@ fn iglines_decoder_emits_decoded_iglines_with_provenance() {
         total_decoded >= 100,
         "decode_iglines must emit >= 100 igLine2d records cross-fixture, got {total_decoded}. \
         Per-fixture summary: {per_fixture_summary:?}"
+    );
+}
+
+/// Phase 18: cross-fixture ratchet for the conservative PSM `0x0010`
+/// sub-record audit-only decoder.
+///
+/// The probe (`examples/probe_psm_0x0010_shape.rs`) finds 638 matches
+/// under a non-advancing scan that counts overlapping hits. This
+/// conservative audit-only decoder advances past each matched record
+/// (Phase 15 GraphicGroup template), yielding 582 cross-fixture
+/// records: `DWG-0201=161, DWG-0202=104, 工艺管道-1=306, A01=11`.
+/// The decoder admits more records in A01 than the probe because the
+/// probe's `max_offset` reserves a 16-byte dump buffer at the end of
+/// the stream and skips records there; the decoder only needs the
+/// 6-byte header + 8-byte minimum payload.
+///
+/// Each emitted record must carry stable provenance: byte range fits
+/// within the stream, `type_code == 0x0010`, and `raw_payload.len()`
+/// matches the declared `bytes_to_follow`.
+#[test]
+fn sub_records_0x0010_decoder_emits_audit_records_with_provenance() {
+    let fixtures = [
+        ("DWG-0201GP06-01.pid", 161usize),
+        ("DWG-0202GP06-01.pid", 104usize),
+        ("工艺管道及仪表流程-1.pid", 306usize),
+        ("export-test/publish-data/A01/A01.pid", 11usize),
+    ];
+    let mut total_decoded = 0usize;
+    let mut total_expected = 0usize;
+    let mut per_fixture_summary: Vec<(String, usize, usize)> = Vec::new();
+    let mut sample_records: Vec<String> = Vec::new();
+
+    for (fixture, expected_count) in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture_count = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let bytes = raw.data.as_slice();
+            let decoded = decode_sub_records_0x0010(bytes);
+            let model_decoded_count = sheet
+                .geometry
+                .as_ref()
+                .map_or(0, |geometry| geometry.decoded_sub_records_0x0010.len());
+            assert_eq!(
+                model_decoded_count,
+                decoded.len(),
+                "SheetGeometry audit collection must mirror parser-level 0x0010 count for {} {}",
+                fixture,
+                sheet.path
+            );
+            for rec in &decoded {
+                assert!(
+                    rec.byte_range.end <= bytes.len(),
+                    "0x0010 byte_range {:?} exceeds stream {} bytes ({})",
+                    rec.byte_range,
+                    sheet.path,
+                    bytes.len()
+                );
+                assert!(
+                    rec.byte_range.start < rec.byte_range.end,
+                    "0x0010 byte_range must be non-empty: {:?}",
+                    rec.byte_range
+                );
+                assert_eq!(rec.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
+                assert!(
+                    (SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
+                        .contains(&rec.bytes_to_follow),
+                    "0x0010 bytes_to_follow outside audit envelope: {}",
+                    rec.bytes_to_follow
+                );
+                assert_eq!(
+                    rec.raw_payload.len(),
+                    rec.bytes_to_follow as usize,
+                    "0x0010 raw_payload length must equal bytes_to_follow"
+                );
+                assert_eq!(
+                    rec.byte_range.end - rec.byte_range.start,
+                    6 + rec.raw_payload.len(),
+                    "0x0010 byte_range must cover 6-byte header + payload"
+                );
+
+                if sample_records.len() < 6 {
+                    sample_records.push(format!(
+                        "{fixture} {} @ 0x{:06x}..0x{:06x} type_flags={} bytes_to_follow={} payload_len={}",
+                        sheet.path,
+                        rec.byte_range.start,
+                        rec.byte_range.end,
+                        rec.type_flags,
+                        rec.bytes_to_follow,
+                        rec.raw_payload.len(),
+                    ));
+                }
+            }
+            per_fixture_count += decoded.len();
+        }
+
+        per_fixture_summary.push((fixture.to_string(), per_fixture_count, expected_count));
+        total_decoded += per_fixture_count;
+        total_expected += expected_count;
+    }
+
+    eprintln!("--- Phase 18: PSM 0x0010 sub-record decoder fixture ratchet ---");
+    for (name, actual, expected) in &per_fixture_summary {
+        eprintln!("  {name}: {actual} decoded 0x0010 sub-records (expected {expected})");
+    }
+    for sample in &sample_records {
+        eprintln!("  sample: {sample}");
+    }
+    eprintln!("  total decoded 0x0010 sub-records: {total_decoded}");
+
+    if per_fixture_summary.is_empty() {
+        eprintln!(
+            "skipping: no Sheet-bearing fixture present (CI / contributors \
+            without SmartPlant samples)"
+        );
+        return;
+    }
+
+    for (fixture, actual, expected) in &per_fixture_summary {
+        assert_eq!(
+            actual, expected,
+            "0x0010 sub-record count drift for {fixture}: expected {expected}, got {actual}. \
+            Re-run `cargo run --release --example probe_psm_0x0010_shape` before updating this ratchet."
+        );
+    }
+    assert_eq!(
+        total_decoded, total_expected,
+        "0x0010 aggregate count drift. Per-fixture summary: {per_fixture_summary:?}"
     );
 }

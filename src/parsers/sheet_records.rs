@@ -3524,6 +3524,149 @@ pub fn decode_jstyle_override_at(data: &[u8], offset: usize) -> Option<SheetJSty
     })
 }
 
+// ---------------------------------------------------------------------------
+// Phase 18: PSM 0x0010 sub-record family — audit-only decoder
+//
+// PSM type code 0x0010 is the most prevalent (638 cross-fixture hits)
+// yet-unexplained record type after the Phase 14-17 typed decoders. probe
+// evidence (`examples/probe_psm_0x0010_shape.rs`) shows highly polymorphic
+// payload shapes — sizes range from ~13 bytes to ≥99 bytes, with multiple
+// sub-kinds inside (some carry IEEE 754 doubles, others carry leading
+// discriminators such as `02 00 01 00`). They are referenced from
+// JStyleOverride `+38..41` (`referenced_oid_a`) and `+56..59`
+// (`referenced_oid_c`); see
+// `docs/analysis/2026-05-15-garc2d-packed-int-tail.md` §11.
+//
+// Until IDA reverse engineering confirms the class identity and the
+// sub-kind discriminator, this decoder follows the Phase 15 GraphicGroup
+// audit-only template: stable 6-byte PSM header (`type_word + bytes_to_follow`,
+// **not** the 18-byte IGDS header used by Phase 14 typed primitives) +
+// raw payload + full provenance. NO sub-kind field naming, NO
+// `PidGraphicKind` emission. Sub-kind decoders will land in a future phase.
+
+/// PSM type code for the `0x0010` sub-record family (638 cross-fixture
+/// hits, polymorphic payload).
+///
+/// Validated against four Sheet-bearing fixtures via
+/// `examples/probe_psm_0x0010_shape.rs`. See
+/// `docs/plans/2026-05-14-phase14-decoder-suite-final-summary.md` §6.3
+/// for the initial categorization as "embedded sub-records / attribute
+/// fragments inside other record types".
+pub const PSM_TYPE_CODE_SUB_RECORD_0X0010: u16 = 0x0010;
+
+/// Minimum `bytes_to_follow` accepted by the conservative 0x0010 audit
+/// decoder. Cross-fixture probe baseline shows the smallest observed
+/// payload is 13 bytes; the threshold is set to 8 to leave headroom
+/// while still rejecting trivially-small noise hits.
+pub const SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW: u32 = 8;
+
+/// Upper bound on `bytes_to_follow` for 0x0010 records. Probe maximum
+/// observed across the four-fixture set is ~99 bytes; the cap leaves
+/// room for variant growth while rejecting wide-scan false positives
+/// whose `bytes_to_follow` accidentally reads as a giant value.
+pub const SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW: u32 = 100_000;
+
+/// One decoded PSM `0x0010` sub-record (audit-only).
+///
+/// This DTO exposes only the stable 6-byte PSM header and the variable
+/// payload as raw bytes. The payload structure is **highly polymorphic**
+/// (size 13..99+, multiple sub-kinds with different discriminators), so
+/// per-field naming is deferred until IDA reverse engineering confirms
+/// the class identity and sub-kind layout. The decoder is intentionally
+/// permissive: it admits every byte sequence whose header satisfies
+/// `type_code == 0x0010` and `bytes_to_follow` fits within the stream.
+/// Some hits may be embedded fragments inside larger parent records
+/// rather than standalone 0x0010 records — the audit collection
+/// preserves both, leaving sub-kind disambiguation to a future phase.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetSubRecord0x0010Decoded {
+    /// Byte range covering the full PSM record (6-byte header + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always
+    /// [`PSM_TYPE_CODE_SUB_RECORD_0X0010`] (`0x0010`).
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header. Equals `raw_payload.len()`
+    /// by construction.
+    pub bytes_to_follow: u32,
+    /// Raw payload bytes (length = `bytes_to_follow`). Sub-kind
+    /// discrimination and per-field decoding are deferred to a
+    /// future phase.
+    pub raw_payload: Vec<u8>,
+}
+
+/// Decode every PSM `0x0010` sub-record in a Sheet stream's bytes.
+///
+/// Walk every offset; at each offset, accept the 6-byte PSM header
+/// when `type_code == 0x0010` and `bytes_to_follow` satisfies the
+/// `[SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
+/// SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW]` envelope. After accepting a
+/// record, the scanner advances past it so non-overlapping back-to-back
+/// records are decoded individually.
+///
+/// The decoder is **conservative** and panic-free: adversarial bytes
+/// either fail validation and are skipped, or never decode at all.
+pub fn decode_sub_records_0x0010(data: &[u8]) -> Vec<SheetSubRecord0x0010Decoded> {
+    let mut out = Vec::new();
+    let min_record_len = 6usize.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize);
+    if data.len() < min_record_len {
+        return out;
+    }
+    let max_offset = data.len() - min_record_len;
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_sub_record_0x0010_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `0x0010` sub-record starting at `offset`
+/// in `data`. Returns `None` when any validation rule from
+/// [`decode_sub_records_0x0010`] fails. Bounds-checked: passing
+/// `offset >= data.len()` or a truncated tail returns `None`.
+pub fn decode_sub_record_0x0010_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<SheetSubRecord0x0010Decoded> {
+    let header_end = offset.checked_add(6)?;
+    if header_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
+        .contains(&bytes_to_follow)
+    {
+        return None;
+    }
+    let btf = bytes_to_follow as usize;
+    let payload_end = header_end.checked_add(btf)?;
+    if payload_end > data.len() {
+        return None;
+    }
+    let raw_payload = data.get(header_end..payload_end)?.to_vec();
+    Some(SheetSubRecord0x0010Decoded {
+        byte_range: offset..payload_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        raw_payload,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4904,5 +5047,143 @@ mod tests {
         // byte_range covers full record: 6 (type+bytes_to_follow) + 248.
         assert_eq!(line.byte_range.end, 6 + 248);
         assert_eq!(line.bytes_to_follow, 248);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 18: PSM 0x0010 sub-record family audit-only decoder tests
+    // -----------------------------------------------------------------
+
+    fn build_synthetic_sub_record_0x0010(type_flags: u16, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(6 + payload.len());
+        let type_word = PSM_TYPE_CODE_SUB_RECORD_0X0010 | ((type_flags & 0x3) << 14);
+        out.extend_from_slice(&type_word.to_le_bytes());
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    #[test]
+    fn sub_record_0x0010_decodes_canonical_payload() {
+        let payload: Vec<u8> = (0..16u8).collect();
+        let record = build_synthetic_sub_record_0x0010(0, &payload);
+        let decoded = decode_sub_records_0x0010(&record);
+        assert_eq!(decoded.len(), 1);
+        let rec = &decoded[0];
+        assert_eq!(rec.byte_range, 0..(6 + payload.len()));
+        assert_eq!(rec.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
+        assert_eq!(rec.type_flags, 0);
+        assert_eq!(rec.bytes_to_follow as usize, payload.len());
+        assert_eq!(rec.raw_payload, payload);
+    }
+
+    #[test]
+    fn sub_record_0x0010_decoded_at_returns_some_for_valid_offset() {
+        let payload = vec![0xAAu8; 32];
+        let record = build_synthetic_sub_record_0x0010(0, &payload);
+        let rec = decode_sub_record_0x0010_at(&record, 0).expect("valid offset must decode");
+        assert_eq!(rec.bytes_to_follow, 32);
+        assert_eq!(rec.raw_payload.len(), 32);
+    }
+
+    #[test]
+    fn sub_record_0x0010_rejects_wrong_type_code() {
+        let payload = vec![0u8; 16];
+        let mut record = build_synthetic_sub_record_0x0010(0, &payload);
+        // Flip type_code to 0x0018 (igLine2d).
+        record[0] = 0x18;
+        record[1] = 0x00;
+        assert!(decode_sub_records_0x0010(&record).is_empty());
+    }
+
+    #[test]
+    fn sub_record_0x0010_rejects_zero_bytes_to_follow() {
+        let payload = vec![];
+        let record = build_synthetic_sub_record_0x0010(0, &payload);
+        // bytes_to_follow = 0 < SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW (8).
+        assert!(decode_sub_records_0x0010(&record).is_empty());
+    }
+
+    #[test]
+    fn sub_record_0x0010_rejects_below_minimum_bytes_to_follow() {
+        // bytes_to_follow = 7 < min (8). Must build a 13-byte buffer
+        // so the header fits but payload is too small to be accepted.
+        let mut record = Vec::with_capacity(6 + 7);
+        record.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
+        record.extend_from_slice(&7u32.to_le_bytes());
+        record.extend_from_slice(&[0u8; 7]);
+        assert!(decode_sub_records_0x0010(&record).is_empty());
+    }
+
+    #[test]
+    fn sub_record_0x0010_rejects_oversized_bytes_to_follow() {
+        // Encode a fake bytes_to_follow well above the cap; we only
+        // need the header (6 bytes) — payload bounds will reject the
+        // record anyway because data.len() is small.
+        let mut record = Vec::with_capacity(6);
+        record.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
+        record.extend_from_slice(&(SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW + 1).to_le_bytes());
+        let mut padded = record.clone();
+        padded.extend(std::iter::repeat_n(0u8, 16));
+        assert!(decode_sub_records_0x0010(&padded).is_empty());
+    }
+
+    #[test]
+    fn sub_record_0x0010_rejects_truncated_payload() {
+        let payload = vec![0u8; 16];
+        let record = build_synthetic_sub_record_0x0010(0, &payload);
+        // Drop the last 4 payload bytes; bytes_to_follow header still
+        // says 16 but only 12 are available.
+        let truncated = &record[..record.len() - 4];
+        assert!(decode_sub_records_0x0010(truncated).is_empty());
+    }
+
+    #[test]
+    fn sub_record_0x0010_returns_empty_for_short_or_empty_input() {
+        assert!(decode_sub_records_0x0010(&[]).is_empty());
+        // 13 bytes = exactly header (6) + min payload (8) - 1.
+        assert!(decode_sub_records_0x0010(&[0u8; 13]).is_empty());
+    }
+
+    #[test]
+    fn sub_record_0x0010_decoder_is_panic_safe_on_short_input() {
+        let payload = vec![0xCCu8; 16];
+        let record = build_synthetic_sub_record_0x0010(0, &payload);
+        for trunc_len in 0..record.len() {
+            // Should not panic; truncated inputs return an empty vec.
+            let _ = decode_sub_records_0x0010(&record[..trunc_len]);
+        }
+    }
+
+    #[test]
+    fn sub_record_0x0010_decoder_is_panic_safe_on_random_noise() {
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_sub_records_0x0010(&noise);
+        assert!(decode_sub_records_0x0010(&vec![0u8; 4096]).is_empty());
+        // All-0xFF stream never matches type_code 0x0010 (low 14 bits
+        // would be 0x3FFF, not 0x0010).
+        assert!(decode_sub_records_0x0010(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    #[test]
+    fn sub_record_0x0010_decodes_two_back_to_back_records() {
+        let payload_a = vec![0xAAu8; 16];
+        let payload_b = vec![0xBBu8; 24];
+        let mut data = build_synthetic_sub_record_0x0010(0, &payload_a);
+        data.extend_from_slice(&build_synthetic_sub_record_0x0010(0, &payload_b));
+        let decoded = decode_sub_records_0x0010(&data);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].raw_payload, payload_a);
+        assert_eq!(decoded[1].raw_payload, payload_b);
+        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
+    }
+
+    #[test]
+    fn sub_record_0x0010_preserves_type_flags() {
+        let payload = vec![0u8; 16];
+        let record = build_synthetic_sub_record_0x0010(0b11, &payload);
+        let decoded = decode_sub_records_0x0010(&record);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].type_flags, 0b11);
+        assert_eq!(decoded[0].type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
     }
 }

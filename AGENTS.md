@@ -87,9 +87,14 @@ without needing `radsrvitem.dll` decompilation.
 - SmartPlant fixtures don't use standard IGDS `igCircle2d` (0x0059),
   `igRectangle2d` (0x0020), `igArc2d` (0x0061), or
   `igEllipticalArc2d` (0x007E) — zero hits cross-fixture.
-- `0x0010` (638 hits) appears to be embedded sub-records / attribute
-  fragments inside other record types, not a standalone geometry
-  type.
+- `0x0010` (638 probe scan hits, 582 decoded after advancing) is a
+  polymorphic sub-record family. Phase 18 ships it as an audit-only
+  typed collection (`SheetGeometry::decoded_sub_records_0x0010`) on
+  the Phase 15 GraphicGroup template: stable 6-byte PSM header + raw
+  payload + full provenance, no sub-kind field naming, no
+  `PidGraphicKind` emission. Referenced from JStyleOverride
+  `+38..41` / `+56..59`. Sub-kind discrimination deferred to a
+  follow-up phase pending IDA confirmation of the real RAD class.
 
 Phase 14 milestones are tracked in
 `goals/phase14-sppid-sheet-geometry/progress.jsonl`. See

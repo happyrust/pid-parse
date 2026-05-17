@@ -11,8 +11,9 @@ use crate::error::PidError;
 use crate::model::{
     ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedGraphicGroupRecord, DecodedIgLine2dRecord,
     DecodedIgLineString2dRecord, DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord,
-    DecodedIgTextBoxRecord, DecodedJStyleOverrideRecord, DecodedPrimitiveLineRecord, PidDocument,
-    SheetCoordinateHintDto, SheetGeometry, SheetStream, SheetText,
+    DecodedIgTextBoxRecord, DecodedJStyleOverrideRecord, DecodedPrimitiveLineRecord,
+    DecodedSubRecord0x0010Record, PidDocument, SheetCoordinateHintDto, SheetGeometry, SheetStream,
+    SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
@@ -20,6 +21,7 @@ use crate::parsers::{
     sheet_records::{
         decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints,
         decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
+        decode_sub_records_0x0010,
     },
 };
 use std::io::Read;
@@ -276,6 +278,11 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             .into_iter()
             .map(DecodedJStyleOverrideRecord::from)
             .collect();
+    let decoded_sub_records_0x0010: Vec<DecodedSubRecord0x0010Record> =
+        decode_sub_records_0x0010(raw_data)
+            .into_iter()
+            .map(DecodedSubRecord0x0010Record::from)
+            .collect();
 
     if texts.is_empty()
         && coordinate_hints.is_empty()
@@ -287,6 +294,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         && decoded_igsymbols.is_empty()
         && decoded_graphic_groups.is_empty()
         && decoded_jstyle_overrides.is_empty()
+        && decoded_sub_records_0x0010.is_empty()
     {
         None
     } else {
@@ -303,6 +311,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             decoded_igsymbols,
             decoded_graphic_groups,
             decoded_jstyle_overrides,
+            decoded_sub_records_0x0010,
         })
     }
 }

@@ -909,6 +909,17 @@ pub struct SheetGeometry {
     /// `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_jstyle_overrides: Vec<DecodedJStyleOverrideRecord>,
+    /// Audit-only PSM `0x0010` sub-record records emitted by
+    /// [`crate::parsers::sheet_records::decode_sub_records_0x0010`]
+    /// (Phase 18). The 6-byte PSM header is exposed verbatim and the
+    /// variable payload is preserved as raw bytes; no sub-kind
+    /// discrimination is attempted because IDA reverse engineering
+    /// has not yet pinned the real class identity. Some entries may
+    /// be embedded fragments inside larger parent records rather than
+    /// standalone 0x0010 records. These records intentionally do not
+    /// produce normalized geometry entities.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_sub_records_0x0010: Vec<DecodedSubRecord0x0010Record>,
 }
 
 /// Stable, model-shaped DTO that mirrors
@@ -1344,6 +1355,53 @@ impl From<crate::parsers::sheet_records::SheetGraphicGroupDecoded> for DecodedGr
             group_kind_word: d.group_kind_word,
             sub_type_word: d.sub_type_word,
             raw_reference_payload: d.raw_reference_payload,
+        }
+    }
+}
+
+/// Audit-only model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetSubRecord0x0010Decoded`] —
+/// PSM type `0x0010` sub-record family (Phase 18 audit collection).
+///
+/// Only the stable 6-byte PSM header (`type_code`, `type_flags`,
+/// `bytes_to_follow`) and the variable payload are exposed; the
+/// payload's sub-kind discriminator and per-field semantics are
+/// deferred until IDA reverse engineering confirms the class identity.
+/// **Unlike Phase 14 typed primitives**, this DTO has no `oid` field
+/// because `0x0010` records use the 6-byte PSM header convention
+/// (no fixed `oid` slot), mirroring Phase 15
+/// [`DecodedGraphicGroupRecord`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DecodedSubRecord0x0010Record {
+    /// Inclusive byte-range start covering the full PSM record
+    /// (6-byte header + payload).
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x0010`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header. Equals
+    /// `raw_payload.len()` by construction.
+    pub bytes_to_follow: u32,
+    /// Raw payload bytes (length = `bytes_to_follow`). Sub-kind
+    /// discrimination and per-field decoding are deferred to a
+    /// future phase.
+    pub raw_payload: Vec<u8>,
+}
+
+impl From<crate::parsers::sheet_records::SheetSubRecord0x0010Decoded>
+    for DecodedSubRecord0x0010Record
+{
+    fn from(d: crate::parsers::sheet_records::SheetSubRecord0x0010Decoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            raw_payload: d.raw_payload,
         }
     }
 }
