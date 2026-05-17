@@ -610,3 +610,41 @@
   每个 Slice append progress.jsonl entry，每 2 Slice 跨 session recap。
 - 是否要把 Phase 20 goal package + 详细路线图 + 本 session 三个 planning
   文件作为一次 docs/planning commit 推送（独立于 Phase 19 commit 6beb6f1）。
+
+## Session: 2026-05-18
+
+### 当前状态
+- **Phase:** 21 - D06 解析覆盖收敛与关系/Sheet 审计闭环
+- **状态:** Phase 21 Slice A-C 已完成，Slice D 按 Slice C 结论跳过，Slice E（gates + docs）已完成。
+
+### 已完成
+- 按 Phase 21 计划（`docs/plans/2026-05-18-phase21-d06-parse-coverage-plan-cn.md`）执行 Slice A-E。
+- **Slice A** D06 baseline ratchet：新增 `d06_pid_parses_with_expected_structure_and_geometry_summary` 测试，覆盖 D06 全部结构计数与 normalized geometry。
+- **Slice B** relationship gap 修复：`build_object_graph` 新增 attribute-fallback 路径，当 `class_id == 0xF6` trailer 产生 0 条 relationship 时，从 `P&IDAttributes` 的 `ModelItemType=Relationship` + `ModelID=Relationship.<GUID>` 提取已被 probe 确认的 GUID，保留为 unresolved `PidRelationship`。D06 现在有 10 objects + 10 unresolved relationships。
+- **Slice C** Sheet audit inventory：文档化 `/Sheet6` 的 decoded (25)、audit-only (41)、probe-only (8) evidence 分层，含 GraphicGroup 与 0x0010 样例。
+- **Slice D** 跳过：现有 CLI (`--geometry-summary`, `--json`) 足够，不新增 flag。
+- **Slice E** 验证与文档：5 道 pre-commit gate 全绿（build / test 1000+ passed 0 failed / clippy / fmt / missing-docs=0）；更新 CHANGELOG、findings、progress。
+
+### 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --test parse_real_files d06_pid_parses -- --nocapture` | 1 passed |
+| `cargo test --test parse_real_files relationship -- --nocapture` | 9 passed |
+| `cargo build --locked --workspace --all-targets` | 通过 |
+| `cargo test --locked --workspace --all-targets` | 1000+ passed, 0 failed |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 通过 |
+| `cargo fmt --all -- --check` | 通过 |
+| `cargo rustdoc --lib --locked -- -W missing-docs` | 通过，current=0 baseline=0 |
+
+### 决策
+| 决策 | 理由 |
+|---|---|
+| attribute-fallback 只在 trailer 产生 0 relationships 时触发 | 避免在 DWG fixture 中 double-count trailer-backed relationships |
+| D06 relationships 全部 unresolved | 无 Sheet-level `field_x` link，endpoint resolution 延后 |
+| 跳过 Slice D CLI 改动 | 现有 `--geometry-summary` / `--json` 足够 D06 分析 |
+| `0x0010` / GraphicGroup 继续 audit-only | Phase 20 partial AC 边界不破 |
+
+### 下一步
+- 如需把 Phase 21 改动提交，可 commit 并 push。
+- 后续可对 D06 做 text-placement regression fixture。
+- `0x0010` typed DTO 需等待 Read/DoIO 或 IDA 新证据。

@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### Phase 21: D06 fixture baseline, relationship graph fix, Sheet audit inventory
+
+D06 (`test-file/D06.pid`) is a compact SmartPlant PID whose relationship
+identity lives in `P&IDAttributes` fields (`ModelItemType=Relationship`,
+`ModelID=Relationship.<GUID>`) rather than the `class_id == 0xF6` DA
+trailer shape used by DWG fixtures.  Before Phase 21 the parser correctly
+decoded D06 geometry (97 total / 25 decoded entities), but dropped all 10
+relationship GUIDs from `ObjectGraph.relationships` because
+`build_object_graph` only created `PidRelationship` entries via the
+`0xF6` trailer path.
+
+Additions:
+
+- `src/cfb/reader.rs`: attribute-fallback relationship extraction.  When
+  trailer-based `build_object_graph` yields zero relationships, scan
+  `P&IDAttributes` for `ModelItemType=Relationship` +
+  `ModelID=Relationship.<32-hex GUID>`, require the GUID to also appear
+  in `relationship_probes`, and emit unresolved `PidRelationship` entries
+  (`record_id = None`, `field_x = None`, endpoints `None`).  This
+  prevents double-counting in fixtures that already have trailer-backed
+  relationships.
+- `tests/parse_real_files.rs`:
+  `d06_pid_parses_with_expected_structure_and_geometry_summary` —
+  comprehensive D06 baseline ratchet covering streams (56), JSites (10),
+  PSMroots (7), cluster table (5), segment table (4), DocVersion2/3 (2/2),
+  AppObject (5), DA records (47), trailers (25), relationship probes (10),
+  object inventory (23), object graph (10 objects + 10 unresolved
+  relationships), Sheet6 geometry (6 polylines, 10 points, 4 texts,
+  2 symbols, 3 annotations, 21 GraphicGroup audit, 20 `0x0010` audit),
+  and normalized geometry totals (97 total, 25 decoded, 64 inferred
+  points, 8 probe-only unknown).
+- `docs/analysis/2026-05-18-d06-relationship-gap.md`: root-cause analysis
+  documenting why D06 lacked relationships and the conservative fix.
+- `docs/analysis/2026-05-18-d06-sheet6-audit-inventory.md`: per-type
+  inventory of `/Sheet6` decoded, audit-only, and probe-only evidence with
+  sample byte ranges and engineering conclusions.
+- `docs/plans/2026-05-18-phase21-d06-parse-coverage-plan-cn.md`: full
+  plan document with REQ-D06-01..04, 5 slices, stop-and-challenge
+  conditions.
+
+Boundaries preserved:
+
+- `0x0010` and `GraphicGroup` remain audit-only.
+- No `0x0010` sub-kind naming or typed DTO.
+- D06 relationships remain unresolved (no endpoint field_x link).
+- All Phase 14–20 decoder ratchets pass unchanged.
+- 5 pre-commit gates green: build / test --workspace --all-targets /
+  clippy -D warnings / fmt / missing-docs baseline=0.
+
 ### Phase 19: PSM `0x0010` `leading_word` audit field (partial sub-kind discriminator)
 
 Phase 18 landed the 0x0010 sub-record family as an audit-only collection

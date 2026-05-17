@@ -135,7 +135,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|(b, c)| format!("0x{:02X}={} ({}%)", b, c, 100 * **c / bucket_count.max(1)))
             .collect::<Vec<_>>()
             .join(" / ");
-        println!("{:>5} | {:>5} | {:<40} | {:<40}", size, bucket_count, words, bytes);
+        println!(
+            "{:>5} | {:>5} | {:<40} | {:<40}",
+            size, bucket_count, words, bytes
+        );
     }
 
     println!("\n--- Global byte@+0 histogram (all sizes) ---");

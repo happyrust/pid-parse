@@ -44,6 +44,14 @@ publish XML pipeline (`Export.mdf → oxidized-mdf → drawing graph → _Data.x
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
 
+D06 fixture test
+(`d06_pid_parses_with_expected_structure_and_geometry_summary`) covers
+`test-file/D06.pid` — a compact PID with relationship identity in
+`P&IDAttributes` rather than `class_id == 0xF6` trailers.  The test
+ratchets stream count, PSM tables, DA records, object graph (10 objects
++ 10 unresolved relationships), Sheet6 geometry, and normalized totals.
+Soft-skips when `test-file/D06.pid` is absent.
+
 ## Phase 14 SmartPlant Sheet geometry decoder — 8 PSM type families
 
 `src/parsers/sheet_records.rs` ships PSM-record decoders for **8
@@ -130,7 +138,7 @@ phase):
 ## Common commands
 
 ```bash
-cargo test                                        # 928+ tests (840 unit + 88 integration, 2 DWG-gated skipped)
+cargo test                                        # 1000+ tests (851 unit + 91 integration, 2 DWG-gated skipped)
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
 cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (31 tests)
 ```

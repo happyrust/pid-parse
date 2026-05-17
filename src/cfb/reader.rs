@@ -462,6 +462,7 @@ fn build_object_graph(doc: &mut PidDocument) {
     // matches the raw stream and every trailer has a verified identity
     // (record_id, field_x, class_id).
     let mut seen_objects: std::collections::HashSet<String> = Default::default();
+    let mut seen_relationship_guids: std::collections::HashSet<String> = Default::default();
     for t in &da.record_trailers {
         if t.class_id == 0x0000_00F6 {
             // Relationships are identified by `class_id == 0xF6`. The
@@ -477,6 +478,9 @@ fn build_object_graph(doc: &mut PidDocument) {
             } else {
                 format!("Relationship.{guid}")
             };
+            if !guid.is_empty() {
+                seen_relationship_guids.insert(guid.clone());
+            }
             *counts.entry("Relationship".to_string()).or_default() += 1;
             graph.relationships.push(PidRelationship {
                 model_id,
@@ -507,6 +511,69 @@ fn build_object_graph(doc: &mut PidDocument) {
             record_id: Some(t.record_id),
             field_x: Some(t.field_x),
         });
+    }
+
+    // Some fixtures carry relationship identity only in the parsed
+    // P&IDAttributes fields (`ModelItemType=Relationship` +
+    // `ModelID=Relationship.<GUID>`) without a class_id=0xF6 trailer.
+    // Preserve those as unresolved graph relationships rather than dropping
+    // the known GUID entirely; endpoint resolution still requires Sheet-level
+    // evidence and remains None when no relationship field_x is available.
+    if graph.relationships.is_empty() {
+        let probed_relationship_guids: std::collections::HashSet<String> = da
+            .relationship_probes
+            .iter()
+            .map(|probe| probe.guid.clone())
+            .collect();
+        for rec in &da.attribute_records {
+            if rec.class_name != "P&IDAttributes" {
+                continue;
+            }
+            let mut is_relationship = false;
+            let mut model_id: Option<String> = None;
+            for attr in &rec.attributes {
+                let AttributeValue::Text(value) = &attr.value else {
+                    continue;
+                };
+                match attr.name.as_str() {
+                    "ModelItemType" if value == "Relationship" => {
+                        is_relationship = true;
+                    }
+                    "ModelID" if !value.is_empty() => {
+                        model_id = Some(value.clone());
+                    }
+                    _ => {}
+                }
+            }
+            if !is_relationship {
+                continue;
+            }
+            let Some(model_id) = model_id else {
+                continue;
+            };
+            let Some(guid) = model_id.strip_prefix("Relationship.") else {
+                continue;
+            };
+            if guid.len() != 32 || !guid.chars().all(|c| c.is_ascii_hexdigit()) {
+                continue;
+            }
+            let guid = guid.to_string();
+            if !probed_relationship_guids.contains(&guid) {
+                continue;
+            }
+            if !seen_relationship_guids.insert(guid.clone()) {
+                continue;
+            }
+            *counts.entry("Relationship".to_string()).or_default() += 1;
+            graph.relationships.push(PidRelationship {
+                model_id,
+                guid,
+                record_id: None,
+                field_x: None,
+                source_drawing_id: None,
+                target_drawing_id: None,
+            });
+        }
     }
 
     // Resolve relationship endpoints via Sheet endpoint records. Each

@@ -27,6 +27,28 @@
 | Known unknowns | analysis doc §7 | 明列剩余 audit-only 字段 / sub-kind |
 | Phase 21 prerequisites | analysis doc §8 | 含 typed DTO 字段表草图 |
 
+## Partial AC Closeout
+
+Phase 20 当前按 `blockers.md` Q5 接受 partial AC，不再声明 full
+`goal_complete`。验证标准调整为：
+
+| Check | Status | Evidence |
+|---|---|---|
+| AC1 persisted identity | partial pass | `docs/analysis/2026-05-17-phase20-psm-0x0010-rad-class.md` TL;DR + Type Table Layout：`0x0010 -> GUID 1D1928C0-0000-0000-C000-000000000046`, parent alias `0x0115` |
+| AC1 human class name / concrete factory | deferred | 同文档 Known Unknowns；`style.dll` direct factory 与 `radsrvitem` direct stub 路线均记录为 negative evidence |
+| AC2 sub-kind discriminator | deferred | Read/DoIO 未恢复；Phase 19 `leading_word` 仍 audit-only |
+| AC3 sub-kind enumeration | deferred | 不命名 sub_kind，不实现 typed DTO |
+| AC4 analysis doc | partial pass | analysis doc 已创建，明确 partial 状态 |
+| AC5 gates | not run in this partial closeout | 本轮只改 docs/goals；full gate 留给后续 full completion 或 commit 前 |
+| AC6 evidence trail | pass | `progress.jsonl` 包含 Slice A/B、negative evidence、analysis_doc_partial、partial_complete |
+| AC7 existing IDA instances only | pass | 未装载新 IDA instance |
+
+Partial closeout entry format：
+
+```json
+{"type":"partial_complete","timestamp":"...","phase":"20","work_type":"reverse_engineering_only","confirmed_identity":{"psm_type":"0x0010","guid":"1D1928C0-0000-0000-C000-000000000046","parent_alias":"0x0115","tail17":"0x06"},"deferred":["human persisted type name","Read/DoIO sequence","sub-kind discriminator","sub-kind enumeration"],"analysis_doc":"docs/analysis/2026-05-17-phase20-psm-0x0010-rad-class.md","src_code_changes":false,"test_changes":false,"new_ida_instances":false}
+```
+
 ## Evidence Rules
 
 - 每个 IDA tool call 后 append progress.jsonl entry：
@@ -71,3 +93,6 @@ cargo rustdoc --lib --locked -- -W missing-docs
 ```
 
 然后暂停等用户签收。Phase 21 typed DTO 实现需要单独 /goal 启动。
+
+如果按 Q5 partial AC 收口，则 append `partial_complete`，不要 append
+`goal_complete`。

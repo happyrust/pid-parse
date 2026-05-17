@@ -843,6 +843,225 @@ fn second_file_parses_successfully() {
 }
 
 #[test]
+fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
+    let Some(doc) = parse_test_file("D06.pid") else {
+        return;
+    };
+
+    assert_eq!(doc.streams.len(), 56, "D06 stream inventory drifted");
+    assert_eq!(doc.jsites.len(), 10, "D06 JSite count drifted");
+    assert_eq!(
+        doc.sheet_streams.len(),
+        1,
+        "D06 should expose exactly one Sheet stream"
+    );
+
+    let roots = doc.psm_roots.as_ref().expect("D06 PSMroots should decode");
+    assert_eq!(roots.entries.len(), 7, "D06 PSMroots count drifted");
+
+    let cluster_table = doc
+        .psm_cluster_table
+        .as_ref()
+        .expect("D06 PSMclustertable should decode");
+    assert_eq!(cluster_table.count, 5, "D06 declared cluster count drifted");
+    assert_eq!(
+        cluster_table.entries.len(),
+        5,
+        "D06 PSM cluster entries drifted"
+    );
+    assert_eq!(
+        cluster_table.decoded_records.len(),
+        5,
+        "D06 conservative PSM cluster decoded records drifted"
+    );
+
+    let segment_table = doc
+        .psm_segment_table
+        .as_ref()
+        .expect("D06 PSMsegmenttable should decode");
+    assert_eq!(segment_table.count, 4, "D06 PSM segment count drifted");
+    assert_eq!(
+        segment_table.entries.len(),
+        4,
+        "D06 PSM segment entries drifted"
+    );
+
+    let doc_version2 = doc
+        .doc_version2_decoded
+        .as_ref()
+        .expect("D06 DocVersion2 should decode");
+    let doc_version3 = doc
+        .version_history
+        .as_ref()
+        .expect("D06 DocVersion3 should decode");
+    assert_eq!(
+        doc_version2.records.len(),
+        2,
+        "D06 DocVersion2 count drifted"
+    );
+    assert_eq!(
+        doc_version3.records.len(),
+        2,
+        "D06 DocVersion3 count drifted"
+    );
+
+    let app_object = doc
+        .app_object_registry
+        .as_ref()
+        .expect("D06 AppObject registry should decode");
+    assert_eq!(
+        app_object.entries.len(),
+        5,
+        "D06 AppObject entry count drifted"
+    );
+
+    let tagged = doc
+        .tagged_storages
+        .as_ref()
+        .expect("D06 tagged storage list should decode");
+    assert_eq!(tagged.entries.len(), 1, "D06 tagged storage count drifted");
+
+    let da = doc
+        .dynamic_attributes
+        .as_ref()
+        .expect("D06 dynamic attributes should decode");
+    assert_eq!(
+        da.attribute_records.len(),
+        47,
+        "D06 DA record count drifted"
+    );
+    assert_eq!(da.record_trailers.len(), 25, "D06 DA trailer count drifted");
+    assert_eq!(
+        da.relationship_probes.len(),
+        10,
+        "D06 relationship probe count drifted"
+    );
+
+    let inventory = doc
+        .object_inventory
+        .as_ref()
+        .expect("D06 object inventory should derive");
+    assert_eq!(
+        inventory.items.len(),
+        23,
+        "D06 object inventory item count drifted"
+    );
+
+    let graph = doc
+        .object_graph
+        .as_ref()
+        .expect("D06 object graph should derive");
+    assert_eq!(
+        graph.objects.len(),
+        10,
+        "D06 object graph object count drifted"
+    );
+    assert_eq!(
+        graph.relationships.len(),
+        10,
+        "D06 relationship attributes should be retained as unresolved graph relationships"
+    );
+    assert_eq!(
+        graph.counts_by_type.get("Relationship").copied(),
+        Some(10),
+        "D06 relationship count should be reflected in counts_by_type"
+    );
+    assert!(
+        graph.relationships.iter().all(|rel| {
+            rel.record_id.is_none()
+                && rel.field_x.is_none()
+                && rel.source_drawing_id.is_none()
+                && rel.target_drawing_id.is_none()
+        }),
+        "D06 attribute-only relationships should remain unresolved until Sheet endpoints provide a field_x link"
+    );
+
+    let sheet = doc
+        .sheet_streams
+        .first()
+        .expect("D06 should expose /Sheet6");
+    assert_eq!(sheet.path, "/Sheet6");
+    let geometry = sheet
+        .geometry
+        .as_ref()
+        .expect("D06 Sheet6 geometry expected");
+    assert_eq!(
+        geometry.texts.len(),
+        8,
+        "D06 Sheet6 text probe count drifted"
+    );
+    assert_eq!(
+        geometry.coordinate_hints.len(),
+        64,
+        "D06 Sheet6 coordinate hint count drifted"
+    );
+    assert_eq!(
+        geometry.decoded_primitive_lines.len(),
+        0,
+        "D06 should not gain GLine2d records without updating the baseline"
+    );
+    assert_eq!(
+        geometry.decoded_iglines.len(),
+        0,
+        "D06 should not gain igLine2d records without updating the baseline"
+    );
+    assert_eq!(
+        geometry.decoded_iglinestrings.len(),
+        6,
+        "D06 igLineString2d count drifted"
+    );
+    assert_eq!(
+        geometry.decoded_igpoints.len(),
+        10,
+        "D06 igPoint2d count drifted"
+    );
+    assert_eq!(
+        geometry.decoded_igtextboxes.len(),
+        4,
+        "D06 igTextBox count drifted"
+    );
+    assert_eq!(
+        geometry.decoded_igsymbols.len(),
+        2,
+        "D06 igSymbol2d count drifted"
+    );
+    assert_eq!(
+        geometry.decoded_graphic_groups.len(),
+        21,
+        "D06 GraphicGroup audit count drifted"
+    );
+    assert_eq!(
+        geometry.decoded_jstyle_overrides.len(),
+        3,
+        "D06 JStyleOverride count drifted"
+    );
+    assert_eq!(
+        geometry.decoded_sub_records_0x0010.len(),
+        20,
+        "D06 0x0010 audit count drifted"
+    );
+
+    let normalized = normalized_geometry_inventory(&doc);
+    assert_eq!(
+        normalized.total(),
+        97,
+        "D06 normalized geometry total drifted"
+    );
+    assert_eq!(normalized.decoded_lines, 0);
+    assert_eq!(normalized.decoded_polylines, 6);
+    assert_eq!(normalized.decoded_points, 10);
+    assert_eq!(normalized.decoded_texts, 4);
+    assert_eq!(normalized.decoded_symbols, 2);
+    assert_eq!(
+        normalized.other_entities, 3,
+        "D06 decoded annotations count drifted"
+    );
+    assert_eq!(normalized.inferred_points, 64);
+    assert_eq!(normalized.inferred_lines, 0);
+    assert_eq!(normalized.probe_only_unknowns, 8);
+}
+
+#[test]
 fn second_file_builds_readable_layout_model() {
     let Some(doc) = parse_test_file("DWG-0202GP06-01.pid") else {
         return;

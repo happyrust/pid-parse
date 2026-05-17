@@ -229,7 +229,14 @@
 - Phase 20 scope **严格 reverse engineering + 文档**，不改 src/ 代码、不改 test；Phase 21 才会基于 Phase 20 IDA 证据落地 typed sub-kind DTO + reference resolver。
 - 备选方案：20-B `JStyleOverride/GraphicGroup → 0x0010 reference resolver`（不需 IDA、0.5-1 session）；20-C size=31 bucket 专项反向；20-D 多 Sheet* 流未知 type code inventory。详细决策矩阵见 roadmap 文档 §4。
 
-## 关键文件（Phase 13-20 补丁）
+## Phase 21 关键结论：D06 fixture baseline + relationship graph fix + Sheet audit（2026-05-18）
+- D06（`test-file/D06.pid`）是一个紧凑 SmartPlant PID 样本，当前解析输出 97 total / 25 decoded geometry entities，无 decoded lines（polyline/point/annotation 为主）。
+- **relationship gap 根因**：D06 的 10 条关系身份存放在 `P&IDAttributes` 的 `ModelItemType=Relationship` + `ModelID=Relationship.<GUID>` 中，而非 DWG fixture 使用的 `class_id == 0xF6` DA trailer。修复方案：当 trailer path 产生 0 条 relationship 时，扫描 `P&IDAttributes` 提取已被 probe 确认的 GUID，保留为 unresolved `PidRelationship`（endpoint = None）。
+- **D06 relationship 全部 unresolved**：无 Sheet-level `field_x` link，endpoint resolution 需等待后续 phase。
+- **Sheet6 audit inventory**：21 GraphicGroup + 20 `0x0010` audit-only records；`leading_word == 0x0002` 在 D06 也出现；GraphicGroup `raw_reference_payload` 不 promote 为 child OIDs。8 个 probe-only unknown 是未定位的 text runs。
+- **Phase 14-20 边界完好**：不命名 `0x0010` sub-kind，不新增 typed DTO，不解释 GraphicGroup tail。
+
+## 关键文件（Phase 13-21 补丁）
 - `goals/phase14-sppid-sheet-geometry/`
 - `goals/phase15-graphic-group-records/`
 - `goals/phase16-j2dsrv-record-decode/`
@@ -241,8 +248,11 @@
 - `docs/plans/2026-05-14-phase15-graphic-group-final-summary.md`
 - `docs/plans/2026-05-16-phase16-jstyleoverride-final-summary.md`
 - `docs/plans/2026-05-17-phase20-ida-rad-class-roadmap-cn.md`
+- `docs/plans/2026-05-18-phase21-d06-parse-coverage-plan-cn.md`
 - `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`
 - `docs/analysis/2026-05-17-phase19-rad-sibling-probe-null-result.md`
+- `docs/analysis/2026-05-18-d06-relationship-gap.md`
+- `docs/analysis/2026-05-18-d06-sheet6-audit-inventory.md`
 - `examples/probe_psm_0x0010_shape.rs`
 - `examples/probe_psm_0x0010_sub_kind.rs`
 - `examples/probe_rad_siblings_0x0029_0x0035.rs`

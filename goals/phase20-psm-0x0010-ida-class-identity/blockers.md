@@ -49,6 +49,34 @@ attribute fragments inside other record types"。如果 IDA 证据强烈
 **决定**：本 phase 容忍这种结论；写 progress.jsonl `[discovery]`
 entry，调整 AC 描述。
 
+### Q5 — concrete class name / Read-DoIO 未恢复 [PARTIAL-AC ACCEPTED]
+
+Phase 20 Slice B 已确认 `0x0010` 的 persisted GUID / type-table identity：
+
+- `entry[0x0010] @ radsrvitem.dll .data:0x5667B1A8`
+- GUID `1D1928C0-0000-0000-C000-000000000046`
+- `tail16=0x40`, `tail17=0x06`, `parent=0x0115`
+- `entry[0x0115]` 复用同一 GUID，作为 root alias
+
+同时已形成负证据：
+
+- `style.dll!DllGetClassObject` 没有该 GUID 的 direct CLSID branch；
+- `style.dll .rdata:0x10068F44` 只有 raw GUID hit，无 static xref；
+- `sub_5647CE40` / `sub_5647CA50` 是 default `E_NOTIMPL` stub；
+- `sub_56468B30` 路径是 packed OID → existing record slot →
+  SerialCluster lazy-load，不是普通 COM class factory。
+
+**决定**：接受 partial AC。Phase 20 当前收口为：
+
+- AC1 partial pass：GUID + persisted type-table identity confirmed；
+  human persisted type name / concrete class name deferred。
+- AC2/AC3 deferred：Read/DoIO 与 sub-kind discriminator 未恢复，禁止
+  命名 sub_kind 或实现 typed DTO。
+- AC4 partial pass：analysis doc 已创建并明确 partial 状态。
+
+后续若要继续恢复 human type name，应另开小 phase，优先查外部 metadata /
+RTTI / local types，而不是继续 blind factory tracing。
+
 ## Stop And Ask
 
 任一条件成立立即停手，写 `progress.jsonl`，等用户回复：
@@ -87,6 +115,7 @@ entry，调整 AC 描述。
 | Q2 | question | OPEN | 执行时按 pseudocode-only 推荐 | agent |
 | Q3 | question | DEFERRED | partial AC3 accepted if discriminator 与 leading_word 对不上 | agent |
 | Q4 | question | DEFERRED | 容忍 "embedded fragment" 结论，调整 AC 描述 | agent |
+| Q5 | partial-ac | ACCEPTED | GUID/table identity 收口；class name / Read-DoIO / sub-kind deferred | user + agent |
 
 ## 当前状态总表
 
