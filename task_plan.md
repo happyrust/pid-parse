@@ -4,7 +4,12 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 12 - 页面坐标变换与 Text 字段提取
+Phase 20 - PSM 0x0010 IDA 反向（RAD class identity + sub-kind discriminator），goal package 已落盘，待 `/goal` 授权执行
+
+## 历史阶段 → goals/ 包托管说明
+2026-05-13 起 Phase 13+ 的细节迁移到 `goals/phaseNN-...` 目录（brief / plan /
+verification / blockers / goal-prompt / progress.jsonl 五件套+1 模板），
+`task_plan.md` 只保留入口与 status。详细路线图见 `docs/plans/`。
 
 ## 阶段
 
@@ -126,8 +131,92 @@ Phase 12 - 页面坐标变换与 Text 字段提取
 - [ ] Slice 3：H7CAD 坐标空间对齐
 - [ ] Slice 4：Sheet Record Text 字段识别（investigation）
 - [ ] Slice 5：质量回归与文档
-- **Status:** pending
+- **Status:** pending（保留待后续重启；Phase 13+ 优先把 Sheet record 反向做透）
 - **Plan:** `docs/plans/2026-05-09-phase-12-page-transform-text-extraction-plan-cn.md`
+
+### Phase 13：2026-05-14 Plan B controlled-diff protocol
+- [x] 建立 Plan B 控制 diff 协议作为 SPPID Sheet 几何反向工程的安全网
+- **Status:** complete
+- **Goal package:** `goals/phase14-plan-b-controlled-diff-protocol/`
+
+### Phase 14：2026-05-14 SmartPlant Sheet geometry decoder suite（8 PSM 类型）
+- [x] Slice D-E：`GLine2d` (0x3FE6) typed decoder + ratchet
+- [x] Slice F-I：`GArc2d` (0x0030) typed decoder + ratchet（Phase 16 后被 retire）
+- [x] Slice J：`igLine2d` (0x0018) typed decoder + ratchet（284 records）
+- [x] Slice K：`igLineString2d` (0x0084) typed decoder + ratchet（119 records）
+- [x] Slice L：`igPoint2d` (0x005E) typed decoder + ratchet（146 records）
+- [x] Slice M：`igTextBox` (0x004D) typed decoder + ratchet（142 records）
+- [x] Slice N：`igSymbol2d` (0x00CE) typed decoder + ratchet（27 records）
+- [x] Slice O：decoder suite final summary
+- [x] Slice P：`pid_inspect --geometry-summary` CLI flag
+- **Status:** complete
+- **Goal package:** `goals/phase14-sppid-sheet-geometry/`
+- **Final summary:** `docs/plans/2026-05-14-phase14-decoder-suite-final-summary.md`
+
+### Phase 15：2026-05-14 PSM 0x00FA `GraphicGroup` audit-only decoder
+- [x] 跨 4 fixture 352 audit records（header + raw_variable_tail，
+      不命名 child OID list）
+- [x] 不引入 `PidGraphicKind` variant
+- **Status:** complete
+- **Goal package:** `goals/phase15-graphic-group-records/`
+- **Final summary:** `docs/plans/2026-05-14-phase15-graphic-group-final-summary.md`
+
+### Phase 16：2026-05-16 PSM 0x0030 = `JStyleOverride` 跨 5 IDA 反向
+- [x] 跨 5 IDA instance（radsrvitem.dll → J2DSrv.dll → JUTIL.dll →
+      style.dll）反向，钉到 RAD CLSID `{47FCC338-...}`
+- [x] V3 disk schema 13 个 IOContext::DoIO（64 字节 payload）
+- [x] 跨 fixture 98 records（找回 Phase 14 GArc2d 错误丢失的 50 条）
+- [x] 新 `decode_jstyle_overrides` + `PidGraphicKind::Annotation`
+- [x] 严格 additive，Phase 14 既有 surface 暂留
+- **Status:** complete
+- **Goal package:** `goals/phase16-j2dsrv-record-decode/`
+- **Final summary:** `docs/plans/2026-05-16-phase16-jstyleoverride-final-summary.md`
+- **Authoritative fields:** `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`
+
+### Phase 17：2026-05-17 移除 legacy `PrimitiveArc` 兼容层
+- [x] 删除 `decode_primitive_arcs` parser API、`SheetPrimitiveArcDecoded`
+      DTO、`SheetGeometry::decoded_primitive_arcs` 字段
+- [x] `geometry.rs` 不再为 0x0030 emit `PidGraphicKind::Arc`
+- [x] 新 `SheetDecodedGeometryKind::Annotation` + `jstyle_override`
+      schema 入口
+- [x] `pid_inspect --geometry-summary` 切换为 "Annotations" 计数
+- **Status:** complete
+- **Goal package:** `goals/phase17-primitive-arc-deprecation/`
+
+### Phase 18：2026-05-17 PSM 0x0010 sub-record family audit-only decoder
+- [x] Slice A-H：parser DTO + decoder + model DTO + cluster pipeline +
+      cross-fixture ratchet (582 records) + panic-safety + CHANGELOG +
+      5 道 gate
+- [x] 不命名 sub-kind 字段；不引入 `PidGraphicKind` variant
+- [x] commit `81daa20` + push
+- **Status:** complete
+- **Goal package:** `goals/phase18-psm-0x0010-sub-record/`
+
+### Phase 19：2026-05-17 PSM 0x0010 `leading_word` audit field
+- [x] RAD sibling probe 证伪 "CLSID 段 47FCC330..47FCC33E ↔ PSM 0x29..0x35"
+      假设（仅 0x0030 有 hits）；evidence `docs/analysis/2026-05-17-phase19-rad-sibling-probe-null-result.md`
+- [x] `leading_word: Option<u16>` audit 字段（= `payload[0..2]` LE u16）
+- [x] cross-fixture ratchet：0x0002=164 / 0x0003=21 / 0x0001=18 /
+      None=0 / total=582
+- [x] Phase 18 ratchet 582 不退化
+- [x] 字段名描述字节位置不描述语义；不命名 `sub_kind`
+- [x] commit `6beb6f1` + push
+- **Status:** complete
+- **Goal package:** `goals/phase19-psm-0x0010-leading-word-audit/`
+
+### Phase 20：2026-05-17 PSM 0x0010 IDA-confirmed RAD class identity（待执行）
+- [ ] Slice A：`radsrvitem.dll` dispatch table 侦察（找 0x0010 factory）
+- [ ] Slice B：factory → CLSID + 目标 DLL
+- [ ] Slice C：目标 class Read/IO 函数 + IO sequence
+- [ ] Slice D：sub-kind discriminator 偏移 + 枚举
+- [ ] Slice E：cross-fixture validation（Phase 19 leading_word 对得上）
+- [ ] Slice F：`docs/analysis/2026-05-17-phase20-psm-0x0010-rad-class.md`
+      8 节 authoritative analysis（mirror Phase 16）
+- [ ] Slice G：5 道 pre-commit gate（不改代码应自动绿）+ goal_complete
+- **Status:** package drafted, awaiting `/goal` authorization
+- **Goal package:** `goals/phase20-psm-0x0010-ida-class-identity/`
+- **详细路线图:** `docs/plans/2026-05-17-phase20-ida-rad-class-roadmap-cn.md`
+- **预期工作量:** 2-5 session（polymorphic family，比 Phase 16 单 type code 反向更大）
 
 ## 决策
 | 决策 | 理由 |
@@ -142,6 +231,14 @@ Phase 12 - 页面坐标变换与 Text 字段提取
 | Phase 8 先做多 fixture 与 Sheet record grammar | 当前 promotion 缺的是 source-proven record 证据，不是 H7CAD UI 能力 |
 | Phase 9 先补 fixture baseline 再扩大 promotion | 当前 5 fixture 横向扫描已有 `object_geometry_hint_count=5`，但 Text/Symbol 仍 `text_over_threshold=0`，下一步应先硬化 registry 与 gate |
 | Phase 10 优先利用 f64 pair 突破 endpoint line 零线困局 | Phase 9A fixture 扩容被外部样本供给阻塞；Phase 9C 诊断链已发现 repeated f64 pair 坐标候选，可在现有 5 fixture 上闭环 endpoint line |
+| Phase 13+ 把详细计划迁移到 `goals/phaseNN-…/` | 单个 `task_plan.md` 文件超过 200 行会失焦；goal package 五件套对 Codex `/goal` 与 Plannotator 更友好 |
+| Phase 16 跨 5 IDA instance 反向 0x0030 → JStyleOverride | Phase 14 `decode_primitive_arcs` 的 `axis_a.y ≈ 0` 约束误拒 50 条真 record；必须 IDA-confirmed 修正 |
+| Phase 17 移除 legacy `PrimitiveArc` 而非保留 dual-surface | Phase 16 已证明 0x0030 不是 IGDS GArc2d，保留 dual surface 会让下游消费者继续误读 |
+| Phase 18 audit-only 而非 typed sub-record DTO | 0x0010 是 polymorphic family，未 IDA-confirmed 前命名 sub-kind 字段 = Phase 14 GArc2d 重蹈覆辙 |
+| Phase 19 加 `leading_word` 而非 `sub_kind` | probe 证明 `+0..+1` 只覆盖 ~36% records；size 31/70/13/16/43 在 +0 异质，单一固定 discriminator 不存在 |
+| Phase 19 RAD sibling sweep 被证伪后改走 leading-word | 不浪费已采集的 probe 数据；leading-word 是 Phase 18 audit collection 上最便宜的可命名维度 |
+| Phase 20 选 IDA-first 而非 byte-pattern-only | Phase 19 probe 已证明纯 byte 看不出 size 31 bucket discriminator；IDA 是唯一可获权威证据的路径 |
+| Phase 20 拒绝在单 session 内执行 | 5374 个 function（4867 unnamed）的反向工作量与 Phase 16 量级相当，单 session 必然 lost context；7 个 Slice + 跨 session checkpoint 是必须的 |
 
 ## 错误与限制
 | 问题 | 处理 |

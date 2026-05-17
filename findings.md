@@ -192,3 +192,57 @@
 - `/Sheet6` 当前 top shape classes 为 `(14, 38)` 和 `(46, 70)`，support 均为 2；这说明存在可复查的重复 record shape，但还不是 source-proven geometry。
 - `sheet6_field_x_window_features_report_chunk_shapes` 已接入 classifier，仍保持 `max_score=45`、`promotable=0`，不填充 `SheetObjectGeometryHint`。
 - 多 fixture inventory 已接入 classifier 汇总：当前 `record_shape_classes=328`，top aggregate shapes 最高累计 support 为 4，但 identity/text promotion threshold 仍为 0。
+
+## Phase 14-17 关键结论（2026-05-14 ~ 2026-05-17）
+- Phase 14 落地 8 个 PSM 类型 typed decoder（GLine2d=3、GArc2d=48、igLine2d=284、igLineString2d=119、igPoint2d=146、igTextBox=142、igSymbol2d=27，共 769 decoded entities）；reusable seven-layer decoder template 在该 phase 验证 6×。
+- Phase 14 §6.3 把 PSM `0x0010`（638 probe scan hits）定性为 "embedded sub-records / attribute fragments inside other record types"，留给 Phase 18。
+- Phase 15 落地 PSM `0x00FA` GraphicGroup audit-only decoder（352 records，header + raw_variable_tail），不引入 PidGraphicKind variant；audit-only 模板被 Phase 18 复用。
+- Phase 16 跨 5 IDA instance（radsrvitem.dll → J2DSrv.dll → JUTIL.dll → style.dll）反向 PSM `0x0030`，最终钉到 RAD `JStyleOverride` 类（CLSID `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`），V3 disk schema 13 个 IOContext::DoIO（64 字节 payload），跨 fixture 98 records；找回 Phase 14 GArc2d `axis_a.y ≈ 0` 约束误拒的 50 条真 record；新增 `decode_jstyle_overrides` + `PidGraphicKind::Annotation`。
+- Phase 16 §11：probe v5 把磁盘 `+0..15` 解读为 2 个 f64 anchor（跨 fixture 100% 落归一化范围）；IDA V3 schema 解读为 4 个独立 u32。`JStyleOverride::Clone` (sub_10010640) 的 `qmemcpy(v5+22, this+22, 0x58)` 证明 RAD 层是 untyped byte IO；SmartPlant 把 RAD 的 byte slots 当 `union { u32; f64 }` 用，两种解读**同时正确**。
+- Phase 17 移除 legacy `decode_primitive_arcs` 系列（parser API + DTO + model field + schema entry + geometry emission），杜绝下游消费者继续误读 0x0030 为 IGDS GArc2d。Default schema 新增 `jstyle_override` 入口。
+
+## Phase 18 关键结论：PSM 0x0010 sub-record audit-only landing（2026-05-17, commit 81daa20）
+- `SheetSubRecord0x0010Decoded` 沿用 Phase 15 GraphicGroup 6-byte header 模板（`type_word + bytes_to_follow`，NOT Phase 14 IGDS 18-byte header），无 `oid` 字段。
+- Advancing-scan decoder（accept-then-skip）跨 4 fixture 输出 **582 records**：DWG-0201=161 / DWG-0202=104 / 工艺管道-1=306 / A01=11。probe non-advancing scan 报 638（含 overlap）。
+- Validation 极保守：`type_code == 0x0010` + `bytes_to_follow ∈ [8, 100_000]` + 边界检查；不在 payload 上做额外 validation（不知 sub-kind discriminator 在哪个字节）。
+- `raw_payload: Vec<u8>` 复制 payload bytes（不借用），JSON 序列化为 number array，与 Phase 15 GraphicGroup `raw_variable_tail` 保持一致。
+- 关键设计原则：未 IDA-confirmed 前不命名 sub-kind 字段；不引入 PidGraphicKind variant；不实现 reference resolver（这些都是 Phase 19/20+ 工作）。
+- 12 个 parser unit test + 1 cross-fixture ratchet test + adversarial panic-safety matrix；5 道 pre-commit gate 全绿；Phase 14-17 baseline 全部保持。
+
+## Phase 19 关键结论：PSM 0x0010 leading_word audit field（2026-05-17, commit 6beb6f1）
+- **RAD sibling sweep 假设被证伪**：`examples/probe_rad_siblings_0x0029_0x0035.rs` 扫描 `/Sheet6` 上 PSM type code `0x0029..=0x0035`，跨 4 fixture 只有 `0x0030`（JStyleOverride）有 hits（115 total），其余 12 个 type code 全 0。"RAD 47FCC330..47FCC33E CLSID 段 1:1 映射 PSM 0x29..0x35" 假设不成立。Evidence：`docs/analysis/2026-05-17-phase19-rad-sibling-probe-null-result.md`。
+- **leading_word @ payload[0..2] LE u16 是部分 sub-kind discriminator**：`examples/probe_psm_0x0010_sub_kind.rs` 跨 4 fixture 578 records 直方图：
+  - `0x0002` = 164 records (28.2%)，跨 ~40 个 size bucket 普遍出现
+  - `0x0003` = 21 records (3.6%)
+  - `0x0001` = 18 records (3.1%)
+  - `0x4C1C` / `0x4E1C` = 各 8 records（size=16 bucket 双峰）
+  - `0x8EA5` = 7 records（size=86 bucket 85% 单峰）
+- **~30 个 size bucket 是 single-word-dominant**：size=12/15/19/22/25/26/27/29/36/37/41/42/45/47/69/76/86/92/94/97/102/115/119/120/123/147 在 `+0` 处 100% 单一 word；这类 record ~280 条。
+- **size 31 / 70 / 13 / 16 / 43 在 `+0` 异质**：size=31 是最大 bucket（182 records）但 top word 只占 1%；size=70 (53 records) top word 5%；size=13 (21 records) top word 14%。这些 bucket 的 leading bytes 几乎肯定不是 sub-kind discriminator，可能是坐标或 OID。
+- **结论**：单一固定偏移 discriminator 不能干净划分整个 0x0010 family。`leading_word` 字段名描述字节位置（`payload[0..2]` LE u16），**不**描述语义；杜绝重蹈 Phase 14 GArc2d 错误命名（axis_a / axis_ratio / sweep_direction / sweep_angle 全错）。
+- **落地**：`leading_word: Option<u16>` 在 parser DTO 与 model DTO mirror；`Option<>` 类型保留给 < 2 byte payload，虽然 decoder min payload = 8 让 `None` 不可达，但保留契约诚实性。cross-fixture ratchet 锁定 0x0002=164 / 0x0003=21 / 0x0001=18 / None=0 / total=582；Phase 18 ratchet 582 不退化。
+
+## Phase 20 IDA-RAD-class roadmap（2026-05-17, package drafted, awaiting /goal）
+- 12 个 IDA instance 全 reachable：`radsrvitem.dll` port 13346 / `J2DSrv.dll` 13347 / `style.dll` 13348（Phase 16 navigated）/ `sppid.dll` 13341 / `smartplantpid.exe` 13342 / `sppidautomation.dll` 13340 / `sppiddwgprocess.dll` 13343 / `sppidautomation.exe` 13344 / `llama.dll` 13345 / `ipidobjectmanagerinf.dll` 13339 / `sppidautomationwrap.dll` 13338 / `core.dll` 13337（AVEVA E3D，可能 unrelated）。
+- `radsrvitem.dll` 规模：32-bit，base 0x56440000，5374 functions（4867 unnamed、~90%），1739 strings；exports `GetServerItemTransceiver` (0x56448040) / `GetServerItemVersion` (0x564480d0)。PSM dispatch table 反向必须从 unnamed function 入手，预期需要 `search_text` literal + xref + analyze_function 多次跳转。
+- Phase 20 工作量预估：Phase 16 单 type code 反向用了多 session，Phase 20 polymorphic family 预期 **2-5 session**，必须按 Slice A-G 逐个 checkpoint；详细路线图见 `docs/plans/2026-05-17-phase20-ida-rad-class-roadmap-cn.md`。
+- Phase 20 scope **严格 reverse engineering + 文档**，不改 src/ 代码、不改 test；Phase 21 才会基于 Phase 20 IDA 证据落地 typed sub-kind DTO + reference resolver。
+- 备选方案：20-B `JStyleOverride/GraphicGroup → 0x0010 reference resolver`（不需 IDA、0.5-1 session）；20-C size=31 bucket 专项反向；20-D 多 Sheet* 流未知 type code inventory。详细决策矩阵见 roadmap 文档 §4。
+
+## 关键文件（Phase 13-20 补丁）
+- `goals/phase14-sppid-sheet-geometry/`
+- `goals/phase15-graphic-group-records/`
+- `goals/phase16-j2dsrv-record-decode/`
+- `goals/phase17-primitive-arc-deprecation/`
+- `goals/phase18-psm-0x0010-sub-record/`
+- `goals/phase19-psm-0x0010-leading-word-audit/`
+- `goals/phase20-psm-0x0010-ida-class-identity/`
+- `docs/plans/2026-05-14-phase14-decoder-suite-final-summary.md`
+- `docs/plans/2026-05-14-phase15-graphic-group-final-summary.md`
+- `docs/plans/2026-05-16-phase16-jstyleoverride-final-summary.md`
+- `docs/plans/2026-05-17-phase20-ida-rad-class-roadmap-cn.md`
+- `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`
+- `docs/analysis/2026-05-17-phase19-rad-sibling-probe-null-result.md`
+- `examples/probe_psm_0x0010_shape.rs`
+- `examples/probe_psm_0x0010_sub_kind.rs`
+- `examples/probe_rad_siblings_0x0029_0x0035.rs`

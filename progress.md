@@ -475,3 +475,138 @@
 - 如有新真实 PID fixture 可供使用，优先扩展 registry（Phase 9A 仍待闭环）。
 - 调查 f64 record shape 中是否包含 text field index 或 text record reference。
 - H7CAD 坐标映射：f64 归一化坐标 × 页面尺寸 → 物理坐标。
+
+## Session: 2026-05-17
+
+### 当前状态
+- **Phase:** 20 - PSM 0x0010 IDA-confirmed RAD class identity + sub-kind discriminator
+- **状态:** Phase 18 / 19 已 commit + push；Phase 20 goal package 已落盘，
+  详细中文路线图已就位；待用户 `/goal` 授权进入执行。
+- **commit baseline:** `6beb6f1` (Phase 19) on origin/main
+- **Phase 13-17 进度:** 全部 complete，细节托管在 `goals/phaseNN-…/`
+  五件套；详见 `task_plan.md` Phase 13-20 条目。
+
+### 已完成（本 session）
+- 通过 MCP 桥接确认本会话工作目录切到 `d:\work\plant-code\cad\pid-parse`。
+- 复核 Phase 18 commit `81daa20` + Phase 19 commit `6beb6f1` 的落盘情况，
+  确认 working tree 只剩 `.superdesign/` 与 `dlls/` 两个未追踪目录（项目规则禁提交）。
+- **Phase 19 RAD sibling probe 证伪**：跑 `examples/probe_rad_siblings_0x0029_0x0035.rs`，
+  跨 4 fixture `/Sheet6` 上 PSM type code `0x0029..=0x0035` 只有 `0x0030` 有 hits
+  （115 total，其余 12 个全 0）；落盘 evidence
+  `docs/analysis/2026-05-17-phase19-rad-sibling-probe-null-result.md`。
+- **Phase 19 leading-word probe 落地**：写 `examples/probe_psm_0x0010_sub_kind.rs`
+  并跑通；578 records 中 `leading_word == 0x0002` = 164 (28%)、`0x0003` = 21、
+  `0x0001` = 18；~30 个 size bucket 在 `+0` 处单 word 100% 覆盖，但 size 31
+  (182 records) / 70 / 13 / 16 / 43 在 `+0` 异质。
+- **Phase 19 goal package 起草**：
+  `goals/phase19-psm-0x0010-leading-word-audit/` 五件套
+  （brief / plan / verification / blockers / goal-prompt）+ 初始 progress.jsonl
+  4 条 entry，总 ~41 KB。
+- **Phase 19 Slice A-G 执行**：
+  - Slice A 写 Phase 18 mirror 点 inventory 到 progress.jsonl。
+  - Slice B 给 `SheetSubRecord0x0010Decoded` 加 `leading_word: Option<u16>` 字段，
+    decoder 用 `raw_payload.get(0..2).map(|s| u16::from_le_bytes([s[0], s[1]]))`
+    填充；扩展原有 canonical test + 新增 2 个 unit test
+    （`sub_record_0x0010_leading_word_matches_first_two_payload_bytes_le` 验证
+    0x0002 / 0x0003 / 0x4E1C 的 LE 提取；
+    `sub_record_0x0010_leading_word_is_none_for_sub_two_byte_payload` 验证
+    `Option<>` 契约）。14 parser unit test 全绿。
+  - Slice C 给 `DecodedSubRecord0x0010Record` mirror `leading_word: Option<u16>`
+    带 `#[serde(default)]`（向后兼容 Phase 18 JSON）；同步 From impl；schema
+    needle ratchet 加 `leading_word`；8 schema test 全绿。
+  - Slice D 写 cross-fixture ratchet test
+    `sub_records_0x0010_leading_word_distribution_matches_phase19_probe`；
+    decoder-side 数字与 probe 完全一致：0x0002=164 / 0x0003=21 / 0x0001=18 /
+    None=0 / total=582；assertion 锁定 top-3 ranking + None=0 + total=582 +
+    0x0002 coverage ≥ 25%。
+  - Slice E 跑 Phase 18 既有 ratchet 确认仍 582；跑
+    `normalized_geometry_probe_baseline_on_real_fixture` 确认 entity 仍 394。
+  - Slice F 在 `CHANGELOG.md` 写 Phase 19 入口（~95 行：RAD sibling null-result
+    context + leading_word probe evidence + audit-only 设计选择 + 4 个 "no"
+    边界 + Future Work pointer）；`AGENTS.md` 0x0010 段落补 Phase 19 信息。
+  - Slice G 跑 5 道 gate：build OK / test 851 lib + 90 integration 0 failed /
+    clippy OK / fmt OK / missing-docs current=0 baseline=0。
+- **clippy fix**：probe `BTreeMap<usize, (BTreeMap<u8, usize>, BTreeMap<u16, usize>)>`
+  触发 `clippy::type_complexity`，抽出 `ByteHist / WordHist / SizeBucket` 类型别名。
+- **fmt fix**：`cargo fmt --all` 顺手清理 `probe_rad_siblings_0x0029_0x0035.rs`
+  从上次会话遗留的 if-else 单行排版漂移。
+- **Phase 19 commit + push**：commit `6beb6f1`
+  "feat(parsers,model,schema,tests,docs,examples): Phase 19 — PSM 0x0010
+  leading_word audit field"，15 files / 1345 insertions；`git push origin main`
+  从 81daa20..6beb6f1 成功。
+- **IDA 可达性确认**：调用 `list_instances`，确认 12 个 IDA instance 全
+  reachable（含 `radsrvitem.dll` port 13346、`style.dll` 13348、
+  `J2DSrv.dll` 13347 等 Phase 16 反向用到的全部）。
+- **radsrvitem.dll 起手 survey**：32-bit / base 0x56440000 / 5374 functions
+  (4867 unnamed, ~90%) / 1739 strings / exports `GetServerItemTransceiver` /
+  `GetServerItemVersion`；预期 Phase 20 PSM dispatch table 反向需要从 unnamed
+  function 入手。
+- **Phase 20 goal package 起草**：
+  `goals/phase20-psm-0x0010-ida-class-identity/` 五件套 + 初始 progress.jsonl
+  4 条 entry，总 ~32 KB；明确 scope = 纯 reverse engineering + 文档，
+  不改 src/、不改 test；AC1-AC7 覆盖 RAD class identity / sub-kind discriminator
+  offset / sub-kind 枚举 / cross-fixture validation / authoritative analysis doc
+  / 5 道 gate / progress.jsonl evidence trail。
+- **Phase 20 详细中文路线图落地**：
+  `docs/plans/2026-05-17-phase20-ida-rad-class-roadmap-cn.md`（11 节、
+  Slice A-G 详细分解、备选方案 20-B/C/D、多 session checkpoint 策略、
+  风险登记表、验证命令汇总、与既有 plan/goal 文件的关系矩阵、Phase 21+ 预告）。
+- 更新 `task_plan.md`：当前阶段切到 Phase 20；新增 Phase 13-20 条目
+  （Phase 13-17 引用 `goals/` package + final summary；Phase 18-19 标 complete
+  + commit hash；Phase 20 标 awaiting `/goal`）；决策表新增 6 行
+  （Phase 13-20 关键 trade-off 解释）。
+- 更新 `findings.md`：新增 5 大节 — Phase 14-17 关键结论、Phase 18 audit-only
+  landing、Phase 19 leading_word 完整证据、Phase 20 IDA-RAD-class roadmap、
+  关键文件补丁清单。
+- 通过 best-mcp-sqlite-1 `save_progress` 多次记录跨 session 进度断点。
+
+### 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo run --release --example probe_rad_siblings_0x0029_0x0035` | 通过；0x29..0x2F + 0x31..0x35 全 0，仅 0x0030=115 |
+| `cargo run --release --example probe_psm_0x0010_sub_kind` | 通过；total=578，top word 0x0002=164 (28%) |
+| `cargo test --locked -j 4 --lib parsers::sheet_records::tests::sub_record_0x0010 -- --nocapture` | 14/14 通过（12 Phase 18 + 2 Phase 19） |
+| `cargo test --locked -j 4 --lib schema` | 8/8 通过 |
+| `cargo test --locked -j 4 --test parse_real_files sub_records_0x0010_leading_word_distribution_matches_phase19_probe -- --nocapture` | 通过；0x0002=164 / 0x0003=21 / 0x0001=18 / None=0 / total=582 |
+| `cargo test --locked -j 4 --test parse_real_files sub_records_0x0010_decoder_emits_audit_records_with_provenance -- --nocapture` | 通过；total 582，per-fixture 161/104/306/11 |
+| `cargo test --locked -j 4 --test parse_real_files normalized_geometry_probe_baseline_on_real_fixture -- --nocapture` | 通过；entities=394 |
+| `cargo build --locked --workspace --all-targets` | 通过 |
+| `cargo test --locked -j 4 --workspace --all-targets` | 通过；851 lib + 90 integration + 其他小 target，0 failed |
+| `cargo clippy --locked -j 4 --workspace --all-targets -- -D warnings` | 通过（修 `BTreeMap` type complexity 后） |
+| `cargo fmt --all -- --check` | 通过（`cargo fmt --all` 后） |
+| `cargo rustdoc --lib --locked -- -W missing-docs` | 通过；current=0 baseline=0 |
+| `git commit + git push origin main` | 通过；81daa20..6beb6f1 |
+| `git status` | 干净，只剩 `.superdesign/` + `dlls/` 两个未追踪目录（项目规则禁提交） |
+| MCP `user-ida-pro-mcp.list_instances` | 12 个 instance 全 reachable |
+| MCP `user-ida-pro-mcp.select_instance(13346) + survey_binary` | radsrvitem.dll 元数据齐全 |
+| ReadLints | 编辑过的 6 个源文件 + 2 个 probe + 2 个 markdown 全无 lint 错误 |
+
+### 错误与限制
+| 问题 | 处理 |
+|---|---|
+| 初次 `cargo run --release --example probe_psm_0x0010_sub_kind` 报 "no example target named ..." | cargo 需要先 `cargo build --release --example probe_psm_0x0010_sub_kind` 触发 example 注册，之后 `cargo run` 就能 resolve |
+| `cargo clippy --workspace --all-targets -- -D warnings` 在新 probe 上报 `clippy::type_complexity` | 抽出 `type ByteHist = BTreeMap<u8, usize>; type WordHist = BTreeMap<u16, usize>; type SizeBucket = (ByteHist, WordHist);` 三个 type alias 后通过 |
+| `cargo fmt --all -- --check` 显示 probe_rad_siblings_0x0029_0x0035.rs（上会话遗留）+ 本会话新 probe 都有排版漂移 | 跑一次 `cargo fmt --all` 一并清理，新 commit 一并带走 |
+| `git commit -m "$(cat <<EOF ...)"` PowerShell 不支持 heredoc 语法 | 改写 commit message 到 `.git/COMMIT_EDITMSG.phase19` 临时文件，用 `git commit -F <file>` 提交，提交后删除临时文件 |
+| Write 与 Shell 并行调用造成 race condition（git commit 在 Write 写完前跑） | 改成顺序调用：先 Write 完成，再 Shell 调用 git commit；Phase 18→19 commit 流程从此 always 串行 |
+| `python "$env:USERPROFILE\.cursor\skills-cursor\planning-with-files\scripts\session-catchup.py"` 路径不存在 | planning-with-files 的 session-catchup 脚本在 `~/.codex/skills/planning-with-files/scripts/` 而不是 `.cursor/skills-cursor/`；本会话直接读 `findings.md` / `progress.md` 替代 catchup |
+| `Grep` 在 `dlls/` 目录上报 "os error 32 file in use" | IDA 持有 `.id0` / `.id1` / `.nam` 文件锁，正常现象；后续 grep 加 `-g '!dlls/'` 或限定 path 即可 |
+
+### 决策
+| 决策 | 理由 |
+|---|---|
+| Phase 19 选 leading-word 而非 sibling sweep | RAD sibling probe 5 分钟内证伪原假设（只有 0x0030 有 hits）；leading-word probe 数据强信号（0x0002=28% / 28 个 single-word size bucket），可直接产出 audit-only 字段 |
+| Phase 19 audit-only 严格遵守 | Phase 14 GArc2d 错误命名教训重申；字段名 `leading_word` 仅描述字节位置，不描述语义 |
+| Phase 19 ratchet 接受 decoder-side ground truth | probe 报 578 / decoder ratchet 报 582，差 4 是 probe-side iter_records 边界处理；decoder 是 source of truth，per-word 数字（164/21/18）完全一致 |
+| 用 `#[serde(default)]` 标 `Option<u16>` | 向后兼容 Phase 18 JSON：旧 JSON 没有 `leading_word` 字段，反序列化时默认 None |
+| Phase 20 拒绝单 session 执行 | 5374 个 function（4867 unnamed）反向工作量与 Phase 16 量级相当；单 session 必然 lost context，必须按 Slice A-G 拆开 |
+| Phase 20 scope 纯 reverse engineering + 文档 | typed sub-kind DTO 实现是 Phase 21 工作；本 phase 严格不改 src/、不改 test，避免 IDA 反向过程产生 half-baked decoder |
+| Phase 20 详细路线图独立成 docs/plans/ 文件 | `goals/phase20-…/plan.md` 是紧凑版供 `/goal` 启动；详细路线图（Slice 详解 + 备选方案 + 风险登记 + checkpoint 策略）应在 docs/plans/ 长篇分析 |
+| 历史 Phase 13+ 详细计划迁移到 `goals/phaseNN-…/` | 单个 task_plan.md 文件超 200 行失焦；goal package 五件套对 Codex `/goal` 与 Plannotator 更友好；task_plan.md 只保留入口与 status |
+
+### 下一步
+- 等用户对 Phase 20 `/goal` 授权或选 20-B / 20-C / 20-D 备选角度。
+- 如启 Phase 20：从 Slice A radsrvitem.dll dispatch table 侦察开始，
+  每个 Slice append progress.jsonl entry，每 2 Slice 跨 session recap。
+- 是否要把 Phase 20 goal package + 详细路线图 + 本 session 三个 planning
+  文件作为一次 docs/planning commit 推送（独立于 Phase 19 commit 6beb6f1）。
