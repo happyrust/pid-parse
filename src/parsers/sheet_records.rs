@@ -1881,14 +1881,6 @@ pub const PSM_RECORD_HEADER_LEN: usize = 18;
 /// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
 pub const GLINE2D_PAYLOAD_LEN: usize = 48;
 
-/// Byte length of one in-memory `GArc2d` payload:
-/// 8 × `f64` LE = 64 bytes.
-///
-/// Layout reverse-engineered from `radsrvitem.dll`
-/// `GArc2d::Validate` (`sub_56524150` @ 0x56524150). Documented in
-/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
-pub const GARC2D_PAYLOAD_LEN: usize = 64;
-
 /// PSM type code that identifies a standard Intergraph Sigma
 /// `igLine2d` record on disk.
 ///
@@ -2028,54 +2020,14 @@ const GLINE2D_UNIT_VECTOR_TOLERANCE: f64 = 1e-3;
 /// is treated as garbage (uninitialized memory, out-of-domain).
 const GLINE2D_COORDINATE_DOMAIN_LIMIT: f64 = 1e9;
 
-/// PSM type code that identifies a `GArc2d` `PrimitiveArc` /
-/// `PrimitiveCircle` record.
+/// PSM type code that identifies a RAD `JStyleOverride` record.
 ///
-/// Empirically validated against three Sheet-bearing fixtures
-/// (`DWG-0201GP06-01.pid`, `DWG-0202GP06-01.pid`,
-/// `工艺管道及仪表流程-1.pid`): every record whose 18-byte PSM
-/// header is followed by 64 bytes matching the `GArc2d` validation
-/// rules (8 finite doubles + non-trivial `axis1` + ordered param
-/// range) carries `type_code == 0x0030` (= decimal 48). The
-/// authoritative `type → GUID` lookup table lives in `SmartPlant`'s
-/// `guidtab.h` (named explicitly in `PSMSerializeIn`'s error
-/// message `"... OID=%d nType= %d in guidtab.h"`).
-pub const PSM_TYPE_CODE_GARC2D: u16 = 0x0030;
-
-/// Minimum acceptable magnitude for the `axis1` vector of a
-/// decoded `GArc2d`. The IDA-decoded `GArc2d::Validate` checks the
-/// inner `sub_56524280` predicate for degenerate axes; in practice
-/// `SmartPlant` writes axis magnitudes from `~0.05` (small symbol
-/// circles) up to `~1.0` (page-spanning arcs). Anything smaller is
-/// either uninitialised memory or a degenerate record we should
-/// reject.
-const GARC2D_AXIS1_MIN_MAGNITUDE: f64 = 1e-6;
-
-/// Maximum acceptable magnitude for either axis of a decoded
-/// `GArc2d`. Real fixtures stay well under `1e3`; values like
-/// `131072.0` or `92.99` are byte-coincident noise pretending to
-/// be an arc.
-const GARC2D_AXIS_MAX_MAGNITUDE: f64 = 1e3;
-
-/// Tolerance for `axis_ratio` upper bound. `axis_ratio` represents
-/// `axis_b / |axis_a|` and is mathematically in `[0, 1]`, but the
-/// `radsrvitem.dll!sub_56539060` (`IMElIsCir2d`) circle test uses
-/// a tolerance of `~1e-6`, so we allow up to `1.0 + 1e-6` for
-/// rounding-error robustness.
-const GARC2D_AXIS_RATIO_TOLERANCE: f64 = 1e-6;
-
-/// Tolerance enforcing the `GEllipse2d` "major-axis along X"
-/// constraint (`radsrvitem.dll!sub_56524280` error string
-/// `"GEllipse2d: majorAxis is not along x axis"`). For a canonical
-/// `GArc2d` record `axis_a.y` should be ≈ 0; records with
-/// `|axis_a.y| > 1e-6` are rejected as likely false positives
-/// (e.g. records of a different PSM type that happen to share the
-/// 0x0030 14-bit type code and the first 32 bytes of the `GArc2d`
-/// payload shape but encode `axis_a.y` slot with non-geometric
-/// data — see fixture byte dump in
-/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
-/// section "fixture byte dump 颠覆 `GArc2d` 字段假设").
-const GARC2D_MAJOR_AXIS_ALONG_X_TOLERANCE: f64 = 1e-6;
+/// Phase 16 proved that the earlier Phase 14 `GArc2d` interpretation
+/// of `0x0030` was a historical misidentification. The authoritative
+/// implementation is RAD `style.dll` `JStyleOverride` (CLSID
+/// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`), documented in
+/// `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`.
+pub const PSM_TYPE_CODE_JSTYLE_OVERRIDE: u16 = 0x0030;
 
 /// One decoded PSM `GLine2d` `PrimitiveLine` record.
 ///
@@ -2182,244 +2134,6 @@ pub fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
         off += 1;
     }
     out
-}
-
-/// One decoded PSM `GArc2d` `PrimitiveArc` (or `PrimitiveCircle`,
-/// when `axis_ratio` ≈ 1.0) record.
-///
-/// `radsrvitem.dll!GArc2d::Validate` (`sub_56524150`) + its 4
-/// internal helpers (`sub_56524280` / `sub_5658F950` /
-/// `sub_56539060` / `sub_564E0D90` / `sub_56537290`) decompilation
-/// collectively confirm the 64-byte payload layout:
-///
-/// ```text
-///  0..7    f64    center.x
-///  8..15   f64    center.y
-/// 16..23   f64    axis_a.x          (primary axis vector x)
-/// 24..31   f64    axis_a.y          (primary axis vector y)
-/// 32..39   f64    axis_ratio        (axis_b / |axis_a|, = 1 → circle)
-/// 40       u8     sweep_direction   (0 = CW, 1 = CCW)
-/// 41..47   pad    7 bytes           (alignment)
-/// 48..55   f64    sweep_start_angle (radians)
-/// 56..63   f64    sweep_end_angle   (radians)
-/// ```
-///
-/// Producing
-/// [`crate::geometry::PidGeometryConfidence::Decoded`] is the
-/// responsibility of `geometry.rs`; this module only decodes bytes.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SheetPrimitiveArcDecoded {
-    /// Byte range covering the full PSM record (header + payload +
-    /// any trailing attribute bytes captured by `bytes_to_follow`).
-    pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_GARC2D`]
-    /// (`0x0030` = decimal 48) for records this decoder emits.
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word (record-level flags).
-    pub type_flags: u16,
-    /// `bytes_to_follow` field from the PSM header.
-    pub bytes_to_follow: u32,
-    /// `oid` field from the PSM header (`SmartPlant`'s object
-    /// identifier for this geometry).
-    pub oid: u32,
-    /// Arc center `(x, y)`.
-    pub center: (f64, f64),
-    /// Primary axis vector `(x, y)`. Length (`|axis_a|`) encodes
-    /// the semi-major axis of the ellipse (or the radius for a
-    /// circular arc); direction (`atan2(y, x)`) encodes the
-    /// orientation.
-    pub axis_a: (f64, f64),
-    /// Ratio of the secondary axis to the primary axis
-    /// (`axis_b / axis_a_magnitude`). `~1.0` means the arc is
-    /// circular; `< 1.0` means the arc is elliptical with
-    /// `axis_b = axis_ratio * axis_a_magnitude`.
-    pub axis_ratio: f64,
-    /// Sweep direction flag at byte offset 40 in the payload:
-    /// `0` = clockwise (CW), `1` = counter-clockwise (CCW).
-    /// Extracted from the raw byte; the remaining 7 bytes of the
-    /// 8-byte slot are padding and discarded.
-    pub sweep_direction: u8,
-    /// Sweep start angle in radians.
-    pub sweep_start_angle: f64,
-    /// Sweep end angle in radians.
-    pub sweep_end_angle: f64,
-}
-
-impl SheetPrimitiveArcDecoded {
-    /// Length of the primary axis (`= |axis_a|`). Equals the
-    /// **radius** for a circular arc, the **semi-major axis** for
-    /// an elliptical arc.
-    pub fn axis_a_magnitude(&self) -> f64 {
-        (self.axis_a.0 * self.axis_a.0 + self.axis_a.1 * self.axis_a.1).sqrt()
-    }
-
-    /// Semi-minor axis length = `axis_ratio * |axis_a|`. Equals
-    /// `|axis_a|` for a circle, `< |axis_a|` for an ellipse.
-    pub fn semi_minor_axis(&self) -> f64 {
-        self.axis_a_magnitude() * self.axis_ratio
-    }
-
-    /// `true` when `|axis_ratio - 1.0| < 1e-6`, i.e. the arc is
-    /// circular (not elliptical). This is the
-    /// `radsrvitem.dll!sub_56539060` (`IMElIsCir2d`) criterion.
-    pub fn is_circular(&self) -> bool {
-        (self.axis_ratio - 1.0).abs() < 1e-6
-    }
-}
-
-/// Decode every PSM-encoded `GArc2d` `PrimitiveArc` /
-/// `PrimitiveCircle` record in a `Sheet*` stream's bytes.
-///
-/// Walk every byte offset; at each offset, check whether an
-/// 18-byte PSM header followed by 64 bytes of `GArc2d` payload
-/// satisfies all of:
-///
-/// 1. PSM type code (header bytes 0..2 LE, masked to 14 bits) ==
-///    [`PSM_TYPE_CODE_GARC2D`];
-/// 2. `bytes_to_follow` (header bytes 2..6 LE) is `>=` 64 and fits
-///    within the remaining stream;
-/// 3. All seven payload `f64`s (`center.xy` + `axis_a.xy` +
-///    `axis_ratio` + `sweep_start_angle` + `sweep_end_angle`) are
-///    finite, with `|x| <= GLINE2D_COORDINATE_DOMAIN_LIMIT`;
-/// 4. `|axis_a|` is in `[GARC2D_AXIS1_MIN_MAGNITUDE,
-///    GARC2D_AXIS_MAX_MAGNITUDE]` (rejects zero/uninit and obvious
-///    noise);
-/// 5. `axis_a.y` is ≈ 0 (within
-///    `GARC2D_MAJOR_AXIS_ALONG_X_TOLERANCE`), enforcing the
-///    `radsrvitem.dll!sub_56524280` `GEllipse2d` "major-axis along X"
-///    constraint. Records that fail are likely PSM-type-collisions
-///    sharing the 0x0030 14-bit type but encoding `axis_a.y` slot
-///    with non-geometric data.
-/// 6. `axis_ratio` is in `[0, 1 + GARC2D_AXIS_RATIO_TOLERANCE]`
-///    (ellipse arcs have `axis_b / |axis_a|` ≤ 1; some rounding
-///    error tolerated);
-/// 7. `sweep_direction` ≤ 1 (only `0` = CW and `1` = CCW are valid);
-/// 8. `sweep_start_angle < sweep_end_angle` strictly.
-///
-/// The decoder is **conservative** and panic-free: adversarial
-/// bytes either fail validation and are skipped, or never decode
-/// at all.
-pub fn decode_primitive_arcs(data: &[u8]) -> Vec<SheetPrimitiveArcDecoded> {
-    let mut out = Vec::new();
-    if data.len() < PSM_RECORD_HEADER_LEN + GARC2D_PAYLOAD_LEN {
-        return out;
-    }
-    let max_offset = data.len() - (PSM_RECORD_HEADER_LEN + GARC2D_PAYLOAD_LEN);
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_primitive_arc_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
-}
-
-/// Try to decode a single PSM `GArc2d` record starting at `offset`
-/// in `data`. Returns `None` when any of the validation rules in
-/// [`decode_primitive_arcs`] fail. Bounds-checked: passing
-/// `offset >= data.len()` or a truncated tail returns `None`.
-pub fn decode_primitive_arc_at(data: &[u8], offset: usize) -> Option<SheetPrimitiveArcDecoded> {
-    let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
-    let payload_end = header_end.checked_add(GARC2D_PAYLOAD_LEN)?;
-    if payload_end > data.len() {
-        return None;
-    }
-
-    let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_GARC2D {
-        return None;
-    }
-    let type_flags = type_word >> 14;
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    let bytes_to_follow_usize = bytes_to_follow as usize;
-    if bytes_to_follow_usize < GARC2D_PAYLOAD_LEN {
-        return None;
-    }
-    let record_end = offset.checked_add(6 + bytes_to_follow_usize)?;
-    if record_end > data.len() {
-        return None;
-    }
-    let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
-
-    // GArc2d payload (corrected per radsrvitem.dll Validate +
-    // helpers decompile):
-    //   bytes 0..7   center.x
-    //   bytes 8..15  center.y
-    //   bytes 16..23 axis_a.x
-    //   bytes 24..31 axis_a.y
-    //   bytes 32..39 axis_ratio
-    //   byte 40      sweep_direction (u8)
-    //   bytes 41..47 padding (discarded)
-    //   bytes 48..55 sweep_start_angle
-    //   bytes 56..63 sweep_end_angle
-    let payload = data.get(header_end..payload_end)?;
-    let mut doubles = [0f64; 7];
-    let offsets = [0usize, 8, 16, 24, 32, 48, 56];
-    for (i, slot) in doubles.iter_mut().enumerate() {
-        let pos = offsets[i];
-        let chunk = payload.get(pos..pos + 8)?;
-        *slot = f64::from_le_bytes([
-            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-        ]);
-    }
-    let sweep_direction: u8 = *payload.get(40)?;
-
-    if !doubles.iter().all(|x| x.is_finite()) {
-        return None;
-    }
-    if doubles
-        .iter()
-        .any(|x| x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
-    {
-        return None;
-    }
-
-    let center = (doubles[0], doubles[1]);
-    let axis_a = (doubles[2], doubles[3]);
-    let axis_ratio = doubles[4];
-    let sweep_start_angle = doubles[5];
-    let sweep_end_angle = doubles[6];
-
-    let axis_a_mag = (axis_a.0 * axis_a.0 + axis_a.1 * axis_a.1).sqrt();
-    if !(GARC2D_AXIS1_MIN_MAGNITUDE..=GARC2D_AXIS_MAX_MAGNITUDE).contains(&axis_a_mag) {
-        return None;
-    }
-    // GEllipse2d's "majorAxis along x" constraint (radsrvitem.dll!sub_56524280):
-    // axis_a should point along the X axis (axis_a.y ≈ 0).
-    // Records that fail this check are rejected as likely false
-    // positives.
-    if axis_a.1.abs() > GARC2D_MAJOR_AXIS_ALONG_X_TOLERANCE {
-        return None;
-    }
-    if !(0.0..=1.0 + GARC2D_AXIS_RATIO_TOLERANCE).contains(&axis_ratio) {
-        return None;
-    }
-    if sweep_direction > 1 {
-        return None;
-    }
-    if sweep_start_angle >= sweep_end_angle {
-        return None;
-    }
-
-    Some(SheetPrimitiveArcDecoded {
-        byte_range: offset..record_end,
-        type_code,
-        type_flags,
-        bytes_to_follow,
-        oid,
-        center,
-        axis_a,
-        axis_ratio,
-        sweep_direction,
-        sweep_start_angle,
-        sweep_end_angle,
-    })
 }
 
 /// Try to decode a single PSM `GLine2d` `PrimitiveLine` starting at
@@ -3548,13 +3262,9 @@ pub fn decode_graphic_group_at(data: &[u8], offset: usize) -> Option<SheetGraphi
 // disk +62..63 u16 (host byte+146)
 // ```
 //
-// The decoder is **strictly additive**: it does *not* replace the
-// Phase 14 `decode_primitive_arcs` (`SheetPrimitiveArcDecoded`) family
-// in this slice. The two decoders coexist so the existing Phase 14
-// cross-fixture baseline is preserved while the new decoder is
-// validated. A follow-up phase (Phase 17) will deprecate the misnamed
-// Phase 14 decoder once the JStyleOverride pipeline reaches feature
-// parity with downstream consumers.
+// Phase 17 removed the historical Phase 14 `PrimitiveArc` compatibility
+// decoder. PSM type `0x0030` is now represented solely by this
+// `JStyleOverride` decoder on the parser surface.
 
 /// Inner PSM payload length emitted by `JStyleOverride`
 /// `IJPersistImp::Save` Version-3 path (`style.dll!sub_1000F030`).
@@ -3681,10 +3391,10 @@ pub fn decode_jstyle_overrides(data: &[u8]) -> Vec<SheetJStyleOverrideDecoded> {
 /// 4. All four payload f64 fields are finite and within
 ///    `|x| <= JSTYLE_OVERRIDE_FIELD_DOMAIN_LIMIT`.
 ///
-/// Unlike the misnamed Phase 14 `decode_primitive_arcs`, this decoder
-/// does **not** apply the spurious `axis_a.y ≈ 0` constraint (which
-/// caused ~51 % false-negatives by rejecting `rotation_angle != 0`
-/// records).
+/// This authoritative decoder does **not** apply the historical
+/// `axis_a.y ≈ 0` constraint from the removed Phase 14 `PrimitiveArc`
+/// compatibility path, which rejected ~51% of real `JStyleOverride`
+/// records.
 pub fn decode_jstyle_override_at(data: &[u8], offset: usize) -> Option<SheetJStyleOverrideDecoded> {
     let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
     if header_end > data.len() {
@@ -3693,7 +3403,7 @@ pub fn decode_jstyle_override_at(data: &[u8], offset: usize) -> Option<SheetJSty
     let header = data.get(offset..header_end)?;
     let type_word = u16::from_le_bytes([header[0], header[1]]);
     let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_GARC2D {
+    if type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
         return None;
     }
     let type_flags = type_word >> 14;
@@ -4361,194 +4071,6 @@ mod tests {
         assert_eq!(decoded[1].oid, 8);
         // The two records must have non-overlapping byte ranges.
         assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
-    }
-
-    // -----------------------------------------------------------------
-    // Phase 14 Slice F: PSM GArc2d decoder tests
-    // -----------------------------------------------------------------
-
-    /// Build a single synthetic PSM `GArc2d` record per the
-    /// corrected payload layout (`center` + `axis_a` + `axis_ratio`
-    /// + `sweep_direction` byte + 7B padding + sweep angles).
-    fn build_synthetic_garc2d_record(
-        oid: u32,
-        center: (f64, f64),
-        axis_a: (f64, f64),
-        axis_ratio: f64,
-        sweep_direction: u8,
-        sweep_start_angle: f64,
-        sweep_end_angle: f64,
-    ) -> Vec<u8> {
-        let mut out = Vec::with_capacity(PSM_RECORD_HEADER_LEN + GARC2D_PAYLOAD_LEN);
-        let type_word: u16 = PSM_TYPE_CODE_GARC2D;
-        out.extend_from_slice(&type_word.to_le_bytes());
-        out.extend_from_slice(&(GARC2D_PAYLOAD_LEN as u32).to_le_bytes());
-        out.extend_from_slice(&oid.to_le_bytes());
-        out.extend_from_slice(&[0u8; 8]);
-        out.extend_from_slice(&center.0.to_le_bytes());
-        out.extend_from_slice(&center.1.to_le_bytes());
-        out.extend_from_slice(&axis_a.0.to_le_bytes());
-        out.extend_from_slice(&axis_a.1.to_le_bytes());
-        out.extend_from_slice(&axis_ratio.to_le_bytes());
-        out.push(sweep_direction);
-        out.extend_from_slice(&[0u8; 7]);
-        out.extend_from_slice(&sweep_start_angle.to_le_bytes());
-        out.extend_from_slice(&sweep_end_angle.to_le_bytes());
-        out
-    }
-
-    #[test]
-    fn primitive_arc_decodes_canonical_circle_record() {
-        let record = build_synthetic_garc2d_record(
-            99,
-            (0.25, 0.5),
-            (0.1, 0.0),
-            1.0,
-            1,
-            0.0,
-            std::f64::consts::TAU,
-        );
-        let decoded = decode_primitive_arcs(&record);
-        assert_eq!(decoded.len(), 1);
-        let arc = &decoded[0];
-        assert_eq!(arc.type_code, PSM_TYPE_CODE_GARC2D);
-        assert_eq!(arc.oid, 99);
-        assert_eq!(arc.bytes_to_follow, 64);
-        assert_eq!(arc.center, (0.25, 0.5));
-        assert!((arc.axis_a.0 - 0.1).abs() < 1e-12 && arc.axis_a.1.abs() < 1e-12);
-        assert!((arc.axis_ratio - 1.0).abs() < 1e-12);
-        assert_eq!(arc.sweep_direction, 1);
-        assert_eq!(arc.sweep_start_angle, 0.0);
-        assert!((arc.sweep_end_angle - std::f64::consts::TAU).abs() < 1e-12);
-        assert!((arc.axis_a_magnitude() - 0.1).abs() < 1e-12);
-        assert!((arc.semi_minor_axis() - 0.1).abs() < 1e-12);
-        assert!(arc.is_circular());
-        assert_eq!(arc.byte_range.start, 0);
-        assert_eq!(arc.byte_range.end, 6 + 64);
-    }
-
-    #[test]
-    fn primitive_arc_decodes_canonical_ellipse_record() {
-        let record = build_synthetic_garc2d_record(100, (0.5, 0.5), (0.2, 0.0), 0.5, 0, 0.0, 0.5);
-        let decoded = decode_primitive_arcs(&record);
-        assert_eq!(decoded.len(), 1);
-        let arc = &decoded[0];
-        assert!(!arc.is_circular());
-        assert!((arc.axis_a_magnitude() - 0.2).abs() < 1e-12);
-        assert!((arc.semi_minor_axis() - 0.1).abs() < 1e-12);
-        assert_eq!(arc.sweep_direction, 0);
-    }
-
-    #[test]
-    fn primitive_arc_rejects_wrong_type_code() {
-        let mut record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 1, 0.0, 1.0);
-        record[0] = 0xE6;
-        record[1] = 0x3F;
-        assert!(decode_primitive_arcs(&record).is_empty());
-    }
-
-    #[test]
-    fn primitive_arc_rejects_zero_axis_a() {
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.0, 0.0), 1.0, 1, 0.0, 1.0);
-        assert!(decode_primitive_arcs(&record).is_empty());
-    }
-
-    #[test]
-    fn primitive_arc_rejects_oversize_axis_or_invalid_ratio() {
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (1e6, 0.0), 1.0, 1, 0.0, 1.0);
-        assert!(decode_primitive_arcs(&record).is_empty());
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 2.0, 1, 0.0, 1.0);
-        assert!(decode_primitive_arcs(&record).is_empty());
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), -0.5, 1, 0.0, 1.0);
-        assert!(decode_primitive_arcs(&record).is_empty());
-    }
-
-    #[test]
-    fn primitive_arc_rejects_invalid_sweep_direction() {
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 2, 0.0, 1.0);
-        assert!(decode_primitive_arcs(&record).is_empty());
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 0xFF, 0.0, 1.0);
-        assert!(decode_primitive_arcs(&record).is_empty());
-    }
-
-    #[test]
-    fn primitive_arc_rejects_reversed_sweep_range() {
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 1, 1.0, 0.5);
-        assert!(decode_primitive_arcs(&record).is_empty());
-    }
-
-    #[test]
-    fn primitive_arc_rejects_nan_payload() {
-        let mut record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 1, 0.0, 1.0);
-        let nan_bytes = f64::NAN.to_le_bytes();
-        let center_off = PSM_RECORD_HEADER_LEN;
-        record[center_off..center_off + 8].copy_from_slice(&nan_bytes);
-        assert!(decode_primitive_arcs(&record).is_empty());
-    }
-
-    #[test]
-    fn primitive_arc_decoder_is_panic_safe_on_short_input() {
-        let record = build_synthetic_garc2d_record(1, (0.0, 0.0), (0.1, 0.0), 1.0, 1, 0.0, 1.0);
-        for trunc_len in 0..record.len() {
-            assert!(
-                decode_primitive_arcs(&record[..trunc_len]).is_empty(),
-                "truncated arc input of length {trunc_len} must not decode"
-            );
-        }
-        assert!(decode_primitive_arcs(&[]).is_empty());
-    }
-
-    #[test]
-    fn primitive_arc_decoder_is_panic_safe_on_random_noise() {
-        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
-        let _ = decode_primitive_arcs(&noise);
-        assert!(decode_primitive_arcs(&vec![0u8; 4096]).is_empty());
-        assert!(decode_primitive_arcs(&vec![0xFFu8; 4096]).is_empty());
-    }
-
-    #[test]
-    fn primitive_arc_decodes_two_back_to_back_records() {
-        let mut data = build_synthetic_garc2d_record(7, (0.1, 0.1), (0.2, 0.0), 1.0, 1, 0.0, 0.5);
-        data.extend(build_synthetic_garc2d_record(
-            8,
-            (0.3, 0.3),
-            (0.15, 0.0),
-            0.5,
-            0,
-            0.0,
-            0.8,
-        ));
-        let decoded = decode_primitive_arcs(&data);
-        assert_eq!(decoded.len(), 2);
-        assert_eq!(decoded[0].oid, 7);
-        assert_eq!(decoded[1].oid, 8);
-        assert!(decoded[0].is_circular());
-        assert!(!decoded[1].is_circular());
-        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
-    }
-
-    #[test]
-    fn primitive_arc_byte_range_covers_attribute_tail() {
-        let mut record = Vec::new();
-        record.extend_from_slice(&PSM_TYPE_CODE_GARC2D.to_le_bytes());
-        record.extend_from_slice(&(64u32 + 100).to_le_bytes());
-        record.extend_from_slice(&55u32.to_le_bytes());
-        record.extend_from_slice(&[0u8; 8]);
-        // Manually emit 64-byte payload matching new corrected layout.
-        for v in [0.5f64, 0.5, 0.2, 0.0, 1.0] {
-            record.extend_from_slice(&v.to_le_bytes());
-        }
-        record.push(1);
-        record.extend_from_slice(&[0u8; 7]);
-        for v in [0.0f64, 1.0] {
-            record.extend_from_slice(&v.to_le_bytes());
-        }
-        record.extend_from_slice(&[0xAB; 100]);
-
-        let decoded = decode_primitive_arcs(&record);
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].byte_range.end, 6 + 164);
-        assert_eq!(decoded[0].bytes_to_follow, 164);
     }
 
     // -----------------------------------------------------------------

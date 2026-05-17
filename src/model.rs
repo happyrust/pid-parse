@@ -852,18 +852,6 @@ pub struct SheetGeometry {
     /// converts these records on-demand.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_primitive_lines: Vec<DecodedPrimitiveLineRecord>,
-    /// PSM-decoded `GArc2d` primitive arc / circle records emitted
-    /// by
-    /// [`crate::parsers::sheet_records::decode_primitive_arcs`]
-    /// for this sheet's raw stream bytes. Each entry is a stable
-    /// model-shaped projection of the parser-level
-    /// `SheetPrimitiveArcDecoded` DTO with full provenance.
-    /// Conversion to a
-    /// [`crate::geometry::PidGeometryConfidence::Decoded`]
-    /// `PidGraphicKind::Arc` entity is the responsibility of
-    /// [`crate::geometry::build_normalized_geometry`].
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub decoded_primitive_arcs: Vec<DecodedPrimitiveArcRecord>,
     /// PSM-decoded `igLine2d` records (PSM type `0x0018`, IGDS
     /// class tag `0x18`) — Intergraph Sigma's standard 2D line
     /// primitive, emitted by
@@ -915,9 +903,9 @@ pub struct SheetGeometry {
     /// PSM-decoded `JStyleOverride` records (PSM type `0x0030`,
     /// RAD `style.dll` CLSID `{47FCC338-...}`) emitted by
     /// [`crate::parsers::sheet_records::decode_jstyle_overrides`].
-    /// Phase 16 Slice D additive collection — coexists with the
-    /// misnamed Phase 14 `decoded_primitive_arcs` until downstream
-    /// consumers migrate. See
+    /// Authoritative PSM `0x0030` collection. Phase 17 removed the
+    /// historical Phase 14 `PrimitiveArc` compatibility field; new
+    /// consumers should use this field for `0x0030` records. See
     /// `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md`.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_jstyle_overrides: Vec<DecodedJStyleOverrideRecord>,
@@ -1001,94 +989,6 @@ impl DecodedPrimitiveLineRecord {
             self.origin_x + self.param_end * self.direction_x,
             self.origin_y + self.param_end * self.direction_y,
         )
-    }
-}
-
-/// Stable, model-shaped DTO that mirrors
-/// [`crate::parsers::sheet_records::SheetPrimitiveArcDecoded`].
-///
-/// Mirrors the parser-level DTO's 12 fields (header + 8 doubles)
-/// with explicit `byte_start` / `byte_end` instead of
-/// [`std::ops::Range<usize>`] for `JsonSchema` friendliness.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct DecodedPrimitiveArcRecord {
-    /// Inclusive byte-range start covering the full PSM record.
-    pub byte_start: usize,
-    /// Exclusive byte-range end.
-    pub byte_end: usize,
-    /// PSM 14-bit type code. Always `0x0030` (the `GArc2d` PSM
-    /// type code) for records this decoder emits.
-    pub type_code: u16,
-    /// Top 2 bits of the PSM type word (record-level flags).
-    pub type_flags: u16,
-    /// `bytes_to_follow` field from the PSM header.
-    pub bytes_to_follow: u32,
-    /// `oid` field from the PSM header.
-    pub oid: u32,
-    /// Arc center `x`.
-    pub center_x: f64,
-    /// Arc center `y`.
-    pub center_y: f64,
-    /// Primary axis vector `x`. `|axis_a|` is the semi-major axis
-    /// length (the **radius** for a circular arc); direction
-    /// (`atan2(y, x)`) is the orientation.
-    pub axis_a_x: f64,
-    /// Primary axis vector `y`.
-    pub axis_a_y: f64,
-    /// Ratio `axis_b / |axis_a|` ∈ `[0, 1]`. `~1.0` means
-    /// **circular** (`radsrvitem.dll!IMElIsCir2d` criterion);
-    /// `< 1` means elliptical with `axis_b = axis_ratio * |axis_a|`.
-    pub axis_ratio: f64,
-    /// Sweep direction flag at byte offset 40 of the payload:
-    /// `0` = clockwise (CW), `1` = counter-clockwise (CCW).
-    pub sweep_direction: u8,
-    /// Sweep start angle in radians.
-    pub sweep_start_angle: f64,
-    /// Sweep end angle in radians. Guaranteed
-    /// `> sweep_start_angle` at decode time.
-    pub sweep_end_angle: f64,
-}
-
-impl From<crate::parsers::sheet_records::SheetPrimitiveArcDecoded> for DecodedPrimitiveArcRecord {
-    fn from(d: crate::parsers::sheet_records::SheetPrimitiveArcDecoded) -> Self {
-        Self {
-            byte_start: d.byte_range.start,
-            byte_end: d.byte_range.end,
-            type_code: d.type_code,
-            type_flags: d.type_flags,
-            bytes_to_follow: d.bytes_to_follow,
-            oid: d.oid,
-            center_x: d.center.0,
-            center_y: d.center.1,
-            axis_a_x: d.axis_a.0,
-            axis_a_y: d.axis_a.1,
-            axis_ratio: d.axis_ratio,
-            sweep_direction: d.sweep_direction,
-            sweep_start_angle: d.sweep_start_angle,
-            sweep_end_angle: d.sweep_end_angle,
-        }
-    }
-}
-
-impl DecodedPrimitiveArcRecord {
-    /// Length of the primary axis (`= |axis_a|`). For a circular
-    /// arc this is the **radius**; for an ellipse, the
-    /// **semi-major axis** length.
-    pub fn axis_a_magnitude(&self) -> f64 {
-        (self.axis_a_x * self.axis_a_x + self.axis_a_y * self.axis_a_y).sqrt()
-    }
-
-    /// Semi-minor axis length = `axis_ratio * |axis_a|`. Equals
-    /// the primary axis magnitude for a circle.
-    pub fn semi_minor_axis(&self) -> f64 {
-        self.axis_a_magnitude() * self.axis_ratio
-    }
-
-    /// `true` when `|axis_ratio - 1.0| < 1e-6`, i.e. the arc is
-    /// circular (not elliptical). Mirrors the
-    /// `radsrvitem.dll!sub_56539060` (`IMElIsCir2d`) criterion.
-    pub fn is_circular(&self) -> bool {
-        (self.axis_ratio - 1.0).abs() < 1e-6
     }
 }
 
@@ -1453,9 +1353,8 @@ impl From<crate::parsers::sheet_records::SheetGraphicGroupDecoded> for DecodedGr
 /// PSM type `0x0030` (RAD `JStyleOverride` class, `style.dll` CLSID
 /// `{47FCC338-2D0F-11D0-A1FF-080036A1CF02}`) Version-3 IO record.
 ///
-/// Phase 16 Slice D additive DTO: replaces the misnamed Phase 14
-/// `DecodedPrimitiveArcRecord` family with field names that match
-/// the authoritative `style.dll!sub_1000F030` IO sequence.
+/// Phase 16 Slice D DTO with field names that match the
+/// authoritative `style.dll!sub_1000F030` IO sequence.
 /// See `docs/analysis/2026-05-16-jstyleoverride-v3-fields.md` for
 /// the byte-level evidence chain.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -2677,8 +2576,6 @@ pub enum SheetRecordKind {
     PrimitivePolyline,
     /// Primitive circle record.
     PrimitiveCircle,
-    /// Primitive circular arc record.
-    PrimitiveArc,
     /// Symbol instance placement record.
     SymbolPlacement,
     /// Text placement/style record.
@@ -2718,6 +2615,8 @@ pub enum SheetDecodedGeometryKind {
     Circle,
     /// [`crate::geometry::PidGraphicKind::Arc`].
     Arc,
+    /// [`crate::geometry::PidGraphicKind::Annotation`].
+    Annotation,
     /// [`crate::geometry::PidGraphicKind::Text`].
     Text,
     /// [`crate::geometry::PidGraphicKind::SymbolInstance`].
@@ -2768,15 +2667,6 @@ fn default_sheet_record_schema_entries() -> Vec<SheetRecordSchemaEntry> {
             false,
         ),
         sheet_record_schema_entry(
-            "primitive_arc",
-            SheetRecordKind::PrimitiveArc,
-            SheetRecordSchemaStatus::Typed,
-            "Decoded Sheet arc primitive with center, radius, and radian angle semantics.",
-            &["center", "radius", "start_angle", "end_angle"],
-            &[SheetDecodedGeometryKind::Arc],
-            false,
-        ),
-        sheet_record_schema_entry(
             "symbol_placement",
             SheetRecordKind::SymbolPlacement,
             SheetRecordSchemaStatus::Typed,
@@ -2792,6 +2682,15 @@ fn default_sheet_record_schema_entries() -> Vec<SheetRecordSchemaEntry> {
             "Decoded text placement and style with value, insertion, height, rotation, and font contract.",
             &["value", "insertion", "height", "rotation", "font"],
             &[SheetDecodedGeometryKind::Text],
+            false,
+        ),
+        sheet_record_schema_entry(
+            "jstyle_override",
+            SheetRecordKind::JStyleOverride,
+            SheetRecordSchemaStatus::Typed,
+            "Decoded RAD JStyleOverride annotation placement record for PSM type 0x0030.",
+            &["anchor", "rotation_angle", "secondary_radius", "raw_attribute_tail"],
+            &[SheetDecodedGeometryKind::Annotation],
             false,
         ),
         sheet_record_schema_entry(

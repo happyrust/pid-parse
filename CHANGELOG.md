@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Phase 17: remove legacy `PrimitiveArc` / `decode_primitive_arcs` surface
+
+Phase 16 proved PSM type `0x0030` is RAD `JStyleOverride`, not IGDS
+`GArc2d`. Phase 17 removes the historical Phase 14 compatibility path
+instead of keeping a misleading decoded `Arc` projection.
+
+Breaking migration:
+
+- Removed parser API `decode_primitive_arcs` / `decode_primitive_arc_at`
+  and parser DTO `SheetPrimitiveArcDecoded`.
+- Removed model DTO `DecodedPrimitiveArcRecord` and
+  `SheetGeometry::decoded_primitive_arcs`.
+- Removed `SheetRecordKind::PrimitiveArc` and the default
+  `primitive_arc` schema contract entry.
+- Stopped `geometry.rs` from emitting `PidGraphicKind::Arc` entities for
+  PSM `0x0030`.
+- Kept the generic `PidGraphicKind::Arc` enum variant for future true arc
+  sources; it no longer maps to a decoded Sheet record kind by default.
+- Added `SheetDecodedGeometryKind::Annotation` and a default
+  `jstyle_override` schema contract entry for the authoritative Phase 16
+  `DecodedJStyleOverrideRecord` path.
+- Updated `pid_inspect --geometry-summary` to drop the misleading
+  "Arcs (GArc2d)" line and report "Annotations (JStyleOverride, PSM
+  0x0030)" instead, keeping the per-kind decoded counters aligned with
+  the actual decoded sources.
+
+Consumer migration: read `SheetGeometry::decoded_jstyle_overrides` and
+normalized `PidGraphicKind::Annotation` for PSM `0x0030` records. Do not
+use the old `decoded_primitive_arcs` JSON field; it represented a
+historical misidentification.
+
 ### Phase 16: PSM 0x0030 = `JStyleOverride` 反向工程 + `decode_jstyle_overrides` + `PidGraphicKind::Annotation`
 
 **重大发现**: PSM type code `0x0030` 真实身份**不是 IGDS `GArc2d`**, 而是

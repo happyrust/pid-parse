@@ -705,7 +705,6 @@ mod tests {
                 }],
                 object_geometry_hints: vec![],
                 decoded_primitive_lines: vec![],
-                decoded_primitive_arcs: vec![],
                 decoded_iglines: vec![],
                 decoded_iglinestrings: vec![],
                 decoded_igpoints: vec![],

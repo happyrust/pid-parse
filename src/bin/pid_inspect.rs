@@ -768,11 +768,11 @@ fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
     use pid_parse::{PidGeometryConfidence, PidGraphicKind};
 
     let mut decoded_lines = 0usize;
-    let mut decoded_arcs = 0usize;
     let mut decoded_polylines = 0usize;
     let mut decoded_points = 0usize;
     let mut decoded_texts = 0usize;
     let mut decoded_symbols = 0usize;
+    let mut decoded_annotations = 0usize;
     let mut inferred_lines = 0usize;
     let mut inferred_points = 0usize;
     let mut probe_only_unknown = 0usize;
@@ -785,9 +785,6 @@ fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
         match (&entity.confidence, &entity.kind) {
             (PidGeometryConfidence::Decoded, PidGraphicKind::Line { .. }) => {
                 decoded_lines += 1;
-            }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Arc { .. }) => {
-                decoded_arcs += 1;
             }
             (PidGeometryConfidence::Decoded, PidGraphicKind::Polyline { .. }) => {
                 decoded_polylines += 1;
@@ -809,6 +806,9 @@ fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
                     }
                 }
             }
+            (PidGeometryConfidence::Decoded, PidGraphicKind::Annotation { .. }) => {
+                decoded_annotations += 1;
+            }
             (PidGeometryConfidence::Inferred, PidGraphicKind::Line { .. }) => {
                 inferred_lines += 1;
             }
@@ -828,21 +828,21 @@ fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
     println!("=== Sheet stream geometry summary ===");
     println!("Total entities: {total}");
     println!();
-    println!("Decoded (PSM record decoders, Phase 14):");
+    println!("Decoded (PSM record decoders, Phase 14 / 16):");
     println!("  Lines (GLine2d / igLine2d):              {decoded_lines}");
-    println!("  Arcs (GArc2d):                            {decoded_arcs}");
     println!("  Polylines (igLineString2d):               {decoded_polylines}");
     println!("  Points (igPoint2d):                       {decoded_points}");
     println!("  Texts (igTextBox, UTF-16LE):              {decoded_texts}");
     println!("  SymbolInstances (igSymbol2d):             {decoded_symbols}");
+    println!("  Annotations (JStyleOverride, PSM 0x0030): {decoded_annotations}");
     println!(
         "  Total decoded:                            {}",
         decoded_lines
-            + decoded_arcs
             + decoded_polylines
             + decoded_points
             + decoded_texts
             + decoded_symbols
+            + decoded_annotations
     );
     println!();
     println!("Inferred (probe-derived):");

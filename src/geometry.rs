@@ -273,7 +273,7 @@ impl PidGraphicKind {
         match self {
             Self::Line { .. } => Some(SheetRecordKind::PrimitiveLine),
             Self::Polyline { .. } => Some(SheetRecordKind::PrimitivePolyline),
-            Self::Arc { .. } => Some(SheetRecordKind::PrimitiveArc),
+            Self::Arc { .. } => None,
             Self::Circle { .. } => Some(SheetRecordKind::PrimitiveCircle),
             Self::Text { .. } => Some(SheetRecordKind::TextPlacementStyle),
             Self::SymbolInstance { .. } => Some(SheetRecordKind::SymbolPlacement),
@@ -993,70 +993,6 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     confidence: PidGeometryConfidence::Decoded,
                 });
             }
-            for (index, record) in geometry.decoded_primitive_arcs.iter().enumerate() {
-                let Some(byte_range) = source_range(
-                    record.byte_start,
-                    record.byte_end.saturating_sub(record.byte_start),
-                    sheet.size,
-                ) else {
-                    continue;
-                };
-                // Slice G first-pass mapping from the parametric
-                // `GArc2d` form to `PidGraphicKind::Arc`: use
-                // `|axis_a|` as radius (exact for circular arcs,
-                // i.e. when `axis_ratio ≈ 1`; for ellipses this is
-                // the semi-major axis length, with the semi-minor
-                // = `axis_ratio * |axis_a|` carried in
-                // `source.note` for downstream renderers).
-                let radius = record.axis_a_magnitude();
-                entities.push(PidGraphicEntity {
-                    id: format!("{}:primitive-arc:{index}", sheet.path),
-                    drawing_id: None,
-                    graphic_oid: Some(record.oid),
-                    kind: PidGraphicKind::Arc {
-                        center: PidPoint {
-                            x: record.center_x,
-                            y: record.center_y,
-                        },
-                        radius,
-                        start_angle: record.sweep_start_angle,
-                        end_angle: record.sweep_end_angle,
-                    },
-                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
-                    source: PidGraphicProvenance {
-                        stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(byte_range),
-                        record_id: Some(format!("primitive-arc:{index}")),
-                        record_kind: Some(SheetRecordKind::PrimitiveArc),
-                        field_x: None,
-                        note: Some(format!(
-                            "PSM GArc2d record decoded from radsrvitem.dll byte layout (\
-                             18-byte header + 7 x f64 + 1 x u8 sweep_direction + 7B padding); \
-                             oid={} type_code=0x{:04X} type_flags=0x{:X} \
-                             bytes_to_follow={} center=({:.4}, {:.4}) \
-                             axis_a=({:.5}, {:.5})|{:.5} axis_ratio={:.6} \
-                             semi_minor={:.5} sweep_direction={} \
-                             sweep_angle=[{:.4}, {:.4}] rad circular={}",
-                            record.oid,
-                            record.type_code,
-                            record.type_flags,
-                            record.bytes_to_follow,
-                            record.center_x,
-                            record.center_y,
-                            record.axis_a_x,
-                            record.axis_a_y,
-                            radius,
-                            record.axis_ratio,
-                            record.semi_minor_axis(),
-                            record.sweep_direction,
-                            record.sweep_start_angle,
-                            record.sweep_end_angle,
-                            record.is_circular(),
-                        )),
-                    },
-                    confidence: PidGeometryConfidence::Decoded,
-                });
-            }
             // Phase 16 Slice F: emit `decoded_jstyle_overrides`
             // (PSM `0x0030` = RAD `JStyleOverride`) as
             // `PidGraphicKind::Annotation`. The IDA Version-3 schema
@@ -1310,7 +1246,6 @@ mod tests {
                 }],
                 object_geometry_hints: Vec::new(),
                 decoded_primitive_lines: Vec::new(),
-                decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -1406,7 +1341,6 @@ mod tests {
                     },
                 ],
                 decoded_primitive_lines: Vec::new(),
-                decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -1540,7 +1474,6 @@ mod tests {
                     ),
                 }],
                 decoded_primitive_lines: Vec::new(),
-                decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -1627,7 +1560,6 @@ mod tests {
                 }],
                 object_geometry_hints: Vec::new(),
                 decoded_primitive_lines: Vec::new(),
-                decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -1685,7 +1617,6 @@ mod tests {
                 }],
                 object_geometry_hints: Vec::new(),
                 decoded_primitive_lines: Vec::new(),
-                decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -1763,7 +1694,6 @@ mod tests {
                 }],
                 object_geometry_hints: Vec::new(),
                 decoded_primitive_lines: Vec::new(),
-                decoded_primitive_arcs: Vec::new(),
                 decoded_iglines: Vec::new(),
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
@@ -1872,15 +1802,6 @@ mod tests {
                 SheetRecordKind::PrimitiveCircle,
             ),
             (
-                PidGraphicKind::Arc {
-                    center: PidPoint { x: 2.0, y: 3.0 },
-                    radius: 4.0,
-                    start_angle: 0.0,
-                    end_angle: 1.0,
-                },
-                SheetRecordKind::PrimitiveArc,
-            ),
-            (
                 PidGraphicKind::Text {
                     insertion: PidPoint { x: 5.0, y: 6.0 },
                     value: "TAG".into(),
@@ -1925,6 +1846,18 @@ mod tests {
             assert_eq!(entity.source.record_kind, Some(expected_record_kind));
             assert_ne!(entity.source.record_kind, Some(SheetRecordKind::Unknown));
         }
+
+        assert_eq!(
+            PidGraphicKind::Arc {
+                center: PidPoint { x: 2.0, y: 3.0 },
+                radius: 4.0,
+                start_angle: 0.0,
+                end_angle: 1.0,
+            }
+            .decoded_sheet_record_kind(),
+            None,
+            "Phase 17 removed the only decoded Sheet arc source; generic Arc remains available but has no current SheetRecordKind"
+        );
     }
 
     #[test]

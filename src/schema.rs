@@ -122,21 +122,12 @@ mod tests {
             "SheetText",
             "SheetEndpoint",
             "SheetObjectGeometryHint",
-            // Phase 14 Slice D-H: PSM-decoded primitive DTOs land in
+            // Phase 14 Slice D/E: PSM-decoded primitive DTOs land in
             // the public schema alongside probe-level DTOs so JSON
             // consumers can deserialize the `decoded_primitive_*`
             // fields without manual schema patching.
             "DecodedPrimitiveLineRecord",
-            "DecodedPrimitiveArcRecord",
             "decoded_primitive_lines",
-            "decoded_primitive_arcs",
-            // Phase 14 Slice H: GArc2d corrected field names
-            // (axis_a + axis_ratio + sweep_direction + sweep_*).
-            "axis_a_x",
-            "axis_ratio",
-            "sweep_direction",
-            "sweep_start_angle",
-            "sweep_end_angle",
             // Phase 14 Slice J: igLine2d (PSM 0x0018) DTO.
             "DecodedIgLine2dRecord",
             "decoded_iglines",
@@ -162,6 +153,11 @@ mod tests {
             "decoded_igsymbols",
             "transform_00",
             "insertion_x",
+            // Phase 16/17: PSM 0x0030 authoritative JStyleOverride DTO.
+            "DecodedJStyleOverrideRecord",
+            "decoded_jstyle_overrides",
+            "field_a_u32",
+            "raw_attribute_tail",
         ] {
             assert!(
                 text.contains(needle),
@@ -187,9 +183,9 @@ mod tests {
             "primitive_line",
             "primitive_polyline",
             "primitive_circle",
-            "primitive_arc",
             "symbol_placement",
             "text_placement_style",
+            "jstyle_override",
             "endpoint_pair",
             "coordinate_page_metadata",
             "unknown",
@@ -264,10 +260,13 @@ mod tests {
                 SheetDecodedGeometryKind::Circle,
                 SheetRecordKind::PrimitiveCircle,
             ),
-            (SheetDecodedGeometryKind::Arc, SheetRecordKind::PrimitiveArc),
             (
                 SheetDecodedGeometryKind::Text,
                 SheetRecordKind::TextPlacementStyle,
+            ),
+            (
+                SheetDecodedGeometryKind::Annotation,
+                SheetRecordKind::JStyleOverride,
             ),
             (
                 SheetDecodedGeometryKind::SymbolInstance,
