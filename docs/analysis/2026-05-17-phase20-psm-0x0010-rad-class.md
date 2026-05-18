@@ -224,6 +224,9 @@ Negative evidence:
   returned key-not-found for `1D1928C0-0000-0000-C000-000000000046` and the
   adjacent `style.dll` GUID constants `09D6BBB0-0000-0000-C000-000000000046`
   / `8EC51800-0000-0000-C000-000000000046`.
+- Public web/GUID database searches also did not identify
+  `1D1928C0-0000-0000-C000-000000000046`, the two adjacent GUID constants, or
+  the `JStyleBase` control GUID `19F333B0-4F81-11D0-A223-080036A1CF02`.
 
 Additional IDA evidence:
 
