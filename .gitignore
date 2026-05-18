@@ -5,6 +5,16 @@
 .factory/
 .commit_msg.txt
 
+# Local SuperDesign plugin scratch (HTML/markdown design notes that
+# do not belong in the shared repository).
+.superdesign/
+
+# Vendor / reverse-engineering DLLs and IDA scratch (SmartPlant +
+# Intergraph binaries plus their .id0/.id1/.til/.nam/.i64 IDA database
+# siblings). Proprietary, very large, and reproducible from a local
+# Intergraph install — keep them out of git.
+dlls/
+
 # Plant-proprietary controlled-diff fixtures (see
 # docs/protocols/2026-05-13-controlled-pid-diff-collection.md).
 # Only the .gitkeep / README.md tracking the directory layout
