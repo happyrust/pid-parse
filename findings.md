@@ -255,6 +255,56 @@
 - 方案文件：`docs/plans/2026-05-18-phase24-coordinate-page-metadata-decoder-plan-cn.md`。
 - 核心 gate：如果候选无法解释完整 width/height/origin/scale/bounds 字段组，必须以 negative analysis 收口；不能把 coordinate-like f64 evidence 误升为 page transform。
 
+## Phase 22 micro 关键结论：D06 进入 6 个 Phase 14 cross-fixture decoder tests（2026-05-18, commit bf4f972）
+- D06 已被 Phase 21 (`678af70`) + `5255f25` 加入仓库并由 baseline test
+  `d06_pid_parses_with_expected_structure_and_geometry_summary` 与
+  `d06_text_placement_regression_keeps_text_probes_unpromoted` 锁定；
+  但 D06 在 Phase 14 cross-fixture decoder tests 中未列为 fixture。
+- Phase 22 micro 把 D06 列入 6 个 Phase 14 cross-fixture decoder fixture
+  数组，并按 D06 baseline 锁定的逐 decoder 计数 ratchet 阈值：
+  K +6 (igLineString2d) / L +10 (igPoint2d) / M +4 (igTextBox) /
+  N +2 (igSymbol2d)；E (GLine2d) / J (igLine2d) 阈值不变（D06
+  贡献 0，作为 parse-package / panic-safety guard）。
+- 与其它 cross-fixture decoder 测试一致：每个 fixture 旁加 inline 注释
+  解释 D06 贡献，便于未来 ratchet drift 自我说明。
+- 此 commit 与远端 Phase 23 实现 (`6c554b9`)、Phase 24 plan
+  (`a1f0843`)、Phase 20-22 文档同步 (`0b56818`/`53f04fa`) 互补，
+  pull/push 均 fast-forward 无冲突。
+
+## Phase 24 Task 24-01 关键结论：candidate evidence + negative evidence 收口（2026-05-18, commit 8f3739c）
+- **Cross-fixture stable marker = 0**：probe
+  `examples/probe_phase24_top_evidence.rs` 跨 5 fixture × 7 sheet dump
+  出 **29 top_evidence 行 / 25 distinct marker**；几乎全部
+  `support = 1` 且单 fixture / 单 sheet。唯一跨 2 fixture 的 marker
+  `0x0000 (0)` 在 DWG-0202 是 `NormalizedF64CoordinateLike`、在 D06
+  是 `InsufficientEvidence`，kind 不一致 → 不算 stable cross-fixture
+  evidence。
+- **page_dimension_scalar_matches = 0 cross-fixture**：29 行
+  top_evidence 无一命中 `page_dimension_scalar_matches > 0`；与
+  Phase 23 cross-fixture aggregate
+  (`sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promotion`)
+  输出 `page_dimension_scalar_matches=0` 完全一致 → page dimension
+  scalar source 在当前 5 fixture 中不存在。
+- **Phase 24 plan known_unknown marker `0xC03F (49215)` 单 fixture**：
+  只在 DWG-0201 `/Sheet6` 出现 2 次，A01 / DWG-0202 / 工艺管道-1 / D06
+  完全无。Phase 24 plan §known_unknowns 第 1 条
+  "marker 49215 是否是真实 page metadata record 仍未证明" → 本 Task
+  确认为 **否定**。
+- **NormalizedF64CoordinateLike 占主导 (25/29 = 86%)**：coordinate
+  evidence 丰富 (`normalized_f64_pair_count=1397`)，但所有 f64 pair
+  缺 page-dimension 锚点；几乎肯定都是 geometry coordinate 而非
+  transform metadata。
+- **Stop-And-Challenge 4 条满足 3 条** → 按 Phase 24 plan Task 24-02
+  `<done>` 选择 **路径 A negative evidence 收口**：跳过 Task 24-03
+  typed candidate DTO 实现，保留 Phase 23 `probe_only_no_coordinate_
+  page_metadata_promotion` guardrail 不变。
+- **下次重启条件**：若新增 PID fixture 在 **同一 marker** 上出现
+  **kind 一致** 的 top_evidence，且至少 1 行
+  `page_dimension_scalar_matches > 0`，则可重启 Task 24-03。
+- **closure_claim_limit 遵守**：本阶段只声明 negative evidence，不声明
+  page transform decoded、不让 `PidPageTransform::Available` 出现、
+  不修改 `0x0010` audit-only surface。
+
 ## 关键文件（Phase 13-21 补丁）
 - `goals/phase14-sppid-sheet-geometry/`
 - `goals/phase15-graphic-group-records/`

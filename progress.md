@@ -899,3 +899,69 @@
 ### 下一步
 - 执行 Task 24-01：生成 candidate marker group evidence table，并落盘
   `docs/analysis/2026-05-18-phase24-coordinate-page-metadata-candidates.md`。
+
+## Session: 2026-05-18 Phase 22 micro + Phase 24 Task 24-01 闭环
+
+### 当前状态
+- **Phase:** 22 micro complete (commit `bf4f972`) + 24 Task 24-01 complete (commit `8f3739c`) + Task 24-02 review 选 negative evidence 收口
+- **状态:** 三个 commit 全部已 push 到 origin/main；Phase 24 Task 24-03 跳过，Task 24-04 文档同步完成
+
+### 已完成
+- Phase 22 micro：把 `test-file/D06.pid` 列入 6 个 Phase 14 cross-fixture
+  decoder fixture 数组（Slice E/J/K/L/M/N），按 D06 baseline 锁定
+  的计数精准 ratchet 阈值：K +6 / L +10 / M +4 / N +2；E / J 阈值
+  不变（D06 贡献 0，作为 parse-package / panic-safety guard）。
+- Phase 24 Task 24-01：
+  - 新增 `examples/probe_phase24_top_evidence.rs`（307 行）：跨
+    5 fixture × 7 sheet 调
+    `coordinate_page_metadata_investigation_report`，dump 每个
+    `top_evidence` 行的完整字段为 markdown 表格。
+  - 新增 `docs/analysis/2026-05-18-phase24-coordinate-page-metadata-candidates.md`
+    （231 行）：覆盖 Top 5 候选评估、5 类 rejected 理由、与 Phase 23
+    cross-fixture aggregate 的互证、Task 24-02 review 的 A/B/C 路径
+    建议、closure_claim_limit 边界声明。
+- Phase 24 Task 24-02：用户明确选择 **路径 A negative evidence 收口**，
+  确认 Task 24-03 typed candidate DTO 不实现，Phase 23 guardrail
+  保留不变。
+- Phase 24 Task 24-04：同步 4 份文档
+  （`CHANGELOG.md` / `findings.md` / `progress.md` / `task_plan.md`）
+  反映上述闭环。
+
+### Phase 24 Task 24-01 关键证据
+| 指标 | 数值 |
+|---|---:|
+| total `top_evidence` 行 | 29 |
+| distinct `marker_type` | 25 |
+| 行 `page_dimension_scalar_matches > 0` | 0 |
+| 行 `normalized_f64_pairs > 0` | 25 (86 %) |
+| 跨 ≥ 2 fixture 的 marker | 1（`0x0000`，但 kind 不一致） |
+| 跨 fixture 且 kind 一致 stable marker | 0 |
+| 已知 unknown marker `0xC03F (49215)` 跨 fixture support | 仅 DWG-0201 |
+
+### Phase 24 Stop-And-Challenge 触发对照
+| 条件 | 状态 |
+|---|---|
+| Top candidate 没有跨 fixture/sheet support | ✅ 触发 |
+| `page_dimension_scalar_matches` 继续为 0 | ✅ 触发 |
+| 字段解释需要猜单位、方向或 origin | ✅ 触发 |
+| 任何实现会让 `PidPageTransform::Available` 出现 | ⏸ 本 Task 未实现 typed DTO，未触发 |
+
+→ 3 / 4 触发，按 Phase 24 plan Task 24-02 `<done>` 选择 negative
+evidence 收口。
+
+### 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo run --release --example probe_phase24_top_evidence` | 通过；输出 29 行 markdown table |
+| `cargo build --locked --workspace --all-targets` | 通过 |
+| `cargo test --locked --workspace --all-targets` | 通过（59 binaries · 0 failed） |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 通过 |
+| `cargo fmt --all -- --check` | 通过 |
+| `cargo rustdoc --lib --locked -- -W missing-docs` | 通过（current=0, baseline=0） |
+| `git push origin main` | 通过（用户明确授权） |
+
+### Phase 24 后续触发条件
+- 新增 PID fixture 在 **同一 marker** 上出现 **kind 一致** 的
+  `top_evidence`，且至少 1 行 `page_dimension_scalar_matches > 0`
+  时，重启 Task 24-03 typed candidate DTO 路径。
+- 不在 0x0010 RAD class IDA 证据补足前推进 typed `0x0010` DTO。

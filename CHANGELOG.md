@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### Phase 24 Task 24-01：CoordinatePageMetadata 候选证据 — 推荐 negative evidence 收口
+
+- 新增 cross-fixture probe：`examples/probe_phase24_top_evidence.rs`。
+  以 `PidParser::parse_package` + `coordinate_page_metadata_investigation_report`
+  跨 5 fixture × 7 sheet dump 每个 `top_evidence` 的完整字段
+  （marker / range / support / kind / i32+f64 pairs / normalized_f64 /
+  page-dim matches / offset / hex prefix）为 markdown 表格。
+- 新增分析文档：
+  `docs/analysis/2026-05-18-phase24-coordinate-page-metadata-candidates.md`。
+  覆盖 Top 5 候选评估、5 类 rejected 理由、与 Phase 23 cross-fixture
+  aggregate 的互证、Task 24-02 review 的 A/B/C 路径建议。
+- 关键证据：29 top_evidence 行 / 25 distinct marker / **0** 行
+  `page_dimension_scalar_matches > 0` / **1** marker (`0x0000`) 跨 2 fixture
+  但 kind 不一致 / Phase 24 plan known_unknown marker `0xC03F (49215)`
+  只在 DWG-0201 出现 → 跨 fixture 没有稳定 marker group 可作为
+  typed CoordinatePageMetadata 候选。
+- 收口决策：满足 Phase 24 plan Stop-And-Challenge 第 1/2/3 条
+  （无跨 fixture support、`page_dimension_scalar_matches=0`、字段
+  解释需要猜单位/方向/origin），按 Task 24-02 review 选 **路径 A
+  negative evidence 收口**。Task 24-03 typed candidate DTO **不实现**；
+  Phase 23 `probe_only_no_coordinate_page_metadata_promotion` guardrail
+  完全保持。
+- 5 道 pre-commit gate 全绿（build / test 59 binaries · 0 failed /
+  clippy -D warnings / fmt --check / missing-docs baseline=0）。
+- 后续路径：若未来新增 PID fixture 在同一 marker 上出现 kind 一致的
+  top_evidence，且至少 1 行 `page_dimension_scalar_matches > 0`，则
+  可重启 Task 24-03 typed DTO 路径。
+
+### Phase 22 micro：D06 进入 6 个 Phase 14 cross-fixture decoder tests
+
+- `tests/parse_real_files.rs`：把 `test-file/D06.pid` 追加到 6 个
+  Phase 14 cross-fixture decoder 测试的 fixture 列表（Slice E
+  GLine2d、Slice J igLine2d、Slice K igLineString2d、Slice L igPoint2d、
+  Slice M igTextBox、Slice N igSymbol2d）。
+- 按 D06 baseline (commit `5255f25`) 锁定的计数精准 ratchet 阈值：
+  - Slice E (GLine2d): `>=1` 不变（D06 贡献 0，作为 panic-safety guard）
+  - Slice J (igLine2d): `>=100` 不变（D06 贡献 0，作为 panic-safety guard）
+  - Slice K (igLineString2d): `>=30` → `>=36` (+6)
+  - Slice L (igPoint2d): `>=30` → `>=40` (+10)
+  - Slice M (igTextBox): `>=20` → `>=24` (+4)
+  - Slice N (igSymbol2d): `>=20` → `>=22` (+2)
+- 此 commit 是 Phase 21 (`678af70`) + D06 fixture (`5255f25`) +
+  d06_text_placement_regression test 的 micro follow-up；不开新 Phase。
+- 5 道 pre-commit gate 全绿。
+
 ### 中文更新：Phase 24 CoordinatePageMetadata decoder 候选筛选方案
 
 - 新增 Phase 24 中文执行方案：

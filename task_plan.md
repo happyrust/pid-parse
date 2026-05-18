@@ -246,8 +246,12 @@ verification / blockers / goal-prompt / progress.jsonl 五件套+1 模板），
 - [x] 锁定 D06 `/Sheet6` 8 个 raw text probes + 4 个 decoded `igTextBox`
 - [x] 确认 text probes 不提升为 inferred `Text` geometry
 - [x] focused tests / `parse_real_files` / fmt / lint 通过
+- [x] Phase 22 micro：D06 进入 6 个 Phase 14 cross-fixture decoder
+      fixture 数组（Slice E/J/K/L/M/N），按 D06 baseline 计数精准
+      ratchet 阈值：K +6 / L +10 / M +4 / N +2；E/J 阈值不变
 - **Status:** complete
-- **Commit:** `9ebdd89`
+- **Commits:** `9ebdd89` (text-placement regression) /
+  `bf4f972` (Phase 22 micro cross-fixture coverage)
 
 ### Phase 23：2026-05-18 Coordinate/Page Context 收敛与 transform guardrail
 - [x] 分析 Phase 20/21/22 后的真实阻塞：typed `0x0010` DTO 仍缺 Read/DoIO
@@ -267,12 +271,28 @@ verification / blockers / goal-prompt / progress.jsonl 五件套+1 模板），
 ### Phase 24：2026-05-18 CoordinatePageMetadata decoder 候选筛选
 - [x] 制定 planning-skill 风格中文执行方案：
       `docs/plans/2026-05-18-phase24-coordinate-page-metadata-decoder-plan-cn.md`
-- [ ] Task 24-01：生成 candidate marker group evidence table
-- [ ] Task 24-02：stop-and-challenge review，决定 typed candidate decoder 是否达标
-- [ ] Task 24-03：仅在 review 通过后新增 audit-only typed candidate DTO
-- [ ] Task 24-04：同步文档与门禁结果
-- **Status:** planned, awaiting execution
+- [x] Task 24-01：生成 candidate marker group evidence table
+      （`examples/probe_phase24_top_evidence.rs` +
+      `docs/analysis/2026-05-18-phase24-coordinate-page-metadata-candidates.md`）；
+      29 top_evidence rows / 25 distinct markers / 0 cross-fixture
+      stable marker / 0 page-dim matches
+- [x] Task 24-02：stop-and-challenge review；4 条触发 3 条
+      （无跨 fixture support、`page_dimension_scalar_matches=0`、
+      字段解释需要猜单位/方向/origin）；用户选择 **路径 A negative
+      evidence 收口**
+- [ ] Task 24-03：跳过 — 不实现 typed candidate DTO；保留
+      Phase 23 `probe_only_no_coordinate_page_metadata_promotion`
+      guardrail 不变
+- [x] Task 24-04：CHANGELOG / findings / progress / task_plan 同步
+      Phase 22 micro + Phase 24 Task 24-01 + Task 24-02 review 决策
+- **Status:** complete (negative evidence)；Task 24-03 skipped per
+  Stop-And-Challenge
 - **Plan:** `docs/plans/2026-05-18-phase24-coordinate-page-metadata-decoder-plan-cn.md`
+- **Analysis:** `docs/analysis/2026-05-18-phase24-coordinate-page-metadata-candidates.md`
+- **Commits:** `8f3739c` (Task 24-01 probe + analysis) +
+  follow-up commit (Task 24-04 docs sync)
+- **Re-open trigger:** 新增 PID fixture 在同一 marker 上出现 kind
+  一致的 top_evidence 且至少 1 行 `page_dimension_scalar_matches > 0`
 
 ## 决策
 | 决策 | 理由 |
