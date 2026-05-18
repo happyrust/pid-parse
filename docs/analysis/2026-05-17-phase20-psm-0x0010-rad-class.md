@@ -208,6 +208,45 @@ named. It must not be renamed to `sub_kind`.
 | sub-kind discriminator offset | unresolved | blocked on `Read` / `DoIO` |
 | mapping from `leading_word` buckets to sub-kind names | unresolved | keep audit-only |
 
+## Follow-up Metadata / RTTI Recon (2026-05-18)
+
+A focused follow-up checked the recommended low-risk path for recovering a
+human type name before doing more blind factory tracing.
+
+Negative evidence:
+
+- `style.dll` local type queries for `1D1928`, `Persist`, `Style`, and
+  `Override` returned no IDA local type entries tied to the `0x0010` GUID.
+- Rendered-text search for `1D1928` / `1D1928C0` returned no listing hits.
+- Repository search found no external `.tlb`, `.idl`, `.drx`, `.pdb`, `.lib`,
+  `.exp`, `.map`, or `.def` metadata files for the loaded SmartPlant DLLs.
+- Local registry queries for `HKCR\CLSID`, `HKCR\Interface`, and `HKCR\TypeLib`
+  returned key-not-found for `1D1928C0-0000-0000-C000-000000000046` and the
+  adjacent `style.dll` GUID constants `09D6BBB0-0000-0000-C000-000000000046`
+  / `8EC51800-0000-0000-C000-000000000046`.
+
+Additional IDA evidence:
+
+- `style.dll` keeps `1D1928C0...` at `.rdata:0x10068F44` followed immediately by
+  `09D6BBB0...` and `8EC51800...`; all three have the COM-style
+  `C000-000000000046` tail.
+- `0x10068F44` still has **zero xrefs**.
+- Nearby GUID-array addresses `0x10068AD4` and `0x10068B84` are referenced by
+  default style / exception-style creation functions such as
+  `HGetDimExceptionStyle`, `sub_1003E0D0`, `sub_10059060`, and `sub_10059D00`.
+  Those paths call `JCoCreateInstance` for known style helpers and do not create
+  an xref to `1D1928C0...`.
+- The GUID block is followed by named `ClassFactory<VJStyle...>` vtables and
+  style strings (`styles.drx`, `JStyleOverride::...`, `JStyleBase::IJPersistImp`),
+  but there is no ordering evidence strong enough to assign a class name to
+  `1D1928C0...`.
+
+Conclusion: the metadata / RTTI / registry path did **not** recover a human
+persisted type name. The safest current interpretation remains:
+`1D1928C0...` is a persisted/interface GUID constant present in `style.dll`, but
+not an activatable or named class in the loaded IDB. Typed `0x0010` DTO work
+remains blocked on stronger Read/DoIO evidence.
+
 ## Phase 21 Implications
 
 Do not implement typed `0x0010` sub-kind DTOs from this evidence alone.

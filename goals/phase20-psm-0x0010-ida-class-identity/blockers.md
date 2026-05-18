@@ -116,6 +116,7 @@ RTTI / local types，而不是继续 blind factory tracing。
 | Q3 | question | DEFERRED | partial AC3 accepted if discriminator 与 leading_word 对不上 | agent |
 | Q4 | question | DEFERRED | 容忍 "embedded fragment" 结论，调整 AC 描述 | agent |
 | Q5 | partial-ac | ACCEPTED | GUID/table identity 收口；class name / Read-DoIO / sub-kind deferred | user + agent |
+| Q6 | metadata-recon | ACCEPTED NEGATIVE | external metadata / RTTI / local type / registry search did not recover human type name | agent |
 
 ## 当前状态总表
 
