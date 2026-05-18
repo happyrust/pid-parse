@@ -6594,6 +6594,10 @@ fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
         "DWG-0202GP06-01.pid",
         "工艺管道及仪表流程-1.pid",
         "export-test/publish-data/A01/A01.pid",
+        // D06 currently has 0 decoded GLine2d records; including it
+        // here is a panic-safety / parse-package guard rather than a
+        // baseline contribution. See Phase 22 micro follow-up.
+        "D06.pid",
     ];
     let mut total_decoded = 0usize;
     let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
@@ -6952,6 +6956,9 @@ fn igsymbols_decoder_emits_decoded_symbols_with_provenance() {
         "DWG-0202GP06-01.pid",
         "工艺管道及仪表流程-1.pid",
         "export-test/publish-data/A01/A01.pid",
+        // Phase 22 micro: D06 contributes 2 decoded igSymbol2d records;
+        // the floor below is ratcheted from 20 → 22 to reflect this.
+        "D06.pid",
     ];
     let mut total_decoded = 0usize;
     let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
@@ -7004,8 +7011,9 @@ fn igsymbols_decoder_emits_decoded_symbols_with_provenance() {
         return;
     }
     assert!(
-        total_decoded >= 20,
-        "decode_igsymbols should emit >= 20 symbols cross-fixture, got {total_decoded}"
+        total_decoded >= 22,
+        "decode_igsymbols should emit >= 22 symbols cross-fixture (Phase 22 micro: \
+         D06 contributes 2 igSymbol2d records), got {total_decoded}"
     );
 }
 
@@ -7019,6 +7027,9 @@ fn igtextboxes_decoder_emits_decoded_texts_with_provenance() {
         "DWG-0202GP06-01.pid",
         "工艺管道及仪表流程-1.pid",
         "export-test/publish-data/A01/A01.pid",
+        // Phase 22 micro: D06 contributes 4 decoded igTextBox records;
+        // the floor below is ratcheted from 20 → 24 to reflect this.
+        "D06.pid",
     ];
     let mut total_decoded = 0usize;
     let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
@@ -7064,8 +7075,9 @@ fn igtextboxes_decoder_emits_decoded_texts_with_provenance() {
         return;
     }
     assert!(
-        total_decoded >= 20,
-        "decode_igtextboxes should emit >= 20 text records cross-fixture, got {total_decoded}"
+        total_decoded >= 24,
+        "decode_igtextboxes should emit >= 24 text records cross-fixture (Phase 22 micro: \
+         D06 contributes 4 igTextBox records), got {total_decoded}"
     );
 }
 
@@ -7079,6 +7091,9 @@ fn igpoints_decoder_emits_decoded_points_with_provenance() {
         "DWG-0202GP06-01.pid",
         "工艺管道及仪表流程-1.pid",
         "export-test/publish-data/A01/A01.pid",
+        // Phase 22 micro: D06 contributes 10 decoded igPoint2d records;
+        // the floor below is ratcheted from 30 → 40 to reflect this.
+        "D06.pid",
     ];
     let mut total_decoded = 0usize;
     let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
@@ -7113,8 +7128,9 @@ fn igpoints_decoder_emits_decoded_points_with_provenance() {
         return;
     }
     assert!(
-        total_decoded >= 30,
-        "decode_igpoints should emit >= 30 points cross-fixture, got {total_decoded}"
+        total_decoded >= 40,
+        "decode_igpoints should emit >= 40 points cross-fixture (Phase 22 micro: \
+         D06 contributes 10 igPoint2d records), got {total_decoded}"
     );
 }
 
@@ -7135,6 +7151,9 @@ fn iglinestrings_decoder_emits_decoded_polylines_with_provenance() {
         "DWG-0202GP06-01.pid",
         "工艺管道及仪表流程-1.pid",
         "export-test/publish-data/A01/A01.pid",
+        // Phase 22 micro: D06 contributes 6 decoded igLineString2d polylines;
+        // the floor below is ratcheted from 30 → 36 to reflect this.
+        "D06.pid",
     ];
     let mut total_decoded = 0usize;
     let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
@@ -7199,8 +7218,9 @@ fn iglinestrings_decoder_emits_decoded_polylines_with_provenance() {
         return;
     }
     assert!(
-        total_decoded >= 30,
-        "decode_iglinestrings should emit >= 30 polylines cross-fixture, got {total_decoded}"
+        total_decoded >= 36,
+        "decode_iglinestrings should emit >= 36 polylines cross-fixture (Phase 22 micro: \
+         D06 contributes 6 igLineString2d records), got {total_decoded}"
     );
 }
 
@@ -7224,6 +7244,10 @@ fn iglines_decoder_emits_decoded_iglines_with_provenance() {
         "DWG-0202GP06-01.pid",
         "工艺管道及仪表流程-1.pid",
         "export-test/publish-data/A01/A01.pid",
+        // D06 currently has 0 decoded igLine2d records; including it
+        // here is a panic-safety / parse-package guard rather than a
+        // baseline contribution. See Phase 22 micro follow-up.
+        "D06.pid",
     ];
     let mut total_decoded = 0usize;
     let mut per_fixture_summary: Vec<(String, usize)> = Vec::new();
