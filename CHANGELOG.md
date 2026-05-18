@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### 中文更新：Phase 20/21/22 状态同步
+
+- 同步顶层计划与进度日志：`task_plan.md` 和 `progress.md` 现在都记录
+  Phase 20 partial closeout 以及 Phase 21 / Phase 22 的完成状态。
+- Phase 20 当前安全结论：PSM `0x0010` 已确认 persisted type-table identity
+  为 GUID `1D1928C0-0000-0000-C000-000000000046`，parent alias 为 `0x0115`；
+  但 human class name、Read/DoIO sequence 与 sub-kind discriminator 仍未恢复。
+- 继续保持边界：typed `0x0010` DTO、`sub_kind` 命名和 reference resolver
+  仍被阻塞，必须等待更强 IDA / Read-DoIO 证据。
+- Phase 21 D06 baseline / relationship fallback / Sheet audit 已完成；Phase 22
+  D06 text-placement regression 已完成，D06 raw text probes 继续不提升为
+  inferred `Text` geometry。
+
 ### Phase 21: D06 fixture baseline, relationship graph fix, Sheet audit inventory
 
 D06 (`test-file/D06.pid`) is a compact SmartPlant PID whose relationship
