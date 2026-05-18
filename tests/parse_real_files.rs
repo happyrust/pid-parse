@@ -1062,6 +1062,111 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
 }
 
 #[test]
+fn d06_text_placement_regression_keeps_text_probes_unpromoted() {
+    let Some(pkg) = parse_test_package("D06.pid") else {
+        return;
+    };
+    let raw_sheet = pkg
+        .streams
+        .get("/Sheet6")
+        .expect("D06 should expose /Sheet6 when the fixture is present");
+    let report = probe_sheet_stream(
+        "Sheet6",
+        "/Sheet6",
+        &raw_sheet.data,
+        &SheetProbeOptions::default(),
+    );
+    let decoded_textboxes = decode_igtextboxes(&raw_sheet.data);
+    let text_candidates = sheet_text_window_candidates(
+        &report.text_runs,
+        &report.coordinate_hints,
+        &report.chunks,
+        128,
+    );
+    let scores = score_sheet_text_window_candidates(&text_candidates);
+    let field_xs: Vec<_> = pkg
+        .parsed
+        .object_graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .objects
+                .iter()
+                .filter_map(|object| object.field_x)
+                .collect()
+        })
+        .unwrap_or_default();
+    let inventory = sheet_record_shape_inventory(&raw_sheet.data, &report, &field_xs);
+    let text_placement_report =
+        text_placement_investigation_report(&raw_sheet.data, &report, &inventory, 128);
+    let normalized = pid_parse::build_normalized_geometry(&pkg.parsed);
+    let text_probe_ids = normalized
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.source.stream_path.as_deref() == Some("/Sheet6")
+                && entity.confidence == pid_parse::PidGeometryConfidence::ProbeOnly
+                && matches!(entity.kind, pid_parse::PidGraphicKind::Unknown { .. })
+        })
+        .filter_map(|entity| entity.source.record_id.clone())
+        .filter(|record_id| record_id.starts_with("text-probe:"))
+        .collect::<BTreeSet<_>>();
+    let expected_text_probe_ids = (0..8)
+        .map(|index| format!("text-probe:{index}"))
+        .collect::<BTreeSet<_>>();
+    let inferred_text_count = normalized
+        .entities
+        .iter()
+        .filter(|entity| {
+            matches!(entity.kind, pid_parse::PidGraphicKind::Text { .. })
+                && entity.confidence != pid_parse::PidGeometryConfidence::Decoded
+        })
+        .count();
+
+    assert_eq!(
+        report.text_runs.len(),
+        8,
+        "D06 raw text probe count drifted"
+    );
+    assert_eq!(
+        decoded_textboxes.len(),
+        4,
+        "D06 decoded igTextBox count drifted"
+    );
+    assert_eq!(
+        text_placement_report.raw_candidate_count,
+        scores.len(),
+        "D06 text placement report should account for every text-window score"
+    );
+    assert_eq!(
+        text_placement_report.rejected_candidate_count,
+        scores
+            .len()
+            .saturating_sub(text_placement_report.candidates.len()),
+        "D06 text placement report should expose rejected binary-like candidates"
+    );
+    assert!(
+        text_placement_report.candidates.iter().all(|candidate| {
+            !candidate.text_hex.is_empty()
+                && !candidate.coordinate_hex.is_empty()
+                && candidate
+                    .notes
+                    .iter()
+                    .any(|note| note == "probe_only_no_text_geometry_promotion")
+        }),
+        "D06 text placement candidates should remain investigation-only evidence"
+    );
+    assert_eq!(
+        text_probe_ids, expected_text_probe_ids,
+        "D06 text probe identities drifted"
+    );
+    assert_eq!(
+        inferred_text_count, 0,
+        "D06 text probes must not be promoted to inferred Text geometry"
+    );
+}
+
+#[test]
 fn second_file_builds_readable_layout_model() {
     let Some(doc) = parse_test_file("DWG-0202GP06-01.pid") else {
         return;

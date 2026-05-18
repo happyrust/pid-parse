@@ -648,3 +648,26 @@
 - 如需把 Phase 21 改动提交，可 commit 并 push。
 - 后续可对 D06 做 text-placement regression fixture。
 - `0x0010` typed DTO 需等待 Read/DoIO 或 IDA 新证据。
+
+## Session: 2026-05-18 Phase 22 D06 text-placement regression
+
+### 当前状态
+- **Phase:** 22 - D06 text-placement regression fixture
+- **状态:** 小切片完成，新增 D06 专用回归测试；未改解析器语义。
+
+### 已完成
+- 新增 `d06_text_placement_regression_keeps_text_probes_unpromoted`。
+- 锁定 D06 `/Sheet6` text-placement 证据：8 个 raw text probes、4 个 decoded `igTextBox`。
+- 验证 `text_placement_investigation_report` 只保留 bounded evidence，不把 text probes 提升为 inferred `Text` geometry。
+
+### 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --test parse_real_files d06_text_placement_regression_keeps_text_probes_unpromoted -- --nocapture` | 1 passed |
+| `cargo test --test parse_real_files d06_pid_parses_with_expected_structure_and_geometry_summary -- --nocapture` | 1 passed |
+| `cargo test --test parse_real_files` | 92 passed, 0 failed |
+| `cargo fmt --all -- --check` | 通过 |
+| IDE lint (`tests/parse_real_files.rs`) | 无错误 |
+
+### 下一步
+- 如需提交，提交范围应只包含 `tests/parse_real_files.rs` 与 `progress.md`。
