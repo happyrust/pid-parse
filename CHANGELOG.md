@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Phase 23: Coordinate/Page Context guardrails
+
+- 新增中文 Phase 23 planning 文件：
+  `docs/plans/2026-05-18-phase23-coordinate-page-context-plan-cn.md`，按
+  planning-skill 风格记录 requirements、hard boundaries、evidence contract
+  和 XML task blocks。
+- `src/geometry.rs`: 明确 `NormalizedPidGeometry.page_dimensions_mm` 只是
+  page-size evidence；`PidPageTransform::Available` 需要 source coordinate
+  space、units、transform direction 和 bounded byte provenance。
+- `tests/parse_real_files.rs`: 新增
+  `template_page_dimensions_do_not_make_page_transform_available`，锁定 A2
+  page dimensions 不会让 entity page transform 变成 available。
+- `src/parsers/sheet_records.rs`: `SheetCoordinatePageMetadataInvestigationReport`
+  新增 `top_evidence`，输出最多 8 个 compact coordinate/page metadata 强候选。
+- `src/schema.rs`: normalized geometry schema ratchet 锁定
+  `available/origin/scale/page_bounds/matrix` transform contract 字段。
+- 文档更新：PRD 与架构指南明确 page dimensions 不等于 page transform，下游在
+  transform unavailable 时不应猜测 source/page/viewport 坐标映射。
+
 ### 中文更新：Phase 20/21/22 状态同步
 
 - 同步顶层计划与进度日志：`task_plan.md` 和 `progress.md` 现在都记录

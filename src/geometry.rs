@@ -25,6 +25,10 @@ pub struct NormalizedPidGeometry {
     /// Source-backed graphic entities in drawing order where known.
     pub entities: Vec<PidGraphicEntity>,
     /// Inferred page dimensions in mm, if the template name could be parsed.
+    ///
+    /// This is page-size evidence only.  It is not a decoded source-to-page
+    /// transform, and must not by itself make [`PidPageTransform::Available`]
+    /// appear on individual entities.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub page_dimensions_mm: Option<(f64, f64)>,
     /// Non-fatal diagnostics explaining missing or skipped geometry.
@@ -130,6 +134,11 @@ pub enum PidDrawingUnits {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PidPageTransform {
     /// Source-to-page transform was decoded.
+    ///
+    /// This state requires source-proven transform metadata: page dimensions
+    /// alone, scalar hits, or normalized f64 coordinate evidence are not enough.
+    /// The decoder must know the source coordinate space, units, transform
+    /// direction, and bounded byte provenance before emitting this variant.
     Available {
         /// Transform origin in source/model coordinates.
         origin: PidPoint,
@@ -1726,6 +1735,27 @@ mod tests {
                 .filter(|entity| entity.confidence == PidGeometryConfidence::Inferred)
                 .all(|entity| entity.source.byte_range.is_some()),
             "inferred entities must have bounded byte provenance"
+        );
+    }
+
+    #[test]
+    fn default_coordinate_context_keeps_page_transform_unavailable_until_promoted() {
+        let context = PidCoordinateContext::default();
+        let value = serde_json::to_value(&context).expect("coordinate context JSON");
+
+        assert_eq!(context.coordinate_space, PidCoordinateSpace::Unknown);
+        assert!(matches!(
+            context.page_transform,
+            PidPageTransform::Unavailable { ref diagnostic }
+                if diagnostic.contains("metadata is unavailable")
+                    && diagnostic.contains("source coordinates are preserved")
+        ));
+        assert_eq!(value["page_transform"]["state"], "unavailable");
+        assert!(
+            value["page_transform"]["diagnostic"]
+                .as_str()
+                .is_some_and(|diagnostic| diagnostic.contains("metadata is unavailable")),
+            "default coordinate context should serialize an explicit unavailable transform"
         );
     }
 

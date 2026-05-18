@@ -236,6 +236,19 @@
 - **Sheet6 audit inventory**：21 GraphicGroup + 20 `0x0010` audit-only records；`leading_word == 0x0002` 在 D06 也出现；GraphicGroup `raw_reference_payload` 不 promote 为 child OIDs。8 个 probe-only unknown 是未定位的 text runs。
 - **Phase 14-20 边界完好**：不命名 `0x0010` sub-kind，不新增 typed DTO，不解释 GraphicGroup tail。
 
+## Phase 23 方案结论：Coordinate/Page Context 优先（2026-05-18）
+- Phase 20 partial AC 后，typed `0x0010` DTO 仍缺 human class name、Read/DoIO sequence 与 sub-kind discriminator；继续推进会违反 Phase 18/19 audit-only 原则。
+- Phase 21/22 已把 D06 作为 compact fixture 纳入 baseline，但 D06 text probes 仍不能 promotion 为 inferred `Text`。
+- 当前代码已有 `NormalizedPidGeometry.page_dimensions_mm`、`PidCoordinateContext`、`PidPageTransform` 与 `coordinate_page_metadata_investigation_report`，但 transform 仍应保持 unavailable。
+- 下一阶段推荐 Phase 23A：先收敛 coordinate/page metadata 报告和 transform promotion gate，明确 page dimensions 不等于 page transform。
+- 方案文件：`docs/plans/2026-05-18-phase23-coordinate-page-context-plan-cn.md`。
+- 后续只有在找到完整 source record / scalar source / decoded semantics 时，才允许 `PidPageTransform::Available`；否则继续保留 source coordinates 与 explicit unavailable diagnostics。
+- Slice A 已落地 guardrail：`template_page_dimensions_do_not_make_page_transform_available` 锁定 DWG-0201 A2 page dimensions `Some((594.0, 420.0))` 仍不能让 entity page transform available；`src/geometry.rs` doc comment 也明确 page size evidence 不等于 source-to-page transform。
+- Slice B 已落地 compact top evidence：`SheetCoordinatePageMetadataInvestigationReport.top_evidence` 输出最多 8 个强候选摘要；cross-fixture 当前 `coordinate_metadata_candidates=97`、`coordinate_top_evidence=36`、`normalized_f64_pair_count=1397`、`page_dimension_scalar_matches=0`，仍保持 no-promotion。
+- Slice C 已落地 transform promotion gate 合同：`PidPageTransform::Available` doc comment 明确需要 source coordinate space、units、transform direction 与 bounded byte provenance；新增默认 context unavailable 单测，并在 normalized geometry schema test 中锁定 `available/origin/scale/page_bounds/matrix` 字段。
+- Slice D 已同步下游文档：`docs/prd-pid-parse-current-state.md` 与 `docs/architecture-guide.md` 现在明确 page_dimensions 是 page-size evidence，H7CAD / JSON consumer 在 transform unavailable 时不应猜测 source/page/viewport 映射；`CHANGELOG.md` 已记录 Phase 23 A-D。
+- Slice E 全量门禁通过：build / test --workspace --all-targets / clippy -D warnings / fmt --check / rustdoc missing-docs 均绿；Phase 23 可按当前证据声明 complete，但不声明 page transform decoded。
+
 ## 关键文件（Phase 13-21 补丁）
 - `goals/phase14-sppid-sheet-geometry/`
 - `goals/phase15-graphic-group-records/`

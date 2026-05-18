@@ -4,9 +4,9 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 22 - D06 text-placement regression 已完成；Phase 20 已按 partial AC
-收口（0x0010 GUID / persisted type-table identity confirmed，typed DTO 仍
-blocked）。当前没有未完成代码切片，下一步需单独选择新 goal。
+Phase 23 - Coordinate/Page Context 收敛方案已制定；推荐先硬化
+page_dimensions / coordinate metadata / page transform guardrail，再考虑
+H7CAD 坐标对齐或 Text/Symbol promotion。
 
 ## 历史阶段 → goals/ 包托管说明
 2026-05-13 起 Phase 13+ 的细节迁移到 `goals/phaseNN-...` 目录（brief / plan /
@@ -248,6 +248,21 @@ verification / blockers / goal-prompt / progress.jsonl 五件套+1 模板），
 - [x] focused tests / `parse_real_files` / fmt / lint 通过
 - **Status:** complete
 - **Commit:** `9ebdd89`
+
+### Phase 23：2026-05-18 Coordinate/Page Context 收敛与 transform guardrail
+- [x] 分析 Phase 20/21/22 后的真实阻塞：typed `0x0010` DTO 仍缺 Read/DoIO
+      与 sub-kind discriminator 证据，D06 text probes 仍 no-promotion
+- [x] 选择下一阶段方向：避开 0x0010 blocker，先收敛 page dimensions、
+      coordinate metadata investigation 与 page transform guardrail
+- [x] 新增中文开发方案：
+      `docs/plans/2026-05-18-phase23-coordinate-page-context-plan-cn.md`
+- [x] Slice A：coordinate context baseline ratchet
+- [x] Slice B：cross-fixture coordinate metadata report 增强
+- [x] Slice C：transform promotion gate 合同
+- [x] Slice D：文档与下游契约同步
+- [x] Slice E：预提交门禁
+- **Status:** complete
+- **Plan:** `docs/plans/2026-05-18-phase23-coordinate-page-context-plan-cn.md`
 
 ## 决策
 | 决策 | 理由 |

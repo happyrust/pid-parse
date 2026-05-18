@@ -50,6 +50,8 @@ pub struct SheetCurvePrimitiveInvestigationReport {
 pub struct SheetCoordinatePageMetadataInvestigationReport {
     /// Marker-range groups that contain coordinate-domain or page metadata evidence.
     pub candidates: Vec<SheetCoordinatePageMetadataCandidate>,
+    /// Compact top-ranked evidence groups for cross-fixture reporting.
+    pub top_evidence: Vec<SheetCoordinatePageMetadataTopEvidence>,
     /// Bounds of i32 coordinate hints surfaced by the existing Sheet probe.
     pub coordinate_hint_bounds: Option<SheetI32CoordinateBounds>,
     /// Bounds of f64 coordinate hints linked through repeated marker evidence.
@@ -89,6 +91,31 @@ pub struct SheetCoordinatePageMetadataCandidate {
     pub example_hex_prefix: String,
     /// Human-readable investigation notes; evidence-only.
     pub investigation_notes: Vec<String>,
+}
+
+/// Compact summary for the strongest coordinate/page metadata candidates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SheetCoordinatePageMetadataTopEvidence {
+    /// Marker type decoded after `0x89`.
+    pub marker_type: Option<u16>,
+    /// Bounded range length for this marker shape.
+    pub range_len: usize,
+    /// Number of records with the same marker/range/numeric shape.
+    pub support: usize,
+    /// Coarse investigation category.
+    pub candidate_kind: SheetCoordinatePageMetadataCandidateKind,
+    /// Count of plausible i32 coordinate-like pairs inside the example payload.
+    pub candidate_i32_pairs: usize,
+    /// Count of plausible f64 coordinate-like pairs inside the example payload.
+    pub candidate_f64_pairs: usize,
+    /// Count of normalized f64 pairs inside the example payload.
+    pub normalized_f64_pairs: usize,
+    /// Count of scalar values matching inferred page dimensions.
+    pub page_dimension_scalar_matches: usize,
+    /// Example record offset for manual byte review.
+    pub example_offset: usize,
+    /// Hex prefix of the example range for bounded byte-window review.
+    pub example_hex_prefix: String,
 }
 
 /// Coarse shape category for coordinate/page metadata investigation.
@@ -539,9 +566,26 @@ pub fn coordinate_page_metadata_investigation_report(
         .iter()
         .map(|candidate| candidate.page_dimension_scalar_matches * candidate.support)
         .sum();
+    let top_evidence = candidates
+        .iter()
+        .take(8)
+        .map(|candidate| SheetCoordinatePageMetadataTopEvidence {
+            marker_type: candidate.marker_type,
+            range_len: candidate.range_len,
+            support: candidate.support,
+            candidate_kind: candidate.candidate_kind,
+            candidate_i32_pairs: candidate.candidate_i32_pairs,
+            candidate_f64_pairs: candidate.candidate_f64_pairs,
+            normalized_f64_pairs: candidate.normalized_f64_pairs,
+            page_dimension_scalar_matches: candidate.page_dimension_scalar_matches,
+            example_offset: candidate.example_offset,
+            example_hex_prefix: candidate.example_hex_prefix.clone(),
+        })
+        .collect();
 
     SheetCoordinatePageMetadataInvestigationReport {
         candidates,
+        top_evidence,
         coordinate_hint_bounds,
         f64_coordinate_bounds,
         normalized_f64_pair_count,

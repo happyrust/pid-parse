@@ -705,3 +705,169 @@
 ### 下一步
 - 如需落盘本轮文档同步，可提交 `task_plan.md` 与 `progress.md`。
 - 不要从 Phase 20 partial AC 直接实现 typed `0x0010` DTO；除非后续拿到更强 Read/DoIO 或 sub-kind discriminator 证据。
+
+## Session: 2026-05-18 Phase 23 next-step plan
+
+### 当前状态
+- **Phase:** 23 - Coordinate/Page Context 收敛与 transform guardrail
+- **状态:** 中文开发方案已制定；待执行 Slice A-E。
+
+### 已完成
+- 复核 Phase 20/21/22 状态：
+  - Phase 20 只达到 partial AC：`0x0010` GUID / persisted type-table identity confirmed，typed DTO 仍 blocked。
+  - Phase 21 D06 baseline / relationship fallback / Sheet audit 已完成。
+  - Phase 22 D06 text-placement regression 已完成，raw text probes 继续 no-promotion。
+- 复核当前坐标上下文基础：
+  - `NormalizedPidGeometry.page_dimensions_mm` 已存在。
+  - `PidCoordinateContext` / `PidPageTransform` 已是 public geometry contract。
+  - `coordinate_page_metadata_investigation_report` 能输出 i32/f64/page-dimension evidence，但仍是 investigation-only。
+  - 现有测试保持 transform unavailable guardrail。
+- 制定下一步推荐方案：避开 0x0010 Read/DoIO blocker，优先执行 Coordinate/Page Context hardening。
+- 新增中文方案文件：
+  - `docs/plans/2026-05-18-phase23-coordinate-page-context-plan-cn.md`
+- 更新 `task_plan.md`：当前阶段切到 Phase 23，并新增 Slice A-E。
+- 更新 `findings.md`：记录 Phase 23 方案结论与边界。
+
+### 推荐执行顺序
+| Slice | 目标 |
+|---|---|
+| A | coordinate context baseline ratchet |
+| B | cross-fixture coordinate metadata report 增强 |
+| C | transform promotion gate 合同 |
+| D | 文档与下游契约同步 |
+| E | 预提交门禁 |
+
+### 下一步
+- 执行 Phase 23 Slice A：锁定 page dimensions 与 transform unavailable 可同时存在，防止 investigation evidence 被误升为 decoded transform。
+
+### Phase 23 Slice A 实现进展
+- 补强 `src/geometry.rs` 文档注释：
+  - `NormalizedPidGeometry.page_dimensions_mm` 只是 page-size evidence。
+  - `PidPageTransform::Available` 需要 source-proven transform metadata；page dimensions、scalar hits 或 normalized f64 coordinate evidence 都不够。
+- 新增 `template_page_dimensions_do_not_make_page_transform_available`：
+  - 使用 `DWG-0201GP06-01.pid` 锁定 template-derived A2 page dimensions：`Some((594.0, 420.0))`。
+  - 确认 normalized entities 非空。
+  - 确认所有 entity 的 `coordinate_context.page_transform` 仍为 `Unavailable`。
+  - 确认 warning 继续暴露 coordinate units / page transforms unavailable。
+- 更新 `task_plan.md`：Phase 23 Slice A 标记 complete，阶段状态为 in_progress。
+- 更新 `findings.md`：记录 page dimensions 不等于 page transform 的 guardrail 结论。
+
+### Phase 23 Slice A 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --locked -j 1 --test parse_real_files template_page_dimensions_do_not_make_page_transform_available -- --nocapture` | 通过 |
+| `cargo test --locked -j 1 --test parse_real_files coordinate_page_metadata -- --nocapture` | 通过 |
+| `cargo test --locked -j 1 --test parse_real_files non_sheet_stream_page_metadata -- --nocapture` | 通过 |
+| `cargo fmt --all -- --check` | 通过 |
+| `ReadLints` | 无错误 |
+
+### Phase 23 Slice A 下一步
+- 执行 Slice B：增强 cross-fixture coordinate metadata report，输出 top evidence group（marker/range/support/i32/f64/page scalar/example offset/hex prefix）。
+
+### Phase 23 Slice B 实现进展
+- 新增 `SheetCoordinatePageMetadataTopEvidence` compact summary：
+  - `marker_type`
+  - `range_len`
+  - `support`
+  - `candidate_kind`
+  - `candidate_i32_pairs`
+  - `candidate_f64_pairs`
+  - `normalized_f64_pairs`
+  - `page_dimension_scalar_matches`
+  - `example_offset`
+  - `example_hex_prefix`
+- `SheetCoordinatePageMetadataInvestigationReport` 新增 `top_evidence`，从已排序 candidates 中取前 8 个强候选。
+- `coordinate_page_metadata_investigation_keeps_transform_unavailable_until_record_proven` 现在输出并断言 top evidence：
+  - 非空且最多 8 条。
+  - 每条有 bounded offset、hex prefix 和数值证据。
+- `sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promotion` 聚合 `coordinate_top_evidence`，并断言 cross-fixture top evidence 非空。
+- 当前 cross-fixture 输出：
+  - `fixtures_seen=5`
+  - `sheets_seen=7`
+  - `coordinate_metadata_candidates=97`
+  - `coordinate_top_evidence=36`
+  - `normalized_f64_pair_count=1397`
+  - `page_dimension_scalar_matches=0`
+  - 仍保持 coordinate/page metadata no-promotion。
+- 更新 `task_plan.md`：Phase 23 Slice B 标记 complete，阶段状态为 Slice A-B complete。
+- 更新 `findings.md`：记录 top evidence 结果。
+
+### Phase 23 Slice B 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --locked -j 1 --test parse_real_files coordinate_page_metadata -- --nocapture` | 通过 |
+| `cargo test --locked -j 1 --test parse_real_files sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promotion -- --nocapture` | 通过 |
+| `cargo fmt --all -- --check` | 通过 |
+| `ReadLints` | 无错误 |
+
+### Phase 23 Slice B 下一步
+- 执行 Slice C：定义并测试 `PidPageTransform::Available` promotion gate 合同。
+
+### Phase 23 Slice C 实现进展
+- 补强 `PidPageTransform::Available` 文档注释：
+  - 需要 source-proven transform metadata。
+  - page dimensions、scalar hits、normalized f64 coordinate evidence 都不够。
+  - decoder 必须知道 source coordinate space、units、transform direction 和 bounded byte provenance。
+- 新增 `default_coordinate_context_keeps_page_transform_unavailable_until_promoted`：
+  - 默认 `PidCoordinateContext` 的 `coordinate_space` 为 `Unknown`。
+  - 默认 `page_transform` 为 `Unavailable`。
+  - JSON 序列化必须显式输出 `state=unavailable` 和 diagnostic。
+- 增强 `schema::tests::normalized_geometry_schema_exposes_graphic_contract`：
+  - 锁定 normalized geometry schema 继续暴露 `available`、`origin`、`scale`、`page_bounds`、`matrix`。
+- 更新 `task_plan.md`：Phase 23 Slice C 标记 complete，阶段状态为 Slice A-C complete。
+- 更新 `findings.md`：记录 transform promotion gate 合同。
+
+### Phase 23 Slice C 验证
+| 检查项 | 结果 |
+|---|---|
+| `cargo test --locked -j 1 --lib geometry::tests::default_coordinate_context_keeps_page_transform_unavailable_until_promoted -- --nocapture` | 通过 |
+| `cargo test --locked -j 1 --lib geometry::tests::available_page_transform_json_exposes_bounds_and_matrix -- --nocapture` | 通过 |
+| `cargo test --locked -j 1 --lib schema::tests::normalized_geometry_schema_exposes_graphic_contract -- --nocapture` | 通过 |
+| `cargo test --locked -j 1 --test parse_real_files coordinate_page_metadata -- --nocapture` | 通过 |
+
+### Phase 23 Slice C 下一步
+- 执行 Slice D：同步 `docs/prd-pid-parse-current-state.md` / `docs/architecture-guide.md` / `CHANGELOG.md` 等下游契约文档。
+
+### Phase 23 Slice D 实现进展
+- 更新 `docs/prd-pid-parse-current-state.md`：
+  - Sheet 深层几何缺口中新增 Phase 23 坐标合同边界。
+  - 明确 `page_dimensions_mm` 是 template-derived page-size evidence。
+  - 明确 `PidPageTransform` 仍应保持 `Unavailable`，直到找到完整 source record / scalar source / decoded semantics。
+  - 明确 H7CAD / 下游不应把 source coordinates 直接当作 page-space 或 viewport pixels。
+- 更新 `docs/architecture-guide.md`：
+  - 新增 “Normalized Geometry 坐标合同” 小节。
+  - 说明 `page_dimensions_mm`、`coordinate_space`、`PidPageTransform` 的分工。
+  - 写明 `PidPageTransform::Available` 的最低证据要求。
+- 更新 `CHANGELOG.md`：
+  - 新增 Phase 23 条目，记录 planning 文件、Slice A-D 代码/测试/文档变更。
+- 更新 `task_plan.md`：Phase 23 Slice D 标记 complete，阶段状态为 Slice A-D complete。
+- 更新 `findings.md`：记录下游文档同步结论。
+
+### Phase 23 Slice D 下一步
+- 执行 Slice E：运行全量预提交门禁，并记录结果。
+
+### Phase 23 Slice E 验证与收口
+| 检查项 | 结果 |
+|---|---|
+| `cargo build --locked --workspace --all-targets` | 通过 |
+| `cargo test --locked --workspace --all-targets` | 通过 |
+| `cargo clippy --locked --workspace --all-targets -- -D warnings` | 通过 |
+| `cargo fmt --all -- --check` | 通过 |
+| `cargo rustdoc --lib --locked -- -W missing-docs` | 通过 |
+
+### Phase 23 当前结论
+- Phase 23 A-E 已完成。
+- 可以声明完成的内容：
+  - Coordinate/Page Context guardrail 完成。
+  - compact top evidence report 完成。
+  - `PidPageTransform::Available` promotion gate 合同完成。
+  - 下游文档已同步当前坐标语义。
+- 不能声明的内容：
+  - page transform 已 decoded。
+  - H7CAD 已 page-space 对齐。
+  - Text/Symbol 已 source-proven promotion。
+- 更新 `task_plan.md`：Phase 23 标记 complete。
+- 更新 `findings.md`：记录 Slice E 全量门禁通过。
+
+### Phase 23 后续建议
+- 若继续实现，推荐 Phase 24：基于 `top_evidence` 选择稳定 marker group，尝试 typed CoordinatePageMetadata decoder；若证据仍不足，则优先 fixture 扩容。

@@ -154,6 +154,25 @@ PidPackage + WritePlan
     re-parse + diff_packages → --verify 确认零差异
 ```
 
+### Normalized Geometry 坐标合同
+
+`build_normalized_geometry()` 是 parser 与 H7CAD 等下游渲染方之间的几何合同。
+当前合同刻意区分三类信息：
+
+- `page_dimensions_mm`：从 template name 推断出的页面尺寸证据，只说明纸张大小。
+- `PidCoordinateContext.coordinate_space`：实体坐标当前多为 `SourceSheet` 或 `Unknown`。
+- `PidPageTransform`：source/model → page 的变换状态；当前保持 `Unavailable`。
+
+这意味着：
+
+- 有 `page_dimensions_mm` 不等于已经 decoded page transform。
+- i32/f64 coordinate evidence、scalar hits、template name 都不能单独让
+  `PidPageTransform::Available` 出现。
+- `PidPageTransform::Available` 需要 source coordinate space、units、transform
+  direction 和 bounded byte provenance 都可证明。
+- H7CAD / JSON consumer 在 transform unavailable 时应保留 source coordinates，
+  不应自行猜测 viewport 或 page-space 映射。
+
 ---
 
 ## .pid 文件结构

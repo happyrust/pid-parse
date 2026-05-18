@@ -3616,8 +3616,9 @@ fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_reco
         .count();
 
     eprintln!(
-        "coordinate page metadata investigation: candidates={}, normalized_f64_candidates={}, page_dimension_candidates={}, i32_domain_candidates={}, normalized_f64_pair_count={}, page_dimension_scalar_matches={}, i32_bounds={:?}, f64_bounds={:?}, page_dimensions_mm={:?}, top={:?}",
+        "coordinate page metadata investigation: candidates={}, top_evidence={}, normalized_f64_candidates={}, page_dimension_candidates={}, i32_domain_candidates={}, normalized_f64_pair_count={}, page_dimension_scalar_matches={}, i32_bounds={:?}, f64_bounds={:?}, page_dimensions_mm={:?}, top={:?}",
         report.candidates.len(),
+        report.top_evidence.len(),
         normalized_f64_candidates,
         page_dimension_candidates,
         i32_domain_candidates,
@@ -3626,7 +3627,7 @@ fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_reco
         report.coordinate_hint_bounds,
         report.f64_coordinate_bounds,
         normalized.page_dimensions_mm,
-        report.candidates.iter().take(8).collect::<Vec<_>>()
+        report.top_evidence
     );
 
     assert!(
@@ -3644,6 +3645,22 @@ fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_reco
     assert!(
         normalized_f64_candidates + page_dimension_candidates + i32_domain_candidates > 0,
         "coordinate/page metadata investigation should classify at least one numeric evidence group"
+    );
+    assert!(
+        !report.top_evidence.is_empty() && report.top_evidence.len() <= 8,
+        "coordinate/page metadata report should expose a bounded top-evidence summary"
+    );
+    assert!(
+        report.top_evidence.iter().all(|evidence| {
+            evidence.example_offset < raw_sheet.data.len()
+                && !evidence.example_hex_prefix.is_empty()
+                && evidence.candidate_i32_pairs
+                    + evidence.candidate_f64_pairs
+                    + evidence.normalized_f64_pairs
+                    + evidence.page_dimension_scalar_matches
+                    > 0
+        }),
+        "top evidence should carry bounded offsets, hex prefixes, and numeric support"
     );
     assert_eq!(
         unavailable_context_entities,
@@ -3667,6 +3684,40 @@ fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_reco
                 && candidate.example_range_end <= raw_sheet.data.len()
         }),
         "coordinate/page metadata candidates should carry bounded no-promotion evidence"
+    );
+}
+
+#[test]
+fn template_page_dimensions_do_not_make_page_transform_available() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+
+    let normalized = pid_parse::build_normalized_geometry(&doc);
+    assert_eq!(
+        normalized.page_dimensions_mm,
+        Some((594.0, 420.0)),
+        "DWG-0201 template should expose A2 page dimensions as page-size evidence"
+    );
+    assert!(
+        !normalized.entities.is_empty(),
+        "fixture should have normalized entities for coordinate-context checking"
+    );
+    assert!(
+        normalized.entities.iter().all(|entity| {
+            matches!(
+                &entity.coordinate_context.page_transform,
+                pid_parse::PidPageTransform::Unavailable { diagnostic }
+                    if diagnostic.contains("page transform metadata")
+            )
+        }),
+        "template-derived page dimensions must not promote entity page transforms"
+    );
+    assert!(
+        normalized.warnings.iter().any(|warning| {
+            warning.contains("coordinate units and page transforms are unavailable")
+        }),
+        "warnings should keep page transform unavailability visible even when page dimensions exist"
     );
 }
 
@@ -3792,6 +3843,7 @@ fn sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promot
     let mut fixtures_seen = 0usize;
     let mut sheets_seen = 0usize;
     let mut coordinate_metadata_candidates = 0usize;
+    let mut coordinate_top_evidence = 0usize;
     let mut normalized_f64_pair_count = 0usize;
     let mut page_dimension_scalar_matches = 0usize;
     let mut curve_groups = 0usize;
@@ -3844,6 +3896,7 @@ fn sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promot
             let curve_report = curve_primitive_investigation_report(&raw_sheet.data, &inventory);
 
             coordinate_metadata_candidates += coordinate_report.candidates.len();
+            coordinate_top_evidence += coordinate_report.top_evidence.len();
             normalized_f64_pair_count += coordinate_report.normalized_f64_pair_count;
             page_dimension_scalar_matches += coordinate_report.page_dimension_scalar_matches;
             curve_groups += curve_report.groups.len();
@@ -3891,6 +3944,24 @@ fn sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promot
                 fixture.path,
                 sheet.path
             );
+            if !coordinate_report.candidates.is_empty() {
+                assert!(
+                    !coordinate_report.top_evidence.is_empty()
+                        && coordinate_report.top_evidence.len() <= 8,
+                    "coordinate metadata report should expose bounded top evidence for {} {}",
+                    fixture.path,
+                    sheet.path
+                );
+                assert!(
+                    coordinate_report.top_evidence.iter().all(|evidence| {
+                        evidence.example_offset < raw_sheet.data.len()
+                            && !evidence.example_hex_prefix.is_empty()
+                    }),
+                    "coordinate metadata top evidence must keep bounded example offsets for {} {}",
+                    fixture.path,
+                    sheet.path
+                );
+            }
             assert!(
                 curve_report.groups.iter().all(|group| {
                     group
@@ -3925,10 +3996,11 @@ fn sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promot
     }
 
     eprintln!(
-        "cross-fixture Sheet geometry investigation: fixtures_seen={}, sheets_seen={}, coordinate_metadata_candidates={}, normalized_f64_pair_count={}, page_dimension_scalar_matches={}, curve_groups={}, marker_49215_groups={}, polyline_like={}, mixed_numeric={}, short_i32_sequences={}",
+        "cross-fixture Sheet geometry investigation: fixtures_seen={}, sheets_seen={}, coordinate_metadata_candidates={}, coordinate_top_evidence={}, normalized_f64_pair_count={}, page_dimension_scalar_matches={}, curve_groups={}, marker_49215_groups={}, polyline_like={}, mixed_numeric={}, short_i32_sequences={}",
         fixtures_seen,
         sheets_seen,
         coordinate_metadata_candidates,
+        coordinate_top_evidence,
         normalized_f64_pair_count,
         page_dimension_scalar_matches,
         curve_groups,
@@ -3949,6 +4021,10 @@ fn sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promot
     assert!(
         coordinate_metadata_candidates + curve_groups > 0,
         "cross-fixture investigation should surface Sheet evidence without decoded promotion"
+    );
+    assert!(
+        coordinate_top_evidence > 0,
+        "cross-fixture coordinate metadata investigation should expose compact top evidence"
     );
     assert!(
         mixed_numeric >= polyline_like,
