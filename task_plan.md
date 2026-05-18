@@ -4,9 +4,9 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 23 - Coordinate/Page Context 收敛方案已制定；推荐先硬化
-page_dimensions / coordinate metadata / page transform guardrail，再考虑
-H7CAD 坐标对齐或 Text/Symbol promotion。
+Phase 24 - CoordinatePageMetadata decoder 候选筛选方案已制定；下一步先从
+Phase 23 `top_evidence` 生成 candidate evidence table，不直接 promotion
+`PidPageTransform::Available`。
 
 ## 历史阶段 → goals/ 包托管说明
 2026-05-13 起 Phase 13+ 的细节迁移到 `goals/phaseNN-...` 目录（brief / plan /
@@ -263,6 +263,16 @@ verification / blockers / goal-prompt / progress.jsonl 五件套+1 模板），
 - [x] Slice E：预提交门禁
 - **Status:** complete
 - **Plan:** `docs/plans/2026-05-18-phase23-coordinate-page-context-plan-cn.md`
+
+### Phase 24：2026-05-18 CoordinatePageMetadata decoder 候选筛选
+- [x] 制定 planning-skill 风格中文执行方案：
+      `docs/plans/2026-05-18-phase24-coordinate-page-metadata-decoder-plan-cn.md`
+- [ ] Task 24-01：生成 candidate marker group evidence table
+- [ ] Task 24-02：stop-and-challenge review，决定 typed candidate decoder 是否达标
+- [ ] Task 24-03：仅在 review 通过后新增 audit-only typed candidate DTO
+- [ ] Task 24-04：同步文档与门禁结果
+- **Status:** planned, awaiting execution
+- **Plan:** `docs/plans/2026-05-18-phase24-coordinate-page-metadata-decoder-plan-cn.md`
 
 ## 决策
 | 决策 | 理由 |

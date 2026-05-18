@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### 中文更新：Phase 24 CoordinatePageMetadata decoder 候选筛选方案
+
+- 新增 Phase 24 中文执行方案：
+  `docs/plans/2026-05-18-phase24-coordinate-page-metadata-decoder-plan-cn.md`。
+- Phase 24 的第一步不是直接 promotion `PidPageTransform::Available`，而是基于
+  Phase 23 `top_evidence` 生成 candidate marker group evidence table。
+- 当前起点事实：`coordinate_metadata_candidates=97`、`coordinate_top_evidence=36`、
+  `normalized_f64_pair_count=1397`、`page_dimension_scalar_matches=0`。
+- 新方案明确 gate：若候选无法解释完整 width / height / origin / scale /
+  bounds 字段组，必须以 negative analysis 收口，不能把 coordinate-like f64
+  evidence 误升为 page transform。
+
 ### Phase 23: Coordinate/Page Context guardrails
 
 - 新增中文 Phase 23 planning 文件：

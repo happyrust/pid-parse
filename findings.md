@@ -249,6 +249,12 @@
 - Slice D 已同步下游文档：`docs/prd-pid-parse-current-state.md` 与 `docs/architecture-guide.md` 现在明确 page_dimensions 是 page-size evidence，H7CAD / JSON consumer 在 transform unavailable 时不应猜测 source/page/viewport 映射；`CHANGELOG.md` 已记录 Phase 23 A-D。
 - Slice E 全量门禁通过：build / test --workspace --all-targets / clippy -D warnings / fmt --check / rustdoc missing-docs 均绿；Phase 23 可按当前证据声明 complete，但不声明 page transform decoded。
 
+## Phase 24 方案结论：CoordinatePageMetadata decoder 候选筛选（2026-05-18）
+- Phase 24 不直接实现 `PidPageTransform::Available`；第一步是从 Phase 23 `top_evidence` 生成 candidate marker group evidence table。
+- 当前关键事实：`coordinate_metadata_candidates=97`、`coordinate_top_evidence=36`、`normalized_f64_pair_count=1397`，但 `page_dimension_scalar_matches=0`。
+- 方案文件：`docs/plans/2026-05-18-phase24-coordinate-page-metadata-decoder-plan-cn.md`。
+- 核心 gate：如果候选无法解释完整 width/height/origin/scale/bounds 字段组，必须以 negative analysis 收口；不能把 coordinate-like f64 evidence 误升为 page transform。
+
 ## 关键文件（Phase 13-21 补丁）
 - `goals/phase14-sppid-sheet-geometry/`
 - `goals/phase15-graphic-group-records/`

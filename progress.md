@@ -871,3 +871,31 @@
 
 ### Phase 23 后续建议
 - 若继续实现，推荐 Phase 24：基于 `top_evidence` 选择稳定 marker group，尝试 typed CoordinatePageMetadata decoder；若证据仍不足，则优先 fixture 扩容。
+
+## Session: 2026-05-18 Phase 24 next-step plan
+
+### 当前状态
+- **Phase:** 24 - CoordinatePageMetadata decoder 候选筛选
+- **状态:** 中文执行方案已制定；待执行 Task 24-01。
+
+### 已完成
+- 在 Phase 23 已提交并推送后，按推荐方向制定 Phase 24 方案。
+- 新增 planning-skill 风格中文执行文件：
+  - `docs/plans/2026-05-18-phase24-coordinate-page-metadata-decoder-plan-cn.md`
+- 更新 `task_plan.md`：当前阶段切到 Phase 24，并新增 Task 24-01..04。
+- 更新 `findings.md`：记录 Phase 24 方案结论和 evidence gate。
+
+### Phase 24 起点事实
+| 事实 | 数值 / 状态 |
+|---|---|
+| `fixtures_seen` | 5 |
+| `sheets_seen` | 7 |
+| `coordinate_metadata_candidates` | 97 |
+| `coordinate_top_evidence` | 36 |
+| `normalized_f64_pair_count` | 1397 |
+| `page_dimension_scalar_matches` | 0 |
+| `PidPageTransform::Available` | 禁止在本阶段直接 promotion |
+
+### 下一步
+- 执行 Task 24-01：生成 candidate marker group evidence table，并落盘
+  `docs/analysis/2026-05-18-phase24-coordinate-page-metadata-candidates.md`。
