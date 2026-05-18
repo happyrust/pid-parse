@@ -4,7 +4,9 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 20 - PSM 0x0010 IDA 反向（RAD class identity + sub-kind discriminator），goal package 已落盘，待 `/goal` 授权执行
+Phase 22 - D06 text-placement regression 已完成；Phase 20 已按 partial AC
+收口（0x0010 GUID / persisted type-table identity confirmed，typed DTO 仍
+blocked）。当前没有未完成代码切片，下一步需单独选择新 goal。
 
 ## 历史阶段 → goals/ 包托管说明
 2026-05-13 起 Phase 13+ 的细节迁移到 `goals/phaseNN-...` 目录（brief / plan /
@@ -204,19 +206,48 @@ verification / blockers / goal-prompt / progress.jsonl 五件套+1 模板），
 - **Status:** complete
 - **Goal package:** `goals/phase19-psm-0x0010-leading-word-audit/`
 
-### Phase 20：2026-05-17 PSM 0x0010 IDA-confirmed RAD class identity（待执行）
-- [ ] Slice A：`radsrvitem.dll` dispatch table 侦察（找 0x0010 factory）
-- [ ] Slice B：factory → CLSID + 目标 DLL
-- [ ] Slice C：目标 class Read/IO 函数 + IO sequence
-- [ ] Slice D：sub-kind discriminator 偏移 + 枚举
-- [ ] Slice E：cross-fixture validation（Phase 19 leading_word 对得上）
-- [ ] Slice F：`docs/analysis/2026-05-17-phase20-psm-0x0010-rad-class.md`
+### Phase 20：2026-05-17 PSM 0x0010 IDA-confirmed RAD class identity（partial closeout）
+- [x] Slice A：`radsrvitem.dll` dispatch table 侦察，定位 `PSMSerializeIn`
+      / `PSMSerializeOut` 与 PersistTypeTable 路径
+- [x] Slice B：factory / CLSID lookup 追踪到 partial AC：PSM type `0x0010`
+      映射 GUID `1D1928C0-0000-0000-C000-000000000046`，parent alias
+      `0x0115` 复用同一 GUID
+- [ ] Slice C：目标 class Read/IO 函数 + IO sequence（deferred；未恢复）
+- [ ] Slice D：sub-kind discriminator 偏移 + 枚举（deferred；禁止命名 `sub_kind`）
+- [ ] Slice E：cross-fixture validation（deferred；`leading_word` 仍 audit-only）
+- [x] Slice F：`docs/analysis/2026-05-17-phase20-psm-0x0010-rad-class.md`
       8 节 authoritative analysis（mirror Phase 16）
-- [ ] Slice G：5 道 pre-commit gate（不改代码应自动绿）+ goal_complete
-- **Status:** package drafted, awaiting `/goal` authorization
+- [x] metadata / RTTI / registry / external GUID follow-up：均未恢复 human type name
+- [x] readonly Read/DoIO tracing follow-up：恢复 `JStyleBase` control path，但未绑定
+      `1D1928C0...`
+- [ ] Slice G：full `goal_complete` 未声明；本阶段按 partial AC closeout 收口
+- **Status:** partial complete；GUID / type-table identity confirmed，class name /
+  Read-DoIO / sub-kind discriminator deferred
 - **Goal package:** `goals/phase20-psm-0x0010-ida-class-identity/`
 - **详细路线图:** `docs/plans/2026-05-17-phase20-ida-rad-class-roadmap-cn.md`
-- **预期工作量:** 2-5 session（polymorphic family，比 Phase 16 单 type code 反向更大）
+- **Analysis doc:** `docs/analysis/2026-05-17-phase20-psm-0x0010-rad-class.md`
+- **Docs commits:** `b50ca19` / `68d505f` / `d586834`
+
+### Phase 21：2026-05-18 D06 解析覆盖收敛与关系 / Sheet 审计闭环
+- [x] Slice A：D06 baseline ratchet，锁定结构计数与 normalized geometry summary
+- [x] Slice B：attribute-fallback relationship extraction，D06 现在保留 10 条
+      unresolved relationships
+- [x] Slice C：D06 `/Sheet6` decoded / audit-only / probe-only evidence inventory
+- [x] Slice D：跳过新增 CLI flag；现有 `--geometry-summary` / `--json` 足够
+- [x] Slice E：build / test / clippy / fmt / missing-docs gates 通过并更新文档
+- **Status:** complete
+- **Plan:** `docs/plans/2026-05-18-phase21-d06-parse-coverage-plan-cn.md`
+- **Analysis:** `docs/analysis/2026-05-18-d06-relationship-gap.md`,
+  `docs/analysis/2026-05-18-d06-sheet6-audit-inventory.md`
+- **Commit:** `5255f25`
+
+### Phase 22：2026-05-18 D06 text-placement regression fixture
+- [x] 新增 `d06_text_placement_regression_keeps_text_probes_unpromoted`
+- [x] 锁定 D06 `/Sheet6` 8 个 raw text probes + 4 个 decoded `igTextBox`
+- [x] 确认 text probes 不提升为 inferred `Text` geometry
+- [x] focused tests / `parse_real_files` / fmt / lint 通过
+- **Status:** complete
+- **Commit:** `9ebdd89`
 
 ## 决策
 | 决策 | 理由 |

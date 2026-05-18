@@ -671,3 +671,37 @@
 
 ### 下一步
 - 如需提交，提交范围应只包含 `tests/parse_real_files.rs` 与 `progress.md`。
+
+## Session: 2026-05-18 Phase 20/21/22 status sync
+
+### 当前状态
+- **Phase:** 22 - D06 text-placement regression fixture
+- **状态:** Phase 20 已按 partial AC 收口；Phase 21/22 已完成；本轮同步顶层计划文件。
+
+### 已完成
+- 恢复 best-mcp-sqlite-9 存档，发现旧存档只记录到 Phase 21/22 完成，但未包含后续 Phase 20 partial closeout follow-up docs。
+- 核对 git 状态：`main...origin/main` 对齐；开始本轮前工作树干净。
+- 确认 Phase 20 follow-up docs 已有提交：
+  - `b50ca19 docs(phase20): record 0x0010 metadata recon negative`
+  - `68d505f docs(phase20): trace 0x0010 Read DoIO candidates`
+  - `d586834 docs(phase20): record 0x0010 external GUID lookup`
+- 确认 Phase 20 当前结论：
+  - `0x0010` persisted type-table identity confirmed：GUID `1D1928C0-0000-0000-C000-000000000046`，parent alias `0x0115`。
+  - metadata / RTTI / registry / external GUID lookup 未恢复 human type name。
+  - readonly Read/DoIO tracing 恢复了 `JStyleBase` control path，但未绑定 `1D1928C0...`。
+  - typed `0x0010` DTO 仍被 Read/DoIO 与 sub-kind discriminator 证据阻塞，继续 audit-only。
+- 同步 `task_plan.md`：
+  - 更新“当前阶段”为 Phase 22 complete + Phase 20 partial AC。
+  - 将 Phase 20 从 awaiting `/goal` 改为 partial closeout。
+  - 补齐 Phase 21 D06 coverage / relationship / Sheet audit 完成状态。
+  - 补齐 Phase 22 D06 text-placement regression 完成状态。
+
+### 验证
+| 检查项 | 结果 |
+|---|---|
+| `git status --short --branch` | 当前仅 `task_plan.md` / `progress.md` 有未提交文档变更 |
+| `ReadLints task_plan.md` | 无错误 |
+
+### 下一步
+- 如需落盘本轮文档同步，可提交 `task_plan.md` 与 `progress.md`。
+- 不要从 Phase 20 partial AC 直接实现 typed `0x0010` DTO；除非后续拿到更强 Read/DoIO 或 sub-kind discriminator 证据。
