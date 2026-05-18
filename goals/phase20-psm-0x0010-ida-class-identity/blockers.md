@@ -117,6 +117,7 @@ RTTI / local types，而不是继续 blind factory tracing。
 | Q4 | question | DEFERRED | 容忍 "embedded fragment" 结论，调整 AC 描述 | agent |
 | Q5 | partial-ac | ACCEPTED | GUID/table identity 收口；class name / Read-DoIO / sub-kind deferred | user + agent |
 | Q6 | metadata-recon | ACCEPTED NEGATIVE | external metadata / RTTI / local type / registry search did not recover human type name | agent |
+| Q7 | readonly-tracing | ACCEPTED PARTIAL | SerialCluster traced to storage accessors; style IJPersist DoIO recovered for JStyleBase control GUID, not 1D1928C0 | agent |
 
 ## 当前状态总表
 

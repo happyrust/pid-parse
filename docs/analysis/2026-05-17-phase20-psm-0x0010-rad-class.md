@@ -247,6 +247,42 @@ persisted type name. The safest current interpretation remains:
 not an activatable or named class in the loaded IDB. Typed `0x0010` DTO work
 remains blocked on stronger Read/DoIO evidence.
 
+## Follow-up Read/DoIO Tracing (2026-05-18)
+
+After the metadata path failed, a second focused follow-up traced the two
+least-risky Read/DoIO candidates: the `radsrvitem.dll` `SerialCluster` path and
+the `style.dll` `IJPersist` path.
+
+`radsrvitem.dll` findings:
+
+- `sub_56468B30` resolves packed OIDs to record slots, checks type-entry flags,
+  and can lazy-load a `SerialCluster`.
+- `sub_5648BBA0` constructs/uses `SerialCluster` and then calls
+  `sub_56490B30` or `sub_56491090` to open named persisted children.
+- `sub_56490B30` / `sub_56491090` are storage accessor wrappers: they validate a
+  short wide name, then call a storage-like vtable at `+12` / `+16` with
+  constants `4114` / `18`.
+- The resulting objects are handed to `SerialCluster` vtable slots `+64` /
+  `+68`, but this path still does not identify the concrete class or
+  `Read` / `DoIO` sequence for GUID `1D1928C0...`.
+
+`style.dll` findings:
+
+- `JStyleBase::IJPersistImp` has full RTTI and an inspectable vtable at
+  `.rdata:0x1006E9AC`.
+- Its versioned read helper `sub_10057B30` calls
+  `IOContext::GetObjectVersions` with GUID
+  `19F333B0-4F81-11D0-A223-080036A1CF02`, not `1D1928C0...`.
+- When the object version is 2 or 3, `sub_10057B30` calls `sub_10057350`, which
+  performs two `IOContext::DoIO(..., 2, ...)` reads/writes against
+  `JStyleBase` fields.
+
+Conclusion: the `style.dll` route proves the method for recovering a
+version-gated `IJPersist` `DoIO` sequence, but the recovered sequence belongs to
+`JStyleBase` (`19F333B0...`) rather than the PSM `0x0010` persisted GUID
+`1D1928C0...`. This is useful control evidence, not sufficient DTO evidence for
+`0x0010`.
+
 ## Phase 21 Implications
 
 Do not implement typed `0x0010` sub-kind DTOs from this evidence alone.
