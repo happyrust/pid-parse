@@ -12,9 +12,9 @@ use pid_parse::{
     parsers::sheet_records::{
         collect_normalized_f64_pairs, coordinate_page_metadata_investigation_report,
         coordinate_pair_spatial_analysis, curve_primitive_investigation_report,
-        decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints,
-        decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
-        decode_sub_records_0x0010, primitive_line_investigation_report,
+        decode_attribute_fragments, decode_graphic_groups, decode_iglines, decode_iglinestrings,
+        decode_igpoints, decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides,
+        decode_primitive_lines, decode_sub_records_0x0010, primitive_line_investigation_report,
         sheet_record_shape_inventory, symbol_placement_investigation_report,
         text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
         SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSymbolPlacementObject,
@@ -7839,6 +7839,97 @@ fn sub_records_0x0010_leading_word_distribution_matches_phase19_probe() {
             *count >= 1,
             "fixture {fixture} contributed 0 records to leading_word histogram \
             but Phase 18 ratchet expected non-zero"
+        );
+    }
+}
+
+/// Phase 26: PSM 0x0010 attribute-fragment decoder cross-fixture ratchet.
+///
+/// Asserts the additive attribute decoder extracts engineering text
+/// (instrument tags / line numbers / sizes / drawing refs) from the
+/// Sheet-bearing fixtures, AND that the raw Phase 18
+/// `decoded_sub_records_0x0010` baseline (582) is unchanged — the new
+/// decoder is strictly additive. See
+/// `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`.
+#[test]
+fn attribute_fragments_extract_engineering_text_cross_fixture() {
+    let fixtures = [
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+        "export-test/publish-data/A01/A01.pid",
+    ];
+    let mut total_fragments = 0usize;
+    let mut total_strings = 0usize;
+    let mut raw_0x0010 = 0usize;
+    let mut per_fixture: Vec<(String, usize, usize)> = Vec::new();
+    let mut samples: Vec<String> = Vec::new();
+
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut frags = 0usize;
+        let mut strs = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            raw_0x0010 += decode_sub_records_0x0010(raw.data.as_slice()).len();
+            for f in &decode_attribute_fragments(raw.data.as_slice()) {
+                frags += 1;
+                strs += f.strings.len();
+                for s in &f.strings {
+                    if samples.len() < 24 && s.text.trim().chars().count() >= 2 {
+                        samples.push(s.text.clone());
+                    }
+                }
+            }
+        }
+        total_fragments += frags;
+        total_strings += strs;
+        per_fixture.push((fixture.to_string(), frags, strs));
+    }
+
+    if per_fixture.is_empty() {
+        eprintln!("skipping: no Sheet-bearing fixture present");
+        return;
+    }
+
+    eprintln!("--- Phase 26: PSM 0x0010 attribute fragments ---");
+    for (name, frags, strs) in &per_fixture {
+        eprintln!("  {name}: {frags} fragments, {strs} strings");
+    }
+    eprintln!("  total fragments: {total_fragments}, total strings: {total_strings}");
+    eprintln!("  raw 0x0010 (Phase 18 path): {raw_0x0010}");
+    eprintln!("  samples: {samples:?}");
+
+    if per_fixture.len() == fixtures.len() {
+        // All fixtures present: lock the Phase 18 raw baseline (the
+        // additive decoder must not change it) plus Phase 26 counts.
+        assert_eq!(
+            raw_0x0010, 582,
+            "Phase 26 attribute decoder must not change the Phase 18 raw 0x0010 baseline (582)"
+        );
+        assert_eq!(
+            total_fragments, 84,
+            "Phase 26 attribute fragment baseline drifted (got {total_fragments})"
+        );
+        assert_eq!(
+            total_strings, 84,
+            "Phase 26 attribute string baseline drifted (got {total_strings})"
+        );
+        let counts: Vec<usize> = per_fixture.iter().map(|(_, f, _)| *f).collect();
+        assert_eq!(
+            counts,
+            vec![34, 26, 24, 0],
+            "Phase 26 per-fixture attribute baseline drifted: {per_fixture:?}"
+        );
+    } else {
+        // Partial fixture set (some samples absent): soft floor only.
+        assert!(
+            total_strings >= 1,
+            "expected extractable attribute strings, got {total_strings}"
         );
     }
 }

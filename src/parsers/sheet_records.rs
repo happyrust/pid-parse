@@ -3952,6 +3952,191 @@ pub fn decode_sub_record_0x0010_at(
     })
 }
 
+// Phase 26: PSM 0x0010 attribute-fragment decoder (additive, audit-only)
+//
+// 2026-05-31 analysis proved 0x0010 records carry SmartPlant attribute
+// text (instrument tags / line numbers / nominal sizes / drawing refs /
+// annotation labels) as length-prefixed UTF-16LE after a fixed
+// `marker(4) + aux(8)` prefix. See
+// `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`. This decoder
+// is strictly additive: the raw Phase 18 `decode_sub_records_0x0010`
+// path is unchanged, and no `PidGraphicKind` is emitted.
+
+/// One length-prefixed UTF-16LE string extracted from a PSM `0x0010`
+/// attribute fragment (Phase 26).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedAttributeString {
+    /// Offset (within the record payload) of the `u16` length word.
+    pub len_offset: usize,
+    /// Character count from the `u16` length prefix.
+    pub char_count: u16,
+    /// Decoded UTF-16LE text. Records whose tail is not clean UTF-16LE
+    /// are rejected wholesale, so this is always valid Unicode.
+    pub text: String,
+}
+
+/// A PSM `0x0010` record decoded as a `SmartPlant` **attribute fragment**
+/// (Phase 26).
+///
+/// Carries engineering attribute text — instrument tags, line numbers,
+/// nominal sizes, drawing references, annotation labels — as one or more
+/// length-prefixed UTF-16LE strings after a fixed `marker(4) + aux(8)`
+/// prefix. This is an **additive, audit-only** view that coexists with
+/// the raw [`SheetSubRecord0x0010Decoded`] from Phase 18 (unchanged) and
+/// emits no geometry kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SheetAttributeFragmentDecoded {
+    /// Byte range covering the full PSM record (6-byte header + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always
+    /// [`PSM_TYPE_CODE_SUB_RECORD_0X0010`] (`0x0010`).
+    pub type_code: u16,
+    /// `payload[0..4]` as little-endian `u32`. A repeating **type
+    /// marker** (frequently `0x00010002`), **not** a unique object id.
+    pub marker: u32,
+    /// `payload[4..12]` raw. 8-byte header/aux whose per-field semantics
+    /// remain pending IDA confirmation; preserved verbatim for audit.
+    pub aux: [u8; 8],
+    /// Length-prefixed UTF-16LE strings parsed from `payload[12..]`.
+    /// Non-empty by construction.
+    pub strings: Vec<DecodedAttributeString>,
+}
+
+/// Payload offset where the first length-prefixed string begins
+/// (`marker(4) + aux(8)`).
+pub const ATTRIBUTE_FRAGMENT_STRING_START: usize = 12;
+
+/// Upper bound on a single string's `u16` character count, guarding
+/// against a bogus length prefix.
+pub const ATTRIBUTE_FRAGMENT_MAX_CHAR_COUNT: u16 = 4096;
+
+/// Decode every PSM `0x0010` **attribute fragment** in a Sheet stream's
+/// bytes (Phase 26, additive + audit-only).
+///
+/// Uses the same header envelope as [`decode_sub_records_0x0010`], then
+/// parses `marker(4) + aux(8) + [u16 len + UTF-16LE]*` and keeps a record
+/// only when at least one clean, non-empty UTF-16LE string is recovered.
+/// Records whose tail is not clean length-prefixed UTF-16LE are skipped
+/// (still available via the raw Phase 18 decoder). Panic-free.
+pub fn decode_attribute_fragments(data: &[u8]) -> Vec<SheetAttributeFragmentDecoded> {
+    let mut out = Vec::new();
+    let min_record_len = 6usize.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize);
+    if data.len() < min_record_len {
+        return out;
+    }
+    let max_offset = data.len() - min_record_len;
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_attribute_fragment_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `0x0010` attribute fragment at `offset`.
+/// Returns `None` when the header fails validation, the payload is too
+/// short for `marker(4)+aux(8)+len`, or no clean UTF-16LE string is
+/// found. Bounds-checked and panic-free.
+pub fn decode_attribute_fragment_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<SheetAttributeFragmentDecoded> {
+    let header_end = offset.checked_add(6)?;
+    if header_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
+        return None;
+    }
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
+        .contains(&bytes_to_follow)
+    {
+        return None;
+    }
+    let btf = bytes_to_follow as usize;
+    let payload_end = header_end.checked_add(btf)?;
+    if payload_end > data.len() {
+        return None;
+    }
+    let payload = data.get(header_end..payload_end)?;
+    if payload.len() < ATTRIBUTE_FRAGMENT_STRING_START + 2 {
+        return None;
+    }
+    let marker = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    let mut aux = [0u8; 8];
+    aux.copy_from_slice(payload.get(4..12)?);
+
+    let mut strings = Vec::new();
+    let mut pos = ATTRIBUTE_FRAGMENT_STRING_START;
+    while pos + 2 <= payload.len() {
+        let char_count = u16::from_le_bytes([payload[pos], payload[pos + 1]]);
+        if char_count == 0 || char_count > ATTRIBUTE_FRAGMENT_MAX_CHAR_COUNT {
+            break;
+        }
+        let text_start = pos + 2;
+        let byte_len = (char_count as usize).checked_mul(2)?;
+        let text_end = text_start.checked_add(byte_len)?;
+        if text_end > payload.len() {
+            break;
+        }
+        let Some(raw) = payload.get(text_start..text_end) else {
+            break;
+        };
+        let Some(text) = decode_attribute_utf16le(raw) else {
+            break;
+        };
+        if text.chars().all(char::is_whitespace) {
+            break;
+        }
+        strings.push(DecodedAttributeString {
+            len_offset: pos,
+            char_count,
+            text,
+        });
+        pos = text_end;
+    }
+
+    if strings.is_empty() {
+        return None;
+    }
+    Some(SheetAttributeFragmentDecoded {
+        byte_range: offset..payload_end,
+        type_code,
+        marker,
+        aux,
+        strings,
+    })
+}
+
+/// Decode `bytes` as UTF-16LE, returning `None` on odd length, any
+/// unpaired surrogate, or any control character other than space/tab.
+fn decode_attribute_utf16le(bytes: &[u8]) -> Option<String> {
+    if !bytes.len().is_multiple_of(2) {
+        return None;
+    }
+    let units = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]));
+    let mut out = String::new();
+    for unit in char::decode_utf16(units) {
+        let ch = unit.ok()?;
+        if ch.is_control() && ch != ' ' && ch != '\t' {
+            return None;
+        }
+        out.push(ch);
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5335,6 +5520,133 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // Phase 26: PSM 0x0010 attribute-fragment decoder tests
+    // -----------------------------------------------------------------
+
+    fn build_attribute_fragment(marker: u32, aux: [u8; 8], strings: &[&str]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&marker.to_le_bytes());
+        payload.extend_from_slice(&aux);
+        for s in strings {
+            let units: Vec<u16> = s.encode_utf16().collect();
+            payload.extend_from_slice(&(units.len() as u16).to_le_bytes());
+            for u in units {
+                payload.extend_from_slice(&u.to_le_bytes());
+            }
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    #[test]
+    fn attribute_fragment_decodes_single_string() {
+        let rec = build_attribute_fragment(
+            0x0001_0002,
+            [3, 0, 1, 0, 0x44, 0, 0, 0],
+            &["ODOIL020150 MM"],
+        );
+        let decoded = decode_attribute_fragments(&rec);
+        assert_eq!(decoded.len(), 1);
+        let f = &decoded[0];
+        assert_eq!(f.type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
+        assert_eq!(f.marker, 0x0001_0002);
+        assert_eq!(f.aux, [3, 0, 1, 0, 0x44, 0, 0, 0]);
+        assert_eq!(f.strings.len(), 1);
+        assert_eq!(f.strings[0].char_count, 14);
+        assert_eq!(f.strings[0].text, "ODOIL020150 MM");
+    }
+
+    #[test]
+    fn attribute_fragment_decodes_cjk_string() {
+        let rec = build_attribute_fragment(0x0001_0002, [0; 8], &["设计温度"]);
+        let decoded = decode_attribute_fragments(&rec);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].strings[0].text, "设计温度");
+        assert_eq!(decoded[0].strings[0].char_count, 4);
+    }
+
+    #[test]
+    fn attribute_fragment_decodes_multiple_strings() {
+        let rec = build_attribute_fragment(1, [0; 8], &["A3", "DN80"]);
+        let decoded = decode_attribute_fragments(&rec);
+        assert_eq!(decoded.len(), 1);
+        let texts: Vec<&str> = decoded[0].strings.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, vec!["A3", "DN80"]);
+    }
+
+    #[test]
+    fn attribute_fragment_rejects_control_char_string() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        payload.extend_from_slice(&[0u8; 8]);
+        payload.extend_from_slice(&2u16.to_le_bytes());
+        // U+0001 U+0002 — control chars, must reject the whole record.
+        payload.extend_from_slice(&[0x01, 0x00, 0x02, 0x00]);
+        let mut rec = Vec::new();
+        rec.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
+        rec.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        rec.extend_from_slice(&payload);
+        assert!(decode_attribute_fragments(&rec).is_empty());
+    }
+
+    #[test]
+    fn attribute_fragment_skips_truncated_length_prefix() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        payload.extend_from_slice(&[0u8; 8]);
+        payload.extend_from_slice(&100u16.to_le_bytes());
+        payload.extend_from_slice(&[0x41, 0x00]); // only 1 char available, len says 100
+        let mut rec = Vec::new();
+        rec.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
+        rec.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        rec.extend_from_slice(&payload);
+        assert!(decode_attribute_fragments(&rec).is_empty());
+    }
+
+    #[test]
+    fn attribute_fragment_rejects_wrong_type_code() {
+        let mut rec = build_attribute_fragment(1, [0; 8], &["A3"]);
+        rec[0] = 0x18; // igLine2d type code
+        assert!(decode_attribute_fragments(&rec).is_empty());
+    }
+
+    #[test]
+    fn attribute_fragment_rejects_too_short_payload() {
+        // payload < marker(4)+aux(8)+len(2) = 14
+        let payload = vec![0u8; 10];
+        let mut rec = Vec::new();
+        rec.extend_from_slice(&PSM_TYPE_CODE_SUB_RECORD_0X0010.to_le_bytes());
+        rec.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        rec.extend_from_slice(&payload);
+        assert!(decode_attribute_fragments(&rec).is_empty());
+    }
+
+    #[test]
+    fn attribute_fragment_at_returns_some_for_valid_offset() {
+        let rec = build_attribute_fragment(0x0001_0002, [0; 8], &["DN80"]);
+        let f = decode_attribute_fragment_at(&rec, 0).expect("valid offset must decode");
+        assert_eq!(f.strings[0].text, "DN80");
+        assert_eq!(f.byte_range, 0..rec.len());
+    }
+
+    #[test]
+    fn attribute_fragment_decoder_is_panic_safe() {
+        let rec = build_attribute_fragment(
+            0x0001_0002,
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            &["ODOIL020150 MM", "DN80"],
+        );
+        for trunc in 0..rec.len() {
+            let _ = decode_attribute_fragments(&rec[..trunc]);
+        }
+        let noise: Vec<u8> = (0..4096u32).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_attribute_fragments(&noise);
+        let _ = decode_attribute_fragments(&vec![0xFFu8; 2048]);
+    }
+
     // Phase 18: PSM 0x0010 sub-record family audit-only decoder tests
     // -----------------------------------------------------------------
 

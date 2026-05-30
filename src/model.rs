@@ -920,6 +920,17 @@ pub struct SheetGeometry {
     /// produce normalized geometry entities.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_sub_records_0x0010: Vec<DecodedSubRecord0x0010Record>,
+    /// Phase 26 additive, audit-only attribute-fragment view of PSM
+    /// `0x0010` records, emitted by
+    /// [`crate::parsers::sheet_records::decode_attribute_fragments`].
+    /// Decodes the `marker(4) + aux(8) + [u16 len + UTF-16LE]*`
+    /// structure to extract `SmartPlant` attribute text (instrument tags,
+    /// line numbers, nominal sizes, drawing references, annotation
+    /// labels). Coexists with [`Self::decoded_sub_records_0x0010`] (raw,
+    /// unchanged) and produces no normalized geometry entity. See
+    /// `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_attribute_fragments: Vec<DecodedAttributeFragment>,
     /// Phase 25-A read-only spatial-distribution analysis of this
     /// sheet's normalized `(x, y)` f64 pairs, emitted by
     /// [`crate::parsers::sheet_records::coordinate_pair_spatial_analysis`].
@@ -1503,6 +1514,68 @@ impl From<crate::parsers::sheet_records::SheetSubRecord0x0010Decoded>
             bytes_to_follow: d.bytes_to_follow,
             raw_payload: d.raw_payload,
             leading_word: d.leading_word,
+        }
+    }
+}
+
+/// One length-prefixed UTF-16LE string from a PSM `0x0010` attribute
+/// fragment (Phase 26). Model-shaped mirror of
+/// [`crate::parsers::sheet_records::DecodedAttributeString`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DecodedAttributeStringRecord {
+    /// Offset of the `u16` length word within the record payload.
+    pub len_offset: usize,
+    /// Character count from the `u16` length prefix.
+    pub char_count: u16,
+    /// Decoded UTF-16LE text.
+    pub text: String,
+}
+
+/// Stable, model-shaped DTO that mirrors
+/// [`crate::parsers::sheet_records::SheetAttributeFragmentDecoded`] —
+/// the Phase 26 additive, audit-only attribute-fragment view of PSM
+/// `0x0010` records.
+///
+/// Carries `SmartPlant` attribute text as length-prefixed UTF-16LE strings
+/// after a fixed `marker(4) + aux(8)` prefix. Coexists with
+/// [`DecodedSubRecord0x0010Record`] (raw) and emits no geometry kind.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DecodedAttributeFragment {
+    /// Inclusive byte-range start (6-byte header + payload).
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x0010`.
+    pub type_code: u16,
+    /// `payload[0..4]` little-endian `u32` — a repeating type marker
+    /// (often `0x00010002`), not a unique object id.
+    pub marker: u32,
+    /// `payload[4..12]` raw aux bytes (length 8); per-field semantics
+    /// pending IDA confirmation.
+    pub aux: Vec<u8>,
+    /// Length-prefixed UTF-16LE strings parsed from `payload[12..]`.
+    pub strings: Vec<DecodedAttributeStringRecord>,
+}
+
+impl From<crate::parsers::sheet_records::SheetAttributeFragmentDecoded>
+    for DecodedAttributeFragment
+{
+    fn from(d: crate::parsers::sheet_records::SheetAttributeFragmentDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            marker: d.marker,
+            aux: d.aux.to_vec(),
+            strings: d
+                .strings
+                .into_iter()
+                .map(|s| DecodedAttributeStringRecord {
+                    len_offset: s.len_offset,
+                    char_count: s.char_count,
+                    text: s.text,
+                })
+                .collect(),
         }
     }
 }

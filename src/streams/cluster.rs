@@ -9,19 +9,20 @@
 use crate::api::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
-    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedGraphicGroupRecord, DecodedIgLine2dRecord,
-    DecodedIgLineString2dRecord, DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord,
-    DecodedIgTextBoxRecord, DecodedJStyleOverrideRecord, DecodedPrimitiveLineRecord,
-    DecodedSpatialAnalysis, DecodedSubRecord0x0010Record, PidDocument, SheetCoordinateHintDto,
-    SheetGeometry, SheetStream, SheetText,
+    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedAttributeFragment,
+    DecodedGraphicGroupRecord, DecodedIgLine2dRecord, DecodedIgLineString2dRecord,
+    DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord, DecodedIgTextBoxRecord,
+    DecodedJStyleOverrideRecord, DecodedPrimitiveLineRecord, DecodedSpatialAnalysis,
+    DecodedSubRecord0x0010Record, PidDocument, SheetCoordinateHintDto, SheetGeometry, SheetStream,
+    SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
     sheet_records::{
-        collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_graphic_groups,
-        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
-        decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
+        collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_attribute_fragments,
+        decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints,
+        decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
         decode_sub_records_0x0010, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
     },
 };
@@ -284,6 +285,13 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             .into_iter()
             .map(DecodedSubRecord0x0010Record::from)
             .collect();
+    // Phase 26 additive, audit-only attribute-fragment view of the same
+    // 0x0010 records (raw `decoded_sub_records_0x0010` above is unchanged).
+    let decoded_attribute_fragments: Vec<DecodedAttributeFragment> =
+        decode_attribute_fragments(raw_data)
+            .into_iter()
+            .map(DecodedAttributeFragment::from)
+            .collect();
 
     if texts.is_empty()
         && coordinate_hints.is_empty()
@@ -324,6 +332,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             decoded_graphic_groups,
             decoded_jstyle_overrides,
             decoded_sub_records_0x0010,
+            decoded_attribute_fragments,
             spatial_analysis,
         })
     }

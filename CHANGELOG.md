@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Phase 26：PSM 0x0010 属性片段解码器（additive / audit-only）
+
+- 逆向突破落地：PSM `0x0010` 记录承载 SmartPlant **工程属性文本**（仪表
+  位号 / 管线号 / 公称尺寸 / 图纸号 / 标注标签），结构为
+  `marker(4) + aux(8) + [u16 len + UTF-16LE]*`（由 `ODOIL020150 MM` =
+  14 字符、btf=42=4+8+2+28 精确验证）。新增 **strict-additive、audit-only**
+  解码器，与 Phase 18 raw `decode_sub_records_0x0010`（582）**并存不替换**，
+  **不 emit `PidGraphicKind`**。
+- `src/parsers/sheet_records.rs`：新增 `decode_attribute_fragments` /
+  `decode_attribute_fragment_at` + `SheetAttributeFragmentDecoded` /
+  `DecodedAttributeString` + 常量 `ATTRIBUTE_FRAGMENT_STRING_START` /
+  `ATTRIBUTE_FRAGMENT_MAX_CHAR_COUNT`。保守解码：仅接受能干净解出
+  length-prefixed UTF-16LE 的记录，非法（unpaired surrogate / 控制字符）
+  整条回退给 raw 解码器。9 个 unit test。
+- `src/model.rs`：新增 `DecodedAttributeFragment` /
+  `DecodedAttributeStringRecord` DTO + `From` impl +
+  `SheetGeometry::decoded_attribute_fragments`（serde skip-if-empty）。
+- `src/streams/cluster.rs`：pipeline 与 raw `decoded_sub_records_0x0010`
+  并列填充（raw 集合字节级不变）。`src/schema.rs`：新增 schema needle。
+- 测试：`attribute_fragments_extract_engineering_text_cross_fixture` 跨 4
+  fixture 锁定 **per-fixture DWG-0201=34 / DWG-0202=26 / 工艺管道-1=24 /
+  A01=0，共 84 fragment/string**，并断言 raw Phase 18 baseline 恒为
+  **582**；`tests/parser_panic_safety.rs` 把新解码器纳入对抗矩阵。
+- 文档：`docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`（模式 A
+  原始 PE 独立验证 PersistTypeTable、类身份定性 = persist 框架容器非几何、
+  突破证据链、Phase 26 落地说明）+
+  `goals/phase26-psm-0x0010-attribute-fragment-decoder/` 五件套 +
+  `examples/probe_attribute_fragment.rs`（Slice A 只读 probe）。
+- **Slice B（aux 8 字节语义）暂缓**：Slice A 探针 `multi=0` 证明保守单
+  字符串路径已完备，aux 语义不阻塞字符串提取，留待 IDA
+  `radsrvitem.dll.i64` 确认。**promotion（emit Text/Attribute entity）
+  留后续 phase**。
+- 5 道 pre-commit gate 全绿（build / test full workspace 0 failed /
+  clippy -D warnings / fmt --check / missing-docs baseline=0）；
+  Phase 14–25 所有 baseline（尤其 `decoded_sub_records_0x0010 = 582`）
+  零退化。
+
 ### Phase 25-A：normalized_f64_pair 空间分布分析（含 25-C 收口 + 25-D 加固）
 
 - 新增**只读**空间分布分析层，把跨 fixture 的 normalized `(x, y)` f64

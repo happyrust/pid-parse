@@ -164,6 +164,10 @@ mod tests {
             // Phase 19: PSM 0x0010 leading_word audit field
             // (= payload[0..2] as little-endian u16).
             "leading_word",
+            // Phase 26: PSM 0x0010 attribute-fragment DTO (additive).
+            "DecodedAttributeFragment",
+            "DecodedAttributeStringRecord",
+            "decoded_attribute_fragments",
             // Phase 25-A: read-only spatial-distribution analysis DTO.
             "DecodedSpatialAnalysis",
             "DecodedSpatialCluster",

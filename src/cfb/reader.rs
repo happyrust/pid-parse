@@ -780,6 +780,7 @@ mod tests {
                 decoded_graphic_groups: vec![],
                 decoded_jstyle_overrides: vec![],
                 decoded_sub_records_0x0010: vec![],
+                decoded_attribute_fragments: vec![],
                 spatial_analysis: None,
             }),
             endpoint_records: vec![SheetEndpointRecord {

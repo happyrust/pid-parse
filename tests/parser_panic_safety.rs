@@ -35,12 +35,13 @@ use pid_parse::parsers::relationship_probe::probe_relationships;
 use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
-    collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_graphic_group_at,
-    decode_graphic_groups, decode_igline_at, decode_iglines, decode_iglinestring_at,
-    decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igsymbol_at, decode_igsymbols,
-    decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
-    decode_primitive_line_at, decode_primitive_lines, decode_sub_record_0x0010_at,
-    decode_sub_records_0x0010, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+    collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_attribute_fragment_at,
+    decode_attribute_fragments, decode_graphic_group_at, decode_graphic_groups, decode_igline_at,
+    decode_iglines, decode_iglinestring_at, decode_iglinestrings, decode_igpoint_at,
+    decode_igpoints, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at, decode_igtextboxes,
+    decode_jstyle_override_at, decode_jstyle_overrides, decode_primitive_line_at,
+    decode_primitive_lines, decode_sub_record_0x0010_at, decode_sub_records_0x0010,
+    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -269,6 +270,14 @@ fn exercise_all_parsers(input: &[u8]) {
     if !input.is_empty() {
         let _ = decode_sub_record_0x0010_at(input, input.len() - 1);
         let _ = decode_sub_record_0x0010_at(input, input.len());
+    }
+
+    // Phase 26: PSM `0x0010` attribute-fragment decoder.
+    let _ = decode_attribute_fragments(input);
+    let _ = decode_attribute_fragment_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_attribute_fragment_at(input, input.len() - 1);
+        let _ = decode_attribute_fragment_at(input, input.len());
     }
 
     // Phase 25-A: normalized f64 pair scan + spatial-distribution
