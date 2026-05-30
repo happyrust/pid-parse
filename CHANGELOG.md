@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+### Phase 25-A：normalized_f64_pair 空间分布分析（含 25-C 收口 + 25-D 加固）
+
+- 新增**只读**空间分布分析层，把跨 fixture 的 normalized `(x, y)` f64
+  pair 升级为 sheet-local 拓扑证据；cluster id 仅为拓扑提示，**不 promotion
+  任何 entity、不改 normalized geometry transform、不引入新
+  `PidGraphicKind`、不令 `PidPageTransform::Available` 出现**。
+- `src/parsers/sheet_records.rs`：
+  - 新增 `coordinate_pair_spatial_analysis(pairs, n_grid)` API +
+    `SheetSpatialAnalysisReport` / `SheetSpatialCluster` DTO（N×N 网格
+    bucketing + 4-邻接连通分量合并；确定性 + panic-safe，NaN / Inf / 越界
+    统一 clamp 到 `[0, 1]`）。
+  - 新增 `collect_normalized_f64_pairs(bytes)` helper，
+    `normalized_f64_pair_count` 改为复用它（谓词与计数不变，单一事实源）。
+  - 新增公开常量 `SPATIAL_ANALYSIS_DEFAULT_GRID_N = 20`。
+- `src/model.rs`：新增 `DecodedSpatialAnalysis` / `DecodedSpatialCluster`
+  DTO（scalar bbox/centroid 字段）+ `From` impl +
+  `SheetGeometry::spatial_analysis: Option<DecodedSpatialAnalysis>`
+  （serde skip-if-None）。
+- `src/streams/cluster.rs`：pipeline 在 sheet 本就产出几何时填充
+  `spatial_analysis`（emptiness 判定未改 → 哪些 sheet 有几何零变化）。
+- `src/schema.rs`：新增 DTO 的 schema 合约 needles。
+- 测试：11 个 unit test + `spatial_analysis_cross_fixture`（跨 5 fixture
+  共 **1698 pair / 83 cluster / 7 sheet**，全部非均匀 → positive 信号）+
+  `spatial_analysis_pipeline_populates_sheet_geometry`（pipeline ↔ API
+  一致性）。
+- 文档：`docs/analysis/2026-05-23-phase25-f64-spatial-distribution.md`
+  （落地报告）+ `2026-05-23-phase25-slice-a-probe-output.md`（Slice A
+  heatmap）+ `2026-05-29-phase25-cross-fixture-inventory-convergence-cn.md`。
+- **Slice F（attach cluster id 到 `provenance.note`）暂缓**：空间簇在
+  归一化 `[0, 1]²` f64-pair 空间，而 `inferred_points` 在 i32
+  coordinate-hint 空间（如 `x=1200, y=-450`），两空间同源未经字节级证明；
+  跨空间注入 cluster id 会产生误导性 provenance，违反 source-proven gate /
+  Stop-And-Challenge。
+- **Phase 25-C 收口**：实测 DWG-0201 `inferred_lines = 49 (≥ 40)`，
+  endpoint → inferred line 闭环早已落地，原 `inferred_lines = 0` 前提作废
+  （59 endpoint 中 49 配对，剩余 10 为单端，属预期非配对）；计划文档
+  §2.3 标注 Done 条件已满足，无新解码工作。
+- **Phase 25-D 加固**：`tests/parser_panic_safety.rs` 把
+  `collect_normalized_f64_pairs`（新字节级入口）+
+  `coordinate_pair_spatial_analysis`（degenerate 网格 0/1 + 默认 +
+  raw 未过滤 f64 向量驱动 NaN/Inf/越界 clamp 路径）纳入对抗 + 截断
+  panic-safety 双扫描矩阵。
+- 5 道 pre-commit gate 全绿（build / test 863 lib + 95 parse_real_files
+  + 全部集成（2 DWG-gated 跳过）/ clippy -D warnings / fmt --check /
+  missing-docs baseline=0）；Phase 23/24 guardrail、Phase 14 cross-fixture
+  inventory、`inferred_points=80` / `inferred_lines` floor 均未退化。
+
 ### Phase 24 Task 24-01：CoordinatePageMetadata 候选证据 — 推荐 negative evidence 收口
 
 - 新增 cross-fixture probe：`examples/probe_phase24_top_evidence.rs`。
