@@ -920,6 +920,96 @@ pub struct SheetGeometry {
     /// produce normalized geometry entities.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_sub_records_0x0010: Vec<DecodedSubRecord0x0010Record>,
+    /// Phase 25-A read-only spatial-distribution analysis of this
+    /// sheet's normalized `(x, y)` f64 pairs, emitted by
+    /// [`crate::parsers::sheet_records::coordinate_pair_spatial_analysis`].
+    /// `None` when the sheet carries no normalized f64 pairs.
+    ///
+    /// This is **investigation-only evidence**: cluster ids are
+    /// sheet-local topology hints, never coordinate authority. It does
+    /// not promote any entity and does not change
+    /// [`crate::geometry::PidPageTransform`] state.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub spatial_analysis: Option<DecodedSpatialAnalysis>,
+}
+
+/// Stable, model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetSpatialAnalysisReport`]
+/// (Phase 25-A read-only spatial distribution analysis).
+///
+/// Read-only evidence: it records how a sheet's normalized `(x, y)`
+/// f64 pairs cluster in `[0, 1]²` space. It carries no coordinate
+/// authority and never promotes an entity.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+pub struct DecodedSpatialAnalysis {
+    /// Total normalized f64 pairs that contributed to the analysis.
+    pub pair_count: usize,
+    /// Grid resolution (N×N) used for bucketing.
+    pub grid_resolution: usize,
+    /// True when the analysis cannot separate clusters (zero pairs,
+    /// a single cluster, or all pairs in one grid cell).
+    pub uniform_distribution: bool,
+    /// Connected-component clusters, in deterministic discovery order.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub clusters: Vec<DecodedSpatialCluster>,
+}
+
+/// Stable, model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetSpatialCluster`].
+///
+/// Cluster ids are sheet-local (0-based, deterministic) and must not
+/// be compared across sheets or fixtures. The bounding box and
+/// centroid live in normalized `[0, 1]²` space.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+pub struct DecodedSpatialCluster {
+    /// Sheet-local cluster id (0-based, deterministic for the same input).
+    pub id: u32,
+    /// Number of normalized f64 pairs that fell into this cluster.
+    pub pair_count: usize,
+    /// Bounding-box minimum X in normalized `[0, 1]` space.
+    pub min_x: f64,
+    /// Bounding-box minimum Y in normalized `[0, 1]` space.
+    pub min_y: f64,
+    /// Bounding-box maximum X in normalized `[0, 1]` space.
+    pub max_x: f64,
+    /// Bounding-box maximum Y in normalized `[0, 1]` space.
+    pub max_y: f64,
+    /// Centroid X (arithmetic mean) in normalized `[0, 1]` space.
+    pub centroid_x: f64,
+    /// Centroid Y (arithmetic mean) in normalized `[0, 1]` space.
+    pub centroid_y: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetSpatialCluster> for DecodedSpatialCluster {
+    fn from(cluster: crate::parsers::sheet_records::SheetSpatialCluster) -> Self {
+        let ((min_x, min_y), (max_x, max_y)) = cluster.bbox;
+        let (centroid_x, centroid_y) = cluster.centroid;
+        Self {
+            id: cluster.id,
+            pair_count: cluster.pair_count,
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+            centroid_x,
+            centroid_y,
+        }
+    }
+}
+
+impl From<crate::parsers::sheet_records::SheetSpatialAnalysisReport> for DecodedSpatialAnalysis {
+    fn from(report: crate::parsers::sheet_records::SheetSpatialAnalysisReport) -> Self {
+        Self {
+            pair_count: report.pair_count,
+            grid_resolution: report.grid_resolution,
+            uniform_distribution: report.uniform_distribution,
+            clusters: report
+                .clusters
+                .into_iter()
+                .map(DecodedSpatialCluster::from)
+                .collect(),
+        }
+    }
 }
 
 /// Stable, model-shaped DTO that mirrors

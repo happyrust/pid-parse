@@ -12,16 +12,17 @@ use crate::model::{
     ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedGraphicGroupRecord, DecodedIgLine2dRecord,
     DecodedIgLineString2dRecord, DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord,
     DecodedIgTextBoxRecord, DecodedJStyleOverrideRecord, DecodedPrimitiveLineRecord,
-    DecodedSubRecord0x0010Record, PidDocument, SheetCoordinateHintDto, SheetGeometry, SheetStream,
-    SheetText,
+    DecodedSpatialAnalysis, DecodedSubRecord0x0010Record, PidDocument, SheetCoordinateHintDto,
+    SheetGeometry, SheetStream, SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
     sheet_records::{
-        decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints,
-        decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
-        decode_sub_records_0x0010,
+        collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_graphic_groups,
+        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
+        decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
+        decode_sub_records_0x0010, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
     },
 };
 use std::io::Read;
@@ -298,6 +299,17 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
     {
         None
     } else {
+        // Phase 25-A: read-only spatial-distribution analysis of the
+        // sheet's normalized f64 pairs. `None` when the sheet carries
+        // no normalized pairs; never promotes any entity.
+        let spatial_pairs = collect_normalized_f64_pairs(raw_data);
+        let spatial_analysis = if spatial_pairs.is_empty() {
+            None
+        } else {
+            Some(DecodedSpatialAnalysis::from(
+                coordinate_pair_spatial_analysis(&spatial_pairs, SPATIAL_ANALYSIS_DEFAULT_GRID_N),
+            ))
+        };
         Some(SheetGeometry {
             texts,
             endpoints: Vec::new(),
@@ -312,6 +324,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             decoded_graphic_groups,
             decoded_jstyle_overrides,
             decoded_sub_records_0x0010,
+            spatial_analysis,
         })
     }
 }

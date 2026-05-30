@@ -163,6 +163,52 @@ pub struct SheetF64CoordinateBounds {
     pub count: usize,
 }
 
+/// Phase 25-A spatial-analysis report for normalized `(x, y)` f64 pairs.
+///
+/// The report is **read-only evidence**: it characterises how
+/// `normalized_f64_pair` evidence is distributed across a single sheet's
+/// normalized `[0, 1]²` coordinate space. It does **not** promote any
+/// entity or change `PidPageTransform` state. Downstream consumers may
+/// use the cluster ids as topology hints, never as coordinate
+/// authority.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetSpatialAnalysisReport {
+    /// Total normalized f64 pairs that contributed to the analysis.
+    pub pair_count: usize,
+    /// Grid resolution used for bucketing (N×N). Records the algorithm
+    /// parameter so ratchets can reproduce the result.
+    pub grid_resolution: usize,
+    /// Connected-component clusters discovered after grid bucketing
+    /// and 4-neighbour merging. Empty when `pair_count == 0`.
+    pub clusters: Vec<SheetSpatialCluster>,
+    /// True when the analysis cannot meaningfully separate clusters
+    /// (zero pairs, single cluster, or all pairs collapsed into one
+    /// grid cell). Used by Phase 25-A Stop-And-Challenge as the
+    /// negative-evidence trigger.
+    pub uniform_distribution: bool,
+}
+
+/// A single spatial cluster inside [`SheetSpatialAnalysisReport`].
+///
+/// Cluster ids are sheet-local (start at `0` and increment in
+/// connected-component discovery order). They are stable across runs
+/// for the same input but must not be compared across sheets or
+/// fixtures.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SheetSpatialCluster {
+    /// Sheet-local cluster id (0-based, deterministic for the same
+    /// input).
+    pub id: u32,
+    /// Number of normalized f64 pairs that fell into this cluster.
+    pub pair_count: usize,
+    /// Bounding box in normalized `[0, 1]²` space:
+    /// `((min_x, min_y), (max_x, max_y))`.
+    pub bbox: ((f64, f64), (f64, f64)),
+    /// Centroid (arithmetic mean of pair coordinates) in normalized
+    /// `[0, 1]²` space.
+    pub centroid: (f64, f64),
+}
+
 /// One marker-range shape inspected for curve primitive potential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SheetCurvePrimitiveShapeGroup {
@@ -591,6 +637,167 @@ pub fn coordinate_page_metadata_investigation_report(
         normalized_f64_pair_count,
         page_dimension_scalar_matches,
     }
+}
+
+/// Default grid resolution (N) used by Phase 25-A spatial analysis
+/// when a caller has no fixture-specific tuning. Buckets the
+/// normalized `[0, 1]²` space into a `20 × 20` grid — the value the
+/// Slice A probe validated as producing non-uniform cross-fixture
+/// cluster signal.
+pub const SPATIAL_ANALYSIS_DEFAULT_GRID_N: usize = 20;
+
+/// Phase 25-A: spatial-distribution analysis of normalized f64 pairs.
+///
+/// Buckets pairs into an `n_grid × n_grid` grid covering the
+/// normalized `[0, 1]²` coordinate space, then performs 4-neighbour
+/// connected-component merging on non-empty cells to discover spatial
+/// clusters. Returns a [`SheetSpatialAnalysisReport`] documenting
+/// cluster count, per-cluster bbox / centroid / pair count, and a
+/// `uniform_distribution` flag used by Phase 25-A Stop-And-Challenge.
+///
+/// The algorithm is deterministic: the same input produces the same
+/// cluster ids (0-based, in connected-component discovery order). It
+/// is panic-safe for adversarial values — `NaN`, `Infinity`, and
+/// out-of-range coordinates are clamped to `[0, 1]` before bucketing.
+///
+/// `n_grid == 0` is silently promoted to `1` (a single cluster
+/// covering the whole sheet). Pairs slices that are empty produce
+/// a zero-cluster report with `uniform_distribution == true`.
+///
+/// This is **investigation-only evidence**. It must not be used to
+/// promote any entity to [`crate::geometry::PidPageTransform::Available`]
+/// or to mark any record as decoded.
+pub fn coordinate_pair_spatial_analysis(
+    pairs: &[(f64, f64)],
+    n_grid: usize,
+) -> SheetSpatialAnalysisReport {
+    let grid_resolution = n_grid.max(1);
+    if pairs.is_empty() {
+        return SheetSpatialAnalysisReport {
+            pair_count: 0,
+            grid_resolution,
+            clusters: Vec::new(),
+            uniform_distribution: true,
+        };
+    }
+    let grid = spatial_grid_bucket(pairs, grid_resolution);
+    let clusters = spatial_connected_components(&grid, pairs, grid_resolution);
+    let uniform_distribution = clusters.len() <= 1;
+    SheetSpatialAnalysisReport {
+        pair_count: pairs.len(),
+        grid_resolution,
+        clusters,
+        uniform_distribution,
+    }
+}
+
+fn spatial_clamp_coordinate(value: f64) -> f64 {
+    if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, 1.0)
+    }
+}
+
+fn spatial_grid_bucket(pairs: &[(f64, f64)], n: usize) -> Vec<Vec<Vec<usize>>> {
+    let mut grid: Vec<Vec<Vec<usize>>> = (0..n)
+        .map(|_| (0..n).map(|_| Vec::new()).collect())
+        .collect();
+    if n == 0 {
+        return grid;
+    }
+    let nf = n as f64;
+    for (idx, (x, y)) in pairs.iter().copied().enumerate() {
+        let xc = spatial_clamp_coordinate(x);
+        let yc = spatial_clamp_coordinate(y);
+        let cx = ((xc * nf) as usize).min(n - 1);
+        let cy = ((yc * nf) as usize).min(n - 1);
+        grid[cy][cx].push(idx);
+    }
+    grid
+}
+
+fn spatial_connected_components(
+    grid: &[Vec<Vec<usize>>],
+    pairs: &[(f64, f64)],
+    n: usize,
+) -> Vec<SheetSpatialCluster> {
+    if n == 0 || pairs.is_empty() {
+        return Vec::new();
+    }
+    let mut visited = vec![vec![false; n]; n];
+    let mut clusters = Vec::new();
+
+    for sy in 0..n {
+        for sx in 0..n {
+            if visited[sy][sx] || grid[sy][sx].is_empty() {
+                continue;
+            }
+            let mut stack = vec![(sx, sy)];
+            let mut pair_indices = Vec::<usize>::new();
+            while let Some((x, y)) = stack.pop() {
+                if visited[y][x] || grid[y][x].is_empty() {
+                    continue;
+                }
+                visited[y][x] = true;
+                pair_indices.extend_from_slice(&grid[y][x]);
+                if x > 0 {
+                    stack.push((x - 1, y));
+                }
+                if x + 1 < n {
+                    stack.push((x + 1, y));
+                }
+                if y > 0 {
+                    stack.push((x, y - 1));
+                }
+                if y + 1 < n {
+                    stack.push((x, y + 1));
+                }
+            }
+
+            let Some((&first_idx, rest)) = pair_indices.split_first() else {
+                continue;
+            };
+            let (fx, fy) = pairs[first_idx];
+            let fx = spatial_clamp_coordinate(fx);
+            let fy = spatial_clamp_coordinate(fy);
+            let mut min_x = fx;
+            let mut max_x = fx;
+            let mut min_y = fy;
+            let mut max_y = fy;
+            let mut sum_x = fx;
+            let mut sum_y = fy;
+            for &idx in rest {
+                let (px, py) = pairs[idx];
+                let px = spatial_clamp_coordinate(px);
+                let py = spatial_clamp_coordinate(py);
+                if px < min_x {
+                    min_x = px;
+                }
+                if px > max_x {
+                    max_x = px;
+                }
+                if py < min_y {
+                    min_y = py;
+                }
+                if py > max_y {
+                    max_y = py;
+                }
+                sum_x += px;
+                sum_y += py;
+            }
+            let count = pair_indices.len() as f64;
+            let cluster_id = clusters.len() as u32;
+            clusters.push(SheetSpatialCluster {
+                id: cluster_id,
+                pair_count: pair_indices.len(),
+                bbox: ((min_x, min_y), (max_x, max_y)),
+                centroid: (sum_x / count, sum_y / count),
+            });
+        }
+    }
+
+    clusters
 }
 
 /// Build an investigation-only report for potential text placement records.
@@ -1786,23 +1993,40 @@ fn plausible_f64_coordinate(value: f64) -> bool {
     value.is_finite() && (1.0e-6..=1.0e9).contains(&value.abs())
 }
 
+/// Collect every normalized `(x, y)` f64 pair from a byte slice.
+///
+/// Scans 16-byte windows at 4-byte alignment (matching the Sheet PSM
+/// coordinate layout), decoding each window as two little-endian `f64`
+/// values. A pair is kept only when both components are finite, inside
+/// the normalized `[-1e-9, 1 + 1e-9]` range, and at least one component
+/// is non-zero — the same predicate the coordinate/page metadata
+/// investigation report uses for its `normalized_f64_pair_count`.
+///
+/// This is **investigation-only evidence** feeding
+/// [`coordinate_pair_spatial_analysis`]. It does not decode records or
+/// promote any entity, and the scan is panic-safe and bounded.
+pub fn collect_normalized_f64_pairs(bytes: &[u8]) -> Vec<(f64, f64)> {
+    let mut pairs = Vec::new();
+    for (relative_offset, window) in bytes.windows(16).enumerate() {
+        if relative_offset % 4 != 0 {
+            continue;
+        }
+        let x = f64::from_le_bytes([
+            window[0], window[1], window[2], window[3], window[4], window[5], window[6], window[7],
+        ]);
+        let y = f64::from_le_bytes([
+            window[8], window[9], window[10], window[11], window[12], window[13], window[14],
+            window[15],
+        ]);
+        if normalized_f64_pair_values(x, y) {
+            pairs.push((x, y));
+        }
+    }
+    pairs
+}
+
 fn normalized_f64_pair_count(bytes: &[u8]) -> usize {
-    bytes
-        .windows(16)
-        .enumerate()
-        .filter(|(relative_offset, _)| relative_offset % 4 == 0)
-        .filter(|(_, window)| {
-            let x = f64::from_le_bytes([
-                window[0], window[1], window[2], window[3], window[4], window[5], window[6],
-                window[7],
-            ]);
-            let y = f64::from_le_bytes([
-                window[8], window[9], window[10], window[11], window[12], window[13], window[14],
-                window[15],
-            ]);
-            normalized_f64_pair_values(x, y)
-        })
-        .count()
+    collect_normalized_f64_pairs(bytes).len()
 }
 
 fn normalized_f64_coordinate(value: f64) -> bool {
@@ -5308,5 +5532,140 @@ mod tests {
             ..dto.clone()
         };
         assert_eq!(dto_one.leading_word, None);
+    }
+
+    // Phase 25-A spatial-distribution analysis tests.
+
+    #[test]
+    fn spatial_analysis_empty_pairs_yield_zero_clusters_and_uniform_true() {
+        let report = coordinate_pair_spatial_analysis(&[], 20);
+        assert_eq!(report.pair_count, 0);
+        assert_eq!(report.grid_resolution, 20);
+        assert!(report.clusters.is_empty());
+        assert!(report.uniform_distribution);
+    }
+
+    #[test]
+    fn spatial_analysis_single_pair_emits_one_cluster_centered_on_pair() {
+        let pairs = [(0.4, 0.6)];
+        let report = coordinate_pair_spatial_analysis(&pairs, 20);
+        assert_eq!(report.pair_count, 1);
+        assert_eq!(report.clusters.len(), 1);
+        assert!(report.uniform_distribution);
+        let cluster = &report.clusters[0];
+        assert_eq!(cluster.id, 0);
+        assert_eq!(cluster.pair_count, 1);
+        assert_eq!(cluster.bbox, ((0.4, 0.6), (0.4, 0.6)));
+        assert_eq!(cluster.centroid, (0.4, 0.6));
+    }
+
+    #[test]
+    fn spatial_analysis_two_pairs_in_same_grid_cell_collapse_to_one_cluster() {
+        let pairs = [(0.05, 0.05), (0.06, 0.06)];
+        let report = coordinate_pair_spatial_analysis(&pairs, 20);
+        assert_eq!(report.clusters.len(), 1, "same grid cell ⇒ 1 cluster");
+        assert_eq!(report.clusters[0].pair_count, 2);
+    }
+
+    #[test]
+    fn spatial_analysis_two_pairs_in_4_neighbour_cells_merge_to_one_cluster() {
+        // (0.05, 0.05) lives in cell (1, 1); (0.1, 0.05) lives in
+        // cell (2, 1). Sharing an edge — should merge.
+        let pairs = [(0.05, 0.05), (0.1, 0.05)];
+        let report = coordinate_pair_spatial_analysis(&pairs, 20);
+        assert_eq!(report.clusters.len(), 1);
+        assert_eq!(report.clusters[0].pair_count, 2);
+    }
+
+    #[test]
+    fn spatial_analysis_two_pairs_in_diagonal_cells_remain_two_clusters() {
+        // (0.025, 0.025) → cell (0, 0); (0.075, 0.075) → cell (1, 1).
+        // 4-neighbour adjacency excludes diagonals → 2 distinct
+        // clusters.
+        let pairs = [(0.025, 0.025), (0.075, 0.075)];
+        let report = coordinate_pair_spatial_analysis(&pairs, 20);
+        assert_eq!(report.clusters.len(), 2);
+        assert!(!report.uniform_distribution);
+    }
+
+    #[test]
+    fn spatial_analysis_far_apart_pairs_yield_two_clusters_with_correct_bboxes() {
+        let pairs = [(0.1, 0.1), (0.1, 0.15), (0.9, 0.9)];
+        let report = coordinate_pair_spatial_analysis(&pairs, 20);
+        assert_eq!(report.clusters.len(), 2);
+        let cluster_a = report
+            .clusters
+            .iter()
+            .find(|c| c.pair_count == 2)
+            .expect("expected 2-pair cluster near (0.1, 0.1)");
+        let cluster_b = report
+            .clusters
+            .iter()
+            .find(|c| c.pair_count == 1)
+            .expect("expected 1-pair cluster near (0.9, 0.9)");
+        assert_eq!(cluster_a.bbox, ((0.1, 0.1), (0.1, 0.15)));
+        assert_eq!(cluster_b.bbox, ((0.9, 0.9), (0.9, 0.9)));
+    }
+
+    #[test]
+    fn spatial_analysis_n_grid_zero_is_promoted_to_one() {
+        let pairs = [(0.1, 0.1), (0.9, 0.9)];
+        let report = coordinate_pair_spatial_analysis(&pairs, 0);
+        assert_eq!(report.grid_resolution, 1);
+        assert_eq!(report.clusters.len(), 1, "n_grid=1 collapses all pairs");
+        assert_eq!(report.clusters[0].pair_count, 2);
+    }
+
+    #[test]
+    fn spatial_analysis_n_grid_one_collapses_all_pairs_to_single_cluster() {
+        let pairs = [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0)];
+        let report = coordinate_pair_spatial_analysis(&pairs, 1);
+        assert_eq!(report.clusters.len(), 1);
+        assert_eq!(report.clusters[0].pair_count, 3);
+        assert!(report.uniform_distribution);
+    }
+
+    #[test]
+    fn spatial_analysis_clamps_nan_infinity_and_out_of_range_inputs() {
+        let pairs = [
+            (f64::NAN, 0.5),
+            (f64::INFINITY, 0.5),
+            (-0.5, 0.5),
+            (1.5, 0.5),
+        ];
+        let report = coordinate_pair_spatial_analysis(&pairs, 4);
+        assert_eq!(report.pair_count, 4);
+        for cluster in &report.clusters {
+            let ((min_x, min_y), (max_x, max_y)) = cluster.bbox;
+            assert!(
+                (0.0..=1.0).contains(&min_x)
+                    && (0.0..=1.0).contains(&min_y)
+                    && (0.0..=1.0).contains(&max_x)
+                    && (0.0..=1.0).contains(&max_y),
+                "clamped bbox should stay in [0, 1]² for cluster {cluster:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn spatial_analysis_is_deterministic_across_invocations() {
+        let pairs: Vec<(f64, f64)> = (0..50)
+            .map(|i| (i as f64 / 100.0, (i as f64 * 1.3) % 1.0))
+            .collect();
+        let a = coordinate_pair_spatial_analysis(&pairs, 20);
+        let b = coordinate_pair_spatial_analysis(&pairs, 20);
+        assert_eq!(a, b, "spatial analysis must be deterministic");
+    }
+
+    #[test]
+    fn spatial_analysis_uniform_distribution_flag_matches_cluster_count() {
+        let single = coordinate_pair_spatial_analysis(&[(0.5, 0.5)], 20);
+        assert!(single.uniform_distribution);
+
+        let multi = coordinate_pair_spatial_analysis(&[(0.1, 0.1), (0.9, 0.9)], 20);
+        assert!(!multi.uniform_distribution);
+
+        let empty = coordinate_pair_spatial_analysis(&[], 20);
+        assert!(empty.uniform_distribution);
     }
 }

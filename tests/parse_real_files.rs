@@ -10,7 +10,8 @@ use pid_parse::{
         top_text_candidate_record_dumps, SheetFieldXWindowScoreReason, SheetProbeOptions,
     },
     parsers::sheet_records::{
-        coordinate_page_metadata_investigation_report, curve_primitive_investigation_report,
+        collect_normalized_f64_pairs, coordinate_page_metadata_investigation_report,
+        coordinate_pair_spatial_analysis, curve_primitive_investigation_report,
         decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints,
         decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
         decode_sub_records_0x0010, primitive_line_investigation_report,
@@ -4030,6 +4031,266 @@ fn sheet_geometry_investigation_aggregates_cross_fixture_evidence_without_promot
         mixed_numeric >= polyline_like,
         "mixed numeric evidence should remain visible while PolylineLike requires stronger point-sequence proof"
     );
+}
+
+/// Phase 25-A Slice E: cross-fixture ratchet for
+/// `coordinate_pair_spatial_analysis`.
+///
+/// Extracts every normalized `(x, y)` f64 pair from each fixture's
+/// `/Sheet*` streams (via `collect_normalized_f64_pairs`), runs the
+/// Phase 25-A spatial-distribution analysis, and locks a positive
+/// non-uniform baseline. This is the cross-fixture aggregate the
+/// Phase 25-A plan §2.2 / verification Slice E requires. It is
+/// read-only evidence and asserts the analysis never invents promotion
+/// (cluster ids are topology hints, not coordinate authority).
+#[test]
+fn spatial_analysis_cross_fixture() {
+    const GRID_N: usize = 20;
+
+    // Per-present-fixture cluster floors derived from the Slice A probe
+    // (docs/analysis/2026-05-23-phase25-slice-a-probe-output.md) with
+    // comfortable margin so the ratchet is stable but meaningful.
+    fn fixture_cluster_floor(path: &str) -> usize {
+        match path {
+            "DWG-0201GP06-01.pid" => 10,
+            "DWG-0202GP06-01.pid" => 10,
+            "工艺管道及仪表流程-1.pid" => 18,
+            "export-test/publish-data/A01/A01.pid" => 6,
+            "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid" => 10,
+            _ => 1,
+        }
+    }
+
+    let mut fixtures_seen = 0usize;
+    let mut sheets_with_pairs = 0usize;
+    let mut multi_cluster_sheets = 0usize;
+    let mut non_uniform_fixtures = 0usize;
+    let mut total_clusters = 0usize;
+    let mut total_pairs = 0usize;
+    let mut max_clusters_on_single_sheet = 0usize;
+    let mut determinism_checked = false;
+
+    for fixture in geometry_fixture_cases() {
+        let Some(pkg) = parse_test_package(fixture.path) else {
+            continue;
+        };
+        fixtures_seen += 1;
+        let mut fixture_clusters = 0usize;
+        let mut fixture_non_uniform = false;
+
+        for sheet in pkg
+            .parsed
+            .sheet_streams
+            .iter()
+            .filter(|sheet| sheet.path.starts_with("/Sheet"))
+        {
+            let Some(raw_sheet) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let pairs = collect_normalized_f64_pairs(&raw_sheet.data);
+            let report = coordinate_pair_spatial_analysis(&pairs, GRID_N);
+
+            // Structural invariants: read-only, internally consistent.
+            assert_eq!(
+                report.pair_count,
+                pairs.len(),
+                "report pair_count must equal scanned pairs for {} {}",
+                fixture.path,
+                sheet.path
+            );
+            assert_eq!(
+                report.grid_resolution, GRID_N,
+                "report must record the grid resolution it ran with for {} {}",
+                fixture.path, sheet.path
+            );
+            assert_eq!(
+                report.clusters.iter().map(|c| c.pair_count).sum::<usize>(),
+                report.pair_count,
+                "cluster pair_count must partition all pairs for {} {}",
+                fixture.path,
+                sheet.path
+            );
+            assert_eq!(
+                report.uniform_distribution,
+                report.clusters.len() <= 1,
+                "uniform_distribution must mirror cluster count for {} {}",
+                fixture.path,
+                sheet.path
+            );
+            for cluster in &report.clusters {
+                let ((min_x, min_y), (max_x, max_y)) = cluster.bbox;
+                assert!(
+                    (0.0..=1.0).contains(&min_x)
+                        && (0.0..=1.0).contains(&min_y)
+                        && (0.0..=1.0).contains(&max_x)
+                        && (0.0..=1.0).contains(&max_y)
+                        && min_x <= max_x
+                        && min_y <= max_y,
+                    "cluster bbox must stay ordered inside [0, 1]² for {} {}: {:?}",
+                    fixture.path,
+                    sheet.path,
+                    cluster
+                );
+                let (cx, cy) = cluster.centroid;
+                assert!(
+                    (min_x..=max_x).contains(&cx) && (min_y..=max_y).contains(&cy),
+                    "cluster centroid must lie inside its bbox for {} {}: {:?}",
+                    fixture.path,
+                    sheet.path,
+                    cluster
+                );
+                assert!(
+                    cluster.pair_count > 0,
+                    "discovered clusters must be non-empty for {} {}",
+                    fixture.path,
+                    sheet.path
+                );
+            }
+
+            if !pairs.is_empty() {
+                sheets_with_pairs += 1;
+                // Determinism: identical input ⇒ identical report.
+                if !determinism_checked {
+                    let rerun = coordinate_pair_spatial_analysis(&pairs, GRID_N);
+                    assert_eq!(
+                        report, rerun,
+                        "spatial analysis must be deterministic for {} {}",
+                        fixture.path, sheet.path
+                    );
+                    determinism_checked = true;
+                }
+            }
+            if report.clusters.len() >= 2 {
+                multi_cluster_sheets += 1;
+                fixture_non_uniform = true;
+            }
+            fixture_clusters += report.clusters.len();
+            total_clusters += report.clusters.len();
+            total_pairs += report.pair_count;
+            max_clusters_on_single_sheet = max_clusters_on_single_sheet.max(report.clusters.len());
+        }
+
+        if fixture_non_uniform {
+            non_uniform_fixtures += 1;
+        }
+
+        let floor = fixture_cluster_floor(fixture.path);
+        assert!(
+            fixture_clusters >= floor,
+            "fixture {} should yield >= {} clusters across /Sheet* (got {}); Slice A baseline regression?",
+            fixture.path,
+            floor,
+            fixture_clusters
+        );
+    }
+
+    eprintln!(
+        "cross-fixture spatial analysis: fixtures_seen={}, sheets_with_pairs={}, multi_cluster_sheets={}, non_uniform_fixtures={}, total_pairs={}, total_clusters={}, max_clusters_on_single_sheet={}",
+        fixtures_seen,
+        sheets_with_pairs,
+        multi_cluster_sheets,
+        non_uniform_fixtures,
+        total_pairs,
+        total_clusters,
+        max_clusters_on_single_sheet
+    );
+
+    if fixtures_seen == 0 {
+        eprintln!("skipping: no available PID fixtures found for cross-fixture spatial analysis");
+        return;
+    }
+    assert!(
+        sheets_with_pairs > 0,
+        "available fixtures should expose Sheet streams carrying normalized f64 pairs"
+    );
+    // Positive non-uniform signal (Phase 25-A Slice A decision: continue,
+    // not negative closeout). At least one sheet must produce >= 3
+    // distinct clusters and at least one fixture must be non-uniform.
+    assert!(
+        max_clusters_on_single_sheet >= 3,
+        "at least one sheet must produce >= 3 distinct spatial clusters (positive signal), got {}",
+        max_clusters_on_single_sheet
+    );
+    assert!(
+        non_uniform_fixtures > 0,
+        "at least one fixture must show a non-uniform (multi-cluster) spatial distribution"
+    );
+    assert!(
+        multi_cluster_sheets >= 1,
+        "at least one sheet must carry >= 2 spatial clusters"
+    );
+}
+
+/// Phase 25-A Slice C+D: the cluster pipeline populates
+/// `SheetGeometry::spatial_analysis` from real fixture bytes, and the
+/// populated model report stays consistent with a direct
+/// `coordinate_pair_spatial_analysis` run over the same sheet bytes
+/// (pipeline ↔ API parity). Read-only; asserts no promotion.
+#[test]
+fn spatial_analysis_pipeline_populates_sheet_geometry() {
+    let Some(pkg) = parse_test_package("DWG-0201GP06-01.pid") else {
+        eprintln!("skipping: DWG-0201GP06-01.pid fixture absent");
+        return;
+    };
+    let sheet = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .find(|sheet| sheet.path == "/Sheet6")
+        .expect("DWG-0201 should expose /Sheet6");
+    let geometry = sheet
+        .geometry
+        .as_ref()
+        .expect("/Sheet6 should carry decoded geometry");
+    let spatial = geometry
+        .spatial_analysis
+        .as_ref()
+        .expect("/Sheet6 should carry Phase 25-A spatial analysis");
+
+    // Pipeline ↔ direct API parity over the same raw sheet bytes.
+    let raw = pkg
+        .streams
+        .get("/Sheet6")
+        .expect("/Sheet6 raw bytes should be present");
+    let pairs = collect_normalized_f64_pairs(&raw.data);
+    let direct = coordinate_pair_spatial_analysis(&pairs, 20);
+    assert_eq!(
+        spatial.grid_resolution, 20,
+        "pipeline must use the documented default grid resolution"
+    );
+    assert_eq!(spatial.pair_count, direct.pair_count);
+    assert_eq!(spatial.clusters.len(), direct.clusters.len());
+    assert_eq!(spatial.uniform_distribution, direct.uniform_distribution);
+
+    // Positive non-uniform signal locked at Slice A (DWG-0201 = 15
+    // clusters); pipeline must not collapse it to uniform.
+    assert!(
+        spatial.clusters.len() >= 2,
+        "DWG-0201 /Sheet6 spatial analysis should be non-uniform, got {} clusters",
+        spatial.clusters.len()
+    );
+    assert!(!spatial.uniform_distribution);
+    assert_eq!(
+        spatial.clusters.iter().map(|c| c.pair_count).sum::<usize>(),
+        spatial.pair_count,
+        "model cluster pair_count must partition all pairs"
+    );
+    for cluster in &spatial.clusters {
+        assert!(
+            (0.0..=1.0).contains(&cluster.min_x)
+                && (0.0..=1.0).contains(&cluster.min_y)
+                && (0.0..=1.0).contains(&cluster.max_x)
+                && (0.0..=1.0).contains(&cluster.max_y)
+                && cluster.min_x <= cluster.max_x
+                && cluster.min_y <= cluster.max_y,
+            "model cluster bbox must stay ordered inside [0, 1]²: {cluster:?}"
+        );
+        assert!(
+            (cluster.min_x..=cluster.max_x).contains(&cluster.centroid_x)
+                && (cluster.min_y..=cluster.max_y).contains(&cluster.centroid_y),
+            "model cluster centroid must lie inside its bbox: {cluster:?}"
+        );
+    }
 }
 
 #[test]

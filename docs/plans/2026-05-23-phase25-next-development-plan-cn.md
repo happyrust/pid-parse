@@ -9,13 +9,18 @@
 
 ## 0. 背景速览（一张表说清楚现在在哪）
 
+> **[2026-05-29 收敛更新]** 下表为 2026-05-23 快照。`inferred_lines = 0` 已**作废**：
+> endpoint pair → inferred line 闭环实际已落地（DWG-0201 = 49 floor + 26 decoded GLine2d）。
+> 最新跨 fixture inventory 收敛见
+> `docs/analysis/2026-05-29-phase25-cross-fixture-inventory-convergence-cn.md`。
+
 | 维度 | 当前事实 |
 |---|---|
 | Cross-fixture 几何 entities | 769（Phase 14 八大解码器，5 fixture × 7 sheet） |
 | Audit-only PSM record families | GraphicGroup 352 · JStyleOverride 98 · `0x0010` 582 |
 | `0x0010` IDA RAD class identity | GUID `1D1928C0-0000-0000-C000-000000000046` 已锁定 / class name + Read-DoIO + sub-kind 未恢复 |
 | `inferred_points` (H7CAD 可见) | 80（Phase 10） |
-| `inferred_lines` (H7CAD 可见) | **0**（Phase 10 Slice 3 endpoint pair 两端不对称，未闭环） |
+| `inferred_lines` (H7CAD 可见) | ~~**0**~~ → **49**（DWG-0201 floor，2026-05-29 收敛；剩余 10 条为单端 endpoint，属预期非配对） |
 | `coordinate_metadata_candidates` | 97 |
 | `coordinate_top_evidence` | 36 |
 | `normalized_f64_pair_count` | 1397 |
@@ -100,7 +105,18 @@ git diff examples/probe_phase24_top_evidence.rs
 
 ### 2.3 Phase 25-C：endpoint pair → Inferred Line 闭环
 
-**目标**：把 task_plan Phase 10 Slice 3 的 `inferred_lines = 0` 困局推进到 ≥40/59 endpoint pair → Line（H7CAD 可见）。
+> **[2026-05-30 已满足收口]** Done 条件 `inferred_lines >= 40`
+> **已达成**：实测 DWG-0201 `inferred_lines = 49`（floor）+
+> `inferred_points = 117` + `decoded_GLine2d_lines = 2`
+> （`dwg0201_produces_inferred_endpoint_lines` /
+> `dwg0201_emits_decoded_primitive_lines_without_inferred_regression`）。
+> 原 `inferred_lines = 0` 前提作废（见 §0 与
+> `docs/analysis/2026-05-29-phase25-cross-fixture-inventory-convergence-cn.md`）：
+> 59 个 endpoint 中 49 条已配对成 Line，剩余 10 条为单端 endpoint
+> （only_a/only_b），属预期非配对。**本 phase 无新解码工作**；
+> 闭环已存在于现行 pipeline。剩余推荐工作转入 Phase 25-B。
+
+**目标（历史）**：把 task_plan Phase 10 Slice 3 的 `inferred_lines = 0` 困局推进到 ≥40/59 endpoint pair → Line（H7CAD 可见）。
 
 **Scope**：
 - ✅ 重新检视 endpoint pair 两端不对称的字节级证据
