@@ -35,11 +35,12 @@ use pid_parse::parsers::relationship_probe::probe_relationships;
 use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
-    decode_graphic_group_at, decode_graphic_groups, decode_igline_at, decode_iglines,
-    decode_iglinestring_at, decode_iglinestrings, decode_igpoint_at, decode_igpoints,
-    decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at, decode_igtextboxes,
-    decode_jstyle_override_at, decode_jstyle_overrides, decode_primitive_line_at,
-    decode_primitive_lines, decode_sub_record_0x0010_at, decode_sub_records_0x0010,
+    collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_graphic_group_at,
+    decode_graphic_groups, decode_igline_at, decode_iglines, decode_iglinestring_at,
+    decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igsymbol_at, decode_igsymbols,
+    decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
+    decode_primitive_line_at, decode_primitive_lines, decode_sub_record_0x0010_at,
+    decode_sub_records_0x0010, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -135,6 +136,28 @@ fn push_xorshift_corpus(out: &mut Vec<Vec<u8>>) {
 /// keeps the second test linear in corpus size instead of
 /// O(corpus * max_len).
 const TRUNCATION_SWEEP_LIMIT: usize = 64;
+
+/// Reinterpret `data` as consecutive 16-byte `(f64, f64)` pairs at
+/// 4-byte alignment **without** the normalized-range filter, so
+/// `NaN` / `Infinity` / out-of-range coordinates reach
+/// [`coordinate_pair_spatial_analysis`] and exercise its clamp path.
+fn bytes_as_raw_f64_pairs(data: &[u8]) -> Vec<(f64, f64)> {
+    let mut pairs = Vec::new();
+    for (offset, window) in data.windows(16).enumerate() {
+        if offset % 4 != 0 {
+            continue;
+        }
+        let x = f64::from_le_bytes([
+            window[0], window[1], window[2], window[3], window[4], window[5], window[6], window[7],
+        ]);
+        let y = f64::from_le_bytes([
+            window[8], window[9], window[10], window[11], window[12], window[13], window[14],
+            window[15],
+        ]);
+        pairs.push((x, y));
+    }
+    pairs
+}
 
 /// Run every parser entry point against `input` exactly once.
 ///
@@ -247,6 +270,18 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = decode_sub_record_0x0010_at(input, input.len() - 1);
         let _ = decode_sub_record_0x0010_at(input, input.len());
     }
+
+    // Phase 25-A: normalized f64 pair scan + spatial-distribution
+    // analysis. `collect_normalized_f64_pairs` is the byte-level entry;
+    // chain into `coordinate_pair_spatial_analysis` with degenerate
+    // (`0`, `1`) and default grids, plus a raw unfiltered pair vector to
+    // drive the NaN / Infinity / out-of-range clamp path.
+    let spatial_pairs = collect_normalized_f64_pairs(input);
+    let _ = coordinate_pair_spatial_analysis(&spatial_pairs, 0);
+    let _ = coordinate_pair_spatial_analysis(&spatial_pairs, 1);
+    let _ = coordinate_pair_spatial_analysis(&spatial_pairs, SPATIAL_ANALYSIS_DEFAULT_GRID_N);
+    let raw_pairs = bytes_as_raw_f64_pairs(input);
+    let _ = coordinate_pair_spatial_analysis(&raw_pairs, SPATIAL_ANALYSIS_DEFAULT_GRID_N);
 }
 
 #[test]
