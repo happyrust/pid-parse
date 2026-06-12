@@ -1,5 +1,13 @@
 # pid-parse format notes
 
+> This is an early lightweight note. For the current, evidence-graded format
+> map, see
+> [`docs/analysis/2026-06-03-pid-file-format-analysis-cn.md`](analysis/2026-06-03-pid-file-format-analysis-cn.md).
+>
+> The newer document covers Phase 14+ Sheet typed decoders, audit-only record
+> families, byte-audit status, and the coordinate/page transform guardrails
+> that are not represented in this short note.
+
 This repository treats a SmartPlant / Smart P&ID `.pid` file as a layered container.
 
 ## Layer 1: OLE / CFBF container

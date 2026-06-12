@@ -7,6 +7,7 @@
 ## 文档与产品现状
 
 - [`docs/prd-pid-parse-current-state.md`](docs/prd-pid-parse-current-state.md) — **当前状态 PRD**：解析现状、能力分层、缺口与下一阶段需求（P0–P5）。新读者建议先看此文档对齐边界。
+- [`docs/analysis/2026-06-03-pid-file-format-analysis-cn.md`](docs/analysis/2026-06-03-pid-file-format-analysis-cn.md) — **PID 文件格式分析说明**：按当前实现口径汇总 CFB 容器、已知 stream/storage、magic、字节布局、coverage、byte-audit、Sheet decoded/audit/probe 分层与未知区。
 - [`docs/sppid/v0.10.x-status.md`](docs/sppid/v0.10.x-status.md) — v0.10.0 (Phase 12b-1j) 解析能力快照：顶层流 coverage、byte-audit 注册表、roadmap Phase 完成度。
 - [`docs/architecture-guide.md`](docs/architecture-guide.md) — 八层架构详解。
 - [`docs/byte-audit-guide.md`](docs/byte-audit-guide.md) — `--byte-audit` CLI 与 baseline 比较器使用指南。

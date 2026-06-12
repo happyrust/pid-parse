@@ -1,6 +1,267 @@
-# 变更日志
+
 
 ## [Unreleased]
+
+### Phase 30-A：radsrvitem.dll JSite IDA 证据刷新
+
+- 只读 IDA 复查当前可达 `radsrvitem.dll`：`JSitesList` / `"OLEM"`
+  均 0 hits；`JSite` 路径命中 `sub_56448A10`、`sub_56448A70`、
+  `sub_5646FF60`。
+- `sub_56448A10` / `sub_56448A70` 均构造 `JSite<id>`；
+  `sub_5646FF60` 接收整数 id，构造 `JSite<id>` 并打开对应 storage。
+  `sub_5645FF00` / `sub_56460330` 调用链从 record/runtime context
+  取 id 后进入该 open path。
+- 结论：Phase 29-M 的 `/JSitesList.entries` ↔ `JSite<id>` storage
+  id 关联获得 IDA 旁证加强；但 writer 侧 `"OLEM"` / `JSitesList`
+  仍未确认，stale tail 语义未解，因此 `JSitesListDecoded` 继续保留
+  `entries` / `trailing_slots` 保守命名，不升级为 `jsite_ids`。
+- 新增分析记录
+  `docs/analysis/2026-06-12-phase30-radsrvitem-jsite-ida-refresh.md`；
+  本轮无生产代码改动、未重跑 Rust 门禁。
+
+### Phase 30-B/C：0x0089 export 边界 + PSMspacemap handle 证据
+
+- 只读 IDA 复查 `sub_5644B640` / `sub_56445F40` / `sub_564462F0`：
+  `0x0089` 确认为 runtime/persisted record type filter，但在当前
+  `radsrvitem.dll` RAD export helper 中不命名；`sub_56448F70`
+  type-code 表不含 `0x0089`，因此 default path 只写
+  `RAD_OBJECT_TYPE = "137"` 和 `"RELEATIONS"` id 列表，不解
+  DA/PSMcluster0 head fields 或 ASCII class payload。
+- `PSMspacemap` 字符串命中 storage load/save 与
+  `ClusterTable::GetSpaceMapSegment()`；`tseg` 字符串 0 hits。
+  `sub_5648C370` 证明 cluster entry 持有 segment-id array，
+  复用/分配 segment 时使用 flags `0x08`、`m_iNext` 与 free-list
+  状态。
+- `sub_56479040` / `sub_56479C20` 证明 handle 编码：
+  `(segment_id << 13) | entry_index`，entry index 低 13 bit，
+  有效范围 `0..0x1FFF`，segment capacity = `0x2000` entries。
+  这仍是 handle/selection 模型证据，尚不升级 `/PSMspacemap` raw page
+  byte layout claim。
+- 新增分析记录
+  `docs/analysis/2026-06-12-phase30-radsrvitem-record-spacemap-ida.md`；
+  本轮无生产代码改动、未重跑 Rust 门禁。
+
+### Phase 30-D：Style / JStyle low-cost negative pass
+
+- 可用 IDB 仍仅 `core.dll` / `radsrvitem.dll`；`StyleCluster` 与
+  `JStyleOverride` 在当前 `radsrvitem.dll` 中均 0 hits。
+- `JStyle` 命中集中在 `JStyleBase`、`JStyleBase::IJPersistImp`、
+  `IJManageStyle2Imp`、`IJStyleCopyImp`、`IJStyleUserImp` 的 RTTI /
+  vtable / thunk；`sub_5655D200` 只构造 base object，
+  `sub_5655DB60` / `sub_5655DBE0` 仅把
+  `"JStyleBase::IJPersistImp"` 转发给 base vtable slots。
+- 结论：当前 `radsrvitem.dll` 不能解 `0x0030` persistence fields 或
+  StyleCluster prefix layout；Phase 16/17 的 `0x0030 = JStyleOverride`
+  结论保持，深层字段仍需 `style.dll` / `J2DSrv.dll` 等 writer/reader
+  模块。
+- 新增分析记录
+  `docs/analysis/2026-06-12-phase30-radsrvitem-style-jstyle-negative.md`；
+  本轮无生产代码改动、未重跑 Rust 门禁。
+
+### Phase 30-F：IDA-gated next actions handoff
+
+- 新增
+  `docs/analysis/2026-06-12-phase30-ida-gated-next-actions.md`，汇总当前
+  `radsrvitem.dll` 已确认结论、不可升级边界，以及下一次打开新 IDB 后
+  的精确搜索 checklist。
+- 收口判断：当前可达 IDB 的低成本路线已覆盖 JSite naming/open、
+  `0x0089` export boundary、PSMspacemap handle model、Style/JStyle
+  negative pass；继续在当前 `radsrvitem.dll` broad search 的边际收益
+  很低。
+- 下一步推荐：打开 `style.dll` / `J2DSrv.dll` / `sppid.dll` /
+  `XCeedRAD.dll` / `smartplantpid.exe` 继续 gated IDA 问题，或
+  提交/评审当前 Phase 29/30 工作树。
+- 本轮无生产代码改动、未重跑 Rust 门禁。
+
+### Phase 30-G：worktree readiness check
+
+- 新增
+  `docs/analysis/2026-06-12-phase29-30-worktree-readiness.md`，记录当前
+  Phase 29/30 累积工作树的提交/评审前状态。
+- 只读核对结果：tracked modified 16 files，`git diff --stat`
+  显示 4552 insertions / 109 deletions；另有 Phase 26/27/29/30 docs、
+  spec-kit、probe examples、`src/parsers/jsites_list.rs` 等 untracked
+  files。
+- `ReadLints` scoped to关键 Rust parser/test files 无诊断；提交前仍建议
+  运行五项 pre-commit gate，并检查若干 Rust 文件 LF→CRLF warning。
+- 当前推荐：无新 IDB 时转为最终门禁 + 提交/评审，或按主题拆分当前
+  大变更。
+
+### Phase 30-H：final pre-commit gate run
+
+- 提交/评审前门禁验证已运行：`cargo fmt --all -- --check`、
+  `cargo build --locked --workspace --all-targets`、
+  `cargo test --locked --workspace --all-targets`、
+  `cargo clippy --locked --workspace --all-targets -- -D warnings`
+  均通过。
+- `bash .github/scripts/check-missing-docs.sh` 在本地 Windows bash 环境
+  仍失败（乱码 / `REGDB_E_CLASSNOTREG`）；按既有项目记录使用 fallback
+  `cargo rustdoc --lib --locked -- -W missing-docs`，通过。
+- 更新 readiness 文档记录最终门禁状态；本轮未创建提交。
+
+### Phase 30-I：commit / review plan
+
+- 新增
+  `docs/analysis/2026-06-12-phase29-30-commit-review-plan.md`；在未获
+  明确 commit 授权前不创建提交。
+- 文档提供 single milestone commit 与 three review units 两种方案：
+  Phase 29 parser/byte-audit、Phase 29 probes/spec/docs、Phase 30 IDA
+  evidence/handoff。
+- 记录建议 commit message、关键 review 文件、后续命令序列与 residual
+  risks（大 diff、LF→CRLF warning、剩余 IDA-gated semantic questions）。
+
+### Phase 30-J：focused self-review
+
+- 新增 `docs/analysis/2026-06-12-phase29-30-self-review.md`，记录提交前
+  focused self-review。
+- `git diff --check` 无 whitespace errors（仅 LF→CRLF warning）；
+  `ReadLints` scoped to关键 Rust parser/test files 无诊断。
+- 自审重点覆盖 cluster body walker、DA chain-scoped extraction、
+  `JSitesList` parser、nested JSite dispatch 与 real-fixture /
+  panic-safety tests；未发现 blocking code issue。
+
+### Phase 29-M：JSitesList 解码 + Revision 占位注册（unregistered 清尾）
+
+- 探针 `examples/probe_phase29_unregistered_tails.rs`：`/JSitesList`
+  （6/6 fixture）= `"OLEM"` magic + u32 count + 4 字节对齐 u32 slot
+  表；**逻辑 entries 与 `JSite<id>` storage id 在 6/6 fixture 上
+  全量一一对应**（70/70）—— 该流是 JSite symbol-instance storage
+  目录。`dwg0202` / `publish-dwg0202` 携带 3 个重复逻辑值的 stale
+  尾 slot（count=13 / slot=16），首版 exact-size gate 被 ratchet
+  当场证伪后修正。`/TaggedTxtData/Revision` = 0 字节占位（5/5）。
+- 新增 `src/parsers/jsites_list.rs`：`parse_jsites_list` /
+  `parse_jsites_list_with_trace` + `JSitesListDecoded { count,
+  entries, trailing_slots }`；gate = magic + count cap + 4 对齐 +
+  `len >= 8 + 4*count`；trace：header `[0..8)` `Decoded`、逻辑表
+  `Probed`、**stale 尾 slot 不 claim**（留 leftover）。字段名
+  `entries` / `trailing_slots`（不命名 `jsite_ids`，storage 关联
+  仅记录为证据，等 IDA writer 侧确认）。8 单测 + panic-safety。
+- `src/byte_audit/aggregate.rs`：注册顶层 `/JSitesList`、nested
+  `JSite*/JSitesList`（并入 Slice L registry 分派表）与
+  `/TaggedTxtData/Revision`（`revision_empty_stream` 零 claim 占位，
+  未来内容以 registered leftover 显形）。
+- ratchet
+  `jsites_list_parses_with_exact_size_and_matches_jsite_storages`：
+  counts {9,10,20,13,5,13}、trailing {0,0,0,3,0,3}、storage
+  matches == count 6/6、leftover == 4×trailing。
+- 快照：12 个 JSON 重生成；distinct unregistered paths
+  **51 → 38**（9–14/fixture）；剩余 multi-fixture unregistered
+  全部 IDA（`PSMspacemap` 页）/ demand（`\x01Ole`）gated；全文件
+  coverage ratio 0.665–0.888。
+- 5 道 pre-commit gate 严格全绿（clippy 首跑
+  `manual_is_multiple_of` 修复后通过）。
+
+### Phase 29-L：nested JSite registry 分派（top-level parser 复用）
+
+- 探针 `examples/probe_phase29_nested_registry_streams.rs`（6/6
+  fixture）：68 个 nested `JSite*` registry 流复用 top-level 格式
+  （总 consumed 98.4%）—— `DocVersion2/3` / `PSMclustertable` /
+  `PSMsegmenttable` 全量解析；nested `PSMroots` 与 top-level 同款
+  4 字节尾；4 字节 `AppObject` stub 被 parser gate 干净拒绝；
+  `JSite204` summary pair 部分解析（与 top-level 形态一致）。
+- `src/byte_audit/aggregate.rs`：新增 `nested_jsite_registry_parser`
+  helper，nested branch 将 8 类 registry child（PSMclustertable /
+  PSMroots / PSMsegmenttable / DocVersion2 / DocVersion3 / AppObject /
+  `\x05SummaryInformation` / `\x05DocumentSummaryInformation`）分派到
+  既有 top-level trace parser；`JSitesList` 无 parser，维持
+  unregistered（demand-gated）。
+- 测试：`nested_jsite_registry_children_dispatch_to_top_level_parsers`
+  aggregate 单测 + ratchet
+  `nested_jsite_registry_streams_reuse_top_level_parsers`
+  （DocVersion2/3 / clustertable / segmenttable leftover=0，
+  PSMroots leftover=4，summary consumed>0）。
+- 快照：12 个 JSON 重生成；`JSite*` family leftover
+  74,559 → **66,778**（ratio 0.8045）；unregistered paths 降至
+  **12–19/fixture**；全文件 coverage ratio **0.664–0.888**；common
+  unregistered 收敛为 JSitesList / PSMspacemap 页 /
+  TaggedTxtData/Revision / OLE payload。
+- 5 道 pre-commit gate 全绿（中断后以严格退出码逐项重验）。
+
+### Phase 29-K：per-record DA attribute scoping（chain-gated extraction）
+
+- `src/parsers/dynamic_attr_records.rs`：section-body 解析从
+  `try_parse_record` 抽出为共享 `parse_section_body`（提取逻辑
+  byte-for-byte 不变）；新增 **`parse_attribute_records_chain_scoped`**：
+  当 `/Unclustered Dynamic Attributes` 通过 Phase 29-I 链 gate 时按
+  record 精确边界逐 record 解析 attribute section，否则 byte-for-byte
+  回退 legacy 扫描。相比 legacy：找回 flagged-head record（字面非
+  `89 00` 但 `word & 0x3FFF == 0x0089`）、payload 内伪 `89 00` 不再
+  可能开 phantom section、section 解析不可能跨 record 边界。
+- `src/streams/dynamic_attrs.rs`：DA 文档管线切换 chain-scoped 提取；
+  `streams/cluster.rs` 泛用路径保持 legacy（避免 magic+chain gate 在
+  非 DA cluster 流上意外触发）。
+- 测试：4 个新单测 + panic-safety 入口 + ratchet
+  `da_chain_scoped_attribute_extraction_matches_or_beats_legacy_scan`
+  （6/6 fixture：`工艺管道及仪表流程-1` 68 → **69**（找回 `Symbol`
+  class 记录），其余 fixture 计数不变 —— D06=47 等全部既有 baseline
+  零回归）。
+- 快照不受影响（提取不改 byte-audit claims；coverage JSON 哈希不变）。
+- 5 道 pre-commit gate 全绿。head-field surfacing（benefit #2）仍
+  IDA-gated。
+
+### Phase 29-J：nested JSite cluster body 分派（audit-only follow-up）
+
+- 探针 `examples/probe_phase29_nested_cluster_bodies.rs`（6/6 fixture）：
+  **23/23** 个一层 nested `JSite*` cluster 流用**未改动**的 top-level
+  walker 直接 end-anchored 走通 —— nested `PSMcluster0` 11/11 保持
+  `record_count - 2` invariant（链起点统一 145）、nested `StyleCluster`
+  11/11、nested `Unclustered Dynamic Attributes` 1/1。nested 包与
+  top-level 流是同一 writer 输出。
+- `src/byte_audit/aggregate.rs`：nested JSite branch 由 header-only
+  升级为按 child 分派完整 walker（`parse_psm_cluster0` /
+  `parse_style_cluster` / `parse_unclustered_da`）；`Sheet*` /
+  `Dynamic Attributes Metadata` 维持 header-only（ownership /
+  semantic review 边界不破）；nested registry 增加
+  `Unclustered Dynamic Attributes`。
+- 测试：`nested_jsite_cluster_bodies_dispatch_to_full_walkers`
+  aggregate 单测 + 23-stream ratchet
+  `nested_jsite_cluster_bodies_are_end_anchored_across_fixtures`
+  （nested PSMcluster0 / DA leftover=0；nested StyleCluster
+  leftover == unparsed prefix）。
+- 快照：12 个 JSON 重生成；`JSite*` family leftover
+  **325,843 → 74,559**（ratio 0.0460 → 0.7817）；全文件 coverage
+  ratio 升至 **0.630–0.880**（d06 0.7699 / nonascii 0.8201 /
+  dwg0201 0.8804 / dwg0202 0.8474 / publish-a01 0.6297 /
+  publish-dwg0202 0.8474）。
+- 5 道 pre-commit gate 全绿。
+
+### Phase 29-I：Unclustered Dynamic Attributes body-chain walker（audit-only）
+
+- 三角化突破（`examples/probe_phase29_da_body_triage.rs`，6/6 fixture）：
+  `/Unclustered Dynamic Attributes` = 8 字节 prologue（cluster-family
+  magic `0x6C90_F544` + u32 record counter）+ **单条 end-anchored
+  `0x0089` envelope 链**（覆盖 0.9978–0.9998，零 resync、零 tail gap），
+  与 `/PSMcluster0` body 同构 —— DA 流并入 cluster-family。
+  417/417 个 signature-valid "31 字节 trailer" offset 与链 record head
+  重合：Phase 11/12 的 trailer 解读与下一 record 的 envelope head 是
+  同一段字节。counter == 字面 marker record 数 6/6、== 严格链长仅 5/6
+  （`nonascii-process-1` 有一条高位 flag head），故 counter 只报告不
+  gate。
+- `src/parsers/cluster_header.rs`：新增 `UNCLUSTERED_DA_PROLOGUE_LEN` +
+  `decode_unclustered_da_body_records`（magic gate + end-anchored
+  full-coverage gate，否则零 claim）+ `parse_unclustered_da_with_trace`
+  （prologue 与全部 record 均 `Probed`，**无 `Decoded` promotion**）。
+  7 个新单测。
+- `src/byte_audit/aggregate.rs`：DA branch 合并 walker 与既有
+  `scan_da_landmarks_with_trace`（landmark `Decoded` claims 不变，
+  overlap union 计数），parser name → `parse_unclustered_da`；
+  新增 fixture-shaped 全覆盖 aggregate 测试。
+- 测试：`tests/parser_panic_safety.rs` 新增对抗入口；
+  `tests/parse_real_files.rs` 新增 ratchet
+  `da_body_chain_is_end_anchored_across_fixtures`（6/6 fixture，
+  records 47/69/231/169/22/169，type 全 0x0089，leftover=0）。
+- 快照：12 个 coverage / byte-audit JSON 重生成；
+  `/Unclustered Dynamic Attributes` family leftover **111,120 → 0**；
+  全文件 coverage ratio 升至 0.273–0.670。
+- 文档：`docs/analysis/2026-06-08-phase29-dynamic-attributes-body-backlog.md`
+  （triage 证据 + 属性 census + 对象/关系收益 + IDA target request +
+  Implementation Status）；spec-kit data-model / snapshot-priority-backlog
+  / tasks 同步。
+- guardrails：`0x0089` 是 type code 不是语义名；head 字段沿用既有
+  fixture-evidence 命名（record_id/field_x/class_id）；prologue counter
+  不命名；per-record attribute scoping 留 follow-up。
+- 5 道 pre-commit gate 全绿（build / test full workspace 0 failed /
+  clippy -D warnings / fmt --check / missing-docs 0=baseline 0）。
 
 ### Phase 26：PSM 0x0010 属性片段解码器（additive / audit-only）
 

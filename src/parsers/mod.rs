@@ -21,6 +21,7 @@ pub mod drawing_xml;
 pub mod dynamic_attr_records;
 pub mod general_xml;
 pub mod jproperties;
+pub mod jsites_list;
 pub mod magic;
 pub mod psm_tables;
 pub mod relationship_probe;

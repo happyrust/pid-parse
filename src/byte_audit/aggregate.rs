@@ -180,9 +180,9 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
             let _ = parsers::cluster_header::parse_psm_cluster0_with_trace(data, &mut b);
             Some(b)
         }),
-        "/StyleCluster" => ("parse_cluster_header", {
-            let mut b = ParserTraceBuilder::new("parse_cluster_header");
-            let _ = parsers::cluster_header::parse_header_with_trace(data, &mut b);
+        "/StyleCluster" => ("parse_style_cluster", {
+            let mut b = ParserTraceBuilder::new("parse_style_cluster");
+            let _ = parsers::cluster_header::parse_style_cluster_with_trace(data, &mut b);
             Some(b)
         }),
         "/Dynamic Attributes Metadata" => ("parse_cluster_header", {
@@ -190,8 +190,14 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
             let _ = parsers::cluster_header::parse_header_with_trace(data, &mut b);
             Some(b)
         }),
-        "/Unclustered Dynamic Attributes" => ("scan_da_landmarks", {
-            let mut b = ParserTraceBuilder::new("scan_da_landmarks");
+        "/Unclustered Dynamic Attributes" => ("parse_unclustered_da", {
+            let mut b = ParserTraceBuilder::new("parse_unclustered_da");
+            // Phase 29 Slice C: audit-only body-chain walker (8-byte
+            // prologue + end-anchored `0x0089` chain, all `Probed`).
+            // The landmark scanner keeps its `Decoded` claims on class
+            // names, 31-byte heads, and DrawingID runs; overlaps are
+            // union-counted.
+            let _ = parsers::cluster_header::parse_unclustered_da_with_trace(data, &mut b);
             let _ = parsers::dynamic_attr_records::scan_da_landmarks_with_trace(data, &mut b);
             Some(b)
         }),
@@ -230,6 +236,19 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
             let _ = parsers::tagged_stg_list::parse_tagged_stg_list_with_trace(data, &mut b);
             Some(b)
         }),
+        "/JSitesList" => ("parse_jsites_list", {
+            let mut b = ParserTraceBuilder::new("parse_jsites_list");
+            let _ = parsers::jsites_list::parse_jsites_list_with_trace(data, &mut b);
+            Some(b)
+        }),
+        "/TaggedTxtData/Revision" => ("revision_empty_stream", {
+            // Phase 29 Slice M: the Revision stream is 0 bytes on every
+            // local fixture (5/5). Registering it keeps the inventory
+            // clean; if a future fixture carries content, it surfaces
+            // as leftover under this registered path instead of hiding
+            // in the unregistered list.
+            Some(ParserTraceBuilder::new("revision_empty_stream"))
+        }),
         "/TaggedTxtData/Drawing" => ("parse_drawing_xml", {
             Some(trace_utf8_xml_stream(
                 "parse_drawing_xml",
@@ -244,6 +263,88 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
                 parsers::general_xml::parse_general_xml,
             ))
         }),
+        path if nested_jsite_registry_parser(path).is_some() => {
+            // Phase 29 Slice L: nested JSite registry children reuse the
+            // top-level stream formats byte-for-byte (probe: 68 streams,
+            // 98.4% consumed; PSMroots keeps the same 4-byte tail as its
+            // top-level twin; 4-byte AppObject stubs gate out cleanly).
+            // The parsers self-validate via magic / record-shape gates.
+            match nested_jsite_registry_parser(path).expect("guard checked registry child") {
+                "parse_psm_cluster_table" => ("parse_psm_cluster_table", {
+                    let mut b = ParserTraceBuilder::new("parse_psm_cluster_table");
+                    let _ = parsers::psm_tables::parse_psm_cluster_table_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                "parse_psm_roots" => ("parse_psm_roots", {
+                    let mut b = ParserTraceBuilder::new("parse_psm_roots");
+                    let _ = parsers::psm_tables::parse_psm_roots_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                "parse_psm_segment_table" => ("parse_psm_segment_table", {
+                    let mut b = ParserTraceBuilder::new("parse_psm_segment_table");
+                    let _ = parsers::psm_tables::parse_psm_segment_table_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                "parse_doc_version2" => ("parse_doc_version2", {
+                    let mut b = ParserTraceBuilder::new("parse_doc_version2");
+                    let _ = parsers::doc_version2::parse_doc_version2_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                "parse_doc_version3" => ("parse_doc_version3", {
+                    let mut b = ParserTraceBuilder::new("parse_doc_version3");
+                    let _ = parsers::doc_version::parse_doc_version3_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                "parse_app_object" => ("parse_app_object", {
+                    let mut b = ParserTraceBuilder::new("parse_app_object");
+                    let _ = parsers::app_object::parse_app_object_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                "parse_jsites_list" => ("parse_jsites_list", {
+                    let mut b = ParserTraceBuilder::new("parse_jsites_list");
+                    let _ = parsers::jsites_list::parse_jsites_list_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                _ => ("parse_summary_property_set", {
+                    let mut b = ParserTraceBuilder::new("parse_summary_property_set");
+                    let _ = parsers::summary::parse_summary_property_set_with_trace(data, &mut b);
+                    Some(b)
+                }),
+            }
+        }
+        path if nested_jsite_cluster_header_name(path).is_some() => {
+            // Phase 29 nested follow-up: the Slice B/C body-chain walkers
+            // gate themselves (end-anchored full coverage or zero claim),
+            // and the nested-cluster body probe proved every nested
+            // `PSMcluster0` / `StyleCluster` / DA twin reuses the
+            // top-level layout (23/23 streams). Dispatch those children
+            // to the full walkers; everything else (Sheet*, DA Metadata)
+            // stays header-only pending ownership / semantic review.
+            match nested_jsite_cluster_header_name(path).expect("guard checked child name") {
+                "PSMcluster0" => ("parse_psm_cluster0", {
+                    let mut b = ParserTraceBuilder::new("parse_psm_cluster0");
+                    let _ = parsers::cluster_header::parse_psm_cluster0_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                "StyleCluster" => ("parse_style_cluster", {
+                    let mut b = ParserTraceBuilder::new("parse_style_cluster");
+                    let _ = parsers::cluster_header::parse_style_cluster_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                "Unclustered Dynamic Attributes" => ("parse_unclustered_da", {
+                    let mut b = ParserTraceBuilder::new("parse_unclustered_da");
+                    let _ = parsers::cluster_header::parse_unclustered_da_with_trace(data, &mut b);
+                    let _ =
+                        parsers::dynamic_attr_records::scan_da_landmarks_with_trace(data, &mut b);
+                    Some(b)
+                }),
+                _ => ("parse_nested_jsite_cluster_header", {
+                    let mut b = ParserTraceBuilder::new("parse_nested_jsite_cluster_header");
+                    let _ = parsers::cluster_header::parse_header_with_trace(data, &mut b);
+                    Some(b)
+                }),
+            }
+        }
         path if path.ends_with("/JProperties") => ("parse_jproperties", {
             let mut b = ParserTraceBuilder::new("parse_jproperties");
             let _ = parsers::jproperties::parse_jproperties_with_trace(data, &mut b);
@@ -252,11 +353,13 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
         path if top_level_sheet_name(path).is_some() => ("probe_sheet_stream", {
             let mut b = ParserTraceBuilder::new("probe_sheet_stream");
             let sheet_name = top_level_sheet_name(path).expect("guard checked sheet name");
+            let _ = parsers::cluster_header::parse_header_with_trace(data, &mut b);
             trace_sheet_text_runs(sheet_name, path, data, &mut b);
             // Also scan for 26-byte endpoint records (Phase 12b-1g):
             // self-contained discriminator-only scan, no need for the
             // DA-side `rel_field_xs` set.
             let _ = parsers::sheet_endpoint_records::scan_endpoint_records_with_trace(data, &mut b);
+            trace_sheet_decoded_records(data, &mut b);
             Some(b)
         }),
         _ => return None,
@@ -272,6 +375,50 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
             }
             t
         })
+}
+
+fn consume_usize_range(
+    builder: &mut ParserTraceBuilder,
+    range: std::ops::Range<usize>,
+    confidence: TraceConfidence,
+) {
+    builder.consume(
+        ByteRange::new(range.start as u64, range.end as u64),
+        confidence,
+    );
+}
+
+fn trace_sheet_decoded_records(data: &[u8], builder: &mut ParserTraceBuilder) {
+    for decoded in parsers::sheet_records::decode_primitive_lines(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
+    }
+    for decoded in parsers::sheet_records::decode_iglines(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
+    }
+    for decoded in parsers::sheet_records::decode_iglinestrings(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
+    }
+    for decoded in parsers::sheet_records::decode_igpoints(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
+    }
+    for decoded in parsers::sheet_records::decode_igtextboxes(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
+    }
+    for decoded in parsers::sheet_records::decode_igsymbols(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
+    }
+    for decoded in parsers::sheet_records::decode_jstyle_overrides(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
+    }
+
+    // Audit-only families are intentionally claimed as Probed: the byte envelope
+    // is bounded, but the business semantics remain guarded.
+    for decoded in parsers::sheet_records::decode_graphic_groups(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Probed);
+    }
+    for decoded in parsers::sheet_records::decode_sub_records_0x0010(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Probed);
+    }
 }
 
 fn trace_utf8_xml_stream<T, E>(
@@ -298,6 +445,58 @@ fn top_level_sheet_name(path: &str) -> Option<&str> {
         return None;
     }
     Some(leaf)
+}
+
+/// Map a one-level nested `JSite*` registry child stream to the
+/// top-level parser it reuses (Phase 29 Slice L). Returns `None` for
+/// everything else, leaving cluster children to
+/// [`nested_jsite_cluster_header_name`] and unknown children
+/// unregistered.
+fn nested_jsite_registry_parser(path: &str) -> Option<&'static str> {
+    let mut parts = path.strip_prefix('/')?.split('/');
+    let jsite = parts.next()?;
+    if !jsite.starts_with("JSite") {
+        return None;
+    }
+    let child = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    match child {
+        "PSMclustertable" => Some("parse_psm_cluster_table"),
+        "PSMroots" => Some("parse_psm_roots"),
+        "PSMsegmenttable" => Some("parse_psm_segment_table"),
+        "DocVersion2" => Some("parse_doc_version2"),
+        "DocVersion3" => Some("parse_doc_version3"),
+        "AppObject" => Some("parse_app_object"),
+        "JSitesList" => Some("parse_jsites_list"),
+        "\u{5}SummaryInformation" | "\u{5}DocumentSummaryInformation" => {
+            Some("parse_summary_property_set")
+        }
+        _ => None,
+    }
+}
+
+fn nested_jsite_cluster_header_name(path: &str) -> Option<&str> {
+    let mut parts = path.strip_prefix('/')?.split('/');
+    let jsite = parts.next()?;
+    if !jsite.starts_with("JSite") {
+        return None;
+    }
+    let child = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if child == "PSMcluster0"
+        || child == "StyleCluster"
+        || child == "Dynamic Attributes Metadata"
+        || child == "Unclustered Dynamic Attributes"
+        || child.starts_with("Sheet")
+    {
+        Some(child)
+    } else {
+        None
+    }
 }
 
 fn trace_sheet_text_runs(
@@ -484,10 +683,14 @@ mod tests {
         let report = byte_audit_report(&pkg);
         assert!(report.unregistered_paths.is_empty());
 
+        // The /StyleCluster fixture body (32 × 0xAB) never forms a
+        // qualifying record chain, so the Phase 29 walker claims only
+        // the 16-byte header — same accounting as the old header-only
+        // branch, now under the dedicated parser name.
         let style_summary = &report.per_stream["/StyleCluster"];
         assert_eq!(
             style_summary.parser_name.as_deref(),
-            Some("parse_cluster_header")
+            Some("parse_style_cluster")
         );
         assert_eq!(style_summary.consumed_bytes, 16);
         assert_eq!(style_summary.leftover_bytes, style.len() as u64 - 16);
@@ -525,15 +728,56 @@ mod tests {
         let pkg = pkg_with_streams(&[("/Unclustered Dynamic Attributes", data.clone())]);
         let report = byte_audit_report(&pkg);
         let summary = &report.per_stream["/Unclustered Dynamic Attributes"];
-        assert_eq!(summary.parser_name.as_deref(), Some("scan_da_landmarks"));
-        // class name (14) + DrawingID tag (10) + 32 hex (32) + trailer (31)
-        // = 87 bytes; the leftover is the surrounding opaque body.
+        assert_eq!(summary.parser_name.as_deref(), Some("parse_unclustered_da"));
+        // No cluster magic at offset 0, so the Phase 29 Slice C chain
+        // walker claims nothing; the landmark scanner accounts for
+        // class name (14) + DrawingID tag (10) + 32 hex (32) +
+        // trailer (31) = 87 bytes; the leftover is the surrounding
+        // opaque body.
         assert_eq!(
             summary.consumed_bytes, 87,
             "expected 14 + 42 + 31 = 87 landmark bytes; got {}",
             summary.consumed_bytes
         );
         assert_eq!(summary.leftover_bytes, data.len() as u64 - 87);
+    }
+
+    #[test]
+    fn unclustered_dynamic_attributes_body_chain_walker_claims_full_stream() {
+        // Fixture-shaped stream: cluster magic + u32 counter, then an
+        // end-anchored record chain whose first record carries the
+        // 25-byte head-tail plus the ASCII class name (the bytes the
+        // landmark scanner reads as a "31-byte trailer" + class name).
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&7u32.to_le_bytes()); // record_id
+        payload.extend_from_slice(&[0u8; 8]); // zero padding
+        payload.extend_from_slice(&0x0000_03B7u32.to_le_bytes()); // field_x
+        payload.extend_from_slice(&[0xFF, 0xFF]); // separator
+        payload.extend_from_slice(&0x0000_00EAu32.to_le_bytes()); // class_id
+        payload.extend_from_slice(&[0x14, 0x00, 0x00]); // head tail
+        payload.extend_from_slice(b"P&IDAttributes");
+        payload.extend_from_slice(&[0xAB; 9]); // opaque attribute body
+
+        let mut data = Vec::new();
+        data.extend_from_slice(&0x6C90_F544u32.to_le_bytes()); // magic
+        data.extend_from_slice(&2u32.to_le_bytes()); // record counter
+        data.extend_from_slice(&0x0089u16.to_le_bytes());
+        data.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        data.extend_from_slice(&payload);
+        data.extend_from_slice(&0x0089u16.to_le_bytes());
+        data.extend_from_slice(&5u32.to_le_bytes());
+        data.extend_from_slice(&[0xCD; 5]);
+
+        let pkg = pkg_with_streams(&[("/Unclustered Dynamic Attributes", data.clone())]);
+        let report = byte_audit_report(&pkg);
+        let summary = &report.per_stream["/Unclustered Dynamic Attributes"];
+        assert_eq!(summary.parser_name.as_deref(), Some("parse_unclustered_da"));
+        assert_eq!(
+            summary.consumed_bytes,
+            data.len() as u64,
+            "prologue + end-anchored chain must account for every byte"
+        );
+        assert_eq!(summary.leftover_bytes, 0);
     }
 
     #[test]
@@ -716,6 +960,188 @@ mod tests {
             summary.consumed_bytes
         );
         assert!(summary.consumed_bytes < total);
+    }
+
+    #[test]
+    fn sheet_typed_decoders_claim_known_record_ranges() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&0x005Eu16.to_le_bytes());
+        data.extend_from_slice(&34u32.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes()); // oid
+        data.extend_from_slice(&6u32.to_le_bytes()); // parent_ref
+        data.extend_from_slice(&8u32.to_le_bytes()); // remaining_header
+        data.extend_from_slice(&1u16.to_le_bytes()); // sub_type_word
+        data.extend_from_slice(&1u32.to_le_bytes()); // index
+        data.extend_from_slice(&1.0f64.to_le_bytes()); // x
+        data.extend_from_slice(&2.0f64.to_le_bytes()); // y
+
+        let pkg = pkg_with_streams(&[("/Sheet6", data)]);
+        let report = byte_audit_report(&pkg);
+        let summary = &report.per_stream["/Sheet6"];
+
+        assert_eq!(summary.parser_name.as_deref(), Some("probe_sheet_stream"));
+        assert_eq!(summary.total_bytes, 40);
+        assert_eq!(summary.consumed_bytes, 40);
+        assert_eq!(summary.leftover_bytes, 0);
+
+        let trace = report
+            .traces
+            .iter()
+            .find(|trace| trace.stream_path == "/Sheet6")
+            .expect("expected Sheet trace");
+        assert_eq!(
+            trace
+                .ranges_by_confidence
+                .get(&TraceConfidence::Decoded)
+                .cloned()
+                .unwrap_or_default(),
+            vec![ByteRange::new(0, 40)]
+        );
+    }
+
+    #[test]
+    fn sheet_cluster_header_gets_traced() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&0x6C90_F544u32.to_le_bytes()); // cluster magic
+        data.extend_from_slice(&1u32.to_le_bytes()); // record_count
+        data.extend_from_slice(&6u16.to_le_bytes()); // stream_type
+        data.extend_from_slice(&0u32.to_le_bytes()); // body_len
+        data.extend_from_slice(&0u16.to_le_bytes()); // flags
+
+        let pkg = pkg_with_streams(&[("/Sheet6", data)]);
+        let report = byte_audit_report(&pkg);
+        let summary = &report.per_stream["/Sheet6"];
+
+        assert_eq!(summary.parser_name.as_deref(), Some("probe_sheet_stream"));
+        assert_eq!(summary.total_bytes, 16);
+        assert_eq!(summary.consumed_bytes, 16);
+        assert_eq!(summary.leftover_bytes, 0);
+    }
+
+    #[test]
+    fn nested_jsite_cluster_header_gets_header_only_trace() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&0x6C90_F544u32.to_le_bytes()); // cluster magic
+        data.extend_from_slice(&1u32.to_le_bytes()); // record_count
+        data.extend_from_slice(&6u16.to_le_bytes()); // stream_type
+        data.extend_from_slice(&0u32.to_le_bytes()); // body_len
+        data.extend_from_slice(&0u16.to_le_bytes()); // flags
+        data.extend_from_slice(&[0xAA; 8]); // unclaimed body bytes
+
+        let pkg = pkg_with_streams(&[("/JSite204/Sheet6", data)]);
+        let report = byte_audit_report(&pkg);
+        let summary = &report.per_stream["/JSite204/Sheet6"];
+
+        assert_eq!(
+            summary.parser_name.as_deref(),
+            Some("parse_nested_jsite_cluster_header")
+        );
+        assert_eq!(summary.total_bytes, 24);
+        assert_eq!(summary.consumed_bytes, 16);
+        assert_eq!(summary.leftover_bytes, 8);
+        assert!(report.unregistered_paths.is_empty());
+    }
+
+    #[test]
+    fn nested_jsite_cluster_bodies_dispatch_to_full_walkers() {
+        // Nested PSMcluster0: short header-only stream (<= 32 bytes)
+        // claims its 16-byte header under the full walker's name.
+        let mut psm = Vec::new();
+        psm.extend_from_slice(&0x6C90_F544u32.to_le_bytes());
+        psm.extend_from_slice(&1u32.to_le_bytes());
+        psm.extend_from_slice(&0x75u16.to_le_bytes());
+        psm.extend_from_slice(&0u32.to_le_bytes());
+        psm.extend_from_slice(&0u16.to_le_bytes());
+
+        // Nested StyleCluster: header + body that never forms a chain.
+        let mut style = psm.clone();
+        style.extend_from_slice(&[0xAA; 24]);
+
+        // Nested DA: 8-byte prologue + one end-anchored record.
+        let mut da = Vec::new();
+        da.extend_from_slice(&0x6C90_F544u32.to_le_bytes());
+        da.extend_from_slice(&1u32.to_le_bytes());
+        da.extend_from_slice(&0x0089u16.to_le_bytes());
+        da.extend_from_slice(&4u32.to_le_bytes());
+        da.extend_from_slice(&[0xBB; 4]);
+
+        let pkg = pkg_with_streams(&[
+            ("/JSite793/PSMcluster0", psm.clone()),
+            ("/JSite793/StyleCluster", style.clone()),
+            ("/JSite204/Unclustered Dynamic Attributes", da.clone()),
+        ]);
+        let report = byte_audit_report(&pkg);
+
+        let psm_summary = &report.per_stream["/JSite793/PSMcluster0"];
+        assert_eq!(
+            psm_summary.parser_name.as_deref(),
+            Some("parse_psm_cluster0")
+        );
+        assert_eq!(psm_summary.consumed_bytes, 16);
+
+        let style_summary = &report.per_stream["/JSite793/StyleCluster"];
+        assert_eq!(
+            style_summary.parser_name.as_deref(),
+            Some("parse_style_cluster")
+        );
+        assert_eq!(style_summary.consumed_bytes, 16);
+        assert_eq!(style_summary.leftover_bytes, style.len() as u64 - 16);
+
+        let da_summary = &report.per_stream["/JSite204/Unclustered Dynamic Attributes"];
+        assert_eq!(
+            da_summary.parser_name.as_deref(),
+            Some("parse_unclustered_da")
+        );
+        assert_eq!(da_summary.consumed_bytes, da.len() as u64);
+        assert_eq!(da_summary.leftover_bytes, 0);
+        assert!(report.unregistered_paths.is_empty());
+    }
+
+    #[test]
+    fn nested_jsite_registry_children_dispatch_to_top_level_parsers() {
+        // Nested JSitesList: "OLEM" + count + one entry (Slice M parser).
+        let mut jsites_list = Vec::new();
+        jsites_list.extend_from_slice(b"OLEM");
+        jsites_list.extend_from_slice(&1u32.to_le_bytes());
+        jsites_list.extend_from_slice(&204u32.to_le_bytes());
+
+        let pkg = pkg_with_streams(&[
+            ("/JSite793/PSMsegmenttable", make_psm_segment_bytes(4)),
+            ("/JSite793/JSitesList", jsites_list.clone()),
+            ("/JSite793/UnknownChild", vec![0xAB; 12]),
+        ]);
+        let report = byte_audit_report(&pkg);
+
+        let seg = &report.per_stream["/JSite793/PSMsegmenttable"];
+        assert_eq!(
+            seg.parser_name.as_deref(),
+            Some("parse_psm_segment_table"),
+            "nested segment table must reuse the top-level parser"
+        );
+        assert_eq!(seg.leftover_bytes, 0);
+
+        let jl = &report.per_stream["/JSite793/JSitesList"];
+        assert_eq!(
+            jl.parser_name.as_deref(),
+            Some("parse_jsites_list"),
+            "nested JSitesList must reuse the Slice M parser"
+        );
+        assert_eq!(jl.consumed_bytes, jsites_list.len() as u64);
+
+        // Children without a proven parser stay unregistered.
+        assert!(report
+            .unregistered_paths
+            .contains(&"/JSite793/UnknownChild".to_string()));
+    }
+
+    #[test]
+    fn nested_jsite_jproperties_still_uses_jproperties_parser() {
+        let data = b"Pump\x00Valve".to_vec();
+        let pkg = pkg_with_streams(&[("/JSite204/JProperties", data)]);
+        let report = byte_audit_report(&pkg);
+        let summary = &report.per_stream["/JSite204/JProperties"];
+
+        assert_eq!(summary.parser_name.as_deref(), Some("parse_jproperties"));
     }
 
     #[test]

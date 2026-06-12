@@ -4,9 +4,15 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 24 - CoordinatePageMetadata decoder 候选筛选方案已制定；下一步先从
-Phase 23 `top_evidence` 生成 candidate evidence table，不直接 promotion
-`PidPageTransform::Available`。
+Phase 30 - radsrvitem.dll IDA 证据刷新（partial）。Phase 29 A..M 的
+byte-audit / extraction / registry 清尾已 complete；本轮在可达
+`radsrvitem.dll` IDB 中确认多个 `JSite<N>` storage name builder /
+open path（`sub_56448A10`、`sub_56448A70`、`sub_5646FF60`），增强
+`/JSitesList.entries` ↔ JSite storage id 的证据链；但当前 DLL 仍无
+`"OLEM"` / `JSitesList` 字符串，writer 侧和 stale tail 语义未解，
+因此 DTO 继续保持 `entries` / `trailing_slots` 保守命名。剩余
+multi-fixture 项仍为 IDA（PSMspacemap 页、0x0089/0x0010 语义、
+StyleCluster prefix）/ demand（\x01Ole）gated。
 
 ## 历史阶段 → goals/ 包托管说明
 2026-05-13 起 Phase 13+ 的细节迁移到 `goals/phaseNN-...` 目录（brief / plan /
@@ -293,6 +299,325 @@ verification / blockers / goal-prompt / progress.jsonl 五件套+1 模板），
   follow-up commit (Task 24-04 docs sync)
 - **Re-open trigger:** 新增 PID fixture 在同一 marker 上出现 kind
   一致的 top_evidence 且至少 1 行 `page_dimension_scalar_matches > 0`
+
+### Phase 26：2026-06-03 PID 文件全格式分析说明
+- [x] 结合 grill-me 决策树制定格式说明开发计划：
+      `docs/plans/2026-06-03-phase26-pid-file-format-analysis-plan-cn.md`
+- [x] Phase 26-A：事实源审计
+  - [x] 复核 known stream/storage registry、coverage 状态、byte-audit registered parser
+  - [x] 标记旧文档中可能偏乐观或过时的格式描述
+- [x] Phase 26-B：新增主格式说明
+  - [x] 新增 `docs/analysis/2026-06-03-pid-file-format-analysis-cn.md`
+  - [x] 覆盖 CFB、top-level stream/storage、magic、字节布局、parser、模型字段、coverage、限制
+  - [x] 单独区分 `Sheet*` decoded / audit-only / probe-only record families
+- [x] Phase 26-C：验证与快照
+  - [x] 检查代表性 fixture 可用性；当前工作树未发现 `.pid` 样本
+  - [ ] 对代表性 fixture 运行 `pid_inspect --coverage --json`（blocked: fixture 缺失）
+  - [ ] 对代表性 fixture 运行 `pid_inspect --byte-audit --json`（blocked: fixture 缺失）
+  - [x] 将阻塞原因写入主文档附录
+- [x] Phase 26-D：文档交叉链接与收口
+  - [x] 更新 README / `docs/format-notes.md` 入口
+  - [x] 同步 `task_plan.md` / `progress.md` / `findings.md`
+- **Status:** complete (snapshot blocked by missing fixtures)
+- **Plan:** `docs/plans/2026-06-03-phase26-pid-file-format-analysis-plan-cn.md`
+- **Analysis:** `docs/analysis/2026-06-03-pid-file-format-analysis-cn.md`
+
+### Phase 27：2026-06-03 IDA 证据驱动的 PID 全数据类型提取
+- [x] 制定 Phase 27 计划：
+      `docs/plans/2026-06-03-phase27-ida-driven-pid-data-type-extraction-plan-cn.md`
+- [x] 连接并选择 `radsrvitem.dll` IDA instance (`127.0.0.1:13338`)
+- [x] survey `radsrvitem.dll`，确认 32-bit / 5374 functions / 1739 strings /
+      exports `GetServerItemTransceiver` 与 `GetServerItemVersion`
+- [x] Phase 27-A 初步恢复 `sub_56448F70` type-code mapper：
+  - [x] 导出 27 个 switch case
+  - [x] 补齐 `igDimension` / `igBalloon` / `igLeader` 三个 if/else return
+  - [x] 确认 `0x00CE = igSymbol2d`
+- [x] 新增数据类型矩阵初版：
+      `docs/analysis/2026-06-03-phase27-pid-data-type-matrix-cn.md`
+- [x] 建立 `igTextBox` 样板 reader 候选：`sub_564468B0`
+- [ ] Phase 27-B：对 P0 五类 typed decoder 逐类追 `type name -> xref -> reader`
+  - [x] `igTextBox` 样板：确认 `sub_56445F40 -> sub_564468B0` dispatch / reader path
+  - [x] `igTextBox` 样板：完成首版 `IDA reader ↔ decode_igtextbox_at` 字段对照
+  - [x] 追 `sub_564462F0` 默认路径，确认该路径只写 type name / `RELEATIONS`，不读取普通几何字段
+  - [x] 搜索 P0/P1 type name xrefs，确认 `igPoint2d` / `igLineString2d` / `igSymbol2d` / `igCircle2d` 在当前 `radsrvitem.dll` 仅命中 mapper
+  - [x] 追 `sub_56445F40` 中 `v10` record pointer 来源：确认它来自 `this+0x3c` / `ImpIJPersistManager` 的 vtable `+0xA4` lookup
+  - [x] 定位 `ImpIJPersistManager::vtable+0xA4 = sub_56468DB0` 与 `SerialCluster::vtable+0x70 = sub_56493F50`，确认 runtime record pointer = loaded cluster base + descriptor offset
+  - [x] 确认 `SerialCluster` 层 offset 公式：`stream_offset = runtime_record_ptr - serial_cluster_base = record_descriptor[0]`
+  - [x] 确认 `ImpIPersistStorage::Load` 从 CFB `IStorage` 打开 `PSMclustertable` / `PSMroots` / `PSMspacemap` / `PSMcluster0`，当前链路绑定到 PSM 持久化 streams，而非直接 `Sheet*` raw stream
+  - [x] 复查现有 `core.dll` IDA instance：`ASHEET` / `DSHEET` 为数据库属性初始化，`CMPTSZ` 为 sheet token 坐标调试/命令输出，未发现 PID `Sheet*` raw record reader
+  - [ ] 继续追 PSM runtime record 到 `Sheet*` raw geometry 的投影关系，或打开/选择更多相关 IDA DLL（优先 `J2DSrv.dll` / `style.dll` / `sppid.dll` / `XCeedRAD.dll`）寻找普通几何 reader
+- [ ] Phase 27-C：做 `IDA layout ↔ parser DTO` 字段级对照
+- [ ] Phase 27-D：形成后续 parser 修复 / 补齐 backlog
+- [ ] Phase 27-E：重启 `0x0010` / `GraphicGroup` / `PSMspacemap` 深水区分析
+- **Status:** in_progress
+- **Plan:** `docs/plans/2026-06-03-phase27-ida-driven-pid-data-type-extraction-plan-cn.md`
+- **Matrix:** `docs/analysis/2026-06-03-phase27-pid-data-type-matrix-cn.md`
+
+### Phase 28：2026-06-08 Spec Kit 风格 PID 文件全格式规格包
+- [x] 创建 Spec Kit 风格规格包目录：
+      `docs/specs/2026-06-08-pid-file-format-spec-kit/`
+- [x] 新增 `spec.md`：目标、用户故事、证据等级、功能需求、guardrails、
+      验收标准
+- [x] 新增 `plan.md`：Phase 28-A..E 执行切片、IDA 续查入口、风险矩阵
+- [x] 新增 `research.md`：parser 事实、Phase 27 IDA 事实、fixture 限制、
+      `0x0010` / JStyle 阻塞
+- [x] 新增 `data-model.md`：container / metadata / registry / PSM / Sheet
+      type-code / derived geometry / writer-publish 边界的 evidence-graded
+      inventory
+- [x] 新增 `tasks.md`：后续 IDA availability、evidence refresh、fixture
+      snapshot 与 backlog 分类任务
+- [x] 新增 `quickstart.md`：parser inspection、coverage / byte-audit、test
+      gates 与 IDA 复查流程
+- [x] Phase 28-E：确认当前本地有 6 个 `.pid` fixture，并为全部 6 个
+      fixture 生成 coverage / byte-audit JSON 快照；`data-model.md` 已记录
+      snapshot matrix
+- [x] Phase 28-F：在 `data-model.md` 中新增 completion classification，将各
+      entry group 标为 `Complete` / `NeedsFixture` / `NeedsIDA` /
+      `NeedsParser` / `Blocked`
+- [x] Phase 28-G：基于 6-fixture byte-audit 快照生成
+      `snapshot-priority-backlog.md`，聚合 highest-leftover families /
+      individual paths / common unregistered paths
+- [x] Phase 28-H：新增 `phase29-candidate-slices.md`，将 priority backlog
+      转成 Phase 29-A..F 候选 implementation slices
+- [ ] Phase 28-C：在 `ida-pro-mcp` tool descriptor 可用且相关 IDB 打开后，
+      复查 `style.dll` / `J2DSrv.dll` / `sppid.dll` / `XCeedRAD.dll`
+      证据
+- **Status:** spec package + 6-fixture snapshot matrix + priority backlog
+  + Phase 29 candidate slices complete；live IDA refresh blocked until
+  relevant IDA modules / tool descriptors are available
+- **Spec:** `docs/specs/2026-06-08-pid-file-format-spec-kit/spec.md`
+
+### Phase 29：2026-06-08 Sheet leftover unknown record priority
+- [x] Phase 29-A：基于 6-fixture byte-audit snapshot 生成 Sheet leftover
+      priority report：
+      `docs/analysis/2026-06-08-phase29-sheet-leftover-priority.md`
+- [x] 报告确认 `/Sheet6` 是主导 registered Sheet hotspot：
+      total 129,506 / consumed 8,818 / leftover 120,688 / ratio 0.06808951
+- [x] 报告识别两个 `Sheet6615` 小型 registered Sheet-like stream：
+      total 632 / consumed 144 / leftover 488
+- [x] 报告识别 `publish-a01` 的嵌套 `/JSite204/Sheet*` unregistered streams，
+      需先决定 byte-audit registration / ownership 语义
+- [x] Phase 29-A follow-up：新增 read-only probe
+      `examples/probe_phase29_sheet_leftover_windows.rs`，生成
+      `docs/analysis/2026-06-08-phase29-sheet-leftover-windows.md`
+- [x] bounded windows report 已按 conservative local byte shape 分组，并输出
+      sample ranges / header offset / hex prefix；仍保持 investigation-only
+- [x] Phase 29-A review：新增
+      `docs/analysis/2026-06-08-phase29-sheet-leftover-review.md`，确认当前
+      Sheet byte-audit 未接入 typed/audit-only decoders，不能把 leftover
+      直接解释成新格式
+- [x] Phase 29-B：将现有 Sheet typed/audit-only decoders 接入 byte-audit
+      trace，降低已知记录造成的 leftover 噪声
+- [x] 修复 `ParserTrace::consumed_bytes()` mixed-confidence overlap 双计数：
+      改为 `total_bytes - leftover_bytes`
+- [x] 新增 focused tests：
+      `consumed_bytes_counts_union_across_confidence_overlap` 与
+      `sheet_typed_decoders_claim_known_record_ranges`
+- [x] 重跑 6-fixture snapshot matrix 与
+      `phase29-sheet-leftover-windows-after-trace.md`
+- [x] 新增结果说明：
+      `docs/analysis/2026-06-08-phase29-sheet-byte-audit-trace-integration.md`
+- [x] Phase 29-C：新增
+      `docs/analysis/2026-06-08-phase29-sheet-after-trace-review.md`，分类
+      after-trace 剩余 groups
+- [x] Phase 29-C 结论：优先执行 Phase 29-C1 Symbol Reject Probe；nested
+      `/JSite204/Sheet*` 另走 ownership / registration review
+- [x] Phase 29-C1：新增 `examples/probe_phase29_igsymbol_rejects.rs`，
+      生成 `docs/analysis/2026-06-08-phase29-igsymbol-reject-probe.md`
+- [x] Phase 29-C1 结论：剩余 `0x00CE` candidates 均为
+      `out_of_domain_double`，保留 `decode_igsymbols` validation 不变
+- [x] Phase 29-C2：新增
+      `docs/analysis/2026-06-08-phase29-nested-sheet-ownership-review.md`，
+      确认 nested `JSite*/Sheet*` 不与 top-level `/Sheet*` 混同
+- [x] Phase 29-C2 结论：nested JSite streams 更像 symbol-local / embedded
+      PSM package，需先建 ownership inventory
+- [x] Phase 29-D：新增
+      `docs/analysis/2026-06-08-phase29-nested-jsite-package-inventory.md`，
+      生成 6-fixture nested `JSite*` package inventory
+- [x] Phase 29-D 分类：`NeedsOwnership` / `CanTraceHeaderOnly` /
+      `IgnoreUntilConsumerNeeds`
+- [x] Phase 29-D follow-up：为 `CanTraceHeaderOnly` nested JSite
+      cluster-family child streams 添加 header-only byte-audit trace
+- [x] 新增 tests：
+      `nested_jsite_cluster_header_gets_header_only_trace` 与
+      `nested_jsite_jproperties_still_uses_jproperties_parser`
+- [x] 重跑 6-fixture snapshots 和 nested inventory，更新 `data-model.md` /
+      `snapshot-priority-backlog.md`
+- [x] Phase 29-E：验证与收口：
+      `cargo test --lib byte_audit -- --nocapture` 44 passed；
+      `cargo fmt --all -- --check` 通过；ReadLints 无错误
+- [x] Phase 28-C：IDA 可达性核查（2026-06-10）：仅 `core.dll`（无关）与
+      `radsrvitem.dll` 可达，目标 IDB 未打开，Slice 29-F 维持 blocked
+- [x] 文档漂移修正：`AGENTS.md` 0x0030 GArc2d → JStyleOverride；
+      `tasks.md` 28-F / Validation 选框回写
+- [x] Phase 29-F：PSMcluster0 body 三角化（candidate Slice 29-B）：
+      新增 `examples/probe_phase29_psmcluster0_body_triage.rs`，
+      证明 body = 单条连续 PSM envelope record 链（6/6 fixture，
+      覆盖 99.8%+，`chain_records == record_count - 2`），
+      产出 `docs/analysis/2026-06-08-phase29-psmcluster0-leftover-triage.md`
+- [x] Phase 29-F follow-up：实现 audit-only PSMcluster0 walker
+      （共享核心 `decode_cluster_body_records`）：full-coverage gate +
+      trace 集成（prologue Probed / envelope Decoded / payload Probed），
+      8 单测 + 3 panic-safety 入口 + cross-fixture ratchet
+      （6/6 fixture record_count-2 成立、consumed ratio = 1.0），
+      12 个快照 JSON 重生成，`/PSMcluster0` leftover 193,173 → 0，
+      五项门禁全过
+- [x] Phase 29-G：StyleCluster body 三角化 + walker：
+      泛化探针证明单条 end-anchored 链（record_count 仅 2/6 匹配 →
+      整条 Probed），`decode_style_cluster_body_records` +
+      `parse_style_cluster_with_trace` 落地，6 单测 + ratchet 6/6 过，
+      `/StyleCluster` leftover 83,468 → 12,300（仅剩 GUID-table 形
+      prefix），五项门禁全过
+- [x] Phase 29-H：StyleCluster prefix 特征化（documentation-only
+      closeout）：12B opener + 532B 跨 fixture 常量 boilerplate +
+      42B style slot 纹理；GUID 区非均匀 stride → 不上 parser，
+      prefix 保持 leftover，IDA target 扩展
+- [x] Phase 29-I：Unclustered DA body 三角化（candidate Slice 29-C）：
+      先核查 IDA（2026-06-11 仍仅 core.dll / radsrvitem.dll，29-F 维持
+      blocked）；新增 `examples/probe_phase29_da_body_triage.rs`，证明
+      DA body = 8 字节 magic+counter prologue + 单条 end-anchored
+      `0x0089` envelope 链（6/6 fixture，覆盖 0.9978–0.9998，
+      417/417 trailer offset == chain head，"31 字节 trailer" 实为下一
+      record 的 envelope head）；产出
+      `docs/analysis/2026-06-08-phase29-dynamic-attributes-body-backlog.md`
+      （walker backlog + 属性 census + IDA target request）
+- [x] Phase 29-I follow-up：实现 audit-only DA body-chain walker：
+      `decode_unclustered_da_body_records` +
+      `parse_unclustered_da_with_trace`（全 `Probed` claims，
+      end-anchored full-coverage gate，counter 不作硬 invariant）；
+      aggregate DA branch 合并 walker + landmark scanner
+      （parser name `parse_unclustered_da`）；7 单测 + 1 aggregate 测试 +
+      panic-safety 入口 + ratchet
+      `da_body_chain_is_end_anchored_across_fixtures`
+      （6/6，records 47/69/231/169/22/169，leftover=0）；
+      12 个 snapshot JSON 重生成，`/Unclustered Dynamic Attributes`
+      leftover 111,120 → 0，全文件 ratio 升至 0.273–0.670；
+      五项门禁全过
+- [x] Phase 29-J：nested JSite cluster body dispatch（Slice B/C
+      follow-up）：IDA 复查仍 blocked 后，新增
+      `examples/probe_phase29_nested_cluster_bodies.rs` 证明 23/23 个
+      一层 nested `JSite*` `PSMcluster0`(11) / `StyleCluster`(11) /
+      `Unclustered Dynamic Attributes`(1) 流用未改动的 top-level
+      walker 即可 end-anchored 走通（nested PSMcluster0 11/11 保持
+      `record_count - 2`，链起点统一 145）；aggregate nested branch
+      按 child 分派到完整 walker（Sheet* / DA Metadata 维持
+      header-only）；新增 dispatch 单测 + 23-stream ratchet；
+      快照重生成：`JSite*` family leftover 325,843 → 74,559
+      （ratio 0.7817），全文件 ratio 0.630–0.880；五项门禁全过
+- [x] Phase 29-K：per-record DA attribute scoping（Slice C named
+      benefit #1）：抽出 `parse_section_body` 共享核心（提取逻辑
+      byte-for-byte 不变）；新增
+      `parse_attribute_records_chain_scoped`（chain gate 通过时按
+      record 精确边界解析 attribute section，否则回退 legacy 扫描）；
+      `streams/dynamic_attrs.rs` 管线切换，`streams/cluster.rs` 保持
+      legacy；4 单测 + panic-safety + ratchet
+      `da_chain_scoped_attribute_extraction_matches_or_beats_legacy_scan`
+      （6/6：nonascii 68 → 69 找回 flagged-head `Symbol` record，
+      其余 fixture 不变，全部既有 baseline 零回归）；快照不受影响
+      （提取不改 byte-audit claims）；五项门禁全过
+- [x] Phase 29-L：nested JSite registry dispatch：探针
+      `examples/probe_phase29_nested_registry_streams.rs` 证明 68 个
+      nested registry 流复用 top-level 格式（98.4% consumed，
+      DocVersion2/3 / PSMclustertable / PSMsegmenttable 全量解析，
+      PSMroots 同款 4 字节尾，4 字节 AppObject stub 干净 gate-out，
+      summary pair 部分解析）；byte-audit nested branch 增加
+      registry child → top-level parser 分派（JSitesList 无 parser
+      维持 unregistered）；dispatch 单测 + ratchet；快照重生成：
+      JSite family leftover 74,559 → 66,778，unregistered paths
+      降至 12–19/fixture，全文件 ratio 0.664–0.888；五项门禁全过
+- [x] Phase 29-M：JSitesList / Revision 清尾：探针
+      `examples/probe_phase29_unregistered_tails.rs` 证明
+      `/JSitesList` = "OLEM" magic + u32 count + u32 slot 表（逻辑
+      entries 与 `JSite<id>` storage id 6/6 全量对应；dwg0202 族有
+      3 个 stale 尾 slot 重复逻辑值），`/TaggedTxtData/Revision` =
+      0 字节占位（5/5）；新增 `src/parsers/jsites_list.rs`（header
+      Decoded / 逻辑表 Probed / stale 尾留 leftover）+ 顶层与 nested
+      注册 + Revision 占位注册；8 单测 + panic-safety + ratchet
+      （counts {9,10,20,13,5,13}，trailing {0,0,0,3,0,3}，
+      storage matches == count 6/6）；快照重生成：unregistered
+      51 → 38 distinct（9–14/fixture）；五项门禁严格全绿
+      （首版 exact-size gate 被 dwg0202 stale tail 证伪后修正，
+      clippy is_multiple_of 告警已修）
+- **Status:** Phase 29-A..M complete（byte-accounting + 提取质量 +
+  注册清尾全部收口）；剩余 multi-fixture unregistered 全部
+  IDA / demand gated；deep semantics gated by IDA / controlled
+  fixtures / downstream requirements
+- **Analysis:** `docs/analysis/2026-06-08-phase29-sheet-leftover-priority.md`
+
+### Phase 30：radsrvitem.dll IDA 续查（JSite / 0x0089 / gated 语义）
+- [x] Phase 30-A：JSite storage naming refresh：在可达
+      `radsrvitem.dll` IDB 中确认 `sub_56448A10` /
+      `sub_56448A70` 均格式化 `JSite<id>`；`sub_5646FF60`
+      接收整数 id，构造 `JSite<id>` 并调用 storage open path。
+      `sub_5645FF00` / `sub_56460330` 调用链从 record/runtime
+      context 取 id 后打开对应 JSite storage，强化 Phase 29-M
+      `/JSitesList.entries` 与 `JSite<id>` storage id 的证据链。
+- [x] Phase 30-B：确认当前 `radsrvitem.dll` 不含 `"OLEM"` /
+      `JSitesList` 字符串；因此不能证明 `/JSitesList` writer /
+      reader，也不能解释 dwg0202 stale tail。`JSitesListDecoded`
+      字段继续保持 `entries` / `trailing_slots`，不升级命名为
+      `jsite_ids`。
+- [x] Phase 30-C：`0x0089` RAD export 边界：`sub_5644B640`
+      确认 runtime record first word 会按 `*record == 137`
+      过滤并收集；`sub_56445F40` 对 `0x0089` 走 default
+      `sub_564462F0`；`sub_56448F70` type-name 表不包含
+      `0x0089`，因此该路径只写 `RAD_OBJECT_TYPE = "137"`，
+      不解 DA/PSMcluster0 head 字段或 ASCII class payload。
+- [x] Phase 30-D：PSMspacemap segment handle 证据：`sub_5648C370`
+      是 `ClusterTable::GetSpaceMapSegment()`，按 cluster entry
+      的 segment-id array 复用/分配 segment；`sub_56479040`
+      证明 handle = `(segment_id << 13) | entry_index`，entry
+      范围 `0..0x1FFF`，segment capacity = `0x2000`；但尚未
+      直接证明 raw `/PSMspacemap` page byte layout，因此不升级
+      byte-audit claim。
+- [x] Phase 30-E：Style/JStyle low-cost negative pass：可用 IDB 仍
+      只有 `core.dll` / `radsrvitem.dll`；`StyleCluster` 0 hits、
+      `JStyleOverride` 0 hits；`JStyleBase::IJPersistImp` /
+      `IJManageStyle2Imp` 等命中仅为 generic interface thunk / RTTI，
+      未暴露 `0x0030` persistence body 或 StyleCluster prefix layout。
+- [x] Phase 30-F：IDA-gated next actions handoff：汇总当前
+      `radsrvitem.dll` 已确认结论、不可升级边界，以及下一次打开
+      `style.dll` / `J2DSrv.dll` / `sppid.dll` 等 IDB 后应优先执行的
+      精确搜索清单；当前建议停止在现有 IDB 中盲搜，转为打开新 IDB
+      或提交/评审当前工作树。
+- [x] Phase 30-G：worktree readiness check：只读核对当前变更范围；
+      当前为 Phase 29/30 累积大变更（tracked diff 16 files，
+      4552 insertions / 109 deletions，另有 spec-kit / probe /
+      analysis / `jsites_list.rs` untracked）；IDE lint 对关键 Rust
+      文件无诊断；提交前仍建议跑五项 pre-commit gate，并注意若干
+      Rust 文件 LF→CRLF warning。
+- [x] Phase 30-H：final pre-commit gate run：`cargo fmt --all -- --check`、
+      `cargo build --locked --workspace --all-targets`、
+      `cargo test --locked --workspace --all-targets`、
+      `cargo clippy --locked --workspace --all-targets -- -D warnings`
+      全过；本地 Windows bash 运行 missing-docs 脚本仍失败
+      （乱码 / `REGDB_E_CLASSNOTREG`），按项目既有 fallback
+      `cargo rustdoc --lib --locked -- -W missing-docs` 验证通过。
+- [x] Phase 30-I：commit/review plan：在未获明确 commit 授权前不提交；
+      新增提交/评审方案，给出 single milestone commit 与三段拆分
+      review units（Phase 29 parser/byte-audit、Phase 29 probes/spec/docs、
+      Phase 30 IDA evidence/handoff），并记录建议 commit message 与
+      residual risks。
+- [x] Phase 30-J：focused self-review：自审关键 Rust 改动
+     （byte-audit aggregate、cluster header walker、DA chain-scoped
+      extraction、JSitesList parser、real-fixture / panic-safety tests）；
+      `git diff --check` 无 whitespace errors，ReadLints 无诊断，
+      未发现 blocking code issue；剩余风险为大 diff、LF→CRLF warning
+      和 IDA-gated semantic questions。
+- **Status:** partial / gated；当前可达 IDB 的低成本 JSite / 0x0089 /
+  PSMspacemap handle / Style-JStyle negative 证据与 handoff 已收口。
+  本地可执行门禁已通过。下一步二选一：打开 `style.dll` /
+  `J2DSrv.dll` / `sppid.dll` / `XCeedRAD.dll` /
+  `smartplantpid.exe` 任一相关 IDB 后再查 `"OLEM"`、`JSitesList`、
+  `tseg`、StyleCluster prefix 与 RAD/JStyle persistence；或由用户
+  授权单提交 / 拆分 / 评审当前工作树。
+- **Analysis:** `docs/analysis/2026-06-12-phase30-radsrvitem-jsite-ida-refresh.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase30-radsrvitem-record-spacemap-ida.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase30-radsrvitem-style-jstyle-negative.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase30-ida-gated-next-actions.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase29-30-worktree-readiness.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase29-30-commit-review-plan.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase29-30-self-review.md`
 
 ## 决策
 | 决策 | 理由 |

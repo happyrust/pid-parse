@@ -7933,3 +7933,573 @@ fn attribute_fragments_extract_engineering_text_cross_fixture() {
         );
     }
 }
+
+/// Phase 29 Slice B: `/PSMcluster0` audit-only body record-chain walker
+/// cross-fixture ratchet.
+///
+/// Triage evidence
+/// (`docs/analysis/2026-06-08-phase29-psmcluster0-leftover-triage.md`)
+/// proved the post-string-table body of every local fixture is a single
+/// continuous PSM-envelope record chain with
+/// `chain_records == header.record_count - 2`. This test ratchets:
+///
+/// 1. the full-coverage chain decodes on every present fixture;
+/// 2. the `record_count - 2` invariant holds;
+/// 3. the byte-audit consumed ratio for `/PSMcluster0` is ≥ 0.99.
+#[test]
+fn psmcluster0_body_chain_matches_record_count_invariant() {
+    let fixtures = [
+        "D06.pid",
+        "工艺管道及仪表流程-1.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "export-test/publish-data/A01/A01.pid",
+        "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+    ];
+    let mut checked = 0usize;
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let Some(stream) = pkg.streams.get("/PSMcluster0") else {
+            eprintln!("skipping: {fixture} has no /PSMcluster0 stream");
+            continue;
+        };
+        let data = stream.data.as_slice();
+        let header = pid_parse::parsers::cluster_header::parse_header(data)
+            .unwrap_or_else(|| panic!("{fixture}: /PSMcluster0 must carry a cluster header"));
+        let records = pid_parse::parsers::cluster_header::decode_psm_cluster0_body_records(data);
+        assert!(
+            !records.is_empty(),
+            "{fixture}: body chain must decode under the full-coverage gate"
+        );
+        assert_eq!(
+            records.len() as u32,
+            header.record_count.saturating_sub(2),
+            "{fixture}: chain_records must equal header.record_count - 2"
+        );
+        assert_eq!(
+            records.last().map(|r| r.byte_range.end),
+            Some(data.len()),
+            "{fixture}: chain must run exactly to end-of-stream"
+        );
+
+        let report = pid_parse::byte_audit_report(&pkg);
+        let summary = report
+            .per_stream
+            .get("/PSMcluster0")
+            .unwrap_or_else(|| panic!("{fixture}: byte-audit must cover /PSMcluster0"));
+        let ratio = summary.consumed_bytes as f64 / data.len() as f64;
+        assert!(
+            ratio >= 0.99,
+            "{fixture}: /PSMcluster0 consumed ratio must be >= 0.99 after the walker, got {ratio}"
+        );
+        eprintln!(
+            "{fixture}: records={} record_count={} consumed_ratio={ratio:.4}",
+            records.len(),
+            header.record_count
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!("skipping: no fixture with /PSMcluster0 present");
+    }
+}
+
+/// Phase 29 Slice B follow-up: `/StyleCluster` audit-only body
+/// record-chain walker cross-fixture ratchet.
+///
+/// Probe evidence (triage doc) shows every fixture's `/StyleCluster`
+/// body ends in a single record chain that runs exactly to
+/// end-of-stream after a variable-length unparsed prefix. Unlike
+/// `/PSMcluster0`, `header.record_count` does not consistently match
+/// the chain length, so this test ratchets only structure:
+///
+/// 1. a qualifying chain (>= 3 records) decodes on every present fixture;
+/// 2. the chain is end-anchored;
+/// 3. the byte-audit consumed ratio for `/StyleCluster` reaches >= 0.6.
+#[test]
+fn stylecluster_body_chain_is_end_anchored_across_fixtures() {
+    let fixtures = [
+        "D06.pid",
+        "工艺管道及仪表流程-1.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "export-test/publish-data/A01/A01.pid",
+        "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+    ];
+    let mut checked = 0usize;
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let Some(stream) = pkg.streams.get("/StyleCluster") else {
+            eprintln!("skipping: {fixture} has no /StyleCluster stream");
+            continue;
+        };
+        let data = stream.data.as_slice();
+        let records = pid_parse::parsers::cluster_header::decode_style_cluster_body_records(data);
+        assert!(
+            records.len() >= 3,
+            "{fixture}: /StyleCluster must decode a qualifying chain, got {} records",
+            records.len()
+        );
+        assert_eq!(
+            records.last().map(|r| r.byte_range.end),
+            Some(data.len()),
+            "{fixture}: chain must be end-anchored"
+        );
+        assert!(
+            records.first().map(|r| r.byte_range.start) > Some(16),
+            "{fixture}: chain must start after the 16-byte header"
+        );
+
+        let report = pid_parse::byte_audit_report(&pkg);
+        let summary = report
+            .per_stream
+            .get("/StyleCluster")
+            .unwrap_or_else(|| panic!("{fixture}: byte-audit must cover /StyleCluster"));
+        let ratio = summary.consumed_bytes as f64 / data.len() as f64;
+        assert!(
+            ratio >= 0.6,
+            "{fixture}: /StyleCluster consumed ratio must be >= 0.6 after the walker, got {ratio}"
+        );
+        eprintln!(
+            "{fixture}: records={} chain_start={} consumed_ratio={ratio:.4}",
+            records.len(),
+            records.first().map(|r| r.byte_range.start).unwrap_or(0)
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!("skipping: no fixture with /StyleCluster present");
+    }
+}
+
+/// Phase 29 Slice C ratchet: the `/Unclustered Dynamic Attributes`
+/// stream body is an 8-byte prologue (cluster magic + u32 counter)
+/// plus a single end-anchored `0x0089` record chain on every local
+/// fixture, and the audit-only walker plus the landmark scanner
+/// account for every byte (leftover 0). Chain lengths are pinned to
+/// the Phase 29 Slice C triage probe results
+/// (`docs/analysis/2026-06-08-phase29-dynamic-attributes-body-backlog.md`).
+#[test]
+fn da_body_chain_is_end_anchored_across_fixtures() {
+    let fixtures: [(&str, usize); 6] = [
+        ("D06.pid", 47),
+        ("工艺管道及仪表流程-1.pid", 69),
+        ("DWG-0201GP06-01.pid", 231),
+        ("DWG-0202GP06-01.pid", 169),
+        ("export-test/publish-data/A01/A01.pid", 22),
+        (
+            "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+            169,
+        ),
+    ];
+    let mut checked = 0usize;
+    for (fixture, expected_records) in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let Some(stream) = pkg.streams.get("/Unclustered Dynamic Attributes") else {
+            eprintln!("skipping: {fixture} has no /Unclustered Dynamic Attributes stream");
+            continue;
+        };
+        let data = stream.data.as_slice();
+        let records = pid_parse::parsers::cluster_header::decode_unclustered_da_body_records(data);
+        assert_eq!(
+            records.len(),
+            expected_records,
+            "{fixture}: DA body chain length must match the Slice C triage probe"
+        );
+        assert_eq!(
+            records.first().map(|r| r.byte_range.start),
+            Some(pid_parse::parsers::cluster_header::UNCLUSTERED_DA_PROLOGUE_LEN),
+            "{fixture}: chain must start right after the 8-byte prologue"
+        );
+        assert_eq!(
+            records.last().map(|r| r.byte_range.end),
+            Some(data.len()),
+            "{fixture}: chain must be end-anchored"
+        );
+        assert!(
+            records.iter().all(|r| r.type_code == 0x0089),
+            "{fixture}: every DA body record masks to type code 0x0089"
+        );
+
+        let report = pid_parse::byte_audit_report(&pkg);
+        let summary = report
+            .per_stream
+            .get("/Unclustered Dynamic Attributes")
+            .unwrap_or_else(|| {
+                panic!("{fixture}: byte-audit must cover /Unclustered Dynamic Attributes")
+            });
+        assert_eq!(
+            summary.parser_name.as_deref(),
+            Some("parse_unclustered_da"),
+            "{fixture}: DA branch must run the combined walker + landmark parser"
+        );
+        assert_eq!(
+            summary.leftover_bytes, 0,
+            "{fixture}: walker + landmarks must account for every DA byte"
+        );
+        assert_eq!(summary.consumed_bytes, data.len() as u64);
+        eprintln!(
+            "{fixture}: records={} stream_bytes={} leftover=0",
+            records.len(),
+            data.len()
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!("skipping: no fixture with /Unclustered Dynamic Attributes present");
+    }
+}
+
+/// Phase 29 nested follow-up ratchet: every one-level nested
+/// `JSite*/PSMcluster0`, `JSite*/StyleCluster`, and
+/// `JSite*/Unclustered Dynamic Attributes` stream reuses its top-level
+/// twin's body layout (probe: 23/23 streams end-anchored), and the
+/// byte-audit dispatches them to the full audit-only walkers.
+#[test]
+fn nested_jsite_cluster_bodies_are_end_anchored_across_fixtures() {
+    let fixtures = [
+        "D06.pid",
+        "工艺管道及仪表流程-1.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "export-test/publish-data/A01/A01.pid",
+        "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+    ];
+    let mut checked = 0usize;
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let report = pid_parse::byte_audit_report(&pkg);
+        for (path, stream) in &pkg.streams {
+            let trimmed = path.trim_start_matches('/');
+            let Some((parent, child)) = trimmed.split_once('/') else {
+                continue;
+            };
+            if !parent.starts_with("JSite") || child.contains('/') {
+                continue;
+            }
+            let data = stream.data.as_slice();
+            let summary = report
+                .per_stream
+                .get(path)
+                .unwrap_or_else(|| panic!("{fixture}: byte-audit must cover {path}"));
+            match child {
+                "PSMcluster0" => {
+                    let records =
+                        pid_parse::parsers::cluster_header::decode_psm_cluster0_body_records(data);
+                    let header = pid_parse::parsers::cluster_header::parse_header(data)
+                        .unwrap_or_else(|| panic!("{fixture}: {path} must have a cluster header"));
+                    assert_eq!(
+                        records.len() as u32,
+                        header.record_count - 2,
+                        "{fixture}: {path} must keep the record_count - 2 invariant"
+                    );
+                    assert_eq!(
+                        records.last().map(|r| r.byte_range.end),
+                        Some(data.len()),
+                        "{fixture}: {path} chain must be end-anchored"
+                    );
+                    assert_eq!(
+                        summary.parser_name.as_deref(),
+                        Some("parse_psm_cluster0"),
+                        "{fixture}: {path} must dispatch to the full walker"
+                    );
+                    assert_eq!(
+                        summary.leftover_bytes, 0,
+                        "{fixture}: {path} must be fully accounted"
+                    );
+                }
+                "StyleCluster" => {
+                    let records =
+                        pid_parse::parsers::cluster_header::decode_style_cluster_body_records(data);
+                    assert!(
+                        records.len() >= 3,
+                        "{fixture}: {path} must decode a qualifying chain"
+                    );
+                    assert_eq!(
+                        records.last().map(|r| r.byte_range.end),
+                        Some(data.len()),
+                        "{fixture}: {path} chain must be end-anchored"
+                    );
+                    assert_eq!(
+                        summary.parser_name.as_deref(),
+                        Some("parse_style_cluster"),
+                        "{fixture}: {path} must dispatch to the full walker"
+                    );
+                    let chain_start = records.first().map(|r| r.byte_range.start).unwrap_or(0);
+                    assert_eq!(
+                        summary.leftover_bytes,
+                        (chain_start - 16) as u64,
+                        "{fixture}: {path} leftover must be exactly the unparsed prefix"
+                    );
+                }
+                "Unclustered Dynamic Attributes" => {
+                    let records =
+                        pid_parse::parsers::cluster_header::decode_unclustered_da_body_records(
+                            data,
+                        );
+                    assert!(
+                        !records.is_empty(),
+                        "{fixture}: {path} must decode an end-anchored chain"
+                    );
+                    assert_eq!(
+                        summary.parser_name.as_deref(),
+                        Some("parse_unclustered_da"),
+                        "{fixture}: {path} must dispatch to the full walker"
+                    );
+                    assert_eq!(
+                        summary.leftover_bytes, 0,
+                        "{fixture}: {path} must be fully accounted"
+                    );
+                }
+                _ => continue,
+            }
+            eprintln!(
+                "{fixture}: {path} bytes={} leftover={}",
+                data.len(),
+                summary.leftover_bytes
+            );
+            checked += 1;
+        }
+    }
+    if checked == 0 {
+        eprintln!("skipping: no fixture with nested JSite cluster streams present");
+    }
+}
+
+/// Phase 29 Slice L ratchet: nested `JSite*` registry child streams
+/// reuse the top-level stream parsers byte-for-byte. DocVersion2/3,
+/// PSMclustertable, and PSMsegmenttable parse fully; PSMroots keeps the
+/// same 4-byte tail as its top-level twin; 4-byte AppObject stubs gate
+/// out (registered, zero claim); the JSite204 summary pair parses
+/// partially like its top-level twin.
+#[test]
+fn nested_jsite_registry_streams_reuse_top_level_parsers() {
+    let fixtures = [
+        "D06.pid",
+        "工艺管道及仪表流程-1.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "export-test/publish-data/A01/A01.pid",
+        "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+    ];
+    let mut checked = 0usize;
+    for fixture in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let report = pid_parse::byte_audit_report(&pkg);
+        for (path, stream) in &pkg.streams {
+            let trimmed = path.trim_start_matches('/');
+            let Some((parent, child)) = trimmed.split_once('/') else {
+                continue;
+            };
+            if !parent.starts_with("JSite") || child.contains('/') {
+                continue;
+            }
+            let expected = match child {
+                "PSMclustertable" => ("parse_psm_cluster_table", Some(0)),
+                "PSMroots" => ("parse_psm_roots", Some(4)),
+                "PSMsegmenttable" => ("parse_psm_segment_table", Some(0)),
+                "DocVersion2" => ("parse_doc_version2", Some(0)),
+                "DocVersion3" => ("parse_doc_version3", Some(0)),
+                "AppObject" => ("parse_app_object", None),
+                "\u{5}SummaryInformation" | "\u{5}DocumentSummaryInformation" => {
+                    ("parse_summary_property_set", None)
+                }
+                _ => continue,
+            };
+            let summary = report
+                .per_stream
+                .get(path)
+                .unwrap_or_else(|| panic!("{fixture}: byte-audit must cover {path}"));
+            assert_eq!(
+                summary.parser_name.as_deref(),
+                Some(expected.0),
+                "{fixture}: {path} must dispatch to the top-level parser"
+            );
+            if let Some(expected_leftover) = expected.1 {
+                assert_eq!(
+                    summary.leftover_bytes, expected_leftover,
+                    "{fixture}: {path} leftover drifted"
+                );
+            }
+            if child.starts_with('\u{5}') {
+                assert!(
+                    summary.consumed_bytes > 0,
+                    "{fixture}: {path} summary stream must parse partially"
+                );
+            }
+            eprintln!(
+                "{fixture}: {} bytes={} consumed={} leftover={}",
+                path.replace('\u{5}', "\\x05"),
+                stream.data.len(),
+                summary.consumed_bytes,
+                summary.leftover_bytes
+            );
+            checked += 1;
+        }
+    }
+    if checked == 0 {
+        eprintln!("skipping: no fixture with nested JSite registry streams present");
+    }
+}
+
+/// Phase 29 Slice M ratchet: the top-level `/JSitesList` stream is
+/// `"OLEM"` magic + `u32` count + `count × u32` entries with an exact
+/// stream-length match, and the entry values correlate with `JSite<id>`
+/// storages in the same package. The 0-byte `/TaggedTxtData/Revision`
+/// placeholder is registered with zero claims.
+#[test]
+fn jsites_list_parses_with_exact_size_and_matches_jsite_storages() {
+    let fixtures: [(&str, u32, usize); 6] = [
+        ("D06.pid", 9, 0),
+        ("工艺管道及仪表流程-1.pid", 10, 0),
+        ("DWG-0201GP06-01.pid", 20, 0),
+        ("DWG-0202GP06-01.pid", 13, 3),
+        ("export-test/publish-data/A01/A01.pid", 5, 0),
+        (
+            "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+            13,
+            3,
+        ),
+    ];
+    let mut checked = 0usize;
+    for (fixture, expected_count, expected_trailing) in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let Some(stream) = pkg.streams.get("/JSitesList") else {
+            eprintln!("skipping: {fixture} has no /JSitesList stream");
+            continue;
+        };
+        let data = stream.data.as_slice();
+        let list = pid_parse::parsers::jsites_list::parse_jsites_list(data)
+            .unwrap_or_else(|| panic!("{fixture}: /JSitesList must pass the slot-table gate"));
+        assert_eq!(
+            list.count, expected_count,
+            "{fixture}: /JSitesList entry count drifted"
+        );
+        assert_eq!(
+            list.trailing_slots.len(),
+            expected_trailing,
+            "{fixture}: stale trailing slot count drifted"
+        );
+        assert_eq!(
+            data.len(),
+            8 + 4 * (list.entries.len() + list.trailing_slots.len())
+        );
+
+        let storage_matches = list
+            .entries
+            .iter()
+            .filter(|id| {
+                pkg.streams
+                    .keys()
+                    .any(|p| p.starts_with(&format!("/JSite{id}/")))
+            })
+            .count();
+        assert!(
+            storage_matches > 0,
+            "{fixture}: at least one /JSitesList entry must match a JSite storage id"
+        );
+
+        let report = pid_parse::byte_audit_report(&pkg);
+        let summary = report
+            .per_stream
+            .get("/JSitesList")
+            .unwrap_or_else(|| panic!("{fixture}: byte-audit must cover /JSitesList"));
+        assert_eq!(summary.parser_name.as_deref(), Some("parse_jsites_list"));
+        assert_eq!(
+            summary.leftover_bytes,
+            (4 * expected_trailing) as u64,
+            "{fixture}: only stale trailing slots may stay leftover"
+        );
+        if let Some(revision) = report.per_stream.get("/TaggedTxtData/Revision") {
+            assert_eq!(
+                revision.parser_name.as_deref(),
+                Some("revision_empty_stream"),
+                "{fixture}: Revision placeholder must be registered"
+            );
+            assert_eq!(revision.total_bytes, 0, "{fixture}: Revision must be empty");
+        }
+        eprintln!(
+            "{fixture}: entries={} storage_matches={storage_matches}",
+            list.entries.len()
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!("skipping: no fixture with /JSitesList present");
+    }
+}
+
+/// Phase 29 Slice K ratchet: the chain-scoped DA attribute extraction
+/// (`parse_attribute_records_chain_scoped`) is at least as complete as
+/// the legacy whole-stream scan on every fixture, and recovers the
+/// flagged-head record the byte-literal scan misses on
+/// `工艺管道及仪表流程-1.pid`.
+#[test]
+fn da_chain_scoped_attribute_extraction_matches_or_beats_legacy_scan() {
+    let fixtures: [(&str, usize); 6] = [
+        ("D06.pid", 47),
+        ("工艺管道及仪表流程-1.pid", 69),
+        ("DWG-0201GP06-01.pid", 231),
+        ("DWG-0202GP06-01.pid", 169),
+        ("export-test/publish-data/A01/A01.pid", 22),
+        (
+            "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+            169,
+        ),
+    ];
+    let mut checked = 0usize;
+    for (fixture, expected_records) in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let Some(stream) = pkg.streams.get("/Unclustered Dynamic Attributes") else {
+            continue;
+        };
+        let data = stream.data.as_slice();
+        let (legacy, _) = pid_parse::parsers::dynamic_attr_records::parse_attribute_records(data);
+        let (scoped, _) =
+            pid_parse::parsers::dynamic_attr_records::parse_attribute_records_chain_scoped(data);
+        assert!(
+            scoped.len() >= legacy.len(),
+            "{fixture}: chain-scoped extraction must never lose records (legacy {} vs scoped {})",
+            legacy.len(),
+            scoped.len()
+        );
+        assert_eq!(
+            scoped.len(),
+            expected_records,
+            "{fixture}: chain-scoped record count drifted"
+        );
+        let da = pkg
+            .parsed
+            .dynamic_attributes
+            .as_ref()
+            .expect("DA blob must parse");
+        assert_eq!(
+            da.attribute_records.len(),
+            scoped.len(),
+            "{fixture}: document pipeline must use the chain-scoped extraction"
+        );
+        eprintln!(
+            "{fixture}: legacy={} chain_scoped={}",
+            legacy.len(),
+            scoped.len()
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!("skipping: no fixture with /Unclustered Dynamic Attributes present");
+    }
+}

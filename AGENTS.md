@@ -33,14 +33,13 @@ publish XML pipeline (`Export.mdf → oxidized-mdf → drawing graph → _Data.x
 | `tests/publish_meta_parity.rs` | Meta XML shape + DWG compare | A01 ref + optional DWG fixture |
 | `tests/publish_a01_raw_residual.rs` | Residual value scanning | `test-file/…/Export.mdf` |
 | `tests/parse_real_files.rs::primitive_line_decoder_emits_decoded_lines_with_provenance` | Phase 14 GLine2d cross-fixture | `test-file/*.pid` |
-| `tests/parse_real_files.rs::primitive_arc_decoder_emits_decoded_arcs_with_provenance` | Phase 14 GArc2d cross-fixture | `test-file/*.pid` |
+| `tests/parse_real_files.rs::jstyle_override_decoder_emits_audit_records_with_provenance` | Phase 16 JStyleOverride (PSM 0x0030) cross-fixture | `test-file/*.pid` |
 | `tests/parse_real_files.rs::iglines_decoder_emits_decoded_iglines_with_provenance` | Phase 14 Slice J igLine2d (PSM 0x0018) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::iglinestrings_decoder_emits_decoded_polylines_with_provenance` | Phase 14 Slice K igLineString2d (PSM 0x0084) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igpoints_decoder_emits_decoded_points_with_provenance` | Phase 14 Slice L igPoint2d (PSM 0x005E) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igtextboxes_decoder_emits_decoded_texts_with_provenance` | Phase 14 Slice M igTextBox (PSM 0x004D) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igsymbols_decoder_emits_decoded_symbols_with_provenance` | Phase 14 Slice N igSymbol2d (PSM 0x00CE) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
-| `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_arcs_without_regression` | Phase 14 Slice G AC8 guard | `DWG-0201GP06-01.pid` |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
 
@@ -52,28 +51,31 @@ ratchets stream count, PSM tables, DA records, object graph (10 objects
 + 10 unresolved relationships), Sheet6 geometry, and normalized totals.
 Soft-skips when `test-file/D06.pid` is absent.
 
-## Phase 14 SmartPlant Sheet geometry decoder — 8 PSM type families
+## SmartPlant Sheet PSM decoders — 7 typed + 2 audit-only families
 
-`src/parsers/sheet_records.rs` ships PSM-record decoders for **8
-SmartPlant `Sheet*` stream primitives**:
+`src/parsers/sheet_records.rs` ships typed PSM-record decoders for **7
+SmartPlant `Sheet*` stream record families** (plus audit-only
+`0x00FA GraphicGroup` and `0x0010` sub-record collections):
 
 | Slice | PSM Type | Decoder | DTO | Sigma Class |
 |---|---|---|---|---|
 | D-E | `0x3FE6` | `decode_primitive_lines` | `SheetPrimitiveLineDecoded` | `GLine2d` (SmartPlant ext.) |
-| F-I | `0x0030` | `decode_primitive_arcs` | `SheetPrimitiveArcDecoded` | `GArc2d` ≥ `GEllipse2d` |
+| Phase 16 D | `0x0030` | `decode_jstyle_overrides` | `SheetJStyleOverrideDecoded` | `JStyleOverride` (RAD `style.dll`, **not** an arc) |
 | J | `0x0018` | `decode_iglines` | `SheetIgLine2dDecoded` | `igLine2d` (IGDS standard) |
 | K | `0x0084` | `decode_iglinestrings` | `SheetIgLineString2dDecoded` | `igLineString2d` (IGDS standard) |
 | L | `0x005E` | `decode_igpoints` | `SheetIgPoint2dDecoded` | `igPoint2d` (IGDS standard) |
 | M | `0x004D` | `decode_igtextboxes` | `SheetIgTextBoxDecoded` | `igTextBox` (IGDS, UTF-16LE) |
 | N | `0x00CE` | `decode_igsymbols` | `SheetIgSymbol2dDecoded` | `igSymbol2d` (IGDS, SmartPlant symbols) |
 
-**769 decoded geometry entities cross-fixture** (3 GLine2d + 48 GArc2d
-+ 284 igLine2d + 119 polyline + 146 point + 142 text + 27 symbol).
+Cross-fixture decoded geometry spans the GLine2d / igLine2d /
+polyline / point / text / symbol families (Phase 16 reclassified
+`0x0030` records as non-geometry `JStyleOverride`; Phase 17 removed
+the legacy `PrimitiveArc` compatibility surface).
 All decoders are panic-safe (validated via
 `tests/parser_panic_safety.rs` adversarial matrix) and bounds-checked.
 
 Decoded records flow through `streams/cluster.rs` →
-`model::SheetGeometry::decoded_{primitive_lines, primitive_arcs,
+`model::SheetGeometry::decoded_{primitive_lines, jstyle_overrides,
 iglines, iglinestrings, igpoints, igtextboxes, igsymbols}` →
 `geometry::build_normalized_geometry` to emit `PidGraphicEntity {
 confidence: Decoded, kind: Line | Arc | Polyline | Point | Text |
@@ -83,15 +85,19 @@ the byte-level evidence chain.
 
 **Key insight (Slice J discovery)**: Intergraph Sigma uses its IGDS
 class tags directly as PSM type codes for standard primitives.
-SmartPlant extends with `GLine2d` (`0x3FE6`) and `GArc2d`
-(`0x0030`), but the bulk of geometry is standard IGDS records using
-IGDS class tags as PSM type codes. This unlocked Slices J–N
-without needing `radsrvitem.dll` decompilation.
+SmartPlant extends with `GLine2d` (`0x3FE6`), but the bulk of
+geometry is standard IGDS records using IGDS class tags as PSM type
+codes. This unlocked Slices J–N without needing `radsrvitem.dll`
+decompilation.
 
 **Caveats**:
-- `GArc2d` (Slice F-I): byte positions IDA-confirmed but some
-  geometric field semantics (e.g. `axis_ratio` interpretation) remain
-  hypothesis. See `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`.
+- `0x0030` is `JStyleOverride`, **not** `GArc2d`: the Phase 14 arc
+  interpretation was a misidentification. Phase 16 IDA evidence
+  (`radsrvitem.dll` type-code mapper → CLSID in `style.dll`) proved
+  the JStyleOverride identity; Phase 17 removed the `PrimitiveArc`
+  compatibility decoder. Never re-introduce an arc reading for
+  `0x0030` (the real IGDS arc is `0x0061 igArc2d`, currently
+  uncovered).
 - SmartPlant fixtures don't use standard IGDS `igCircle2d` (0x0059),
   `igRectangle2d` (0x0020), `igArc2d` (0x0061), or
   `igEllipticalArc2d` (0x007E) — zero hits cross-fixture.

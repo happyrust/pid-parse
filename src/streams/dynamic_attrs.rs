@@ -69,8 +69,11 @@ pub fn parse_dynamic_attrs<R: Read + std::io::Seek>(
             .collect();
 
         let header = crate::parsers::cluster_header::parse_header(&data);
+        // Phase 29 Slice K: scope attribute sections to the proven body
+        // record chain when the stream passes the chain gate; legacy
+        // whole-stream scan otherwise.
         let (attribute_records, probe_summary) =
-            crate::parsers::dynamic_attr_records::parse_attribute_records(&data);
+            crate::parsers::dynamic_attr_records::parse_attribute_records_chain_scoped(&data);
         let relationship_probes = crate::parsers::relationship_probe::probe_relationships(&data);
         let record_trailers = crate::parsers::dynamic_attr_records::extract_record_trailers(&data);
 

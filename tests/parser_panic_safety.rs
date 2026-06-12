@@ -23,11 +23,18 @@
 use std::collections::HashSet;
 
 use pid_parse::parsers::app_object::parse_app_object;
-use pid_parse::parsers::cluster_header::{parse_header, parse_string_table};
+use pid_parse::parsers::cluster_header::{
+    decode_cluster_body_record_at, decode_cluster_body_records, decode_psm_cluster0_body_records,
+    decode_style_cluster_body_records, decode_unclustered_da_body_records, parse_header,
+    parse_string_table,
+};
 use pid_parse::parsers::doc_version::parse_doc_version3;
 use pid_parse::parsers::doc_version2::parse_doc_version2;
-use pid_parse::parsers::dynamic_attr_records::{extract_record_trailers, parse_attribute_records};
+use pid_parse::parsers::dynamic_attr_records::{
+    extract_record_trailers, parse_attribute_records, parse_attribute_records_chain_scoped,
+};
 use pid_parse::parsers::jproperties::parse_jproperties;
+use pid_parse::parsers::jsites_list::parse_jsites_list;
 use pid_parse::parsers::psm_tables::{
     parse_psm_cluster_table, parse_psm_roots, parse_psm_segment_table,
 };
@@ -174,13 +181,27 @@ fn exercise_all_parsers(input: &[u8]) {
     let _ = parse_string_table(input, input.len().saturating_sub(1));
     let _ = parse_string_table(input, input.len());
 
+    // Phase 29 Slice B/C: audit-only `/PSMcluster0`, `/StyleCluster`,
+    // and `/Unclustered Dynamic Attributes` body record-chain walkers.
+    let _ = decode_psm_cluster0_body_records(input);
+    let _ = decode_style_cluster_body_records(input);
+    let _ = decode_unclustered_da_body_records(input);
+    let _ = decode_cluster_body_records(input, 0);
+    let _ = decode_cluster_body_record_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_cluster_body_record_at(input, input.len() - 1);
+        let _ = decode_cluster_body_record_at(input, input.len());
+    }
+
     let _ = parse_doc_version3(input);
     let _ = parse_doc_version2(input);
 
     let _ = parse_attribute_records(input);
+    let _ = parse_attribute_records_chain_scoped(input);
     let _ = extract_record_trailers(input);
 
     let _ = parse_jproperties(input);
+    let _ = parse_jsites_list(input);
 
     let _ = parse_psm_roots(input);
     let _ = parse_psm_cluster_table(input);

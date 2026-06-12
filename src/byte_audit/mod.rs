@@ -135,7 +135,7 @@ impl ParserTrace {
     /// Sum of `consumed_ranges`; invariant: `consumed_bytes +
     /// leftover_bytes == total_bytes`.
     pub fn consumed_bytes(&self) -> u64 {
-        self.consumed_ranges.iter().map(ByteRange::len).sum()
+        self.total_bytes.saturating_sub(self.leftover_bytes())
     }
 
     /// Sum of `leftover_ranges`.
@@ -482,6 +482,21 @@ mod parser_trace_tests {
             ],
         );
         assert_eq!(trace.leftover_ranges, vec![ByteRange::new(10, 16)]);
+    }
+
+    #[test]
+    fn consumed_bytes_counts_union_across_confidence_overlap() {
+        let trace = build_simple(
+            16,
+            &[
+                (0, 6, TraceConfidence::Decoded),
+                (4, 10, TraceConfidence::Probed),
+            ],
+        );
+
+        assert_eq!(trace.consumed_bytes(), 10);
+        assert_eq!(trace.leftover_bytes(), 6);
+        assert_eq!(trace.consumed_bytes() + trace.leftover_bytes(), 16);
     }
 
     #[test]

@@ -1,0 +1,275 @@
+{
+  "entries": [
+    {
+      "name": "\u0005DocumentSummaryInformation",
+      "kind": "TopLevelStream",
+      "status": "FullyDecoded",
+      "parser": "streams::summary",
+      "document_field": "summary",
+      "stream_size": 432
+    },
+    {
+      "name": "\u0005SummaryInformation",
+      "kind": "TopLevelStream",
+      "status": "FullyDecoded",
+      "parser": "streams::summary",
+      "document_field": "summary",
+      "stream_size": 296
+    },
+    {
+      "name": "AppObject",
+      "kind": "TopLevelStream",
+      "status": "FullyDecoded",
+      "parser": "streams::app_object",
+      "document_field": "app_object_registry",
+      "stream_size": 673
+    },
+    {
+      "name": "DocVersion2",
+      "kind": "TopLevelStream",
+      "status": "FullyDecoded",
+      "parser": "parsers::doc_version2",
+      "document_field": "doc_version2_decoded",
+      "note": "Phase 9f reversed; 9-byte stride records with op_type + version number",
+      "stream_size": 39
+    },
+    {
+      "name": "DocVersion3",
+      "kind": "TopLevelStream",
+      "status": "FullyDecoded",
+      "parser": "streams::version_history",
+      "document_field": "version_history",
+      "stream_size": 144
+    },
+    {
+      "name": "Dynamic Attributes Metadata",
+      "kind": "TopLevelStream",
+      "status": "PartiallyDecoded",
+      "parser": "streams::dyn_attrs",
+      "document_field": "dynamic_attrs",
+      "note": "class/attribute tables extracted; per-object binding inferred at graph level",
+      "stream_size": 28
+    },
+    {
+      "name": "JSite23",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 349
+    },
+    {
+      "name": "JSite2471",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 248
+    },
+    {
+      "name": "JSite2475",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 264
+    },
+    {
+      "name": "JSite4484",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 296
+    },
+    {
+      "name": "JSite4488",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 348
+    },
+    {
+      "name": "JSite4490",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 392
+    },
+    {
+      "name": "JSite4505",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 292
+    },
+    {
+      "name": "JSite4509",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 336
+    },
+    {
+      "name": "JSite4541",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 284
+    },
+    {
+      "name": "JSite4543",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 276
+    },
+    {
+      "name": "JSite5222",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 228
+    },
+    {
+      "name": "JSite7361",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 284
+    },
+    {
+      "name": "JSite793",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 66633
+    },
+    {
+      "name": "JSitesList",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::jsite",
+      "document_field": "jsites",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 72
+    },
+    {
+      "name": "JTaggedTxtStgList",
+      "kind": "TopLevelStream",
+      "status": "FullyDecoded",
+      "parser": "streams::tagged_txt_list",
+      "document_field": "tagged_storages",
+      "stream_size": 70
+    },
+    {
+      "name": "PSMcluster0",
+      "kind": "TopLevelStream",
+      "status": "PartiallyDecoded",
+      "parser": "streams::cluster",
+      "document_field": "clusters",
+      "note": "header + record boundaries known; inner fields audit-only",
+      "stream_size": 37556
+    },
+    {
+      "name": "PSMclustertable",
+      "kind": "TopLevelStream",
+      "status": "PartiallyDecoded",
+      "parser": "streams::psm_tables",
+      "document_field": "psm_cluster_table",
+      "note": "names + decoded record candidates; SmartPlant field semantics still pending",
+      "stream_size": 296
+    },
+    {
+      "name": "PSMroots",
+      "kind": "TopLevelStream",
+      "status": "FullyDecoded",
+      "parser": "streams::psm_roots",
+      "document_field": "psm_roots",
+      "stream_size": 234
+    },
+    {
+      "name": "PSMsegmenttable",
+      "kind": "TopLevelStream",
+      "status": "PartiallyDecoded",
+      "parser": "streams::psm_tables",
+      "document_field": "psm_segment_table",
+      "note": "segment flags + owner candidate mapping; SmartPlant field semantics still pending",
+      "stream_size": 12
+    },
+    {
+      "name": "PSMspacemap",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 12090
+    },
+    {
+      "name": "Sheet6",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::sheets",
+      "document_field": "sheet_streams",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 23739
+    },
+    {
+      "name": "Sheet6615",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::sheets",
+      "document_field": "sheet_streams",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 316
+    },
+    {
+      "name": "StyleCluster",
+      "kind": "TopLevelStream",
+      "status": "PartiallyDecoded",
+      "parser": "streams::cluster",
+      "document_field": "clusters",
+      "note": "header + record boundaries known; inner fields audit-only",
+      "stream_size": 22121
+    },
+    {
+      "name": "TaggedTxtData",
+      "kind": "TopLevelStorage",
+      "status": "IdentifiedOnly",
+      "parser": "streams::tagged_text",
+      "document_field": "drawing_meta / general_meta",
+      "note": "storage prefix recognized; member streams carry the data",
+      "stream_size": 3867
+    },
+    {
+      "name": "Unclustered Dynamic Attributes",
+      "kind": "TopLevelStream",
+      "status": "PartiallyDecoded",
+      "parser": "streams::dyn_attrs",
+      "document_field": "dynamic_attrs",
+      "note": "class/attribute tables extracted; per-object binding inferred at graph level",
+      "stream_size": 34364
+    }
+  ]
+}

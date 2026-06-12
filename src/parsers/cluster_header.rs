@@ -155,6 +155,13 @@ pub fn parse_string_table_with_trace(
 /// generic leftover. Returns the parsed header on success (the string
 /// table itself is not surfaced — callers needing the typed table go
 /// through [`parse_string_table`]).
+///
+/// Phase 29 Slice B extends the walk past the string table: when the
+/// fixed-length prologue plus a strict body record chain explains every
+/// remaining byte (see [`decode_psm_cluster0_body_records`] for the
+/// full-coverage gate), the prologue is traced `Probed`, each record
+/// envelope `Decoded`, and each record payload `Probed`. When the gate
+/// fails, the post-table region stays leftover — no partial claims.
 pub fn parse_psm_cluster0_with_trace(
     data: &[u8],
     trace: &mut ParserTraceBuilder,
@@ -172,8 +179,334 @@ pub fn parse_psm_cluster0_with_trace(
             TraceConfidence::Probed,
         );
     }
-    let _ = parse_string_table_with_trace(data, table_start, trace);
+    let (_, table_end) = parse_string_table_with_trace(data, table_start, trace);
+
+    if let Some((prologue, records)) = psm_cluster0_chain_after_table(data, table_end) {
+        // Prologue: byte position known, semantics unexplained.
+        trace.consume(
+            ByteRange::new(prologue.start as u64, prologue.end as u64),
+            TraceConfidence::Probed,
+        );
+        for record in &records {
+            let envelope_end = record.byte_range.start + 6;
+            // Envelope semantics (type code + bytes_to_follow) are
+            // corroborated by the cross-fixture `record_count - 2`
+            // invariant; payload fields remain unnamed.
+            trace.consume(
+                ByteRange::new(record.byte_range.start as u64, envelope_end as u64),
+                TraceConfidence::Decoded,
+            );
+            trace.consume(
+                ByteRange::new(envelope_end as u64, record.byte_range.end as u64),
+                TraceConfidence::Probed,
+            );
+        }
+    }
     Some(header)
+}
+
+// Phase 29 Slice B: audit-only `/PSMcluster0` body record-chain walker.
+//
+// Cross-fixture triage
+// (`docs/analysis/2026-06-08-phase29-psmcluster0-leftover-triage.md`)
+// proved the post-string-table body is a single continuous chain of
+// PSM-style records (6-byte envelope + payload) preceded by a fixed
+// 10-byte prologue, with `chain_records == header.record_count - 2` on
+// all 6 local fixtures. The walker below follows the Phase 18
+// audit-only template: envelope decoded, payload raw, no semantic type
+// names, no `PidGraphicKind` emission. PSMcluster0 type codes must NOT
+// be mapped through the Sheet ig* table without IDA confirmation of a
+// shared namespace.
+
+/// Fixed length of the unexplained prologue between the string-table
+/// sentinel and the first `/PSMcluster0` body-chain record. Identical
+/// 10-byte sequence observed on all 6 local fixtures (Phase 29 Slice B
+/// triage); semantics unknown, traced as `Probed`.
+pub const PSM_CLUSTER0_PROLOGUE_LEN: usize = 10;
+
+/// Upper bound on `bytes_to_follow` accepted for one `/PSMcluster0`
+/// body-chain record. Mirrors the Sheet-family record cap; rejects
+/// wide-scan false positives whose length field reads as a giant value.
+pub const CLUSTER_BODY_RECORD_MAX_BYTES_TO_FOLLOW: u32 = 100_000;
+
+/// One audit-only record from the `/PSMcluster0` post-string-table body
+/// chain (Phase 29 Slice B).
+///
+/// Exposes the 6-byte PSM-style envelope (`type_code`, `type_flags`,
+/// `bytes_to_follow`) and the raw payload, with full byte provenance.
+/// **No semantic type name is claimed for any code**: whether the
+/// `PSMcluster0` record namespace matches the Sheet/IGDS table is an
+/// open IDA question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterBodyRecordDecoded {
+    /// Byte range covering the record (6-byte envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM-style 14-bit type code (`type_word & 0x3FFF`). Never 0.
+    pub type_code: u16,
+    /// Top 2 bits of the type word (record-level flags).
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the envelope. Equals `raw_payload.len()`
+    /// by construction.
+    pub bytes_to_follow: u32,
+    /// Raw payload bytes (audit-only; field semantics deferred until
+    /// IDA names the record types).
+    pub raw_payload: Vec<u8>,
+}
+
+/// Try to decode a single `/PSMcluster0` body-chain record at `offset`.
+///
+/// Validation rules: 6-byte envelope must fit, `type_code != 0`,
+/// `bytes_to_follow <=` [`CLUSTER_BODY_RECORD_MAX_BYTES_TO_FOLLOW`],
+/// and the payload must fit inside `data`. Bounds-checked and
+/// panic-free: out-of-range offsets return `None`.
+pub fn decode_cluster_body_record_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<ClusterBodyRecordDecoded> {
+    let header_end = offset.checked_add(6)?;
+    if header_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code == 0 {
+        return None;
+    }
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    if bytes_to_follow > CLUSTER_BODY_RECORD_MAX_BYTES_TO_FOLLOW {
+        return None;
+    }
+    let payload_end = header_end.checked_add(bytes_to_follow as usize)?;
+    if payload_end > data.len() {
+        return None;
+    }
+    let raw_payload = data.get(header_end..payload_end)?.to_vec();
+    Some(ClusterBodyRecordDecoded {
+        byte_range: offset..payload_end,
+        type_code,
+        type_flags: type_word >> 14,
+        bytes_to_follow,
+        raw_payload,
+    })
+}
+
+/// Strictly walk a `/PSMcluster0` body record chain starting at `start`.
+///
+/// No resync: the walk stops at the first offset that fails
+/// [`decode_cluster_body_record_at`] validation (zero type code,
+/// oversized `bytes_to_follow`, truncated envelope or payload). The
+/// triage evidence shows real fixture bodies form one such chain from
+/// prologue end to end-of-stream.
+pub fn decode_cluster_body_records(data: &[u8], start: usize) -> Vec<ClusterBodyRecordDecoded> {
+    let mut out = Vec::new();
+    let mut cursor = start;
+    while let Some(record) = decode_cluster_body_record_at(data, cursor) {
+        cursor = record.byte_range.end;
+        out.push(record);
+    }
+    out
+}
+
+/// Decode the `/PSMcluster0` body record chain behind the header,
+/// locator gap, string table, and fixed prologue.
+///
+/// Applies the **full-coverage gate**: the chain is returned only when
+/// at least one record decodes at `table_end +`
+/// [`PSM_CLUSTER0_PROLOGUE_LEN`] and the chain runs exactly to the end
+/// of the stream. Anything else returns an empty vector so callers
+/// (and the byte-audit trace) never claim a partial, unproven walk.
+pub fn decode_psm_cluster0_body_records(data: &[u8]) -> Vec<ClusterBodyRecordDecoded> {
+    if parse_header(data).is_none() || data.len() <= 32 {
+        return Vec::new();
+    }
+    let table_start = find_string_table_start(data);
+    let (_, table_end) = parse_string_table(data, table_start);
+    psm_cluster0_chain_after_table(data, table_end)
+        .map(|(_, records)| records)
+        .unwrap_or_default()
+}
+
+/// Shared core for the post-table walk: compute the prologue range and
+/// run the full-coverage gate described on
+/// [`decode_psm_cluster0_body_records`].
+fn psm_cluster0_chain_after_table(
+    data: &[u8],
+    table_end: usize,
+) -> Option<(std::ops::Range<usize>, Vec<ClusterBodyRecordDecoded>)> {
+    let chain_start = table_end.checked_add(PSM_CLUSTER0_PROLOGUE_LEN)?;
+    if chain_start >= data.len() {
+        return None;
+    }
+    let records = decode_cluster_body_records(data, chain_start);
+    let last = records.last()?;
+    if last.byte_range.end != data.len() {
+        return None;
+    }
+    Some((table_end..chain_start, records))
+}
+
+// Phase 29 Slice B follow-up: audit-only `/StyleCluster` body record-chain
+// walker.
+//
+// The same probe that triaged `/PSMcluster0`
+// (`examples/probe_phase29_psmcluster0_body_triage.rs`, run with the
+// `StyleCluster` argument) shows every local fixture's `/StyleCluster`
+// stream is: 16-byte cluster header (`stream_type = 0x005A`,
+// `flags = 0x2000`) + a variable-length unparsed prefix (GUID-table-like:
+// ten zero bytes, a `u16` count, then consecutive 16-byte CLSID-shaped
+// entries, plus further uncharacterized structure) + a single PSM-style
+// record chain that runs exactly to end-of-stream with zero resync.
+// Unlike `/PSMcluster0`, `header.record_count` matches the chain length
+// on only 2 of 6 fixtures, so record envelopes here stay `Probed`
+// (audit-only), not `Decoded`. The prefix is intentionally left as
+// leftover until a dedicated slice characterizes it.
+
+/// Minimum number of records a candidate `/StyleCluster` body chain
+/// must contain before the walker commits to it. Guards the
+/// earliest-offset locator against committing to a short coincidental
+/// tail chain.
+pub const STYLE_CLUSTER_CHAIN_MIN_RECORDS: usize = 3;
+
+/// Decode the `/StyleCluster` body record chain.
+///
+/// Locator + gate: starting right after the 16-byte cluster header,
+/// find the **earliest** offset from which a strict
+/// [`decode_cluster_body_records`] chain of at least
+/// [`STYLE_CLUSTER_CHAIN_MIN_RECORDS`] records runs **exactly** to
+/// end-of-stream. Returns that chain, or an empty vector when no offset
+/// qualifies (no partial claims). The unparsed prefix between the
+/// header and the chain start is not described by this function.
+pub fn decode_style_cluster_body_records(data: &[u8]) -> Vec<ClusterBodyRecordDecoded> {
+    if parse_header(data).is_none() {
+        return Vec::new();
+    }
+    style_cluster_chain(data)
+        .map(|(_, records)| records)
+        .unwrap_or_default()
+}
+
+/// Trace-aware `/StyleCluster` walker: 16-byte header (`Decoded`) plus
+/// the body record chain from [`decode_style_cluster_body_records`],
+/// claimed entirely as `TraceConfidence::Probed` (byte layout isolated,
+/// record semantics unnamed). The prefix between header and chain start
+/// stays leftover so the byte-audit keeps flagging it for a future
+/// slice.
+pub fn parse_style_cluster_with_trace(
+    data: &[u8],
+    trace: &mut ParserTraceBuilder,
+) -> Option<ClusterHeader> {
+    let header = parse_header_with_trace(data, trace)?;
+    if let Some((_, records)) = style_cluster_chain(data) {
+        for record in &records {
+            trace.consume(
+                ByteRange::new(record.byte_range.start as u64, record.byte_range.end as u64),
+                TraceConfidence::Probed,
+            );
+        }
+    }
+    Some(header)
+}
+
+// Phase 29 Slice C: audit-only `/Unclustered Dynamic Attributes` body
+// record-chain walker.
+//
+// Cross-fixture triage
+// (`docs/analysis/2026-06-08-phase29-dynamic-attributes-body-backlog.md`)
+// proved the DA stream is a minimal cluster-family member: an 8-byte
+// prologue (the cluster magic plus a u32 record counter) followed by a
+// single end-anchored chain of PSM-style records, every one masking to
+// type code `0x0089`, on all 6 local fixtures. The 31-byte "record
+// trailer" decoded by `dynamic_attr_records::extract_record_trailers`
+// is byte-identical to the next record's envelope head, so this walker
+// coexists with (and never replaces) the landmark scanner. The prologue
+// counter equals the strict chain length on only 5 of 6 fixtures (one
+// fixture carries a flagged head whose literal bytes are not
+// `89 00`), so the counter is reported by probes but never gated on,
+// and every claim stays `Probed` (StyleCluster precedent).
+
+/// Fixed length of the `/Unclustered Dynamic Attributes` stream
+/// prologue: the cluster-family magic [`CLUSTER_MAGIC`] plus a `u32`
+/// record counter. Identical shape observed on all 6 local fixtures
+/// (Phase 29 Slice C triage); counter semantics stay unnamed.
+pub const UNCLUSTERED_DA_PROLOGUE_LEN: usize = 8;
+
+/// Decode the `/Unclustered Dynamic Attributes` body record chain
+/// behind the 8-byte prologue.
+///
+/// Applies the **full-coverage gate**: the chain is returned only when
+/// the stream opens with [`CLUSTER_MAGIC`], at least one record decodes
+/// at [`UNCLUSTERED_DA_PROLOGUE_LEN`], and the chain runs exactly to
+/// the end of the stream. Anything else returns an empty vector so
+/// callers (and the byte-audit trace) never claim a partial, unproven
+/// walk. The prologue counter is intentionally **not** validated
+/// against the chain length — it mismatches the strict chain on one
+/// local fixture and its semantics are unnamed.
+pub fn decode_unclustered_da_body_records(data: &[u8]) -> Vec<ClusterBodyRecordDecoded> {
+    if data.len() < UNCLUSTERED_DA_PROLOGUE_LEN {
+        return Vec::new();
+    }
+    if u32_le(data, 0) != CLUSTER_MAGIC {
+        return Vec::new();
+    }
+    let records = decode_cluster_body_records(data, UNCLUSTERED_DA_PROLOGUE_LEN);
+    match records.last() {
+        Some(last) if last.byte_range.end == data.len() => records,
+        _ => Vec::new(),
+    }
+}
+
+/// Trace-aware `/Unclustered Dynamic Attributes` walker: the 8-byte
+/// prologue plus every body record from
+/// [`decode_unclustered_da_body_records`], all claimed as
+/// [`TraceConfidence::Probed`] (byte layout proven end-anchored,
+/// record semantics unnamed). When the full-coverage gate fails the
+/// builder is left untouched — the landmark scanner
+/// (`dynamic_attr_records::scan_da_landmarks_with_trace`) remains the
+/// only claim source in that case.
+///
+/// Returns the number of chain records claimed — useful for unit
+/// assertions.
+pub fn parse_unclustered_da_with_trace(data: &[u8], trace: &mut ParserTraceBuilder) -> usize {
+    let records = decode_unclustered_da_body_records(data);
+    if records.is_empty() {
+        return 0;
+    }
+    trace.consume(
+        ByteRange::new(0, UNCLUSTERED_DA_PROLOGUE_LEN as u64),
+        TraceConfidence::Probed,
+    );
+    for record in &records {
+        trace.consume(
+            ByteRange::new(record.byte_range.start as u64, record.byte_range.end as u64),
+            TraceConfidence::Probed,
+        );
+    }
+    records.len()
+}
+
+/// Earliest-offset chain locator shared by the `/StyleCluster` entry
+/// points; see [`decode_style_cluster_body_records`] for the gate.
+fn style_cluster_chain(data: &[u8]) -> Option<(usize, Vec<ClusterBodyRecordDecoded>)> {
+    for start in 16..data.len() {
+        // Cheap pre-filter: a chain can only start where one record
+        // decodes; skip offsets that fail immediately.
+        let Some(first) = decode_cluster_body_record_at(data, start) else {
+            continue;
+        };
+        if first.byte_range.end == data.len() {
+            // Single record to end-of-stream: below the minimum chain
+            // length, keep scanning.
+            continue;
+        }
+        let records = decode_cluster_body_records(data, start);
+        if records.len() >= STYLE_CLUSTER_CHAIN_MIN_RECORDS
+            && records.last().map(|r| r.byte_range.end) == Some(data.len())
+        {
+            return Some((start, records));
+        }
+    }
+    None
 }
 
 /// Heuristic copy of `streams::cluster::find_string_table_start` —
@@ -399,6 +732,373 @@ mod tests {
         assert_eq!(trace.consumed_bytes(), data.len() as u64);
         assert!(trace.leftover_ranges.is_empty());
         assert!(decoded.iter().any(|r| r.start == 0 && r.end == 16));
+    }
+
+    fn make_record(type_word: u16, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&type_word.to_le_bytes());
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    /// Header + locator gap + 2-entry string table + sentinel, the same
+    /// construction `trace_aware_psm_cluster0_marks_locator_prefix_probed`
+    /// uses; returns the buffer and the table-end offset.
+    fn make_psm_cluster0_prefix() -> (Vec<u8>, usize) {
+        let mut data = make_header(0, 0x75, 113, 1);
+        data.extend_from_slice(&[0u8; 16]); // locator gap
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&4u32.to_le_bytes());
+        data.extend(utf16le("AB"));
+        data.extend_from_slice(&2u32.to_le_bytes());
+        data.extend_from_slice(&4u32.to_le_bytes());
+        data.extend(utf16le("CD"));
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
+        let table_end = data.len();
+        (data, table_end)
+    }
+
+    #[test]
+    fn psm_cluster0_record_at_decodes_canonical_record() {
+        let data = make_record(0x4089, &[0xAA, 0xBB, 0xCC]);
+        let record = decode_cluster_body_record_at(&data, 0).expect("valid record");
+        assert_eq!(record.byte_range, 0..9);
+        assert_eq!(record.type_code, 0x0089);
+        assert_eq!(record.type_flags, 0x1);
+        assert_eq!(record.bytes_to_follow, 3);
+        assert_eq!(record.raw_payload, vec![0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn psm_cluster0_record_at_rejects_zero_type_code() {
+        // type_word 0x4000 has flags but a zero 14-bit type code.
+        let data = make_record(0x4000, &[0xAA]);
+        assert!(decode_cluster_body_record_at(&data, 0).is_none());
+    }
+
+    #[test]
+    fn psm_cluster0_record_at_rejects_oversized_bytes_to_follow() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&0x0089u16.to_le_bytes());
+        data.extend_from_slice(&(CLUSTER_BODY_RECORD_MAX_BYTES_TO_FOLLOW + 1).to_le_bytes());
+        data.extend_from_slice(&[0u8; 8]);
+        assert!(decode_cluster_body_record_at(&data, 0).is_none());
+    }
+
+    #[test]
+    fn psm_cluster0_record_at_rejects_truncated_payload_and_header() {
+        let data = make_record(0x0089, &[0xAA, 0xBB, 0xCC, 0xDD]);
+        // Claimed 4 payload bytes, only 2 present.
+        assert!(decode_cluster_body_record_at(&data[..8], 0).is_none());
+        // Truncated header.
+        assert!(decode_cluster_body_record_at(&data[..5], 0).is_none());
+        // Out-of-range offsets are bounds-safe.
+        assert!(decode_cluster_body_record_at(&data, data.len()).is_none());
+        assert!(decode_cluster_body_record_at(&data, usize::MAX).is_none());
+    }
+
+    #[test]
+    fn psm_cluster0_records_walks_chain_and_stops_at_first_invalid() {
+        let mut data = make_record(0x0002, &[0x01; 4]);
+        data.extend(make_record(0x0089, &[0x02; 7]));
+        data.extend(make_record(0x0003, &[]));
+        let chain_end = data.len();
+        // Trailing bytes that do not parse as a record (zero type code).
+        data.extend_from_slice(&[0u8; 6]);
+
+        let records = decode_cluster_body_records(&data, 0);
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].type_code, 0x0002);
+        assert_eq!(records[1].type_code, 0x0089);
+        assert_eq!(records[2].type_code, 0x0003);
+        assert_eq!(records[2].byte_range.end, chain_end);
+    }
+
+    #[test]
+    fn psm_cluster0_body_records_applies_full_coverage_gate() {
+        let (mut data, table_end) = make_psm_cluster0_prefix();
+        data.extend_from_slice(&[0u8; PSM_CLUSTER0_PROLOGUE_LEN]);
+        data.extend(make_record(0x0002, &[0x01; 4]));
+        data.extend(make_record(0x0089, &[0x02; 7]));
+
+        let records = decode_psm_cluster0_body_records(&data);
+        assert_eq!(records.len(), 2, "chain covering stream end must decode");
+        assert_eq!(
+            records[0].byte_range.start,
+            table_end + PSM_CLUSTER0_PROLOGUE_LEN
+        );
+        assert_eq!(records[1].byte_range.end, data.len());
+
+        // Trailing garbage breaks the full-coverage gate: no partial claim.
+        let mut with_garbage = data.clone();
+        with_garbage.extend_from_slice(&[0u8; 3]);
+        assert!(decode_psm_cluster0_body_records(&with_garbage).is_empty());
+
+        // Headerless data never walks.
+        assert!(decode_psm_cluster0_body_records(&data[16..]).is_empty());
+    }
+
+    #[test]
+    fn trace_aware_psm_cluster0_walks_body_chain_when_it_covers_stream() {
+        let (mut data, table_end) = make_psm_cluster0_prefix();
+        data.extend_from_slice(&[0u8; PSM_CLUSTER0_PROLOGUE_LEN]);
+        data.extend(make_record(0x0002, &[0x01; 4]));
+        data.extend(make_record(0x0089, &[0x02; 7]));
+
+        let mut b = ParserTraceBuilder::new("parse_psm_cluster0");
+        let header = parse_psm_cluster0_with_trace(&data, &mut b).expect("valid");
+        assert_eq!(header.stream_type, 0x75);
+        let trace = b.build("/PSMcluster0", data.len() as u64);
+
+        assert_eq!(
+            trace.consumed_bytes(),
+            data.len() as u64,
+            "prologue + chain must cover the whole stream"
+        );
+        assert!(trace.leftover_ranges.is_empty());
+
+        let probed = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Probed)
+            .cloned()
+            .unwrap_or_default();
+        let prologue_range = ByteRange::new(
+            table_end as u64,
+            (table_end + PSM_CLUSTER0_PROLOGUE_LEN) as u64,
+        );
+        assert!(
+            probed
+                .iter()
+                .any(|r| r.start <= prologue_range.start && prologue_range.end <= r.end),
+            "prologue must be claimed as Probed: {probed:?}"
+        );
+
+        let decoded = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Decoded)
+            .cloned()
+            .unwrap_or_default();
+        let first_envelope_start = (table_end + PSM_CLUSTER0_PROLOGUE_LEN) as u64;
+        assert!(
+            decoded
+                .iter()
+                .any(|r| r.start <= first_envelope_start && first_envelope_start + 6 <= r.end),
+            "record envelopes must be claimed as Decoded: {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn trace_aware_psm_cluster0_leaves_body_leftover_when_gate_fails() {
+        let (mut data, table_end) = make_psm_cluster0_prefix();
+        data.extend_from_slice(&[0u8; PSM_CLUSTER0_PROLOGUE_LEN]);
+        data.extend(make_record(0x0002, &[0x01; 4]));
+        // Trailing garbage after the chain breaks the full-coverage gate.
+        data.extend_from_slice(&[0u8; 5]);
+
+        let mut b = ParserTraceBuilder::new("parse_psm_cluster0");
+        let _ = parse_psm_cluster0_with_trace(&data, &mut b).expect("valid header");
+        let trace = b.build("/PSMcluster0", data.len() as u64);
+
+        let post_table = (data.len() - table_end) as u64;
+        assert_eq!(
+            trace.leftover_bytes(),
+            post_table,
+            "gate failure must leave the whole post-table region leftover"
+        );
+    }
+
+    /// Header + uncharacterized prefix + a 3-record chain to stream end,
+    /// mirroring the fixture `/StyleCluster` shape. Returns the buffer
+    /// and the chain start offset.
+    fn make_style_cluster_stream() -> (Vec<u8>, usize) {
+        let mut data = make_header(47, 0x5A, 2368, 0x2000);
+        data.extend_from_slice(&[0u8; 10]); // zero prologue
+        data.extend_from_slice(&13u16.to_le_bytes());
+        data.extend_from_slice(&[0xAB; 32]); // GUID-table-like prefix bytes
+        let chain_start = data.len();
+        data.extend(make_record(0x002C, &[0x01; 5]));
+        data.extend(make_record(0x002D, &[0x02; 9]));
+        data.extend(make_record(0x002E, &[0x03; 2]));
+        (data, chain_start)
+    }
+
+    #[test]
+    fn style_cluster_body_records_finds_earliest_chain_to_stream_end() {
+        let (data, chain_start) = make_style_cluster_stream();
+        let records = decode_style_cluster_body_records(&data);
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].byte_range.start, chain_start);
+        assert_eq!(records[0].type_code, 0x002C);
+        assert_eq!(records[2].byte_range.end, data.len());
+    }
+
+    #[test]
+    fn style_cluster_body_records_rejects_chain_not_reaching_stream_end() {
+        let (mut data, _) = make_style_cluster_stream();
+        // Trailing garbage detaches the chain from end-of-stream.
+        data.extend_from_slice(&[0u8; 4]);
+        assert!(decode_style_cluster_body_records(&data).is_empty());
+    }
+
+    #[test]
+    fn style_cluster_body_records_rejects_chain_below_min_records() {
+        let mut data = make_header(2, 0x5A, 0, 0x2000);
+        data.extend_from_slice(&[0u8; 12]); // prefix
+        data.extend(make_record(0x002C, &[0x01; 5]));
+        data.extend(make_record(0x002D, &[0x02; 3]));
+        assert!(
+            decode_style_cluster_body_records(&data).is_empty(),
+            "2-record chain is below STYLE_CLUSTER_CHAIN_MIN_RECORDS"
+        );
+    }
+
+    #[test]
+    fn style_cluster_body_records_rejects_headerless_stream() {
+        let (data, _) = make_style_cluster_stream();
+        assert!(decode_style_cluster_body_records(&data[16..]).is_empty());
+    }
+
+    #[test]
+    fn trace_aware_style_cluster_claims_chain_probed_and_leaves_prefix_leftover() {
+        let (data, chain_start) = make_style_cluster_stream();
+        let mut b = ParserTraceBuilder::new("parse_style_cluster");
+        let header = parse_style_cluster_with_trace(&data, &mut b).expect("valid header");
+        assert_eq!(header.stream_type, 0x5A);
+        let trace = b.build("/StyleCluster", data.len() as u64);
+
+        // Header (16, Decoded) + chain (Probed); prefix stays leftover.
+        let chain_bytes = (data.len() - chain_start) as u64;
+        assert_eq!(trace.consumed_bytes(), 16 + chain_bytes);
+        assert_eq!(trace.leftover_bytes(), (chain_start - 16) as u64);
+
+        let probed = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Probed)
+            .cloned()
+            .unwrap_or_default();
+        let probed_total: u64 = probed.iter().map(ByteRange::len).sum();
+        assert_eq!(
+            probed_total, chain_bytes,
+            "every chain record must be claimed as Probed: {probed:?}"
+        );
+    }
+
+    #[test]
+    fn trace_aware_style_cluster_claims_only_header_when_no_chain_qualifies() {
+        let mut data = make_header(0, 0x5A, 0, 0x2000);
+        data.extend_from_slice(&[0u8; 64]); // body that never chains
+        let mut b = ParserTraceBuilder::new("parse_style_cluster");
+        let _ = parse_style_cluster_with_trace(&data, &mut b).expect("valid header");
+        let trace = b.build("/StyleCluster", data.len() as u64);
+        assert_eq!(trace.consumed_bytes(), 16);
+        assert_eq!(trace.leftover_bytes(), 64);
+    }
+
+    /// 8-byte DA prologue (magic + counter) followed by the given
+    /// records, mirroring the fixture `/Unclustered Dynamic Attributes`
+    /// shape.
+    fn make_unclustered_da_stream(counter: u32, payloads: &[(u16, &[u8])]) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&CLUSTER_MAGIC.to_le_bytes());
+        data.extend_from_slice(&counter.to_le_bytes());
+        for (type_word, payload) in payloads {
+            data.extend(make_record(*type_word, payload));
+        }
+        data
+    }
+
+    #[test]
+    fn unclustered_da_body_records_decodes_end_anchored_chain() {
+        let data = make_unclustered_da_stream(2, &[(0x0089, &[0x01; 40]), (0x0089, &[0x02; 7])]);
+        let records = decode_unclustered_da_body_records(&data);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].byte_range.start, UNCLUSTERED_DA_PROLOGUE_LEN);
+        assert_eq!(records[0].type_code, 0x0089);
+        assert_eq!(records[1].byte_range.end, data.len());
+    }
+
+    #[test]
+    fn unclustered_da_body_records_ignores_counter_mismatch() {
+        // Counter says 99, chain has 2 records: the counter is reported
+        // by probes but never gated on (it mismatches the strict chain
+        // on one real fixture).
+        let data = make_unclustered_da_stream(99, &[(0x0089, &[0x01; 4]), (0x4089, &[0x02; 3])]);
+        let records = decode_unclustered_da_body_records(&data);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1].type_code, 0x0089, "flagged head masks to 0x0089");
+        assert_eq!(records[1].type_flags, 0x1);
+    }
+
+    #[test]
+    fn unclustered_da_body_records_rejects_wrong_magic() {
+        let mut data = make_unclustered_da_stream(1, &[(0x0089, &[0x01; 4])]);
+        data[0] ^= 0xFF;
+        assert!(decode_unclustered_da_body_records(&data).is_empty());
+    }
+
+    #[test]
+    fn unclustered_da_body_records_rejects_non_end_anchored_chain() {
+        let mut data = make_unclustered_da_stream(1, &[(0x0089, &[0x01; 4])]);
+        // Trailing garbage that does not parse as a record (zero type
+        // code) breaks the full-coverage gate: no partial claim.
+        data.extend_from_slice(&[0u8; 3]);
+        assert!(decode_unclustered_da_body_records(&data).is_empty());
+    }
+
+    #[test]
+    fn unclustered_da_body_records_rejects_truncated_or_empty_stream() {
+        assert!(decode_unclustered_da_body_records(&[]).is_empty());
+        let data = make_unclustered_da_stream(1, &[(0x0089, &[0x01; 4])]);
+        assert!(
+            decode_unclustered_da_body_records(&data[..7]).is_empty(),
+            "stream shorter than the prologue must not walk"
+        );
+        assert!(
+            decode_unclustered_da_body_records(&data[..UNCLUSTERED_DA_PROLOGUE_LEN]).is_empty(),
+            "prologue-only stream has no records and must not claim"
+        );
+    }
+
+    #[test]
+    fn trace_aware_unclustered_da_claims_prologue_and_chain_probed() {
+        let data = make_unclustered_da_stream(2, &[(0x0089, &[0x01; 40]), (0x0089, &[0x02; 7])]);
+        let mut b = ParserTraceBuilder::new("parse_unclustered_da");
+        let claimed = parse_unclustered_da_with_trace(&data, &mut b);
+        assert_eq!(claimed, 2);
+        let trace = b.build("/Unclustered Dynamic Attributes", data.len() as u64);
+        assert_eq!(
+            trace.consumed_bytes(),
+            data.len() as u64,
+            "prologue + chain must cover the whole stream"
+        );
+        assert!(trace.leftover_ranges.is_empty());
+        let probed_total: u64 = trace
+            .ranges_by_confidence
+            .get(&TraceConfidence::Probed)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(ByteRange::len)
+            .sum();
+        assert_eq!(
+            probed_total,
+            data.len() as u64,
+            "every claim must be Probed; no Decoded promotion"
+        );
+    }
+
+    #[test]
+    fn trace_aware_unclustered_da_claims_nothing_when_gate_fails() {
+        let mut data = make_unclustered_da_stream(1, &[(0x0089, &[0x01; 4])]);
+        data.extend_from_slice(&[0u8; 3]);
+        let mut b = ParserTraceBuilder::new("parse_unclustered_da");
+        let claimed = parse_unclustered_da_with_trace(&data, &mut b);
+        assert_eq!(claimed, 0);
+        let trace = b.build("/Unclustered Dynamic Attributes", data.len() as u64);
+        assert_eq!(trace.consumed_bytes(), 0);
+        assert_eq!(trace.leftover_bytes(), data.len() as u64);
     }
 
     #[test]

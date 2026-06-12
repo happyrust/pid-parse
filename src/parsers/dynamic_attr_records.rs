@@ -82,20 +82,33 @@ fn try_parse_record(data: &[u8], pos: usize) -> Option<(AttributeRecord, usize)>
     }
 
     // After 0x89 0x00: scan for the class section
-    let mut cursor = pos + 2;
+    let cursor = pos + 2;
 
     // Read body region length/flags (varies)
     if cursor + 4 > data.len() {
         return None;
     }
     let section_len = u32_le(data, cursor) as usize;
-    cursor += 4;
+    let cursor = cursor + 4;
 
     if section_len == 0 || cursor + section_len > data.len() + 4 {
         return None;
     }
 
     let section_end = (cursor + section_len).min(data.len());
+    let record = parse_section_body(data, cursor, section_end)?;
+    Some((record, section_end))
+}
+
+/// Parse the class name plus attribute name/value pairs from one record
+/// section body (`data[cursor..section_end)`); the record envelope /
+/// marker has already been validated by the caller.
+fn parse_section_body(
+    data: &[u8],
+    mut cursor: usize,
+    section_end: usize,
+) -> Option<AttributeRecord> {
+    let section_end = section_end.min(data.len());
 
     // Skip initial flags/counters until we hit readable content
     while cursor < section_end && cursor + 2 <= data.len() {
@@ -152,14 +165,59 @@ fn try_parse_record(data: &[u8], pos: usize) -> Option<(AttributeRecord, usize)>
         return None;
     }
 
-    Some((
-        AttributeRecord {
-            class_name,
-            attributes,
-            confidence: "heuristic".to_string(),
-        },
-        section_end,
-    ))
+    Some(AttributeRecord {
+        class_name,
+        attributes,
+        confidence: "heuristic".to_string(),
+    })
+}
+
+/// Phase 29 Slice K: chain-scoped variant of [`parse_attribute_records`]
+/// for the `/Unclustered Dynamic Attributes` stream.
+///
+/// When the stream passes the Phase 29 Slice C body-chain gate
+/// ([`crate::parsers::cluster_header::decode_unclustered_da_body_records`]:
+/// 8-byte magic + counter prologue, single end-anchored `0x0089` record
+/// chain), each attribute section is parsed from its exact chain record
+/// bounds instead of a whole-stream marker scan. Compared to the legacy
+/// scan this:
+///
+/// - recovers records whose envelope head carries a non-zero high flag
+///   bit (`word & 0x3FFF == 0x0089` but literal bytes are not
+///   `89 00`), which the byte-literal marker scan misses;
+/// - never starts a section at a `0x89 0x00` byte pair that sits inside
+///   another record's payload;
+/// - uses exact record bounds, so section parsing cannot bleed across
+///   record boundaries.
+///
+/// Streams that do not pass the chain gate (wrong magic, truncated, or
+/// non-end-anchored chains) fall back to the legacy
+/// [`parse_attribute_records`] scan, byte-for-byte.
+pub fn parse_attribute_records_chain_scoped(data: &[u8]) -> (Vec<AttributeRecord>, ProbeSummary) {
+    let chain = crate::parsers::cluster_header::decode_unclustered_da_body_records(data);
+    if chain.is_empty() {
+        return parse_attribute_records(data);
+    }
+
+    let body_start = crate::parsers::cluster_header::UNCLUSTERED_DA_PROLOGUE_LEN;
+    let mut records = Vec::new();
+    for record in &chain {
+        // Skip the 6-byte envelope (type word + bytes_to_follow); the
+        // section body runs to the record's exact end.
+        let cursor = record.byte_range.start + 6;
+        let section_end = record.byte_range.end;
+        if let Some(rec) = parse_section_body(data, cursor, section_end) {
+            records.push(rec);
+        }
+    }
+
+    let summary = ProbeSummary {
+        body_start_offset: body_start,
+        marker_count: count_markers(data, body_start),
+        records_extracted: records.len(),
+        bytes_scanned: data.len().saturating_sub(body_start),
+    };
+    (records, summary)
 }
 
 /// Returns the decoded value plus an optional `raw_value` audit trail: if the
@@ -948,5 +1006,133 @@ mod tests {
         assert_eq!(hits, 0);
         let trace = trace.build("/Unclustered Dynamic Attributes", data.len() as u64);
         assert_eq!(trace.consumed_bytes(), 0);
+    }
+
+    /// One chain record: `type_word` + btf envelope, then a payload of
+    /// non-printable flag bytes, an ASCII class name, and one
+    /// `Name\0Value\0` attribute pair.
+    fn make_chain_record(type_word: u16, class_name: &str, attr: &str, value: &str) -> Vec<u8> {
+        let mut payload = vec![0x01, 0x02, 0x03]; // non-printable flags
+        payload.extend_from_slice(class_name.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(attr.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(value.as_bytes());
+        payload.push(0);
+        let mut out = Vec::new();
+        out.extend_from_slice(&type_word.to_le_bytes());
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    fn make_chain_stream(counter: u32, records: &[Vec<u8>]) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&0x6C90_F544u32.to_le_bytes());
+        data.extend_from_slice(&counter.to_le_bytes());
+        for r in records {
+            data.extend_from_slice(r);
+        }
+        data
+    }
+
+    #[test]
+    fn chain_scoped_records_recover_flagged_head_missed_by_legacy_scan() {
+        // Record 2 carries a high flag bit: literal bytes `89 40`, so the
+        // byte-literal `89 00` scan cannot see it, but the chain walk can.
+        let data = make_chain_stream(
+            2,
+            &[
+                make_chain_record(0x0089, "P&IDAttributes", "ModelItemType", "Drawing"),
+                make_chain_record(0x4089, "Symbol", "DefinitionName", "Pump"),
+            ],
+        );
+
+        let (legacy, _) = parse_attribute_records(&data);
+        assert_eq!(legacy.len(), 1, "legacy scan misses the flagged head");
+
+        let (scoped, summary) = parse_attribute_records_chain_scoped(&data);
+        assert_eq!(scoped.len(), 2, "chain-scoped path recovers both records");
+        assert_eq!(scoped[0].class_name, "P&IDAttributes");
+        assert_eq!(scoped[1].class_name, "Symbol");
+        assert_eq!(scoped[1].attributes[0].name, "DefinitionName");
+        assert_eq!(summary.records_extracted, 2);
+        assert_eq!(summary.body_start_offset, 8);
+    }
+
+    #[test]
+    fn chain_scoped_records_ignore_marker_bytes_inside_payloads() {
+        // Embed a fake `89 00` + plausible-length marker inside record 1's
+        // attribute value; the legacy scan may try to open a phantom
+        // section there, the chain-scoped path never does.
+        let mut payload = vec![0x01, 0x02, 0x03];
+        payload.extend_from_slice(b"P&IDAttributes\0");
+        payload.extend_from_slice(b"Note\0");
+        payload.extend_from_slice(&[0x89, 0x00, 0x08, 0x00, 0x00, 0x00]); // fake marker + len 8
+        payload.extend_from_slice(b"ABCDEF\0\0");
+        let mut rec1 = Vec::new();
+        rec1.extend_from_slice(&0x0089u16.to_le_bytes());
+        rec1.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        rec1.extend_from_slice(&payload);
+
+        let data = make_chain_stream(
+            2,
+            &[
+                rec1,
+                make_chain_record(0x0089, "Symbol", "DefinitionName", "Pump"),
+            ],
+        );
+
+        let (scoped, _) = parse_attribute_records_chain_scoped(&data);
+        assert_eq!(
+            scoped.len(),
+            2,
+            "exactly one record per chain head; no phantom payload section"
+        );
+        assert_eq!(scoped[0].class_name, "P&IDAttributes");
+        assert_eq!(scoped[1].class_name, "Symbol");
+    }
+
+    #[test]
+    fn chain_scoped_records_fall_back_to_legacy_scan_without_chain_gate() {
+        // No cluster magic: the chain gate fails and the function must
+        // behave byte-for-byte like the legacy scan.
+        let mut data = vec![0u8; 8];
+        data.extend(make_chain_record(0x0089, "P&IDAttributes", "Flag", "3"));
+
+        let (legacy, legacy_summary) = parse_attribute_records(&data);
+        let (scoped, scoped_summary) = parse_attribute_records_chain_scoped(&data);
+        assert_eq!(legacy.len(), scoped.len());
+        for (l, s) in legacy.iter().zip(scoped.iter()) {
+            assert_eq!(l.class_name, s.class_name);
+            assert_eq!(l.attributes.len(), s.attributes.len());
+        }
+        assert_eq!(
+            legacy_summary.records_extracted,
+            scoped_summary.records_extracted
+        );
+    }
+
+    #[test]
+    fn chain_scoped_records_skip_sections_without_class_names() {
+        // A chain record whose payload has no ASCII run yields no
+        // AttributeRecord, but the other records still parse.
+        let mut opaque = Vec::new();
+        opaque.extend_from_slice(&0x0089u16.to_le_bytes());
+        opaque.extend_from_slice(&4u32.to_le_bytes());
+        opaque.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+
+        let data = make_chain_stream(
+            2,
+            &[
+                opaque,
+                make_chain_record(0x0089, "P&IDAttributes", "Flag", "3"),
+            ],
+        );
+
+        let (scoped, summary) = parse_attribute_records_chain_scoped(&data);
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].class_name, "P&IDAttributes");
+        assert_eq!(summary.records_extracted, 1);
     }
 }
