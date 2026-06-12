@@ -604,17 +604,69 @@ verification / blockers / goal-prompt / progress.jsonl 五件套+1 模板），
       `git diff --check` 无 whitespace errors，ReadLints 无诊断，
       未发现 blocking code issue；剩余风险为大 diff、LF→CRLF warning
       和 IDA-gated semantic questions。
-- **Status:** partial / gated；当前可达 IDB 的低成本 JSite / 0x0089 /
-  PSMspacemap handle / Style-JStyle negative 证据与 handoff 已收口。
-  本地可执行门禁已通过。下一步二选一：打开 `style.dll` /
-  `J2DSrv.dll` / `sppid.dll` / `XCeedRAD.dll` /
-  `smartplantpid.exe` 任一相关 IDB 后再查 `"OLEM"`、`JSitesList`、
-  `tseg`、StyleCluster prefix 与 RAD/JStyle persistence；或由用户
-  授权单提交 / 拆分 / 评审当前工作树。
+- [x] Phase 30-K：`style.dll` JStyleOverride persistence refresh：
+      打开 `E:\reverse\pid\style.dll` 为 IDA MCP instance
+      (`127.0.0.1:13339`)；确认 `JStyleOverride` vtable、
+      `stru_10066B64 = 47fcc338-2d0f-11d0-a1ff-080036a1cf02`；
+      `sub_1000F030` 是当前 persistence body，13 次
+      `IOContext::DoIO` 合计 64 字节，直接支持现有 `0x0030 =
+      JStyleOverride` decoder；`sub_1000F210` 是 versioned path；
+      `sub_10010640` clone 复制更宽 runtime slot 区并清 transient
+      pointers。`style.dll` 未命中 `StyleCluster` / `JSitesList` /
+      `OLEM` / `PSMspacemap` / `GraphicGroup`，这些仍需其它 IDB。
+- [x] Phase 30-L：secondary IDB sweep：打开并扫 `J2DSrv.dll`
+      (`13340`)、`XceedRAD.dll` (`13341`)、`jengine.dll` (`13342`)。
+      `J2DSrv.dll` 更像 2D geometry/render/style helper；
+      `XceedRAD.dll` 是 Xceed compression support；二者对
+      `JSitesList` / `OLEM` / `PSMspacemap` / `StyleCluster` /
+      `JStyleOverride` / `GraphicGroup` 均 0 hits。`jengine.dll` 含
+      `IJPersist` / `IOContext` / `DoIO` / `PersistCluster` /
+      PSM/segment diagnostic text，是通用 persistence engine，但也不含
+      业务 storage 名。
+- [x] Phase 30-M：`OLESITE.dll` JSitesList refresh：打开
+      `OLESITE.dll` (`13344`)；确认它导出 `JSite` / `JSiteManager` /
+      `JOLEMembassy` 相关接口，`off_1005BBC8 -> "JSitesList"`，
+      `off_1005BBD0 -> "JSite"`；`sub_1001DFC0` 是 versioned
+      `JOLEMembassy` persistence dispatcher，version 1/2 分别走
+      `sub_1001D2C0` / `sub_1001D7F0`，二者打开 `JSitesList`、
+      读写 count 并迭代 `JSite` entries。`entries` 可解释为
+      IDA-backed JSite ids / entries；`trailing_slots` stale semantics
+      仍保守。
+- [x] Phase 30-N：spec-kit JSitesList terminology sync：同步
+      `docs/specs/2026-06-08-pid-file-format-spec-kit/data-model.md`，
+      将 `JSitesList` 证据从 fixture match / unnamed 提升为
+      `OLESITE.dll` 直接证据；保留 JSON 字段名 `entries`，继续将
+      `trailing_slots` 作为未证明 stale/delete 语义的保守 leftover。
+- [x] Phase 30-O：local OLE follow-up closeout：尝试打开
+      `OLECRT.dll`，IDA 进程存在（`ida.exe E:\reverse\pid\OLECRT.dll`），
+      但未注册为 IDA MCP instance，无法做 survey/search；结合
+      `Linkole.dll` / `OLESITE.dll` 结果，本地 SmartSketch/RAD runtime
+      低成本 broad search 收敛。
+- [x] Phase 30-P：`smartplantpid.exe` launcher sweep：打开用户提供的
+      `D:\work\plant-code\cad\pid-parse\dlls\smartplantpid.exe` 为
+      IDA MCP instance `13345`；survey 显示 32-bit VB6 application
+      / launcher（`MSVBVM60` imports，120 functions，161 strings），
+      strings 包含 `SmartPlantPID` / `Smart Plant P&ID` / `sppid` /
+      `Registry` / `ErrorLogging`，但 Phase 30 checklist
+      `JSitesList` / `OLEM` / `JSite` / `PSMspacemap` /
+      `StyleCluster` / `JStyleOverride` / `GraphicGroup` /
+      `P&IDAttributes` / `IJPersist` / `IOContext` / `DoIO` 均 0 hits。
+      结论：该 EXE 是前端/启动壳，不是 `.pid` storage body reader。
+- **Status:** partial / gated；当前可达 IDB 的 JSite / 0x0089 /
+  PSMspacemap handle 与 `0x0030` JStyleOverride persistence 证据已
+  收口，`JSitesList` storage/name/entry 语义也已由 `OLESITE.dll`
+  直接确认。`smartplantpid.exe` 已确认只是 VB6 launcher；下一步若
+  继续 IDA，应优先真实 SmartPlant P&ID install 的 lower-level backend
+  DLL / COM module（例如 `sppid.dll` 或含 storage reader 的产品 DLL）。
 - **Analysis:** `docs/analysis/2026-06-12-phase30-radsrvitem-jsite-ida-refresh.md`
 - **Analysis:** `docs/analysis/2026-06-12-phase30-radsrvitem-record-spacemap-ida.md`
 - **Analysis:** `docs/analysis/2026-06-12-phase30-radsrvitem-style-jstyle-negative.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase30-style-dll-jstyleoverride-ida.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase30-secondary-idb-sweep.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase30-olesite-jsiteslist-ida.md`
+- **Analysis:** `docs/analysis/2026-06-12-phase30-smartplantpid-exe-ida.md`
 - **Analysis:** `docs/analysis/2026-06-12-phase30-ida-gated-next-actions.md`
+- **Spec:** `docs/specs/2026-06-08-pid-file-format-spec-kit/data-model.md`
 - **Analysis:** `docs/analysis/2026-06-12-phase29-30-worktree-readiness.md`
 - **Analysis:** `docs/analysis/2026-06-12-phase29-30-commit-review-plan.md`
 - **Analysis:** `docs/analysis/2026-06-12-phase29-30-self-review.md`

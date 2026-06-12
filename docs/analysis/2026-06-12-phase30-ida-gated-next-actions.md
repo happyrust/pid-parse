@@ -5,26 +5,44 @@
 
 ## Current IDB Availability
 
-Only these IDBs were reachable:
+Initial `radsrvitem.dll` refresh only had these IDBs:
 
 | Binary | Port | Useful result |
 |---|---:|---|
 | `core.dll` | 13337 | Not the SmartPlant writer target for current PID format questions. |
 | `radsrvitem.dll` | 13338 | Exhausted for low-cost JSite / `0x0089` / PSMspacemap / JStyle checks. |
 
-Not available:
+Later in the same phase, `E:\reverse\pid\style.dll` was opened and
+registered as an IDA MCP instance. See
+`2026-06-12-phase30-style-dll-jstyleoverride-ida.md`.
 
-- `style.dll`
-- `J2DSrv.dll`
+Later sweeps also opened SmartSketch / RAD runtime modules under
+`E:\reverse\pid`. `OLESITE.dll` provided direct `JSitesList` evidence.
+See `2026-06-12-phase30-secondary-idb-sweep.md` and
+`2026-06-12-phase30-olesite-jsiteslist-ida.md`.
+
+`OLECRT.dll` was launched in IDA during the final local OLE follow-up, but
+did not register as an IDA MCP instance after the same wait/poll loop used
+for the other modules. The local SmartSketch/RAD runtime sweep is therefore
+considered exhausted for low-cost broad searches.
+
+`smartplantpid.exe` was later provided under the repository `dlls`
+directory and opened as IDA MCP instance `127.0.0.1:13345`. It appears to
+be a VB6 front-end / launcher (`MSVBVM60` imports, strings such as
+`SmartPlantPID`, `Smart Plant P&ID`, `sppid`, `Registry`, and
+`ErrorLogging`), not the low-level `.pid` persistence module. See
+`2026-06-12-phase30-smartplantpid-exe-ida.md`.
+
+Still not available from a true SmartPlant P&ID install:
+
 - `sppid.dll`
-- `XCeedRAD.dll`
-- `smartplantpid.exe`
+- lower-level backend DLL / COM module that contains PID storage readers
 
 ## Confirmed From `radsrvitem.dll`
 
 ### JSite / JSitesList Evidence
 
-Confirmed:
+Confirmed from `radsrvitem.dll`:
 
 - `sub_56448A10` formats `JSite<id>` from `*sub_564472F0()`.
 - `sub_56448A70` formats `JSite<id>` from `sub_56448970()`.
@@ -33,16 +51,29 @@ Confirmed:
 - `sub_5645FF00` / `sub_56460330` call this storage-open helper after
   deriving the id from record/runtime context.
 
+Confirmed from `OLESITE.dll`:
+
+- `off_1005BBC8 -> "JSitesList"`.
+- `off_1005BBD0 -> "JSite"`.
+- `sub_1001DFC0` dispatches versioned `JOLEMembassy` persistence:
+  version 1 to `sub_1001D2C0`, version 2 to `sub_1001D7F0`, version 3
+  to `sub_1001DCC0`.
+- `sub_1001D2C0` / `sub_1001D7F0` open `JSitesList`, read/write count
+  fields, and iterate `JSite` entries through jengine persistence
+  interfaces.
+
 Still gated:
 
-- no `JSitesList` literal in `radsrvitem.dll`;
-- no `"OLEM"` literal in `radsrvitem.dll`;
-- no writer/reader evidence for stale tail slots.
+- exact writer semantics for stale/trailing slots.
 
 Parser implication:
 
-- keep `JSitesListDecoded.entries` / `trailing_slots`;
-- do not rename `entries` to `jsite_ids` yet.
+- `JSitesListDecoded.entries` are now IDA-backed as `JSite` ids /
+  entries;
+- keep the serialized field names `entries` / `trailing_slots` unless a
+  broader schema migration is intentionally made;
+- keep `trailing_slots` conservative until stale-tail writer behavior is
+  mapped.
 
 ### `0x0089` Evidence
 
@@ -103,25 +134,41 @@ Parser implication:
 
 ### Style / JStyle Evidence
 
-Confirmed negative:
+Confirmed from the original `radsrvitem.dll` pass:
 
 - `StyleCluster` 0 hits.
 - `JStyleOverride` 0 hits.
 - `JStyleBase::IJPersistImp` hits are interface thunks / RTTI, not direct
   persistence bodies.
 
+Confirmed from the later `style.dll` pass:
+
+- `JStyleOverride` strings and vtables are present.
+- `stru_10066B64` is `47fcc338-2d0f-11d0-a1ff-080036a1cf02`.
+- `sub_1000F030` is the current `JStyleOverride` persistence body:
+  after common style setup it performs 13 `IOContext::DoIO` calls for a
+  total 64-byte payload.
+- `sub_1000F210` is the versioned persistence path for the same CLSID.
+- `sub_10010640` clones a wider runtime byte region with
+  `qmemcpy(v5 + 22, this + 22, 0x58)` and clears transient pointer-like
+  slots.
+
 Still gated:
 
-- `0x0030` persistence fields;
+- semantic names for the individual `0x0030` persistence fields;
 - StyleCluster prefix layout;
-- JStyleOverride class-specific load/save behavior.
+- JStyleOverride fields beyond the 64-byte disk sequence / runtime slot
+  relationship.
 
 Parser implication:
 
 - Phase 16/17 conclusion remains: `0x0030` is `JStyleOverride`, not arc
   geometry;
-- deeper fields still need `style.dll` / `J2DSrv.dll` or another
-  writer/reader-side IDB.
+- the existing 64-byte Rust decoder is now directly backed by
+  `style.dll` IDA evidence;
+- field naming, StyleCluster prefix, and storage writer semantics still
+  need `J2DSrv.dll`, `sppid.dll`, or another lower-level writer/reader-side
+  backend IDB.
 
 ## Next IDB Search Checklist
 
@@ -129,19 +176,21 @@ When a new relevant IDB is opened, run these first:
 
 | Question | Search terms |
 |---|---|
-| `/JSitesList` writer | `JSitesList`, `OLEM`, `JSite`, `OpenStream`, `CreateStream` |
-| stale tail semantics | `JSitesList`, slot/count nearby code, array resize/write paths |
+| `/JSitesList` writer | `OLESITE.dll`: `sub_1001D2C0`, `sub_1001D7F0`, `sub_1001DFC0`, `off_1005BBC8` |
+| stale tail semantics | `JSitesList`, count nearby code, deleted/stale `JSite` slot write paths |
 | DA / `0x0089` semantic name | `137`, `0x89`, `P&IDAttributes`, `Dynamic Attributes`, `RAD_OBJECT_TYPE` |
 | PSMspacemap raw page layout | `PSMspacemap`, `GetSpaceMapSegment`, `Segment::`, `0x2000`, `<< 13`, `0x1FFF` |
-| StyleCluster prefix | `StyleCluster`, `JStyleBase`, `JStyleOverride`, `IJPersistImp`, `0x30` |
+| StyleCluster prefix | `StyleCluster`, style storage open/create paths, style catalog save/load code |
 | `0x0010` discriminator | `0x10`, `16`, `GraphicGroup`, `JStyleOverride`, sub-record read loops |
 
 ## Current Recommendation
 
-Do not continue broad searches in the currently open `radsrvitem.dll`
+Do not continue broad searches in the currently open local runtime IDBs
 unless a new concrete string/function clue appears. The next productive
 step is either:
 
-- open one of the gated IDBs and run the checklist above; or
+- open a lower-level SmartPlant P&ID backend IDB (`sppid.dll` or another
+  product DLL / COM module that is not just the VB6 launcher) and run the
+  checklist above; or
 - keep parser behavior unchanged and submit/review the accumulated
   Phase 29/30 documentation + parser work as-is.

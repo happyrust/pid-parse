@@ -59,7 +59,7 @@ next_action:
 | `DocVersion3` | 48-byte records | `Registry` | `Decoded` | `version_history` | No major current gap. |
 | `AppObject` | CLSID + UTF-16 path records | `Registry` | `Decoded` | `app_object_registry` | Filler / resync bytes are probed. |
 | `JTaggedTxtStgList` | UTF-16 storage list | `Registry` | `Decoded` | `tagged_storages` | No major current gap. |
-| `JSitesList` | magic `"OLEM"` + u32 count + u32 slot table | `Registry` | `PartiallyDecoded` | `parse_jsites_list` (header `Decoded`, logical table `Probed`) | Entry values match `JSite<id>` storage ids 6/6 (evidence, unnamed); stale trailing slots on `dwg0202`-family stay leftover; writer semantics IDA-gated. See `2026-06-08-phase29-jsiteslist-revision-tails.md`. |
+| `JSitesList` | magic `"OLEM"` + u32 count + u32 slot table | `Registry` | `PartiallyDecoded` | `parse_jsites_list` (header `Decoded`, logical table `Probed`) | `OLESITE.dll` confirms the stream name (`off_1005BBC8 -> "JSitesList"`) and `JSite` entry relationship (`off_1005BBD0 -> "JSite"`; `JOLEMembassy` persistence opens `JSitesList`, reads/writes count, and iterates `JSite` entries). Keep JSON field name `entries`; stale trailing slots on `dwg0202`-family stay leftover until stale/delete writer semantics are proven. See `2026-06-12-phase30-olesite-jsiteslist-ida.md` and `2026-06-08-phase29-jsiteslist-revision-tails.md`. |
 | `TaggedTxtData/Revision` | 0-byte placeholder | `Metadata` | `IdentifiedOnly` | `revision_empty_stream` registration | Empty on 5/5 fixtures; future content would surface as leftover under the registered path. |
 
 ## Storage Prefix Formats
@@ -200,7 +200,11 @@ Interpretation:
   whole-file ratios reach 0.664–0.888.
 - The Slice M closeout registers `/JSitesList` (top-level + nested;
   `"OLEM"` slot table whose logical entries match `JSite<id>` storages
-  6/6) and the 0-byte `/TaggedTxtData/Revision` placeholder. Distinct
+  6/6) and the 0-byte `/TaggedTxtData/Revision` placeholder. Phase 30
+  `OLESITE.dll` evidence upgrades the logical entries to IDA-backed
+  `JSite` entries (`JOLEMembassy` persistence opens `JSitesList` and
+  iterates `JSite` objects); trailing slots remain conservative because
+  stale/delete writer semantics are not yet proven. Distinct
   unregistered paths drop 51 → 38 (9–14 per fixture); every remaining
   multi-fixture unregistered path is IDA-gated (`PSMspacemap` pages) or
   demand-gated (`\x01Ole` payloads).

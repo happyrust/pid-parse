@@ -959,6 +959,122 @@
     LF→CRLF warning、以及 IDA-gated semantic questions。
   - 产出：
     `docs/analysis/2026-06-12-phase29-30-self-review.md`。
+- Phase 30-K `style.dll` JStyleOverride persistence refresh（同日）：
+  - [IDA] 用户提供 `E:\reverse\pid` 后，确认并打开
+    `style.dll`；新 IDA MCP instance 为 `127.0.0.1:13339`。
+  - [证据] `style.dll` 含 `JStyleOverride` / `JStyleBase` /
+    `IJPersist` 字符串与 style 导出；不含 `StyleCluster` /
+    `JSitesList` / `OLEM` / `PSMspacemap` / `GraphicGroup` 字符串。
+  - [证据] `stru_10066B64 =
+    47fcc338-2d0f-11d0-a1ff-080036a1cf02`，对应既有
+    `JStyleOverride` CLSID。
+  - [证据] `JStyleOverride` vtable around `0x1006A560`；`sub_1000EF40`
+    returns `"JStyleOverride"`；`sub_1000DFE0` /
+    `sub_1000E6E0` 是 `IJStyleOverrideImp` /
+    `IJStylePrerenderImp` interface thunk，不是 persistence body。
+  - [证据] `sub_1000F030` 是当前 `JStyleOverride` persistence body：
+    `sub_10055F30` common helper 后执行 13 次
+    `IOContext::DoIO`，总计 64 字节，offset/size =
+    `+88:4, +96:4, +100:4, +152:4, +104:8, +112:8,
+    +120:8, +136:8, +128:4, +188:4, +192:4, +144:2,
+    +146:2`。
+  - [决策] 现有 Rust `0x0030 = JStyleOverride` 64-byte decoder 获得
+    `style.dll` 直接佐证；本轮不改 parser，不回退为 arc。
+  - [边界] 13 个字段语义名、`StyleCluster` prefix、`JSitesList` /
+    `OLEM` writer、`PSMspacemap` raw page、`0x0010` discriminator、
+    `GraphicGroup` payload 仍 gated on 其它 IDB / controlled fixture。
+  - 产出：
+    `docs/analysis/2026-06-12-phase30-style-dll-jstyleoverride-ida.md`。
+- Phase 30-L secondary IDB sweep（同日）：
+  - [路径] `E:\reverse\pid` 是 SmartSketch / RAD-era runtime 目录；
+    关键词扫描未发现 `sppid.dll` / `smartplantpid.exe`。
+  - [IDA] `J2DSrv.dll` (`127.0.0.1:13340`) imports geometry/render/style
+    helpers，但对 `JSitesList` / `OLEM` / `PSMspacemap` /
+    `StyleCluster` / `JStyleOverride` / `GraphicGroup` / `IJPersist` /
+    `PSM` 均 0 hits；不作为当前 storage-name 入口。
+  - [IDA] `XceedRAD.dll` (`127.0.0.1:13341`) 表现为 Xceed compression
+    support，Phase 30 目标词均 0 hits。
+  - [IDA] `jengine.dll` (`127.0.0.1:13342`) 含 generic persistence
+    machinery：`IJPersist`、`IOContext`、`DoIO`、`PersistCluster`、
+    `GetPersistCluster`、PSM/segment diagnostic text；但对
+    `JSitesList` / `OLEM` / `JSite` / `PSMspacemap` /
+    `StyleCluster` / `JStyleOverride` / `GraphicGroup` 均 0 hits。
+  - [决策] `jengine.dll` 可用于后续理解通用 persist manager /
+    `IOContext` 机制，但不能把 PID-specific storage/payload semantics
+    从本轮 low-cost sweep 中升级。
+  - [后续已执行] 本地 runtime OLE 路线随后完成
+    `Linkole.dll` / `OLESITE.dll` / `OLECRT.dll` follow-up；真正新增
+    PID-specific 证据的是 `OLESITE.dll`，本地 broad search 已在
+    Phase 30-O 收敛。Phase 30-P 随后确认 `smartplantpid.exe` 只是
+    VB6 launcher；若可获得真实 SmartPlant P&ID install，仍优先
+    `sppid.dll` 或其它 lower-level backend DLL / COM module。
+  - 产出：
+    `docs/analysis/2026-06-12-phase30-secondary-idb-sweep.md`。
+- Phase 30-M `OLESITE.dll` JSitesList / JOLEMembassy refresh（同日）：
+  - [IDA] `Linkole.dll` (`127.0.0.1:13343`) 是 OLE link/moniker
+    helper；含 OLE/jengine persistence imports，但对 `JSitesList` /
+    `OLEM` / `JSite` / `PSMspacemap` / `StyleCluster` /
+    `JStyleOverride` / `GraphicGroup` / `PSM` 均 0 hits。
+  - [IDA] `OLESITE.dll` (`127.0.0.1:13344`) 导出 `JSite` /
+    `JSiteManager` / `JOLEMembassy` 相关接口，是当前
+    `/JSitesList` 的有效 writer/reader 证据来源。
+  - [证据] `off_1005BBC8 -> "JSitesList"`；
+    `off_1005BBD0 -> "JSite"`。
+  - [证据] `sub_1001DFC0` 是 versioned `JOLEMembassy` persistence
+    dispatcher：version 1 → `sub_1001D2C0`，version 2 →
+    `sub_1001D7F0`，version 3 → `sub_1001DCC0`。
+  - [证据] `sub_1001D2C0` / `sub_1001D7F0` 通过 persist manager 打开
+    `JSitesList`，读写 presence/count，并迭代 `JSite` entries /
+    persisted objects。
+  - [决策] `/JSitesList.entries` 可描述为 IDA-backed `JSite` ids /
+    entries；为避免 schema churn，仍建议保留 JSON 字段名 `entries`。
+    `trailing_slots` 继续保守，不 claim 为 active ids。
+  - [边界] stale-tail writer semantics、`PSMspacemap` raw page、
+    `StyleCluster` prefix、`0x0010` discriminator、`GraphicGroup`
+    payload 仍未由本轮证明。
+  - 产出：
+    `docs/analysis/2026-06-12-phase30-olesite-jsiteslist-ida.md`。
+- Phase 30-N spec-kit JSitesList terminology sync（同日）：
+  - [文档] `docs/specs/2026-06-08-pid-file-format-spec-kit/data-model.md`
+    已同步 `OLESITE.dll` 证据：`off_1005BBC8 -> "JSitesList"`、
+    `off_1005BBD0 -> "JSite"`，`JOLEMembassy` persistence opens
+    `JSitesList` and iterates `JSite` entries。
+  - [决策] `JSitesListDecoded.entries` 可描述为 IDA-backed `JSite`
+    entries / ids，但 JSON 字段名保持 `entries`，不做 schema churn。
+  - [边界] `trailing_slots` 继续作为 stale/unclaimed tail leftover；
+    stale/delete writer semantics 未证明前不升级为 active ids。
+- Phase 30-O local OLE follow-up closeout（同日）：
+  - [工具边界] `OLECRT.dll` 已用 IDA 启动（`ida.exe
+    E:\reverse\pid\OLECRT.dll`，PID `128572`），但未注册为
+    `user-ida-pro-mcp` instance，不能通过 MCP 做 survey/search。
+  - [结论] 本地 SmartSketch/RAD runtime broad search 已收敛：
+    `style.dll` 给出 `JStyleOverride` 正证据，`OLESITE.dll` 给出
+    `JSitesList` 正证据；其余本地模块未提供新的 PID-specific
+    storage / record semantics。
+  - [后续] 除非有具体 string/function clue，不继续本地模块泛搜；
+    Phase 30-P 已确认 `smartplantpid.exe` 只是 VB6 launcher；下一高
+    价值 IDA 目标是真实 SmartPlant P&ID 的 `sppid.dll` 或其它
+    lower-level backend DLL / COM module。
+- Phase 30-P `smartplantpid.exe` launcher sweep（同日）：
+  - [IDA] 用户提供
+    `D:\work\plant-code\cad\pid-parse\dlls\smartplantpid.exe`，已打开为
+    IDA MCP instance `13345`。
+  - [结论] survey 显示它是 32-bit VB6 application / launcher：
+    imports 以 `MSVBVM60` 为主，strings 包含 `SmartPlantPID`、
+    `Smart Plant P&ID`、`sppid`、`Registry`、`ErrorLogging`、
+    `Form1` / `Module1`。
+  - [负证据] `JSitesList` / `OLEM` / `JSite` / `PSMspacemap` /
+    `StyleCluster` / `JStyleOverride` / `GraphicGroup` /
+    `P&IDAttributes` / `IJPersist` / `IOContext` / `DoIO` /
+    `PersistCluster` 均 0 hits。
+  - [边界] registry API (`RegOpenKeyEx` / `RegQueryValueEx` /
+    `RegCloseKey`) 只暴露 VB / `DllFunctionCall` wrapper 路径，未发现
+    指向 PID storage reader 的明文 key、COM ProgID、DLL 或 EXE 路径。
+  - [后续] `smartplantpid.exe` 不再作为 PID storage reader 目标；
+    若继续 IDA，需要同安装目录下 lower-level backend DLL / COM module
+    （如 `sppid.dll` 或含 storage reader 的产品 DLL）。
+  - 产出：
+    `docs/analysis/2026-06-12-phase30-smartplantpid-exe-ida.md`。
 
 ## 关键文件（Phase 13-21 补丁）
 - `goals/phase14-sppid-sheet-geometry/`

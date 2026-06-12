@@ -4,6 +4,11 @@
 > `radsrvitem.dll` instance (`127.0.0.1:13338`). This note records the
 > final low-cost searches after the JSite, `0x0089`, and PSMspacemap
 > refreshes.
+>
+> Update: a later pass opened `E:\reverse\pid\style.dll` and found direct
+> `JStyleOverride` persistence evidence. See
+> `2026-06-12-phase30-style-dll-jstyleoverride-ida.md`. The negative
+> conclusions below apply only to `radsrvitem.dll`, not to `style.dll`.
 
 ## Instance Check
 
@@ -74,8 +79,8 @@ Load/Save implementations.
 
 ## Practical Conclusion
 
-This current IDB cannot answer the remaining StyleCluster/JStyle
-questions:
+This `radsrvitem.dll` IDB cannot answer the remaining
+StyleCluster/JStyle questions:
 
 - no `StyleCluster` storage literal;
 - no `JStyleOverride` class literal;
@@ -83,6 +88,7 @@ questions:
 - `JStyleBase::IJPersistImp` hits are generic interface thunks.
 
 The Phase 16/17 conclusion remains unchanged: `0x0030` is
-`JStyleOverride`, not arc geometry, but deeper persistence fields and
-StyleCluster prefix layout are still gated on `style.dll` / `J2DSrv.dll`
-or another writer/reader-side IDB.
+`JStyleOverride`, not arc geometry. This specific IDB does not expose the
+class-specific persistence body; the later `style.dll` pass confirms the
+64-byte / 13-`DoIO` JStyleOverride body directly. `StyleCluster` prefix
+layout remains gated on another writer/reader-side IDB.
