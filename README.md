@@ -341,6 +341,50 @@ loader fidelity：A24 仍保留 `PIDProcessVessel` 的 tank variant 单项接口
 A27b 仍保留 15 条 DWG-only style / canonical-field enrichment 差异。任何未来
 SmartPlant 端漂移会以 `(tag, interface, attr)` 三元组在 CI 上失败定位。
 
+## Final format-analysis and validation status (2026-06-19)
+
+Current user-facing status is evidence-based, not a claim that the vendor PID
+format is completely decoded. The authoritative artifacts are:
+
+- `docs/analysis/2026-06-19-authoritative-pid-format-atlas.md`: confidence
+  vocabulary and ledger for `Decoded`, `TypedAudit`, `Probe`,
+  `IdentifiedOnly`, and `Unknown` outputs.
+- `docs/analysis/2026-06-19-ida-evidence-baseline.md`: read-only IDA evidence
+  scope. Current `sppid.dll` and `core.dll` checks did not justify upgrading
+  unresolved raw `.pid` families; historical `style.dll`, `OLESITE.dll`,
+  `OLECRT.dll`, and `radsrvitem.dll` evidence remains scoped to the rows named
+  in that document.
+- `docs/plans/2026-06-19-pid-parser-roadmap-gates.md`: parser promotion gates
+  and forbidden shortcuts for `PSMspacemap`, `StyleCluster`, `0x0010`,
+  `GraphicGroup 0x00FA`, `JSitesList.trailing_slots`, `0x0089` / class 137 DA
+  heads, and page transform / coordinate units.
+- `docs/pid-export-bundle-contract.md` and `docs/writer-layer-plan.md`: bundle
+  shape, raw-byte opt-in behavior, writer whitelist, publish separation, and
+  read-only geometry/audit/probe boundaries.
+
+Black-box CLI validation was exercised on
+`test-file/DWG-0201GP06-01.pid` with `pid_inspect --json`,
+`pid_inspect --byte-audit --json`, default `--export-bundle`,
+`--round-trip ... --verify`, and `pid_writer_validate --json`. The default
+bundle produced `manifest.json`, `raw/streams.json`,
+`decoded/document.json`, `audit/confidence_ledger.json`, split geometry files,
+and writer guidance without creating `raw/streams/*.bin`, preserving the raw
+payload opt-in rule. The optional publish bundle and `pid_publish_xml` flow were
+also exercised against `test-file/backup-test/TEST02_p/extracted/Export.mdf`
+for drawing `D9635C3C898840D1990B7E8BEE1D55DA` / plant `TEST02`; semantic diff
+against `test-file/export-test/publish-data/A01/A01_Data.xml` was clean. The
+DWG publish MDF fixture
+`test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` was absent and
+therefore soft-skipped explicitly.
+
+Final gate evidence for this status snapshot covered formatting, library
+tests, parser panic-safety, real fixture tests, clippy, workspace build,
+workspace tests, and the missing-docs ratchet. Remaining blockers are the
+non-decoded atlas rows listed above: raw `PSMspacemap` page bytes,
+`StyleCluster` prefix semantics, `0x0010` discriminator, `GraphicGroup 0x00FA`
+payload semantics, `JSitesList` trailing-slot writer meaning, `0x0089` DA head
+semantics, page transform / coordinate units, and any semantic Sheet writer.
+
 ## License
 
 The `pid-parse` source code (everything **outside** `vendor/`) is dual-licensed under
