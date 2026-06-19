@@ -775,7 +775,7 @@ fn write_writer_guidance(
                     "notes": "Mutates raw XML stream bytes only; reparse after writing for refreshed typed metadata."
                 },
                 {
-                    "surface": "OLE SummaryInformation string properties",
+                    "surface": "OLE SummaryInformation / DocumentSummaryInformation string properties",
                     "method": "WritePlan.metadata_updates.summary_updates",
                     "confidence": "Decoded",
                     "notes": "String properties only; non-string property values remain raw passthrough."
@@ -783,18 +783,36 @@ fn write_writer_guidance(
                 {
                     "surface": "Verbatim CFB stream replacement",
                     "method": "WritePlan.stream_replacements",
-                    "confidence": "Raw",
-                    "notes": "Caller owns byte validity and any downstream parser refresh."
+                    "confidence": "IdentifiedOnly",
+                    "notes": "Whole-stream byte replacement only; caller owns byte validity, downstream compatibility, and reparse."
+                },
+                {
+                    "surface": "Experimental Sheet byte patch",
+                    "method": "WritePlan.sheet_patches with experimental=true",
+                    "confidence": "IdentifiedOnly",
+                    "notes": "Byte-range splice only; does not accept geometry, audit, or probe JSON as semantic input."
                 }
             ],
             "read_only": [
                 {
-                    "surface": "geometry/*.json",
+                    "surface": "geometry/decoded_entities.json",
                     "reason": "No source writer contract exists for regenerating Sheet bytes from bundle geometry."
                 },
                 {
+                    "surface": "geometry/audit_entities.json",
+                    "reason": "Typed audit and inferred entities are investigation outputs, not writer instructions."
+                },
+                {
+                    "surface": "geometry/probe_entities.json",
+                    "reason": "Probe-only evidence has not passed decoded promotion gates and is never writable."
+                },
+                {
                     "surface": "decoded/sheets.json",
-                    "reason": "Sheet decoded/probe records are export views; use explicit stream replacements for byte-level experiments."
+                    "reason": "Sheet decoded/audit/probe records are export views; use explicit Sheet byte patches or stream replacements for byte-level experiments."
+                },
+                {
+                    "surface": "decoded/structure.json",
+                    "reason": "DA, JSite, PSM, unknown-stream, and object-graph surfaces remain read-only unless a future writer gate proves an exact edit."
                 },
                 {
                     "surface": "publish/*.xml",
@@ -803,8 +821,11 @@ fn write_writer_guidance(
             ],
             "forbidden_in_phase32": [
                 "writing Sheet bytes from geometry/*.json",
+                "using decoded/audit/probe bundle JSON as semantic write instructions",
                 "promoting probe or inferred geometry to Decoded",
+                "semantic write-back for Sheet geometry, probe entities, typed audit entities, Dynamic Attributes, JSite, PSM, or publish XML",
                 "compacting unknown streams",
+                "using MDF-backed publish XML as raw .pid decode or write evidence",
                 "regenerating CFB tree without passthrough verification"
             ]
         }),
@@ -816,6 +837,8 @@ fn write_writer_guidance(
             "reason": "Bundle export does not perform a writer round-trip or package diff.",
             "recommended_verification": [
                 "pid_inspect input.pid --round-trip out.pid --verify",
+                "pid_writer_validate input.pid --json",
+                "pid_writer_validate input.pid --apply-plan plan.json --out out.pid --keep --json",
                 "pid_inspect input.pid --diff out.pid"
             ]
         }),
@@ -1348,7 +1371,7 @@ mod tests {
             ("/TaggedTxtData/Drawing", b"<Drawing/>"),
             ("/JSite0/\x01Ole", &[0xAA, 0xBB, 0xCC]),
         ]);
-        let out = tmp_dir("minimal");
+        let out = tmp_dir("default-plan");
 
         export_bundle(&package, &ExportBundlePlan::default(), &out).expect("export");
 
@@ -1427,13 +1450,52 @@ mod tests {
             writer_plan["default_write_plan"]["sheet_patches"],
             serde_json::json!([])
         );
-        assert!(writer_plan["read_only"]
+        let read_only = writer_plan["read_only"]
             .as_array()
-            .expect("read_only array")
+            .expect("read_only array");
+        for expected in [
+            "geometry/decoded_entities.json",
+            "geometry/audit_entities.json",
+            "geometry/probe_entities.json",
+        ] {
+            assert!(
+                read_only
+                    .iter()
+                    .any(|surface| surface["surface"] == expected),
+                "missing read-only surface {expected}: {read_only:?}"
+            );
+        }
+        let editable = writer_plan["editable"].as_array().expect("editable array");
+        for expected in [
+            "TaggedTxtData/Drawing XML tag",
+            "TaggedTxtData/General XML tag",
+            "OLE SummaryInformation / DocumentSummaryInformation string properties",
+            "Verbatim CFB stream replacement",
+            "Experimental Sheet byte patch",
+        ] {
+            assert!(
+                editable
+                    .iter()
+                    .any(|surface| surface["surface"] == expected),
+                "missing writer-safe surface {expected}: {editable:?}"
+            );
+        }
+        assert!(writer_plan["forbidden_in_phase32"]
+            .as_array()
+            .expect("forbidden array")
             .iter()
-            .any(|surface| surface["surface"] == "geometry/*.json"));
+            .any(|operation| operation
+                .as_str()
+                .is_some_and(|text| text.contains("semantic write-back"))));
         let diff_summary: serde_json::Value = read_json(&out.join("writer/diff_summary.json"));
         assert_eq!(diff_summary["status"], "not_run");
+        assert!(diff_summary["recommended_verification"]
+            .as_array()
+            .expect("recommended verification")
+            .iter()
+            .any(|command| command
+                .as_str()
+                .is_some_and(|text| text.contains("pid_writer_validate"))));
         let import_view: serde_json::Value = read_json(&out.join("decoded/import_view.json"));
         assert_eq!(import_view["title"], "Smart P&ID Import");
         assert!(import_view["objects"].as_array().is_some());
@@ -1444,7 +1506,7 @@ mod tests {
     #[test]
     fn export_bundle_minimal_plan_skips_split_views_and_geometry() {
         let package = pkg_with_streams(&[("/FlatStream", &[0x11, 0x22, 0x33])]);
-        let out = tmp_dir("minimal");
+        let out = tmp_dir("minimal-plan");
 
         export_bundle(&package, &ExportBundlePlan::minimal(), &out).expect("export");
 

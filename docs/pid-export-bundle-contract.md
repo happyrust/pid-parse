@@ -1,8 +1,8 @@
 # PID Export Bundle Contract
 
-> Status: Draft (Phase 32-B)  
+> Status: Writer/export boundary contract (2026-06-19)  
 > Scope: file-based export format for one SmartPlant / Smart P&ID `.pid` parse result  
-> Related: `docs/analysis/2026-06-16-pid-format-atlas-cn.md`
+> Related: `docs/analysis/2026-06-19-authoritative-pid-format-atlas.md`, `docs/plans/2026-06-19-pid-parser-roadmap-gates.md`
 
 ## 1. Purpose
 
@@ -15,6 +15,11 @@ The bundle is not a new semantic truth layer. It is a packaging contract over ex
 - probe hints remain probe;
 - unknown bytes remain raw/inventory only.
 
+Bundle export is also not writer verification. It can emit `writer/`
+guidance and a default passthrough plan, but `writer/diff_summary.json`
+must remain `status = "not_run"` until a real round-trip or localized
+writer validation command has executed.
+
 ## 2. Directory Shape
 
 ```text
@@ -22,7 +27,7 @@ The bundle is not a new semantic truth layer. It is a packaging contract over ex
   manifest.json
   raw/
     streams.json
-    streams/
+    streams/                         # opt-in only
       <escaped-stream-path>.bin
   decoded/
     document.json
@@ -50,7 +55,11 @@ The bundle is not a new semantic truth layer. It is a packaging contract over ex
     publish_diff.json
 ```
 
-Only `manifest.json`, `raw/streams.json`, `decoded/document.json`, and `audit/confidence_ledger.json` are mandatory for a minimal bundle. Other files are emitted when the corresponding parser output exists or the export plan enables that subtree.
+Only `manifest.json`, `raw/streams.json`, `decoded/document.json`, and
+`audit/confidence_ledger.json` are mandatory for a minimal bundle. Other
+files are emitted when the corresponding parser output exists or the export
+plan enables that subtree. The `raw/streams/` payload directory is never part
+of the default skeleton.
 
 Phase 32-C6 implementation note: the current writer emits decoded split
 views and geometry files for the default plan, including
@@ -70,6 +79,11 @@ serde specifically to make that UI projection an explicit export surface.
 | `audit/*` | on | confidence and unknown tracking |
 | `writer/*` | on for package parses | safe editing boundaries |
 | `publish/*` | off | requires MDF/SQLite input, not `.pid` alone |
+
+Default bundle export writes `raw/streams.json` with path, size, escaped
+filename, and write-state metadata only. Full stream payload files are emitted
+only when the caller explicitly supplies `--export-bundle-raw-streams` or an
+equivalent `ExportBundlePlan::include_raw_stream_bytes = true` setting.
 
 Recommended CLI flags:
 
@@ -210,28 +224,65 @@ inferred or probe evidence to decoded geometry.
   "editable": [
     {
       "surface": "TaggedTxtData/Drawing XML tag",
-      "method": "set_xml_tag",
+      "method": "PidPackage::set_xml_tag",
       "confidence": "Decoded"
     },
     {
-      "surface": "arbitrary stream replacement",
-      "method": "replace_stream",
-      "confidence": "raw passthrough"
+      "surface": "TaggedTxtData/General XML tag",
+      "method": "PidPackage::set_xml_tag",
+      "confidence": "Decoded"
+    },
+    {
+      "surface": "OLE SummaryInformation / DocumentSummaryInformation string properties",
+      "method": "WritePlan.metadata_updates.summary_updates",
+      "confidence": "Decoded"
+    },
+    {
+      "surface": "Verbatim CFB stream replacement",
+      "method": "WritePlan.stream_replacements",
+      "confidence": "IdentifiedOnly"
+    },
+    {
+      "surface": "Experimental Sheet byte patch",
+      "method": "WritePlan.sheet_patches with experimental=true",
+      "confidence": "IdentifiedOnly"
     }
   ],
   "read_only": [
     {
-      "surface": "Sheet geometry decoded/probe JSON",
+      "surface": "Sheet geometry decoded/audit/probe JSON",
       "reason": "no source writer contract"
     }
   ]
 }
 ```
 
+### 8.1 Safe Write Whitelist
+
+The writer-safe surfaces are limited to:
+
+1. `TaggedTxtData/Drawing` XML tags through the XML tag editor;
+2. `TaggedTxtData/General` XML tags through the XML tag editor;
+3. string-valued SummaryInformation / DocumentSummaryInformation properties
+   that the summary writer explicitly supports;
+4. whole raw CFB stream replacement, where the caller owns byte validity and
+   downstream parser compatibility;
+5. explicit experimental Sheet byte patches, which are bounded byte-range
+   splices and require the patch plan to opt into the experimental surface.
+
+Every other stream, decoded DTO, audit record, probe, object graph, JSite,
+Dynamic Attributes, PSM table, publish artifact, and inferred geometry view is
+read-only unless a future writer gate proves the exact edit.
+
 Forbidden in Phase 32:
 
 - writing Sheet bytes from `geometry/*.json`;
+- using decoded, audit, or probe JSON as semantic write instructions;
+- semantic write-back for Sheet geometry, probe entities, typed audit
+  entities, Dynamic Attributes, JSite, PSM, or publish XML;
+- promoting probe or inferred geometry to decoded during export or writing;
 - compacting unknown streams;
+- using MDF-backed publish XML as raw `.pid` decode or write evidence;
 - regenerating CFBF tree without passthrough verification.
 
 Phase 32-C5 implementation note: default exports now write
@@ -240,6 +291,26 @@ Phase 32-C5 implementation note: default exports now write
 the supported edit surfaces, read-only bundle views, and the forbidden
 operations above. `diff_summary.json` is explicitly `status = "not_run"`
 because bundle export does not perform a writer round-trip or package diff.
+
+Writer verification must be run separately with commands such as:
+
+```powershell
+pid_inspect input.pid --round-trip out.pid --verify
+pid_writer_validate input.pid --json
+pid_writer_validate input.pid --apply-plan plan.json --out out.pid --keep --json
+pid_inspect input.pid --diff out.pid
+```
+
+Required verification cases are:
+
+- no-op round-trip, expecting zero package diffs;
+- localized Drawing/General XML edits, expecting only the target XML stream to
+  differ;
+- localized Summary string property edits, expecting only the target property
+  bytes to differ and non-string properties to remain passthrough;
+- whole raw stream replacement, expecting exactly that stream to differ;
+- bounded experimental SheetPatch, expecting only the declared byte range to
+  differ and no semantic geometry claims.
 
 ## 9. Publish Subtree
 
@@ -261,6 +332,13 @@ pid_inspect drawing.pid \
   "reason": "DWG Export.mdf fixture absent; tests soft-skipped"
 }
 ```
+
+`publish/` is never emitted by default. It requires explicit
+`--export-bundle-publish <Export.mdf|Export_v2.sqlite>` plus drawing identity
+(`--publish-drawing <UID>`) and optional plant/style settings. The manifest
+must record publish input identity separately from `.pid` input identity, and
+publish XML must remain under `publish/`. Publish output is an MDF/SQLite
+pipeline artifact, not raw `.pid` Sheet, DA, PSM, or JSite decode evidence.
 
 Phase 32-C7 planning note: publish bundle support should be a thin wrapper
 around the existing `pid_publish_xml` pipeline, not a second publish
@@ -419,6 +497,28 @@ cargo rustdoc --lib --locked -- -W missing-docs
 ```
 
 and record the bash failure separately, as in previous project history.
+
+### 11.1 CLI And File Validation Surface
+
+Mission validators should use black-box command and file checks:
+
+- `pid_inspect --json`
+- `pid_inspect --byte-audit`
+- `pid_inspect --export-bundle`
+- `pid_inspect --round-trip ... --verify`
+- `pid_writer_validate --json`
+- `pid_publish_xml` when MDF fixtures are available
+- generated atlas, roadmap, writer/export, and status documentation
+
+There is no browser or web UI validation surface for this mission. User
+testing should inspect CLI output, parse JSON files, and check generated file
+existence and contents.
+
+Programmatic gate commands are encoded in
+`C:\Users\dpc\.factory\missions\9658a964-9e52-4f06-a6bf-39e7c7ac821f\services.yaml`
+and include formatting, targeted library tests, parser panic-safety,
+parse-real-files, clippy, workspace build, workspace tests, and the
+missing-docs ratchet.
 
 ## 12. Open Questions
 
