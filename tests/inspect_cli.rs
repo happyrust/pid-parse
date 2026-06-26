@@ -12,6 +12,11 @@ fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_pid_inspect")
 }
 
+const LEGACY_SQLITE_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export_v2.sqlite";
+const A01_MDF_PATH: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
+const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
+const A01_REFERENCE_DATA_XML: &str = "test-file/export-test/publish-data/A01/A01_Data.xml";
+
 fn unique_tmp(label: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
     let nanos = std::time::SystemTime::now()
@@ -417,6 +422,207 @@ fn geometry_json_flag_emits_normalized_probe_entities() {
     );
 
     let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn export_bundle_flag_writes_minimal_bundle_and_raw_bytes_only_when_requested() {
+    let fixture = unique_tmp("export-bundle");
+    let default_out = unique_tmp_dir("export-bundle-default");
+    let raw_out = unique_tmp_dir("export-bundle-raw");
+    build_mixed_coverage_fixture(&fixture);
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--export-bundle")
+        .arg(&default_out)
+        .output()
+        .expect("spawn pid_inspect --export-bundle");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(default_out.join("manifest.json").is_file());
+    assert!(default_out.join("raw/streams.json").is_file());
+    assert!(default_out.join("decoded/document.json").is_file());
+    assert!(default_out.join("audit/confidence_ledger.json").is_file());
+    assert!(
+        !default_out.join("raw/streams").exists(),
+        "default export must not write raw stream byte dumps"
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(default_out.join("manifest.json")).unwrap())
+            .expect("manifest JSON");
+    assert_eq!(manifest["features"]["raw_stream_bytes"], false);
+    assert_eq!(manifest["counts"]["streams"], 4);
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--export-bundle")
+        .arg(&raw_out)
+        .arg("--export-bundle-raw-streams")
+        .output()
+        .expect("spawn pid_inspect --export-bundle --export-bundle-raw-streams");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let streams: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(raw_out.join("raw/streams.json")).unwrap())
+            .expect("streams JSON");
+    let mystery = streams["streams"]
+        .as_array()
+        .expect("streams array")
+        .iter()
+        .find(|stream| stream["path"] == "/MysteryStream")
+        .expect("MysteryStream entry");
+    assert_eq!(mystery["raw_bytes_written"], true);
+    let escaped = mystery["escaped_filename"]
+        .as_str()
+        .expect("escaped filename");
+    assert_eq!(
+        std::fs::read(raw_out.join("raw/streams").join(escaped)).expect("raw stream bytes"),
+        b"ghost-bytes"
+    );
+
+    let _ = std::fs::remove_file(&fixture);
+    let _ = std::fs::remove_dir_all(&default_out);
+    let _ = std::fs::remove_dir_all(&raw_out);
+}
+
+#[test]
+fn export_bundle_publish_requires_drawing_uid() {
+    let output = Command::new(binary_path())
+        .arg("missing.pid")
+        .arg("--export-bundle")
+        .arg(unique_tmp_dir("export-bundle-missing-drawing"))
+        .arg("--export-bundle-publish")
+        .arg(LEGACY_SQLITE_PATH)
+        .output()
+        .expect("spawn pid_inspect --export-bundle-publish without drawing");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing publish drawing should be argument error"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--export-bundle-publish requires --publish-drawing"),
+        "stderr should explain missing drawing UID, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn export_bundle_publish_flags_write_xml_and_success_status() {
+    if !std::path::Path::new(LEGACY_SQLITE_PATH).exists() {
+        eprintln!("skipping: fixture {LEGACY_SQLITE_PATH} not found");
+        return;
+    }
+    let fixture = unique_tmp("export-bundle-publish");
+    let out_dir = unique_tmp_dir("export-bundle-publish");
+    build_mixed_coverage_fixture(&fixture);
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--export-bundle")
+        .arg(&out_dir)
+        .arg("--export-bundle-publish")
+        .arg(LEGACY_SQLITE_PATH)
+        .arg("--publish-drawing")
+        .arg(A01_DRAWING_UID)
+        .arg("--publish-plant")
+        .arg("TEST02")
+        .arg("--publish-style")
+        .arg("a01")
+        .output()
+        .expect("spawn pid_inspect export-bundle publish");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(out_dir.join("publish/data.xml").is_file());
+    assert!(out_dir.join("publish/meta.xml").is_file());
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out_dir.join("manifest.json")).unwrap())
+            .expect("manifest JSON");
+    assert_eq!(manifest["features"]["publish_xml"], true);
+    assert_eq!(manifest["inputs"]["publish_mdf"]["kind"], "sqlite");
+
+    let status: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out_dir.join("publish/status.json")).unwrap())
+            .expect("status JSON");
+    assert_eq!(status["requested_drawing_uid"], A01_DRAWING_UID);
+    assert_eq!(status["plant"], "TEST02");
+    assert_eq!(status["style"], "a01");
+    assert_eq!(status["data_xml_written"], true);
+    assert_eq!(status["meta_xml_written"], true);
+    assert_eq!(status["status"]["state"], "written");
+
+    let _ = std::fs::remove_file(&fixture);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn export_bundle_publish_diff_against_writes_diff_artifact() {
+    if !std::path::Path::new(A01_MDF_PATH).exists()
+        || !std::path::Path::new(A01_REFERENCE_DATA_XML).exists()
+    {
+        eprintln!("skipping: fixture {A01_MDF_PATH} or {A01_REFERENCE_DATA_XML} not found");
+        return;
+    }
+    let fixture = unique_tmp("export-bundle-publish-diff");
+    let out_dir = unique_tmp_dir("export-bundle-publish-diff");
+    build_mixed_coverage_fixture(&fixture);
+
+    let output = Command::new(binary_path())
+        .arg(&fixture)
+        .arg("--export-bundle")
+        .arg(&out_dir)
+        .arg("--export-bundle-publish")
+        .arg(A01_MDF_PATH)
+        .arg("--publish-drawing")
+        .arg(A01_DRAWING_UID)
+        .arg("--publish-plant")
+        .arg("TEST02")
+        .arg("--publish-diff-against")
+        .arg(A01_REFERENCE_DATA_XML)
+        .output()
+        .expect("spawn pid_inspect export-bundle publish diff");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out_dir.join("manifest.json")).unwrap())
+            .expect("manifest JSON");
+    assert_eq!(manifest["inputs"]["publish_mdf"]["kind"], "mdf");
+    assert!(out_dir.join("publish/publish_diff.json").is_file());
+    let diff: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out_dir.join("publish/publish_diff.json")).unwrap())
+            .expect("publish diff JSON");
+    assert_eq!(diff["reference_path"], A01_REFERENCE_DATA_XML);
+    assert!(diff["pid_tags"]["generated_total"].as_u64().is_some());
+    assert!(diff["rel_defuids"]["reference_total"].as_u64().is_some());
+
+    let status: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out_dir.join("publish/status.json")).unwrap())
+            .expect("status JSON");
+    let comparison = status["reference_comparison"]["state"]
+        .as_str()
+        .expect("comparison state");
+    assert!(matches!(comparison, "clean" | "findings"));
+
+    let _ = std::fs::remove_file(&fixture);
+    let _ = std::fs::remove_dir_all(&out_dir);
 }
 
 fn write_byte_audit_baseline(

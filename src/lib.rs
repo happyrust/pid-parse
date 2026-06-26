@@ -91,6 +91,7 @@ pub mod byte_audit;
 pub mod cfb;
 pub mod crossref;
 pub mod error;
+pub mod export_bundle;
 pub mod geometry;
 pub mod import_view;
 pub mod inspect;
@@ -109,6 +110,9 @@ pub use byte_audit::{
     StreamAuditSummary, TraceConfidence,
 };
 pub use error::PidError;
+pub use export_bundle::{
+    export_bundle_publish_xml, ExportBundlePlan, ExportBundlePublishPlan, ExportBundlePublishStatus,
+};
 pub use geometry::*;
 pub use import_view::*;
 pub use layout::*;

@@ -17,13 +17,14 @@ use crate::model::{
     ClusterCoverage, ObjectGraph, PidDocument, PidObject, PidRelationship, RootPresence,
     SheetStream, SymbolUsage,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Compact UI-oriented snapshot of a [`PidDocument`], produced by
 /// [`build_import_view`]. Immutable view intended for reports, pickers
 /// and imports; richer or byte-level detail stays on
 /// [`crate::model::PidDocument`] / [`crate::model::CrossReferenceGraph`].
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PidImportView {
     /// Display title sourced from `DrawingMeta.drawing_number`, then
     /// `SummaryInfo.title`, falling back to `"Smart P&ID Import"`.
@@ -48,7 +49,7 @@ pub struct PidImportView {
 
 /// Slim view of a single [`PidObject`] — keeps just the fields a UI
 /// typically needs for pickers, tables and diffs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PidVisualObject {
     /// 32-character hex drawing-scoped identifier.
     pub drawing_id: String,
@@ -67,7 +68,7 @@ pub struct PidVisualObject {
 }
 
 /// Slim view of a single [`PidRelationship`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PidVisualRelationship {
     /// 32-character hex GUID portion of `model_id`.
     pub guid: String,
@@ -91,7 +92,7 @@ pub struct PidVisualRelationship {
 
 /// Reverse-index summary of how a symbol is used across `JSite`
 /// instances — slim view of [`crate::model::SymbolUsage`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PidSymbolSummary {
     /// Symbol basename (e.g. `"GateValve"`) when the `JSite` exposed
     /// one; else `None`.
@@ -109,7 +110,7 @@ pub struct PidSymbolSummary {
 
 /// One-line cluster / sheet / coverage summary used inside
 /// [`PidImportView::clusters`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PidClusterSummary {
     /// Display name — matches [`crate::model::ClusterInfo::name`] or
     /// a synthetic marker like `"coverage.declared_missing"`.

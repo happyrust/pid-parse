@@ -2,7 +2,10 @@ use pid_parse::inspect::controlled_diff::{
     build_evidence_report, ControlledDiffCaseReport, ControlledDiffEvidenceReport,
     ControlledDiffMetadata, ControlledDiffStreamReport,
 };
-use pid_parse::{PidParser, PidWriter, WritePlan};
+use pid_parse::{
+    export_bundle_publish_xml, ExportBundlePlan, ExportBundlePublishPlan, PidParser, PidWriter,
+    WritePlan,
+};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,7 +14,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--geometry-json] [--geometry-summary]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit [--byte-audit-baseline <audit.json>]]\n                    [--round-trip <output.pid> [--verify]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]\n                    [--controlled-diff-dir <dir>]"
+            "Usage: pid_inspect <file.pid> [--json] [--schema]\n                    [--geometry-json] [--geometry-summary]\n                    [--probe-cluster] [--probe-dynamic] [--probe-sheet]\n                    [--probe-sheet-chunks [Sheet<N>]]\n                    [--probe-relationships] [--probe-endpoints]\n                    [--crossref] [--graph-mermaid] [--crossref-mermaid]\n                    [--coverage] [--byte-audit [--byte-audit-baseline <audit.json>]]\n                    [--round-trip <output.pid> [--verify]]\n                    [--export-bundle <dir> [--export-bundle-raw-streams]\n                     [--export-bundle-publish <Export.mdf|Export_v2.sqlite>]\n                     [--publish-drawing <UID>] [--publish-plant <NAME>]\n                     [--publish-style a01|dwg]\n                     [--publish-diff-against <Data.xml>]]\n                    [--set-drawing-number <NEW> --output <output.pid>]\n                    [--set-xml-tag <stream> <tag> <value> --output <output.pid>]\n                    [--diff <other.pid>]\n                    [--controlled-diff-dir <dir>]"
         );
         std::process::exit(1);
     }
@@ -35,12 +38,48 @@ fn main() {
     let byte_audit_baseline = flag_value(&args, "--byte-audit-baseline");
 
     let round_trip = flag_value(&args, "--round-trip");
+    let export_bundle_dir = flag_value(&args, "--export-bundle");
+    let export_bundle_raw_streams = args.iter().any(|a| a == "--export-bundle-raw-streams");
+    let export_bundle_publish = flag_value(&args, "--export-bundle-publish");
+    let publish_drawing = flag_value(&args, "--publish-drawing");
+    let publish_plant = flag_value(&args, "--publish-plant");
+    let publish_style = flag_value(&args, "--publish-style");
+    let publish_diff_against = flag_value(&args, "--publish-diff-against");
     let set_drawing_number = flag_value(&args, "--set-drawing-number");
     let set_xml_tag_args = flag_triple(&args, "--set-xml-tag");
     let output = flag_value(&args, "--output");
     let diff_other = flag_value(&args, "--diff");
     let controlled_diff_dir = flag_value(&args, "--controlled-diff-dir");
     let verify = args.iter().any(|a| a == "--verify");
+    let has_publish_bundle_options = export_bundle_publish.is_some()
+        || publish_drawing.is_some()
+        || publish_plant.is_some()
+        || publish_style.is_some()
+        || publish_diff_against.is_some();
+
+    if export_bundle_dir.is_none() {
+        if export_bundle_raw_streams {
+            eprintln!("--export-bundle-raw-streams requires --export-bundle <dir>");
+            std::process::exit(2);
+        }
+        if has_publish_bundle_options {
+            eprintln!("publish bundle flags require --export-bundle <dir>");
+            std::process::exit(2);
+        }
+    }
+    if export_bundle_publish.is_none()
+        && (publish_drawing.is_some()
+            || publish_plant.is_some()
+            || publish_style.is_some()
+            || publish_diff_against.is_some())
+    {
+        eprintln!("publish option flags require --export-bundle-publish <input>");
+        std::process::exit(2);
+    }
+    if export_bundle_publish.is_some() && publish_drawing.is_none() {
+        eprintln!("--export-bundle-publish requires --publish-drawing <UID>");
+        std::process::exit(2);
+    }
 
     // Writer / diff modes are handled up-front because they don't print
     // the standard report and always exit after completing.
@@ -54,6 +93,21 @@ fn main() {
     }
     if let Some(out) = round_trip {
         run_round_trip(path, &out, verify);
+        return;
+    }
+    if let Some(out_dir) = export_bundle_dir {
+        run_export_bundle(
+            path,
+            ExportBundleCliOptions {
+                output_dir: out_dir,
+                include_raw_streams: export_bundle_raw_streams,
+                publish_input: export_bundle_publish,
+                publish_drawing,
+                publish_plant,
+                publish_style,
+                publish_diff_against,
+            },
+        );
         return;
     }
     if let Some(new_number) = set_drawing_number {
@@ -76,7 +130,6 @@ fn main() {
         eprintln!("--byte-audit-baseline requires --byte-audit");
         std::process::exit(2);
     }
-
     if schema_mode {
         match pid_parse::schema::pid_document_schema_pretty() {
             Ok(s) => println!("{s}"),
@@ -922,6 +975,67 @@ fn run_round_trip(input: &str, output: &str, verify: bool) {
             std::process::exit(1);
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct ExportBundleCliOptions {
+    output_dir: String,
+    include_raw_streams: bool,
+    publish_input: Option<String>,
+    publish_drawing: Option<String>,
+    publish_plant: Option<String>,
+    publish_style: Option<String>,
+    publish_diff_against: Option<String>,
+}
+
+/// Export a parsed `.pid` package to a Phase 32 `.pid.bundle/` directory.
+fn run_export_bundle(input: &str, options: ExportBundleCliOptions) {
+    let parser = PidParser::new();
+    let pkg = match parser.parse_package(input) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Parse error: {e}");
+            std::process::exit(1);
+        }
+    };
+    let mut plan = if options.include_raw_streams {
+        ExportBundlePlan::default().with_raw_stream_bytes()
+    } else {
+        ExportBundlePlan::default()
+    };
+    if let Some(input_path) = options.publish_input {
+        let drawing_uid = options
+            .publish_drawing
+            .expect("validated --export-bundle-publish requires --publish-drawing");
+        let mut publish = ExportBundlePublishPlan::new(input_path).with_drawing_uid(drawing_uid);
+        if let Some(plant) = options.publish_plant {
+            publish = publish.with_plant(plant);
+        }
+        if let Some(style) = options.publish_style {
+            publish = publish.with_style(style);
+        }
+        if let Some(reference) = options.publish_diff_against {
+            publish = publish.with_reference_data_xml(reference);
+        }
+        plan = plan.with_publish(publish);
+    }
+    if let Err(e) =
+        pid_parse::export_bundle::export_bundle(&pkg, &plan, Path::new(&options.output_dir))
+    {
+        eprintln!("Export bundle error: {e}");
+        std::process::exit(1);
+    }
+    if let Some(publish) = plan.publish.as_ref() {
+        let publish_dir = Path::new(&options.output_dir).join("publish");
+        if let Err(e) = export_bundle_publish_xml(publish, &publish_dir) {
+            eprintln!("Export bundle publish error: {e}");
+            std::process::exit(1);
+        }
+    }
+    eprintln!("export-bundle ok: {input} -> {}", options.output_dir);
+    eprintln!("  streams indexed: {}", pkg.streams.len());
+    eprintln!("  raw stream bytes: {}", options.include_raw_streams);
+    eprintln!("  publish XML: {}", plan.publish.is_some());
 }
 
 /// Print a byte-level diff between two `.pid` packages.
