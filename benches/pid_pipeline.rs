@@ -20,6 +20,7 @@ use std::hint::black_box;
 use std::path::Path;
 
 use criterion::{criterion_group, criterion_main, Criterion};
+use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::publish::{load_drawing_graph_from_mdf, write_data_xml, PublishDrawing};
 use pid_parse::PidParser;
 
@@ -30,6 +31,15 @@ const A01_PID: &str = "test-file/export-test/publish-data/A01/A01.pid";
 const A01_MDF: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
 const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
 const A01_PLANT_NAME: &str = "TEST02";
+
+// Richest local fixture by decoded-geometry volume; used to quantify
+// the M5 "single-pass probe" question (master-plan candidate 7): the
+// reader currently runs `probe_sheet_stream` twice per sheet (once in
+// `streams/cluster.rs`, once in `populate_geometry_hints`). The
+// decision gate compares `probe_sheet_streams_gongyi` against
+// `parse_pid_gongyi` — if one full probe pass is < 5% of a full
+// parse, candidate 7 is closed as not worth the churn.
+const GONGYI_PID: &str = "test-file/工艺管道及仪表流程-1.pid";
 
 fn bench_parse_pid(c: &mut Criterion) {
     let path = Path::new(A01_PID);
@@ -82,10 +92,74 @@ fn bench_write_data_xml(c: &mut Criterion) {
     });
 }
 
+fn bench_parse_pid_gongyi(c: &mut Criterion) {
+    let path = Path::new(GONGYI_PID);
+    if !path.exists() {
+        eprintln!("bench skip: {GONGYI_PID} not found (SmartPlant fixture)");
+        return;
+    }
+    c.bench_function("parse_pid_gongyi", |b| {
+        b.iter(|| {
+            let doc = PidParser::new()
+                .parse_file(black_box(path))
+                .expect("gongyi fixture should parse");
+            black_box(doc);
+        });
+    });
+}
+
+/// M5 evidence gate: cost of ONE full `probe_sheet_stream` pass over
+/// every `Sheet*` stream of the gongyi fixture. The parse pipeline
+/// currently pays this twice per sheet (cluster decode + the
+/// post-crossref `populate_geometry_hints` re-probe), so the ratio
+/// `probe_sheet_streams_gongyi / parse_pid_gongyi` bounds the maximum
+/// saving of master-plan candidate 7 (`SheetGeometryBuilder`).
+fn bench_probe_sheet_streams(c: &mut Criterion) {
+    let path = Path::new(GONGYI_PID);
+    if !path.exists() {
+        eprintln!("bench skip: {GONGYI_PID} not found (SmartPlant fixture)");
+        return;
+    }
+    // Collect sheet stream bytes once outside the hot loop via the
+    // package path (raw bytes retained).
+    let pkg = pid_parse::PidPackage::from_path(path).expect("gongyi package should parse");
+    let sheets: Vec<(String, Vec<u8>)> = pkg
+        .parsed
+        .sheet_streams
+        .iter()
+        .filter_map(|sheet| {
+            pkg.streams
+                .get(&sheet.path)
+                .map(|raw| (sheet.path.clone(), raw.data.clone()))
+        })
+        .collect();
+    if sheets.is_empty() {
+        eprintln!("bench skip: gongyi fixture exposes no sheet streams");
+        return;
+    }
+
+    c.bench_function("probe_sheet_streams_gongyi", |b| {
+        b.iter(|| {
+            for (sheet_path, bytes) in &sheets {
+                let name = sheet_path.rsplit('/').next().unwrap_or("Sheet");
+                let report = probe_sheet_stream(
+                    black_box(name),
+                    black_box(sheet_path),
+                    black_box(bytes),
+                    &SheetProbeOptions::default(),
+                );
+                black_box(report);
+            }
+        });
+    });
+}
+
 criterion_group!(
     pid_pipeline,
     bench_parse_pid,
     bench_load_mdf,
-    bench_write_data_xml
+    bench_write_data_xml,
+    bench_parse_pid_gongyi,
+    bench_probe_sheet_streams
 );
 criterion_main!(pid_pipeline);

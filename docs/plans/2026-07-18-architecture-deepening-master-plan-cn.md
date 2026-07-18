@@ -169,8 +169,9 @@ struct SheetRecordFamily {
 
 ## 8. M5 — 单遍探测（候选 7，证据先行，可砍）
 
-- [ ] **PR-B1**：扩展 `benches/pid_pipeline.rs`：单独计时 ① `probe_sheet_stream` 双跑成本、② endpoints 二次开流成本，占全解析时长比例。
+- [x] **PR-B1**（2026-07-19 实测）：`benches/pid_pipeline.rs` 新增 `parse_pid_gongyi`（11.91 ms）与 `probe_sheet_streams_gongyi`（0.994 ms，单遍全 Sheet probe）。重复的第二遍 probe ≈ 全解析时长的 **8.3%**。
   - **决策门禁**：占比 < 5% → 关闭候选 7，写一条 ADR 记录「不再重提」（防未来评审重复建议）；占比 ≥ 5% → 进 PR-B2。
+  - **门禁结果：8.3% ≥ 5%，候选 7 保留**，PR-B2 排在 M4 之后执行（绝对收益 ~1 ms/文件，优先级仍低于 M4）。
 - [ ] **PR-B2（条件触发）**：`SheetGeometryBuilder` 两阶段构建（第一遍 probe+decode 缓存；第二遍只注入 crossref field_x 补算 object hints），调用顺序不变式（DA 尾巴 → endpoints → crossref → hints）收进 builder 的 interface 并可断言。
   - 注意内存权衡：`parse_file` 流式路径不保留原始字节，缓存策略只对 `parse_package` 路径生效，`parse_file` 保持现状。
 
