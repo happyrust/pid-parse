@@ -3295,57 +3295,82 @@ pub struct SheetIgTextBoxDecoded {
 ///    offset 30;
 /// 4. `text_length <= 1024` (reject obvious noise);
 /// 5. 3 trailing doubles finite + in domain.
+///
+/// Thin wrapper over [`IgTextBoxDecoder`]'s shared
+/// [`PsmRecordDecoder::scan`].
 pub fn decode_igtextboxes(data: &[u8]) -> Vec<SheetIgTextBoxDecoded> {
-    let mut out = Vec::new();
-    if data.len() < 6 + IGTEXTBOX_PAYLOAD_OVERHEAD {
-        return out;
-    }
-    let max_offset = data.len() - (6 + IGTEXTBOX_PAYLOAD_OVERHEAD);
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_igtextbox_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
+    IgTextBoxDecoder.scan(data)
 }
 
 /// Try to decode a single PSM `igTextBox` record starting at
 /// `offset`. Returns `None` on validation failure.
+///
+/// Thin wrapper over [`IgTextBoxDecoder::decode_at`].
 pub fn decode_igtextbox_at(data: &[u8], offset: usize) -> Option<SheetIgTextBoxDecoded> {
-    let header_end = offset.checked_add(6)?;
-    if header_end > data.len() {
-        return None;
-    }
-    let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_IGTEXTBOX {
-        return None;
-    }
-    let type_flags = type_word >> 14;
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    let btf = bytes_to_follow as usize;
-    if btf < IGTEXTBOX_PAYLOAD_OVERHEAD {
-        return None;
-    }
-    if !(btf - IGTEXTBOX_PAYLOAD_OVERHEAD).is_multiple_of(2) {
-        return None;
-    }
-    let derived_text_len_words = ((btf - IGTEXTBOX_PAYLOAD_OVERHEAD) / 2) as u16;
-    if derived_text_len_words > IGTEXTBOX_MAX_TEXT_LENGTH {
-        return None;
+    IgTextBoxDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the `igTextBox` family (PSM type
+/// `0x004D`). Validation rules are documented on
+/// [`decode_igtextboxes`].
+pub struct IgTextBoxDecoder;
+
+impl PsmRecordDecoder for IgTextBoxDecoder {
+    type Record = SheetIgTextBoxDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGTEXTBOX
     }
 
-    let payload_end = header_end.checked_add(btf)?;
-    if payload_end > data.len() {
-        return None;
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGTEXTBOX_PAYLOAD_OVERHEAD
     }
-    let payload = data.get(header_end..payload_end)?;
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgTextBoxDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGTEXTBOX {
+            return None;
+        }
+        let btf = header.bytes_to_follow as usize;
+        if btf < IGTEXTBOX_PAYLOAD_OVERHEAD {
+            return None;
+        }
+        if !(btf - IGTEXTBOX_PAYLOAD_OVERHEAD).is_multiple_of(2) {
+            return None;
+        }
+        let derived_text_len_words = ((btf - IGTEXTBOX_PAYLOAD_OVERHEAD) / 2) as u16;
+        if derived_text_len_words > IGTEXTBOX_MAX_TEXT_LENGTH {
+            return None;
+        }
+        let payload_end = header.body_start.checked_add(btf)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        decode_igtextbox_payload(data, offset, &header, payload_end, derived_text_len_words)
+    }
+
+    fn advance_of(&self, record: &SheetIgTextBoxDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// Family-specific payload validation for `igTextBox` (everything
+/// after the shared PSM envelope and size/parity pre-checks).
+fn decode_igtextbox_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+    derived_text_len_words: u16,
+) -> Option<SheetIgTextBoxDecoded> {
+    let type_code = header.type_code;
+    let type_flags = header.type_flags;
+    let bytes_to_follow = header.bytes_to_follow;
+
+    let payload = data.get(header.body_start..payload_end)?;
 
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
