@@ -27,6 +27,21 @@
 - 守恒证据：金快照逐条不变、951 lib tests + 104 `parse_real_files`
   棘轮全绿、clippy -D warnings / fmt / missing_docs 0=baseline。
   AGENTS.md「七层模板」章节更新为「双 seam 模板」。
+- **M3（SheetRecordFamily registry，4 个 commit）**：新增
+  `src/model/sheet_families.rs` —— 每个记录族一行 const 注册表
+  （name / type_code / emits_geometry 政策 / byte-audit trace class /
+  SheetGeometry 字段与 DTO 名 / fn 指针 decode_into · record_count ·
+  decoded_ranges）。四个消费方全部改为吃表：
+  ① `streams/cluster.rs` 接线（删 11 段 decode 块 + 12 连 `&&` 空判）；
+  ② 新增 `tests/sheet_family_wiring.rs` 接线一致性门禁（5 fixture ×
+  12 sheet × 11 族，SheetGeometry 字段计数 == 原始字节重解码计数，
+  堵住「解码器在、接线漏」的静默缺口）；
+  ③ `byte_audit/aggregate.rs` trace 走注册表（顺带把此前缺席的
+  `attribute_fragments` 补进 trace——其 Probed 区间与原始 0x0010 区间
+  重合，coverage 棘轮数字零变化）；
+  ④ `schema.rs` 逐族 needle 断言自动从注册表派生。
+  `primitive_circle`（igCircle2d 0x0059）的 schema/解码器漂移在注册表
+  文档中显式声明：按 ADR-0003 过 35-B 证据门禁后才建行。
 
 ### Phase 34-E：缺失曲线家族 fixture 扩充计划——本地语料重大发现（2026-07-07）
 
