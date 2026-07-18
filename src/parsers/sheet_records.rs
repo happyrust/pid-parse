@@ -3921,22 +3921,63 @@ pub struct SheetJStyleOverrideDecoded {
 /// header + payload validation. Adversarial input is panic-safe via
 /// the per-offset `Option` boundary and bounded `Vec` allocations.
 pub fn decode_jstyle_overrides(data: &[u8]) -> Vec<SheetJStyleOverrideDecoded> {
-    let mut out = Vec::new();
-    if data.len() < PSM_RECORD_HEADER_LEN + JSTYLE_OVERRIDE_PAYLOAD_LEN {
-        return out;
+    JStyleOverrideDecoder.scan(data)
+}
+
+/// [`PsmRecordDecoder`] adapter for the RAD `JStyleOverride` family
+/// (PSM type `0x0030`, `style.dll` Version-3 IO — **not** an arc; see
+/// the Phase 16 reclassification note on
+/// [`PSM_TYPE_CODE_JSTYLE_OVERRIDE`]).
+///
+/// Like `GLine2d`, this family uses the extended 18-byte
+/// [`PSM_RECORD_HEADER_LEN`] header (`oid` at header bytes 6..10) and
+/// carries a variable attribute tail inside `bytes_to_follow`; both
+/// deviations live on this adapter.
+pub struct JStyleOverrideDecoder;
+
+impl PsmRecordDecoder for JStyleOverrideDecoder {
+    type Record = SheetJStyleOverrideDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_JSTYLE_OVERRIDE
     }
-    let max_offset = data.len() - (PSM_RECORD_HEADER_LEN + JSTYLE_OVERRIDE_PAYLOAD_LEN);
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_jstyle_override_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
+
+    fn min_record_len(&self) -> usize {
+        PSM_RECORD_HEADER_LEN + JSTYLE_OVERRIDE_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetJStyleOverrideDecoded> {
+        let envelope = parse_psm_header(data, offset)?;
+        if envelope.type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
+            return None;
         }
-        off += 1;
+        if envelope.type_flags != 0 {
+            return None;
+        }
+        if !(JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW..=JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW)
+            .contains(&envelope.bytes_to_follow)
+        {
+            return None;
+        }
+        let btf_usize = envelope.bytes_to_follow as usize;
+        let record_end = offset.checked_add(PSM_ENVELOPE_LEN + btf_usize)?;
+        if record_end > data.len() {
+            return None;
+        }
+        let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
+        let payload_end = header_end.checked_add(JSTYLE_OVERRIDE_PAYLOAD_LEN)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        decode_jstyle_override_payload(data, offset, &envelope, header_end, payload_end, record_end)
     }
-    out
+
+    fn advance_of(&self, record: &SheetJStyleOverrideDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
 }
 
 /// Try to decode one PSM `0x0030` `JStyleOverride` record at `offset`.
@@ -3954,42 +3995,31 @@ pub fn decode_jstyle_overrides(data: &[u8]) -> Vec<SheetJStyleOverrideDecoded> {
 /// `axis_a.y ≈ 0` constraint from the removed Phase 14 `PrimitiveArc`
 /// compatibility path, which rejected ~51% of real `JStyleOverride`
 /// records.
+///
+/// Thin wrapper over [`JStyleOverrideDecoder::decode_at`].
 pub fn decode_jstyle_override_at(data: &[u8], offset: usize) -> Option<SheetJStyleOverrideDecoded> {
-    let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
-    if header_end > data.len() {
-        return None;
-    }
+    JStyleOverrideDecoder.decode_at(data, offset)
+}
+
+/// Family-specific payload extraction for `JStyleOverride` (the
+/// 18-byte extended header's `oid`, the 64-byte Version-3 field
+/// block, and the raw attribute tail).
+fn decode_jstyle_override_payload(
+    data: &[u8],
+    offset: usize,
+    envelope: &PsmHeader,
+    header_end: usize,
+    payload_end: usize,
+    record_end: usize,
+) -> Option<SheetJStyleOverrideDecoded> {
+    let type_code = envelope.type_code;
+    let type_flags = envelope.type_flags;
+    let bytes_to_follow = envelope.bytes_to_follow;
+
     let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
-        return None;
-    }
-    let type_flags = type_word >> 14;
-    if type_flags != 0 {
-        return None;
-    }
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    if !(JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW..=JSTYLE_OVERRIDE_MAX_BYTES_TO_FOLLOW)
-        .contains(&bytes_to_follow)
-    {
-        return None;
-    }
-    let btf_usize = bytes_to_follow as usize;
-    let record_end = offset
-        .checked_add(6)
-        .and_then(|p| p.checked_add(btf_usize))?;
-    if record_end > data.len() {
-        return None;
-    }
     let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
 
-    let payload_start = offset + PSM_RECORD_HEADER_LEN;
-    let payload_end = payload_start + JSTYLE_OVERRIDE_PAYLOAD_LEN;
-    if payload_end > data.len() {
-        return None;
-    }
-    let payload = data.get(payload_start..payload_end)?;
+    let payload = data.get(header_end..payload_end)?;
 
     let field_a_u32 = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let field_b_u32 = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
