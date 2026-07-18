@@ -2512,56 +2512,89 @@ impl SheetPrimitiveLineDecoded {
 /// through without panics; the output is bounded by the input
 /// length.
 pub fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
-    let mut out = Vec::new();
-    if data.len() < PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN {
-        return out;
-    }
-    let max_offset = data.len() - (PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN);
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_primitive_line_at(data, off) {
-            // Advance past the entire record (per bytes_to_follow + 6
-            // header overhead) to avoid emitting overlapping records.
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
+    GLine2dDecoder.scan(data)
 }
 
 /// Try to decode a single PSM `GLine2d` `PrimitiveLine` starting at
 /// `offset` in `data`. Returns `None` when any of the validation
 /// rules in [`decode_primitive_lines`] fail. Bounds-checked: passing
 /// `offset >= data.len()` or a truncated tail simply returns `None`.
+///
+/// Thin wrapper over [`GLine2dDecoder::decode_at`].
 pub fn decode_primitive_line_at(data: &[u8], offset: usize) -> Option<SheetPrimitiveLineDecoded> {
-    let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
-    let payload_end = header_end.checked_add(GLINE2D_PAYLOAD_LEN)?;
-    if payload_end > data.len() {
-        return None;
+    GLine2dDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the `SmartPlant` extended
+/// `GLine2d` family (PSM type `0x3FE6`).
+///
+/// The family deviation from the standard IGDS record shape lives
+/// here, not in the shared seam: `GLine2d` uses the extended
+/// [`PSM_RECORD_HEADER_LEN`] (18-byte) header carrying `oid` at
+/// header bytes 6..10 (standard families carry `oid` in their payload
+/// sub-header), and its `bytes_to_follow` may exceed the 48-byte
+/// geometry payload — the trailing attribute bytes are included in
+/// the decoded [`SheetPrimitiveLineDecoded::byte_range`] so
+/// [`PsmRecordDecoder::scan`] jumps the whole record.
+pub struct GLine2dDecoder;
+
+impl PsmRecordDecoder for GLine2dDecoder {
+    type Record = SheetPrimitiveLineDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_GLINE2D
     }
 
-    // PSM header.
+    fn min_record_len(&self) -> usize {
+        PSM_RECORD_HEADER_LEN + GLINE2D_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetPrimitiveLineDecoded> {
+        let envelope = parse_psm_header(data, offset)?;
+        if envelope.type_code != PSM_TYPE_CODE_GLINE2D {
+            return None;
+        }
+        let header_end = offset.checked_add(PSM_RECORD_HEADER_LEN)?;
+        let payload_end = header_end.checked_add(GLINE2D_PAYLOAD_LEN)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        let bytes_to_follow_usize = envelope.bytes_to_follow as usize;
+        // bytes_to_follow must cover at least the 48-byte payload.
+        if bytes_to_follow_usize < GLINE2D_PAYLOAD_LEN {
+            return None;
+        }
+        // The full record (envelope + bytes_to_follow trailer) must fit.
+        let record_end = offset.checked_add(PSM_ENVELOPE_LEN + bytes_to_follow_usize)?;
+        if record_end > data.len() {
+            return None;
+        }
+        decode_primitive_line_payload(data, offset, &envelope, header_end, payload_end, record_end)
+    }
+
+    fn advance_of(&self, record: &SheetPrimitiveLineDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// Family-specific payload validation for `GLine2d` (the 18-byte
+/// extended header's `oid` plus the six-double parametric payload).
+fn decode_primitive_line_payload(
+    data: &[u8],
+    offset: usize,
+    envelope: &PsmHeader,
+    header_end: usize,
+    payload_end: usize,
+    record_end: usize,
+) -> Option<SheetPrimitiveLineDecoded> {
+    let type_code = envelope.type_code;
+    let type_flags = envelope.type_flags;
+    let bytes_to_follow = envelope.bytes_to_follow;
+
     let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_GLINE2D {
-        return None;
-    }
-    let type_flags = type_word >> 14;
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    let bytes_to_follow_usize = bytes_to_follow as usize;
-    // bytes_to_follow must cover at least the 48-byte payload.
-    if bytes_to_follow_usize < GLINE2D_PAYLOAD_LEN {
-        return None;
-    }
-    // The full record (header + bytes_to_follow trailer) must fit.
-    let record_end = offset.checked_add(6 + bytes_to_follow_usize)?;
-    if record_end > data.len() {
-        return None;
-    }
     let oid = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
 
     // 6-double GLine2d payload at offset + 18.
