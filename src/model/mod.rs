@@ -821,8 +821,13 @@ pub struct SheetStream {
 }
 
 mod sheet;
+mod sheet_families;
 
 pub use sheet::*;
+pub use sheet_families::{
+    decode_all_families_into, sheet_geometry_has_no_family_records, SheetFamilyTraceClass,
+    SheetRecordFamily, SHEET_RECORD_FAMILIES,
+};
 
 /// Top-level stream the reader encountered but does not (yet)
 /// interpret. This stores classification metadata only; bytes are

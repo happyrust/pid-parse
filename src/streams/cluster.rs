@@ -9,21 +9,16 @@
 use crate::config::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
-    ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedAttributeFragment,
-    DecodedGraphicGroupRecord, DecodedIgBoundary2dRecord, DecodedIgLine2dRecord,
-    DecodedIgLineString2dRecord, DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord,
-    DecodedIgTextBoxRecord, DecodedJStyleOverrideRecord, DecodedPrimitiveLineRecord,
-    DecodedSpatialAnalysis, DecodedSubRecord0x0010Record, PidDocument, SheetCoordinateHintDto,
-    SheetGeometry, SheetStream, SheetText,
+    decode_all_families_into, sheet_geometry_has_no_family_records, ClusterInfo, ClusterKind,
+    ClusterProbeInfo, DecodedSpatialAnalysis, PidDocument, SheetCoordinateHintDto, SheetGeometry,
+    SheetStream, SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
     sheet_records::{
-        collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_attribute_fragments,
-        decode_graphic_groups, decode_igboundaries, decode_iglines, decode_iglinestrings,
-        decode_igpoints, decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides,
-        decode_primitive_lines, decode_sub_records_0x0010, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+        collect_normalized_f64_pairs, coordinate_pair_spatial_analysis,
+        SPATIAL_ANALYSIS_DEFAULT_GRID_N,
     },
 };
 use std::io::Read;
@@ -242,73 +237,21 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         })
         .collect();
 
-    // Phase 14/16: walk the raw stream for PSM-encoded `GLine2d`,
-    // standard IGDS primitives, GraphicGroup audit records, and
-    // authoritative `JStyleOverride` records. All decoders are
-    // conservative — they emit zero records when the stream uses
-    // a different record shape and never panic.
-    let decoded_primitive_lines: Vec<DecodedPrimitiveLineRecord> = decode_primitive_lines(raw_data)
-        .into_iter()
-        .map(DecodedPrimitiveLineRecord::from)
-        .collect();
-    let decoded_iglines: Vec<DecodedIgLine2dRecord> = decode_iglines(raw_data)
-        .into_iter()
-        .map(DecodedIgLine2dRecord::from)
-        .collect();
-    let decoded_iglinestrings: Vec<DecodedIgLineString2dRecord> = decode_iglinestrings(raw_data)
-        .into_iter()
-        .map(DecodedIgLineString2dRecord::from)
-        .collect();
-    let decoded_igpoints: Vec<DecodedIgPoint2dRecord> = decode_igpoints(raw_data)
-        .into_iter()
-        .map(DecodedIgPoint2dRecord::from)
-        .collect();
-    let decoded_igtextboxes: Vec<DecodedIgTextBoxRecord> = decode_igtextboxes(raw_data)
-        .into_iter()
-        .map(DecodedIgTextBoxRecord::from)
-        .collect();
-    let decoded_igsymbols: Vec<DecodedIgSymbol2dRecord> = decode_igsymbols(raw_data)
-        .into_iter()
-        .map(DecodedIgSymbol2dRecord::from)
-        .collect();
-    let decoded_igboundaries: Vec<DecodedIgBoundary2dRecord> = decode_igboundaries(raw_data)
-        .into_iter()
-        .map(DecodedIgBoundary2dRecord::from)
-        .collect();
-    let decoded_graphic_groups: Vec<DecodedGraphicGroupRecord> = decode_graphic_groups(raw_data)
-        .into_iter()
-        .map(DecodedGraphicGroupRecord::from)
-        .collect();
-    let decoded_jstyle_overrides: Vec<DecodedJStyleOverrideRecord> =
-        decode_jstyle_overrides(raw_data)
-            .into_iter()
-            .map(DecodedJStyleOverrideRecord::from)
-            .collect();
-    let decoded_sub_records_0x0010: Vec<DecodedSubRecord0x0010Record> =
-        decode_sub_records_0x0010(raw_data)
-            .into_iter()
-            .map(DecodedSubRecord0x0010Record::from)
-            .collect();
-    // Phase 26 additive, audit-only attribute-fragment view of the same
-    // 0x0010 records (raw `decoded_sub_records_0x0010` above is unchanged).
-    let decoded_attribute_fragments: Vec<DecodedAttributeFragment> =
-        decode_attribute_fragments(raw_data)
-            .into_iter()
-            .map(DecodedAttributeFragment::from)
-            .collect();
+    // M3 registry walk (was: 11 hand-written decode+convert+assign
+    // blocks). All decoders are conservative — they emit zero records
+    // when the stream uses a different record shape and never panic.
+    let mut geometry = SheetGeometry {
+        texts,
+        endpoints: Vec::new(),
+        coordinate_hints,
+        object_geometry_hints: Vec::new(),
+        ..SheetGeometry::default()
+    };
+    decode_all_families_into(raw_data, &mut geometry);
 
-    if texts.is_empty()
-        && coordinate_hints.is_empty()
-        && decoded_primitive_lines.is_empty()
-        && decoded_iglines.is_empty()
-        && decoded_iglinestrings.is_empty()
-        && decoded_igpoints.is_empty()
-        && decoded_igtextboxes.is_empty()
-        && decoded_igsymbols.is_empty()
-        && decoded_igboundaries.is_empty()
-        && decoded_graphic_groups.is_empty()
-        && decoded_jstyle_overrides.is_empty()
-        && decoded_sub_records_0x0010.is_empty()
+    if geometry.texts.is_empty()
+        && geometry.coordinate_hints.is_empty()
+        && sheet_geometry_has_no_family_records(&geometry)
     {
         None
     } else {
@@ -316,31 +259,14 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         // sheet's normalized f64 pairs. `None` when the sheet carries
         // no normalized pairs; never promotes any entity.
         let spatial_pairs = collect_normalized_f64_pairs(raw_data);
-        let spatial_analysis = if spatial_pairs.is_empty() {
+        geometry.spatial_analysis = if spatial_pairs.is_empty() {
             None
         } else {
             Some(DecodedSpatialAnalysis::from(
                 coordinate_pair_spatial_analysis(&spatial_pairs, SPATIAL_ANALYSIS_DEFAULT_GRID_N),
             ))
         };
-        Some(SheetGeometry {
-            texts,
-            endpoints: Vec::new(),
-            coordinate_hints,
-            object_geometry_hints: Vec::new(),
-            decoded_primitive_lines,
-            decoded_iglines,
-            decoded_iglinestrings,
-            decoded_igpoints,
-            decoded_igtextboxes,
-            decoded_igsymbols,
-            decoded_igboundaries,
-            decoded_graphic_groups,
-            decoded_jstyle_overrides,
-            decoded_sub_records_0x0010,
-            decoded_attribute_fragments,
-            spatial_analysis,
-        })
+        Some(geometry)
     }
 }
 
