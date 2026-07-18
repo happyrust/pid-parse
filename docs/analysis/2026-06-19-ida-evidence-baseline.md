@@ -98,6 +98,78 @@ readers for `PSMspacemap`, `StyleCluster`, `0x0010`, `GraphicGroup 0x00FA`,
 semantics. Therefore no parser confidence upgrade is justified from
 `sppid.dll` alone.
 
+## 2026-06-21 live MCP refresh
+
+This refresh used the currently installed short-name `ida-pro-mcp` HTTP
+tool surface (`survey_binary`, `find_regex`, `search_text`,
+`imports_query`, `server_health`, `list_instances`) rather than the older
+`idapro_*` wrapper names. The server started successfully with
+`scripts/start.ps1` and reported `OK:65`.
+
+### Tooling boundary
+
+The live tool list did not expose `idalib_open`; the skill `open.ps1`
+therefore could not open an additional `radsrvitem.dll` session in this
+environment and failed while expecting `structuredContent` from that older
+method. This is a tooling boundary only. It does not change parser evidence:
+the current live IDA evidence is limited to already reachable instances.
+
+### Reachable instances
+
+`list_instances` on `127.0.0.1:13337` returned one active instance:
+
+| Instance | Host/port | IDB path | Active |
+|---|---:|---|---|
+| `sppid.dll` | `127.0.0.1:13337` | `D:\work\plant-code\cad\pid-parse\dlls\sppid.dll.i64` | yes |
+
+A direct port health sweep over `13337..13352` found:
+
+| Host/port | Module | IDB path |
+|---:|---|---|
+| `127.0.0.1:13337` | `sppid.dll` | `D:\work\plant-code\cad\pid-parse\dlls\sppid.dll.i64` |
+| `127.0.0.1:13338` | `core.dll` | `D:\AVEVA\Everything3D3.1\core.dll.i64` |
+
+No other IDA MCP endpoints answered in that range during this refresh.
+
+### Live focused search refresh
+
+`sppid.dll` remained a negative raw-persistence source:
+
+| Tool | Search target | Result | Impact |
+|---|---|---|---|
+| `survey_binary` | minimal survey | 32-bit, 158 functions, 204 strings, base `0x54880000` | Confirms the small VB6/COM glue scope. |
+| `find_regex` | `PSMspacemap|StyleCluster|GraphicGroup|JSitesList|OLEM|JStyleOverride|JStyleBase` | `n = 0` | No unresolved-family stream/name evidence. |
+| `find_regex` | `IOContext|DoIO|IJPersist|PersistCluster|IPersistStorage|StgOpen` | `n = 0` | No persistence body or CFBF storage entrypoint evidence. |
+| `find_regex` | `P&IDAttributes|Dynamic Attributes|RAD_OBJECT_TYPE|137|0x0089|0089` | `n = 0` | No DA body semantic reader evidence. |
+| `find_regex` | `Sheet[0-9]|Sheet|igLine|igText|igSymbol|igPoint|GLine|GArc` | `n = 0` | No Sheet raw-record reader clue. |
+| `imports_query` | `.*(Stg|Storage|Stream|Ole|CoCreate|CLSID|IStorage|IStream).*` | empty result | No imported storage/stream API surface. |
+| `search_text` | `StgOpen`, `IStorage`, `IStream`, `PSMspacemap`, `JSitesList`, `StyleCluster`, `GraphicGroup`, `IOContext`, `DoIO` | all `n = 0` | No rendered-listing evidence. |
+
+`core.dll` also did not produce SmartPlant raw-persistence evidence:
+
+| Tool | Search target | Result | Impact |
+|---|---|---|---|
+| `survey_binary` | minimal survey | 32-bit, 34,308 functions, 52,255 strings, base `0x5170000` | Broad AVEVA E3D platform module, not a PID raw-format module by itself. |
+| `find_regex` | unresolved-family and persistence terms from the `sppid.dll` batch | `n = 0` for `PSMspacemap`, `StyleCluster`, `GraphicGroup`, `JSitesList`, `OLEM`, `IOContext`, `DoIO`, `P&IDAttributes`, `0x0089`, etc. | Negative for direct SmartPlant raw persistence clues. |
+| `find_regex` | `Sheet[0-9]|Sheet|igLine|igText|igSymbol|igPoint|GLine|GArc` | 16 hits such as `ASHEET`, `DSHEET`, `Co-ordinates refer to sheet token $S$/`, `DGARC`, `DGARCL` | E3D sheet/token vocabulary only. Not evidence for SmartPlant `Sheet*` raw PSM record layout. |
+
+The attempted heavier `core.dll` import/listing batch timed out. No
+confidence claim is made from that timeout.
+
+### Refresh conclusion
+
+The 2026-06-21 live MCP refresh reinforces the existing negative boundary:
+
+- keep `sppid.dll` scoped to application/COM glue;
+- keep `core.dll` scoped to broad platform sheet/database vocabulary;
+- do not promote `PSMspacemap`, `StyleCluster`, `0x0010`,
+  `GraphicGroup`, `JSitesList.trailing_slots`, `0x0089`, page transform,
+  or semantic Sheet writer rows from these live searches;
+- future IDA work needs a reachable `radsrvitem.dll`, `style.dll`,
+  `OLESITE.dll`, `OLECRT.dll`, `J2DSrv.dll`, `jengine.dll`, or similar
+  session with direct stream-name, `IOContext::DoIO`, or controlled writer
+  evidence.
+
 ## `core.dll` current evidence
 
 `core.dll` is reachable at `127.0.0.1:13338`, but it is a very large AVEVA

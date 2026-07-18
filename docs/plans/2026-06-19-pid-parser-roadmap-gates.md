@@ -2,7 +2,7 @@
 
 > Date: 2026-06-19  
 > Scope: unresolved SmartPlant / Smart P&ID `.pid` parser families and the gates required before any promotion to `Decoded` confidence.  
-> Status: roadmap artifact. This document does not implement new parsers and does not widen writer support.
+> Status: roadmap artifact, synchronized through Phase 34-F on 2026-07-10. This document does not widen writer support.
 
 ## Evidence Baseline
 
@@ -20,9 +20,10 @@ Promotion to `Decoded` is allowed only when all required proof exists:
 6. IDA reader evidence or controlled fixture evidence when semantic names are claimed;
 7. separate IDA writer evidence or controlled write fixture evidence before any writer surface changes.
 
-Current IDA impact is conservative. `sppid.dll` and `core.dll` searches
-in `docs/analysis/2026-06-19-ida-evidence-baseline.md` found no direct
-raw `.pid` persistence path for the unresolved families below. Historical
+Current IDA impact is conservative. `sppid.dll` and `core.dll` searches,
+including the 2026-06-21 live `ida-pro-mcp` refresh in
+`docs/analysis/2026-06-19-ida-evidence-baseline.md`, found no direct raw
+`.pid` persistence path for the unresolved families below. Historical
 IDA evidence remains scoped to `JStyleOverride`, `JSitesList.entries`,
 `DocVersion2` / embedded OLE, `0x0089` export behavior, and the
 `PSMspacemap` handle model. It does not prove writer support.
@@ -57,6 +58,10 @@ magic value, or type code is known.
 | `ROADMAP-JSITESLIST-TRAILING` | `JSitesList.trailing_slots` | Entries `Decoded`; trailing slots `TypedAudit` | `/JSitesList` layout is `"OLEM"` + u32 count + u32 slot table. Logical entries match `JSite<id>` storages on 6/6 fixtures. `dwg0202` and `publish-dwg0202` carry three slots beyond `count` that repeat logical values. Historical `OLESITE.dll` confirms count-bounded `JSite` entries. | Delete/compact/stale-slot writer evidence or controlled before/after fixture proving whether trailing slots are inactive, reusable, deleted, or active under another count. Need byte ranges for header, entries, and trailing slots. | Active-vs-stale semantics of slots beyond count are not proven. | If no delete/compact writer evidence exists, keep trailing slots as `TypedAudit` and leave their byte ranges unconsumed or audit-only according to byte-audit policy. | Do not treat trailing slots as active entries. Do not rename them to deleted, free-list, or reusable slots without writer proof. | Header and first `count` logical entries are decoded. Slots beyond `count` are audit/tail ranges and must remain distinguishable from decoded entries. | Ratchet counts `{9,10,20,13,5,13}`, trailing counts `{0,0,0,3,0,3}`, storage-match counts, and byte-audit leftover equal to `4 * trailing_slots`. Roll back if controlled deletion shows different semantics. | Read-only. No JSite list compaction, deletion, or active-entry rewrite. |
 | `ROADMAP-DA-0089` | `0x0089` / class 137 Dynamic Attribute and cluster heads | `TypedAudit` | `/Unclustered Dynamic Attributes` is an end-anchored `0x0089` envelope chain with 8-byte prologue. The old 31-byte trailer aligns with the next record head. Historical `radsrvitem.dll` confirms `0x0089` is a runtime/persisted type and exports generic `RAD_OBJECT_TYPE = "137"`, but the type-name table does not map it to a semantic name. | Concrete DA/cluster reader path proving prologue counter semantics, head field names, class/family name, payload boundaries, and relation to existing object graph fields. Controlled fixture edits can supplement reader proof. | Current export path confirms type existence but not payload semantics. One fixture has a flagged head that the prologue count does not include, so counter semantics are not a hard invariant. | If no reader path is found, keep envelope and existing landmark claims separate: landmarks may remain decoded where already proven, envelope/payload stays audit/probe. | Do not call `0x0089` a named business record family from `RAD_OBJECT_TYPE = "137"`. Do not rename `record_id`, `field_x`, or `class_id` beyond current fixture-evidence names without proof. | Prologue and envelope ranges may be audit/probe-accounted; decoded landmark ranges remain separate. Payload bytes are not consumed as decoded just because the envelope is valid. | Ratchet chain start `8`, counts by fixture, end anchoring, flagged-head behavior, class-id histograms, and `P&IDAttributes` alignment. Add malformed chain tests and panic-safety for new public entry points. Roll back semantic names if IDA maps fields differently. | Read-only. DA semantic edits remain forbidden. |
 | `ROADMAP-PAGE-TRANSFORM` | Page transform / coordinate units | `Unknown`; coordinate hints are `Probe` | Sheet probes find normalized f64 coordinate-domain evidence and candidate marker groups. Existing page-transform evidence finds no source-backed record containing complete width/height, units, origin, scale, direction, bounds, or matrix. Phase 24 negative evidence records zero page-dimension scalar matches in top candidates. | A bounded source record, IDA reader, or controlled fixture proving coordinate space, units, direction, origin, scale, bounds, and provenance. Must distinguish raw source coordinates from page coordinates and prove transform direction. | Template names, page dimensions, isolated f64 pairs, and normalized coordinate hints do not identify a transform. | Until every required component is proven, preserve `PidPageTransform::Unavailable`. Future work may add evidence DTOs only as `Probe` or `TypedAudit`. | Do not make page transforms available from template dimensions, page size, normalized f64 hints, candidate marker support, or inferred bounds alone. Do not treat probe geometry as decoded geometry. | Coordinate windows and page metadata candidates stay probe/audit ranges. No whole Sheet stream or marker range is consumed as decoded solely because it contains plausible numbers. | Ratchet source byte ranges, complete component set, unit and direction checks, fixture coverage, and regression proving no coordinate-space conflation. Roll back to `Unavailable` on missing component or fixture contradiction. | Not writable. Page transform availability does not imply geometry write support. |
+| `ROADMAP-IGBOUNDARY-0013` | `igBoundary2d 0x0013` | `Decoded` typed association; Phase 34-D complete | Twenty top-level `/Sheet6` records prove `segment_count` groups of `0x67 + 4×f64`, exact `btf == 49 + 41n`, anchor and member trailer layout. All 60 member OIDs resolve to canonical same-stream `igLine2d` records whose geometry matches the same-index segment. | No further evidence is needed for the current typed association DTO. A future geometry-emission change would require fixtures with independent, non-duplicated boundary geometry and an explicit downstream contract. | Current fixtures only show association records that duplicate member-line geometry. | Keep the fully typed record in `SheetGeometry::decoded_igboundaries` and suppress normalized geometry emission while member geometry is already emitted. | Do not classify the record as unknown merely because it emits no entity; conversely, do not emit a second closed polyline from duplicated segments. | The complete validated record range is `Decoded`; no payload tail remains unclaimed for accepted records. | Exact per-fixture counts `0/5/10/0/0/5`, 20/20 closed loops, 60/60 member resolution and geometry match, 16 parser unit tests, schema needles and panic-safety entries. Roll back only if new fixtures violate the validated grammar. | Read-only typed association. No Sheet semantic write-back. |
+| `ROADMAP-RECTANGLE-0020` | `igRectangle2d 0x0020` | `IdentifiedOnly`; Phase 34-B closed negative | Four records have stable `btf=78`, but occur only in `/Sheet6615` mini-sheet or nested `/JSite204/Sheet6`. Relaxed neighboring `igLine2d` reads show one family reuses line corner/extent values while the nested family looks page-frame-like. | Controlled fixture or native reader proving ownership projection and a stable two-extent rectangle layout across both ownership families, with bounded ranges and malformed cases. | Offset meanings contradict across ownership families; `+42` provides no second extent and top-level drawing ownership is unproven. | Keep the family identified and probe-only until both layout and ownership gates pass. | Do not derive a rectangle from the type name, a single exact neighboring line match, or page-size-like scalar values. | Candidate ranges remain probe/leftover; there is no production decoder claim. | Re-run the four-record correlation and add decoder/panic/schema ratchets only if the reopen evidence exists. Roll back immediately on cross-family offset disagreement. | No geometry emission or writer scope. |
+| `ROADMAP-SMARTFRAME-003D` | `igSmartFrame2d 0x003D` | `IdentifiedOnly` structural record; body `Probe` | Twelve hits across all six fixtures, roughly one per drawing, carry A2-like page-frame scalars and do not correlate with neighboring line geometry. | Native reader or controlled fixture evidence is required to name bounded structural fields. Drawable promotion additionally requires evidence that contradicts the current frame classification. | Current evidence supports sheet-frame structure, not a drawable object or complete page transform. | Preserve as structural evidence and keep `PidPageTransform::Unavailable`. | Do not emit it as geometry or use its `0.594/0.420` values alone to promote a page transform. | Record bytes remain probe/leftover until a structural parser validates bounded fields. | Ratchet 12 hits / 6 fixtures and page-transform guardrails; add parser tests only after reader/fixture evidence. | Read-only; no writer scope. |
+| `ROADMAP-CURVE-FAMILIES` | `igCircle2d 0x0059`, `igArc2d 0x0061`, `igEllipse2d 0x0063`, `igEllipticalArc2d 0x007E`, `igBSplineCurve2d 0x005D` | `IdentifiedOnly`; local evidence available, `NeedsParser` | Phase 34-E all-stream scan finds circle/arc/elliptical-arc/B-spline in registered nested JSite streams and all five families in the backup `.sym` corpus, with counts `616/279/44/50/55`. Tiny top-level `.sym` `Sheet6` containers are available as clean byte-layout fixtures. | E-1 extract 1–2 representative `.sym` fixtures per family; E-2 prove each payload formula and geometry fields; then run independent per-family parser/model/schema/byte-audit/panic-safety/fixture ratchet slices. Nested JSite emission separately needs ownership proof. | Record identity and sample supply are solved; field layout, validation rules and projection ownership are not. | If a family cannot prove one stable layout, retain it as `IdentifiedOnly` and document size/variant buckets rather than merging variants. | Do not reuse arc/circle/ellipse field names by analogy, combine five families into one speculative decoder, or treat nested JSite occurrence as top-level ownership. Never restore `0x0030` as an arc. | Until each decoder lands, candidate bytes remain audit/probe/leftover. A future decoder claims only fully validated records and leaves variant rejects visible. | Per family: size distribution, representative byte values, 6–12 malformed/truncated unit tests, panic-safety entry, schema needle, cross-fixture or cross-symbol counts and byte-audit movement. Roll back semantic names on variant drift. | Read-only geometry export after each family independently passes; no semantic writer. |
 
 ## Byte-Audit Strategy
 
@@ -127,6 +132,12 @@ inspection, unit tests, or fixture ratchets:
 - naming `0x0010.leading_word` as `sub_kind`;
 - treating `GraphicGroup` tail integers as child OIDs without proof;
 - treating `JSitesList.trailing_slots` as active entries without delete/compact writer evidence;
+- emitting `igBoundary2d` as duplicate geometry when its referenced member
+  lines already emit the same segments;
+- treating nested JSite curve records as top-level drawing geometry without
+  ownership projection evidence;
+- inferring one curve family's field layout from another family or restoring
+  the retired `0x0030` arc interpretation;
 - using MDF publish parity as raw `.pid` parser evidence.
 
 ## IDA And Writer Boundary
@@ -141,6 +152,9 @@ Current roadmap implications:
   promoted from application-glue strings or absence of hits.
 - `core.dll` remains broad platform evidence only, not raw `.pid`
   byte-layout proof.
+- the 2026-06-21 live MCP refresh found only `sppid.dll` and `core.dll`
+  reachable on ports `13337..13352`; opening additional IDBs was blocked
+  by the current short-name MCP tool surface lacking `idalib_open`.
 - historical `style.dll` evidence keeps `0x0030` as `JStyleOverride`;
   it does not decode `StyleCluster`, `0x0010`, or `GraphicGroup`.
 - historical `OLESITE.dll` evidence supports count-bounded
@@ -148,6 +162,11 @@ Current roadmap implications:
 - historical `radsrvitem.dll` evidence supports `0x0089` existence and
   `PSMspacemap` handle math; it does not decode DA payloads or raw
   spacemap page bytes.
+- Phase 34-D fixture and member-reference evidence is sufficient for the
+  `igBoundary2d` typed association, but deliberately does not widen normalized
+  geometry or writer scope.
+- Phase 34-E corpus evidence solves curve-family sample availability, not field
+  layout or nested JSite ownership.
 
 No parser promotion in this roadmap authorizes geometry JSON write-back,
 Sheet semantic write-back, DA semantic edits, JSite compaction, or MDF
@@ -165,3 +184,5 @@ publish output as raw `.pid` evidence.
 - `docs/analysis/2026-06-08-phase29-dynamic-attributes-body-backlog.md`
 - `docs/analysis/2026-05-09-page-transform-evidence.md`
 - `docs/analysis/2026-05-18-phase24-coordinate-page-metadata-candidates.md`
+- `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`
+- `docs/analysis/2026-07-07-phase34e-missing-geometry-fixture-plan.md`

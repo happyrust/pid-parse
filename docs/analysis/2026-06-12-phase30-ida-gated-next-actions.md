@@ -21,10 +21,16 @@ Later sweeps also opened SmartSketch / RAD runtime modules under
 See `2026-06-12-phase30-secondary-idb-sweep.md` and
 `2026-06-12-phase30-olesite-jsiteslist-ida.md`.
 
-`OLECRT.dll` was launched in IDA during the final local OLE follow-up, but
-did not register as an IDA MCP instance after the same wait/poll loop used
-for the other modules. The local SmartSketch/RAD runtime sweep is therefore
-considered exhausted for low-cost broad searches.
+`OLECRT.dll` was launched in IDA during the final local OLE follow-up and
+initially did not register as an IDA MCP instance. It later became reachable
+as instance `127.0.0.1:13353` and was checked in Phase 31. See
+`2026-06-13-phase31-olecrt-storage-entrypoints.md`.
+
+`OLECRT.dll` confirms a generic OLE / embedded symbol-object layer:
+`StgOpenStorageEx`, `DocVersion2`, `SymbolInformationCluster`,
+`GetPersistManager`, `GetPersistCluster`, and `UnBindSheetWrappers2`.
+It still does not expose `JSitesList`, `PSMspacemap`, `StyleCluster`,
+`GraphicGroup`, `IOContext`, or `DoIO` reader bodies.
 
 `smartplantpid.exe` was later provided under the repository `dlls`
 directory and opened as IDA MCP instance `127.0.0.1:13345`. It appears to
@@ -33,9 +39,18 @@ be a VB6 front-end / launcher (`MSVBVM60` imports, strings such as
 `ErrorLogging`), not the low-level `.pid` persistence module. See
 `2026-06-12-phase30-smartplantpid-exe-ida.md`.
 
+Additional SPPID application / automation modules were opened afterward:
+`sppid.dll` (13346), `sppidautomation.dll` (13347),
+`sppiddwgprocess.dll` (13348), `ipidobjectmanagerinf.dll` (13349),
+`sppidautomation.exe` (13350), `sppidautomationwrap.dll` (13351), and
+`llama.dll` (13352). They add application, archive/workshare, automation,
+interface, and logical-model context, but still do not expose the raw CFBF
+stream / `IOContext` persistence reader names needed for the remaining
+byte-layout questions. See
+`2026-06-12-phase30-sppid-backend-idb-sweep.md`.
+
 Still not available from a true SmartPlant P&ID install:
 
-- `sppid.dll`
 - lower-level backend DLL / COM module that contains PID storage readers
 
 ## Confirmed From `radsrvitem.dll`
@@ -189,8 +204,7 @@ Do not continue broad searches in the currently open local runtime IDBs
 unless a new concrete string/function clue appears. The next productive
 step is either:
 
-- open a lower-level SmartPlant P&ID backend IDB (`sppid.dll` or another
-  product DLL / COM module that is not just the VB6 launcher) and run the
-  checklist above; or
+- open a lower-level product DLL / COM module that directly references raw
+  CFBF stream names, jengine `IOContext`, or persist-manager APIs; or
 - keep parser behavior unchanged and submit/review the accumulated
   Phase 29/30 documentation + parser work as-is.

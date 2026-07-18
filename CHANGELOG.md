@@ -2,6 +2,143 @@
 
 ## [Unreleased]
 
+### Phase 34-E：缺失曲线家族 fixture 扩充计划——本地语料重大发现（2026-07-07）
+
+- 新增常驻只读探针 `examples/probe_curve_family_corpus_scan.rs`：对目录下
+  全部 CFB 容器做**全流**（非 Sheet-only）chain-validated 顶层 PSM 扫描，
+  统计五个曲线家族命中。
+- **推翻「NeedsFixture」旧框架**：曲线记录一直在本地，只是躲在 Sheet 流
+  过滤器之外——注册 fixture 嵌套 `/JSite*\PSMcluster0` 有 igCircle2d×79 /
+  igArc2d×29 / igEllipticalArc2d×4 / igBSplineCurve2d×2；已入库
+  `RefData~4~683` 的 `/StyleCluster` 有 igCircle2d×34 + igArc2d×6；备份
+  `RefData~4~681.zip` 符号库（1826 个 `.sym`，270 个含曲线）合计
+  0x0059×616 / 0x0061×279 / 0x0063×44 / 0x007E×50 / 0x005D×55，且存在
+  683 B 迷你理想 fixture。仅 igEllipse2d 在注册文件中零命中。
+- 联网核实（docs.hexagonppm.com / Octave Institute）：无公开独立样例
+  下载，外部获取降级为兜底；改为 E-1 提取 `.sym` 入库 → E-2 逐家族字节
+  探针 → E-4 逐家族解码器 slice 的就地取材路线。嵌套 JSite 投影语义
+  门禁维持（布局证据 ≠ 几何发射授权）。
+- 只读 slice：零生产代码改动。产出
+  `docs/analysis/2026-07-07-phase34e-missing-geometry-fixture-plan.md`。
+
+### Phase 34-D：0x0013 igBoundary2d 语法钉死 + typed audit-only 解码器（2026-07-07）
+
+- 专属探针 `examples/probe_0013_igboundary2d_grammar.rs` 在全部 20 条跨
+  fixture 记录上钉死 34-C 遗留的 `0x67` 标签语法：`0x67` 是**每段固定前缀
+  标签**（`segment_count` 组 `0x67 + 4×f64`，33 B/组，自 payload +28 起），
+  计数字段是 `+22` 的 `u32 segment_count`（= 尾部 `member_count`），
+  `btf == 49 + 41n` 精确成立；段间 1e-9 容差闭环 20/20；锚点落段 bbox 内
+  20/20。
+- 语义定性：**association**——尾部成员引用（`u32 oid + u16 class 0x00CB +
+  u16 sub`）60/60 解析到同流 canonical `igLine2d`，且第 i 个成员几何与第
+  i 段正向精确相等 → boundary 坐标是成员线几何的重列。
+- 落地 `decode_igboundaries` / `decode_igboundary_at`（9 条校验规则、16 个
+  单元测试、panic-safety 对抗矩阵入口）+ 全字段 DTO
+  `DecodedIgBoundary2dRecord`（含 `closed_loop`）+
+  `SheetGeometry::decoded_igboundaries` 管线字段 + byte-audit `Decoded`
+  认领 + schema needle 棘轮 + 跨 fixture 精确计数棘轮测试（5/10/5，其余 0）。
+  **不发射**归一化几何（避免与成员线双计）；writer 行为零变化。
+- 顺手修复 34-A 遗留的 `registered=5` 陈旧断言（fixture 注册表已归一化为
+  6 个）。五项 pre-commit 门禁全绿（missing-docs 棘轮 0==0）。
+- 产出：`docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`。
+
+### 0x0089 DA record trailer：跨 fixture 验证 + tail 修正（2026-06-30）
+
+- pid-session backlog「0x0089 DA head」只读 evidence。把 `DaRecordTrailer`
+  布局（`src/model.rs` L613–627，原「2 samples」）用独立 Python CFB reader
+  （FAT + mini-FAT）在 5 fixture 上验证。无 parser / DTO / schema / writer /
+  byte-audit / confidence 改动。
+- trailer head 跨 fixture 确认：`sep==0xFFFF` 与 `+10..+18` 8 字节 pad=0 在
+  **519/520 markers（99.8%）** 成立（dwg0202 仅 1 例外）。
+- **修正**：`+28 tail = 0x14 0x00 0x00` 非 invariant，仅 **320/520（~62%）**
+  携带 → 稳定 trailer 是 `+0..+28`（到 class_id），`+28` 起按 class/variant
+  变化。`DaRecordTrailer` DTO 不暴露 tail 字段，故 JSON 输出不受影响（仅
+  model.rs 注释过度断言，建议后续单独授权修正）。
+- `class_id` 是宽枚举（~20+ 值）：命名集 `0xF6`/`0xEA`/`0x109` 仅小子集，
+  另有 `0xAC/0xE1/0xE7/0xE9/0xED/0x100..0x111` 等未命名（名字在
+  `/Dynamic Attributes Metadata`）。每 fixture 首条统一为
+  `record_id=0x6002, field_x=4, class_id=0xAC, size=192` 头记录。A01 的 DA 流
+  是 395B CFB mini-stream（已可读）。
+- Mode A：Phase 30-C 已证 `0x0089` 走 mapper default（写 `RAD_OBJECT_TYPE=137`，
+  不解 head 字段），无命名 typed reader。结论维持 audit/probe，docs-only。
+- 产出：`docs/analysis/2026-06-30-0089-da-trailer-cross-fixture-validation.md`。
+
+### 0x00FA GraphicGroup：child-OID-array 假设证伪 + mapper 证据（2026-06-30）
+
+- pid-session backlog 任务「0x00FA GraphicGroup payload」只读 evidence 收尾，
+  无 parser / DTO / schema / writer / byte-audit / ratchet / confidence 改动，
+  `0x00FA` 维持 Phase 15 `TypedAudit`。
+- fixture 侧（独立 Python CFB reader，因本会话 Rust release 构建被 MSVC
+  `LNK1318` PDB 链接错误阻塞）：在 5 个 fixture 上检验「tail = u32 count C +
+  C×u32 child OID（全部解析到几何 OID）」假设 → **0/366 精确命中**（DWG-0201
+  0/136、DWG-0202 0/84、工艺管道-1 0/125、D06 0/21；A01 的 `/Sheet6` 是 CFB
+  mini-stream 跳过）；少量 loose all-OID 命中均为 count=3 / 仅 DWG 族 / 非
+  tail-anchored 的巧合三元组。→ `0x00FA` 不是 count-prefixed child-OID 列表。
+- Mode A（`radsrvitem.dll` type-name mapper `sub_56448F70`）：命名 RAD 类只覆盖
+  code `6..0x0CE`（`sub eax,6; cmp eax,0C8h; ja default`），`0x00FA`(250) 越界
+  落 default → **无 RAD 类名**（binary 无 `GraphicGroup`/`GraphicPersist`
+  字符串；`igGroup` 是更低 code）；同 mapper 特判 `0x115`（= 0x0010 alias，
+  与 Phase 33 一致）。`0x00FA` 与 `0x0010` 一样走通用 `vtable+0x18` 反序列化。
+- 产出：`docs/analysis/2026-06-30-00fa-graphicgroup-child-oid-evidence.md`。
+
+### Phase 33：0x0010 discriminator Mode A static .asm evidence
+
+- 执行 `2026-06-30-phase33-0010-discriminator-next-ida-evidence-plan.md` 的
+  **Mode A**（`radsrvitem.dll` 未作为 IDA instance 打开，Mode B 暂不可用）：
+  只读静态分析 `dlls/radsrvitem.dll.asm`（40 MB IDA 反汇编导出）+ 原始 PE
+  字节校验，无生产代码 / DTO / schema / writer / byte-audit / ratchet /
+  confidence 改动。`ROADMAP-0010` 维持 `TypedAudit`。
+- A1：从原始 PE 独立复算类型表项 `0x0010`@`0x23A5A8` / `0x0115`@`0x23BA0C`，
+  确认共享 GUID `1D1928C0-0000-0000-C000-000000000046`，`tail16/tail17/parent`
+  = `0x40/0x06/0x0115` 与 `0xC0/0x06/0x0000`（复核 Phase 20）。
+- A2：`PSMSerializeIn sub_564915E0` 确认 `type=(rec[8]>>6)&0x3FFF`
+  （`L147350-147353`）→ PersistTypeTable 身份校验 → 每类型 **`vtable+0x18`**
+  Read 解析 body（`call [ecx+18h]`，IOContext 在 `[edi+8]`，`L147559`）→
+  `bytes_to_follow` consume 校验（`sub_56491050`，`L147594-147603`）；
+  deferral `0x80040233` 置标志位 `0x400`，正是 `sub_56468B30` 路由
+  SerialCluster lazy-load 所测位（`L70094`）。
+- 结论：shared path 只证明 envelope + 运行时分派 + 类型身份，size-31/16/86
+  固定字段布局只可能在 type-`0x0010` 对象的 `vtable+0x18` 内（该 GUID 工厂
+  `E_NOTIMPL` / SerialCluster 持久化容器画像）→ 命中 plan 的 negative
+  rollback 判据。re-open trigger 收窄为 Mode B 反编译 `sub_56490B00` 与该类
+  `vtable+0x18`。
+- 产出：`docs/analysis/2026-06-30-phase33-0010-discriminator-mode-a-asm-evidence.md`。
+
+### Phase 34-C：0x0013 / 0x003D evidence closeout
+
+- 基于 Phase 34-B 增强的 `examples/probe_psm_undecoded_shapes.rs`（relaxed
+  neighbor correlation）做只读 evidence closeout，无生产代码 / schema /
+  writer / byte-audit / confidence 改动。
+- `0x0013 igBoundary2d`：20 hits / 3 fixtures，全 `btf=172`，全部在
+  primary top-level `/Sheet6`，neighbor 是 canonical `igLine2d`
+  （`remaining_header=12`）；payload f64（`+29` 起 8 字节 stride）跨所有样本
+  精确复现邻接 line 端点。最强 drawable 候选，但 vertex-count / array range
+  与交错 `0x67` tag 文法未钉死 → 推荐专门 decoder slice，本轮不 emit。
+- `0x003D igSmartFrame2d`：12 hits / 全 6 fixtures，每图约 1 条，
+  `remaining_header=14`，payload 是 page-frame 标量（`+76≈0.594` A2 宽、
+  `+84≈0.420` A2 高、`+148≈0.707`=1/√2），与 neighbor 端点无关联 →
+  结构性 sheet-frame 记录，非 drawable geometry；page-dim 标量不满足
+  `ROADMAP-PAGE-TRANSFORM` gate。
+- 产出：`docs/analysis/2026-06-30-phase34-0013-003d-evidence-closeout.md`。
+
+### Phase 34-B：0x0020 igRectangle2d relaxed neighbor correlation closeout
+
+- 增强 `examples/probe_psm_undecoded_shapes.rs`：新增 relaxed `0x0018`
+  neighbor 读取（绕过 `decode_igline_at` 的 `remaining_header==12` magic
+  gate），并输出 relaxed candidate↔neighbor endpoint/bbox/extent/length
+  delta、neighbor `remaining_header` 与 finite-in-range 标志。read-only
+  probe，无生产代码 / schema / writer / byte-audit / confidence 改动。
+- 证据：`0x0020` 的每个 neighbor 都是非规范 `0x0018`
+  （`remaining_header ∈ {8, 6996}`，非 12）。`/Sheet6615` 族 `0x0020`
+  `+18/+26/+34` 与下一条 line 的 corner/extent f64 位精确相等，但 `+42=0`
+  无 height、`+50` 为 padding 噪声；nested `/JSite204\Sheet6` 族 candidate
+  与 neighbor 端点无关联且呈 page-frame 形态。
+- 决策：两个 ownership family 字段语义不一致、无 rectangle invariant，
+  `0x0020` 收口为 `identified drawable type name, ownership-gated, no
+  decoder`；不新增 `SheetIgRectangle2dDecoded` / `PidGraphicKind::Rectangle`
+  / geometry emission。
+- 产出：`docs/analysis/2026-06-30-phase34-0020-relaxed-neighbor-correlation.md`。
+
 ### Phase 30-A：radsrvitem.dll JSite IDA 证据刷新
 
 - 只读 IDA 复查当前可达 `radsrvitem.dll`：`JSitesList` / `"OLEM"`

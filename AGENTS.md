@@ -39,6 +39,7 @@ publish XML pipeline (`Export.mdf → oxidized-mdf → drawing graph → _Data.x
 | `tests/parse_real_files.rs::igpoints_decoder_emits_decoded_points_with_provenance` | Phase 14 Slice L igPoint2d (PSM 0x005E) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igtextboxes_decoder_emits_decoded_texts_with_provenance` | Phase 14 Slice M igTextBox (PSM 0x004D) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igsymbols_decoder_emits_decoded_symbols_with_provenance` | Phase 14 Slice N igSymbol2d (PSM 0x00CE) | `test-file/*.pid` |
+| `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
@@ -51,9 +52,9 @@ ratchets stream count, PSM tables, DA records, object graph (10 objects
 + 10 unresolved relationships), Sheet6 geometry, and normalized totals.
 Soft-skips when `test-file/D06.pid` is absent.
 
-## SmartPlant Sheet PSM decoders — 7 typed + 2 audit-only families
+## SmartPlant Sheet PSM decoders — 8 typed + 2 audit-only families
 
-`src/parsers/sheet_records.rs` ships typed PSM-record decoders for **7
+`src/parsers/sheet_records.rs` ships typed PSM-record decoders for **8
 SmartPlant `Sheet*` stream record families** (plus audit-only
 `0x00FA GraphicGroup` and `0x0010` sub-record collections):
 
@@ -66,6 +67,7 @@ SmartPlant `Sheet*` stream record families** (plus audit-only
 | L | `0x005E` | `decode_igpoints` | `SheetIgPoint2dDecoded` | `igPoint2d` (IGDS standard) |
 | M | `0x004D` | `decode_igtextboxes` | `SheetIgTextBoxDecoded` | `igTextBox` (IGDS, UTF-16LE) |
 | N | `0x00CE` | `decode_igsymbols` | `SheetIgSymbol2dDecoded` | `igSymbol2d` (IGDS, SmartPlant symbols) |
+| 34-D | `0x0013` | `decode_igboundaries` | `SheetIgBoundary2dDecoded` | `igBoundary2d` (IGDS standard; fully-typed **audit-only** association, no geometry emission) |
 
 Cross-fixture decoded geometry spans the GLine2d / igLine2d /
 polyline / point / text / symbol families (Phase 16 reclassified
@@ -76,12 +78,13 @@ All decoders are panic-safe (validated via
 
 Decoded records flow through `streams/cluster.rs` →
 `model::SheetGeometry::decoded_{primitive_lines, jstyle_overrides,
-iglines, iglinestrings, igpoints, igtextboxes, igsymbols}` →
-`geometry::build_normalized_geometry` to emit `PidGraphicEntity {
-confidence: Decoded, kind: Line | Arc | Polyline | Point | Text |
-SymbolInstance, source: PidGraphicProvenance { stream_path,
-byte_range, record_kind, graphic_oid, note } }`. The `note` carries
-the byte-level evidence chain.
+iglines, iglinestrings, igpoints, igtextboxes, igsymbols,
+igboundaries}` → `geometry::build_normalized_geometry` to emit
+`PidGraphicEntity { confidence: Decoded, kind: Line | Arc | Polyline
+| Point | Text | SymbolInstance, source: PidGraphicProvenance {
+stream_path, byte_range, record_kind, graphic_oid, note } }`. The
+`note` carries the byte-level evidence chain. (`decoded_igboundaries`
+stops at the `SheetGeometry` layer — see the `0x0013` caveat below.)
 
 **Key insight (Slice J discovery)**: Intergraph Sigma uses its IGDS
 class tags directly as PSM type codes for standard primitives.
@@ -101,6 +104,16 @@ decompilation.
 - SmartPlant fixtures don't use standard IGDS `igCircle2d` (0x0059),
   `igRectangle2d` (0x0020), `igArc2d` (0x0061), or
   `igEllipticalArc2d` (0x007E) — zero hits cross-fixture.
+- `0x0013 igBoundary2d` (Phase 34-D) is a fully-typed **association**
+  record: `segment_count` groups of `0x67 tag + 4×f64` re-list the
+  geometry of the `igLine2d` records named by its trailer member
+  references (60/60 forward matches cross-fixture), plus an anchor
+  point inside the segment bbox. `decode_igboundaries` exposes every
+  byte (`SheetGeometry::decoded_igboundaries`, `closed_loop` flag,
+  byte-audit `Decoded`) but deliberately emits **no**
+  `PidGraphicKind` — a closed-polyline emission would double-count
+  the member lines. See
+  `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`.
 - `0x0010` (638 probe scan hits, 582 decoded after advancing) is a
   polymorphic sub-record family. Phase 18 ships it as an audit-only
   typed collection (`SheetGeometry::decoded_sub_records_0x0010`) on

@@ -2,7 +2,7 @@
 
 > Date: 2026-06-19  
 > Scope: SmartPlant / Smart P&ID `.pid` CFBF format atlas, confidence vocabulary, fixture reconciliation, and bundle confidence ledger policy  
-> Status: authoritative evidence atlas for the current repository state. This document does not claim the vendor PID format is fully decoded.
+> Status: authoritative evidence atlas for the current repository state. Phase 34-F status synchronized on 2026-07-10. This document does not claim the vendor PID format is fully decoded.
 
 ## Canonical Confidence Vocabulary
 
@@ -79,6 +79,10 @@ Every row below records status, parser/model reference, evidence, blocker, and w
 | igTextBox `0x004D` | Raw `.pid` | `Decoded` | `decode_igtextboxes`, `SheetIgTextBoxDecoded` | UTF-16LE parser, Phase 14 ratchets, byte provenance | Text placement and page transform remain separate | Export decoded text entity only |
 | igSymbol2d `0x00CE` | Raw `.pid` | `Decoded` | `decode_igsymbols`, `SheetIgSymbol2dDecoded` | Phase 14 ratchets and byte provenance | Symbol reference/transform enrichment remains open | Export decoded symbol entity only |
 | JStyleOverride `0x0030` | Raw `.pid` + IDA | `Decoded` | `decode_jstyle_overrides`, `SheetJStyleOverrideDecoded` | `style.dll::sub_1000F030` with 13 `IOContext::DoIO` calls and 64-byte payload | Individual field names and StyleCluster relation remain conservative | Read-only audit/decoded style record, not geometry write |
+| igBoundary2d `0x0013` | Raw `.pid` | `Decoded` typed association; audit-only geometry policy | `decode_igboundaries`, `SheetIgBoundary2dDecoded`, `SheetGeometry.decoded_igboundaries` | Phase 34-D pins every byte on 20/20 records: `segment_count` groups of `0x67 + 4×f64`, `btf == 49 + 41n`, anchor and member trailer; 60/60 member OIDs resolve to same-stream `igLine2d` records with matching geometry | Current fixtures contain only boundaries that re-list member-line geometry; independent boundaries without resolvable members have not been observed | Export the typed association in decoded Sheet DTOs; do not emit a duplicate normalized polyline and do not write |
+| igRectangle2d `0x0020` | Raw `.pid` | `IdentifiedOnly` family; body `Probe` | no production decoder; `probe_psm_undecoded_shapes` | Four records across three fixture paths, all in `/Sheet6615` or nested `/JSite204/Sheet6`; relaxed neighbor correlation completed | Two ownership families give contradictory field meanings and no stable two-extent rectangle layout; top-level projection is unproven | Preserve/audit only; no normalized geometry or writer surface |
+| igSmartFrame2d `0x003D` | Raw `.pid` | `IdentifiedOnly` family; body `Probe` | no production decoder; Phase 34-C evidence note | Twelve records across all six fixtures, with page-frame-like scalars and no line-neighbor geometry correlation | Native reader and bounded field semantics are missing; page-size-like scalars do not prove a page transform | Structural evidence only; no drawable geometry or writer surface |
+| Curve families `0x0059` / `0x0061` / `0x0063` / `0x007E` / `0x005D` | Raw `.pid` / `.sym` corpus | `IdentifiedOnly`; local evidence available | `probe_curve_family_corpus_scan`; no production decoder | Phase 34-E finds circle/arc/elliptical-arc/B-spline records in registered nested JSite streams and all five families in the backup `.sym` library (`616/279/44/50/55` records respectively) | Representative `.sym` fixtures must be extracted and each family still needs bounded field probes, validation rules, ratchets, schema and panic-safety; nested JSite ownership projection remains unproven | Read-only corpus evidence; no geometry emission or write support |
 | GraphicGroup `0x00FA` | Raw `.pid` | `TypedAudit` | `decode_graphic_groups`, `SheetGraphicGroupDecoded` | Header plus raw variable tail ratchet | Payload child/reference semantics are not proven | Read-only audit |
 | Sub-record `0x0010` | Raw `.pid` | `TypedAudit` | `decode_sub_records_0x0010`, `decode_attribute_fragments_0x0010` | Phase 18/19/20 GUID, leading-word, and payload audit | Discriminator/sub-kind is unresolved. `leading_word` is positional only | Read-only audit |
 | Coordinate hints and inferred geometry | Raw `.pid` derived | `Probe` | normalized geometry, f64 pair/triple gates | Source notes and guardrailed coordinate context | Page transform, units, origin, scale, and bounds are not proven | Read-only probe/audit |
@@ -134,6 +138,7 @@ The bundle confidence ledger is the cross-reference between exported files, this
 | `raw/streams/*.bin` | raw CFB streams | raw stream bytes | `IdentifiedOnly` | Unknown stream payloads, stream inventory | unknown bytes stay backlog candidates | opt-in only, caller-owned bytes |
 | `decoded/document.json` | `/` raw `.pid` aggregate | `PidDocument` aggregate | `IdentifiedOnly` aggregate | all atlas rows by child field | prevents aggregate file from overclaiming `Decoded` | export-only unless a child writer policy allows edits |
 | `decoded/*.json` | decoded split views | metadata, structure, sheet, PSM, graph projections | `IdentifiedOnly` aggregate | child rows in this atlas | directs future parser promotions to row-specific gates | export-only |
+| `decoded/sheets.json` `decoded_igboundaries` field | top-level `/Sheet*` `0x0013` records | typed igBoundary2d association | `Decoded` | igBoundary2d atlas row and Phase 34-D 20-record / 60-member ratchet | association is decoded, but duplicate drawable emission is intentionally suppressed | export-only; no semantic Sheet write-back |
 | `geometry/decoded_entities.json` | `/Sheet*` decoded PSM records | GLine2d, igLine2d, igLineString2d, igPoint2d, igTextBox, igSymbol2d | `Decoded` | decoded Sheet record rows | future coverage can add new decoded families only through promotion gate | no semantic Sheet write-back |
 | `geometry/audit_entities.json` | `/Sheet*` inferred/audit records | typed audit and inferred entities | `TypedAudit` | GraphicGroup, `0x0010`, coordinate hints | roadmap owns discriminator/payload/page-transform blockers | read-only |
 | `geometry/probe_entities.json` | `/Sheet*` probe windows | heuristic geometry evidence | `Probe` | Sheet shell, coordinate hints, unknown Sheet windows | roadmap owns unknown-record inventory | read-only |
@@ -156,7 +161,15 @@ The current atlas has non-decoded rows, so the vendor PID format is not fully de
 | JSitesList trailing slots | `TypedAudit` | Delete/compact/stale-slot writer semantics are not proven. |
 | `0x0089` / class 137 DA heads | `TypedAudit` | Export boundary exists, but family name and head field semantics are not proven. |
 | Page transform and coordinate units | `Unknown` | Source coordinate space, units, origin, direction, scale, bounds, and byte provenance are not all established. |
+| Curve-family field layouts | `IdentifiedOnly` | Local records now exist, but circle/arc/ellipse/elliptical-arc/B-spline payload fields have not passed per-family decoder gates. |
+| Nested JSite geometry ownership | `IdentifiedOnly` | Nested records are valid byte-layout evidence sources, but their projection into top-level drawing geometry is not proven. |
 | Semantic Sheet writer | `Unknown` | Reader confidence and geometry JSON do not prove native write-back. |
+
+The 2026-06-21 live `ida-pro-mcp` refresh in
+`docs/analysis/2026-06-19-ida-evidence-baseline.md` rechecked the currently
+reachable `sppid.dll` and `core.dll` instances. It found no direct raw
+SmartPlant `.pid` stream reader/writer evidence for these blockers, so the
+classes above stay unchanged.
 
 Forbidden shortcuts:
 
@@ -165,15 +178,24 @@ Forbidden shortcuts:
 - Do not treat GraphicGroup tail integers as child OIDs without proof.
 - Do not treat JSitesList trailing slots as active IDs without delete/compact writer evidence.
 - Do not make page transforms available from template dimensions or f64 hints alone.
+- Do not emit `igBoundary2d` as a second polyline when its member references
+  resolve to already-emitted `igLine2d` geometry.
+- Do not treat a valid curve record in nested JSite storage as proof that it
+  belongs in top-level normalized drawing geometry.
 - Do not derive writer support from read support.
 - Do not use MDF publish parity as raw `.pid` decode evidence.
 
 ## Evidence References
 
-- Current IDA baseline: `docs/analysis/2026-06-19-ida-evidence-baseline.md`.
+- Current IDA baseline, including the 2026-06-21 live MCP refresh:
+  `docs/analysis/2026-06-19-ida-evidence-baseline.md`.
 - Historical `JStyleOverride` IDA scope: `docs/analysis/2026-06-12-phase30-style-dll-jstyleoverride-ida.md`.
 - Historical JSitesList IDA scope: `docs/analysis/2026-06-12-phase30-olesite-jsiteslist-ida.md`.
 - Historical OLE/DocVersion2 scope: `docs/analysis/2026-06-13-phase31-olecrt-storage-entrypoints.md`.
 - Historical `PSMspacemap` and `0x0089` scope: `docs/analysis/2026-06-12-phase30-radsrvitem-record-spacemap-ida.md`.
+- Phase 34-D igBoundary2d grammar and typed association:
+  `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`.
+- Phase 34-E local curve-family corpus evidence:
+  `docs/analysis/2026-07-07-phase34e-missing-geometry-fixture-plan.md`.
 - Fixture inventory source: `docs/specs/2026-06-08-pid-file-format-spec-kit/d06-coverage.json` and `d06-byte-audit.json`.
 - Bundle contract: `docs/pid-export-bundle-contract.md`.

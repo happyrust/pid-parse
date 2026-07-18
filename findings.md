@@ -1075,6 +1075,443 @@
     （如 `sppid.dll` 或含 storage reader 的产品 DLL）。
   - 产出：
     `docs/analysis/2026-06-12-phase30-smartplantpid-exe-ida.md`。
+- Phase 30-Q SPPID backend / automation IDB sweep（同日）：
+  - [IDA] 新打开 `sppid.dll` (`13346`)、`sppidautomation.dll`
+    (`13347`)、`sppiddwgprocess.dll` (`13348`)、
+    `ipidobjectmanagerinf.dll` (`13349`)、`sppidautomation.exe`
+    (`13350`)、`sppidautomationwrap.dll` (`13351`)、`llama.dll`
+    (`13352`)。
+  - [负证据] 这些模块对 raw-storage checklist 仍为 0 direct hits：
+    `JSitesList` / `OLEM` / `JSite` / `PSMspacemap` /
+    `StyleCluster` / `JStyleOverride` / `GraphicGroup` /
+    `P&IDAttributes` / `IJPersist` / `IOContext` / `DoIO` /
+    `PersistCluster` 均未出现。
+  - [结论] `sppid.dll` / `sppidautomation*` 多为 VB6 / COM
+    application / automation layer；`sppiddwgprocess.dll` 是 Drawing
+    Recovery / Workshare / Archive 管理层，含
+    `ISPPidArchive_LoadSPItems`、`DrawingPath`、XML 文件语义；但它不
+    是 raw CFBF storage reader。
+  - [结论] `llama.dll` 是 SmartPlant P&ID Logical Model Automation
+    object model，含 `LMADataSource`、`LMPlantItems`、`LMDrawing`、
+    `LMRelationships` 等，后续可用于语义对象模型映射，但不能用于宣称
+    `.pid` byte-layout decoded。
+  - [后续] 继续 IDA 时只追直接引用 CFBF stream names、jengine
+    `IOContext` 或 persist-manager APIs 的模块；否则收束并提交文档。
+  - 产出：
+    `docs/analysis/2026-06-12-phase30-sppid-backend-idb-sweep.md`。
+- Phase 31 planning-with-files 开发计划（同日）：
+  - [计划] 新增
+    `docs/plans/2026-06-12-phase31-post-ida-development-plan-cn.md`。
+  - [结论] 当前最稳妥路线是先 review / commit Phase 29/30 成果；
+    继续 IDA 只接受直接引用 CFBF stream names、jengine `IOContext` 或
+    persist-manager APIs 的新模块/函数线索。
+  - [门禁] `PSMspacemap` raw page、StyleCluster prefix、`0x0010`
+    discriminator、GraphicGroup payload、JSitesList stale-tail semantics
+    全部需要 IDA reader/writer 或 controlled fixture 双证据；否则不得
+    promotion 为 `Decoded`。
+  - [边界] `llama.dll` / `sppiddwgprocess.dll` 只作为语义对象模型 /
+    archive-workshare 候选，不反推 `.pid` raw byte layout。
+  - [工具问题] `planning-with-files` 的 `session-catchup.py` 在当前
+    `.claude\skills` 路径缺失；本轮以 planning files + git 状态恢复上下文。
+  - [提交准备] 在用户继续要求“按推荐方案继续下一步”但未明确授权 commit
+    时，新增只读 readiness 文档
+    `docs/analysis/2026-06-12-phase31-commit-readiness-review.md`；
+    该文档记录建议 commit message、当前文档范围、验证状态与 residual
+    risks，但不执行 git 写操作。
+- Phase 31-B OLECRT follow-up（2026-06-13）：
+  - [IDA] 此前 tooling-gated 的 `OLECRT.dll` 后续已注册为 IDA MCP
+    instance `13353`，本轮完成 storage entrypoint sweep。
+  - [正证据] `sub_1000A800` 通过 `StgOpenStorageEx` 打开 storage，
+    打开 `DocVersion2` 宽字符串 stream，并连续读取两个 16-bit 值；
+    caller `sub_1000A920` 用第一 word `>= 0x21` 做版本/兼容性判断。
+  - [正证据] `CreateImagineerOleObject -> sub_100017C0` 打开
+    `SymbolInformationCluster`，并调用 style/symbol helper；这是嵌入
+    symbol/OLE object 路径。
+  - [正证据] `sub_10008180` 通过 `GetPersistManager` 取得 `IStorage`，
+    调用 `DecoupleAutomationWrappersInCache` 与 `UnBindSheetWrappers2`；
+    这是 sheet wrapper lifecycle 证据。
+  - [负证据] `OLECRT.dll` 仍无 `JSitesList`、`PSMspacemap`、
+    `StyleCluster`、`GraphicGroup`、`IOContext`、`DoIO`、
+    `P&IDAttributes`、`TaggedTxtData`、`AppObject`、`PSMroots`、
+    `JTaggedTxtStgList` 命中。
+  - [边界] 该模块支持 `DocVersion2` / embedded symbol storage 的 native
+    evidence，但不解锁剩余 byte-layout backlog；不得据此 promotion
+    `/Sheet*`、PSM、JSitesList stale-tail 字段。
+  - 产出：
+    `docs/analysis/2026-06-13-phase31-olecrt-storage-entrypoints.md`。
+
+## Phase 32 关键结论：完整 PID 分析与文件化解析总体计划（2026-06-16）
+- [目标] 后续路线不再只围绕“新增一个 parser”，而是把 `.pid` 格式分析、
+  结构化解析、目录化 bundle 输出、writer round-trip、publish XML 和 CI
+  gate 作为同一产品面规划。
+- [产出] 新增总体计划：
+  `docs/plans/2026-06-16-phase32-full-pid-analysis-and-file-export-plan-cn.md`。
+- [产出] 新增 Plannotator goal package：
+  `goals/phase32-full-pid-analysis-and-file-export/`，包含
+  `brief.md` / `plan.md` / `verification.md` / `blockers.md` /
+  `goal-prompt.md` / `progress.jsonl`。
+- [设计] 文件化解析目标目录为 `.pid.bundle/`，分为 `manifest.json`、
+  `raw/`、`decoded/`、`geometry/`、`audit/`、`writer/`、可选 `publish/`
+  子树；默认不输出全部 raw stream bytes，raw `.bin` 输出需显式 opt-in。
+- [边界] `publish/` 是 MDF-backed optional subtree，不把 MDF publish 语义
+  反推为 `.pid` raw byte-layout。
+- [门禁] Phase 32-D 继续保留 `PSMspacemap` raw page、StyleCluster prefix、
+  `0x0010` discriminator、GraphicGroup payload、JSitesList stale tail、
+  `0x0089`/DA head semantics 六个深水区；没有 direct stream-reader /
+  `IOContext::DoIO` / controlled fixture 双证据时只做 negative/deferred
+  closeout，不做 `Decoded` promotion。
+- [writer] `.pid.bundle/` 可以输出 writer guidance，但禁止从
+  geometry/probe JSON 反写 Sheet bytes；writer 仍保持 passthrough-first。
+- [状态] 当前五件套为 DRAFT，等待 Plannotator gate；gate 通过后首个执行
+  切片应是 Phase 32-A format atlas，而不是 parser promotion。
+- [Gate] 2026-06-16 重新运行
+  `plannotator annotate goals/phase32-full-pid-analysis-and-file-export --gate --json`
+  返回 `{"decision":"approved"}`；Phase 32 计划五件套已通过 gate。
+- [Atlas] `docs/analysis/2026-06-16-pid-format-atlas-cn.md` 已把现有格式知识
+  归为 `Decoded` / `TypedAudit` / `Probe` / `IdentifiedOnly` / `Unknown`
+  五级，并映射到 bundle 输出目标；该文档不改变 Rust parser confidence。
+- [Bundle] `docs/pid-export-bundle-contract.md` 定义 `.pid.bundle/` 合同：
+  `manifest.json`、`raw/`、`decoded/`、`geometry/`、`audit/`、`writer/`、
+  可选 `publish/`。最小 bundle 只要求 manifest、stream inventory、full
+  document 与 confidence ledger；raw stream `.bin` 保持 opt-in。
+- [实现顺序] Phase 32-C 若启动，应先做 `ExportBundlePlan` DTO 与 pure
+  `export_bundle` writer，再接 `pid_inspect --export-bundle` CLI；publish
+  opt-in 应在 core `.pid` bundle 落地后再做。
+- [实现] Phase 32-C1 已落地 `src/export_bundle.rs`：
+  `ExportBundlePlan` 默认输出 manifest / stream inventory / decoded document /
+  geometry / audit / writer guidance，但 raw stream bytes 和 `publish/`
+  subtree 都保持显式 opt-in。`ExportBundlePublishPlan` 只记录 publish
+  输入路径 / drawing UID / plant / diff 选项，不把 MDF 语义混入 `.pid`
+  raw decode。
+- [验证] C1 聚焦门禁通过：`cargo test --locked --lib export_bundle -- --nocapture`
+  6 passed；`cargo fmt --all -- --check` 通过；`cargo rustdoc --lib --locked
+  -- -W missing-docs` 通过；`cargo clippy --locked --lib -- -D warnings`
+  在修复两个 doc_markdown 反引号警告后通过。
+- [实现] Phase 32-C2 已落地 pure `export_bundle` writer：
+  `export_bundle(package, plan, out_dir)` 当前只创建最小骨架
+  `manifest.json`、`raw/streams.json`、`decoded/document.json`、
+  `audit/confidence_ledger.json`；仅当
+  `plan.include_raw_stream_bytes == true` 时写 `raw/streams/*.bin`。
+  尚未写 geometry split files / writer guidance / publish XML，也未接
+  `pid_inspect` CLI。
+- [设计] C2 的 raw stream 文件名采用 stream path UTF-8 bytes 的 hex
+  编码并追加 `.bin`，例如 `/FlatStream` →
+  `2f466c617453747265616d.bin`，避开 Windows 保留字符，同时保持可逆
+  和可审计。
+- [验证] C2 聚焦门禁通过：`cargo test --locked --lib export_bundle -- --nocapture`
+  8 passed；`cargo fmt --all -- --check`、`cargo clippy --locked --lib
+  -- -D warnings`、`cargo rustdoc --lib --locked -- -W missing-docs` 全部通过。
+- [实现] Phase 32-C3 已接入 CLI：
+  `pid_inspect <file.pid> --export-bundle <dir>` 使用
+  `ExportBundlePlan::default()` 输出最小 bundle；
+  `--export-bundle-raw-streams` 只有和 `--export-bundle` 一起使用才有效，
+  用于显式写 `raw/streams/*.bin`。
+- [验证] C3 新增 `tests/inspect_cli.rs` synthetic CFB smoke test：
+  默认导出必须没有 `raw/streams/` 目录；raw opt-in 导出必须可按
+  `raw/streams.json` 的 `escaped_filename` 读回原始 bytes。
+- [验证] C3 门禁通过：
+  `cargo test --locked --test inspect_cli export_bundle_flag_writes_minimal_bundle_and_raw_bytes_only_when_requested -- --nocapture`、
+  `cargo test --locked --lib export_bundle -- --nocapture`、
+  `cargo fmt --all -- --check`、`cargo clippy --locked --all-targets
+  -- -D warnings`、`cargo rustdoc --lib --locked -- -W missing-docs`。
+- [实现] Phase 32-C4 已补默认 split outputs：
+  `decoded/metadata.json`、`decoded/psm_tables.json`、
+  `decoded/sheets.json`、`decoded/structure.json`，以及存在时才写的
+  `decoded/object_inventory.json`、`decoded/object_graph.json`、
+  `decoded/cross_reference.json`、`decoded/layout.json`。
+- [实现] Phase 32-C4 已补 geometry outputs：
+  `geometry/normalized_geometry.json`、`geometry/decoded_entities.json`、
+  `geometry/audit_entities.json`、`geometry/probe_entities.json`。
+  其中 `audit_entities` 当前承载 `PidGeometryConfidence::Inferred`，
+  `probe_entities` 承载 `ProbeOnly`；不做任何 confidence promotion。
+- [边界] `decoded/import_view.json` 暂缓：`PidImportView` 当前没有
+  serde derive，是 UI projection 而非已承诺的 serialized API surface。
+  不在 C4 为了一个文件顺手扩大 public serialization contract。
+- [验证] C4 门禁通过：`cargo test --locked --lib export_bundle -- --nocapture`
+  9 passed；focused `inspect_cli` export-bundle smoke 通过；`cargo fmt
+  --all -- --check`、`cargo clippy --locked --all-targets -- -D warnings`、
+  `cargo rustdoc --lib --locked -- -W missing-docs` 全部通过。
+- [实现] Phase 32-C5 已补 writer guidance：
+  默认 plan 写 `writer/round_trip_plan.json` 与
+  `writer/diff_summary.json`；`ExportBundlePlan::minimal()` 仍跳过
+  writer subtree。
+- [边界] `writer/round_trip_plan.json` 只描述当前支持的 edit surfaces，
+  包含 passthrough `WritePlan::default()`、可编辑 XML/OLE/string/raw stream
+  replacement surfaces、只读 `geometry/*.json` / `decoded/sheets.json` /
+  `publish/*.xml` 说明，以及 Phase 32 禁止项。它不是从 geometry JSON
+  反写 Sheet bytes 的计划。
+- [边界] `writer/diff_summary.json` 明确 `status = "not_run"`，因为
+  bundle export 不执行 round-trip 或 package diff；验证仍应使用
+  `pid_inspect input.pid --round-trip out.pid --verify` / `--diff`。
+- [验证] C5 门禁通过：`cargo test --locked --lib export_bundle -- --nocapture`
+  9 passed；focused `inspect_cli` export-bundle smoke 通过；`cargo fmt
+  --all -- --check`、`cargo clippy --locked --all-targets -- -D warnings`、
+  `cargo rustdoc --lib --locked -- -W missing-docs` 全部通过。
+- [实现] Phase 32-C6 已将 `PidImportView`、`PidVisualObject`、
+  `PidVisualRelationship`、`PidSymbolSummary`、`PidClusterSummary` 设为
+  serde-backed export surface，并在默认 bundle 写
+  `decoded/import_view.json`。
+- [边界] `decoded/import_view.json` 是 UI-oriented projection，不替代
+  `decoded/document.json` 作为 canonical parse model；minimal plan 仍跳过
+  所有 split views，包括 import_view。
+- [验证] C6 门禁通过：`cargo test --locked --lib export_bundle -- --nocapture`
+  9 passed；focused `inspect_cli` export-bundle smoke 通过；`cargo fmt
+  --all -- --check`、`cargo clippy --locked --all-targets -- -D warnings`、
+  `cargo rustdoc --lib --locked -- -W missing-docs` 全部通过。
+- [规划] Phase 32-C7 已补 publish opt-in planning：bundle publish
+  应复用现有 `pid_publish_xml` library path（`open_mdf_as_sqlite` →
+  `load_drawing_graph` → `write_data_xml` / `write_meta_xml`），而不是在
+  `.pid` parser 内实现第二套 publish 管线。
+- [规划] C7 planned CLI flags：
+  `--export-bundle-publish <Export.mdf>`、`--publish-drawing <UID>`、
+  `--publish-plant <NAME>`、`--publish-style a01|dwg`。输出目标是
+  `publish/data.xml`、`publish/meta.xml`、`publish/status.json`。
+- [边界] publish files 只有显式 opt-in 才写；`manifest.inputs.publish_mdf`
+  必须记录 publish input path / sha256 / size / kind，且不得暗示 publish
+  XML 来自 `.pid` raw bytes。
+- [实现建议] 下一步若实现 publish opt-in，应先做 manifest input identity
+  helpers + publish status DTO，再接 CLI flags；real MDF fixture 缺失时可
+  soft-skip fidelity tests，但 flag parsing / manifest shape / status-file
+  behavior 应用 synthetic 或 legacy SQLite fixture 覆盖。
+- [实现] Phase 32-C8 已实现 manifest input identity helpers：
+  `manifest.inputs.pid`（package 有 source path 时）和
+  `manifest.inputs.publish_mdf`（plan 有 publish input 时）记录
+  path、lowercase SHA-256、size_bytes、kind。kind 规则：
+  `.sqlite` / `.db` → `sqlite`，其它 publish input 默认 `mdf`。
+- [依赖] C8 新增直接依赖 `sha2`，用于输入文件 SHA-256。当前不引入
+  publish XML 生成代码或新 CLI flags。
+- [验证] C8 门禁通过：`cargo test --locked --lib export_bundle -- --nocapture`
+  11 passed；focused `inspect_cli` export-bundle smoke 通过；`cargo fmt
+  --all -- --check`、`cargo clippy --locked --all-targets -- -D warnings`、
+  `cargo rustdoc --lib --locked -- -W missing-docs` 全部通过。
+- [实现] Phase 32-C9 已实现并锁定 publish status output：当
+  `ExportBundlePlan` 显式携带 publish input 时，bundle 写
+  `publish/status.json`，记录 requested drawing UID / plant / style、
+  publish input identity、`data_xml_written=false`、
+  `meta_xml_written=false`、`reference_comparison.state="not_run"` 与
+  `status.state="skipped"`。
+- [边界] C9 只给 publish opt-in 一个可审计 deferred status，不调用
+  `pid_publish_xml`，不写 `publish/data.xml` / `publish/meta.xml`，不接
+  `pid_inspect` publish CLI flags，也不把 MDF publish 结果描述为 `.pid`
+  raw-byte decode。
+- [验证] C9 focused gate 通过：
+  `cargo test --locked --lib export_bundle -- --nocapture`，12 passed。
+- [实现] Phase 32-C10 已新增 library-level publish bundle helper：
+  `export_bundle_publish_xml(...)`。它只在调用方显式调用时生成
+  `publish/data.xml` / `publish/meta.xml`，并写 success
+  `publish/status.json`；默认 `export_bundle(...)` 仍保持 C9 的 deferred
+  status 行为。
+- [复用] C10 helper 复用既有 publish pipeline：
+  `.mdf` 走 `open_mdf_as_sqlite`，legacy SQLite 走
+  `sqlite_load::open_readonly`，随后 `load_drawing_graph` →
+  `write_data_xml` / `write_meta_xml`。
+- [边界] C10 要求 explicit drawing UID；style 默认 `a01`，plant 默认
+  `P01`；不接 `pid_inspect` publish CLI flags，不执行 reference diff。
+- [验证] C10 focused gate 通过：
+  `cargo test --locked --lib export_bundle -- --nocapture`，14 passed，其中
+  legacy SQLite fixture 测试验证 `data.xml` / `meta.xml` / success
+  `status.json` 实物输出。
+- [实现] Phase 32-C11 已将 publish opt-in 接到 `pid_inspect`：
+  `--export-bundle-publish <input>`、`--publish-drawing <UID>`、
+  `--publish-plant <NAME>`、`--publish-style a01|dwg`。
+- [校验] publish flags 必须依附 `--export-bundle <dir>`；
+  `--export-bundle-publish` 必须配 `--publish-drawing`；plant/style/drawing
+  不允许在没有 publish input 时单独使用。
+- [行为] 带 publish flags 时，CLI 先写普通 bundle，再调用
+  `export_bundle_publish_xml(...)` 写 `publish/data.xml`、`publish/meta.xml`
+  和 success `publish/status.json`；不带 publish flags 的 bundle 行为保持
+  C9/C10 之前的默认路径。
+- [边界] C11 仍不做 publish reference diff，也不改变 `.pid` parser
+  confidence / byte-layout promotion。
+- [验证] C11 focused CLI gate 通过：
+  `cargo test --locked --test inspect_cli export_bundle -- --nocapture`，
+  3 passed。
+- [验证] C11 full focused chain 通过：
+  `cargo test --locked --lib export_bundle -- --nocapture`（14 passed）、
+  `cargo fmt --all -- --check`、`cargo rustdoc --lib --locked
+  -- -W missing-docs`、`cargo clippy --locked --all-targets -- -D warnings`、
+  `git diff --check`。
+- [实现] Phase 32-C12 已新增 publish reference diff artifact：
+  `ExportBundlePublishPlan::with_reference_data_xml(...)` 与
+  `pid_inspect --publish-diff-against <Data.xml>`。
+- [行为] 当 reference `_Data.xml` 存在时，`export_bundle_publish_xml(...)`
+  调用既有 `diff_publish_xml` / `diff_rel_defuids`，写
+  `publish/publish_diff.json`，并把
+  `publish/status.json.reference_comparison.state` 标记为 `clean` 或
+  `findings`。
+- [边界] C12 的 `publish_diff.json` 是 bundle 专用 summary（PID tag /
+  Rel DefUID totals、missing、extra、count_deltas），不改变
+  `publish::diff` 公共 DTO，不导出逐行 rows；CLI 不因 diff findings 改变
+  exit code。
+- [验证] C12 focused tests 通过：
+  `cargo test --locked --lib export_bundle -- --nocapture`（15 passed）、
+  `cargo test --locked --test inspect_cli export_bundle -- --nocapture`
+  （4 passed）。
+- [验证] C12 full focused chain 通过：
+  `cargo fmt --all -- --check`、上述两组 focused tests、
+  `cargo rustdoc --lib --locked -- -W missing-docs`、
+  `cargo clippy --locked --all-targets -- -D warnings`、`git diff --check`。
+- [Review] Phase 32-C commit readiness review 已生成：
+  `docs/analysis/2026-06-18-phase32-bundle-commit-readiness-review.md`。
+- [Review] 未发现 Phase 32-C 实现路径的 blocking correctness issue；主要
+  residual risks 是提交边界污染（Phase30/31 docs、`debug.log`）、既有 CRLF
+  warning、`publish_diff.json` 仅 summary counts、reference diff failure 可能
+  留下 partial XML artifacts。
+- [Review] 建议停止继续扩大实现，准备 Phase 32-C review/commit；row-level
+  diff output 或 CI gate 应作为后续 slice。
+
+## Phase 33 关键结论：PSM 0x0010 discriminator tooling-gated closeout（2026-06-23）
+- [目标] 重启 `0x0010` discriminator 证据门禁，但只有拿到 persisted
+  reader / discriminator / bounded byte ranges 后才允许 parser slice。
+- [IDA] 当前 `list_instances` 仅返回 reachable `sppid.dll`
+  (`127.0.0.1:13337`) 与 `core.dll` (`127.0.0.1:13338`)。
+- [负证据] Phase 33 preferred targets 当前不可达：
+  `radsrvitem.dll`、`J2DSrv.dll`、`style.dll`、`jengine.dll`、
+  `XceedRAD.dll`、`OLESITE.dll`、`OLECRT.dll`。
+- [决策] 按 Phase 33 stop condition，只看到 `sppid.dll` / `core.dll`
+  时不继续 broad search，不进入 parser implementation；写
+  tooling-gated negative closeout。
+- [产出]
+  `docs/analysis/2026-06-23-phase33-0010-discriminator-ida-evidence.md`。
+- [边界] `ROADMAP-0010` 继续保持 `TypedAudit`；`leading_word` 仍是
+  `payload[0..2]` positional evidence，不命名为 `sub_kind`；未改 parser、
+  schema、writer 或 bundle confidence。
+- [重启条件] 打开 preferred IDA module，或拿到从 preferred module 指向
+  `sppid.dll` / `core.dll` 的 persistence xref，或提供 controlled fixture
+  证明 discriminator + field layout + bounded byte ranges。
+
+## Phase 34-A 关键结论：Sheet geometry completeness inventory（2026-06-26）
+- [产出] 新增
+  `docs/analysis/2026-06-26-phase34-geometry-completeness-inventory.md`，
+  作为 Phase 34-A read-only inventory；未改 parser、schema、writer、
+  bundle confidence 或 geometry emission。
+- [覆盖] 当前主要 decoded / typed-audit Sheet families 已明确：
+  `0x3FE6 GLine2d`、`0x0018 igLine2d`、`0x0084 igLineString2d`、
+  `0x005E igPoint2d`、`0x004D igTextBox`、`0x00CE igSymbol2d`、
+  `0x0030 JStyleOverride`、`0x00FA GraphicGroup`、`0x0010`。
+- [Fixture gap] 当前 fixture scope 不统一：
+  - spec-kit byte-audit matrix 是 6 个本地 PID；
+  - `geometry_fixture_cases()` 是 5 个，包含 publish-dwg0202 但不含 D06；
+  - PSM histogram / undecoded-shapes examples 是 5 个，包含 D06 但不含
+    publish-dwg0202。
+  Phase 34 follow-up 已将 `geometry_fixture_cases()` 与两个 Phase 34 PSM
+  probe examples 统一到同一组 6 个本地 PID；normalized histogram /
+  undecoded-shapes probe 与 geometry inventory focused test 已重跑通过。
+- [候选分类] Phase 34 plan 中剩余 cross-fixture undecoded candidates：
+  - `0x0013 igBoundary2d`：20 hits / 3 fixtures，StructuralCandidate /
+    NeedsReader。
+  - `0x003D igSmartFrame2d`：12 hits / 6 fixtures，StructuralCandidate /
+    NeedsReader。
+  - `0x0020 igRectangle2d`：4 hits / 3 fixtures，唯一 drawable type-name
+    candidate，但当前 ownership-gated 且仍需 byte-layout proof。
+- [缺失类型] `igCircle2d` (`0x0059`)、`igArc2d` (`0x0061`)、`igEllipse2d`
+  (`0x0063`)、`igEllipticalArc2d` (`0x007E`) 与 `igBSplineCurve2d`
+  (`0x005D`) 当前 blocked by missing fixture/native reader evidence。
+- [决策] Phase 34-B 不应直接 coding。先产出 `0x0020 igRectangle2d`
+  byte-layout note：3 条记录 offset/range、btf/flags、邻接类型、candidate
+  corner/transform fields、rejection expectations 与 expected byte-audit
+  movement。若三条样本不能证明稳定 layout，则写 negative closeout。
+- [验证] shell exit status 后续恢复；normalized histogram probe、
+  undecoded-shapes probe、geometry inventory focused test 与 fmt check 均已通过。
+
+## Phase 34-B pre-decoder 关键结论：0x0020 igRectangle2d readiness（2026-06-26）
+- [产出] 新增
+  `docs/analysis/2026-06-26-phase34-0020-igrectangle2d-readiness.md`。
+- [当前结论] `0x0020 igRectangle2d` 仍是 preferred first drawable candidate，
+  但当前不允许 decoder implementation。
+- [已证明] IDA / IGDS type table 将 `0x20` 命名为 `igRectangle2d`；Phase 34
+  normalized probe 记录 4 hits / 3 fixture paths，全部 `bytes_to_follow=78`；
+  该候选比 `0x0013 igBoundary2d` / `0x003D igSmartFrame2d` 更接近 drawable
+  geometry。
+- [已补 dump] 可信 probe dump 已记录 4 条样本：`DWG-0202 /Sheet6615`
+  与 `publish-DWG-0202 /Sheet6615` 是同族副本；A01 有 2 条 nested
+  `/JSite204\Sheet6` 样本。
+- [未证明] field layout 仍不稳定：top-level `/Sheet6615` 样本
+  `flags=2` 且 previous record 为空；nested A01 样本 `flags=0` 且夹在
+  `igLine2d` 之间；candidate f64 offsets 只说明存在 normalized-like 数值，
+  尚不能证明 corner / width / height / transform 语义。
+- [旧证据冲突] Phase 14 文档曾说标准 IGDS `0x0020` 在当时 fixture set
+  为 0 hits；normalized 6-fixture probe 当前为 4 hits / 3 fixture paths。
+  该差异已确认是 snapshot drift，但仍不能凭 summary 直接编码。
+- [门禁] 只有在 `/Sheet6615` 与 nested `/JSite204\Sheet6` ownership、
+  nearby decoded `igLine2d` 关系、candidate f64 offsets 与 byte-audit movement
+  都证明稳定后，才允许 `SheetIgRectangle2dDecoded` /
+  `decode_igrectangle_at`。否则写 negative closeout。
+
+## Phase 34-B follow-up 关键结论：0x0020 ownership review（2026-06-26）
+- [产出] 新增
+  `docs/analysis/2026-06-26-phase34-0020-ownership-review.md`。
+- [Probe 增强] `probe_psm_undecoded_shapes` 现在会为 target samples 输出
+  previous / next record 的 range、flags 与 `bytes_to_follow`。
+- [所有权事实] normalized probe 的 4 条 `0x0020` hits 均不在 primary
+  top-level `/Sheet6`：
+  - `DWG-0202` 与 `publish-DWG-0202`：`/Sheet6615` mini-sheet，record
+    `0x000008..0x00005C`，`flags=2`，stream 内首条 PSM record，next 是
+    `igLine2d flags=2 btf=50`。
+  - `A01`：nested `/JSite204\Sheet6` 两条，均夹在 decoded
+    `igLine2d btf=50` records 之间，`flags=0`。
+- [决策] `0x0020` 当前从 “immediate drawable candidate” 降级为
+  “drawable type name, ownership-gated candidate”。不得把 mini-sheet /
+  nested symbol-local records 直接 merge 到 top-level normalized geometry。
+- [下一步] 做 neighbor correlation：dump adjacent decoded `igLine2d`
+  geometry，比较 endpoints 与 `0x0020` candidate f64 offsets；若不能证明
+  bounding box / rectangle semantics，则 Phase 34-B 应 negative closeout。
+
+## Phase 34-B relaxed neighbor correlation 关键结论：0x0020 收口 negative（2026-06-30）
+- [动因] 之前的 strict correlation 报 "no decoded igLine2d neighbor" 是
+  `decode_igline_at` 的 `remaining_header==12` magic gate 造成的假阴性：
+  每个 `0x0020` 的 neighbor 都是 `0x0018 btf=50` 但 `remaining_header`
+  不是 12，被 strict decoder 拒绝。
+- [增强] `examples/probe_psm_undecoded_shapes.rs` 新增 relaxed `0x0018`
+  读取（绕过 magic，仍按 `+18/+26/+34/+42` 读 start/end），并输出 relaxed
+  candidate↔neighbor delta、neighbor 的 `remaining_header` 与 finite 标志。
+- [Family A `/Sheet6615`（DWG-0202 + publish dup）] `0x0020` 的
+  `+18=0.126271288517`、`+26=0.092378904764`、`+34=0.127478376761` 与下一条
+  line（oid=4732, 水平线）的 `start.x` / `start.y` / `extent.x(=length)`
+  **f64 位精确相等（delta=0）**；但 `+42=0.0`（无 height/第二 extent），
+  `+50=0.4068` 的尾数是 `0A 0A 0A 0A` padding 噪声；该 neighbor 本身
+  `remaining_header=6996`（非 12）。
+- [Family B nested `/JSite204\Sheet6`（A01）] `0x0020` candidate 与 neighbor
+  端点**完全无关联**（neighbor 是 A2 page-border line，`remaining_header=8`）；
+  candidate 更像 page-frame：`+34=0.594`(=A2 宽 m)、`+50≈0.707≈1/√2`(A 系
+  纸张比)、`+18/+26` 像 0.025/0.010 margin。
+- [结论] 两个 ownership family 的 `0x0020` 字段语义**不一致**（同一 offset
+  在两族含义不同），且无法证明双 extent / rectangle invariant，neighbor 又
+  是 variant dialect，ownership 仍是 mini-sheet / nested symbol-local（从不
+  在 top-level `/Sheet6`）。按 roadmap promotion gate，证据不足。
+- [决策] `0x0020 = identified drawable type name, ownership-gated, no decoder`；
+  不新增 `SheetIgRectangle2dDecoded` / `PidGraphicKind::Rectangle` / polyline
+  rectangle emission / byte-audit movement / writer / bundle confidence change。
+- [重开条件] controlled fixture 或 native reader 同时证明 ownership projection
+  与跨族稳定的两 extent（width+height，含 `+42`/`+50` 语义）字段集。
+- [产出] `docs/analysis/2026-06-30-phase34-0020-relaxed-neighbor-correlation.md`。
+
+## Phase 34-C 关键结论：0x0013 / 0x003D evidence closeout（2026-06-30）
+- [`0x0013 igBoundary2d` = 最强候选] 20 hits / 3 fixtures，全 `btf=172`，
+  **全部在 primary top-level `/Sheet6`**（ownership 干净，区别于 `0x0020`），
+  neighbor 是 canonical `igLine2d`（`remaining_header=12`，strict 可解）。
+  payload f64（`+29` 起 8 字节 stride）跨 4 个样本**精确复现**前后 line 的
+  start/end 端点（delta=0 同位）。header：`+0` oid、`+4` parent_ref、
+  `+8` remaining_header=12、`+12` sub_type=0x0010；vertex run 前有重复
+  `0x67` tag 字节（`+28`、`+61`…），故不是纯 packed `f64[2n]`。
+- [`0x0013` 不本轮 emit] 缺 vertex-count 字段、精确 vertex-array byte range
+  （起点不对齐 `+29` 且被 `0x67` tag 打断）、boundary 语义（闭合多边形 /
+  hatch boundary / 仅复列成员端点的 association 三者都与现象相容）；按 gate
+  需要 count/array range + panic-safety + schema + byte-audit + ratchet →
+  归入专门 slice（建议 Phase 34-D），本轮只做 evidence closeout。
+- [`0x003D igSmartFrame2d` = 结构性 frame，非几何] 12 hits / **全 6 fixtures**，
+  每图约 1 条，`remaining_header=14`；payload 是 page-frame 标量
+  （`+76≈0.594`=A2 宽 m、`+84≈0.420`=A2 高 m、`+148≈0.707`=1/√2、
+  `+19/+32≈2.0`、`+60=1.0`），与 neighbor 端点**无关联**（最近 igLine2d 很远，
+  delta 0.01–1.4，"matches" 是 nearest-value 伪命中）。判定为 drawing-frame /
+  sheet-border 结构记录，不 emit drawable geometry。
+- [page-transform 护栏交叉链] `0x003D` 的 `0.594/0.420` 正是
+  `ROADMAP-PAGE-TRANSFORM` 明确禁止据以 promote transform 的证据类型；只能作为
+  page-size evidence（probe 级），不得让 `PidPageTransform::Available` 出现。
+- [缺失几何家族] `0x0059 igCircle2d` / `0x0061 igArc2d` / `0x0063 igEllipse2d`
+  / `0x007E igEllipticalArc2d` / `0x005D igBSplineCurve2d` 在 6 个本地 fixture
+  上 0 hits，继续 blocked by missing fixture / native reader。
+- [产出] `docs/analysis/2026-06-30-phase34-0013-003d-evidence-closeout.md`。
 
 ## 关键文件（Phase 13-21 补丁）
 - `goals/phase14-sppid-sheet-geometry/`
@@ -1096,3 +1533,58 @@
 - `examples/probe_psm_0x0010_shape.rs`
 - `examples/probe_psm_0x0010_sub_kind.rs`
 - `examples/probe_rad_siblings_0x0029_0x0035.rs`
+
+## Phase 33-I：0x0010 discriminator Mode A 静态 .asm 证据（2026-06-30）
+
+- 上下文：`radsrvitem.dll` 未作为 IDA instance 打开（`list_instances` 仅
+  `sppid.dll`/`core.dll`），Mode B 暂不可用；改执行 plan 的 Mode A，只读分析
+  本地 `dlls/radsrvitem.dll.asm`（40 MB）+ 原始 PE 校验。
+- [证据] 类型表身份独立复算：`0x0010`@`0x23A5A8`、`0x0115`@`0x23BA0C` 共享
+  GUID `1D1928C0-0000-0000-C000-000000000046`；type code 不存于条目（GUID 排序
+  二分表）→ PSM type code 无序数语义。
+- [证据] body 解析机制（`PSMSerializeIn sub_564915E0`）：envelope
+  `type+btf+oid+aux` → PersistTypeTable 身份校验 → 每类型 **`vtable+0x18`**
+  Read（IOContext `[edi+8]`）→ `bytes_to_follow` consume 校验。deferral
+  `0x80040233` 置标志位 `0x400`，即 `sub_56468B30` 路由 SerialCluster
+  lazy-load 所测位。
+- [结论] shared path 仅证明 envelope + 运行时分派 + 类型身份；`0x0010` 的
+  size-31/16/86 固定字段布局只能在 type-`0x0010` 对象 `vtable+0x18` 内确定，
+  而该 GUID 工厂 `E_NOTIMPL`、走 SerialCluster 持久化容器路径 → 命中 plan
+  negative rollback 判据。`ROADMAP-0010` 维持 `TypedAudit`，docs-only。
+- [陷阱] 原始 PE 20 字节条目尾部是 `tail16(1)+tail17(1)+parent(2 LE)`，
+  不要按单个 u16 读（首轮误读成 `0x0640`）。
+- re-open：Mode B 反编译 `sub_56490B00`（`L145614`）+ 该类 `vtable+0x18`。
+- 产出：`docs/analysis/2026-06-30-phase33-0010-discriminator-mode-a-asm-evidence.md`
+
+## 0x00FA GraphicGroup：child-OID-array 假设证伪（2026-06-30）
+
+- [证据] fixture 侧（Python CFB reader，Rust release 构建被 MSVC `LNK1318` PDB
+  链接错误阻塞）：5 fixture 检验「tail = u32 count C + C×u32 几何 OID」→
+  **0/366 精确命中**；少量 loose all-OID 命中是 count=3 / 仅 DWG 族 /
+  非 tail-anchored 的巧合 → `0x00FA` 不是 count-prefixed child-OID 列表。
+- [证据] Mode A `radsrvitem.dll` type-name mapper `sub_56448F70`：命名 RAD 类
+  仅覆盖 code `6..0x0CE`（`sub eax,6; cmp eax,0C8h; ja default`），`0x00FA`(250)
+  越界落 default → 无 RAD 类名；binary 无 `GraphicGroup`/`GraphicPersist`
+  字符串（`igGroup` 是更低 code）。同 mapper 特判 `0x115`（=0x0010 alias）。
+- [结论] `0x00FA` 维持 Phase 15 `TypedAudit`；tail 几何 OID 在 per-sub_type
+  variant 的 size-specific offset，非通用列表；命名 child_oids 需 Mode B 的
+  `0x00FA` 反序列化 handler / `vtable+0x18` 或 controlled fixture。
+- [陷阱] A01 的 `/Sheet6` 是 CFB mini-stream(<4KiB)，FAT-only reader 跳过。
+- 产出：`docs/analysis/2026-06-30-00fa-graphicgroup-child-oid-evidence.md`
+
+## 0x0089 DA record trailer：跨 fixture 验证 + tail 修正（2026-06-30）
+
+- [证据] `DaRecordTrailer` 布局（model.rs L613-627，原「2 samples」）经独立
+  Python CFB reader（含 mini-FAT）在 5 fixture 验证：head（marker/size/
+  record_id/pad8/field_x/sep=0xFFFF/class_id）在 **519/520 markers(99.8%)**
+  成立（dwg0202 1 例外）。
+- [修正] `+28 tail = 0x14 0x00 0x00` 非 invariant，仅 ~62%(320/520) 携带 →
+  稳定 trailer 是 `+0..+28`；`+28` 起 class/variant 变化。DTO 不暴露 tail，
+  JSON 不受影响；建议后续单独授权改 model.rs 注释。
+- [证据] `class_id` 宽枚举(~20+)：`0xF6/0xEA/0x109` 仅小子集；另有
+  `0xAC/0xE1/0xE7/0xE9/0xED/0x100..0x111` 等未命名（名字在 DA Metadata）。
+  每 fixture 首条统一 `record_id=0x6002,field_x=4,class_id=0xAC,size=192`。
+- [证据] Mode A：`0x0089`(137) 在 mapper 区间内但走 default（Phase 30-C：写
+  `RAD_OBJECT_TYPE=137`、不解 head）→ 无命名 typed reader。
+- [结论] 维持 audit/probe，docs-only；命名 class_id 需解 `/Dynamic Attributes
+  Metadata`。产出 `docs/analysis/2026-06-30-0089-da-trailer-cross-fixture-validation.md`
