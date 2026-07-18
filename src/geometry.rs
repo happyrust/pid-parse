@@ -5,7 +5,7 @@
 //! points because they carry source byte ranges, but they are still not
 //! line / text / symbol geometry.
 
-use crate::model::{PidDocument, SheetRecordKind};
+use crate::model::{PidDocument, SheetRecordKind, SheetStream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -719,367 +719,15 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
             });
         }
 
-        // Phase 14 Slice E/J: emit `Decoded` entities for every
-        // PSM-decoded `GLine2d` / `igLine2d` record in this sheet.
-        // These run **in addition to** the EndpointPair-derived
-        // inferred lines above so existing inferred geometry never
-        // regresses; consumers should pick the right entity by
-        // `confidence` + `record_kind`.
-        if let Some(geometry) = &sheet.geometry {
-            for (index, record) in geometry.decoded_primitive_lines.iter().enumerate() {
-                let Some(byte_range) = source_range(
-                    record.byte_start,
-                    record.byte_end.saturating_sub(record.byte_start),
-                    sheet.size,
-                ) else {
-                    continue;
-                };
-                let (ax, ay) = record.endpoint_a();
-                let (bx, by) = record.endpoint_b();
-                entities.push(PidGraphicEntity {
-                    id: format!("{}:primitive-line:{index}", sheet.path),
-                    drawing_id: None,
-                    graphic_oid: Some(record.oid),
-                    kind: PidGraphicKind::Line {
-                        start: PidPoint { x: ax, y: ay },
-                        end: PidPoint { x: bx, y: by },
-                    },
-                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
-                    source: PidGraphicProvenance {
-                        stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(byte_range),
-                        record_id: Some(format!("primitive-line:{index}")),
-                        record_kind: Some(SheetRecordKind::PrimitiveLine),
-                        field_x: None,
-                        note: Some(format!(
-                            "PSM GLine2d record decoded from radsrvitem.dll byte layout (\
-                             18-byte header + 6 x f64 payload); oid={} type_code=0x{:04X} \
-                             type_flags=0x{:X} bytes_to_follow={} origin=({:.4}, {:.4}) \
-                             direction=({:.5}, {:.5}) param=[{:.4}, {:.4}]",
-                            record.oid,
-                            record.type_code,
-                            record.type_flags,
-                            record.bytes_to_follow,
-                            record.origin_x,
-                            record.origin_y,
-                            record.direction_x,
-                            record.direction_y,
-                            record.param_start,
-                            record.param_end,
-                        )),
-                    },
-                    confidence: PidGeometryConfidence::Decoded,
-                });
-            }
-            for (index, record) in geometry.decoded_igsymbols.iter().enumerate() {
-                let Some(byte_range) = source_range(
-                    record.byte_start,
-                    record.byte_end.saturating_sub(record.byte_start),
-                    sheet.size,
-                ) else {
-                    continue;
-                };
-                entities.push(PidGraphicEntity {
-                    id: format!("{}:igsymbol2d:{index}", sheet.path),
-                    drawing_id: None,
-                    graphic_oid: Some(record.oid),
-                    kind: PidGraphicKind::SymbolInstance {
-                        insertion: PidPoint {
-                            x: record.insertion_x,
-                            y: record.insertion_y,
-                        },
-                        symbol_path: None,
-                        rotation: 0.0,
-                        scale: [record.transform_00, record.transform_11],
-                    },
-                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
-                    source: PidGraphicProvenance {
-                        stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(byte_range),
-                        record_id: Some(format!("igsymbol2d:{index}")),
-                        record_kind: Some(SheetRecordKind::SymbolPlacement),
-                        field_x: None,
-                        note: Some(format!(
-                            "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, \
-                             type 0x00CE, IGDS class tag 0xCE); oid={} parent_ref={} \
-                             sub_type=0x{:04X} insertion=({:.4}, {:.4}) transform=[{:.4}, \
-                             {:.4}, {:.4}, {:.4}]; byte layout from fixture dump",
-                            record.oid,
-                            record.parent_ref,
-                            record.sub_type_word,
-                            record.insertion_x,
-                            record.insertion_y,
-                            record.transform_00,
-                            record.transform_01,
-                            record.transform_10,
-                            record.transform_11,
-                        )),
-                    },
-                    confidence: PidGeometryConfidence::Decoded,
-                });
-            }
-            for (index, record) in geometry.decoded_igtextboxes.iter().enumerate() {
-                let Some(byte_range) = source_range(
-                    record.byte_start,
-                    record.byte_end.saturating_sub(record.byte_start),
-                    sheet.size,
-                ) else {
-                    continue;
-                };
-                entities.push(PidGraphicEntity {
-                    id: format!("{}:igtextbox:{index}", sheet.path),
-                    drawing_id: None,
-                    graphic_oid: Some(record.oid),
-                    kind: PidGraphicKind::Text {
-                        insertion: PidPoint {
-                            x: record.trailing_double_1,
-                            y: record.trailing_double_2,
-                        },
-                        value: record.text.clone(),
-                        height: 0.0,
-                        rotation: 0.0,
-                    },
-                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
-                    source: PidGraphicProvenance {
-                        stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(byte_range),
-                        record_id: Some(format!("igtextbox:{index}")),
-                        record_kind: Some(SheetRecordKind::TextPlacementStyle),
-                        field_x: None,
-                        note: Some(format!(
-                            "PSM igTextBox record (Intergraph Sigma standard text annotation, \
-                             type 0x004D, IGDS class tag 0x4D); oid={} parent_ref={} \
-                             sub_type=0x{:04X} index={} text_length={} text={:?} \
-                             insertion=({:.4}, {:.4}) trailing_3={:.4}; byte layout from \
-                             fixture dump",
-                            record.oid,
-                            record.parent_ref,
-                            record.sub_type_word,
-                            record.index,
-                            record.text_length,
-                            record.text,
-                            record.trailing_double_1,
-                            record.trailing_double_2,
-                            record.trailing_double_3,
-                        )),
-                    },
-                    confidence: PidGeometryConfidence::Decoded,
-                });
-            }
-            for (index, record) in geometry.decoded_igpoints.iter().enumerate() {
-                let Some(byte_range) = source_range(
-                    record.byte_start,
-                    record.byte_end.saturating_sub(record.byte_start),
-                    sheet.size,
-                ) else {
-                    continue;
-                };
-                entities.push(PidGraphicEntity {
-                    id: format!("{}:igpoint2d:{index}", sheet.path),
-                    drawing_id: None,
-                    graphic_oid: Some(record.oid),
-                    kind: PidGraphicKind::Point {
-                        position: PidPoint {
-                            x: record.x,
-                            y: record.y,
-                        },
-                    },
-                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
-                    source: PidGraphicProvenance {
-                        stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(byte_range),
-                        record_id: Some(format!("igpoint2d:{index}")),
-                        record_kind: Some(SheetRecordKind::CoordinatePageMetadata),
-                        field_x: None,
-                        note: Some(format!(
-                            "PSM igPoint2d record (Intergraph Sigma standard point, \
-                             type 0x005E, IGDS class tag 0x5E); oid={} parent_ref={} \
-                             sub_type=0x{:04X} index={} position=({:.4}, {:.4}); \
-                             byte layout from fixture dump",
-                            record.oid,
-                            record.parent_ref,
-                            record.sub_type_word,
-                            record.index,
-                            record.x,
-                            record.y,
-                        )),
-                    },
-                    confidence: PidGeometryConfidence::Decoded,
-                });
-            }
-            for (index, record) in geometry.decoded_iglinestrings.iter().enumerate() {
-                let Some(byte_range) = source_range(
-                    record.byte_start,
-                    record.byte_end.saturating_sub(record.byte_start),
-                    sheet.size,
-                ) else {
-                    continue;
-                };
-                if record.vertex_xs.len() != record.vertex_ys.len() {
-                    continue;
-                }
-                let points: Vec<PidPoint> = record
-                    .vertex_xs
-                    .iter()
-                    .zip(record.vertex_ys.iter())
-                    .map(|(x, y)| PidPoint { x: *x, y: *y })
-                    .collect();
-                entities.push(PidGraphicEntity {
-                    id: format!("{}:iglinestring2d:{index}", sheet.path),
-                    drawing_id: None,
-                    graphic_oid: Some(record.oid),
-                    kind: PidGraphicKind::Polyline {
-                        points,
-                        closed: false,
-                    },
-                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
-                    source: PidGraphicProvenance {
-                        stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(byte_range),
-                        record_id: Some(format!("iglinestring2d:{index}")),
-                        record_kind: Some(SheetRecordKind::PrimitivePolyline),
-                        field_x: None,
-                        note: Some(format!(
-                            "PSM igLineString2d record (Intergraph Sigma standard polyline, \
-                             type 0x0084, IGDS class tag 0x84); oid={} parent_ref={} \
-                             sub_type=0x{:04X} index={} form={} scope={} vc={} \
-                             total_length={:.4}; byte layout from fixture dump",
-                            record.oid,
-                            record.parent_ref,
-                            record.sub_type_word,
-                            record.index,
-                            record.form,
-                            record.scope,
-                            record.vertex_count(),
-                            record.total_length(),
-                        )),
-                    },
-                    confidence: PidGeometryConfidence::Decoded,
-                });
-            }
-            for (index, record) in geometry.decoded_iglines.iter().enumerate() {
-                let Some(byte_range) = source_range(
-                    record.byte_start,
-                    record.byte_end.saturating_sub(record.byte_start),
-                    sheet.size,
-                ) else {
-                    continue;
-                };
-                entities.push(PidGraphicEntity {
-                    id: format!("{}:igline2d:{index}", sheet.path),
-                    drawing_id: None,
-                    graphic_oid: Some(record.oid),
-                    kind: PidGraphicKind::Line {
-                        start: PidPoint {
-                            x: record.start_x,
-                            y: record.start_y,
-                        },
-                        end: PidPoint {
-                            x: record.end_x,
-                            y: record.end_y,
-                        },
-                    },
-                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
-                    source: PidGraphicProvenance {
-                        stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(byte_range),
-                        record_id: Some(format!("igline2d:{index}")),
-                        record_kind: Some(SheetRecordKind::PrimitiveLine),
-                        field_x: None,
-                        note: Some(format!(
-                            "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, \
-                             IGDS class tag 0x18); oid={} parent_ref={} sub_type=0x{:04X} \
-                             index={} start=({:.4}, {:.4}) end=({:.4}, {:.4}) length={:.4}; \
-                             byte layout from fixture dump (radsrvitem.dll-adjacent)",
-                            record.oid,
-                            record.parent_ref,
-                            record.sub_type_word,
-                            record.index,
-                            record.start_x,
-                            record.start_y,
-                            record.end_x,
-                            record.end_y,
-                            record.length(),
-                        )),
-                    },
-                    confidence: PidGeometryConfidence::Decoded,
-                });
-            }
-            // Phase 16 Slice F: emit `decoded_jstyle_overrides`
-            // (PSM `0x0030` = RAD `JStyleOverride`) as
-            // `PidGraphicKind::Annotation`. The IDA Version-3 schema
-            // (`style.dll!sub_1000F030`) writes the payload as
-            // `4 × u32 + 4 × f64 + 3 × u32 + 2 × u16`; cross-fixture
-            // probe v5 evidence shows that joining the first 8 bytes
-            // and bytes `+8..15` as `f64` produces consistently
-            // normalized coordinates, so we expose them as an
-            // `Inferred` annotation anchor while keeping the
-            // authoritative record layout in the decoded audit collection.
-            for (index, record) in geometry.decoded_jstyle_overrides.iter().enumerate() {
-                let Some(byte_range) = source_range(
-                    record.byte_start,
-                    record.byte_end.saturating_sub(record.byte_start),
-                    sheet.size,
-                ) else {
-                    continue;
-                };
-                let a_bytes = record.field_a_u32.to_le_bytes();
-                let b_bytes = record.field_b_u32.to_le_bytes();
-                let c_bytes = record.field_c_u32.to_le_bytes();
-                let d_bytes = record.field_d_u32.to_le_bytes();
-                let anchor_x = f64::from_le_bytes([
-                    a_bytes[0], a_bytes[1], a_bytes[2], a_bytes[3], b_bytes[0], b_bytes[1],
-                    b_bytes[2], b_bytes[3],
-                ]);
-                let anchor_y = f64::from_le_bytes([
-                    c_bytes[0], c_bytes[1], c_bytes[2], c_bytes[3], d_bytes[0], d_bytes[1],
-                    d_bytes[2], d_bytes[3],
-                ]);
-                if !anchor_x.is_finite() || !anchor_y.is_finite() {
-                    continue;
-                }
-                entities.push(PidGraphicEntity {
-                    id: format!("{}:jstyle-override:{index}", sheet.path),
-                    drawing_id: None,
-                    graphic_oid: Some(record.oid),
-                    kind: PidGraphicKind::Annotation {
-                        anchor: PidPoint {
-                            x: anchor_x,
-                            y: anchor_y,
-                        },
-                        rotation_angle: record.field_2_f64,
-                        secondary_radius: record.field_1_f64,
-                        note: format!(
-                            "PSM JStyleOverride (RAD style.dll CLSID {{47FCC338-...}}) \
-                             V3 IO record; probe-derived annotation anchor; \
-                             oid={} bytes_to_follow={} tail_len={}",
-                            record.oid,
-                            record.bytes_to_follow,
-                            record.raw_attribute_tail.len(),
-                        ),
-                    },
-                    coordinate_context: sheet_source_coordinate_context(&sheet.path),
-                    source: PidGraphicProvenance {
-                        stream_path: Some(sheet.path.clone()),
-                        byte_range: Some(byte_range),
-                        record_id: Some(format!("jstyle-override:{index}")),
-                        record_kind: Some(SheetRecordKind::JStyleOverride),
-                        field_x: None,
-                        note: Some(format!(
-                            "PSM 0x0030 JStyleOverride record layout decoded from \
-                             style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): \
-                             oid={} bytes_to_follow={} field_1={:.6} \
-                             rotation_angle={:.6} (rad); annotation anchor remains \
-                             inferred because payload +0..15 is authoritative as 4 x u32",
-                            record.oid,
-                            record.bytes_to_follow,
-                            record.field_1_f64,
-                            record.field_2_f64,
-                        )),
-                    },
-                    confidence: PidGeometryConfidence::Inferred,
-                });
-            }
+        // M2 seam (RFC §3.2): every decoded PSM record family emits
+        // through its registered `GeometryEmitter`. Emitters run **in
+        // addition to** the EndpointPair-derived inferred lines above
+        // so existing inferred geometry never regresses; consumers
+        // should pick the right entity by `confidence` + `record_kind`.
+        // Audit-only families are registered as explicit no-op
+        // emitters, making the emission policy visible in one table.
+        for emitter in EMITTERS {
+            emitter.emit(sheet, &mut entities);
         }
     }
 
@@ -1113,6 +761,520 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         page_dimensions_mm: page_dims,
         warnings,
     }
+}
+
+/// Per-family emission seam (RFC §3.2, L6 counterpart of the parser-side
+/// `PsmRecordDecoder`): one adapter per PSM record family turns that
+/// family's decoded records on a sheet into zero or more
+/// [`PidGraphicEntity`] values.
+///
+/// Contract:
+///
+/// - Emitters read only `sheet` and append to `out`; per-family
+///   differences (`PidGraphicKind`, `confidence`, evidence notes) live
+///   entirely inside each adapter.
+/// - **Audit-only families register deliberate no-op emitters** so the
+///   "which families emit geometry" policy is visible in the
+///   [`EMITTERS`] table rather than implied by absence. Per ADR-0001 /
+///   CONTEXT.md, promoting an audit-only family to emission is an
+///   evidence-gated decision, never a refactor side effect.
+trait GeometryEmitter {
+    /// Append this family's entities for `sheet` onto `out`.
+    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>);
+}
+
+/// Emission registry walked by [`build_normalized_geometry`] for every
+/// sheet. Order is stable and part of the golden-snapshot contract
+/// (`tests/geometry_golden_snapshot.rs`): emitting families first in
+/// their historical order, then the audit-only no-op families.
+const EMITTERS: &[&dyn GeometryEmitter] = &[
+    // Emitting families (historical order — do not reorder without
+    // re-blessing the golden snapshot).
+    &GLine2dEmitter,
+    &IgSymbol2dEmitter,
+    &IgTextBoxEmitter,
+    &IgPoint2dEmitter,
+    &IgLineString2dEmitter,
+    &IgLine2dEmitter,
+    &JStyleOverrideEmitter,
+    // Audit-only families: explicit no-op policy.
+    &IgBoundary2dEmitter,
+    &GraphicGroupEmitter,
+    &SubRecord0x0010Emitter,
+    &AttributeFragmentEmitter,
+];
+
+/// Emits `Decoded` [`PidGraphicKind::Line`] entities for the
+/// `SmartPlant` extended `GLine2d` family (PSM `0x3FE6`), converting
+/// the parametric `origin + t·direction` form to Cartesian endpoints.
+struct GLine2dEmitter;
+
+impl GeometryEmitter for GLine2dEmitter {
+    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_primitive_lines.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            let (ax, ay) = record.endpoint_a();
+            let (bx, by) = record.endpoint_b();
+            out.push(PidGraphicEntity {
+                id: format!("{}:primitive-line:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                kind: PidGraphicKind::Line {
+                    start: PidPoint { x: ax, y: ay },
+                    end: PidPoint { x: bx, y: by },
+                },
+                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("primitive-line:{index}")),
+                    record_kind: Some(SheetRecordKind::PrimitiveLine),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM GLine2d record decoded from radsrvitem.dll byte layout (\
+                         18-byte header + 6 x f64 payload); oid={} type_code=0x{:04X} \
+                         type_flags=0x{:X} bytes_to_follow={} origin=({:.4}, {:.4}) \
+                         direction=({:.5}, {:.5}) param=[{:.4}, {:.4}]",
+                        record.oid,
+                        record.type_code,
+                        record.type_flags,
+                        record.bytes_to_follow,
+                        record.origin_x,
+                        record.origin_y,
+                        record.direction_x,
+                        record.direction_y,
+                        record.param_start,
+                        record.param_end,
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+    }
+}
+
+/// Emits `Decoded` [`PidGraphicKind::SymbolInstance`] entities for the
+/// `igSymbol2d` family (PSM `0x00CE`).
+struct IgSymbol2dEmitter;
+
+impl GeometryEmitter for IgSymbol2dEmitter {
+    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_igsymbols.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            out.push(PidGraphicEntity {
+                id: format!("{}:igsymbol2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                kind: PidGraphicKind::SymbolInstance {
+                    insertion: PidPoint {
+                        x: record.insertion_x,
+                        y: record.insertion_y,
+                    },
+                    symbol_path: None,
+                    rotation: 0.0,
+                    scale: [record.transform_00, record.transform_11],
+                },
+                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igsymbol2d:{index}")),
+                    record_kind: Some(SheetRecordKind::SymbolPlacement),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, \
+                         type 0x00CE, IGDS class tag 0xCE); oid={} parent_ref={} \
+                         sub_type=0x{:04X} insertion=({:.4}, {:.4}) transform=[{:.4}, \
+                         {:.4}, {:.4}, {:.4}]; byte layout from fixture dump",
+                        record.oid,
+                        record.parent_ref,
+                        record.sub_type_word,
+                        record.insertion_x,
+                        record.insertion_y,
+                        record.transform_00,
+                        record.transform_01,
+                        record.transform_10,
+                        record.transform_11,
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+    }
+}
+
+/// Emits `Decoded` [`PidGraphicKind::Text`] entities for the
+/// `igTextBox` family (PSM `0x004D`).
+struct IgTextBoxEmitter;
+
+impl GeometryEmitter for IgTextBoxEmitter {
+    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_igtextboxes.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            out.push(PidGraphicEntity {
+                id: format!("{}:igtextbox:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                kind: PidGraphicKind::Text {
+                    insertion: PidPoint {
+                        x: record.trailing_double_1,
+                        y: record.trailing_double_2,
+                    },
+                    value: record.text.clone(),
+                    height: 0.0,
+                    rotation: 0.0,
+                },
+                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igtextbox:{index}")),
+                    record_kind: Some(SheetRecordKind::TextPlacementStyle),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igTextBox record (Intergraph Sigma standard text annotation, \
+                         type 0x004D, IGDS class tag 0x4D); oid={} parent_ref={} \
+                         sub_type=0x{:04X} index={} text_length={} text={:?} \
+                         insertion=({:.4}, {:.4}) trailing_3={:.4}; byte layout from \
+                         fixture dump",
+                        record.oid,
+                        record.parent_ref,
+                        record.sub_type_word,
+                        record.index,
+                        record.text_length,
+                        record.text,
+                        record.trailing_double_1,
+                        record.trailing_double_2,
+                        record.trailing_double_3,
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+    }
+}
+
+/// Emits `Decoded` [`PidGraphicKind::Point`] entities for the
+/// `igPoint2d` family (PSM `0x005E`).
+struct IgPoint2dEmitter;
+
+impl GeometryEmitter for IgPoint2dEmitter {
+    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_igpoints.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            out.push(PidGraphicEntity {
+                id: format!("{}:igpoint2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                kind: PidGraphicKind::Point {
+                    position: PidPoint {
+                        x: record.x,
+                        y: record.y,
+                    },
+                },
+                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igpoint2d:{index}")),
+                    record_kind: Some(SheetRecordKind::CoordinatePageMetadata),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igPoint2d record (Intergraph Sigma standard point, \
+                         type 0x005E, IGDS class tag 0x5E); oid={} parent_ref={} \
+                         sub_type=0x{:04X} index={} position=({:.4}, {:.4}); \
+                         byte layout from fixture dump",
+                        record.oid,
+                        record.parent_ref,
+                        record.sub_type_word,
+                        record.index,
+                        record.x,
+                        record.y,
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+    }
+}
+
+/// Emits `Decoded` [`PidGraphicKind::Polyline`] entities for the
+/// `igLineString2d` family (PSM `0x0084`).
+struct IgLineString2dEmitter;
+
+impl GeometryEmitter for IgLineString2dEmitter {
+    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_iglinestrings.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            if record.vertex_xs.len() != record.vertex_ys.len() {
+                continue;
+            }
+            let points: Vec<PidPoint> = record
+                .vertex_xs
+                .iter()
+                .zip(record.vertex_ys.iter())
+                .map(|(x, y)| PidPoint { x: *x, y: *y })
+                .collect();
+            out.push(PidGraphicEntity {
+                id: format!("{}:iglinestring2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                kind: PidGraphicKind::Polyline {
+                    points,
+                    closed: false,
+                },
+                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("iglinestring2d:{index}")),
+                    record_kind: Some(SheetRecordKind::PrimitivePolyline),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igLineString2d record (Intergraph Sigma standard polyline, \
+                         type 0x0084, IGDS class tag 0x84); oid={} parent_ref={} \
+                         sub_type=0x{:04X} index={} form={} scope={} vc={} \
+                         total_length={:.4}; byte layout from fixture dump",
+                        record.oid,
+                        record.parent_ref,
+                        record.sub_type_word,
+                        record.index,
+                        record.form,
+                        record.scope,
+                        record.vertex_count(),
+                        record.total_length(),
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+    }
+}
+
+/// Emits `Decoded` [`PidGraphicKind::Line`] entities for the standard
+/// IGDS `igLine2d` family (PSM `0x0018`).
+struct IgLine2dEmitter;
+
+impl GeometryEmitter for IgLine2dEmitter {
+    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_iglines.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            out.push(PidGraphicEntity {
+                id: format!("{}:igline2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                kind: PidGraphicKind::Line {
+                    start: PidPoint {
+                        x: record.start_x,
+                        y: record.start_y,
+                    },
+                    end: PidPoint {
+                        x: record.end_x,
+                        y: record.end_y,
+                    },
+                },
+                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igline2d:{index}")),
+                    record_kind: Some(SheetRecordKind::PrimitiveLine),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, \
+                         IGDS class tag 0x18); oid={} parent_ref={} sub_type=0x{:04X} \
+                         index={} start=({:.4}, {:.4}) end=({:.4}, {:.4}) length={:.4}; \
+                         byte layout from fixture dump (radsrvitem.dll-adjacent)",
+                        record.oid,
+                        record.parent_ref,
+                        record.sub_type_word,
+                        record.index,
+                        record.start_x,
+                        record.start_y,
+                        record.end_x,
+                        record.end_y,
+                        record.length(),
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+    }
+}
+
+/// Emits `Inferred` [`PidGraphicKind::Annotation`] entities for the RAD
+/// `JStyleOverride` family (PSM `0x0030`).
+///
+/// Phase 16 Slice F semantics preserved verbatim: the IDA Version-3
+/// schema (`style.dll!sub_1000F030`) writes the payload as
+/// `4 × u32 + 4 × f64 + 3 × u32 + 2 × u16`; cross-fixture probe v5
+/// evidence shows that joining the first 8 bytes and bytes `+8..15` as
+/// `f64` produces consistently normalized coordinates, so they surface
+/// as an `Inferred` annotation anchor while the authoritative record
+/// layout stays in the decoded audit collection.
+struct JStyleOverrideEmitter;
+
+impl GeometryEmitter for JStyleOverrideEmitter {
+    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_jstyle_overrides.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            let a_bytes = record.field_a_u32.to_le_bytes();
+            let b_bytes = record.field_b_u32.to_le_bytes();
+            let c_bytes = record.field_c_u32.to_le_bytes();
+            let d_bytes = record.field_d_u32.to_le_bytes();
+            let anchor_x = f64::from_le_bytes([
+                a_bytes[0], a_bytes[1], a_bytes[2], a_bytes[3], b_bytes[0], b_bytes[1], b_bytes[2],
+                b_bytes[3],
+            ]);
+            let anchor_y = f64::from_le_bytes([
+                c_bytes[0], c_bytes[1], c_bytes[2], c_bytes[3], d_bytes[0], d_bytes[1], d_bytes[2],
+                d_bytes[3],
+            ]);
+            if !anchor_x.is_finite() || !anchor_y.is_finite() {
+                continue;
+            }
+            out.push(PidGraphicEntity {
+                id: format!("{}:jstyle-override:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                kind: PidGraphicKind::Annotation {
+                    anchor: PidPoint {
+                        x: anchor_x,
+                        y: anchor_y,
+                    },
+                    rotation_angle: record.field_2_f64,
+                    secondary_radius: record.field_1_f64,
+                    note: format!(
+                        "PSM JStyleOverride (RAD style.dll CLSID {{47FCC338-...}}) \
+                         V3 IO record; probe-derived annotation anchor; \
+                         oid={} bytes_to_follow={} tail_len={}",
+                        record.oid,
+                        record.bytes_to_follow,
+                        record.raw_attribute_tail.len(),
+                    ),
+                },
+                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("jstyle-override:{index}")),
+                    record_kind: Some(SheetRecordKind::JStyleOverride),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM 0x0030 JStyleOverride record layout decoded from \
+                         style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): \
+                         oid={} bytes_to_follow={} field_1={:.6} \
+                         rotation_angle={:.6} (rad); annotation anchor remains \
+                         inferred because payload +0..15 is authoritative as 4 x u32",
+                        record.oid, record.bytes_to_follow, record.field_1_f64, record.field_2_f64,
+                    )),
+                },
+                confidence: PidGeometryConfidence::Inferred,
+            });
+        }
+    }
+}
+
+/// No-op emitter: `igBoundary2d` (PSM `0x0013`) is a fully-typed
+/// **association** record — its segment groups re-list the geometry of
+/// the member `igLine2d` records it names (60/60 forward matches
+/// cross-fixture), so emitting a closed polyline here would
+/// double-count the member lines. See
+/// `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`.
+struct IgBoundary2dEmitter;
+
+impl GeometryEmitter for IgBoundary2dEmitter {
+    fn emit(&self, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {}
+}
+
+/// No-op emitter: `GraphicGroup` (PSM `0x00FA`) is an audit-only
+/// grouping record; child-OID extraction remains an audit-layer
+/// hypothesis, not render geometry.
+struct GraphicGroupEmitter;
+
+impl GeometryEmitter for GraphicGroupEmitter {
+    fn emit(&self, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {}
+}
+
+/// No-op emitter: the polymorphic `0x0010` sub-record family is an
+/// audit-only typed collection (Phase 18); sub-kind discrimination is
+/// deferred pending IDA confirmation.
+struct SubRecord0x0010Emitter;
+
+impl GeometryEmitter for SubRecord0x0010Emitter {
+    fn emit(&self, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {}
+}
+
+/// No-op emitter: attribute fragments (Phase 26 view of `0x0010`)
+/// carry engineering attribute text for audit; they are not placed
+/// text geometry (no decoded insertion point).
+struct AttributeFragmentEmitter;
+
+impl GeometryEmitter for AttributeFragmentEmitter {
+    fn emit(&self, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {}
 }
 
 fn sheet_source_coordinate_context(sheet_path: &str) -> PidCoordinateContext {
@@ -1280,6 +1442,100 @@ mod tests {
             warning.contains("1 Sheet evidence item")
                 && warning.contains("0 decoded, 1 inferred, 0 probe-only")
         }));
+    }
+
+    #[test]
+    fn audit_only_families_register_no_op_emitters() {
+        // M2 seam policy test: igBoundary2d / GraphicGroup / 0x0010 /
+        // attribute fragments are registered in EMITTERS as explicit
+        // no-ops — decoded records must produce zero entities.
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 4096,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                decoded_igboundaries: vec![crate::model::DecodedIgBoundary2dRecord {
+                    byte_start: 16,
+                    byte_end: 194,
+                    type_code: 0x0013,
+                    type_flags: 0,
+                    bytes_to_follow: 172,
+                    oid: 900,
+                    parent_ref: 6,
+                    sub_type_word: 0x0010,
+                    index: 1,
+                    segment_count: 1,
+                    sub_header_tail: [2, 1],
+                    segments: vec![crate::model::DecodedIgBoundary2dSegment {
+                        tag_offset: 28,
+                        start_x: 0.1,
+                        start_y: 0.1,
+                        end_x: 0.4,
+                        end_y: 0.1,
+                    }],
+                    anchor_x: 0.25,
+                    anchor_y: 0.1,
+                    trailer_flag: 1,
+                    member_refs: vec![crate::model::DecodedIgBoundary2dMemberRef {
+                        member_oid: 901,
+                        class_word: 0x00CB,
+                        sub_word: 13,
+                    }],
+                    closed_loop: false,
+                }],
+                decoded_graphic_groups: vec![crate::model::DecodedGraphicGroupRecord {
+                    byte_start: 200,
+                    byte_end: 250,
+                    type_code: 0x00FA,
+                    type_flags: 0,
+                    bytes_to_follow: 44,
+                    oid: 77,
+                    parent_ref: 6,
+                    group_kind_word: 2,
+                    sub_type_word: 1,
+                    raw_reference_payload: vec![0u8; 26],
+                }],
+                decoded_sub_records_0x0010: vec![crate::model::DecodedSubRecord0x0010Record {
+                    byte_start: 260,
+                    byte_end: 280,
+                    type_code: 0x0010,
+                    type_flags: 0,
+                    bytes_to_follow: 14,
+                    raw_payload: vec![0u8; 14],
+                    leading_word: Some(0x0002),
+                }],
+                decoded_attribute_fragments: vec![crate::model::DecodedAttributeFragment {
+                    byte_start: 300,
+                    byte_end: 330,
+                    type_code: 0x0010,
+                    marker: 0x0001_0002,
+                    aux: vec![0u8; 8],
+                    strings: Vec::new(),
+                }],
+                ..SheetGeometry::default()
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert!(
+            geometry.entities.is_empty(),
+            "audit-only families must not emit PidGraphicEntity values, got {:?}",
+            geometry
+                .entities
+                .iter()
+                .map(|entity| &entity.id)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
