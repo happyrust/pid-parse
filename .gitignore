@@ -1,5 +1,10 @@
 /target/
+/target-gates/
 .ace-tool/
+
+# Local scratch: compiler crash dumps and tool debug logs.
+rustc-ice-*.txt
+debug.log
 .cursor/
 .cursorignore
 .factory/
