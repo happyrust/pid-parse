@@ -2122,6 +2122,134 @@ fn primitive_line_numeric_samples(
 }
 
 // ---------------------------------------------------------------------------
+// M1 deepening seam: shared PSM record envelope + per-family decoder trait
+//
+// RFC: docs/plans/2026-07-16-psm-decoder-deepening-refactor-rfc-cn.md §3.1.
+// Every PSM record family on a `Sheet*` stream shares the same 6-byte
+// envelope (`u16` type word + `u32` bytes_to_follow) and the same
+// walk+advance scan loop. Before this seam landed, both were copy-pasted
+// per family (11×). Families implement `PsmRecordDecoder` and keep only
+// their genuinely family-specific payload validation; the public
+// `decode_*` free functions remain as thin wrappers for API stability.
+// ---------------------------------------------------------------------------
+
+/// Byte length of the PSM record **envelope** shared by every record
+/// family: `u16` LE type word (14-bit type code + 2 flag bits) followed
+/// by a `u32` LE `bytes_to_follow`.
+///
+/// Not to be confused with [`PSM_RECORD_HEADER_LEN`] (18), which is the
+/// `GLine2d`-specific header that additionally carries `oid` + an 8-byte
+/// aux prefix after the shared envelope.
+pub const PSM_ENVELOPE_LEN: usize = 6;
+
+/// The decoded 6-byte PSM record envelope shared by every PSM record
+/// family (see [`parse_psm_header`]).
+///
+/// Deliberately minimal: `oid` is **not** part of the shared envelope —
+/// `igLine2d` and friends carry it in their payload sub-header, while
+/// `GLine2d` (PSM `0x3FE6`) carries it inside its 18-byte
+/// [`PSM_RECORD_HEADER_LEN`] header. Each family reads its own fields
+/// after [`Self::body_start`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PsmHeader {
+    /// 14-bit PSM type code (`type_word & 0x3FFF`).
+    pub type_code: u16,
+    /// Top 2 bits of the type word (`type_word >> 14`), the record-level
+    /// flag bits documented in `PSMSerializeIn`'s skip-record branch.
+    pub type_flags: u16,
+    /// Payload byte count following the 6-byte envelope, as stored.
+    pub bytes_to_follow: u32,
+    /// Absolute offset of the first payload byte (envelope start + 6).
+    pub body_start: usize,
+}
+
+/// Parse the shared 6-byte PSM record envelope at `offset`.
+///
+/// Returns `None` when fewer than [`PSM_ENVELOPE_LEN`] bytes remain at
+/// `offset` (or `offset` overflows). Performs **no** family validation:
+/// callers must check [`PsmHeader::type_code`] / bounds themselves.
+/// Panic-free on arbitrary input.
+pub fn parse_psm_header(data: &[u8], offset: usize) -> Option<PsmHeader> {
+    let body_start = offset.checked_add(PSM_ENVELOPE_LEN)?;
+    let header = data.get(offset..body_start)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    Some(PsmHeader {
+        type_code: type_word & 0x3FFF,
+        type_flags: type_word >> 14,
+        bytes_to_follow: u32::from_le_bytes([header[2], header[3], header[4], header[5]]),
+        body_start,
+    })
+}
+
+/// One PSM record family's decoder (RFC §3.1, L4 seam).
+///
+/// Implementations are unit structs owning only the family-specific
+/// payload validation inside [`Self::decode_at`]; the walk+advance scan
+/// loop lives once in the provided [`Self::scan`]. The associated
+/// [`Self::Record`] keeps each family's typed parser DTO — this seam
+/// deliberately does **not** collapse families into an enum or an
+/// untyped map (that would erase the Typed Audit evidence language from
+/// `CONTEXT.md`).
+///
+/// Contract for implementors:
+///
+/// - [`Self::decode_at`] must be panic-free on arbitrary bytes and
+///   return `None` on any validation failure (same bar as every
+///   `decode_*_at` free function, enforced by
+///   `tests/parser_panic_safety.rs`).
+/// - [`Self::advance_of`] returns the accepted record's full on-disk
+///   byte length; [`Self::scan`] clamps it to ≥ 1 so a buggy zero can
+///   never stall the walk.
+/// - Families whose scan must deviate from the shared loop (none today;
+///   watch `0x0010` Mode B) may override [`Self::scan`], documenting why.
+pub trait PsmRecordDecoder {
+    /// Typed decoded-record DTO for this family (e.g.
+    /// [`SheetIgLine2dDecoded`]).
+    type Record;
+
+    /// The 14-bit PSM type code this decoder accepts.
+    fn type_code(&self) -> u16;
+
+    /// Smallest possible full-record byte length for this family
+    /// (envelope + minimum payload). [`Self::scan`] uses it to bound
+    /// the walk so trailing bytes shorter than one record are skipped
+    /// without per-offset decode attempts.
+    fn min_record_len(&self) -> usize;
+
+    /// Try to decode one record starting at `offset`. `None` when any
+    /// family validation rule fails. Must be panic-free and
+    /// bounds-checked.
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<Self::Record>;
+
+    /// Byte count [`Self::scan`] advances after accepting `record` —
+    /// the record's full on-disk length (envelope + payload).
+    fn advance_of(&self, record: &Self::Record) -> usize;
+
+    /// Shared walk+advance scan loop (previously copy-pasted per
+    /// family): try [`Self::decode_at`] at each offset, jump past
+    /// accepted records, slide one byte on rejection.
+    fn scan(&self, data: &[u8]) -> Vec<Self::Record> {
+        let mut out = Vec::new();
+        let min_len = self.min_record_len().max(1);
+        if data.len() < min_len {
+            return out;
+        }
+        let max_offset = data.len() - min_len;
+        let mut off = 0usize;
+        while off <= max_offset {
+            if let Some(record) = self.decode_at(data, off) {
+                let advance = self.advance_of(&record).max(1);
+                out.push(record);
+                off = off.saturating_add(advance);
+                continue;
+            }
+            off += 1;
+        }
+        out
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Phase 14 Slices D/F: PSM-encoded geometry decoder family
 // ---------------------------------------------------------------------------
 
@@ -2571,49 +2699,78 @@ impl SheetIgLine2dDecoded {
 ///
 /// Panic-free and bounds-checked: adversarial bytes simply fail
 /// validation and are skipped.
+///
+/// Thin wrapper over [`IgLine2dDecoder`]'s shared
+/// [`PsmRecordDecoder::scan`] (M1 pilot family).
 pub fn decode_iglines(data: &[u8]) -> Vec<SheetIgLine2dDecoded> {
-    let mut out = Vec::new();
-    if data.len() < 6 + IGLINE2D_PAYLOAD_LEN {
-        return out;
-    }
-    let max_offset = data.len() - (6 + IGLINE2D_PAYLOAD_LEN);
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_igline_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
+    IgLine2dDecoder.scan(data)
 }
 
 /// Try to decode a single PSM `igLine2d` record starting at
 /// `offset` in `data`. Returns `None` when any of the validation
 /// rules in [`decode_iglines`] fail. Bounds-checked; tolerant of
 /// truncated input.
+///
+/// Thin wrapper over [`IgLine2dDecoder::decode_at`].
 pub fn decode_igline_at(data: &[u8], offset: usize) -> Option<SheetIgLine2dDecoded> {
-    let header_end = offset.checked_add(6)?;
-    let payload_end = header_end.checked_add(IGLINE2D_PAYLOAD_LEN)?;
-    if payload_end > data.len() {
-        return None;
+    IgLine2dDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the `igLine2d` family (PSM type
+/// `0x0018`) — the M1 pilot migration of the seven-layer template
+/// onto the shared decoder seam. Validation rules are documented on
+/// [`decode_iglines`].
+pub struct IgLine2dDecoder;
+
+impl PsmRecordDecoder for IgLine2dDecoder {
+    type Record = SheetIgLine2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGLINE2D
     }
 
-    let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_IGLINE2D {
-        return None;
-    }
-    let type_flags = type_word >> 14;
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    if bytes_to_follow as usize != IGLINE2D_PAYLOAD_LEN {
-        return None;
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGLINE2D_PAYLOAD_LEN
     }
 
-    let payload = data.get(header_end..payload_end)?;
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgLine2dDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGLINE2D {
+            return None;
+        }
+        if header.bytes_to_follow as usize != IGLINE2D_PAYLOAD_LEN {
+            return None;
+        }
+        let payload_end = header.body_start.checked_add(IGLINE2D_PAYLOAD_LEN)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        decode_igline_payload(data, offset, &header, payload_end)
+    }
+
+    fn advance_of(&self, record: &SheetIgLine2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// Family-specific payload validation for `igLine2d` (everything after
+/// the shared PSM envelope). Split out of
+/// [`IgLine2dDecoder::decode_at`] so the envelope handling and payload
+/// rules read separately.
+fn decode_igline_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+) -> Option<SheetIgLine2dDecoded> {
+    let type_code = header.type_code;
+    let type_flags = header.type_flags;
+    let bytes_to_follow = header.bytes_to_follow;
+
+    let payload = data.get(header.body_start..payload_end)?;
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
     let remaining_header = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
@@ -5190,6 +5347,92 @@ mod tests {
         assert_eq!(decoded[0].sub_type_word, 0x10);
         assert_eq!(decoded[1].sub_type_word, 0x65);
         assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
+    }
+
+    // -----------------------------------------------------------------
+    // M1 deepening seam: shared PSM envelope + PsmRecordDecoder tests
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn psm_header_parses_canonical_envelope() {
+        // type word 0x8018 = type_code 0x0018 with flag bit 0b10.
+        let mut data = vec![0u8; 10];
+        data[0..2].copy_from_slice(&0x8018u16.to_le_bytes());
+        data[2..6].copy_from_slice(&50u32.to_le_bytes());
+        let header = parse_psm_header(&data, 0).expect("envelope");
+        assert_eq!(header.type_code, 0x0018);
+        assert_eq!(header.type_flags, 0b10);
+        assert_eq!(header.bytes_to_follow, 50);
+        assert_eq!(header.body_start, 6);
+    }
+
+    #[test]
+    fn psm_header_honors_nonzero_offset() {
+        let mut data = vec![0xAAu8; 16];
+        data[4..6].copy_from_slice(&PSM_TYPE_CODE_IGLINE2D.to_le_bytes());
+        data[6..10].copy_from_slice(&7u32.to_le_bytes());
+        let header = parse_psm_header(&data, 4).expect("envelope at offset");
+        assert_eq!(header.type_code, PSM_TYPE_CODE_IGLINE2D);
+        assert_eq!(header.bytes_to_follow, 7);
+        assert_eq!(header.body_start, 10);
+    }
+
+    #[test]
+    fn psm_header_rejects_truncated_and_out_of_range_offsets() {
+        let data = [0u8; 5];
+        assert!(parse_psm_header(&data, 0).is_none(), "5 bytes < envelope");
+        assert!(parse_psm_header(&data, 4).is_none());
+        assert!(parse_psm_header(&data, 5).is_none());
+        assert!(parse_psm_header(&data, usize::MAX).is_none(), "no overflow");
+        assert!(parse_psm_header(&[], 0).is_none());
+    }
+
+    #[test]
+    fn igline2d_trait_scan_matches_free_function_on_mixed_stream() {
+        // Two valid records separated / surrounded by noise so both the
+        // slide-by-one and jump-past-record paths of the shared scan run.
+        let mut data = vec![0x00u8; 3];
+        data.extend(build_synthetic_igline2d_record(
+            7,
+            100,
+            0x10,
+            1,
+            (0.1, 0.1),
+            (0.2, 0.1),
+        ));
+        data.extend([0xFFu8; 5]);
+        data.extend(build_synthetic_igline2d_record(
+            8,
+            100,
+            0x65,
+            2,
+            (0.3, 0.3),
+            (0.3, 0.5),
+        ));
+        data.extend([0x11u8; 2]);
+
+        let via_trait = IgLine2dDecoder.scan(&data);
+        let via_free_fn = decode_iglines(&data);
+        assert_eq!(via_trait, via_free_fn, "trait scan and wrapper must agree");
+        assert_eq!(via_trait.len(), 2);
+        assert_eq!(via_trait[0].oid, 7);
+        assert_eq!(via_trait[1].oid, 8);
+    }
+
+    #[test]
+    fn igline2d_trait_reports_family_metadata() {
+        assert_eq!(IgLine2dDecoder.type_code(), PSM_TYPE_CODE_IGLINE2D);
+        assert_eq!(
+            IgLine2dDecoder.min_record_len(),
+            PSM_ENVELOPE_LEN + IGLINE2D_PAYLOAD_LEN
+        );
+        let record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
+        let decoded = IgLine2dDecoder.decode_at(&record, 0).expect("canonical");
+        assert_eq!(
+            IgLine2dDecoder.advance_of(&decoded),
+            record.len(),
+            "advance must equal the full on-disk record length"
+        );
     }
 
     // -----------------------------------------------------------------

@@ -49,7 +49,7 @@ use pid_parse::parsers::sheet_records::{
     decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at, decode_igtextboxes,
     decode_jstyle_override_at, decode_jstyle_overrides, decode_primitive_line_at,
     decode_primitive_lines, decode_sub_record_0x0010_at, decode_sub_records_0x0010,
-    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+    parse_psm_header, IgLine2dDecoder, PsmRecordDecoder, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -236,6 +236,18 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = decode_igline_at(input, input.len() - 1);
         let _ = decode_igline_at(input, input.len());
     }
+
+    // M1 deepening seam: shared PSM envelope helper + trait-based
+    // igLine2d pilot decoder (same behavior as the wrappers above,
+    // exercised directly so the seam keeps its own panic-safety bar).
+    let _ = parse_psm_header(input, 0);
+    let _ = IgLine2dDecoder.scan(input);
+    if !input.is_empty() {
+        let _ = parse_psm_header(input, input.len() - 1);
+        let _ = parse_psm_header(input, input.len());
+        let _ = IgLine2dDecoder.decode_at(input, input.len() - 1);
+    }
+    let _ = parse_psm_header(input, usize::MAX);
 
     // Phase 14 Slice K: PSM `igLineString2d` polyline decoder.
     let _ = decode_iglinestrings(input);
