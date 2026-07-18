@@ -3112,46 +3112,72 @@ pub struct SheetIgPoint2dDecoded {
 /// 3. 2 doubles finite + in domain `[-1e9, 1e9]`
 ///
 /// Panic-free and bounds-checked.
+///
+/// Thin wrapper over [`IgPoint2dDecoder`]'s shared
+/// [`PsmRecordDecoder::scan`].
 pub fn decode_igpoints(data: &[u8]) -> Vec<SheetIgPoint2dDecoded> {
-    let mut out = Vec::new();
-    if data.len() < 6 + IGPOINT2D_PAYLOAD_LEN {
-        return out;
-    }
-    let max_offset = data.len() - (6 + IGPOINT2D_PAYLOAD_LEN);
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_igpoint_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
+    IgPoint2dDecoder.scan(data)
 }
 
 /// Try to decode a single PSM `igPoint2d` record starting at
 /// `offset`. Returns `None` on validation failure.
+///
+/// Thin wrapper over [`IgPoint2dDecoder::decode_at`].
 pub fn decode_igpoint_at(data: &[u8], offset: usize) -> Option<SheetIgPoint2dDecoded> {
-    let header_end = offset.checked_add(6)?;
-    let payload_end = header_end.checked_add(IGPOINT2D_PAYLOAD_LEN)?;
-    if payload_end > data.len() {
-        return None;
-    }
-    let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_IGPOINT2D {
-        return None;
-    }
-    let type_flags = type_word >> 14;
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    if bytes_to_follow as usize != IGPOINT2D_PAYLOAD_LEN {
-        return None;
+    IgPoint2dDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the `igPoint2d` family (PSM type
+/// `0x005E`). Validation rules are documented on [`decode_igpoints`].
+pub struct IgPoint2dDecoder;
+
+impl PsmRecordDecoder for IgPoint2dDecoder {
+    type Record = SheetIgPoint2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGPOINT2D
     }
 
-    let payload = data.get(header_end..payload_end)?;
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGPOINT2D_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgPoint2dDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGPOINT2D {
+            return None;
+        }
+        if header.bytes_to_follow as usize != IGPOINT2D_PAYLOAD_LEN {
+            return None;
+        }
+        let payload_end = header.body_start.checked_add(IGPOINT2D_PAYLOAD_LEN)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        decode_igpoint_payload(data, offset, &header, payload_end)
+    }
+
+    fn advance_of(&self, record: &SheetIgPoint2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// Family-specific payload validation for `igPoint2d` (everything
+/// after the shared PSM envelope).
+fn decode_igpoint_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+) -> Option<SheetIgPoint2dDecoded> {
+    let type_code = header.type_code;
+    let type_flags = header.type_flags;
+    let bytes_to_follow = header.bytes_to_follow;
+
+    let payload = data.get(header.body_start..payload_end)?;
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
