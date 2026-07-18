@@ -4369,55 +4369,79 @@ pub const ATTRIBUTE_FRAGMENT_MAX_CHAR_COUNT: u16 = 4096;
 /// Records whose tail is not clean length-prefixed UTF-16LE are skipped
 /// (still available via the raw Phase 18 decoder). Panic-free.
 pub fn decode_attribute_fragments(data: &[u8]) -> Vec<SheetAttributeFragmentDecoded> {
-    let mut out = Vec::new();
-    let min_record_len = 6usize.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize);
-    if data.len() < min_record_len {
-        return out;
-    }
-    let max_offset = data.len() - min_record_len;
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_attribute_fragment_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
+    AttributeFragmentDecoder.scan(data)
 }
 
 /// Try to decode a single PSM `0x0010` attribute fragment at `offset`.
 /// Returns `None` when the header fails validation, the payload is too
 /// short for `marker(4)+aux(8)+len`, or no clean UTF-16LE string is
 /// found. Bounds-checked and panic-free.
+///
+/// Thin wrapper over [`AttributeFragmentDecoder::decode_at`].
 pub fn decode_attribute_fragment_at(
     data: &[u8],
     offset: usize,
 ) -> Option<SheetAttributeFragmentDecoded> {
-    let header_end = offset.checked_add(6)?;
-    if header_end > data.len() {
-        return None;
+    AttributeFragmentDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the Phase 26 attribute-fragment
+/// **view** of the `0x0010` family (audit-only, additive): same PSM
+/// envelope as [`SubRecord0x0010Decoder`], but the payload must parse
+/// as `marker(4) + aux(8) + [u16 len + UTF-16LE]*` with at least one
+/// clean non-empty string. Two adapters deliberately share one type
+/// code here — the raw Phase 18 collection and this typed view coexist
+/// by design.
+pub struct AttributeFragmentDecoder;
+
+impl PsmRecordDecoder for AttributeFragmentDecoder {
+    type Record = SheetAttributeFragmentDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_SUB_RECORD_0X0010
     }
-    let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
-        return None;
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize)
     }
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
-        .contains(&bytes_to_follow)
-    {
-        return None;
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetAttributeFragmentDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
+            return None;
+        }
+        if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
+            .contains(&header.bytes_to_follow)
+        {
+            return None;
+        }
+        let btf = header.bytes_to_follow as usize;
+        let payload_end = header.body_start.checked_add(btf)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        decode_attribute_fragment_payload(data, offset, &header, payload_end)
     }
-    let btf = bytes_to_follow as usize;
-    let payload_end = header_end.checked_add(btf)?;
-    if payload_end > data.len() {
-        return None;
+
+    fn advance_of(&self, record: &SheetAttributeFragmentDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
     }
-    let payload = data.get(header_end..payload_end)?;
+}
+
+/// Family-specific payload validation for attribute fragments (the
+/// `marker + aux + length-prefixed UTF-16LE strings` grammar).
+fn decode_attribute_fragment_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+) -> Option<SheetAttributeFragmentDecoded> {
+    let type_code = header.type_code;
+
+    let payload = data.get(header.body_start..payload_end)?;
     if payload.len() < ATTRIBUTE_FRAGMENT_STRING_START + 2 {
         return None;
     }
