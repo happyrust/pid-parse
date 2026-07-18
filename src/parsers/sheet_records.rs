@@ -4710,50 +4710,74 @@ impl SheetIgBoundary2dDecoded {
 /// After accepting a record the scanner advances past it. Panic-free
 /// and bounds-checked: adversarial bytes simply fail validation.
 pub fn decode_igboundaries(data: &[u8]) -> Vec<SheetIgBoundary2dDecoded> {
-    let min_record_len = 6 + IGBOUNDARY2D_FIXED_PAYLOAD_LEN + IGBOUNDARY2D_PER_SEGMENT_LEN;
-    let mut out = Vec::new();
-    if data.len() < min_record_len {
-        return out;
-    }
-    let max_offset = data.len() - min_record_len;
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_igboundary_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
+    IgBoundary2dDecoder.scan(data)
 }
 
 /// Try to decode a single PSM `igBoundary2d` record starting at
 /// `offset`. Returns `None` when any validation rule in
 /// [`decode_igboundaries`] fails. Bounds-checked and panic-free.
+///
+/// Thin wrapper over [`IgBoundary2dDecoder::decode_at`].
 pub fn decode_igboundary_at(data: &[u8], offset: usize) -> Option<SheetIgBoundary2dDecoded> {
-    let header_end = offset.checked_add(6)?;
-    if header_end > data.len() {
-        return None;
+    IgBoundary2dDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the typed audit-only
+/// `igBoundary2d` association family (PSM type `0x0013`). Validation
+/// rules are documented on [`decode_igboundaries`]; no geometry is
+/// emitted for this family (member `igLine2d` records already carry
+/// the segments).
+pub struct IgBoundary2dDecoder;
+
+impl PsmRecordDecoder for IgBoundary2dDecoder {
+    type Record = SheetIgBoundary2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGBOUNDARY2D
     }
-    let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_IGBOUNDARY2D {
-        return None;
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGBOUNDARY2D_FIXED_PAYLOAD_LEN + IGBOUNDARY2D_PER_SEGMENT_LEN
     }
-    let type_flags = type_word >> 14;
-    if type_flags != 0 {
-        return None;
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgBoundary2dDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGBOUNDARY2D {
+            return None;
+        }
+        if header.type_flags != 0 {
+            return None;
+        }
+        let btf = header.bytes_to_follow as usize;
+        let payload_end = header.body_start.checked_add(btf)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        decode_igboundary_payload(data, offset, &header, payload_end)
     }
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+
+    fn advance_of(&self, record: &SheetIgBoundary2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// Family-specific payload validation for `igBoundary2d` (segment
+/// grammar, anchor, and member-reference trailer).
+fn decode_igboundary_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+) -> Option<SheetIgBoundary2dDecoded> {
+    let type_code = header.type_code;
+    let type_flags = header.type_flags;
+    let bytes_to_follow = header.bytes_to_follow;
     let btf = bytes_to_follow as usize;
-    let payload_end = header_end.checked_add(btf)?;
-    if payload_end > data.len() {
-        return None;
-    }
-    let payload = data.get(header_end..payload_end)?;
+
+    let payload = data.get(header.body_start..payload_end)?;
 
     let read_u32 = |pos: usize| -> Option<u32> {
         payload
