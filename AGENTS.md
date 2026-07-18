@@ -135,24 +135,40 @@ Phase 14 milestones are tracked in
 `docs/plans/2026-05-14-phase14-decoder-suite-final-summary.md`
 for the full Phase 14 summary report.
 
-### Reusable seven-layer decoder template
+### Adding a new record family (two-seam template, v0.11.8+)
 
-Each new decoder follows the same template (validated 6× in this
-phase):
+The historical "seven-layer template" collapsed into two seams
+(RFC `docs/plans/2026-07-16-psm-decoder-deepening-refactor-rfc-cn.md`,
+landed as M1/M2 of the 2026-07-18 master plan):
 
-1. **Probe**: `examples/probe_<type>_shape.rs` dumps fixture bytes
-2. **Layout discovery** via byte dump
-3. **Decoder API**: `decode_<type>s` + `decode_<type>_at` +
-   `Sheet<Type>Decoded` DTO + public constants
-4. **Validation rules**: type code + size consistency + finite
-   coords + non-degenerate values
-5. **Unit tests**: 6–12 covering canonical + every validation
-   rejection + panic safety
-6. **Model DTO**: `Decoded<Type>Record` + `From` + `SheetGeometry`
-   field + schema ratchet
-7. **Pipeline**: `cluster.rs` + `geometry.rs` emit
-   `PidGraphicEntity { confidence: Decoded, ..., source: full
-   provenance }`
+- **L4 decode seam — `PsmRecordDecoder`** (`src/parsers/sheet_records.rs`):
+  implement the trait on a unit struct (`type_code` /
+  `min_record_len` / `decode_at` / `advance_of`); the shared default
+  `scan()` owns the walk+advance loop and `parse_psm_header` owns the
+  6-byte envelope. Only family-specific payload validation lives in
+  your `decode_<type>_payload`. Add thin `decode_<type>s` /
+  `decode_<type>_at` wrappers for API symmetry, and register both in
+  `tests/parser_panic_safety.rs`.
+- **L6 emission seam — `GeometryEmitter`** (`src/geometry.rs`):
+  implement `emit(sheet, out)` and register in the `EMITTERS` table.
+  Audit-only families register an explicit **no-op** emitter (policy
+  is visible in the table, tested by
+  `audit_only_families_register_no_op_emitters`).
+
+Unchanged supporting steps per family: probe example
+(`examples/probe_<type>_shape.rs`), 6–12 unit tests (canonical +
+every validation rejection + panic safety), model DTO
+`Decoded<Type>Record` + `From` + `SheetGeometry` field in
+`src/model/sheet.rs`, `streams/cluster.rs` wiring, schema needle,
+byte-audit trace, cross-fixture ratchet in
+`tests/parse_real_files.rs`. Registry-driven wiring for these
+remaining parallel lists is planned as M3 (`SheetRecordFamily`
+registry) in
+`docs/plans/2026-07-18-architecture-deepening-master-plan-cn.md`.
+
+The geometry output conservation gate for any refactor in this area
+is `tests/geometry_golden_snapshot.rs`
+(`UPDATE_GEOMETRY_GOLDEN=1` to bless intentional changes).
 
 ## Common commands
 

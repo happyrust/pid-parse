@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### 架构深化 M0–M2：PsmRecordDecoder + GeometryEmitter 双 seam 落地（2026-07-18）
+
+- **M0（ADR-0003 P0）**：62 项 Phase 33/34 脏工作树按 4 个 review-unit
+  commit 打包入库（parser core / phase34 docs / phase33 IDA 证据 /
+  planning），`tests/geometry_golden_snapshot.rs` 金快照门禁随 commit 1
+  建立（6 个本地 fixture 基线，`UPDATE_GEOMETRY_GOLDEN=1` 刷新）。
+- **M1（RFC §3.1，11 个 commit）**：`src/parsers/sheet_records.rs` 新增
+  共享 6 字节 PSM 信封解析（`parse_psm_header` + `PsmHeader` +
+  `PSM_ENVELOPE_LEN`）与 `PsmRecordDecoder` trait（关联类型 Record +
+  默认 `scan()`）；全部 11 个记录族逐一迁移为 trait adapter（igLine2d
+  试点 → igPoint2d → igTextBox → igSymbol2d → igLineString2d → GLine2d →
+  JStyleOverride → GraphicGroup → 0x0010 → attributeFragment →
+  igBoundary2d）。11 份复制的 walk+advance 扫描循环与 11 份头解析收敛为
+  1 份；`decode_*` 自由函数保留为薄 wrapper，公开 API 零破坏；GLine2d /
+  JStyleOverride 的 18 字节扩展头特例收进各自 adapter。
+- **M2（RFC §3.2 + Phase 4）**：`src/geometry.rs` 新增 `GeometryEmitter`
+  trait + `EMITTERS` 注册表，`build_normalized_geometry` 的 7 段逐族发射
+  臂迁入 per-family emitter，审计族（0x0013 / 0x00FA / 0x0010 /
+  attributeFragment）注册显式 no-op emitter 并有政策测试；`model.rs` 拆
+  为 `model/mod.rs` + `model/sheet.rs`（SheetGeometry + 12 个
+  `Decoded*Record` + From 桥 + sheet DTO，约 1060 行），`pub use`
+  全量再导出、公开路径零变化。
+- 守恒证据：金快照逐条不变、951 lib tests + 104 `parse_real_files`
+  棘轮全绿、clippy -D warnings / fmt / missing_docs 0=baseline。
+  AGENTS.md「七层模板」章节更新为「双 seam 模板」。
+
 ### Phase 34-E：缺失曲线家族 fixture 扩充计划——本地语料重大发现（2026-07-07）
 
 - 新增常驻只读探针 `examples/probe_curve_family_corpus_scan.rs`：对目录下
