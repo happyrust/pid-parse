@@ -117,67 +117,55 @@ mod tests {
     #[test]
     fn schema_exposes_sheet_geometry_dtos() {
         let text = pid_document_schema_pretty().expect("pretty JSON");
+
+        // M3-PR19: every family's model DTO name + `SheetGeometry`
+        // field name derive from the registry — a new family row makes
+        // this assertion cover it automatically, with no hand-edited
+        // needle list to forget.
+        for family in crate::model::SHEET_RECORD_FAMILIES {
+            for needle in [family.model_dto, family.geometry_field] {
+                assert!(
+                    text.contains(needle),
+                    "schema should mention registry family `{}` needle `{needle}` \
+                     but did not; output starts with:\n{}",
+                    family.name,
+                    &text[..text.len().min(500)]
+                );
+            }
+        }
+
+        // Non-registry needles: probe-level sheet DTOs, per-family
+        // field spot-checks, nested DTOs, and the spatial-analysis
+        // view. These are schema-shape facts rather than family
+        // wiring facts, so they stay as an explicit list.
         for needle in [
             "SheetGeometry",
             "SheetText",
             "SheetEndpoint",
             "SheetObjectGeometryHint",
-            // Phase 14 Slice D/E: PSM-decoded primitive DTOs land in
-            // the public schema alongside probe-level DTOs so JSON
-            // consumers can deserialize the `decoded_primitive_*`
-            // fields without manual schema patching.
-            "DecodedPrimitiveLineRecord",
-            "decoded_primitive_lines",
-            // Phase 14 Slice J: igLine2d (PSM 0x0018) DTO.
-            "DecodedIgLine2dRecord",
-            "decoded_iglines",
             "parent_ref",
             "sub_type_word",
             "start_x",
             "end_x",
-            // Phase 14 Slice K: igLineString2d (PSM 0x0084) polyline DTO.
-            "DecodedIgLineString2dRecord",
-            "decoded_iglinestrings",
             "vertex_xs",
             "vertex_ys",
-            // Phase 14 Slice L: igPoint2d (PSM 0x005E) DTO.
-            "DecodedIgPoint2dRecord",
-            "decoded_igpoints",
-            // Phase 14 Slice M: igTextBox (PSM 0x004D) DTO.
-            "DecodedIgTextBoxRecord",
-            "decoded_igtextboxes",
             "text_length",
             "trailing_double_1",
-            // Phase 14 Slice N: igSymbol2d (PSM 0x00CE) DTO.
-            "DecodedIgSymbol2dRecord",
-            "decoded_igsymbols",
             "transform_00",
             "insertion_x",
-            // Phase 16/17: PSM 0x0030 authoritative JStyleOverride DTO.
-            "DecodedJStyleOverrideRecord",
-            "decoded_jstyle_overrides",
             "field_a_u32",
             "raw_attribute_tail",
-            // Phase 18: PSM 0x0010 sub-record audit-only DTO.
-            "DecodedSubRecord0x0010Record",
-            "decoded_sub_records_0x0010",
-            // Phase 34-D: PSM 0x0013 igBoundary2d fully-typed
-            // audit-only DTO (association over member igLine2d
-            // records; no geometry emission).
-            "DecodedIgBoundary2dRecord",
+            // Phase 34-D nested igBoundary2d DTOs.
             "DecodedIgBoundary2dSegment",
             "DecodedIgBoundary2dMemberRef",
-            "decoded_igboundaries",
             "member_oid",
             "segment_count",
             "closed_loop",
             // Phase 19: PSM 0x0010 leading_word audit field
             // (= payload[0..2] as little-endian u16).
             "leading_word",
-            // Phase 26: PSM 0x0010 attribute-fragment DTO (additive).
-            "DecodedAttributeFragment",
+            // Phase 26 nested attribute-fragment string DTO.
             "DecodedAttributeStringRecord",
-            "decoded_attribute_fragments",
             // Phase 25-A: read-only spatial-distribution analysis DTO.
             "DecodedSpatialAnalysis",
             "DecodedSpatialCluster",
