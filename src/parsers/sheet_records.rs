@@ -3701,54 +3701,77 @@ pub struct SheetGraphicGroupDecoded {
 /// 4. payload bytes 8..13 are zero in the current fixture family;
 /// 5. `group_kind_word` is a small non-zero discriminator.
 pub fn decode_graphic_groups(data: &[u8]) -> Vec<SheetGraphicGroupDecoded> {
-    let mut out = Vec::new();
-    if data.len() < 6 + GRAPHIC_GROUP_MIN_PAYLOAD_LEN {
-        return out;
-    }
-    let max_offset = data.len() - (6 + GRAPHIC_GROUP_MIN_PAYLOAD_LEN);
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_graphic_group_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
+    GraphicGroupDecoder.scan(data)
 }
 
 /// Try to decode one conservative PSM `0x00FA` `GraphicGroup` record at
 /// `offset`. Returns `None` on validation failure.
+///
+/// Thin wrapper over [`GraphicGroupDecoder::decode_at`].
 pub fn decode_graphic_group_at(data: &[u8], offset: usize) -> Option<SheetGraphicGroupDecoded> {
-    let header_end = offset.checked_add(6)?;
-    if header_end > data.len() {
-        return None;
+    GraphicGroupDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the audit-only `GraphicGroup` /
+/// `GraphicPersist` family (PSM type `0x00FA`). Validation rules are
+/// documented on [`decode_graphic_groups`].
+pub struct GraphicGroupDecoder;
+
+impl PsmRecordDecoder for GraphicGroupDecoder {
+    type Record = SheetGraphicGroupDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_GRAPHIC_GROUP
     }
-    let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_GRAPHIC_GROUP {
-        return None;
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + GRAPHIC_GROUP_MIN_PAYLOAD_LEN
     }
-    let type_flags = type_word >> 14;
-    if type_flags != 0 {
-        return None;
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetGraphicGroupDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_GRAPHIC_GROUP {
+            return None;
+        }
+        if header.type_flags != 0 {
+            return None;
+        }
+        let btf = header.bytes_to_follow as usize;
+        if !(GRAPHIC_GROUP_MIN_PAYLOAD_LEN..=GRAPHIC_GROUP_MAX_PAYLOAD_LEN).contains(&btf) {
+            return None;
+        }
+        if !btf.is_multiple_of(2) {
+            return None;
+        }
+        let payload_end = header.body_start.checked_add(btf)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        decode_graphic_group_payload(data, offset, &header, payload_end)
     }
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    let btf = bytes_to_follow as usize;
-    if !(GRAPHIC_GROUP_MIN_PAYLOAD_LEN..=GRAPHIC_GROUP_MAX_PAYLOAD_LEN).contains(&btf) {
-        return None;
+
+    fn advance_of(&self, record: &SheetGraphicGroupDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
     }
-    if !btf.is_multiple_of(2) {
-        return None;
-    }
-    let payload_end = header_end.checked_add(btf)?;
-    if payload_end > data.len() {
-        return None;
-    }
-    let payload = data.get(header_end..payload_end)?;
+}
+
+/// Family-specific payload validation for `GraphicGroup` (fixture
+/// invariants: non-zero `oid`, `parent_ref == 6` `PID_Page`, zeroed
+/// bytes 8..13, small non-zero kind word).
+fn decode_graphic_group_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+) -> Option<SheetGraphicGroupDecoded> {
+    let type_code = header.type_code;
+    let type_flags = header.type_flags;
+    let bytes_to_follow = header.bytes_to_follow;
+
+    let payload = data.get(header.body_start..payload_end)?;
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     if oid == 0 {
         return None;
