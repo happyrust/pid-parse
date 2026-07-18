@@ -8,7 +8,7 @@
 //! — [`crate::api::PidParser`] is a thin facade over these
 //! functions.
 
-use crate::api::{ParseOptions, ParseProfile};
+use crate::config::{ParseOptions, ParseProfile};
 use crate::error::PidError;
 use crate::model::{PidDocument, SheetEndpoint, SheetGeometry, SheetStream, StreamEntry};
 use crate::package::{PidPackage, RawStream, StorageTimestamps};
@@ -777,6 +777,7 @@ mod tests {
                 decoded_igpoints: vec![],
                 decoded_igtextboxes: vec![],
                 decoded_igsymbols: vec![],
+                decoded_igboundaries: vec![],
                 decoded_graphic_groups: vec![],
                 decoded_jstyle_overrides: vec![],
                 decoded_sub_records_0x0010: vec![],

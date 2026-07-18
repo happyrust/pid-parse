@@ -119,6 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "test-file/工艺管道及仪表流程-1.pid",
         "test-file/D06.pid",
         "test-file/export-test/publish-data/A01/A01.pid",
+        "test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
     ];
 
     // type_code -> (fixture -> count)

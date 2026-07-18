@@ -7,7 +7,7 @@
 //! [`PidDocument::psm_cluster_table`],
 //! [`PidDocument::psm_segment_table`]).
 
-use crate::api::ParseOptions;
+use crate::config::ParseOptions;
 use crate::error::PidError;
 use crate::model::PidDocument;
 use crate::parsers::psm_tables;

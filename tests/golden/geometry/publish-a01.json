@@ -1,0 +1,5468 @@
+[
+  {
+    "id": "/Sheet6:text-probe:0",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 决e첧쀿"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 741,
+        "end": 749
+      },
+      "record_id": "text-probe:0",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:text-probe:1",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 퇇舿쩗ベ"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 883,
+        "end": 891
+      },
+      "record_id": "text-probe:1",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:text-probe:2",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 톢쐝瓎?"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1095,
+        "end": 1103
+      },
+      "record_id": "text-probe:2",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:text-probe:3",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: V 010121A卒"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1300,
+        "end": 1320
+      },
+      "record_id": "text-probe:3",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:text-probe:4",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 툽뀿鹡뉨춼?"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1323,
+        "end": 1335
+      },
+      "record_id": "text-probe:4",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:text-probe:5",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 왤혤흁蠿鍡"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1551,
+        "end": 1561
+      },
+      "record_id": "text-probe:5",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:text-probe:6",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 왤혤흁蠿鍡"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1621,
+        "end": 1631
+      },
+      "record_id": "text-probe:6",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:text-probe:7",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: #PH- 0102102-DN250 mm-B5-P-40.000 in攀"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1672,
+        "end": 1746
+      },
+      "record_id": "text-probe:7",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:0",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 16,
+        "end": 24
+      },
+      "record_id": "coordinate-hint:0",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:1",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 65536.0,
+        "y": 131067.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 32,
+        "end": 40
+      },
+      "record_id": "coordinate-hint:1",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:2",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 131067.0,
+        "y": 51.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 36,
+        "end": 44
+      },
+      "record_id": "coordinate-hint:2",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:3",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 51.0,
+        "y": 196608.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 40,
+        "end": 48
+      },
+      "record_id": "coordinate-hint:3",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:4",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 786434.0,
+        "y": 656.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 52,
+        "end": 60
+      },
+      "record_id": "coordinate-hint:4",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:5",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 656.0,
+        "y": 15.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 56,
+        "end": 64
+      },
+      "record_id": "coordinate-hint:5",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:6",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 15.0,
+        "y": 4.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 60,
+        "end": 68
+      },
+      "record_id": "coordinate-hint:6",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:7",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 76,
+        "end": 84
+      },
+      "record_id": "coordinate-hint:7",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:8",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 65536.0,
+        "y": 184.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 92,
+        "end": 100
+      },
+      "record_id": "coordinate-hint:8",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:9",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 184.0,
+        "y": -327679.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 96,
+        "end": 104
+      },
+      "record_id": "coordinate-hint:9",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:10",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": -327679.0,
+        "y": 131067.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 100,
+        "end": 108
+      },
+      "record_id": "coordinate-hint:10",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:11",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 131067.0,
+        "y": 43.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 104,
+        "end": 112
+      },
+      "record_id": "coordinate-hint:11",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:12",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 43.0,
+        "y": 262144.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 108,
+        "end": 116
+      },
+      "record_id": "coordinate-hint:12",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:13",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": -1.0,
+        "y": -3.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 124,
+        "end": 132
+      },
+      "record_id": "coordinate-hint:13",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:14",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": -3.0,
+        "y": 7.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 128,
+        "end": 136
+      },
+      "record_id": "coordinate-hint:14",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:15",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 7.0,
+        "y": 2.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 132,
+        "end": 140
+      },
+      "record_id": "coordinate-hint:15",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:16",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 188,
+        "end": 196
+      },
+      "record_id": "coordinate-hint:16",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:17",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 65536.0,
+        "y": 51.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 204,
+        "end": 212
+      },
+      "record_id": "coordinate-hint:17",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:18",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 51.0,
+        "y": -327679.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 208,
+        "end": 216
+      },
+      "record_id": "coordinate-hint:18",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:19",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": -327679.0,
+        "y": 131067.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 212,
+        "end": 220
+      },
+      "record_id": "coordinate-hint:19",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:20",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 131067.0,
+        "y": 48.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 216,
+        "end": 224
+      },
+      "record_id": "coordinate-hint:20",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:21",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 48.0,
+        "y": 262144.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 220,
+        "end": 228
+      },
+      "record_id": "coordinate-hint:21",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:22",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 1.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 236,
+        "end": 244
+      },
+      "record_id": "coordinate-hint:22",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:23",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 1.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 240,
+        "end": 248
+      },
+      "record_id": "coordinate-hint:23",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:24",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 16.0,
+        "y": 19484.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 312,
+        "end": 320
+      },
+      "record_id": "coordinate-hint:24",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:25",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 60928.0,
+        "y": 16384.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 420,
+        "end": 428
+      },
+      "record_id": "coordinate-hint:25",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:26",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 16384.0,
+        "y": 1536.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 424,
+        "end": 432
+      },
+      "record_id": "coordinate-hint:26",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:27",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 1536.0,
+        "y": 3328.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 428,
+        "end": 436
+      },
+      "record_id": "coordinate-hint:27",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:28",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 63.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 492,
+        "end": 500
+      },
+      "record_id": "coordinate-hint:28",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:29",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 63.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 516,
+        "end": 524
+      },
+      "record_id": "coordinate-hint:29",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:30",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 63.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 564,
+        "end": 572
+      },
+      "record_id": "coordinate-hint:30",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:31",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 63.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 596,
+        "end": 604
+      },
+      "record_id": "coordinate-hint:31",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:32",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 1.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 648,
+        "end": 656
+      },
+      "record_id": "coordinate-hint:32",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:33",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 768.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 652,
+        "end": 660
+      },
+      "record_id": "coordinate-hint:33",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:34",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 29440.0,
+        "y": 47104.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 664,
+        "end": 672
+      },
+      "record_id": "coordinate-hint:34",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:35",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 47104.0,
+        "y": 1536.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 668,
+        "end": 676
+      },
+      "record_id": "coordinate-hint:35",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:36",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 1536.0,
+        "y": 2048.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 672,
+        "end": 680
+      },
+      "record_id": "coordinate-hint:36",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:37",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 724736.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 692,
+        "end": 700
+      },
+      "record_id": "coordinate-hint:37",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:38",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 206.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 696,
+        "end": 704
+      },
+      "record_id": "coordinate-hint:38",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:39",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 481.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 772,
+        "end": 780
+      },
+      "record_id": "coordinate-hint:39",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:40",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 481.0,
+        "y": 121.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 776,
+        "end": 784
+      },
+      "record_id": "coordinate-hint:40",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:41",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 30.0,
+        "y": 3.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 844,
+        "end": 852
+      },
+      "record_id": "coordinate-hint:41",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:42",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 66.0,
+        "y": 276.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 904,
+        "end": 912
+      },
+      "record_id": "coordinate-hint:42",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:43",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 276.0,
+        "y": 6.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 908,
+        "end": 916
+      },
+      "record_id": "coordinate-hint:43",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:44",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 6.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 912,
+        "end": 920
+      },
+      "record_id": "coordinate-hint:44",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:45",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 131072.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 916,
+        "end": 924
+      },
+      "record_id": "coordinate-hint:45",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:46",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 131072.0,
+        "y": 417.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 920,
+        "end": 928
+      },
+      "record_id": "coordinate-hint:46",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:47",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 417.0,
+        "y": 1.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 924,
+        "end": 932
+      },
+      "record_id": "coordinate-hint:47",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:48",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 1.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 928,
+        "end": 936
+      },
+      "record_id": "coordinate-hint:48",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:49",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": -5.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 932,
+        "end": 940
+      },
+      "record_id": "coordinate-hint:49",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:50",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 4.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 944,
+        "end": 952
+      },
+      "record_id": "coordinate-hint:50",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:51",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 4.0,
+        "y": 65655.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 948,
+        "end": 956
+      },
+      "record_id": "coordinate-hint:51",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:52",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 65655.0,
+        "y": 65552.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 952,
+        "end": 960
+      },
+      "record_id": "coordinate-hint:52",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:53",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 65552.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 956,
+        "end": 964
+      },
+      "record_id": "coordinate-hint:53",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:54",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 65536.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 960,
+        "end": 968
+      },
+      "record_id": "coordinate-hint:54",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:55",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 65536.0,
+        "y": 131072.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 964,
+        "end": 972
+      },
+      "record_id": "coordinate-hint:55",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:56",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 170.0,
+        "y": 417.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 976,
+        "end": 984
+      },
+      "record_id": "coordinate-hint:56",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:57",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 417.0,
+        "y": 6.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 980,
+        "end": 988
+      },
+      "record_id": "coordinate-hint:57",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:58",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 6.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 984,
+        "end": 992
+      },
+      "record_id": "coordinate-hint:58",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:59",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 262144.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 988,
+        "end": 996
+      },
+      "record_id": "coordinate-hint:59",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:60",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 262144.0,
+        "y": 363.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 992,
+        "end": 1000
+      },
+      "record_id": "coordinate-hint:60",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:61",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 363.0,
+        "y": 1.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 996,
+        "end": 1004
+      },
+      "record_id": "coordinate-hint:61",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:62",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 1.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1000,
+        "end": 1008
+      },
+      "record_id": "coordinate-hint:62",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:coordinate-hint:63",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 184.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1004,
+        "end": 1012
+      },
+      "record_id": "coordinate-hint:63",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6:primitive-line:0",
+    "graphic_oid": 1344733186,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 1.000000000001e-6,
+        "y": 1.0000000000020003e-12
+      },
+      "end": {
+        "x": 1.0,
+        "y": 1.000000000001e-6
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 579,
+        "end": 789
+      },
+      "record_id": "primitive-line:0",
+      "record_kind": "primitive_line",
+      "note": "PSM GLine2d record decoded from radsrvitem.dll byte layout (18-byte header + 6 x f64 payload); oid=1344733186 type_code=0x3FE6 type_flags=0x0 bytes_to_follow=204 origin=(0.0000, 0.0000) direction=(1.00000, 0.00000) param=[0.0000, 1.0000]"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:0",
+    "graphic_oid": 184,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": -31.799423241363638,
+        "y": 1.7665855227355053e-307
+      },
+      "rotation": 0.0,
+      "scale": [
+        1.7765824089018436e-307,
+        -3.481307965190664e-105
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 663,
+        "end": 784
+      },
+      "record_id": "igsymbol2d:0",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=184 parent_ref=6 sub_type=0x0000 insertion=(-31.7994, 0.0000) transform=[0.0000, 0.0000, 0.0000, -0.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:0",
+    "graphic_oid": 646,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.2849896178279795,
+        "y": 0.23232107265790836
+      },
+      "value": "V 010121A",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1262,
+        "end": 1354
+      },
+      "record_id": "igtextbox:0",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=646 parent_ref=649 sub_type=0x0010 index=15 text_length=9 text=\"V 010121A\" insertion=(0.2850, 0.2323) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:1",
+    "graphic_oid": 1120,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.3633933409815455,
+        "y": 0.28098533010753535
+      },
+      "value": "PH- 0102102-DN250 mm-B5-P-40.000 in",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1636,
+        "end": 1780
+      },
+      "record_id": "igtextbox:1",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1120 parent_ref=1094 sub_type=0x0010 index=34 text_length=35 text=\"PH- 0102102-DN250 mm-B5-P-40.000 in\" insertion=(0.3634, 0.2810) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igpoint2d:0",
+    "graphic_oid": 43,
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.32160035432016265,
+        "y": 0.2554317639574144
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 140,
+        "end": 180
+      },
+      "record_id": "igpoint2d:0",
+      "record_kind": "coordinate_page_metadata",
+      "note": "PSM igPoint2d record (Intergraph Sigma standard point, type 0x005E, IGDS class tag 0x5E); oid=43 parent_ref=42 sub_type=0x0010 index=28 position=(0.3216, 0.2554); byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igpoint2d:1",
+    "graphic_oid": 48,
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.3216003543201623,
+        "y": 0.2586067639574144
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 252,
+        "end": 292
+      },
+      "record_id": "igpoint2d:1",
+      "record_kind": "coordinate_page_metadata",
+      "note": "PSM igPoint2d record (Intergraph Sigma standard point, type 0x005E, IGDS class tag 0x5E); oid=48 parent_ref=47 sub_type=0x0010 index=24 position=(0.3216, 0.2586); byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igpoint2d:2",
+    "graphic_oid": 273,
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.42066594379991085,
+        "y": 0.2778103301075352
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 784,
+        "end": 824
+      },
+      "record_id": "igpoint2d:2",
+      "record_kind": "coordinate_page_metadata",
+      "note": "PSM igPoint2d record (Intergraph Sigma standard point, type 0x005E, IGDS class tag 0x5E); oid=273 parent_ref=276 sub_type=0x0010 index=28 position=(0.4207, 0.2778); byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:iglinestring2d:0",
+    "graphic_oid": 275,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.3216003543201623,
+          "y": 0.2586067639574144
+        },
+        {
+          "x": 0.3216003543201618,
+          "y": 0.2778103301075352
+        },
+        {
+          "x": 0.42066594379991085,
+          "y": 0.2778103301075352
+        }
+      ],
+      "closed": false
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 824,
+        "end": 902
+      },
+      "record_id": "iglinestring2d:0",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=275 parent_ref=417 sub_type=0x0010 index=30 form=1 scope=1 vc=3 total_length=0.1183; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:iglinestring2d:1",
+    "graphic_oid": 640,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.28443698155407454,
+          "y": 0.23464620038518108
+        },
+        {
+          "x": 0.2785546049811104,
+          "y": 0.2554317639574152
+        }
+      ],
+      "closed": false
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1200,
+        "end": 1262
+      },
+      "record_id": "iglinestring2d:1",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=640 parent_ref=649 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0216; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:iglinestring2d:2",
+    "graphic_oid": 1119,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.3633933409815453,
+          "y": 0.2801995972893535
+        },
+        {
+          "x": 0.36339334098154463,
+          "y": 0.2778103301075352
+        }
+      ],
+      "closed": false
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1574,
+        "end": 1636
+      },
+      "record_id": "iglinestring2d:2",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=1119 parent_ref=1094 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0024; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:jstyle-override:0",
+    "graphic_oid": 65538,
+    "kind": {
+      "kind": "annotation",
+      "anchor": {
+        "x": 0.2322294015573042,
+        "y": 0.2785546049811104
+      },
+      "rotation_angle": 0.0,
+      "secondary_radius": 0.2554317639574152,
+      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=128 tail_len=52"
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1414,
+        "end": 1548
+      },
+      "record_id": "jstyle-override:0",
+      "record_kind": "j_style_override",
+      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=128 field_1=0.255432 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:0",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 日期淰씁딣"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 414,
+        "end": 424
+      },
+      "record_id": "text-probe:0",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:1",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 뾥搏钮혿"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 553,
+        "end": 561
+      },
+      "record_id": "text-probe:1",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:2",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 뢜콖脿涰"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 623,
+        "end": 631
+      },
+      "record_id": "text-probe:2",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:3",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 潫葉儿噲푺"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 727,
+        "end": 737
+      },
+      "record_id": "text-probe:3",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:4",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 琗儿噲푺"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 785,
+        "end": 793
+      },
+      "record_id": "text-probe:4",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:5",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: t?QrVz"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 786,
+        "end": 792
+      },
+      "record_id": "text-probe:5",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:6",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 蛒슴협紿涰"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1013,
+        "end": 1023
+      },
+      "record_id": "text-probe:6",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:7",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 原辁틞鼿香香香"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1125,
+        "end": 1139
+      },
+      "record_id": "text-probe:7",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:8",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: 潫葉紿먅"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1175,
+        "end": 1183
+      },
+      "record_id": "text-probe:8",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:9",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: t?QrVz"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1542,
+        "end": 1548
+      },
+      "record_id": "text-probe:9",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:text-probe:10",
+    "kind": {
+      "kind": "unknown",
+      "note": "sheet text probe: O9eAr6,^"
+    },
+    "coordinate_context": {
+      "coordinate_space": "unknown",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4379,
+        "end": 4387
+      },
+      "record_id": "text-probe:10",
+      "record_kind": "unknown",
+      "note": "text position is not decoded yet"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:0",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 16,
+        "end": 24
+      },
+      "record_id": "coordinate-hint:0",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:1",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 7.0,
+        "y": 8.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 32,
+        "end": 40
+      },
+      "record_id": "coordinate-hint:1",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:2",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 65537.0,
+        "y": 1.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 44,
+        "end": 52
+      },
+      "record_id": "coordinate-hint:2",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:3",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 1.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 48,
+        "end": 56
+      },
+      "record_id": "coordinate-hint:3",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:4",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 16393.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 72,
+        "end": 80
+      },
+      "record_id": "coordinate-hint:4",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:5",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 48816.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 112,
+        "end": 120
+      },
+      "record_id": "coordinate-hint:5",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:6",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 48832.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 152,
+        "end": 160
+      },
+      "record_id": "coordinate-hint:6",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:7",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 131072.0,
+        "y": 20519.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 172,
+        "end": 180
+      },
+      "record_id": "coordinate-hint:7",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:8",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 20519.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 176,
+        "end": 184
+      },
+      "record_id": "coordinate-hint:8",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:9",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 16368.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 180,
+        "end": 188
+      },
+      "record_id": "coordinate-hint:9",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:10",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 16368.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 184,
+        "end": 192
+      },
+      "record_id": "coordinate-hint:10",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:11",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 16368.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 204,
+        "end": 212
+      },
+      "record_id": "coordinate-hint:11",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:12",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 16368.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 208,
+        "end": 216
+      },
+      "record_id": "coordinate-hint:12",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:13",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 50.0,
+        "y": 89.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 244,
+        "end": 252
+      },
+      "record_id": "coordinate-hint:13",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:14",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 89.0,
+        "y": 6.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 248,
+        "end": 256
+      },
+      "record_id": "coordinate-hint:14",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:15",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 6.0,
+        "y": 8.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 252,
+        "end": 260
+      },
+      "record_id": "coordinate-hint:15",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:16",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 72.0,
+        "y": 90.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 300,
+        "end": 308
+      },
+      "record_id": "coordinate-hint:16",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:17",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 90.0,
+        "y": 6.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 304,
+        "end": 312
+      },
+      "record_id": "coordinate-hint:17",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:18",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 6.0,
+        "y": 8.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 308,
+        "end": 316
+      },
+      "record_id": "coordinate-hint:18",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:19",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 131072.0,
+        "y": 131073.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 320,
+        "end": 328
+      },
+      "record_id": "coordinate-hint:19",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:20",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 384,
+        "end": 392
+      },
+      "record_id": "coordinate-hint:20",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:21",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 388,
+        "end": 396
+      },
+      "record_id": "coordinate-hint:21",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:22",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 34.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 392,
+        "end": 400
+      },
+      "record_id": "coordinate-hint:22",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:23",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 34.0,
+        "y": 65538.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 396,
+        "end": 404
+      },
+      "record_id": "coordinate-hint:23",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:24",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 65538.0,
+        "y": 65538.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 400,
+        "end": 408
+      },
+      "record_id": "coordinate-hint:24",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:25",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 65538.0,
+        "y": 30.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 404,
+        "end": 412
+      },
+      "record_id": "coordinate-hint:25",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:26",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 15505.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 440,
+        "end": 448
+      },
+      "record_id": "coordinate-hint:26",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:27",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 16368.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 444,
+        "end": 452
+      },
+      "record_id": "coordinate-hint:27",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:28",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 50.0,
+        "y": 92.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 456,
+        "end": 464
+      },
+      "record_id": "coordinate-hint:28",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:29",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 92.0,
+        "y": 6.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 460,
+        "end": 468
+      },
+      "record_id": "coordinate-hint:29",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:30",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 6.0,
+        "y": 8.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 464,
+        "end": 472
+      },
+      "record_id": "coordinate-hint:30",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:31",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 72.0,
+        "y": 93.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 512,
+        "end": 520
+      },
+      "record_id": "coordinate-hint:31",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:32",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 93.0,
+        "y": 6.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 516,
+        "end": 524
+      },
+      "record_id": "coordinate-hint:32",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:33",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 6.0,
+        "y": 8.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 520,
+        "end": 528
+      },
+      "record_id": "coordinate-hint:33",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:34",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 131072.0,
+        "y": 131073.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 532,
+        "end": 540
+      },
+      "record_id": "coordinate-hint:34",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:35",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 596,
+        "end": 604
+      },
+      "record_id": "coordinate-hint:35",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:36",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 600,
+        "end": 608
+      },
+      "record_id": "coordinate-hint:36",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:37",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 20.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 604,
+        "end": 612
+      },
+      "record_id": "coordinate-hint:37",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:38",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 652,
+        "end": 660
+      },
+      "record_id": "coordinate-hint:38",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:39",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 656,
+        "end": 664
+      },
+      "record_id": "coordinate-hint:39",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:40",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 20.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 660,
+        "end": 668
+      },
+      "record_id": "coordinate-hint:40",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:41",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 708,
+        "end": 716
+      },
+      "record_id": "coordinate-hint:41",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:42",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 712,
+        "end": 720
+      },
+      "record_id": "coordinate-hint:42",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:43",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 20.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 716,
+        "end": 724
+      },
+      "record_id": "coordinate-hint:43",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:44",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 764,
+        "end": 772
+      },
+      "record_id": "coordinate-hint:44",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:45",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 768,
+        "end": 776
+      },
+      "record_id": "coordinate-hint:45",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:46",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 20.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 772,
+        "end": 780
+      },
+      "record_id": "coordinate-hint:46",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:47",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 820,
+        "end": 828
+      },
+      "record_id": "coordinate-hint:47",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:48",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 824,
+        "end": 832
+      },
+      "record_id": "coordinate-hint:48",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:49",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 20.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 828,
+        "end": 836
+      },
+      "record_id": "coordinate-hint:49",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:50",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 876,
+        "end": 884
+      },
+      "record_id": "coordinate-hint:50",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:51",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 880,
+        "end": 888
+      },
+      "record_id": "coordinate-hint:51",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:52",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 20.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 884,
+        "end": 892
+      },
+      "record_id": "coordinate-hint:52",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:53",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 932,
+        "end": 940
+      },
+      "record_id": "coordinate-hint:53",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:54",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 936,
+        "end": 944
+      },
+      "record_id": "coordinate-hint:54",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:55",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 20.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 940,
+        "end": 948
+      },
+      "record_id": "coordinate-hint:55",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:56",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 988,
+        "end": 996
+      },
+      "record_id": "coordinate-hint:56",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:57",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 992,
+        "end": 1000
+      },
+      "record_id": "coordinate-hint:57",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:58",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 20.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 996,
+        "end": 1004
+      },
+      "record_id": "coordinate-hint:58",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:59",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1044,
+        "end": 1052
+      },
+      "record_id": "coordinate-hint:59",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:60",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1048,
+        "end": 1056
+      },
+      "record_id": "coordinate-hint:60",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:61",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 20.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1052,
+        "end": 1060
+      },
+      "record_id": "coordinate-hint:61",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:62",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 393216.0,
+        "y": 524288.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1100,
+        "end": 1108
+      },
+      "record_id": "coordinate-hint:62",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:coordinate-hint:63",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 524288.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1104,
+        "end": 1112
+      },
+      "record_id": "coordinate-hint:63",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet6:igtextbox:0",
+    "graphic_oid": 90,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.020119263789250514,
+        "y": 0.25321836449535284
+      },
+      "value": "专业",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 298,
+        "end": 376
+      },
+      "record_id": "igtextbox:0",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=90 parent_ref=6 sub_type=0x0000 index=34 text_length=2 text=\"专业\" insertion=(0.0201, 0.2532) trailing_3=0.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igtextbox:1",
+    "graphic_oid": 91,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.020222243212954127,
+        "y": 0.3802692284896932
+      },
+      "value": "日期",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 376,
+        "end": 454
+      },
+      "record_id": "igtextbox:1",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=91 parent_ref=6 sub_type=0x0000 index=34 text_length=2 text=\"日期\" insertion=(0.0202, 0.3803) trailing_3=0.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igtextbox:2",
+    "graphic_oid": 93,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.02019649835702823,
+        "y": 0.2796325866753312
+      },
+      "value": "签署",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 510,
+        "end": 588
+      },
+      "record_id": "igtextbox:2",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=93 parent_ref=6 sub_type=0x0000 index=34 text_length=2 text=\"签署\" insertion=(0.0202, 0.2796) trailing_3=0.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igtextbox:3",
+    "graphic_oid": 249,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.020093518933324613,
+        "y": 0.3298865454426974
+      },
+      "value": "专业",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2072,
+        "end": 2150
+      },
+      "record_id": "igtextbox:3",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=249 parent_ref=6 sub_type=0x0000 index=34 text_length=2 text=\"专业\" insertion=(0.0201, 0.3299) trailing_3=0.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igtextbox:4",
+    "graphic_oid": 257,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.02014500864517641,
+        "y": 0.35385500630971484
+      },
+      "value": "签署",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2374,
+        "end": 2452
+      },
+      "record_id": "igtextbox:4",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=257 parent_ref=6 sub_type=0x0000 index=34 text_length=2 text=\"签署\" insertion=(0.0201, 0.3539) trailing_3=0.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igtextbox:5",
+    "graphic_oid": 520,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.020016284365546897,
+        "y": 0.303472323262719
+      },
+      "value": "日期",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 3106,
+        "end": 3184
+      },
+      "record_id": "igtextbox:5",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=520 parent_ref=6 sub_type=0x0000 index=34 text_length=2 text=\"日期\" insertion=(0.0200, 0.3035) trailing_3=0.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igtextbox:6",
+    "graphic_oid": 649,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5482450737536082,
+        "y": 0.08924075506645585
+      },
+      "value": "审定",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5316,
+        "end": 5394
+      },
+      "record_id": "igtextbox:6",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=649 parent_ref=6 sub_type=0x0000 index=22 text_length=2 text=\"审定\" insertion=(0.5482, 0.0892) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet12:coordinate-hint:0",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 786432.0,
+        "y": 917504.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet12; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet12",
+      "byte_range": {
+        "start": 16,
+        "end": 24
+      },
+      "record_id": "coordinate-hint:0",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet12:coordinate-hint:1",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 917504.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet12; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet12",
+      "byte_range": {
+        "start": 20,
+        "end": 28
+      },
+      "record_id": "coordinate-hint:1",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet12:coordinate-hint:2",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 1.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet12; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet12",
+      "byte_range": {
+        "start": 24,
+        "end": 32
+      },
+      "record_id": "coordinate-hint:2",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet12:coordinate-hint:3",
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 1.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet12; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet12",
+      "byte_range": {
+        "start": 28,
+        "end": 36
+      },
+      "record_id": "coordinate-hint:3",
+      "record_kind": "unknown",
+      "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
+    },
+    "confidence": "inferred"
+  },
+  {
+    "id": "/JSite204/Sheet12:igpoint2d:0",
+    "graphic_oid": 21,
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /JSite204/Sheet12; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet12",
+      "byte_range": {
+        "start": 8,
+        "end": 48
+      },
+      "record_id": "igpoint2d:0",
+      "record_kind": "coordinate_page_metadata",
+      "note": "PSM igPoint2d record (Intergraph Sigma standard point, type 0x005E, IGDS class tag 0x5E); oid=21 parent_ref=12 sub_type=0x0000 index=1 position=(0.0000, 0.0000); byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  }
+]

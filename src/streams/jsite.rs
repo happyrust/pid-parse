@@ -6,7 +6,7 @@
 //! [`crate::parsers::jproperties`]. Output lives under
 //! [`PidDocument::jsites`].
 
-use crate::api::ParseOptions;
+use crate::config::ParseOptions;
 use crate::error::PidError;
 use crate::model::{EmbeddedStream, JSite, PidDocument};
 use std::collections::BTreeSet;

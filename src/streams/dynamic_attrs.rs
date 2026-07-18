@@ -6,7 +6,7 @@
 //! [`crate::parsers::dynamic_attr_records`] and consumed downstream
 //! by the object-inventory / object-graph derivation passes.
 
-use crate::api::ParseOptions;
+use crate::config::ParseOptions;
 use crate::error::PidError;
 use crate::model::{DynamicAttributesBlob, PidDocument};
 use std::io::Read;

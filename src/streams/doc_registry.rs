@@ -4,7 +4,7 @@
 //!
 //! Each parser is tolerant of missing streams and format mismatches.
 
-use crate::api::ParseOptions;
+use crate::config::ParseOptions;
 use crate::error::PidError;
 use crate::model::PidDocument;
 use crate::parsers::{app_object, doc_version, tagged_stg_list};

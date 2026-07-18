@@ -816,7 +816,7 @@ fn print_sheet_chunk_reports(reports: &[pid_parse::parsers::sheet_probe::SheetPr
 
 /// Human-friendly geometry summary for the `--geometry-summary` flag.
 /// Counts entities by kind × confidence and prints sample decoded text /
-/// symbol names to give a quick at-a-glance view of what Phase 14 decoded.
+/// symbol names to give a quick at-a-glance view of current geometry evidence.
 fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
     use pid_parse::{PidGeometryConfidence, PidGraphicKind};
 
@@ -825,9 +825,9 @@ fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
     let mut decoded_points = 0usize;
     let mut decoded_texts = 0usize;
     let mut decoded_symbols = 0usize;
-    let mut decoded_annotations = 0usize;
     let mut inferred_lines = 0usize;
     let mut inferred_points = 0usize;
+    let mut inferred_annotations = 0usize;
     let mut probe_only_unknown = 0usize;
     let mut other = 0usize;
 
@@ -859,14 +859,14 @@ fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
                     }
                 }
             }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Annotation { .. }) => {
-                decoded_annotations += 1;
-            }
             (PidGeometryConfidence::Inferred, PidGraphicKind::Line { .. }) => {
                 inferred_lines += 1;
             }
             (PidGeometryConfidence::Inferred, PidGraphicKind::Point { .. }) => {
                 inferred_points += 1;
+            }
+            (PidGeometryConfidence::Inferred, PidGraphicKind::Annotation { .. }) => {
+                inferred_annotations += 1;
             }
             (PidGeometryConfidence::ProbeOnly, PidGraphicKind::Unknown { .. }) => {
                 probe_only_unknown += 1;
@@ -881,26 +881,25 @@ fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
     println!("=== Sheet stream geometry summary ===");
     println!("Total entities: {total}");
     println!();
-    println!("Decoded (PSM record decoders, Phase 14 / 16):");
+    println!("Decoded (PSM record geometry):");
     println!("  Lines (GLine2d / igLine2d):              {decoded_lines}");
     println!("  Polylines (igLineString2d):               {decoded_polylines}");
     println!("  Points (igPoint2d):                       {decoded_points}");
     println!("  Texts (igTextBox, UTF-16LE):              {decoded_texts}");
     println!("  SymbolInstances (igSymbol2d):             {decoded_symbols}");
-    println!("  Annotations (JStyleOverride, PSM 0x0030): {decoded_annotations}");
     println!(
         "  Total decoded:                            {}",
-        decoded_lines
-            + decoded_polylines
-            + decoded_points
-            + decoded_texts
-            + decoded_symbols
-            + decoded_annotations
+        decoded_lines + decoded_polylines + decoded_points + decoded_texts + decoded_symbols
     );
     println!();
     println!("Inferred (probe-derived):");
     println!("  Points (coordinate hints):                {inferred_points}");
     println!("  Lines (endpoint pairs):                   {inferred_lines}");
+    println!("  Annotations (JStyleOverride, PSM 0x0030): {inferred_annotations}");
+    println!(
+        "  Total inferred:                           {}",
+        inferred_points + inferred_lines + inferred_annotations
+    );
     println!();
     println!("ProbeOnly (raw evidence, undecoded):");
     println!("  Unknown:                                  {probe_only_unknown}");

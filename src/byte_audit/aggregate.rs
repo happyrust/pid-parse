@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::byte_audit::{ByteRange, ParserTrace, ParserTraceBuilder, TraceConfidence};
 use crate::package::PidPackage;
 use crate::parsers;
-use crate::writer::summary_write::{DOC_SUMMARY_PATH, SUMMARY_INFO_PATH};
+use crate::stream_paths::{DOC_SUMMARY_PATH, SUMMARY_INFO_PATH};
 
 /// Per-stream rollup pulled from the matching [`ParserTrace`] (when a
 /// parser was registered) or synthesized from the raw stream length
@@ -408,6 +408,13 @@ fn trace_sheet_decoded_records(data: &[u8], builder: &mut ParserTraceBuilder) {
         consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
     }
     for decoded in parsers::sheet_records::decode_jstyle_overrides(data) {
+        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
+    }
+    // Phase 34-D igBoundary2d: every payload byte is field-named (typed
+    // layout), so the byte envelope counts as Decoded even though the
+    // record is audit-only (no normalized geometry emission — its
+    // segments duplicate member igLine2d geometry).
+    for decoded in parsers::sheet_records::decode_igboundaries(data) {
         consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
     }
 

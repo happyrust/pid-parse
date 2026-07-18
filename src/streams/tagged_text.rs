@@ -6,7 +6,7 @@
 //! corresponding slots on [`PidDocument`] plus the
 //! [`PidDocument::tagged_storages`] index.
 
-use crate::api::ParseOptions;
+use crate::config::ParseOptions;
 use crate::error::PidError;
 use crate::model::PidDocument;
 use std::io::Read;

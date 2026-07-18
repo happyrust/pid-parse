@@ -6,24 +6,24 @@
 //! populates [`PidDocument::clusters`] / [`PidDocument::sheet_streams`].
 //! DA records are pulled via [`crate::parsers::dynamic_attr_records`].
 
-use crate::api::ParseOptions;
+use crate::config::ParseOptions;
 use crate::error::PidError;
 use crate::model::{
     ClusterInfo, ClusterKind, ClusterProbeInfo, DecodedAttributeFragment,
-    DecodedGraphicGroupRecord, DecodedIgLine2dRecord, DecodedIgLineString2dRecord,
-    DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord, DecodedIgTextBoxRecord,
-    DecodedJStyleOverrideRecord, DecodedPrimitiveLineRecord, DecodedSpatialAnalysis,
-    DecodedSubRecord0x0010Record, PidDocument, SheetCoordinateHintDto, SheetGeometry, SheetStream,
-    SheetText,
+    DecodedGraphicGroupRecord, DecodedIgBoundary2dRecord, DecodedIgLine2dRecord,
+    DecodedIgLineString2dRecord, DecodedIgPoint2dRecord, DecodedIgSymbol2dRecord,
+    DecodedIgTextBoxRecord, DecodedJStyleOverrideRecord, DecodedPrimitiveLineRecord,
+    DecodedSpatialAnalysis, DecodedSubRecord0x0010Record, PidDocument, SheetCoordinateHintDto,
+    SheetGeometry, SheetStream, SheetText,
 };
 use crate::parsers::{
     cluster_header, dynamic_attr_records, magic,
     sheet_probe::{self, SheetProbeReport, SheetTextEncoding},
     sheet_records::{
         collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_attribute_fragments,
-        decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints,
-        decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines,
-        decode_sub_records_0x0010, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+        decode_graphic_groups, decode_igboundaries, decode_iglines, decode_iglinestrings,
+        decode_igpoints, decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides,
+        decode_primitive_lines, decode_sub_records_0x0010, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
     },
 };
 use std::io::Read;
@@ -271,6 +271,10 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         .into_iter()
         .map(DecodedIgSymbol2dRecord::from)
         .collect();
+    let decoded_igboundaries: Vec<DecodedIgBoundary2dRecord> = decode_igboundaries(raw_data)
+        .into_iter()
+        .map(DecodedIgBoundary2dRecord::from)
+        .collect();
     let decoded_graphic_groups: Vec<DecodedGraphicGroupRecord> = decode_graphic_groups(raw_data)
         .into_iter()
         .map(DecodedGraphicGroupRecord::from)
@@ -301,6 +305,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         && decoded_igpoints.is_empty()
         && decoded_igtextboxes.is_empty()
         && decoded_igsymbols.is_empty()
+        && decoded_igboundaries.is_empty()
         && decoded_graphic_groups.is_empty()
         && decoded_jstyle_overrides.is_empty()
         && decoded_sub_records_0x0010.is_empty()
@@ -329,6 +334,7 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
             decoded_igpoints,
             decoded_igtextboxes,
             decoded_igsymbols,
+            decoded_igboundaries,
             decoded_graphic_groups,
             decoded_jstyle_overrides,
             decoded_sub_records_0x0010,

@@ -89,6 +89,7 @@ pub mod api;
 pub mod backup;
 pub mod byte_audit;
 pub mod cfb;
+mod config;
 pub mod crossref;
 pub mod error;
 pub mod export_bundle;
@@ -101,6 +102,7 @@ pub mod package;
 pub mod parsers;
 pub mod publish;
 pub mod schema;
+pub mod stream_paths;
 pub mod streams;
 pub mod writer;
 

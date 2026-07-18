@@ -889,6 +889,21 @@ pub struct SheetGeometry {
     /// (Phase 14 Slice N).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igsymbols: Vec<DecodedIgSymbol2dRecord>,
+    /// Fully-typed **audit-only** PSM `igBoundary2d` records (PSM type
+    /// `0x0013`, IGDS class tag `0x13`) emitted by
+    /// [`crate::parsers::sheet_records::decode_igboundaries`]
+    /// (Phase 34-D).
+    ///
+    /// Every payload byte is field-named (segment groups, anchor,
+    /// trailer member references), but these records intentionally do
+    /// not produce normalized geometry entities: the trailer member
+    /// references prove the segment coordinates duplicate member
+    /// `igLine2d` geometry that already emits normalized `Line`
+    /// entities, so emitting the boundary as a polyline would
+    /// double-count geometry. See
+    /// `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igboundaries: Vec<DecodedIgBoundary2dRecord>,
     /// Audit-only PSM `0x00FA` `GraphicGroup` / `GraphicPersist` records
     /// emitted by
     /// [`crate::parsers::sheet_records::decode_graphic_groups`].
@@ -1456,6 +1471,137 @@ impl From<crate::parsers::sheet_records::SheetGraphicGroupDecoded> for DecodedGr
             group_kind_word: d.group_kind_word,
             sub_type_word: d.sub_type_word,
             raw_reference_payload: d.raw_reference_payload,
+        }
+    }
+}
+
+/// One `(start, end)` segment of a decoded `igBoundary2d` record
+/// (Phase 34-D). Model-shaped mirror of
+/// [`crate::parsers::sheet_records::SheetIgBoundary2dSegment`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgBoundary2dSegment {
+    /// Payload offset of the segment group's `0x67` tag byte.
+    pub tag_offset: usize,
+    /// Segment start X in normalized sheet coordinates.
+    pub start_x: f64,
+    /// Segment start Y in normalized sheet coordinates.
+    pub start_y: f64,
+    /// Segment end X in normalized sheet coordinates.
+    pub end_x: f64,
+    /// Segment end Y in normalized sheet coordinates.
+    pub end_y: f64,
+}
+
+/// One 8-byte trailer member reference of a decoded `igBoundary2d`
+/// record (Phase 34-D). Model-shaped mirror of
+/// [`crate::parsers::sheet_records::SheetIgBoundary2dMemberRef`].
+///
+/// Fixture evidence (60/60 members): `member_oid` resolves to a real
+/// `0x0018 igLine2d` record in the same Sheet stream whose
+/// `(start, end)` equals the same-index segment in forward order;
+/// `class_word` is always `0x00CB`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DecodedIgBoundary2dMemberRef {
+    /// Object identifier of the referenced member record.
+    pub member_oid: u32,
+    /// Class-like word at member offset +4 (`0x00CB` in fixtures).
+    pub class_word: u16,
+    /// Sub-code word at member offset +6 (`13` / `12` in fixtures).
+    pub sub_word: u16,
+}
+
+/// Fully-typed **audit-only** model DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgBoundary2dDecoded`] —
+/// PSM type `0x0013` `igBoundary2d` (Phase 34-D).
+///
+/// The record is an *association*: its segment coordinates re-list
+/// geometry owned by the member `igLine2d` records named in
+/// [`Self::member_refs`], so no normalized geometry entity is emitted
+/// (that would double-count the member lines). `closed_loop` is
+/// computed at decode time with a `1e-9` per-axis tolerance.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgBoundary2dRecord {
+    /// Inclusive byte-range start covering the full PSM record.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x0013`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header
+    /// (`49 + 41 × segment_count` by validation).
+    pub bytes_to_follow: u32,
+    /// Boundary object identifier.
+    pub oid: u32,
+    /// Parent reference (varies per record; not validated).
+    pub parent_ref: u32,
+    /// Sub-type word at payload offset 12. Always `0x0010`.
+    pub sub_type_word: u16,
+    /// Index-like word at payload offset 14.
+    pub index: u32,
+    /// Number of segment groups / trailer member references.
+    pub segment_count: u32,
+    /// Sub-header bytes at payload offsets 26–27 (`[2, 1]` across
+    /// all fixture records; exposed verbatim).
+    pub sub_header_tail: [u8; 2],
+    /// Decoded segment groups (`segment_count` entries).
+    pub segments: Vec<DecodedIgBoundary2dSegment>,
+    /// Anchor X following the segment groups (inside the segment
+    /// bounding box on all fixture records).
+    pub anchor_x: f64,
+    /// Anchor Y following the segment groups.
+    pub anchor_y: f64,
+    /// `u8` flag between the anchor and the member count (`1` in
+    /// fixtures; exposed verbatim).
+    pub trailer_flag: u8,
+    /// Trailer member references (`segment_count` entries).
+    pub member_refs: Vec<DecodedIgBoundary2dMemberRef>,
+    /// `true` when the segments chain end-to-start and close back
+    /// onto the first start within `1e-9` per axis (20/20 fixture
+    /// records are closed).
+    pub closed_loop: bool,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgBoundary2dDecoded> for DecodedIgBoundary2dRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgBoundary2dDecoded) -> Self {
+        let closed_loop = d.is_closed_loop(1e-9);
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            segment_count: d.segment_count,
+            sub_header_tail: d.sub_header_tail,
+            segments: d
+                .segments
+                .into_iter()
+                .map(|s| DecodedIgBoundary2dSegment {
+                    tag_offset: s.tag_offset,
+                    start_x: s.start.0,
+                    start_y: s.start.1,
+                    end_x: s.end.0,
+                    end_y: s.end.1,
+                })
+                .collect(),
+            anchor_x: d.anchor.0,
+            anchor_y: d.anchor.1,
+            trailer_flag: d.trailer_flag,
+            member_refs: d
+                .member_refs
+                .into_iter()
+                .map(|m| DecodedIgBoundary2dMemberRef {
+                    member_oid: m.member_oid,
+                    class_word: m.class_word,
+                    sub_word: m.sub_word,
+                })
+                .collect(),
+            closed_loop,
         }
     }
 }

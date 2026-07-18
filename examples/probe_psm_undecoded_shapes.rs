@@ -47,6 +47,17 @@ fn type_label(type_code: u16) -> &'static str {
     }
 }
 
+fn record_summary(rec: &Rec) -> String {
+    format!(
+        "{} range=0x{:06X}..0x{:06X} flags={} btf={}",
+        type_label(rec.type_code),
+        rec.offset,
+        rec.end,
+        rec.type_flags,
+        rec.btf
+    )
+}
+
 /// `Some(end)` if a valid PSM record header starts at `off`, else `None`.
 fn psm_record_end(bytes: &[u8], off: usize) -> Option<usize> {
     let header_end = off.checked_add(PSM_HEADER_LEN)?;
@@ -114,6 +125,166 @@ fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
+fn read_f64(data: &[u8], offset: usize) -> Option<f64> {
+    let b = data.get(offset..offset.checked_add(8)?)?;
+    Some(f64::from_le_bytes([
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+    ]))
+}
+
+#[derive(Clone)]
+struct LineGeometry {
+    offset: usize,
+    end_offset: usize,
+    oid: u32,
+    start: (f64, f64),
+    end: (f64, f64),
+    length: f64,
+}
+
+impl LineGeometry {
+    fn summary(&self) -> String {
+        format!(
+            "range=0x{:06X}..0x{:06X} oid={} start=({:.12},{:.12}) end=({:.12},{:.12}) length={:.12}",
+            self.offset,
+            self.end_offset,
+            self.oid,
+            self.start.0,
+            self.start.1,
+            self.end.0,
+            self.end.1,
+            self.length
+        )
+    }
+
+    fn anchors(&self) -> [(&'static str, f64); 11] {
+        let min_x = self.start.0.min(self.end.0);
+        let max_x = self.start.0.max(self.end.0);
+        let min_y = self.start.1.min(self.end.1);
+        let max_y = self.start.1.max(self.end.1);
+        [
+            ("start.x", self.start.0),
+            ("start.y", self.start.1),
+            ("end.x", self.end.0),
+            ("end.y", self.end.1),
+            ("bbox.min.x", min_x),
+            ("bbox.max.x", max_x),
+            ("bbox.min.y", min_y),
+            ("bbox.max.y", max_y),
+            ("extent.x", max_x - min_x),
+            ("extent.y", max_y - min_y),
+            ("length", self.length),
+        ]
+    }
+}
+
+fn igline_geometry(data: &[u8], rec: &Rec) -> Option<LineGeometry> {
+    let line = pid_parse::parsers::sheet_records::decode_igline_at(data, rec.offset)?;
+    Some(LineGeometry {
+        offset: rec.offset,
+        end_offset: rec.end,
+        oid: line.oid,
+        start: line.start,
+        end: line.end,
+        length: line.length(),
+    })
+}
+
+/// A `0x0018 btf=50` record read with the strict `remaining_header == 12`
+/// magic gate **relaxed**. The strict `decode_igline_at` rejects the neighbours
+/// of every `0x0020` hit (their `payload+8` word is not `12`), so the prior
+/// neighbour-correlation found "no decoded igLine2d neighbor". This relaxed
+/// read pulls the same `(start, end)` f64 quad those records would carry *if*
+/// they used the canonical igLine2d layout, so we can test whether the
+/// `0x0020` candidate f64s line up with real neighbour endpoints/bbox or not.
+#[derive(Clone)]
+struct RelaxedLine {
+    offset: usize,
+    end_offset: usize,
+    oid: u32,
+    remaining_header: u32,
+    finite_in_range: bool,
+    line: LineGeometry,
+}
+
+impl RelaxedLine {
+    fn summary(&self) -> String {
+        format!(
+            "range=0x{:06X}..0x{:06X} oid={} remaining_header={} finite_in_range={} start=({:.12},{:.12}) end=({:.12},{:.12}) length={:.12}",
+            self.offset,
+            self.end_offset,
+            self.oid,
+            self.remaining_header,
+            self.finite_in_range,
+            self.line.start.0,
+            self.line.start.1,
+            self.line.end.0,
+            self.line.end.1,
+            self.line.length
+        )
+    }
+}
+
+/// Read a `0x0018 btf=50` record's canonical `(start, end)` f64 quad without
+/// enforcing the `remaining_header == 12` magic. Returns `None` for records
+/// that are not `0x0018 btf=50` or that are truncated.
+fn relaxed_igline_geometry(data: &[u8], rec: &Rec) -> Option<RelaxedLine> {
+    if rec.type_code != 0x0018 || rec.btf != 50 {
+        return None;
+    }
+    let payload = rec.offset.checked_add(PSM_HEADER_LEN)?;
+    let oid = read_u32(data, payload)?;
+    let remaining_header = read_u32(data, payload.checked_add(8)?)?;
+    let sx = read_f64(data, payload.checked_add(18)?)?;
+    let sy = read_f64(data, payload.checked_add(26)?)?;
+    let ex = read_f64(data, payload.checked_add(34)?)?;
+    let ey = read_f64(data, payload.checked_add(42)?)?;
+    let vals = [sx, sy, ex, ey];
+    let finite_in_range = vals.iter().all(|v| v.is_finite() && v.abs() <= 1.0e9);
+    let dx = ex - sx;
+    let dy = ey - sy;
+    Some(RelaxedLine {
+        offset: rec.offset,
+        end_offset: rec.end,
+        oid,
+        remaining_header,
+        finite_in_range,
+        line: LineGeometry {
+            offset: rec.offset,
+            end_offset: rec.end,
+            oid,
+            start: (sx, sy),
+            end: (ex, ey),
+            length: (dx * dx + dy * dy).sqrt(),
+        },
+    })
+}
+
+fn candidate_matches(
+    candidates: &[(usize, f64)],
+    neighbors: &[(&str, &LineGeometry)],
+) -> Vec<String> {
+    candidates
+        .iter()
+        .map(|(offset, candidate)| {
+            let best = neighbors
+                .iter()
+                .flat_map(|(side, line)| {
+                    line.anchors().into_iter().map(move |(field, value)| {
+                        (side, line.oid, field, value, (candidate - value).abs())
+                    })
+                })
+                .min_by(|a, b| a.4.total_cmp(&b.4));
+            match best {
+                Some((side, oid, field, value, delta)) => format!(
+                    "+{offset}:{candidate:.12} -> {side} oid={oid} {field}={value:.12} delta={delta:.12}"
+                ),
+                None => format!("+{offset}:{candidate:.12} -> no decoded igLine2d neighbor"),
+            }
+        })
+        .collect()
+}
+
 fn hexdump(payload: &[u8], max: usize) {
     let dump_len = payload.len().min(max);
     for start in (0..dump_len).step_by(16) {
@@ -142,11 +313,17 @@ fn hexdump(payload: &[u8], max: usize) {
 struct Sample {
     fixture: &'static str,
     stream: String,
+    offset: usize,
+    end: usize,
     type_flags: u16,
     btf: u32,
     payload: Vec<u8>,
-    prev: Option<u16>,
-    next: Option<u16>,
+    prev: Option<Rec>,
+    next: Option<Rec>,
+    prev_geometry: Option<LineGeometry>,
+    next_geometry: Option<LineGeometry>,
+    prev_relaxed: Option<RelaxedLine>,
+    next_relaxed: Option<RelaxedLine>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -156,6 +333,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "test-file/工艺管道及仪表流程-1.pid",
         "test-file/D06.pid",
         "test-file/export-test/publish-data/A01/A01.pid",
+        "test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
     ];
 
     // target type_code -> (per-fixture count, btf distribution, samples)
@@ -198,14 +376,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .or_insert(0) += 1;
                 let bucket = samples.entry(rec.type_code).or_default();
                 if bucket.len() < 4 {
+                    let prev = i.checked_sub(1).map(|j| records[j].clone());
+                    let next = records.get(i + 1).cloned();
+                    let prev_geometry = records[..i]
+                        .iter()
+                        .rev()
+                        .find_map(|neighbor| igline_geometry(&bytes, neighbor));
+                    let next_geometry = records
+                        .get(i + 1..)
+                        .unwrap_or_default()
+                        .iter()
+                        .find_map(|neighbor| igline_geometry(&bytes, neighbor));
+                    let prev_relaxed = records[..i]
+                        .iter()
+                        .rev()
+                        .find_map(|neighbor| relaxed_igline_geometry(&bytes, neighbor));
+                    let next_relaxed = records
+                        .get(i + 1..)
+                        .unwrap_or_default()
+                        .iter()
+                        .find_map(|neighbor| relaxed_igline_geometry(&bytes, neighbor));
                     bucket.push(Sample {
                         fixture,
                         stream: sp.to_string_lossy().to_string(),
+                        offset: rec.offset,
+                        end: rec.end,
                         type_flags: rec.type_flags,
                         btf: rec.btf,
                         payload: bytes[rec.offset + PSM_HEADER_LEN..rec.end].to_vec(),
-                        prev: i.checked_sub(1).map(|j| records[j].type_code),
-                        next: records.get(i + 1).map(|r| r.type_code),
+                        prev,
+                        next,
+                        prev_geometry,
+                        next_geometry,
+                        prev_relaxed,
+                        next_relaxed,
                     });
                 }
             }
@@ -243,21 +447,113 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         read_u32(&s.payload, w * 4).map(|v| format!("+{}:{}", w * 4, v))
                     })
                     .collect();
+                let doubles: Vec<String> = (0..9)
+                    .filter_map(|w| {
+                        let offset = w * 8;
+                        read_f64(&s.payload, offset)
+                            .filter(|v| v.is_finite())
+                            .map(|v| format!("+{offset}:{v:.12}"))
+                    })
+                    .collect();
+                let finite_double_candidates: Vec<(usize, f64)> =
+                    (0..=s.payload.len().saturating_sub(8))
+                        .filter_map(|offset| {
+                            read_f64(&s.payload, offset)
+                                .filter(|v| {
+                                    v.is_finite() && (-10.0..=10.0).contains(v) && v.abs() >= 1.0e-6
+                                })
+                                .map(|v| (offset, v))
+                        })
+                        .take(12)
+                        .collect();
+                let candidate_text: Vec<String> = finite_double_candidates
+                    .iter()
+                    .map(|(offset, v)| format!("+{offset}:{v:.12}"))
+                    .collect();
+                let mut neighbors = Vec::new();
+                if let Some(line) = &s.prev_geometry {
+                    neighbors.push(("prev", line));
+                }
+                if let Some(line) = &s.next_geometry {
+                    neighbors.push(("next", line));
+                }
+                let matches = candidate_matches(&finite_double_candidates, &neighbors);
                 println!(
-                    "\n  SAMPLE[{}] {} {}  flags={} btf={} payload_len={}",
+                    "\n  SAMPLE[{}] {} {}  range=0x{:06X}..0x{:06X} ({}..{}) flags={} btf={} payload_len={}",
                     k,
                     s.fixture,
                     s.stream,
+                    s.offset,
+                    s.end,
+                    s.offset,
+                    s.end,
                     s.type_flags,
                     s.btf,
                     s.payload.len()
                 );
                 println!(
                     "    context: prev={} next={}",
-                    s.prev.map(type_label).unwrap_or("<none>"),
-                    s.next.map(type_label).unwrap_or("<none>"),
+                    s.prev
+                        .as_ref()
+                        .map(record_summary)
+                        .unwrap_or_else(|| "<none>".to_string()),
+                    s.next
+                        .as_ref()
+                        .map(record_summary)
+                        .unwrap_or_else(|| "<none>".to_string()),
                 );
+                if let Some(summary) = &s.prev_geometry {
+                    println!("    prev decoded igLine2d geometry: {}", summary.summary());
+                }
+                if let Some(summary) = &s.next_geometry {
+                    println!("    next decoded igLine2d geometry: {}", summary.summary());
+                }
+                if let Some(relaxed) = &s.prev_relaxed {
+                    println!(
+                        "    prev RELAXED igLine2d (no magic gate): {}",
+                        relaxed.summary()
+                    );
+                }
+                if let Some(relaxed) = &s.next_relaxed {
+                    println!(
+                        "    next RELAXED igLine2d (no magic gate): {}",
+                        relaxed.summary()
+                    );
+                }
+                let mut relaxed_lines: Vec<(&'static str, LineGeometry)> = Vec::new();
+                if let Some(relaxed) = &s.prev_relaxed {
+                    relaxed_lines.push(("prev~", relaxed.line.clone()));
+                }
+                if let Some(relaxed) = &s.next_relaxed {
+                    relaxed_lines.push(("next~", relaxed.line.clone()));
+                }
+                let relaxed_refs: Vec<(&str, &LineGeometry)> = relaxed_lines
+                    .iter()
+                    .map(|(side, line)| (*side, line))
+                    .collect();
+                let relaxed_matches = candidate_matches(&finite_double_candidates, &relaxed_refs);
+                if relaxed_matches.is_empty() {
+                    println!("    RELAXED neighbor candidate matches: <none>");
+                } else {
+                    println!("    RELAXED neighbor candidate matches:");
+                    for m in relaxed_matches {
+                        println!("      {m}");
+                    }
+                }
                 println!("    u32 words: {}", words.join("  "));
+                println!("    f64 words: {}", doubles.join("  "));
+                println!(
+                    "    f64 finite [-10,10] candidates: {}",
+                    candidate_text.join("  ")
+                );
+                if matches.is_empty() {
+                    println!("    neighbor candidate matches: <none>");
+                } else {
+                    println!("    neighbor candidate matches:");
+                    for m in matches {
+                        println!("      {m}");
+                    }
+                }
                 hexdump(&s.payload, 96);
             }
         }

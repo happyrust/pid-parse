@@ -237,7 +237,9 @@ pub enum PidGraphicKind {
     /// schema (4×u32) and probe v5 cross-fixture evidence (2×f64
     /// `anchor`); the variant carries the probe-derived `anchor`
     /// interpretation but exposes only fields with strong
-    /// double-evidence support.
+    /// double-evidence support. Current projections therefore emit this
+    /// kind with [`PidGeometryConfidence::Inferred`], even though the
+    /// underlying `JStyleOverride` record layout is decoded.
     Annotation {
         /// Inferred anchor point from payload bytes `+0..15`
         /// interpreted as `(f64, f64)`. Cross-fixture probe shows
@@ -343,7 +345,8 @@ pub struct PidByteRange {
 pub enum PidGeometryConfidence {
     /// Record layout and geometry semantics are decoded.
     Decoded,
-    /// Entity is derived by cross-record inference but has strong provenance.
+    /// Entity geometry semantics are inferred from bounded source evidence but
+    /// are not decoded strongly enough for [`Self::Decoded`].
     Inferred,
     /// Entity is probe evidence only and should not be rendered by default.
     ProbeOnly,
@@ -399,7 +402,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         warnings.push("no Sheet streams available for geometry decode".to_string());
     } else {
         warnings.push(format!(
-            "geometry decode not yet implemented; {sheet_count} Sheet stream(s) available as probe input"
+            "geometry decode remains partial across {sheet_count} Sheet stream(s); decoded, inferred, and probe-only evidence may coexist"
         ));
     }
 
@@ -716,8 +719,8 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
             });
         }
 
-        // Phase 14 Slice E/G: emit `Decoded` entities for every
-        // PSM-decoded `GLine2d` / `GArc2d` record in this sheet.
+        // Phase 14 Slice E/J: emit `Decoded` entities for every
+        // PSM-decoded `GLine2d` / `igLine2d` record in this sheet.
         // These run **in addition to** the EndpointPair-derived
         // inferred lines above so existing inferred geometry never
         // regresses; consumers should pick the right entity by
@@ -1009,9 +1012,9 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
             // `4 × u32 + 4 × f64 + 3 × u32 + 2 × u16`; cross-fixture
             // probe v5 evidence shows that joining the first 8 bytes
             // and bytes `+8..15` as `f64` produces consistently
-            // normalized coordinates, so we expose them as the
-            // inferred `anchor` while keeping the rest in the audit
-            // collection.
+            // normalized coordinates, so we expose them as an
+            // `Inferred` annotation anchor while keeping the
+            // authoritative record layout in the decoded audit collection.
             for (index, record) in geometry.decoded_jstyle_overrides.iter().enumerate() {
                 let Some(byte_range) = source_range(
                     record.byte_start,
@@ -1048,7 +1051,8 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         secondary_radius: record.field_1_f64,
                         note: format!(
                             "PSM JStyleOverride (RAD style.dll CLSID {{47FCC338-...}}) \
-                             V3 IO record; oid={} bytes_to_follow={} tail_len={}",
+                             V3 IO record; probe-derived annotation anchor; \
+                             oid={} bytes_to_follow={} tail_len={}",
                             record.oid,
                             record.bytes_to_follow,
                             record.raw_attribute_tail.len(),
@@ -1062,26 +1066,41 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         record_kind: Some(SheetRecordKind::JStyleOverride),
                         field_x: None,
                         note: Some(format!(
-                            "PSM 0x0030 JStyleOverride record decoded from \
+                            "PSM 0x0030 JStyleOverride record layout decoded from \
                              style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): \
                              oid={} bytes_to_follow={} field_1={:.6} \
-                             rotation_angle={:.6} (rad)",
+                             rotation_angle={:.6} (rad); annotation anchor remains \
+                             inferred because payload +0..15 is authoritative as 4 x u32",
                             record.oid,
                             record.bytes_to_follow,
                             record.field_1_f64,
                             record.field_2_f64,
                         )),
                     },
-                    confidence: PidGeometryConfidence::Decoded,
+                    confidence: PidGeometryConfidence::Inferred,
                 });
             }
         }
     }
 
-    let probe_count = entities.len();
-    if probe_count > 0 {
+    let evidence_count = entities.len();
+    if evidence_count > 0 {
+        let decoded_count = entities
+            .iter()
+            .filter(|entity| entity.confidence == PidGeometryConfidence::Decoded)
+            .count();
+        let inferred_count = entities
+            .iter()
+            .filter(|entity| entity.confidence == PidGeometryConfidence::Inferred)
+            .count();
+        let probe_only_count = entities
+            .iter()
+            .filter(|entity| entity.confidence == PidGeometryConfidence::ProbeOnly)
+            .count();
         warnings.push(format!(
-            "{probe_count} Sheet evidence item(s) emitted; renderers should still gate by kind and confidence"
+            "{evidence_count} Sheet evidence item(s) emitted ({decoded_count} decoded, \
+             {inferred_count} inferred, {probe_only_count} probe-only); renderers should \
+             still gate by kind and confidence"
         ));
         warnings.push(
             "Sheet coordinate units and page transforms are unavailable; source coordinates remain unconverted and every entity carries explicit coordinate_context diagnostics"
@@ -1141,8 +1160,8 @@ fn source_range(start: usize, len: usize, stream_size: u64) -> Option<PidByteRan
 mod tests {
     use super::*;
     use crate::model::{
-        SheetCoordinateHintDto, SheetEndpoint, SheetEndpointRecord, SheetGeometry,
-        SheetObjectGeometryHint, SheetStream, SheetText,
+        DecodedJStyleOverrideRecord, SheetCoordinateHintDto, SheetEndpoint, SheetEndpointRecord,
+        SheetGeometry, SheetObjectGeometryHint, SheetStream, SheetText,
     };
 
     #[test]
@@ -1166,10 +1185,101 @@ mod tests {
         let geometry = build_normalized_geometry(&doc);
 
         assert!(geometry.is_empty());
+        assert!(geometry.warnings.iter().any(|warning| warning
+            .contains("geometry decode remains partial")
+            && warning.contains("1 Sheet stream")));
         assert!(geometry
             .warnings
             .iter()
-            .any(|w| w.contains("1 Sheet stream")));
+            .all(|warning| !warning.contains("geometry decode not yet implemented")));
+    }
+
+    #[test]
+    fn jstyle_override_projection_keeps_inferred_geometry_confidence() {
+        let anchor_x = 0.25_f64;
+        let anchor_y = 0.5_f64;
+        let anchor_x_bytes = anchor_x.to_le_bytes();
+        let anchor_y_bytes = anchor_y.to_le_bytes();
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 128,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                decoded_jstyle_overrides: vec![DecodedJStyleOverrideRecord {
+                    byte_start: 8,
+                    byte_end: 78,
+                    type_code: 0x0030,
+                    type_flags: 0,
+                    bytes_to_follow: 64,
+                    oid: 42,
+                    field_a_u32: u32::from_le_bytes(
+                        anchor_x_bytes[0..4].try_into().expect("first anchor word"),
+                    ),
+                    field_b_u32: u32::from_le_bytes(
+                        anchor_x_bytes[4..8].try_into().expect("second anchor word"),
+                    ),
+                    field_c_u32: u32::from_le_bytes(
+                        anchor_y_bytes[0..4].try_into().expect("first anchor word"),
+                    ),
+                    field_d_u32: u32::from_le_bytes(
+                        anchor_y_bytes[4..8].try_into().expect("second anchor word"),
+                    ),
+                    field_1_f64: anchor_x,
+                    field_2_f64: 0.0,
+                    field_3_f64: 0.0,
+                    field_4_f64: 0.0,
+                    field_e_u32: 0,
+                    field_f_u32: 0,
+                    field_g_u32: 0,
+                    field_h_u16: 0,
+                    field_i_u16: 0,
+                    raw_attribute_tail: Vec::new(),
+                }],
+                ..SheetGeometry::default()
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+        let annotation = geometry
+            .entities
+            .iter()
+            .find(|entity| matches!(entity.kind, PidGraphicKind::Annotation { .. }))
+            .expect("JStyleOverride should project as an annotation");
+
+        assert_eq!(annotation.confidence, PidGeometryConfidence::Inferred);
+        assert_eq!(
+            annotation.source.record_kind,
+            Some(SheetRecordKind::JStyleOverride)
+        );
+        assert_eq!(
+            annotation.source.byte_range,
+            Some(PidByteRange { start: 8, end: 78 })
+        );
+        assert!(annotation
+            .source
+            .note
+            .as_deref()
+            .is_some_and(|note| note.contains("annotation anchor remains inferred")));
+        assert!(matches!(
+            annotation.kind,
+            PidGraphicKind::Annotation {
+                anchor: PidPoint { x, y },
+                ..
+            } if x == anchor_x && y == anchor_y
+        ));
+        assert!(geometry.warnings.iter().any(|warning| {
+            warning.contains("1 Sheet evidence item")
+                && warning.contains("0 decoded, 1 inferred, 0 probe-only")
+        }));
     }
 
     #[test]
@@ -1260,6 +1370,7 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_igboundaries: Vec::new(),
                 decoded_graphic_groups: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
@@ -1358,6 +1469,7 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_igboundaries: Vec::new(),
                 decoded_graphic_groups: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
@@ -1494,6 +1606,7 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_igboundaries: Vec::new(),
                 decoded_graphic_groups: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
@@ -1583,6 +1696,7 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_igboundaries: Vec::new(),
                 decoded_graphic_groups: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
@@ -1643,6 +1757,7 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_igboundaries: Vec::new(),
                 decoded_graphic_groups: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
@@ -1723,6 +1838,7 @@ mod tests {
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
                 decoded_igsymbols: Vec::new(),
+                decoded_igboundaries: Vec::new(),
                 decoded_graphic_groups: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),

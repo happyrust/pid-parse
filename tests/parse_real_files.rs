@@ -12,18 +12,18 @@ use pid_parse::{
     parsers::sheet_records::{
         collect_normalized_f64_pairs, coordinate_page_metadata_investigation_report,
         coordinate_pair_spatial_analysis, curve_primitive_investigation_report,
-        decode_attribute_fragments, decode_graphic_groups, decode_iglines, decode_iglinestrings,
-        decode_igpoints, decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides,
-        decode_primitive_lines, decode_sub_records_0x0010, primitive_line_investigation_report,
-        sheet_record_shape_inventory, symbol_placement_investigation_report,
-        text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
-        SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSymbolPlacementObject,
-        GRAPHIC_GROUP_MIN_PAYLOAD_LEN, JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW,
-        JSTYLE_OVERRIDE_PAYLOAD_LEN, PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_GRAPHIC_GROUP,
-        PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D,
-        PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
-        PSM_TYPE_CODE_SUB_RECORD_0X0010, SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW,
-        SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
+        decode_attribute_fragments, decode_graphic_groups, decode_igboundaries, decode_iglines,
+        decode_iglinestrings, decode_igpoints, decode_igsymbols, decode_igtextboxes,
+        decode_jstyle_overrides, decode_primitive_lines, decode_sub_records_0x0010,
+        primitive_line_investigation_report, sheet_record_shape_inventory,
+        symbol_placement_investigation_report, text_placement_investigation_report,
+        SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
+        SheetRecordShapeKind, SheetSymbolPlacementObject, GRAPHIC_GROUP_MIN_PAYLOAD_LEN,
+        JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW, JSTYLE_OVERRIDE_PAYLOAD_LEN, PSM_TYPE_CODE_GLINE2D,
+        PSM_TYPE_CODE_GRAPHIC_GROUP, PSM_TYPE_CODE_IGBOUNDARY2D, PSM_TYPE_CODE_IGLINE2D,
+        PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D,
+        PSM_TYPE_CODE_IGTEXTBOX, PSM_TYPE_CODE_JSTYLE_OVERRIDE, PSM_TYPE_CODE_SUB_RECORD_0X0010,
+        SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW, SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
     },
     PidParser,
 };
@@ -259,6 +259,10 @@ fn geometry_fixture_cases() -> &'static [GeometryFixtureCase] {
         GeometryFixtureCase {
             path: "工艺管道及仪表流程-1.pid",
             category: "non_ascii",
+        },
+        GeometryFixtureCase {
+            path: "D06.pid",
+            category: "compact_d06",
         },
         GeometryFixtureCase {
             path: "export-test/publish-data/A01/A01.pid",
@@ -1988,13 +1992,14 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                 )
         })
         .count();
-    // Phase 16 Slice F: `decoded_jstyle_overrides` records emit
-    // `PidGraphicKind::Annotation` entities at Decoded confidence.
-    let decoded_annotations = geometry
+    // The JStyleOverride record layout is decoded, but the annotation anchor
+    // remains a probe-derived interpretation of bytes that IDA reads as four
+    // u32 fields. The normalized geometry entity must therefore stay Inferred.
+    let inferred_annotations = geometry
         .entities
         .iter()
         .filter(|entity| {
-            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
+            entity.confidence == pid_parse::PidGeometryConfidence::Inferred
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Annotation { .. })
         })
         .count();
@@ -2074,13 +2079,13 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
             + decoded_points
             + decoded_texts
             + decoded_symbols
-            + decoded_annotations,
+            + inferred_annotations,
         geometry.entities.len(),
-        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d/igLine2d records become decoded lines; igLineString2d records become decoded polylines; igPoint2d records become decoded points; igTextBox records become decoded texts; igSymbol2d records become decoded symbol instances; PSM-decoded JStyleOverride records become decoded annotations; remaining probe evidence stays ProbeOnly Unknown"
+        "coordinate/geometry hints become inferred points; fully mapped endpoint pairs become inferred lines; PSM-decoded GLine2d/igLine2d records become decoded lines; igLineString2d records become decoded polylines; igPoint2d records become decoded points; igTextBox records become decoded texts; igSymbol2d records become decoded symbol instances; JStyleOverride records become inferred annotations; remaining probe evidence stays ProbeOnly Unknown"
     );
     // `PidGeometryConfidence::Decoded` is legitimate for decoded
-    // line / polyline / point / text / symbol / annotation records.
-    // Arc / Circle / Unknown must still not claim Decoded confidence.
+    // line / polyline / point / text / symbol records. Arc / Circle /
+    // Annotation / Unknown must still not claim Decoded confidence.
     assert!(
         geometry.entities.iter().all(|entity| {
             entity.confidence != pid_parse::PidGeometryConfidence::Decoded
@@ -2091,10 +2096,16 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
                         | pid_parse::PidGraphicKind::Point { .. }
                         | pid_parse::PidGraphicKind::Text { .. }
                         | pid_parse::PidGraphicKind::SymbolInstance { .. }
-                        | pid_parse::PidGraphicKind::Annotation { .. }
                 )
         }),
-        "Decoded confidence currently only applies to PSM GLine2d / igLine2d / igLineString2d / igPoint2d / igTextBox / igSymbol2d / JStyleOverride entities"
+        "Decoded confidence currently only applies to PSM GLine2d / igLine2d / igLineString2d / igPoint2d / igTextBox / igSymbol2d entities"
+    );
+    assert!(
+        geometry.entities.iter().all(|entity| {
+            !matches!(entity.kind, pid_parse::PidGraphicKind::Annotation { .. })
+                || entity.confidence == pid_parse::PidGeometryConfidence::Inferred
+        }),
+        "JStyleOverride annotations must remain Inferred while anchor semantics are ambiguous"
     );
     // `Polyline`, `Text` and `SymbolInstance` are legitimate when
     // backed by decoded records (`confidence == Decoded`). `Arc`
@@ -2161,6 +2172,20 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
             .iter()
             .any(|warning| warning.contains("coordinate units and page transforms are unavailable")),
         "normalized geometry should report explicit transform-unavailable diagnostics"
+    );
+    assert!(
+        geometry
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("geometry decode remains partial")),
+        "normalized geometry should report partial, not absent, Sheet decoding"
+    );
+    assert!(
+        geometry
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("geometry decode not yet implemented")),
+        "normalized geometry must not claim that implemented decoders are absent"
     );
 
     for entity in &geometry.entities {
@@ -2992,7 +3017,9 @@ fn geometry_fixture_availability_summary_tracks_target_gap() {
 fn geometry_fixture_availability_report_line_is_human_readable() {
     let line = geometry_fixture_availability_report_line(&geometry_fixture_availability_summary());
 
-    assert!(line.contains("registered=5"));
+    // Phase 34-A follow-up normalized the registry to six local fixtures
+    // (D06 joined the Phase 9A five).
+    assert!(line.contains("registered=6"));
     assert!(line.contains("target_min_available=8"));
     assert!(line.contains("available="));
     assert!(line.contains("missing="));
@@ -7587,6 +7614,181 @@ fn iglines_decoder_emits_decoded_iglines_with_provenance() {
         total_decoded >= 100,
         "decode_iglines must emit >= 100 igLine2d records cross-fixture, got {total_decoded}. \
         Per-fixture summary: {per_fixture_summary:?}"
+    );
+}
+
+/// Phase 34-D: cross-fixture ratchet for the fully-typed audit-only
+/// PSM `igBoundary2d` (`0x0013`) decoder.
+///
+/// Grammar evidence: `examples/probe_0013_igboundary2d_grammar.rs` +
+/// `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`.
+/// The 20 fixture records live in primary `/Sheet6` only, carry 3
+/// segments each, close into a loop within `1e-9`, and their trailer
+/// member references resolve to canonical `igLine2d` records whose
+/// geometry equals the same-index segment in forward order.
+#[test]
+fn igboundaries_decoder_emits_typed_audit_records_with_provenance() {
+    let fixtures = [
+        ("DWG-0201GP06-01.pid", 0usize),
+        ("DWG-0202GP06-01.pid", 5usize),
+        ("工艺管道及仪表流程-1.pid", 10usize),
+        ("D06.pid", 0usize),
+        ("export-test/publish-data/A01/A01.pid", 0usize),
+        (
+            "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+            5usize,
+        ),
+    ];
+    let mut total_decoded = 0usize;
+    let mut total_expected = 0usize;
+    let mut member_matches = 0usize;
+    let mut per_fixture_summary: Vec<(String, usize, usize)> = Vec::new();
+    let mut sample_records: Vec<String> = Vec::new();
+
+    for (fixture, expected_count) in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture_count = 0usize;
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let bytes = raw.data.as_slice();
+            let decoded = decode_igboundaries(bytes);
+            // Member-resolution oracle: strict igLine2d records by oid.
+            let lines_by_oid: BTreeMap<u32, _> = decode_iglines(bytes)
+                .into_iter()
+                .map(|line| (line.oid, line))
+                .collect();
+            for boundary in &decoded {
+                assert!(
+                    boundary.byte_range.end <= bytes.len(),
+                    "igBoundary2d byte_range {:?} exceeds stream {} bytes ({})",
+                    boundary.byte_range,
+                    sheet.path,
+                    bytes.len()
+                );
+                assert_eq!(boundary.type_code, PSM_TYPE_CODE_IGBOUNDARY2D);
+                assert_eq!(
+                    boundary.bytes_to_follow, 172,
+                    "all fixture igBoundary2d records carry 3 segments (btf=172)"
+                );
+                assert_eq!(boundary.segment_count, 3);
+                assert_eq!(boundary.segments.len(), 3);
+                assert_eq!(boundary.member_refs.len(), 3);
+                assert_eq!(boundary.sub_type_word, 0x0010);
+                assert_eq!(boundary.sub_header_tail, [2, 1]);
+                assert_eq!(boundary.trailer_flag, 1);
+                assert!(
+                    boundary.is_closed_loop(1e-9),
+                    "fixture igBoundary2d must close into a loop: oid={} in {}",
+                    boundary.oid,
+                    sheet.path
+                );
+                // Anchor inside the segment bounding box.
+                let xs: Vec<f64> = boundary
+                    .segments
+                    .iter()
+                    .flat_map(|s| [s.start.0, s.end.0])
+                    .collect();
+                let ys: Vec<f64> = boundary
+                    .segments
+                    .iter()
+                    .flat_map(|s| [s.start.1, s.end.1])
+                    .collect();
+                let min_x = xs.iter().cloned().fold(f64::INFINITY, f64::min);
+                let max_x = xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let min_y = ys.iter().cloned().fold(f64::INFINITY, f64::min);
+                let max_y = ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                assert!(
+                    (min_x..=max_x).contains(&boundary.anchor.0)
+                        && (min_y..=max_y).contains(&boundary.anchor.1),
+                    "anchor must sit inside the segment bbox: oid={}",
+                    boundary.oid
+                );
+                // Every trailer member resolves to a canonical igLine2d
+                // whose geometry equals the same-index segment (forward).
+                for (i, member) in boundary.member_refs.iter().enumerate() {
+                    assert_eq!(
+                        member.class_word, 0x00CB,
+                        "fixture member class word is always 0x00CB"
+                    );
+                    let line = lines_by_oid.get(&member.member_oid).unwrap_or_else(|| {
+                        panic!(
+                            "member oid {} of boundary oid={} must resolve to a decoded \
+                             igLine2d in {}",
+                            member.member_oid, boundary.oid, sheet.path
+                        )
+                    });
+                    let seg = &boundary.segments[i];
+                    let close = |a: f64, b: f64| (a - b).abs() <= 1e-9;
+                    assert!(
+                        close(seg.start.0, line.start.0)
+                            && close(seg.start.1, line.start.1)
+                            && close(seg.end.0, line.end.0)
+                            && close(seg.end.1, line.end.1),
+                        "segment[{i}] of boundary oid={} must equal member igLine2d oid={} \
+                         geometry (forward order)",
+                        boundary.oid,
+                        member.member_oid
+                    );
+                    member_matches += 1;
+                }
+                if sample_records.len() < 4 {
+                    sample_records.push(format!(
+                        "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} parent={} members={:?} \
+                         anchor=({:+.4},{:+.4}) closed={}",
+                        sheet.path,
+                        boundary.byte_range.start,
+                        boundary.byte_range.end,
+                        boundary.oid,
+                        boundary.parent_ref,
+                        boundary
+                            .member_refs
+                            .iter()
+                            .map(|m| m.member_oid)
+                            .collect::<Vec<_>>(),
+                        boundary.anchor.0,
+                        boundary.anchor.1,
+                        boundary.is_closed_loop(1e-9),
+                    ));
+                }
+            }
+            per_fixture_count += decoded.len();
+        }
+        per_fixture_summary.push((fixture.to_string(), per_fixture_count, expected_count));
+        total_decoded += per_fixture_count;
+        total_expected += expected_count;
+    }
+    eprintln!("--- Phase 34-D: PSM igBoundary2d decoder cross-fixture summary ---");
+    for (name, count, expected) in &per_fixture_summary {
+        eprintln!("  {name}: {count} decoded igBoundary2d records (expected {expected})");
+    }
+    for sample in &sample_records {
+        eprintln!("  sample: {sample}");
+    }
+    eprintln!(
+        "  total decoded igBoundaries across present fixtures: {total_decoded} \
+         (member geometry matches: {member_matches})"
+    );
+    if per_fixture_summary.is_empty() {
+        eprintln!(
+            "skipping: no Sheet-bearing fixture present (CI / contributors \
+            without SmartPlant samples)"
+        );
+        return;
+    }
+    for (name, count, expected) in &per_fixture_summary {
+        assert_eq!(
+            count, expected,
+            "igBoundary2d count ratchet drifted for {name}; \
+             per-fixture summary: {per_fixture_summary:?}"
+        );
+    }
+    assert_eq!(
+        total_decoded, total_expected,
+        "igBoundary2d cross-fixture total ratchet drifted"
     );
 }
 

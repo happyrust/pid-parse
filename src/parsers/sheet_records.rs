@@ -4137,6 +4137,369 @@ fn decode_attribute_utf16le(bytes: &[u8]) -> Option<String> {
     Some(out)
 }
 
+// ---------------------------------------------------------------------------
+// Phase 34-D: PSM `igBoundary2d` (type `0x0013`) — typed audit-only decoder
+//
+// Grammar pinned by `examples/probe_0013_igboundary2d_grammar.rs`
+// (2026-07-07) on all 20 cross-fixture records (`DWG-0202` ×5,
+// `publish-DWG-0202` ×5, `工艺管道及仪表流程-1` ×10; every hit in primary
+// top-level `/Sheet6`, all `bytes_to_follow = 172`):
+//
+// - the record reuses the 18-byte IGDS prefix (`oid`, `parent_ref`,
+//   `remaining_header == 12`, `sub_type_word == 0x0010`, `index`);
+// - a 10-byte sub-header follows: `u32 == 1`, `u32 segment_count`,
+//   two small bytes (`2`, `1` across all fixtures);
+// - `segment_count` groups of `0x67 tag + 4×f64` (33 bytes each)
+//   carry per-segment `(start, end)` coordinates; the recurring
+//   `0x67` byte the Phase 34-C closeout flagged is a fixed
+//   per-segment tag, not an interleaved vertex-array stride;
+// - an anchor point (2×f64, inside the segment bbox on 20/20
+//   records), a `u8` flag, and `u32 member_count == segment_count`
+//   follow;
+// - the payload ends with `member_count` 8-byte references
+//   (`u32 member_oid + u16 class_word + u16 sub_word`); on 60/60
+//   fixture members the `member_oid` resolves to a real `0x0018`
+//   `igLine2d` record in the same stream whose `(start, end)`
+//   equals `segments[i]` in forward order, and the class word is
+//   always `0x00CB`.
+//
+// Total payload length is exactly `49 + 41 × segment_count`.
+//
+// **Why audit-only:** the member-reference table proves
+// `igBoundary2d` is an *association* record — its segment
+// coordinates re-list geometry that the member `igLine2d` records
+// already emit as normalized `Line` entities. Emitting the boundary
+// as a `PidGraphicKind::Polyline` would double-count those bytes'
+// geometry, so this decoder exposes fully-typed fields (closure is
+// available via [`SheetIgBoundary2dDecoded::is_closed_loop`]) but
+// deliberately produces no normalized geometry entity.
+
+/// PSM type code for the standard Intergraph Sigma `igBoundary2d`
+/// record (`0x13 = 19`, the IGDS class tag used directly as the PSM
+/// type code, matching the Slice J discovery for `igLine2d`).
+///
+/// Cross-fixture histogram: 20 top-level hits in 3 fixtures, all in
+/// primary `/Sheet6` with canonical `igLine2d` neighbours. See
+/// `docs/analysis/2026-06-30-phase34-0013-003d-evidence-closeout.md`.
+pub const PSM_TYPE_CODE_IGBOUNDARY2D: u16 = 0x0013;
+
+/// Per-segment tag byte that opens every `igBoundary2d` segment
+/// group (`0x67`). Fixture dumps show `segment_count` groups of
+/// `tag + 4×f64` starting at payload offset 28.
+pub const IGBOUNDARY2D_SEGMENT_TAG: u8 = 0x67;
+
+/// Upper bound accepted for `segment_count`. All fixture records
+/// carry 3 segments; the cap leaves headroom for larger closed
+/// boundaries while rejecting wide-scan false positives.
+pub const IGBOUNDARY2D_MAX_SEGMENT_COUNT: u32 = 64;
+
+/// Fixed payload byte overhead of an `igBoundary2d` record outside
+/// its per-segment data: 18-byte IGDS prefix + 10-byte sub-header +
+/// 16-byte anchor + 1-byte flag + 4-byte member count = 49 bytes.
+/// Each segment adds 33 group bytes + an 8-byte member reference,
+/// so `bytes_to_follow == 49 + 41 × segment_count`.
+pub const IGBOUNDARY2D_FIXED_PAYLOAD_LEN: usize = 49;
+
+/// Per-segment payload cost: a 33-byte `0x67 + 4×f64` group plus an
+/// 8-byte trailer member reference.
+pub const IGBOUNDARY2D_PER_SEGMENT_LEN: usize = 41;
+
+/// One `(start, end)` segment decoded from an `igBoundary2d`
+/// segment group (`0x67 tag + 4×f64`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgBoundary2dSegment {
+    /// Payload offset of the group's `0x67` tag byte.
+    pub tag_offset: usize,
+    /// Segment start `(x, y)` in normalized sheet coordinates.
+    pub start: (f64, f64),
+    /// Segment end `(x, y)` in normalized sheet coordinates.
+    pub end: (f64, f64),
+}
+
+/// One 8-byte member reference from the `igBoundary2d` trailer:
+/// `u32 member_oid + u16 class_word + u16 sub_word`.
+///
+/// On all 60 fixture members the `member_oid` resolves to a real
+/// `0x0018 igLine2d` record in the same Sheet stream whose
+/// `(start, end)` equals the same-index segment in forward order;
+/// `class_word` is always `0x00CB` and `sub_word` is `13` for the
+/// first member and `12` for the rest. The words are exposed
+/// verbatim without semantic naming until a native reader confirms
+/// their roles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SheetIgBoundary2dMemberRef {
+    /// Object identifier of the member record (fixture evidence:
+    /// a `0x0018 igLine2d` in the same stream).
+    pub member_oid: u32,
+    /// Class-like word at member offset +4 (`0x00CB` across all
+    /// fixture members).
+    pub class_word: u16,
+    /// Sub-code word at member offset +6 (`13` / `12` in fixtures).
+    pub sub_word: u16,
+}
+
+/// One decoded PSM `igBoundary2d` record (type `0x0013`).
+///
+/// Fully-typed **audit-only** DTO: every payload byte is accounted
+/// for (prefix, sub-header, segment groups, anchor, flag, member
+/// references), but no normalized geometry entity is emitted
+/// because the member references prove the segment coordinates
+/// duplicate member `igLine2d` geometry (see module comment).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgBoundary2dDecoded {
+    /// Byte range covering the full PSM record (6-byte header +
+    /// payload) within the Sheet stream.
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always
+    /// [`PSM_TYPE_CODE_IGBOUNDARY2D`].
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word (0 across fixtures).
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header
+    /// (`49 + 41 × segment_count` by validation).
+    pub bytes_to_follow: u32,
+    /// Object identifier from payload offset 0.
+    pub oid: u32,
+    /// Parent reference from payload offset 4 (varies per record;
+    /// not validated).
+    pub parent_ref: u32,
+    /// Sub-type word at payload offset 12. Always `0x0010`.
+    pub sub_type_word: u16,
+    /// Index-like word at payload offset 14 (21 / 24 in fixtures,
+    /// constant per fixture family like the other IGDS decoders).
+    pub index: u32,
+    /// `u32` at payload offset 22: number of segment groups and
+    /// trailer member references.
+    pub segment_count: u32,
+    /// Two sub-header bytes at payload offsets 26–27 (`[2, 1]`
+    /// across all fixture records; exposed verbatim, not
+    /// validated).
+    pub sub_header_tail: [u8; 2],
+    /// Decoded segment groups (`segment_count` entries).
+    pub segments: Vec<SheetIgBoundary2dSegment>,
+    /// Anchor point following the segment groups; inside the
+    /// segment bounding box on 20/20 fixture records.
+    pub anchor: (f64, f64),
+    /// `u8` flag between the anchor and the member count (`1`
+    /// across all fixture records; exposed verbatim, not
+    /// validated).
+    pub trailer_flag: u8,
+    /// Trailer member references (`segment_count` entries).
+    pub member_refs: Vec<SheetIgBoundary2dMemberRef>,
+}
+
+impl SheetIgBoundary2dDecoded {
+    /// `true` when consecutive segments chain end-to-start and the
+    /// last segment closes back onto the first start, each within
+    /// `tolerance` per axis.
+    ///
+    /// Fixture records close within a few f64 ulps (exact-bit
+    /// equality fails on 19/20 records, `1e-9` passes on 20/20), so
+    /// callers should pass a small positive tolerance such as
+    /// `1e-9` rather than `0.0`.
+    pub fn is_closed_loop(&self, tolerance: f64) -> bool {
+        let close = |a: (f64, f64), b: (f64, f64)| {
+            (a.0 - b.0).abs() <= tolerance && (a.1 - b.1).abs() <= tolerance
+        };
+        if self.segments.len() < 2 {
+            return false;
+        }
+        let chained = self
+            .segments
+            .windows(2)
+            .all(|w| close(w[0].end, w[1].start));
+        chained
+            && close(
+                self.segments[self.segments.len() - 1].end,
+                self.segments[0].start,
+            )
+    }
+}
+
+/// Decode every PSM `igBoundary2d` record in a Sheet stream's bytes.
+///
+/// Validation rules (all must hold, otherwise the offset is skipped):
+///
+/// 1. `type_code == 0x0013`; type flags are zero;
+/// 2. `remaining_header == 12` (payload offset 8) and
+///    `sub_type_word == 0x0010` (payload offset 12);
+/// 3. sub-header `u32` at payload offset 18 equals `1`;
+/// 4. `segment_count` (payload offset 22) is in
+///    `1..=IGBOUNDARY2D_MAX_SEGMENT_COUNT`;
+/// 5. `bytes_to_follow == 49 + 41 × segment_count` exactly;
+/// 6. every segment group starts with the `0x67` tag byte;
+/// 7. all segment and anchor coordinates are finite and within the
+///    `[-1e9, 1e9]` domain;
+/// 8. trailer `member_count == segment_count`;
+/// 9. not all segment vertices are identical (non-degenerate).
+///
+/// After accepting a record the scanner advances past it. Panic-free
+/// and bounds-checked: adversarial bytes simply fail validation.
+pub fn decode_igboundaries(data: &[u8]) -> Vec<SheetIgBoundary2dDecoded> {
+    let min_record_len = 6 + IGBOUNDARY2D_FIXED_PAYLOAD_LEN + IGBOUNDARY2D_PER_SEGMENT_LEN;
+    let mut out = Vec::new();
+    if data.len() < min_record_len {
+        return out;
+    }
+    let max_offset = data.len() - min_record_len;
+    let mut off = 0usize;
+    while off <= max_offset {
+        if let Some(decoded) = decode_igboundary_at(data, off) {
+            let advance = (decoded.byte_range.end - off).max(1);
+            out.push(decoded);
+            off = off.saturating_add(advance);
+            continue;
+        }
+        off += 1;
+    }
+    out
+}
+
+/// Try to decode a single PSM `igBoundary2d` record starting at
+/// `offset`. Returns `None` when any validation rule in
+/// [`decode_igboundaries`] fails. Bounds-checked and panic-free.
+pub fn decode_igboundary_at(data: &[u8], offset: usize) -> Option<SheetIgBoundary2dDecoded> {
+    let header_end = offset.checked_add(6)?;
+    if header_end > data.len() {
+        return None;
+    }
+    let header = data.get(offset..header_end)?;
+    let type_word = u16::from_le_bytes([header[0], header[1]]);
+    let type_code = type_word & 0x3FFF;
+    if type_code != PSM_TYPE_CODE_IGBOUNDARY2D {
+        return None;
+    }
+    let type_flags = type_word >> 14;
+    if type_flags != 0 {
+        return None;
+    }
+    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
+    let btf = bytes_to_follow as usize;
+    let payload_end = header_end.checked_add(btf)?;
+    if payload_end > data.len() {
+        return None;
+    }
+    let payload = data.get(header_end..payload_end)?;
+
+    let read_u32 = |pos: usize| -> Option<u32> {
+        payload
+            .get(pos..pos + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let read_f64 = |pos: usize| -> Option<f64> {
+        payload
+            .get(pos..pos + 8)
+            .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+    };
+
+    let oid = read_u32(0)?;
+    let parent_ref = read_u32(4)?;
+    let remaining_header = read_u32(8)?;
+    if remaining_header != IGLINE2D_REMAINING_HEADER {
+        return None;
+    }
+    let sub_type_word = u16::from_le_bytes([*payload.get(12)?, *payload.get(13)?]);
+    if sub_type_word != 0x0010 {
+        return None;
+    }
+    let index = read_u32(14)?;
+    if read_u32(18)? != 1 {
+        return None;
+    }
+    let segment_count = read_u32(22)?;
+    if !(1..=IGBOUNDARY2D_MAX_SEGMENT_COUNT).contains(&segment_count) {
+        return None;
+    }
+    let n = segment_count as usize;
+    let expected_len =
+        IGBOUNDARY2D_FIXED_PAYLOAD_LEN.checked_add(IGBOUNDARY2D_PER_SEGMENT_LEN.checked_mul(n)?)?;
+    if btf != expected_len {
+        return None;
+    }
+    let sub_header_tail = [*payload.get(26)?, *payload.get(27)?];
+
+    // Segment groups: `0x67 tag + 4×f64` each, starting at +28.
+    let mut segments = Vec::with_capacity(n);
+    let mut pos = 28usize;
+    let mut all_same = true;
+    let mut first_vertex: Option<(f64, f64)> = None;
+    for _ in 0..n {
+        if *payload.get(pos)? != IGBOUNDARY2D_SEGMENT_TAG {
+            return None;
+        }
+        let sx = read_f64(pos + 1)?;
+        let sy = read_f64(pos + 9)?;
+        let ex = read_f64(pos + 17)?;
+        let ey = read_f64(pos + 25)?;
+        for v in [sx, sy, ex, ey] {
+            if !v.is_finite() || v.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+                return None;
+            }
+        }
+        let reference = *first_vertex.get_or_insert((sx, sy));
+        for vertex in [(sx, sy), (ex, ey)] {
+            if vertex != reference {
+                all_same = false;
+            }
+        }
+        segments.push(SheetIgBoundary2dSegment {
+            tag_offset: pos,
+            start: (sx, sy),
+            end: (ex, ey),
+        });
+        pos += 33;
+    }
+    if all_same {
+        return None;
+    }
+
+    // Anchor + flag + member count.
+    let anchor_x = read_f64(pos)?;
+    let anchor_y = read_f64(pos + 8)?;
+    for v in [anchor_x, anchor_y] {
+        if !v.is_finite() || v.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+            return None;
+        }
+    }
+    let trailer_flag = *payload.get(pos + 16)?;
+    let member_count = read_u32(pos + 17)?;
+    if member_count != segment_count {
+        return None;
+    }
+
+    // Trailer member references.
+    let mut member_refs = Vec::with_capacity(n);
+    let member_base = pos + 21;
+    for i in 0..n {
+        let base = member_base + i * 8;
+        let member_oid = read_u32(base)?;
+        let class_word = u16::from_le_bytes([*payload.get(base + 4)?, *payload.get(base + 5)?]);
+        let sub_word = u16::from_le_bytes([*payload.get(base + 6)?, *payload.get(base + 7)?]);
+        member_refs.push(SheetIgBoundary2dMemberRef {
+            member_oid,
+            class_word,
+            sub_word,
+        });
+    }
+
+    Some(SheetIgBoundary2dDecoded {
+        byte_range: offset..payload_end,
+        type_code,
+        type_flags,
+        bytes_to_follow,
+        oid,
+        parent_ref,
+        sub_type_word,
+        index,
+        segment_count,
+        sub_header_tail,
+        segments,
+        anchor: (anchor_x, anchor_y),
+        trailer_flag,
+        member_refs,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5979,5 +6342,278 @@ mod tests {
 
         let empty = coordinate_pair_spatial_analysis(&[], 20);
         assert!(empty.uniform_distribution);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 34-D: PSM igBoundary2d (0x0013) decoder tests
+    // -----------------------------------------------------------------
+
+    /// One `(start, end)` synthetic segment for the igBoundary2d
+    /// test builder.
+    type TestSegment = ((f64, f64), (f64, f64));
+
+    /// Build a synthetic PSM `igBoundary2d` record mirroring the
+    /// fixture layout proven by
+    /// `examples/probe_0013_igboundary2d_grammar.rs`: 6-byte PSM
+    /// header + `49 + 41 × n` payload.
+    fn build_synthetic_igboundary2d_record(
+        oid: u32,
+        parent_ref: u32,
+        index: u32,
+        segments: &[TestSegment],
+        anchor: (f64, f64),
+        member_oids: &[u32],
+    ) -> Vec<u8> {
+        let n = segments.len();
+        assert_eq!(n, member_oids.len(), "test builder invariant");
+        let btf = (IGBOUNDARY2D_FIXED_PAYLOAD_LEN + IGBOUNDARY2D_PER_SEGMENT_LEN * n) as u32;
+        let mut out = Vec::with_capacity(6 + btf as usize);
+        out.extend_from_slice(&PSM_TYPE_CODE_IGBOUNDARY2D.to_le_bytes());
+        out.extend_from_slice(&btf.to_le_bytes());
+        // 18-byte IGDS prefix.
+        out.extend_from_slice(&oid.to_le_bytes());
+        out.extend_from_slice(&parent_ref.to_le_bytes());
+        out.extend_from_slice(&IGLINE2D_REMAINING_HEADER.to_le_bytes());
+        out.extend_from_slice(&0x0010u16.to_le_bytes());
+        out.extend_from_slice(&index.to_le_bytes());
+        // 10-byte sub-header: u32 == 1, u32 segment_count, bytes [2, 1].
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&(n as u32).to_le_bytes());
+        out.push(2);
+        out.push(1);
+        // Segment groups.
+        for (start, end) in segments {
+            out.push(IGBOUNDARY2D_SEGMENT_TAG);
+            out.extend_from_slice(&start.0.to_le_bytes());
+            out.extend_from_slice(&start.1.to_le_bytes());
+            out.extend_from_slice(&end.0.to_le_bytes());
+            out.extend_from_slice(&end.1.to_le_bytes());
+        }
+        // Anchor + flag + member count + member refs.
+        out.extend_from_slice(&anchor.0.to_le_bytes());
+        out.extend_from_slice(&anchor.1.to_le_bytes());
+        out.push(1);
+        out.extend_from_slice(&(n as u32).to_le_bytes());
+        for (i, member_oid) in member_oids.iter().enumerate() {
+            out.extend_from_slice(&member_oid.to_le_bytes());
+            out.extend_from_slice(&0x00CBu16.to_le_bytes());
+            out.extend_from_slice(&(if i == 0 { 13u16 } else { 12u16 }).to_le_bytes());
+        }
+        out
+    }
+
+    /// Closed fixture-shaped triangle: three chained segments.
+    fn canonical_igboundary_triangle() -> Vec<u8> {
+        build_synthetic_igboundary2d_record(
+            81,
+            71,
+            21,
+            &[
+                ((0.2025, 0.2202), (0.1993, 0.2210)),
+                ((0.1993, 0.2210), (0.1993, 0.2194)),
+                ((0.1993, 0.2194), (0.2025, 0.2202)),
+            ],
+            (0.2001, 0.2204),
+            &[70, 83, 82],
+        )
+    }
+
+    #[test]
+    fn igboundary2d_decodes_canonical_closed_triangle() {
+        let record = canonical_igboundary_triangle();
+        assert_eq!(record.len(), 6 + 172, "3-segment record is 178 bytes");
+        let decoded = decode_igboundaries(&record);
+        assert_eq!(decoded.len(), 1);
+        let b = &decoded[0];
+        assert_eq!(b.type_code, PSM_TYPE_CODE_IGBOUNDARY2D);
+        assert_eq!(b.bytes_to_follow, 172);
+        assert_eq!(b.oid, 81);
+        assert_eq!(b.parent_ref, 71);
+        assert_eq!(b.sub_type_word, 0x0010);
+        assert_eq!(b.index, 21);
+        assert_eq!(b.segment_count, 3);
+        assert_eq!(b.sub_header_tail, [2, 1]);
+        assert_eq!(b.segments.len(), 3);
+        assert_eq!(b.segments[0].tag_offset, 28);
+        assert_eq!(b.segments[1].tag_offset, 61);
+        assert_eq!(b.segments[2].tag_offset, 94);
+        assert!((b.segments[0].start.0 - 0.2025).abs() < 1e-12);
+        assert!((b.anchor.0 - 0.2001).abs() < 1e-12);
+        assert_eq!(b.trailer_flag, 1);
+        assert_eq!(
+            b.member_refs,
+            vec![
+                SheetIgBoundary2dMemberRef {
+                    member_oid: 70,
+                    class_word: 0x00CB,
+                    sub_word: 13
+                },
+                SheetIgBoundary2dMemberRef {
+                    member_oid: 83,
+                    class_word: 0x00CB,
+                    sub_word: 12
+                },
+                SheetIgBoundary2dMemberRef {
+                    member_oid: 82,
+                    class_word: 0x00CB,
+                    sub_word: 12
+                },
+            ]
+        );
+        assert!(b.is_closed_loop(1e-9));
+        assert_eq!(b.byte_range, 0..(6 + 172));
+    }
+
+    #[test]
+    fn igboundary2d_rejects_wrong_type_code() {
+        let mut record = canonical_igboundary_triangle();
+        record[0] = 0x18; // igLine2d type code instead
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_bytes_to_follow_off_formula() {
+        let mut record = canonical_igboundary_triangle();
+        record[2] = 171; // 172 -> 171 breaks `49 + 41 × n`
+        record.truncate(6 + 171);
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_wrong_remaining_header() {
+        let mut record = canonical_igboundary_triangle();
+        record[6 + 8] = 11;
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_wrong_sub_type_word() {
+        let mut record = canonical_igboundary_triangle();
+        record[6 + 12] = 0x11;
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_wrong_sub_header_flag() {
+        let mut record = canonical_igboundary_triangle();
+        record[6 + 18] = 2; // u32 at +18 must equal 1
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_missing_segment_tag() {
+        let mut record = canonical_igboundary_triangle();
+        record[6 + 61] = 0x68; // second group tag corrupted
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_member_count_mismatch() {
+        let mut record = canonical_igboundary_triangle();
+        // member_count u32 lives at payload +144 (pos=127 + 17).
+        record[6 + 144] = 4;
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_nan_segment_coordinate() {
+        let mut record = canonical_igboundary_triangle();
+        let nan = f64::NAN.to_le_bytes();
+        record[6 + 29..6 + 37].copy_from_slice(&nan); // first segment start.x
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_out_of_domain_anchor() {
+        let mut record = canonical_igboundary_triangle();
+        let big = 1e10f64.to_le_bytes();
+        record[6 + 127..6 + 135].copy_from_slice(&big); // anchor.x
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_degenerate_all_same_vertices() {
+        let p = (0.5, 0.5);
+        let record = build_synthetic_igboundary2d_record(
+            1,
+            1,
+            21,
+            &[(p, p), (p, p), (p, p)],
+            p,
+            &[10, 11, 12],
+        );
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_rejects_zero_segment_count() {
+        let mut record = canonical_igboundary_triangle();
+        record[6 + 22..6 + 26].copy_from_slice(&0u32.to_le_bytes());
+        assert!(decode_igboundaries(&record).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_open_chain_reports_not_closed() {
+        let record = build_synthetic_igboundary2d_record(
+            1,
+            1,
+            21,
+            &[
+                ((0.1, 0.1), (0.2, 0.1)),
+                ((0.2, 0.1), (0.2, 0.2)),
+                // Last segment does not return to (0.1, 0.1).
+                ((0.2, 0.2), (0.3, 0.3)),
+            ],
+            (0.2, 0.15),
+            &[10, 11, 12],
+        );
+        let decoded = decode_igboundaries(&record);
+        assert_eq!(decoded.len(), 1);
+        assert!(!decoded[0].is_closed_loop(1e-9));
+    }
+
+    #[test]
+    fn igboundary2d_decoder_is_panic_safe_on_short_input() {
+        let record = canonical_igboundary_triangle();
+        for trunc_len in 0..record.len() {
+            assert!(
+                decode_igboundaries(&record[..trunc_len]).is_empty(),
+                "truncated input length {trunc_len} must not decode"
+            );
+        }
+        assert!(decode_igboundaries(&[]).is_empty());
+        assert!(decode_igboundary_at(&record, record.len()).is_none());
+        assert!(decode_igboundary_at(&record, usize::MAX).is_none());
+    }
+
+    #[test]
+    fn igboundary2d_decoder_is_panic_safe_on_random_noise() {
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_igboundaries(&noise);
+        assert!(decode_igboundaries(&vec![0u8; 4096]).is_empty());
+        assert!(decode_igboundaries(&vec![0xFFu8; 4096]).is_empty());
+    }
+
+    #[test]
+    fn igboundary2d_decodes_two_back_to_back_records() {
+        let mut data = canonical_igboundary_triangle();
+        data.extend(build_synthetic_igboundary2d_record(
+            522,
+            526,
+            24,
+            &[
+                ((0.4, 0.4), (0.5, 0.4)),
+                ((0.5, 0.4), (0.5, 0.5)),
+                ((0.5, 0.5), (0.4, 0.4)),
+            ],
+            (0.47, 0.43),
+            &[521, 524, 523],
+        ));
+        let decoded = decode_igboundaries(&data);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].oid, 81);
+        assert_eq!(decoded[1].oid, 522);
+        assert!(decoded[0].byte_range.end <= decoded[1].byte_range.start);
+        assert!(decoded[1].is_closed_loop(1e-9));
     }
 }
