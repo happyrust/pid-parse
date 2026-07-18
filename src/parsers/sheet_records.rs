@@ -3495,49 +3495,73 @@ pub struct SheetIgSymbol2dDecoded {
 /// 1. `type_code == 0x00CE`;
 /// 2. `bytes_to_follow ∈ [113, 200]`;
 /// 3. 6 doubles at payload offsets 40..87 finite + in domain.
+///
+/// Thin wrapper over [`IgSymbol2dDecoder`]'s shared
+/// [`PsmRecordDecoder::scan`].
 pub fn decode_igsymbols(data: &[u8]) -> Vec<SheetIgSymbol2dDecoded> {
-    let mut out = Vec::new();
-    if data.len() < 6 + IGSYMBOL2D_MIN_PAYLOAD_LEN {
-        return out;
-    }
-    let max_offset = data.len() - (6 + IGSYMBOL2D_MIN_PAYLOAD_LEN);
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_igsymbol_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
+    IgSymbol2dDecoder.scan(data)
 }
 
 /// Try to decode a single PSM `igSymbol2d` record starting at
 /// `offset`. Returns `None` on validation failure.
+///
+/// Thin wrapper over [`IgSymbol2dDecoder::decode_at`].
 pub fn decode_igsymbol_at(data: &[u8], offset: usize) -> Option<SheetIgSymbol2dDecoded> {
-    let header_end = offset.checked_add(6)?;
-    if header_end > data.len() {
-        return None;
+    IgSymbol2dDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the `igSymbol2d` family (PSM type
+/// `0x00CE`). Validation rules are documented on [`decode_igsymbols`].
+pub struct IgSymbol2dDecoder;
+
+impl PsmRecordDecoder for IgSymbol2dDecoder {
+    type Record = SheetIgSymbol2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGSYMBOL2D
     }
-    let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_IGSYMBOL2D {
-        return None;
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGSYMBOL2D_MIN_PAYLOAD_LEN
     }
-    let type_flags = type_word >> 14;
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    let btf = bytes_to_follow as usize;
-    if !(IGSYMBOL2D_MIN_PAYLOAD_LEN..=IGSYMBOL2D_MAX_PAYLOAD_LEN).contains(&btf) {
-        return None;
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgSymbol2dDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGSYMBOL2D {
+            return None;
+        }
+        let btf = header.bytes_to_follow as usize;
+        if !(IGSYMBOL2D_MIN_PAYLOAD_LEN..=IGSYMBOL2D_MAX_PAYLOAD_LEN).contains(&btf) {
+            return None;
+        }
+        let payload_end = header.body_start.checked_add(btf)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        decode_igsymbol_payload(data, offset, &header, payload_end)
     }
-    let payload_end = header_end.checked_add(btf)?;
-    if payload_end > data.len() {
-        return None;
+
+    fn advance_of(&self, record: &SheetIgSymbol2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
     }
-    let payload = data.get(header_end..payload_end)?;
+}
+
+/// Family-specific payload validation for `igSymbol2d` (everything
+/// after the shared PSM envelope and size window pre-check).
+fn decode_igsymbol_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+) -> Option<SheetIgSymbol2dDecoded> {
+    let type_code = header.type_code;
+    let type_flags = header.type_flags;
+    let bytes_to_follow = header.bytes_to_follow;
+
+    let payload = data.get(header.body_start..payload_end)?;
 
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
