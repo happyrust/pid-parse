@@ -4233,67 +4233,73 @@ pub struct SheetSubRecord0x0010Decoded {
 /// The decoder is **conservative** and panic-free: adversarial bytes
 /// either fail validation and are skipped, or never decode at all.
 pub fn decode_sub_records_0x0010(data: &[u8]) -> Vec<SheetSubRecord0x0010Decoded> {
-    let mut out = Vec::new();
-    let min_record_len = 6usize.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize);
-    if data.len() < min_record_len {
-        return out;
-    }
-    let max_offset = data.len() - min_record_len;
-    let mut off = 0usize;
-    while off <= max_offset {
-        if let Some(decoded) = decode_sub_record_0x0010_at(data, off) {
-            let advance = (decoded.byte_range.end - off).max(1);
-            out.push(decoded);
-            off = off.saturating_add(advance);
-            continue;
-        }
-        off += 1;
-    }
-    out
+    SubRecord0x0010Decoder.scan(data)
 }
 
 /// Try to decode a single PSM `0x0010` sub-record starting at `offset`
 /// in `data`. Returns `None` when any validation rule from
 /// [`decode_sub_records_0x0010`] fails. Bounds-checked: passing
 /// `offset >= data.len()` or a truncated tail returns `None`.
+///
+/// Thin wrapper over [`SubRecord0x0010Decoder::decode_at`].
 pub fn decode_sub_record_0x0010_at(
     data: &[u8],
     offset: usize,
 ) -> Option<SheetSubRecord0x0010Decoded> {
-    let header_end = offset.checked_add(6)?;
-    if header_end > data.len() {
-        return None;
+    SubRecord0x0010Decoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the audit-only polymorphic
+/// `0x0010` sub-record family. Validation rules are documented on
+/// [`decode_sub_records_0x0010`].
+pub struct SubRecord0x0010Decoder;
+
+impl PsmRecordDecoder for SubRecord0x0010Decoder {
+    type Record = SheetSubRecord0x0010Decoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_SUB_RECORD_0X0010
     }
-    let header = data.get(offset..header_end)?;
-    let type_word = u16::from_le_bytes([header[0], header[1]]);
-    let type_code = type_word & 0x3FFF;
-    if type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
-        return None;
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN.saturating_add(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW as usize)
     }
-    let type_flags = type_word >> 14;
-    let bytes_to_follow = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
-        .contains(&bytes_to_follow)
-    {
-        return None;
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetSubRecord0x0010Decoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
+            return None;
+        }
+        if !(SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW..=SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW)
+            .contains(&header.bytes_to_follow)
+        {
+            return None;
+        }
+        let btf = header.bytes_to_follow as usize;
+        let payload_end = header.body_start.checked_add(btf)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        let raw_payload = data.get(header.body_start..payload_end)?.to_vec();
+        let leading_word = raw_payload
+            .get(0..2)
+            .map(|slot| u16::from_le_bytes([slot[0], slot[1]]));
+        Some(SheetSubRecord0x0010Decoded {
+            byte_range: offset..payload_end,
+            type_code: header.type_code,
+            type_flags: header.type_flags,
+            bytes_to_follow: header.bytes_to_follow,
+            raw_payload,
+            leading_word,
+        })
     }
-    let btf = bytes_to_follow as usize;
-    let payload_end = header_end.checked_add(btf)?;
-    if payload_end > data.len() {
-        return None;
+
+    fn advance_of(&self, record: &SheetSubRecord0x0010Decoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
     }
-    let raw_payload = data.get(header_end..payload_end)?.to_vec();
-    let leading_word = raw_payload
-        .get(0..2)
-        .map(|slot| u16::from_le_bytes([slot[0], slot[1]]));
-    Some(SheetSubRecord0x0010Decoded {
-        byte_range: offset..payload_end,
-        type_code,
-        type_flags,
-        bytes_to_follow,
-        raw_payload,
-        leading_word,
-    })
 }
 
 // Phase 26: PSM 0x0010 attribute-fragment decoder (additive, audit-only)
