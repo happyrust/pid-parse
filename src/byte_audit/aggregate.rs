@@ -388,43 +388,26 @@ fn consume_usize_range(
     );
 }
 
+/// Trace every Sheet PSM record family's decoded byte envelopes from
+/// the [`crate::model::SHEET_RECORD_FAMILIES`] registry (M3-PR18; was
+/// ten hand-maintained per-family loops that had silently omitted
+/// `attribute_fragments`).
+///
+/// Per-family claim policy travels on the registry row
+/// (`SheetFamilyTraceClass`): typed layouts claim `Decoded` even when
+/// audit-only for geometry (igBoundary2d — every payload byte is
+/// field-named); bounded-envelope-only families claim `Probed`. The
+/// attribute-fragment rows coincide with raw `0x0010` envelopes, so
+/// their `Probed` claims merge without changing coverage totals.
 fn trace_sheet_decoded_records(data: &[u8], builder: &mut ParserTraceBuilder) {
-    for decoded in parsers::sheet_records::decode_primitive_lines(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
-    }
-    for decoded in parsers::sheet_records::decode_iglines(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
-    }
-    for decoded in parsers::sheet_records::decode_iglinestrings(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
-    }
-    for decoded in parsers::sheet_records::decode_igpoints(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
-    }
-    for decoded in parsers::sheet_records::decode_igtextboxes(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
-    }
-    for decoded in parsers::sheet_records::decode_igsymbols(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
-    }
-    for decoded in parsers::sheet_records::decode_jstyle_overrides(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
-    }
-    // Phase 34-D igBoundary2d: every payload byte is field-named (typed
-    // layout), so the byte envelope counts as Decoded even though the
-    // record is audit-only (no normalized geometry emission — its
-    // segments duplicate member igLine2d geometry).
-    for decoded in parsers::sheet_records::decode_igboundaries(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Decoded);
-    }
-
-    // Audit-only families are intentionally claimed as Probed: the byte envelope
-    // is bounded, but the business semantics remain guarded.
-    for decoded in parsers::sheet_records::decode_graphic_groups(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Probed);
-    }
-    for decoded in parsers::sheet_records::decode_sub_records_0x0010(data) {
-        consume_usize_range(builder, decoded.byte_range, TraceConfidence::Probed);
+    for family in crate::model::SHEET_RECORD_FAMILIES {
+        let confidence = match family.trace_class {
+            crate::model::SheetFamilyTraceClass::Decoded => TraceConfidence::Decoded,
+            crate::model::SheetFamilyTraceClass::Probed => TraceConfidence::Probed,
+        };
+        for range in (family.decoded_ranges)(data) {
+            consume_usize_range(builder, range, confidence);
+        }
     }
 }
 
