@@ -43,10 +43,10 @@ impl PidParser {
         Self { options }
     }
 
-    /// Parse a `.pid` file on disk into a [`PidDocument`]. Streams are
-    /// consumed on the fly; raw bytes are not retained. Use
-    /// [`Self::parse_package`] when the caller plans to write the file
-    /// back.
+    /// Parse a `.pid` file on disk into a [`PidDocument`]. Raw stream bytes
+    /// exist only as parser-local state while the document is assembled and
+    /// are discarded before return. Use [`Self::parse_package`] when the
+    /// caller needs those bytes for a later write.
     pub fn parse_file<P: AsRef<Path>>(&self, path: P) -> Result<PidDocument, PidError> {
         crate::cfb::reader::parse_pid_file(path.as_ref(), &self.options)
     }

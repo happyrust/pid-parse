@@ -93,6 +93,29 @@ pub fn generate_package_report(pkg: &PidPackage) -> String {
 pub fn generate_report(doc: &PidDocument) -> String {
     let mut out = String::new();
 
+    render_document_overview(&mut out, doc);
+    render_metadata_sections(&mut out, doc);
+
+    render_jsites_section(&mut out, doc);
+    render_clusters_section(&mut out, doc);
+    render_dynamic_attributes_section(&mut out, doc);
+    render_sheets_section(&mut out, doc);
+
+    render_psm_roots_section(&mut out, doc);
+    render_psm_tables_sections(&mut out, doc);
+
+    render_version_and_registry_sections(&mut out, doc);
+    render_object_graph_section(&mut out, doc);
+
+    render_coverage_and_unknown_sections(&mut out, doc);
+    render_object_inventory_section(&mut out, doc);
+
+    render_cross_reference_section(&mut out, doc);
+
+    out
+}
+
+fn render_document_overview(out: &mut String, doc: &PidDocument) {
     writeln!(out, "=== PID Document Report ===\n").ok();
 
     writeln!(out, "Streams: {}", doc.streams.len()).ok();
@@ -100,7 +123,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
     writeln!(out, "Clusters: {}", doc.clusters.len()).ok();
     writeln!(out, "Sheet streams: {}", doc.sheet_streams.len()).ok();
     writeln!(out, "Unknown streams: {}", doc.unknown_streams.len()).ok();
+}
 
+fn render_metadata_sections(out: &mut String, doc: &PidDocument) {
     if let Some(ref si) = doc.summary {
         writeln!(out, "\n--- Summary ---").ok();
         if let Some(ref v) = si.creating_application {
@@ -148,7 +173,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  FileSize: {v}").ok();
         }
     }
+}
 
+fn render_jsites_section(out: &mut String, doc: &PidDocument) {
     if !doc.jsites.is_empty() {
         writeln!(out, "\n--- JSites ---").ok();
         for js in &doc.jsites {
@@ -170,7 +197,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  Total GUIDs across JSites: {total_guids}").ok();
         }
     }
+}
 
+fn render_clusters_section(out: &mut String, doc: &PidDocument) {
     if !doc.clusters.is_empty() {
         writeln!(out, "\n--- Clusters ---").ok();
         for c in &doc.clusters {
@@ -204,7 +233,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
+}
 
+fn render_dynamic_attributes_section(out: &mut String, doc: &PidDocument) {
     if let Some(ref da) = doc.dynamic_attributes {
         writeln!(out, "\n--- Dynamic Attributes ---").ok();
         writeln!(out, "  Size: {} bytes", da.size).ok();
@@ -252,7 +283,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
+}
 
+fn render_sheets_section(out: &mut String, doc: &PidDocument) {
     if !doc.sheet_streams.is_empty() {
         writeln!(out, "\n--- Sheets ---").ok();
         for sh in &doc.sheet_streams {
@@ -304,7 +337,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
+}
 
+fn render_psm_roots_section(out: &mut String, doc: &PidDocument) {
     if let Some(ref r) = doc.psm_roots {
         writeln!(out, "\n--- PSMroots ({} bytes) ---", r.size).ok();
         for e in &r.entries {
@@ -314,7 +349,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  ({} trailing bytes)", r.trailing_bytes).ok();
         }
     }
+}
 
+fn render_psm_tables_sections(out: &mut String, doc: &PidDocument) {
     if let Some(ref t) = doc.psm_cluster_table {
         writeln!(
             out,
@@ -445,7 +482,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  ({} trailing bytes)", t.trailing_bytes).ok();
         }
     }
+}
 
+fn render_version_and_registry_sections(out: &mut String, doc: &PidDocument) {
     if let Some(ref vh) = doc.version_history {
         writeln!(
             out,
@@ -534,7 +573,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
         .ok();
         writeln!(out, "  hex: {}", d2.hex_preview).ok();
     }
+}
 
+fn render_object_graph_section(out: &mut String, doc: &PidDocument) {
     if let Some(ref g) = doc.object_graph {
         writeln!(out, "\n--- Object Graph ---").ok();
         if let Some(ref p) = g.project_number {
@@ -599,7 +640,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
+}
 
+fn render_coverage_and_unknown_sections(out: &mut String, doc: &PidDocument) {
     // Phase 10a (v0.6.0): structured coverage inventory. Written BEFORE
     // the legacy "Top-level Unidentified Streams" section so readers see
     // the new categorical view first, and the two remain cross-linked
@@ -673,7 +716,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, ")").ok();
         }
     }
+}
 
+fn render_object_inventory_section(out: &mut String, doc: &PidDocument) {
     if let Some(ref inv) = doc.object_inventory {
         writeln!(out, "\n--- P&ID Object Inventory ---").ok();
         if let Some(ref proj) = inv.project {
@@ -687,7 +732,9 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "    {item_type}: {count}").ok();
         }
     }
+}
 
+fn render_cross_reference_section(out: &mut String, doc: &PidDocument) {
     if let Some(ref xr) = doc.cross_reference {
         writeln!(out, "\n--- Cross Reference ---").ok();
 
@@ -1005,8 +1052,6 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
-
-    out
 }
 
 #[cfg(test)]
@@ -1028,6 +1073,24 @@ mod tests {
                 .collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn empty_report_text_remains_byte_for_byte_stable() {
+        let report = generate_report(&PidDocument::default());
+
+        assert_eq!(
+            report,
+            concat!(
+                "=== PID Document Report ===\n",
+                "\n",
+                "Streams: 0\n",
+                "JSites:  0\n",
+                "Clusters: 0\n",
+                "Sheet streams: 0\n",
+                "Unknown streams: 0\n",
+            )
+        );
     }
 
     #[test]

@@ -29,6 +29,7 @@ use rusqlite::{params, Connection, OpenFlags};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+use super::catalog;
 use super::model::{
     CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
     PublishRepresentation,
@@ -458,44 +459,7 @@ fn attach_business_columns(
 /// and `T_Vessel` — vessel-specific dimensions), and later rows
 /// overwrite earlier ones on column name collision.
 pub(super) fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
-    match item_type_name {
-        // A vessel is an equipment subtype: general equipment
-        // fields first, then vessel-specific fields.
-        "Vessel" => &[
-            "T_PlantItem",
-            "T_Equipment",
-            "T_ProcessEquipment",
-            "T_Vessel",
-        ],
-        "Nozzle" => &["T_PlantItem", "T_EquipComponent", "T_Nozzle"],
-        // `T_Pipeline` carries the line-level business fields
-        // (`OperFluidCode` / `FluidSystem` / `TagSequenceNo` /
-        // `TagSuffix`) that the PIDPipeline writer arm renders.
-        // SPPID stores them under the same `SP_ID` as the owning
-        // PipeRun, so the chain is just another column merge.
-        "PipeRun" => &["T_PlantItem", "T_Connector", "T_PipeRun", "T_Pipeline"],
-        "PipingPoint" => &["T_PipingPoint"],
-        "PipingComp" => &["T_PlantItem", "T_InlineComp", "T_PipingComp"],
-        "Instrument" | "InstrFunction" => &["T_PlantItem", "T_Instrument", "T_InstrFunction"],
-        "Note" | "ItemNote" => &["T_ItemNote"],
-        "Exchanger" => &["T_PlantItem", "T_Equipment", "T_Exchanger"],
-        "Mechanical" => &["T_PlantItem", "T_Equipment", "T_Mechanical"],
-        // A18: `SignalRun` is the signal-side counterpart of
-        // `PipeRun` — T_SignalRun stores the signal-specific
-        // attributes (SignalType / TagSequenceNo / TagSuffix)
-        // while T_Connector carries the standard connector
-        // geometry (start/end items, zero-length flag).
-        // Drives the `write_signal_connector` XML writer arm.
-        "SignalRun" => &["T_PlantItem", "T_Connector", "T_SignalRun"],
-        // Stage-4: branch point types appear in DWG-flavor
-        // plants. The exact subtable chain will be confirmed
-        // when the DWG Export.mdf fixture lands; for now
-        // we attach T_PlantItem (which carries Name) so the
-        // writer has the Name field available for IObject.
-        "BranchPoint" => &["T_PlantItem"],
-        "PipingBranchPoint" => &["T_PlantItem"],
-        _ => &[],
-    }
+    catalog::subtables_for_item_type(item_type_name)
 }
 
 /// A34c — loader-side inference of each `PipeRun`'s two endpoint

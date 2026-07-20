@@ -134,19 +134,20 @@ fn parse_pid_package_from_cfb<R: Read + std::io::Seek>(
         crate::streams::jsite::parse_jsites(cfb, &mut doc, options)?;
     }
 
-    crate::streams::cluster::parse_clusters(cfb, &mut doc, options)?;
+    let sheet_probe_caches =
+        crate::streams::cluster::parse_clusters_with_probe_cache(cfb, &mut doc, options)?;
     if !light_profile {
         crate::streams::dynamic_attrs::parse_dynamic_attrs(cfb, &mut doc, options)?;
         crate::streams::psm_tables::parse_psm_tables(cfb, &mut doc, options)?;
         crate::streams::doc_registry::parse_doc_registry(cfb, &mut doc, options)?;
         capture_doc_version2(cfb, &mut doc)?;
-        populate_sheet_endpoints(cfb, &mut doc)?;
+        populate_sheet_endpoints(&raw_streams, &mut doc);
 
         build_object_inventory(&mut doc);
         build_object_graph(&mut doc);
 
         doc.cross_reference = Some(crate::crossref::build_graph(&doc));
-        populate_geometry_hints(&raw_streams, &mut doc);
+        populate_geometry_hints(&raw_streams, &mut doc, sheet_probe_caches);
         crate::layout::derive_layout(&mut doc);
     }
 
@@ -158,21 +159,17 @@ fn parse_pid_package_from_cfb<R: Read + std::io::Seek>(
 }
 
 /// After both `parse_clusters` and `parse_dynamic_attrs` have run, scan each
-/// already-discovered Sheet stream for relationship endpoint-pair records.
+/// already-discovered Sheet stream for relationship endpoint-pair records
+/// using the raw bytes collected at reader startup.
 ///
 /// This is a two-phase step because the parser needs the set of
 /// relationship `field_x` values from the DA trailers to stay strict;
-/// running it inline from `parse_clusters` would require either caching
-/// sheet bytes or reordering the CFB ingestion pipeline, both more
-/// invasive than a simple second read pass on the (already small) sheet
-/// streams.
-fn populate_sheet_endpoints<R: Read + std::io::Seek>(
-    cfb: &mut ::cfb::CompoundFile<R>,
-    doc: &mut PidDocument,
-) -> Result<(), PidError> {
+/// The decode remains a second semantic phase because its strict field set is
+/// not available during cluster parsing, but it does not reopen the CFB stream.
+fn populate_sheet_endpoints(raw_streams: &BTreeMap<String, RawStream>, doc: &mut PidDocument) {
     use std::collections::HashSet;
     let Some(ref da) = doc.dynamic_attributes else {
-        return Ok(());
+        return;
     };
     // Relationship records are identified by class_id=0xF6 in the DA trailer.
     // (See `DaRecordTrailer` doc for the other observed class_id values.)
@@ -183,33 +180,21 @@ fn populate_sheet_endpoints<R: Read + std::io::Seek>(
         .map(|t| t.field_x)
         .collect();
     if rel_field_xs.is_empty() {
-        return Ok(());
+        return;
     }
     for sheet in &mut doc.sheet_streams {
-        let mut s = match cfb.open_stream(&sheet.path) {
-            Ok(s) => s,
-            Err(e) => {
-                sheet.endpoint_decode_error = Some(format!(
-                    "failed to reopen sheet stream for endpoint records: {e}"
-                ));
-                continue;
-            }
-        };
-        let mut data = Vec::new();
-        if let Err(e) = s.read_to_end(&mut data) {
-            sheet.endpoint_decode_error = Some(format!(
-                "failed to read sheet stream for endpoint records: {e}"
-            ));
+        let Some(raw) = raw_streams.get(&sheet.path) else {
+            sheet.endpoint_decode_error =
+                Some("raw sheet bytes unavailable for endpoint records".to_string());
             continue;
-        }
+        };
         sheet.endpoint_records = crate::parsers::sheet_endpoint_records::parse_endpoint_records(
             &sheet.path,
-            &data,
+            &raw.data,
             &rel_field_xs,
         );
         sync_sheet_geometry_endpoints(sheet);
     }
-    Ok(())
 }
 
 fn sync_sheet_geometry_endpoints(sheet: &mut SheetStream) {
@@ -233,7 +218,11 @@ fn sync_sheet_geometry_endpoints(sheet: &mut SheetStream) {
         .collect();
 }
 
-fn populate_geometry_hints(raw_streams: &BTreeMap<String, RawStream>, doc: &mut PidDocument) {
+fn populate_geometry_hints(
+    raw_streams: &BTreeMap<String, RawStream>,
+    doc: &mut PidDocument,
+    mut probe_caches: BTreeMap<String, crate::streams::sheet_geometry::SheetProbeCache>,
+) {
     use std::collections::HashSet;
 
     let Some(ref cross) = doc.cross_reference else {
@@ -276,30 +265,16 @@ fn populate_geometry_hints(raw_streams: &BTreeMap<String, RawStream>, doc: &mut 
             continue;
         }
 
-        let report = crate::parsers::sheet_probe::probe_sheet_stream(
-            &sheet.name,
-            &sheet.path,
+        let Some(cache) = probe_caches.remove(&sheet.path) else {
+            continue;
+        };
+        let hints = crate::streams::sheet_geometry::object_geometry_hints_from_cache(
             &raw.data,
-            &Default::default(),
-        );
-        let windows = crate::parsers::sheet_probe::field_x_windows(&raw.data, &field_xs, 96);
-        let features = crate::parsers::sheet_probe::field_x_window_features(
-            &raw.data,
-            &windows,
-            &report.chunks,
-        );
-        let identities = crate::parsers::sheet_probe::field_x_window_identities(
-            &raw.data,
-            &windows,
+            &field_xs,
             &identity_index,
-        );
-        let scores = crate::parsers::sheet_probe::score_field_x_window_features_with_identities(
-            &features,
             &object_field_xs,
-            &identities,
+            cache,
         );
-
-        let hints = crate::parsers::sheet_probe::populate_object_geometry_hints(&scores, 70);
 
         if !hints.is_empty() {
             if let Some(geometry) = &mut sheet.geometry {

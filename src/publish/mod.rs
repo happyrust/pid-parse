@@ -49,6 +49,7 @@
 //!   once the DWG MDF lands and the end-to-end count gates
 //!   in `tests/publish_dwg_mirror.rs` fire.
 
+mod catalog;
 pub mod diff;
 pub mod mdf_load;
 pub mod model;

@@ -277,10 +277,6 @@ mod tests {
                 SheetRecordKind::PrimitivePolyline,
             ),
             (
-                SheetDecodedGeometryKind::Circle,
-                SheetRecordKind::PrimitiveCircle,
-            ),
-            (
                 SheetDecodedGeometryKind::Text,
                 SheetRecordKind::TextPlacementStyle,
             ),
@@ -302,5 +298,27 @@ mod tests {
                 "missing typed Sheet record schema entry for {geometry_kind:?} -> {record_kind:?}; mappings={mappings:?}"
             );
         }
+    }
+
+    #[test]
+    fn primitive_circle_stays_unknown_until_the_semantic_evidence_gate_passes() {
+        use crate::model::{SheetRecordKind, SheetRecordSchemaStatus};
+
+        let schema = crate::model::PidDocument::default().sheet_record_schema;
+        let circle = schema
+            .entries
+            .iter()
+            .find(|entry| entry.kind == SheetRecordKind::PrimitiveCircle)
+            .expect("primitive circle schema entry");
+
+        assert_eq!(circle.status, SheetRecordSchemaStatus::Unknown);
+        assert!(
+            circle.typed_fields.is_empty(),
+            "unproven circle semantics must not expose typed fields"
+        );
+        assert!(
+            circle.decoded_geometry_kinds.is_empty(),
+            "unproven circle semantics must not claim decoded geometry"
+        );
     }
 }

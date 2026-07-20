@@ -3,7 +3,7 @@
 > 日期：2026-07-18
 > 来源：`/improve-codebase-architecture` 评审（7 个 deepening 候选 + 风险×工作量排表）
 > 设计细节引用：`docs/plans/2026-07-16-psm-decoder-deepening-refactor-rfc-cn.md`（候选 1/2/6 已 grilling 定稿）
-> 状态：待评审（Plannotator 标注中）
+> 状态：收尾中（M0–M3、M4 publish、M4-I1/I2、M5 已落地；M4-I3 余项、可选 I4 与 DWG 全夹具验收待完成）
 > 词汇：module · interface · implementation · depth · seam · adapter · leverage · locality（`/codebase-design`）；
 > 域名词依 CONTEXT.md（Decoded / Typed Audit / Probe Evidence / Coverage Gap / Versioned Reference Corpus）
 
@@ -15,11 +15,11 @@
 
 | # | 指标 | 现状 | 目标 |
 |---|---|---|---|
-| 1 | 新增一个 PSM 记录族的落地成本 | 手工同步 ~10 个文件（igBoundary2d 实测） | 1 个 `PsmRecordDecoder` + 1 个 `GeometryEmitter` + registry 1 行 |
-| 2 | cluster 接线缺失 | 静默（tests 直接重解码原始字节，绕过接线 seam） | 测试可见（接线 == 重解码断言）或编译期报错 |
-| 3 | publish 侧新增 item type / PID tag | 3 份平行匹配表同步改（sqlite_load / xml_writer / diff） | catalog 1 行，三方消费 |
-| 4 | `pid_inspect` 编排逻辑 | 困在 1,454 行 bin，仅进程 spawn 可测 | 库内 `InspectCommand::run()` 可直接单测 |
-| 5 | 已知漂移 | schema 声明 `PrimitiveCircle` 但无 decoder；`attribute_fragments` 在 byte_audit 缺席 | registry 行显式标注（Planned / trace 补账），漂移可查 |
+| 1 | 新增一个 PSM 记录族的落地成本 | **已达成**：decoder + emitter + registry 三个 seam | 维持该 interface，并由接线测试守恒 |
+| 2 | cluster 接线缺失 | **已达成**：`tests/sheet_family_wiring.rs` 逐族比对 | 测试可见（接线 == 重解码断言） |
+| 3 | publish 侧新增 item type / PID tag | **已达成**：`PublishItemSpec` 统一 subtables / emission / rank / PID tags | 维持单一 catalog 与一致性测试 |
+| 4 | `pid_inspect` 编排逻辑 | **部分达成**：核心只读视图已进 `InspectCommand::run()`；bin 仍 1,195 行 | 继续迁移 probe / 文件操作并压缩进程层 |
+| 5 | 已知漂移 | **已达成**：`PrimitiveCircle` 保持 `Unknown` | 35-B 证据门禁前不声明 typed fields / decoded geometry |
 
 ### 非目标（红线）
 
@@ -32,15 +32,15 @@
 
 ## 1. 基线数字与全局守恒门禁
 
-### 基线（2026-07-18 实测）
+### 当前基线（2026-07-20 复核）
 
-- 11 个 decoder 族；11 份复制的 scan 循环 + 11 份 PSM 头解析（~440 行脚手架，`sheet_records.rs` 6,619 行）
-- 13 个 `From` 桥 + 13 个 `SheetGeometry.decoded_*` 字段（`model.rs` 4,193 行）
-- `build_normalized_geometry` 单函数 ~726 行、7 个逐族发射臂（`geometry.rs`）
-- `schema.rs` ~35 个手写 needle；`byte_audit/aggregate.rs` 8 个逐族 trace 循环
-- publish 侧：`xml_writer.rs` 6,016 行（2 pub fn / 54 私有 fn）、`diff.rs` 15-tag 平行表、`sqlite_load.rs` ~12 臂 subtable 表
-- inspect 侧：`generate_report` 917 行（全库最大函数）、`pid_inspect.rs` 1,454 行
-- 工作树：62 项未提交（Phase 33/34 backlog）
+- M1：11 个 Sheet family 已共用 `PsmRecordDecoder::scan` 与 `parse_psm_header`。
+- M2：geometry 由 `GeometryEmitter` / `EMITTERS` 发射；audit-only family 显式 no-op。
+- M3：`SheetRecordFamily` 已驱动 cluster、byte audit、schema needle 与 wiring gate。
+- publish 侧：catalog 已统一 staging / subtables / writer emission / rank / diff tags；writer 实现已按职责拆成 8 个子模块，公开路径不变。
+- inspect 侧：`generate_report` 已拆为 13 个固定顺序私有 renderer；核心 report / coverage / byte-audit / geometry / Mermaid 视图已进库，`pid_inspect.rs` 仍 1,195 行。
+- M5-B1：第二遍 Sheet probe 占完整解析约 8.3%（绝对约 1 ms/文件），达到继续门禁。
+- M5-B2：第一遍 probe 的 `chunks` 现作为 reader 临时状态跨越 DA / crossref 阶段复用，不进入公开 model/schema。
 
 ### 每个 PR 的守恒门禁（不例外）
 
@@ -63,12 +63,12 @@ bash .github/scripts/check-missing-docs.sh
 
 | 里程碑 | 内容 | 候选 | 规模 | 风险 | 前置 |
 |---|---|---|---|---|---|
-| M0 | P0：62 项脏工作树打包提交 | — | 3–4 commit | 低 | 无（ADR-0003 硬性要求） |
-| M1 | L4 seam：`PsmRecordDecoder` + 逐族迁移 | 1 | ~11 PR | 低 | M0 |
-| M2 | L6 seam：`GeometryEmitter` + model 拆分 + 收尾 | 2 + 6 | ~4 PR | 低 | M1 |
-| M3 | `SheetRecordFamily` registry 统一接线 | 3 | ~4 PR | 中 | M1（M2 完成更顺） |
-| M4 | 并行轨：publish catalog + inspect 进库 | 4 + 5 | ~8–13 PR | 中 | M0（与 M1–M3 不抢文件，可并行） |
-| M5 | 证据驱动的单遍探测 | 7 | bench + ~2 PR | 中–高 | 先拿 bench 证据，可砍 |
+| M0 | P0：62 项脏工作树打包提交 | — | **已完成** | 低 | 无（ADR-0003 硬性要求） |
+| M1 | L4 seam：`PsmRecordDecoder` + 逐族迁移 | 1 | **已完成** | 低 | M0 |
+| M2 | L6 seam：`GeometryEmitter` + model 拆分 + 收尾 | 2 + 6 | **已完成** | 低 | M1 |
+| M3 | `SheetRecordFamily` registry 统一接线 | 3 | **已完成** | 中 | M1（M2 完成更顺） |
+| M4 | 并行轨：publish catalog + inspect 进库 | 4 + 5 | **核心完成，I3 余项待收尾** | 中 | M0（与 M1–M3 不抢文件，可并行） |
+| M5 | 证据驱动的单遍探测 | 7 | **已完成（B1+B2）** | 中–高 | M3 |
 
 ```mermaid
 flowchart LR
@@ -86,11 +86,11 @@ flowchart LR
 
 按 ADR-0003 已定的 3–4 个 review-unit commit 划分，不新增决策：
 
-- [ ] commit 1 — parser core：`src/config.rs`、`src/stream_paths.rs`、sheet geometry 管线改动 + 相关测试（注意 ADR-0003 约束：这两个文件必须与包含 `mod config` / `pub mod stream_paths` 声明的 `lib.rs` 同 commit）
-- [ ] commit 2 — Phase 34 analysis / goal package 文档
-- [ ] commit 3 — Phase 33 `0x0010` IDA 证据文档
-- [ ] commit 4 — planning / misc（ROADMAP、CHANGELOG、findings、ADR）
-- [ ] `tests/geometry_golden_snapshot.rs` 已在工作树中：归入 commit 1（它是 M1/M2 的守恒真值，必须最先入库）
+- [x] commit 1 — parser core：`src/config.rs`、`src/stream_paths.rs`、sheet geometry 管线改动 + 相关测试。
+- [x] commit 2 — Phase 34 analysis / goal package 文档。
+- [x] commit 3 — Phase 33 `0x0010` IDA 证据文档。
+- [x] commit 4 — planning / misc（ROADMAP、CHANGELOG、findings、ADR）。
+- [x] `tests/geometry_golden_snapshot.rs` 已作为 M1/M2 守恒真值入库。
 - 验收：`git status --porcelain` 为空；5 道门禁绿；每个 commit 可独立 review。
 
 ---
@@ -99,10 +99,10 @@ flowchart LR
 
 设计细节见 RFC §3.1，此处只列 PR 切分与验收。
 
-- [ ] **PR-1（RFC Phase 0/1 合并）**：`parse_psm_header` 私有 helper + 单测；`PsmRecordDecoder` trait（associated type + 默认 `scan()`）+ rustdoc；`IgLine2dDecoder` 试点，`decode_iglines` 改薄包装。
+- [x] **PR-1（RFC Phase 0/1 合并）**：`parse_psm_header` 私有 helper + 单测；`PsmRecordDecoder` trait（associated type + 默认 `scan()`）+ rustdoc；`IgLine2dDecoder` 试点，`decode_iglines` 改薄包装。
   - 红绿门禁：新路径与旧 `decode_iglines` 对全部本地 fixture **逐记录一致**（新增 parity 测试）。
   - 预期暴露：各族 advance 语义是否同构（0x0010 有「先推进再解码」特例）——若不同构，在本 PR 把 `advance_of` 的契约文档写死。
-- [ ] **PR-2 … PR-11（每族一个 PR，RFC Phase 2）**：迁移顺序按简单→复杂：igPoint2d → igTextBox → igSymbol2d → igLineString2d → GLine2d → jstyleOverride → graphicGroup → subRecords0x0010 → attributeFragment → igBoundary2d。
+- [x] **PR-2 … PR-11（每族一个 PR，RFC Phase 2）**：已按简单→复杂迁移全部 10 个剩余 family。
   - 每 PR：实现该族 `*Decoder`，删除该族复制的扫描/头解析，旧自由函数转薄包装；金快照不变；该族原有单测 + `parser_panic_safety` 对抗矩阵全绿。
 - 验收（M1 整体）：`sheet_records.rs` 不再含任何手写 scan 循环 / 头解析副本；~440 行脚手架蒸发；公开函数签名零变化。
 
@@ -110,15 +110,15 @@ flowchart LR
 
 ## 5. M2 — L6 发射 seam + model 拆分（RFC Phase 3–5）
 
-- [ ] **PR-12/13（RFC Phase 3）**：`GeometryEmitter` trait + `EMITTERS` 表；逐族把 `geometry.rs` 的 for-arm 迁进 emitter；audit-only 族（0x0013 / 0x0010）实现 no-op emitter 并**显式测试不发射**。
+- [x] **PR-12/13（RFC Phase 3）**：`GeometryEmitter` trait + `EMITTERS` 表；audit-only family 实现 no-op emitter 并显式测试不发射。
   - 验收：金快照逐条不变（本里程碑最关键守恒）；`build_normalized_geometry` 主体 = 前置段 + `for e in EMITTERS`。
-- [ ] **PR-14（RFC Phase 4 = 候选 6）**：`model.rs` → `model/` 子模块（`decoded_records.rs`、`sheet_geometry.rs`，其余居民 `document / psm / object_graph / coverage / sheet_schema` 同批或后批搬）；`mod.rs` 全量 `pub use`。
+- [x] **PR-14（RFC Phase 4 = 候选 6）**：Sheet DTO island 已迁入 `model/sheet.rs`，`mod.rs` 保持全量再导出；其余 model 拆分不作为 M4/M5 阻塞项。
   - 约束：纯机械搬迁，挑没有在飞 PR 的窗口执行；对外 API 路径零变化；schemars 派生自动跟随。
-- [ ] **PR-15（RFC Phase 5）**：薄包装移除或降 `pub(crate)`；刷新 AGENTS.md「七层模板」→「新增族 = 1 decoder + 1 emitter」；刷新 ARCHITECTURE.md；`cargo audit`。
+- [x] **PR-15（RFC Phase 5）**：文档已刷新为 two-seam 模型；公开薄包装因兼容约束保留。
 
 ---
 
-## 6. M3 — `SheetRecordFamily` registry（候选 3，RFC 之外净新增）
+## 6. M3 — `SheetRecordFamily` registry（已完成）
 
 registry 行的形状（设计草案，评审点之一）：
 
@@ -127,18 +127,18 @@ registry 行的形状（设计草案，评审点之一）：
 struct SheetRecordFamily {
     type_code: u16,                       // 0x0018 …
     name: &'static str,                   // "igLine2d"
-    schema_kind: SheetRecordKind,
-    schema_status: FamilyStatus,          // Active / Planned（吃掉 PrimitiveCircle 漂移）
     emits_geometry: bool,                 // audit-only = false（政策显式化）
-    trace_confidence: TraceConfidence,    // byte_audit 过账依据
+    trace_class: SheetFamilyTraceClass,   // byte_audit 过账依据
     decode_into: fn(&[u8], &mut SheetGeometry),  // 类型擦除点：每族一个具体 fn
+    record_count: fn(&SheetGeometry) -> usize,
+    decoded_ranges: fn(&[u8]) -> Vec<Range<usize>>,
 }
 ```
 
-- [ ] **PR-16**：registry 定义 + `cluster.rs` 接线改为遍历 registry；`SheetGeometry::is_empty` 从 registry 派生（删掉 12 连 `&&` 空判）。
-- [ ] **PR-17（接线一致性测试，堵住静默缺口）**：`PidParser::parse_package(fixture)` 后逐族断言 `sheet.geometry.decoded_* == decode_*(raw_bytes)`。这是金快照覆盖不到的 L3 接线层，必须独立成测试。
-- [ ] **PR-18（唯一预期行为变更）**：byte_audit trace 从 registry 派生；**把 `attribute_fragments` 补进 trace**——coverage 数字会变，属有意过账：同 PR 更新 coverage ratchet 基线并在 CHANGELOG 说明（ADR-0002：ratchet 变更须显式可见）。
-- [ ] **PR-19**：`schema.rs` needle 测试改为从 registry 生成；`PrimitiveCircle` 标 `Planned` 消除文档漂移。
+- [x] **PR-16**：registry 定义 + `cluster.rs` 接线改为遍历 registry；空判从 registry 派生。
+- [x] **PR-17**：`tests/sheet_family_wiring.rs` 逐 fixture / sheet 断言接线结果等于原始字节重解码。
+- [x] **PR-18**：byte audit trace 从 registry 派生并补入 `attribute_fragments`；其区间与 `0x0010` 重合，coverage 数字未变化。
+- [x] **PR-19**：`schema.rs` needle 测试从 registry 生成；`PrimitiveCircle` 在 35-B 前保持 `Unknown`。
 - 验收（M3 整体）：一族知识只住 registry 一行；漏接线在 PR-17 测试下现形。
 
 ### 评审点（请在 Plannotator 里表态）
@@ -152,17 +152,18 @@ struct SheetRecordFamily {
 
 ### publish 轨（候选 4）
 
-- [ ] **PR-P1**：`PublishItemCatalog` 数据表 `{ item_type, subtables[], writer_fn, pid_tags[] }` + catalog 一致性单测（三方清单对齐即测试，先不动消费方）。
-- [ ] **PR-P2**：`sqlite_load::subtables_for_item_type` 改为消费 catalog，删 ~12 臂平行表。
-- [ ] **PR-P3 … P6**：`xml_writer.rs` 逐族搬进 `src/publish/xml/` 子模块（emitter 内核 + drawing / relationships / vessel / pipeline / …），每 PR 2–4 族，100 个原地单测随族迁移；对外 2 个 pub fn 门面不动。
-- [ ] **PR-P7**：`diff.rs::supported_pid_tags` 改为消费 catalog，删平行 tag 表。
+- [x] **PR-P1**：`PublishItemSpec` 数据表统一 aliases / subtables / emission plan / rank / PID tags，并有一致性单测。
+- [x] **PR-P2**：`sqlite_load::subtables_for_item_type` 已改为消费 catalog，原平行 match 已删除。
+- [x] **PR-P3 … P6**：`xml_writer.rs` 已拆为 `common / drawing / meta / relationships / vessel_nozzle / pipeline / instrument_signal / components_notes_branch`；两个公开入口路径不变。原 114 个单测仍集中保留在门面模块，后续可按族迁移测试 locality。
+- [x] **PR-P7**：`diff.rs::supported_pid_tags` 已由 catalog 的 emission plan 派生。
 - **硬性执行条件**：本轨所有 PR 必须在带全夹具（`test-file/backup-test/...` DWG）的机器上跑测试——DWG 对照测试软跳过会静默漏回归。CI 若无夹具，PR 描述中附本地全夹具跑绿的证据。
+  - 2026-07-20 当前机器缺少 `DWG-0202GP06-01_p/extracted/Export.mdf`；代码门禁已绿，但本条全夹具准入尚未满足，不能据此宣称 DWG parity 已完整验收。
 
 ### inspect 轨（候选 5，可在 publish 轨之后或穿插）
 
-- [ ] **PR-I1**：`inspect::commands` 模块：`InspectCommand` 枚举 + `run(cmd) -> InspectOutput` 骨架，先迁 2–3 个子命令。
-- [ ] **PR-I2**：`generate_report`（917 行）拆成可组合 section renderer（streams / jsites / crossref / sheet provenance），文件尾部现有测试按 section 就位。
-- [ ] **PR-I3**：`pid_inspect.rs` 缩到 ~100 行（参数解析 + 打印）；`tests/inspect_cli.rs` 的 19 个 spawn 测试大半转库内直调，保留 1–2 个 CLI 冒烟。
+- [x] **PR-I1**：新增进程无关的 `InspectCommand / InspectRequest / InspectOutcome`；Report / Coverage / ByteAudit / Geometry / Object Graph Mermaid / Cross-reference Mermaid 已迁入并可库内直测。
+- [x] **PR-I2**：`generate_report` 已拆为 13 个固定顺序私有 section renderer，原输出顺序与测试保持不变。
+- [ ] **PR-I3（部分完成）**：CLI 已把上述核心只读路径映射到库接口并统一 Findings→退出码 3；probe、schema、diff、controlled-diff、round-trip、export 与 set-* 仍留在进程层，`pid_inspect.rs` 现 1,195 行，19 个 spawn 测试仍作为端到端守恒保留。原定 ~100 行目标尚未达到。
 - [ ] **PR-I4（可选）**：`pid_writer_validate.rs` 同法收尾（`writer::validate::round_trip_report`）。
 
 ---
@@ -172,8 +173,19 @@ struct SheetRecordFamily {
 - [x] **PR-B1**（2026-07-19 实测）：`benches/pid_pipeline.rs` 新增 `parse_pid_gongyi`（11.91 ms）与 `probe_sheet_streams_gongyi`（0.994 ms，单遍全 Sheet probe）。重复的第二遍 probe ≈ 全解析时长的 **8.3%**。
   - **决策门禁**：占比 < 5% → 关闭候选 7，写一条 ADR 记录「不再重提」（防未来评审重复建议）；占比 ≥ 5% → 进 PR-B2。
   - **门禁结果：8.3% ≥ 5%，候选 7 保留**，PR-B2 排在 M4 之后执行（绝对收益 ~1 ms/文件，优先级仍低于 M4）。
-- [ ] **PR-B2（条件触发）**：`SheetGeometryBuilder` 两阶段构建（第一遍 probe+decode 缓存；第二遍只注入 crossref field_x 补算 object hints），调用顺序不变式（DA 尾巴 → endpoints → crossref → hints）收进 builder 的 interface 并可断言。
-  - 注意内存权衡：`parse_file` 流式路径不保留原始字节，缓存策略只对 `parse_package` 路径生效，`parse_file` 保持现状。
+- [x] **PR-B2（条件触发）**：轻量两阶段构建（第一遍 probe+decode 缓存 `chunks`；DA 尾巴 → endpoints → crossref 后消费缓存补算 object hints）。
+  - `parse_file` 当前也经 `parse_pid_package` 路径在解析期临时持有 `raw_streams`；缓存必须是 reader 侧临时状态，不进入公开 `PidDocument` / serde schema。
+  - 实现：`streams::sheet_geometry::SheetProbeCache` 仅在 reader 调用链中流转；endpoint 阶段复用启动时收集的 raw Sheet bytes，不再重开 CFB stream。
+  - 同机交叉复测（Criterion，20 samples，warm-up 1 s，measurement 4 s）：HEAD 基线 `12.246 ms`，B2 `11.878 ms`，中心估计减少约 `0.368 ms / 3.0%`。收益小于 B1 的独立完整 probe 上界，但重复 probe 已从调用图移除。
+
+### 2026-07-20 收尾验证
+
+- `cargo build --locked --workspace --all-targets`：通过。
+- `cargo test --locked --workspace --all-targets`：通过（含 geometry golden、Sheet family wiring、inspect 69 个库测试与 19 个 CLI 测试）。
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`：通过。
+- `cargo fmt --all -- --check`：通过。
+- missing-docs ratchet：PowerShell 等价执行 `cargo rustdoc --lib --locked -- -W missing-docs`，`current=0 / baseline=0`；本机 `bash` launcher 因 `REGDB_E_CLASSNOTREG` 无法直接运行包装脚本。
+- DWG MDF：缺失，相关 Stage 2–4 parity 测试软跳过；这是当前唯一硬性验收阻塞。
 
 ---
 

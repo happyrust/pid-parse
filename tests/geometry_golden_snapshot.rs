@@ -123,7 +123,7 @@ fn normalized_geometry_matches_golden_snapshot() {
         }
 
         let expected = match std::fs::read_to_string(&golden) {
-            Ok(contents) => contents,
+            Ok(contents) => contents.replace("\r\n", "\n"),
             Err(_) => panic!(
                 "golden snapshot missing for fixture `{}` (expected at {}). \
                  Fixture is present, so this is a new baseline: run \

@@ -22,6 +22,7 @@
 //! dependency surface zero-cost (no quick-xml needed) and makes the
 //! comparison robust to the formatting drift between exporters.
 
+use super::catalog;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -246,33 +247,14 @@ fn is_tag_name_byte(b: u8) -> bool {
 /// strings; the function is pure (no I/O) so it is cheap to call
 /// from tests, CI gates, and the CLI alike.
 /// PID tag varieties the writer is known to emit today. Sorted
-/// for determinism. The list is the executable counterpart of the
-/// `subtables_for_item_type` dispatch matrix in `xml_writer.rs`
-/// plus the four virtual nodes (`PIDDrawing` / `PIDRepresentation` /
-/// derived `PIDPipingPort` / `PIDProcessPoint`) that any non-trivial
-/// drawing emits.
+/// for determinism. The list is derived from the publish item catalog's
+/// ordered emission actions plus document-scoped virtual nodes.
 ///
 /// Used by [`coverage_against_reference`] to classify a reference
 /// `SmartPlant` `_Data.xml` into "tags we already know how to emit"
 /// vs "tags that form the next-phase backlog".
 pub fn supported_pid_tags() -> &'static [&'static str] {
-    &[
-        "PIDBranchPoint",
-        "PIDControlSystemFunction",
-        "PIDDrawing",
-        "PIDNote",
-        "PIDNozzle",
-        "PIDPipeline",
-        "PIDPipingBranchPoint",
-        "PIDPipingComponent",
-        "PIDPipingConnector",
-        "PIDPipingPort",
-        "PIDProcessPoint",
-        "PIDProcessVessel",
-        "PIDRepresentation",
-        "PIDSignalConnector",
-        "PIDSignalPort",
-    ]
+    catalog::supported_pid_tags()
 }
 
 /// One row of the [`WriterCoverage`] report. `count` is the

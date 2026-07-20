@@ -1984,10 +1984,10 @@ fn default_sheet_record_schema_entries() -> Vec<SheetRecordSchemaEntry> {
         sheet_record_schema_entry(
             "primitive_circle",
             SheetRecordKind::PrimitiveCircle,
-            SheetRecordSchemaStatus::Typed,
-            "Decoded Sheet circle primitive with center and positive radius.",
-            &["center", "radius"],
-            &[SheetDecodedGeometryKind::Circle],
+            SheetRecordSchemaStatus::Unknown,
+            "Layout-admitted igCircle2d record awaiting the ADR-0003 semantic evidence gate; retained as probe evidence without typed fields or decoded geometry.",
+            &[],
+            &[],
             false,
         ),
         sheet_record_schema_entry(

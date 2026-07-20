@@ -14,41 +14,9 @@ use log::info;
 use oxidized_mdf::{MdfDatabase, Value};
 use rusqlite::{params_from_iter, Connection};
 
+use super::catalog::PUBLISH_STAGING_TABLES;
 use super::model::{PublishDrawing, PublishError};
 use super::sqlite_load;
-
-const PUBLISH_TABLES: &[&str] = &[
-    "T_Drawing",
-    "T_Representation",
-    "T_Relationship",
-    "T_ModelItem",
-    "T_PipingPoint",
-    "T_PlantItem",
-    "T_Equipment",
-    "T_ProcessEquipment",
-    "T_Vessel",
-    "T_EquipComponent",
-    "T_Nozzle",
-    "T_Connector",
-    "T_PipeRun",
-    // `T_Pipeline` shares its `SP_ID` with the owning PipeRun in
-    // the simplified single-Pipeline-per-PipeRun model SPPID uses
-    // for Publish XML. Staging it here lets `subtables_for_item_type`
-    // attach `OperFluidCode` / `FluidSystem` / `TagSequenceNo` /
-    // `TagSuffix` onto the PipeRun's `PublishObject.fields` so the
-    // PIDPipeline writer arm can read them.
-    "T_Pipeline",
-    "T_InlineComp",
-    "T_PipingComp",
-    "T_Instrument",
-    "T_InstrFunction",
-    "T_ItemNote",
-    "T_Exchanger",
-    "T_Mechanical",
-    "T_SignalRun",
-    "codelists",
-    "attributes",
-];
 
 /// Open `path` with `oxidized-mdf`, stage the publish-relevant
 /// `SmartPlant` tables into an in-memory `SQLite` connection, and return
@@ -58,7 +26,7 @@ pub fn open_mdf_as_sqlite(path: &Path) -> Result<Connection, PublishError> {
     let conn = Connection::open_in_memory()?;
     let mut tables_staged = 0u32;
     let mut total_rows = 0usize;
-    for table_name in PUBLISH_TABLES {
+    for table_name in PUBLISH_STAGING_TABLES {
         let mut db = MdfDatabase::open(path)?;
         let rows = stage_table(&mut db, &conn, table_name)?;
         if rows > 0 {

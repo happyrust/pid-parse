@@ -158,72 +158,42 @@ fn main() {
     let doc = &pkg.parsed;
 
     if geometry_json {
-        let geometry = pid_parse::build_normalized_geometry(doc);
-        match serde_json::to_string_pretty(&geometry) {
-            Ok(json) => println!("{json}"),
-            Err(e) => {
-                eprintln!("Geometry JSON serialization error: {e}");
-                std::process::exit(1);
-            }
-        }
+        emit_inspect_outcome(
+            &pkg,
+            &pid_parse::inspect::commands::InspectCommand::GeometryJson,
+        );
         return;
     }
 
     if geometry_summary {
-        let geometry = pid_parse::build_normalized_geometry(doc);
-        print_geometry_summary(&geometry);
+        emit_inspect_outcome(
+            &pkg,
+            &pid_parse::inspect::commands::InspectCommand::GeometrySummary,
+        );
         return;
     }
 
     if json_mode {
+        use pid_parse::inspect::commands::{
+            InspectCommand, InspectOutputFormat, InspectRequest, InspectView,
+        };
+
+        let mut request = InspectRequest::new(InspectOutputFormat::Json);
         if coverage_flag {
-            // Phase 10e (v0.6.4+): --coverage + --json emits just the
-            // CoverageReport as JSON, not the entire PidDocument.
-            // Lets CI / automation consume coverage metrics without
-            // paying to serialize (or skip past) every decoded field.
-            match pid_parse::inspect::coverage::coverage_report(doc).to_json_pretty() {
-                Ok(json) => println!("{json}"),
-                Err(e) => {
-                    eprintln!("Coverage JSON serialization error: {e}");
-                    std::process::exit(1);
-                }
-            }
-            return;
+            request = request.with_view(InspectView::Coverage);
         }
         if byte_audit {
-            let current = pid_parse::byte_audit_report(&pkg);
-            if let Some(baseline_path) = byte_audit_baseline.as_deref() {
-                let baseline = load_byte_audit_baseline(baseline_path);
-                let comparison =
-                    pid_parse::byte_audit::compare_byte_audit_reports(&baseline, &current);
-                match serde_json::to_string_pretty(&comparison) {
-                    Ok(json) => println!("{json}"),
-                    Err(e) => {
-                        eprintln!("Byte audit comparison JSON serialization error: {e}");
-                        std::process::exit(1);
-                    }
+            request = request.with_view(InspectView::ByteAudit);
+            // Coverage historically wins JSON precedence without touching a
+            // byte-audit baseline, even when both flags are present.
+            if !coverage_flag {
+                if let Some(baseline_path) = byte_audit_baseline.as_deref() {
+                    request =
+                        request.with_byte_audit_baseline(load_byte_audit_baseline(baseline_path));
                 }
-                if !comparison.is_clean() {
-                    std::process::exit(3);
-                }
-                return;
-            }
-            match serde_json::to_string_pretty(&current) {
-                Ok(json) => println!("{json}"),
-                Err(e) => {
-                    eprintln!("Byte audit JSON serialization error: {e}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-        match serde_json::to_string_pretty(doc) {
-            Ok(json) => println!("{json}"),
-            Err(e) => {
-                eprintln!("JSON serialization error: {e}");
-                std::process::exit(1);
             }
         }
+        emit_inspect_outcome(&pkg, &InspectCommand::Views(request));
         return;
     }
 
@@ -251,39 +221,23 @@ fn main() {
         print_crossref(doc);
     }
 
+    use pid_parse::inspect::commands::{
+        InspectCommand, InspectOutputFormat, InspectRequest, InspectView,
+    };
+    let mut request = InspectRequest::new(InspectOutputFormat::Text);
     if graph_mermaid {
-        let out = pid_parse::inspect::mermaid::object_graph_mermaid(doc);
-        if out.is_empty() {
-            eprintln!("(no object graph available — nothing to render)");
-        } else {
-            print!("{out}");
-        }
+        request = request.with_view(InspectView::ObjectGraphMermaid);
     }
-
     if crossref_mermaid {
-        let out = pid_parse::inspect::mermaid::crossref_mermaid(doc);
-        if out.is_empty() {
-            eprintln!("(no cross-reference graph — nothing to render)");
-        } else {
-            print!("{out}");
-        }
+        request = request.with_view(InspectView::CrossReferenceMermaid);
     }
-
     if coverage_flag {
-        print_coverage(doc);
+        request = request.with_view(InspectView::Coverage);
     }
-
     if byte_audit {
-        let current = pid_parse::byte_audit_report(&pkg);
+        request = request.with_view(InspectView::ByteAudit);
         if let Some(baseline_path) = byte_audit_baseline.as_deref() {
-            let baseline = load_byte_audit_baseline(baseline_path);
-            let comparison = pid_parse::byte_audit::compare_byte_audit_reports(&baseline, &current);
-            print_byte_audit_comparison(&comparison);
-            if !comparison.is_clean() {
-                std::process::exit(3);
-            }
-        } else {
-            print_byte_audit_report(&current);
+            request = request.with_byte_audit_baseline(load_byte_audit_baseline(baseline_path));
         }
     }
 
@@ -299,37 +253,27 @@ fn main() {
         && !coverage_flag
         && !byte_audit
     {
-        let report = pid_parse::inspect::report::generate_package_report(&pkg);
-        print!("{report}");
+        request = request.with_view(InspectView::Report);
     }
+    emit_inspect_outcome(&pkg, &InspectCommand::Views(request));
 }
 
-fn print_byte_audit_report(report: &pid_parse::byte_audit::ByteAuditReport) {
-    println!("--- Byte Audit ---");
-    println!("Total stream bytes: {}", report.total_file_bytes);
-    println!("Overall consumed:   {}", report.overall_consumed);
-    println!("Overall leftover:   {}", report.overall_leftover);
-    println!(
-        "Overall coverage:   {:.1}%",
-        report.overall_coverage_ratio * 100.0
-    );
-    println!(
-        "Fully consumed traced streams: {}",
-        report.fully_consumed_stream_count()
-    );
-    println!("Unregistered streams: {}", report.unregistered_paths.len());
-
-    for summary in report.per_stream.values() {
-        let parser = summary.parser_name.as_deref().unwrap_or("unregistered");
-        println!(
-            "  [{:>5.1}%] {} ({} B consumed / {} B total, {} B leftover) {}",
-            summary.coverage_ratio * 100.0,
-            summary.path,
-            summary.consumed_bytes,
-            summary.total_bytes,
-            summary.leftover_bytes,
-            parser
-        );
+fn emit_inspect_outcome(
+    pkg: &pid_parse::PidPackage,
+    command: &pid_parse::inspect::commands::InspectCommand,
+) {
+    match pid_parse::inspect::commands::run(pkg, command) {
+        Ok(outcome) => {
+            print!("{}", outcome.stdout);
+            eprint!("{}", outcome.stderr);
+            if outcome.status == pid_parse::inspect::commands::InspectStatus::Findings {
+                std::process::exit(3);
+            }
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -347,95 +291,6 @@ fn load_byte_audit_baseline(path: &str) -> pid_parse::byte_audit::ByteAuditRepor
             eprintln!("Byte audit baseline JSON parse error: {e}");
             std::process::exit(1);
         }
-    }
-}
-
-fn print_byte_audit_comparison(comparison: &pid_parse::byte_audit::ByteAuditComparison) {
-    println!("--- Byte Audit Baseline Comparison ---");
-    println!("Regressions: {}", comparison.regressions.len());
-    for regression in &comparison.regressions {
-        println!(
-            "  [{}] {} baseline={} current={}",
-            byte_audit_regression_kind_label(regression.kind),
-            regression.path.as_deref().unwrap_or("(overall)"),
-            regression.baseline_value,
-            regression.current_value,
-        );
-    }
-    println!("Improvements: {}", comparison.improvements.len());
-    for improvement in &comparison.improvements {
-        println!(
-            "  [{}] {} baseline={} current={}",
-            byte_audit_improvement_kind_label(improvement.kind),
-            improvement.path.as_deref().unwrap_or("(overall)"),
-            improvement.baseline_value,
-            improvement.current_value,
-        );
-    }
-}
-
-fn byte_audit_regression_kind_label(
-    kind: pid_parse::byte_audit::ByteAuditRegressionKind,
-) -> &'static str {
-    match kind {
-        pid_parse::byte_audit::ByteAuditRegressionKind::OverallCoverageDecreased => {
-            "overall_coverage_decreased"
-        }
-        pid_parse::byte_audit::ByteAuditRegressionKind::StreamMissing => "stream_missing",
-        pid_parse::byte_audit::ByteAuditRegressionKind::StreamConsumedBytesDecreased => {
-            "stream_consumed_bytes_decreased"
-        }
-        pid_parse::byte_audit::ByteAuditRegressionKind::StreamBecameUnregistered => {
-            "stream_became_unregistered"
-        }
-    }
-}
-
-fn byte_audit_improvement_kind_label(
-    kind: pid_parse::byte_audit::ByteAuditImprovementKind,
-) -> &'static str {
-    match kind {
-        pid_parse::byte_audit::ByteAuditImprovementKind::StreamBecameTraced => {
-            "stream_became_traced"
-        }
-        pid_parse::byte_audit::ByteAuditImprovementKind::NewTracedStream => "new_traced_stream",
-    }
-}
-
-/// Phase 10a (v0.6.0): print a standalone coverage inventory for `--coverage`
-/// invocations. Mirrors the section embedded in `generate_report` but lets
-/// CI / scripts grab it without paying for the rest of the report.
-fn print_coverage(doc: &pid_parse::PidDocument) {
-    let report = pid_parse::inspect::coverage::coverage_report(doc);
-    if report.entries.is_empty() {
-        println!("--- Coverage ---");
-        println!("(no top-level entries found; document may be empty)");
-        return;
-    }
-    let [full, partial, ident, unk] = report.status_counts();
-    println!("--- Coverage ---");
-    println!("  Fully decoded:     {full}");
-    println!("  Partially decoded: {partial}");
-    println!("  Identified only:   {ident}");
-    println!("  Unknown:           {unk}");
-    for entry in &report.entries {
-        let tag = match entry.status {
-            pid_parse::model::ParseCoverageStatus::FullyDecoded => "[FULL]",
-            pid_parse::model::ParseCoverageStatus::PartiallyDecoded => "[PART]",
-            pid_parse::model::ParseCoverageStatus::IdentifiedOnly => "[ID]  ",
-            pid_parse::model::ParseCoverageStatus::Unknown => "[UNK] ",
-        };
-        let field = entry
-            .document_field
-            .as_deref()
-            .map(|f| format!(" -> {f}"))
-            .unwrap_or_default();
-        let note = entry
-            .note
-            .as_deref()
-            .map(|n| format!("  ({n})"))
-            .unwrap_or_default();
-        println!("  {tag} {}{}{}", entry.name, field, note);
     }
 }
 
@@ -811,120 +666,6 @@ fn print_sheet_chunk_reports(reports: &[pid_parse::parsers::sheet_probe::SheetPr
             }
         }
         println!();
-    }
-}
-
-/// Human-friendly geometry summary for the `--geometry-summary` flag.
-/// Counts entities by kind × confidence and prints sample decoded text /
-/// symbol names to give a quick at-a-glance view of current geometry evidence.
-fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
-    use pid_parse::{PidGeometryConfidence, PidGraphicKind};
-
-    let mut decoded_lines = 0usize;
-    let mut decoded_polylines = 0usize;
-    let mut decoded_points = 0usize;
-    let mut decoded_texts = 0usize;
-    let mut decoded_symbols = 0usize;
-    let mut inferred_lines = 0usize;
-    let mut inferred_points = 0usize;
-    let mut inferred_annotations = 0usize;
-    let mut probe_only_unknown = 0usize;
-    let mut other = 0usize;
-
-    let mut sample_decoded_texts: Vec<String> = Vec::new();
-    let mut sample_decoded_symbol_oids: Vec<u32> = Vec::new();
-
-    for entity in &geometry.entities {
-        match (&entity.confidence, &entity.kind) {
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Line { .. }) => {
-                decoded_lines += 1;
-            }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Polyline { .. }) => {
-                decoded_polylines += 1;
-            }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Point { .. }) => {
-                decoded_points += 1;
-            }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Text { value, .. }) => {
-                decoded_texts += 1;
-                if sample_decoded_texts.len() < 8 {
-                    sample_decoded_texts.push(value.clone());
-                }
-            }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::SymbolInstance { .. }) => {
-                decoded_symbols += 1;
-                if let Some(oid) = entity.graphic_oid {
-                    if sample_decoded_symbol_oids.len() < 5 {
-                        sample_decoded_symbol_oids.push(oid);
-                    }
-                }
-            }
-            (PidGeometryConfidence::Inferred, PidGraphicKind::Line { .. }) => {
-                inferred_lines += 1;
-            }
-            (PidGeometryConfidence::Inferred, PidGraphicKind::Point { .. }) => {
-                inferred_points += 1;
-            }
-            (PidGeometryConfidence::Inferred, PidGraphicKind::Annotation { .. }) => {
-                inferred_annotations += 1;
-            }
-            (PidGeometryConfidence::ProbeOnly, PidGraphicKind::Unknown { .. }) => {
-                probe_only_unknown += 1;
-            }
-            _ => {
-                other += 1;
-            }
-        }
-    }
-
-    let total = geometry.entities.len();
-    println!("=== Sheet stream geometry summary ===");
-    println!("Total entities: {total}");
-    println!();
-    println!("Decoded (PSM record geometry):");
-    println!("  Lines (GLine2d / igLine2d):              {decoded_lines}");
-    println!("  Polylines (igLineString2d):               {decoded_polylines}");
-    println!("  Points (igPoint2d):                       {decoded_points}");
-    println!("  Texts (igTextBox, UTF-16LE):              {decoded_texts}");
-    println!("  SymbolInstances (igSymbol2d):             {decoded_symbols}");
-    println!(
-        "  Total decoded:                            {}",
-        decoded_lines + decoded_polylines + decoded_points + decoded_texts + decoded_symbols
-    );
-    println!();
-    println!("Inferred (probe-derived):");
-    println!("  Points (coordinate hints):                {inferred_points}");
-    println!("  Lines (endpoint pairs):                   {inferred_lines}");
-    println!("  Annotations (JStyleOverride, PSM 0x0030): {inferred_annotations}");
-    println!(
-        "  Total inferred:                           {}",
-        inferred_points + inferred_lines + inferred_annotations
-    );
-    println!();
-    println!("ProbeOnly (raw evidence, undecoded):");
-    println!("  Unknown:                                  {probe_only_unknown}");
-    if other > 0 {
-        println!();
-        println!("Other:                                    {other}");
-    }
-
-    if !sample_decoded_texts.is_empty() {
-        println!();
-        println!("Sample decoded texts:");
-        for t in &sample_decoded_texts {
-            println!("  {t:?}");
-        }
-    }
-    if !sample_decoded_symbol_oids.is_empty() {
-        println!();
-        println!(
-            "Sample decoded symbol oids: {}",
-            sample_decoded_symbol_oids
-                .iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
     }
 }
 

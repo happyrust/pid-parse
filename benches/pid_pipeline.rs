@@ -32,13 +32,10 @@ const A01_MDF: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
 const A01_DRAWING_UID: &str = "D9635C3C898840D1990B7E8BEE1D55DA";
 const A01_PLANT_NAME: &str = "TEST02";
 
-// Richest local fixture by decoded-geometry volume; used to quantify
-// the M5 "single-pass probe" question (master-plan candidate 7): the
-// reader currently runs `probe_sheet_stream` twice per sheet (once in
-// `streams/cluster.rs`, once in `populate_geometry_hints`). The
-// decision gate compares `probe_sheet_streams_gongyi` against
-// `parse_pid_gongyi` — if one full probe pass is < 5% of a full
-// parse, candidate 7 is closed as not worth the churn.
+// Richest local fixture by decoded-geometry volume. M5-B1 used it to
+// quantify the historical duplicate Sheet probe; M5-B2 keeps the same
+// scenarios as a before/after regression signal after the reader starts
+// carrying the first pass's chunk evidence into geometry-hint scoring.
 const GONGYI_PID: &str = "test-file/工艺管道及仪表流程-1.pid";
 
 fn bench_parse_pid(c: &mut Criterion) {
@@ -108,12 +105,9 @@ fn bench_parse_pid_gongyi(c: &mut Criterion) {
     });
 }
 
-/// M5 evidence gate: cost of ONE full `probe_sheet_stream` pass over
-/// every `Sheet*` stream of the gongyi fixture. The parse pipeline
-/// currently pays this twice per sheet (cluster decode + the
-/// post-crossref `populate_geometry_hints` re-probe), so the ratio
-/// `probe_sheet_streams_gongyi / parse_pid_gongyi` bounds the maximum
-/// saving of master-plan candidate 7 (`SheetGeometryBuilder`).
+/// M5 evidence benchmark: cost of one full `probe_sheet_stream` pass over
+/// every `Sheet*` stream. PR-B1 used the ratio against `parse_pid_gongyi`
+/// as the decision gate; PR-B2 retains it to document the eliminated work.
 fn bench_probe_sheet_streams(c: &mut Criterion) {
     let path = Path::new(GONGYI_PID);
     if !path.exists() {
