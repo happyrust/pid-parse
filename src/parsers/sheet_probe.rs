@@ -1261,7 +1261,7 @@ fn utf16_le_hex_32(bytes: &[u8]) -> Option<String> {
         return None;
     }
     let mut text = String::with_capacity(32);
-    for pair in bytes.chunks_exact(2) {
+    for pair in bytes.as_chunks::<2>().0 {
         if pair[1] != 0 || !pair[0].is_ascii_hexdigit() {
             return None;
         }

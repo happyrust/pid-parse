@@ -113,7 +113,9 @@ pub fn parse_boot_page(page_bytes: &[u8]) -> Result<BootPageInfo, BootPageError>
 /// (`U+0000`, `U+0020`, `U+2020`).
 fn decode_utf16le_trim_padding(bytes: &[u8]) -> String {
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     let trimmed_end = units

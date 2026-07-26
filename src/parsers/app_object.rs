@@ -140,7 +140,9 @@ fn format_guid(bytes: &[u8]) -> String {
 /// Decode a UTF-16LE byte slice, dropping any trailing L'\0'.
 fn read_utf16le_null_terminated(bytes: &[u8]) -> String {
     let words: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .take_while(|&w| w != 0)
         .collect();

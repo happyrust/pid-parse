@@ -82,7 +82,9 @@ fn main() {
             }
             let name_bytes = &data[name_start..name_start + byte_len];
             let utf16: Vec<u16> = name_bytes
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
                 .collect();
             let name = String::from_utf16_lossy(&utf16);

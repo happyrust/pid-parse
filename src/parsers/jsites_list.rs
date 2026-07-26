@@ -92,7 +92,9 @@ pub fn parse_jsites_list_with_trace(
         return None;
     }
     let mut slots = data[8..]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
     let entries: Vec<u32> = slots.by_ref().take(count as usize).collect();
     let trailing_slots: Vec<u32> = slots.collect();

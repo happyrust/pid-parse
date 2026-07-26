@@ -42,7 +42,9 @@ fn hex_window(bytes: &[u8], max_len: usize) -> String {
 
 fn utf16_preview(bytes: &[u8], max_chars: usize) -> String {
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .take(max_chars)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();

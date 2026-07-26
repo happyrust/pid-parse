@@ -62,7 +62,9 @@ fn read_utf16le_name(data: &[u8], start: usize, char_count: usize) -> Option<Str
         return None;
     }
     let words: Vec<u16> = data[start..end]
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     Some(String::from_utf16_lossy(&words))

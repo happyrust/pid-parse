@@ -145,7 +145,7 @@ fn try_decode_utf16le_name(page: &[u8], offset: usize, byte_count: usize) -> Opt
     }
 
     let mut decoded = String::with_capacity(even_count / 2);
-    for pair in page[offset..end].chunks_exact(2) {
+    for pair in page[offset..end].as_chunks::<2>().0 {
         let unit = u16::from_le_bytes([pair[0], pair[1]]);
         match unit {
             // Printable ASCII code unit — part of the name.

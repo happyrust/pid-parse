@@ -19,7 +19,9 @@ fn decode_utf16le(bytes: &[u8]) -> Option<String> {
         return None;
     }
     let units = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]));
     let mut out = String::new();
     for r in char::decode_utf16(units) {
