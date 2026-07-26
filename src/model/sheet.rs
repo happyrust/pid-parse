@@ -582,8 +582,8 @@ pub struct DecodedIgSymbol2dRecord {
     pub parent_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
-    /// First element of the 2×2 transform matrix at payload
-    /// offsets 40..47 (often `cos(rotation) * scale_x`).
+    /// First element of the 2×2 placement matrix, which follows the
+    /// record's matrix tag rather than sitting at a fixed offset.
     pub transform_00: f64,
     /// Second element of the transform matrix.
     pub transform_01: f64,

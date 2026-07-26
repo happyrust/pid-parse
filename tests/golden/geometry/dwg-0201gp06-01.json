@@ -6246,17 +6246,207 @@
   },
   {
     "id": "/Sheet6:igsymbol2d:0",
+    "graphic_oid": 35,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.41907652027555364,
+        "y": 0.23859757143145932
+      },
+      "rotation": 1.570796326795,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 8,
+        "end": 135
+      },
+      "record_id": "igsymbol2d:0",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=35 parent_ref=138 sub_type=0x0010 insertion=(0.4191, 0.2386) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:1",
+    "graphic_oid": 68,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.381099008906741,
+        "y": 0.258451538665969
+      },
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 325,
+        "end": 452
+      },
+      "record_id": "igsymbol2d:1",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=68 parent_ref=6 sub_type=0x0000 insertion=(0.3811, 0.2585) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:2",
+    "graphic_oid": 111,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.362366581946306,
+        "y": 0.258451260106459
+      },
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 728,
+        "end": 855
+      },
+      "record_id": "igsymbol2d:2",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=111 parent_ref=6 sub_type=0x0000 insertion=(0.3624, 0.2585) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:3",
+    "graphic_oid": 139,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.4063831154321107,
+        "y": 0.23859757143145932
+      },
+      "rotation": 1.570796326795,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 915,
+        "end": 1042
+      },
+      "record_id": "igsymbol2d:3",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=139 parent_ref=145 sub_type=0x0010 insertion=(0.4064, 0.2386) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:4",
+    "graphic_oid": 147,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.3623665042644456,
+        "y": 0.23859757143145932
+      },
+      "rotation": 1.570796326795,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1102,
+        "end": 1229
+      },
+      "record_id": "igsymbol2d:4",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=147 parent_ref=153 sub_type=0x0010 insertion=(0.3624, 0.2386) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:5",
     "graphic_oid": 157,
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
-        "x": -6.336213496636966e-63,
-        "y": 1.353829678674e-312
+        "x": 0.29411240631820856,
+        "y": 0.2246573077045813
       },
-      "rotation": 0.0,
+      "rotation": -3.14159265358959,
       "scale": [
-        -3.770919286038734e-247,
-        -2.7296865311230904e-159
+        1.0,
+        -1.0
       ]
     },
     "coordinate_context": {
@@ -6276,25 +6466,101 @@
         "start": 1289,
         "end": 1416
       },
-      "record_id": "igsymbol2d:0",
+      "record_id": "igsymbol2d:5",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=157 parent_ref=164 sub_type=0x0010 insertion=(-0.0000, 0.0000) transform=[-0.0000, -0.0000, 0.0000, -0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=157 parent_ref=164 sub_type=0x0010 insertion=(0.2941, 0.2247) transform=[-1.0000, -0.0000, -0.0000, 1.0000]; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igsymbol2d:1",
+    "id": "/Sheet6:igsymbol2d:6",
+    "graphic_oid": 169,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.34205597034835766,
+        "y": 0.23859757143145832
+      },
+      "rotation": 1.570796326795,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1476,
+        "end": 1595
+      },
+      "record_id": "igsymbol2d:6",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=169 parent_ref=219 sub_type=0x0010 insertion=(0.3421, 0.2386) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:7",
+    "graphic_oid": 229,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.39637099833461087,
+        "y": 0.2385965714314603
+      },
+      "rotation": 1.5707963267949,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 1859,
+        "end": 1978
+      },
+      "record_id": "igsymbol2d:7",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=229 parent_ref=209 sub_type=0x0010 insertion=(0.3964, 0.2386) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:8",
     "graphic_oid": 239,
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
-        "x": -9.585230948024851e-42,
-        "y": 1.35426412075e-312
+        "x": 0.362366581946305,
+        "y": 0.281207723278992
       },
       "rotation": 0.0,
       "scale": [
-        1.35675105885e-312,
-        -1.0332462109826662e-116
+        1.0,
+        1.0
       ]
     },
     "coordinate_context": {
@@ -6314,25 +6580,367 @@
         "start": 1978,
         "end": 2105
       },
-      "record_id": "igsymbol2d:1",
+      "record_id": "igsymbol2d:8",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=239 parent_ref=6 sub_type=0x0000 insertion=(-0.0000, 0.0000) transform=[0.0000, 0.0000, 0.0000, -0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=239 parent_ref=6 sub_type=0x0000 insertion=(0.3624, 0.2812) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igsymbol2d:2",
+    "id": "/Sheet6:igsymbol2d:9",
+    "graphic_oid": 262,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.3679967760194369,
+        "y": 0.16461788550731882
+      },
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 2105,
+        "end": 2224
+      },
+      "record_id": "igsymbol2d:9",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=262 parent_ref=6 sub_type=0x0000 insertion=(0.3680, 0.1646) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:10",
+    "graphic_oid": 326,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.2811793806926386,
+        "y": 0.11410753664198632
+      },
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 2224,
+        "end": 2345
+      },
+      "record_id": "igsymbol2d:10",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=326 parent_ref=6 sub_type=0x0000 insertion=(0.2812, 0.1141) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:11",
+    "graphic_oid": 433,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.04728515427424009,
+        "y": 0.22455919257847134
+      },
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 2623,
+        "end": 2750
+      },
+      "record_id": "igsymbol2d:11",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=433 parent_ref=6 sub_type=0x0000 insertion=(0.0473, 0.2246) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:12",
+    "graphic_oid": 440,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.476412539747518,
+        "y": 0.24631956864153368
+      },
+      "rotation": 3.14159265358979,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 2750,
+        "end": 2877
+      },
+      "record_id": "igsymbol2d:12",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=440 parent_ref=6 sub_type=0x0000 insertion=(0.4764, 0.2463) transform=[-1.0000, 0.0000, -0.0000, -1.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:13",
+    "graphic_oid": 452,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.37320055270157904,
+        "y": 0.106617921575028
+      },
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 2877,
+        "end": 2996
+      },
+      "record_id": "igsymbol2d:13",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=452 parent_ref=466 sub_type=0x0010 insertion=(0.3732, 0.1066) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:14",
+    "graphic_oid": 467,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.451150309525328,
+        "y": 0.246319568641534
+      },
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 3242,
+        "end": 3369
+      },
+      "record_id": "igsymbol2d:14",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=467 parent_ref=6 sub_type=0x0000 insertion=(0.4512, 0.2463) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:15",
+    "graphic_oid": 490,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.406565369254247,
+        "y": 0.2557146560652619
+      },
+      "rotation": 1.5707963267949,
+      "scale": [
+        1.0,
+        -1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 3369,
+        "end": 3496
+      },
+      "record_id": "igsymbol2d:15",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=490 parent_ref=6 sub_type=0x0000 insertion=(0.4066, 0.2557) transform=[-0.0000, 1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:16",
+    "graphic_oid": 537,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.0780222851652167,
+        "y": 0.26219371508292244
+      },
+      "rotation": -1.57079632679448,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 3820,
+        "end": 3947
+      },
+      "record_id": "igsymbol2d:16",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=537 parent_ref=6 sub_type=0x0000 insertion=(0.0780, 0.2622) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:17",
+    "graphic_oid": 597,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.03398386354470842,
+        "y": 0.057211358595993994
+      },
+      "rotation": 0.0,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 4805,
+        "end": 4926
+      },
+      "record_id": "igsymbol2d:17",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=597 parent_ref=6 sub_type=0x0000 insertion=(0.0340, 0.0572) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:18",
     "graphic_oid": 602,
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
-        "x": -1.935263385714861e-249,
-        "y": 1.352365892387e-312
+        "x": 0.23410597034835762,
+        "y": 0.10584707081970532
       },
       "rotation": 0.0,
       "scale": [
-        1.35675105885e-312,
-        1.3688043394178276e-34
+        1.0,
+        1.0
       ]
     },
     "coordinate_context": {
@@ -6352,25 +6960,25 @@
         "start": 4926,
         "end": 5045
       },
-      "record_id": "igsymbol2d:2",
+      "record_id": "igsymbol2d:18",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=602 parent_ref=616 sub_type=0x0010 insertion=(-0.0000, 0.0000) transform=[0.0000, 0.0000, 0.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=602 parent_ref=616 sub_type=0x0010 insertion=(0.2341, 0.1058) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igsymbol2d:3",
+    "id": "/Sheet6:igsymbol2d:19",
     "graphic_oid": 617,
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
-        "x": -1.930619080206371e-271,
-        "y": 1.35233310511e-312
+        "x": 0.287767169181777,
+        "y": 0.10430195567435202
       },
       "rotation": 0.0,
       "scale": [
-        1.35675105885e-312,
-        4.43407984927293e-155
+        1.0,
+        1.0
       ]
     },
     "coordinate_context": {
@@ -6390,9 +6998,9 @@
         "start": 5369,
         "end": 5488
       },
-      "record_id": "igsymbol2d:3",
+      "record_id": "igsymbol2d:19",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=617 parent_ref=6 sub_type=0x0000 insertion=(-0.0000, 0.0000) transform=[0.0000, 0.0000, 0.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=617 parent_ref=6 sub_type=0x0000 insertion=(0.2878, 0.1043) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },

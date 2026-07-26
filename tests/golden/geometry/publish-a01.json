@@ -2318,17 +2318,55 @@
   },
   {
     "id": "/Sheet6:igsymbol2d:0",
+    "graphic_oid": 51,
+    "kind": {
+      "kind": "symbol_instance",
+      "insertion": {
+        "x": 0.32160035432016265,
+        "y": 0.2554317639574144
+      },
+      "rotation": 1.570796326795,
+      "scale": [
+        1.0,
+        1.0
+      ]
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "unknown",
+        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+      },
+      "page_transform": {
+        "state": "unavailable",
+        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 292,
+        "end": 419
+      },
+      "record_id": "igsymbol2d:0",
+      "record_kind": "symbol_placement",
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=51 parent_ref=41 sub_type=0x0010 insertion=(0.3216, 0.2554) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igsymbol2d:1",
     "graphic_oid": 184,
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
-        "x": -31.799423241363638,
-        "y": 1.7665855227355053e-307
+        "x": 0.22384648272727975,
+        "y": 0.1405733273754759
       },
       "rotation": 0.0,
       "scale": [
-        1.7765824089018436e-307,
-        -3.481307965190664e-105
+        1.0,
+        1.0
       ]
     },
     "coordinate_context": {
@@ -2348,9 +2386,9 @@
         "start": 663,
         "end": 784
       },
-      "record_id": "igsymbol2d:0",
+      "record_id": "igsymbol2d:1",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=184 parent_ref=6 sub_type=0x0000 insertion=(-31.7994, 0.0000) transform=[0.0000, 0.0000, 0.0000, -0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=184 parent_ref=6 sub_type=0x0000 insertion=(0.2238, 0.1406) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },

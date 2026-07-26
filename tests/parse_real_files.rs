@@ -1025,9 +1025,13 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
         4,
         "D06 igTextBox count drifted"
     );
+    // Was 2 while the decoder read the placement matrix from a fixed
+    // payload offset: the other four records failed the finite/in-domain
+    // check on the noise that offset produced. Anchoring on the matrix
+    // tag recovers all six.
     assert_eq!(
         geometry.decoded_igsymbols.len(),
-        2,
+        6,
         "D06 igSymbol2d count drifted"
     );
     assert_eq!(
@@ -1049,14 +1053,14 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
     let normalized = normalized_geometry_inventory(&doc);
     assert_eq!(
         normalized.total(),
-        97,
+        101,
         "D06 normalized geometry total drifted"
     );
     assert_eq!(normalized.decoded_lines, 0);
     assert_eq!(normalized.decoded_polylines, 6);
     assert_eq!(normalized.decoded_points, 10);
     assert_eq!(normalized.decoded_texts, 4);
-    assert_eq!(normalized.decoded_symbols, 2);
+    assert_eq!(normalized.decoded_symbols, 6);
     assert_eq!(
         normalized.other_entities, 3,
         "D06 decoded annotations count drifted"

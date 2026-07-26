@@ -866,6 +866,26 @@ impl GeometryEmitter for GLine2dEmitter {
 /// `igSymbol2d` family (PSM `0x00CE`).
 struct IgSymbol2dEmitter;
 
+/// Split an `igSymbol2d` 2×2 placement matrix into an angle and a scale.
+///
+/// Half the placements in the fixtures are reflections rather than
+/// rotations (`det < 0`) — a P&ID mirrors a valve as readily as it turns
+/// one. A reflection has no equivalent angle, so it is carried as a
+/// negative `y` scale; folding it into the angle would draw the symbol
+/// facing the wrong way.
+fn decompose_placement(matrix: [f64; 4]) -> (f64, [f64; 2]) {
+    let [m00, m01, m10, m11] = matrix;
+    let determinant = m00 * m11 - m01 * m10;
+    let scale_y = m10.hypot(m11);
+    (
+        m01.atan2(m00),
+        [
+            m00.hypot(m01),
+            if determinant < 0.0 { -scale_y } else { scale_y },
+        ],
+    )
+}
+
 impl GeometryEmitter for IgSymbol2dEmitter {
     fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
@@ -879,6 +899,12 @@ impl GeometryEmitter for IgSymbol2dEmitter {
             ) else {
                 continue;
             };
+            let (rotation, scale) = decompose_placement([
+                record.transform_00,
+                record.transform_01,
+                record.transform_10,
+                record.transform_11,
+            ]);
             out.push(PidGraphicEntity {
                 id: format!("{}:igsymbol2d:{index}", sheet.path),
                 drawing_id: None,
@@ -889,8 +915,8 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                         y: record.insertion_y,
                     },
                     symbol_path: None,
-                    rotation: 0.0,
-                    scale: [record.transform_00, record.transform_11],
+                    rotation,
+                    scale,
                 },
                 coordinate_context: sheet_source_coordinate_context(&sheet.path),
                 source: PidGraphicProvenance {

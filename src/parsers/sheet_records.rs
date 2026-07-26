@@ -2373,6 +2373,22 @@ pub const IGSYMBOL2D_MIN_PAYLOAD_LEN: usize = 113;
 /// Maximum byte length we'll accept on a decoded `igSymbol2d`.
 const IGSYMBOL2D_MAX_PAYLOAD_LEN: usize = 200;
 
+/// Byte tag that immediately precedes an `igSymbol2d` placement matrix.
+///
+/// The header between the OID block and the matrix is *not* a fixed
+/// length: across the 109 records in the five fixtures it ends at payload
+/// offset 33 or 35, tracking the two payload-size families. Reading the
+/// matrix from a constant offset therefore lands mid-field and yields
+/// denormal noise, which is what the first version of this decoder did.
+/// Every record carries this tag exactly once
+/// (`examples/probe_igsymbol2d_matrix.rs`), so it is the anchor.
+const IGSYMBOL2D_MATRIX_TAG: [u8; 4] = [0x02, 0x00, 0xA7, 0x50];
+
+/// How far into the payload the matrix tag is searched for. Observed
+/// positions are 33 and 35; bounding the search stops a byte pair inside
+/// the coordinate data from being mistaken for the tag.
+const IGSYMBOL2D_TAG_SEARCH_END: usize = 64;
+
 /// PSM type code for suspected `GraphicGroup` / `GraphicPersist` records.
 ///
 /// Phase 15 probe evidence (`examples/probe_psm_0x00fa_shape.rs` and
@@ -3514,14 +3530,16 @@ fn decode_igtextbox_payload(
 ///   4..7    u32   parent_ref
 ///   8..11   u32   remaining_header
 ///   12..13  u16   sub_type_word
-///   14..39  26 bytes  sub-fields (flags, references, sub-IDs)
-///   40..47  f64   transform[0] (typically scale_x or rotation_cos)
-///   48..55  f64   transform[1]
-///   56..63  f64   transform[2]
-///   64..71  f64   transform[3]
-///   72..79  f64   insertion.x
-///   80..87  f64   insertion.y
-///   88..    variable tail (symbol library ref + class ID + flags)
+///   14..T-1 variable sub-fields (flags, references, sub-IDs)
+///   T..T+3  4 bytes   [`IGSYMBOL2D_MATRIX_TAG`], T is 33 or 35
+///   +0..7   f64   transform[0]  ⎫ 2×2 placement matrix, row-major.
+///   +8..15  f64   transform[1]  ⎪ Fixtures hold only the eight
+///   +16..23 f64   transform[2]  ⎪ axis-aligned placements: entries
+///   +24..31 f64   transform[3]  ⎭ are 0 or ±1, `det` is ±1.
+///   +32..39 f64   insertion.x   ⎫ translation, in sheet units (0..1)
+///   +40..47 f64   insertion.y   ⎭
+///   +48..55 f64   uniform scale; 1.0 in 108 of 109 fixture records
+///   ...     variable tail (symbol library ref + class ID + flags)
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetIgSymbol2dDecoded {
@@ -3539,12 +3557,13 @@ pub struct SheetIgSymbol2dDecoded {
     pub parent_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
-    /// 4-element `f64` transform matrix at payload offsets 40..71.
-    /// Without `radsrvitem.dll` decompile this is named generically;
-    /// for canonical un-rotated/un-scaled symbols it's
-    /// `[1.0, 0.0, 0.0, 1.0]`.
+    /// Row-major 2×2 placement matrix, read from just past
+    /// [`IGSYMBOL2D_MATRIX_TAG`]. An un-rotated, un-mirrored symbol reads
+    /// `[1.0, 0.0, 0.0, 1.0]`; a negative determinant means the placement
+    /// is mirrored, not merely turned.
     pub transform: [f64; 4],
-    /// Insertion point (extracted from payload offsets 72..87).
+    /// Insertion point in sheet units, the translation column of the same
+    /// matrix.
     pub insertion: (f64, f64),
 }
 
@@ -3553,7 +3572,9 @@ pub struct SheetIgSymbol2dDecoded {
 /// Validation:
 /// 1. `type_code == 0x00CE`;
 /// 2. `bytes_to_follow ∈ [113, 200]`;
-/// 3. 6 doubles at payload offsets 40..87 finite + in domain.
+/// 3. [`IGSYMBOL2D_MATRIX_TAG`] occurs within the first
+///    [`IGSYMBOL2D_TAG_SEARCH_END`] payload bytes;
+/// 4. the 6 doubles following it are finite + in domain.
 ///
 /// Thin wrapper over [`IgSymbol2dDecoder`]'s shared
 /// [`PsmRecordDecoder::scan`].
@@ -3626,11 +3647,17 @@ fn decode_igsymbol_payload(
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
 
-    // Read 6 doubles starting at payload offset 40: 4 for transform,
-    // 2 for insertion.
+    let search_end = IGSYMBOL2D_TAG_SEARCH_END.min(payload.len());
+    let matrix_at = payload
+        .get(..search_end)?
+        .windows(IGSYMBOL2D_MATRIX_TAG.len())
+        .position(|w| w == IGSYMBOL2D_MATRIX_TAG)?
+        + IGSYMBOL2D_MATRIX_TAG.len();
+
+    // 4 doubles of placement matrix, then the translation pair.
     let mut doubles = [0f64; 6];
     for (i, slot) in doubles.iter_mut().enumerate() {
-        let pos = 40 + i * 8;
+        let pos = matrix_at + i * 8;
         let chunk = payload.get(pos..pos + 8)?;
         *slot = f64::from_le_bytes([
             chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
@@ -6124,24 +6151,28 @@ mod tests {
         let mut out = Vec::with_capacity(6 + IGSYMBOL2D_MIN_PAYLOAD_LEN);
         out.extend_from_slice(&PSM_TYPE_CODE_IGSYMBOL2D.to_le_bytes());
         out.extend_from_slice(&(IGSYMBOL2D_MIN_PAYLOAD_LEN as u32).to_le_bytes());
-        // Payload bytes 0..40: oid + parent_ref + 8B remaining +
-        // 2B sub_type + 26 bytes of sub-fields (zeroed)
         out.extend_from_slice(&oid.to_le_bytes()); // 0..4
         out.extend_from_slice(&parent_ref.to_le_bytes()); // 4..8
         out.extend_from_slice(&8u32.to_le_bytes()); // 8..12 remaining_header
         out.extend_from_slice(&0x0010u16.to_le_bytes()); // 12..14 sub_type
-        out.extend_from_slice(&[0u8; 26]); // 14..40 sub-fields
-                                           // 40..72: 4 transform doubles
+        out.extend_from_slice(&[0u8; 19]); // 14..33 sub-fields
+        out.extend_from_slice(&IGSYMBOL2D_MATRIX_TAG); // 33..37
         for v in &transform {
+            // 37..69
             out.extend_from_slice(&v.to_le_bytes());
         }
-        // 72..88: insertion x, y
+        // 69..85: translation
         out.extend_from_slice(&insertion.0.to_le_bytes());
         out.extend_from_slice(&insertion.1.to_le_bytes());
-        // 88..113: 25 bytes of trailing (symbol library ref + flags)
-        out.extend_from_slice(&[0u8; 25]);
+        // 85..93: uniform scale, then the trailing library ref + flags.
+        out.extend_from_slice(&1.0f64.to_le_bytes());
+        out.extend_from_slice(&[0u8; 20]); // 93..113
         out
     }
+
+    /// Payload offset of `transform[0]` in a record from
+    /// [`build_synthetic_igsymbol2d_record`].
+    const SYNTHETIC_IGSYMBOL2D_MATRIX_AT: usize = 33 + 4;
 
     #[test]
     fn igsymbol2d_decodes_canonical_unrotated_symbol() {
@@ -6182,9 +6213,34 @@ mod tests {
     #[test]
     fn igsymbol2d_rejects_nan_transform_element() {
         let mut record = build_synthetic_igsymbol2d_record(1, 1, [1.0, 0.0, 0.0, 1.0], (0.0, 0.0));
-        // transform[0] at record offset 6 + 40 = 46
-        record[46..54].copy_from_slice(&f64::NAN.to_le_bytes());
+        let at = PSM_ENVELOPE_LEN + SYNTHETIC_IGSYMBOL2D_MATRIX_AT;
+        record[at..at + 8].copy_from_slice(&f64::NAN.to_le_bytes());
         assert!(decode_igsymbols(&record).is_empty());
+    }
+
+    #[test]
+    fn igsymbol2d_rejects_record_without_matrix_tag() {
+        let mut record = build_synthetic_igsymbol2d_record(1, 1, [1.0, 0.0, 0.0, 1.0], (0.5, 0.5));
+        let tag_at = PSM_ENVELOPE_LEN + 33;
+        record[tag_at..tag_at + IGSYMBOL2D_MATRIX_TAG.len()].copy_from_slice(&[0xFF; 4]);
+        assert!(decode_igsymbols(&record).is_empty());
+    }
+
+    #[test]
+    fn igsymbol2d_follows_the_tag_when_the_header_grows() {
+        // The 115- and 123-byte fixture families push the matrix two
+        // bytes later; a decoder pinned to one offset misses them.
+        let base = build_synthetic_igsymbol2d_record(7, 6, [0.0, 1.0, -1.0, 0.0], (0.25, 0.75));
+        let mut shifted = base.clone();
+        let tag_at = PSM_ENVELOPE_LEN + 33;
+        shifted.splice(tag_at..tag_at, [0u8, 0u8]);
+        let btf = (shifted.len() - PSM_ENVELOPE_LEN) as u32;
+        shifted[2..6].copy_from_slice(&btf.to_le_bytes());
+
+        let decoded = decode_igsymbols(&shifted);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].transform, [0.0, 1.0, -1.0, 0.0]);
+        assert_eq!(decoded[0].insertion, (0.25, 0.75));
     }
 
     #[test]
