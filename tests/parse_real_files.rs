@@ -7309,6 +7309,102 @@ fn igsymbols_decoder_emits_decoded_symbols_with_provenance() {
     );
 }
 
+/// Phase 35-C: every real `igSymbol2d` record's `jsite_ref` (the u32
+/// immediately before the placement-matrix tag) resolves to a
+/// same-file `JSite<id>` storage, and normalized geometry surfaces
+/// that site's `.sym` library path on the `SymbolInstance` entity.
+#[test]
+fn igsymbol2d_jsite_ref_resolves_to_symbol_paths() {
+    let fixtures = [
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+        "D06.pid",
+        "export-test/publish-data/A01/A01.pid",
+        "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+    ];
+    for fixture in fixtures {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let jsite_ids: BTreeSet<u32> = doc
+            .jsites
+            .iter()
+            .filter_map(|site| site.name.strip_prefix("JSite")?.parse().ok())
+            .collect();
+
+        let mut record_count = 0usize;
+        for sheet in &doc.sheet_streams {
+            let Some(geometry) = &sheet.geometry else {
+                continue;
+            };
+            for record in &geometry.decoded_igsymbols {
+                record_count += 1;
+                assert!(
+                    jsite_ids.contains(&record.jsite_ref),
+                    "{fixture} {} oid={}: jsite_ref={} has no matching JSite storage \
+                     (known ids: {jsite_ids:?})",
+                    sheet.path,
+                    record.oid,
+                    record.jsite_ref,
+                );
+            }
+        }
+        if record_count == 0 {
+            continue;
+        }
+
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let mut symbol_instances = 0usize;
+        let mut with_sym_path = 0usize;
+        for entity in &geometry.entities {
+            if let pid_parse::PidGraphicKind::SymbolInstance { symbol_path, .. } = &entity.kind {
+                symbol_instances += 1;
+                if symbol_path
+                    .as_deref()
+                    .is_some_and(|path| path.to_ascii_lowercase().ends_with(".sym"))
+                {
+                    with_sym_path += 1;
+                }
+            }
+        }
+        assert_eq!(
+            with_sym_path, symbol_instances,
+            "{fixture}: every SymbolInstance should resolve its JSite's .sym path \
+             (Phase 35-C probe: 132/132 records)"
+        );
+        eprintln!(
+            "{fixture}: {record_count} igSymbol2d records, {with_sym_path}/{symbol_instances} \
+             symbol instances carry a .sym path"
+        );
+    }
+
+    // Fixture-specific spot check: A01's two placed symbols are a
+    // flanged nozzle and the horizontal drum it sits on.
+    if let Some(doc) = parse_test_file("export-test/publish-data/A01/A01.pid") {
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let paths: BTreeSet<String> = geometry
+            .entities
+            .iter()
+            .filter_map(|entity| match &entity.kind {
+                pid_parse::PidGraphicKind::SymbolInstance {
+                    symbol_path: Some(path),
+                    ..
+                } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            paths.iter().any(|p| p.ends_with("Flanged Nozzle.sym")),
+            "A01 should reference Flanged Nozzle.sym, got {paths:?}"
+        );
+        assert!(
+            paths.iter().any(|p| p.ends_with("Horizontal Drum.sym")),
+            "A01 should reference Horizontal Drum.sym, got {paths:?}"
+        );
+    }
+}
+
 /// Phase 14 Slice M: cross-fixture validation that
 /// `decode_igtextboxes` emits decoded `igTextBox` text annotations
 /// (PSM type `0x004D`) from real `Sheet*` streams.

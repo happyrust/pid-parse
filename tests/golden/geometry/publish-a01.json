@@ -2325,6 +2325,7 @@
         "x": 0.32160035432016265,
         "y": 0.2554317639574144
       },
+      "symbol_path": "\\\\Mm-128\\SPID\\TEST02\\ZGSY P&ID Reference Data\\Symbols\\Equipment Components\\Nozzles\\Flanged Nozzle.sym",
       "rotation": 1.570796326795,
       "scale": [
         1.0,
@@ -2350,7 +2351,7 @@
       },
       "record_id": "igsymbol2d:0",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=51 parent_ref=41 sub_type=0x0010 insertion=(0.3216, 0.2554) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=51 parent_ref=41 sub_type=0x0010 jsite_ref=1229 insertion=(0.3216, 0.2554) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -2363,6 +2364,7 @@
         "x": 0.22384648272727975,
         "y": 0.1405733273754759
       },
+      "symbol_path": "\\\\Mm-128\\SPID\\TEST02\\ZGSY P&ID Reference Data\\Symbols\\Equipment\\Vessels\\Horizontal Drums\\Horizontal Drum.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -2388,7 +2390,7 @@
       },
       "record_id": "igsymbol2d:1",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=184 parent_ref=6 sub_type=0x0000 insertion=(0.2238, 0.1406) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=184 parent_ref=6 sub_type=0x0000 jsite_ref=206 insertion=(0.2238, 0.1406) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },

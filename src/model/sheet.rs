@@ -582,6 +582,13 @@ pub struct DecodedIgSymbol2dRecord {
     pub parent_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
+    /// Numeric id of the top-level `JSite<id>` storage carrying this
+    /// instance's symbol reference (Phase 35-C: the u32 immediately
+    /// before the placement-matrix tag; 132/132 records across all 6
+    /// fixtures resolve to a same-file `JSite<id>` whose `JProperties`
+    /// names the `.sym` library path).
+    #[serde(default)]
+    pub jsite_ref: u32,
     /// First element of the 2×2 placement matrix, which follows the
     /// record's matrix tag rather than sitting at a fixed offset.
     pub transform_00: f64,
@@ -608,6 +615,7 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
             oid: d.oid,
             parent_ref: d.parent_ref,
             sub_type_word: d.sub_type_word,
+            jsite_ref: d.jsite_ref,
             transform_00: d.transform[0],
             transform_01: d.transform[1],
             transform_10: d.transform[2],

@@ -406,6 +406,8 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         ));
     }
 
+    let emit_context = EmitContext::from_doc(doc);
+
     for sheet in &doc.sheet_streams {
         let object_positions: BTreeMap<u32, ResolvedObjectPosition> = sheet
             .geometry
@@ -727,7 +729,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         // Audit-only families are registered as explicit no-op
         // emitters, making the emission policy visible in one table.
         for emitter in EMITTERS {
-            emitter.emit(sheet, &mut entities);
+            emitter.emit(&emit_context, sheet, &mut entities);
         }
     }
 
@@ -779,8 +781,41 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
 ///   CONTEXT.md, promoting an audit-only family to emission is an
 ///   evidence-gated decision, never a refactor side effect.
 trait GeometryEmitter {
-    /// Append this family's entities for `sheet` onto `out`.
-    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>);
+    /// Append this family's entities for `sheet` onto `out`. `ctx`
+    /// carries document-level lookups shared by the whole pass.
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>);
+}
+
+/// Document-level context shared by every [`GeometryEmitter`] during
+/// one [`build_normalized_geometry`] pass. Carries cross-stream
+/// lookups that an individual `Sheet*` stream cannot resolve on its
+/// own.
+struct EmitContext<'a> {
+    /// `JSite<id>` storage id → symbol-library path (that site's
+    /// `JProperties` `.sym` string), used to resolve
+    /// `SymbolInstance::symbol_path` from
+    /// [`crate::model::DecodedIgSymbol2dRecord::jsite_ref`]
+    /// (Phase 35-C).
+    jsite_symbol_paths: BTreeMap<u32, &'a str>,
+}
+
+impl<'a> EmitContext<'a> {
+    /// Build the pass context from the parsed document.
+    fn from_doc(doc: &'a PidDocument) -> Self {
+        let jsite_symbol_paths = doc
+            .jsites
+            .iter()
+            .filter_map(|site| {
+                let id: u32 = site.name.strip_prefix("JSite")?.parse().ok()?;
+                let path = site
+                    .symbol_path
+                    .as_deref()
+                    .or(site.local_symbol_path.as_deref())?;
+                Some((id, path))
+            })
+            .collect();
+        Self { jsite_symbol_paths }
+    }
 }
 
 /// Emission registry walked by [`build_normalized_geometry`] for every
@@ -810,7 +845,7 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
 struct GLine2dEmitter;
 
 impl GeometryEmitter for GLine2dEmitter {
-    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -887,7 +922,7 @@ fn decompose_placement(matrix: [f64; 4]) -> (f64, [f64; 2]) {
 }
 
 impl GeometryEmitter for IgSymbol2dEmitter {
-    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -914,7 +949,10 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                         x: record.insertion_x,
                         y: record.insertion_y,
                     },
-                    symbol_path: None,
+                    symbol_path: ctx
+                        .jsite_symbol_paths
+                        .get(&record.jsite_ref)
+                        .map(|path| (*path).to_string()),
                     rotation,
                     scale,
                 },
@@ -928,11 +966,14 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                     note: Some(format!(
                         "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, \
                          type 0x00CE, IGDS class tag 0xCE); oid={} parent_ref={} \
-                         sub_type=0x{:04X} insertion=({:.4}, {:.4}) transform=[{:.4}, \
-                         {:.4}, {:.4}, {:.4}]; byte layout from fixture dump",
+                         sub_type=0x{:04X} jsite_ref={} insertion=({:.4}, {:.4}) \
+                         transform=[{:.4}, {:.4}, {:.4}, {:.4}]; byte layout from \
+                         fixture dump; jsite_ref -> JSite<id> link from Phase 35-C \
+                         cross-fixture probe (132/132)",
                         record.oid,
                         record.parent_ref,
                         record.sub_type_word,
+                        record.jsite_ref,
                         record.insertion_x,
                         record.insertion_y,
                         record.transform_00,
@@ -952,7 +993,7 @@ impl GeometryEmitter for IgSymbol2dEmitter {
 struct IgTextBoxEmitter;
 
 impl GeometryEmitter for IgTextBoxEmitter {
-    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1012,7 +1053,7 @@ impl GeometryEmitter for IgTextBoxEmitter {
 struct IgPoint2dEmitter;
 
 impl GeometryEmitter for IgPoint2dEmitter {
-    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1065,7 +1106,7 @@ impl GeometryEmitter for IgPoint2dEmitter {
 struct IgLineString2dEmitter;
 
 impl GeometryEmitter for IgLineString2dEmitter {
-    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1127,7 +1168,7 @@ impl GeometryEmitter for IgLineString2dEmitter {
 struct IgLine2dEmitter;
 
 impl GeometryEmitter for IgLine2dEmitter {
-    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1195,7 +1236,7 @@ impl GeometryEmitter for IgLine2dEmitter {
 struct JStyleOverrideEmitter;
 
 impl GeometryEmitter for JStyleOverrideEmitter {
-    fn emit(&self, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1273,7 +1314,8 @@ impl GeometryEmitter for JStyleOverrideEmitter {
 struct IgBoundary2dEmitter;
 
 impl GeometryEmitter for IgBoundary2dEmitter {
-    fn emit(&self, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {}
+    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    }
 }
 
 /// No-op emitter: `GraphicGroup` (PSM `0x00FA`) is an audit-only
@@ -1282,7 +1324,8 @@ impl GeometryEmitter for IgBoundary2dEmitter {
 struct GraphicGroupEmitter;
 
 impl GeometryEmitter for GraphicGroupEmitter {
-    fn emit(&self, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {}
+    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    }
 }
 
 /// No-op emitter: the polymorphic `0x0010` sub-record family is an
@@ -1291,7 +1334,8 @@ impl GeometryEmitter for GraphicGroupEmitter {
 struct SubRecord0x0010Emitter;
 
 impl GeometryEmitter for SubRecord0x0010Emitter {
-    fn emit(&self, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {}
+    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    }
 }
 
 /// No-op emitter: attribute fragments (Phase 26 view of `0x0010`)
@@ -1300,7 +1344,8 @@ impl GeometryEmitter for SubRecord0x0010Emitter {
 struct AttributeFragmentEmitter;
 
 impl GeometryEmitter for AttributeFragmentEmitter {
-    fn emit(&self, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {}
+    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    }
 }
 
 fn sheet_source_coordinate_context(sheet_path: &str) -> PidCoordinateContext {

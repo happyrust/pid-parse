@@ -3465,6 +3465,7 @@
         "x": 0.11972548583593046,
         "y": 0.22017888003963712
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Piping\\Fittings\\End Components\\Cap2.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -3490,7 +3491,7 @@
       },
       "record_id": "igsymbol2d:0",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=185 parent_ref=6 sub_type=0x0000 insertion=(0.1197, 0.2202) transform=[1.0000, 0.0000, 0.0000, -1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=185 parent_ref=6 sub_type=0x0000 jsite_ref=2475 insertion=(0.1197, 0.2202) transform=[1.0000, 0.0000, 0.0000, -1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3503,6 +3504,7 @@
         "x": 0.25446083159358324,
         "y": 0.2630369587203516
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Instrumentation\\System Functions\\D C S\\DCS Func Access in Prime Loc.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -3528,7 +3530,7 @@
       },
       "record_id": "igsymbol2d:1",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=612 parent_ref=6 sub_type=0x0000 insertion=(0.2545, 0.2630) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=612 parent_ref=6 sub_type=0x0000 jsite_ref=4490 insertion=(0.2545, 0.2630) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3541,6 +3543,7 @@
         "x": 0.17094728452507368,
         "y": 0.2657693148219282
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Piping\\Piping OPC's\\Off-Drawing.sym",
       "rotation": -1.5707963267944829,
       "scale": [
         1.0,
@@ -3566,7 +3569,7 @@
       },
       "record_id": "igsymbol2d:2",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1257 parent_ref=6 sub_type=0x0000 insertion=(0.1709, 0.2658) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1257 parent_ref=6 sub_type=0x0000 jsite_ref=2471 insertion=(0.1709, 0.2658) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3579,6 +3582,7 @@
         "x": 0.12929864959946258,
         "y": 0.26515036104106304
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Piping\\Piping OPC's\\Off-Drawing.sym",
       "rotation": -1.5707963267944829,
       "scale": [
         1.0,
@@ -3604,7 +3608,7 @@
       },
       "record_id": "igsymbol2d:3",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1590 parent_ref=6 sub_type=0x0000 insertion=(0.1293, 0.2652) transform=[0.0000, -1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1590 parent_ref=6 sub_type=0x0000 jsite_ref=2471 insertion=(0.1293, 0.2652) transform=[0.0000, -1.0000, -1.0000, -0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3617,6 +3621,7 @@
         "x": 0.17849876687445648,
         "y": 0.12454477432321434
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Labels\\Item Note & Label.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -3642,7 +3647,7 @@
       },
       "record_id": "igsymbol2d:4",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1662 parent_ref=6 sub_type=0x0000 insertion=(0.1785, 0.1245) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1662 parent_ref=6 sub_type=0x0000 jsite_ref=4505 insertion=(0.1785, 0.1245) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3655,6 +3660,7 @@
         "x": -0.01283344279435561,
         "y": 0.3498291107611703
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Graphics\\ElecTraceLine.sym",
       "rotation": -1.570796326794586,
       "scale": [
         1.0,
@@ -3680,7 +3686,7 @@
       },
       "record_id": "igsymbol2d:5",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1711 parent_ref=6 sub_type=0x0000 insertion=(-0.0128, 0.3498) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1711 parent_ref=6 sub_type=0x0000 jsite_ref=7361 insertion=(-0.0128, 0.3498) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3693,6 +3699,7 @@
         "x": 0.10959674350793236,
         "y": 0.06523784031963847
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Graphics\\ElecTraceLine.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -3718,7 +3725,7 @@
       },
       "record_id": "igsymbol2d:6",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1756 parent_ref=6 sub_type=0x0000 insertion=(0.1096, 0.0652) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1756 parent_ref=6 sub_type=0x0000 jsite_ref=7361 insertion=(0.1096, 0.0652) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3731,6 +3738,7 @@
         "x": 0.15651370252785135,
         "y": 0.2663034850780823
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Piping\\Piping OPC's\\Off-Drawing.sym",
       "rotation": -1.5707963267944474,
       "scale": [
         1.0,
@@ -3756,7 +3764,7 @@
       },
       "record_id": "igsymbol2d:7",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1837 parent_ref=6 sub_type=0x0000 insertion=(0.1565, 0.2663) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=1837 parent_ref=6 sub_type=0x0000 jsite_ref=2471 insertion=(0.1565, 0.2663) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3769,6 +3777,7 @@
         "x": 0.18683189219204088,
         "y": 0.10426943417829251
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Labels\\Item Note & Label.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -3794,7 +3803,7 @@
       },
       "record_id": "igsymbol2d:8",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=2267 parent_ref=6 sub_type=0x0000 insertion=(0.1868, 0.1043) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=2267 parent_ref=6 sub_type=0x0000 jsite_ref=4505 insertion=(0.1868, 0.1043) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3807,6 +3816,7 @@
         "x": -0.025640743054062942,
         "y": 0.3498921901726485
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Graphics\\ElecTraceLine.sym",
       "rotation": -1.570796326794586,
       "scale": [
         1.0,
@@ -3832,7 +3842,7 @@
       },
       "record_id": "igsymbol2d:9",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=2301 parent_ref=6 sub_type=0x0000 insertion=(-0.0256, 0.3499) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=2301 parent_ref=6 sub_type=0x0000 jsite_ref=7361 insertion=(-0.0256, 0.3499) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3845,6 +3855,7 @@
         "x": 0.1421059498591699,
         "y": 0.2667012931992341
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Piping\\Piping OPC's\\Off-Drawing.sym",
       "rotation": -1.5707963267944829,
       "scale": [
         1.0,
@@ -3870,7 +3881,7 @@
       },
       "record_id": "igsymbol2d:10",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=2320 parent_ref=6 sub_type=0x0000 insertion=(0.1421, 0.2667) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=2320 parent_ref=6 sub_type=0x0000 jsite_ref=2471 insertion=(0.1421, 0.2667) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3883,6 +3894,7 @@
         "x": 0.24069472855472585,
         "y": 0.2254734587203428
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Equipment Components\\Nozzles\\Gauge Hatch.sym",
       "rotation": 1.5707963267948966,
       "scale": [
         1.0,
@@ -3908,7 +3920,7 @@
       },
       "record_id": "igsymbol2d:11",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=2896 parent_ref=3513 sub_type=0x0010 insertion=(0.2407, 0.2255) transform=[0.0000, 1.0000, -1.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=2896 parent_ref=3513 sub_type=0x0010 jsite_ref=4541 insertion=(0.2407, 0.2255) transform=[0.0000, 1.0000, -1.0000, 0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3921,6 +3933,7 @@
         "x": 0.254460831593585,
         "y": 0.24269234018762628
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Instrumentation\\System Functions\\D C S\\DCS Field Mounted.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -3946,7 +3959,7 @@
       },
       "record_id": "igsymbol2d:12",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=3140 parent_ref=6 sub_type=0x0000 insertion=(0.2545, 0.2427) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=3140 parent_ref=6 sub_type=0x0000 jsite_ref=4488 insertion=(0.2545, 0.2427) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3959,6 +3972,7 @@
         "x": 0.37913438653404424,
         "y": 0.14063105879958337
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Drawing Description.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -3984,7 +3998,7 @@
       },
       "record_id": "igsymbol2d:13",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=3298 parent_ref=6 sub_type=0x0000 insertion=(0.3791, 0.1406) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=3298 parent_ref=6 sub_type=0x0000 jsite_ref=5222 insertion=(0.3791, 0.1406) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -3997,6 +4011,7 @@
         "x": 0.1280017184873557,
         "y": 0.09241555632361617
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Labels\\Item Note & Label.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -4022,7 +4037,7 @@
       },
       "record_id": "igsymbol2d:14",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=3406 parent_ref=6 sub_type=0x0000 insertion=(0.1280, 0.0924) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=3406 parent_ref=6 sub_type=0x0000 jsite_ref=4505 insertion=(0.1280, 0.0924) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -4035,6 +4050,7 @@
         "x": 0.2024493988432723,
         "y": 0.08680112942645427
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Equipment\\Vessels\\Tanks\\Wastewater Pit.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -4060,7 +4076,7 @@
       },
       "record_id": "igsymbol2d:15",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=3864 parent_ref=6 sub_type=0x0000 insertion=(0.2024, 0.0868) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=3864 parent_ref=6 sub_type=0x0000 jsite_ref=4543 insertion=(0.2024, 0.0868) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -4073,6 +4089,7 @@
         "x": 0.30703644323903534,
         "y": 0.22547445872034205
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Equipment Components\\Nozzles\\Flanged Nozzle.sym",
       "rotation": 1.570796326795,
       "scale": [
         1.0,
@@ -4098,7 +4115,7 @@
       },
       "record_id": "igsymbol2d:16",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=4339 parent_ref=1045 sub_type=0x0010 insertion=(0.3070, 0.2255) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=4339 parent_ref=1045 sub_type=0x0010 jsite_ref=4484 insertion=(0.3070, 0.2255) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -4111,6 +4128,7 @@
         "x": 0.30685426709876573,
         "y": 0.2597428858856832
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Piping\\Valves\\2 Way Other\\arrester breather valve(RD).sym",
       "rotation": 1.5707963267953104,
       "scale": [
         1.0,
@@ -4136,7 +4154,7 @@
       },
       "record_id": "igsymbol2d:17",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=4508 parent_ref=6 sub_type=0x0000 insertion=(0.3069, 0.2597) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=4508 parent_ref=6 sub_type=0x0000 jsite_ref=4509 insertion=(0.3069, 0.2597) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -4149,6 +4167,7 @@
         "x": 0.25403094326004316,
         "y": 0.22547445872034205
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Equipment Components\\Nozzles\\Flanged Nozzle.sym",
       "rotation": 1.570796326795,
       "scale": [
         1.0,
@@ -4174,7 +4193,7 @@
       },
       "record_id": "igsymbol2d:18",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=4576 parent_ref=1077 sub_type=0x0010 insertion=(0.2540, 0.2255) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=4576 parent_ref=1077 sub_type=0x0010 jsite_ref=4484 insertion=(0.2540, 0.2255) transform=[-0.0000, 1.0000, -1.0000, -0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -4187,6 +4206,7 @@
         "x": 0.15209705058551126,
         "y": 0.3494091340748726
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Graphics\\ElecTraceLine.sym",
       "rotation": -1.5707963267945864,
       "scale": [
         1.0,
@@ -4212,7 +4232,7 @@
       },
       "record_id": "igsymbol2d:19",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=5921 parent_ref=6 sub_type=0x0000 insertion=(0.1521, 0.3494) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=5921 parent_ref=6 sub_type=0x0000 jsite_ref=7361 insertion=(0.1521, 0.3494) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -4225,6 +4245,7 @@
         "x": 0.42843954401880946,
         "y": -0.12613467927220334
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Labels\\Item Note & Label.sym",
       "rotation": 0.0,
       "scale": [
         1.0,
@@ -4250,7 +4271,7 @@
       },
       "record_id": "igsymbol2d:20",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=6191 parent_ref=6 sub_type=0x0000 insertion=(0.4284, -0.1261) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=6191 parent_ref=6 sub_type=0x0000 jsite_ref=4505 insertion=(0.4284, -0.1261) transform=[1.0000, 0.0000, 0.0000, 1.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -4263,6 +4284,7 @@
         "x": 0.01600789187154819,
         "y": 0.3491667769406457
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Graphics\\ElecTraceLine.sym",
       "rotation": -1.5707963267945864,
       "scale": [
         1.0,
@@ -4288,7 +4310,7 @@
       },
       "record_id": "igsymbol2d:21",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=6507 parent_ref=6 sub_type=0x0000 insertion=(0.0160, 0.3492) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=6507 parent_ref=6 sub_type=0x0000 jsite_ref=7361 insertion=(0.0160, 0.3492) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },
@@ -4301,6 +4323,7 @@
         "x": 0.001574309874327523,
         "y": 0.34913523723490636
       },
+      "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Design\\Annotation\\Graphics\\ElecTraceLine.sym",
       "rotation": -1.570796326794586,
       "scale": [
         1.0,
@@ -4326,7 +4349,7 @@
       },
       "record_id": "igsymbol2d:22",
       "record_kind": "symbol_placement",
-      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=7342 parent_ref=6 sub_type=0x0000 insertion=(0.0016, 0.3491) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump"
+      "note": "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, type 0x00CE, IGDS class tag 0xCE); oid=7342 parent_ref=6 sub_type=0x0000 jsite_ref=7361 insertion=(0.0016, 0.3491) transform=[0.0000, -1.0000, 1.0000, 0.0000]; byte layout from fixture dump; jsite_ref -> JSite<id> link from Phase 35-C cross-fixture probe (132/132)"
     },
     "confidence": "decoded"
   },

@@ -3530,7 +3530,10 @@ fn decode_igtextbox_payload(
 ///   4..7    u32   parent_ref
 ///   8..11   u32   remaining_header
 ///   12..13  u16   sub_type_word
-///   14..T-1 variable sub-fields (flags, references, sub-IDs)
+///   14..T-5 variable sub-fields (flags, references, sub-IDs)
+///   T-4..T-1 u32  jsite_ref — id of the `JSite<id>` storage that
+///                 names this instance's `.sym` path (Phase 35-C,
+///                 132/132 records across 6 fixtures)
 ///   T..T+3  4 bytes   [`IGSYMBOL2D_MATRIX_TAG`], T is 33 or 35
 ///   +0..7   f64   transform[0]  ⎫ 2×2 placement matrix, row-major.
 ///   +8..15  f64   transform[1]  ⎪ Fixtures hold only the eight
@@ -3557,6 +3560,15 @@ pub struct SheetIgSymbol2dDecoded {
     pub parent_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
+    /// Numeric id of the top-level `JSite<id>` storage carrying this
+    /// instance's symbol reference, read from the 4 bytes immediately
+    /// preceding [`IGSYMBOL2D_MATRIX_TAG`]. Phase 35-C cross-fixture
+    /// probe (`examples/probe_igsymbol2d_jsite_link.rs`): 132/132
+    /// records across all 6 fixtures carry a value equal to a same-file
+    /// `JSite<id>` id, and the referenced site's `JProperties` names the
+    /// `.sym` library path. See
+    /// `docs/analysis/2026-07-26-phase35c-igsymbol2d-jsite-link.md`.
+    pub jsite_ref: u32,
     /// Row-major 2×2 placement matrix, read from just past
     /// [`IGSYMBOL2D_MATRIX_TAG`]. An un-rotated, un-mirrored symbol reads
     /// `[1.0, 0.0, 0.0, 1.0]`; a negative determinant means the placement
@@ -3648,11 +3660,21 @@ fn decode_igsymbol_payload(
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
 
     let search_end = IGSYMBOL2D_TAG_SEARCH_END.min(payload.len());
-    let matrix_at = payload
+    let tag_at = payload
         .get(..search_end)?
         .windows(IGSYMBOL2D_MATRIX_TAG.len())
-        .position(|w| w == IGSYMBOL2D_MATRIX_TAG)?
-        + IGSYMBOL2D_MATRIX_TAG.len();
+        .position(|w| w == IGSYMBOL2D_MATRIX_TAG)?;
+    let matrix_at = tag_at + IGSYMBOL2D_MATRIX_TAG.len();
+
+    // The u32 immediately before the matrix tag is the `JSite<id>`
+    // storage id of the placed symbol (Phase 35-C, 132/132 records).
+    let jsite_at = tag_at.checked_sub(4)?;
+    let jsite_ref = u32::from_le_bytes([
+        payload[jsite_at],
+        payload[jsite_at + 1],
+        payload[jsite_at + 2],
+        payload[jsite_at + 3],
+    ]);
 
     // 4 doubles of placement matrix, then the translation pair.
     let mut doubles = [0f64; 6];
@@ -3681,6 +3703,7 @@ fn decode_igsymbol_payload(
         oid,
         parent_ref,
         sub_type_word,
+        jsite_ref,
         transform: [doubles[0], doubles[1], doubles[2], doubles[3]],
         insertion: (doubles[4], doubles[5]),
     })
@@ -4525,7 +4548,9 @@ fn decode_attribute_utf16le(bytes: &[u8]) -> Option<String> {
         return None;
     }
     let units = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]));
     let mut out = String::new();
     for unit in char::decode_utf16(units) {
@@ -6145,6 +6170,7 @@ mod tests {
     fn build_synthetic_igsymbol2d_record(
         oid: u32,
         parent_ref: u32,
+        jsite_ref: u32,
         transform: [f64; 4],
         insertion: (f64, f64),
     ) -> Vec<u8> {
@@ -6155,7 +6181,8 @@ mod tests {
         out.extend_from_slice(&parent_ref.to_le_bytes()); // 4..8
         out.extend_from_slice(&8u32.to_le_bytes()); // 8..12 remaining_header
         out.extend_from_slice(&0x0010u16.to_le_bytes()); // 12..14 sub_type
-        out.extend_from_slice(&[0u8; 19]); // 14..33 sub-fields
+        out.extend_from_slice(&[0u8; 15]); // 14..29 sub-fields
+        out.extend_from_slice(&jsite_ref.to_le_bytes()); // 29..33 JSite<id>
         out.extend_from_slice(&IGSYMBOL2D_MATRIX_TAG); // 33..37
         for v in &transform {
             // 37..69
@@ -6179,6 +6206,7 @@ mod tests {
         let record = build_synthetic_igsymbol2d_record(
             500,
             6,
+            399,
             [1.0, 0.0, 0.0, 1.0], // identity transform
             (0.3, 0.4),
         );
@@ -6189,13 +6217,15 @@ mod tests {
         assert_eq!(s.bytes_to_follow, 113);
         assert_eq!(s.oid, 500);
         assert_eq!(s.parent_ref, 6);
+        assert_eq!(s.jsite_ref, 399);
         assert_eq!(s.transform, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(s.insertion, (0.3, 0.4));
     }
 
     #[test]
     fn igsymbol2d_rejects_wrong_type_code() {
-        let mut record = build_synthetic_igsymbol2d_record(1, 1, [1.0, 0.0, 0.0, 1.0], (0.0, 0.0));
+        let mut record =
+            build_synthetic_igsymbol2d_record(1, 1, 0, [1.0, 0.0, 0.0, 1.0], (0.0, 0.0));
         record[0] = 0x18;
         record[1] = 0x00;
         assert!(decode_igsymbols(&record).is_empty());
@@ -6212,7 +6242,8 @@ mod tests {
 
     #[test]
     fn igsymbol2d_rejects_nan_transform_element() {
-        let mut record = build_synthetic_igsymbol2d_record(1, 1, [1.0, 0.0, 0.0, 1.0], (0.0, 0.0));
+        let mut record =
+            build_synthetic_igsymbol2d_record(1, 1, 0, [1.0, 0.0, 0.0, 1.0], (0.0, 0.0));
         let at = PSM_ENVELOPE_LEN + SYNTHETIC_IGSYMBOL2D_MATRIX_AT;
         record[at..at + 8].copy_from_slice(&f64::NAN.to_le_bytes());
         assert!(decode_igsymbols(&record).is_empty());
@@ -6220,7 +6251,8 @@ mod tests {
 
     #[test]
     fn igsymbol2d_rejects_record_without_matrix_tag() {
-        let mut record = build_synthetic_igsymbol2d_record(1, 1, [1.0, 0.0, 0.0, 1.0], (0.5, 0.5));
+        let mut record =
+            build_synthetic_igsymbol2d_record(1, 1, 0, [1.0, 0.0, 0.0, 1.0], (0.5, 0.5));
         let tag_at = PSM_ENVELOPE_LEN + 33;
         record[tag_at..tag_at + IGSYMBOL2D_MATRIX_TAG.len()].copy_from_slice(&[0xFF; 4]);
         assert!(decode_igsymbols(&record).is_empty());
@@ -6229,23 +6261,27 @@ mod tests {
     #[test]
     fn igsymbol2d_follows_the_tag_when_the_header_grows() {
         // The 115- and 123-byte fixture families push the matrix two
-        // bytes later; a decoder pinned to one offset misses them.
-        let base = build_synthetic_igsymbol2d_record(7, 6, [0.0, 1.0, -1.0, 0.0], (0.25, 0.75));
+        // bytes later; a decoder pinned to one offset misses them. The
+        // growth happens before the JSite id, which stays glued to the
+        // tag (Phase 35-C: +29 records vs +31 records).
+        let base =
+            build_synthetic_igsymbol2d_record(7, 6, 204, [0.0, 1.0, -1.0, 0.0], (0.25, 0.75));
         let mut shifted = base.clone();
-        let tag_at = PSM_ENVELOPE_LEN + 33;
-        shifted.splice(tag_at..tag_at, [0u8, 0u8]);
+        let jsite_at = PSM_ENVELOPE_LEN + 29;
+        shifted.splice(jsite_at..jsite_at, [0u8, 0u8]);
         let btf = (shifted.len() - PSM_ENVELOPE_LEN) as u32;
         shifted[2..6].copy_from_slice(&btf.to_le_bytes());
 
         let decoded = decode_igsymbols(&shifted);
         assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].jsite_ref, 204);
         assert_eq!(decoded[0].transform, [0.0, 1.0, -1.0, 0.0]);
         assert_eq!(decoded[0].insertion, (0.25, 0.75));
     }
 
     #[test]
     fn igsymbol2d_decoder_is_panic_safe_on_short_input() {
-        let record = build_synthetic_igsymbol2d_record(1, 1, [1.0, 0.0, 0.0, 1.0], (0.5, 0.5));
+        let record = build_synthetic_igsymbol2d_record(1, 1, 0, [1.0, 0.0, 0.0, 1.0], (0.5, 0.5));
         for trunc_len in 0..record.len() {
             assert!(decode_igsymbols(&record[..trunc_len]).is_empty());
         }
