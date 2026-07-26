@@ -26,3 +26,9 @@ dlls/
 # may enter git; .pid files MUST NOT.
 test-file/controlled-diff/before/*.pid
 test-file/controlled-diff/after/*.pid
+
+# Full SmartPlant symbol library unpacked from the RefData backup zips
+# for corpus runs. test-file/symbols/PROVENANCE.md grants no
+# redistribution right, so only the two committed sample .sym files may
+# enter git; re-extract the rest locally when a corpus run needs them.
+test-file/symbols-full/
