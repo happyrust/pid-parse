@@ -37,7 +37,7 @@ use super::sheet::SheetGeometry;
 use crate::parsers::sheet_records::{
     decode_attribute_fragments, decode_graphic_groups, decode_igboundaries, decode_iglines,
     decode_iglinestrings, decode_igpoints, decode_igsymbols, decode_igtextboxes,
-    decode_jstyle_overrides, decode_primitive_lines, decode_sub_records_0x0010,
+    decode_jstyle_overrides, decode_primitive_lines, decode_smartframes, decode_sub_records_0x0010,
 };
 
 /// Byte-audit claim class for a family's decoded byte envelopes.
@@ -235,6 +235,27 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
         },
     },
     SheetRecordFamily {
+        name: "igSmartFrame2d",
+        type_code: 0x003D,
+        emits_geometry: false,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_igsmartframes",
+        model_dto: "DecodedIgSmartFrame2dRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_igsmartframes = decode_smartframes(data)
+                .into_iter()
+                .map(Into::into)
+                .collect();
+        },
+        record_count: |geometry| geometry.decoded_igsmartframes.len(),
+        decoded_ranges: |data| {
+            decode_smartframes(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
+    SheetRecordFamily {
         name: "GraphicGroup",
         type_code: 0x00FA,
         emits_geometry: false,
@@ -347,8 +368,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_eleven_rows_with_unique_fields() {
-        assert_eq!(SHEET_RECORD_FAMILIES.len(), 11);
+    fn registry_has_twelve_rows_with_unique_fields() {
+        assert_eq!(SHEET_RECORD_FAMILIES.len(), 12);
         let mut fields: Vec<&str> = SHEET_RECORD_FAMILIES
             .iter()
             .map(|f| f.geometry_field)
@@ -357,7 +378,7 @@ mod tests {
         fields.dedup();
         assert_eq!(
             fields.len(),
-            11,
+            12,
             "every registry row must own a distinct SheetGeometry field"
         );
     }
@@ -419,6 +440,7 @@ mod tests {
             audit_only,
             vec![
                 "igBoundary2d",
+                "igSmartFrame2d",
                 "GraphicGroup",
                 "SubRecord0x0010",
                 "AttributeFragment"

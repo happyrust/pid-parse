@@ -4950,6 +4950,231 @@ fn decode_igboundary_payload(
     })
 }
 
+// ---------------------------------------------------------------------------
+// PSM `igSmartFrame2d` (type `0x003D`) — typed sheet-frame decoder
+//
+// Named from the native reader rather than inferred. `radsrvitem.dll`
+// `sub_564464D0` validates the record and classifies it:
+//
+//   if ( *(WORD *)a2 != 61 ) return E_INVALIDARG;        // 61 == 0x003D
+//   v6 = *(DWORD *)(a2 + 32);
+//   if ( (*(DWORD *)(a2 + 20) & 0x8000) == 0 )  "_Empty SmartFrame2d"     igOLENone
+//   else if ( !(v6 & 0x40) && !(v6 & 0x20000) ) "_Embedded SmartFrame2d"  igOLEEmbedded
+//   else if ( v6 & 0x20000 )                    "_Locally Linked ..."     igOLELinked
+//   else                                        externally linked         igOLELinked
+//
+// It reads the type word at `a2 + 0`, which is where the PSM envelope puts
+// it, so `a2` is the record start and the two flag words are at record
+// `+20` / `+32` — payload `+14` / `+26`.
+//
+// The record is an OLE container frame, and a P&ID's sheet border is a
+// linked OLE object, which is why the payload carries a page extent without
+// being a page transform on its own: it is the framed object's own size.
+// Across the six fixtures both flag words take only three distinct values
+// each over all twelve records, and the classification agrees with the
+// payload — the eleven embedded/linked frames carry ISO A-series pages,
+// while the single locally-linked one sits in a nested JSite with a
+// degenerate 1e-6 extent.
+//
+// See `docs/analysis/2026-07-27-smartframe-003d-native-reader.md`.
+// ---------------------------------------------------------------------------
+
+/// PSM type code of an `igSmartFrame2d` record (`61`).
+pub const PSM_TYPE_CODE_IGSMARTFRAME: u16 = 0x003D;
+
+/// Payload offset of the content flag word (record `+20`).
+const IGSMARTFRAME_CONTENT_FLAGS_AT: usize = 14;
+/// Payload offset of the link flag word (record `+32`).
+const IGSMARTFRAME_LINK_FLAGS_AT: usize = 26;
+/// Payload offset of the framed extent's width, in metres.
+const IGSMARTFRAME_WIDTH_AT: usize = 76;
+/// Payload offset of the framed extent's height, in metres.
+const IGSMARTFRAME_HEIGHT_AT: usize = 84;
+/// Payload offset of the extent's aspect ratio (`height / width`).
+const IGSMARTFRAME_ASPECT_AT: usize = 148;
+/// Shortest payload that reaches every field above.
+const IGSMARTFRAME_MIN_PAYLOAD: usize = IGSMARTFRAME_ASPECT_AT + 8;
+
+/// `record + 20` bit: the frame holds something.
+const IGSMARTFRAME_HAS_CONTENT: u32 = 0x8000;
+/// `record + 32` bit: the framed object is linked rather than embedded.
+const IGSMARTFRAME_LINKED: u32 = 0x40;
+/// `record + 32` bit: the link is local to the drawing.
+const IGSMARTFRAME_LOCALLY_LINKED: u32 = 0x2_0000;
+
+/// Widest sheet a page extent can plausibly claim, in metres. ISO A0 is
+/// 1.189m; this only has to reject the degenerate and the absurd.
+const IGSMARTFRAME_MAX_PAGE_M: f64 = 5.0;
+/// Narrowest sheet a page extent can plausibly claim, in metres.
+const IGSMARTFRAME_MIN_PAGE_M: f64 = 0.05;
+
+/// Which of the native reader's three states a frame is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SheetSmartFrame2dState {
+    /// `igOLENone` — the frame holds nothing.
+    Empty,
+    /// `igOLEEmbedded` — the framed object is stored in this drawing.
+    Embedded,
+    /// `igOLELinked` against an external document.
+    Linked,
+    /// `igOLELinked` against something inside this drawing.
+    LocallyLinked,
+}
+
+/// One decoded PSM `igSmartFrame2d` record (PSM type `0x003D`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgSmartFrame2dDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_IGSMARTFRAME`].
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header.
+    pub bytes_to_follow: u32,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Content flag word at payload `+14`, verbatim.
+    pub content_flags: u32,
+    /// Link flag word at payload `+26`, verbatim.
+    pub link_flags: u32,
+    /// State the native reader's rules put the frame in.
+    pub state: SheetSmartFrame2dState,
+    /// Framed extent width in metres (payload `+76`).
+    pub extent_width_m: f64,
+    /// Framed extent height in metres (payload `+84`).
+    pub extent_height_m: f64,
+    /// Extent aspect ratio (payload `+148`); `1/sqrt(2)` on ISO A sheets.
+    pub aspect_ratio: f64,
+}
+
+impl SheetIgSmartFrame2dDecoded {
+    /// The extent as a sheet page, or `None` when this frame is not one.
+    ///
+    /// An empty frame has nothing to size, and a locally-linked frame is not
+    /// a page — the one in the fixtures is a nested-site placeholder whose
+    /// extent is a micrometre square. What remains is the drawing's border
+    /// template, embedded or linked, whose extent is the sheet size.
+    #[must_use]
+    pub fn page_extent_m(&self) -> Option<(f64, f64)> {
+        if !matches!(
+            self.state,
+            SheetSmartFrame2dState::Embedded | SheetSmartFrame2dState::Linked
+        ) {
+            return None;
+        }
+        let plausible = |v: f64| (IGSMARTFRAME_MIN_PAGE_M..=IGSMARTFRAME_MAX_PAGE_M).contains(&v);
+        (plausible(self.extent_width_m) && plausible(self.extent_height_m))
+            .then_some((self.extent_width_m, self.extent_height_m))
+    }
+}
+
+/// Decode every PSM `igSmartFrame2d` record in a `Sheet*` stream.
+///
+/// Thin wrapper over [`IgSmartFrame2dDecoder`]'s shared
+/// [`PsmRecordDecoder::scan`].
+pub fn decode_smartframes(data: &[u8]) -> Vec<SheetIgSmartFrame2dDecoded> {
+    IgSmartFrame2dDecoder.scan(data)
+}
+
+/// Try to decode a single PSM `igSmartFrame2d` record at `offset`.
+pub fn decode_smartframe_at(data: &[u8], offset: usize) -> Option<SheetIgSmartFrame2dDecoded> {
+    IgSmartFrame2dDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the `igSmartFrame2d` family.
+pub struct IgSmartFrame2dDecoder;
+
+impl PsmRecordDecoder for IgSmartFrame2dDecoder {
+    type Record = SheetIgSmartFrame2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGSMARTFRAME
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGSMARTFRAME_MIN_PAYLOAD
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgSmartFrame2dDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGSMARTFRAME {
+            return None;
+        }
+        let payload_len = usize::try_from(header.bytes_to_follow).ok()?;
+        if payload_len < IGSMARTFRAME_MIN_PAYLOAD {
+            return None;
+        }
+        let payload_end = header.body_start.checked_add(payload_len)?;
+        let payload = data.get(header.body_start..payload_end)?;
+
+        let u32_at = |at: usize| -> Option<u32> {
+            payload
+                .get(at..at + 4)
+                .and_then(|s| <[u8; 4]>::try_from(s).ok())
+                .map(u32::from_le_bytes)
+        };
+        let f64_at = |at: usize| -> Option<f64> {
+            payload
+                .get(at..at + 8)
+                .and_then(|s| <[u8; 8]>::try_from(s).ok())
+                .map(f64::from_le_bytes)
+        };
+
+        let content_flags = u32_at(IGSMARTFRAME_CONTENT_FLAGS_AT)?;
+        let link_flags = u32_at(IGSMARTFRAME_LINK_FLAGS_AT)?;
+        let extent_width_m = f64_at(IGSMARTFRAME_WIDTH_AT)?;
+        let extent_height_m = f64_at(IGSMARTFRAME_HEIGHT_AT)?;
+        let aspect_ratio = f64_at(IGSMARTFRAME_ASPECT_AT)?;
+        // A frame with a non-finite or negative extent is not a frame this
+        // reader understands, whatever the flags say.
+        if ![extent_width_m, extent_height_m, aspect_ratio]
+            .iter()
+            .all(|v| v.is_finite())
+            || extent_width_m < 0.0
+            || extent_height_m < 0.0
+        {
+            return None;
+        }
+
+        let state = if content_flags & IGSMARTFRAME_HAS_CONTENT == 0 {
+            SheetSmartFrame2dState::Empty
+        } else if link_flags & IGSMARTFRAME_LINKED == 0
+            && link_flags & IGSMARTFRAME_LOCALLY_LINKED == 0
+        {
+            SheetSmartFrame2dState::Embedded
+        } else if link_flags & IGSMARTFRAME_LOCALLY_LINKED != 0 {
+            SheetSmartFrame2dState::LocallyLinked
+        } else {
+            SheetSmartFrame2dState::Linked
+        };
+
+        Some(SheetIgSmartFrame2dDecoded {
+            byte_range: offset..payload_end,
+            type_code: header.type_code,
+            type_flags: header.type_flags,
+            bytes_to_follow: header.bytes_to_follow,
+            oid: u32_at(0)?,
+            parent_ref: u32_at(4)?,
+            content_flags,
+            link_flags,
+            state,
+            extent_width_m,
+            extent_height_m,
+            aspect_ratio,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgSmartFrame2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

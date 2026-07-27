@@ -778,6 +778,7 @@ mod tests {
                 decoded_igtextboxes: vec![],
                 decoded_igsymbols: vec![],
                 decoded_igboundaries: vec![],
+                decoded_igsmartframes: vec![],
                 decoded_graphic_groups: vec![],
                 decoded_jstyle_overrides: vec![],
                 decoded_sub_records_0x0010: vec![],

@@ -48,8 +48,9 @@ use pid_parse::parsers::sheet_records::{
     decode_iglinestring_at, decode_iglinestrings, decode_igpoint_at, decode_igpoints,
     decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at, decode_igtextboxes,
     decode_jstyle_override_at, decode_jstyle_overrides, decode_primitive_line_at,
-    decode_primitive_lines, decode_sub_record_0x0010_at, decode_sub_records_0x0010,
-    parse_psm_header, IgLine2dDecoder, PsmRecordDecoder, SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+    decode_primitive_lines, decode_smartframe_at, decode_smartframes, decode_sub_record_0x0010_at,
+    decode_sub_records_0x0010, parse_psm_header, IgLine2dDecoder, PsmRecordDecoder,
+    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
 use pid_parse::parsers::tagged_stg_list::parse_tagged_stg_list;
@@ -295,6 +296,16 @@ fn exercise_all_parsers(input: &[u8]) {
     if !input.is_empty() {
         let _ = decode_igboundary_at(input, input.len() - 1);
         let _ = decode_igboundary_at(input, input.len());
+    }
+
+    // PSM `0x003D` igSmartFrame2d decoder. The page a drawing's border
+    // record proves is read out of this, so a malformed frame must fail
+    // the record rather than the parse.
+    let _ = decode_smartframes(input);
+    let _ = decode_smartframe_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_smartframe_at(input, input.len() - 1);
+        let _ = decode_smartframe_at(input, input.len());
     }
 
     // Phase 16 Slice D: PSM `0x0030` JStyleOverride decoder (real

@@ -106,6 +106,17 @@ pub struct SheetGeometry {
     /// size/sub-type buckets.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_graphic_groups: Vec<DecodedGraphicGroupRecord>,
+    /// PSM `0x003D` `igSmartFrame2d` records emitted by
+    /// [`crate::parsers::sheet_records::decode_smartframes`].
+    ///
+    /// An OLE container frame. The drawing's border is one of these, linked
+    /// or embedded, so an entry whose
+    /// [`DecodedIgSmartFrame2dRecord::page_extent_m`] is `Some` gives the
+    /// sheet size. It emits no normalized geometry: the extent is metadata
+    /// about the page, and the border's own strokes live in the linked
+    /// template rather than in this drawing.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igsmartframes: Vec<DecodedIgSmartFrame2dRecord>,
     /// PSM-decoded `JStyleOverride` records (PSM type `0x0030`,
     /// RAD `style.dll` CLSID `{47FCC338-...}`) emitted by
     /// [`crate::parsers::sheet_records::decode_jstyle_overrides`].
@@ -802,6 +813,112 @@ impl From<crate::parsers::sheet_records::SheetIgBoundary2dDecoded> for DecodedIg
                 .collect(),
             closed_loop,
         }
+    }
+}
+
+/// Which of the native reader's three OLE states an `igSmartFrame2d`
+/// record is in. Model-shaped mirror of
+/// [`crate::parsers::sheet_records::SheetSmartFrame2dState`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SmartFrame2dState {
+    /// `igOLENone` — the frame holds nothing.
+    Empty,
+    /// `igOLEEmbedded` — the framed object is stored in this drawing.
+    Embedded,
+    /// `igOLELinked` against an external document.
+    Linked,
+    /// `igOLELinked` against something inside this drawing.
+    LocallyLinked,
+}
+
+/// Fully-typed model DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgSmartFrame2dDecoded`] —
+/// PSM type `0x003D` `igSmartFrame2d`.
+///
+/// The record is an OLE container frame, and a P&ID's sheet border is a
+/// linked OLE object, so an embedded or linked frame's extent is the sheet
+/// size. Field names come from `radsrvitem.dll sub_564464D0` rather than
+/// from inference; see
+/// `docs/analysis/2026-07-27-smartframe-003d-native-reader.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgSmartFrame2dRecord {
+    /// Inclusive byte-range start covering the full PSM record.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// PSM 14-bit type code. Always `0x003D`.
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM header.
+    pub bytes_to_follow: u32,
+    /// Frame object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Content flag word at payload `+14` (record `+20`), verbatim. Bit
+    /// `0x8000` is the reader's has-content test.
+    pub content_flags: u32,
+    /// Link flag word at payload `+26` (record `+32`), verbatim. Bits
+    /// `0x40` and `0x20000` are the reader's linked / locally-linked tests.
+    pub link_flags: u32,
+    /// State the reader's rules put the frame in.
+    pub state: SmartFrame2dState,
+    /// Framed extent width in metres (payload `+76`).
+    pub extent_width_m: f64,
+    /// Framed extent height in metres (payload `+84`).
+    pub extent_height_m: f64,
+    /// Extent aspect ratio (payload `+148`); `1/sqrt(2)` on ISO A sheets.
+    pub aspect_ratio: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgSmartFrame2dDecoded>
+    for DecodedIgSmartFrame2dRecord
+{
+    fn from(d: crate::parsers::sheet_records::SheetIgSmartFrame2dDecoded) -> Self {
+        use crate::parsers::sheet_records::SheetSmartFrame2dState as S;
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_code: d.type_code,
+            type_flags: d.type_flags,
+            bytes_to_follow: d.bytes_to_follow,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            content_flags: d.content_flags,
+            link_flags: d.link_flags,
+            state: match d.state {
+                S::Empty => SmartFrame2dState::Empty,
+                S::Embedded => SmartFrame2dState::Embedded,
+                S::Linked => SmartFrame2dState::Linked,
+                S::LocallyLinked => SmartFrame2dState::LocallyLinked,
+            },
+            extent_width_m: d.extent_width_m,
+            extent_height_m: d.extent_height_m,
+            aspect_ratio: d.aspect_ratio,
+        }
+    }
+}
+
+impl DecodedIgSmartFrame2dRecord {
+    /// The extent as a sheet page, or `None` when this frame is not one.
+    ///
+    /// Mirrors
+    /// [`crate::parsers::sheet_records::SheetIgSmartFrame2dDecoded::page_extent_m`]:
+    /// an empty frame has nothing to size, and a locally-linked frame is a
+    /// nested-site placeholder rather than a border.
+    #[must_use]
+    pub fn page_extent_m(&self) -> Option<(f64, f64)> {
+        if !matches!(
+            self.state,
+            SmartFrame2dState::Embedded | SmartFrame2dState::Linked
+        ) {
+            return None;
+        }
+        let plausible = |v: f64| (0.05..=5.0).contains(&v);
+        (plausible(self.extent_width_m) && plausible(self.extent_height_m))
+            .then_some((self.extent_width_m, self.extent_height_m))
     }
 }
 
