@@ -54,9 +54,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("poly,{}", coords.join(","));
             }
             SymbolPrimitive::Text { text, at } => {
-                // Quoted last so a comma or a newline in the label cannot be
-                // read as another column.
-                println!("text,{},{},{text:?}", at.0, at.1);
+                // Height and rotation are zero because the record carries
+                // neither; the columns are there so a drawing-level dump can
+                // use the same row shape. Quoted last so a comma or a newline
+                // in the label cannot be read as another column.
+                println!("text,{},{},0,0,{text:?}", at.0, at.1);
             }
         }
     }

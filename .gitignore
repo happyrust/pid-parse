@@ -2,9 +2,11 @@
 /target-gates/
 .ace-tool/
 
-# Local scratch: compiler crash dumps and tool debug logs.
+# Local scratch: compiler crash dumps, tool debug logs, and the PNG/CSV a
+# `plot_symbol.ps1` run leaves behind (regenerate it, don't commit it).
 rustc-ice-*.txt
 debug.log
+.plot/
 .cursor/
 .cursorignore
 .factory/
