@@ -27,6 +27,7 @@
 //! ```
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -387,12 +388,18 @@ pub fn library_relative_path(symbol_path: &str) -> Option<&str> {
 /// A local copy of a `SmartPlant` symbol library, resolving the UNC paths
 /// carried by placements to the bodies on disk.
 ///
+/// More than one root is allowed, searched in order. Drawings from different
+/// projects name different reference shares — the fixtures here cite five —
+/// and a local machine usually holds several partial copies rather than one
+/// merged tree, so a single root leaves whichever project it did not come
+/// from undrawn.
+///
 /// Lookups are cached, including misses: a drawing places the same handful
 /// of symbols dozens of times, and a project that lacks a symbol lacks it
 /// for every placement.
 #[derive(Debug)]
 pub struct SymbolLibrary {
-    root: PathBuf,
+    roots: Vec<PathBuf>,
     cache: BTreeMap<String, Option<SymbolGeometry>>,
 }
 
@@ -401,15 +408,29 @@ impl SymbolLibrary {
     /// `Piping`, `Equipment` … trees.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
-            root: root.into(),
+            roots: vec![root.into()],
             cache: BTreeMap::new(),
         }
     }
 
-    /// The directory this library reads from.
+    /// Point the library at several such directories, searched in order.
+    pub fn with_roots<P: Into<PathBuf>>(roots: impl IntoIterator<Item = P>) -> Self {
+        Self {
+            roots: roots.into_iter().map(Into::into).collect(),
+            cache: BTreeMap::new(),
+        }
+    }
+
+    /// Build a library from a `PATH`-style list of roots — `;` separated on
+    /// Windows, `:` elsewhere — in search order.
+    pub fn from_path_list(list: &OsStr) -> Self {
+        Self::with_roots(std::env::split_paths(list))
+    }
+
+    /// The directories this library reads from, in search order.
     #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
     }
 
     /// Number of distinct symbol paths looked up so far, resolved or not.
@@ -440,19 +461,39 @@ impl SymbolLibrary {
 
     /// Resolve a placement's symbol path to its body.
     ///
-    /// Returns `None` when the path is not library-relative, the file is
-    /// absent, or it cannot be read. A symbol that reads but holds no
-    /// geometry resolves to an empty body, which callers can tell from a
-    /// miss.
+    /// Returns `None` when the path is not library-relative, or when no root
+    /// holds a readable copy. A symbol that reads but holds no geometry
+    /// resolves to an empty body, which callers can tell from a miss.
     pub fn resolve(&mut self, symbol_path: &str) -> Option<&SymbolGeometry> {
         if !self.cache.contains_key(symbol_path) {
-            let body = library_relative_path(symbol_path)
-                .map(|relative| self.root.join(relative.replace('\\', "/")))
-                .filter(|path| path.is_file())
-                .and_then(|path| read_symbol_geometry(&path).ok());
+            let body = self.read_from_roots(symbol_path);
             self.cache.insert(symbol_path.to_owned(), body);
         }
         self.cache.get(symbol_path)?.as_ref()
+    }
+
+    /// Read a symbol from the first root that draws it.
+    ///
+    /// A root can hold a symbol as a text-only or connect-point body with
+    /// nothing to draw while another root has the drawn version, so an empty
+    /// body is kept only as a fallback rather than ending the search.
+    fn read_from_roots(&self, symbol_path: &str) -> Option<SymbolGeometry> {
+        let relative = library_relative_path(symbol_path)?.replace('\\', "/");
+        let mut empty = None;
+        for root in &self.roots {
+            let path = root.join(&relative);
+            if !path.is_file() {
+                continue;
+            }
+            let Ok(body) = read_symbol_geometry(&path) else {
+                continue;
+            };
+            if !body.primitives.is_empty() {
+                return Some(body);
+            }
+            empty.get_or_insert(body);
+        }
+        empty
     }
 }
 
@@ -460,13 +501,30 @@ impl SymbolLibrary {
 mod tests {
     use super::*;
 
-    fn fixture(relative: &str) -> Option<PathBuf> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+    fn symbols_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("test-file")
             .join("symbols")
-            .join(relative);
+    }
+
+    fn fixture(relative: &str) -> Option<PathBuf> {
+        let path = symbols_root().join(relative);
         path.is_file().then_some(path)
     }
+
+    fn scratch_root(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "pid-parse-symlib-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).expect("scratch root");
+        path
+    }
+
+    const CIRCLE_UNC: &str = r"\\WIN-SPID\p\Ref\Symbols\Design\Annotation\Graphics\Circle.sym";
 
     #[test]
     fn library_relative_path_strips_every_site_prefix() {
@@ -545,15 +603,13 @@ mod tests {
 
     #[test]
     fn library_resolves_through_a_unc_path_and_caches_the_miss() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("test-file")
-            .join("symbols");
+        let root = symbols_root();
         if !root.is_dir() {
             return;
         }
         let mut library = SymbolLibrary::new(&root);
         let hit = library
-            .resolve(r"\\WIN-SPID\p\Ref\Symbols\Design\Annotation\Graphics\Circle.sym")
+            .resolve(CIRCLE_UNC)
             .map(|body| body.primitives.len());
         assert_eq!(hit, Some(1));
 
@@ -563,5 +619,51 @@ mod tests {
         assert_eq!(library.lookups(), 2);
         assert_eq!(library.resolved(), 1);
         assert_eq!(library.missing().len(), 1);
+    }
+
+    #[test]
+    fn library_searches_past_a_root_that_lacks_the_symbol() {
+        // The fixtures cite five different reference shares, and a machine
+        // normally holds a partial copy of each rather than one merged tree.
+        if !symbols_root().is_dir() {
+            return;
+        }
+        let absent = scratch_root("absent");
+        let mut library = SymbolLibrary::with_roots([absent.clone(), symbols_root()]);
+        let hit = library
+            .resolve(CIRCLE_UNC)
+            .map(|body| body.primitives.len());
+        assert_eq!(hit, Some(1), "the second root holds the symbol");
+        std::fs::remove_dir_all(&absent).ok();
+    }
+
+    #[test]
+    fn library_searches_past_a_root_whose_copy_will_not_read() {
+        // A partial copy can leave a placeholder or a truncated file where
+        // another copy has the real symbol. That must not end the search.
+        if !symbols_root().is_dir() {
+            return;
+        }
+        let broken = scratch_root("broken");
+        let dir = broken.join("Design").join("Annotation").join("Graphics");
+        std::fs::create_dir_all(&dir).expect("scratch tree");
+        std::fs::write(dir.join("Circle.sym"), b"not a compound file").expect("placeholder");
+
+        let mut library = SymbolLibrary::with_roots([broken.clone(), symbols_root()]);
+        let hit = library
+            .resolve(CIRCLE_UNC)
+            .map(|body| body.primitives.len());
+        assert_eq!(hit, Some(1), "the readable copy wins");
+        std::fs::remove_dir_all(&broken).ok();
+    }
+
+    #[test]
+    fn from_path_list_keeps_the_roots_in_order() {
+        let joined =
+            std::env::join_paths([Path::new("/first"), Path::new("/second")]).expect("plain paths");
+        let library = SymbolLibrary::from_path_list(&joined);
+        assert_eq!(library.roots().len(), 2);
+        assert!(library.roots()[0].ends_with("first"));
+        assert!(library.roots()[1].ends_with("second"));
     }
 }

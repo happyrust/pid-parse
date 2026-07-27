@@ -28,12 +28,26 @@ fn test_file_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("test-file")
 }
 
-fn symbols_root() -> PathBuf {
+/// Where to read the library from: the arguments, else `PID_SYMBOL_LIBRARY`
+/// (the same override the importer honours), else the unpacked corpus, else
+/// the two committed samples.
+///
+/// Several roots are allowed because the fixtures come from different
+/// projects citing different reference shares, and a machine normally holds
+/// a partial copy of each rather than one merged tree.
+fn symbols_roots() -> Vec<PathBuf> {
+    let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    if !args.is_empty() {
+        return args;
+    }
+    if let Some(env) = std::env::var_os("PID_SYMBOL_LIBRARY") {
+        return std::env::split_paths(&env).collect();
+    }
     let full = test_file_root().join("symbols-full");
     if full.is_dir() {
-        full
+        vec![full]
     } else {
-        test_file_root().join("symbols")
+        vec![test_file_root().join("symbols")]
     }
 }
 
@@ -55,11 +69,20 @@ fn collect_syms(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let root = symbols_root();
+    let roots = symbols_roots();
     let mut syms = Vec::new();
-    collect_syms(&root, &mut syms);
+    for root in &roots {
+        collect_syms(root, &mut syms);
+    }
     syms.sort();
-    println!("library: {} symbols under {}", syms.len(), root.display());
+    println!(
+        "library: {} symbols under {} root(s)",
+        syms.len(),
+        roots.len()
+    );
+    for root in &roots {
+        println!("  {}", root.display());
+    }
 
     let (mut lines, mut circles, mut arcs, mut polylines) = (0usize, 0usize, 0usize, 0usize);
     let mut empty = 0usize;
@@ -86,8 +109,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for (code, count) in &body.skipped_records {
             *skipped.entry(*code).or_default() += count;
         }
-        let name = sym
-            .strip_prefix(&root)
+        let name = roots
+            .iter()
+            .find_map(|root| sym.strip_prefix(root).ok())
             .unwrap_or(sym.as_path())
             .display()
             .to_string();
@@ -123,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n-- placements in the drawing fixtures --");
-    let mut library = SymbolLibrary::new(&root);
+    let mut library = SymbolLibrary::with_roots(roots.clone());
     let (mut placed, mut drawable, mut drawable_primitives) = (0usize, 0usize, 0usize);
     let mut unnamed = 0usize;
 
