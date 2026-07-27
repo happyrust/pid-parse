@@ -14,16 +14,18 @@ use pid_parse::{
         coordinate_pair_spatial_analysis, curve_primitive_investigation_report,
         decode_attribute_fragments, decode_graphic_groups, decode_igboundaries, decode_iglines,
         decode_iglinestrings, decode_igpoints, decode_igsymbols, decode_igtextboxes,
-        decode_jstyle_overrides, decode_primitive_lines, decode_sub_records_0x0010,
-        primitive_line_investigation_report, sheet_record_shape_inventory,
-        symbol_placement_investigation_report, text_placement_investigation_report,
-        SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
-        SheetRecordShapeKind, SheetSymbolPlacementObject, GRAPHIC_GROUP_MIN_PAYLOAD_LEN,
+        decode_jstyle_overrides, decode_primitive_lines, decode_smartframes,
+        decode_sub_records_0x0010, primitive_line_investigation_report,
+        sheet_record_shape_inventory, symbol_placement_investigation_report,
+        text_placement_investigation_report, SheetCoordinatePageMetadataCandidateKind,
+        SheetCurvePrimitiveCandidateKind, SheetRecordShapeKind, SheetSmartFrame2dState,
+        SheetSymbolPlacementObject, GRAPHIC_GROUP_MIN_PAYLOAD_LEN,
         JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW, JSTYLE_OVERRIDE_PAYLOAD_LEN, PSM_TYPE_CODE_GLINE2D,
         PSM_TYPE_CODE_GRAPHIC_GROUP, PSM_TYPE_CODE_IGBOUNDARY2D, PSM_TYPE_CODE_IGLINE2D,
-        PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D,
-        PSM_TYPE_CODE_IGTEXTBOX, PSM_TYPE_CODE_JSTYLE_OVERRIDE, PSM_TYPE_CODE_SUB_RECORD_0X0010,
-        SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW, SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
+        PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSMARTFRAME,
+        PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+        PSM_TYPE_CODE_SUB_RECORD_0X0010, SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW,
+        SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
     },
     PidParser,
 };
@@ -1821,6 +1823,21 @@ fn sheet_probe_evidence_populates_on_real_sheet_fixture() {
     );
 }
 
+/// The page a sheet's decoded `igSmartFrame2d` proves, in metres.
+///
+/// This is the *only* evidence allowed to promote a sheet's units and page
+/// transform, so the guards below use it to decide which of the two states
+/// each entity must be in. Template names, probe candidates and non-Sheet
+/// scalar scans deliberately do not appear here.
+fn sheet_frame_page_extent_m(sheet: &pid_parse::SheetStream) -> Option<(f64, f64)> {
+    sheet
+        .geometry
+        .as_ref()?
+        .decoded_igsmartframes
+        .iter()
+        .find_map(pid_parse::DecodedIgSmartFrame2dRecord::page_extent_m)
+}
+
 #[test]
 fn normalized_geometry_probe_baseline_on_real_fixture() {
     print_geometry_fixture_availability();
@@ -2170,13 +2187,27 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
         );
     }
 
-    assert!(
-        geometry
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("coordinate units and page transforms are unavailable")),
-        "normalized geometry should report explicit transform-unavailable diagnostics"
-    );
+    // Whichever state the fixture is in, the warnings have to say so, and
+    // a promoted transform has to name the record that promoted it.
+    if doc
+        .sheet_streams
+        .iter()
+        .any(|sheet| sheet_frame_page_extent_m(sheet).is_some())
+    {
+        assert!(
+            geometry.warnings.iter().any(|warning| {
+                warning.contains("page transform proven by a decoded igSmartFrame2d frame record")
+            }),
+            "normalized geometry should name the frame record behind its promoted transforms"
+        );
+    } else {
+        assert!(
+            geometry.warnings.iter().any(|warning| {
+                warning.contains("coordinate units and page transforms are unavailable")
+            }),
+            "normalized geometry should report explicit transform-unavailable diagnostics"
+        );
+    }
     assert!(
         geometry
             .warnings
@@ -2219,20 +2250,49 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
             sheet.path,
             sheet.size
         );
-        assert!(
-            matches!(
-                entity.coordinate_context.units,
-                pid_parse::PidDrawingUnits::Unknown { .. }
-            ),
-            "units should be explicit unknown until Sheet unit metadata is decoded"
-        );
-        assert!(
-            matches!(
-                entity.coordinate_context.page_transform,
-                pid_parse::PidPageTransform::Unavailable { .. }
-            ),
-            "page transform should be explicit unavailable until metadata is decoded"
-        );
+        // A sheet's units and page transform are promoted by exactly one
+        // thing: a decoded `igSmartFrame2d` that proves the page. Both
+        // states must therefore track that record, never a probe guess.
+        match sheet_frame_page_extent_m(sheet) {
+            Some((width_m, height_m)) => {
+                assert_eq!(
+                    entity.coordinate_context.units,
+                    pid_parse::PidDrawingUnits::Known {
+                        unit: "m".to_string()
+                    },
+                    "a proven frame states the sheet in metres"
+                );
+                let pid_parse::PidPageTransform::Available { page_bounds, .. } =
+                    &entity.coordinate_context.page_transform
+                else {
+                    panic!(
+                        "{} has a frame proving {width_m}x{height_m}m, so its page transform must be available",
+                        sheet.path
+                    );
+                };
+                assert!(
+                    (page_bounds.max.x - width_m).abs() < 1.0e-9
+                        && (page_bounds.max.y - height_m).abs() < 1.0e-9,
+                    "page bounds must come from the frame record, not from another source"
+                );
+            }
+            None => {
+                assert!(
+                    matches!(
+                        entity.coordinate_context.units,
+                        pid_parse::PidDrawingUnits::Unknown { .. }
+                    ),
+                    "units stay explicit unknown on a sheet with no frame record"
+                );
+                assert!(
+                    matches!(
+                        entity.coordinate_context.page_transform,
+                        pid_parse::PidPageTransform::Unavailable { .. }
+                    ),
+                    "page transform stays explicit unavailable on a sheet with no frame record"
+                );
+            }
+        }
     }
 
     for entity in geometry.entities.iter().filter(|entity| {
@@ -3636,14 +3696,29 @@ fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_reco
                 == SheetCoordinatePageMetadataCandidateKind::I32CoordinateDomainLike
         })
         .count();
-    let unavailable_context_entities = normalized
+    // This report is probe-only evidence. It may classify numeric groups
+    // all it likes, but it must never be what promotes a transform: every
+    // promoted entity has to trace back to a sheet whose frame record
+    // proves the page.
+    let promoted_without_record = normalized
         .entities
         .iter()
         .filter(|entity| {
             matches!(
                 entity.coordinate_context.page_transform,
-                pid_parse::PidPageTransform::Unavailable { .. }
-            )
+                pid_parse::PidPageTransform::Available { .. }
+            ) && entity
+                .source
+                .stream_path
+                .as_deref()
+                .and_then(|path| {
+                    pkg.parsed
+                        .sheet_streams
+                        .iter()
+                        .find(|sheet| sheet.path == path)
+                })
+                .and_then(sheet_frame_page_extent_m)
+                .is_none()
         })
         .count();
 
@@ -3695,15 +3770,17 @@ fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_reco
         "top evidence should carry bounded offsets, hex prefixes, and numeric support"
     );
     assert_eq!(
-        unavailable_context_entities,
-        normalized.entities.len(),
-        "CoordinatePageMetadata investigation must not make page transforms available"
+        promoted_without_record, 0,
+        "CoordinatePageMetadata investigation must not make page transforms available; \
+         only a decoded frame record may"
     );
     assert!(
         normalized.warnings.iter().any(|warning| {
             warning.contains("coordinate units and page transforms are unavailable")
+                || warning
+                    .contains("page transform proven by a decoded igSmartFrame2d frame record")
         }),
-        "normalized geometry should keep explicit transform-unavailable warning"
+        "normalized geometry should state, either way, where its transforms stand"
     );
     assert!(
         report.candidates.iter().all(|candidate| {
@@ -3735,21 +3812,71 @@ fn template_page_dimensions_do_not_make_page_transform_available() {
         !normalized.entities.is_empty(),
         "fixture should have normalized entities for coordinate-context checking"
     );
+
+    // The template rounds to a nominal A2 while the frame record measures
+    // the sheet itself, so the two disagree by a few tenths of a
+    // millimetre. That disagreement is what lets this fixture tell the two
+    // sources apart: a promoted transform carrying the record's extent
+    // provably did not come from the template.
+    let frame_extent_m = doc
+        .sheet_streams
+        .iter()
+        .find_map(sheet_frame_page_extent_m)
+        .expect("DWG-0201 should carry a frame record proving its page");
     assert!(
-        normalized.entities.iter().all(|entity| {
-            matches!(
-                &entity.coordinate_context.page_transform,
-                pid_parse::PidPageTransform::Unavailable { diagnostic }
-                    if diagnostic.contains("page transform metadata")
-            )
-        }),
-        "template-derived page dimensions must not promote entity page transforms"
+        (frame_extent_m.0 * 1000.0 - 594.0).abs() > 0.1
+            && (frame_extent_m.1 * 1000.0 - 420.0).abs() > 0.1,
+        "frame extent {frame_extent_m:?} must differ from the nominal template A2, \
+         otherwise this test cannot discriminate between the two sources"
+    );
+
+    let mut promoted = 0usize;
+    for entity in &normalized.entities {
+        let Some(sheet) = entity
+            .source
+            .stream_path
+            .as_deref()
+            .and_then(|path| doc.sheet_streams.iter().find(|sheet| sheet.path == path))
+        else {
+            continue;
+        };
+        match (
+            sheet_frame_page_extent_m(sheet),
+            &entity.coordinate_context.page_transform,
+        ) {
+            (
+                Some((width_m, height_m)),
+                pid_parse::PidPageTransform::Available { page_bounds, .. },
+            ) => {
+                promoted += 1;
+                assert!(
+                    (page_bounds.max.x - width_m).abs() < 1.0e-9
+                        && (page_bounds.max.y - height_m).abs() < 1.0e-9,
+                    "page bounds must be the frame record's extent, not the template's"
+                );
+            }
+            (None, pid_parse::PidPageTransform::Unavailable { diagnostic }) => {
+                assert!(
+                    diagnostic.contains("page transform metadata"),
+                    "a sheet with no frame record keeps its unavailability diagnostic"
+                );
+            }
+            (frame, transform) => panic!(
+                "{}: frame evidence {frame:?} and page transform {transform:?} disagree",
+                sheet.path
+            ),
+        }
+    }
+    assert!(
+        promoted > 0,
+        "DWG-0201's frame record should promote at least one entity, \
+         otherwise the discrimination above is vacuous"
     );
     assert!(
         normalized.warnings.iter().any(|warning| {
-            warning.contains("coordinate units and page transforms are unavailable")
+            warning.contains("page transform proven by a decoded igSmartFrame2d frame record")
         }),
-        "warnings should keep page transform unavailability visible even when page dimensions exist"
+        "warnings should name the frame record as the source of every promoted transform"
     );
 }
 
@@ -3763,7 +3890,7 @@ fn non_sheet_stream_page_metadata_scan_keeps_transform_unavailable_without_compl
     let mut complete_page_dimension_streams = 0usize;
     let mut scalar_hit_streams = Vec::new();
     let mut template_hit_streams = Vec::new();
-    let mut unavailable_context_entities = 0usize;
+    let mut promoted_without_record = 0usize;
     let mut total_entities = 0usize;
 
     for fixture in geometry_fixture_cases() {
@@ -3776,14 +3903,28 @@ fn non_sheet_stream_page_metadata_scan_keeps_transform_unavailable_without_compl
         };
         fixtures_seen += 1;
         total_entities += normalized.entities.len();
-        unavailable_context_entities += normalized
+        // Template names and page-sized scalars living outside /Sheet* are
+        // evidence, not a transform source. Anything promoted must trace
+        // back to a sheet whose frame record proves the page.
+        promoted_without_record += normalized
             .entities
             .iter()
             .filter(|entity| {
                 matches!(
                     entity.coordinate_context.page_transform,
-                    pid_parse::PidPageTransform::Unavailable { .. }
-                )
+                    pid_parse::PidPageTransform::Available { .. }
+                ) && entity
+                    .source
+                    .stream_path
+                    .as_deref()
+                    .and_then(|path| {
+                        pkg.parsed
+                            .sheet_streams
+                            .iter()
+                            .find(|sheet| sheet.path == path)
+                    })
+                    .and_then(sheet_frame_page_extent_m)
+                    .is_none()
             })
             .count();
 
@@ -3836,7 +3977,7 @@ fn non_sheet_stream_page_metadata_scan_keeps_transform_unavailable_without_compl
     }
 
     eprintln!(
-        "non-Sheet page metadata scan: fixtures_seen={}, scanned_streams={}, template_stream_hits={}, page_dimension_scalar_hits={}, complete_page_dimension_streams={}, scalar_hit_streams={:?}, template_hit_streams={:?}, unavailable_context_entities={}/{}",
+        "non-Sheet page metadata scan: fixtures_seen={}, scanned_streams={}, template_stream_hits={}, page_dimension_scalar_hits={}, complete_page_dimension_streams={}, scalar_hit_streams={:?}, template_hit_streams={:?}, promoted_without_record={}/{}",
         fixtures_seen,
         scanned_streams,
         template_stream_hits,
@@ -3844,7 +3985,7 @@ fn non_sheet_stream_page_metadata_scan_keeps_transform_unavailable_without_compl
         complete_page_dimension_streams,
         scalar_hit_streams,
         template_hit_streams,
-        unavailable_context_entities,
+        promoted_without_record,
         total_entities
     );
 
@@ -3865,8 +4006,9 @@ fn non_sheet_stream_page_metadata_scan_keeps_transform_unavailable_without_compl
         "non-Sheet scalar hits must include both page width and height before they can be considered a transform source"
     );
     assert_eq!(
-        unavailable_context_entities, total_entities,
-        "template or scalar scan evidence must not make page transforms available"
+        promoted_without_record, 0,
+        "template or scalar scan evidence must not make page transforms available; \
+         only a decoded frame record may"
     );
 }
 
@@ -7889,6 +8031,216 @@ fn igboundaries_decoder_emits_typed_audit_records_with_provenance() {
     assert_eq!(
         total_decoded, total_expected,
         "igBoundary2d cross-fixture total ratchet drifted"
+    );
+}
+
+/// Cross-fixture ratchet for the typed PSM `igSmartFrame2d` (`0x003D`)
+/// decoder, and for the page it lets a sheet claim.
+///
+/// Field names come from `radsrvitem.dll sub_564464D0`, not from
+/// inference; see `docs/analysis/2026-07-27-smartframe-003d-native-reader.md`.
+/// Twelve records across six fixtures split into exactly three reader
+/// states, and the split agrees with the payload: the eleven
+/// embedded/linked frames carry ISO A-series extents at `1/sqrt(2)`,
+/// and the one locally-linked frame is a nested-site placeholder a
+/// micrometre across. That agreement is what makes the flag words
+/// evidence rather than coincidence, so the ratchet pins the states and
+/// the extents together — a drift in either direction should fail here.
+#[test]
+fn smartframes_decoder_emits_typed_records_and_page_extents() {
+    // (fixture, records, page-bearing records, page extent in mm)
+    let fixtures = [
+        (
+            "DWG-0201GP06-01.pid",
+            6usize,
+            6usize,
+            Some((594.305, 420.314)),
+        ),
+        ("DWG-0202GP06-01.pid", 1, 1, Some((593.746, 419.629))),
+        ("工艺管道及仪表流程-1.pid", 1, 1, Some((841.000, 594.000))),
+        ("D06.pid", 1, 1, Some((594.328, 420.566))),
+        // A01 carries the only Embedded frame plus the only
+        // LocallyLinked one, in a nested JSite; the latter is not a page.
+        (
+            "export-test/publish-data/A01/A01.pid",
+            2,
+            1,
+            Some((594.001, 420.001)),
+        ),
+        (
+            "export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid",
+            1,
+            1,
+            Some((593.746, 419.629)),
+        ),
+    ];
+
+    let mut total_decoded = 0usize;
+    let mut total_expected = 0usize;
+    let mut states: BTreeMap<String, usize> = BTreeMap::new();
+    let mut per_fixture_summary: Vec<(String, usize, usize)> = Vec::new();
+    let mut sample_records: Vec<String> = Vec::new();
+
+    for (fixture, expected_count, expected_pages, expected_extent_mm) in fixtures {
+        let Some(pkg) = parse_test_package(fixture) else {
+            continue;
+        };
+        let mut per_fixture_count = 0usize;
+        let mut per_fixture_pages = 0usize;
+
+        for sheet in &pkg.parsed.sheet_streams {
+            let Some(raw) = pkg.streams.get(&sheet.path) else {
+                continue;
+            };
+            let bytes = raw.data.as_slice();
+            for frame in decode_smartframes(bytes) {
+                assert!(
+                    frame.byte_range.end <= bytes.len(),
+                    "igSmartFrame2d byte_range {:?} exceeds stream {} bytes ({})",
+                    frame.byte_range,
+                    sheet.path,
+                    bytes.len()
+                );
+                assert_eq!(frame.type_code, PSM_TYPE_CODE_IGSMARTFRAME);
+                assert_eq!(
+                    frame.bytes_to_follow as usize,
+                    frame.byte_range.end - frame.byte_range.start - 6,
+                    "declared payload length must match the consumed range"
+                );
+                assert!(
+                    frame.extent_width_m.is_finite() && frame.extent_height_m.is_finite(),
+                    "a decoded frame must carry a finite extent: oid={}",
+                    frame.oid
+                );
+
+                // The reader's own gate: the classifier only runs once
+                // the has-content bit is set, so every state but Empty
+                // implies it.
+                if frame.state != SheetSmartFrame2dState::Empty {
+                    assert_ne!(
+                        frame.content_flags & 0x8000,
+                        0,
+                        "a non-Empty frame must carry the has-content bit: oid={}",
+                        frame.oid
+                    );
+                }
+
+                match frame.page_extent_m() {
+                    Some((w, h)) => {
+                        per_fixture_pages += 1;
+                        // ISO A sheets are 1/sqrt(2); the record states
+                        // that ratio independently at payload +148, so
+                        // the two must agree.
+                        let ratio = h / w;
+                        assert!(
+                            (ratio - std::f64::consts::FRAC_1_SQRT_2).abs() < 0.01,
+                            "page extent {w:.6} x {h:.6} is not an ISO A sheet: oid={}",
+                            frame.oid
+                        );
+                        assert!(
+                            (ratio - frame.aspect_ratio).abs() < 0.01,
+                            "extent ratio {ratio:.6} disagrees with the record's own \
+                             aspect_ratio {:.6}: oid={}",
+                            frame.aspect_ratio,
+                            frame.oid
+                        );
+                        if let Some((exp_w, exp_h)) = expected_extent_mm {
+                            assert!(
+                                (w * 1000.0 - exp_w).abs() < 0.01
+                                    && (h * 1000.0 - exp_h).abs() < 0.01,
+                                "{fixture} page extent drifted: got {:.3} x {:.3} mm, \
+                                 expected {exp_w:.3} x {exp_h:.3} mm",
+                                w * 1000.0,
+                                h * 1000.0
+                            );
+                        }
+                    }
+                    None => assert!(
+                        matches!(
+                            frame.state,
+                            SheetSmartFrame2dState::Empty | SheetSmartFrame2dState::LocallyLinked
+                        ) || !(0.05..=5.0).contains(&frame.extent_width_m),
+                        "an embedded/linked frame with a plausible extent must yield a \
+                         page: oid={} state={:?}",
+                        frame.oid,
+                        frame.state
+                    ),
+                }
+
+                *states.entry(format!("{:?}", frame.state)).or_default() += 1;
+                if sample_records.len() < 4 {
+                    sample_records.push(format!(
+                        "{fixture} {} @ 0x{:06x}..0x{:06x} oid={} {:?} \
+                         content_flags={:#010x} link_flags={:#010x} \
+                         extent={:.3}x{:.3}mm",
+                        sheet.path,
+                        frame.byte_range.start,
+                        frame.byte_range.end,
+                        frame.oid,
+                        frame.state,
+                        frame.content_flags,
+                        frame.link_flags,
+                        frame.extent_width_m * 1000.0,
+                        frame.extent_height_m * 1000.0,
+                    ));
+                }
+                per_fixture_count += 1;
+            }
+        }
+
+        assert_eq!(
+            per_fixture_pages, expected_pages,
+            "{fixture} must yield {expected_pages} page-bearing frame(s), got \
+             {per_fixture_pages}"
+        );
+        per_fixture_summary.push((fixture.to_string(), per_fixture_count, expected_count));
+        total_decoded += per_fixture_count;
+        total_expected += expected_count;
+    }
+
+    eprintln!("--- PSM igSmartFrame2d decoder cross-fixture summary ---");
+    for (name, count, expected) in &per_fixture_summary {
+        eprintln!("  {name}: {count} decoded igSmartFrame2d records (expected {expected})");
+    }
+    for (state, count) in &states {
+        eprintln!("  state {state}: {count}");
+    }
+    for sample in &sample_records {
+        eprintln!("  sample: {sample}");
+    }
+
+    if per_fixture_summary.is_empty() {
+        eprintln!(
+            "skipping: no Sheet-bearing fixture present (CI / contributors \
+            without SmartPlant samples)"
+        );
+        return;
+    }
+    for (name, count, expected) in &per_fixture_summary {
+        assert_eq!(
+            count, expected,
+            "igSmartFrame2d count ratchet drifted for {name}; \
+             per-fixture summary: {per_fixture_summary:?}"
+        );
+    }
+    assert_eq!(
+        total_decoded, total_expected,
+        "igSmartFrame2d cross-fixture total ratchet drifted"
+    );
+    assert_eq!(
+        states.get("Embedded").copied().unwrap_or_default(),
+        1,
+        "exactly one fixture frame is embedded rather than linked"
+    );
+    assert_eq!(
+        states.get("Linked").copied().unwrap_or_default(),
+        10,
+        "ten fixture frames link an external border template"
+    );
+    assert_eq!(
+        states.get("LocallyLinked").copied().unwrap_or_default(),
+        1,
+        "the only locally-linked frame is A01's nested-site placeholder"
     );
 }
 
