@@ -14,6 +14,11 @@ debug.log
 # do not belong in the shared repository).
 .superdesign/
 
+# Notes an agent work-group writes about its own session — task routing,
+# roster and tooling defects. They describe the collaboration harness, not
+# this parser, so they stay local.
+docs/BL*-workgroup-*.md
+
 # Vendor / reverse-engineering DLLs and IDA scratch (SmartPlant +
 # Intergraph binaries plus their .id0/.id1/.til/.nam/.i64 IDA database
 # siblings). Proprietary, very large, and reproducible from a local
