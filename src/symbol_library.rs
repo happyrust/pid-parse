@@ -14,8 +14,9 @@
 //! it safe to read the chain instead of scanning for candidates the way the
 //! drawing-side decoders must.
 //!
-//! Four record types carry drawable geometry; the rest are connect points,
-//! text, styles and structure. See [`SymbolPrimitive`].
+//! Five record types carry something to draw — four geometry families and
+//! the symbol's own lettering; the rest are connect points, styles and
+//! structure. See [`SymbolPrimitive`].
 //!
 //! ```no_run
 //! use pid_parse::symbol_library::SymbolLibrary;
@@ -60,6 +61,30 @@ const TYPE_LINE: u16 = 0x0018;
 const TYPE_CIRCLE: u16 = 0x0059;
 const TYPE_ARC: u16 = 0x0061;
 const TYPE_POLYLINE: u16 = 0x0084;
+const TYPE_TEXT: u16 = 0x004D;
+
+/// Bytes of geometry and style following a text record's characters. The
+/// first two `f64`s of it are the insertion point, and the run's constant
+/// width is what makes the character count identifiable — see
+/// [`TEXT_COUNT_OFFSETS`].
+const TEXT_TRAILING_LEN: usize = 36;
+
+/// Payload offsets at which a text record can put its `u16` character count,
+/// most common first.
+///
+/// The drawing-side decoder reads the count at `+30`, and 908 of the
+/// library's 1490 text records agree. The rest carry a wider sub-header and
+/// put it at `+22`. The two are told apart by the payload size rather than
+/// by a flag: with the trailing run fixed at [`TEXT_TRAILING_LEN`], a count
+/// is only believed when `payload_len` comes out exactly right, and across
+/// the corpus no record is explained by both offsets — 248 fit `+22` alone,
+/// none fit both, and every string either recovers is readable text.
+const TEXT_COUNT_OFFSETS: [usize; 2] = [30, 22];
+
+/// Longest run of characters a symbol label can plausibly hold. The corpus
+/// tops out at 117 (an embedded XML field reference); this only has to
+/// reject a count that would reach past the payload anyway.
+const TEXT_MAX_CHARS: usize = 1024;
 
 /// Payload length of a line record: header plus four `f64`s.
 const LINE_PAYLOAD_LEN: usize = PAYLOAD_HEADER_LEN + 32;
@@ -88,9 +113,10 @@ const LIBRARY_MARKER: &str = r"\symbols\";
 /// One drawable element of a symbol body, in the symbol's own coordinate
 /// space (source units, i.e. metres — the same unit the drawing uses).
 ///
-/// The library uses four geometry records out of the 27 PSM type codes that
-/// appear in it; the others carry connect points, text, line styles and
-/// object structure, none of which draw a shape.
+/// The library draws with five of the 27 PSM type codes that appear in it —
+/// four geometry families and one text family; the others carry connect
+/// points, line styles and object structure, none of which put anything on
+/// the sheet.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SymbolPrimitive {
     /// Straight segment (PSM `0x0018` `igLine2d`) — 43% of all library
@@ -129,6 +155,23 @@ pub enum SymbolPrimitive {
     Polyline {
         /// Vertices in source order.
         vertices: Vec<(f64, f64)>,
+    },
+    /// Lettering the symbol carries itself (PSM `0x004D` `igTextBox`) — the
+    /// `设备位号` header on an equipment table, the `HH=` on an alarm, the
+    /// `XXX` a note symbol shows as its own sample.
+    ///
+    /// The library is a set of templates, so a run is often the placeholder
+    /// `NULL`, standing for a value the drawing supplies at placement time
+    /// rather than text anyone means to read. It is decoded as it appears;
+    /// deciding whether to draw it belongs to whoever is drawing.
+    ///
+    /// Carries no height or font: the record does not hold one, and the
+    /// style table it points at is unread.
+    Text {
+        /// Text content, decoded from UTF-16LE.
+        text: String,
+        /// Insertion point in the symbol's own coordinate space.
+        at: (f64, f64),
     },
 }
 
@@ -189,6 +232,10 @@ impl SymbolGeometry {
                         add(*x, *y);
                     }
                 }
+                // The insertion point only. How far the lettering actually
+                // reaches needs a height and a font, and the record carries
+                // neither.
+                SymbolPrimitive::Text { at, .. } => add(at.0, at.1),
             }
         }
         acc
@@ -220,6 +267,47 @@ fn f64_le(bytes: &[u8], at: usize) -> Option<f64> {
 fn coordinate(bytes: &[u8], at: usize) -> Option<f64> {
     let value = f64_le(bytes, at)?;
     (value.is_finite() && value.abs() <= COORDINATE_LIMIT).then_some(value)
+}
+
+/// Read a text record's characters and insertion point.
+///
+/// The character count sits at one of [`TEXT_COUNT_OFFSETS`], and which one
+/// is settled by arithmetic rather than by a flag: the count is believed
+/// only when the characters it claims, plus the fixed
+/// [`TEXT_TRAILING_LEN`]-byte trailing run, account for the payload exactly.
+/// A wrong offset almost never adds up, and across the reference library no
+/// record adds up at both.
+fn decode_text(payload: &[u8]) -> Option<SymbolPrimitive> {
+    let (text_end, text) = TEXT_COUNT_OFFSETS
+        .iter()
+        .find_map(|&count_at| read_text_run(payload, count_at))?;
+    let at = (
+        coordinate(payload, text_end)?,
+        coordinate(payload, text_end + 8)?,
+    );
+    Some(SymbolPrimitive::Text { text, at })
+}
+
+/// The run introduced by the `u16` at `count_at`, if it accounts for the
+/// payload exactly and decodes to readable text.
+fn read_text_run(payload: &[u8], count_at: usize) -> Option<(usize, String)> {
+    let count = u16_le(payload, count_at)? as usize;
+    if count == 0 || count > TEXT_MAX_CHARS {
+        return None;
+    }
+    let start = count_at + 2;
+    let end = start.checked_add(count * 2)?;
+    if payload.len() != end.checked_add(TEXT_TRAILING_LEN)? {
+        return None;
+    }
+    let mut chars = Vec::with_capacity(count);
+    for index in 0..count {
+        chars.push(u16_le(payload, start + index * 2)?);
+    }
+    let text = String::from_utf16(&chars).ok()?;
+    // An unpaired surrogate is caught above; a NUL means the run is not
+    // really characters, whatever the arithmetic says.
+    (!text.contains('\0')).then_some((end, text))
 }
 
 /// Turn one record payload into a primitive, or `None` when the record
@@ -281,6 +369,7 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
             }
             Some(SymbolPrimitive::Polyline { vertices })
         }
+        TYPE_TEXT => decode_text(payload),
         _ => None,
     }
 }
@@ -655,6 +744,82 @@ mod tests {
             .map(|body| body.primitives.len());
         assert_eq!(hit, Some(1), "the readable copy wins");
         std::fs::remove_dir_all(&broken).ok();
+    }
+
+    /// A text record laid out the way the library writes them: `count_at`
+    /// bytes of header, the `u16` count, the characters, then the fixed
+    /// trailing run whose first two `f64`s are the insertion point.
+    fn text_payload(count_at: usize, text: &str, at: (f64, f64)) -> Vec<u8> {
+        let chars: Vec<u16> = text.encode_utf16().collect();
+        let mut payload = vec![0u8; count_at];
+        payload.extend_from_slice(&u16::try_from(chars.len()).unwrap().to_le_bytes());
+        for c in &chars {
+            payload.extend_from_slice(&c.to_le_bytes());
+        }
+        payload.extend_from_slice(&at.0.to_le_bytes());
+        payload.extend_from_slice(&at.1.to_le_bytes());
+        payload.extend_from_slice(&[0u8; TEXT_TRAILING_LEN - 16]);
+        payload
+    }
+
+    #[test]
+    fn text_record_decodes_at_the_drawing_side_offset() {
+        let payload = text_payload(30, "HH=NULL ", (0.012, -0.034));
+        assert_eq!(
+            decode_primitive(TYPE_TEXT, &payload),
+            Some(SymbolPrimitive::Text {
+                text: "HH=NULL ".to_owned(),
+                at: (0.012, -0.034),
+            })
+        );
+    }
+
+    #[test]
+    fn text_record_decodes_past_a_wider_sub_header() {
+        // 248 of the library's records put the count at +22 instead of +30;
+        // the payload size is what tells the two apart.
+        let payload = text_payload(22, "设备位号", (0.05, 0.06));
+        assert_eq!(
+            decode_primitive(TYPE_TEXT, &payload),
+            Some(SymbolPrimitive::Text {
+                text: "设备位号".to_owned(),
+                at: (0.05, 0.06),
+            })
+        );
+    }
+
+    #[test]
+    fn text_record_is_skipped_when_the_count_does_not_account_for_the_payload() {
+        // Neither offset adds up once the payload grows by a byte, and a
+        // count that only nearly fits is exactly the reading that would put
+        // reinterpreted binary on the sheet.
+        let mut payload = text_payload(30, "XXX", (0.0, 0.0));
+        payload.push(0);
+        assert_eq!(decode_primitive(TYPE_TEXT, &payload), None);
+    }
+
+    #[test]
+    fn text_record_with_an_absurd_insertion_point_is_skipped() {
+        let payload = text_payload(30, "XXX", (1.0e9, 0.0));
+        assert_eq!(decode_primitive(TYPE_TEXT, &payload), None);
+    }
+
+    #[test]
+    fn bounds_take_in_the_text_insertion_point() {
+        let body = SymbolGeometry {
+            primitives: vec![
+                SymbolPrimitive::Line {
+                    start: (0.0, 0.0),
+                    end: (0.1, 0.1),
+                },
+                SymbolPrimitive::Text {
+                    text: "设备名称".to_owned(),
+                    at: (-0.2, 0.3),
+                },
+            ],
+            skipped_records: BTreeMap::new(),
+        };
+        assert_eq!(body.bounds(), Some((-0.2, 0.0, 0.1, 0.3)));
     }
 
     #[test]

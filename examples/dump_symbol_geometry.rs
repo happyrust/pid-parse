@@ -53,6 +53,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect();
                 println!("poly,{}", coords.join(","));
             }
+            SymbolPrimitive::Text { text, at } => {
+                // Quoted last so a comma or a newline in the label cannot be
+                // read as another column.
+                println!("text,{},{},{text:?}", at.0, at.1);
+            }
         }
     }
     eprintln!(

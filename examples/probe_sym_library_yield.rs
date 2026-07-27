@@ -24,6 +24,9 @@ const FIXTURES: &[&str] = &[
     "export-test/publish-data/A01/A01.pid",
 ];
 
+/// What a template label reads as before the drawing supplies a value.
+const PLACEHOLDER: &str = "NULL";
+
 fn test_file_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("test-file")
 }
@@ -85,6 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (mut lines, mut circles, mut arcs, mut polylines) = (0usize, 0usize, 0usize, 0usize);
+    let (mut texts, mut placeholders) = (0usize, 0usize);
     let mut empty = 0usize;
     let mut failed = 0usize;
     let mut skipped: BTreeMap<u16, usize> = BTreeMap::new();
@@ -104,6 +108,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 SymbolPrimitive::Circle { .. } => circles += 1,
                 SymbolPrimitive::Arc { .. } => arcs += 1,
                 SymbolPrimitive::Polyline { .. } => polylines += 1,
+                SymbolPrimitive::Text { text, .. } => {
+                    texts += 1;
+                    if text == PLACEHOLDER {
+                        placeholders += 1;
+                    }
+                }
             }
         }
         for (code, count) in &body.skipped_records {
@@ -118,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         richest.push((body.primitives.len(), name));
     }
 
-    let total = lines + circles + arcs + polylines;
+    let total = lines + circles + arcs + polylines + texts;
     println!("\n-- library yield --");
     println!("  read failures      : {failed}");
     println!(
@@ -132,6 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    circles   {circles}");
     println!("    arcs      {arcs}");
     println!("    polylines {polylines}");
+    println!("    texts     {texts} (of which {placeholders} are the {PLACEHOLDER:?} placeholder)");
 
     println!("\n  stepped-over record types (no drawable shape):");
     let mut rows: Vec<(&u16, &usize)> = skipped.iter().collect();
