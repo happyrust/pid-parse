@@ -3,6 +3,20 @@
 Layered parser for SmartPlant / Smart P&ID `.pid` files with a
 publish XML pipeline (`Export.mdf → oxidized-mdf → drawing graph → _Data.xml / _Meta.xml`).
 
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub issues on `happyrust/pid-parse` (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles, each label string equal to its name (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
 ## Architecture
 
 | Layer | Path | Role |
