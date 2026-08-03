@@ -385,6 +385,41 @@ fn scalar_matches_dimension(value: f64, width: f64, height: f64) -> bool {
     value.is_finite() && ((value - width).abs() <= 1.0e-6 || (value - height).abs() <= 1.0e-6)
 }
 
+/// Whether an entity is raw Sheet-stream evidence rather than a decoded
+/// record.
+///
+/// These carry the stream's own numbers -- i32 coordinate hints, object
+/// hints, endpoint and text probes -- which are not in the page space the
+/// drawing's border frame states. Nothing may promote their coordinate
+/// context, whatever else the file proves about its page.
+fn is_raw_sheet_evidence(entity: &pid_parse::PidGraphicEntity) -> bool {
+    [
+        ":text-probe:",
+        ":coordinate-hint:",
+        ":geometry-hint:",
+        ":endpoint-line:",
+        ":endpoint-probe:",
+    ]
+    .iter()
+    .any(|marker| entity.id.contains(marker))
+}
+
+/// Raw Sheet evidence whose page transform was promoted anyway.
+fn promoted_raw_sheet_evidence(geometry: &pid_parse::NormalizedPidGeometry) -> Vec<&str> {
+    geometry
+        .entities
+        .iter()
+        .filter(|entity| is_raw_sheet_evidence(entity))
+        .filter(|entity| {
+            matches!(
+                entity.coordinate_context.page_transform,
+                pid_parse::PidPageTransform::Available { .. }
+            )
+        })
+        .map(|entity| entity.id.as_str())
+        .collect()
+}
+
 fn stream_contains_ascii_token(data: &[u8], token: &str) -> bool {
     !token.is_empty()
         && data
@@ -2171,11 +2206,16 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
     }
 
     assert!(
-        geometry
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("coordinate units and page transforms are unavailable")),
-        "normalized geometry should report explicit transform-unavailable diagnostics"
+        geometry.warnings.iter().any(|warning| {
+            warning.contains("coordinate units and page transforms are unavailable")
+                || warning.contains("keeps unconverted source values")
+        }),
+        "normalized geometry should say which of its evidence is still unconverted"
+    );
+    assert!(
+        promoted_raw_sheet_evidence(&geometry).is_empty(),
+        "raw Sheet evidence must keep its unavailable coordinate context: {:?}",
+        promoted_raw_sheet_evidence(&geometry)
     );
     assert!(
         geometry
@@ -2219,20 +2259,22 @@ fn normalized_geometry_probe_baseline_on_real_fixture() {
             sheet.path,
             sheet.size
         );
-        assert!(
-            matches!(
-                entity.coordinate_context.units,
-                pid_parse::PidDrawingUnits::Unknown { .. }
-            ),
-            "units should be explicit unknown until Sheet unit metadata is decoded"
-        );
-        assert!(
-            matches!(
-                entity.coordinate_context.page_transform,
-                pid_parse::PidPageTransform::Unavailable { .. }
-            ),
-            "page transform should be explicit unavailable until metadata is decoded"
-        );
+        if is_raw_sheet_evidence(entity) {
+            assert!(
+                matches!(
+                    entity.coordinate_context.units,
+                    pid_parse::PidDrawingUnits::Unknown { .. }
+                ),
+                "raw Sheet evidence keeps explicit unknown units until its own metadata is decoded"
+            );
+            assert!(
+                matches!(
+                    entity.coordinate_context.page_transform,
+                    pid_parse::PidPageTransform::Unavailable { .. }
+                ),
+                "raw Sheet evidence keeps an explicit unavailable page transform"
+            );
+        }
     }
 
     for entity in geometry.entities.iter().filter(|entity| {
@@ -3694,16 +3736,21 @@ fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_reco
         }),
         "top evidence should carry bounded offsets, hex prefixes, and numeric support"
     );
-    assert_eq!(
-        unavailable_context_entities,
-        normalized.entities.len(),
-        "CoordinatePageMetadata investigation must not make page transforms available"
+    assert!(
+        unavailable_context_entities > 0,
+        "CoordinatePageMetadata investigation must leave its own evidence unpromoted"
+    );
+    assert!(
+        promoted_raw_sheet_evidence(&normalized).is_empty(),
+        "CoordinatePageMetadata investigation must not make page transforms available: {:?}",
+        promoted_raw_sheet_evidence(&normalized)
     );
     assert!(
         normalized.warnings.iter().any(|warning| {
             warning.contains("coordinate units and page transforms are unavailable")
+                || warning.contains("keeps unconverted source values")
         }),
-        "normalized geometry should keep explicit transform-unavailable warning"
+        "normalized geometry should keep the unconverted evidence visible in its warnings"
     );
     assert!(
         report.candidates.iter().all(|candidate| {
@@ -3719,37 +3766,44 @@ fn coordinate_page_metadata_investigation_keeps_transform_unavailable_until_reco
     );
 }
 
+/// Only the drawing's own border frame promotes the page transform; a
+/// template name never does.
+///
+/// The two are distinguishable on this fixture: `XIONGANA2.pid` can only
+/// yield the A2 nominal 594.0mm, while the frame measures 594.3mm. Reading
+/// the nominal back means the frame was not consulted, and any promotion
+/// would then be resting on a name.
 #[test]
-fn template_page_dimensions_do_not_make_page_transform_available() {
+fn only_a_border_frame_promotes_the_page_transform() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;
     };
 
     let normalized = pid_parse::build_normalized_geometry(&doc);
-    assert_eq!(
-        normalized.page_dimensions_mm,
-        Some((594.0, 420.0)),
-        "DWG-0201 template should expose A2 page dimensions as page-size evidence"
+    let (width, height) = normalized
+        .page_dimensions_mm
+        .expect("DWG-0201 states a page through its border frame");
+    assert!(
+        (width - 594.0).abs() > 0.1,
+        "page came back at the template's nominal {width} x {height} mm, so the frame was not read"
     );
     assert!(
         !normalized.entities.is_empty(),
         "fixture should have normalized entities for coordinate-context checking"
     );
     assert!(
-        normalized.entities.iter().all(|entity| {
-            matches!(
-                &entity.coordinate_context.page_transform,
-                pid_parse::PidPageTransform::Unavailable { diagnostic }
-                    if diagnostic.contains("page transform metadata")
-            )
-        }),
-        "template-derived page dimensions must not promote entity page transforms"
+        promoted_raw_sheet_evidence(&normalized).is_empty(),
+        "raw Sheet evidence is not in page space and must not be promoted: {:?}",
+        promoted_raw_sheet_evidence(&normalized)
     );
     assert!(
-        normalized.warnings.iter().any(|warning| {
-            warning.contains("coordinate units and page transforms are unavailable")
+        normalized.entities.iter().any(|entity| {
+            matches!(
+                entity.coordinate_context.page_transform,
+                pid_parse::PidPageTransform::Available { .. }
+            )
         }),
-        "warnings should keep page transform unavailability visible even when page dimensions exist"
+        "decoded records should carry the page the border frame states"
     );
 }
 
@@ -3765,6 +3819,7 @@ fn non_sheet_stream_page_metadata_scan_keeps_transform_unavailable_without_compl
     let mut template_hit_streams = Vec::new();
     let mut unavailable_context_entities = 0usize;
     let mut total_entities = 0usize;
+    let mut promoted_raw_sheet_entities: Vec<String> = Vec::new();
 
     for fixture in geometry_fixture_cases() {
         let Some(pkg) = parse_test_package(fixture.path) else {
@@ -3786,6 +3841,11 @@ fn non_sheet_stream_page_metadata_scan_keeps_transform_unavailable_without_compl
                 )
             })
             .count();
+        promoted_raw_sheet_entities.extend(
+            promoted_raw_sheet_evidence(&normalized)
+                .into_iter()
+                .map(str::to_owned),
+        );
 
         let template = pkg
             .parsed
@@ -3864,9 +3924,13 @@ fn non_sheet_stream_page_metadata_scan_keeps_transform_unavailable_without_compl
         complete_page_dimension_streams, 0,
         "non-Sheet scalar hits must include both page width and height before they can be considered a transform source"
     );
-    assert_eq!(
-        unavailable_context_entities, total_entities,
+    assert!(
+        unavailable_context_entities > 0 && unavailable_context_entities <= total_entities,
         "template or scalar scan evidence must not make page transforms available"
+    );
+    assert!(
+        promoted_raw_sheet_entities.is_empty(),
+        "template or scalar scan evidence must not make page transforms available: {promoted_raw_sheet_entities:?}"
     );
 }
 
@@ -8804,4 +8868,102 @@ fn da_chain_scoped_attribute_extraction_matches_or_beats_legacy_scan() {
     if checked == 0 {
         eprintln!("skipping: no fixture with /Unclustered Dynamic Attributes present");
     }
+}
+
+/// The page each fixture states through its own `0x003D` border frame,
+/// ratcheted against the measured table in
+/// `docs/analysis/2026-07-27-smartframe-003d-native-reader.md`.
+///
+/// The ratchet is on the measurement rather than on a nominal size, because
+/// that is the difference this evidence makes: a template name can only ever
+/// produce the ISO nominal, three of these five sheets differ from it, and
+/// two of them carry no template name at all.
+#[test]
+fn every_fixture_states_its_page_through_its_own_border_frame() {
+    const MEASURED_PAGES_MM: &[(&str, f64, f64)] = &[
+        ("DWG-0201GP06-01.pid", 594.3, 420.3),
+        ("DWG-0202GP06-01.pid", 593.7, 419.6),
+        ("工艺管道及仪表流程-1.pid", 841.0, 594.0),
+        ("D06.pid", 594.3, 420.6),
+        ("export-test/publish-data/A01/A01.pid", 594.0, 420.0),
+    ];
+    // The table is quoted to a tenth of a millimetre.
+    const TOLERANCE_MM: f64 = 0.05;
+
+    let mut checked = 0usize;
+    for (fixture, expected_width, expected_height) in MEASURED_PAGES_MM {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let (width, height) = geometry
+            .page_dimensions_mm
+            .unwrap_or_else(|| panic!("{fixture}: border frame states a page"));
+
+        assert!(
+            (width - expected_width).abs() <= TOLERANCE_MM
+                && (height - expected_height).abs() <= TOLERANCE_MM,
+            "{fixture}: page is {width:.3} x {height:.3} mm, the analysis table measured \
+             {expected_width:.1} x {expected_height:.1}"
+        );
+        assert!(
+            !geometry
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("page transforms are unavailable")),
+            "{fixture}: the page is decoded, so nothing may still report it unavailable"
+        );
+        eprintln!("{fixture}: page {width:.3} x {height:.3} mm");
+        checked += 1;
+    }
+
+    assert!(
+        checked > 0,
+        "no fixture with a border frame was available to check"
+    );
+}
+
+/// Decoded coordinates are metres on the page the border frame states; the
+/// raw coordinate hints are not, and must keep saying so.
+///
+/// The two are in different spaces: a decoded record carries the drawing's
+/// normalized values, while a coordinate hint is a raw source pair that
+/// reaches the +/-900k range. Promoting both would claim a point 900km off
+/// the sheet is on it.
+#[test]
+fn only_decoded_coordinates_carry_the_page_the_border_frame_states() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let geometry = pid_parse::build_normalized_geometry(&doc);
+
+    let mut decoded = 0usize;
+    let mut raw_hints = 0usize;
+    for entity in &geometry.entities {
+        let available = matches!(
+            entity.coordinate_context.page_transform,
+            pid_parse::PidPageTransform::Available { .. }
+        );
+        if entity.confidence == pid_parse::PidGeometryConfidence::Decoded {
+            decoded += 1;
+            assert!(available, "decoded entity {} lost its page", entity.id);
+            assert_eq!(
+                entity.coordinate_context.units,
+                pid_parse::PidDrawingUnits::Known { unit: "m".into() },
+                "decoded entity {} lost its unit",
+                entity.id
+            );
+        } else if entity.id.contains(":coordinate-hint:") {
+            raw_hints += 1;
+            assert!(
+                !available,
+                "raw coordinate hint {} was promoted onto the page",
+                entity.id
+            );
+        }
+    }
+
+    assert!(decoded > 0, "DWG-0201 has decoded geometry");
+    assert!(raw_hints > 0, "DWG-0201 has raw coordinate hints");
+    eprintln!("page promotion: decoded={decoded}, raw_hints_left_alone={raw_hints}");
 }

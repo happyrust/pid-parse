@@ -2298,12 +2298,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2337,12 +2362,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2376,12 +2426,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2415,12 +2490,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2454,12 +2554,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2493,12 +2618,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2529,12 +2679,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2565,12 +2740,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2601,12 +2801,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2637,12 +2862,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2670,12 +2920,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2703,12 +2978,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2736,12 +3036,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2769,12 +3094,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2802,12 +3152,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2835,12 +3210,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2868,12 +3268,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2901,12 +3326,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2934,12 +3384,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -2967,12 +3442,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -3007,12 +3507,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -3047,12 +3572,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -3087,12 +3637,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -3127,12 +3702,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -3171,12 +3771,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -3215,12 +3840,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -3251,12 +3901,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -3287,12 +3962,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {
@@ -3323,12 +4023,37 @@
     "coordinate_context": {
       "coordinate_space": "source_sheet",
       "units": {
-        "state": "unknown",
-        "diagnostic": "Sheet coordinate units are not decoded from coordinate/page metadata records yet"
+        "state": "known",
+        "unit": "m"
       },
       "page_transform": {
-        "state": "unavailable",
-        "diagnostic": "Sheet page transform metadata is not decoded for /Sheet6; source coordinates are preserved without viewport conversion"
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943278903340716,
+            "y": 0.4205656942737827
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     "source": {

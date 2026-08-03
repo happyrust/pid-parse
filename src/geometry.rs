@@ -13,6 +13,11 @@ use std::collections::BTreeMap;
 const SHEET_ENDPOINT_RECORD_LEN: usize = 26;
 const UNKNOWN_UNITS_DIAGNOSTIC: &str =
     "Sheet coordinate units are not decoded from coordinate/page metadata records yet";
+/// Millimetres in a metre. A border frame states its extent in metres;
+/// [`NormalizedPidGeometry::page_dimensions_mm`] reports it in millimetres.
+const MM_PER_METRE: f64 = 1000.0;
+/// Unit label for coordinates a decoded border frame proves are metres.
+const SOURCE_UNIT_METRE: &str = "m";
 
 /// Visualization-ready geometry extracted from a [`PidDocument`].
 ///
@@ -24,11 +29,12 @@ const UNKNOWN_UNITS_DIAGNOSTIC: &str =
 pub struct NormalizedPidGeometry {
     /// Source-backed graphic entities in drawing order where known.
     pub entities: Vec<PidGraphicEntity>,
-    /// Inferred page dimensions in mm, if the template name could be parsed.
+    /// Page dimensions in mm, from the drawing's own `0x003D` border frame
+    /// where it has one and from its template name otherwise.
     ///
-    /// This is page-size evidence only.  It is not a decoded source-to-page
-    /// transform, and must not by itself make [`PidPageTransform::Available`]
-    /// appear on individual entities.
+    /// This is page-size evidence only.  A template name must not by itself
+    /// make [`PidPageTransform::Available`] appear on individual entities;
+    /// only a decoded border frame carries enough evidence for that.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub page_dimensions_mm: Option<(f64, f64)>,
     /// Non-fatal diagnostics explaining missing or skipped geometry.
@@ -359,7 +365,89 @@ struct ResolvedObjectPosition {
     byte_len: usize,
 }
 
-/// Inferred page dimensions from the drawing template name.
+/// The sheet page a drawing states through its own border frame.
+///
+/// `0x003D igSmartFrame2d` is an OLE container frame, and a P&ID's border
+/// template is exactly that: an object linked or embedded into the sheet whose
+/// framed extent is the sheet size. The extent is in metres, the origin is
+/// `(0, 0)`, and source coordinates already are page coordinates. All seven
+/// `ROADMAP-PAGE-TRANSFORM` requirements are discharged against the corpus in
+/// `docs/analysis/2026-07-27-smartframe-003d-native-reader.md`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PageFrame {
+    width_m: f64,
+    height_m: f64,
+}
+
+impl PageFrame {
+    /// The page in millimetres, which is the unit a renderer frames on.
+    fn dimensions_mm(self) -> (f64, f64) {
+        (self.width_m * MM_PER_METRE, self.height_m * MM_PER_METRE)
+    }
+
+    /// The identity source-to-page transform this frame proves.
+    ///
+    /// Source coordinates already are page coordinates -- across the corpus
+    /// every drawing's content lands inside `(0, 0)-(w, h)` with a margin on
+    /// all four edges -- so the scale is 1 and the origin is the page's own
+    /// corner. Converting to millimetres is a unit change applied afterwards,
+    /// not part of the transform.
+    fn page_transform(self) -> PidPageTransform {
+        PidPageTransform::Available {
+            origin: PidPoint { x: 0.0, y: 0.0 },
+            scale: [1.0, 1.0],
+            page_bounds: PidPageBounds {
+                min: PidPoint { x: 0.0, y: 0.0 },
+                max: PidPoint {
+                    x: self.width_m,
+                    y: self.height_m,
+                },
+            },
+            matrix: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        }
+    }
+}
+
+/// The page every border frame in `doc` agrees on.
+///
+/// A drawing can carry the same frame several times -- `DWG-0201` repeats it
+/// six times in `/Sheet6` -- so the frames are deduplicated by extent and a
+/// page is taken only when one extent is left. Two frames that disagree are
+/// two claims about the page size, and choosing between them would be a
+/// guess, so the caller falls back to the template name instead. Repeats are
+/// bit-identical across the corpus, which is why exact equality is the test.
+fn decoded_page_frame(doc: &PidDocument) -> Option<PageFrame> {
+    let mut extents: Vec<(f64, f64)> = Vec::new();
+    for sheet in &doc.sheet_streams {
+        let Some(geometry) = &sheet.geometry else {
+            continue;
+        };
+        for frame in &geometry.decoded_igsmartframes {
+            let Some(extent) = frame.page_extent_m() else {
+                continue;
+            };
+            if !extents.iter().any(|seen| same_extent(*seen, extent)) {
+                extents.push(extent);
+            }
+        }
+    }
+    let &[(width_m, height_m)] = extents.as_slice() else {
+        return None;
+    };
+    Some(PageFrame { width_m, height_m })
+}
+
+/// Whether two framed extents are the same page, to the bit.
+fn same_extent(a: (f64, f64), b: (f64, f64)) -> bool {
+    a.0.to_bits() == b.0.to_bits() && a.1.to_bits() == b.1.to_bits()
+}
+
+/// Page dimensions read off the drawing template's name.
+///
+/// The fallback for a drawing with no border frame to state its own page. A
+/// name is not a measurement: it cannot tell a 594.3mm sheet from a 594.0mm
+/// one, and a template not named for an ISO size yields nothing. It never
+/// promotes [`PidPageTransform`].
 fn infer_page_dimensions(doc: &PidDocument) -> Option<(f64, f64)> {
     let template = doc
         .drawing_meta
@@ -390,7 +478,10 @@ fn infer_page_dimensions(doc: &PidDocument) -> Option<(f64, f64)> {
 pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
     let mut warnings = Vec::new();
     let mut entities = Vec::new();
-    let page_dims = infer_page_dimensions(doc);
+    let page_frame = decoded_page_frame(doc);
+    let page_dims = page_frame
+        .map(PageFrame::dimensions_mm)
+        .or_else(|| infer_page_dimensions(doc));
     if page_dims.is_none() {
         warnings.push(
             "coordinate units and page transforms are unavailable; geometry uses raw values"
@@ -406,7 +497,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         ));
     }
 
-    let emit_context = EmitContext::from_doc(doc);
+    let ctx = EmitContext::from_doc(doc, page_frame);
 
     for sheet in &doc.sheet_streams {
         let object_positions: BTreeMap<u32, ResolvedObjectPosition> = sheet
@@ -729,7 +820,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         // Audit-only families are registered as explicit no-op
         // emitters, making the emission policy visible in one table.
         for emitter in EMITTERS {
-            emitter.emit(&emit_context, sheet, &mut entities);
+            emitter.emit(&ctx, sheet, &mut entities);
         }
     }
 
@@ -752,10 +843,16 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
              {inferred_count} inferred, {probe_only_count} probe-only); renderers should \
              still gate by kind and confidence"
         ));
-        warnings.push(
-            "Sheet coordinate units and page transforms are unavailable; source coordinates remain unconverted and every entity carries explicit coordinate_context diagnostics"
+        warnings.push(match page_frame {
+            Some(frame) => {
+                let (width_mm, height_mm) = frame.dimensions_mm();
+                format!(
+                    "decoded geometry is in metres on the {width_mm:.1} x {height_mm:.1} mm page the drawing's own border frame states; inferred and probe-only evidence keeps unconverted source values"
+                )
+            }
+            None => "Sheet coordinate units and page transforms are unavailable; source coordinates remain unconverted and every entity carries explicit coordinate_context diagnostics"
                 .to_string(),
-        );
+        });
     }
 
     NormalizedPidGeometry {
@@ -797,11 +894,15 @@ struct EmitContext<'a> {
     /// [`crate::model::DecodedIgSymbol2dRecord::jsite_ref`]
     /// (Phase 35-C).
     jsite_symbol_paths: BTreeMap<u32, &'a str>,
+    /// The page the drawing's own border frame states, when it has one.
+    /// Decoded coordinates are metres on this page; see
+    /// [`decoded_sheet_coordinate_context`].
+    page: Option<PageFrame>,
 }
 
 impl<'a> EmitContext<'a> {
     /// Build the pass context from the parsed document.
-    fn from_doc(doc: &'a PidDocument) -> Self {
+    fn from_doc(doc: &'a PidDocument, page: Option<PageFrame>) -> Self {
         let jsite_symbol_paths = doc
             .jsites
             .iter()
@@ -814,7 +915,10 @@ impl<'a> EmitContext<'a> {
                 Some((id, path))
             })
             .collect();
-        Self { jsite_symbol_paths }
+        Self {
+            jsite_symbol_paths,
+            page,
+        }
     }
 }
 
@@ -845,7 +949,7 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
 struct GLine2dEmitter;
 
 impl GeometryEmitter for GLine2dEmitter {
-    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -867,7 +971,7 @@ impl GeometryEmitter for GLine2dEmitter {
                     start: PidPoint { x: ax, y: ay },
                     end: PidPoint { x: bx, y: by },
                 },
-                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
                     byte_range: Some(byte_range),
@@ -956,7 +1060,7 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                     rotation,
                     scale,
                 },
-                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
                     byte_range: Some(byte_range),
@@ -993,7 +1097,7 @@ impl GeometryEmitter for IgSymbol2dEmitter {
 struct IgTextBoxEmitter;
 
 impl GeometryEmitter for IgTextBoxEmitter {
-    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1018,7 +1122,7 @@ impl GeometryEmitter for IgTextBoxEmitter {
                     height: 0.0,
                     rotation: 0.0,
                 },
-                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
                     byte_range: Some(byte_range),
@@ -1053,7 +1157,7 @@ impl GeometryEmitter for IgTextBoxEmitter {
 struct IgPoint2dEmitter;
 
 impl GeometryEmitter for IgPoint2dEmitter {
-    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1075,7 +1179,7 @@ impl GeometryEmitter for IgPoint2dEmitter {
                         y: record.y,
                     },
                 },
-                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
                     byte_range: Some(byte_range),
@@ -1106,7 +1210,7 @@ impl GeometryEmitter for IgPoint2dEmitter {
 struct IgLineString2dEmitter;
 
 impl GeometryEmitter for IgLineString2dEmitter {
-    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1135,7 +1239,7 @@ impl GeometryEmitter for IgLineString2dEmitter {
                     points,
                     closed: false,
                 },
-                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
                     byte_range: Some(byte_range),
@@ -1168,7 +1272,7 @@ impl GeometryEmitter for IgLineString2dEmitter {
 struct IgLine2dEmitter;
 
 impl GeometryEmitter for IgLine2dEmitter {
-    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1194,7 +1298,7 @@ impl GeometryEmitter for IgLine2dEmitter {
                         y: record.end_y,
                     },
                 },
-                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
                     byte_range: Some(byte_range),
@@ -1236,7 +1340,7 @@ impl GeometryEmitter for IgLine2dEmitter {
 struct JStyleOverrideEmitter;
 
 impl GeometryEmitter for JStyleOverrideEmitter {
-    fn emit(&self, _ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
         };
@@ -1283,7 +1387,7 @@ impl GeometryEmitter for JStyleOverrideEmitter {
                         record.raw_attribute_tail.len(),
                     ),
                 },
-                coordinate_context: sheet_source_coordinate_context(&sheet.path),
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
                     stream_path: Some(sheet.path.clone()),
                     byte_range: Some(byte_range),
@@ -1353,6 +1457,29 @@ fn sheet_source_coordinate_context(sheet_path: &str) -> PidCoordinateContext {
         coordinate_space: PidCoordinateSpace::SourceSheet,
         units: unknown_sheet_units(),
         page_transform: unavailable_sheet_transform(sheet_path),
+    }
+}
+
+/// Coordinate context for a decoded record's geometry.
+///
+/// A decoded record carries the drawing's own normalized coordinates, which a
+/// border frame proves are metres on the page it states. The inferred
+/// coordinate hints and endpoint pairs do not share that space -- they are
+/// raw source pairs reaching the +/-900k range -- so they keep
+/// [`sheet_source_coordinate_context`] and its explicit unavailable states.
+fn decoded_sheet_coordinate_context(
+    sheet_path: &str,
+    page: Option<PageFrame>,
+) -> PidCoordinateContext {
+    let Some(page) = page else {
+        return sheet_source_coordinate_context(sheet_path);
+    };
+    PidCoordinateContext {
+        coordinate_space: PidCoordinateSpace::SourceSheet,
+        units: PidDrawingUnits::Known {
+            unit: SOURCE_UNIT_METRE.to_string(),
+        },
+        page_transform: page.page_transform(),
     }
 }
 
@@ -2391,5 +2518,189 @@ mod tests {
         let source = &value["entities"][0]["source"];
         assert_eq!(source["record_id"], "sheet.primitive.line:0");
         assert_eq!(source["record_kind"], "primitive_line");
+    }
+
+    fn border_frame(
+        width_m: f64,
+        height_m: f64,
+        state: crate::model::SmartFrame2dState,
+    ) -> crate::model::DecodedIgSmartFrame2dRecord {
+        crate::model::DecodedIgSmartFrame2dRecord {
+            byte_start: 0,
+            byte_end: 162,
+            type_code: 0x003D,
+            type_flags: 0,
+            bytes_to_follow: 156,
+            oid: 42,
+            parent_ref: 6,
+            content_flags: 0x5c80_8011,
+            link_flags: 0x20e9_0040,
+            state,
+            extent_width_m: width_m,
+            extent_height_m: height_m,
+            aspect_ratio: height_m / width_m,
+        }
+    }
+
+    fn doc_with_border_frames(
+        frames: Vec<crate::model::DecodedIgSmartFrame2dRecord>,
+        template: Option<&str>,
+    ) -> PidDocument {
+        let mut doc = PidDocument::default();
+        if let Some(template) = template {
+            let mut meta = crate::model::DrawingMeta::default();
+            meta.tags.insert("Template".into(), template.into());
+            doc.drawing_meta = Some(meta);
+        }
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 512,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                decoded_igsmartframes: frames,
+                ..SheetGeometry::default()
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+        doc
+    }
+
+    /// The frame is a measurement and the template name is a name, so the
+    /// frame wins where both are present: `XIONGANA2.pid` says "A2", the
+    /// frame says 594.3mm, and an A2 is nominally 594.0mm.
+    #[test]
+    fn a_border_frame_states_the_page_over_the_template_name() {
+        let doc = doc_with_border_frames(
+            vec![border_frame(
+                0.594_305,
+                0.420_314,
+                crate::model::SmartFrame2dState::Linked,
+            )],
+            Some("XIONGANA2.pid"),
+        );
+
+        let (width_mm, height_mm) = build_normalized_geometry(&doc)
+            .page_dimensions_mm
+            .expect("a drawing with one border frame states its page");
+        assert!(
+            (width_mm - 594.305).abs() < 1.0e-6 && (height_mm - 420.314).abs() < 1.0e-6,
+            "expected the frame's measured page, got {width_mm} x {height_mm}"
+        );
+    }
+
+    /// `DWG-0201` repeats its frame six times in `/Sheet6` with a
+    /// bit-identical extent. Six copies of one page are still one page.
+    #[test]
+    fn repeated_border_frames_of_one_extent_are_one_page() {
+        let frames = (0..6)
+            .map(|_| {
+                border_frame(
+                    0.594_305,
+                    0.420_314,
+                    crate::model::SmartFrame2dState::Linked,
+                )
+            })
+            .collect();
+
+        let dimensions = build_normalized_geometry(&doc_with_border_frames(frames, None))
+            .page_dimensions_mm
+            .expect("six identical frames describe one page");
+        assert!((dimensions.0 - 594.305).abs() < 1.0e-6);
+    }
+
+    /// Two frames that disagree are two claims about the page. Choosing
+    /// between them would be a guess, so the template name decides instead.
+    #[test]
+    fn border_frames_that_disagree_fall_back_to_the_template_name() {
+        let doc = doc_with_border_frames(
+            vec![
+                border_frame(
+                    0.594_305,
+                    0.420_314,
+                    crate::model::SmartFrame2dState::Linked,
+                ),
+                border_frame(0.841, 0.594, crate::model::SmartFrame2dState::Linked),
+            ],
+            Some("XIONGANA2.pid"),
+        );
+
+        assert_eq!(
+            build_normalized_geometry(&doc).page_dimensions_mm,
+            Some((594.0, 420.0)),
+            "disagreeing frames must not be picked between"
+        );
+    }
+
+    /// The nested-site frame `A01` carries is a micrometre square in a
+    /// `/JSite*/Sheet*` stream, which is a placeholder rather than a border.
+    /// It must not count as a second, disagreeing page.
+    #[test]
+    fn a_locally_linked_frame_is_not_a_page() {
+        let doc = doc_with_border_frames(
+            vec![
+                border_frame(
+                    1.0e-6,
+                    1.0e-6,
+                    crate::model::SmartFrame2dState::LocallyLinked,
+                ),
+                border_frame(0.594, 0.420, crate::model::SmartFrame2dState::Embedded),
+            ],
+            None,
+        );
+
+        assert_eq!(
+            build_normalized_geometry(&doc).page_dimensions_mm,
+            Some((594.0, 420.0))
+        );
+    }
+
+    /// With a page in hand, a decoded record's coordinates are metres on it.
+    #[test]
+    fn a_page_frame_makes_decoded_coordinates_metres_on_that_page() {
+        let page = PageFrame {
+            width_m: 0.594,
+            height_m: 0.42,
+        };
+
+        let context = decoded_sheet_coordinate_context("/Sheet6", Some(page));
+
+        assert_eq!(
+            context.units,
+            PidDrawingUnits::Known { unit: "m".into() },
+            "a frame states its extent in metres"
+        );
+        let PidPageTransform::Available {
+            origin,
+            scale,
+            page_bounds,
+            matrix,
+        } = context.page_transform
+        else {
+            panic!("a decoded page frame makes the transform available");
+        };
+        assert_eq!(origin, PidPoint { x: 0.0, y: 0.0 });
+        assert_eq!(scale, [1.0, 1.0]);
+        assert_eq!(page_bounds.min, PidPoint { x: 0.0, y: 0.0 });
+        assert_eq!(page_bounds.max, PidPoint { x: 0.594, y: 0.42 });
+        assert_eq!(matrix, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+    }
+
+    /// Without a frame nothing is promoted, page-size guess or not.
+    #[test]
+    fn without_a_border_frame_decoded_coordinates_stay_unconverted() {
+        let context = decoded_sheet_coordinate_context("/Sheet6", None);
+
+        assert!(matches!(context.units, PidDrawingUnits::Unknown { .. }));
+        assert!(matches!(
+            context.page_transform,
+            PidPageTransform::Unavailable { .. }
+        ));
     }
 }
