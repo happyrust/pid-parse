@@ -126,10 +126,12 @@ fn analyse(payloads: &[Vec<u8>]) {
     }
     println!("      {constants}/{width} byte columns constant; varying at {varying:?}");
 
-    // f64 candidates for the height, at every 2-byte alignment.
+    // f64 candidates for the height. Scanned byte by byte rather than on an
+    // alignment: the payload length varies with an embedded name, so a field
+    // sitting after that name need not stay 2-byte aligned between variants.
     println!("      f64 windows in a text-height range:");
     let mut found_height = false;
-    for at in (0..width.saturating_sub(7)).step_by(2) {
+    for at in 0..width.saturating_sub(7) {
         let values: Vec<f64> = payloads.iter().filter_map(|p| f64_at(p, at)).collect();
         if values.len() != n {
             continue;
@@ -139,22 +141,29 @@ fn analyse(payloads: &[Vec<u8>]) {
             .filter(|v| in_range(**v, HEIGHT_METRES))
             .count();
         let mm = values.iter().filter(|v| in_range(**v, HEIGHT_MM)).count();
-        if metres < n && mm < n {
+        let (hits, in_metres) = if metres >= mm {
+            (metres, true)
+        } else {
+            (mm, false)
+        };
+        // A clean sweep, or a near miss -- a height field can hold a sentinel
+        // in one record out of a dozen.
+        if hits * 4 < n * 3 {
             continue;
         }
         found_height = true;
-        let unit = if metres == n { "metres" } else { "mm" };
-        let distinct: BTreeSet<String> = values.iter().map(|v| format!("{v:.6}")).collect();
-        let shown: Vec<&String> = distinct.iter().take(8).collect();
+        let distinct: BTreeSet<String> = values
+            .iter()
+            .filter(|v| in_range(**v, HEIGHT_METRES) || in_range(**v, HEIGHT_MM))
+            .map(|v| format!("{:.3}", if in_metres { v * 1000.0 } else { *v }))
+            .collect();
+        let shown: Vec<&str> = distinct.iter().take(9).map(String::as_str).collect();
         println!(
-            "        +{at:<3} all {n} in {unit} range; {} distinct: {}{}",
+            "        +{at:<3} {hits}/{n} in {} range; {} distinct (mm): {}{}",
+            if in_metres { "metres" } else { "mm" },
             distinct.len(),
-            shown
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-            if distinct.len() > 8 { " ..." } else { "" }
+            shown.join(", "),
+            if distinct.len() > 9 { " ..." } else { "" }
         );
     }
     if !found_height {
