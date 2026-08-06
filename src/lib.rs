@@ -104,6 +104,7 @@ pub mod publish;
 pub mod schema;
 pub mod stream_paths;
 pub mod streams;
+pub mod style_link;
 pub mod symbol_library;
 pub mod writer;
 

@@ -1,0 +1,883 @@
+//! How a geometry record reaches the line width and colour it draws with.
+//!
+//! `igLine2d` and its siblings carry a `u32` at payload `+14` that the
+//! decoders call `index`. It is a **style reference**: it names a style id in
+//! the `StyleCluster` of the document that geometry lives in, and that record
+//! either is the line style or points at it.
+//!
+//! ```text
+//! geometry payload +14 (u32)
+//!    └─ look the id up in the SAME document's StyleCluster
+//!         ├─ lands on 0x002E JStyleSimpleLine → width +34 (f64, metres)
+//!         │                                     colour +50 (Win32 COLORREF)
+//!         └─ lands on 0x0030 JStyleOverride   → its +22 names a
+//!                                               JStyleSimpleLine → as above
+//! ```
+//!
+//! # Evidence
+//!
+//! **The two offsets this module reads inside a style record are
+//! native-reader; the geometry side of the link is corpus.**
+//!
+//! `JStyleBase__ReadCommonFields` in `style.dll` reads the base-class block as
+//! four contiguous fields — `DoIO(2)`, `DoIO(4)`, `DoIO(4)`, `DoIO(4)` — and
+//! `JStyleBase__LoadV3Block` shows what the last one is for: it compares the
+//! incoming value with the stored id, and on a change releases the cached
+//! object pointer and stores the new id. That is a lazily-resolved reference
+//! to another object, held by `JStyleBase` itself, so every style family has
+//! exactly one.
+//!
+//! Sliding that four-field block over the corpus places it uniquely at payload
+//! `+12`: it is the only offset where the reference field's non-zero values
+//! name a *different* record, and it does so on 48 of 48 (every other
+//! placement scores 0). So
+//!
+//! ```text
+//! +0   12 bytes  prologue, ahead of the class Load
+//! +12  u16       dash index, via (w & 7) != 0 ? (w & 7) + 10 : 0
+//! +14  u32       the record's own identity          <- STYLE_ID_OFFSET
+//! +18  u32       zero on all 718 corpus records
+//! +22  u32       JStyleBase's object reference      <- BASE_OBJECT_REFERENCE_OFFSET
+//! +26            class-specific fields begin
+//! ```
+//!
+//! which also settles a number `docs/pid-format-guide.md` §6 flags as
+//! unverified: the base block is 14 bytes and the class block starts at 26, so
+//! **26 = 12 + 14**. The guide's `B = 26`, the native `DoIO` count of 14, and
+//! the fixture-measured 12 were all correct and were measuring different
+//! things.
+//!
+//! Two consequences worth stating plainly. The id at `+14` is unique per
+//! document *across every style family* because it is a base-class field, not
+//! a per-family one. And `+22` is not an override-specific slot — it is
+//! `JStyleBase`'s single reference, which only `JStyleOverride` populates.
+//! The resolver is base-class machinery, and this module is walking it.
+//!
+//! What remains corpus-level is the geometry side: that a geometry record's
+//! `index` names one of these ids. Over the four `test-file/*.pid` fixtures:
+//!
+//! * Every drawable record resolves to a concrete width and colour, with
+//!   nothing left over — all 558 that `decode_iglines` / `decode_igpoints` /
+//!   `decode_iglinestrings` accept across the four fixtures. (A raw chain walk
+//!   finds 574; the 16 it finds and they refuse fail on their own validation
+//!   rules — four `igLine2d` in `DWG-0202/Sheet6615` whose `remaining_header`
+//!   reads 6996 rather than 12, and twelve polylines — which is a decoder
+//!   coverage question, not a link question.) The ratchet in
+//!   `tests/style_link_ratchet.rs` pins the counts.
+//! * Resolution alone is weak evidence: style ids form a 79–97% dense `1..N`
+//!   run per document, so any small integer resolves. The evidence is in
+//!   **which kind** the id lands on. Across 98 distinct index values not one
+//!   lands on a wrong kind — text on `JStyleTextPara`, points and polylines on
+//!   `JStyleSimpleLine`, lines on `JStyleSimpleLine` or `JStyleOverride`.
+//!   Under the null model (the id names a record drawn from the document's own
+//!   population of style kinds) that runs to `5.2e-12` on the strongest
+//!   fixture.
+//! * The override's line slot at `+22` is **zero on all 718 non-override style
+//!   records** and populated on all 48 overrides, every one of them naming a
+//!   real local style. A coincidence does not zero itself out elsewhere.
+//! * The palette that falls out is nine entries wide and sits on the ISO 128
+//!   ladder apart from the 0.100 mm point ticks.
+//!
+//! # The scoping rule, which is the part that is easy to get wrong
+//!
+//! A `.pid` is not one document. The root storage has its own `Sheet*` and
+//! `StyleCluster`, and every `JSite<n>/` storage is a nested document with its
+//! own pair. **Style ids restart from 1 in each.** Resolving geometry against
+//! a pooled id set both invents matches and hides real ones — that is why an
+//! earlier probe scored 0/24 on one drawing and 212/218 on another and
+//! concluded the field was noise. [`stylecluster_path_for_sheet`] exists so
+//! callers cannot repeat it.
+//!
+//! This module deliberately stays out of the model layer: it reads
+//! `StyleCluster` bytes and answers questions about them, and emits no
+//! `PidGraphicEntity`. A renderer joins the two indices below on
+//! `(stream path, graphic oid)` and decides for itself what to do with a
+//! record that does not resolve — which is a decision this crate should not
+//! be making on its behalf.
+
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::Read;
+use std::ops::Range;
+use std::path::Path;
+
+use crate::error::PidError;
+use crate::parsers::sheet_records::{
+    decode_iglines, decode_iglinestrings, decode_igpoints, decode_igtextboxes,
+    PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+};
+
+/// Magic word every cluster-family stream opens with, `StyleCluster`
+/// included.
+const CLUSTER_MAGIC: u32 = 0x6C90_F544;
+
+/// Bytes of stream header (`magic` + `record_count`) before the record chain.
+const STREAM_HEADER_LEN: usize = 8;
+
+/// Bytes of PSM envelope (`type_word` + `bytes_to_follow`) before a payload.
+const PSM_ENVELOPE_LEN: usize = 6;
+
+/// PSM type code of `JStyleSimpleLine` (RAD `style.dll`), the record that
+/// carries a concrete line width and colour.
+pub const PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE: u16 = 0x002E;
+
+/// The `StyleCluster` families whose `+14` is a style id, per
+/// `docs/pid-format-guide.md` §4.
+///
+/// The chain also carries `0x005A JStyleLibrarian` — the type directory at
+/// the head of every cluster — and it is deliberately excluded: its `+14` is
+/// not an id in this space, and since the librarian comes first in the chain
+/// a permissive table would let it shadow a real style. `0x0029`
+/// `JStyleMultiplexer` is listed for completeness though it has zero hits
+/// across the corpus.
+const STYLE_FAMILY_TYPE_CODES: [u16; 10] = [
+    0x0029, 0x002A, 0x002B, 0x002C, 0x002D, 0x002E, 0x002F, 0x0030, 0x0032, 0x0033,
+];
+
+/// Offset of a style record's own identity within its payload.
+///
+/// Level: native-reader. The second of the four `DoIO` reads
+/// `JStyleBase__ReadCommonFields` performs, which is why the value is unique
+/// per document across every style family rather than per family. The corpus
+/// agrees independently: this is the only offset whose value is unique per
+/// record (uniqueness 1.00; the next best candidate reaches 0.33).
+pub const STYLE_ID_OFFSET: usize = 14;
+
+/// Offset of `JStyleBase`'s lazily-resolved object reference.
+///
+/// Level: native-reader. The fourth `DoIO` read of the base block.
+/// `JStyleBase__LoadV3Block` keys a cached object pointer on it and releases
+/// that cache when the id changes, which is what makes it a reference rather
+/// than a value.
+///
+/// Every style family carries the field; in this corpus only `JStyleOverride`
+/// populates it — 48 of 48, against zero on all 718 other style records — and
+/// the value always names a different record.
+pub const BASE_OBJECT_REFERENCE_OFFSET: usize = 22;
+
+/// Offset of the line width, an `f64` in metres, within a
+/// `JStyleSimpleLine` payload. Level: native-reader.
+pub const SIMPLE_LINE_WIDTH_OFFSET: usize = 34;
+
+/// Offset of the colour, a Win32 `COLORREF`, within a `JStyleSimpleLine`
+/// payload. Level: native-reader.
+pub const SIMPLE_LINE_COLOUR_OFFSET: usize = 50;
+
+/// PSM type code of `JStyleTextChar`, which carries the character height.
+pub const PSM_TYPE_CODE_JSTYLE_TEXT_CHAR: u16 = 0x002C;
+
+/// PSM type code of `JStyleTextPara`, which is what a text record names.
+pub const PSM_TYPE_CODE_JSTYLE_TEXT_PARA: u16 = 0x002D;
+
+/// Offset at which a `JStyleTextPara` names its `JStyleTextChar`.
+///
+/// Level: corpus, and a strong one — 237 of 237 `JStyleTextPara` records
+/// across every document in the corpus name a locally defined
+/// `JStyleTextChar` here, and no other offset comes close. Text needs this
+/// hop because `igTextBox` names the paragraph style, while the height lives
+/// on the character style.
+pub const TEXT_PARA_CHAR_REFERENCE_OFFSET: usize = 38;
+
+/// Offset of the character height, an `f64` in metres, within a
+/// `JStyleTextChar` payload. Level: native-reader.
+pub const TEXT_CHAR_HEIGHT_OFFSET: usize = 42;
+
+/// Smallest and largest character height accepted as real, in metres.
+///
+/// The corpus lands on recognisable drafting sizes — ISO 3098's 1.5 / 2.5 /
+/// 3.5 mm, the imperial 1/16-1/8-1/4 inch steps, 7 to 12 point — all inside
+/// 0.5..20 mm. Outside that window is the known unexplained case: 21 records
+/// reference a `JStyleTextChar` whose height reads 0.254 mm, which
+/// `docs/pid-format-guide.md` §8.2 has flagged as unexplained since 08-04.
+/// Text that small cannot be what the drawing means, so it is refused and the
+/// caller keeps its own default rather than drawing something invisible.
+const MIN_PLAUSIBLE_HEIGHT_M: f64 = 0.0005;
+const MAX_PLAUSIBLE_HEIGHT_M: f64 = 0.02;
+
+/// Largest line width accepted as real, in metres.
+///
+/// Widths are stored in metres and the widest in the corpus is 10 mm, so
+/// 100 mm leaves generous headroom while still catching a misframed `f64` —
+/// which reads either enormous or subnormal, both of which are refused. Two
+/// bytes of framing slip is exactly how this crate has been misled before.
+const MAX_PLAUSIBLE_WIDTH_M: f64 = 0.1;
+
+fn u16_at(data: &[u8], at: usize) -> Option<u16> {
+    let end = at.checked_add(2)?;
+    let s = data.get(at..end)?;
+    Some(u16::from_le_bytes([s[0], s[1]]))
+}
+
+fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+    let end = at.checked_add(4)?;
+    let s = data.get(at..end)?;
+    Some(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+}
+
+fn f64_at(data: &[u8], at: usize) -> Option<f64> {
+    let end = at.checked_add(8)?;
+    let s = data.get(at..end)?;
+    Some(f64::from_le_bytes([
+        s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
+    ]))
+}
+
+/// The width and colour a `JStyleSimpleLine` record declares.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LineSymbology {
+    /// Line width in metres, exactly as stored at
+    /// [`SIMPLE_LINE_WIDTH_OFFSET`].
+    pub width_m: f64,
+    /// Colour as the raw Win32 `COLORREF` word from
+    /// [`SIMPLE_LINE_COLOUR_OFFSET`], i.e. `0x00BBGGRR`.
+    pub colour: u32,
+}
+
+impl LineSymbology {
+    /// Line width in millimetres, which is the unit drawing standards use.
+    #[must_use]
+    pub fn width_mm(&self) -> f64 {
+        self.width_m * 1000.0
+    }
+
+    /// Colour split into `[R, G, B]`.
+    #[must_use]
+    pub fn rgb(&self) -> [u8; 3] {
+        [
+            (self.colour & 0xFF) as u8,
+            ((self.colour >> 8) & 0xFF) as u8,
+            ((self.colour >> 16) & 0xFF) as u8,
+        ]
+    }
+}
+
+/// Which route a geometry record took to its `JStyleSimpleLine`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StyleHop {
+    /// The style id named a `JStyleSimpleLine` outright.
+    Direct,
+    /// The style id named a `JStyleOverride`, whose line slot named the
+    /// `JStyleSimpleLine`.
+    ViaOverride {
+        /// Style id of the `JStyleOverride` that was traversed.
+        override_id: u32,
+    },
+}
+
+/// A geometry record's line style, plus the route taken to reach it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedLineStyle {
+    /// Style id of the `JStyleSimpleLine` finally reached.
+    pub style_id: u32,
+    /// Width and colour that record declares.
+    pub symbology: LineSymbology,
+    /// Whether an override was traversed on the way.
+    pub hop: StyleHop,
+}
+
+/// One `StyleCluster` record, reduced to what the link needs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleRecord {
+    /// PSM type code, low 14 bits of the envelope's type word.
+    pub type_code: u16,
+    /// The record's own style id, read at [`STYLE_ID_OFFSET`]. Unique within
+    /// its document across every style family.
+    pub style_id: u32,
+    /// Byte range of the whole record — envelope included — within the
+    /// stream, for provenance.
+    pub byte_range: Range<usize>,
+    /// Width and colour, when this is a `JStyleSimpleLine` whose fields read
+    /// plausibly.
+    pub symbology: Option<LineSymbology>,
+    /// Style id named by [`BASE_OBJECT_REFERENCE_OFFSET`], when this record
+    /// populates it. Only `JStyleOverride` does, in this corpus.
+    pub base_reference: Option<u32>,
+    /// Character height in metres, when this is a `JStyleTextChar` whose
+    /// height reads plausibly.
+    pub char_height_m: Option<f64>,
+    /// `JStyleTextChar` this record names, when it is a `JStyleTextPara`.
+    pub text_char_reference: Option<u32>,
+}
+
+/// A text record's character height, and which style it came from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedTextHeight {
+    /// Style id of the `JStyleTextChar` finally reached.
+    pub style_id: u32,
+    /// Character height in metres, as stored at [`TEXT_CHAR_HEIGHT_OFFSET`].
+    pub height_m: f64,
+}
+
+impl ResolvedTextHeight {
+    /// Character height in millimetres, which is the unit drafting standards
+    /// and renderers use.
+    #[must_use]
+    pub fn height_mm(&self) -> f64 {
+        self.height_m * 1000.0
+    }
+}
+
+/// Every style record of one document's `StyleCluster` stream.
+///
+/// Build one per document — see the scoping rule in the module docs — and
+/// resolve only that document's geometry against it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DocumentStyleTable {
+    records: Vec<StyleRecord>,
+    by_id: BTreeMap<u32, usize>,
+}
+
+impl DocumentStyleTable {
+    /// Walk a `StyleCluster` stream's bytes into a table.
+    ///
+    /// The stream is a pure record chain — `u32` magic, `u32` count, then
+    /// records nose to tail — so it is walked exactly rather than scanned.
+    /// Anything that is not such a chain yields an empty table; nothing here
+    /// panics or allocates unboundedly on hostile input.
+    #[must_use]
+    pub fn from_stylecluster_bytes(data: &[u8]) -> Self {
+        let mut table = Self::default();
+        if u32_at(data, 0) != Some(CLUSTER_MAGIC) {
+            return table;
+        }
+        let mut at = STREAM_HEADER_LEN;
+        while let (Some(type_word), Some(bytes_to_follow)) =
+            (u16_at(data, at), u32_at(data, at + 2))
+        {
+            let Some(payload_start) = at.checked_add(PSM_ENVELOPE_LEN) else {
+                break;
+            };
+            let Some(end) = payload_start.checked_add(bytes_to_follow as usize) else {
+                break;
+            };
+            // A zero-length record would not advance the cursor.
+            if bytes_to_follow == 0 || end > data.len() {
+                break;
+            }
+            let payload = &data[payload_start..end];
+            let type_code = type_word & 0x3FFF;
+            if !STYLE_FAMILY_TYPE_CODES.contains(&type_code) {
+                at = end;
+                continue;
+            }
+            if let Some(style_id) = u32_at(payload, STYLE_ID_OFFSET) {
+                let record = StyleRecord {
+                    type_code,
+                    style_id,
+                    byte_range: at..end,
+                    symbology: read_symbology(type_code, payload),
+                    base_reference: read_base_reference(payload),
+                    char_height_m: read_char_height(type_code, payload),
+                    text_char_reference: read_text_char_reference(type_code, payload),
+                };
+                // First writer wins, matching how a reader walking the chain
+                // in order would bind the id.
+                let slot = table.records.len();
+                table.by_id.entry(style_id).or_insert(slot);
+                table.records.push(record);
+            }
+            at = end;
+        }
+        table
+    }
+
+    /// Every record in chain order.
+    #[must_use]
+    pub fn records(&self) -> &[StyleRecord] {
+        &self.records
+    }
+
+    /// The record a style id names, if this document defines it.
+    #[must_use]
+    pub fn get(&self, style_id: u32) -> Option<&StyleRecord> {
+        self.by_id
+            .get(&style_id)
+            .and_then(|at| self.records.get(*at))
+    }
+
+    /// How many style records the document defines.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Whether the document defines no style records at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    /// Resolve a geometry record's `index` to the line style it draws with.
+    ///
+    /// Returns `None` when the id is not defined here, when it names a family
+    /// that carries no line symbology — a fill or a text style — or when an
+    /// override's reference leads nowhere. Callers should treat `None` as
+    /// "keep the current default", not as a parse failure: an override
+    /// referencing a `JStyleSimpleFill` is a well-formed record describing a
+    /// filled object, and 4 of the corpus's 48 overrides are exactly that.
+    #[must_use]
+    pub fn resolve_line_style(&self, style_id: u32) -> Option<ResolvedLineStyle> {
+        let record = self.get(style_id)?;
+        if record.type_code == PSM_TYPE_CODE_JSTYLE_OVERRIDE {
+            let referenced = record.base_reference?;
+            let target = self.get(referenced)?;
+            return Some(ResolvedLineStyle {
+                style_id: target.style_id,
+                symbology: target.symbology?,
+                hop: StyleHop::ViaOverride {
+                    override_id: record.style_id,
+                },
+            });
+        }
+        Some(ResolvedLineStyle {
+            style_id: record.style_id,
+            symbology: record.symbology?,
+            hop: StyleHop::Direct,
+        })
+    }
+
+    /// Resolve a text record's `index` to the character height it draws at.
+    ///
+    /// A text record names a `JStyleTextPara`, and the height is on the
+    /// `JStyleTextChar` that paragraph style points at, so this is two hops
+    /// like the line case — just through a different field.
+    ///
+    /// Returns `None` when the id names something else, when the paragraph
+    /// style names no character style, or when the height it reaches is
+    /// outside the plausible window. Callers should keep their own default in
+    /// that case: 21 corpus records legitimately reach a `JStyleTextChar`
+    /// whose height reads 0.254 mm, which nobody has explained yet.
+    #[must_use]
+    pub fn resolve_text_height(&self, style_id: u32) -> Option<ResolvedTextHeight> {
+        let para = self.get(style_id)?;
+        let char_style = if para.type_code == PSM_TYPE_CODE_JSTYLE_TEXT_PARA {
+            self.get(para.text_char_reference?)?
+        } else {
+            para
+        };
+        Some(ResolvedTextHeight {
+            style_id: char_style.style_id,
+            height_m: char_style.char_height_m?,
+        })
+    }
+}
+
+fn read_symbology(type_code: u16, payload: &[u8]) -> Option<LineSymbology> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE {
+        return None;
+    }
+    let width_m = f64_at(payload, SIMPLE_LINE_WIDTH_OFFSET)?;
+    let colour = u32_at(payload, SIMPLE_LINE_COLOUR_OFFSET)?;
+    // Zero is a real stored value; anything else must be a normal float in
+    // range, which rules out both the huge and the subnormal misframings.
+    if width_m != 0.0 && (!width_m.is_normal() || width_m < 0.0 || width_m > MAX_PLAUSIBLE_WIDTH_M)
+    {
+        return None;
+    }
+    Some(LineSymbology { width_m, colour })
+}
+
+fn read_char_height(type_code: u16, payload: &[u8]) -> Option<f64> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_TEXT_CHAR {
+        return None;
+    }
+    let height_m = f64_at(payload, TEXT_CHAR_HEIGHT_OFFSET)?;
+    if !height_m.is_normal()
+        || !(MIN_PLAUSIBLE_HEIGHT_M..=MAX_PLAUSIBLE_HEIGHT_M).contains(&height_m)
+    {
+        return None;
+    }
+    Some(height_m)
+}
+
+fn read_text_char_reference(type_code: u16, payload: &[u8]) -> Option<u32> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_TEXT_PARA {
+        return None;
+    }
+    u32_at(payload, TEXT_PARA_CHAR_REFERENCE_OFFSET).filter(|referenced| *referenced != 0)
+}
+
+fn read_base_reference(payload: &[u8]) -> Option<u32> {
+    // Zero means "references nothing", which is what 670 of the corpus's 718
+    // style records say. Style ids start at 1, so zero is unambiguous.
+    u32_at(payload, BASE_OBJECT_REFERENCE_OFFSET).filter(|referenced| *referenced != 0)
+}
+
+/// Every drawable record's line style, keyed by the stream it lives in and
+/// the record's `oid`.
+///
+/// `oid` is what [`crate::geometry::PidGraphicEntity::graphic_oid`] carries
+/// and the stream is what its provenance names, so a renderer can join on the
+/// pair without re-deriving anything.
+pub type LineStyleIndex = BTreeMap<(String, u32), ResolvedLineStyle>;
+
+/// Every text record's character height, keyed the same way as
+/// [`LineStyleIndex`].
+pub type TextHeightIndex = BTreeMap<(String, u32), ResolvedTextHeight>;
+
+/// Resolve the character height of every text record in one `.pid`.
+///
+/// Keyed like [`line_styles_for_file`], so a renderer joins both the same
+/// way. Records whose height does not resolve are absent rather than
+/// defaulted — see [`DocumentStyleTable::resolve_text_height`] for when that
+/// happens and why a caller should keep its own default.
+///
+/// # Errors
+///
+/// Returns [`PidError`] when the file cannot be opened or read as a compound
+/// file.
+pub fn text_heights_for_file(path: &Path) -> Result<TextHeightIndex, PidError> {
+    let mut out = TextHeightIndex::new();
+    for_each_document(path, &mut |stream, sheet, table| {
+        for record in decode_igtextboxes(sheet) {
+            if let Some(resolved) = table.resolve_text_height(record.index) {
+                out.insert((stream.to_string(), record.oid), resolved);
+            }
+        }
+    })?;
+    Ok(out)
+}
+
+/// Resolve the line style of every drawable record in one `.pid`.
+///
+/// Walks each `Sheet*` stream, decodes the three families that carry an
+/// `index` — `igLine2d`, `igPoint2d`, `igLineString2d` — and resolves each
+/// against the `StyleCluster` of that sheet's own document.
+///
+/// Records whose index resolves to something with no line symbology are left
+/// out rather than defaulted, so a caller can tell "this record asks for a
+/// style I could not follow" from "this record asks for a fill".
+///
+/// # Errors
+///
+/// Returns [`PidError`] when the file cannot be opened or read as a compound
+/// file. A stream that fails to read individually is skipped rather than
+/// failing the whole index.
+pub fn line_styles_for_file(path: &Path) -> Result<LineStyleIndex, PidError> {
+    let mut out = LineStyleIndex::new();
+    for_each_document(path, &mut |stream, sheet, table| {
+        let indexed = decode_iglines(sheet)
+            .into_iter()
+            .map(|record| (record.oid, record.index))
+            .chain(
+                decode_igpoints(sheet)
+                    .into_iter()
+                    .map(|record| (record.oid, record.index)),
+            )
+            .chain(
+                decode_iglinestrings(sheet)
+                    .into_iter()
+                    .map(|record| (record.oid, record.index)),
+            );
+        for (oid, index) in indexed {
+            if let Some(resolved) = table.resolve_line_style(index) {
+                out.insert((stream.to_string(), oid), resolved);
+            }
+        }
+    })?;
+    Ok(out)
+}
+
+/// Call `visit` once per `Sheet*` stream with that sheet's bytes and the
+/// style table of the document it belongs to.
+///
+/// Sheets whose own `StyleCluster` is missing or empty are skipped rather
+/// than resolved against someone else's — see the scoping rule in the module
+/// docs.
+fn for_each_document(
+    path: &Path,
+    visit: &mut dyn FnMut(&str, &[u8], &DocumentStyleTable),
+) -> Result<(), PidError> {
+    let file = File::open(path)?;
+    let mut cfb = ::cfb::CompoundFile::open(file)?;
+    let sheet_paths: Vec<String> = cfb
+        .walk()
+        .filter(::cfb::Entry::is_stream)
+        .map(|entry| entry.path().to_string_lossy().into_owned())
+        .filter(|name| {
+            name.rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .starts_with("Sheet")
+        })
+        .collect();
+
+    for sheet_path in &sheet_paths {
+        let Some(sheet) = read_stream(&mut cfb, sheet_path) else {
+            continue;
+        };
+        let table = read_stream(&mut cfb, &stylecluster_path_for_sheet(sheet_path))
+            .map_or_else(DocumentStyleTable::default, |bytes| {
+                DocumentStyleTable::from_stylecluster_bytes(&bytes)
+            });
+        if table.is_empty() {
+            continue;
+        }
+        visit(sheet_path, &sheet, &table);
+    }
+    Ok(())
+}
+
+fn read_stream<R: std::io::Read + std::io::Seek>(
+    cfb: &mut ::cfb::CompoundFile<R>,
+    path: &str,
+) -> Option<Vec<u8>> {
+    let mut stream = cfb.open_stream(path).ok()?;
+    let mut data = Vec::new();
+    stream.read_to_end(&mut data).ok()?;
+    Some(data)
+}
+
+/// The `StyleCluster` stream governing the geometry in `sheet_path`.
+///
+/// `/Sheet6` is governed by `/StyleCluster`; `/JSite329/Sheet6` by
+/// `/JSite329/StyleCluster`. Resolving across that boundary is the mistake
+/// that hid this link, so route every lookup through here rather than
+/// searching for a stream whose name contains `Style`.
+#[must_use]
+pub fn stylecluster_path_for_sheet(sheet_path: &str) -> String {
+    match sheet_path.rfind('/') {
+        Some(0) | None => "/StyleCluster".to_string(),
+        Some(at) => format!("{}/StyleCluster", &sheet_path[..at]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a `StyleCluster` stream out of `(type_code, payload)` pairs.
+    fn stream(records: &[(u16, Vec<u8>)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&CLUSTER_MAGIC.to_le_bytes());
+        out.extend_from_slice(&(records.len() as u32).to_le_bytes());
+        for (type_code, payload) in records {
+            out.extend_from_slice(&type_code.to_le_bytes());
+            out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            out.extend_from_slice(payload);
+        }
+        out
+    }
+
+    fn simple_line(style_id: u32, width_m: f64, colour: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 54];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        payload[SIMPLE_LINE_WIDTH_OFFSET..SIMPLE_LINE_WIDTH_OFFSET + 8]
+            .copy_from_slice(&width_m.to_le_bytes());
+        payload[SIMPLE_LINE_COLOUR_OFFSET..SIMPLE_LINE_COLOUR_OFFSET + 4]
+            .copy_from_slice(&colour.to_le_bytes());
+        (PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE, payload)
+    }
+
+    fn override_record(style_id: u32, references: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 90];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        payload[BASE_OBJECT_REFERENCE_OFFSET..BASE_OBJECT_REFERENCE_OFFSET + 4]
+            .copy_from_slice(&references.to_le_bytes());
+        (PSM_TYPE_CODE_JSTYLE_OVERRIDE, payload)
+    }
+
+    fn text_char(style_id: u32) -> (u16, Vec<u8>) {
+        text_char_of_height(style_id, 0.0025)
+    }
+
+    fn text_char_of_height(style_id: u32, height_m: f64) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 94];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        payload[TEXT_CHAR_HEIGHT_OFFSET..TEXT_CHAR_HEIGHT_OFFSET + 8]
+            .copy_from_slice(&height_m.to_le_bytes());
+        (PSM_TYPE_CODE_JSTYLE_TEXT_CHAR, payload)
+    }
+
+    fn text_para(style_id: u32, names: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 90];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        payload[TEXT_PARA_CHAR_REFERENCE_OFFSET..TEXT_PARA_CHAR_REFERENCE_OFFSET + 4]
+            .copy_from_slice(&names.to_le_bytes());
+        (PSM_TYPE_CODE_JSTYLE_TEXT_PARA, payload)
+    }
+
+    #[test]
+    fn a_paragraph_style_resolves_to_the_height_of_the_character_style_it_names() {
+        let data = stream(&[text_char_of_height(4, 0.003_175), text_para(9, 4)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_text_height(9).expect("id 9 is defined");
+        assert_eq!(
+            resolved.style_id, 4,
+            "reports the character style, not the paragraph"
+        );
+        assert!((resolved.height_mm() - 3.175).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_character_style_named_directly_still_resolves() {
+        let data = stream(&[text_char_of_height(4, 0.0035)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!((table.resolve_text_height(4).expect("defined").height_mm() - 3.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_paragraph_style_naming_nothing_declines_to_guess() {
+        let data = stream(&[text_para(9, 0), text_para(10, 404)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(table.resolve_text_height(9).is_none());
+        assert!(table.resolve_text_height(10).is_none());
+    }
+
+    #[test]
+    fn the_unexplained_sub_millimetre_height_is_refused() {
+        // 21 corpus records reach a character style whose height reads
+        // 0.254mm. Nobody has explained it and text that small cannot be
+        // what the drawing means, so the caller keeps its own default.
+        let data = stream(&[text_char_of_height(4, 0.000_254), text_para(9, 4)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert_eq!(table.get(4).expect("defined").char_height_m, None);
+        assert!(table.resolve_text_height(9).is_none());
+    }
+
+    #[test]
+    fn a_line_style_carries_no_character_height() {
+        let data = stream(&[simple_line(7, 0.000_35, 0)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(table.resolve_text_height(7).is_none());
+    }
+
+    #[test]
+    fn a_direct_line_style_resolves_to_its_own_width_and_colour() {
+        let data = stream(&[simple_line(7, 0.000_35, 0x00FF_0000)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_line_style(7).expect("id 7 is defined");
+        assert_eq!(resolved.style_id, 7);
+        assert_eq!(resolved.hop, StyleHop::Direct);
+        assert!((resolved.symbology.width_mm() - 0.35).abs() < 1e-9);
+        assert_eq!(resolved.symbology.rgb(), [0x00, 0x00, 0xFF]);
+    }
+
+    #[test]
+    fn an_override_resolves_through_the_base_reference() {
+        let data = stream(&[simple_line(3, 0.0007, 0x0000_8080), override_record(9, 3)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_line_style(9).expect("id 9 is defined");
+        assert_eq!(
+            resolved.style_id, 3,
+            "reports the line style, not the override"
+        );
+        assert_eq!(resolved.hop, StyleHop::ViaOverride { override_id: 9 });
+        assert!((resolved.symbology.width_mm() - 0.7).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_override_whose_reference_names_nothing_declines_to_guess() {
+        let data = stream(&[override_record(9, 404)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(table.resolve_line_style(9).is_none());
+    }
+
+    #[test]
+    fn an_override_pointing_at_a_non_line_style_declines_to_guess() {
+        let data = stream(&[text_char(3), override_record(9, 3)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(
+            table.resolve_line_style(9).is_none(),
+            "a fill or text target carries no width; 4 of 48 corpus overrides are like this"
+        );
+    }
+
+    #[test]
+    fn an_override_with_a_zero_reference_references_nothing() {
+        let data = stream(&[override_record(9, 0)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert_eq!(table.get(9).expect("defined").base_reference, None);
+        assert!(table.resolve_line_style(9).is_none());
+    }
+
+    #[test]
+    fn a_text_style_carries_no_line_symbology() {
+        let data = stream(&[text_char(4)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.get(4).expect("defined").symbology, None);
+        assert!(table.resolve_line_style(4).is_none());
+    }
+
+    #[test]
+    fn an_implausible_width_is_rejected_rather_than_surfaced() {
+        // 1e9 metres is what a two-byte framing slip turns a double into.
+        let data = stream(&[simple_line(1, 1.0e9, 0)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert_eq!(table.get(1).expect("defined").symbology, None);
+        assert!(table.resolve_line_style(1).is_none());
+    }
+
+    #[test]
+    fn an_unknown_id_resolves_to_nothing() {
+        let data = stream(&[simple_line(7, 0.000_35, 0)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(table.resolve_line_style(8).is_none());
+    }
+
+    #[test]
+    fn a_stream_without_the_cluster_magic_yields_an_empty_table() {
+        let mut data = stream(&[simple_line(7, 0.000_35, 0)]);
+        data[0] ^= 0xFF;
+        assert!(DocumentStyleTable::from_stylecluster_bytes(&data).is_empty());
+    }
+
+    #[test]
+    fn the_walk_stops_rather_than_spinning_on_a_zero_length_record() {
+        let mut data = stream(&[simple_line(7, 0.000_35, 0)]);
+        // Blank the length word of the only record.
+        let len_at = STREAM_HEADER_LEN + 2;
+        data[len_at..len_at + 4].copy_from_slice(&0u32.to_le_bytes());
+        assert!(DocumentStyleTable::from_stylecluster_bytes(&data).is_empty());
+    }
+
+    #[test]
+    fn a_record_running_past_the_end_is_dropped_not_read() {
+        let mut data = stream(&[simple_line(7, 0.000_35, 0)]);
+        data.truncate(data.len() - 8);
+        assert!(DocumentStyleTable::from_stylecluster_bytes(&data).is_empty());
+    }
+
+    #[test]
+    fn a_payload_too_short_to_hold_an_id_is_skipped() {
+        let data = stream(&[(PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE, vec![0u8; 4])]);
+        assert!(DocumentStyleTable::from_stylecluster_bytes(&data).is_empty());
+    }
+
+    #[test]
+    fn the_table_is_panic_safe_on_adversarial_input() {
+        let patterns: Vec<Vec<u8>> = vec![
+            Vec::new(),
+            vec![0u8; 3],
+            vec![0u8; 4096],
+            vec![0xFFu8; 4096],
+            (0..4096).map(|i| (i & 0xFF) as u8).collect(),
+        ];
+        for pattern in &patterns {
+            let _ = DocumentStyleTable::from_stylecluster_bytes(pattern);
+        }
+        // A well-formed header over hostile payload bytes is the nastier case.
+        let mut framed = CLUSTER_MAGIC.to_le_bytes().to_vec();
+        framed.extend_from_slice(&u32::MAX.to_le_bytes());
+        framed.extend_from_slice(&vec![0xFFu8; 1024]);
+        let _ = DocumentStyleTable::from_stylecluster_bytes(&framed);
+    }
+
+    #[test]
+    fn a_sheet_resolves_against_the_style_cluster_of_its_own_document() {
+        assert_eq!(stylecluster_path_for_sheet("/Sheet6"), "/StyleCluster");
+        assert_eq!(
+            stylecluster_path_for_sheet("/JSite329/Sheet6"),
+            "/JSite329/StyleCluster"
+        );
+        assert_eq!(
+            stylecluster_path_for_sheet("/JSite329/Nested/Sheet6615"),
+            "/JSite329/Nested/StyleCluster"
+        );
+        assert_eq!(stylecluster_path_for_sheet("Sheet6"), "/StyleCluster");
+    }
+}

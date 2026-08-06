@@ -13,7 +13,11 @@
 | **corpus** | 从多张真实图纸的字节统计得出，且跨图纸一致 | 谨慎，需 fixture ratchet |
 | **hypothesis** | 单一来源或值域吻合推出 | **不可以** |
 
-今天有两个 corpus 级结论被 native reader 推翻（见 §7），所以这个区分不是形式主义。
+有两个 corpus 级结论被 native reader 推翻（见 §7），所以这个区分不是形式主义。
+
+反过来也一样：**一条被判负的候选后来被证明是对的**（见 §8.1）。判负和判正一样需要
+一个站得住的判据——那次用的是「取值在不在某个 id 集合里」，而 id 空间稠密到任何小整数
+都能命中，所以它的阳性和阴性都不携带信息。
 
 ---
 
@@ -67,13 +71,27 @@ cargo run --example pid_plot_dump -- ..\pid-parse\test-file\DWG-0201GP06-01.pid
 +6  …    payload
 ```
 
-`StyleCluster` 流是**纯记录链**：`u32 magic 0x6C90F544` + `u32 count`，之后从 `+8`
-起一条接一条，走到流尾**零剩余**（六个流实测全部逐字节走通）。
+这个链头**不是 `StyleCluster` 专有的**：`Sheet*`、`PSMcluster0`、
+`Dynamic Attributes Metadata`、`Unclustered Dynamic Attributes` 等流共用同一个
+结构（`src/streams/cluster.rs` 早就复用 `cluster_header::parse_header()` 处理
+`Sheet*`）：
 
-`Sheet*` 流**不是**纯链，家族交错，需要按 type code 滑窗扫描并做长度校验。
+```text
++0  u32  magic 0x6C90F544
++4  u32  record_count
++8       记录链开始，一条接一条
+```
 
-> ⚠ 滑窗扫描是分帧错误的高发区。**拿到一批记录后第一件事是核对 payload 长度是否
-> 符合该家族的已知长度**——今天就因为跳过这一步得出过一个错误结论（§7）。
+**从 `+8` 起顺着 `bytes_to_follow` 走就行，不需要滑窗扫描。** 2026-08-05 实测：
+四张图 44 个流全部走到**零剩余**，且记录数与 pid-parse 自己的解码器逐张图相同
+（359 / 279 / 563 / 48）。`probe_psm_type_code_histogram` 里那条「失败退一字节
+重同步」的兜底路径实际从未被触发。
+
+`+4` 的 `record_count` 是白送的校验和，但**只能当告警不能当断言**：多数流精确
+相等，少数流实测差 1..5 条。
+
+> ⚠ 真正的分帧陷阱不在走链，而在**在链外按 type code 滑窗找记录**。§7 那个被推翻
+> 的结论就是这么来的。要找某个家族，先走链拿到记录边界，再按 type code 过滤。
 
 ## 4. type code 对照表
 
@@ -108,16 +126,29 @@ RTTI / COM 类工厂），**等级：native-reader**。
 
 **样式族（都在 `style.dll`，CLSID `47FCC331`…`47FCC338` 连号）**
 
-| code | 类名 |
-|---|---|
-| `0x002A` | JStyleSimpleFill |
-| `0x002B` | JStyleHatchFill |
-| `0x002C` | **JStyleTextChar** |
-| `0x002D` | JStyleTextPara |
-| `0x002E` | **JStyleSimpleLine** |
-| `0x002F` | JStyleSimpleDashType |
-| `0x0030` | **JStyleOverride** |
-| `0x005A` | JStyleLibrarian（`StyleCluster` 的第一条记录） |
+| code | 类名 | 语料命中 |
+|---|---|---|
+| `0x0029` | JStyleMultiplexer | **0**（见 §8.3） |
+| `0x002A` | JStyleSimpleFill | 25 |
+| `0x002B` | JStyleHatchFill | 11 |
+| `0x002C` | **JStyleTextChar** | 244 |
+| `0x002D` | JStyleTextPara | 237 |
+| `0x002E` | **JStyleSimpleLine** | 116 |
+| `0x002F` | JStyleSimpleDashType | 13 |
+| `0x0030` | **JStyleOverride** | 48 |
+| `0x0032` | JStylePointSymbol | 12 |
+| `0x0033` | JStyleLineTerminator | 12 |
+| `0x005A` | JStyleLibrarian（`StyleCluster` 的第一条记录） | 13 |
+
+`0x0032` / `0x0033` 补录于 2026-08-05（`tools/psm_type_clsid.py 0x32 0x33` →
+`47FCC33B` / `47FCC33C`，等级 native-reader）。两者**只出现在 `StyleCluster`、
+且每张图都成对等量**——线终止符本质上就是画在线端的点符号，成对出现符合语义。
+`probe_stylecluster_records` 一直能看见它们，只是本表漏收；
+`probe_rad_siblings_0x0029_0x0035` 只扫 `/Sheet6`，所以那个 probe 看不到。
+
+> ⚠ CLSID 连号**不能线性外推 type code**：`47FCC337` 在表里被跳过，所以
+> `0x0032` 是 `47FCC33B` 而不是直觉上的 `47FCC33A`。要判断某个 code 属于谁，
+> 查 `psm_type_clsid.py`，别自己算。
 
 ## 5. 几何记录布局
 
@@ -146,7 +177,9 @@ RTTI / COM 类工厂），**等级：native-reader**。
 ```
 
 **两者字节全额入账，没有空位。** 这条事实很重要：它排除了「线宽/颜色藏在几何图元里」
-这个最直觉的假设。
+这个最直觉的假设。样式不是藏起来的，是**引用出去的**——`+14` 的 `index` 就是那条引用，
+见 §8.1。`igLineString2d`（`0x0084`）与 `igTextBox`（`0x004D`）在同一位置有同一字段；
+`igSymbol2d`（`0x00CE`）**没有**，它的 `14..T-5` 是变长子字段。
 
 坐标单位是**米**，页面在 1m 以内；渲染时乘 1000 转毫米。页幅由 `0x003D` 给出。
 
@@ -176,20 +209,58 @@ RTTI / COM 类工厂），**等级：native-reader**。
 [基类块 B 字节][类专属字段…]
 ```
 
-**`B` 不是固定值**，取决于 version 与调用的基类 helper：
+version 3 的账**已经算平**（2026-08-05）：
 
-| version | 基类 helper | `B` |
-|---|---|---:|
-| 3 | `sub_10003814` | 26 |
-| 2 | `sub_10002CFC` | 30 |
+```text
++0..11   12 字节 prologue，在类的 Load 之前
++12  u16   dash 索引，按 (w & 7) != 0 ? (w & 7) + 10 : 0 映射到成员字节 60
++14  u32   记录自己的身份（样式 id）
++18  u32   语料 718 条全为 0
++22  u32   JStyleBase 的对象引用，惰性解析
++26        类专属字段开始     ← 即 B = 26
+```
 
-样式 id 在 payload `+14`，每条记录唯一（**等级：corpus**——基类块本身还没读）。
+**`B = 26 = 12 + 14`。** 之前记的三个互相矛盾的数**全都是对的，只是在量不同的东西**：
+本表的 26 是「类字段的起点」，数原生 `DoIO` 得的 14 是「基类块本身」，拿真 fixture
+字节测出的 12 是「基类块之前的 prologue」——也正是 `JStyleOverrideDecoder` 那个 18
+字节扩展头减去 6 字节信封的部分。
+
+前提（把 `jengine.dll` 也建库，它同样带完整 C++ 符号）：
+
+- `jengine_1075` = `IOContext::DoIO(unsigned long size, void* ptr)`——**恰好消耗
+  `size` 字节**。
+- `jengine_1076` = `IOContext::GetObjectVersions(const GUID*, u16*, u16*)`——只是拿
+  CLSID 查一张缓在 `IOContext` 上的版本表，**一个流字节都不消耗**。
+
+`JStyleBase__ReadCommonFields` 的 load 路径就是 `DoIO(2)` + 三个 `DoIO(4)` = 14 字节，
+落点连续。把这个四字段块在 payload 里滑一遍，**起点 +12 是唯一能过判据的位置**：判据
+是「第四个字段（对象引用）的非零值必须命名另一条记录」，+12 得 48/48 全中，其余候选
+全部 0%。
+
+> ⚠ **version 2 的账还没平。** `JStyleSimpleLine` 是 v2，其基类 helper
+> `JStyleBase__LoadV2Block` 只数出 8 字节，但 `12 + 8 = 20`，而它的类字段实测从
+> `+30` 开始。要么 v2 基类块漏数了，要么 v2 的 prologue 不同。下表 `0x002E` 的偏移
+> 是实测可用的，但 v2 的 `B` 仍不要引用。
+
+> ⚠ 另一条错误指引已封：`JStyleBase__LoadV3Block` 里的 `(*this + 184)`（slot 46）
+> **不读流**。它拿不到 `IOContext`，且只在存盘位执行——是存盘路径上的 getter。
+
+样式 id 在 payload `+14`，每条记录唯一（**等级：native-reader**）。它跨全部样式族唯一，
+是因为它是**基类字段**而不是每族各自的字段。
+
+payload `+22` 是 `JStyleBase` **唯一的对象引用字段**（**等级：native-reader**）：加载
+器拿它和 `this+18` 存的 id 比，一旦不同就释放 `this+16` 缓着的对象指针。每个样式族都
+有这个字段，但语料里只有 `0x0030` 填了它（48/48 非零，其余 670 条全为 0）。**这一层
+就是样式解析器，它写在基类里。**
+
+复现：`_ida-probe-plant10-2026-08-05/probe_slot46.py`、`base_locate2.py`；
+详见 `docs/analysis/2026-08-05-geometry-index-is-the-style-link.md`。
 
 ### `0x002C` JStyleTextChar（version 3，`B = 26`）
 
 | 偏移 | 类型 | 含义 | 等级 |
 |---|---|---|---|
-| `+14` | u32 | 样式 id | corpus |
+| `+14` | u32 | 样式 id（基类字段） | native-reader |
 | `+26` | u32 | — | native-reader（位置） |
 | `+30` | u16 | 语言 / 键盘布局（读到 0 用 `GetKeyboardLayout(0)` 兜底） | native-reader |
 | `+34` | u32 | 带 `-1` 哨兵；形状符合文字颜色 | hypothesis |
@@ -200,11 +271,21 @@ RTTI / COM 类工厂），**等级：native-reader**。
 2.646 / 2.822 / **3.175** / 3.500 / 3.528 / 3.704 / 4.233 / **6.350** mm
 ——ISO 3098 的 2.5mm、英制 1/16″ 1/8″ 1/4″、7/7.5/8/10/12 磅。
 
-### `0x002E` JStyleSimpleLine（version 2，`B = 30`）
+### `0x002D` JStyleTextPara（version 3，payload 恒 90 字节）
 
 | 偏移 | 类型 | 含义 | 等级 |
 |---|---|---|---|
-| `+14` | u32 | 样式 id | corpus |
+| `+14` | u32 | 样式 id（基类字段） | native-reader |
+| **`+38`** | **u32** | **它使用的 `JStyleTextChar` 的样式 id** | **corpus（237/237）** |
+
+文字记录的 `index` 指的是**段落样式**，字高在**字符样式**上，所以这一跳是拿到字高的
+必经之路。见 §8.1。
+
+### `0x002E` JStyleSimpleLine（version 2，`B` 未坐实，见上）
+
+| 偏移 | 类型 | 含义 | 等级 |
+|---|---|---|---|
+| `+14` | u32 | 样式 id（基类字段） | native-reader |
 | **`+34`** | **f64** | **线宽，单位米** | **native-reader** |
 | `+42` | u32 | 带 `-1` 哨兵 | native-reader（位置） |
 | **`+50`** | **u32** | **颜色，`[R, G, B, 0]`（Win32 COLORREF）** | **native-reader** |
@@ -245,34 +326,86 @@ OCS 的 `PID-ANNOTATION` 图层因此恒为空。
 
 ## 8. 还没整理完的地方
 
-### 8.1 阻断交付的（必须解决）
+### 8.1 「几何 → 样式」链路：已打通（2026-08-05）
 
-**「几何 → 样式」链路仍未打通。** 知道颜色值在哪，不等于知道哪条线用哪个颜色。
-`igLine2d` 没有样式 id 字段（50 字节全额入账）。四个候选已全部排除：
+**`index`（payload `+14`）就是样式引用。** 它命名的是**同一个文档**的 `StyleCluster`
+里的一个样式 id：
 
-| 候选 | 排除理由 |
+```text
+几何记录 payload +14 (u32)
+   └─ 在它自己那个文档的 StyleCluster 里查这个样式 id
+        ├─ 落在 0x002E SimpleLine → 线宽 +34、颜色 +50
+        └─ 落在 0x0030 Override   → 它的 +22 命名一条 SimpleLine → 同上
+```
+
+四张图 **558/558** 条可绘制记录（`igLine2d` / `igPoint2d` / `igLineString2d`）走通，
+零未解析。落地在 `src/style_link.rs`，ratchet 在 `tests/style_link_ratchet.rs`。
+
+**文字走同样的两跳，只是换一个字段。** `igTextBox` 的 `index` 指向的是
+`0x002D JStyleTextPara`（58/58 个不同取值），而字高在 `0x002C JStyleTextChar` 上，
+所以中间还有一跳：**`JStyleTextPara` 的 `+38` 命名一条 `JStyleTextChar`，237/237、
+每个文档都成立**（等级：corpus）。全链跑下来 116 条文字拿到真字高，取值全落在制图
+档位上——ISO 3098 的 1.5 / 2.5 / 3.5mm，英制 1/16″ 1/8″ 1/4″，其中 **3.175mm（1/8″）
+占了大半**。
+
+> ⚠ Phase 35-D 那个「`igTextBox` trailer 末 4 字节是跨图稳定的样式 id」的读法，
+> 现在拿真样式表一验**站不住**：同一个值在四张图里分别落到 LineTerminator /
+> SimpleLine / TextChar / Override / PointSymbol，还夹着 `218103808`、`3002759231`
+> 这类大数。它观察到的**分组**是真的（21 ≈ 常规标注、56 ≈ 中文、64 ≈ 管道号），
+> 但那个值不是这个 id 空间里的样式 id。字高不需要它，走 `index` 那条就够了。
+
+`index` 曾经在这张表里被判负，**那次排除有两个 bug**，都值得记住：
+
+| 旧判据 | 错在哪 |
 |---|---|
-| `0x00FA` Dependency Object | 覆盖率不足（135 条里 4 条引用线；125 条里 26 条对 218 条线），命中偏移散乱 |
-| `igLine2d.sub_type_word` | 两张图都恒为 16，不携带逐线信息 |
-| `igLine2d.index` | 一张图 212/218 命中，另一张 0/24（取值超出 id 上限） |
-| `0x0030` `+50` | **分帧错误**，见 §7 说明 |
+| 把所有名字含 `style` 的流汇成一个 id 集合 | **样式 id 每个文档从 1 重数**。根存储与每个 `JSite<n>/` 都是自带 `StyleCluster` 的独立文档，混域既造出假命中也掩盖真命中 |
+| 问「是不是一条 `0x002E` 的 id」 | 线**大多数指向 `0x0030 Override`**，正确答案在这个判据下算 miss |
 
-未测：`0x0010` 子记录（638 次命中，「嵌在其他记录里的属性片段」）、
-样式按 level 生效、`0x0030` 重新分帧后再查。
+而且「命中率」本身就是弱判据：id 在文档内是 1..N 的稠密区间（密度 79%–97%），任何范围
+内的小整数都能命中。同一份输出里恒为 16 的 `sub_type_word` 拿到过 24/24——那就是噪声
+水平。**换成「落到哪一类样式」之后判据才有力**：98 个不同取值无一落错类，最强一张图的
+零假设概率 `5.2e-12`。详见
+`docs/analysis/2026-08-05-geometry-index-is-the-style-link.md`。
 
-**在链路打通前不要把样式接进 OCS 渲染**——拿一个样式套所有线比继续用默认值更糟。
+仍是 corpus 的部分：**几何侧**。没有反编译代码显示原生渲染器读几何的 `+14` 去查样式表；
+样式记录侧（`+14` 身份、`+22` 引用）已是 native-reader。按 §0 的规矩，corpus 级配
+fixture ratchet 才可用，ratchet 已经在了。
+
+已接进 OCS 渲染：`OpenCADStudio` 的 `.pid` 导入按 `(流路径, graphic oid)` 关联这两张
+表，线宽与颜色落到 `PID-GEOMETRY` / `PID-POINT` 的实体上，字高落到 `PID-TEXT` 的文字
+上。解析不出来的记录**保留消费方自己的默认值**而不是被填一个猜测——`resolve_*` 返回
+`None` 的三种情形（id 未定义、落到不带该属性的样式族、override 指向的目标没有线属性）
+都是良构记录，不是解析失败。
+
+其余候选的状态不变：`0x00FA` Dependency Object 覆盖率不足；`igLine2d.sub_type_word`
+恒为 16；`0x0030 +50` 是分帧错误（见 §7）。`0x0010` 子记录仍未测，但链路已通，它不再
+在关键路径上。
 
 ### 8.2 已定位但证据不足的
 
 | 项 | 现状 |
 |---|---|
-| 样式 id 在 `+14` | corpus 级；需读基类块 `sub_10003814` / `sub_10002CFC` 坐实 |
+| `0x002E` 的 `B`（version 2 基类块） | 未坐实；`12 + 8 = 20` 对不上实测的类字段起点 `+30`，见 §6 |
 | `0x002C +34` = 文字颜色 | hypothesis；原生代码只显示 `-1` 哨兵语义 |
 | `0x002C` 的 version 2 路径 | 未读（`sub_10002CFC` + `sub_10002CC0`） |
 | 字体名字段的确切偏移 | 用「最长 UTF-16 串」启发式读的，未定位 |
-| `0x002C` 里两条亚毫米记录（0.254mm / 0.176mm） | 未解释 |
+| `0x002C` 里的亚毫米记录（0.254mm） | 仍未解释，但**不再是孤例**：有真文字记录经 `TextPara +38` 指到它们。0.254mm = 0.01″，太小不可能是实际字高，`style_link` 直接拒收让消费方保留自己的默认值 |
 
 ### 8.3 已知风险，暂不动
+
+**Phase 19 的 `0x0029..0x0035` 假设：可以结掉了。**
+`examples/probe_rad_siblings_0x0029_0x0035.rs` 记着一条 deferred hypothesis
+——CLSID 连号段 `47FCC330..47FCC33E` 可能 1:1 映射到 type code `0x29..0x35`，
+且其中或许藏着别的标注类记录。2026-08-05 查清：
+
+- 映射**确实存在**但**不是线性的**（`47FCC337` 被跳过，见 §4 的警告）。
+- `0x0029` = JStyleMultiplexer，**全语料 0 命中**。这个类在 `style.dll` 里有
+  vtable、有 CLSID、有 slot 17 序列化器，也就是说它**可持久化但这四张图没用它**。
+- 该段里真实存在的只有 `0x0032` / `0x0033`，都是样式而非标注，已补进 §4。
+
+对样式链路的意义：**「resolver 是一个被静默跳过的持久化记录族」这条路排除了。**
+JStyleMultiplexer 这种名字最像 resolver 的类根本没落盘，剩下的解释是 resolver
+在 load 时于内存中构造——这也是 §8.1 那条链路应该往「消费端」找的理由。
 
 **标注族静默丢弃。** `igDimension`(277) / `igBalloon`(279) / `igLeader`(280) 与
 `0x00FF` Graphics Bag 都通过原生图形谓词 `radsrvitem.dll!sub_56449950`，
@@ -309,6 +442,8 @@ ComplexString）。
 | `examples/probe_geometry_style_link` | 几何 → 样式链路候选测试 |
 | `examples/probe_jstyleoverride_link` | `0x0030` 链路候选测试 |
 | `examples/probe_inferred_points` | inferred 证据分类 |
+| `src/style_link.rs` | 几何 `index` → 样式 id → 线宽/颜色（两跳解析） |
+| `tests/style_link_ratchet.rs` | 上者的跨 fixture ratchet：计数 + 调色板 |
 | `tools/psm_type_clsid.py` | type code → CLSID → 类名 |
 | `tools/clsid_registry.py` | CLSID → 模块 + 类名（查 `jutil.dll`） |
 
@@ -335,7 +470,12 @@ flowchart LR
 
 ## 11. 详细分析文档
 
-本文是索引，逐项证据见 `docs/analysis/2026-08-04-*.md`：
+本文是索引，逐项证据见 `docs/analysis/`：
+
+- `2026-08-05-geometry-index-is-the-style-link` — 几何 → 样式链路、基类块字节账、
+  `+14` 与 `+22` 升 native-reader
+
+以及 `2026-08-04-*`：
 
 - `psm-type-code-registry` — type code 全表与四路互证
 - `stylecluster-record-chain` — 记录链与目录结构
@@ -343,6 +483,7 @@ flowchart LR
 - `jstylesimpleline-native-reader-confirmed` — 线宽与颜色
 - `jstyleoverride-native-reader-settles-it` — override 布局与两处推翻
 - `style-dll-class-chain` — CLSID → vtable 的走法
-- `geometry-to-style-link-negative` — 链路候选排除
+- `geometry-to-style-link-negative` — 链路候选排除（`index` 那一行已被
+  `2026-08-05-geometry-index-is-the-style-link.md` 推翻，见 §8.1）
 - `inferred-points-negative-note` — inferred 证据为何不画
 - `annotation-families-risk` — 标注族风险

@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### 打通「几何 → 样式」链路：`style_link` 模块（2026-08-05）
+
+- **`index`（几何 payload `+14`）就是样式引用**，此前它在候选表里被判负。那次排除
+  有两个 bug：一是把所有名字含 `style` 的流汇成一个 id 集合，而**样式 id 是每个文档
+  从 1 重数的**（根存储与每个 `JSite<n>/` 各自带 `StyleCluster`，是独立文档），混域
+  既造假命中也掩盖真命中；二是判据问的是「是不是一条 `0x002E` 的 id」，而线**大多数
+  指向 `0x0030 Override`**，正确答案在那个判据下算 miss。
+- **判据换成「落到哪一类样式」才有力**。命中率本身是弱判据：id 在文档内是 1..N 的稠密
+  区间（密度 79%–97%），任何范围内的小整数都能命中——恒为 16 的 `sub_type_word` 就拿到
+  过 24/24，那是噪声水平。改问落到哪一族之后，98 个不同取值无一落错类，最强一张图的
+  零假设概率 `5.2e-12`。
+- **新增 `pub mod style_link`**：`line_styles_for_file` 与 `text_heights_for_file`
+  各返回一张按 `(流路径, graphic oid)` 索引的表，供渲染侧直接 join。线走
+  `SimpleLine +34/+50`（宽/色）或经 `Override +22` 转一跳；文字走
+  `TextPara +38` → `TextChar +42`（字高）。四张图 **558/558** 条可绘制记录零未解析。
+- **`DocumentStyleTable` 按文档建表**，`stylecluster_path_for_sheet` 是唯一的定位入口，
+  就是为了让调用方无法重犯上面那个跨文档解析的错。
+- **两个偏移升到 native-reader**：`JStyleBase__ReadCommonFields` 的四字段基类块
+  （`DoIO(2)` + 三个 `DoIO(4)`）在 payload 里只有 `+12` 一个位置能过判据（48/48，其余
+  候选 0%），于是 `+14` 是记录自己的样式 id、`+22` 是 `JStyleBase` 唯一的对象引用。
+  `B = 26 = 12 + 14`，把格式指南 §6 里三个互相矛盾的数一次对齐——它们都对，只是在量
+  不同的东西。
+- **拒收而非猜测**：`resolve_*` 在 id 未定义、落到不带该属性的样式族、override 目标
+  没有线属性这三种情形返回 `None`，让消费方保留自己的默认值。0.254mm（0.01″）那批
+  字高也在此列——它仍未解释，但太小不可能是实际字高。
+- 棘轮在 `tests/style_link_ratchet.rs`（计数 + 调色板）；证据见
+  `docs/analysis/2026-08-05-geometry-index-is-the-style-link.md`。
+- 下游：`OpenCADStudio` 的 `.pid` 导入已按这两张表上线宽、颜色与字高。
+
 ### 把 2026-08-04 的 style.dll 原生读取器证据落进解析器（2026-08-05）
 
 - **`0x0030` JStyleOverride 撤回标注锚点**：原先把 payload `+0..15` 拼成两个
