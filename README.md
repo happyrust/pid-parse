@@ -356,8 +356,8 @@ format is completely decoded. The authoritative artifacts are:
   in that document.
 - `docs/plans/2026-06-19-pid-parser-roadmap-gates.md`: parser promotion gates
   and forbidden shortcuts for `PSMspacemap`, `StyleCluster`, `0x0010`,
-  `GraphicGroup 0x00FA`, `JSitesList.trailing_slots`, `0x0089` / class 137 DA
-  heads, and page transform / coordinate units.
+  `DependencyObject 0x00FA`, `JSitesList.trailing_slots`, `0x0089` / class 137
+  DA heads, and page transform / coordinate units.
 - `docs/pid-export-bundle-contract.md` and `docs/writer-layer-plan.md`: bundle
   shape, raw-byte opt-in behavior, writer whitelist, publish separation, and
   read-only geometry/audit/probe boundaries.
@@ -381,7 +381,8 @@ Final gate evidence for this status snapshot covered formatting, library
 tests, parser panic-safety, real fixture tests, clippy, workspace build,
 workspace tests, and the missing-docs ratchet. Remaining blockers are the
 non-decoded atlas rows listed above: raw `PSMspacemap` page bytes,
-`StyleCluster` prefix semantics, `0x0010` discriminator, `GraphicGroup 0x00FA`
+`StyleCluster` prefix semantics, `0x0010` discriminator,
+`DependencyObject 0x00FA`
 payload semantics, `JSitesList` trailing-slot writer meaning, `0x0089` DA head
 semantics, page transform / coordinate units, and any semantic Sheet writer.
 

@@ -41,7 +41,7 @@ fn type_label(type_code: u16) -> &'static str {
         0x005E => "igPoint2d",
         0x004D => "igTextBox",
         0x00CE => "igSymbol2d",
-        0x00FA => "GraphicGroup",
+        0x00FA => "DependencyObject",
         0x0010 => "0x0010-frag",
         _ => "?",
     }

@@ -95,9 +95,9 @@ pub struct SheetGeometry {
     /// `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igboundaries: Vec<DecodedIgBoundary2dRecord>,
-    /// Audit-only PSM `0x00FA` `GraphicGroup` / `GraphicPersist` records
+    /// Audit-only PSM `0x00FA` `DependencyObject` / `GraphicPersist` records
     /// emitted by
-    /// [`crate::parsers::sheet_records::decode_graphic_groups`].
+    /// [`crate::parsers::sheet_records::decode_dependency_objects`].
     ///
     /// These records preserve the stable envelope and raw reference
     /// payload for inspection. They intentionally do not produce
@@ -105,7 +105,7 @@ pub struct SheetGeometry {
     /// `child_oids` field until the variable tail is proven across
     /// size/sub-type buckets.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub decoded_graphic_groups: Vec<DecodedGraphicGroupRecord>,
+    pub decoded_dependency_objects: Vec<DecodedDependencyObjectRecord>,
     /// PSM `0x003D` `igSmartFrame2d` records emitted by
     /// [`crate::parsers::sheet_records::decode_smartframes`].
     ///
@@ -638,14 +638,14 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
 }
 
 /// Audit-only model-shaped DTO mirroring
-/// [`crate::parsers::sheet_records::SheetGraphicGroupDecoded`] —
-/// PSM type `0x00FA` `GraphicGroup` / `GraphicPersist` records.
+/// [`crate::parsers::sheet_records::SheetDependencyObjectDecoded`] —
+/// PSM type `0x00FA` `DependencyObject` / `GraphicPersist` records.
 ///
 /// Only the stable 18-byte payload prefix and raw variable tail are
 /// exposed. Candidate child references remain probe/audit evidence and
 /// are not represented as a stable field.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct DecodedGraphicGroupRecord {
+pub struct DecodedDependencyObjectRecord {
     /// Inclusive byte-range start.
     pub byte_start: usize,
     /// Exclusive byte-range end.
@@ -668,8 +668,10 @@ pub struct DecodedGraphicGroupRecord {
     pub raw_reference_payload: Vec<u8>,
 }
 
-impl From<crate::parsers::sheet_records::SheetGraphicGroupDecoded> for DecodedGraphicGroupRecord {
-    fn from(d: crate::parsers::sheet_records::SheetGraphicGroupDecoded) -> Self {
+impl From<crate::parsers::sheet_records::SheetDependencyObjectDecoded>
+    for DecodedDependencyObjectRecord
+{
+    fn from(d: crate::parsers::sheet_records::SheetDependencyObjectDecoded) -> Self {
         Self {
             byte_start: d.byte_range.start,
             byte_end: d.byte_range.end,
@@ -933,7 +935,7 @@ impl DecodedIgSmartFrame2dRecord {
 /// **Unlike Phase 14 typed primitives**, this DTO has no `oid` field
 /// because `0x0010` records use the 6-byte PSM header convention
 /// (no fixed `oid` slot), mirroring Phase 15
-/// [`DecodedGraphicGroupRecord`].
+/// [`DecodedDependencyObjectRecord`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct DecodedSubRecord0x0010Record {
     /// Inclusive byte-range start covering the full PSM record

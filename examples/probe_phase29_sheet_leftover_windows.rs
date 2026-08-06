@@ -72,7 +72,7 @@ fn type_label(type_code: u16) -> &'static str {
         0x005E => "igPoint2d",
         0x0084 => "igLineString2d",
         0x00CE => "igSymbol2d",
-        0x00FA => "GraphicGroup",
+        0x00FA => "DependencyObject",
         0x3FE6 => "GLine2d",
         _ => "unknown",
     }
@@ -341,6 +341,8 @@ fn main() {
     println!();
     println!("- Treat these groups as byte-shape evidence only.");
     println!("- Do not infer field names from prefix bytes, size buckets, or offsets.");
-    println!("- `0x0010`, `GraphicGroup`, page transform, and text placement remain no-promotion.");
+    println!(
+        "- `0x0010`, `DependencyObject`, page transform, and text placement remain no-promotion."
+    );
     println!("- Nested `JSite*/Sheet*` streams need ownership and byte-audit registration decisions before parser work.");
 }

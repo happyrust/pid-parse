@@ -12,18 +12,19 @@ use pid_parse::{
     parsers::sheet_records::{
         collect_normalized_f64_pairs, coordinate_page_metadata_investigation_report,
         coordinate_pair_spatial_analysis, curve_primitive_investigation_report,
-        decode_attribute_fragments, decode_graphic_groups, decode_igboundaries, decode_iglines,
+        decode_attribute_fragments, decode_dependency_objects, decode_igboundaries, decode_iglines,
         decode_iglinestrings, decode_igpoints, decode_igsymbols, decode_igtextboxes,
         decode_jstyle_overrides, decode_primitive_lines, decode_sub_records_0x0010,
         primitive_line_investigation_report, sheet_record_shape_inventory,
         symbol_placement_investigation_report, text_placement_investigation_report,
         SheetCoordinatePageMetadataCandidateKind, SheetCurvePrimitiveCandidateKind,
-        SheetRecordShapeKind, SheetSymbolPlacementObject, GRAPHIC_GROUP_MIN_PAYLOAD_LEN,
-        JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW, JSTYLE_OVERRIDE_PAYLOAD_LEN, PSM_TYPE_CODE_GLINE2D,
-        PSM_TYPE_CODE_GRAPHIC_GROUP, PSM_TYPE_CODE_IGBOUNDARY2D, PSM_TYPE_CODE_IGLINE2D,
-        PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D, PSM_TYPE_CODE_IGSYMBOL2D,
-        PSM_TYPE_CODE_IGTEXTBOX, PSM_TYPE_CODE_JSTYLE_OVERRIDE, PSM_TYPE_CODE_SUB_RECORD_0X0010,
-        SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW, SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
+        SheetRecordShapeKind, SheetSymbolPlacementObject, DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN,
+        JSTYLE_OVERRIDE_MIN_BYTES_TO_FOLLOW, JSTYLE_OVERRIDE_PAYLOAD_LEN,
+        PSM_TYPE_CODE_DEPENDENCY_OBJECT, PSM_TYPE_CODE_GLINE2D, PSM_TYPE_CODE_IGBOUNDARY2D,
+        PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_IGLINESTRING2D, PSM_TYPE_CODE_IGPOINT2D,
+        PSM_TYPE_CODE_IGSYMBOL2D, PSM_TYPE_CODE_IGTEXTBOX, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+        PSM_TYPE_CODE_SUB_RECORD_0X0010, SUB_RECORD_0X0010_MAX_BYTES_TO_FOLLOW,
+        SUB_RECORD_0X0010_MIN_BYTES_TO_FOLLOW,
     },
     PidParser,
 };
@@ -1070,9 +1071,9 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
         "D06 igSymbol2d count drifted"
     );
     assert_eq!(
-        geometry.decoded_graphic_groups.len(),
+        geometry.decoded_dependency_objects.len(),
         21,
-        "D06 GraphicGroup audit count drifted"
+        "D06 DependencyObject audit count drifted"
     );
     assert_eq!(
         geometry.decoded_jstyle_overrides.len(),
@@ -1096,13 +1097,18 @@ fn d06_pid_parses_with_expected_structure_and_geometry_summary() {
     assert_eq!(normalized.decoded_points, 10);
     assert_eq!(normalized.decoded_texts, 4);
     assert_eq!(normalized.decoded_symbols, 6);
+    // D06's 3 JStyleOverride records used to surface here as inferred
+    // annotations. style.dll's own reader shows the bytes that anchor was
+    // built from are four u32, not two f64, so they now surface as probe-only
+    // unknowns instead -- hence 0 annotations and 8 + 3 = 11 unknowns. See
+    // `docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`.
     assert_eq!(
-        normalized.other_entities, 3,
+        normalized.other_entities, 0,
         "D06 decoded annotations count drifted"
     );
     assert_eq!(normalized.inferred_points, 64);
     assert_eq!(normalized.inferred_lines, 0);
-    assert_eq!(normalized.probe_only_unknowns, 8);
+    assert_eq!(normalized.probe_only_unknowns, 11);
 }
 
 #[test]
@@ -7063,7 +7069,7 @@ fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
 }
 
 /// Phase 15 Slice C: fixture-level ratchet for the conservative
-/// PSM `0x00FA` GraphicGroup / GraphicPersist parser.
+/// PSM `0x00FA` DependencyObject / GraphicPersist parser.
 ///
 /// This intentionally stays at parser level. It locks the stable record
 /// envelope and count evidence from `examples/probe_psm_0x00fa_shape.rs`
@@ -7072,7 +7078,7 @@ fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
 /// four-fixture set: one fewer than the broad bounded probe count
 /// because the decoder applies additional header validation.
 #[test]
-fn graphic_group_decoder_ratchets_fixture_counts_and_header_fields() {
+fn dependency_object_decoder_ratchets_fixture_counts_and_header_fields() {
     let fixtures = [
         ("DWG-0201GP06-01.pid", 135usize),
         ("DWG-0202GP06-01.pid", 84usize),
@@ -7094,36 +7100,36 @@ fn graphic_group_decoder_ratchets_fixture_counts_and_header_fields() {
                 continue;
             };
             let bytes = raw.data.as_slice();
-            let decoded = decode_graphic_groups(bytes);
+            let decoded = decode_dependency_objects(bytes);
             let model_decoded_count = sheet
                 .geometry
                 .as_ref()
-                .map_or(0, |geometry| geometry.decoded_graphic_groups.len());
+                .map_or(0, |geometry| geometry.decoded_dependency_objects.len());
             assert_eq!(
                 model_decoded_count,
                 decoded.len(),
-                "SheetGeometry audit collection must mirror parser-level GraphicGroup count for {} {}",
+                "SheetGeometry audit collection must mirror parser-level DependencyObject count for {} {}",
                 fixture,
                 sheet.path
             );
             for group in &decoded {
                 assert!(
                     group.byte_range.end <= bytes.len(),
-                    "GraphicGroup byte_range {:?} exceeds stream {} bytes ({})",
+                    "DependencyObject byte_range {:?} exceeds stream {} bytes ({})",
                     group.byte_range,
                     sheet.path,
                     bytes.len()
                 );
                 assert!(
                     group.byte_range.start < group.byte_range.end,
-                    "GraphicGroup byte_range must be non-empty: {:?}",
+                    "DependencyObject byte_range must be non-empty: {:?}",
                     group.byte_range
                 );
-                assert_eq!(group.type_code, PSM_TYPE_CODE_GRAPHIC_GROUP);
+                assert_eq!(group.type_code, PSM_TYPE_CODE_DEPENDENCY_OBJECT);
                 assert_eq!(group.type_flags, 0);
                 assert!(
-                    group.bytes_to_follow as usize >= GRAPHIC_GROUP_MIN_PAYLOAD_LEN,
-                    "GraphicGroup bytes_to_follow below conservative floor: {:?}",
+                    group.bytes_to_follow as usize >= DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN,
+                    "DependencyObject bytes_to_follow below conservative floor: {:?}",
                     group
                 );
                 assert_eq!(group.bytes_to_follow % 2, 0);
@@ -7157,14 +7163,14 @@ fn graphic_group_decoder_ratchets_fixture_counts_and_header_fields() {
         total_expected += expected_count;
     }
 
-    eprintln!("--- Phase 15 Slice C: PSM GraphicGroup decoder fixture ratchet ---");
+    eprintln!("--- Phase 15 Slice C: PSM DependencyObject decoder fixture ratchet ---");
     for (name, actual, expected) in &per_fixture_summary {
-        eprintln!("  {name}: {actual} decoded GraphicGroup records (expected {expected})");
+        eprintln!("  {name}: {actual} decoded DependencyObject records (expected {expected})");
     }
     for sample in &sample_groups {
         eprintln!("  sample: {sample}");
     }
-    eprintln!("  total decoded GraphicGroup records: {total_decoded}");
+    eprintln!("  total decoded DependencyObject records: {total_decoded}");
 
     if per_fixture_summary.is_empty() {
         eprintln!(
@@ -7177,13 +7183,13 @@ fn graphic_group_decoder_ratchets_fixture_counts_and_header_fields() {
     for (fixture, actual, expected) in &per_fixture_summary {
         assert_eq!(
             actual, expected,
-            "GraphicGroup fixture count drift for {fixture}: expected {expected}, got {actual}. \
+            "DependencyObject fixture count drift for {fixture}: expected {expected}, got {actual}. \
             Re-run `cargo run --release --example probe_psm_0x00fa_shape` before updating this ratchet."
         );
     }
     assert_eq!(
         total_decoded, total_expected,
-        "GraphicGroup aggregate count drift. Per-fixture summary: {per_fixture_summary:?}"
+        "DependencyObject aggregate count drift. Per-fixture summary: {per_fixture_summary:?}"
     );
 }
 
@@ -7962,7 +7968,7 @@ fn igboundaries_decoder_emits_typed_audit_records_with_provenance() {
 /// The probe (`examples/probe_psm_0x0010_shape.rs`) finds 638 matches
 /// under a non-advancing scan that counts overlapping hits. This
 /// conservative audit-only decoder advances past each matched record
-/// (Phase 15 GraphicGroup template), yielding 582 cross-fixture
+/// (Phase 15 DependencyObject template), yielding 582 cross-fixture
 /// records: `DWG-0201=161, DWG-0202=104, 工艺管道-1=306, A01=11`.
 /// The decoder admits more records in A01 than the probe because the
 /// probe's `max_offset` reserves a 16-byte dump buffer at the end of

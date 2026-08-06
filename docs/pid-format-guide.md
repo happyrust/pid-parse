@@ -1,7 +1,7 @@
 # `.pid` 文件格式指南
 
 > 面向要读懂、扩展或调试 `pid-parse` 的人。
-> 最后更新：2026-08-04。
+> 最后更新：2026-08-05。
 
 ## 先读这一段
 
@@ -227,17 +227,21 @@ version 2 字段相同、次序略异，共 98 字节。
 
 ## 7. 两个被推翻的结论（务必知道）
 
+两条都已在代码里收口，这里保留是因为旧文档与旧分析里还留着被推翻的说法。
+
 **（一）`0x0030` 不是标注锚点。**
-`JStyleOverrideEmitter` 现在把 payload 前 16 字节读作两个 f64「锚点坐标」并产出
+`JStyleOverrideEmitter` 原先把 payload 前 16 字节读作两个 f64「锚点坐标」并产出
 `PidGraphicKind::Annotation`。**原生读取序显示那里是四次独立的 4 字节读取。**
 「值落在 0..1」只是四个 u32 恰好拼出合法的小 double 位模式。
-OCS 的 `PID-ANNOTATION` 图层默认隐藏，无可见损害，但该产出应撤回或降级。
+该锚点读法已撤回：记录仍然发出（字节溯源本身站得住），但降级为
+`PidGraphicKind::Unknown` + `ProbeOnly`，不再带任何渲染器会去落笔的坐标。
+OCS 的 `PID-ANNOTATION` 图层因此恒为空。
 
 **（二）`0x00FA` 不是 GraphicGroup。**
-它是 `imagdex.dex` 的 **Dependency Object**。pid-parse 里
-`SheetGraphicGroupDecoded` / `PSM_TYPE_CODE_GRAPHIC_GROUP` / `decode_graphic_groups`
-这套命名基于 Phase 15 的一个未经证实的猜测，应当改名。它带两个 OID 引用，
-是依赖关系的两端。
+它是 `imagdex.dex` 的 **Dependency Object**。它带两个 OID 引用，是依赖关系的两端，
+不是「一个对象和它的图形」。Phase 15 那套基于形状猜出来的命名已改名为
+`DecodedDependencyObjectRecord` / `PSM_TYPE_CODE_DEPENDENCY_OBJECT` /
+`decode_dependency_objects`。
 
 ## 8. 还没整理完的地方
 
@@ -301,7 +305,7 @@ ComplexString）。
 | `examples/probe_stylecluster_records` | StyleCluster 记录链与目录 |
 | `examples/probe_jsl_text_char_style` | `0x002C` 字段分析 |
 | `examples/probe_jsl_line_style` | `0x002E` 字段分析 |
-| `examples/probe_graphicgroup_tail_columns` | `0x00FA` 尾部列分析 |
+| `examples/probe_dependency_object_tail_columns` | `0x00FA` 尾部列分析 |
 | `examples/probe_geometry_style_link` | 几何 → 样式链路候选测试 |
 | `examples/probe_jstyleoverride_link` | `0x0030` 链路候选测试 |
 | `examples/probe_inferred_points` | inferred 证据分类 |

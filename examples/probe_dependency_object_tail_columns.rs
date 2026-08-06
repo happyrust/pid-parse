@@ -1,6 +1,6 @@
-//! What is in the `0x00FA GraphicGroup` raw tail.
+//! What is in the `0x00FA DependencyObject` raw tail.
 //!
-//! `GraphicGroup` is the most numerous record family in every fixture (458
+//! `DependencyObject` is the most numerous record family in every fixture (458
 //! cross-fixture hits) and the only high-volume one whose payload past offset
 //! 18 is still kept as raw bytes. Symbology -- line weight, colour, style --
 //! cannot be in the geometry primitives, because `igLine2d` (50 bytes) and
@@ -20,8 +20,8 @@ use std::path::Path;
 
 use cfb::CompoundFile;
 use pid_parse::parsers::sheet_records::{
-    decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
-    decode_igtextboxes,
+    decode_dependency_objects, decode_iglines, decode_iglinestrings, decode_igpoints,
+    decode_igsymbols, decode_igtextboxes,
 };
 
 /// Buckets smaller than this cannot tell a constant from a coincidence.
@@ -71,7 +71,7 @@ fn known_oids(data: &[u8]) -> BTreeSet<u32> {
     oids.extend(decode_iglinestrings(data).iter().map(|r| r.oid));
     oids.extend(decode_igtextboxes(data).iter().map(|r| r.oid));
     oids.extend(decode_igsymbols(data).iter().map(|r| r.oid));
-    oids.extend(decode_graphic_groups(data).iter().map(|r| r.oid));
+    oids.extend(decode_dependency_objects(data).iter().map(|r| r.oid));
     oids
 }
 
@@ -318,14 +318,14 @@ fn trailer_scan(buckets: &BTreeMap<(u32, u16), Bucket>) {
 
 fn probe(path: &Path) {
     for (stream, data) in sheet_streams(path) {
-        let groups = decode_graphic_groups(&data);
+        let groups = decode_dependency_objects(&data);
         if groups.is_empty() {
             continue;
         }
         let oids = known_oids(&data);
         let families = oid_families(&data);
         println!(
-            "\n=== {} {stream} === {} GraphicGroup record(s), {} known OID(s)",
+            "\n=== {} {stream} === {} DependencyObject record(s), {} known OID(s)",
             path.display(),
             groups.len(),
             oids.len()

@@ -2389,23 +2389,30 @@ const IGSYMBOL2D_MATRIX_TAG: [u8; 4] = [0x02, 0x00, 0xA7, 0x50];
 /// the coordinate data from being mistaken for the tag.
 const IGSYMBOL2D_TAG_SEARCH_END: usize = 64;
 
-/// PSM type code for suspected `GraphicGroup` / `GraphicPersist` records.
+/// PSM type code for `DependencyObject` records.
+///
+/// The class is `imagdex.dex`'s **Dependency Object**, resolved through the
+/// PSM type-code table in `radsrvitem.dll` and the RAD CLSID registry in
+/// `jutil.dll` (see `docs/analysis/2026-08-04-psm-type-code-registry.md`).
+/// Phase 15 named it `GraphicGroup` / `GraphicPersist` on shape alone; that
+/// was a guess and it was wrong. The two OID references its payload carries
+/// are the two ends of a dependency, not an object and its graphics.
 ///
 /// Phase 15 probe evidence (`examples/probe_psm_0x00fa_shape.rs` and
 /// `docs/analysis/2026-05-14-psm-0x00fa-graphic-group-layout.md`)
 /// shows these records are standalone variable-size PSM records whose
 /// payload starts with `oid`, `parent_ref`, a small kind/count word,
 /// and a sub-type discriminator, followed by a reference-like raw tail.
-pub const PSM_TYPE_CODE_GRAPHIC_GROUP: u16 = 0x00FA;
+pub const PSM_TYPE_CODE_DEPENDENCY_OBJECT: u16 = 0x00FA;
 
 /// Minimum `0x00FA` payload size observed in current fixtures.
-pub const GRAPHIC_GROUP_MIN_PAYLOAD_LEN: usize = 44;
+pub const DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN: usize = 44;
 
 /// Maximum `0x00FA` payload size accepted by the conservative decoder.
 ///
 /// Current fixtures top out at 200 bytes. The cap leaves room for
 /// variant growth while rejecting obvious wide-scan false positives.
-const GRAPHIC_GROUP_MAX_PAYLOAD_LEN: usize = 512;
+const DEPENDENCY_OBJECT_MAX_PAYLOAD_LEN: usize = 512;
 
 /// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
 ///
@@ -3534,7 +3541,7 @@ fn decode_igtextbox_payload(
 ///   T-4..T-1 u32  jsite_ref — id of the `JSite<id>` storage that
 ///                 names this instance's `.sym` path (Phase 35-C,
 ///                 132/132 records across 6 fixtures)
-///   T..T+3  4 bytes   [`IGSYMBOL2D_MATRIX_TAG`], T is 33 or 35
+///   T..T+3  4 bytes   `IGSYMBOL2D_MATRIX_TAG`, T is 33 or 35
 ///   +0..7   f64   transform[0]  ⎫ 2×2 placement matrix, row-major.
 ///   +8..15  f64   transform[1]  ⎪ Fixtures hold only the eight
 ///   +16..23 f64   transform[2]  ⎪ axis-aligned placements: entries
@@ -3562,7 +3569,7 @@ pub struct SheetIgSymbol2dDecoded {
     pub sub_type_word: u16,
     /// Numeric id of the top-level `JSite<id>` storage carrying this
     /// instance's symbol reference, read from the 4 bytes immediately
-    /// preceding [`IGSYMBOL2D_MATRIX_TAG`]. Phase 35-C cross-fixture
+    /// preceding `IGSYMBOL2D_MATRIX_TAG`. Phase 35-C cross-fixture
     /// probe (`examples/probe_igsymbol2d_jsite_link.rs`): 132/132
     /// records across all 6 fixtures carry a value equal to a same-file
     /// `JSite<id>` id, and the referenced site's `JProperties` names the
@@ -3570,7 +3577,7 @@ pub struct SheetIgSymbol2dDecoded {
     /// `docs/analysis/2026-07-26-phase35c-igsymbol2d-jsite-link.md`.
     pub jsite_ref: u32,
     /// Row-major 2×2 placement matrix, read from just past
-    /// [`IGSYMBOL2D_MATRIX_TAG`]. An un-rotated, un-mirrored symbol reads
+    /// `IGSYMBOL2D_MATRIX_TAG`. An un-rotated, un-mirrored symbol reads
     /// `[1.0, 0.0, 0.0, 1.0]`; a negative determinant means the placement
     /// is mirrored, not merely turned.
     pub transform: [f64; 4],
@@ -3584,8 +3591,8 @@ pub struct SheetIgSymbol2dDecoded {
 /// Validation:
 /// 1. `type_code == 0x00CE`;
 /// 2. `bytes_to_follow ∈ [113, 200]`;
-/// 3. [`IGSYMBOL2D_MATRIX_TAG`] occurs within the first
-///    [`IGSYMBOL2D_TAG_SEARCH_END`] payload bytes;
+/// 3. `IGSYMBOL2D_MATRIX_TAG` occurs within the first
+///    `IGSYMBOL2D_TAG_SEARCH_END` payload bytes;
 /// 4. the 6 doubles following it are finite + in domain.
 ///
 /// Thin wrapper over [`IgSymbol2dDecoder`]'s shared
@@ -3710,20 +3717,25 @@ fn decode_igsymbol_payload(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 15 Slice C: PSM-encoded GraphicGroup / GraphicPersist decoder
+// Phase 15 Slice C: PSM-encoded DependencyObject / GraphicPersist decoder
 // ---------------------------------------------------------------------------
 
-/// One decoded PSM `0x00FA` `GraphicGroup` / `GraphicPersist` record.
+/// One decoded PSM `0x00FA` `DependencyObject` record.
 ///
 /// This DTO intentionally exposes only the stable header fields proven
 /// by fixture byte dumps. The variable tail is retained as raw bytes
 /// because candidate child-OID extraction is still an audit-layer
 /// hypothesis, not a stable schema contract.
+///
+/// The tail does have a known shape: it ends in a self-describing block,
+/// `u16 type` + `u16 selector` + `u16 len` followed by exactly `len` bytes,
+/// which two unrelated drawings agree on bucket for bucket. See
+/// `docs/analysis/2026-08-04-graphicgroup-tail-property-block.md`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SheetGraphicGroupDecoded {
+pub struct SheetDependencyObjectDecoded {
     /// Byte range covering the full PSM record.
     pub byte_range: std::ops::Range<usize>,
-    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_GRAPHIC_GROUP`].
+    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_DEPENDENCY_OBJECT`].
     pub type_code: u16,
     /// Top 2 bits of the PSM type word.
     pub type_flags: u16,
@@ -3742,7 +3754,7 @@ pub struct SheetGraphicGroupDecoded {
     pub raw_reference_payload: Vec<u8>,
 }
 
-/// Decode every conservative PSM `0x00FA` `GraphicGroup` record.
+/// Decode every conservative PSM `0x00FA` `DependencyObject` record.
 ///
 /// Validation:
 /// 1. `type_code == 0x00FA` and type flags are zero;
@@ -3750,44 +3762,47 @@ pub struct SheetGraphicGroupDecoded {
 /// 3. payload exists, `oid != 0`, `parent_ref == 6`;
 /// 4. payload bytes 8..13 are zero in the current fixture family;
 /// 5. `group_kind_word` is a small non-zero discriminator.
-pub fn decode_graphic_groups(data: &[u8]) -> Vec<SheetGraphicGroupDecoded> {
-    GraphicGroupDecoder.scan(data)
+pub fn decode_dependency_objects(data: &[u8]) -> Vec<SheetDependencyObjectDecoded> {
+    DependencyObjectDecoder.scan(data)
 }
 
-/// Try to decode one conservative PSM `0x00FA` `GraphicGroup` record at
+/// Try to decode one conservative PSM `0x00FA` `DependencyObject` record at
 /// `offset`. Returns `None` on validation failure.
 ///
-/// Thin wrapper over [`GraphicGroupDecoder::decode_at`].
-pub fn decode_graphic_group_at(data: &[u8], offset: usize) -> Option<SheetGraphicGroupDecoded> {
-    GraphicGroupDecoder.decode_at(data, offset)
+/// Thin wrapper over [`DependencyObjectDecoder::decode_at`].
+pub fn decode_dependency_object_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<SheetDependencyObjectDecoded> {
+    DependencyObjectDecoder.decode_at(data, offset)
 }
 
-/// [`PsmRecordDecoder`] adapter for the audit-only `GraphicGroup` /
+/// [`PsmRecordDecoder`] adapter for the audit-only `DependencyObject` /
 /// `GraphicPersist` family (PSM type `0x00FA`). Validation rules are
-/// documented on [`decode_graphic_groups`].
-pub struct GraphicGroupDecoder;
+/// documented on [`decode_dependency_objects`].
+pub struct DependencyObjectDecoder;
 
-impl PsmRecordDecoder for GraphicGroupDecoder {
-    type Record = SheetGraphicGroupDecoded;
+impl PsmRecordDecoder for DependencyObjectDecoder {
+    type Record = SheetDependencyObjectDecoded;
 
     fn type_code(&self) -> u16 {
-        PSM_TYPE_CODE_GRAPHIC_GROUP
+        PSM_TYPE_CODE_DEPENDENCY_OBJECT
     }
 
     fn min_record_len(&self) -> usize {
-        PSM_ENVELOPE_LEN + GRAPHIC_GROUP_MIN_PAYLOAD_LEN
+        PSM_ENVELOPE_LEN + DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN
     }
 
-    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetGraphicGroupDecoded> {
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetDependencyObjectDecoded> {
         let header = parse_psm_header(data, offset)?;
-        if header.type_code != PSM_TYPE_CODE_GRAPHIC_GROUP {
+        if header.type_code != PSM_TYPE_CODE_DEPENDENCY_OBJECT {
             return None;
         }
         if header.type_flags != 0 {
             return None;
         }
         let btf = header.bytes_to_follow as usize;
-        if !(GRAPHIC_GROUP_MIN_PAYLOAD_LEN..=GRAPHIC_GROUP_MAX_PAYLOAD_LEN).contains(&btf) {
+        if !(DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN..=DEPENDENCY_OBJECT_MAX_PAYLOAD_LEN).contains(&btf) {
             return None;
         }
         if !btf.is_multiple_of(2) {
@@ -3797,10 +3812,10 @@ impl PsmRecordDecoder for GraphicGroupDecoder {
         if payload_end > data.len() {
             return None;
         }
-        decode_graphic_group_payload(data, offset, &header, payload_end)
+        decode_dependency_object_payload(data, offset, &header, payload_end)
     }
 
-    fn advance_of(&self, record: &SheetGraphicGroupDecoded) -> usize {
+    fn advance_of(&self, record: &SheetDependencyObjectDecoded) -> usize {
         record
             .byte_range
             .end
@@ -3808,15 +3823,15 @@ impl PsmRecordDecoder for GraphicGroupDecoder {
     }
 }
 
-/// Family-specific payload validation for `GraphicGroup` (fixture
+/// Family-specific payload validation for `DependencyObject` (fixture
 /// invariants: non-zero `oid`, `parent_ref == 6` `PID_Page`, zeroed
 /// bytes 8..13, small non-zero kind word).
-fn decode_graphic_group_payload(
+fn decode_dependency_object_payload(
     data: &[u8],
     offset: usize,
     header: &PsmHeader,
     payload_end: usize,
-) -> Option<SheetGraphicGroupDecoded> {
+) -> Option<SheetDependencyObjectDecoded> {
     let type_code = header.type_code;
     let type_flags = header.type_flags;
     let bytes_to_follow = header.bytes_to_follow;
@@ -3840,7 +3855,7 @@ fn decode_graphic_group_payload(
     let sub_type_word = u16::from_le_bytes([payload[16], payload[17]]);
     let raw_reference_payload = payload.get(18..)?.to_vec();
 
-    Some(SheetGraphicGroupDecoded {
+    Some(SheetDependencyObjectDecoded {
         byte_range: offset..payload_end,
         type_code,
         type_flags,
@@ -4200,7 +4215,7 @@ fn decode_jstyle_override_payload(
 // `docs/analysis/2026-05-15-garc2d-packed-int-tail.md` §11.
 //
 // Until IDA reverse engineering confirms the class identity and the
-// sub-kind discriminator, this decoder follows the Phase 15 GraphicGroup
+// sub-kind discriminator, this decoder follows the Phase 15 DependencyObject
 // audit-only template: stable 6-byte PSM header (`type_word + bytes_to_follow`,
 // **not** the 18-byte IGDS header used by Phase 14 typed primitives) +
 // raw payload + full provenance. NO sub-kind field naming, NO
@@ -6522,10 +6537,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Phase 15 Slice C: PSM 0x00FA GraphicGroup decoder tests
+    // Phase 15 Slice C: PSM 0x00FA DependencyObject decoder tests
     // -----------------------------------------------------------------
 
-    fn build_synthetic_graphic_group_record(
+    fn build_synthetic_dependency_object_record(
         oid: u32,
         parent_ref: u32,
         group_kind_word: u16,
@@ -6533,9 +6548,9 @@ mod tests {
         raw_reference_payload: &[u8],
     ) -> Vec<u8> {
         let bytes_to_follow = 18 + raw_reference_payload.len();
-        assert!(bytes_to_follow >= GRAPHIC_GROUP_MIN_PAYLOAD_LEN);
+        assert!(bytes_to_follow >= DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN);
         let mut out = Vec::with_capacity(6 + bytes_to_follow);
-        out.extend_from_slice(&PSM_TYPE_CODE_GRAPHIC_GROUP.to_le_bytes());
+        out.extend_from_slice(&PSM_TYPE_CODE_DEPENDENCY_OBJECT.to_le_bytes());
         out.extend_from_slice(&(bytes_to_follow as u32).to_le_bytes());
         out.extend_from_slice(&oid.to_le_bytes());
         out.extend_from_slice(&parent_ref.to_le_bytes());
@@ -6547,17 +6562,20 @@ mod tests {
     }
 
     #[test]
-    fn graphic_group_decodes_canonical_header_and_raw_tail() {
-        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
-        let record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+    fn dependency_object_decodes_canonical_header_and_raw_tail() {
+        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
 
-        let decoded = decode_graphic_groups(&record);
+        let decoded = decode_dependency_objects(&record);
         assert_eq!(decoded.len(), 1);
         let group = &decoded[0];
         assert_eq!(group.byte_range, 0..record.len());
-        assert_eq!(group.type_code, PSM_TYPE_CODE_GRAPHIC_GROUP);
+        assert_eq!(group.type_code, PSM_TYPE_CODE_DEPENDENCY_OBJECT);
         assert_eq!(group.type_flags, 0);
-        assert_eq!(group.bytes_to_follow, GRAPHIC_GROUP_MIN_PAYLOAD_LEN as u32);
+        assert_eq!(
+            group.bytes_to_follow,
+            DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN as u32
+        );
         assert_eq!(group.oid, 42);
         assert_eq!(group.parent_ref, 6);
         assert_eq!(group.group_kind_word, 2);
@@ -6566,89 +6584,95 @@ mod tests {
     }
 
     #[test]
-    fn graphic_group_rejects_wrong_type_code() {
-        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
-        let mut record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+    fn dependency_object_rejects_wrong_type_code() {
+        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
         record[0] = 0x18;
         record[1] = 0x00;
 
-        assert!(decode_graphic_groups(&record).is_empty());
+        assert!(decode_dependency_objects(&record).is_empty());
     }
 
     #[test]
-    fn graphic_group_rejects_nonzero_type_flags() {
-        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
-        let mut record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
-        let flagged_type = PSM_TYPE_CODE_GRAPHIC_GROUP | 0x4000;
+    fn dependency_object_rejects_nonzero_type_flags() {
+        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
+        let flagged_type = PSM_TYPE_CODE_DEPENDENCY_OBJECT | 0x4000;
         record[0..2].copy_from_slice(&flagged_type.to_le_bytes());
 
-        assert!(decode_graphic_groups(&record).is_empty());
+        assert!(decode_dependency_objects(&record).is_empty());
     }
 
     #[test]
-    fn graphic_group_rejects_invalid_size_and_truncation() {
-        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
-        let mut record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+    fn dependency_object_rejects_invalid_size_and_truncation() {
+        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
         record[2..6].copy_from_slice(&43u32.to_le_bytes());
-        assert!(decode_graphic_groups(&record).is_empty());
+        assert!(decode_dependency_objects(&record).is_empty());
 
-        let record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
-        assert!(decode_graphic_groups(&record[..record.len() - 1]).is_empty());
+        let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
+        assert!(decode_dependency_objects(&record[..record.len() - 1]).is_empty());
     }
 
     #[test]
-    fn graphic_group_rejects_invalid_header_fields() {
-        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
-        assert!(decode_graphic_groups(&build_synthetic_graphic_group_record(
-            0, 6, 2, 0x01A1, &raw_tail
-        ))
-        .is_empty());
-        assert!(decode_graphic_groups(&build_synthetic_graphic_group_record(
-            42, 7, 2, 0x01A1, &raw_tail
-        ))
-        .is_empty());
-        assert!(decode_graphic_groups(&build_synthetic_graphic_group_record(
-            42, 6, 0, 0x01A1, &raw_tail
-        ))
-        .is_empty());
+    fn dependency_object_rejects_invalid_header_fields() {
+        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        assert!(
+            decode_dependency_objects(&build_synthetic_dependency_object_record(
+                0, 6, 2, 0x01A1, &raw_tail
+            ))
+            .is_empty()
+        );
+        assert!(
+            decode_dependency_objects(&build_synthetic_dependency_object_record(
+                42, 7, 2, 0x01A1, &raw_tail
+            ))
+            .is_empty()
+        );
+        assert!(
+            decode_dependency_objects(&build_synthetic_dependency_object_record(
+                42, 6, 0, 0x01A1, &raw_tail
+            ))
+            .is_empty()
+        );
     }
 
     #[test]
-    fn graphic_group_rejects_nonzero_reserved_prefix() {
-        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
-        let mut record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+    fn dependency_object_rejects_nonzero_reserved_prefix() {
+        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let mut record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
         record[6 + 8] = 1;
 
-        assert!(decode_graphic_groups(&record).is_empty());
+        assert!(decode_dependency_objects(&record).is_empty());
     }
 
     #[test]
-    fn graphic_group_decoder_is_panic_safe_on_short_input() {
-        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
-        let record = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
+    fn dependency_object_decoder_is_panic_safe_on_short_input() {
+        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
         for trunc_len in 0..record.len() {
-            assert!(decode_graphic_groups(&record[..trunc_len]).is_empty());
+            assert!(decode_dependency_objects(&record[..trunc_len]).is_empty());
         }
-        assert!(decode_graphic_groups(&[]).is_empty());
+        assert!(decode_dependency_objects(&[]).is_empty());
     }
 
     #[test]
-    fn graphic_group_decoder_is_panic_safe_on_random_noise() {
+    fn dependency_object_decoder_is_panic_safe_on_random_noise() {
         let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
-        let _ = decode_graphic_groups(&noise);
-        assert!(decode_graphic_groups(&vec![0u8; 4096]).is_empty());
-        assert!(decode_graphic_groups(&vec![0xFFu8; 4096]).is_empty());
+        let _ = decode_dependency_objects(&noise);
+        assert!(decode_dependency_objects(&vec![0u8; 4096]).is_empty());
+        assert!(decode_dependency_objects(&vec![0xFFu8; 4096]).is_empty());
     }
 
     #[test]
-    fn graphic_group_decodes_two_back_to_back_records() {
-        let raw_tail = vec![0x01; GRAPHIC_GROUP_MIN_PAYLOAD_LEN - 18];
-        let first = build_synthetic_graphic_group_record(42, 6, 2, 0x01A1, &raw_tail);
-        let second = build_synthetic_graphic_group_record(43, 6, 1, 0x00B8, &raw_tail);
+    fn dependency_object_decodes_two_back_to_back_records() {
+        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let first = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
+        let second = build_synthetic_dependency_object_record(43, 6, 1, 0x00B8, &raw_tail);
         let mut data = first;
         data.extend_from_slice(&second);
 
-        let decoded = decode_graphic_groups(&data);
+        let decoded = decode_dependency_objects(&data);
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].oid, 42);
         assert_eq!(decoded[1].oid, 43);

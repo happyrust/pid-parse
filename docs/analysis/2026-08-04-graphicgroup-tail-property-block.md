@@ -24,7 +24,7 @@
 > 日期：2026-08-04
 > 范围：`pid-parse`
 > 结论类型：**正向线索，尚未提升为 decoded**——够开一个取证 phase，不够直接写解码器。
-> 证据：`examples/probe_graphicgroup_tail_columns`（本次新增）对
+> 证据：`examples/probe_dependency_object_tail_columns`（本次新增）对
 > `DWG-0201GP06-01.pid` 与 `工艺管道及仪表流程-1.pid` 两张无关图纸的实跑。
 
 ## 1. 为什么看这里

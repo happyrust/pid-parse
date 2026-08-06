@@ -70,7 +70,7 @@ Soft-skips when `test-file/D06.pid` is absent.
 
 `src/parsers/sheet_records.rs` ships typed PSM-record decoders for **8
 SmartPlant `Sheet*` stream record families** (plus audit-only
-`0x00FA GraphicGroup` and `0x0010` sub-record collections):
+`0x00FA DependencyObject` and `0x0010` sub-record collections):
 
 | Slice | PSM Type | Decoder | DTO | Sigma Class |
 |---|---|---|---|---|
@@ -114,7 +114,22 @@ decompilation.
   the JStyleOverride identity; Phase 17 removed the `PrimitiveArc`
   compatibility decoder. Never re-introduce an arc reading for
   `0x0030` (the real IGDS arc is `0x0061 igArc2d`, currently
-  uncovered).
+  uncovered). The record also used to emit an `Inferred`
+  `PidGraphicKind::Annotation` whose anchor came from reading payload
+  `+0..15` as two `f64`; `style.dll`'s own version-3 serializer makes
+  four separate four-byte reads there, so that anchor is withdrawn and
+  the record now surfaces as `ProbeOnly`
+  `PidGraphicKind::Unknown` — present because its byte provenance is
+  sound, positionless because no reading of those bytes is. See
+  `docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`.
+- `0x00FA` is `DependencyObject` (`imagdex.dex`), **not**
+  `GraphicGroup`: Phase 15 named it on record shape alone, and the two
+  OID references its payload carries are the two ends of a dependency,
+  not an object and its graphics. The type-code table in
+  `radsrvitem.dll` plus the RAD CLSID registry in `jutil.dll` settle
+  the identity
+  (`docs/analysis/2026-08-04-psm-type-code-registry.md`). It stays
+  audit-only either way.
 - SmartPlant fixtures don't use standard IGDS `igCircle2d` (0x0059),
   `igRectangle2d` (0x0020), `igArc2d` (0x0061), or
   `igEllipticalArc2d` (0x007E) — zero hits cross-fixture.
@@ -131,7 +146,7 @@ decompilation.
 - `0x0010` (638 probe scan hits, 582 decoded after advancing) is a
   polymorphic sub-record family. Phase 18 ships it as an audit-only
   typed collection (`SheetGeometry::decoded_sub_records_0x0010`) on
-  the Phase 15 GraphicGroup template: stable 6-byte PSM header + raw
+  the Phase 15 `0x00FA` template: stable 6-byte PSM header + raw
   payload + full provenance, no sub-kind field naming, no
   `PidGraphicKind` emission. Referenced from JStyleOverride
   `+38..41` / `+56..59`. Sub-kind discrimination deferred to a

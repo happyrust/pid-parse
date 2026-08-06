@@ -45,7 +45,7 @@ const KNOWN_REFERENCED_TYPES: &[(u16, &str)] = &[
     (0x0084, "igLineString2d"),
     (0x00AC, "0x00AC unknown"),
     (0x00CE, "igSymbol2d"),
-    (0x00FA, "GraphicGroup"),
+    (0x00FA, "DependencyObject"),
     (0x3FE6, "GLine2d"),
 ];
 

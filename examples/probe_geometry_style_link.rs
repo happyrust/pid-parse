@@ -25,8 +25,8 @@ use std::path::Path;
 
 use cfb::CompoundFile;
 use pid_parse::parsers::sheet_records::{
-    decode_graphic_groups, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
-    decode_igtextboxes,
+    decode_dependency_objects, decode_iglines, decode_iglinestrings, decode_igpoints,
+    decode_igsymbols, decode_igtextboxes,
 };
 
 const PSM_TEXT_CHAR_STYLE: u16 = 0x002C;
@@ -138,7 +138,7 @@ fn probe(path: &Path) {
             .filter(|(_, f)| **f == "igLine2d")
             .map(|(oid, _)| *oid)
             .collect();
-        let deps = decode_graphic_groups(&data);
+        let deps = decode_dependency_objects(&data);
         if deps.is_empty() {
             continue;
         }

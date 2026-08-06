@@ -938,7 +938,7 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     &JStyleOverrideEmitter,
     // Audit-only families: explicit no-op policy.
     &IgBoundary2dEmitter,
-    &GraphicGroupEmitter,
+    &DependencyObjectEmitter,
     &SubRecord0x0010Emitter,
     &AttributeFragmentEmitter,
 ];
@@ -1327,16 +1327,24 @@ impl GeometryEmitter for IgLine2dEmitter {
     }
 }
 
-/// Emits `Inferred` [`PidGraphicKind::Annotation`] entities for the RAD
+/// Emits `ProbeOnly` [`PidGraphicKind::Unknown`] entities for the RAD
 /// `JStyleOverride` family (PSM `0x0030`).
 ///
-/// Phase 16 Slice F semantics preserved verbatim: the IDA Version-3
-/// schema (`style.dll!sub_1000F030`) writes the payload as
-/// `4 × u32 + 4 × f64 + 3 × u32 + 2 × u16`; cross-fixture probe v5
-/// evidence shows that joining the first 8 bytes and bytes `+8..15` as
-/// `f64` produces consistently normalized coordinates, so they surface
-/// as an `Inferred` annotation anchor while the authoritative record
-/// layout stays in the decoded audit collection.
+/// This used to emit an `Inferred` annotation anchor. Phase 16 Slice F had
+/// recorded a genuine ambiguity: the IDA Version-3 schema calls the payload
+/// `4 × u32 + 4 × f64 + 3 × u32 + 2 × u16`, while cross-fixture probe v5
+/// evidence found that joining `+0..7` and `+8..15` into two `f64` gives
+/// consistently normalized coordinates, and the anchor reading won.
+///
+/// The native reader settles it the other way. `style.dll`'s version-3
+/// serializer makes four separate four-byte reads there, so those are four
+/// fields and the normalized coordinates were four `u32` that happen to
+/// spell a plausible small double. The record's real doubles are further in.
+/// See `docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`.
+///
+/// The record is still surfaced, because it is in the file and its byte
+/// provenance is sound, but as probe evidence rather than as an annotation
+/// with a position no renderer should trust.
 struct JStyleOverrideEmitter;
 
 impl GeometryEmitter for JStyleOverrideEmitter {
@@ -1352,39 +1360,22 @@ impl GeometryEmitter for JStyleOverrideEmitter {
             ) else {
                 continue;
             };
-            let a_bytes = record.field_a_u32.to_le_bytes();
-            let b_bytes = record.field_b_u32.to_le_bytes();
-            let c_bytes = record.field_c_u32.to_le_bytes();
-            let d_bytes = record.field_d_u32.to_le_bytes();
-            let anchor_x = f64::from_le_bytes([
-                a_bytes[0], a_bytes[1], a_bytes[2], a_bytes[3], b_bytes[0], b_bytes[1], b_bytes[2],
-                b_bytes[3],
-            ]);
-            let anchor_y = f64::from_le_bytes([
-                c_bytes[0], c_bytes[1], c_bytes[2], c_bytes[3], d_bytes[0], d_bytes[1], d_bytes[2],
-                d_bytes[3],
-            ]);
-            if !anchor_x.is_finite() || !anchor_y.is_finite() {
-                continue;
-            }
             out.push(PidGraphicEntity {
                 id: format!("{}:jstyle-override:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: Some(record.oid),
-                kind: PidGraphicKind::Annotation {
-                    anchor: PidPoint {
-                        x: anchor_x,
-                        y: anchor_y,
-                    },
-                    rotation_angle: record.field_2_f64,
-                    secondary_radius: record.field_1_f64,
+                kind: PidGraphicKind::Unknown {
                     note: format!(
-                        "PSM JStyleOverride (RAD style.dll CLSID {{47FCC338-...}}) \
-                         V3 IO record; probe-derived annotation anchor; \
-                         oid={} bytes_to_follow={} tail_len={}",
+                        "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID \
+                         {{47FCC338-2D0F-11D0-A1FF-080036A1CF02}}); style record, \
+                         not drawable geometry; oid={} bytes_to_follow={} \
+                         payload +0..15 = 4 x u32 [{}, {}, {}, {}]",
                         record.oid,
                         record.bytes_to_follow,
-                        record.raw_attribute_tail.len(),
+                        record.field_a_u32,
+                        record.field_b_u32,
+                        record.field_c_u32,
+                        record.field_d_u32,
                     ),
                 },
                 coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
@@ -1395,15 +1386,16 @@ impl GeometryEmitter for JStyleOverrideEmitter {
                     record_kind: Some(SheetRecordKind::JStyleOverride),
                     field_x: None,
                     note: Some(format!(
-                        "PSM 0x0030 JStyleOverride record layout decoded from \
-                         style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): \
-                         oid={} bytes_to_follow={} field_1={:.6} \
-                         rotation_angle={:.6} (rad); annotation anchor remains \
-                         inferred because payload +0..15 is authoritative as 4 x u32",
+                        "Layout confirmed against style.dll's own version-3 \
+                         serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a \
+                         26-byte base block. The earlier annotation-anchor \
+                         reading of payload +0..15 is withdrawn -- the native \
+                         reader makes four separate 4-byte reads there. \
+                         oid={} bytes_to_follow={} field_1={:.6} field_2={:.6}",
                         record.oid, record.bytes_to_follow, record.field_1_f64, record.field_2_f64,
                     )),
                 },
-                confidence: PidGeometryConfidence::Inferred,
+                confidence: PidGeometryConfidence::ProbeOnly,
             });
         }
     }
@@ -1422,12 +1414,12 @@ impl GeometryEmitter for IgBoundary2dEmitter {
     }
 }
 
-/// No-op emitter: `GraphicGroup` (PSM `0x00FA`) is an audit-only
+/// No-op emitter: `DependencyObject` (PSM `0x00FA`) is an audit-only
 /// grouping record; child-OID extraction remains an audit-layer
 /// hypothesis, not render geometry.
-struct GraphicGroupEmitter;
+struct DependencyObjectEmitter;
 
-impl GeometryEmitter for GraphicGroupEmitter {
+impl GeometryEmitter for DependencyObjectEmitter {
     fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
     }
 }
@@ -1555,7 +1547,12 @@ mod tests {
     }
 
     #[test]
-    fn jstyle_override_projection_keeps_inferred_geometry_confidence() {
+    fn jstyle_override_projection_withdraws_the_annotation_anchor() {
+        // The payload words below spell two plausible normalized f64 when
+        // joined pairwise -- exactly the reading style.dll's own version-3
+        // serializer rules out, since it makes four separate 4-byte reads
+        // there. The record must surface as probe-only evidence, never as an
+        // annotation with a position a renderer would place.
         let anchor_x = 0.25_f64;
         let anchor_y = 0.5_f64;
         let anchor_x_bytes = anchor_x.to_le_bytes();
@@ -1609,42 +1606,38 @@ mod tests {
         });
 
         let geometry = build_normalized_geometry(&doc);
-        let annotation = geometry
+        assert!(
+            !geometry
+                .entities
+                .iter()
+                .any(|entity| matches!(entity.kind, PidGraphicKind::Annotation { .. })),
+            "the withdrawn anchor reading must not come back"
+        );
+
+        let style_record = geometry
             .entities
             .iter()
-            .find(|entity| matches!(entity.kind, PidGraphicKind::Annotation { .. }))
-            .expect("JStyleOverride should project as an annotation");
+            .find(|entity| entity.source.record_kind == Some(SheetRecordKind::JStyleOverride))
+            .expect("JStyleOverride should still be surfaced");
 
-        assert_eq!(annotation.confidence, PidGeometryConfidence::Inferred);
+        assert_eq!(style_record.confidence, PidGeometryConfidence::ProbeOnly);
+        assert!(matches!(style_record.kind, PidGraphicKind::Unknown { .. }));
         assert_eq!(
-            annotation.source.record_kind,
-            Some(SheetRecordKind::JStyleOverride)
-        );
-        assert_eq!(
-            annotation.source.byte_range,
+            style_record.source.byte_range,
             Some(PidByteRange { start: 8, end: 78 })
         );
-        assert!(annotation
-            .source
-            .note
-            .as_deref()
-            .is_some_and(|note| note.contains("annotation anchor remains inferred")));
-        assert!(matches!(
-            annotation.kind,
-            PidGraphicKind::Annotation {
-                anchor: PidPoint { x, y },
-                ..
-            } if x == anchor_x && y == anchor_y
-        ));
+        assert!(style_record.source.note.as_deref().is_some_and(|note| note
+            .contains("annotation-anchor reading")
+            && note.contains("withdrawn")));
         assert!(geometry.warnings.iter().any(|warning| {
             warning.contains("1 Sheet evidence item")
-                && warning.contains("0 decoded, 1 inferred, 0 probe-only")
+                && warning.contains("0 decoded, 0 inferred, 1 probe-only")
         }));
     }
 
     #[test]
     fn audit_only_families_register_no_op_emitters() {
-        // M2 seam policy test: igBoundary2d / GraphicGroup / 0x0010 /
+        // M2 seam policy test: igBoundary2d / DependencyObject / 0x0010 /
         // attribute fragments are registered in EMITTERS as explicit
         // no-ops — decoded records must produce zero entities.
         let mut doc = PidDocument::default();
@@ -1689,7 +1682,7 @@ mod tests {
                     closed_loop: false,
                 }],
                 decoded_igsmartframes: Vec::new(),
-                decoded_graphic_groups: vec![crate::model::DecodedGraphicGroupRecord {
+                decoded_dependency_objects: vec![crate::model::DecodedDependencyObjectRecord {
                     byte_start: 200,
                     byte_end: 250,
                     type_code: 0x00FA,
@@ -1827,7 +1820,7 @@ mod tests {
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
-                decoded_graphic_groups: Vec::new(),
+                decoded_dependency_objects: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
@@ -1927,7 +1920,7 @@ mod tests {
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
-                decoded_graphic_groups: Vec::new(),
+                decoded_dependency_objects: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
@@ -2065,7 +2058,7 @@ mod tests {
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
-                decoded_graphic_groups: Vec::new(),
+                decoded_dependency_objects: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
@@ -2156,7 +2149,7 @@ mod tests {
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
-                decoded_graphic_groups: Vec::new(),
+                decoded_dependency_objects: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
@@ -2218,7 +2211,7 @@ mod tests {
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
-                decoded_graphic_groups: Vec::new(),
+                decoded_dependency_objects: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
@@ -2300,7 +2293,7 @@ mod tests {
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
-                decoded_graphic_groups: Vec::new(),
+                decoded_dependency_objects: Vec::new(),
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),

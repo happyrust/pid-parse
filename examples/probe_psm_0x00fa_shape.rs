@@ -1,5 +1,5 @@
 //! Probe PSM type 0x00FA (250 hits cross-fixture) -- suspected
-//! GraphicGroup / GraphicPersist records that relate geometry OIDs
+//! DependencyObject / GraphicPersist records that relate geometry OIDs
 //! to parent/group/reference lists.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -9,7 +9,7 @@ use std::path::Path;
 use cfb::CompoundFile;
 
 const PSM_HEADER_LEN: usize = 6;
-const PSM_GRAPHIC_GROUP: u16 = 0x00FA;
+const PSM_DEPENDENCY_OBJECT: u16 = 0x00FA;
 const PSM_KNOWN_GEOMETRY_TYPES: &[u16] = &[
     0x3FE6, // SmartPlant GLine2d
     0x0030, // SmartPlant GArc2d
@@ -31,7 +31,7 @@ struct PsmRecord {
 }
 
 #[derive(Debug, Default)]
-struct GraphicGroupBucketStats {
+struct DependencyObjectBucketStats {
     records: usize,
     records_with_geometry_oid_candidates: usize,
     geometry_oid_words: usize,
@@ -59,11 +59,12 @@ fn probe_fixture(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut size_dist: BTreeMap<u32, usize> = BTreeMap::new();
     let mut subtype_dist: BTreeMap<u16, usize> = BTreeMap::new();
     let mut parent_dist: BTreeMap<u32, usize> = BTreeMap::new();
-    let mut bucket_stats: BTreeMap<(u32, Option<u16>), GraphicGroupBucketStats> = BTreeMap::new();
+    let mut bucket_stats: BTreeMap<(u32, Option<u16>), DependencyObjectBucketStats> =
+        BTreeMap::new();
 
     for record in psm_records
         .iter()
-        .filter(|record| record.type_code == PSM_GRAPHIC_GROUP)
+        .filter(|record| record.type_code == PSM_DEPENDENCY_OBJECT)
     {
         let payload = &bytes[record.offset + PSM_HEADER_LEN..record.end];
         let Some(oid) = read_u32(payload, 0) else {
@@ -157,7 +158,7 @@ fn probe_fixture(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     print_u32_distribution("bytes_to_follow", &size_dist, 10);
     print_u16_distribution("sub_type_word", &subtype_dist, 10);
     print_u32_distribution("parent_ref", &parent_dist, 10);
-    print_graphic_group_bucket_summary(&bucket_stats, 12);
+    print_dependency_object_bucket_summary(&bucket_stats, 12);
     Ok(())
 }
 
@@ -223,7 +224,7 @@ fn adjacent_record_after(records: &[PsmRecord], end: usize) -> Option<&PsmRecord
 }
 
 fn is_context_record(type_code: u16) -> bool {
-    type_code == PSM_GRAPHIC_GROUP || PSM_KNOWN_GEOMETRY_TYPES.contains(&type_code)
+    type_code == PSM_DEPENDENCY_OBJECT || PSM_KNOWN_GEOMETRY_TYPES.contains(&type_code)
 }
 
 fn candidate_oid_words(
@@ -289,8 +290,8 @@ fn print_u32_distribution(label: &str, dist: &BTreeMap<u32, usize>, limit: usize
     }
 }
 
-fn print_graphic_group_bucket_summary(
-    stats: &BTreeMap<(u32, Option<u16>), GraphicGroupBucketStats>,
+fn print_dependency_object_bucket_summary(
+    stats: &BTreeMap<(u32, Option<u16>), DependencyObjectBucketStats>,
     limit: usize,
 ) {
     println!("  bucket geometry-OID candidate summary:");

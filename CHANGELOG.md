@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### 把 2026-08-04 的 style.dll 原生读取器证据落进解析器（2026-08-05）
+
+- **`0x0030` JStyleOverride 撤回标注锚点**：原先把 payload `+0..15` 拼成两个
+  f64 当锚点、发 `Inferred` 的 `PidGraphicKind::Annotation`。`style.dll` 自己的
+  version-3 序列化器在那里做四次独立的 4 字节读取，所以那是四个 u32，
+  「值落在 0..1」只是恰好拼出合法的小 double 位模式。记录仍然发出（字节溯源
+  站得住），但降级为 `ProbeOnly` 的 `PidGraphicKind::Unknown`，不带任何坐标。
+  证据：`docs/analysis/2026-08-04-jstyleoverride-native-reader-settles-it.md`。
+- **`0x00FA` 改名 `GraphicGroup` → `DependencyObject`**：Phase 15 只按记录形状
+  猜了名字，而它携带的两个 OID 引用是一条依赖的两端，不是「一个对象和它的
+  图形」。身份由 `radsrvitem.dll` 的类型码表 + `jutil.dll` 的 RAD CLSID 注册表
+  坐实（`docs/analysis/2026-08-04-psm-type-code-registry.md`）。公开符号随之
+  改名：`decode_graphic_groups` → `decode_dependency_objects`、
+  `SheetGeometry::decoded_graphic_groups` → `decoded_dependency_objects`、
+  `DecodedGraphicGroupRecord` → `DecodedDependencyObjectRecord`、
+  `PSM_TYPE_CODE_GRAPHIC_GROUP` → `PSM_TYPE_CODE_DEPENDENCY_OBJECT`、
+  `GRAPHIC_GROUP_MIN_PAYLOAD_LEN` → `DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN`。
+  仍是 audit-only，不发几何，计数棘轮零变化。
+- **下游可见的两处**：export bundle 里 JStyleOverride 从
+  `geometry/audit_entities.json` 移到 `geometry/probe_entities.json`；
+  OpenCADStudio 的 `PID-ANNOTATION` 图层从此恒为空（`ProbeOnly` 不落笔）。
+- 金快照按此重祝福：6 个 fixture 的差异只有 annotation→unknown、
+  inferred→probe_only 与两处说明文字，无其它实体移动。
+  D06 棘轮 `other_entities` 3→0、`probe_only_unknowns` 8→11。
+- **顺带修好一个哑掉的门禁**：`cargo rustdoc` 自 Phase 35-C 起就因为公开文档
+  链到私有常量（`IGSYMBOL2D_MATRIX_TAG` / `IGSYMBOL2D_TAG_SEARCH_END`）而报错
+  退出，而 `check-missing-docs.sh` 用 `|| true` 吞掉了失败，于是它一直在数一份
+  「什么都没生成」的输出，稳定得出 0 == baseline 的假绿。把这 5 处改成普通
+  代码跨度后 rustdoc 退出 0，计数 0 是真的 0，棘轮恢复有效。
+- 门禁：build / test / clippy -D warnings / fmt / missing-docs 全绿。
+
 ### 架构深化 M0–M2：PsmRecordDecoder + GeometryEmitter 双 seam 落地（2026-07-18）
 
 - **M0（ADR-0003 P0）**：62 项 Phase 33/34 脏工作树按 4 个 review-unit

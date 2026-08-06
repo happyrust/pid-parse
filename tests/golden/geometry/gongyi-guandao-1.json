@@ -27551,14 +27551,8 @@
     "id": "/Sheet6:jstyle-override:0",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3111093303994483,
-        "y": 0.43680676538424146
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.30044054206109205,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [467858208, 1070852407, 1560267926, 1071379620]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -27604,22 +27598,16 @@
       },
       "record_id": "jstyle-override:0",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.300441 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.300441 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:1",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3261326020525569,
-        "y": 0.4329967653842452
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.2892519573155906,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=128 payload +0..15 = 4 x u32 [1191077958, 1070915419, 279336947, 1071363640]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -27665,22 +27653,16 @@
       },
       "record_id": "jstyle-override:1",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=128 field_1=0.289252 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=128 field_1=0.289252 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:2",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.22140592890099065,
-        "y": 0.17939611937598227
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.2182309289009892,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=128 payload +0..15 = 4 x u32 [2346883008, 1070356231, 3101680726, 1070003827]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -27726,22 +27708,16 @@
       },
       "record_id": "jstyle-override:2",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=128 field_1=0.218231 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=128 field_1=0.218231 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:3",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.18169296201647,
-        "y": 0.5046411983047072
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.17851796201647024,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=128 payload +0..15 = 4 x u32 [149100032, 1070023095, 1281219296, 1071654405]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -27787,22 +27763,16 @@
       },
       "record_id": "jstyle-override:3",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=128 field_1=0.178518 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=128 field_1=0.178518 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:4",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.1476880291822127,
-        "y": 0.5036038201163319
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.14451302918221182,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=128 payload +0..15 = 4 x u32 [4222391552, 1069737840, 3258010173, 1071652229]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -27848,22 +27818,16 @@
       },
       "record_id": "jstyle-override:4",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=128 field_1=0.144513 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=128 field_1=0.144513 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:5",
     "graphic_oid": 2,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3264961386641537,
-        "y": 0.3601404155118854
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.3264961386641537,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=2 bytes_to_follow=225 tail_len=149"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=2 bytes_to_follow=225 payload +0..15 = 4 x u32 [259345650, 1070916944, 1655036283, 1071058058]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -27909,22 +27873,16 @@
       },
       "record_id": "jstyle-override:5",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=2 bytes_to_follow=225 field_1=0.326496 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=2 bytes_to_follow=225 field_1=0.326496 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:6",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.47106458362098813,
-        "y": 0.516550896399715
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.4678895836209867,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=128 payload +0..15 = 4 x u32 [289222432, 1071523308, 3201839944, 1071679381]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -27970,22 +27928,16 @@
       },
       "record_id": "jstyle-override:6",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=128 field_1=0.467890 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=128 field_1=0.467890 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:7",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3398764892736157,
-        "y": 0.5244057800674675
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.33564671933820467,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=128 payload +0..15 = 4 x u32 [1367802272, 1070973065, 2707891194, 1071695854]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28031,22 +27983,16 @@
       },
       "record_id": "jstyle-override:7",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=128 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=128 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:8",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.4283696159524144,
-        "y": 0.238318597154503
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.425194615952413,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=128 payload +0..15 = 4 x u32 [1690789792, 1071344232, 1248285176, 1070498105]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28092,22 +28038,16 @@
       },
       "record_id": "jstyle-override:8",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=128 field_1=0.425195 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=128 field_1=0.425195 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:9",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3463266030399166,
-        "y": 0.43680676538422547
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.33564671933820467,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [242393928, 1071000119, 1560267638, 1071379620]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28153,22 +28093,16 @@
       },
       "record_id": "jstyle-override:9",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:10",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3450340284209056,
-        "y": 0.43680676538422547
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.33564671933820467,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [2600782734, 1070994697, 1560267638, 1071379620]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28214,22 +28148,16 @@
       },
       "record_id": "jstyle-override:10",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:11",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3300645124841537,
-        "y": 0.3025602286343011
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.3356467193382039,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [3886817996, 1070931910, 2479062698, 1070816549]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28275,22 +28203,16 @@
       },
       "record_id": "jstyle-override:11",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:12",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3750585179420787,
-        "y": 0.37047632554826265
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.3711286087492466,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [1898541040, 1071120629, 1435173545, 1071101410]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28336,22 +28258,16 @@
       },
       "record_id": "jstyle-override:12",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.371129 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.371129 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:13",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.26635678403547053,
-        "y": 0.40146453883042305
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.27274195731558015,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [1394606419, 1070664701, 1379004901, 1071231384]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28397,22 +28313,16 @@
       },
       "record_id": "jstyle-override:13",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.272742 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.272742 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:14",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.307361387189281,
-        "y": 0.43680676538424146
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.30044054206109205,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [411172467, 1070836687, 1560267926, 1071379620]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28458,22 +28368,16 @@
       },
       "record_id": "jstyle-override:14",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.300441 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.300441 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:15",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3288484582825876,
-        "y": 0.3025602286343011
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.3356467193382039,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [1735031454, 1070926810, 2479062698, 1070816549]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28519,22 +28423,16 @@
       },
       "record_id": "jstyle-override:15",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:16",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.37465316654155684,
-        "y": 0.33743768833113436
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.37112860874923237,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [1181278863, 1071118929, 1056209897, 1070962836]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28580,22 +28478,16 @@
       },
       "record_id": "jstyle-override:16",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.371129 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.371129 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:17",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.37627457214364424,
-        "y": 0.4014645388304215
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.371128608749259,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [4050327572, 1071125729, 1379004873, 1071231384]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28641,22 +28533,16 @@
       },
       "record_id": "jstyle-override:17",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.371129 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.371129 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:18",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.37242373383868727,
-        "y": 0.37047632554826265
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.3711286087492466,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [1531304195, 1071109578, 1435173545, 1071101410]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28702,22 +28588,16 @@
       },
       "record_id": "jstyle-override:18",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.371129 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.371129 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:19",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.37366860899793386,
-        "y": 0.33743768833113436
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.37112860874923237,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [3184265002, 1071114799, 1056209897, 1070962836]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28763,22 +28643,16 @@
       },
       "record_id": "jstyle-override:19",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.371129 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.371129 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:20",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3736686089979344,
-        "y": 0.4014645388304215
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.371128608749259,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [3184265012, 1071114799, 1379004873, 1071231384]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28824,22 +28698,16 @@
       },
       "record_id": "jstyle-override:20",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.371129 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.371129 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:21",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.2696768050302203,
-        "y": 0.40146453883042305
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.27274195731558015,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [2156268888, 1070678626, 1379004901, 1071231384]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28885,22 +28753,16 @@
       },
       "record_id": "jstyle-override:21",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.272742 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.272742 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:22",
     "graphic_oid": 2,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3356467193382038,
-        "y": 0.08614745636439085
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.3356467193382038,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=2 bytes_to_follow=225 tail_len=149"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=2 bytes_to_follow=225 payload +0..15 = 4 x u32 [1621380672, 1070955324, 2075654443, 1068895682]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -28946,22 +28808,16 @@
       },
       "record_id": "jstyle-override:22",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=2 bytes_to_follow=225 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=2 bytes_to_follow=225 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:23",
     "graphic_oid": 2,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3076047098759768,
-        "y": 0.5987386400749843
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.3076047098759768,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=2 bytes_to_follow=225 tail_len=149"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=2 bytes_to_follow=225 payload +0..15 = 4 x u32 [2856375083, 1070837707, 4022282114, 1071851741]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29007,22 +28863,16 @@
       },
       "record_id": "jstyle-override:23",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=2 bytes_to_follow=225 field_1=0.307605 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=2 bytes_to_follow=225 field_1=0.307605 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:24",
     "graphic_oid": 2,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.2253977948178826,
-        "y": 0.5899605663678468
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.2253977948178826,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=2 bytes_to_follow=225 tail_len=149"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=2 bytes_to_follow=225 payload +0..15 = 4 x u32 [3198855773, 1070389717, 4216281187, 1071833332]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29068,22 +28918,16 @@
       },
       "record_id": "jstyle-override:24",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=2 bytes_to_follow=225 field_1=0.225398 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=2 bytes_to_follow=225 field_1=0.225398 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:25",
     "graphic_oid": 65540,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.21823092890098883,
-        "y": 0.4014645388304246
-      },
-      "rotation_angle": 4.712388980384718,
-      "secondary_radius": 0.21823092890098883,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65540 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65540 bytes_to_follow=128 payload +0..15 = 4 x u32 [3075309396, 1070329597, 1379004929, 1071231384]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29129,22 +28973,16 @@
       },
       "record_id": "jstyle-override:25",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65540 bytes_to_follow=128 field_1=0.218231 rotation_angle=4.712389 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65540 bytes_to_follow=128 field_1=0.218231 field_2=4.712389"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:26",
     "graphic_oid": 65539,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.2809903121531294,
-        "y": 0.4014645388304229
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.27401195731558015,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65539 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65539 bytes_to_follow=128 payload +0..15 = 4 x u32 [3393991044, 1070726078, 1379004898, 1071231384]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29190,22 +29028,16 @@
       },
       "record_id": "jstyle-override:26",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65539 bytes_to_follow=128 field_1=0.274012 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65539 bytes_to_follow=128 field_1=0.274012 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:27",
     "graphic_oid": 65539,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.2809825239219284,
-        "y": 0.33743768833113297
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.27655195731555526,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65539 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65539 bytes_to_follow=128 payload +0..15 = 4 x u32 [532643977, 1070726046, 1056209872, 1070962836]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29251,22 +29083,16 @@
       },
       "record_id": "jstyle-override:27",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65539 bytes_to_follow=128 field_1=0.276552 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65539 bytes_to_follow=128 field_1=0.276552 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:28",
     "graphic_oid": 65539,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.36283201808429566,
-        "y": 0.4014645388304219
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.36731860874925903,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65539 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65539 bytes_to_follow=128 payload +0..15 = 4 x u32 [3370600284, 1071069347, 1379004880, 1071231384]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29312,22 +29138,16 @@
       },
       "record_id": "jstyle-override:28",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65539 bytes_to_follow=128 field_1=0.367319 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65539 bytes_to_follow=128 field_1=0.367319 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:29",
     "graphic_oid": 65539,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.36307924530660396,
-        "y": 0.37047632554826304
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.3673186087492466,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65539 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65539 bytes_to_follow=128 payload +0..15 = 4 x u32 [3139219386, 1071070384, 1435173552, 1071101410]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29373,22 +29193,16 @@
       },
       "record_id": "jstyle-override:29",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65539 bytes_to_follow=128 field_1=0.367319 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65539 bytes_to_follow=128 field_1=0.367319 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:30",
     "graphic_oid": 65539,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.36307924530658975,
-        "y": 0.33743768833113474
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.3673186087492324,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65539 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65539 bytes_to_follow=128 payload +0..15 = 4 x u32 [3139219130, 1071070384, 1056209904, 1070962836]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29434,22 +29248,16 @@
       },
       "record_id": "jstyle-override:30",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65539 bytes_to_follow=128 field_1=0.367319 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65539 bytes_to_follow=128 field_1=0.367319 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:31",
     "graphic_oid": 65539,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3356467193382055,
-        "y": 0.3063702286343011
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.33564671933820467,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65539 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65539 bytes_to_follow=128 payload +0..15 = 4 x u32 [1621380703, 1070955324, 3759993744, 1070832529]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29495,22 +29303,16 @@
       },
       "record_id": "jstyle-override:31",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65539 bytes_to_follow=128 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65539 bytes_to_follow=128 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:32",
     "graphic_oid": 65539,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3002427602832363,
-        "y": 0.4329967653842415
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.30044054206109205,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65539 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65539 bytes_to_follow=128 payload +0..15 = 4 x u32 [1762770625, 1070806829, 279336880, 1071363640]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29556,22 +29358,16 @@
       },
       "record_id": "jstyle-override:32",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65539 bytes_to_follow=128 field_1=0.300441 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65539 bytes_to_follow=128 field_1=0.300441 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:33",
     "graphic_oid": 65539,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.3350533740046357,
-        "y": 0.4329967653842255
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.33564671933820467,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65539 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65539 bytes_to_follow=128 payload +0..15 = 4 x u32 [3035687779, 1070952835, 279336592, 1071363640]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29617,22 +29413,16 @@
       },
       "record_id": "jstyle-override:33",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65539 bytes_to_follow=128 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65539 bytes_to_follow=128 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:34",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.20995214202765944,
-        "y": 0.31195306252425375
-      },
-      "rotation_angle": 1.5707963267951035,
-      "secondary_radius": 0.2182309289009889,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [937292260, 1070260150, 4200296457, 1070855945]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29678,22 +29468,16 @@
       },
       "record_id": "jstyle-override:34",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.218231 rotation_angle=1.570796 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.218231 field_2=1.570796"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:35",
     "graphic_oid": 65540,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.17851796201647052,
-        "y": 0.31195306252425375
-      },
-      "rotation_angle": 4.712388980384897,
-      "secondary_radius": 0.17851796201647024,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65540 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65540 bytes_to_follow=128 payload +0..15 = 4 x u32 [877526504, 1069996461, 4200296457, 1070855945]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29739,22 +29523,16 @@
       },
       "record_id": "jstyle-override:35",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65540 bytes_to_follow=128 field_1=0.178518 rotation_angle=4.712389 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65540 bytes_to_follow=128 field_1=0.178518 field_2=4.712389"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:36",
     "graphic_oid": 2,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.47750583692323345,
-        "y": 0.5974030853841208
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.47750583692323345,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=2 bytes_to_follow=225 tail_len=149"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=2 bytes_to_follow=225 payload +0..15 = 4 x u32 [2756640860, 1071550324, 323494702, 1071848941]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29800,22 +29578,16 @@
       },
       "record_id": "jstyle-override:36",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=2 bytes_to_follow=225 field_1=0.477506 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=2 bytes_to_follow=225 field_1=0.477506 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:37",
     "graphic_oid": 2,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.4753451263537316,
-        "y": 0.09992108386204998
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.4753451263537316,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=2 bytes_to_follow=225 tail_len=149"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=2 bytes_to_follow=225 payload +0..15 = 4 x u32 [4143981852, 1071541261, 2606648838, 1069126765]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29861,22 +29633,16 @@
       },
       "record_id": "jstyle-override:37",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=2 bytes_to_follow=225 field_1=0.475345 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=2 bytes_to_follow=225 field_1=0.475345 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:38",
     "graphic_oid": 2,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.5513144021399108,
-        "y": 0.7437082436226305
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.5513144021399108,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=2 bytes_to_follow=225 tail_len=149"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=2 bytes_to_follow=225 payload +0..15 = 4 x u32 [434120340, 1071752286, 990117466, 1072155765]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29922,22 +29688,16 @@
       },
       "record_id": "jstyle-override:38",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=2 bytes_to_follow=225 field_1=0.551314 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=2 bytes_to_follow=225 field_1=0.551314 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:39",
     "graphic_oid": 65540,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.4678895836209867,
-        "y": 0.5201770390671064
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.4678895836209867,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65540 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65540 bytes_to_follow=128 payload +0..15 = 4 x u32 [653435633, 1071509991, 1365085177, 1071686986]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -29983,22 +29743,16 @@
       },
       "record_id": "jstyle-override:39",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65540 bytes_to_follow=128 field_1=0.467890 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65540 bytes_to_follow=128 field_1=0.467890 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:40",
     "graphic_oid": 65541,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.4668213810931081,
-        "y": 0.2412617024478998
-      },
-      "rotation_angle": 1.7763568394002505e-15,
-      "secondary_radius": 0.4668213810931081,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65541 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65541 bytes_to_follow=128 payload +0..15 = 4 x u32 [3375862968, 1071505510, 3638902760, 1070522793]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -30044,22 +29798,16 @@
       },
       "record_id": "jstyle-override:40",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65541 bytes_to_follow=128 field_1=0.466821 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65541 bytes_to_follow=128 field_1=0.466821 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:41",
     "graphic_oid": 65541,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.425194615952413,
-        "y": 0.24181272190836312
-      },
-      "rotation_angle": 6.283185307179585,
-      "secondary_radius": 0.425194615952413,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65541 bytes_to_follow=129 tail_len=53"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65541 bytes_to_follow=129 payload +0..15 = 4 x u32 [2055002993, 1071330915, 573387884, 1070527416]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -30105,22 +29853,16 @@
       },
       "record_id": "jstyle-override:41",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65541 bytes_to_follow=129 field_1=0.425195 rotation_angle=6.283185 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65541 bytes_to_follow=129 field_1=0.425195 field_2=6.283185"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:42",
     "graphic_oid": 65540,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.33564671933820467,
-        "y": 0.5217688552289401
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.33564671933820467,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65540 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65540 bytes_to_follow=128 payload +0..15 = 4 x u32 [1621380688, 1070955324, 2569597682, 1071690324]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -30166,22 +29908,16 @@
       },
       "record_id": "jstyle-override:42",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65540 bytes_to_follow=128 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65540 bytes_to_follow=128 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:43",
     "graphic_oid": 1,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.0015030800826257434,
-        "y": 0.0
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.0,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=1 bytes_to_follow=129 tail_len=53"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=1 bytes_to_follow=129 payload +0..15 = 4 x u32 [4078228800, 1062772831, 0, 0]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -30227,22 +29963,16 @@
       },
       "record_id": "jstyle-override:43",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=1 bytes_to_follow=129 field_1=0.000000 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=1 bytes_to_follow=129 field_1=0.000000 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:44",
     "graphic_oid": 65538,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.20768287724058843,
-        "y": 0.27978623416752274
-      },
-      "rotation_angle": 1.5707963267951035,
-      "secondary_radius": 0.21823092890098897,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65538 bytes_to_follow=145 tail_len=69"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65538 bytes_to_follow=145 payload +0..15 = 4 x u32 [1054343252, 1070241114, 2238166631, 1070721028]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -30288,22 +30018,16 @@
       },
       "record_id": "jstyle-override:44",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65538 bytes_to_follow=145 field_1=0.218231 rotation_angle=1.570796 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65538 bytes_to_follow=145 field_1=0.218231 field_2=1.570796"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:45",
     "graphic_oid": 65541,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.33564671933820345,
-        "y": 0.19714200700788925
-      },
-      "rotation_angle": 3.552713678800501e-15,
-      "secondary_radius": 0.33564671933820345,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=65541 bytes_to_follow=128 tail_len=52"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=65541 bytes_to_follow=128 payload +0..15 = 4 x u32 [1621380666, 1070955324, 73540302, 1070152691]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -30349,22 +30073,16 @@
       },
       "record_id": "jstyle-override:45",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=65541 bytes_to_follow=128 field_1=0.335647 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=65541 bytes_to_follow=128 field_1=0.335647 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   },
   {
     "id": "/Sheet6:jstyle-override:46",
     "graphic_oid": 2,
     "kind": {
-      "kind": "annotation",
-      "anchor": {
-        "x": 0.34439617393261723,
-        "y": 0.5978705060688373
-      },
-      "rotation_angle": 0.0,
-      "secondary_radius": 0.34439617393261723,
-      "note": "PSM JStyleOverride (RAD style.dll CLSID {47FCC338-...}) V3 IO record; probe-derived annotation anchor; oid=2 bytes_to_follow=225 tail_len=149"
+      "kind": "unknown",
+      "note": "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID {47FCC338-2D0F-11D0-A1FF-080036A1CF02}); style record, not drawable geometry; oid=2 bytes_to_follow=225 payload +0..15 = 4 x u32 [1073356446, 1070992022, 1406787651, 1071849921]"
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -30410,8 +30128,8 @@
       },
       "record_id": "jstyle-override:46",
       "record_kind": "j_style_override",
-      "note": "PSM 0x0030 JStyleOverride record layout decoded from style.dll!sub_1000F030 V3 IO (13 DoIO = 64B): oid=2 bytes_to_follow=225 field_1=0.344396 rotation_angle=0.000000 (rad); annotation anchor remains inferred because payload +0..15 is authoritative as 4 x u32"
+      "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=2 bytes_to_follow=225 field_1=0.344396 field_2=0.000000"
     },
-    "confidence": "inferred"
+    "confidence": "probe_only"
   }
 ]

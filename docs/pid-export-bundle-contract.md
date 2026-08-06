@@ -180,7 +180,7 @@ Recommended escaping for `streams/*.bin` is hex of UTF-8 path bytes plus `.bin`.
     {
       "source_path": "/Sheet6",
       "bundle_path": "geometry/audit_entities.json",
-      "family": "GraphicGroup 0x00FA",
+      "family": "DependencyObject 0x00FA",
       "confidence": "TypedAudit",
       "evidence": ["header + raw tail audit decoder"],
       "blockers": ["payload child/reference semantics not proven"]
@@ -204,7 +204,7 @@ file level and must be interpreted through the authoritative atlas rows in
 |---|---|
 | `geometry/normalized_geometry.json` | existing normalized geometry contract, preserving coordinate context |
 | `geometry/decoded_entities.json` | `PidGraphicEntity` values whose source family is decoded |
-| `geometry/audit_entities.json` | typed audit records such as GraphicGroup / `0x0010` raw audit |
+| `geometry/audit_entities.json` | typed audit records such as DependencyObject / `0x0010` raw audit |
 | `geometry/probe_entities.json` | investigation-only windows, scores, text/coordinate hints |
 
 `PidPageTransform::Unavailable` must remain explicit. Bundle consumers must not infer page-space coordinates from template-derived page size alone.
@@ -214,6 +214,14 @@ Phase 32-C4 maps `PidGeometryConfidence::Decoded` to
 `audit_entities.json`, and `PidGeometryConfidence::ProbeOnly` to
 `probe_entities.json`. This is a packaging split only; it does not promote
 inferred or probe evidence to decoded geometry.
+
+`JStyleOverride` (`0x0030`) moved buckets: it used to land in
+`audit_entities.json` as an `Inferred` annotation carrying an anchor read
+from payload `+0..15`, and now lands in `probe_entities.json` as a
+positionless `ProbeOnly` unknown, because `style.dll`'s own version-3
+serializer reads those bytes as four `u32` rather than two `f64`. Consumers
+that drew that anchor should stop; the record itself is unchanged in the
+typed audit collection.
 
 ## 8. Writer Files
 

@@ -35,7 +35,7 @@
 
 use super::sheet::SheetGeometry;
 use crate::parsers::sheet_records::{
-    decode_attribute_fragments, decode_graphic_groups, decode_igboundaries, decode_iglines,
+    decode_attribute_fragments, decode_dependency_objects, decode_igboundaries, decode_iglines,
     decode_iglinestrings, decode_igpoints, decode_igsymbols, decode_igtextboxes,
     decode_jstyle_overrides, decode_primitive_lines, decode_smartframes, decode_sub_records_0x0010,
 };
@@ -256,21 +256,21 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
         },
     },
     SheetRecordFamily {
-        name: "GraphicGroup",
+        name: "DependencyObject",
         type_code: 0x00FA,
         emits_geometry: false,
         trace_class: SheetFamilyTraceClass::Probed,
-        geometry_field: "decoded_graphic_groups",
-        model_dto: "DecodedGraphicGroupRecord",
+        geometry_field: "decoded_dependency_objects",
+        model_dto: "DecodedDependencyObjectRecord",
         decode_into: |data, geometry| {
-            geometry.decoded_graphic_groups = decode_graphic_groups(data)
+            geometry.decoded_dependency_objects = decode_dependency_objects(data)
                 .into_iter()
                 .map(Into::into)
                 .collect();
         },
-        record_count: |geometry| geometry.decoded_graphic_groups.len(),
+        record_count: |geometry| geometry.decoded_dependency_objects.len(),
         decoded_ranges: |data| {
-            decode_graphic_groups(data)
+            decode_dependency_objects(data)
                 .into_iter()
                 .map(|r| r.byte_range)
                 .collect()
@@ -441,7 +441,7 @@ mod tests {
             vec![
                 "igBoundary2d",
                 "igSmartFrame2d",
-                "GraphicGroup",
+                "DependencyObject",
                 "SubRecord0x0010",
                 "AttributeFragment"
             ],

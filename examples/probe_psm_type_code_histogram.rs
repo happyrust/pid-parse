@@ -37,7 +37,7 @@ fn decoded_label(type_code: u16) -> Option<&'static str> {
         0x005E => Some("igPoint2d (IGDS)"),
         0x004D => Some("igTextBox (IGDS)"),
         0x00CE => Some("igSymbol2d (IGDS)"),
-        0x00FA => Some("GraphicGroup (Phase 15, audit-only header + raw tail)"),
+        0x00FA => Some("DependencyObject (Phase 15, audit-only header + raw tail)"),
         0x0010 => Some("0x0010 sub-record / attribute-fragment (audit-only)"),
         _ => None,
     }

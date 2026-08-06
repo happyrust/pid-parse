@@ -43,7 +43,7 @@ use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
     collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_attribute_fragment_at,
-    decode_attribute_fragments, decode_graphic_group_at, decode_graphic_groups,
+    decode_attribute_fragments, decode_dependency_object_at, decode_dependency_objects,
     decode_igboundaries, decode_igboundary_at, decode_igline_at, decode_iglines,
     decode_iglinestring_at, decode_iglinestrings, decode_igpoint_at, decode_igpoints,
     decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at, decode_igtextboxes,
@@ -282,12 +282,12 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = decode_igsymbol_at(input, input.len());
     }
 
-    // Phase 15 Slice C: PSM `0x00FA` GraphicGroup decoder.
-    let _ = decode_graphic_groups(input);
-    let _ = decode_graphic_group_at(input, 0);
+    // Phase 15 Slice C: PSM `0x00FA` DependencyObject decoder.
+    let _ = decode_dependency_objects(input);
+    let _ = decode_dependency_object_at(input, 0);
     if !input.is_empty() {
-        let _ = decode_graphic_group_at(input, input.len() - 1);
-        let _ = decode_graphic_group_at(input, input.len());
+        let _ = decode_dependency_object_at(input, input.len() - 1);
+        let _ = decode_dependency_object_at(input, input.len());
     }
 
     // Phase 34-D: PSM `0x0013` igBoundary2d typed audit-only decoder.
