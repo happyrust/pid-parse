@@ -102,6 +102,7 @@ pub mod package;
 pub mod parsers;
 pub mod publish;
 pub mod schema;
+pub mod semantics;
 pub mod stream_paths;
 pub mod streams;
 pub mod style_link;
@@ -125,6 +126,7 @@ pub use package::{
     diff_packages, PackageDiff, PidPackage, RawStream, StateBitsDiff, StorageClsidDiff,
     StorageTimestampDiff, StorageTimestamps, StreamDiff,
 };
+pub use semantics::{PidSemanticHit, PidSemanticIndex, PidSemanticObject};
 pub use writer::{
     EncodedString, MetadataUpdates, PidWriter, SheetChunkPatch, SheetPatch, StreamReplacement,
     WritePlan,
