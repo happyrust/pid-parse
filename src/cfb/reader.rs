@@ -784,6 +784,7 @@ mod tests {
                 decoded_sub_records_0x0010: vec![],
                 decoded_attribute_fragments: vec![],
                 spatial_analysis: None,
+                undecoded_type_codes: vec![],
             }),
             endpoint_records: vec![SheetEndpointRecord {
                 sheet_path: "/Sheet6".into(),

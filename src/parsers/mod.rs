@@ -31,4 +31,5 @@ pub mod sheet_records;
 pub mod string_scan;
 pub mod summary;
 pub mod tagged_stg_list;
+pub mod undecoded_census;
 pub mod xml_util;

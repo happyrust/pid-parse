@@ -20,6 +20,7 @@ use crate::parsers::{
         collect_normalized_f64_pairs, coordinate_pair_spatial_analysis,
         SPATIAL_ANALYSIS_DEFAULT_GRID_N,
     },
+    undecoded_census::undecoded_type_code_census,
 };
 use std::io::Read;
 
@@ -248,6 +249,19 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         ..SheetGeometry::default()
     };
     decode_all_families_into(raw_data, &mut geometry);
+
+    // Phase 38 S2: census of records no typed decoder claims, so graphic
+    // content this crate cannot draw is named instead of silently dropped.
+    // The claimed ranges come from the same registry that just decoded the
+    // stream, so the census and the decoders cannot disagree about coverage.
+    let claimed: Vec<core::ops::Range<usize>> = crate::model::SHEET_RECORD_FAMILIES
+        .iter()
+        .flat_map(|family| (family.decoded_ranges)(raw_data))
+        .collect();
+    geometry.undecoded_type_codes = undecoded_type_code_census(raw_data, &claimed)
+        .into_iter()
+        .map(Into::into)
+        .collect();
 
     if geometry.texts.is_empty()
         && geometry.coordinate_hints.is_empty()

@@ -368,6 +368,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn registry_and_census_decoded_set_stay_in_sync() {
+        use crate::parsers::undecoded_census::DECODED_TYPE_CODES;
+        for family in SHEET_RECORD_FAMILIES {
+            assert!(
+                DECODED_TYPE_CODES.contains(&family.type_code),
+                "family {} (0x{:04X}) is missing from undecoded_census::DECODED_TYPE_CODES",
+                family.name,
+                family.type_code
+            );
+        }
+        for code in DECODED_TYPE_CODES {
+            assert!(
+                SHEET_RECORD_FAMILIES.iter().any(|f| f.type_code == code),
+                "undecoded_census::DECODED_TYPE_CODES lists 0x{code:04X}, which no registry family decodes"
+            );
+        }
+    }
+
+    #[test]
     fn registry_has_twelve_rows_with_unique_fields() {
         assert_eq!(SHEET_RECORD_FAMILIES.len(), 12);
         let mut fields: Vec<&str> = SHEET_RECORD_FAMILIES

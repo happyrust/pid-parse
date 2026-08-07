@@ -40,6 +40,33 @@ pub struct NormalizedPidGeometry {
     /// Non-fatal diagnostics explaining missing or skipped geometry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Phase 38 S2: graphic-class PSM records this crate has **no decoder
+    /// for**, named per `(stream, type code)` instead of silently dropped.
+    ///
+    /// Every entry also produces a prose warning in [`Self::warnings`];
+    /// this structured view exists so consumers (`OpenCADStudio`'s
+    /// `report_import`) can surface the drop prominently without string
+    /// matching. Non-graphic unknown records (constraint families) are
+    /// deliberately absent — the native predicate says they draw nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped_graphic_records: Vec<PidDroppedGraphicRecords>,
+}
+
+/// One group of undecoded graphic-class PSM records in one Sheet stream:
+/// content `SmartPlant`'s own graphic predicate says should draw, which
+/// this crate cannot decode yet and therefore drops.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PidDroppedGraphicRecords {
+    /// Full CFB path of the Sheet stream the records sit in.
+    pub stream_path: String,
+    /// PSM 14-bit type code.
+    pub type_code: u16,
+    /// Class name from the PSM type-code registry, when known
+    /// (e.g. `igDimension`, `Graphics Bag`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub rad_class_name: Option<String>,
+    /// Chain-validated record count outside every claimed byte range.
+    pub count: usize,
 }
 
 impl NormalizedPidGeometry {
@@ -497,6 +524,40 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         ));
     }
 
+    // Phase 38 S2: records SmartPlant's own graphic predicate says should
+    // draw, which no decoder here claims, stop being silent. One named
+    // warning per (stream, type code); the constraint families the
+    // predicate rejects stay quiet by design.
+    let mut dropped_graphic_records = Vec::new();
+    for sheet in &doc.sheet_streams {
+        let Some(sheet_geometry) = sheet.geometry.as_ref() else {
+            continue;
+        };
+        for census in &sheet_geometry.undecoded_type_codes {
+            if !census.is_graphic {
+                continue;
+            }
+            let class_name = census
+                .rad_class_name
+                .as_deref()
+                .map(|name| format!(" ({name})"))
+                .unwrap_or_default();
+            warnings.push(format!(
+                "{count} record(s) of undecoded graphic type 0x{code:04X}{class_name} in {path} \
+                 have no decoder and are dropped from the drawing",
+                count = census.count,
+                code = census.type_code,
+                path = sheet.path,
+            ));
+            dropped_graphic_records.push(PidDroppedGraphicRecords {
+                stream_path: sheet.path.clone(),
+                type_code: census.type_code,
+                rad_class_name: census.rad_class_name.clone(),
+                count: census.count,
+            });
+        }
+    }
+
     let ctx = EmitContext::from_doc(doc, page_frame);
 
     for sheet in &doc.sheet_streams {
@@ -859,6 +920,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         entities,
         page_dimensions_mm: page_dims,
         warnings,
+        dropped_graphic_records,
     }
 }
 
@@ -1825,6 +1887,7 @@ mod tests {
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
+                undecoded_type_codes: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -1925,6 +1988,7 @@ mod tests {
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
+                undecoded_type_codes: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2063,6 +2127,7 @@ mod tests {
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
+                undecoded_type_codes: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2154,6 +2219,7 @@ mod tests {
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
+                undecoded_type_codes: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2216,6 +2282,7 @@ mod tests {
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
+                undecoded_type_codes: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2298,6 +2365,7 @@ mod tests {
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
+                undecoded_type_codes: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2505,12 +2573,78 @@ mod tests {
                 confidence: PidGeometryConfidence::Decoded,
             }],
             warnings: Vec::new(),
+            dropped_graphic_records: Vec::new(),
         };
 
         let value = serde_json::to_value(&geometry).expect("geometry JSON");
         let source = &value["entities"][0]["source"];
         assert_eq!(source["record_id"], "sheet.primitive.line:0");
         assert_eq!(source["record_kind"], "primitive_line");
+    }
+
+    #[test]
+    fn undecoded_graphic_census_entries_become_named_warnings() {
+        // Phase 38 S2: a sheet carrying graphic-class records nothing
+        // decodes must say so by name; the constraint families the native
+        // predicate rejects must stay quiet.
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 512,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                undecoded_type_codes: vec![
+                    crate::model::SheetUndecodedTypeCode {
+                        type_code: 0x0115,
+                        count: 3,
+                        is_graphic: true,
+                        rad_class_name: Some("igDimension".into()),
+                    },
+                    crate::model::SheetUndecodedTypeCode {
+                        type_code: 0x0077,
+                        count: 5,
+                        is_graphic: false,
+                        rad_class_name: Some("Fix Constraint".into()),
+                    },
+                ],
+                ..SheetGeometry::default()
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.dropped_graphic_records.len(), 1);
+        let dropped = &geometry.dropped_graphic_records[0];
+        assert_eq!(dropped.type_code, 0x0115);
+        assert_eq!(dropped.count, 3);
+        assert_eq!(dropped.stream_path, "/Sheet6");
+        assert_eq!(dropped.rad_class_name.as_deref(), Some("igDimension"));
+        assert!(
+            geometry.warnings.iter().any(|warning| {
+                warning.contains("0x0115")
+                    && warning.contains("igDimension")
+                    && warning.contains("3 record(s)")
+                    && warning.contains("/Sheet6")
+            }),
+            "graphic-class drops must be named: {:?}",
+            geometry.warnings
+        );
+        assert!(
+            geometry
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("0x0077")),
+            "non-graphic constraint families must stay quiet: {:?}",
+            geometry.warnings
+        );
     }
 
     fn border_frame(

@@ -414,6 +414,13 @@ JStyleMultiplexer 这种名字最像 resolver 的类根本没落盘，剩下的�
 不建议现在写解码器（无 fixture 可验证），**建议加告警**：把未知 type code 按原生
 谓词分成「图形类」与「非图形类」，只对前者推点名警告。
 
+> **2026-08-07 已落地（Phase 38 S2）**：`parsers::undecoded_census` 按谓词集合
+> 给未认领记录分类，`build_normalized_geometry` 对图形类推点名警告
+> （type code + 命中次数 + 流路径），OCS `report_import` 以 warn 级透传。
+> 语料实测：DWG-0202 掉 1 条 `0x0020` Rectangle（`/Sheet6615`），A01 掉
+> 2 条 `0x0020` + 1 条 `0x007B` Group implementation（`/JSite204/Sheet6`），
+> 其余两图无图形类丢弃；标注族与 `0x00FF` 一旦出现即会点名。
+
 ### 8.4 未解码的族
 
 `0x0020` Rectangle（Phase 34-B 负结论）、`0x0010`（638 次命中，语义未定）、

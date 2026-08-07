@@ -159,6 +159,50 @@ pub struct SheetGeometry {
     /// [`crate::geometry::PidPageTransform`] state.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub spatial_analysis: Option<DecodedSpatialAnalysis>,
+    /// Phase 38 S2 census of PSM records **no typed decoder claims**,
+    /// emitted by
+    /// [`crate::parsers::undecoded_census::undecoded_type_code_census`]
+    /// and split by `SmartPlant`'s native graphic predicate.
+    ///
+    /// Entries whose [`SheetUndecodedTypeCode::is_graphic`] is `true`
+    /// are drawable content this crate silently dropped until now
+    /// (`igDimension` / `igBalloon` / `igLeader` / `Graphics Bag` and
+    /// friends); [`crate::geometry::build_normalized_geometry`] turns
+    /// each of them into a named warning. Non-graphic entries (the
+    /// `*Relation2d` constraint families) are recorded here but warn
+    /// nobody.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub undecoded_type_codes: Vec<SheetUndecodedTypeCode>,
+}
+
+/// One PSM type code observed in a Sheet stream with no typed decoder.
+/// Model-shaped mirror of
+/// [`crate::parsers::undecoded_census::UndecodedTypeCodeCount`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SheetUndecodedTypeCode {
+    /// PSM 14-bit type code.
+    pub type_code: u16,
+    /// Chain-validated records with this code outside every claimed
+    /// byte range of this sheet.
+    pub count: usize,
+    /// Whether the native graphic predicate
+    /// (`radsrvitem.dll!sub_56449950`) accepts this code — `true`
+    /// means dropped drawable content.
+    pub is_graphic: bool,
+    /// Class name from the PSM type-code registry, when known.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub rad_class_name: Option<String>,
+}
+
+impl From<crate::parsers::undecoded_census::UndecodedTypeCodeCount> for SheetUndecodedTypeCode {
+    fn from(d: crate::parsers::undecoded_census::UndecodedTypeCodeCount) -> Self {
+        Self {
+            type_code: d.type_code,
+            count: d.count,
+            is_graphic: d.is_graphic,
+            rad_class_name: d.rad_class_name.map(str::to_string),
+        }
+    }
 }
 
 /// Stable, model-shaped DTO mirroring
