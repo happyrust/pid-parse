@@ -163,6 +163,38 @@ pub const SIMPLE_LINE_WIDTH_OFFSET: usize = 34;
 /// payload. Level: native-reader.
 pub const SIMPLE_LINE_COLOUR_OFFSET: usize = 50;
 
+/// PSM type code of `JStyleSimpleDashType`, which carries the dash pattern a
+/// line is drawn with. CLSID `{47FCC336-2D0F-11D0-A1FF-080036A1CF02}`.
+pub const PSM_TYPE_CODE_JSTYLE_SIMPLE_DASH_TYPE: u16 = 0x002F;
+
+/// Offset at which a `JStyleSimpleLine` names its `JStyleSimpleDashType`.
+///
+/// Level: native-reader for the field's existence, corpus for the offset.
+/// `style.dll` holds the dash type as an **id** with a lazily resolved object
+/// pointer beside it — the getter resolves the id on first use and the setter
+/// drops the cached pointer when the id changes — so the line record has to
+/// write an id, and 0 means "draw solid".
+///
+/// The corpus places it: across all ten `StyleCluster` streams that define
+/// any dash style, the number of line records carrying a dash id here is
+/// exactly the number of dash styles defined in that stream — four for four
+/// in the richest, one for one in six others. No other offset comes close.
+pub const SIMPLE_LINE_DASH_REFERENCE_OFFSET: usize = 54;
+
+/// Offset of the segment count within a `JStyleSimpleDashType` payload.
+/// Level: native-reader for the shape, corpus for the width.
+///
+/// The serializer writes a count and then that many `f64`; on disk the count
+/// is a `u16` and the record stops after the pattern, so the payload is
+/// exactly `50 + 8N` bytes.
+pub const DASH_SEGMENT_COUNT_OFFSET: usize = 48;
+
+/// Most dash segments a pattern may declare before the record is refused.
+///
+/// The widest in the corpus is six. Sixteen leaves generous headroom while
+/// still rejecting a misframed count, which reads as an enormous number.
+pub const MAX_DASH_SEGMENTS: usize = 16;
+
 /// PSM type code of `JStyleTextChar`, which carries the character height.
 pub const PSM_TYPE_CODE_JSTYLE_TEXT_CHAR: u16 = 0x002C;
 
@@ -251,6 +283,53 @@ impl LineSymbology {
     }
 }
 
+/// The dash pattern a `JStyleSimpleDashType` record declares.
+///
+/// Segment lengths alternate along the line the way every drafting linetype
+/// does. The sign is the format's own and is preserved rather than
+/// interpreted here: the corpus shows a leading negative run for the plain
+/// dashed patterns and mixed signs for the chain ones, and nothing in
+/// `style.dll` has yet said which sign draws and which skips. A renderer that
+/// only needs the repeat can use the magnitudes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DashPattern {
+    segments: [f64; MAX_DASH_SEGMENTS],
+    len: u8,
+}
+
+impl DashPattern {
+    /// Segment lengths in metres, exactly as stored.
+    #[must_use]
+    pub fn segments_m(&self) -> &[f64] {
+        &self.segments[..usize::from(self.len)]
+    }
+
+    /// Segment lengths in millimetres, which is the unit drafting standards
+    /// and renderers use.
+    #[must_use]
+    pub fn segments_mm(&self) -> Vec<f64> {
+        self.segments_m().iter().map(|v| v * 1000.0).collect()
+    }
+
+    /// How many segments the pattern declares.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        usize::from(self.len)
+    }
+
+    /// Whether the pattern declares no segments at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Total length of one repeat, in metres.
+    #[must_use]
+    pub fn period_m(&self) -> f64 {
+        self.segments_m().iter().map(|v| v.abs()).sum()
+    }
+}
+
 /// Which route a geometry record took to its `JStyleSimpleLine`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StyleHop {
@@ -271,6 +350,9 @@ pub struct ResolvedLineStyle {
     pub style_id: u32,
     /// Width and colour that record declares.
     pub symbology: LineSymbology,
+    /// The dash pattern that line style names, when it names one. `None`
+    /// means the line draws solid — which is what most of the corpus says.
+    pub dash: Option<DashPattern>,
     /// Whether an override was traversed on the way.
     pub hop: StyleHop,
 }
@@ -297,6 +379,12 @@ pub struct StyleRecord {
     pub char_height_m: Option<f64>,
     /// `JStyleTextChar` this record names, when it is a `JStyleTextPara`.
     pub text_char_reference: Option<u32>,
+    /// `JStyleSimpleDashType` this record names, when it is a
+    /// `JStyleSimpleLine` that draws dashed.
+    pub dash_reference: Option<u32>,
+    /// The dash pattern, when this is a `JStyleSimpleDashType` whose own
+    /// length agrees with its segment count.
+    pub dash: Option<DashPattern>,
 }
 
 /// A text record's character height, and which style it came from.
@@ -369,6 +457,8 @@ impl DocumentStyleTable {
                     base_reference: read_base_reference(payload),
                     char_height_m: read_char_height(type_code, payload),
                     text_char_reference: read_text_char_reference(type_code, payload),
+                    dash_reference: read_dash_reference(type_code, payload),
+                    dash: read_dash_pattern(type_code, payload),
                 };
                 // First writer wins, matching how a reader walking the chain
                 // in order would bind the id.
@@ -424,6 +514,7 @@ impl DocumentStyleTable {
             return Some(ResolvedLineStyle {
                 style_id: target.style_id,
                 symbology: target.symbology?,
+                dash: self.dash_of(target),
                 hop: StyleHop::ViaOverride {
                     override_id: record.style_id,
                 },
@@ -432,8 +523,19 @@ impl DocumentStyleTable {
         Some(ResolvedLineStyle {
             style_id: record.style_id,
             symbology: record.symbology?,
+            dash: self.dash_of(record),
             hop: StyleHop::Direct,
         })
+    }
+
+    /// The dash pattern a `JStyleSimpleLine` names, if it names one that this
+    /// document actually defines.
+    ///
+    /// A dangling reference yields `None` — the line then draws solid, which
+    /// is the same thing an absent reference means, so nothing is lost by not
+    /// distinguishing them here.
+    fn dash_of(&self, line: &StyleRecord) -> Option<DashPattern> {
+        self.get(line.dash_reference?)?.dash
     }
 
     /// Resolve a text record's `index` to the character height it draws at.
@@ -495,6 +597,45 @@ fn read_text_char_reference(type_code: u16, payload: &[u8]) -> Option<u32> {
         return None;
     }
     u32_at(payload, TEXT_PARA_CHAR_REFERENCE_OFFSET).filter(|referenced| *referenced != 0)
+}
+
+fn read_dash_reference(type_code: u16, payload: &[u8]) -> Option<u32> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE {
+        return None;
+    }
+    // Zero is "solid", and style ids start at 1, so zero is unambiguous.
+    u32_at(payload, SIMPLE_LINE_DASH_REFERENCE_OFFSET).filter(|referenced| *referenced != 0)
+}
+
+fn read_dash_pattern(type_code: u16, payload: &[u8]) -> Option<DashPattern> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_SIMPLE_DASH_TYPE {
+        return None;
+    }
+    let count = usize::from(u16_at(payload, DASH_SEGMENT_COUNT_OFFSET)?);
+    if count == 0 || count > MAX_DASH_SEGMENTS {
+        return None;
+    }
+    let first = DASH_SEGMENT_COUNT_OFFSET + 2;
+    // The record's own length has to agree with the count it declares. That
+    // is what makes this reading falsifiable instead of merely plausible:
+    // every one of the corpus's 20 records agrees, and a misread count or a
+    // misplaced field would leave a remainder on some of them.
+    if payload.len() != first + 8 * count {
+        return None;
+    }
+    let mut segments = [0.0_f64; MAX_DASH_SEGMENTS];
+    for (i, slot) in segments.iter_mut().enumerate().take(count) {
+        let value = f64_at(payload, first + 8 * i)?;
+        if !value.is_finite() {
+            return None;
+        }
+        // A zero-length segment is a dot, not a decode failure.
+        *slot = value;
+    }
+    Some(DashPattern {
+        segments,
+        len: u8::try_from(count).ok()?,
+    })
 }
 
 fn read_base_reference(payload: &[u8]) -> Option<u32> {
@@ -669,6 +810,32 @@ mod tests {
         (PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE, payload)
     }
 
+    /// A `JStyleSimpleLine` of the longer of the two corpus shapes -- only
+    /// the 58-byte one has room for a dash reference at +54, which is why a
+    /// dashed line is always the long variant.
+    fn simple_line_dashed(style_id: u32, dash_id: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 58];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        payload[SIMPLE_LINE_WIDTH_OFFSET..SIMPLE_LINE_WIDTH_OFFSET + 8]
+            .copy_from_slice(&0.000_35_f64.to_le_bytes());
+        payload[SIMPLE_LINE_DASH_REFERENCE_OFFSET..SIMPLE_LINE_DASH_REFERENCE_OFFSET + 4]
+            .copy_from_slice(&dash_id.to_le_bytes());
+        (PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE, payload)
+    }
+
+    fn dash_type(style_id: u32, segments: &[f64]) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; DASH_SEGMENT_COUNT_OFFSET + 2 + 8 * segments.len()];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        let count = u16::try_from(segments.len()).expect("test patterns are short");
+        payload[DASH_SEGMENT_COUNT_OFFSET..DASH_SEGMENT_COUNT_OFFSET + 2]
+            .copy_from_slice(&count.to_le_bytes());
+        for (i, value) in segments.iter().enumerate() {
+            let at = DASH_SEGMENT_COUNT_OFFSET + 2 + 8 * i;
+            payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        (PSM_TYPE_CODE_JSTYLE_SIMPLE_DASH_TYPE, payload)
+    }
+
     fn override_record(style_id: u32, references: u32) -> (u16, Vec<u8>) {
         let mut payload = vec![0u8; 90];
         payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
@@ -695,6 +862,67 @@ mod tests {
         payload[TEXT_PARA_CHAR_REFERENCE_OFFSET..TEXT_PARA_CHAR_REFERENCE_OFFSET + 4]
             .copy_from_slice(&names.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_TEXT_PARA, payload)
+    }
+
+    #[test]
+    fn a_line_style_resolves_to_the_dash_pattern_it_names() {
+        let data = stream(&[
+            dash_type(17, &[-0.014, 0.001_75, 0.000_35, 0.001_75]),
+            simple_line_dashed(30, 17),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let dash = table
+            .resolve_line_style(30)
+            .expect("id 30 is defined")
+            .dash
+            .expect("it names a dash type");
+        assert_eq!(dash.len(), 4);
+        let mm = dash.segments_mm();
+        assert!((mm[0] + 14.0).abs() < 1e-9, "sign is preserved: {mm:?}");
+        assert!((mm[1] - 1.75).abs() < 1e-9);
+        assert!((dash.period_m() - 0.017_85).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_line_style_with_no_room_for_a_dash_reference_draws_solid() {
+        // The 54-byte shape stops before +54, so the field is absent rather
+        // than zero -- and absent has to read as solid, not as a failure.
+        let data = stream(&[
+            dash_type(17, &[-0.0035, -0.001_75]),
+            simple_line(30, 0.0035, 0),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        let resolved = table.resolve_line_style(30).expect("id 30 is defined");
+        assert!(resolved.dash.is_none());
+        assert!((resolved.symbology.width_mm() - 3.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_dash_record_whose_length_disagrees_with_its_count_is_refused() {
+        let (type_code, mut payload) = dash_type(17, &[-0.0035, -0.001_75]);
+        payload.push(0);
+        let data = stream(&[(type_code, payload), simple_line_dashed(30, 17)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(
+            table
+                .resolve_line_style(30)
+                .expect("defined")
+                .dash
+                .is_none(),
+            "one stray byte has to break the fit, or the fit proves nothing"
+        );
+    }
+
+    #[test]
+    fn a_dangling_dash_reference_draws_solid() {
+        let data = stream(&[simple_line_dashed(30, 404)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(table
+            .resolve_line_style(30)
+            .expect("defined")
+            .dash
+            .is_none());
     }
 
     #[test]
