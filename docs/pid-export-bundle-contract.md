@@ -223,6 +223,15 @@ serializer reads those bytes as four `u32` rather than two `f64`. Consumers
 that drew that anchor should stop; the record itself is unchanged in the
 typed audit collection.
 
+Phase 38 note (2026-08-07): the parser now **names** the undecoded records
+its native graphic predicate (`radsrvitem.dll!sub_56449950`) classes as
+drawable, rather than dropping them silently — the drop is surfaced as a
+`geometry.warnings` line (`type code + hit count + stream`). This does not
+move any record between buckets: those records already land in
+`probe_entities.json` / `IdentifiedOnly`, and no decoder is claimed for them
+(there is no fixture to verify one). The bundle file set is unchanged; the
+change is that a consumer can now see what was dropped instead of guessing.
+
 ## 8. Writer Files
 
 `writer/round_trip_plan.json` should describe safe edit surfaces:
@@ -347,6 +356,18 @@ pid_inspect drawing.pid \
 must record publish input identity separately from `.pid` input identity, and
 publish XML must remain under `publish/`. Publish output is an MDF/SQLite
 pipeline artifact, not raw `.pid` Sheet, DA, PSM, or JSite decode evidence.
+
+Phase 38 note (2026-08-07): do not confuse this **write** path with the
+read-side semantic join added in S3. SmartPlant publishes a `<stem>_Data.xml`
+beside the `.pid`; when it is present, the parser can join its
+`IDrawingRepresentation/@GraphicOID` onto decoded records (two-hop rule, see
+`docs/analysis/2026-08-07-graphic-oid-is-the-semantic-join.md`) to hand a
+consumer the pipeline / equipment identity of a drawn entity. That join is an
+**optional read-side enrichment**: absent the XML, decode is byte-for-byte
+unchanged, and it never becomes a prerequisite for parsing `.pid`. It is not a
+bundle output — `publish/` here is the MDF-backed generator that *writes*
+`data.xml`, whereas the S3 join *reads* one that already ships beside the
+drawing.
 
 Phase 32-C7 planning note: publish bundle support should be a thin wrapper
 around the existing `pid_publish_xml` pipeline, not a second publish

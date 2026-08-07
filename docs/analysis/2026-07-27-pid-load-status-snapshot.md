@@ -3,6 +3,13 @@
 > 用途：给下一步开发计划提供事实基线。所有数字均为本次实跑所得，
 > 非引用历史文档。两仓：`pid-parse`（解码）+ `OpenCADStudio`（消费/渲染）。
 
+> **2026-08-07 更新（Phase 38 收口）**：07-27 的数字保留作历史基线，现状见各节的
+> 08-07 批注。要点：Phase 37 把线宽/颜色/字高从「全默认」推到「读样式表」；
+> Phase 38 S5 把**虚线线型** `0x002F` 也解出并接进 OCS（见
+> `2026-08-07-jstyle-simple-dash-type-linetype.md`）；S1–S4 把发布语义
+> （`_Data.xml` 的 `GraphicOID`，两跳）挂到实体上（见
+> `2026-08-07-graphic-oid-is-the-semantic-join.md`）。§4 第 4 项「线型未解码」至此关闭。
+
 ## 1. 端到端实测：OCS 打开 6 个 fixture
 
 命令：`PID_SYMBOL_LIBRARY=test-file/symbols-full`
@@ -22,6 +29,24 @@
 **文字高度/旋转分布：每张图都只有 1 个 distinct 值**
 （`2.50mm rot=0`）——即 `igTextBox` 的 height/rotation 仍是占位，
 OCS 全部回退到 ISO 3098 默认值。
+
+> **2026-08-07 更新**：重跑 `pid_probe`（六图）。相较 07-27：多了 Phase 37 的
+> `PID-FRAME`（每图 1 条闭合页框）；DWG-0201 的 `PID-CONNECTIVITY` 端点对
+> （25，隐藏层）现在计入总数；字高不再是单值——五到六个 distinct
+> （`3.175`=1/8″、`2.5`/`1.5`/`3.5` ISO、`2.464` 非档位），因 `style_link`
+> 两跳解析已上线。离群数（探针口径 x>900 或 x<0）与 07-27 一致。
+>
+> | Fixture | 总数 | GEOMETRY | POINT | SYMBOL | SYMBOL-LABEL | TEXT | FRAME | 离群 |
+> |---|---:|---:|---:|---:|---:|---:|---:|---:|
+> | DWG-0201GP06-01 | 346 | 63 | 75 | 123 | 20 | 37 | 1 | 2 |
+> | DWG-0202GP06-01 | 344 | 70 | 31 | 180 | 23 | 39 | 1 | 2 |
+> | 工艺管道及仪表流程-1 | 969 | 267 | 36 | 564 | 58 | 43 | 1 | 9 |
+> | D06 | 72 | 6 | 10 | 46 | 6 | 3 | 1 | 0 |
+> | publish A01 | 28 | 3 | 4 | 8 | 2 | 9 | 1 | 1 |
+> | publish DWG-0202 | 344 | 70 | 31 | 180 | 23 | 39 | 1 | 2 |
+>
+> **虚线**（Phase 38 S5，`pid-parse` 端到端探针口径，分母是已解析线样式条数）：
+> DWG-0201 15/138、DWG-0202 9/101、D06 1/16 条带虚线；其余两图线样式全为实线。
 
 ## 2. 符号库（Phase 36 已落地）
 
@@ -71,11 +96,14 @@ OCS 全部回退到 ISO 3098 默认值。
    实测读取，四张图全部拿到（D06 与工艺管道从 `None` 变成有值），
    `PidPageTransform` 升为 `Available`，`PID-FRAME` 图层画出闭合页框，
    两个经验常数由数据提供。
-4. **线宽 / 颜色 / 线型**。完全未解码，OCS 全部按默认渲染。
-   **2026-08-04 进展**：已排除几何图元——`igLine2d`（50 字节）与
-   `igPoint2d`（34 字节）定长且字节全额入账，没有空位。候选收敛为
-   `0x00FA GraphicGroup` 尾部的自描述长度前缀块与 `/StyleCluster 0x005A`。
-   前者的结构已解（见 graphicgroup 那份），语义未证。
+4. ~~**线宽 / 颜色 / 线型**~~ **已关闭（Phase 37 + Phase 38 S5）**。几何 payload
+   `+14` 的 index 命名同文档 `StyleCluster` 里的样式 id：`0x002E SimpleLine` 给
+   线宽（`+34`）与颜色（`+50`），`0x002F SimpleDashType` 给虚线图案，线样式经
+   `+54` 命名它。见 `2026-08-05-geometry-index-is-the-style-link.md` 与
+   `2026-08-07-jstyle-simple-dash-type-linetype.md`。OCS 按样式表画线宽/颜色，
+   并把虚线映到 `PID-DASH-<n>` linetype；四张图 558/558 条可绘制记录零未解析。
+   **2026-08-04 进展（存档）**：曾排除几何图元本身承载样式——`igLine2d`（50 字节）
+   与 `igPoint2d`（34 字节）定长且字节全额入账；后证实样式经 `+14` 的 index 外链。
 5. ~~**离群实体**~~ **非缺口**。实测四张图**可见图层零离群**：探针报的
    都在隐藏层上（`PID-UNRESOLVED` 的单位线、`PID-SYMBOL-LABEL` 的页外标签）。
 
