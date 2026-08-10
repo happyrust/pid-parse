@@ -446,6 +446,7 @@ ComplexString）。
 | `examples/probe_jsl_text_char_style` | `0x002C` 字段分析 |
 | `examples/probe_text_height_fallback` | 字高两跳按失败的那一跳归因；版本列对照定位 |
 | `examples/probe_gline2d_parameter_domain` | `0x3FE6` 的链式归属取证（判定为 `0x003D` 长宽比伪命中） |
+| `examples/probe_fill_style_consumers` | 哪些几何的 `index` 落到填充族（`igBoundary2d` 20/20） |
 | `examples/probe_jsl_line_style` | `0x002E` 字段分析 |
 | `examples/probe_dependency_object_tail_columns` | `0x00FA` 尾部列分析 |
 | `examples/probe_geometry_style_link` | 几何 → 样式链路候选测试 |
