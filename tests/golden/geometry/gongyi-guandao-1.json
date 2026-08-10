@@ -30131,5 +30131,695 @@
       "note": "Layout confirmed against style.dll's own version-3 serializer: 4 x u32, 4 x f64, 3 x u32, 2 x u16 after a 26-byte base block. The earlier annotation-anchor reading of payload +0..15 is withdrawn -- the native reader makes four separate 4-byte reads there. oid=2 bytes_to_follow=225 field_1=0.344396 field_2=0.000000"
     },
     "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:0",
+    "graphic_oid": 6997,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.5201770390671064,
+          "y": 0.4678895836209867
+        },
+        {
+          "x": 0.5170185114451303,
+          "y": 0.46866946833722734
+        },
+        {
+          "x": 0.5170185114451303,
+          "y": 0.46708931994833414
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 21166,
+        "end": 21344
+      },
+      "record_id": "igboundary2d:0",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=6997 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:1",
+    "graphic_oid": 7027,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.2412617024478998,
+          "y": 0.4668213810931081
+        },
+        {
+          "x": 0.23810317482592364,
+          "y": 0.46760126580934874
+        },
+        {
+          "x": 0.2381031748259237,
+          "y": 0.46602111742045554
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 22450,
+        "end": 22628
+      },
+      "record_id": "igboundary2d:1",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=7027 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:2",
+    "graphic_oid": 7051,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.4014645388304246,
+          "y": 0.21823092890098883
+        },
+        {
+          "x": 0.4022444235466651,
+          "y": 0.221389456522965
+        },
+        {
+          "x": 0.4006642751577719,
+          "y": 0.22138945652296493
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 23509,
+        "end": 23687
+      },
+      "record_id": "igboundary2d:2",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=7051 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:3",
+    "graphic_oid": 7099,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.19714200700788925,
+          "y": 0.33564671933820345
+        },
+        {
+          "x": 0.19398347938591312,
+          "y": 0.3364266040544441
+        },
+        {
+          "x": 0.19398347938591315,
+          "y": 0.3348464556655509
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 25738,
+        "end": 25916
+      },
+      "record_id": "igboundary2d:3",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=7099 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:4",
+    "graphic_oid": 7164,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.24181272190836312,
+          "y": 0.425194615952413
+        },
+        {
+          "x": 0.23865419428638696,
+          "y": 0.4259745006686536
+        },
+        {
+          "x": 0.23865419428638696,
+          "y": 0.4243943522797604
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 28016,
+        "end": 28194
+      },
+      "record_id": "igboundary2d:4",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=7164 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:5",
+    "graphic_oid": 7528,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.5217688552289401,
+          "y": 0.33564671933820467
+        },
+        {
+          "x": 0.5186103276069639,
+          "y": 0.3364266040544453
+        },
+        {
+          "x": 0.518610327606964,
+          "y": 0.3348464556655521
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 38394,
+        "end": 38572
+      },
+      "record_id": "igboundary2d:5",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=7528 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:6",
+    "graphic_oid": 7555,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.33743768833113413,
+          "y": 0.2727419573155553
+        },
+        {
+          "x": 0.33665780361489367,
+          "y": 0.2695834296935791
+        },
+        {
+          "x": 0.33823795200378687,
+          "y": 0.26958342969357924
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 39115,
+        "end": 39293
+      },
+      "record_id": "igboundary2d:6",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=7555 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:7",
+    "graphic_oid": 7618,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.311953062524253,
+          "y": 0.17851796201647052
+        },
+        {
+          "x": 0.31273294724049294,
+          "y": 0.18167648963844685
+        },
+        {
+          "x": 0.31115279885159974,
+          "y": 0.18167648963844651
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 41621,
+        "end": 41799
+      },
+      "record_id": "igboundary2d:7",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=7618 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:8",
+    "graphic_oid": 7636,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.5213939533427693,
+          "y": 0.30044054206109216
+        },
+        {
+          "x": 0.518235425720793,
+          "y": 0.3012204267773328
+        },
+        {
+          "x": 0.518235425720793,
+          "y": 0.2996402783884396
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 42049,
+        "end": 42227
+      },
+      "record_id": "igboundary2d:8",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=7636 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igboundary2d:9",
+    "graphic_oid": 7652,
+    "kind": {
+      "kind": "polyline",
+      "points": [
+        {
+          "x": 0.2797862341675221,
+          "y": 0.1445130291822132
+        },
+        {
+          "x": 0.28056611888376204,
+          "y": 0.14767155680418953
+        },
+        {
+          "x": 0.27898597049486884,
+          "y": 0.1476715568041892
+        }
+      ],
+      "closed": true
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.8410000801086426,
+            "y": 0.5940000414848328
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 42733,
+        "end": 42911
+      },
+      "record_id": "igboundary2d:9",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igBoundary2d ring (type 0x0013); oid=7652 segments=3 members=3. The ring re-lists its member igLine2d segments, so a renderer must fill it rather than stroke it -- the outline is already on the sheet. Join style_link::fill_styles_for_file on (stream, oid) for the fill."
+    },
+    "confidence": "decoded"
   }
 ]

@@ -113,6 +113,9 @@ fn main() {
     let mut consumers: Vec<String> = Vec::new();
     let mut fills_reached: BTreeSet<u32> = BTreeSet::new();
     let mut fill_inventory: Vec<String> = Vec::new();
+    let mut rings: Vec<String> = Vec::new();
+    let mut boundary_total = 0usize;
+    let mut closed_rings = 0usize;
 
     for name in FIXTURES {
         let path = root.join(name);
@@ -195,11 +198,37 @@ fn main() {
             // The one family that could bound a filled area, and the reason
             // "no filled-area geometry exists" is worth testing rather than
             // assuming: a boundary is what a fill would fill.
-            ids.extend(
-                decode_igboundaries(&sheet)
-                    .iter()
-                    .map(|r| ("igBoundary2d", r.oid, r.index)),
-            );
+            let boundaries = decode_igboundaries(&sheet);
+            ids.extend(boundaries.iter().map(|r| ("igBoundary2d", r.oid, r.index)));
+
+            // A fill needs somewhere to go. The decoder ships an
+            // `is_closed_loop` helper whose doc claims 20/20 close at 1e-9;
+            // that claim is the prerequisite for drawing an area, so it is
+            // re-measured here rather than taken on trust.
+            for record in &boundaries {
+                boundary_total += 1;
+                let closed = record.is_closed_loop(1e-9);
+                if closed {
+                    closed_rings += 1;
+                }
+                let xs = record.segments.iter().map(|s| s.start.0);
+                let ys = record.segments.iter().map(|s| s.start.1);
+                let (min_x, max_x) = xs
+                    .clone()
+                    .fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+                let (min_y, max_y) =
+                    ys.fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+                rings.push(format!(
+                    "  {name} oid={oid:<6} {segments} segment(s)  closed={closed}  \
+                     bbox {:.1}x{:.1}mm at ({:.1}, {:.1})",
+                    (max_x - min_x) * 1000.0,
+                    (max_y - min_y) * 1000.0,
+                    min_x * 1000.0,
+                    min_y * 1000.0,
+                    oid = record.oid,
+                    segments = record.segments.len(),
+                ));
+            }
 
             for (family, oid, index) in ids {
                 let landed = landing(&table, index);
@@ -235,4 +264,12 @@ fn main() {
         }
         println!("\n  {} distinct style id(s) reached", fills_reached.len());
     }
+
+    println!("\n=== can those boundaries be filled? ===\n");
+    for line in &rings {
+        println!("{line}");
+    }
+    println!(
+        "\n  {closed_rings} of {boundary_total} boundary record(s) close into a ring at 1e-9."
+    );
 }

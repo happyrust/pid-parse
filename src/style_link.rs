@@ -103,7 +103,7 @@ use std::path::Path;
 
 use crate::error::PidError;
 use crate::parsers::sheet_records::{
-    decode_iglines, decode_iglinestrings, decode_igpoints, decode_igtextboxes,
+    decode_igboundaries, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igtextboxes,
     PSM_TYPE_CODE_JSTYLE_OVERRIDE,
 };
 
@@ -387,6 +387,40 @@ pub struct StyleRecord {
     pub dash: Option<DashPattern>,
 }
 
+/// PSM type code of `JStyleSimpleFill`, a flat colour fill.
+pub const PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL: u16 = 0x002A;
+
+/// PSM type code of `JStyleHatchFill`, a patterned fill. Defined in every
+/// corpus document and referenced by nothing in any of them.
+pub const PSM_TYPE_CODE_JSTYLE_HATCH_FILL: u16 = 0x002B;
+
+/// That a record draws filled, and which style says so.
+///
+/// Deliberately carries no colour or pattern: the fill families' payloads are
+/// not decoded. Knowing an area is filled is separable from knowing what it is
+/// filled with, and it is the half that has a consumer today — a renderer can
+/// draw the area in its layer's colour and be more right than leaving it
+/// hollow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedFill {
+    /// Style id of the fill record finally reached.
+    pub style_id: u32,
+    /// Which fill family it is — [`PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL`] or
+    /// [`PSM_TYPE_CODE_JSTYLE_HATCH_FILL`].
+    pub type_code: u16,
+    /// Whether an override was traversed on the way. Every corpus fill is
+    /// reached through one.
+    pub hop: StyleHop,
+}
+
+impl ResolvedFill {
+    /// Whether this is a flat colour fill rather than a pattern.
+    #[must_use]
+    pub fn is_solid(&self) -> bool {
+        self.type_code == PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL
+    }
+}
+
 /// A text record's character height, and which style it came from.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResolvedTextHeight {
@@ -562,6 +596,42 @@ impl DocumentStyleTable {
             height_m: char_style.char_height_m?,
         })
     }
+
+    /// Resolve a boundary record's `index` to the fill it draws with.
+    ///
+    /// Same two shapes as the line case — the id names a fill outright, or it
+    /// names a `JStyleOverride` whose base object is one. In this corpus every
+    /// hit takes the override route.
+    ///
+    /// Returns `None` when the id names anything else, which is what every
+    /// line, point and text record does: fill is a property of areas, and the
+    /// corpus separates cleanly on that.
+    #[must_use]
+    pub fn resolve_fill(&self, style_id: u32) -> Option<ResolvedFill> {
+        let record = self.get(style_id)?;
+        let is_fill = |type_code: u16| {
+            type_code == PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL
+                || type_code == PSM_TYPE_CODE_JSTYLE_HATCH_FILL
+        };
+        if is_fill(record.type_code) {
+            return Some(ResolvedFill {
+                style_id: record.style_id,
+                type_code: record.type_code,
+                hop: StyleHop::Direct,
+            });
+        }
+        if record.type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
+            return None;
+        }
+        let target = self.get(record.base_reference?)?;
+        is_fill(target.type_code).then_some(ResolvedFill {
+            style_id: target.style_id,
+            type_code: target.type_code,
+            hop: StyleHop::ViaOverride {
+                override_id: record.style_id,
+            },
+        })
+    }
 }
 
 fn read_symbology(type_code: u16, payload: &[u8]) -> Option<LineSymbology> {
@@ -655,6 +725,32 @@ pub type LineStyleIndex = BTreeMap<(String, u32), ResolvedLineStyle>;
 /// Every text record's character height, keyed the same way as
 /// [`LineStyleIndex`].
 pub type TextHeightIndex = BTreeMap<(String, u32), ResolvedTextHeight>;
+
+/// Every boundary record's fill, keyed the same way as [`LineStyleIndex`].
+pub type FillIndex = BTreeMap<(String, u32), ResolvedFill>;
+
+/// Resolve the fill of every boundary record in one `.pid`.
+///
+/// `igBoundary2d` is the only family in this corpus that reaches a fill, and
+/// all 20 of its records do — see
+/// `docs/analysis/2026-08-10-fill-has-a-consumer-after-all.md`. Keyed like
+/// [`line_styles_for_file`] so a renderer joins all three the same way.
+///
+/// # Errors
+///
+/// Returns [`PidError`] when the file cannot be opened or read as a compound
+/// file.
+pub fn fill_styles_for_file(path: &Path) -> Result<FillIndex, PidError> {
+    let mut out = FillIndex::new();
+    for_each_document(path, &mut |stream, sheet, table| {
+        for record in decode_igboundaries(sheet) {
+            if let Some(resolved) = table.resolve_fill(record.index) {
+                out.insert((stream.to_string(), record.oid), resolved);
+            }
+        }
+    })?;
+    Ok(out)
+}
 
 /// Resolve the character height of every text record in one `.pid`.
 ///
@@ -842,6 +938,46 @@ mod tests {
         payload[BASE_OBJECT_REFERENCE_OFFSET..BASE_OBJECT_REFERENCE_OFFSET + 4]
             .copy_from_slice(&references.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_OVERRIDE, payload)
+    }
+
+    fn simple_fill(style_id: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 46];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        (PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL, payload)
+    }
+
+    #[test]
+    fn a_boundary_reaches_its_fill_through_the_override_that_names_it() {
+        let data = stream(&[simple_fill(20), override_record(21, 20)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_fill(21).expect("id 21 is defined");
+        assert_eq!(
+            resolved.style_id, 20,
+            "reports the fill, not the override that named it"
+        );
+        assert!(resolved.is_solid());
+        assert_eq!(resolved.hop, StyleHop::ViaOverride { override_id: 21 });
+    }
+
+    #[test]
+    fn a_line_style_is_not_a_fill() {
+        // The corpus separates cleanly on this: every line, point and text
+        // record misses, and every boundary hits. A permissive resolve_fill
+        // would erase that signal.
+        let data = stream(&[
+            simple_line(7, 0.000_35, 0),
+            text_char(8),
+            override_record(9, 7),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(table.resolve_fill(7).is_none());
+        assert!(table.resolve_fill(8).is_none());
+        assert!(
+            table.resolve_fill(9).is_none(),
+            "an override onto a line style is not a fill"
+        );
+        assert!(table.resolve_fill(404).is_none(), "undefined id");
     }
 
     fn text_char(style_id: u32) -> (u16, Vec<u8>) {

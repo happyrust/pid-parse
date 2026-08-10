@@ -1463,16 +1463,84 @@ impl GeometryEmitter for JStyleOverrideEmitter {
     }
 }
 
-/// No-op emitter: `igBoundary2d` (PSM `0x0013`) is a fully-typed
-/// **association** record — its segment groups re-list the geometry of
-/// the member `igLine2d` records it names (60/60 forward matches
-/// cross-fixture), so emitting a closed polyline here would
-/// double-count the member lines. See
+/// Emits `Decoded` closed [`PidGraphicKind::Polyline`] entities for the
+/// `igBoundary2d` family (PSM `0x0013`).
+///
+/// This family was a no-op emitter for a long time, on the correct
+/// observation that its segment groups re-list the geometry of the member
+/// `igLine2d` records it names (60/60 forward matches cross-fixture), so
+/// emitting the ring would draw the outline twice. See
 /// `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`.
+///
+/// What that reasoning missed is the thing the member lines cannot express.
+/// Every one of the corpus's 20 boundaries resolves through a
+/// `JStyleOverride` to a `JStyleSimpleFill`, and every one closes into a
+/// ring at `1e-9` — they are filled areas (all 3-segment arrowheads on the
+/// pipelines), and a renderer given only the member lines draws them hollow.
+/// See `docs/analysis/2026-08-10-fill-has-a-consumer-after-all.md`.
+///
+/// So the ring is emitted, and the duplication becomes the renderer's to
+/// resolve: it has the boundary's own `graphic_oid` to join against
+/// [`crate::style_link::fill_styles_for_file`], and should fill the ring
+/// rather than stroke it, because the stroke is already on the sheet.
 struct IgBoundary2dEmitter;
 
 impl GeometryEmitter for IgBoundary2dEmitter {
-    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_igboundaries.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            // The segments chain end-to-start, so their starts are the ring's
+            // vertices and the closing edge is implied by `closed`.
+            let points: Vec<PidPoint> = record
+                .segments
+                .iter()
+                .map(|segment| PidPoint {
+                    x: segment.start_x,
+                    y: segment.start_y,
+                })
+                .collect();
+            if points.len() < 3 {
+                continue;
+            }
+            out.push(PidGraphicEntity {
+                id: format!("{}:igboundary2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                kind: PidGraphicKind::Polyline {
+                    points,
+                    closed: true,
+                },
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igboundary2d:{index}")),
+                    record_kind: Some(SheetRecordKind::PrimitivePolyline),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igBoundary2d ring (type 0x0013); oid={} segments={} \
+                         members={}. The ring re-lists its member igLine2d \
+                         segments, so a renderer must fill it rather than stroke \
+                         it -- the outline is already on the sheet. Join \
+                         style_link::fill_styles_for_file on (stream, oid) for \
+                         the fill.",
+                        record.oid,
+                        record.segments.len(),
+                        record.member_refs.len(),
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
     }
 }
 
