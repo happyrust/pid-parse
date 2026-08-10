@@ -420,14 +420,15 @@ mod tests {
 
     #[test]
     fn decode_into_and_record_count_agree_on_synthetic_igline_stream() {
-        // One canonical igLine2d record (56 bytes), as in the parser
-        // unit tests: header 0x0018 + btf 50 + payload.
-        let mut data = Vec::new();
+        // One canonical igLine2d record (56 bytes), as in the parser unit
+        // tests: header 0x0018 + btf 50 + payload. The family is chain-gated,
+        // so the record has to sit behind the 8-byte Sheet stream header.
+        let mut data = vec![0u8; crate::parsers::sheet_records::SHEET_STREAM_HEADER_LEN];
         data.extend_from_slice(&0x0018u16.to_le_bytes());
         data.extend_from_slice(&50u32.to_le_bytes());
         data.extend_from_slice(&7u32.to_le_bytes()); // oid
-        data.extend_from_slice(&100u32.to_le_bytes()); // parent_ref
-        data.extend_from_slice(&12u32.to_le_bytes()); // remaining_header
+        data.extend_from_slice(&100u32.to_le_bytes()); // aux_lo (parent_ref)
+        data.extend_from_slice(&12u32.to_le_bytes()); // aux_hi
         data.extend_from_slice(&0x10u16.to_le_bytes()); // sub_type_word
         data.extend_from_slice(&1u32.to_le_bytes()); // index
         for v in [0.1f64, 0.1, 0.2, 0.1] {
@@ -443,8 +444,9 @@ mod tests {
             .iter()
             .find(|f| f.name == "igLine2d")
             .expect("registry row");
+        let start = crate::parsers::sheet_records::SHEET_STREAM_HEADER_LEN;
         assert_eq!((igline_row.record_count)(&geometry), 1);
-        assert_eq!((igline_row.decoded_ranges)(&data), vec![0..56]);
+        assert_eq!((igline_row.decoded_ranges)(&data), vec![start..start + 56]);
         assert!(!sheet_geometry_has_no_family_records(&geometry));
     }
 

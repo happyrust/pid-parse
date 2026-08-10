@@ -411,13 +411,13 @@ impl DecodedPrimitiveLineRecord {
 /// [`crate::parsers::sheet_records::SheetIgLine2dDecoded`]
 /// — PSM type `0x0018` Intergraph Sigma 2D standard line.
 ///
-/// Layout: PSM 6-byte header + 50-byte payload. Payload fields are
-/// `oid` (u32), `parent_ref` (u32), `remaining_header` (u32 = 12,
-/// validated), `sub_type_word` (u16), `index` (u32), then four
-/// `f64` LE for `start.x`, `start.y`, `end.x`, `end.y`. See
-/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
-/// section "igLine2d 字节布局已揭示" for the full layout and
-/// fixture-verified evidence.
+/// Layout: PSM 6-byte header + 50-byte payload. The payload opens
+/// with the rest of the shared PSM envelope — `oid` (u32) and the
+/// 8-byte `aux` pair (`parent_ref`, `aux_hi`) — and only then the
+/// class's own `sub_type_word` (u16), `index` (u32), and four `f64`
+/// LE for `start.x`, `start.y`, `end.x`, `end.y`. See
+/// `docs/analysis/2026-08-11-remaining-header-is-the-psm-aux-field.md`
+/// for why `aux_hi` is evidence rather than a validation rule.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct DecodedIgLine2dRecord {
     /// Inclusive byte-range start covering the full PSM record.
@@ -434,8 +434,12 @@ pub struct DecodedIgLine2dRecord {
     pub bytes_to_follow: u32,
     /// Object identifier (payload bytes 0..3).
     pub oid: u32,
-    /// Parent reference (payload bytes 4..7).
+    /// Low half of the PSM envelope's `aux` pair (payload bytes 4..7).
     pub parent_ref: u32,
+    /// High half of the PSM envelope's `aux` pair (payload bytes
+    /// 8..11), verbatim. `12`, `8` and `6996` all occur on the corpus;
+    /// the native reader discards this field, so nothing gates on it.
+    pub aux_hi: u32,
     /// Sub-type discriminator (payload bytes 12..13).
     pub sub_type_word: u16,
     /// Index / sub-oid (payload bytes 14..17).
@@ -460,6 +464,7 @@ impl From<crate::parsers::sheet_records::SheetIgLine2dDecoded> for DecodedIgLine
             bytes_to_follow: d.bytes_to_follow,
             oid: d.oid,
             parent_ref: d.parent_ref,
+            aux_hi: d.aux_hi,
             sub_type_word: d.sub_type_word,
             index: d.index,
             start_x: d.start.0,

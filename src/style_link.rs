@@ -59,13 +59,14 @@
 //! `index` names one of these ids. Over the four `test-file/*.pid` fixtures:
 //!
 //! * Every drawable record resolves to a concrete width and colour, with
-//!   nothing left over — all 558 that `decode_iglines` / `decode_igpoints` /
+//!   nothing left over — all 562 that `decode_iglines` / `decode_igpoints` /
 //!   `decode_iglinestrings` accept across the four fixtures. (A raw chain walk
-//!   finds 574; the 16 it finds and they refuse fail on their own validation
-//!   rules — four `igLine2d` in `DWG-0202/Sheet6615` whose `remaining_header`
-//!   reads 6996 rather than 12, and twelve polylines — which is a decoder
-//!   coverage question, not a link question.) The ratchet in
-//!   `tests/style_link_ratchet.rs` pins the counts.
+//!   finds 574; the twelve polylines it finds and they refuse fail on their
+//!   own validation rules, which is a decoder coverage question, not a link
+//!   question. The four `igLine2d` in `DWG-0202/Sheet6615` that used to sit
+//!   beside them are in the 562 now — and all four resolve, which is one more
+//!   reading that refusing them was the decoder's error and not the file's.)
+//!   The ratchet in `tests/style_link_ratchet.rs` pins the counts.
 //! * Resolution alone is weak evidence: style ids form a 79–97% dense `1..N`
 //!   run per document, so any small integer resolves. The evidence is in
 //!   **which kind** the id lands on. Across 98 distinct index values not one

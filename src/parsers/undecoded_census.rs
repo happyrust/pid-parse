@@ -213,9 +213,13 @@ pub fn undecoded_type_code_census(
 /// This is the other half of [`undecoded_type_code_census`], over the same
 /// walk and the same `claimed` ranges, so a record is counted by exactly one
 /// of the two. A refused record is not a mystery type code: the family is
-/// wired, it saw these bytes, and a rule said no. On the corpus that is a
-/// second `igLine2d` framing whose `remaining_header` is not the expected
-/// `12`, and it costs 21% of the drawings' lines.
+/// wired, it saw these bytes, and a rule said no.
+///
+/// Naming them is what got them re-measured. 88 of the corpus's first 141 —
+/// 21% of every line in the drawings, `A01`'s whole page border among them —
+/// were `igLine2d` refused on a rule this crate invented for a PSM envelope
+/// field the native reader discards; that rule is gone and they draw. The
+/// 53 that remain are `igTextBox` and `igLineString2d`, still unexplained.
 ///
 /// The graphic/non-graphic split is the same native predicate the undecoded
 /// census uses, so consumers can apply one warn rule to both.

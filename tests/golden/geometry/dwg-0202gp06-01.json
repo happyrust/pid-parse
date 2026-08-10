@@ -16243,5 +16243,253 @@
       "note": "coordinate pair promoted as an inferred point; surrounding record semantics are not decoded yet"
     },
     "confidence": "inferred"
+  },
+  {
+    "id": "/Sheet6615:igline2d:0",
+    "graphic_oid": 4732,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.1262712885165092,
+        "y": 0.09237890476352967
+      },
+      "end": {
+        "x": 0.25374966527762555,
+        "y": 0.09237890476352967
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5937458383472489,
+            "y": 0.4196291691964342
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6615",
+      "byte_range": {
+        "start": 92,
+        "end": 148
+      },
+      "record_id": "igline2d:0",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=4732 parent_ref=1909 sub_type=0x0010 index=1 start=(0.1263, 0.0924) end=(0.2537, 0.0924) length=0.1275; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6615:igline2d:1",
+    "graphic_oid": 5238,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.25374966527762555,
+        "y": 0.09237890476352967
+      },
+      "end": {
+        "x": 0.25374966527762555,
+        "y": 0.14424510707319954
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5937458383472489,
+            "y": 0.4196291691964342
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6615",
+      "byte_range": {
+        "start": 148,
+        "end": 204
+      },
+      "record_id": "igline2d:1",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=5238 parent_ref=1909 sub_type=0x0010 index=1 start=(0.2537, 0.0924) end=(0.2537, 0.1442) length=0.0519; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6615:igline2d:2",
+    "graphic_oid": 6099,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.25374966527762555,
+        "y": 0.14424510707319954
+      },
+      "end": {
+        "x": 0.1262712885165092,
+        "y": 0.14424510707319954
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5937458383472489,
+            "y": 0.4196291691964342
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6615",
+      "byte_range": {
+        "start": 204,
+        "end": 260
+      },
+      "record_id": "igline2d:2",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=6099 parent_ref=1909 sub_type=0x0010 index=1 start=(0.2537, 0.1442) end=(0.1263, 0.1442) length=0.1275; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6615:igline2d:3",
+    "graphic_oid": 6530,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.1262712885165092,
+        "y": 0.14424510707319954
+      },
+      "end": {
+        "x": 0.1262712885165092,
+        "y": 0.09237890476352967
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5937458383472489,
+            "y": 0.4196291691964342
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6615",
+      "byte_range": {
+        "start": 260,
+        "end": 316
+      },
+      "record_id": "igline2d:3",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=6530 parent_ref=1909 sub_type=0x0010 index=1 start=(0.1263, 0.1442) end=(0.1263, 0.0924) length=0.0519; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
   }
 ]

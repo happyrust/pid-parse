@@ -2332,22 +2332,17 @@ pub const GLINE2D_PAYLOAD_LEN: usize = 48;
 pub const PSM_TYPE_CODE_IGLINE2D: u16 = 0x0018;
 
 /// Byte length of one PSM `igLine2d` payload (after the 6-byte
-/// `(type_code, bytes_to_follow)` header): 18 bytes of sub-header
-/// (`oid` + `parent_ref` + `remaining=12` + `sub_type_word` +
-/// `index`) + 32 bytes of `(start.x, start.y, end.x, end.y)`
-/// f64-LE = **50 bytes total**.
+/// `(type_code, bytes_to_follow)` header): 12 bytes finishing the
+/// shared PSM envelope (`oid` + the 8-byte `aux` pair) + 38 bytes
+/// the class itself writes (`sub_type_word` + `index` + four f64-LE
+/// `(start.x, start.y, end.x, end.y)`) = **50 bytes total**.
 ///
-/// Layout revealed by `examples/probe_igline2d_shape.rs` fixture
-/// byte dump; see
-/// `docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`
-/// section "igLine2d 字节布局已揭示" for the full evidence.
+/// The envelope split is `radsrvitem.dll`'s, not a guess:
+/// `PSMSerializeOut` (`0x56491E80`) writes
+/// `type(2) + bytes_to_follow(4) + oid(4) + aux(8)` before handing
+/// the stream to the class's `Save`. See
+/// `docs/analysis/2026-08-11-remaining-header-is-the-psm-aux-field.md`.
 pub const IGLINE2D_PAYLOAD_LEN: usize = 50;
-
-/// Magic constant inside the `igLine2d` payload's sub-header at
-/// byte offset 8..11: `remaining_header == 12` (4 bytes for
-/// `sub_type_word + index`). Records whose `remaining_header`
-/// doesn't equal 12 are rejected as not real `igLine2d`.
-const IGLINE2D_REMAINING_HEADER: u32 = 12;
 
 /// PSM type code that identifies a standard Intergraph Sigma
 /// `igLineString2d` (polyline) record on disk.
@@ -2740,9 +2735,9 @@ fn decode_primitive_line_payload(
 ///   2..5   u32 LE   bytes_to_follow = 50
 ///
 /// Payload (50 bytes):
-///   0..3   u32 LE   oid
-///   4..7   u32 LE   parent_ref
-///   8..11  u32 LE   remaining_header == 12 (constant)
+///   0..3   u32 LE   oid          \ still the shared PSM envelope
+///   4..7   u32 LE   aux_lo       | (`PSMSerializeOut` writes these;
+///   8..11  u32 LE   aux_hi       / `PSMSerializeIn` discards the aux)
 ///   12..13 u16 LE   sub_type_word
 ///   14..17 u32 LE   index / sub_oid
 ///   18..25 f64 LE   start.x
@@ -2750,6 +2745,13 @@ fn decode_primitive_line_payload(
 ///   34..41 f64 LE   end.x
 ///   42..49 f64 LE   end.y
 /// ```
+///
+/// The crate read `aux_hi` as a `remaining_header` sub-header length
+/// and refused every record whose value was not `12`, which silently
+/// dropped 88 real lines — among them the whole page border of `A01`.
+/// It is not a length: the native reader reads those 8 bytes into a
+/// local it never consults. Chain membership, not `aux_hi`, is what
+/// tells a record from a coincidence.
 ///
 /// 4-double Cartesian `(start, end)` representation. Compare to
 /// the parametric 6-double `GLine2d` (PSM `0x3FE6`) family, which
@@ -2772,10 +2774,18 @@ pub struct SheetIgLine2dDecoded {
     pub bytes_to_follow: u32,
     /// Object identifier (payload bytes 0..3).
     pub oid: u32,
-    /// Parent reference (payload bytes 4..7) — typically the
-    /// `PrimitiveCluster` or owning entity. Semantic precise meaning
-    /// is hypothesis; the byte field is reliably present.
+    /// Low half of the PSM envelope's `aux` pair (payload bytes
+    /// 4..7). The crate reads it as the owning `PrimitiveCluster` or
+    /// entity; that reading is hypothesis, and `PSMSerializeOut`
+    /// sources it from object-record bookkeeping rather than from the
+    /// class, so it is not part of the line's geometry.
     pub parent_ref: u32,
+    /// High half of the PSM envelope's `aux` pair (payload bytes
+    /// 8..11), verbatim. Corpus values are `12` (326 records), `8`
+    /// (`A01`'s page border, 80) and `6996` (`DWG-0202/Sheet6615`, 8).
+    /// Carried for evidence only — the native reader discards it, so
+    /// nothing validates against it.
+    pub aux_hi: u32,
     /// Sub-type discriminator (payload bytes 12..13). Seen values
     /// include `0x0010`, `0x0001`, `0x0065`, `0x0032`, `0x0023`,
     /// `0x001F`, `0x002B`; semantics not yet decoded.
@@ -2800,26 +2810,33 @@ impl SheetIgLine2dDecoded {
 /// Decode every PSM-encoded `igLine2d` record in a `Sheet*`
 /// stream's bytes.
 ///
-/// Walk every byte offset; at each offset check whether a 6-byte
-/// `(type_code, bytes_to_follow)` PSM header is followed by 50
-/// bytes of `igLine2d` payload satisfying all of:
+/// A candidate has to be a **member of the stream's record chain**
+/// ([`sheet_record_starts`]) before its payload is even looked at —
+/// the same gate `decode_primitive_lines` has used since the
+/// `GLine2d` ghost family was retired — and then satisfy all of:
 ///
 /// 1. PSM `type_code` == [`PSM_TYPE_CODE_IGLINE2D`] (`0x0018`);
 /// 2. `bytes_to_follow` == 50 (igLine2d records are fixed-size);
-/// 3. Payload `remaining_header` field (bytes 8..11) ==
-///    `IGLINE2D_REMAINING_HEADER` (`12`);
-/// 4. All four geometry `f64`s are finite and in domain
+/// 3. All four geometry `f64`s are finite and in domain
 ///    `[-1e9, 1e9]`;
-/// 5. `start != end` (line must be non-degenerate; collapse
+/// 4. `start != end` (line must be non-degenerate; collapse
 ///    rejected to avoid noise).
 ///
-/// Panic-free and bounds-checked: adversarial bytes simply fail
-/// validation and are skipped.
+/// The chain replaced a fourth rule this crate invented, `aux_hi ==
+/// 12`, which had no counterpart in the native reader and refused 88
+/// real lines. On the corpus the swap is free in both directions:
+/// every record the old sliding scan accepted is chain-resident
+/// (326, zero off-chain), and dropping the invented rule adds exactly
+/// the 88 (`examples/probe_phase40_igline_chain_vs_rule`).
 ///
-/// Thin wrapper over [`IgLine2dDecoder`]'s shared
-/// [`PsmRecordDecoder::scan`] (M1 pilot family).
+/// Panic-free and bounds-checked: adversarial bytes simply fail
+/// validation and are skipped, and a stream that is not a clean chain
+/// yields nothing rather than falling back to a scan.
 pub fn decode_iglines(data: &[u8]) -> Vec<SheetIgLine2dDecoded> {
-    IgLine2dDecoder.scan(data)
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| IgLine2dDecoder.decode_at(data, at))
+        .collect()
 }
 
 /// Try to decode a single PSM `igLine2d` record starting at
@@ -2889,10 +2906,9 @@ fn decode_igline_payload(
     let payload = data.get(header.body_start..payload_end)?;
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
-    let remaining_header = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
-    if remaining_header != IGLINE2D_REMAINING_HEADER {
-        return None;
-    }
+    // `aux_hi` is the PSM envelope's own bookkeeping, read and discarded by
+    // `PSMSerializeIn`. Carried through as evidence; never a validation rule.
+    let aux_hi = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
     let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
 
@@ -2928,6 +2944,7 @@ fn decode_igline_payload(
         bytes_to_follow,
         oid,
         parent_ref,
+        aux_hi,
         sub_type_word,
         index,
         start,
@@ -4705,6 +4722,18 @@ pub const IGBOUNDARY2D_FIXED_PAYLOAD_LEN: usize = 49;
 /// 8-byte trailer member reference.
 pub const IGBOUNDARY2D_PER_SEGMENT_LEN: usize = 41;
 
+/// The PSM envelope `aux_hi` (payload bytes 8..11) every corpus
+/// `igBoundary2d` carries.
+///
+/// Kept as a family filter, **not** as a framing rule: `aux_hi` is
+/// envelope bookkeeping the native reader discards, so equality here
+/// is a corpus regularity rather than a format requirement. It stays
+/// because nothing has measured what this family looks like without
+/// it — the same measurement that retired the identical `igLine2d`
+/// rule (`examples/probe_phase40_igline_chain_vs_rule`) has not been
+/// run for `0x0013`.
+const IGBOUNDARY2D_AUX_HI: u32 = 12;
+
 /// One `(start, end)` segment decoded from an `igBoundary2d`
 /// segment group (`0x67 tag + 4×f64`).
 #[derive(Debug, Clone, PartialEq)]
@@ -4919,8 +4948,7 @@ fn decode_igboundary_payload(
 
     let oid = read_u32(0)?;
     let parent_ref = read_u32(4)?;
-    let remaining_header = read_u32(8)?;
-    if remaining_header != IGLINE2D_REMAINING_HEADER {
+    if read_u32(8)? != IGBOUNDARY2D_AUX_HI {
         return None;
     }
     let sub_type_word = u16::from_le_bytes([*payload.get(12)?, *payload.get(13)?]);
@@ -5864,10 +5892,33 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// Build a synthetic PSM `igLine2d` record (56 bytes total):
-    /// 6-byte PSM header + 50-byte payload.
+    /// 6-byte PSM header + 50-byte payload, with the `aux_hi` most
+    /// corpus records carry.
     fn build_synthetic_igline2d_record(
         oid: u32,
         parent_ref: u32,
+        sub_type_word: u16,
+        index: u32,
+        start: (f64, f64),
+        end: (f64, f64),
+    ) -> Vec<u8> {
+        build_synthetic_igline2d_record_with_aux_hi(
+            oid,
+            parent_ref,
+            12,
+            sub_type_word,
+            index,
+            start,
+            end,
+        )
+    }
+
+    /// Same, with `aux_hi` chosen by the caller — the field the decoder
+    /// used to demand equal `12`.
+    fn build_synthetic_igline2d_record_with_aux_hi(
+        oid: u32,
+        parent_ref: u32,
+        aux_hi: u32,
         sub_type_word: u16,
         index: u32,
         start: (f64, f64),
@@ -5879,7 +5930,7 @@ mod tests {
         // Payload starts here.
         out.extend_from_slice(&oid.to_le_bytes());
         out.extend_from_slice(&parent_ref.to_le_bytes());
-        out.extend_from_slice(&IGLINE2D_REMAINING_HEADER.to_le_bytes());
+        out.extend_from_slice(&aux_hi.to_le_bytes());
         out.extend_from_slice(&sub_type_word.to_le_bytes());
         out.extend_from_slice(&index.to_le_bytes());
         out.extend_from_slice(&start.0.to_le_bytes());
@@ -5899,21 +5950,22 @@ mod tests {
             (0.4719, 0.3897),
             (0.5736, 0.3897),
         );
-        let decoded = decode_iglines(&record);
+        let decoded = decode_iglines(&synthetic_sheet_stream(&[record]));
         assert_eq!(decoded.len(), 1);
         let line = &decoded[0];
         assert_eq!(line.type_code, PSM_TYPE_CODE_IGLINE2D);
         assert_eq!(line.bytes_to_follow, 50);
         assert_eq!(line.oid, 177);
         assert_eq!(line.parent_ref, 1212);
+        assert_eq!(line.aux_hi, 12);
         assert_eq!(line.sub_type_word, 0x0010);
         assert_eq!(line.index, 86);
         assert!((line.start.0 - 0.4719).abs() < 1e-9);
         assert!((line.start.1 - 0.3897).abs() < 1e-9);
         assert!((line.end.0 - 0.5736).abs() < 1e-9);
         assert!((line.end.1 - 0.3897).abs() < 1e-9);
-        assert_eq!(line.byte_range.start, 0);
-        assert_eq!(line.byte_range.end, 6 + 50);
+        assert_eq!(line.byte_range.start, SHEET_STREAM_HEADER_LEN);
+        assert_eq!(line.byte_range.end, SHEET_STREAM_HEADER_LEN + 6 + 50);
         assert!((line.length() - 0.1017).abs() < 1e-3);
     }
 
@@ -5922,7 +5974,7 @@ mod tests {
         let mut record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
         record[0] = 0xE6;
         record[1] = 0x3F;
-        assert!(decode_iglines(&record).is_empty());
+        assert!(decode_igline_at(&record, 0).is_none());
     }
 
     #[test]
@@ -5930,21 +5982,38 @@ mod tests {
         let mut record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
         // Overwrite bytes_to_follow with 49 (not exactly 50).
         record[2] = 49;
-        assert!(decode_iglines(&record).is_empty());
+        assert!(decode_igline_at(&record, 0).is_none());
     }
 
+    /// `aux_hi` (payload `+8`) is PSM envelope bookkeeping the native
+    /// reader reads and discards, so no value of it makes a record less
+    /// of a record. The decoder demanded `12` for two phases and dropped
+    /// 88 real lines — `8` is what `A01`'s page border carries and `6996`
+    /// what `DWG-0202/Sheet6615` carries.
     #[test]
-    fn igline2d_rejects_wrong_remaining_header() {
-        let mut record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
-        // Overwrite remaining_header at payload offset 8 (record offset 14).
-        record[6 + 8] = 11; // change 0x0C to 0x0B
-        assert!(decode_iglines(&record).is_empty());
+    fn igline2d_accepts_every_aux_hi_the_corpus_carries() {
+        for aux_hi in [0u32, 8, 12, 6996, u32::MAX] {
+            let record = build_synthetic_igline2d_record_with_aux_hi(
+                1,
+                1,
+                aux_hi,
+                0x10,
+                0,
+                (0.0, 0.0),
+                (1.0, 0.0),
+            );
+            let decoded =
+                decode_igline_at(&record, 0).unwrap_or_else(|| panic!("aux_hi {aux_hi} refused"));
+            assert_eq!(decoded.aux_hi, aux_hi, "carried through verbatim");
+            assert_eq!(decoded.start, (0.0, 0.0));
+            assert_eq!(decoded.end, (1.0, 0.0));
+        }
     }
 
     #[test]
     fn igline2d_rejects_degenerate_zero_length_line() {
         let record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (0.5, 0.5), (0.5, 0.5));
-        assert!(decode_iglines(&record).is_empty());
+        assert!(decode_igline_at(&record, 0).is_none());
     }
 
     #[test]
@@ -5953,13 +6022,36 @@ mod tests {
         let nan_bytes = f64::NAN.to_le_bytes();
         // start.x is at record offset 6 + 18 = 24.
         record[24..32].copy_from_slice(&nan_bytes);
-        assert!(decode_iglines(&record).is_empty());
+        assert!(decode_igline_at(&record, 0).is_none());
     }
 
     #[test]
     fn igline2d_rejects_out_of_domain_coordinate() {
         let record = build_synthetic_igline2d_record(1, 1, 0x10, 0, (1e10, 0.0), (1.0, 1.0));
-        assert!(decode_iglines(&record).is_empty());
+        assert!(decode_igline_at(&record, 0).is_none());
+    }
+
+    /// The chain, not a payload rule, is what tells an `igLine2d` from a
+    /// coincidence — the gate `decode_primitive_lines` has carried since
+    /// the `GLine2d` ghost family was retired.
+    #[test]
+    fn igline2d_ignores_a_record_shaped_match_buried_in_another_record() {
+        let hidden = build_synthetic_igline2d_record(9, 1, 0x10, 0, (0.0, 0.0), (1.0, 0.0));
+        let mut host = Vec::new();
+        host.extend_from_slice(&PSM_TYPE_CODE_DEPENDENCY_OBJECT.to_le_bytes());
+        host.extend_from_slice(&(hidden.len() as u32).to_le_bytes());
+        host.extend_from_slice(&hidden);
+
+        let stream = synthetic_sheet_stream(&[host]);
+        assert!(
+            decode_igline_at(&stream, SHEET_STREAM_HEADER_LEN + PSM_ENVELOPE_LEN).is_some(),
+            "the buried bytes do satisfy every payload rule; without that the \
+             test would prove nothing"
+        );
+        assert!(
+            decode_iglines(&stream).is_empty(),
+            "a payload-shaped match inside another record is not a record"
+        );
     }
 
     #[test]
@@ -5984,15 +6076,10 @@ mod tests {
 
     #[test]
     fn igline2d_decodes_two_back_to_back_records() {
-        let mut data = build_synthetic_igline2d_record(7, 100, 0x10, 1, (0.1, 0.1), (0.2, 0.1));
-        data.extend(build_synthetic_igline2d_record(
-            8,
-            100,
-            0x65,
-            2,
-            (0.3, 0.3),
-            (0.3, 0.5),
-        ));
+        let data = synthetic_sheet_stream(&[
+            build_synthetic_igline2d_record(7, 100, 0x10, 1, (0.1, 0.1), (0.2, 0.1)),
+            build_synthetic_igline2d_record(8, 100, 0x65, 2, (0.3, 0.3), (0.3, 0.5)),
+        ]);
         let decoded = decode_iglines(&data);
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].oid, 7);
@@ -6041,32 +6128,20 @@ mod tests {
     }
 
     #[test]
-    fn igline2d_trait_scan_matches_free_function_on_mixed_stream() {
-        // Two valid records separated / surrounded by noise so both the
-        // slide-by-one and jump-past-record paths of the shared scan run.
-        let mut data = vec![0x00u8; 3];
-        data.extend(build_synthetic_igline2d_record(
-            7,
-            100,
-            0x10,
-            1,
-            (0.1, 0.1),
-            (0.2, 0.1),
-        ));
-        data.extend([0xFFu8; 5]);
-        data.extend(build_synthetic_igline2d_record(
-            8,
-            100,
-            0x65,
-            2,
-            (0.3, 0.3),
-            (0.3, 0.5),
-        ));
-        data.extend([0x11u8; 2]);
+    fn igline2d_trait_scan_matches_free_function_on_a_clean_chain() {
+        let data = synthetic_sheet_stream(&[
+            build_synthetic_igline2d_record(7, 100, 0x10, 1, (0.1, 0.1), (0.2, 0.1)),
+            build_synthetic_igline2d_record(8, 100, 0x65, 2, (0.3, 0.3), (0.3, 0.5)),
+        ]);
 
+        // The stream header is not a record, so the sliding scan cannot see
+        // it; on a chain of nothing but this family the two must still agree.
         let via_trait = IgLine2dDecoder.scan(&data);
         let via_free_fn = decode_iglines(&data);
-        assert_eq!(via_trait, via_free_fn, "trait scan and wrapper must agree");
+        assert_eq!(
+            via_trait, via_free_fn,
+            "on a clean chain of one family the gate changes nothing"
+        );
         assert_eq!(via_trait.len(), 2);
         assert_eq!(via_trait[0].oid, 7);
         assert_eq!(via_trait[1].oid, 8);
@@ -7322,7 +7397,7 @@ mod tests {
         // 18-byte IGDS prefix.
         out.extend_from_slice(&oid.to_le_bytes());
         out.extend_from_slice(&parent_ref.to_le_bytes());
-        out.extend_from_slice(&IGLINE2D_REMAINING_HEADER.to_le_bytes());
+        out.extend_from_slice(&IGBOUNDARY2D_AUX_HI.to_le_bytes());
         out.extend_from_slice(&0x0010u16.to_le_bytes());
         out.extend_from_slice(&index.to_le_bytes());
         // 10-byte sub-header: u32 == 1, u32 segment_count, bytes [2, 1].

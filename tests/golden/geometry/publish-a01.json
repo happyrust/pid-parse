@@ -5752,6 +5752,4966 @@
     "confidence": "decoded"
   },
   {
+    "id": "/JSite204/Sheet6:igline2d:0",
+    "graphic_oid": 89,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390133,
+        "y": 0.3948340189891369
+      },
+      "end": {
+        "x": 0.01990569158390132,
+        "y": 0.36983401898913687
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 242,
+        "end": 298
+      },
+      "record_id": "igline2d:0",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=89 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3948) end=(0.0199, 0.3698) length=0.0250; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:1",
+    "graphic_oid": 92,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.014905691583901325,
+        "y": 0.3826190180496141
+      },
+      "end": {
+        "x": 0.014905691583901287,
+        "y": 0.24483401898913665
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 454,
+        "end": 510
+      },
+      "record_id": "igline2d:1",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=92 parent_ref=6 sub_type=0x0000 index=20 start=(0.0149, 0.3826) end=(0.0149, 0.2448) length=0.1378; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:2",
+    "graphic_oid": 95,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.014905691583901287,
+        "y": 0.2448340189891367
+      },
+      "end": {
+        "x": 0.019905691583901323,
+        "y": 0.2448340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 588,
+        "end": 644
+      },
+      "record_id": "igline2d:2",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=95 parent_ref=6 sub_type=0x0000 index=20 start=(0.0149, 0.2448) end=(0.0199, 0.2448) length=0.0050; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:3",
+    "graphic_oid": 96,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.019905691583901323,
+        "y": 0.2448340189891367
+      },
+      "end": {
+        "x": 0.0,
+        "y": 0.24483401898913668
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 644,
+        "end": 700
+      },
+      "record_id": "igline2d:3",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=96 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2448) end=(0.0000, 0.2448) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:4",
+    "graphic_oid": 97,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.009905691583901324,
+        "y": 0.38261901804961435
+      },
+      "end": {
+        "x": 0.009905691583901323,
+        "y": 0.24483401898913676
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 700,
+        "end": 756
+      },
+      "record_id": "igline2d:4",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=97 parent_ref=6 sub_type=0x0000 index=20 start=(0.0099, 0.3826) end=(0.0099, 0.2448) length=0.1378; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:5",
+    "graphic_oid": 98,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.0049056915839013225,
+        "y": 0.38261901804961435
+      },
+      "end": {
+        "x": 0.004905691583901313,
+        "y": 0.24483401898913665
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 756,
+        "end": 812
+      },
+      "record_id": "igline2d:5",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=98 parent_ref=6 sub_type=0x0000 index=20 start=(0.0049, 0.3826) end=(0.0049, 0.2448) length=0.1378; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:6",
+    "graphic_oid": 99,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390131,
+        "y": 0.3198340189891367
+      },
+      "end": {
+        "x": 0.019905691583901312,
+        "y": 0.2948340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 812,
+        "end": 868
+      },
+      "record_id": "igline2d:6",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=99 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3198) end=(0.0199, 0.2948) length=0.0250; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:7",
+    "graphic_oid": 100,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.019905691583901305,
+        "y": 0.34483401898913685
+      },
+      "end": {
+        "x": 0.025000000000000022,
+        "y": 0.34483401898913685
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 868,
+        "end": 924
+      },
+      "record_id": "igline2d:7",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=100 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3448) end=(0.0250, 0.3448) length=0.0051; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:8",
+    "graphic_oid": 101,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390132,
+        "y": 0.36983401898913676
+      },
+      "end": {
+        "x": 0.025000000000000022,
+        "y": 0.3698340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 924,
+        "end": 980
+      },
+      "record_id": "igline2d:8",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=101 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3698) end=(0.0250, 0.3698) length=0.0051; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:9",
+    "graphic_oid": 102,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.019905691583901305,
+        "y": 0.34483401898913685
+      },
+      "end": {
+        "x": 0.01990569158390131,
+        "y": 0.3198340189891368
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 980,
+        "end": 1036
+      },
+      "record_id": "igline2d:9",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=102 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3448) end=(0.0199, 0.3198) length=0.0250; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:10",
+    "graphic_oid": 103,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.014905691583901325,
+        "y": 0.3826190180496141
+      },
+      "end": {
+        "x": 0.014905691583901325,
+        "y": 0.39483401898913667
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1036,
+        "end": 1092
+      },
+      "record_id": "igline2d:10",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=103 parent_ref=6 sub_type=0x0000 index=20 start=(0.0149, 0.3826) end=(0.0149, 0.3948) length=0.0122; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:11",
+    "graphic_oid": 104,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.019905691583901312,
+        "y": 0.29483401898913675
+      },
+      "end": {
+        "x": 0.02500000000000002,
+        "y": 0.29483401898913675
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1092,
+        "end": 1148
+      },
+      "record_id": "igline2d:11",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=104 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2948) end=(0.0250, 0.2948) length=0.0051; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:12",
+    "graphic_oid": 105,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.009905691583901323,
+        "y": 0.39483401898913667
+      },
+      "end": {
+        "x": 0.009905691583901324,
+        "y": 0.38261901804961423
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1148,
+        "end": 1204
+      },
+      "record_id": "igline2d:12",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=105 parent_ref=6 sub_type=0x0000 index=20 start=(0.0099, 0.3948) end=(0.0099, 0.3826) length=0.0122; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:13",
+    "graphic_oid": 106,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.019905691583901312,
+        "y": 0.29483401898913675
+      },
+      "end": {
+        "x": 0.01990569158390132,
+        "y": 0.2698340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1204,
+        "end": 1260
+      },
+      "record_id": "igline2d:13",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=106 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2948) end=(0.0199, 0.2698) length=0.0250; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:14",
+    "graphic_oid": 109,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.00866079106243918,
+        "y": 0.39483401898913667
+      },
+      "end": {
+        "x": 0.0,
+        "y": 0.39483401898913667
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1260,
+        "end": 1316
+      },
+      "record_id": "igline2d:14",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=109 parent_ref=6 sub_type=0x0000 index=1 start=(0.0087, 0.3948) end=(0.0000, 0.3948) length=0.0087; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:15",
+    "graphic_oid": 110,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.0019056915839013224,
+        "y": 0.41783401898913647
+      },
+      "end": {
+        "x": 0.022905691583901322,
+        "y": 0.4178340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1316,
+        "end": 1372
+      },
+      "record_id": "igline2d:15",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=110 parent_ref=6 sub_type=0x0000 index=1 start=(0.0019, 0.4178) end=(0.0229, 0.4178) length=0.0210; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:16",
+    "graphic_oid": 111,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.022905691583901322,
+        "y": 0.4178340189891367
+      },
+      "end": {
+        "x": 0.022905691583901325,
+        "y": 0.39683401898913667
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1372,
+        "end": 1428
+      },
+      "record_id": "igline2d:16",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=111 parent_ref=6 sub_type=0x0000 index=1 start=(0.0229, 0.4178) end=(0.0229, 0.3968) length=0.0210; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:17",
+    "graphic_oid": 122,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.0049056915839013225,
+        "y": 0.38261901804961435
+      },
+      "end": {
+        "x": 0.0049056915839013225,
+        "y": 0.39476695296015357
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1512,
+        "end": 1568
+      },
+      "record_id": "igline2d:17",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=122 parent_ref=6 sub_type=0x0000 index=20 start=(0.0049, 0.3826) end=(0.0049, 0.3948) length=0.0121; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:18",
+    "graphic_oid": 181,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.025000000000000015,
+        "y": 0.01
+      },
+      "end": {
+        "x": 0.584,
+        "y": 0.01
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1568,
+        "end": 1624
+      },
+      "record_id": "igline2d:18",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=181 parent_ref=295 sub_type=0x0010 index=13 start=(0.0250, 0.0100) end=(0.5840, 0.0100) length=0.5590; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:19",
+    "graphic_oid": 224,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390133,
+        "y": 0.3948340189891369
+      },
+      "end": {
+        "x": 0.019905691583901326,
+        "y": 0.3826190180496141
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1624,
+        "end": 1680
+      },
+      "record_id": "igline2d:19",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=224 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3948) end=(0.0199, 0.3826) length=0.0122; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:20",
+    "graphic_oid": 234,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.019905691583901305,
+        "y": 0.34483401898913685
+      },
+      "end": {
+        "x": 0.0,
+        "y": 0.34483401898913685
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1680,
+        "end": 1736
+      },
+      "record_id": "igline2d:20",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=234 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3448) end=(0.0000, 0.3448) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:21",
+    "graphic_oid": 236,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.022905691583901325,
+        "y": 0.39683401898913667
+      },
+      "end": {
+        "x": 0.0019056915839013207,
+        "y": 0.39683401898913667
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1736,
+        "end": 1792
+      },
+      "record_id": "igline2d:21",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=236 parent_ref=6 sub_type=0x0000 index=1 start=(0.0229, 0.3968) end=(0.0019, 0.3968) length=0.0210; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:22",
+    "graphic_oid": 237,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.584,
+        "y": 0.01
+      },
+      "end": {
+        "x": 0.584,
+        "y": 0.41000000000000003
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1792,
+        "end": 1848
+      },
+      "record_id": "igline2d:22",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=237 parent_ref=295 sub_type=0x0010 index=13 start=(0.5840, 0.0100) end=(0.5840, 0.4100) length=0.4000; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:23",
+    "graphic_oid": 242,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.00866079106243918,
+        "y": 0.39483401898913667
+      },
+      "end": {
+        "x": 0.025000000000000022,
+        "y": 0.3948340189891366
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1848,
+        "end": 1904
+      },
+      "record_id": "igline2d:23",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=242 parent_ref=6 sub_type=0x0000 index=1 start=(0.0087, 0.3948) end=(0.0250, 0.3948) length=0.0163; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:24",
+    "graphic_oid": 246,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390132,
+        "y": 0.36983401898913676
+      },
+      "end": {
+        "x": 0.0,
+        "y": 0.36983401898913676
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1904,
+        "end": 1960
+      },
+      "record_id": "igline2d:24",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=246 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3698) end=(0.0000, 0.3698) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:25",
+    "graphic_oid": 247,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.0019056915839013207,
+        "y": 0.39683401898913667
+      },
+      "end": {
+        "x": 0.0019056915839013224,
+        "y": 0.41783401898913647
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 1960,
+        "end": 2016
+      },
+      "record_id": "igline2d:25",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=247 parent_ref=6 sub_type=0x0000 index=1 start=(0.0019, 0.3968) end=(0.0019, 0.4178) length=0.0210; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:26",
+    "graphic_oid": 248,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.019905691583901312,
+        "y": 0.29483401898913675
+      },
+      "end": {
+        "x": 0.0,
+        "y": 0.2948340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2016,
+        "end": 2072
+      },
+      "record_id": "igline2d:26",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=248 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2948) end=(0.0000, 0.2948) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:27",
+    "graphic_oid": 252,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390132,
+        "y": 0.2698340189891367
+      },
+      "end": {
+        "x": 0.0,
+        "y": 0.2698340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2150,
+        "end": 2206
+      },
+      "record_id": "igline2d:27",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=252 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2698) end=(0.0000, 0.2698) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:28",
+    "graphic_oid": 254,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390132,
+        "y": 0.2698340189891367
+      },
+      "end": {
+        "x": 0.02500000000000002,
+        "y": 0.2698340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2206,
+        "end": 2262
+      },
+      "record_id": "igline2d:28",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=254 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2698) end=(0.0250, 0.2698) length=0.0051; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:29",
+    "graphic_oid": 255,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390131,
+        "y": 0.3198340189891367
+      },
+      "end": {
+        "x": 0.0,
+        "y": 0.3198340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2262,
+        "end": 2318
+      },
+      "record_id": "igline2d:29",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=255 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3198) end=(0.0000, 0.3198) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:30",
+    "graphic_oid": 256,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390132,
+        "y": 0.36983401898913676
+      },
+      "end": {
+        "x": 0.019905691583901305,
+        "y": 0.34483401898913674
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2318,
+        "end": 2374
+      },
+      "record_id": "igline2d:30",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=256 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3698) end=(0.0199, 0.3448) length=0.0250; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:31",
+    "graphic_oid": 261,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.019905691583901323,
+        "y": 0.2448340189891367
+      },
+      "end": {
+        "x": 0.02500000000000002,
+        "y": 0.2448340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2452,
+        "end": 2508
+      },
+      "record_id": "igline2d:31",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=261 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2448) end=(0.0250, 0.2448) length=0.0051; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:32",
+    "graphic_oid": 294,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.594,
+        "y": 0.42
+      },
+      "end": {
+        "x": 0.0,
+        "y": 0.42
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2508,
+        "end": 2564
+      },
+      "record_id": "igline2d:32",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=294 parent_ref=114 sub_type=0x0010 index=1 start=(0.5940, 0.4200) end=(0.0000, 0.4200) length=0.5940; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:33",
+    "graphic_oid": 296,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.0,
+        "y": 0.42
+      },
+      "end": {
+        "x": 0.0,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2648,
+        "end": 2704
+      },
+      "record_id": "igline2d:33",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=296 parent_ref=114 sub_type=0x0010 index=1 start=(0.0000, 0.4200) end=(0.0000, 0.0000) length=0.4200; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:34",
+    "graphic_oid": 297,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.594,
+        "y": 0.0
+      },
+      "end": {
+        "x": 0.594,
+        "y": 0.42
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2704,
+        "end": 2760
+      },
+      "record_id": "igline2d:34",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=297 parent_ref=114 sub_type=0x0010 index=1 start=(0.5940, 0.0000) end=(0.5940, 0.4200) length=0.4200; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:35",
+    "graphic_oid": 302,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.025000000000000022,
+        "y": 0.41000000000000003
+      },
+      "end": {
+        "x": 0.025000000000000015,
+        "y": 0.010000000000000009
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2760,
+        "end": 2816
+      },
+      "record_id": "igline2d:35",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=302 parent_ref=295 sub_type=0x0010 index=13 start=(0.0250, 0.4100) end=(0.0250, 0.0100) length=0.4000; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:36",
+    "graphic_oid": 303,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.584,
+        "y": 0.41000000000000003
+      },
+      "end": {
+        "x": 0.025000000000000022,
+        "y": 0.41000000000000003
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2816,
+        "end": 2872
+      },
+      "record_id": "igline2d:36",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=303 parent_ref=295 sub_type=0x0010 index=13 start=(0.5840, 0.4100) end=(0.0250, 0.4100) length=0.5590; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:37",
+    "graphic_oid": 344,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390131,
+        "y": 0.3198340189891367
+      },
+      "end": {
+        "x": 0.025000000000000022,
+        "y": 0.3198340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2938,
+        "end": 2994
+      },
+      "record_id": "igline2d:37",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=344 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3198) end=(0.0250, 0.3198) length=0.0051; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:38",
+    "graphic_oid": 353,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.01990569158390132,
+        "y": 0.2698340189891367
+      },
+      "end": {
+        "x": 0.019905691583901323,
+        "y": 0.2448340189891367
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 2994,
+        "end": 3050
+      },
+      "record_id": "igline2d:38",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=353 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2698) end=(0.0199, 0.2448) length=0.0250; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:39",
+    "graphic_oid": 369,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "end": {
+        "x": 0.594,
+        "y": 0.0
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 3050,
+        "end": 3106
+      },
+      "record_id": "igline2d:39",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=369 parent_ref=114 sub_type=0x0010 index=1 start=(0.0000, 0.0000) end=(0.5940, 0.0000) length=0.5940; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:40",
+    "graphic_oid": 614,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5309999999999998,
+        "y": 0.009930140314966565
+      },
+      "end": {
+        "x": 0.5309999999999998,
+        "y": 0.015930140314966555
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 3184,
+        "end": 3240
+      },
+      "record_id": "igline2d:40",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=614 parent_ref=6 sub_type=0x0000 index=20 start=(0.5310, 0.0099) end=(0.5310, 0.0159) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:41",
+    "graphic_oid": 617,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5309999999999998,
+        "y": 0.021930140314966554
+      },
+      "end": {
+        "x": 0.5309999999999998,
+        "y": 0.027930140314966555
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 3386,
+        "end": 3442
+      },
+      "record_id": "igline2d:41",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=617 parent_ref=6 sub_type=0x0000 index=20 start=(0.5310, 0.0219) end=(0.5310, 0.0279) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:42",
+    "graphic_oid": 620,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5159999999999999,
+        "y": 0.021930140314966554
+      },
+      "end": {
+        "x": 0.5159999999999999,
+        "y": 0.027930140314966555
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 3590,
+        "end": 3646
+      },
+      "record_id": "igline2d:42",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=620 parent_ref=6 sub_type=0x0000 index=20 start=(0.5160, 0.0219) end=(0.5160, 0.0279) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:43",
+    "graphic_oid": 623,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.45899999999999985,
+        "y": 0.015930140314966548
+      },
+      "end": {
+        "x": 0.45899999999999996,
+        "y": 0.06393014031496655
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 3794,
+        "end": 3850
+      },
+      "record_id": "igline2d:43",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=623 parent_ref=6 sub_type=0x0000 index=20 start=(0.4590, 0.0159) end=(0.4590, 0.0639) length=0.0480; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:44",
+    "graphic_oid": 625,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.479,
+        "y": 0.027930140314966545
+      },
+      "end": {
+        "x": 0.584,
+        "y": 0.02793014031496656
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 3924,
+        "end": 3980
+      },
+      "record_id": "igline2d:44",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=625 parent_ref=6 sub_type=0x0000 index=20 start=(0.4790, 0.0279) end=(0.5840, 0.0279) length=0.1050; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:45",
+    "graphic_oid": 627,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.4939999999999999,
+        "y": 0.009930140314966565
+      },
+      "end": {
+        "x": 0.4939999999999999,
+        "y": 0.027930140314966552
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4054,
+        "end": 4110
+      },
+      "record_id": "igline2d:45",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=627 parent_ref=6 sub_type=0x0000 index=20 start=(0.4940, 0.0099) end=(0.4940, 0.0279) length=0.0180; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:46",
+    "graphic_oid": 628,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.479,
+        "y": 0.009930140314966565
+      },
+      "end": {
+        "x": 0.479,
+        "y": 0.06393014031496655
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4110,
+        "end": 4166
+      },
+      "record_id": "igline2d:46",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=628 parent_ref=6 sub_type=0x0000 index=20 start=(0.4790, 0.0099) end=(0.4790, 0.0639) length=0.0540; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:47",
+    "graphic_oid": 629,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.479,
+        "y": 0.05793014031496655
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.057930140314966544
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4166,
+        "end": 4222
+      },
+      "record_id": "igline2d:47",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=629 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0579) end=(0.4440, 0.0579) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:48",
+    "graphic_oid": 630,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.584,
+        "y": 0.02193014031496656
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.021930140314966543
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4222,
+        "end": 4278
+      },
+      "record_id": "igline2d:48",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=630 parent_ref=6 sub_type=0x0000 index=1 start=(0.5840, 0.0219) end=(0.4440, 0.0219) length=0.1400; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:49",
+    "graphic_oid": 634,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.479,
+        "y": 0.05193014031496655
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.05193014031496655
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4488,
+        "end": 4544
+      },
+      "record_id": "igline2d:49",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=634 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0519) end=(0.4440, 0.0519) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:50",
+    "graphic_oid": 636,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.479,
+        "y": 0.05193014031496655
+      },
+      "end": {
+        "x": 0.584,
+        "y": 0.051930140314966566
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4580,
+        "end": 4636
+      },
+      "record_id": "igline2d:50",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=636 parent_ref=6 sub_type=0x0000 index=20 start=(0.4790, 0.0519) end=(0.5840, 0.0519) length=0.1050; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:51",
+    "graphic_oid": 637,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.479,
+        "y": 0.04593014031496655
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.04593014031496655
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4636,
+        "end": 4692
+      },
+      "record_id": "igline2d:51",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=637 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0459) end=(0.4440, 0.0459) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:52",
+    "graphic_oid": 638,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.479,
+        "y": 0.027930140314966545
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.02793014031496654
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4692,
+        "end": 4748
+      },
+      "record_id": "igline2d:52",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=638 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0279) end=(0.4440, 0.0279) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:53",
+    "graphic_oid": 639,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.584,
+        "y": 0.06393014031496656
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.06393014031496655
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4748,
+        "end": 4804
+      },
+      "record_id": "igline2d:53",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=639 parent_ref=6 sub_type=0x0000 index=13 start=(0.5840, 0.0639) end=(0.4440, 0.0639) length=0.1400; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:54",
+    "graphic_oid": 640,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.479,
+        "y": 0.03993014031496655
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.03993014031496654
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4804,
+        "end": 4860
+      },
+      "record_id": "igline2d:54",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=640 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0399) end=(0.4440, 0.0399) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:55",
+    "graphic_oid": 641,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.44400000000000006,
+        "y": 0.009930140314966565
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.11393014031496658
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4860,
+        "end": 4916
+      },
+      "record_id": "igline2d:55",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=641 parent_ref=6 sub_type=0x0000 index=13 start=(0.4440, 0.0099) end=(0.4440, 0.1139) length=0.1040; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:56",
+    "graphic_oid": 643,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5159999999999999,
+        "y": 0.009930140314966565
+      },
+      "end": {
+        "x": 0.5159999999999999,
+        "y": 0.015930140314966555
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 4986,
+        "end": 5042
+      },
+      "record_id": "igline2d:56",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=643 parent_ref=6 sub_type=0x0000 index=20 start=(0.5160, 0.0099) end=(0.5160, 0.0159) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:57",
+    "graphic_oid": 644,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.479,
+        "y": 0.03393014031496655
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.03393014031496655
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5042,
+        "end": 5098
+      },
+      "record_id": "igline2d:57",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=644 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0339) end=(0.4440, 0.0339) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:58",
+    "graphic_oid": 650,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.45400000000000007,
+        "y": 0.10193014031496657
+      },
+      "end": {
+        "x": 0.45399999999999996,
+        "y": 0.10793014031496657
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5394,
+        "end": 5450
+      },
+      "record_id": "igline2d:58",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=650 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.1019) end=(0.4540, 0.1079) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:59",
+    "graphic_oid": 651,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.4540000000000002,
+        "y": 0.09593014031496656
+      },
+      "end": {
+        "x": 0.45400000000000007,
+        "y": 0.10193014031496657
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5450,
+        "end": 5506
+      },
+      "record_id": "igline2d:59",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=651 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.0959) end=(0.4540, 0.1019) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:60",
+    "graphic_oid": 652,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5840655469560991,
+        "y": 0.08993014031496657
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.08993014031496656
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5506,
+        "end": 5562
+      },
+      "record_id": "igline2d:60",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=652 parent_ref=6 sub_type=0x0000 index=1 start=(0.5841, 0.0899) end=(0.4440, 0.0899) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:61",
+    "graphic_oid": 653,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5840655469560991,
+        "y": 0.09593014031496658
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.09593014031496656
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5562,
+        "end": 5618
+      },
+      "record_id": "igline2d:61",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=653 parent_ref=6 sub_type=0x0000 index=1 start=(0.5841, 0.0959) end=(0.4440, 0.0959) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:62",
+    "graphic_oid": 654,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.45399999999999996,
+        "y": 0.10793014031496657
+      },
+      "end": {
+        "x": 0.45399999999999974,
+        "y": 0.11393014031496658
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5618,
+        "end": 5674
+      },
+      "record_id": "igline2d:62",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=654 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.1079) end=(0.4540, 0.1139) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:63",
+    "graphic_oid": 655,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5840655469560991,
+        "y": 0.10793014031496659
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.10793014031496657
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5674,
+        "end": 5730
+      },
+      "record_id": "igline2d:63",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=655 parent_ref=6 sub_type=0x0000 index=1 start=(0.5841, 0.1079) end=(0.4440, 0.1079) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:64",
+    "graphic_oid": 656,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.4540000000000002,
+        "y": 0.08993014031496656
+      },
+      "end": {
+        "x": 0.4540000000000002,
+        "y": 0.09593014031496656
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5730,
+        "end": 5786
+      },
+      "record_id": "igline2d:64",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=656 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.0899) end=(0.4540, 0.0959) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:65",
+    "graphic_oid": 657,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5840655469560991,
+        "y": 0.1139301403149666
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.11393014031496658
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5786,
+        "end": 5842
+      },
+      "record_id": "igline2d:65",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=657 parent_ref=6 sub_type=0x0000 index=13 start=(0.5841, 0.1139) end=(0.4440, 0.1139) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:66",
+    "graphic_oid": 658,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5840655469560991,
+        "y": 0.1019301403149666
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.10193014031496658
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5842,
+        "end": 5898
+      },
+      "record_id": "igline2d:66",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=658 parent_ref=6 sub_type=0x0000 index=1 start=(0.5841, 0.1019) end=(0.4440, 0.1019) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:67",
+    "graphic_oid": 660,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5299999999999999,
+        "y": 0.08393014031496657
+      },
+      "end": {
+        "x": 0.5299999999999999,
+        "y": 0.1139301403149666
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 5972,
+        "end": 6028
+      },
+      "record_id": "igline2d:67",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=660 parent_ref=6 sub_type=0x0000 index=1 start=(0.5300, 0.0839) end=(0.5300, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:68",
+    "graphic_oid": 661,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.584,
+        "y": 0.08393014031496657
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.08393014031496655
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6028,
+        "end": 6084
+      },
+      "record_id": "igline2d:68",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=661 parent_ref=6 sub_type=0x0000 index=13 start=(0.5840, 0.0839) end=(0.4440, 0.0839) length=0.1400; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:69",
+    "graphic_oid": 663,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5000000000000001,
+        "y": 0.08393014031496655
+      },
+      "end": {
+        "x": 0.5000000000000001,
+        "y": 0.11393014031496658
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6156,
+        "end": 6212
+      },
+      "record_id": "igline2d:69",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=663 parent_ref=6 sub_type=0x0000 index=1 start=(0.5000, 0.0839) end=(0.5000, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:70",
+    "graphic_oid": 664,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.584,
+        "y": 0.015930140314966562
+      },
+      "end": {
+        "x": 0.44400000000000006,
+        "y": 0.015930140314966545
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6212,
+        "end": 6268
+      },
+      "record_id": "igline2d:70",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=664 parent_ref=6 sub_type=0x0000 index=1 start=(0.5840, 0.0159) end=(0.4440, 0.0159) length=0.1400; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:71",
+    "graphic_oid": 665,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.45400000000000007,
+        "y": 0.08393014031496655
+      },
+      "end": {
+        "x": 0.4540000000000002,
+        "y": 0.08993014031496656
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6268,
+        "end": 6324
+      },
+      "record_id": "igline2d:71",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=665 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.0839) end=(0.4540, 0.0899) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:72",
+    "graphic_oid": 669,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5469999999999998,
+        "y": 0.009930140314966565
+      },
+      "end": {
+        "x": 0.5469999999999998,
+        "y": 0.015930140314966555
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6324,
+        "end": 6380
+      },
+      "record_id": "igline2d:72",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=669 parent_ref=6 sub_type=0x0000 index=20 start=(0.5470, 0.0099) end=(0.5470, 0.0159) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:73",
+    "graphic_oid": 670,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5449999999999999,
+        "y": 0.08393014031496657
+      },
+      "end": {
+        "x": 0.5449999999999999,
+        "y": 0.1139301403149666
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6380,
+        "end": 6436
+      },
+      "record_id": "igline2d:73",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=670 parent_ref=6 sub_type=0x0000 index=1 start=(0.5450, 0.0839) end=(0.5450, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:74",
+    "graphic_oid": 671,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5599999999999997,
+        "y": 0.08393014031496657
+      },
+      "end": {
+        "x": 0.5599999999999997,
+        "y": 0.1139301403149666
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6436,
+        "end": 6492
+      },
+      "record_id": "igline2d:74",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=671 parent_ref=6 sub_type=0x0000 index=1 start=(0.5600, 0.0839) end=(0.5600, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:75",
+    "graphic_oid": 722,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.515,
+        "y": 0.08393014031496657
+      },
+      "end": {
+        "x": 0.515,
+        "y": 0.1139301403149666
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6520,
+        "end": 6576
+      },
+      "record_id": "igline2d:75",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=722 parent_ref=6 sub_type=0x0000 index=1 start=(0.5150, 0.0839) end=(0.5150, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:76",
+    "graphic_oid": 723,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.025000000000000022,
+        "y": 0.4
+      },
+      "end": {
+        "x": 0.10681894916325849,
+        "y": 0.4
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6576,
+        "end": 6632
+      },
+      "record_id": "igline2d:76",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=723 parent_ref=6 sub_type=0x0000 index=1 start=(0.0250, 0.4000) end=(0.1068, 0.4000) length=0.0818; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:77",
+    "graphic_oid": 724,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.10681894916325849,
+        "y": 0.4
+      },
+      "end": {
+        "x": 0.10681894916325851,
+        "y": 0.41000000000000003
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6632,
+        "end": 6688
+      },
+      "record_id": "igline2d:77",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=724 parent_ref=6 sub_type=0x0000 index=1 start=(0.1068, 0.4000) end=(0.1068, 0.4100) length=0.0100; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:78",
+    "graphic_oid": 725,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.5619999999999997,
+        "y": 0.009930140314966565
+      },
+      "end": {
+        "x": 0.5619999999999997,
+        "y": 0.015930140314966555
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6688,
+        "end": 6744
+      },
+      "record_id": "igline2d:78",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=725 parent_ref=6 sub_type=0x0000 index=20 start=(0.5620, 0.0099) end=(0.5620, 0.0159) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/JSite204/Sheet6:igline2d:79",
+    "graphic_oid": 856,
+    "kind": {
+      "kind": "line",
+      "start": {
+        "x": 0.025000000000000022,
+        "y": 0.41000000000000003
+      },
+      "end": {
+        "x": 0.025000000000000022,
+        "y": 0.42
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5940010414848328,
+            "y": 0.4200010166893005
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/JSite204/Sheet6",
+      "byte_range": {
+        "start": 6814,
+        "end": 6870
+      },
+      "record_id": "igline2d:79",
+      "record_kind": "primitive_line",
+      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=856 parent_ref=6 sub_type=0x0000 index=13 start=(0.0250, 0.4100) end=(0.0250, 0.4200) length=0.0100; byte layout from fixture dump (radsrvitem.dll-adjacent)"
+    },
+    "confidence": "decoded"
+  },
+  {
     "id": "/JSite204/Sheet12:coordinate-hint:0",
     "kind": {
       "kind": "point",

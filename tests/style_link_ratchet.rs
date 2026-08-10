@@ -13,9 +13,11 @@
 //! * a change that resolves the same records to *different* symbology —
 //!   caught by the corpus palette, which is asserted whole.
 //!
-//! The palette is also the readable part: nine entries over 558 records, ISO
+//! The palette is also the readable part: nine entries over 562 records, ISO
 //! 128 widths apart from the 0.100 mm point ticks. If a future change makes
-//! this list longer or stranger, the framing moved.
+//! this list longer or stranger, the framing moved. Retiring the `igLine2d`
+//! `aux_hi` rule added four records and no tenth entry — they land on
+//! 0.350 mm black, which is what a rectangle outline should weigh.
 //!
 //! Soft-skips per fixture, so a checkout without `test-file/` still passes.
 
@@ -54,18 +56,17 @@ const EXPECTED: [Expected; 4] = [
         direct: 114,
         via_override: 24,
     },
-    // These counts are what the crate's own decoders yield, which is less
-    // than a raw chain walk finds: `Sheet6615` holds four more `igLine2d` —
-    // the sides of a rectangle, beside a `0x0020` Rectangle Object — that
-    // `decode_iglines` refuses because their `remaining_header` reads 6996
-    // rather than the constant 12 every other sheet uses. Well-formed and
-    // non-degenerate, so that is a decoder coverage gap, not a link failure.
+    // `Sheet6615`'s four `igLine2d` — the sides of a rectangle, beside a
+    // `0x0020` Rectangle Object — are in this count now. They were refused
+    // for two phases over an `aux_hi` of 6996 rather than 12, and the fact
+    // that all four resolve to a style this document defines is one more
+    // reading that they were always records.
     Expected {
         fixture: "test-file/DWG-0202GP06-01.pid",
-        lines: 42,
+        lines: 46,
         points: 31,
         linestrings: 28,
-        direct: 74,
+        direct: 78,
         via_override: 27,
     },
     Expected {
@@ -85,7 +86,7 @@ const EXPECTED_PALETTE: [(&str, usize); 9] = [
     ("0.100mm #008000", 10),
     ("0.130mm #000000", 182),
     ("0.180mm #008000", 7),
-    ("0.350mm #000000", 179),
+    ("0.350mm #000000", 183),
     ("0.350mm #808000", 10),
     ("0.350mm #FE0060", 6),
     ("0.700mm #808000", 39),
@@ -229,7 +230,7 @@ fn every_drawable_record_reaches_a_line_width_and_colour() {
         return;
     }
 
-    assert_eq!(corpus_records, 558, "records reaching a line style");
+    assert_eq!(corpus_records, 562, "records reaching a line style");
     let expected_palette: BTreeMap<String, usize> = EXPECTED_PALETTE
         .iter()
         .map(|(key, count)| ((*key).to_string(), *count))
@@ -341,7 +342,7 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
         );
     }
     if joined > 0 {
-        assert_eq!(joined, 558, "entities joined to a line style");
+        assert_eq!(joined, 562, "entities joined to a line style");
     }
 }
 
