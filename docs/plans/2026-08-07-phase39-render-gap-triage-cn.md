@@ -129,11 +129,13 @@ S0  基线确认（沿用 Phase 38 S6 的 08-07 census）
  -> S5  [两仓] 撤回 0x3FE6 GLine2d 家族                      ✅ 2026-08-10 完成
  -> S3  [pid-parse] 缺口 E 归因                              ✅ 2026-08-10 完成，推翻原判
  -> S6  [两仓] 把填充接到画面上                              ✅ 2026-08-10 完成
+ -> S7  [两仓] 解 0x002A 填充色载荷                          ✅ 2026-08-10 完成
 ```
 
 **Phase 39 三项全部有结论，且三项的原病因判断都不成立。** D 已正确处理
 （拒收哨兵 + 回退可见）、F 是伪命中已撤回、E 的封存被推翻并已接到画面上。
-唯一剩下的解码动作是 `0x002A` 的颜色载荷。
+S6 结尾留的「唯一剩下的解码动作 `0x002A` 颜色载荷」也已由 S7 完成——填充色不再是
+图层默认，而是图纸声明的真值。
 
 ### S1：缺口 D 归因 ✅ 完成（负结论）
 
@@ -208,9 +210,25 @@ byte-audit 那三段区间随之归还给 `0x003D`。
 | `pid-parse` | `IgBoundary2dEmitter` 从 no-op 改为发闭合 `Polyline`；golden 重新 bless（DWG-0202 +5、工艺管道-1 +10、publish 副本 +5，纯新增） |
 | `OpenCADStudio` | 新增 `PID-FILL` 图层；带填充的环画成实心 `HATCH`，颜色取图层默认；新增测试 `filled_areas_come_in_as_solid_hatches` |
 
-**剩下的一刀**：解 `0x002A` 的 46 字节载荷拿到真实颜色。手法同 `0x002E` / `0x002F`：
-CLSID → `style.dll` vtable → 版本分发序列化器 → 字段偏移。在那之前填充色是图层默认，
-且代码里标注为默认而非读数。
+**剩下的一刀**（已由 S7 落地）：解 `0x002A` 的 46 字节载荷拿到真实颜色。手法同
+`0x002E` / `0x002F`：CLSID → `style.dll` vtable → 版本分发序列化器 → 字段偏移。
+
+### S7：解 `0x002A` 填充色载荷 ✅ 完成
+
+**native reader 定字段与语义**：CLSID `47FCC331` → worker `sub_1001D610`，版本 2 基类块
+（与 `JStyleSimpleLine` 同一个 helper）之后读三枚 u32 到对象 `+104/+112/+120`；`+104` 是
+实心填充色（`IJStyleSolidFillImp` 的唯一颜色 get/put 指向它，且与线颜色同一基类槽，清空
+时写 `-2` 哨兵）。**corpus 定字节偏移**：基类块在 `.pid` 里占 30 字节，所以颜色在
+payload `+30`，编码同线颜色（`COLORREF [R,G,B,0]`）。
+
+| 仓 | 改动 |
+|---|---|
+| `pid-parse` | `style_link` 新增 `SIMPLE_FILL_COLOUR_OFFSET`、`read_fill_colour`、`StyleRecord.fill_colour`；`ResolvedFill` 多带 `colour: Option<u32>` + `rgb()`；三条断言（颜色 / `-2` 哨兵 / 黑色非哨兵） |
+| `pid-parse` | 新增 `examples/probe_fill_colour`；`docs/analysis/2026-08-10-fill-colour-is-002a-plus-30.md` |
+| `OpenCADStudio` | `build_fill` 取 `ResolvedFill.rgb()` 给实心 `HATCH` 上色（未声明色仍取图层默认）；`filled_areas_come_in_as_solid_hatches` 断言 DWG-0202 箭头为 `#0000FF` |
+
+两张真图 15 个流向箭头（DWG-0202 五、工艺管道-1 十）全部读出 `#0000FF` 蓝，此前一律画成
+图层默认白。`+112`（一枚对象引用）与 `+120`（语义未定）不是颜色，本轮不解。
 
 ## 4. Gate 命令（沿用两仓门禁）
 
@@ -247,7 +265,7 @@ cargo run --release --example pid_probe -- <六张 .pid>
 
 | 项 | 为什么 |
 |---|---|
-| ~~E 填充解码~~ | ~~可见占比实测为 0~~ **此行作废，见 §1 E**：占比不是 0，语料里有 15 个被填充的面。本 phase 仍不解码，但理由变成「消费侧未就绪」而非「没得画」 |
+| ~~E 填充解码~~ | ~~可见占比实测为 0~~ / ~~本 phase 仍不解码~~ **两处均作废**：占比不是 0（15 个面），且 `0x002A` 实心填充色已由 S7 解出（payload `+30`）。仍未解的是 `0x002B` 图案填充（无消费者）与 `0x002A` 的 `+112`/`+120` 两枚非颜色字段 |
 | 字体名偏移 | 「最长 UTF-16 串」启发式已能读对，优先级低于字高档位 |
 | `0x0013` / `0x003D` 尾部 / `0x0020` | 已有负结论或覆盖不足，不在关键路径 |
 | OCS clippy 存量债（1062 条 empty-line-after-doc） | 是仓主的机械清理决策，不塞进显示收口 |

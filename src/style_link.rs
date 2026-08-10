@@ -10,8 +10,10 @@
 //!    └─ look the id up in the SAME document's StyleCluster
 //!         ├─ lands on 0x002E JStyleSimpleLine → width +34 (f64, metres)
 //!         │                                     colour +50 (Win32 COLORREF)
+//!         ├─ lands on 0x002A JStyleSimpleFill → colour +30 (Win32 COLORREF)
 //!         └─ lands on 0x0030 JStyleOverride   → its +22 names a
-//!                                               JStyleSimpleLine → as above
+//!                                               JStyleSimpleLine or a
+//!                                               JStyleSimpleFill → as above
 //! ```
 //!
 //! # Evidence
@@ -385,6 +387,9 @@ pub struct StyleRecord {
     /// The dash pattern, when this is a `JStyleSimpleDashType` whose own
     /// length agrees with its segment count.
     pub dash: Option<DashPattern>,
+    /// Fill colour as a raw Win32 `COLORREF`, when this is a
+    /// `JStyleSimpleFill` that states one rather than the unset sentinel.
+    pub fill_colour: Option<u32>,
 }
 
 /// PSM type code of `JStyleSimpleFill`, a flat colour fill.
@@ -394,13 +399,41 @@ pub const PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL: u16 = 0x002A;
 /// corpus document and referenced by nothing in any of them.
 pub const PSM_TYPE_CODE_JSTYLE_HATCH_FILL: u16 = 0x002B;
 
-/// That a record draws filled, and which style says so.
+/// Offset of the fill colour, a Win32 `COLORREF`, within a `JStyleSimpleFill`
+/// payload. Level: native-reader for the field, corpus for the offset.
 ///
-/// Deliberately carries no colour or pattern: the fill families' payloads are
-/// not decoded. Knowing an area is filled is separable from knowing what it is
-/// filled with, and it is the half that has a consumer today — a renderer can
-/// draw the area in its layer's colour and be more right than leaving it
-/// hollow.
+/// `style.dll`'s version-2 `JStyleSimpleFill` worker (`sub_1001D610`, CLSID
+/// `{47FCC331-…}`) reads a 30-byte base block and then three `u32` fields into
+/// object offsets +104, +112, +120. The first, +104, is the very slot
+/// `JStyleSimpleLine` keeps its colour in, and the one the object's
+/// `IJStyleSolidFillImp` interface exposes through its single get/put colour
+/// pair — so it is the solid fill's colour, in the same `0x00BBGGRR` encoding
+/// as [`SIMPLE_LINE_COLOUR_OFFSET`]. The base block is the same helper
+/// `JStyleSimpleLine` uses, so on disk the field lands at +30.
+///
+/// The corpus pins it: across the five documents every `JStyleSimpleFill`
+/// reads a colour here whose high byte is zero and whose value is one the same
+/// file already uses for a line — the flow-arrow fills on DWG-0202 and the
+/// gongyi drawing both read `#0000FF`. See
+/// `docs/analysis/2026-08-10-fill-colour-is-002a-plus-30.md`.
+pub const SIMPLE_FILL_COLOUR_OFFSET: usize = 30;
+
+/// The `JStyleSimpleFill` "no colour set" sentinel.
+///
+/// `IJStyleSimpleFillImp`'s put method writes `-2` into the colour slot when
+/// asked to clear it, and every corpus document defines one such template fill
+/// (id 3) that nothing references. A record reading this draws in its layer's
+/// colour rather than one the drawing states.
+const SIMPLE_FILL_COLOUR_UNSET: u32 = 0xFFFF_FFFE;
+
+/// That a record draws filled, which style says so, and in what colour.
+///
+/// The colour is a `JStyleSimpleFill`'s stated one, read at
+/// [`SIMPLE_FILL_COLOUR_OFFSET`]; it is `None` for a patterned
+/// [`PSM_TYPE_CODE_JSTYLE_HATCH_FILL`], which carries no single colour, and
+/// for the "unset" template fill every document defines. A caller keeps its
+/// own default in that case — drawing in the layer's colour — which is what a
+/// fill with no stated colour asks for anyway.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedFill {
     /// Style id of the fill record finally reached.
@@ -408,6 +441,10 @@ pub struct ResolvedFill {
     /// Which fill family it is — [`PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL`] or
     /// [`PSM_TYPE_CODE_JSTYLE_HATCH_FILL`].
     pub type_code: u16,
+    /// The fill colour as a raw Win32 `COLORREF` (`0x00BBGGRR`), when this is
+    /// a solid fill that states one. `None` means "draw in the layer's
+    /// colour" — a hatch, or the unset sentinel.
+    pub colour: Option<u32>,
     /// Whether an override was traversed on the way. Every corpus fill is
     /// reached through one.
     pub hop: StyleHop,
@@ -418,6 +455,18 @@ impl ResolvedFill {
     #[must_use]
     pub fn is_solid(&self) -> bool {
         self.type_code == PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL
+    }
+
+    /// The stated fill colour split into `[R, G, B]`, when it states one.
+    #[must_use]
+    pub fn rgb(&self) -> Option<[u8; 3]> {
+        self.colour.map(|word| {
+            [
+                (word & 0xFF) as u8,
+                ((word >> 8) & 0xFF) as u8,
+                ((word >> 16) & 0xFF) as u8,
+            ]
+        })
     }
 }
 
@@ -493,6 +542,7 @@ impl DocumentStyleTable {
                     text_char_reference: read_text_char_reference(type_code, payload),
                     dash_reference: read_dash_reference(type_code, payload),
                     dash: read_dash_pattern(type_code, payload),
+                    fill_colour: read_fill_colour(type_code, payload),
                 };
                 // First writer wins, matching how a reader walking the chain
                 // in order would bind the id.
@@ -617,6 +667,7 @@ impl DocumentStyleTable {
             return Some(ResolvedFill {
                 style_id: record.style_id,
                 type_code: record.type_code,
+                colour: record.fill_colour,
                 hop: StyleHop::Direct,
             });
         }
@@ -627,6 +678,7 @@ impl DocumentStyleTable {
         is_fill(target.type_code).then_some(ResolvedFill {
             style_id: target.style_id,
             type_code: target.type_code,
+            colour: target.fill_colour,
             hop: StyleHop::ViaOverride {
                 override_id: record.style_id,
             },
@@ -712,6 +764,21 @@ fn read_base_reference(payload: &[u8]) -> Option<u32> {
     // Zero means "references nothing", which is what 670 of the corpus's 718
     // style records say. Style ids start at 1, so zero is unambiguous.
     u32_at(payload, BASE_OBJECT_REFERENCE_OFFSET).filter(|referenced| *referenced != 0)
+}
+
+fn read_fill_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
+    // Only a solid fill carries a single colour; a hatch fill is a pattern.
+    if type_code != PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL {
+        return None;
+    }
+    let word = u32_at(payload, SIMPLE_FILL_COLOUR_OFFSET)?;
+    // The unset sentinel means "no colour stated"; and a real COLORREF has a
+    // zero high byte, so anything else is either a sentinel or a misframing —
+    // either way not a plain RGB value to be trusted. Both refuse.
+    if word == SIMPLE_FILL_COLOUR_UNSET || word >> 24 != 0 {
+        return None;
+    }
+    Some(word)
 }
 
 /// Every drawable record's line style, keyed by the stream it lives in and
@@ -940,15 +1007,19 @@ mod tests {
         (PSM_TYPE_CODE_JSTYLE_OVERRIDE, payload)
     }
 
-    fn simple_fill(style_id: u32) -> (u16, Vec<u8>) {
+    fn simple_fill(style_id: u32, colour: u32) -> (u16, Vec<u8>) {
         let mut payload = vec![0u8; 46];
         payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        payload[SIMPLE_FILL_COLOUR_OFFSET..SIMPLE_FILL_COLOUR_OFFSET + 4]
+            .copy_from_slice(&colour.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL, payload)
     }
 
     #[test]
     fn a_boundary_reaches_its_fill_through_the_override_that_names_it() {
-        let data = stream(&[simple_fill(20), override_record(21, 20)]);
+        // 0x00FF0000 is #0000FF, the blue the flow arrowheads read on both
+        // DWG-0202 and the gongyi drawing.
+        let data = stream(&[simple_fill(20, 0x00FF_0000), override_record(21, 20)]);
         let table = DocumentStyleTable::from_stylecluster_bytes(&data);
 
         let resolved = table.resolve_fill(21).expect("id 21 is defined");
@@ -957,7 +1028,38 @@ mod tests {
             "reports the fill, not the override that named it"
         );
         assert!(resolved.is_solid());
+        assert_eq!(
+            resolved.rgb(),
+            Some([0x00, 0x00, 0xFF]),
+            "the fill's stated colour reaches the boundary through the override"
+        );
         assert_eq!(resolved.hop, StyleHop::ViaOverride { override_id: 21 });
+    }
+
+    #[test]
+    fn the_unset_sentinel_reads_as_no_colour() {
+        // Every corpus document defines one template fill whose colour is the
+        // -2 sentinel; it must read as "no colour" so the caller keeps its
+        // layer default rather than drawing 0xFFFFFFFE as a colour.
+        let data = stream(&[simple_fill(3, SIMPLE_FILL_COLOUR_UNSET)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        let resolved = table.resolve_fill(3).expect("id 3 is defined");
+        assert!(resolved.is_solid());
+        assert_eq!(
+            resolved.colour, None,
+            "the -2 sentinel is not a colour to be drawn"
+        );
+        assert_eq!(resolved.rgb(), None);
+    }
+
+    #[test]
+    fn a_black_fill_is_a_stated_colour_not_the_unset_sentinel() {
+        // #000000 is a real value the corpus states, distinct from "unset":
+        // its high byte is zero, the sentinel's is not.
+        let data = stream(&[simple_fill(13, 0x0000_0000)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        let resolved = table.resolve_fill(13).expect("id 13 is defined");
+        assert_eq!(resolved.rgb(), Some([0, 0, 0]));
     }
 
     #[test]
