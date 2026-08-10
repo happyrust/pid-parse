@@ -387,9 +387,9 @@ fixture ratchet 才可用，ratchet 已经在了。
 |---|---|
 | `0x002E` 的 `B`（version 2 基类块） | 未坐实；`12 + 8 = 20` 对不上实测的类字段起点 `+30`，见 §6 |
 | `0x002C +34` = 文字颜色 | hypothesis；原生代码只显示 `-1` 哨兵语义 |
-| `0x002C` 的 version 2 路径 | 未读（`sub_10002CFC` + `sub_10002CC0`） |
+| `0x002C` 的 version 2 路径 | 未读（`sub_10002CFC` + `sub_10002CC0`），且**已移出关键路径**：版本号不逐条写在 payload 里（拿三个已知版本的族做对照，`+0..+13` 无一列携带各族版本），所以「这条是 v2 还是 v3」在文件侧不可判定；本语料也没有一条回退是它造成的 |
 | 字体名字段的确切偏移 | 用「最长 UTF-16 串」启发式读的，未定位 |
-| `0x002C` 里的亚毫米记录（0.254mm） | 仍未解释，但**不再是孤例**：有真文字记录经 `TextPara +38` 指到它们。0.254mm = 0.01″，太小不可能是实际字高，`style_link` 直接拒收让消费方保留自己的默认值 |
+| `0x002C` 里的亚毫米记录（0.254mm） | 仍未解释，但已量化：全语料 184 条文字记录中 **25 条**指到它，来自三条**除身份字段外逐字节相同**的模板样式（四张图共用）。0.254mm = 0.01″，太小不可能是实际字高，`style_link` 直接拒收让消费方保留自己的默认值；段落样式与文字记录里都没有第二个字高来源。翻案要读**消费侧**（`rad2d`）而非 `style.dll` 的序列化器——见 `docs/analysis/2026-08-10-text-height-residue-is-one-sentinel-not-version-2.md` |
 
 ### 8.3 已知风险，暂不动
 
@@ -444,6 +444,8 @@ ComplexString）。
 | `examples/probe_psm_type_code_histogram` | 全语料 type code 频次 |
 | `examples/probe_stylecluster_records` | StyleCluster 记录链与目录 |
 | `examples/probe_jsl_text_char_style` | `0x002C` 字段分析 |
+| `examples/probe_text_height_fallback` | 字高两跳按失败的那一跳归因；版本列对照定位 |
+| `examples/probe_gline2d_parameter_domain` | `0x3FE6` 的链式归属取证（判定为 `0x003D` 长宽比伪命中） |
 | `examples/probe_jsl_line_style` | `0x002E` 字段分析 |
 | `examples/probe_dependency_object_tail_columns` | `0x00FA` 尾部列分析 |
 | `examples/probe_geometry_style_link` | 几何 → 样式链路候选测试 |
