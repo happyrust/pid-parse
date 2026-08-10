@@ -108,22 +108,48 @@ Phase 39 的 F 项就栽在扫描伪命中上——候选集由校验规则自�
 | `pid-parse` | 新增 `tests/render_gap_census.rs`：语料计数棘轮（4/9/21/0/98）+ 具名不变式 + 两种措辞不得混同 |
 | `OpenCADStudio` | `report_import` 把被拒收的图形记录按名报出 |
 
-## 7. 明确没做、也不该顺手做的
+## 7. 那 80 条线属于图纸吗：属于，而且它们是 A01 的图框
 
-- **没有解第二种 `igLine2d` 帧装。** `remaining_header == 8` / `== 6996` 各自是什么、
-  坐标是否真在标准偏移上，都要 `radsrvitem` 原生序列化器定字段、语料定偏移。那是
-  独立一刀。
-- **没有先证「JSite 内的线该不该画在图纸上」。** A01 的 80 条在 `/JSite204/Sheet6`
-  ——一个 JSite（符号站点）内的 sheet。它们可能是符号局部几何，不该出现在图纸坐标
-  系里。**解码之前必须先证消费者存在**，同 Phase 39 S3 的规矩。
+A01 的 80 条在 `/JSite204/Sheet6`——一个 `JSite`（`SmartPlant` 的符号实例容器）内的
+sheet。合理的担心是：那是**符号局部几何**，已经由某个 `igSymbol2d` 摆到页面上了，
+再解码一遍就是重复绘制或画错坐标系。按 Phase 39 S3 的规矩，**先证消费者，再谈解码**。
+
+`examples/probe_phase40_jsite_sheet_is_page_content` 取四条互相独立、任何一条都能
+单独否掉结论的读数：
+
+| # | 读数 | 结果 |
+|---|---|---|
+| 1 | 这条流已经是页面内容来源吗 | **是。** `/JSite204/Sheet6` 今天已经有 7 条记录被接受并画在 A01 的页面上；这不是假设 |
+| 2 | 一个坐标系还是两个 | **一个，就是页面的。** 被拒的线张成 `x 0.0000..594.0000 mm`、`y 0.0000..420.0000 mm`；同流被接受的记录（20.0..548.2、89.2..380.3）落在这个框里 |
+| 3 | JSite204 是符号定义吗 | **不是。** 它 `symbol_name` / `symbol_path` 皆为 `None`；同文件的 JSite1229（`Flanged Nozzle.sym`）、JSite206（`Horizontal Drum.sym`）才是真符号，且都不含 Sheet 流 |
+| 4 | 会不会重复绘制 | **不会。** 顶层 sheet 上仅有的两条 `igSymbol2d` 分别指向 JSite1229 与 JSite206，**没有一条指向 JSite204** |
+
+第 2 条还给出一个意料之外的强信号：**80/80 全部轴对齐**，最长一条恰为 594.0mm（页宽），
+四角精确落在 `(0.0000, 0.0000)`–`(594.0000, 420.0000)`——与边框声明的页幅逐位相符。
+**错帧的字节凑不出一个精确的页面矩形。** 这 80 条是图纸的**边框与图框网格**。
+
+由此顺带解释了症状：A01 在 OCS 里只画 27 个实体、看着像一张空图，**是因为它的边框
+就在这 80 条被拒记录里**。
+
+这条同时把 S5 的风险降了一档：坐标确实在标准偏移上（否则不会落成页面矩形）。但
+`remaining_header` 到底是什么、两个总体是不是两个版本，仍需原生序列化器来定——
+本文不据此放宽任何校验。
+
+## 8. 明确没做、也不该顺手做的
+
+- **没有解第二种 `igLine2d` 帧装。** `remaining_header == 8` / `== 6996` 各自是什么，
+  要 `radsrvitem` 原生序列化器定字段语义。那是独立一刀。
 - **没有查 45 条 text 与 8 条 linestring 的拒收原因。** 只对 88 条线做了规则归因。
   文字占静默桶三分之一，病因未知就无法排序。
+- **没有查 DWG-0202 `/Sheet6615` 那 8 条的归属。** 它在顶层流、不在 JSite 里，
+  `type_flags` 也与 A01 那批不同，是另一个总体，需要自己的取证。
 - **没有把 `0x3FE6` 从 `DECODED_TYPE_CODES` 里摘掉。** S5 撤回了那个家族，但解码器
   仍在（只是从不接受任何东西），留在表里不影响分账；全语料 0 条命中。
 
-## 8. 复现
+## 9. 复现
 
 ```powershell
-cargo run --example probe_phase40_render_gap_census   # 四分账、证伪、规则归因
-cargo test --locked --test render_gap_census          # 语料棘轮与具名不变式
+cargo run --example probe_phase40_render_gap_census            # 四分账、证伪、规则归因
+cargo run --example probe_phase40_jsite_sheet_is_page_content  # §7 四条读数
+cargo test --locked --test render_gap_census                   # 语料棘轮与具名不变式
 ```
