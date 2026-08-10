@@ -2280,68 +2280,6 @@
     "confidence": "inferred"
   },
   {
-    "id": "/Sheet6:primitive-line:0",
-    "graphic_oid": 1344733186,
-    "kind": {
-      "kind": "line",
-      "start": {
-        "x": 1.000000000001e-6,
-        "y": 1.0000000000020003e-12
-      },
-      "end": {
-        "x": 1.0,
-        "y": 1.000000000001e-6
-      }
-    },
-    "coordinate_context": {
-      "coordinate_space": "source_sheet",
-      "units": {
-        "state": "known",
-        "unit": "m"
-      },
-      "page_transform": {
-        "state": "available",
-        "origin": {
-          "x": 0.0,
-          "y": 0.0
-        },
-        "scale": [
-          1.0,
-          1.0
-        ],
-        "page_bounds": {
-          "min": {
-            "x": 0.0,
-            "y": 0.0
-          },
-          "max": {
-            "x": 0.5940010414848328,
-            "y": 0.4200010166893005
-          }
-        },
-        "matrix": [
-          1.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0
-        ]
-      }
-    },
-    "source": {
-      "stream_path": "/Sheet6",
-      "byte_range": {
-        "start": 579,
-        "end": 789
-      },
-      "record_id": "primitive-line:0",
-      "record_kind": "primitive_line",
-      "note": "PSM GLine2d record decoded from radsrvitem.dll byte layout (18-byte header + 6 x f64 payload); oid=1344733186 type_code=0x3FE6 type_flags=0x0 bytes_to_follow=204 origin=(0.0000, 0.0000) direction=(1.00000, 0.00000) param=[0.0000, 1.0000]"
-    },
-    "confidence": "decoded"
-  },
-  {
     "id": "/Sheet6:igsymbol2d:0",
     "graphic_oid": 51,
     "kind": {

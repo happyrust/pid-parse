@@ -2181,6 +2181,48 @@ pub fn parse_psm_header(data: &[u8], offset: usize) -> Option<PsmHeader> {
     })
 }
 
+/// Offset of the first record in a `Sheet*` stream: the 8-byte stream
+/// header (`magic` + `record_count`) precedes the chain.
+pub const SHEET_STREAM_HEADER_LEN: usize = 8;
+
+/// Every offset a record actually starts at, by walking the stream as the
+/// chain it is: `u16` type word, `u32 bytes_to_follow`, payload, repeat.
+///
+/// This is what tells a record from a byte pattern that merely looks like
+/// one. [`PsmRecordDecoder::scan`] tries every offset and slides a byte on
+/// rejection, so a header shape occurring *inside* another record's payload
+/// is accepted as a record — which is how `0x3FE6 GLine2d` came to have
+/// three corpus "records" that are really the top two bytes of an
+/// `igSmartFrame2d` page-ratio `f64` (see
+/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`).
+///
+/// Returns an empty vector unless the walk consumes the stream exactly. A
+/// partial walk means the stream is not the chain this assumes, and half a
+/// chain is worse evidence than none: a caller gating on membership would
+/// silently drop every record past the stall.
+#[must_use]
+pub fn sheet_record_starts(data: &[u8]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut at = SHEET_STREAM_HEADER_LEN;
+    while at < data.len() {
+        let Some(header) = parse_psm_header(data, at) else {
+            return Vec::new();
+        };
+        let Some(end) = header
+            .body_start
+            .checked_add(header.bytes_to_follow as usize)
+        else {
+            return Vec::new();
+        };
+        if header.bytes_to_follow == 0 || end > data.len() {
+            return Vec::new();
+        }
+        starts.push(at);
+        at = end;
+    }
+    starts
+}
+
 /// One PSM record family's decoder (RFC §3.1, L4 seam).
 ///
 /// Implementations are unit structs owning only the family-specific
@@ -2414,17 +2456,25 @@ pub const DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN: usize = 44;
 /// variant growth while rejecting obvious wide-scan false positives.
 const DEPENDENCY_OBJECT_MAX_PAYLOAD_LEN: usize = 512;
 
-/// PSM type code that identifies a `GLine2d` `PrimitiveLine` record.
+/// PSM type code the `GLine2d` `PrimitiveLine` decoder accepts.
 ///
-/// Empirically validated against all three Sheet-bearing fixtures in
-/// the project registry (`DWG-0201GP06-01.pid`,
-/// `工艺管道及仪表流程-1.pid`, `A01.pid`): every record whose
-/// 18-byte PSM header is followed by 48 bytes matching the `GLine2d`
-/// validation rules (all-finite doubles, unit direction vector,
-/// `param_start < param_end`) carries `type_code == 0x3FE6`. The
-/// authoritative `type → GUID` lookup table lives in `SmartPlant`'s
-/// `guidtab.h` (named explicitly in `PSMSerializeIn`'s error
-/// message `"... OID=%d nType= %d in guidtab.h"`).
+/// **Retracted as a corpus identification, 2026-08-10.** The original
+/// claim was that every record whose 18-byte PSM header is followed by 48
+/// bytes matching the `GLine2d` validation rules carries
+/// `type_code == 0x3FE6`. That is a tautology: the candidate set was
+/// *defined* by those rules. Two independent tests both say no —
+/// `radsrvitem.dll`'s authoritative type→class enumeration
+/// (`sub_56448F70`) covers `0x06`..`0x117` and has no `0x3FE6`, and none
+/// of the corpus's three former "records" sits on a record boundary. Each
+/// sits 160 bytes inside an `igSmartFrame2d`, on the top two bytes of its
+/// `1/√2` page-ratio `f64`. See
+/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
+///
+/// The class is real — `radsrvitem.dll` has a `GLine2d::Validate`
+/// (`sub_56524C50`) and the six-double parametric layout is its — so the
+/// decoder stays, now gated on chain membership by
+/// [`decode_primitive_lines`]. It decodes nothing on this corpus, which is
+/// the correct answer for a corpus that contains none.
 pub const PSM_TYPE_CODE_GLINE2D: u16 = 0x3FE6;
 
 /// Unit-vector tolerance used when accepting a candidate `GLine2d`
@@ -2513,9 +2563,9 @@ impl SheetPrimitiveLineDecoded {
 /// Decode every PSM-encoded `GLine2d` `PrimitiveLine` record in a
 /// `Sheet*` stream's bytes.
 ///
-/// Walk every byte offset; at each offset, check whether an 18-byte
-/// PSM header followed by 48 bytes of `GLine2d` payload satisfies
-/// all of:
+/// A candidate has to be a **member of the stream's record chain**
+/// ([`sheet_record_starts`]) before its payload is even looked at, and
+/// then satisfy all of:
 ///
 /// 1. PSM type code (header bytes 0..2 LE, masked to 14 bits) ==
 ///    [`PSM_TYPE_CODE_GLINE2D`];
@@ -2529,13 +2579,23 @@ impl SheetPrimitiveLineDecoded {
 ///    zero vector;
 /// 5. `param_start < param_end` strictly.
 ///
-/// The decoder is **conservative**: it accepts only records whose
-/// inner payload matches the validation rules captured by the
-/// reverse-engineered `GLine2d::Validate`. Adversarial bytes pass
-/// through without panics; the output is bounded by the input
-/// length.
+/// **Chain membership is the load-bearing rule, and it is why this family
+/// no longer decodes anything on the reference corpus.** Rules 1–5 alone
+/// are satisfiable by accident: a `[1 0; 0 1]` placement matrix reads as a
+/// unit direction plus an ordered parameter pair, and `1/√2` — the ISO
+/// A-series page ratio every `igSmartFrame2d` carries — is an `f64` whose
+/// top two bytes are literally `E6 3F`. All eleven page frames in the
+/// corpus spell the type code that way and three of them used to decode as
+/// lines 160 bytes inside another record. See
+/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
+///
+/// Adversarial bytes pass through without panics, and a stream that is not
+/// a clean chain yields nothing rather than falling back to a scan.
 pub fn decode_primitive_lines(data: &[u8]) -> Vec<SheetPrimitiveLineDecoded> {
-    GLine2dDecoder.scan(data)
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| GLine2dDecoder.decode_at(data, at))
+        .collect()
 }
 
 /// Try to decode a single PSM `GLine2d` `PrimitiveLine` starting at
@@ -5571,9 +5631,20 @@ mod tests {
     // Phase 14 Slice D: PSM GLine2d decoder tests
     // -----------------------------------------------------------------
 
+    /// Bytes a `GLine2d` record declares after the 6-byte envelope when it
+    /// carries nothing but its own body: the 12 header bytes the envelope
+    /// does not cover (`oid` + aux) plus the 48-byte payload.
+    ///
+    /// Declaring 48 here instead would make the record claim to end 12 bytes
+    /// before its own payload does — harmless to a scan, but it is not a
+    /// record a chain walk can step over, so the fixture would no longer
+    /// model a real stream.
+    const SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW: usize =
+        PSM_RECORD_HEADER_LEN - PSM_ENVELOPE_LEN + GLINE2D_PAYLOAD_LEN;
+
     /// Build a single synthetic PSM `GLine2d` record:
-    /// 18-byte header (type=0x3FE6, `bytes_to_follow`=48, oid=`oid`)
-    /// + 6×f64 `GLine2d` payload (origin, direction, params).
+    /// 18-byte header (type=0x3FE6, oid=`oid`) + 6×f64 `GLine2d` payload
+    /// (origin, direction, params).
     fn build_synthetic_gline2d_record(
         oid: u32,
         origin: (f64, f64),
@@ -5585,8 +5656,7 @@ mod tests {
         // type_code (14-bit) at bits 0..14 of the LE u16, top 2 bits = 0 flags.
         let type_word: u16 = PSM_TYPE_CODE_GLINE2D;
         out.extend_from_slice(&type_word.to_le_bytes());
-        // bytes_to_follow = 48 (just the payload, no attribute tail).
-        out.extend_from_slice(&(GLINE2D_PAYLOAD_LEN as u32).to_le_bytes());
+        out.extend_from_slice(&(SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW as u32).to_le_bytes());
         // oid
         out.extend_from_slice(&oid.to_le_bytes());
         // 8-byte aux (set to fixed pattern for inspection).
@@ -5605,26 +5675,50 @@ mod tests {
         out
     }
 
+    /// Wrap synthetic records into a `Sheet*` stream: the 8-byte stream
+    /// header, then the records nose to tail.
+    ///
+    /// [`decode_primitive_lines`] only considers offsets that are members of
+    /// the stream's record chain, so a bare record with no stream header
+    /// decodes as nothing. Tests that hand it loose bytes would pass for the
+    /// wrong reason — which is the exact failure mode this gate exists to
+    /// stop — so they go through here. The walk does not inspect the header
+    /// bytes, only their length.
+    fn synthetic_sheet_stream(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = vec![0u8; SHEET_STREAM_HEADER_LEN];
+        for record in records {
+            out.extend_from_slice(record);
+        }
+        out
+    }
+
     #[test]
     fn primitive_line_decodes_canonical_synthetic_record() {
         // Canonical synthetic line: origin at (0,0), unit horizontal
         // direction, params [0, 1.0]. Endpoints A=(0,0) B=(1,0).
         let record = build_synthetic_gline2d_record(42, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        let decoded = decode_primitive_lines(&record);
+        let stream = synthetic_sheet_stream(&[record]);
+        let decoded = decode_primitive_lines(&stream);
         assert_eq!(decoded.len(), 1, "expected exactly one decoded line");
         let line = &decoded[0];
         assert_eq!(line.type_code, PSM_TYPE_CODE_GLINE2D);
         assert_eq!(line.type_flags, 0);
-        assert_eq!(line.bytes_to_follow, 48);
+        assert_eq!(
+            line.bytes_to_follow as usize,
+            SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW
+        );
         assert_eq!(line.oid, 42);
         assert_eq!(line.origin, (0.0, 0.0));
         assert!((line.direction.0 - 1.0).abs() < 1e-12);
         assert!(line.direction.1.abs() < 1e-12);
         assert_eq!(line.param_start, 0.0);
         assert_eq!(line.param_end, 1.0);
-        assert_eq!(line.byte_range.start, 0);
-        // byte_range covers header (6 prefix) + bytes_to_follow (48).
-        assert_eq!(line.byte_range.end, 6 + 48);
+        assert_eq!(line.byte_range.start, SHEET_STREAM_HEADER_LEN);
+        // byte_range covers the envelope plus everything it declares.
+        assert_eq!(
+            line.byte_range.end,
+            SHEET_STREAM_HEADER_LEN + PSM_ENVELOPE_LEN + SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW
+        );
         // Endpoint helpers.
         assert_eq!(line.endpoint_a(), (0.0, 0.0));
         let (bx, by) = line.endpoint_b();
@@ -5639,7 +5733,7 @@ mod tests {
         // Overwrite type with 0x1234 (not the GLine2d type).
         record[0] = 0x34;
         record[1] = 0x12;
-        let decoded = decode_primitive_lines(&record);
+        let decoded = decode_primitive_lines(&synthetic_sheet_stream(&[record]));
         assert!(decoded.is_empty(), "wrong type_code must be rejected");
     }
 
@@ -5648,7 +5742,7 @@ mod tests {
         // direction = (2.0, 0.0): length 2, not unit.
         let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (2.0, 0.0), 0.0, 1.0);
         assert!(
-            decode_primitive_lines(&record).is_empty(),
+            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
             "non-unit direction vector must be rejected"
         );
     }
@@ -5658,7 +5752,7 @@ mod tests {
         // direction = (0.0, 0.0): zero vector.
         let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (0.0, 0.0), 0.0, 1.0);
         assert!(
-            decode_primitive_lines(&record).is_empty(),
+            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
             "zero direction vector must be rejected"
         );
     }
@@ -5668,13 +5762,13 @@ mod tests {
         // param_start == param_end.
         let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.0, 1.0);
         assert!(
-            decode_primitive_lines(&record).is_empty(),
+            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
             "param_start >= param_end must be rejected"
         );
         // param_start > param_end.
         let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 1.5, 0.5);
         assert!(
-            decode_primitive_lines(&record).is_empty(),
+            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
             "reversed param range must be rejected"
         );
     }
@@ -5687,18 +5781,48 @@ mod tests {
         let origin_off = PSM_RECORD_HEADER_LEN;
         record[origin_off..origin_off + 8].copy_from_slice(&nan_bytes);
         assert!(
-            decode_primitive_lines(&record).is_empty(),
+            decode_primitive_lines(&synthetic_sheet_stream(&[record])).is_empty(),
             "NaN coordinate must be rejected"
+        );
+    }
+
+    /// A payload that satisfies every `GLine2d` rule is still not a record
+    /// when it sits inside another one.
+    ///
+    /// This is the corpus failure in miniature: three "records" that passed
+    /// all five payload rules while living 160 bytes inside an
+    /// `igSmartFrame2d`. Chain membership is what rejects them, so it needs
+    /// a test that fails if the gate is ever removed.
+    #[test]
+    fn primitive_line_inside_another_records_payload_is_not_a_record() {
+        let hidden = build_synthetic_gline2d_record(99, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
+        // One record of some other family whose payload happens to contain a
+        // perfectly well-formed GLine2d.
+        let mut host = Vec::new();
+        host.extend_from_slice(&PSM_TYPE_CODE_IGLINE2D.to_le_bytes());
+        host.extend_from_slice(&(hidden.len() as u32).to_le_bytes());
+        host.extend_from_slice(&hidden);
+
+        let stream = synthetic_sheet_stream(&[host]);
+        assert!(
+            decode_primitive_line_at(&stream, SHEET_STREAM_HEADER_LEN + 6).is_some(),
+            "the buried bytes do satisfy every payload rule; without that the \
+             test would prove nothing"
+        );
+        assert!(
+            decode_primitive_lines(&stream).is_empty(),
+            "a payload-shaped match inside another record is not a record"
         );
     }
 
     #[test]
     fn primitive_line_decoder_is_panic_safe_on_truncated_input() {
-        // Build a complete record, then truncate at various sizes.
+        // Build a complete stream, then truncate at various sizes.
         let record = build_synthetic_gline2d_record(1, (0.0, 0.0), (1.0, 0.0), 0.0, 1.0);
-        for trunc_len in 0..record.len() {
+        let stream = synthetic_sheet_stream(&[record]);
+        for trunc_len in 0..stream.len() {
             // Must not panic, must return empty / no decoded line.
-            let decoded = decode_primitive_lines(&record[..trunc_len]);
+            let decoded = decode_primitive_lines(&stream[..trunc_len]);
             assert!(
                 decoded.is_empty(),
                 "truncated input of length {trunc_len} must not decode anything"
@@ -5723,14 +5847,10 @@ mod tests {
 
     #[test]
     fn primitive_line_decodes_two_back_to_back_records() {
-        let mut data = build_synthetic_gline2d_record(7, (0.10, 0.10), (1.0, 0.0), 0.0, 0.5);
-        data.extend(build_synthetic_gline2d_record(
-            8,
-            (0.20, 0.30),
-            (0.0, 1.0),
-            0.0,
-            0.8,
-        ));
+        let data = synthetic_sheet_stream(&[
+            build_synthetic_gline2d_record(7, (0.10, 0.10), (1.0, 0.0), 0.0, 0.5),
+            build_synthetic_gline2d_record(8, (0.20, 0.30), (0.0, 1.0), 0.0, 0.8),
+        ]);
         let decoded = decode_primitive_lines(&data);
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].oid, 7);
@@ -6680,13 +6800,14 @@ mod tests {
 
     #[test]
     fn primitive_line_byte_range_covers_full_record_when_attribute_tail_present() {
-        // Build a record with bytes_to_follow = 48 (payload) + 200
-        // (mock attribute tail).
+        // Build a record whose bytes_to_follow covers its 12 uncovered
+        // header bytes, the 48-byte payload, and a 200-byte attribute tail.
+        const TAIL_LEN: usize = 200;
+        const BYTES_TO_FOLLOW: usize = SYNTHETIC_GLINE2D_BYTES_TO_FOLLOW + TAIL_LEN;
         let mut record = Vec::new();
         let type_word: u16 = PSM_TYPE_CODE_GLINE2D;
         record.extend_from_slice(&type_word.to_le_bytes());
-        // bytes_to_follow = 48 + 200 = 248.
-        record.extend_from_slice(&248u32.to_le_bytes());
+        record.extend_from_slice(&(BYTES_TO_FOLLOW as u32).to_le_bytes());
         // oid
         record.extend_from_slice(&123u32.to_le_bytes());
         // 8-byte aux
@@ -6695,16 +6816,19 @@ mod tests {
         for v in [0.0f64, 0.0, 1.0, 0.0, 0.0, 1.0] {
             record.extend_from_slice(&v.to_le_bytes());
         }
-        // 200 bytes of mock attribute tail
-        record.extend_from_slice(&[0xAB; 200]);
+        record.extend_from_slice(&[0xAB; TAIL_LEN]);
 
-        let decoded = decode_primitive_lines(&record);
+        let decoded = decode_primitive_lines(&synthetic_sheet_stream(&[record]));
         assert_eq!(decoded.len(), 1);
         let line = &decoded[0];
-        assert_eq!(line.byte_range.start, 0);
-        // byte_range covers full record: 6 (type+bytes_to_follow) + 248.
-        assert_eq!(line.byte_range.end, 6 + 248);
-        assert_eq!(line.bytes_to_follow, 248);
+        assert_eq!(line.byte_range.start, SHEET_STREAM_HEADER_LEN);
+        // byte_range covers the envelope plus everything it declares, tail
+        // included — not just the geometry payload.
+        assert_eq!(
+            line.byte_range.end,
+            SHEET_STREAM_HEADER_LEN + PSM_ENVELOPE_LEN + BYTES_TO_FOLLOW
+        );
+        assert_eq!(line.bytes_to_follow as usize, BYTES_TO_FOLLOW);
     }
 
     // -----------------------------------------------------------------

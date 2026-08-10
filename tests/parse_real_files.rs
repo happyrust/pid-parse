@@ -3373,105 +3373,67 @@ fn dwg0201_produces_inferred_endpoint_lines() {
     }
 }
 
-/// Phase 14 Slice E: DWG-0201 must produce **both** the existing
-/// EndpointPair-inferred lines (the 49-line floor) and at least one
-/// PSM-decoded `GLine2d` `Decoded` line from `build_normalized_geometry`.
+/// DWG-0201 keeps its EndpointPair-inferred lines and emits **no**
+/// `GLine2d` line.
 ///
-/// The decoded line's provenance triplet (stream path + byte range
-/// `SheetRecordKind::PrimitiveLine`) is asserted alongside,
-/// plus the parametric geometry sanity checks (unit direction
-/// vector and `param_start < param_end`).
+/// Phase 14 Slice E asserted the opposite — at least one decoded `GLine2d`
+/// — and that assertion held for six months on two entities that were never
+/// records. They were the top two bytes of an `igSmartFrame2d`'s `1/√2` page
+/// ratio, 160 bytes inside that record's payload, picked up because the
+/// decoder scanned every byte offset instead of walking the chain. All of it
+/// is measured in
+/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
+///
+/// The direction is now pinned the other way: zero is the right count for a
+/// corpus with no `GLine2d` in it, and the inferred floor is what must not
+/// move. Should a real one ever turn up, this test is where it announces
+/// itself.
 #[test]
-fn dwg0201_emits_decoded_primitive_lines_without_inferred_regression() {
+fn dwg0201_emits_no_gline2d_lines_and_keeps_its_inferred_floor() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
         return;
     };
     let geometry = pid_parse::build_normalized_geometry(&doc);
-    let inferred_lines: Vec<_> = geometry
+    let inferred_lines = geometry
         .entities
         .iter()
         .filter(|entity| {
             entity.confidence == pid_parse::PidGeometryConfidence::Inferred
                 && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
         })
-        .collect();
-    // Slice E test focuses on GLine2d-specific records (PSM 0x3FE6
-    // family with parametric note text). Slice J's igLine2d entities
-    // also share PidGraphicKind::Line but carry a different note;
-    // they're covered by the dedicated igLines test.
-    let decoded_lines: Vec<_> = geometry
+        .count();
+    // `GLine2d`-specific: Slice J's igLine2d entities share
+    // `PidGraphicKind::Line` but carry a different note, and are covered by
+    // the dedicated igLines test.
+    let gline2d_lines: Vec<_> = geometry
         .entities
         .iter()
         .filter(|entity| {
-            entity.confidence == pid_parse::PidGeometryConfidence::Decoded
-                && matches!(entity.kind, pid_parse::PidGraphicKind::Line { .. })
-                && entity
-                    .source
-                    .note
-                    .as_ref()
-                    .is_some_and(|n| n.contains("PSM GLine2d"))
+            entity
+                .source
+                .note
+                .as_ref()
+                .is_some_and(|note| note.contains("PSM GLine2d"))
         })
         .collect();
     eprintln!(
-        "DWG-0201GP06-01 Slice E: inferred_lines={}, decoded_GLine2d_lines={}",
-        inferred_lines.len(),
-        decoded_lines.len()
+        "DWG-0201GP06-01: inferred_lines={inferred_lines}, GLine2d_lines={}",
+        gline2d_lines.len()
     );
-    // Slice E AC8: existing inferred lines must not regress.
+
     assert!(
-        inferred_lines.len() >= 49,
-        "DWG-0201 inferred line floor regressed: got {}, expected >= 49",
-        inferred_lines.len()
+        inferred_lines >= 49,
+        "DWG-0201 inferred line floor regressed: got {inferred_lines}, expected >= 49"
     );
-    // Slice E AC5/AC7: at least one Decoded line emitted.
     assert!(
-        !decoded_lines.is_empty(),
-        "DWG-0201 should emit at least one PSM-decoded GLine2d PrimitiveLine"
+        gline2d_lines.is_empty(),
+        "DWG-0201 has no GLine2d record; anything here is a scan artifact reaching \
+         the drawing again: {:?}",
+        gline2d_lines
+            .iter()
+            .map(|entity| &entity.source)
+            .collect::<Vec<_>>()
     );
-    for line in &decoded_lines {
-        // AC9 provenance triplet.
-        assert!(
-            line.source.stream_path.as_deref() == Some("/Sheet6"),
-            "decoded line must carry Sheet6 stream_path: {:?}",
-            line.source.stream_path
-        );
-        assert!(
-            line.source.byte_range.is_some(),
-            "decoded line must carry byte_range provenance"
-        );
-        assert_eq!(
-            line.source.record_kind,
-            Some(pid_parse::SheetRecordKind::PrimitiveLine),
-            "decoded line record_kind must be PrimitiveLine"
-        );
-        // Note must mention radsrvitem (the IDA reverse engineering
-        // source) so consumers can trace evidence back to the
-        // analysis doc.
-        assert!(
-            line.source
-                .note
-                .as_ref()
-                .is_some_and(|n| n.contains("PSM GLine2d") && n.contains("radsrvitem.dll")),
-            "decoded line note should describe PSM GLine2d origin from radsrvitem: {:?}",
-            line.source.note
-        );
-        // graphic_oid populated from PSM header.
-        assert!(
-            line.graphic_oid.is_some(),
-            "decoded line should carry PSM oid as graphic_oid"
-        );
-        // Geometry invariants on the decoded line.
-        if let pid_parse::PidGraphicKind::Line { start, end } = &line.kind {
-            assert!(start.x.is_finite() && start.y.is_finite());
-            assert!(end.x.is_finite() && end.y.is_finite());
-            assert!(
-                (start.x - end.x).abs() > 1e-6 || (start.y - end.y).abs() > 1e-6,
-                "decoded line endpoints must not collapse to a single point"
-            );
-        } else {
-            panic!("decoded line kind must be PidGraphicKind::Line");
-        }
-    }
 }
 
 #[test]
@@ -6921,44 +6883,27 @@ fn sheet6_coordinate_value_frequency_analysis() {
     }
 }
 
-/// Phase 14 Slice D: cross-fixture validation that
-/// `decode_primitive_lines` actually emits decoded `GLine2d`
-/// records on real `Sheet*` streams.
+/// Cross-fixture ratchet: `decode_primitive_lines` finds no `GLine2d` on
+/// any `Sheet*` stream in the corpus, and anything it ever does find holds
+/// the documented invariants.
 ///
-/// Empirical baselines reverse-engineered from
-/// `examples/probe_psm_gline2d.rs` against the three Sheet-bearing
-/// fixtures:
+/// Phase 14 Slice D asserted an aggregate of `>= 1` against baselines of
+/// "DWG-0201 → 2 hits, A01 → 1 hit". Those three were never records: each
+/// sat 160 bytes inside an `igSmartFrame2d`, on the two bytes where its
+/// `1/√2` page ratio spells `0x3FE6`. Requiring at least one therefore
+/// pinned the artifact in place. Measured in
+/// `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`.
 ///
-/// - `DWG-0201GP06-01.pid` / `/Sheet6` → 2 hits (page-spanning
-///   horizontal lines, type 0x3FE6, bytes_to_follow 948 each).
-/// - `工艺管道及仪表流程-1.pid` / `/Sheet6` → 0 hits with strict
-///   unit-vector tolerance (file uses a different / older record
-///   shape).
-/// - `A01.pid` / `/Sheet6` → 1 hit (template horizontal reference
-///   line at (0,0)→(1,0) with `bytes_to_follow == 204`).
-///
-/// The test:
-///
-/// 1. Walks every `Sheet*` stream of every fixture present in
-///    `test-file/`.
-/// 2. Asserts the **aggregate** decoded count across all
-///    `Sheet*` streams of all fixtures is `>= 1` (so the test
-///    fails closed when the decoder regresses to zero, and stays
-///    contributor-friendly when only A01 is present).
-/// 3. Asserts every emitted line carries the documented
-///    provenance triplet (stream path + byte range + record
-///    kind) and the unit-vector / `param_start < param_end`
-///    invariants.
+/// The floor is now zero and the per-record invariants stay, so a genuine
+/// `GLine2d` appearing in a future fixture trips the count assertion and
+/// gets checked on the way in rather than slipping through.
 #[test]
-fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
+fn primitive_line_decoder_finds_no_gline2d_and_holds_invariants_if_it_ever_does() {
     let fixtures = [
         "DWG-0201GP06-01.pid",
         "DWG-0202GP06-01.pid",
         "工艺管道及仪表流程-1.pid",
         "export-test/publish-data/A01/A01.pid",
-        // D06 currently has 0 decoded GLine2d records; including it
-        // here is a panic-safety / parse-package guard rather than a
-        // baseline contribution. See Phase 22 micro follow-up.
         "D06.pid",
     ];
     let mut total_decoded = 0usize;
@@ -7045,7 +6990,7 @@ fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
         per_fixture_summary.push((fixture.to_string(), per_fixture_count));
         total_decoded += per_fixture_count;
     }
-    eprintln!("--- Phase 14 Slice D: PSM GLine2d decoder cross-fixture summary ---");
+    eprintln!("--- PSM GLine2d decoder cross-fixture summary ---");
     for (name, count) in &per_fixture_summary {
         eprintln!("  {name}: {count} decoded GLine2d records");
     }
@@ -7060,10 +7005,12 @@ fn primitive_line_decoder_emits_decoded_lines_with_provenance() {
         );
         return;
     }
-    assert!(
-        total_decoded >= 1,
-        "decode_primitive_lines must emit at least one decoded line on the \
-        Sheet-bearing fixture set, got {total_decoded}. \
+    assert_eq!(
+        total_decoded, 0,
+        "the corpus contains no GLine2d record. A non-zero count is either a \
+        genuine one in a newly added fixture — in which case check it against \
+        radsrvitem.dll's type enumeration before raising this floor — or the \
+        chain-membership gate has been lost and scan artifacts are back. \
         Per-fixture summary: {per_fixture_summary:?}"
     );
 }
