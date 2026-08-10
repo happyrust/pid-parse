@@ -20,7 +20,7 @@ use crate::parsers::{
         collect_normalized_f64_pairs, coordinate_pair_spatial_analysis,
         SPATIAL_ANALYSIS_DEFAULT_GRID_N,
     },
-    undecoded_census::undecoded_type_code_census,
+    undecoded_census::{refused_record_census, undecoded_type_code_census},
 };
 use std::io::Read;
 
@@ -259,6 +259,13 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
         .flat_map(|family| (family.decoded_ranges)(raw_data))
         .collect();
     geometry.undecoded_type_codes = undecoded_type_code_census(raw_data, &claimed)
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    // Phase 40: the other half. A record whose family is wired and whose
+    // bytes that family refused is invisible to the census above, which tests
+    // the type code rather than the record. Same walk, same claimed ranges.
+    geometry.refused_records = refused_record_census(raw_data, &claimed)
         .into_iter()
         .map(Into::into)
         .collect();

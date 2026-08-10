@@ -50,6 +50,17 @@ pub struct NormalizedPidGeometry {
     /// deliberately absent — the native predicate says they draw nothing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped_graphic_records: Vec<PidDroppedGraphicRecords>,
+    /// Phase 40: graphic-class PSM records this crate **does have a decoder
+    /// for** and whose bytes that decoder refused, named per `(stream, type
+    /// code)` instead of silently dropped.
+    ///
+    /// The companion to [`Self::dropped_graphic_records`], and on the corpus
+    /// the larger of the two by a factor of 28. The two ask for different
+    /// work: a dropped record needs a decoder written, a refused one needs an
+    /// existing decoder's rules re-measured against a record shape the
+    /// drawings actually contain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused_graphic_records: Vec<PidRefusedGraphicRecords>,
 }
 
 /// One group of undecoded graphic-class PSM records in one Sheet stream:
@@ -66,6 +77,28 @@ pub struct PidDroppedGraphicRecords {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub rad_class_name: Option<String>,
     /// Chain-validated record count outside every claimed byte range.
+    pub count: usize,
+}
+
+/// One group of graphic-class PSM records in one Sheet stream that their
+/// own family's decoder walked over and refused.
+///
+/// The family is wired and the type code is decoded elsewhere in the same
+/// corpus, so this is not a missing decoder: it is a record shape the
+/// existing rules do not accept. Refusing is the right default — a decoder
+/// that guessed at an unknown shape would draw fiction — but refusing in
+/// silence is not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PidRefusedGraphicRecords {
+    /// Full CFB path of the Sheet stream the records sit in.
+    pub stream_path: String,
+    /// PSM 14-bit type code — one this crate decodes.
+    pub type_code: u16,
+    /// Class name from the PSM type-code registry, when known
+    /// (e.g. `Line Object`, `Text Object`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub rad_class_name: Option<String>,
+    /// Chain-validated record count the family's decoder did not claim.
     pub count: usize,
 }
 
@@ -558,6 +591,39 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         }
     }
 
+    // Phase 40: the same treatment for the other way a record misses the
+    // drawing. S2 closed "no decoder exists"; a record its own decoder
+    // refused stayed silent, and on this corpus that is the bigger half.
+    let mut refused_graphic_records = Vec::new();
+    for sheet in &doc.sheet_streams {
+        let Some(sheet_geometry) = sheet.geometry.as_ref() else {
+            continue;
+        };
+        for census in &sheet_geometry.refused_records {
+            if !census.is_graphic {
+                continue;
+            }
+            let class_name = census
+                .rad_class_name
+                .as_deref()
+                .map(|name| format!(" ({name})"))
+                .unwrap_or_default();
+            warnings.push(format!(
+                "{count} record(s) of 0x{code:04X}{class_name} in {path} are a shape this \
+                 crate's decoder for that type refuses, and are dropped from the drawing",
+                count = census.count,
+                code = census.type_code,
+                path = sheet.path,
+            ));
+            refused_graphic_records.push(PidRefusedGraphicRecords {
+                stream_path: sheet.path.clone(),
+                type_code: census.type_code,
+                rad_class_name: census.rad_class_name.clone(),
+                count: census.count,
+            });
+        }
+    }
+
     let ctx = EmitContext::from_doc(doc, page_frame);
 
     for sheet in &doc.sheet_streams {
@@ -921,6 +987,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         page_dimensions_mm: page_dims,
         warnings,
         dropped_graphic_records,
+        refused_graphic_records,
     }
 }
 
@@ -1956,6 +2023,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
+                refused_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2057,6 +2125,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
+                refused_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2196,6 +2265,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
+                refused_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2288,6 +2358,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
+                refused_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2351,6 +2422,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
+                refused_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2434,6 +2506,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
+                refused_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -2642,6 +2715,7 @@ mod tests {
             }],
             warnings: Vec::new(),
             dropped_graphic_records: Vec::new(),
+            refused_graphic_records: Vec::new(),
         };
 
         let value = serde_json::to_value(&geometry).expect("geometry JSON");
@@ -2713,6 +2787,126 @@ mod tests {
             "non-graphic constraint families must stay quiet: {:?}",
             geometry.warnings
         );
+    }
+
+    #[test]
+    fn refused_graphic_records_become_named_warnings_too() {
+        // Phase 40: a record its own family's decoder walked over and
+        // refused is as absent from the drawing as one with no decoder at
+        // all, and until now only the second kind was ever mentioned. The
+        // corpus's 88 refused igLine2d records outnumber every named drop
+        // in it by more than an order of magnitude.
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 512,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                refused_records: vec![
+                    crate::model::SheetRefusedRecord {
+                        type_code: 0x0018,
+                        count: 80,
+                        is_graphic: true,
+                        rad_class_name: Some("Line Object".into()),
+                    },
+                    crate::model::SheetRefusedRecord {
+                        type_code: 0x0030,
+                        count: 2,
+                        is_graphic: false,
+                        rad_class_name: Some("JSL Override Style".into()),
+                    },
+                ],
+                ..SheetGeometry::default()
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+
+        assert_eq!(geometry.refused_graphic_records.len(), 1);
+        let refused = &geometry.refused_graphic_records[0];
+        assert_eq!(refused.type_code, 0x0018);
+        assert_eq!(refused.count, 80);
+        assert_eq!(refused.stream_path, "/Sheet6");
+        assert_eq!(refused.rad_class_name.as_deref(), Some("Line Object"));
+        assert!(
+            geometry.warnings.iter().any(|warning| {
+                warning.contains("0x0018")
+                    && warning.contains("Line Object")
+                    && warning.contains("80 record(s)")
+                    && warning.contains("refuses")
+            }),
+            "a refused shape must be named, and named as a refusal: {:?}",
+            geometry.warnings
+        );
+        assert!(
+            geometry
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("0x0030")),
+            "a refused style record costs no strokes and stays quiet: {:?}",
+            geometry.warnings
+        );
+    }
+
+    #[test]
+    fn a_refusal_reads_differently_from_a_missing_decoder() {
+        // The two diagnostics ask for opposite work -- write a decoder vs
+        // re-measure one that exists -- so a reader must be able to tell
+        // them apart without knowing the type codes.
+        let mut doc = PidDocument::default();
+        doc.sheet_streams.push(SheetStream {
+            name: "Sheet6".into(),
+            path: "/Sheet6".into(),
+            size: 512,
+            extracted_texts: Vec::new(),
+            magic_u32_le: None,
+            magic_tag: None,
+            header: None,
+            attribute_records: Vec::new(),
+            probe_summary: None,
+            geometry: Some(SheetGeometry {
+                undecoded_type_codes: vec![crate::model::SheetUndecodedTypeCode {
+                    type_code: 0x0020,
+                    count: 1,
+                    is_graphic: true,
+                    rad_class_name: Some("Rectangle Object".into()),
+                }],
+                refused_records: vec![crate::model::SheetRefusedRecord {
+                    type_code: 0x0018,
+                    count: 4,
+                    is_graphic: true,
+                    rad_class_name: Some("Line Object".into()),
+                }],
+                ..SheetGeometry::default()
+            }),
+            endpoint_records: Vec::new(),
+            endpoint_decode_error: None,
+        });
+
+        let geometry = build_normalized_geometry(&doc);
+
+        let no_decoder = geometry
+            .warnings
+            .iter()
+            .find(|warning| warning.contains("0x0020"))
+            .expect("the undecoded record is named");
+        let refused = geometry
+            .warnings
+            .iter()
+            .find(|warning| warning.contains("0x0018"))
+            .expect("the refused record is named");
+        assert!(no_decoder.contains("have no decoder"));
+        assert!(!no_decoder.contains("refuses"));
+        assert!(refused.contains("refuses"));
+        assert!(!refused.contains("have no decoder"));
     }
 
     fn border_frame(

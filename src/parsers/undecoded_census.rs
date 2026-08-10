@@ -1,6 +1,22 @@
-//! Census of Sheet PSM records that no typed decoder claims, split by
+//! Census of Sheet PSM records that never reach the drawing, split by
 //! `SmartPlant`'s own graphic predicate (Phase 38 S2: silent drops become
 //! named warnings).
+//!
+//! A record misses the drawing two ways, and this module counts both:
+//!
+//! - **No decoder claims the type code** —
+//!   [`undecoded_type_code_census`], the Phase 38 S2 half.
+//! - **A decoder exists and refused these bytes** —
+//!   [`refused_record_census`], the Phase 40 half. The type code has a
+//!   family, that family walked over this record, and one of its validation
+//!   rules said no. The record then falls out of both the decoded output and
+//!   the undecoded census, because the latter tests the *type code* rather
+//!   than the *record*.
+//!
+//! The second half stayed silent for two phases while the first was being
+//! closed, and it is the larger of the two on the corpus: 141 refused
+//! records against 5 undecoded ones. Measured in
+//! `docs/analysis/2026-08-10-the-silent-bucket-is-refusals-not-unknowns.md`.
 //!
 //! `radsrvitem.dll!sub_56449950` is the native "is this type code a graphic
 //! element" predicate (see
@@ -107,6 +123,27 @@ pub struct UndecodedTypeCodeCount {
     pub rad_class_name: Option<&'static str>,
 }
 
+/// One PSM type code whose family decoder walked this stream and refused
+/// some of its records.
+///
+/// Distinct from [`UndecodedTypeCodeCount`] in what it asks the reader to
+/// do: an undecoded type code needs a new decoder, a refused record needs
+/// an existing decoder's rules revisited against a shape the corpus
+/// actually contains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefusedRecordCount {
+    /// PSM 14-bit type code — one this crate does decode.
+    pub type_code: u16,
+    /// Number of chain-validated records with this code that the family's
+    /// own decoder did not claim.
+    pub count: usize,
+    /// Whether the native graphic predicate accepts this code, i.e. whether
+    /// the refusal costs the drawing strokes rather than styling.
+    pub is_graphic: bool,
+    /// Class name from the PSM type-code registry, when known.
+    pub rad_class_name: Option<&'static str>,
+}
+
 /// Smallest `bytes_to_follow` a census candidate may carry. Matches the
 /// histogram probe's floor; anything smaller is header noise.
 const CENSUS_MIN_BYTES_TO_FOLLOW: usize = 8;
@@ -156,6 +193,57 @@ pub fn undecoded_type_code_census(
     data: &[u8],
     claimed: &[Range<usize>],
 ) -> Vec<UndecodedTypeCodeCount> {
+    unclaimed_counts(data, claimed, |type_code| {
+        !DECODED_TYPE_CODES.contains(&type_code)
+    })
+    .into_iter()
+    .map(|(type_code, count)| UndecodedTypeCodeCount {
+        type_code,
+        count,
+        is_graphic: is_native_graphic_type_code(type_code),
+        rad_class_name: rad_class_name(type_code),
+    })
+    .collect()
+}
+
+/// Count the chain-validated PSM records in `data` whose type code **has** a
+/// typed decoder in this crate and whose bytes that decoder still did not
+/// claim — records refused by their own family's validation rules.
+///
+/// This is the other half of [`undecoded_type_code_census`], over the same
+/// walk and the same `claimed` ranges, so a record is counted by exactly one
+/// of the two. A refused record is not a mystery type code: the family is
+/// wired, it saw these bytes, and a rule said no. On the corpus that is a
+/// second `igLine2d` framing whose `remaining_header` is not the expected
+/// `12`, and it costs 21% of the drawings' lines.
+///
+/// The graphic/non-graphic split is the same native predicate the undecoded
+/// census uses, so consumers can apply one warn rule to both.
+pub fn refused_record_census(data: &[u8], claimed: &[Range<usize>]) -> Vec<RefusedRecordCount> {
+    unclaimed_counts(data, claimed, |type_code| {
+        DECODED_TYPE_CODES.contains(&type_code)
+    })
+    .into_iter()
+    .map(|(type_code, count)| RefusedRecordCount {
+        type_code,
+        count,
+        is_graphic: is_native_graphic_type_code(type_code),
+        rad_class_name: rad_class_name(type_code),
+    })
+    .collect()
+}
+
+/// Walk the record chain once and count, per type code, the records that no
+/// `claimed` range covers and that `keep` selects.
+///
+/// Both censuses go through here so they cannot disagree about what a record
+/// is or which ranges are claimed — the failure that let refused records fall
+/// between them in the first place.
+fn unclaimed_counts(
+    data: &[u8],
+    claimed: &[Range<usize>],
+    keep: impl Fn(u16) -> bool,
+) -> std::collections::BTreeMap<u16, usize> {
     let mut counts: std::collections::BTreeMap<u16, usize> = std::collections::BTreeMap::new();
     let mut off = 0usize;
     while off + 6 <= data.len() {
@@ -163,7 +251,7 @@ pub fn undecoded_type_code_census(
             if end == data.len() || psm_record_end(data, end).is_some() {
                 let type_code = u16::from_le_bytes([data[off], data[off + 1]]) & 0x3FFF;
                 let claimed_here = claimed.iter().any(|range| range.contains(&off));
-                if !claimed_here && !DECODED_TYPE_CODES.contains(&type_code) {
+                if !claimed_here && keep(type_code) {
                     *counts.entry(type_code).or_insert(0) += 1;
                 }
                 off = end;
@@ -173,14 +261,6 @@ pub fn undecoded_type_code_census(
         off += 1;
     }
     counts
-        .into_iter()
-        .map(|(type_code, count)| UndecodedTypeCodeCount {
-            type_code,
-            count,
-            is_graphic: is_native_graphic_type_code(type_code),
-            rad_class_name: rad_class_name(type_code),
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -239,6 +319,74 @@ mod tests {
         assert_eq!(census[0].type_code, 0x0117);
         assert_eq!(census[0].count, 1);
         assert!(second_start > 0);
+    }
+
+    #[test]
+    fn a_refused_record_of_a_decoded_family_is_counted_as_a_refusal() {
+        // An igLine2d the igLine2d decoder walked over and did not claim.
+        // The undecoded census cannot see it -- it tests the type code, and
+        // this type code has a decoder -- so it needs its own count or it is
+        // dropped in silence.
+        let data = record(0x0018, 50);
+
+        assert!(
+            undecoded_type_code_census(&data, &[]).is_empty(),
+            "the undecoded census is blind to a refused record by design"
+        );
+        assert_eq!(
+            refused_record_census(&data, &[]),
+            vec![RefusedRecordCount {
+                type_code: 0x0018,
+                count: 1,
+                is_graphic: true,
+                rad_class_name: Some("Line Object"),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_claimed_record_is_neither_undecoded_nor_refused() {
+        let data = record(0x0018, 50);
+        let claimed: Vec<Range<usize>> = std::iter::once(0..data.len()).collect();
+
+        assert!(refused_record_census(&data, &claimed).is_empty());
+        assert!(undecoded_type_code_census(&data, &claimed).is_empty());
+    }
+
+    #[test]
+    fn every_unclaimed_record_lands_in_exactly_one_census() {
+        // The two censuses partition the unclaimed records: one tests "has a
+        // decoder", the other "has none". A record that answered neither is
+        // what went missing for two phases.
+        let mut data = record(0x0018, 50); // decoded family, unclaimed
+        data.extend(record(0x0115, 8)); // no decoder, graphic
+        data.extend(record(0x0077, 8)); // no decoder, not graphic
+
+        let undecoded: usize = undecoded_type_code_census(&data, &[])
+            .iter()
+            .map(|entry| entry.count)
+            .sum();
+        let refused: usize = refused_record_census(&data, &[])
+            .iter()
+            .map(|entry| entry.count)
+            .sum();
+
+        assert_eq!(undecoded, 2);
+        assert_eq!(refused, 1);
+        assert_eq!(undecoded + refused, 3, "no record is counted twice or lost");
+    }
+
+    #[test]
+    fn a_refused_style_record_is_counted_but_not_graphic() {
+        // A refused JStyleOverride costs the drawing styling, not strokes.
+        // Same predicate as the undecoded half, so one warn rule serves both.
+        let data = record(0x0030, 64);
+
+        let census = refused_record_census(&data, &[]);
+
+        assert_eq!(census.len(), 1);
+        assert!(!census[0].is_graphic);
+        assert_eq!(census[0].rad_class_name, Some("JSL Override Style"));
     }
 
     #[test]

@@ -173,6 +173,18 @@ pub struct SheetGeometry {
     /// nobody.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub undecoded_type_codes: Vec<SheetUndecodedTypeCode>,
+    /// Phase 40 census of PSM records **a typed decoder walked over and
+    /// refused**, emitted by
+    /// [`crate::parsers::undecoded_census::refused_record_census`].
+    ///
+    /// The other way a record misses the drawing. [`Self::undecoded_type_codes`]
+    /// tests the type code, so it is blind to a record whose family is wired
+    /// and whose bytes that family rejected; those fell out of both the
+    /// decoded output and the census, unreported. Entries whose
+    /// [`SheetRefusedRecord::is_graphic`] is `true` cost the drawing strokes
+    /// and [`crate::geometry::build_normalized_geometry`] names each one.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub refused_records: Vec<SheetRefusedRecord>,
 }
 
 /// One PSM type code observed in a Sheet stream with no typed decoder.
@@ -196,6 +208,36 @@ pub struct SheetUndecodedTypeCode {
 
 impl From<crate::parsers::undecoded_census::UndecodedTypeCodeCount> for SheetUndecodedTypeCode {
     fn from(d: crate::parsers::undecoded_census::UndecodedTypeCodeCount) -> Self {
+        Self {
+            type_code: d.type_code,
+            count: d.count,
+            is_graphic: d.is_graphic,
+            rad_class_name: d.rad_class_name.map(str::to_string),
+        }
+    }
+}
+
+/// One PSM type code whose decoder refused records in a Sheet stream.
+/// Model-shaped mirror of
+/// [`crate::parsers::undecoded_census::RefusedRecordCount`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SheetRefusedRecord {
+    /// PSM 14-bit type code — one this crate does decode.
+    pub type_code: u16,
+    /// Chain-validated records with this code that the family's own
+    /// decoder did not claim.
+    pub count: usize,
+    /// Whether the native graphic predicate
+    /// (`radsrvitem.dll!sub_56449950`) accepts this code — `true` means
+    /// the refusal costs the drawing strokes.
+    pub is_graphic: bool,
+    /// Class name from the PSM type-code registry, when known.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub rad_class_name: Option<String>,
+}
+
+impl From<crate::parsers::undecoded_census::RefusedRecordCount> for SheetRefusedRecord {
+    fn from(d: crate::parsers::undecoded_census::RefusedRecordCount) -> Self {
         Self {
             type_code: d.type_code,
             count: d.count,
