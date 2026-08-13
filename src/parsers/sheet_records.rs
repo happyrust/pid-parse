@@ -2385,16 +2385,53 @@ pub const IGPOINT2D_PAYLOAD_LEN: usize = 34;
 /// `Sheet*` streams.
 pub const PSM_TYPE_CODE_IGTEXTBOX: u16 = 0x004D;
 
-/// Constant byte overhead of an `igTextBox` payload: 32-byte
-/// sub-header + 36-byte trailing geometry/style data. Total
-/// payload size is `68 + text_length * 2` where `text_length` is
-/// the number of UTF-16LE chars in the inline text.
+/// Fixed byte overhead of a **sub-type 2** `igTextBox` payload: 22 header
+/// bytes + a 10-byte body prefix + the 36-byte placement/style tail.
+///
+/// Long read as *the* overhead of the family, with the text length derived
+/// from `bytes_to_follow` on that basis. It only ever described sub-type 2 —
+/// the common shape, 215 of the corpus's 260 records — and the other two
+/// shapes were refused wholesale because that arithmetic did not describe
+/// them. See [`igtextbox_body_shape`] for the real per-shape layout and
+/// [`IGTEXTBOX_MIN_PAYLOAD_LEN`] for the floor that replaced this as the
+/// size gate.
 pub const IGTEXTBOX_PAYLOAD_OVERHEAD: usize = 68;
+
+/// Payload offset where an `igTextBox` body begins, after the shared header.
+const IGTEXTBOX_BODY_START: usize = 22;
+
+/// Bytes of placement/style that follow every `igTextBox` body: the
+/// insertion point, the text direction, and a 4-byte trailer.
+const IGTEXTBOX_TAIL_LEN: usize = 36;
+
+/// Smallest `igTextBox` payload over every sub-type: sub-type 1 carrying no
+/// text, which is 22 header + 2 body + 36 tail.
+///
+/// The old gate was 68 — sub-type 2's overhead — and it alone rejected the
+/// corpus's empty and single-character sub-type 1 records, whose payloads
+/// measure 60 and 62 bytes.
+const IGTEXTBOX_MIN_PAYLOAD_LEN: usize =
+    IGTEXTBOX_BODY_START + 2 + IGTEXTBOX_TAIL_LEN;
 
 /// Maximum `text_length` (UTF-16LE chars) accepted. Real
 /// `SmartPlant` fixture texts are short labels (e.g. tag names);
 /// cap at 1024 chars to reject obvious noise.
 const IGTEXTBOX_MAX_TEXT_LENGTH: u16 = 1024;
+
+/// How far `(cos, sin)` may stray from unit length and still be read as a
+/// text direction.
+///
+/// `igTextBox` stores its rotation the way `igSymbol2d` stores its placement:
+/// as direction components rather than an angle. The pair is exact in the
+/// corpus — every angle is `0`, `90` or `180` degrees, so the components are
+/// `0` and `±1` — and this tolerance only absorbs float noise.
+///
+/// The check earns its place twice over. It is where the rotation comes from,
+/// and it is the only test that catches a `text_length` which over-reads: a
+/// length past the end of the real label puts these two reads on bytes that
+/// are not the direction, and they miss unit length by orders of magnitude.
+/// Measured in `docs/analysis/2026-08-13-igtextbox-rotation-is-a-direction-pair.md`.
+const IGTEXTBOX_DIRECTION_UNIT_TOLERANCE: f64 = 1e-6;
 
 /// PSM type code that identifies a standard Intergraph Sigma
 /// `igSymbol2d` record on disk (IGDS class tag `0xCE = 206`).
@@ -3392,25 +3429,30 @@ fn decode_igpoint_payload(
 ///
 /// **Byte layout** (revealed via fixture byte dump in
 /// `examples/probe_igtextbox_shape.rs`; total = 6-byte PSM header
-/// + `68 + text_length * 2`-byte payload):
+/// + a payload of at least `68 + text_length * 2` bytes):
 ///
 /// ```text
 /// PSM header (6 bytes):
 ///   0..1   u16   type_code = 0x004D
-///   2..5   u32   bytes_to_follow = 68 + text_length * 2
+///   2..5   u32   bytes_to_follow >= 68 + text_length * 2
 ///
-/// Payload (68 + text_length * 2 bytes):
+/// Payload (>= 68 + text_length * 2 bytes):
 ///   0..3    u32   oid
 ///   4..7    u32   parent_ref
 ///   8..11   u32   remaining_header
 ///   12..13  u16   sub_type_word
 ///   14..17  u32   index
 ///   18..29  12 bytes  sub-fields (length flags + sub-index)
-///   30..31  u16   text_length (UTF-16LE chars, redundant with
-///                 bytes_to_follow-derived length)
+///   30..31  u16   text_length (UTF-16LE chars) — the record's own
+///                 statement, and the one this decoder believes
 ///   32..    UTF-16LE chars × text_length × 2 bytes
-///   then    24 bytes  3 × f64 (insertion point + scale or similar)
-///   then    12 bytes  trailer
+///   then    16 bytes  2 × f64 insertion point
+///   then    16 bytes  2 × f64 text direction (cos, sin) — a unit vector,
+///                 the rotation this record letters at
+///   then    4 bytes   trailer
+///   then    0, 32 or 40 further bytes on 33 of the corpus's 224
+///                 records — undecoded, and the reason the payload is
+///                 bounded below rather than exactly
 /// ```
 ///
 /// Text content is decoded from UTF-16LE to a Rust `String`.
@@ -3432,6 +3474,10 @@ pub struct SheetIgTextBoxDecoded {
     pub sub_type_word: u16,
     /// Index / sub-oid.
     pub index: u32,
+    /// Which of the three `igTextBox` shapes this record is, from payload
+    /// `+18`. Decides where the text length and the body end sit — see
+    /// [`igtextbox_body_shape`].
+    pub text_sub_type: u16,
     /// Inline text length (UTF-16LE chars).
     pub text_length: u16,
     /// Decoded text content (lossy UTF-16LE → UTF-8 conversion).
@@ -3440,20 +3486,43 @@ pub struct SheetIgTextBoxDecoded {
     pub trailing_double_1: f64,
     /// Second trailing f64 (`insertion.y`).
     pub trailing_double_2: f64,
-    /// Third trailing f64 (often `1.0` — scale or marker).
+    /// Third trailing f64: the **cosine** of the text direction.
+    ///
+    /// Long read as "often 1.0 — scale or marker", because on its own it only
+    /// ever takes `0` or `±1`. It is the first half of the direction pair
+    /// whose second half sits 8 bytes further on; together they are a unit
+    /// vector on every record whose text length is right. See
+    /// [`SheetIgTextBoxDecoded::rotation_rad`].
     pub trailing_double_3: f64,
+    /// Text rotation in radians, from the `(cos, sin)` pair after the text.
+    ///
+    /// `0`, `π/2` and `π` are the only values the corpus holds — a P&ID
+    /// letters horizontally, up the side of a vertical pipe run, or upside
+    /// down. Renderers want degrees: `rotation_rad.to_degrees()`.
+    pub rotation_rad: f64,
 }
 
 /// Decode every PSM-encoded `igTextBox` record in a `Sheet*` stream.
 ///
-/// Validation:
+/// Validation — every rule is about the record's own shape; none
+/// assumes a payload size measured off one batch of fixtures:
 /// 1. `type_code == 0x004D`;
-/// 2. `bytes_to_follow >= 68` and consistent `text_length`;
-/// 3. `(bytes_to_follow - 68) % 2 == 0` and the resulting derived
-///    `text_length` matches the inline `text_length` at payload
-///    offset 30;
-/// 4. `text_length <= 1024` (reject obvious noise);
-/// 5. 3 trailing doubles finite + in domain.
+/// 2. `bytes_to_follow >= 68` (the floor: head + tail around an empty
+///    text) and the payload fits in the stream;
+/// 3. the inline `text_length` at payload offset 30 is `<= 1024`
+///    (reject obvious noise) and the payload has room for that text
+///    plus the 36-byte trailing block;
+/// 4. the 4 doubles after the text are finite + in domain;
+/// 5. the last two of them are a unit vector — the text direction. This
+///    is also what checks rule 3's stated length: a length that over-runs
+///    the label puts this read on the wrong bytes, and they are not a
+///    direction.
+///
+/// Retired in 2026-08-12: rule 3 used to *derive* the length from
+/// `bytes_to_follow` assuming a fixed 68-byte overhead and demand the
+/// inline length agree. That refused 33 records whose tail is longer
+/// than 36 bytes — 20 of them ordinary readable labels. See
+/// [`IGTEXTBOX_PAYLOAD_OVERHEAD`].
 ///
 /// Thin wrapper over [`IgTextBoxDecoder`]'s shared
 /// [`PsmRecordDecoder::scan`].
@@ -3491,21 +3560,18 @@ impl PsmRecordDecoder for IgTextBoxDecoder {
             return None;
         }
         let btf = header.bytes_to_follow as usize;
-        if btf < IGTEXTBOX_PAYLOAD_OVERHEAD {
-            return None;
-        }
-        if !(btf - IGTEXTBOX_PAYLOAD_OVERHEAD).is_multiple_of(2) {
-            return None;
-        }
-        let derived_text_len_words = ((btf - IGTEXTBOX_PAYLOAD_OVERHEAD) / 2) as u16;
-        if derived_text_len_words > IGTEXTBOX_MAX_TEXT_LENGTH {
+        // The smallest an `igTextBox` payload can be, over every sub-type:
+        // sub-type 1 with no text is 22 header + 2 body + 36 tail. The
+        // per-sub-type bound is applied in the payload decoder, which is
+        // where the body length is known.
+        if btf < IGTEXTBOX_MIN_PAYLOAD_LEN {
             return None;
         }
         let payload_end = header.body_start.checked_add(btf)?;
         if payload_end > data.len() {
             return None;
         }
-        decode_igtextbox_payload(data, offset, &header, payload_end, derived_text_len_words)
+        decode_igtextbox_payload(data, offset, &header, payload_end)
     }
 
     fn advance_of(&self, record: &SheetIgTextBoxDecoded) -> usize {
@@ -3516,14 +3582,61 @@ impl PsmRecordDecoder for IgTextBoxDecoder {
     }
 }
 
+/// Where the text is and how long the body runs, for one of the three
+/// `igTextBox` shapes — `(text_length, text_start, body_len)`, all
+/// payload-relative.
+///
+/// Read out of `radsrvitem.dll`'s `igTextBox` Load (`sub_56498C00`) and its
+/// size helper (`sub_5646D450`), and checked against every `0x004D` record on
+/// the corpus chain: the formula fits all 260, and sub-type 2's redundant
+/// dword agrees with its count on all 215. Evidence level: native-reader.
+/// See `docs/analysis/2026-08-13-igtextbox-has-three-shapes.md`.
+///
+/// `None` for an unknown discriminator or a payload too short for the fields
+/// the shape names.
+fn igtextbox_body_shape(payload: &[u8], text_sub_type: u16) -> Option<(u16, usize, usize)> {
+    let u16_at = |at: usize| -> Option<u16> {
+        payload
+            .get(at..at + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    };
+    match text_sub_type {
+        1 => {
+            let count = u16_at(22)?;
+            Some((count, 24, 2 + 2 * count as usize))
+        }
+        2 => {
+            // The count appears twice: once packed with a `0x10000` marker at
+            // +22 and once plain at +30. Requiring them to agree is free here
+            // and rejects a shape that only looks like sub-type 2.
+            let packed = payload
+                .get(22..26)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))?;
+            let count = u16_at(30)?;
+            if packed != (count as u32 | 0x1_0000) {
+                return None;
+            }
+            Some((count, 32, 10 + 2 * count as usize))
+        }
+        3 => {
+            // Two counts of doubles trail the text; they are part of the body,
+            // so the placement tail starts past them.
+            let a = u16_at(22)? as usize;
+            let b = u16_at(24)? as usize;
+            let count = u16_at(26)?;
+            Some((count, 28, 6 + 2 * count as usize + 8 * (a + b)))
+        }
+        _ => None,
+    }
+}
+
 /// Family-specific payload validation for `igTextBox` (everything
-/// after the shared PSM envelope and size/parity pre-checks).
+/// after the shared PSM envelope and the minimum-size pre-check).
 fn decode_igtextbox_payload(
     data: &[u8],
     offset: usize,
     header: &PsmHeader,
     payload_end: usize,
-    derived_text_len_words: u16,
 ) -> Option<SheetIgTextBoxDecoded> {
     let type_code = header.type_code;
     let type_flags = header.type_flags;
@@ -3535,29 +3648,41 @@ fn decode_igtextbox_payload(
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
     let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
-    // Inline text_length at payload offset 30 (u16).
-    let inline_text_length = u16::from_le_bytes([payload[30], payload[31]]);
-    if inline_text_length != derived_text_len_words {
+
+    // Which of the three shapes this record is, and therefore where its text
+    // length lives. Reading `+30` unconditionally only ever worked because
+    // sub-type 2 is the common one; on the other two that offset is some
+    // other field, which is why they were refused wholesale.
+    let text_sub_type = u16::from_le_bytes([payload[18], payload[19]]);
+    let (inline_text_length, text_start, body_len) =
+        igtextbox_body_shape(payload, text_sub_type)?;
+    if inline_text_length > IGTEXTBOX_MAX_TEXT_LENGTH {
         return None;
     }
 
-    // UTF-16LE text starts at payload offset 32.
+    // The payload is 22 header bytes, then the sub-type's body, then the
+    // 36-byte placement/style tail. A record may carry more after the tail;
+    // requiring room rather than an exact fit is what lets those through.
+    let tail_start = IGTEXTBOX_BODY_START.checked_add(body_len)?;
+    if tail_start.checked_add(IGTEXTBOX_TAIL_LEN)? > payload.len() {
+        return None;
+    }
     let text_byte_len = (inline_text_length as usize) * 2;
-    let text_end = 32 + text_byte_len;
-    if text_end + 36 > payload.len() {
+    if text_start.checked_add(text_byte_len)? > payload.len() {
         return None;
     }
     let mut u16_chars = Vec::with_capacity(inline_text_length as usize);
     for i in 0..inline_text_length as usize {
-        let pos = 32 + i * 2;
+        let pos = text_start + i * 2;
         u16_chars.push(u16::from_le_bytes([payload[pos], payload[pos + 1]]));
     }
     let text = String::from_utf16_lossy(&u16_chars);
 
-    // 3 trailing doubles immediately after the text.
-    let mut trailing = [0f64; 3];
+    // Four doubles open the tail: the insertion point, then the direction
+    // pair `(cos, sin)` the text is lettered along.
+    let mut trailing = [0f64; 4];
     for (i, slot) in trailing.iter_mut().enumerate() {
-        let pos = text_end + i * 8;
+        let pos = tail_start + i * 8;
         let chunk = payload.get(pos..pos + 8)?;
         *slot = f64::from_le_bytes([
             chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
@@ -3573,6 +3698,16 @@ fn decode_igtextbox_payload(
         return None;
     }
 
+    // The direction has to be a direction. This is what makes the stated text
+    // length checkable: read the pair off the wrong offset -- which is what a
+    // length that over-runs the label produces -- and it misses unit length by
+    // orders of magnitude rather than by float noise.
+    let (cos, sin) = (trailing[2], trailing[3]);
+    if (cos.hypot(sin) - 1.0).abs() > IGTEXTBOX_DIRECTION_UNIT_TOLERANCE {
+        return None;
+    }
+    let rotation_rad = sin.atan2(cos);
+
     Some(SheetIgTextBoxDecoded {
         byte_range: offset..payload_end,
         type_code,
@@ -3582,11 +3717,13 @@ fn decode_igtextbox_payload(
         parent_ref,
         sub_type_word,
         index,
+        text_sub_type,
         text_length: inline_text_length,
         text,
         trailing_double_1: trailing[0],
         trailing_double_2: trailing[1],
         trailing_double_3: trailing[2],
+        rotation_rad,
     })
 }
 
@@ -6504,10 +6641,14 @@ mod tests {
         out.extend_from_slice(&12u32.to_le_bytes()); // 8..12 remaining_header
         out.extend_from_slice(&0x0010u16.to_le_bytes()); // 12..14 sub_type
         out.extend_from_slice(&0u32.to_le_bytes()); // 14..18 index
-                                                    // 18..30: 12 bytes of sub-fields (we just zero them; decoder
-                                                    // doesn't validate these bytes).
-        out.extend_from_slice(&[0u8; 12]);
-        // 30..32: inline text_length.
+                                                    // 18..30 is the sub-type 2 body prefix: the shape
+                                                    // discriminator, the style-tail tag, the count packed with
+                                                    // its 0x10000 marker, and a spare dword.
+        out.extend_from_slice(&2u16.to_le_bytes()); // 18..20 text sub-type
+        out.extend_from_slice(&0u16.to_le_bytes()); // 20..22 style-tail tag
+        out.extend_from_slice(&(text_length as u32 | 0x1_0000).to_le_bytes()); // 22..26
+        out.extend_from_slice(&0u32.to_le_bytes()); // 26..30
+                                                    // 30..32: inline text_length.
         out.extend_from_slice(&text_length.to_le_bytes());
         // 32..32+text_length*2: UTF-16LE text.
         for c in u16_chars {
@@ -6537,6 +6678,210 @@ mod tests {
         assert!((t.trailing_double_3 - 1.0).abs() < 1e-9);
     }
 
+    /// Rewrite the direction pair that follows the insertion point.
+    fn set_text_direction(record: &mut [u8], text_len_chars: usize, cos: f64, sin: f64) {
+        let text_end = 6 + 32 + text_len_chars * 2;
+        record[text_end + 16..text_end + 24].copy_from_slice(&cos.to_le_bytes());
+        record[text_end + 24..text_end + 32].copy_from_slice(&sin.to_le_bytes());
+    }
+
+    /// A label lettered up a vertical pipe decodes as a quarter turn.
+    ///
+    /// The rotation is stored as `(cos, sin)` rather than as an angle — the
+    /// same convention `igSymbol2d` uses for its placement matrix — so each
+    /// component alone reads as a meaningless `0` or `±1`. Together they are
+    /// the angle, and this is the corpus's second most common one: 35 of its
+    /// labels run vertically.
+    #[test]
+    fn igtextbox_decodes_the_direction_the_text_is_lettered_along() {
+        for (cos, sin, expect_deg) in [
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 90.0),
+            (-1.0, 0.0, 180.0),
+            (0.0, -1.0, -90.0),
+        ] {
+            let mut record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+            set_text_direction(&mut record, 8, cos, sin);
+
+            let decoded = decode_igtextboxes(&record);
+            assert_eq!(decoded.len(), 1, "({cos}, {sin}) is a direction");
+            assert!(
+                (decoded[0].rotation_rad.to_degrees() - expect_deg).abs() < 1e-9,
+                "({cos}, {sin}) should letter at {expect_deg} degrees, got {}",
+                decoded[0].rotation_rad.to_degrees()
+            );
+        }
+    }
+
+    /// A pair that is not a unit vector is not a direction, and the record is
+    /// refused.
+    ///
+    /// This is the check that keeps the stated text length honest. A length
+    /// that over-runs the real label puts these two reads on bytes that are
+    /// not the direction at all; on the corpus they then miss unit length by
+    /// many orders of magnitude, never by float noise. Every record whose
+    /// text carries the binary that follows an over-read fails here.
+    #[test]
+    fn igtextbox_refuses_a_direction_that_is_not_a_unit_vector() {
+        for (cos, sin) in [(0.0, 0.0), (2.0, 0.0), (0.5, 0.5), (1.0, 1.0)] {
+            let mut record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+            set_text_direction(&mut record, 8, cos, sin);
+
+            assert!(
+                decode_igtextboxes(&record).is_empty(),
+                "({cos}, {sin}) is not a direction, so the record's shape is wrong"
+            );
+        }
+    }
+
+    /// A record whose tail is longer than 36 bytes still decodes.
+    ///
+    /// The corpus has 33 of these — tails of 68 or 76 bytes instead of 36,
+    /// with the head unchanged and the text at `+32` reading normally. The
+    /// old rule derived the text length from `bytes_to_follow` on a fixed
+    /// 68-byte overhead and refused them all, because the derived length
+    /// disagreed with the length the record states at `+30`. Believing
+    /// `+30` and asking only that the payload have *room* for the text and
+    /// the trailing block accepts them, and this pins that: a return to
+    /// the derived-length rule fails here.
+    #[test]
+    fn igtextbox_decodes_a_record_with_a_longer_tail() {
+        for extra in [32usize, 40] {
+            let mut record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+            // Append the bytes and grow `bytes_to_follow` to match, leaving
+            // the head and the stated text length untouched.
+            let btf = u32::from_le_bytes([record[2], record[3], record[4], record[5]]);
+            let grown = btf + extra as u32;
+            record[2..6].copy_from_slice(&grown.to_le_bytes());
+            record.extend(std::iter::repeat_n(0u8, extra));
+
+            let decoded = decode_igtextboxes(&record);
+            assert_eq!(
+                decoded.len(),
+                1,
+                "a {extra}-byte longer tail must not refuse the record"
+            );
+            assert_eq!(decoded[0].text, "PUMP-101");
+            assert_eq!(decoded[0].text_length, 8);
+            // The record still spans its whole stated length, so the scan
+            // resumes after the extra bytes rather than inside them.
+            assert_eq!(decoded[0].byte_range, 0..record.len());
+        }
+    }
+
+    /// The stated length still has to fit: `+30` is believed, not obeyed
+    /// blindly. A length claiming more text than the payload can hold —
+    /// with its trailing block — is still refused.
+    #[test]
+    fn igtextbox_refuses_a_stated_length_the_payload_cannot_hold() {
+        // Claim 400 chars (800 bytes) in a payload sized for 8, stated
+        // consistently so the count-agreement rule is not what fires.
+        let mut record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+        set_consistent_count(&mut record, 400);
+        assert!(
+            decode_igtextboxes(&record).is_empty(),
+            "a stated length with no room for text plus the trailing block is noise"
+        );
+
+        // The other way a stated length lies: a sub-type 2 record carries its
+        // count twice -- packed with a 0x10000 marker at +22 and plain at
+        // +30 -- and editing only one of them breaks their agreement.
+        let mut record = build_synthetic_igtextbox_record("HELLO", 1, 1);
+        record[6 + 30..6 + 32].copy_from_slice(&999u16.to_le_bytes());
+        assert!(
+            decode_igtextboxes(&record).is_empty(),
+            "a count that disagrees with its packed twin is not believed"
+        );
+    }
+
+    /// Build a sub-type 1 or sub-type 3 record: the two shapes whose body
+    /// puts the count somewhere other than `+30`, and which the decoder
+    /// refused wholesale until the native layout was read out of
+    /// `radsrvitem.dll`.
+    fn build_igtextbox_of_sub_type(sub_type: u16, text: &str, extra_doubles: (u16, u16)) -> Vec<u8> {
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let count = units.len() as u16;
+        let (a, b) = extra_doubles;
+        let body_len = match sub_type {
+            1 => 2 + 2 * units.len(),
+            3 => 6 + 2 * units.len() + 8 * (a as usize + b as usize),
+            other => panic!("this helper builds sub-types 1 and 3, not {other}"),
+        };
+        let payload_len = 22 + body_len + 36;
+
+        let mut out = Vec::with_capacity(6 + payload_len);
+        out.extend_from_slice(&PSM_TYPE_CODE_IGTEXTBOX.to_le_bytes());
+        out.extend_from_slice(&(payload_len as u32).to_le_bytes());
+        out.extend_from_slice(&7u32.to_le_bytes()); // oid
+        out.extend_from_slice(&1u32.to_le_bytes()); // parent_ref
+        out.extend_from_slice(&12u32.to_le_bytes()); // remaining_header
+        out.extend_from_slice(&0x0010u16.to_le_bytes()); // sub_type_word
+        out.extend_from_slice(&0u32.to_le_bytes()); // index
+        out.extend_from_slice(&sub_type.to_le_bytes()); // +18 shape
+        out.extend_from_slice(&0u16.to_le_bytes()); // +20 style-tail tag
+        match sub_type {
+            1 => out.extend_from_slice(&count.to_le_bytes()), // +22 count
+            _ => {
+                out.extend_from_slice(&a.to_le_bytes()); // +22
+                out.extend_from_slice(&b.to_le_bytes()); // +24
+                out.extend_from_slice(&count.to_le_bytes()); // +26
+            }
+        }
+        for unit in &units {
+            out.extend_from_slice(&unit.to_le_bytes());
+        }
+        if sub_type == 3 {
+            for _ in 0..(a as usize + b as usize) {
+                out.extend_from_slice(&0.0f64.to_le_bytes());
+            }
+        }
+        // The 36-byte placement tail: insertion, direction, trailer.
+        out.extend_from_slice(&0.25f64.to_le_bytes());
+        out.extend_from_slice(&0.75f64.to_le_bytes());
+        out.extend_from_slice(&0.0f64.to_le_bytes()); // cos
+        out.extend_from_slice(&1.0f64.to_le_bytes()); // sin -> 90 degrees
+        out.extend_from_slice(&[0u8; 4]);
+        out
+    }
+
+    /// The two shapes the decoder used to refuse now decode, text and all.
+    ///
+    /// 45 of the corpus's 260 `igTextBox` records are sub-type 1 or 3, and 43
+    /// of those carry a readable label — lettering that was simply absent
+    /// from every drawing. The layout comes from `radsrvitem.dll`'s
+    /// `igTextBox` Load; see [`igtextbox_body_shape`].
+    #[test]
+    fn igtextbox_decodes_the_two_shapes_whose_count_is_not_at_plus_30() {
+        for (sub_type, extras) in [(1u16, (0u16, 0u16)), (3, (2, 3))] {
+            let record = build_igtextbox_of_sub_type(sub_type, "\u{8BBE}\u{5907}\u{4F4D}\u{53F7}", extras);
+            let decoded = decode_igtextboxes(&record);
+
+            assert_eq!(decoded.len(), 1, "sub-type {sub_type} must decode");
+            let t = &decoded[0];
+            assert_eq!(t.text_sub_type, sub_type);
+            assert_eq!(t.text, "\u{8BBE}\u{5907}\u{4F4D}\u{53F7}");
+            assert_eq!(t.text_length, 4);
+            // The placement tail sits past the body, which for sub-type 3
+            // includes the trailing doubles -- read it at the wrong offset
+            // and the direction is not a unit vector.
+            assert!((t.trailing_double_1 - 0.25).abs() < 1e-12);
+            assert!((t.trailing_double_2 - 0.75).abs() < 1e-12);
+            assert!((t.rotation_rad.to_degrees() - 90.0).abs() < 1e-9);
+        }
+    }
+
+    /// An unknown shape is refused rather than guessed at.
+    #[test]
+    fn igtextbox_refuses_a_sub_type_the_native_reader_does_not_name() {
+        let mut record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+        record[6 + 18..6 + 20].copy_from_slice(&4u16.to_le_bytes());
+
+        assert!(
+            decode_igtextboxes(&record).is_empty(),
+            "the native Load names sub-types 1, 2 and 3; a fourth is not a shape we know"
+        );
+    }
+
     #[test]
     fn igtextbox_decodes_chinese_unicode_text() {
         let record = build_synthetic_igtextbox_record("流量计", 200, 100);
@@ -6555,17 +6900,16 @@ mod tests {
         assert!(decode_igtextboxes(&record).is_empty());
     }
 
-    #[test]
-    fn igtextbox_rejects_inconsistent_text_length() {
-        let mut record = build_synthetic_igtextbox_record("HELLO", 1, 1);
-        // Overwrite inline text_length at payload offset 30 (record offset 6+30=36).
-        record[36..38].copy_from_slice(&999u16.to_le_bytes());
-        assert!(decode_igtextboxes(&record).is_empty());
+    /// Set a sub-type 2 record's count in both places the format states it,
+    /// so a test can exercise a rule other than their agreement.
+    fn set_consistent_count(record: &mut [u8], count: u16) {
+        record[6 + 22..6 + 26].copy_from_slice(&(count as u32 | 0x1_0000).to_le_bytes());
+        record[6 + 30..6 + 32].copy_from_slice(&count.to_le_bytes());
     }
 
     #[test]
     fn igtextbox_rejects_zero_length_overhead_violation() {
-        // bytes_to_follow < 68 (constant overhead) is rejected.
+        // bytes_to_follow below the 68-byte floor is rejected.
         let mut record = vec![];
         record.extend_from_slice(&PSM_TYPE_CODE_IGTEXTBOX.to_le_bytes());
         record.extend_from_slice(&50u32.to_le_bytes()); // way less than 68

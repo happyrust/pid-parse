@@ -7453,7 +7453,11 @@ fn igtextboxes_decoder_emits_decoded_texts_with_provenance() {
             for t in &decoded {
                 assert!(t.byte_range.end <= bytes.len());
                 assert_eq!(t.type_code, PSM_TYPE_CODE_IGTEXTBOX);
-                assert!(t.bytes_to_follow >= 68);
+                // 60 is the family's real floor: sub-type 1 with no text is
+                // 22 header + 2 body + 36 tail. 68 was sub-type 2's overhead,
+                // asserted here while it was mistaken for the family's.
+                assert!(t.bytes_to_follow >= 60);
+                assert!(matches!(t.text_sub_type, 1..=3));
                 assert!(t.text_length <= 1024);
                 assert!(t.trailing_double_1.is_finite());
                 if sample_texts.len() < 8 {

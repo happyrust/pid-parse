@@ -180,11 +180,12 @@ fn psm_record_end(bytes: &[u8], off: usize) -> Option<usize> {
 /// typed decoder and whose start offset no typed decoder claimed.
 ///
 /// `claimed` is the union of every family's decoded byte ranges for this
-/// same stream (the caller collects them from the family registry). Records
-/// inside a claimed range are the typed decoders' business; records of a
-/// [`DECODED_TYPE_CODES`] code outside every claimed range are
+/// same stream (the caller collects them from the family registry). A record
+/// whose start a claimed range *starts at* is the typed decoders' business;
+/// records of a [`DECODED_TYPE_CODES`] code no claim starts at are
 /// validation-rejected shapes of a known family, which is a different
-/// diagnostic — both are skipped here.
+/// diagnostic — both are skipped here. (Containment is deliberately not the
+/// test: see `unclaimed_counts`.)
 ///
 /// The result is sorted by type code and carries the graphic/non-graphic
 /// split; consumers warn on the graphic entries and stay quiet about the
@@ -254,7 +255,18 @@ fn unclaimed_counts(
         if let Some(end) = psm_record_end(data, off) {
             if end == data.len() || psm_record_end(data, end).is_some() {
                 let type_code = u16::from_le_bytes([data[off], data[off + 1]]) & 0x3FFF;
-                let claimed_here = claimed.iter().any(|range| range.contains(&off));
+                // A claim shadows this record only when it *is* this record:
+                // the claimed range starts where the record starts. The old
+                // test was containment, and containment let a scan-based
+                // family's over-claim — a range running past its own record —
+                // cover a later record's start and silence that record's
+                // refusal. Chain records never overlap (one record's end is
+                // the next one's start), so a range covering `off` without
+                // starting at it can only be an over-claim, never a decode of
+                // this record. On the corpus the containment test silenced 32
+                // refusals; measured in
+                // `docs/analysis/2026-08-11-what-refuses-the-remaining-53.md` §5.
+                let claimed_here = claimed.iter().any(|range| range.start == off);
                 if !claimed_here && keep(type_code) {
                     *counts.entry(type_code).or_insert(0) += 1;
                 }
@@ -391,6 +403,32 @@ mod tests {
         assert_eq!(census.len(), 1);
         assert!(!census[0].is_graphic);
         assert_eq!(census[0].rad_class_name, Some("JSL Override Style"));
+    }
+
+    #[test]
+    fn an_over_claim_covering_a_later_record_does_not_silence_it() {
+        // The first record is legitimately claimed, but the claim runs past
+        // its own record and covers the second record's start — the shape a
+        // scan-based family's out-of-chain claim takes. Under the old
+        // containment test the second record vanished from both censuses;
+        // it must be counted as the refusal it is.
+        let mut data = record(0x0010, 8);
+        let second_start = data.len();
+        data.extend(record(0x004D, 80)); // igTextBox-coded, decoder refused it
+        let over_claim: Vec<Range<usize>> = std::iter::once(0..second_start + 6).collect();
+
+        let refused = refused_record_census(&data, &over_claim);
+
+        assert_eq!(
+            refused,
+            vec![RefusedRecordCount {
+                type_code: 0x004D,
+                count: 1,
+                is_graphic: true,
+                rad_class_name: Some("Text Object"),
+            }],
+            "a claim that does not start at a record must not silence it"
+        );
     }
 
     #[test]

@@ -80,19 +80,22 @@ pub struct SheetGeometry {
     /// (Phase 14 Slice N).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igsymbols: Vec<DecodedIgSymbol2dRecord>,
-    /// Fully-typed **audit-only** PSM `igBoundary2d` records (PSM type
+    /// Fully-typed PSM `igBoundary2d` records (PSM type
     /// `0x0013`, IGDS class tag `0x13`) emitted by
     /// [`crate::parsers::sheet_records::decode_igboundaries`]
     /// (Phase 34-D).
     ///
     /// Every payload byte is field-named (segment groups, anchor,
-    /// trailer member references), but these records intentionally do
-    /// not produce normalized geometry entities: the trailer member
-    /// references prove the segment coordinates duplicate member
-    /// `igLine2d` geometry that already emits normalized `Line`
-    /// entities, so emitting the boundary as a polyline would
-    /// double-count geometry. See
-    /// `docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`.
+    /// trailer member references). The family was audit-only at first:
+    /// the trailer member references prove the segment coordinates
+    /// re-list member `igLine2d` geometry that already emits normalized
+    /// `Line` entities, so *stroking* the ring again would double-draw
+    /// the outline
+    /// (`docs/analysis/2026-07-07-phase34d-0013-igboundary2d-grammar-decode.md`).
+    /// But the ring is the one thing its members cannot say — every ring
+    /// on the corpus resolves to a `JStyleSimpleFill` — so it now emits
+    /// a closed polyline for renderers to *fill*, never stroke
+    /// (`docs/analysis/2026-08-10-fill-has-a-consumer-after-all.md`).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igboundaries: Vec<DecodedIgBoundary2dRecord>,
     /// Audit-only PSM `0x00FA` `DependencyObject` / `GraphicPersist` records
@@ -638,8 +641,15 @@ pub struct DecodedIgTextBoxRecord {
     pub trailing_double_1: f64,
     /// Second trailing f64 (insertion.y).
     pub trailing_double_2: f64,
-    /// Third trailing f64 (often `1.0`, possibly scale).
+    /// Which of the three `igTextBox` shapes this record is (payload `+18`).
+    #[serde(default)]
+    pub text_sub_type: u16,
+    /// Third trailing f64: the cosine of the text direction.
     pub trailing_double_3: f64,
+    /// Text rotation in radians, from the `(cos, sin)` direction pair that
+    /// follows the insertion point. `0`, `π/2` and `π` across the corpus.
+    #[serde(default)]
+    pub rotation_rad: f64,
 }
 
 impl From<crate::parsers::sheet_records::SheetIgTextBoxDecoded> for DecodedIgTextBoxRecord {
@@ -656,9 +666,11 @@ impl From<crate::parsers::sheet_records::SheetIgTextBoxDecoded> for DecodedIgTex
             index: d.index,
             text_length: d.text_length,
             text: d.text,
+            text_sub_type: d.text_sub_type,
             trailing_double_1: d.trailing_double_1,
             trailing_double_2: d.trailing_double_2,
             trailing_double_3: d.trailing_double_3,
+            rotation_rad: d.rotation_rad,
         }
     }
 }

@@ -273,16 +273,22 @@ fn text_reaches_the_height_its_character_style_states() {
         return;
     }
 
-    // As with the line families, these are the records `decode_igtextboxes`
-    // accepts, which is fewer than a raw chain walk finds.
+    // These are the records `decode_igtextboxes` accepts -- now the whole
+    // family, all 260, since the native sub-type layout landed. Reading
+    // sub-types 1 and 3 brought 21 more records to a character style and put
+    // two sizes on the table that no drawing had shown before: 6.350mm is a
+    // quarter inch, the heading size, and 1.524mm is 0.06 inch. See
+    // `docs/analysis/2026-08-13-igtextbox-has-three-shapes.md`.
     let expected_heights: BTreeMap<String, usize> = [
         ("1.500mm", 10),
+        ("1.524mm", 1),
         ("2.032mm", 1),
         ("2.464mm", 7),
-        ("2.500mm", 26),
-        ("2.540mm", 1),
-        ("3.175mm", 64),
+        ("2.500mm", 27),
+        ("2.540mm", 2),
+        ("3.175mm", 98),
         ("3.500mm", 7),
+        ("6.350mm", 2),
     ]
     .iter()
     .map(|(key, count)| ((*key).to_string(), *count))
@@ -290,7 +296,7 @@ fn text_reaches_the_height_its_character_style_states() {
     assert_eq!(heights, expected_heights);
     // 3.175mm is 1/8 inch and the most common size by far, so the renderer's
     // old fixed 2.5mm was 27% too small for most of a drawing's lettering.
-    assert_eq!(heights.values().sum::<usize>(), 116);
+    assert_eq!(heights.values().sum::<usize>(), 155);
 }
 
 /// The join a renderer performs: entity -> line style, by stream path and oid.

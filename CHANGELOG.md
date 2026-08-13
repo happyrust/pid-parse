@@ -2,6 +2,113 @@
 
 ## [Unreleased]
 
+### 普查认领改为「起点相等」，第二个静默洞收口；注册表 `emits_geometry` 修真（2026-08-12）
+
+- **`unclaimed_counts` 的认领判据从区间覆盖改为起点相等**：链上记录互不重叠，
+  一个认领区间盖住另一条记录的起点而不起始于它，只能是扫描型家族的越界认领。
+  旧判据让 32 条被拒记录连 S2 的警告都发不出来；改后 graphic 侧 +23 条进入
+  `refused_graphic_records`（48 → 71，含 `DWG-0201` 一条此前不可见的被拒
+  `DependencyObject`），棘轮随实测重钉。几何实体与 golden snapshot 零变化。
+  证据：`docs/analysis/2026-08-12-census-claims-are-starts-not-covers.md`。
+- **`SheetRecordFamily::emits_geometry` 对 `igBoundary2d` 修真（`false → true`）**：
+  fill 落地后 `IgBoundary2dEmitter` 实际发闭合折线，注册表的声明滞后了两天而
+  守护测试没红——它断言的是同一份清单的手写副本。策略测试改为对照
+  `geometry::emitter_families()`（emitter 自己声明 `family` / `is_no_op`），
+  并补上 `igSmartFrame2d` 缺席的显式 no-op emitter；`model/sheet.rs` 与
+  `EMITTERS` 表的过期陈述同步改写。
+
+### igTextBox 有三种形状，此前只实现了一种：45 条记录、43 条真标签回到图上（2026-08-13）
+
+- **payload `+18` 是形状判别位，三种形状把文本长度放在不同偏移**：形状 1 在 `+22`
+  （文本 `+24`）、形状 2 在 `+30`（文本 `+32`）、形状 3 在 `+26`（文本 `+28`，其后
+  还有 `A+B` 个 double）。解码器只实现了形状 2——260 条里的 215 条——另外 45 条被
+  整族拒收，不是畸形，是拿形状 2 的尺子去量。
+- **证据等级 native-reader**：`radsrvitem.dll` 的 `igTextBox` Load `sub_56498C00`
+  与尺寸辅助 `sub_5646D450`；本轮另从发布例程 `sub_564468B0` 的三路分派独立复现了
+  判别位。全语料 260 条套用原生公式**零例外**，形状 2 的冗余计数（`+22` 的
+  `count | 0x10000`）与 `+30` **零不符**，三种形状的尾块**一律 36 字节**。
+- **效果**：被接受的 `igTextBox` 215 → **260（全族零拒收）**；graphic refused
+  53 → **13**（只剩折线与一条 `0x00FA`）；解出真字高的文字 134 → **155**，并首次
+  出现 6.350mm（1/4 英寸标题字号）与 1.524mm 两个尺寸。
+- **顺带解释了前两轮的现象**：所谓「尾巴变长 32/40 字节」其实是形状 3 body 里的
+  `8*(A+B)` 字节 double；方向校验拒掉的 9 条是形状 3（方向对被那些 double 挡在后面，
+  校验没错、病因诊断错了）；`btf = 60/62` 的记录是形状 1，被形状 2 的 68 地板挡住，
+  地板已改为 60。
+- **撤回**：`2026-08-12-a01-refused-text-has-no-lettering-behind-it.md` 判定 A01 的
+  18 条被拒记录「0/18 有可读文本」，那是拿 `+32` 去读形状 1/3 的结果。A01 的
+  `PID-TEXT` 现在从 9 条涨到 27 条（含 6 条竖排）。该文已挂撤回标记。
+- 新增 `igtextbox_body_shape` 与 `SheetIgTextBoxDecoded::text_sub_type`。证据：
+  `docs/analysis/2026-08-13-igtextbox-has-three-shapes.md`。
+
+### 解出 igTextBox 的文字旋转角：35 条竖排标签不再躺平（2026-08-13）
+
+- **旋转存成单位方向向量 `(cos, sin)`，不是角度值**：`cos` 在文本后第三个 double
+  （`text_end+16`）、`sin` 在第四个（`text_end+24`，此前完全未解）。164 条记录
+  无一例外满足 `cos² + sin² = 1`，解出的角只有 **0°（128）、90°（35）、180°（1）**
+  ——正是 P&ID 排字用的三种。与 `igSymbol2d` 把放置存成 0/±1 矩阵是同一约定。
+- **撤回前一日的结论**：`2026-08-12-igtextbox-has-no-rotation-field.md` 判定
+  「记录内没有旋转角」，因为它分别量每个槽位、各自只见到离散的 `{0, ±1}`。
+  错在没把两列配对——它们的计数互补，是一个向量的两个分量。该文已挂撤回标记。
+- **同时是文本长度的正确性判据**：9 条记录的方向读数偏离单位长度达 `1e206` 量级，
+  它们正是 `+30` 声明长度超读、标签后挂着控制字符的那批。几何检验与文本检验对
+  「哪些长度是错的」给出完全一致的答案，于是这 9 条被拒收——补上了前一次
+  「无条件相信 `+30`」留下的洞。
+- **计数**：被接受的 `igTextBox` 224 → **215**（相对最初的 191 净 +24 条干净记录）；
+  graphic refused 44 → **53**（9 条全在 `工艺管道及仪表流程-1`）；字高 143 → **134**。
+- 新增 `SheetIgTextBoxDecoded::rotation_rad`；`trailing_double_3` 保留原名，注释
+  改为「文本方向的余弦」。证据：
+  `docs/analysis/2026-08-13-igtextbox-rotation-is-a-direction-pair.md`。
+- 下游：`OpenCADStudio` 零改动兑现，`text.rotation` 此前一直在乘 0。
+
+### 退役 igTextBox 的固定 68 字节开销假设：33 条记录回到图上（2026-08-12）
+
+- **68 是下界不是常量**。解码器原先假设 payload 开销恒为 68，据此从
+  `bytes_to_follow` 反推文本长度，再要求它与记录在 `+30` 自报的长度一致。这个
+  常量是从第一批语料量出来的，对 224 条里的 191 条成立；剩下 33 条的尾巴是 68 或
+  76 字节而不是 36（头没变、尾变长），反推长度自然对不上，于是被整条拒收。与 S5
+  退役的 `aux_hi == 12` 同一物种。
+- **新规则只问记录自己的形状**：信 `+30` 的长度，要求 payload 有地方放下文本加
+  36 字节尾块（`>` 而非 `==`——尾巴更长的是挂了东西的记录，不是坏记录），三个
+  trailing double 有限且在域内。`+30` 是被相信而非盲从：声称的长度放不下仍拒收。
+- **效果**：语料被接受的 `igTextBox` 191 → **224**，golden 里的 `igtextbox` 实体
+  同步 191 → **224**（1:1），其中 20 条文本可读；graphic refused 71 → **44**。
+  逐族点数确认**只有 igTextBox 变了**，线/折线/点/符号/边界/样式链分毫未动。
+- 常量 `IGTEXTBOX_PAYLOAD_OVERHEAD` 保留原名，语义改为「空文本时的最小 payload」。
+  证据：`docs/analysis/2026-08-12-igtextbox-overhead-is-a-floor-not-a-constant.md`。
+- 下游：`OpenCADStudio` 的 `.pid` 导入多出 33 条 `PID-TEXT` 实体。
+
+### 取证：igTextBox 记录内没有旋转角字段，登记为 Coverage Gap（2026-08-12）
+
+- `examples/probe_igtextbox_rotation_candidate` 量了 146 条被接受 `igTextBox` 的
+  每一个记录内角度候选：`trailing_double_3` 落在 `{0, ±1}`（scale/marker），
+  text_end+24 的 f64 落在 `{0, 1}`（flag），无一取到连续角度值。旋转角**不在**
+  `igTextBox` 记录里，与字高同构（在样式链上）。`OpenCADStudio` 标签维持水平
+  兜底，不接线——无源可接，且接线会改 golden snapshot 需两证支撑。
+  证据与将来验收路径：`docs/analysis/2026-08-12-igtextbox-has-no-rotation-field.md`。
+
+### 补账：2026-08-07 至 2026-08-11 已落地、对下游可见的行为变更
+
+- **`igLine2d` 退役 `aux_hi == 12` 拒收规则（08-11）**：那 8 字节是 PSM 通用信封
+  的 `aux` 高半段，原生读侧读进一个再也不看的局部变量；规则退役让 88 条真线
+  回到图面（含 `A01` 整张页框），全语料 `igLine2d` 计数 238 → 368。
+  `docs/analysis/2026-08-11-remaining-header-is-the-psm-aux-field.md`。
+- **`igBoundary2d` 开始发几何（08-10）**：语料 20/20 的边界环全部经
+  `JStyleOverride` 落到 `JStyleSimpleFill`，环以 `Decoded` 闭合折线发出，
+  渲染侧按 `(流路径, oid)` join `fill_styles_for_file` 填充而非描边；填充色
+  在 `0x002A` payload `+30`（`COLORREF`）。
+  `docs/analysis/2026-08-10-fill-has-a-consumer-after-all.md`、
+  `docs/analysis/2026-08-10-fill-colour-is-002a-plus-30.md`。
+- **`GLine2d` 撤回语料身份（08-10）**：三条"记录"是 `igSmartFrame2d` 里
+  ISO 页幅比 `1/√2` 的高两字节，解码器加链式门禁后在本语料上解码为 0；
+  下游 `PID-UNRESOLVED` 一类的兜底随之无物可装。
+  `docs/analysis/2026-08-10-gline2d-is-the-iso-page-ratio-not-a-record.md`。
+- **虚线线型与语义 join（08-07）**：`0x002F JStyleSimpleDashType` 解码 +
+  `0x002E +54` 的引用，`style_link` 交回虚线段表；`_Data.xml` 的 `GraphicOID`
+  按两跳规则（直接命中或经 `0x00FA` 聚合尾部引用）join 到解码记录，
+  `PidSemanticIndex` 上线。
+  `docs/analysis/2026-08-07-jstyle-simple-dash-type-linetype.md`、
+  `docs/analysis/2026-08-07-graphic-oid-is-the-semantic-join.md`。
+
 ### 打通「几何 → 样式」链路：`style_link` 模块（2026-08-05）
 
 - **`index`（几何 payload `+14`）就是样式引用**，此前它在候选表里被判负。那次排除

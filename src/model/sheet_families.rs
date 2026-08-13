@@ -216,7 +216,13 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
     SheetRecordFamily {
         name: "igBoundary2d",
         type_code: 0x0013,
-        emits_geometry: false,
+        // Emits since fills landed: a ring whose style resolves to a
+        // `JStyleSimpleFill` draws as a closed polyline the fill can
+        // attach to (`geometry.rs`, `IgBoundary2dEmitter`). This flag
+        // said `false` for the first two days of that behaviour — the
+        // policy test now checks the emitters instead of a second copy
+        // of this claim.
+        emits_geometry: true,
         trace_class: SheetFamilyTraceClass::Decoded,
         geometry_field: "decoded_igboundaries",
         model_dto: "DecodedIgBoundary2dRecord",
@@ -450,23 +456,45 @@ mod tests {
         assert!(!sheet_geometry_has_no_family_records(&geometry));
     }
 
+    /// The registry's `emits_geometry` flag is a *claim* about the L6
+    /// emitters; this holds it against the emitters' own statement
+    /// (`geometry::emitter_families`) instead of a hand-written copy of
+    /// the same list. The old form asserted the copy, so when
+    /// `IgBoundary2dEmitter` started emitting fills the flag stayed
+    /// `false` and the test stayed green — exactly the drift it existed
+    /// to catch.
     #[test]
     fn emission_policy_matches_geometry_emitter_no_op_set() {
-        let audit_only: Vec<&str> = SHEET_RECORD_FAMILIES
+        let emitters = crate::geometry::emitter_families();
+
+        // Every registry family registers exactly one emitter, and no
+        // emitter serves a family the registry does not know — the L6
+        // counterpart of the cluster-wiring test.
+        let mut registry_names: Vec<&str> =
+            SHEET_RECORD_FAMILIES.iter().map(|f| f.name).collect();
+        registry_names.sort_unstable();
+        let mut emitter_names: Vec<&str> = emitters.iter().map(|(name, _)| *name).collect();
+        emitter_names.sort_unstable();
+        assert_eq!(
+            registry_names, emitter_names,
+            "every sheet record family must register exactly one geometry emitter"
+        );
+
+        let mut registry_audit_only: Vec<&str> = SHEET_RECORD_FAMILIES
             .iter()
             .filter(|f| !f.emits_geometry)
             .map(|f| f.name)
             .collect();
+        registry_audit_only.sort_unstable();
+        let mut no_op_emitters: Vec<&str> = emitters
+            .iter()
+            .filter(|(_, is_no_op)| *is_no_op)
+            .map(|(name, _)| *name)
+            .collect();
+        no_op_emitters.sort_unstable();
         assert_eq!(
-            audit_only,
-            vec![
-                "igBoundary2d",
-                "igSmartFrame2d",
-                "DependencyObject",
-                "SubRecord0x0010",
-                "AttributeFragment"
-            ],
-            "audit-only set must match the no-op emitters in geometry.rs EMITTERS"
+            registry_audit_only, no_op_emitters,
+            "emits_geometry must agree with the emitters themselves"
         );
     }
 }

@@ -1,0 +1,101 @@
+# igTextBox 的 68 字节开销是下界不是常量：33 条记录回到图上
+
+> 日期：2026-08-12
+> 阶段：Phase 40 收尾（改解码器，有行为变化）
+> 上游：`2026-08-11-what-refuses-the-remaining-53.md` §6之二（量出尾巴变长的地方）、
+> `2026-08-11-remaining-header-is-the-psm-aux-field.md`（同一物种的前一例）
+> 产物：`examples/probe_phase40_igtextbox_tail_variants` 的候选规则转正
+
+## TL;DR
+
+`igTextBox` 解码器假设 payload 开销**固定** 68 字节，据此从 `bytes_to_follow`
+反推文本长度，再要求它和记录自己在 `+30` 声明的长度一致。这个 68 是从第一批
+语料量出来的，对 224 条里的 191 条成立——剩下 33 条的尾巴是 68 或 76 字节而不是
+36，反推出的长度自然对不上 `+30`，于是被整条拒收。
+
+改成**信 `+30`、只保留关于记录形状的校验**之后：
+
+| | 改前 | 改后 |
+|---|---:|---:|
+| 语料被接受的 `igTextBox` | 191 | **224**（+33） |
+| golden 里的 `igtextbox` 实体（六图合计） | 191 | **224**（+33） |
+| graphic refused 合计（ratchet 五图） | 71 | **44**（−27） |
+
+两行数字相同不是巧合：每条被接受的记录恰好发一个 `Text` 实体，1:1。
+
+其中 20 条文本可读——**是真的会出现在图纸上的标注**。
+
+## 一、病因：把第一批语料的规律当成格式不变量
+
+这和 S5 退役的 `aux_hi == 12` 是同一个物种。旧规则链：
+
+```rust
+if btf < 68 { return None; }
+if (btf - 68) % 2 != 0 { return None; }
+let derived = (btf - 68) / 2;          // ← 假设开销恒为 68
+...
+if inline_text_length != derived { return None; }   // ← 因此对不上就拒
+```
+
+§6之二 已经把形状量清楚了：**头没变，尾变长了**。被接受的 191 条尾巴无一例外
+正好 36 字节；被拒的那批是 68 或 76，多出的正好是 32 与 40 字节，且多出部分
+结构一致。也就是说这些记录是**普通文本记录后面挂了东西**，不是畸形记录。
+
+## 二、新规则：只问记录自己的形状
+
+```rust
+if btf < IGTEXTBOX_PAYLOAD_OVERHEAD { return None; }   // 68 现在是下界
+...
+let inline_text_length = u16 @ payload+30;             // 信它
+if inline_text_length > IGTEXTBOX_MAX_TEXT_LENGTH { return None; }
+let text_end = 32 + 2 * inline_text_length;
+if text_end + 36 > payload.len() { return None; }      // 要有地方放，不要求正好
+// 3 个 trailing double 有限且在域内
+```
+
+`>` 而不是 `==` 是这次改动的全部：**尾巴更长的是挂了东西的记录，不是坏记录**。
+常量 `IGTEXTBOX_PAYLOAD_OVERHEAD = 68` 保留原名，语义改为「空文本时的最小 payload
+（头 32 + 尾 36）」，注释已就地说明。
+
+被保留的拒收能力：`+30` 是被**相信**而不是被盲从——声明 400 字符而 payload 只放得下
+8 字符的记录仍然被拒（单元测试
+`igtextbox_refuses_a_stated_length_the_payload_cannot_hold` 钉住）。
+
+## 三、验证：只有 igTextBox 变了
+
+golden snapshot 重新 bless 后逐族点数，**其它每一族分毫未动**：
+
+| fixture | igtextbox | 其余各族 |
+|---|---|---|
+| `DWG-0201GP06-01` | 45 → 53（+8） | 全部不变 |
+| `DWG-0202GP06-01` | 45 → 51（+6） | 全部不变 |
+| `工艺管道及仪表流程-1` | 43 → 56（+13） | 全部不变 |
+| `publish-DWG-0202GP06-01` | 45 → 51（+6） | 全部不变 |
+| `D06` | 4 → 4 | 全部不变 |
+| `publish-A01` | 9 → 9 | 全部不变 |
+| 合计 | 191 → **224**（+33） | — |
+
++33 与探针预测的 33 条精确吻合。记录的 `byte_range` 仍由 `bytes_to_follow` 决定，
+所以链走查与 `advance_of` 不受影响——变的只是 payload 内部的解读。
+
+## 四、剩下的拒收是什么
+
+refused 从 71 降到 44，剩下的按病因分三堆：
+
+| 堆 | 条数 | 说明 |
+|---|---:|---|
+| `A01` 的 `/JSite204/Sheet6` 文本 | 18 | **纹丝未动**——不是开销规则拒的，有自己的病因，是语料里最大的单块文本缺口 |
+| `igLineString2d` 退化折线 | 12 | 两顶点完全重合（§5 的总体 C），判为**正确拒收** |
+| 其余零散文本 + 1 条 `DependencyObject` | 14 | 含 `DWG-0201` 那条此前不可见的 `0x00FA`，未归因 |
+
+## 五、下游影响
+
+- `OpenCADStudio` 的 `.pid` 导入多出 33 条 `Text` 实体，落在 `PID-TEXT` 图层，
+  按各自的字高样式排版；导入汇总行的 refused 计数同步变小。
+- 几何以外零影响：线、折线、点、符号、边界、样式链全部未动。
+
+## 六、明确不做
+
+- **`A01` 那 18 条**：与本次开销规则无关，需要独立取证。
+- **`igLineString2d` 的 8+4 条退化折线**：零长折线画不出东西，维持拒收。
+- 尾部多出的 32 / 40 字节**内容**仍未解——本次只承认它们存在，不解释它们是什么。

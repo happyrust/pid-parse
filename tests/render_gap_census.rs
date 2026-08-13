@@ -7,14 +7,19 @@
 //! records fell out of the decoded output and out of the census both, and on
 //! this corpus they outnumbered the named drops 141 to 5.
 //!
-//! Naming them is what got them re-measured. 88 of the 141 were `igLine2d`
-//! refused on `aux_hi != 12` — a rule this crate invented for a PSM envelope
-//! field the native reader discards — and retiring it left 53. The counts
+//! Naming them is what got them re-measured, twice over. 88 of the 141 were
+//! `igLine2d` refused on `aux_hi != 12` — a rule this crate invented for a PSM
+//! envelope field the native reader discards — and retiring it left 53. Then
+//! the census stopped letting a scan-based family's over-claim shadow a later
+//! record's start, which surfaced 23 more (71), and retiring `igTextBox`'s
+//! fixed-68 overhead decoded 33 records that had been refusals (44). The counts
 //! below are the measurement, pinned. They are expected to move when a decoder
 //! learns a shape it used to refuse; they are not expected to move quietly. See
 //! `docs/analysis/2026-08-10-the-silent-bucket-is-refusals-not-unknowns.md`,
-//! `docs/analysis/2026-08-11-remaining-header-is-the-psm-aux-field.md`, and
-//! `examples/probe_phase40_render_gap_census`.
+//! `docs/analysis/2026-08-11-remaining-header-is-the-psm-aux-field.md`,
+//! `docs/analysis/2026-08-12-census-claims-are-starts-not-covers.md`,
+//! `docs/analysis/2026-08-12-igtextbox-overhead-is-a-floor-not-a-constant.md`,
+//! and `examples/probe_phase40_render_gap_census`.
 //!
 //! Fixtures soft-skip when absent, mirroring `tests/parse_real_files.rs`.
 
@@ -23,17 +28,23 @@ use pid_parse::{build_normalized_geometry, PidParser};
 /// `(fixture, refused graphic records, undecoded graphic records)` — both
 /// counted in records, not in `(stream, type code)` groups.
 const EXPECTED: &[(&str, usize, usize)] = &[
-    // Four text records in one shape its decoder refuses.
-    ("DWG-0201GP06-01.pid", 4, 0),
-    // Five refused text on /Sheet6. /Sheet6615's four lines now decode, so
-    // what is left there is the one undecodable rectangle.
-    ("DWG-0202GP06-01.pid", 5, 1),
-    ("工艺管道及仪表流程-1.pid", 21, 0),
+    // The one refused DependencyObject. No text is refused anywhere in the
+    // corpus any more: reading the native `igTextBox` sub-type layout
+    // decoded all 260 records of that family, so every remaining refusal
+    // below is a polyline or the 0x00FA.
+    ("DWG-0201GP06-01.pid", 1, 0),
+    // 4 refused linestrings on /Sheet6; /Sheet6615's one undecodable
+    // rectangle is the dropped record.
+    ("DWG-0202GP06-01.pid", 4, 1),
+    // 8 refused linestrings — population C (degenerate two-vertex), judged
+    // a correct refusal.
+    ("工艺管道及仪表流程-1.pid", 8, 0),
     // The one clean sheet in the corpus.
     ("D06.pid", 0, 0),
-    // 18 refused text on /JSite204/Sheet6. The 80 refused lines that used to
-    // sit beside them were this drawing's page border, and they draw now.
-    ("export-test/publish-data/A01/A01.pid", 18, 3),
+    // Clean since the sub-type layout landed: the 18 text records that used
+    // to sit here were all sub-type 1 or 3, refused only because the decoder
+    // looked for their count at sub-type 2's offset.
+    ("export-test/publish-data/A01/A01.pid", 0, 3),
 ];
 
 /// `(fixture, decoded `igLine2d` records)` — the other side of the same

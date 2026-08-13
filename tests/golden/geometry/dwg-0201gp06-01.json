@@ -8001,6 +8001,189 @@
   },
   {
     "id": "/Sheet6:igtextbox:9",
+    "graphic_oid": 546,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5123988550045462,
+        "y": 0.3759281714965551
+      },
+      "value": "MPag",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 3947,
+        "end": 4069
+      },
+      "record_id": "igtextbox:9",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=546 parent_ref=1212 sub_type=0x0010 index=94 text_length=4 text=\"MPag\" insertion=(0.5124, 0.3759) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:10",
+    "graphic_oid": 548,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.476215214061205,
+        "y": 0.4011895574363559
+      },
+      "value": "设备位号",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 4069,
+        "end": 4143
+      },
+      "record_id": "igtextbox:10",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=548 parent_ref=1212 sub_type=0x0010 index=99 text_length=4 text=\"设备位号\" insertion=(0.4762, 0.4012) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:11",
+    "graphic_oid": 550,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.07400514713367669,
+        "y": 0.2835403069015206
+      },
+      "value": " ",
+      "height": 0.0,
+      "rotation": 1.5707963267953131
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 4143,
+        "end": 4251
+      },
+      "record_id": "igtextbox:11",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=550 parent_ref=573 sub_type=0x0010 index=31 text_length=1 text=\" \" insertion=(0.0740, 0.2835) trailing_3=-0.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:12",
     "graphic_oid": 559,
     "kind": {
       "kind": "text",
@@ -8010,7 +8193,7 @@
       },
       "value": "DWG-0201GP06-01",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 1.5707963267953131
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8054,14 +8237,14 @@
         "start": 4251,
         "end": 4355
       },
-      "record_id": "igtextbox:9",
+      "record_id": "igtextbox:12",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=559 parent_ref=573 sub_type=0x0010 index=30 text_length=15 text=\"DWG-0201GP06-01\" insertion=(0.0818, 0.2819) trailing_3=-0.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:10",
+    "id": "/Sheet6:igtextbox:13",
     "graphic_oid": 572,
     "kind": {
       "kind": "text",
@@ -8071,7 +8254,7 @@
       },
       "value": "283",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 1.5707963267953131
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8115,14 +8298,75 @@
         "start": 4355,
         "end": 4435
       },
-      "record_id": "igtextbox:10",
+      "record_id": "igtextbox:13",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=572 parent_ref=573 sub_type=0x0010 index=30 text_length=3 text=\"283\" insertion=(0.0819, 0.3016) trailing_3=-0.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:11",
+    "id": "/Sheet6:igtextbox:14",
+    "graphic_oid": 574,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5142741308012533,
+        "y": 0.35714492124010794
+      },
+      "value": "℃",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 4551,
+        "end": 4667
+      },
+      "record_id": "igtextbox:14",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=574 parent_ref=1212 sub_type=0x0010 index=94 text_length=1 text=\"℃\" insertion=(0.5143, 0.3571) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:15",
     "graphic_oid": 596,
     "kind": {
       "kind": "text",
@@ -8176,14 +8420,14 @@
         "start": 4723,
         "end": 4805
       },
-      "record_id": "igtextbox:11",
+      "record_id": "igtextbox:15",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=596 parent_ref=1212 sub_type=0x0010 index=99 text_length=4 text=\"设计温度\" insertion=(0.4762, 0.3692) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:12",
+    "id": "/Sheet6:igtextbox:16",
     "graphic_oid": 608,
     "kind": {
       "kind": "text",
@@ -8237,14 +8481,14 @@
         "start": 5045,
         "end": 5123
       },
-      "record_id": "igtextbox:12",
+      "record_id": "igtextbox:16",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=608 parent_ref=613 sub_type=0x0010 index=38 text_length=2 text=\"人孔\" insertion=(0.3421, 0.2455) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:13",
+    "id": "/Sheet6:igtextbox:17",
     "graphic_oid": 615,
     "kind": {
       "kind": "text",
@@ -8298,14 +8542,14 @@
         "start": 5227,
         "end": 5309
       },
-      "record_id": "igtextbox:13",
+      "record_id": "igtextbox:17",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=615 parent_ref=1212 sub_type=0x0010 index=99 text_length=4 text=\"操作温度\" insertion=(0.4762, 0.3565) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:14",
+    "id": "/Sheet6:igtextbox:18",
     "graphic_oid": 626,
     "kind": {
       "kind": "text",
@@ -8359,14 +8603,14 @@
         "start": 5488,
         "end": 5568
       },
-      "record_id": "igtextbox:14",
+      "record_id": "igtextbox:18",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=626 parent_ref=627 sub_type=0x0010 index=22 text_length=3 text=\"量油孔\" insertion=(0.3957, 0.2440) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:15",
+    "id": "/Sheet6:igtextbox:19",
     "graphic_oid": 744,
     "kind": {
       "kind": "text",
@@ -8420,14 +8664,14 @@
         "start": 11760,
         "end": 11838
       },
-      "record_id": "igtextbox:15",
+      "record_id": "igtextbox:19",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=744 parent_ref=1212 sub_type=0x0010 index=99 text_length=2 text=\"说明\" insertion=(0.4762, 0.3946) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:16",
+    "id": "/Sheet6:igtextbox:20",
     "graphic_oid": 745,
     "kind": {
       "kind": "text",
@@ -8481,14 +8725,14 @@
         "start": 11838,
         "end": 11922
       },
-      "record_id": "igtextbox:16",
+      "record_id": "igtextbox:20",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=745 parent_ref=1212 sub_type=0x0010 index=90 text_length=5 text=\"06D01\" insertion=(0.5280, 0.3944) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:17",
+    "id": "/Sheet6:igtextbox:21",
     "graphic_oid": 803,
     "kind": {
       "kind": "text",
@@ -8498,7 +8742,7 @@
       },
       "value": "WW-100- -0101-1.6AR12-N ",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 1.5707963267949
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8542,14 +8786,14 @@
         "start": 13992,
         "end": 14114
       },
-      "record_id": "igtextbox:17",
+      "record_id": "igtextbox:21",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=803 parent_ref=801 sub_type=0x0010 index=47 text_length=24 text=\"WW-100- -0101-1.6AR12-N \" insertion=(0.0805, 0.2435) trailing_3=-0.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:18",
+    "id": "/Sheet6:igtextbox:22",
     "graphic_oid": 818,
     "kind": {
       "kind": "text",
@@ -8559,7 +8803,7 @@
       },
       "value": "WW-100-06-0101-1.6AR12-N ",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 2.3092638912203256e-14
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8603,14 +8847,14 @@
         "start": 14286,
         "end": 14410
       },
-      "record_id": "igtextbox:18",
+      "record_id": "igtextbox:22",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=818 parent_ref=816 sub_type=0x0010 index=47 text_length=25 text=\"WW-100-06-0101-1.6AR12-N \" insertion=(0.2639, 0.2167) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:19",
+    "id": "/Sheet6:igtextbox:23",
     "graphic_oid": 846,
     "kind": {
       "kind": "text",
@@ -8620,7 +8864,7 @@
       },
       "value": "i=0.3 %",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 2.3092638912203256e-14
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8664,14 +8908,14 @@
         "start": 14768,
         "end": 14856
       },
-      "record_id": "igtextbox:19",
+      "record_id": "igtextbox:23",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=846 parent_ref=837 sub_type=0x0010 index=51 text_length=7 text=\"i=0.3 %\" insertion=(0.2771, 0.2283) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:20",
+    "id": "/Sheet6:igtextbox:24",
     "graphic_oid": 859,
     "kind": {
       "kind": "text",
@@ -8681,7 +8925,7 @@
       },
       "value": "WWWATER0101100 MM1.6AR12N",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 1.5707963267949
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8725,14 +8969,14 @@
         "start": 15046,
         "end": 15170
       },
-      "record_id": "igtextbox:20",
+      "record_id": "igtextbox:24",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=859 parent_ref=857 sub_type=0x0010 index=54 text_length=25 text=\"WWWATER0101100 MM1.6AR12N\" insertion=(0.0831, 0.2286) trailing_3=-0.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:21",
+    "id": "/Sheet6:igtextbox:25",
     "graphic_oid": 879,
     "kind": {
       "kind": "text",
@@ -8786,14 +9030,14 @@
         "start": 15510,
         "end": 15604
       },
-      "record_id": "igtextbox:21",
+      "record_id": "igtextbox:25",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=879 parent_ref=877 sub_type=0x0010 index=58 text_length=10 text=\"  A3-06D01\" insertion=(0.3700, 0.2040) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:22",
+    "id": "/Sheet6:igtextbox:26",
     "graphic_oid": 891,
     "kind": {
       "kind": "text",
@@ -8847,14 +9091,14 @@
         "start": 15776,
         "end": 15870
       },
-      "record_id": "igtextbox:22",
+      "record_id": "igtextbox:26",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=891 parent_ref=889 sub_type=0x0010 index=63 text_length=10 text=\"  BV060101\" insertion=(0.4514, 0.2514) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:23",
+    "id": "/Sheet6:igtextbox:27",
     "graphic_oid": 902,
     "kind": {
       "kind": "text",
@@ -8864,7 +9108,7 @@
       },
       "value": "LFL- -06-0101-1.6AR12-WE ",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 1.5707963267948915
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8908,14 +9152,14 @@
         "start": 16042,
         "end": 16166
       },
-      "record_id": "igtextbox:23",
+      "record_id": "igtextbox:27",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=902 parent_ref=900 sub_type=0x0010 index=47 text_length=25 text=\"LFL- -06-0101-1.6AR12-WE \" insertion=(0.4137, 0.2644) trailing_3=0.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:24",
+    "id": "/Sheet6:igtextbox:28",
     "graphic_oid": 917,
     "kind": {
       "kind": "text",
@@ -8969,14 +9213,14 @@
         "start": 16338,
         "end": 16464
       },
-      "record_id": "igtextbox:24",
+      "record_id": "igtextbox:28",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=917 parent_ref=915 sub_type=0x0010 index=47 text_length=26 text=\"WW-100-06-0102-1.6AR12-WE \" insertion=(0.4541, 0.2402) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:25",
+    "id": "/Sheet6:igtextbox:29",
     "graphic_oid": 934,
     "kind": {
       "kind": "text",
@@ -9030,14 +9274,14 @@
         "start": 16636,
         "end": 16730
       },
-      "record_id": "igtextbox:25",
+      "record_id": "igtextbox:29",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=934 parent_ref=931 sub_type=0x0010 index=51 text_length=10 text=\"H=1600 mm \" insertion=(0.3704, 0.2856) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:26",
+    "id": "/Sheet6:igtextbox:30",
     "graphic_oid": 943,
     "kind": {
       "kind": "text",
@@ -9091,14 +9335,14 @@
         "start": 16902,
         "end": 16994
       },
-      "record_id": "igtextbox:26",
+      "record_id": "igtextbox:30",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=943 parent_ref=941 sub_type=0x0010 index=51 text_length=9 text=\"L=300 mm \" insertion=(0.3701, 0.2808) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:27",
+    "id": "/Sheet6:igtextbox:31",
     "graphic_oid": 1114,
     "kind": {
       "kind": "text",
@@ -9152,14 +9396,75 @@
         "start": 24532,
         "end": 24608
       },
-      "record_id": "igtextbox:27",
+      "record_id": "igtextbox:31",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1114 parent_ref=3393 sub_type=0x0010 index=120 text_length=1 text=\" \" insertion=(0.5045, 0.0152) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:28",
+    "id": "/Sheet6:igtextbox:32",
+    "graphic_oid": 1159,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5044508129546196,
+        "y": 0.026617124598989114
+      },
+      "value": "",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 24608,
+        "end": 24674
+      },
+      "record_id": "igtextbox:32",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1159 parent_ref=3393 sub_type=0x0010 index=127 text_length=0 text=\"\" insertion=(0.5045, 0.0266) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:33",
     "graphic_oid": 1175,
     "kind": {
       "kind": "text",
@@ -9213,14 +9518,14 @@
         "start": 24674,
         "end": 24750
       },
-      "record_id": "igtextbox:28",
+      "record_id": "igtextbox:33",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1175 parent_ref=1212 sub_type=0x0010 index=89 text_length=1 text=\" \" insertion=(0.5279, 0.3627) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:29",
+    "id": "/Sheet6:igtextbox:34",
     "graphic_oid": 1185,
     "kind": {
       "kind": "text",
@@ -9274,14 +9579,75 @@
         "start": 24750,
         "end": 24838
       },
-      "record_id": "igtextbox:29",
+      "record_id": "igtextbox:34",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1185 parent_ref=3393 sub_type=0x0010 index=120 text_length=7 text=\"DD24024\" insertion=(0.5379, 0.0275) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:30",
+    "id": "/Sheet6:igtextbox:35",
+    "graphic_oid": 1187,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5152085016686019,
+        "y": 0.38229123962057393
+      },
+      "value": "m",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 24838,
+        "end": 24954
+      },
+      "record_id": "igtextbox:35",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1187 parent_ref=1212 sub_type=0x0010 index=94 text_length=1 text=\"m\" insertion=(0.5152, 0.3823) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:36",
     "graphic_oid": 1210,
     "kind": {
       "kind": "text",
@@ -9335,14 +9701,75 @@
         "start": 25066,
         "end": 25142
       },
-      "record_id": "igtextbox:30",
+      "record_id": "igtextbox:36",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1210 parent_ref=1212 sub_type=0x0010 index=90 text_length=1 text=\"~\" insertion=(0.5285, 0.3687) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:31",
+    "id": "/Sheet6:igtextbox:37",
+    "graphic_oid": 1213,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.52833271962319,
+        "y": 0.37561852948023605
+      },
+      "value": "",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 25480,
+        "end": 25546
+      },
+      "record_id": "igtextbox:37",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1213 parent_ref=1212 sub_type=0x0010 index=90 text_length=0 text=\"\" insertion=(0.5283, 0.3756) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:38",
     "graphic_oid": 1215,
     "kind": {
       "kind": "text",
@@ -9396,14 +9823,14 @@
         "start": 25546,
         "end": 25636
       },
-      "record_id": "igtextbox:31",
+      "record_id": "igtextbox:38",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1215 parent_ref=1212 sub_type=0x0010 index=90 text_length=8 text=\"A3-06D01\" insertion=(0.5280, 0.4007) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:32",
+    "id": "/Sheet6:igtextbox:39",
     "graphic_oid": 1227,
     "kind": {
       "kind": "text",
@@ -9457,14 +9884,75 @@
         "start": 25636,
         "end": 25718
       },
-      "record_id": "igtextbox:32",
+      "record_id": "igtextbox:39",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1227 parent_ref=1212 sub_type=0x0010 index=99 text_length=4 text=\"设计压力\" insertion=(0.4762, 0.3758) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:33",
+    "id": "/Sheet6:igtextbox:40",
+    "graphic_oid": 1231,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5122463935576596,
+        "y": 0.3501621869726949
+      },
+      "value": "-/mm",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 25830,
+        "end": 25952
+      },
+      "record_id": "igtextbox:40",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1231 parent_ref=1212 sub_type=0x0010 index=94 text_length=4 text=\"-/mm\" insertion=(0.5122, 0.3502) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:41",
     "graphic_oid": 1233,
     "kind": {
       "kind": "text",
@@ -9518,14 +10006,14 @@
         "start": 26008,
         "end": 26090
       },
-      "record_id": "igtextbox:33",
+      "record_id": "igtextbox:41",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1233 parent_ref=1212 sub_type=0x0010 index=99 text_length=4 text=\"处理规模\" insertion=(0.4762, 0.3885) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:34",
+    "id": "/Sheet6:igtextbox:42",
     "graphic_oid": 1234,
     "kind": {
       "kind": "text",
@@ -9579,14 +10067,14 @@
         "start": 26090,
         "end": 26172
       },
-      "record_id": "igtextbox:34",
+      "record_id": "igtextbox:42",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1234 parent_ref=1212 sub_type=0x0010 index=99 text_length=4 text=\"操作压力\" insertion=(0.4762, 0.3631) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:35",
+    "id": "/Sheet6:igtextbox:43",
     "graphic_oid": 1239,
     "kind": {
       "kind": "text",
@@ -9640,14 +10128,258 @@
         "start": 26172,
         "end": 26254
       },
-      "record_id": "igtextbox:35",
+      "record_id": "igtextbox:43",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1239 parent_ref=1212 sub_type=0x0010 index=99 text_length=4 text=\"设备规格\" insertion=(0.4762, 0.3819) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:36",
+    "id": "/Sheet6:igtextbox:44",
+    "graphic_oid": 1241,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5123988550045462,
+        "y": 0.36296894851118167
+      },
+      "value": "MPag",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 26254,
+        "end": 26376
+      },
+      "record_id": "igtextbox:44",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1241 parent_ref=1212 sub_type=0x0010 index=94 text_length=4 text=\"MPag\" insertion=(0.5124, 0.3630) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:45",
+    "graphic_oid": 1243,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5193011361751685,
+        "y": 0.38831444137777593
+      },
+      "value": "3",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 26432,
+        "end": 26500
+      },
+      "record_id": "igtextbox:45",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1243 parent_ref=1212 sub_type=0x0010 index=95 text_length=1 text=\"3\" insertion=(0.5193, 0.3883) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:46",
+    "graphic_oid": 1257,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5152085016686019,
+        "y": 0.3885421589429306
+      },
+      "value": "m",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 26556,
+        "end": 26672
+      },
+      "record_id": "igtextbox:46",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1257 parent_ref=1212 sub_type=0x0010 index=94 text_length=1 text=\"m\" insertion=(0.5152, 0.3885) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:47",
+    "graphic_oid": 1270,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.514380853814074,
+        "y": 0.36952479072731176
+      },
+      "value": "℃",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 26672,
+        "end": 26788
+      },
+      "record_id": "igtextbox:47",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1270 parent_ref=1212 sub_type=0x0010 index=94 text_length=1 text=\"℃\" insertion=(0.5144, 0.3695) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:48",
     "graphic_oid": 1271,
     "kind": {
       "kind": "text",
@@ -9701,14 +10433,14 @@
         "start": 26788,
         "end": 26876
       },
-      "record_id": "igtextbox:36",
+      "record_id": "igtextbox:48",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1271 parent_ref=1212 sub_type=0x0010 index=99 text_length=7 text=\"保温类型和厚度\" insertion=(0.4762, 0.3501) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:37",
+    "id": "/Sheet6:igtextbox:49",
     "graphic_oid": 1301,
     "kind": {
       "kind": "text",
@@ -9762,14 +10494,14 @@
         "start": 26938,
         "end": 27014
       },
-      "record_id": "igtextbox:37",
+      "record_id": "igtextbox:49",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1301 parent_ref=1212 sub_type=0x0010 index=18 text_length=1 text=\" \" insertion=(0.5286, 0.3883) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:38",
+    "id": "/Sheet6:igtextbox:50",
     "graphic_oid": 1863,
     "kind": {
       "kind": "text",
@@ -9823,14 +10555,14 @@
         "start": 27126,
         "end": 27234
       },
-      "record_id": "igtextbox:38",
+      "record_id": "igtextbox:50",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=1863 parent_ref=3393 sub_type=0x0010 index=115 text_length=17 text=\"沁水煤层气田安泽区块安13井区开发\" insertion=(0.5260, 0.0596) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:39",
+    "id": "/Sheet6:igtextbox:51",
     "graphic_oid": 3288,
     "kind": {
       "kind": "text",
@@ -9884,14 +10616,75 @@
         "start": 27400,
         "end": 27524
       },
-      "record_id": "igtextbox:39",
+      "record_id": "igtextbox:51",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=3288 parent_ref=3393 sub_type=0x0010 index=120 text_length=25 text=\"DD24024-DWG-0201GP06-01- \" insertion=(0.4894, 0.0069) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:40",
+    "id": "/Sheet6:igtextbox:52",
+    "graphic_oid": 3375,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5044508129546192,
+        "y": 0.020902124598989116
+      },
+      "value": "~",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 27580,
+        "end": 27648
+      },
+      "record_id": "igtextbox:52",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=3375 parent_ref=3393 sub_type=0x0010 index=118 text_length=1 text=\"~\" insertion=(0.5045, 0.0209) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:53",
     "graphic_oid": 3379,
     "kind": {
       "kind": "text",
@@ -9945,14 +10738,14 @@
         "start": 27704,
         "end": 27780
       },
-      "record_id": "igtextbox:40",
+      "record_id": "igtextbox:53",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=3379 parent_ref=3393 sub_type=0x0010 index=90 text_length=1 text=\" \" insertion=(0.5335, 0.0173) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:41",
+    "id": "/Sheet6:igtextbox:54",
     "graphic_oid": 3380,
     "kind": {
       "kind": "text",
@@ -10006,14 +10799,14 @@
         "start": 27780,
         "end": 27884
       },
-      "record_id": "igtextbox:41",
+      "record_id": "igtextbox:54",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=3380 parent_ref=3393 sub_type=0x0010 index=120 text_length=15 text=\"DWG-0201GP06-01\" insertion=(0.5451, 0.0209) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:42",
+    "id": "/Sheet6:igtextbox:55",
     "graphic_oid": 3401,
     "kind": {
       "kind": "text",
@@ -10067,14 +10860,14 @@
         "start": 28058,
         "end": 28134
       },
-      "record_id": "igtextbox:42",
+      "record_id": "igtextbox:55",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=3401 parent_ref=3393 sub_type=0x0010 index=119 text_length=1 text=\" \" insertion=(0.5775, 0.0150) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:43",
+    "id": "/Sheet6:igtextbox:56",
     "graphic_oid": 3404,
     "kind": {
       "kind": "text",
@@ -10128,14 +10921,75 @@
         "start": 28134,
         "end": 28210
       },
-      "record_id": "igtextbox:43",
+      "record_id": "igtextbox:56",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=3404 parent_ref=3393 sub_type=0x0010 index=124 text_length=1 text=\" \" insertion=(0.5260, 0.0425) trailing_3=1.0000; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:igtextbox:44",
+    "id": "/Sheet6:igtextbox:57",
+    "graphic_oid": 3882,
+    "kind": {
+      "kind": "text",
+      "insertion": {
+        "x": 0.5076967760194369,
+        "y": 0.3335278855073188
+      },
+      "value": "说 明",
+      "height": 0.0,
+      "rotation": 0.0
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5943050477653735,
+            "y": 0.42031372524797916
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 28210,
+        "end": 28282
+      },
+      "record_id": "igtextbox:57",
+      "record_kind": "text_placement_style",
+      "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=3882 parent_ref=1946 sub_type=0x0010 index=103 text_length=3 text=\"说 明\" insertion=(0.5077, 0.3335) trailing_3=1.0000; byte layout from fixture dump"
+    },
+    "confidence": "decoded"
+  },
+  {
+    "id": "/Sheet6:igtextbox:58",
     "graphic_oid": 4494,
     "kind": {
       "kind": "text",
@@ -10189,7 +11043,7 @@
         "start": 28282,
         "end": 28358
       },
-      "record_id": "igtextbox:44",
+      "record_id": "igtextbox:58",
       "record_kind": "text_placement_style",
       "note": "PSM igTextBox record (Intergraph Sigma standard text annotation, type 0x004D, IGDS class tag 0x4D); oid=4494 parent_ref=1946 sub_type=0x0010 index=40 text_length=1 text=\" \" insertion=(0.4759, 0.3189) trailing_3=1.0000; byte layout from fixture dump"
     },

@@ -1007,6 +1007,26 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
 ///   CONTEXT.md, promoting an audit-only family to emission is an
 ///   evidence-gated decision, never a refactor side effect.
 trait GeometryEmitter {
+    /// The [`crate::model::sheet_families::SheetRecordFamily::name`]
+    /// this emitter serves.
+    // Read only by the registry policy test via `emitter_families`.
+    #[allow(dead_code)]
+    fn family(&self) -> &'static str;
+
+    /// Whether this emitter is a deliberate no-op (audit-only family).
+    ///
+    /// Declared beside [`GeometryEmitter::emit`] so the claim and the
+    /// behaviour sit one code review apart, and exported through
+    /// [`emitter_families`] so the registry's `emits_geometry` flag is
+    /// tested against the emitters themselves rather than against a
+    /// second hand-written copy of the same claim — `igBoundary2d`
+    /// drifted exactly that way when fills landed.
+    // Read only by the registry policy test via `emitter_families`.
+    #[allow(dead_code)]
+    fn is_no_op(&self) -> bool {
+        false
+    }
+
     /// Append this family's entities for `sheet` onto `out`. `ctx`
     /// carries document-level lookups shared by the whole pass.
     fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>);
@@ -1065,12 +1085,37 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     &IgLineString2dEmitter,
     &IgLine2dEmitter,
     &JStyleOverrideEmitter,
-    // Audit-only families: explicit no-op policy.
+    // Emits since fills landed: a boundary ring whose style resolves to
+    // a `JStyleSimpleFill` is an area the member lines cannot express.
+    // It stays in this position — after the historical emitting block —
+    // because the table order is part of the golden-snapshot contract.
     &IgBoundary2dEmitter,
+    // Audit-only families: explicit no-op policy.
+    &IgSmartFrame2dEmitter,
     &DependencyObjectEmitter,
     &SubRecord0x0010Emitter,
     &AttributeFragmentEmitter,
 ];
+
+/// `(family name, is_no_op)` for every registered emitter, in table
+/// order — one row per [`crate::model::sheet_families::SHEET_RECORD_FAMILIES`]
+/// entry.
+///
+/// This is the emitters' own statement of the emission policy. The
+/// registry's `emits_geometry` flag is the *claim*; the emitter is the
+/// *behaviour*; `model::sheet_families`' policy test holds the two
+/// against each other through this function, so a family cannot start
+/// emitting while the registry still calls it audit-only.
+// Its only caller is that `#[cfg(test)]` policy test, so the non-test
+// build sees it as dead; the precedent for keeping it visible is the
+// documented-intent `allow` in `bin/pid_backup_extract.rs`.
+#[allow(dead_code)]
+pub(crate) fn emitter_families() -> Vec<(&'static str, bool)> {
+    EMITTERS
+        .iter()
+        .map(|emitter| (emitter.family(), emitter.is_no_op()))
+        .collect()
+}
 
 /// Emits `Decoded` [`PidGraphicKind::Line`] entities for the
 /// `SmartPlant` extended `GLine2d` family (PSM `0x3FE6`), converting
@@ -1078,6 +1123,10 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
 struct GLine2dEmitter;
 
 impl GeometryEmitter for GLine2dEmitter {
+    fn family(&self) -> &'static str {
+        "GLine2d"
+    }
+
     fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
@@ -1155,6 +1204,10 @@ fn decompose_placement(matrix: [f64; 4]) -> (f64, [f64; 2]) {
 }
 
 impl GeometryEmitter for IgSymbol2dEmitter {
+    fn family(&self) -> &'static str {
+        "igSymbol2d"
+    }
+
     fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
@@ -1226,6 +1279,10 @@ impl GeometryEmitter for IgSymbol2dEmitter {
 struct IgTextBoxEmitter;
 
 impl GeometryEmitter for IgTextBoxEmitter {
+    fn family(&self) -> &'static str {
+        "igTextBox"
+    }
+
     fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
@@ -1249,7 +1306,7 @@ impl GeometryEmitter for IgTextBoxEmitter {
                     },
                     value: record.text.clone(),
                     height: 0.0,
-                    rotation: 0.0,
+                    rotation: record.rotation_rad,
                 },
                 coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
@@ -1286,6 +1343,10 @@ impl GeometryEmitter for IgTextBoxEmitter {
 struct IgPoint2dEmitter;
 
 impl GeometryEmitter for IgPoint2dEmitter {
+    fn family(&self) -> &'static str {
+        "igPoint2d"
+    }
+
     fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
@@ -1339,6 +1400,10 @@ impl GeometryEmitter for IgPoint2dEmitter {
 struct IgLineString2dEmitter;
 
 impl GeometryEmitter for IgLineString2dEmitter {
+    fn family(&self) -> &'static str {
+        "igLineString2d"
+    }
+
     fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
@@ -1401,6 +1466,10 @@ impl GeometryEmitter for IgLineString2dEmitter {
 struct IgLine2dEmitter;
 
 impl GeometryEmitter for IgLine2dEmitter {
+    fn family(&self) -> &'static str {
+        "igLine2d"
+    }
+
     fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
@@ -1477,6 +1546,10 @@ impl GeometryEmitter for IgLine2dEmitter {
 struct JStyleOverrideEmitter;
 
 impl GeometryEmitter for JStyleOverrideEmitter {
+    fn family(&self) -> &'static str {
+        "JStyleOverride"
+    }
+
     fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
@@ -1553,6 +1626,10 @@ impl GeometryEmitter for JStyleOverrideEmitter {
 struct IgBoundary2dEmitter;
 
 impl GeometryEmitter for IgBoundary2dEmitter {
+    fn family(&self) -> &'static str {
+        "igBoundary2d"
+    }
+
     fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
         let Some(geometry) = &sheet.geometry else {
             return;
@@ -1611,12 +1688,41 @@ impl GeometryEmitter for IgBoundary2dEmitter {
     }
 }
 
+/// No-op emitter: `igSmartFrame2d` (PSM `0x003D`) is the sheet's OLE
+/// container frame. It contributes the page extent every decoded
+/// coordinate is read against (see [`decoded_page_frame`]) rather than
+/// drawable geometry of its own, so its emission policy is a deliberate
+/// no-op — registered, per the module contract, so the policy is
+/// visible in [`EMITTERS`] instead of implied by absence.
+struct IgSmartFrame2dEmitter;
+
+impl GeometryEmitter for IgSmartFrame2dEmitter {
+    fn family(&self) -> &'static str {
+        "igSmartFrame2d"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
+    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    }
+}
+
 /// No-op emitter: `DependencyObject` (PSM `0x00FA`) is an audit-only
 /// grouping record; child-OID extraction remains an audit-layer
 /// hypothesis, not render geometry.
 struct DependencyObjectEmitter;
 
 impl GeometryEmitter for DependencyObjectEmitter {
+    fn family(&self) -> &'static str {
+        "DependencyObject"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
     fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
     }
 }
@@ -1627,6 +1733,14 @@ impl GeometryEmitter for DependencyObjectEmitter {
 struct SubRecord0x0010Emitter;
 
 impl GeometryEmitter for SubRecord0x0010Emitter {
+    fn family(&self) -> &'static str {
+        "SubRecord0x0010"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
     fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
     }
 }
@@ -1637,6 +1751,14 @@ impl GeometryEmitter for SubRecord0x0010Emitter {
 struct AttributeFragmentEmitter;
 
 impl GeometryEmitter for AttributeFragmentEmitter {
+    fn family(&self) -> &'static str {
+        "AttributeFragment"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
     fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
     }
 }
