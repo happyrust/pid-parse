@@ -217,6 +217,37 @@ pub const TEXT_PARA_CHAR_REFERENCE_OFFSET: usize = 38;
 /// `JStyleTextChar` payload. Level: native-reader.
 pub const TEXT_CHAR_HEIGHT_OFFSET: usize = 42;
 
+/// Offset of the character colour, a Win32 `COLORREF` (`0x00BBGGRR`), within
+/// a `JStyleTextChar` payload.
+///
+/// Level: **native-reader**. `style.dll`'s serialiser (`sub_10030A20`) reads
+/// the record in order and brackets this word between two offsets already at
+/// that level — `+30`, the language id with its `GetKeyboardLayout(0)`
+/// fallback, and [`TEXT_CHAR_HEIGHT_OFFSET`] — with `30 + 2 + 2 + 4 + 4 = 42`
+/// closing exactly and leaving no slack. The colour can only be here.
+///
+/// The corpus said the same before the read order was found, and it is what
+/// makes the guide's earlier hypothesis ("holds a `-1` sentinel; the shape
+/// fits a text colour") half right:
+///
+/// * **381 of 381** records read here with a **zero high byte**. An
+///   unconstrained `u32` clears its high byte about once in 256; getting it on
+///   every record means the field is 24-bit by construction, which is what a
+///   `COLORREF` is.
+/// * **No record holds `-1` on disk.** The sentinel is real but lives only in
+///   memory: the serialiser normalises `-1` to `0` on the way through, in both
+///   directions. So reading `0` as black is what the native reader does, not a
+///   convenience of ours.
+/// * The values are a drafting palette — 367 black, then `#FF0000`, `#404040`,
+///   `#FE0060`, `#00FEA0` — and `#FE0060` is a colour the *same drawing* uses
+///   for line work, pinned in `OpenCADStudio`'s import test. An unrelated
+///   field would not land on that.
+/// * Both sibling style families store colour the same way, at
+///   [`SIMPLE_LINE_COLOUR_OFFSET`] and [`SIMPLE_FILL_COLOUR_OFFSET`].
+///
+/// See `docs/analysis/2026-08-13-text-colour-is-002c-plus-34.md`.
+pub const TEXT_CHAR_COLOUR_OFFSET: usize = 34;
+
 /// Smallest and largest character height accepted as real, in metres.
 ///
 /// The corpus lands on recognisable drafting sizes — ISO 3098's 1.5 / 2.5 /
@@ -391,6 +422,9 @@ pub struct StyleRecord {
     /// Fill colour as a raw Win32 `COLORREF`, when this is a
     /// `JStyleSimpleFill` that states one rather than the unset sentinel.
     pub fill_colour: Option<u32>,
+    /// Character colour as a raw Win32 `COLORREF`, when this is a
+    /// `JStyleTextChar` whose [`TEXT_CHAR_COLOUR_OFFSET`] word reads as one.
+    pub text_colour: Option<u32>,
 }
 
 /// PSM type code of `JStyleSimpleFill`, a flat colour fill.
@@ -471,13 +505,23 @@ impl ResolvedFill {
     }
 }
 
-/// A text record's character height, and which style it came from.
+/// A text record's character style: the height it letters at, the colour it
+/// letters in, and which style record they came from.
+///
+/// Both properties ride the same two hops (`igTextBox` names a
+/// `JStyleTextPara`, which names a `JStyleTextChar`), so they are resolved
+/// together rather than through two indexes over the same walk.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResolvedTextHeight {
     /// Style id of the `JStyleTextChar` finally reached.
     pub style_id: u32,
     /// Character height in metres, as stored at [`TEXT_CHAR_HEIGHT_OFFSET`].
     pub height_m: f64,
+    /// Character colour as a raw Win32 `COLORREF` (`0x00BBGGRR`), read at
+    /// [`TEXT_CHAR_COLOUR_OFFSET`]. `None` when the word does not read as one
+    /// — a caller keeps its own default then, the same way an unstated fill
+    /// colour is handled.
+    pub colour: Option<u32>,
 }
 
 impl ResolvedTextHeight {
@@ -486,6 +530,18 @@ impl ResolvedTextHeight {
     #[must_use]
     pub fn height_mm(&self) -> f64 {
         self.height_m * 1000.0
+    }
+
+    /// The stated character colour split into `[R, G, B]`, when it states one.
+    #[must_use]
+    pub fn rgb(&self) -> Option<[u8; 3]> {
+        self.colour.map(|word| {
+            [
+                (word & 0xFF) as u8,
+                ((word >> 8) & 0xFF) as u8,
+                ((word >> 16) & 0xFF) as u8,
+            ]
+        })
     }
 }
 
@@ -544,6 +600,7 @@ impl DocumentStyleTable {
                     dash_reference: read_dash_reference(type_code, payload),
                     dash: read_dash_pattern(type_code, payload),
                     fill_colour: read_fill_colour(type_code, payload),
+                    text_colour: read_text_colour(type_code, payload),
                 };
                 // First writer wins, matching how a reader walking the chain
                 // in order would bind the id.
@@ -645,6 +702,7 @@ impl DocumentStyleTable {
         Some(ResolvedTextHeight {
             style_id: char_style.style_id,
             height_m: char_style.char_height_m?,
+            colour: char_style.text_colour,
         })
     }
 
@@ -777,6 +835,21 @@ fn read_fill_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
     // zero high byte, so anything else is either a sentinel or a misframing —
     // either way not a plain RGB value to be trusted. Both refuse.
     if word == SIMPLE_FILL_COLOUR_UNSET || word >> 24 != 0 {
+        return None;
+    }
+    Some(word)
+}
+
+fn read_text_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_TEXT_CHAR {
+        return None;
+    }
+    let word = u32_at(payload, TEXT_CHAR_COLOUR_OFFSET)?;
+    // Same gate the other two colour readers use: a real COLORREF has a zero
+    // high byte, so a word that sets it is a sentinel or a misframing and is
+    // refused rather than rendered. Every corpus record passes -- 381 of 381
+    // -- which is the measurement that made this field worth reading at all.
+    if word >> 24 != 0 {
         return None;
     }
     Some(word)
@@ -1093,6 +1166,51 @@ mod tests {
         payload[TEXT_CHAR_HEIGHT_OFFSET..TEXT_CHAR_HEIGHT_OFFSET + 8]
             .copy_from_slice(&height_m.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_TEXT_CHAR, payload)
+    }
+
+    fn text_char_of_colour(style_id: u32, colour: u32) -> (u16, Vec<u8>) {
+        let (type_code, mut payload) = text_char_of_height(style_id, 0.003_175);
+        payload[TEXT_CHAR_COLOUR_OFFSET..TEXT_CHAR_COLOUR_OFFSET + 4]
+            .copy_from_slice(&colour.to_le_bytes());
+        (type_code, payload)
+    }
+
+    /// The colour rides the same two hops as the height, so a paragraph style
+    /// resolves both at once.
+    #[test]
+    fn a_paragraph_style_resolves_to_the_colour_of_the_character_style_it_names() {
+        let data = stream(&[text_char_of_colour(4, 0x0000_00FF), text_para(9, 4)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_text_height(9).expect("id 9 is defined");
+        assert_eq!(resolved.style_id, 4);
+        assert_eq!(resolved.colour, Some(0x0000_00FF));
+        assert_eq!(resolved.rgb(), Some([0xFF, 0x00, 0x00]), "COLORREF is BGR");
+    }
+
+    /// Black is a colour a drawing states, not an absent one. 367 of the
+    /// corpus's 381 character styles letter in it, and a renderer that treated
+    /// it as "unstated" would put every one of them back on its layer default.
+    #[test]
+    fn a_character_style_that_letters_in_black_states_a_colour() {
+        let data = stream(&[text_char_of_colour(4, 0)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_text_height(4).expect("defined");
+        assert_eq!(resolved.colour, Some(0));
+        assert_eq!(resolved.rgb(), Some([0, 0, 0]));
+    }
+
+    /// A word with its high byte set is not a `COLORREF`; the caller keeps its
+    /// own default rather than rendering a misframed read.
+    #[test]
+    fn a_character_style_colour_with_a_high_byte_is_refused() {
+        let data = stream(&[text_char_of_colour(4, 0xFFFF_FFFF)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_text_height(4).expect("defined");
+        assert_eq!(resolved.colour, None);
+        assert_eq!(resolved.rgb(), None);
     }
 
     fn text_para(style_id: u32, names: u32) -> (u16, Vec<u8>) {

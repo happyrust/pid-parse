@@ -299,6 +299,57 @@ fn text_reaches_the_height_its_character_style_states() {
     assert_eq!(heights.values().sum::<usize>(), 155);
 }
 
+/// Lettering reaches the colour its character style states, not just its size.
+///
+/// Every label used to render in its layer's default because nothing read a
+/// text colour. `JStyleTextChar +34` holds one, and the corpus is what
+/// established that: 381 of 381 records read there with a zero high byte,
+/// which an unconstrained `u32` does about once in 256. The palette below is
+/// that measurement, pinned -- most lettering is black, and the few stated
+/// colours include `#FE0060`, a value the same drawings use for line work.
+/// See `docs/analysis/2026-08-13-text-colour-is-002c-plus-34.md`.
+#[test]
+fn text_reaches_the_colour_its_character_style_states() {
+    let mut palette: BTreeMap<String, usize> = BTreeMap::new();
+    let mut unstated = 0usize;
+    let mut fixtures_seen = 0usize;
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            continue;
+        }
+        fixtures_seen += 1;
+        let resolved =
+            pid_parse::style_link::text_heights_for_file(path).expect("fixture opens for text");
+        for style in resolved.values() {
+            match style.rgb() {
+                Some([r, g, b]) => *palette.entry(format!("#{r:02X}{g:02X}{b:02X}")).or_default() += 1,
+                None => unstated += 1,
+            }
+        }
+    }
+    if fixtures_seen < EXPECTED.len() {
+        return;
+    }
+
+    assert_eq!(
+        unstated, 0,
+        "every character style the corpus reaches states a colour, got palette {palette:?}"
+    );
+    // The resolved index is narrower than a raw scan of `0x002C`: it holds
+    // only the styles a text record actually reaches whose height is usable,
+    // so 155 of the corpus's 381 character styles. Nearly all of a P&ID
+    // letters in black -- which the renderer flips to white on a dark
+    // background, the same as the drawing's black line work -- and two
+    // labels are stated red.
+    let expected_palette: BTreeMap<String, usize> = [("#000000", 153), ("#FF0000", 2)]
+        .iter()
+        .map(|(key, count)| ((*key).to_string(), *count))
+        .collect();
+    assert_eq!(palette, expected_palette);
+    assert_eq!(palette.values().sum::<usize>(), 155, "one colour per height");
+}
+
 /// The join a renderer performs: entity -> line style, by stream path and oid.
 ///
 /// [`pid_parse::style_link::line_styles_for_file`] keys on
