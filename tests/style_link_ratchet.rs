@@ -350,6 +350,57 @@ fn text_reaches_the_colour_its_character_style_states() {
     assert_eq!(palette.values().sum::<usize>(), 155, "one colour per height");
 }
 
+/// A P&ID does not letter everything from the left, and until now every
+/// consumer had to assume it did.
+///
+/// `JStyleTextPara +35` states the side, with the values Intergraph's own
+/// `Interop.RAD2D.dll` declares (`igHorizontalTextLeft/Center/Right = 0/1/2`).
+/// The counts below are the reason this is worth reading: **76 of the 155
+/// styles the corpus reaches are not left** -- 49% -- so a consumer placing
+/// them all at the insertion point puts half its labels off by half a label.
+/// (Across all 376 paragraph records the share is 38%; the styles text
+/// actually reaches lean further off-left than the file as a whole.) See
+/// `docs/analysis/2026-08-13-text-para-layout-and-justification.md`.
+#[test]
+fn text_reaches_the_side_its_paragraph_letters_from() {
+    use pid_parse::style_link::TextAlignment;
+
+    let mut sides: BTreeMap<String, usize> = BTreeMap::new();
+    let mut fixtures_seen = 0usize;
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            continue;
+        }
+        fixtures_seen += 1;
+        let resolved =
+            pid_parse::style_link::text_heights_for_file(path).expect("fixture opens for text");
+        for style in resolved.values() {
+            let key = match style.alignment {
+                Some(TextAlignment::Left) => "left",
+                Some(TextAlignment::Center) => "center",
+                Some(TextAlignment::Right) => "right",
+                None => "unstated",
+            };
+            *sides.entry(key.to_string()).or_default() += 1;
+        }
+    }
+    if fixtures_seen < EXPECTED.len() {
+        return;
+    }
+
+    // Every style a text record reaches arrives through a paragraph, so none
+    // of them is `unstated`; the one-hop shape that would produce that does
+    // not occur in this corpus.
+    let expected_sides: BTreeMap<String, usize> =
+        [("center", 60), ("left", 79), ("right", 16)]
+            .iter()
+            .map(|(key, count)| ((*key).to_string(), *count))
+            .collect();
+    assert_eq!(sides, expected_sides);
+    assert_eq!(sides.values().sum::<usize>(), 155, "one side per height");
+}
+
 /// The join a renderer performs: entity -> line style, by stream path and oid.
 ///
 /// [`pid_parse::style_link::line_styles_for_file`] keys on

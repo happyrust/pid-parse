@@ -213,6 +213,17 @@ pub const PSM_TYPE_CODE_JSTYLE_TEXT_PARA: u16 = 0x002D;
 /// on the character style.
 pub const TEXT_PARA_CHAR_REFERENCE_OFFSET: usize = 38;
 
+/// Offset of the horizontal alignment, a `u8`, within a `JStyleTextPara`
+/// payload.
+///
+/// Level: **native-reader**. `style.dll`'s serialiser (`sub_100337A0`) reads
+/// the whole 90-byte record in order, and this byte is the fifth field —
+/// immediately before the vertical alignment and four bytes before the
+/// [`TEXT_PARA_CHAR_REFERENCE_OFFSET`] pointer this module already relies on,
+/// which anchors the whole read. It is also one of only two bytes the
+/// `IJStyleTextParaImp` interface exposes with a get/put pair.
+pub const TEXT_PARA_HORIZONTAL_ALIGNMENT_OFFSET: usize = 35;
+
 /// Offset of the character height, an `f64` in metres, within a
 /// `JStyleTextChar` payload. Level: native-reader.
 pub const TEXT_CHAR_HEIGHT_OFFSET: usize = 42;
@@ -413,6 +424,9 @@ pub struct StyleRecord {
     pub char_height_m: Option<f64>,
     /// `JStyleTextChar` this record names, when it is a `JStyleTextPara`.
     pub text_char_reference: Option<u32>,
+    /// Horizontal alignment, when this is a `JStyleTextPara` stating one the
+    /// vendor's enum names.
+    pub text_alignment: Option<TextAlignment>,
     /// `JStyleSimpleDashType` this record names, when it is a
     /// `JStyleSimpleLine` that draws dashed.
     pub dash_reference: Option<u32>,
@@ -505,6 +519,38 @@ impl ResolvedFill {
     }
 }
 
+/// Which side of its insertion point a paragraph letters from.
+///
+/// The values are Intergraph's own, not an interpretation of ours:
+/// `Interop.RAD2D.dll` — the .NET interop assembly shipped beside the readers
+/// — declares `TextHorizontalJustificationConstants` as
+/// `igHorizontalTextLeft = 0`, `igHorizontalTextCenter = 1`,
+/// `igHorizontalTextRight = 2`. The enum continues with three `Shape` variants
+/// (3, 4, 5) that this corpus never uses, so they are refused rather than
+/// guessed at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAlignment {
+    /// `igHorizontalTextLeft`: the insertion point is the left edge.
+    Left,
+    /// `igHorizontalTextCenter`: the insertion point is the centre.
+    Center,
+    /// `igHorizontalTextRight`: the insertion point is the right edge.
+    Right,
+}
+
+impl TextAlignment {
+    /// Read the stated byte, refusing anything the text range does not name.
+    #[must_use]
+    pub fn from_stated(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Left),
+            1 => Some(Self::Center),
+            2 => Some(Self::Right),
+            _ => None,
+        }
+    }
+}
+
 /// A text record's character style: the height it letters at, the colour it
 /// letters in, and which style record they came from.
 ///
@@ -522,6 +568,14 @@ pub struct ResolvedTextHeight {
     /// — a caller keeps its own default then, the same way an unstated fill
     /// colour is handled.
     pub colour: Option<u32>,
+    /// Which side of the insertion point the paragraph letters from, read at
+    /// [`TEXT_PARA_HORIZONTAL_ALIGNMENT_OFFSET`].
+    ///
+    /// Unlike the other two, this comes off the **paragraph** style rather
+    /// than the character style — alignment is a property of the run, not the
+    /// glyphs. So it is `None` for the one-hop shape, where a text record
+    /// names a `JStyleTextChar` outright and there is no paragraph to ask.
+    pub alignment: Option<TextAlignment>,
 }
 
 impl ResolvedTextHeight {
@@ -597,6 +651,7 @@ impl DocumentStyleTable {
                     base_reference: read_base_reference(payload),
                     char_height_m: read_char_height(type_code, payload),
                     text_char_reference: read_text_char_reference(type_code, payload),
+                    text_alignment: read_text_alignment(type_code, payload),
                     dash_reference: read_dash_reference(type_code, payload),
                     dash: read_dash_pattern(type_code, payload),
                     fill_colour: read_fill_colour(type_code, payload),
@@ -703,6 +758,7 @@ impl DocumentStyleTable {
             style_id: char_style.style_id,
             height_m: char_style.char_height_m?,
             colour: char_style.text_colour,
+            alignment: para.text_alignment,
         })
     }
 
@@ -838,6 +894,17 @@ fn read_fill_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
         return None;
     }
     Some(word)
+}
+
+fn read_text_alignment(type_code: u16, payload: &[u8]) -> Option<TextAlignment> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_TEXT_PARA {
+        return None;
+    }
+    // Refusing the `Shape` half of the vendor enum is not caution for its own
+    // sake: those three values mean "align to the shape's box", which needs a
+    // box we do not have. Reading one as a text alignment would place the run
+    // confidently in the wrong place, which is worse than leaving it alone.
+    TextAlignment::from_stated(*payload.get(TEXT_PARA_HORIZONTAL_ALIGNMENT_OFFSET)?)
 }
 
 fn read_text_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
@@ -1219,6 +1286,63 @@ mod tests {
         payload[TEXT_PARA_CHAR_REFERENCE_OFFSET..TEXT_PARA_CHAR_REFERENCE_OFFSET + 4]
             .copy_from_slice(&names.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_TEXT_PARA, payload)
+    }
+
+    fn text_para_aligned(style_id: u32, names: u32, stated: u8) -> (u16, Vec<u8>) {
+        let (type_code, mut payload) = text_para(style_id, names);
+        payload[TEXT_PARA_HORIZONTAL_ALIGNMENT_OFFSET] = stated;
+        (type_code, payload)
+    }
+
+    /// Alignment comes off the paragraph while height and colour come off the
+    /// character style it names, so one walk has to carry both ends.
+    #[test]
+    fn a_paragraph_style_resolves_to_the_side_it_letters_from() {
+        for (stated, expected) in [
+            (0u8, TextAlignment::Left),
+            (1, TextAlignment::Center),
+            (2, TextAlignment::Right),
+        ] {
+            let data = stream(&[
+                text_char_of_height(4, 0.003_175),
+                text_para_aligned(9, 4, stated),
+            ]);
+            let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+            let resolved = table.resolve_text_height(9).expect("id 9 is defined");
+            assert_eq!(resolved.alignment, Some(expected), "stated {stated}");
+            // The hop still lands on the character style for the other two.
+            assert_eq!(resolved.style_id, 4);
+        }
+    }
+
+    /// The vendor enum continues past `Right` into three `Shape` variants that
+    /// align to a box we do not have. Reading one as a text alignment would
+    /// place the run confidently in the wrong place.
+    #[test]
+    fn a_paragraph_style_aligned_to_a_shape_is_refused() {
+        for stated in 3u8..=5 {
+            let data = stream(&[
+                text_char_of_height(4, 0.003_175),
+                text_para_aligned(9, 4, stated),
+            ]);
+            let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+            let resolved = table.resolve_text_height(9).expect("id 9 is defined");
+            assert_eq!(resolved.alignment, None, "stated {stated}");
+        }
+    }
+
+    /// A text record can name a character style outright, skipping the
+    /// paragraph. There is nothing to ask about alignment then, and inventing
+    /// a default would be indistinguishable from a stated left.
+    #[test]
+    fn a_character_style_reached_without_a_paragraph_states_no_alignment() {
+        let data = stream(&[text_char_of_height(4, 0.003_175)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_text_height(4).expect("defined");
+        assert_eq!(resolved.alignment, None);
     }
 
     #[test]

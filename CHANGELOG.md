@@ -17,6 +17,42 @@
   并补上 `igSmartFrame2d` 缺席的显式 no-op emitter；`model/sheet.rs` 与
   `EMITTERS` 表的过期陈述同步改写。
 
+### 原生读序坐实 `JStyleTextPara` 全布局：水平对齐已接线，半数标签不再摆错位置（2026-08-13）
+
+- **序列化器 `style.dll!sub_100337A0`**，用与 `JStyleTextChar` 相同的手法定位（接口
+  get/put 访问器 → 对象槽位 → DoIO 调用者）。`payload == 90` 全语料 **376/376**，
+  读序把每个字节都交代了；已知锚点 `+38`（字符样式指针）落点分毫不差。
+- **`+35` 是水平对齐**，`{0 左, 1 居中, 2 右}`。映射来自 Intergraph 自己的
+  `Interop.RAD2D.dll` 中 `TextHorizontalJustificationConstants`，**不是统计推断**；
+  全语料 `+35` 恰好只取 `{0,1,2}`，Shape 档 `3/4/5` 一条都没有。
+- **实测 `{0: 232, 1: 136, 2: 8}`——144 条（38%）不是左对齐**，而下游把每条标签都按
+  左对齐放在插入点上。这是**位置错**，优先级高于字体名。
+- 同时解出：`+36` 垂直对齐（恒 `igVerticalTextBaseline`）、`+66` 行距倍数
+  （`{1.0: 332, 1.5: 36}`）、其余四个度量恒 `0.0`。
+- **`igTextBox +20` 的 "style-tail tag" 解开**：它是尾块格式选择子（`1`／`2`），语料里
+  kind 2 有 24 条——正是此前记为「尾巴 68/76 字节」的那批。**当前无误读**：放置块在
+  两种 kind 里位置相同（原生两分支调同一辅助传同一指针，且 24 条全部通过单位向量
+  校验）。kind 2 多挂的 32／40 字节仍未解。
+- **形状 3 的 `A`／`B` 不是 doubles**，是带 `1`／`2` 选择子的格式化 run（富文本）。
+- 新增 `examples/probe_text_para_layout`、`examples/probe_igtextbox_tail_kind`。
+  证据：`docs/analysis/2026-08-13-text-para-layout-and-justification.md`。
+
+**接线（同日）**：
+
+- `style_link` 新增 `TextAlignment{Left,Center,Right}` 与
+  `TEXT_PARA_HORIZONTAL_ALIGNMENT_OFFSET`；`ResolvedTextHeight.alignment` 走已有的
+  两跳，**不新建索引表**。注意它取自**段落**而非字符样式（对齐属于 run 不属于字形），
+  所以一跳形状下为 `None`。
+- 拒收枚举里的 `Shape` 三档（3/4/5）：那要求一个我们没有的外框，误读会把 run
+  自信地放到错处。
+- `OpenCADStudio` 的 `apply_text_alignment` 同时调用既有的
+  `sync_text_alignment_point`——TEXT 实体只有在"左对齐+基线"时插入点才是 run 原点，
+  否则原点是 `alignment_point`。**只设枚举不播种对齐点，标签不是偏半个词而是直接
+  掉到原点。**
+- 语料实测：文字能取到的 155 条样式里 **76 条（49%）不是左对齐**
+  （`{center: 60, left: 79, right: 16}`）；`DWG-0201GP06-01` 的 48 条标签里 20 条
+  不是左对齐。两侧各加回归测试锁住这些数，OCS 侧还断言"非左必有对齐点、左必无"。
+
 ### 原生读序坐实 `JStyleTextChar` 全布局：文字颜色升级 native-reader，字体名定位（2026-08-13）
 
 - **序列化器是 `style.dll!sub_10030A20`**。第一轮从 DoIO 调用点反推失败；改从
@@ -35,6 +71,18 @@
 - 新增 `examples/probe_text_char_layout` 作为可复现验证。**尚未接线**：字体名要落到
   渲染需要在文档里建文字样式，是另一件事。
   证据：`docs/analysis/2026-08-13-text-colour-is-002c-plus-34.md` §4。
+
+### 下游修复：OpenCADStudio 的 `.pid` 导入把角度当成了度数（2026-08-13）
+
+- 与本仓无关的消费侧缺陷，但由本仓解出旋转角**触发可见**，记在此处以便对照：
+  `OpenCADStudio` 的 `src/io/pid.rs` 有六处在写入时调 `to_degrees()`，而该应用的
+  内存模型**通篇用弧度**（它的 `fix_dxf_dimension_rotations` 正是为把 DXF 读到的
+  度数转成弧度而存在）。
+- 此前不可见，因为本仓一直把文字旋转硬编码为 `0.0`，而 `0.0.to_degrees()` 仍是
+  `0.0`。解出真实旋转后，一个直角变成了 **90 弧度**（渲染为 116°）。符号库的弧线
+  与符号内部标签则是一直错着的。
+- 六处已全部修正并加回归测试（`rotated_lettering_is_stored_in_radians`，验过旧行为
+  下会红）。
 
 ### 解出文字颜色：标签不再一律渲染成图层绿（2026-08-13）
 
