@@ -577,6 +577,124 @@ fn text_reaches_the_typeface_its_character_style_names() {
     );
 }
 
+/// No `(stream, oid)` collision puts two different style ids on one key.
+///
+/// All three published indexes are keyed by `(stream path, graphic oid)` and
+/// `OpenCADStudio` joins on the same pair, so a key held by two records means
+/// one of them silently inherits the other's style. The corpus has 167 such
+/// keys — which sounds alarming and is not, for a reason worth stating rather
+/// than counting: **166 of them are one record the scanner decoded twice**,
+/// at byte ranges that overlap. `PsmRecordDecoder::scan` walks candidate
+/// offsets, and a record whose bytes also validate a few bytes earlier or
+/// later comes back twice. That is a decoder question with nothing to say
+/// about oids. Exactly one key is genuinely two records.
+///
+/// So this test does not pin the collision count as the interesting number.
+/// It pins the property that decides whether the key has to change:
+///
+/// > **No key is held by records naming different style ids.**
+///
+/// That phrasing is deliberate and is the reason this assertion should survive
+/// work going on elsewhere. A style id is what the geometry record *stores*;
+/// two records naming the same id cannot come out with different symbology
+/// however the resolver is wired — one hop or two, through a paragraph or
+/// through a character run. An assertion written in resolved heights and
+/// colours would have to be re-measured the moment that changes. This one
+/// does not depend on a single style value.
+///
+/// See `docs/analysis/2026-08-22-oid-collisions-are-rescans-not-reuse.md`.
+#[test]
+fn no_key_is_shared_by_records_that_ask_for_different_styles() {
+    use pid_parse::parsers::sheet_records::{
+        decode_igboundaries, decode_iglines, decode_iglinestrings, decode_igpoints,
+        decode_igtextboxes,
+    };
+
+    /// A record reduced to the two things the collision question needs.
+    type Claim = (std::ops::Range<usize>, u32);
+
+    let mut claims: BTreeMap<(&str, &str, String, u32), Vec<Claim>> = BTreeMap::new();
+    let mut fixtures_seen = 0usize;
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            continue;
+        }
+        fixtures_seen += 1;
+        let file = std::fs::File::open(path).expect("fixture opens");
+        let mut cfb = CompoundFile::open(file).expect("fixture is a compound file");
+        let sheet_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .filter(|p| p.rsplit('/').next().unwrap_or("").starts_with("Sheet"))
+            .collect();
+        for sheet_path in &sheet_paths {
+            let Some(sheet) = read_stream(&mut cfb, sheet_path) else {
+                continue;
+            };
+            let mut add = |index: &'static str, oid: u32, claim: Claim| {
+                claims
+                    .entry((expected.fixture, index, sheet_path.clone(), oid))
+                    .or_default()
+                    .push(claim);
+            };
+            for record in decode_iglines(&sheet) {
+                add("line", record.oid, (record.byte_range, record.index));
+            }
+            for record in decode_igpoints(&sheet) {
+                add("line", record.oid, (record.byte_range, record.index));
+            }
+            for record in decode_iglinestrings(&sheet) {
+                add("line", record.oid, (record.byte_range, record.index));
+            }
+            for record in decode_igboundaries(&sheet) {
+                add("fill", record.oid, (record.byte_range, record.index));
+            }
+            for record in decode_igtextboxes(&sheet) {
+                add("text", record.oid, (record.byte_range, record.index));
+            }
+        }
+    }
+    if fixtures_seen < EXPECTED.len() {
+        return;
+    }
+
+    let mut genuine = 0usize;
+    let mut conflicting = Vec::new();
+    for ((fixture, index, stream, oid), mut records) in claims {
+        if records.len() < 2 {
+            continue;
+        }
+        records.sort_by_key(|(range, _)| range.start);
+        // Overlapping ranges are one record read twice, not two records.
+        if records.windows(2).any(|w| w[0].0.end > w[1].0.start) {
+            continue;
+        }
+        genuine += 1;
+        let ids: std::collections::BTreeSet<u32> = records.iter().map(|(_, id)| *id).collect();
+        if ids.len() > 1 {
+            conflicting.push(format!("{fixture} {stream} [{index}] oid {oid} -> {ids:?}"));
+        }
+    }
+
+    assert!(
+        conflicting.is_empty(),
+        "a key held by records asking for different styles means one of them is \
+         drawn with the other's symbology: {conflicting:#?}"
+    );
+    // The one known case is `工艺管道及仪表流程-1.pid` `/Sheet6` oid 6345: the
+    // same line tag stored twice, once as a `250-LNG-57602- - ` template and
+    // once filled in as `250-LNG-57602-6D02-C`, at the same point and naming
+    // the same style. Growth beyond it means a fixture arrived with a wider
+    // collision surface than anyone has looked at.
+    assert!(
+        genuine <= 1,
+        "genuine (non-rescan) colliding keys grew to {genuine}; re-measure with \
+         examples/probe_oid_collision_census before deciding it is still harmless"
+    );
+}
+
 /// The join a renderer performs: entity -> line style, by stream path and oid.
 ///
 /// [`pid_parse::style_link::line_styles_for_file`] keys on
