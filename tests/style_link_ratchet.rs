@@ -323,7 +323,11 @@ fn text_reaches_the_colour_its_character_style_states() {
             pid_parse::style_link::text_heights_for_file(path).expect("fixture opens for text");
         for style in resolved.values() {
             match style.rgb() {
-                Some([r, g, b]) => *palette.entry(format!("#{r:02X}{g:02X}{b:02X}")).or_default() += 1,
+                Some([r, g, b]) => {
+                    *palette
+                        .entry(format!("#{r:02X}{g:02X}{b:02X}"))
+                        .or_default() += 1
+                }
                 None => unstated += 1,
             }
         }
@@ -347,7 +351,11 @@ fn text_reaches_the_colour_its_character_style_states() {
         .map(|(key, count)| ((*key).to_string(), *count))
         .collect();
     assert_eq!(palette, expected_palette);
-    assert_eq!(palette.values().sum::<usize>(), 155, "one colour per height");
+    assert_eq!(
+        palette.values().sum::<usize>(),
+        155,
+        "one colour per height"
+    );
 }
 
 /// A P&ID does not letter everything from the left, and until now every
@@ -392,13 +400,117 @@ fn text_reaches_the_side_its_paragraph_letters_from() {
     // Every style a text record reaches arrives through a paragraph, so none
     // of them is `unstated`; the one-hop shape that would produce that does
     // not occur in this corpus.
-    let expected_sides: BTreeMap<String, usize> =
-        [("center", 60), ("left", 79), ("right", 16)]
-            .iter()
-            .map(|(key, count)| ((*key).to_string(), *count))
-            .collect();
+    let expected_sides: BTreeMap<String, usize> = [("center", 60), ("left", 79), ("right", 16)]
+        .iter()
+        .map(|(key, count)| ((*key).to_string(), *count))
+        .collect();
     assert_eq!(sides, expected_sides);
     assert_eq!(sides.values().sum::<usize>(), 155, "one side per height");
+}
+
+/// A label with a second line is exactly a label whose paragraph widens the
+/// spacing.
+///
+/// `JStyleTextPara +66` is a line spacing multiple, and the corpus states two
+/// values, `1.0` and `1.5`. A distribution alone would not be worth pinning —
+/// spacing that no label can use is a number carried for nothing, and the
+/// whole reason this field was measured before it was wired is that the
+/// measurement could have said exactly that.
+///
+/// It did not. **The four labels in this corpus that carry a `U+000D` are the
+/// same labels whose paragraph states `1.5`, and no label stating `1.0` has a
+/// second line.** That is what this test asserts, rather than the counts on
+/// their own: a wrong offset would still produce *some* distribution, but it
+/// would not produce one that lines up with which labels actually have more
+/// than one line.
+///
+/// Three labels state `1.5` while holding a single line — `人孔` and two blank
+/// ones, all on `DWG-0201`. A spacing on a one-line label is inert rather than
+/// wrong, so they are pinned as they are instead of being explained away.
+///
+/// **These counts are measured on the two-hop join** (`igTextBox +14` →
+/// `JStyleTextPara +38` → `JStyleTextChar`), which is the only one
+/// [`pid_parse::style_link`] walks. A shape-2 record also carries a run of its
+/// own naming a different character style, and on most of the corpus the two
+/// disagree about height and typeface — unsettled as of 2026-08-22. The
+/// spacing itself is safe from that, being a paragraph property rather than a
+/// character one, but anything computed from it *and a height* is not.
+/// See `docs/analysis/2026-08-22-four-labels-have-a-second-line.md` §0.
+#[test]
+fn a_second_line_and_a_widened_spacing_are_the_same_labels() {
+    use pid_parse::parsers::sheet_records::decode_igtextboxes;
+
+    /// The break the vendor writes. A bare carriage return, no line feed.
+    const BREAK: char = '\u{000D}';
+
+    let mut cross: BTreeMap<(bool, String), usize> = BTreeMap::new();
+    let mut fixtures_seen = 0usize;
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            continue;
+        }
+        fixtures_seen += 1;
+        let resolved =
+            pid_parse::style_link::text_heights_for_file(path).expect("fixture opens for text");
+        let file = std::fs::File::open(path).expect("fixture opens");
+        let mut cfb = CompoundFile::open(file).expect("fixture is a compound file");
+        let sheet_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .filter(|p| p.rsplit('/').next().unwrap_or("").starts_with("Sheet"))
+            .collect();
+        for sheet_path in &sheet_paths {
+            let Some(sheet) = read_stream(&mut cfb, sheet_path) else {
+                continue;
+            };
+            for record in decode_igtextboxes(&sheet) {
+                // Only labels that reach a style at all; a label whose height
+                // does not resolve reaches no spacing either, and the height
+                // test already pins how many of those there are.
+                let Some(style) = resolved.get(&(sheet_path.clone(), record.oid)) else {
+                    continue;
+                };
+                let key = style
+                    .line_spacing
+                    .map_or_else(|| "unstated".to_string(), |value| format!("{value:.3}"));
+                *cross.entry((record.text.contains(BREAK), key)).or_default() += 1;
+            }
+        }
+    }
+    if fixtures_seen < EXPECTED.len() {
+        return;
+    }
+
+    let expected_cross: BTreeMap<(bool, String), usize> = [
+        ((false, "1.000"), 151),
+        ((false, "1.500"), 3),
+        ((true, "1.500"), 2),
+    ]
+    .iter()
+    .map(|((multi, key), count)| ((*multi, (*key).to_string()), *count))
+    .collect();
+    assert_eq!(
+        cross, expected_cross,
+        "a (true, \"1.000\") bucket would mean a multi-line label whose spacing \
+         we report as single, which is the reading this field is here to prevent"
+    );
+
+    // 156 labels join onto the 155 index entries the sibling tests above pin,
+    // and the difference is one real collision rather than a rounding of the
+    // story: in `工艺管道及仪表流程-1.pid`, two `igTextBox` records on
+    // `/Sheet6` share oid 6345. `TextHeightIndex` is keyed by (stream, oid),
+    // so they collapse to one entry and the second label inherits the first's
+    // style. Both happen to state 1.0 and neither has a second line, so it
+    // costs this measurement nothing — but it is pinned here because the next
+    // person to compare these two totals deserves the answer rather than the
+    // discrepancy.
+    assert_eq!(
+        cross.values().sum::<usize>(),
+        156,
+        "labels reaching a style, one more than the 155 distinct (stream, oid) entries"
+    );
 }
 
 /// Lettering reaches the typeface its character style names.
@@ -458,7 +570,11 @@ fn text_reaches_the_typeface_its_character_style_names() {
     .map(|(key, count)| ((*key).to_string(), *count))
     .collect();
     assert_eq!(fonts, expected_fonts);
-    assert_eq!(fonts.values().sum::<usize>(), 155, "one typeface per height");
+    assert_eq!(
+        fonts.values().sum::<usize>(),
+        155,
+        "one typeface per height"
+    );
 }
 
 /// The join a renderer performs: entity -> line style, by stream path and oid.

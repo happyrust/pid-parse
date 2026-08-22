@@ -224,6 +224,26 @@ pub const TEXT_PARA_CHAR_REFERENCE_OFFSET: usize = 38;
 /// `IJStyleTextParaImp` interface exposes with a get/put pair.
 pub const TEXT_PARA_HORIZONTAL_ALIGNMENT_OFFSET: usize = 35;
 
+/// Offset of the line spacing multiple, an `f64`, within a `JStyleTextPara`
+/// payload.
+///
+/// Level: **native-reader**. It is the fourth of the six doubles
+/// `sub_100337A0` reads after the [`TEXT_PARA_CHAR_REFERENCE_OFFSET`] pointer
+/// that anchors the record, and the only one of the six that varies: the other
+/// five are `0.0` on every corpus record but six. Its values are `1.0` and
+/// `1.5`, which is what a spacing *multiple* looks like rather than a length.
+///
+/// **This field was measured before it was wired, and the measurement is the
+/// reason it is here.** Line spacing only moves a glyph when a label has a
+/// second line, and nobody had checked whether this corpus has one. It does,
+/// barely: 4 of 235 `igTextBox` labels carry a `U+000D` in their text, on one
+/// drawing. What makes the field worth reading is not the 4 but the way they
+/// line up with it — **every multi-line label states `1.5`, and not one of the
+/// 228 labels stating `1.0` has a second line.** A field that only ever varies
+/// where the thing it claims to govern also varies is not a coincidence.
+/// See `docs/analysis/2026-08-22-four-labels-have-a-second-line.md`.
+pub const TEXT_PARA_LINE_SPACING_OFFSET: usize = 66;
+
 /// Offset of the character height, an `f64` in metres, within a
 /// `JStyleTextChar` payload. Level: native-reader.
 pub const TEXT_CHAR_HEIGHT_OFFSET: usize = 42;
@@ -299,6 +319,20 @@ pub const TEXT_CHAR_FONT_NAME_OFFSET: usize = 70;
 /// caller keeps its own default rather than drawing something invisible.
 const MIN_PLAUSIBLE_HEIGHT_M: f64 = 0.0005;
 const MAX_PLAUSIBLE_HEIGHT_M: f64 = 0.02;
+
+/// Smallest and largest line spacing multiple accepted as real.
+///
+/// The window is not ours: `0.25..=4.0` is the range DXF allows MTEXT's line
+/// spacing factor (group 44), which is the field a consumer will carry this
+/// into. The corpus sits well inside it, at `1.0` and `1.5`.
+///
+/// The corpus's third value, `0.0`, falls outside by construction rather than
+/// by taste — a zero multiple stacks every line of a paragraph onto the first.
+/// It reads as "no spacing stated" and the caller keeps its own default, the
+/// same way an unstated fill colour is handled. No label in the corpus reaches
+/// one: all 8 such paragraph records sit in the style table unreferenced.
+const MIN_PLAUSIBLE_LINE_SPACING: f64 = 0.25;
+const MAX_PLAUSIBLE_LINE_SPACING: f64 = 4.0;
 
 /// Largest line width accepted as real, in metres.
 ///
@@ -456,6 +490,9 @@ pub struct StyleRecord {
     /// Horizontal alignment, when this is a `JStyleTextPara` stating one the
     /// vendor's enum names.
     pub text_alignment: Option<TextAlignment>,
+    /// Line spacing multiple, when this is a `JStyleTextPara` stating a
+    /// plausible one.
+    pub line_spacing: Option<f64>,
     /// `JStyleSimpleDashType` this record names, when it is a
     /// `JStyleSimpleLine` that draws dashed.
     pub dash_reference: Option<u32>,
@@ -608,6 +645,19 @@ pub struct ResolvedTextHeight {
     /// glyphs. So it is `None` for the one-hop shape, where a text record
     /// names a `JStyleTextChar` outright and there is no paragraph to ask.
     pub alignment: Option<TextAlignment>,
+    /// How far apart the lines of a multi-line label sit, as a multiple of the
+    /// character height, read at [`TEXT_PARA_LINE_SPACING_OFFSET`].
+    ///
+    /// Comes off the **paragraph** style for the same reason the alignment
+    /// does — spacing between lines is a property of the run — so it is `None`
+    /// for the one-hop shape, and `None` again when the stated multiple is
+    /// outside [`MIN_PLAUSIBLE_LINE_SPACING`]`..=`[`MAX_PLAUSIBLE_LINE_SPACING`].
+    ///
+    /// A caller only has anything to do with this when the label it belongs to
+    /// has a line break in it. In this corpus that is 4 labels of 235, and
+    /// every one of them states `1.5` while every single-line label states
+    /// `1.0`.
+    pub line_spacing: Option<f64>,
     /// Typeface the character style names, read at
     /// [`TEXT_CHAR_FONT_NAME_OFFSET`]. Carried verbatim, including the twelve
     /// corpus names the vendor damaged on the way out.
@@ -688,6 +738,7 @@ impl DocumentStyleTable {
                     char_height_m: read_char_height(type_code, payload),
                     text_char_reference: read_text_char_reference(type_code, payload),
                     text_alignment: read_text_alignment(type_code, payload),
+                    line_spacing: read_line_spacing(type_code, payload),
                     dash_reference: read_dash_reference(type_code, payload),
                     dash: read_dash_pattern(type_code, payload),
                     fill_colour: read_fill_colour(type_code, payload),
@@ -796,6 +847,7 @@ impl DocumentStyleTable {
             height_m: char_style.char_height_m?,
             colour: char_style.text_colour,
             alignment: para.text_alignment,
+            line_spacing: para.line_spacing,
             font_name: char_style.font_name.clone(),
         })
     }
@@ -943,6 +995,24 @@ fn read_text_alignment(type_code: u16, payload: &[u8]) -> Option<TextAlignment> 
     // box we do not have. Reading one as a text alignment would place the run
     // confidently in the wrong place, which is worse than leaving it alone.
     TextAlignment::from_stated(*payload.get(TEXT_PARA_HORIZONTAL_ALIGNMENT_OFFSET)?)
+}
+
+fn read_line_spacing(type_code: u16, payload: &[u8]) -> Option<f64> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_TEXT_PARA {
+        return None;
+    }
+    let multiple = f64_at(payload, TEXT_PARA_LINE_SPACING_OFFSET)?;
+    // `is_normal` is what rejects the stored `0.0` along with the subnormal
+    // that a misframed read produces; the window then rejects the enormous
+    // one. Both refusals mean the same thing to a caller -- keep your own
+    // default -- which is right, because a paragraph that states no usable
+    // spacing is not asking for any particular one.
+    if !multiple.is_normal()
+        || !(MIN_PLAUSIBLE_LINE_SPACING..=MAX_PLAUSIBLE_LINE_SPACING).contains(&multiple)
+    {
+        return None;
+    }
+    Some(multiple)
 }
 
 fn read_font_name(type_code: u16, payload: &[u8]) -> Option<String> {
@@ -1467,6 +1537,76 @@ mod tests {
 
         let resolved = table.resolve_text_height(4).expect("defined");
         assert_eq!(resolved.alignment, None);
+        assert_eq!(
+            resolved.line_spacing, None,
+            "spacing is a paragraph property too"
+        );
+    }
+
+    fn text_para_spaced(style_id: u32, names: u32, multiple: f64) -> (u16, Vec<u8>) {
+        let (type_code, mut payload) = text_para(style_id, names);
+        payload[TEXT_PARA_LINE_SPACING_OFFSET..TEXT_PARA_LINE_SPACING_OFFSET + 8]
+            .copy_from_slice(&multiple.to_le_bytes());
+        (type_code, payload)
+    }
+
+    /// Spacing rides the same walk as the alignment, off the paragraph end of
+    /// it, while the height still comes off the character style.
+    #[test]
+    fn a_paragraph_style_resolves_to_the_spacing_between_its_lines() {
+        for multiple in [1.0_f64, 1.5] {
+            let data = stream(&[
+                text_char_of_height(4, 0.003_175),
+                text_para_spaced(9, 4, multiple),
+            ]);
+            let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+            let resolved = table.resolve_text_height(9).expect("id 9 is defined");
+            assert_eq!(resolved.line_spacing, Some(multiple));
+            assert_eq!(resolved.style_id, 4, "the height still comes off the char");
+        }
+    }
+
+    /// The corpus's third stored value. A zero multiple would stack every line
+    /// of a paragraph onto the first, so it cannot be a spacing a drawing is
+    /// asking for -- it is the absence of one, and the caller keeps its own.
+    #[test]
+    fn a_paragraph_style_stating_zero_spacing_states_none() {
+        let data = stream(&[
+            text_char_of_height(4, 0.003_175),
+            text_para_spaced(9, 4, 0.0),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        assert_eq!(table.get(9).expect("defined").line_spacing, None);
+        assert_eq!(
+            table
+                .resolve_text_height(9)
+                .expect("the height still resolves")
+                .line_spacing,
+            None,
+            "an unusable spacing must not cost the label its height"
+        );
+    }
+
+    /// Two bytes of framing slip turn a double into something enormous or
+    /// subnormal. Either would be carried into a renderer as a line pitch, so
+    /// both are refused rather than surfaced -- the same gate the width and
+    /// the height already use.
+    #[test]
+    fn a_misframed_spacing_is_refused_rather_than_surfaced() {
+        for multiple in [1.0e9_f64, 5.0e-324, -1.5, f64::NAN, f64::INFINITY] {
+            let data = stream(&[
+                text_char_of_height(4, 0.003_175),
+                text_para_spaced(9, 4, multiple),
+            ]);
+            let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+            assert_eq!(
+                table.get(9).expect("defined").line_spacing,
+                None,
+                "stated {multiple}"
+            );
+        }
     }
 
     #[test]
