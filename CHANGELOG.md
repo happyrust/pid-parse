@@ -17,6 +17,30 @@
   并补上 `igSmartFrame2d` 缺席的显式 no-op emitter；`model/sheet.rs` 与
   `EMITTERS` 表的过期陈述同步改写。
 
+### 字体名接线：标签不再一律用默认字形（2026-08-13）
+
+- `style_link` 新增 `TEXT_CHAR_FONT_NAME_COUNT_OFFSET = 68` / `TEXT_CHAR_FONT_NAME_OFFSET = 70`
+  与 `read_font_name`；`ResolvedTextHeight.font_name` 走既有两跳，**不新建索引表**。
+  证据早已是 native-reader（读序的最后一段），这一批是纯接线。
+- **拒收口径**：名字是记录的最后一段，所以 `payload.len()` 必须恰好等于
+  `70 + 2*count`；对不上说明整条记录的框法与我们理解的不同，`+70` 的字节就不是名字。
+  解码用 `from_utf16` 严格版而非 lossy——孤立代理项不是字体名，围着替换字符拼出来的
+  名字正是本项目拒绝做的猜测。全语料 381/381 通过。
+- `ResolvedTextHeight` 因此**不再是 `Copy`**（多带一个 `String`）。消费侧 `height_for`
+  本来就返回引用，无改动。
+- **12 条乱码名原样带出，不还原**（`宋体` 的 GB2312 字节被逐字节拓宽，读作 `ËÎÌå` 8 条；
+  另有 `匪_GB2312` 4 条，损坏方式不同）。还原是猜测；而匹配不到的名字会回退到消费方
+  默认字体，与还原失败的效果一致，却不会往文档里写一个我们编出来的字体名。
+  **实测这 12 条连同 `Intergraph ANSI` 一条都没有文字记录指到**——文字能取到的 155 条
+  样式只用 7 种字体（`Arial` 68、`Arial Narrow` 28、`宋体` 36、`Braggadocio` 11、
+  `仿宋` 5、`SimSun-ExtB` 4、`仿宋_GB2312` 3），所以这个决定在本语料上零代价。
+  ratchet 把这个分布钉住，将来有 fixture 指到乱码名会直接红。
+- `OpenCADStudio` 新增 `register_text_styles`：按字体池化建文档文字样式，命名
+  `PID-<字体名>`（符号表合法化，`Arial Narrow` → `PID-Arial-Narrow`，中文原样），
+  `true_type_font` 填厂商报的名字，**`height` 必须留 0**——样式高度是**固定**高度，
+  会盖掉逐实体设好的字高。`apply_text_style` 作用域仍限 `PID-TEXT`。
+  DWG-0201 实测建 5 条样式、48 条标签里 47 条指到其中 3 条。
+
 ### 原生读序坐实 `JStyleTextPara` 全布局：水平对齐已接线，半数标签不再摆错位置（2026-08-13）
 
 - **序列化器 `style.dll!sub_100337A0`**，用与 `JStyleTextChar` 相同的手法定位（接口

@@ -401,6 +401,66 @@ fn text_reaches_the_side_its_paragraph_letters_from() {
     assert_eq!(sides.values().sum::<usize>(), 155, "one side per height");
 }
 
+/// Lettering reaches the typeface its character style names.
+///
+/// The name is the last field of the record, `+68` u16 count and `+70` UTF-16
+/// body, and the length formula `payload == 70 + 2*count` holds for all 381
+/// character styles in the corpus. The distribution below is the subset text
+/// actually reaches: 7 typefaces across 155 styles.
+///
+/// It is also the answer to a question the format guide left open. Twelve of
+/// the 381 names are damaged by the vendor before encoding -- `ËÎÌå` is
+/// `宋体`'s GB2312 bytes widened one per code unit, and four more read
+/// `匪_GB2312` -- and the decision was to carry them verbatim rather than
+/// reconstruct. **No text record reaches any of them.** They live in the style
+/// table unreferenced, alongside the single `Intergraph ANSI` style, so the
+/// decision costs this corpus nothing on screen. A fixture that did reach one
+/// would break this assertion, which is the point of pinning it. See
+/// `docs/analysis/2026-08-13-text-colour-is-002c-plus-34.md` §4-3.
+#[test]
+fn text_reaches_the_typeface_its_character_style_names() {
+    let mut fonts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut unstated = 0usize;
+    let mut fixtures_seen = 0usize;
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            continue;
+        }
+        fixtures_seen += 1;
+        let resolved =
+            pid_parse::style_link::text_heights_for_file(path).expect("fixture opens for text");
+        for style in resolved.values() {
+            match style.font_name.as_deref() {
+                Some(name) => *fonts.entry(name.to_string()).or_default() += 1,
+                None => unstated += 1,
+            }
+        }
+    }
+    if fixtures_seen < EXPECTED.len() {
+        return;
+    }
+
+    assert_eq!(
+        unstated, 0,
+        "every character style the corpus reaches names a typeface, got {fonts:?}"
+    );
+    let expected_fonts: BTreeMap<String, usize> = [
+        ("Arial", 68),
+        ("Arial Narrow", 28),
+        ("Braggadocio", 11),
+        ("SimSun-ExtB", 4),
+        ("仿宋", 5),
+        ("仿宋_GB2312", 3),
+        ("宋体", 36),
+    ]
+    .iter()
+    .map(|(key, count)| ((*key).to_string(), *count))
+    .collect();
+    assert_eq!(fonts, expected_fonts);
+    assert_eq!(fonts.values().sum::<usize>(), 155, "one typeface per height");
+}
+
 /// The join a renderer performs: entity -> line style, by stream path and oid.
 ///
 /// [`pid_parse::style_link::line_styles_for_file`] keys on

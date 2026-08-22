@@ -268,7 +268,7 @@ payload `+22` 是 `JStyleBase` **唯一的对象引用字段**（**等级：nati
 | `+38` | u8 ×4 | — | native-reader（位置） |
 | **`+42`** | **f64** | **字高，单位米** | **native-reader** |
 | `+68` | u16 | 字体名长度（UTF-16 码元数） | **native-reader** |
-| `+70` | UTF-16 | **字体名**；`payload == 70 + 2*len`，全语料 381/381 成立。实测取值 `Arial` 111、`Arial Narrow` 108、`宋体` 79、`仿宋` 26、`仿宋_GB2312` 25、`SimSun-ExtB` 15、`Braggadocio` 4、`Intergraph ANSI` 1。12 条是窄字节被拓宽成宽字符的厂商 bug（`宋体` 读作 `ËÎÌå`） | **native-reader** |
+| `+70` | UTF-16 | **字体名**；`payload == 70 + 2*len`，全语料 381/381 成立。实测取值 `Arial` 111、`Arial Narrow` 108、`宋体` 79、`仿宋` 26、`仿宋_GB2312` 25、`SimSun-ExtB` 15、`Braggadocio` 4、`Intergraph ANSI` 1。12 条是窄字节被拓宽成宽字符的厂商 bug（`宋体` 读作 `ËÎÌå` 8 条、`匪_GB2312` 4 条）——**原样带出，不还原**；实测这 12 条连同 `Intergraph ANSI` 都没有文字记录指到，文字实际取到的 155 条样式只用 7 种字体 | **native-reader** |
 
 读序全文见 `style.dll!sub_10030A20`，记于
 `docs/analysis/2026-08-13-text-colour-is-002c-plus-34.md` §4。

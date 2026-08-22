@@ -259,6 +259,35 @@ pub const TEXT_CHAR_HEIGHT_OFFSET: usize = 42;
 /// See `docs/analysis/2026-08-13-text-colour-is-002c-plus-34.md`.
 pub const TEXT_CHAR_COLOUR_OFFSET: usize = 34;
 
+/// Offset of the font name's length, a `u16` count of UTF-16 code units,
+/// within a `JStyleTextChar` payload.
+///
+/// Level: **native-reader**. The name is the last thing `sub_10030A20` reads,
+/// so the count and the body together account for the rest of the record —
+/// which is what [`TEXT_CHAR_FONT_NAME_OFFSET`] documents.
+pub const TEXT_CHAR_FONT_NAME_COUNT_OFFSET: usize = 68;
+
+/// Offset of the font name itself, UTF-16 code units with no terminator,
+/// within a `JStyleTextChar` payload.
+///
+/// Level: **native-reader**, and the corpus agrees exactly: `payload.len() ==
+/// 70 + 2 * count` holds for **381 of 381** records, and every one of them
+/// carves a real typeface at `+70` — `Arial` 111, `Arial Narrow` 108,
+/// `宋体` 79, `仿宋` 26, `仿宋_GB2312` 25, `SimSun-ExtB` 15, `Braggadocio` 4,
+/// `Intergraph ANSI` 1. Nothing is unreadable. The guide used to read this
+/// field by scanning the payload for its longest UTF-16 run, which produced
+/// mojibake; the read order says where the name is instead of guessing.
+///
+/// Twelve of the names are damaged on the vendor's side rather than ours.
+/// Eight read `ËÎÌå`, which is `宋体`'s GB2312 bytes (`CB CE CC E5`) widened
+/// one byte per code unit — a narrow string written into a wide buffer without
+/// transcoding. Four more read `匪_GB2312`, damaged some other way. They are
+/// carried through exactly as stored: reconstructing a name is a guess, and a
+/// name no installed font matches fails over to the consumer's default, which
+/// is the same outcome a failed reconstruction would reach without writing an
+/// invented typeface into the document.
+pub const TEXT_CHAR_FONT_NAME_OFFSET: usize = 70;
+
 /// Smallest and largest character height accepted as real, in metres.
 ///
 /// The corpus lands on recognisable drafting sizes — ISO 3098's 1.5 / 2.5 /
@@ -439,6 +468,8 @@ pub struct StyleRecord {
     /// Character colour as a raw Win32 `COLORREF`, when this is a
     /// `JStyleTextChar` whose [`TEXT_CHAR_COLOUR_OFFSET`] word reads as one.
     pub text_colour: Option<u32>,
+    /// Typeface name, when this is a `JStyleTextChar` whose tail reads as one.
+    pub font_name: Option<String>,
 }
 
 /// PSM type code of `JStyleSimpleFill`, a flat colour fill.
@@ -551,13 +582,14 @@ impl TextAlignment {
     }
 }
 
-/// A text record's character style: the height it letters at, the colour it
-/// letters in, and which style record they came from.
+/// A text record's character style: the height it letters at, the colour and
+/// typeface it letters in, the side it letters from, and which style record
+/// they came from.
 ///
-/// Both properties ride the same two hops (`igTextBox` names a
-/// `JStyleTextPara`, which names a `JStyleTextChar`), so they are resolved
-/// together rather than through two indexes over the same walk.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// They all ride the same two hops (`igTextBox` names a `JStyleTextPara`,
+/// which names a `JStyleTextChar`), so they are resolved together rather than
+/// through several indexes over the same walk.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedTextHeight {
     /// Style id of the `JStyleTextChar` finally reached.
     pub style_id: u32,
@@ -576,6 +608,10 @@ pub struct ResolvedTextHeight {
     /// glyphs. So it is `None` for the one-hop shape, where a text record
     /// names a `JStyleTextChar` outright and there is no paragraph to ask.
     pub alignment: Option<TextAlignment>,
+    /// Typeface the character style names, read at
+    /// [`TEXT_CHAR_FONT_NAME_OFFSET`]. Carried verbatim, including the twelve
+    /// corpus names the vendor damaged on the way out.
+    pub font_name: Option<String>,
 }
 
 impl ResolvedTextHeight {
@@ -656,6 +692,7 @@ impl DocumentStyleTable {
                     dash: read_dash_pattern(type_code, payload),
                     fill_colour: read_fill_colour(type_code, payload),
                     text_colour: read_text_colour(type_code, payload),
+                    font_name: read_font_name(type_code, payload),
                 };
                 // First writer wins, matching how a reader walking the chain
                 // in order would bind the id.
@@ -759,6 +796,7 @@ impl DocumentStyleTable {
             height_m: char_style.char_height_m?,
             colour: char_style.text_colour,
             alignment: para.text_alignment,
+            font_name: char_style.font_name.clone(),
         })
     }
 
@@ -905,6 +943,34 @@ fn read_text_alignment(type_code: u16, payload: &[u8]) -> Option<TextAlignment> 
     // box we do not have. Reading one as a text alignment would place the run
     // confidently in the wrong place, which is worse than leaving it alone.
     TextAlignment::from_stated(*payload.get(TEXT_PARA_HORIZONTAL_ALIGNMENT_OFFSET)?)
+}
+
+fn read_font_name(type_code: u16, payload: &[u8]) -> Option<String> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_TEXT_CHAR {
+        return None;
+    }
+    let count = u16_at(payload, TEXT_CHAR_FONT_NAME_COUNT_OFFSET)? as usize;
+    // The name is the last thing the serialiser reads, so the payload has to
+    // end exactly where the count says it does. A record that disagrees is
+    // framed differently than this reader thinks, and a name carved out of it
+    // would be bytes that happen to decode. All 381 corpus records agree.
+    if count == 0 || payload.len() != TEXT_CHAR_FONT_NAME_OFFSET + 2 * count {
+        return None;
+    }
+    let mut units = Vec::with_capacity(count);
+    for i in 0..count {
+        units.push(u16_at(payload, TEXT_CHAR_FONT_NAME_OFFSET + 2 * i)?);
+    }
+    // Strict rather than lossy: a lone surrogate is not a typeface, and a name
+    // pieced together around a replacement character is the guess this reader
+    // refuses to make. Damage the vendor did *before* encoding -- the twelve
+    // GB2312-widened names -- decodes cleanly and is kept, because it is what
+    // the file states.
+    let name = String::from_utf16(&units).ok()?;
+    if name.chars().any(char::is_control) {
+        return None;
+    }
+    Some(name)
 }
 
 fn read_text_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
@@ -1278,6 +1344,64 @@ mod tests {
         let resolved = table.resolve_text_height(4).expect("defined");
         assert_eq!(resolved.colour, None);
         assert_eq!(resolved.rgb(), None);
+    }
+
+    fn text_char_of_font(style_id: u32, font: &str) -> (u16, Vec<u8>) {
+        let units: Vec<u16> = font.encode_utf16().collect();
+        let mut payload = vec![0u8; TEXT_CHAR_FONT_NAME_OFFSET + 2 * units.len()];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        payload[TEXT_CHAR_HEIGHT_OFFSET..TEXT_CHAR_HEIGHT_OFFSET + 8]
+            .copy_from_slice(&0.003_175f64.to_le_bytes());
+        let count = u16::try_from(units.len()).expect("test names are short");
+        payload[TEXT_CHAR_FONT_NAME_COUNT_OFFSET..TEXT_CHAR_FONT_NAME_COUNT_OFFSET + 2]
+            .copy_from_slice(&count.to_le_bytes());
+        for (i, unit) in units.iter().enumerate() {
+            let at = TEXT_CHAR_FONT_NAME_OFFSET + 2 * i;
+            payload[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        (PSM_TYPE_CODE_JSTYLE_TEXT_CHAR, payload)
+    }
+
+    /// The typeface rides the same two hops as the height and the colour.
+    #[test]
+    fn a_paragraph_style_resolves_to_the_typeface_of_the_character_style_it_names() {
+        let data = stream(&[text_char_of_font(4, "Arial Narrow"), text_para(9, 4)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_text_height(9).expect("id 9 is defined");
+        assert_eq!(resolved.style_id, 4);
+        assert_eq!(resolved.font_name.as_deref(), Some("Arial Narrow"));
+    }
+
+    /// The name is the last thing the record holds, so its stated length has
+    /// to reach the end of the payload exactly. A record where it does not is
+    /// framed differently than this reader thinks, and the bytes at `+70`
+    /// would be whatever else lives there.
+    #[test]
+    fn a_character_style_whose_name_overruns_its_payload_states_no_typeface() {
+        let (type_code, mut payload) = text_char_of_font(4, "Arial");
+        payload[TEXT_CHAR_FONT_NAME_COUNT_OFFSET..TEXT_CHAR_FONT_NAME_COUNT_OFFSET + 2]
+            .copy_from_slice(&99u16.to_le_bytes());
+        let data = stream(&[(type_code, payload)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_text_height(4).expect("defined");
+        assert_eq!(resolved.font_name, None);
+    }
+
+    /// Twelve corpus names are damaged before they were ever encoded -- the
+    /// vendor widened `宋体`'s GB2312 bytes one per code unit. The reader
+    /// hands back what the file says. Reconstructing the intended name is a
+    /// guess, and a name no font matches falls back to the consumer's default
+    /// anyway, which is where a wrong guess would land it too -- except a
+    /// guess also writes an invented typeface into the document.
+    #[test]
+    fn a_character_style_states_the_damaged_name_the_vendor_wrote() {
+        let data = stream(&[text_char_of_font(4, "ËÎÌå")]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        let resolved = table.resolve_text_height(4).expect("defined");
+        assert_eq!(resolved.font_name.as_deref(), Some("ËÎÌå"));
     }
 
     fn text_para(style_id: u32, names: u32) -> (u16, Vec<u8>) {
