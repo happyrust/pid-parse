@@ -1,0 +1,140 @@
+# 放置记录点名符号本体的样式：`igSymbol2d +25`
+
+> 日期：2026-08-24
+> 范围：`pid-parse` + `OpenCADStudio`
+> 结论类型：**corpus + 屏幕对照**，含**两处推翻**（「放置记录不带样式」与「红是显示规则」）。
+> 前置：`2026-08-04-jstyleoverride-native-reader-settles-it.md`（几何→样式链路的四次排除）、
+> OCS `feat(io): draw a placed symbol in the symbology its own .sym states`（.sym 自带样式那一半）
+> 工具：`examples/probe_igsymbol2d_placement`、`probe_igsymbol2d_jsite_link`、目标截图取色
+
+## 0. 问题
+
+SmartPlant 里截屏的 DWG-0201：容器是红的，人孔、法兰管嘴、量油孔也是红的；
+LT/LG/DCS 仪表是绿的；Cap、球阀、阻火呼吸阀、Off-Unit 是橄榄色的。
+我们这边符号本体按 `.sym` 自己的样式表画——容器的
+`Parametric Manifold.sym` 每一笔都写着 `#000000 0.35mm`，所以容器是黑的；
+`Off-Unit.sym` 带青色笔画，所以 Off-Unit 是青的。**两处都与屏幕不符。**
+
+此前的排查（8-24 会话）排除了三处：图纸的线样式表里没有给容器的红、
+放置记录「不带样式链」、`.sym` 自己说黑。剩下的假说是
+「红是 SmartPlant 的显示规则，多半在项目参考数据里，不在 `.pid` 里」。
+
+**这个假说是错的。红就在 `.pid` 里，放置记录自己点名它。**
+
+## 1. 屏幕的调色板就是文件的调色板
+
+对目标截图逐像素取色：
+
+| 屏幕颜色 | 像素值 | 根 `StyleCluster` 里的对应样式 |
+|---|---|---|
+| 管道橄榄 | `#808000` **逐像素精确** | id 76 `#808000 0.70mm`（已被管线几何引用、已绘制） |
+| 仪表绿 | `#008000` 精确 | id 77/79/80 `#008000 0.18mm` |
+| 刻度蓝 | `#0000FF` 精确（198 像素） | id 71 `#0000FF 1.00mm`、id 74 `#0000FF 0.10mm` |
+| 容器红 | `#891313` 等（缩放抗锯齿后的 `#800000`） | id 75、id 82 `#800000 0.35mm` |
+
+关键在最后两行：**id 71/74/75/82 在 8-24 之前的口径下「定义了但没有任何
+已绘制实体引用」**。屏幕上恰好多出来的两种颜色（蓝刻度、红容器），
+正是样式表里恰好没人引用的两种。缺的不是颜色，是**引用它们的记录**。
+
+## 2. 字段：`igSymbol2d` payload `+25`
+
+`igSymbol2d`（PSM `0x00CE`）的 payload 在 `+25` 处带一个 u32，是样式 id：
+
+```
++0   u32  oid
++4   u32  parent_ref
++12  u16  sub_type
++24  u8   0x0B（103/109 条如此——接近普适但不是定律，不作门槛）
++25  u32  样式 id             ← 固定偏移，113/115/121/123 字节四种变体都在这
+...       （变长区）
+tag-4 u32 jsite_ref           ← 相对矩阵 tag，会漂移
+tag   matrix (4×f64) + insertion (2×f64)
+```
+
+**5 个 fixture、109/109 条放置记录**，`+25` 全部在**根文档**的
+`StyleCluster` 里解析成线样式（作用域规则与 `+14` 一致：放置在根
+`/Sheet6`，就查根表）。逐条对上 DWG-0201 的屏幕：
+
+| oid | 符号 | `+25` | 解析 | 屏幕 |
+|---|---|---|---|---|
+| 326 | Parametric Manifold（容器） | 75 | `#800000 0.35` | 红 ✓ |
+| 35 / 139 / 147 | Flanged Nozzle ×3 | 82 | `#800000 0.35` | 红 ✓ |
+| 157 | Flanged Nozzle with blind | 82 | `#800000 0.35` | 红 ✓ |
+| 169 | Manway-Large | 82 | `#800000 0.35` | 红 ✓ |
+| 229 | Gauge Hatch | 82 | `#800000 0.35` | 红 ✓ |
+| 68 / 111 / 239 | LG / LT / DCS | 80 | `#008000 0.18` | 绿 ✓ |
+| 433 / 440 / 467 / 490 | Cap / jinchuzhan2 / 球阀 / 阻火阀 | 81 | `#808000 0.35` | 橄榄 ✓ |
+| 537 | Off-Unit | 83 | `#808000 0.35` | 橄榄 ✓ |
+| 262 / 452 / 597 / 602 / 617 | 标注类五个 | 10 | `#000000 0.35` | 黑 ✓ |
+
+7 个装备类 = 截图里 7 个红色符号，一个不多一个不少。四张 ratchet 图上
+调色板就是分专业配色：装备 `#800000`、管道 `#808000`、仪表 `#008000`、
+电伴热 `#0000FF`（0202 的 ElecTraceLine 全部点名 id 19，与其 `.sym`
+自己的蓝一致——所以在 0202 上两种解释不可区分，判据在 0201）。
+
+## 3. 语义：放置样式盖过 `.sym` 的逐笔样式，覆盖整个本体的线作业
+
+判别用例是 **Off-Unit**：`.sym` 里带青色（`#00FFFF`/`#00FEA0`）笔画，
+放置点名 `#808000`。对截图那一带取色：**橄榄系 + 黑（旋转的管号文字），
+零个青色像素**。所以放置样式不是只盖「默认样式」的笔画，是盖**全部线作业**。
+
+文字不在内：符号内部的 text 记录走文字样式（`0x002C`），不吃线样式。
+仪表泡里的字在屏幕上是绿的，但其字符样式本身可能就是绿的——**未判**，
+不作为本次结论。
+
+## 4. 顺手解开的第二个谜：立管顶上的蓝刻度是 igPoint2d
+
+目标图左侧立管排，每根顶上有一道 ~60° 的蓝色小斜杠（第 11 道在容器
+进料口）。它们不是符号（0201 的 20 个放置里没有 ElecTraceLine），
+不是线（24 条 igLine2d 全部已绘制），在我们的输出里完全不存在。
+
+它们是 **igPoint2d**：`+14` 样式索引 = 74（`#0000FF 0.10mm`）的点记录
+恰好 11 条，坐标恰好是 10 个立管顶 + 1 个容器入口。SmartPlant 把带样式的
+点画成可见的斜杠标记；我们把点画成不可见的 Point 实体。11 条的父记录
+全是 `0x00FA` Dependency Object 聚合。
+
+**斜杠的字形（长度、角度、是否随样式宽度）还没有权威来源**——截图是
+缩放过的，量不准；点记录的 34 字节 payload 里没有方向字段。这是
+遗留项，不是本次修的。
+
+## 5. 已落地
+
+`pid-parse`（本仓库）：
+
+- `SheetIgSymbol2dDecoded` / `DecodedIgSymbol2dRecord` 增加 `style_ref`（`+25`）。
+- `line_styles_for_file` 把放置记录并进 `LineStyleIndex`——OCS 侧原有的
+  `(stream, oid)` join 直接命中，不需要新接口。
+- ratchet 从 562 → **669** 条、调色板 9 → **12** 项（新增
+  `0.350mm #800000` ×22、`0.500mm #0000FF` ×12、`0.350mm #008000` ×2）。
+- `parse_real_files::igsymbol2d_placements_name_the_style_their_body_draws_with`
+  钉住 0201 的 oid → style_ref 表（326→75、35→82、537→83、68→80 等）。
+
+`OpenCADStudio`：
+
+- `apply_symbology` 的门放开 `PID-SYMBOL` 层（text 除外），放置样式在
+  `.sym` 底色之后整体覆盖。
+- 回归测试两条，都验过退回旧写法会红：
+  `the_vessel_draws_in_its_placements_maroon_not_its_syms_black`
+  （容器两条 188mm 壳线必须 `#800000 0.35`；关掉门跑过，读数回黑，红）
+  与重写的 `a_symbol_body_draws_in_the_style_its_placement_names`
+  （0201 全层 120 笔线作业 = 四种分专业色，3 条内部文字不动）。
+
+## 6. 仍然开放
+
+1. **点标记的字形**：11 条蓝点该画成什么样的斜杠（§4）。
+2. **符号内文字**是否也吃放置样式（§3 末）。
+3. `+25` 与 jsite_ref 之间那段变长区（113/115/121/123 四种变体差在哪）没解。
+4. 8-04 文档里 `0x0030` override 的 `+26..` 字段语义照旧未解；本次没有用到它。
+
+## 7. 复现
+
+```powershell
+# 字段与调色板
+cargo test --test parse_real_files igsymbol2d_placements_name_the_style
+cargo test --test style_link_ratchet
+
+# OCS 侧（另一仓库）
+cd ..\OpenCADStudio
+cargo test --test pid_import the_vessel_draws
+cargo test --test pid_import a_symbol_body_draws
+```

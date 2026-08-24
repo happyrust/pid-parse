@@ -703,6 +703,14 @@ pub struct DecodedIgSymbol2dRecord {
     /// names the `.sym` library path).
     #[serde(default)]
     pub jsite_ref: u32,
+    /// Style id the placement names for its body's line work (payload
+    /// `+25`, fixed). Resolves in the root document's `StyleCluster` on
+    /// 109/109 corpus placements, and the colours match a `SmartPlant`
+    /// screenshot — including a vessel whose `.sym` says black but draws
+    /// in this style's `#800000`. See
+    /// `docs/analysis/2026-08-24-placement-names-the-body-style.md`.
+    #[serde(default)]
+    pub style_ref: u32,
     /// First element of the 2×2 placement matrix, which follows the
     /// record's matrix tag rather than sitting at a fixed offset.
     pub transform_00: f64,
@@ -730,6 +738,7 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
             parent_ref: d.parent_ref,
             sub_type_word: d.sub_type_word,
             jsite_ref: d.jsite_ref,
+            style_ref: d.style_ref,
             transform_00: d.transform[0],
             transform_01: d.transform[1],
             transform_10: d.transform[2],

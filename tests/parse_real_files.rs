@@ -7422,6 +7422,62 @@ fn igsymbol2d_jsite_ref_resolves_to_symbol_paths() {
     }
 }
 
+/// A placement names the style its body draws with — `igSymbol2d +25` —
+/// and it is that style, not the `.sym`'s own, that `SmartPlant` puts on
+/// screen. The discriminating case is `DWG-0201`'s vessel: authored black
+/// in `Parametric Manifold.sym`, screenshotted in `#800000` maroon, and
+/// its placement (oid 326) names style id 75, which the root
+/// `StyleCluster` defines as exactly `#800000` 0.35mm.
+///
+/// Reverting the `+25` read (any fixed value, or a shifted offset) breaks
+/// the oid → style_ref table below; resolution and palette are ratcheted
+/// separately in `tests/style_link_ratchet.rs`. See
+/// `docs/analysis/2026-08-24-placement-names-the-body-style.md`.
+#[test]
+fn igsymbol2d_placements_name_the_style_their_body_draws_with() {
+    let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
+        return;
+    };
+    let mut style_refs: BTreeMap<u32, u32> = BTreeMap::new();
+    for sheet in &doc.sheet_streams {
+        let Some(geometry) = &sheet.geometry else {
+            continue;
+        };
+        for record in &geometry.decoded_igsymbols {
+            style_refs.insert(record.oid, record.style_ref);
+        }
+    }
+    // The seven equipment placements the screenshot shows in maroon: the
+    // vessel (Parametric Manifold, via id 75), three Flanged Nozzles, one
+    // Flanged Nozzle with blind, Manway-Large and Gauge Hatch (id 82).
+    for (oid, expected) in [
+        (326u32, 75u32),
+        (35, 82),
+        (139, 82),
+        (147, 82),
+        (157, 82),
+        (169, 82),
+        (229, 82),
+        // Off-Unit: authored with cyan strokes in its .sym, screenshotted
+        // olive — the placement names id 83, #808000 0.35mm.
+        (537, 83),
+        // LG-Magnetic Float Gauge: instruments are class-coloured green.
+        (68, 80),
+    ] {
+        assert_eq!(
+            style_refs.get(&oid),
+            Some(&expected),
+            "DWG-0201 oid {oid}: placement style_ref should be {expected}, got {:?}",
+            style_refs.get(&oid)
+        );
+    }
+    assert_eq!(style_refs.len(), 20, "DWG-0201 places 20 symbols");
+    assert!(
+        style_refs.values().all(|&id| id != 0),
+        "every DWG-0201 placement names a style: {style_refs:?}"
+    );
+}
+
 /// Phase 14 Slice M: cross-fixture validation that
 /// `decode_igtextboxes` emits decoded `igTextBox` text annotations
 /// (PSM type `0x004D`) from real `Sheet*` streams.

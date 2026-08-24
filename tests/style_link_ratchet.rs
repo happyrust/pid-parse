@@ -3,7 +3,9 @@
 //! [`pid_parse::style_link`] claims that a geometry record's `index` at
 //! payload `+14` names a style id in the `StyleCluster` of its own document,
 //! and that the record it names either is a `JStyleSimpleLine` or is a
-//! `JStyleOverride` whose `+22` names one.
+//! `JStyleOverride` whose `+22` names one. A symbol placement makes the same
+//! claim from a different slot — `igSymbol2d +25` — and that one style covers
+//! the placed body's whole line work.
 //!
 //! The claim is corpus-grade, so it is pinned by exact counts rather than
 //! trusted. Two things would break silently without this test:
@@ -13,11 +15,13 @@
 //! * a change that resolves the same records to *different* symbology —
 //!   caught by the corpus palette, which is asserted whole.
 //!
-//! The palette is also the readable part: nine entries over 562 records, ISO
-//! 128 widths apart from the 0.100 mm point ticks. If a future change makes
-//! this list longer or stranger, the framing moved. Retiring the `igLine2d`
-//! `aux_hi` rule added four records and no tenth entry — they land on
-//! 0.350 mm black, which is what a rectangle outline should weigh.
+//! The palette is also the readable part: twelve entries over 669 records,
+//! ISO 128 widths apart from the 0.100 mm point ticks. If a future change
+//! makes this list longer or stranger, the framing moved. Retiring the
+//! `igLine2d` `aux_hi` rule added four records and no new entry; adding the
+//! 107 placements added exactly the item-class palette a `SmartPlant`
+//! screenshot shows — equipment `#800000`, piping `#808000`, instruments
+//! `#008000`, electric trace `#0000FF`, annotation black.
 //!
 //! Soft-skips per fixture, so a checkout without `test-file/` still passes.
 
@@ -26,7 +30,9 @@ use std::io::Read;
 use std::path::Path;
 
 use cfb::CompoundFile;
-use pid_parse::parsers::sheet_records::{decode_iglines, decode_iglinestrings, decode_igpoints};
+use pid_parse::parsers::sheet_records::{
+    decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
+};
 use pid_parse::style_link::{stylecluster_path_for_sheet, DocumentStyleTable, StyleHop};
 
 /// What one fixture is expected to resolve.
@@ -35,6 +41,7 @@ struct Expected {
     lines: usize,
     points: usize,
     linestrings: usize,
+    symbols: usize,
     direct: usize,
     via_override: usize,
 }
@@ -45,7 +52,8 @@ const EXPECTED: [Expected; 4] = [
         lines: 0,
         points: 10,
         linestrings: 6,
-        direct: 16,
+        symbols: 6,
+        direct: 22,
         via_override: 0,
     },
     Expected {
@@ -53,7 +61,8 @@ const EXPECTED: [Expected; 4] = [
         lines: 24,
         points: 75,
         linestrings: 39,
-        direct: 114,
+        symbols: 20,
+        direct: 134,
         via_override: 24,
     },
     // `Sheet6615`'s four `igLine2d` — the sides of a rectangle, beside a
@@ -66,29 +75,34 @@ const EXPECTED: [Expected; 4] = [
         lines: 46,
         points: 31,
         linestrings: 28,
-        direct: 78,
-        via_override: 27,
+        symbols: 23,
+        direct: 100,
+        via_override: 28,
     },
     Expected {
         fixture: "test-file/工艺管道及仪表流程-1.pid",
         lines: 218,
         points: 36,
         linestrings: 49,
-        direct: 297,
+        symbols: 58,
+        direct: 355,
         via_override: 6,
     },
 ];
 
 /// The whole corpus palette, as `("<width>mm #RRGGBB", record count)`.
-const EXPECTED_PALETTE: [(&str, usize); 9] = [
+const EXPECTED_PALETTE: [(&str, usize); 12] = [
     ("0.100mm #000000", 107),
     ("0.100mm #0000FF", 18),
     ("0.100mm #008000", 10),
     ("0.130mm #000000", 182),
-    ("0.180mm #008000", 7),
-    ("0.350mm #000000", 183),
-    ("0.350mm #808000", 10),
+    ("0.180mm #008000", 13),
+    ("0.350mm #000000", 226),
+    ("0.350mm #008000", 2),
+    ("0.350mm #800000", 22),
+    ("0.350mm #808000", 32),
     ("0.350mm #FE0060", 6),
+    ("0.500mm #0000FF", 12),
     ("0.700mm #808000", 39),
 ];
 
@@ -97,6 +111,7 @@ struct Tally {
     lines: usize,
     points: usize,
     linestrings: usize,
+    symbols: usize,
     direct: usize,
     via_override: usize,
     unresolved: Vec<String>,
@@ -143,6 +158,10 @@ fn tally(path: &Path) -> Option<Tally> {
         for record in decode_iglinestrings(&sheet) {
             out.linestrings += 1;
             indices.push(("igLineString2d", record.index));
+        }
+        for record in decode_igsymbols(&sheet) {
+            out.symbols += 1;
+            indices.push(("igSymbol2d", record.style_ref));
         }
 
         for (family, index) in indices {
@@ -198,6 +217,11 @@ fn every_drawable_record_reaches_a_line_width_and_colour() {
             expected.fixture
         );
         assert_eq!(
+            got.symbols, expected.symbols,
+            "{} igSymbol2d",
+            expected.fixture
+        );
+        assert_eq!(
             got.direct, expected.direct,
             "{} resolved without an override",
             expected.fixture
@@ -211,7 +235,7 @@ fn every_drawable_record_reaches_a_line_width_and_colour() {
         let resolved = got.direct + got.via_override;
         assert_eq!(
             resolved,
-            expected.lines + expected.points + expected.linestrings,
+            expected.lines + expected.points + expected.linestrings + expected.symbols,
             "{}: resolutions must account for every record",
             expected.fixture
         );
@@ -230,7 +254,7 @@ fn every_drawable_record_reaches_a_line_width_and_colour() {
         return;
     }
 
-    assert_eq!(corpus_records, 562, "records reaching a line style");
+    assert_eq!(corpus_records, 669, "records reaching a line style");
     let expected_palette: BTreeMap<String, usize> = EXPECTED_PALETTE
         .iter()
         .map(|(key, count)| ((*key).to_string(), *count))
@@ -719,7 +743,7 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
 
         let mut missed = Vec::new();
         for entity in &geometry.entities {
-            let is_indexed_family = ["igline2d:", "igpoint2d:", "iglinestring2d:"]
+            let is_indexed_family = ["igline2d:", "igpoint2d:", "iglinestring2d:", "igsymbol2d:"]
                 .iter()
                 .any(|marker| entity.id.contains(marker));
             if !is_indexed_family {
@@ -744,7 +768,7 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
         );
     }
     if joined > 0 {
-        assert_eq!(joined, 562, "entities joined to a line style");
+        assert_eq!(joined, 669, "entities joined to a line style");
     }
 }
 

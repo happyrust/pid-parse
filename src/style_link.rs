@@ -59,14 +59,25 @@
 //! `index` names one of these ids. Over the four `test-file/*.pid` fixtures:
 //!
 //! * Every drawable record resolves to a concrete width and colour, with
-//!   nothing left over — all 562 that `decode_iglines` / `decode_igpoints` /
-//!   `decode_iglinestrings` accept across the four fixtures. (A raw chain walk
-//!   finds 574; the twelve polylines it finds and they refuse fail on their
-//!   own validation rules, which is a decoder coverage question, not a link
-//!   question. The four `igLine2d` in `DWG-0202/Sheet6615` that used to sit
-//!   beside them are in the 562 now — and all four resolve, which is one more
-//!   reading that refusing them was the decoder's error and not the file's.)
+//!   nothing left over — all 669 that `decode_iglines` / `decode_igpoints` /
+//!   `decode_iglinestrings` / `decode_igsymbols` accept across the four
+//!   fixtures. (A raw chain walk finds more; the twelve polylines it finds
+//!   and they refuse fail on their own validation rules, which is a decoder
+//!   coverage question, not a link question. The four `igLine2d` in
+//!   `DWG-0202/Sheet6615` that used to sit beside them are in the count now —
+//!   and all four resolve, which is one more reading that refusing them was
+//!   the decoder's error and not the file's.)
 //!   The ratchet in `tests/style_link_ratchet.rs` pins the counts.
+//! * A symbol placement's slot is `igSymbol2d +25` rather than `+14`, and the
+//!   style it names covers the placed body's whole line work, overriding the
+//!   per-stroke styles the `.sym` library states: `DWG-0201`'s vessel is
+//!   authored black in `Parametric Manifold.sym` and shows on `SmartPlant`'s
+//!   screen in its placement's `#800000`; `Off-Unit.sym` authors cyan strokes
+//!   and the screen shows its placement's `#808000`. The palette the 107
+//!   placements resolve to is item-class colouring — equipment `#800000`,
+//!   piping `#808000`, instruments `#008000`, electric trace `#0000FF`,
+//!   annotation black. See
+//!   `docs/analysis/2026-08-24-placement-names-the-body-style.md`.
 //! * Resolution alone is weak evidence: style ids form a 79–97% dense `1..N`
 //!   run per document, so any small integer resolves. The evidence is in
 //!   **which kind** the id lands on. Across 98 distinct index values not one
@@ -106,8 +117,8 @@ use std::path::Path;
 
 use crate::error::PidError;
 use crate::parsers::sheet_records::{
-    decode_igboundaries, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igtextboxes,
-    PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+    decode_igboundaries, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
+    decode_igtextboxes, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
 };
 
 /// Magic word every cluster-family stream opens with, `StyleCluster`
@@ -1149,6 +1160,17 @@ pub fn line_styles_for_file(path: &Path) -> Result<LineStyleIndex, PidError> {
                 decode_iglinestrings(sheet)
                     .into_iter()
                     .map(|record| (record.oid, record.index)),
+            )
+            // A symbol placement names the style its whole body draws
+            // with — `igSymbol2d +25` — and it wins over the styles the
+            // `.sym` library states stroke by stroke: `DWG-0201`'s vessel
+            // is authored black in `Parametric Manifold.sym` and shows on
+            // `SmartPlant`'s screen in this reference's `#800000`. See
+            // `docs/analysis/2026-08-24-placement-names-the-body-style.md`.
+            .chain(
+                decode_igsymbols(sheet)
+                    .into_iter()
+                    .map(|record| (record.oid, record.style_ref)),
             );
         for (oid, index) in indexed {
             if let Some(resolved) = table.resolve_line_style(index) {

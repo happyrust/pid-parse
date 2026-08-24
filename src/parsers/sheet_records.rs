@@ -2410,8 +2410,7 @@ const IGTEXTBOX_TAIL_LEN: usize = 36;
 /// The old gate was 68 — sub-type 2's overhead — and it alone rejected the
 /// corpus's empty and single-character sub-type 1 records, whose payloads
 /// measure 60 and 62 bytes.
-const IGTEXTBOX_MIN_PAYLOAD_LEN: usize =
-    IGTEXTBOX_BODY_START + 2 + IGTEXTBOX_TAIL_LEN;
+const IGTEXTBOX_MIN_PAYLOAD_LEN: usize = IGTEXTBOX_BODY_START + 2 + IGTEXTBOX_TAIL_LEN;
 
 /// Maximum `text_length` (UTF-16LE chars) accepted. Real
 /// `SmartPlant` fixture texts are short labels (e.g. tag names);
@@ -2462,6 +2461,16 @@ const IGSYMBOL2D_MATRIX_TAG: [u8; 4] = [0x02, 0x00, 0xA7, 0x50];
 /// positions are 33 and 35; bounding the search stops a byte pair inside
 /// the coordinate data from being mistaken for the tag.
 const IGSYMBOL2D_TAG_SEARCH_END: usize = 64;
+
+/// Offset of the placement's body style reference within an `igSymbol2d`
+/// payload.
+///
+/// Fixed, unlike the tag-relative `jsite_ref`: the 113 / 115 / 121 / 123
+/// byte payload variants all carry it here, and all 109 placements across
+/// the five `test-file` fixtures resolve it against the root document's
+/// `StyleCluster`. The byte before it reads `0x0B` on 103 of the 109 —
+/// close to universal but not a law, so it is not used as a gate.
+pub const IGSYMBOL2D_STYLE_REF_OFFSET: usize = 25;
 
 /// PSM type code for `DependencyObject` records.
 ///
@@ -3654,8 +3663,7 @@ fn decode_igtextbox_payload(
     // sub-type 2 is the common one; on the other two that offset is some
     // other field, which is why they were refused wholesale.
     let text_sub_type = u16::from_le_bytes([payload[18], payload[19]]);
-    let (inline_text_length, text_start, body_len) =
-        igtextbox_body_shape(payload, text_sub_type)?;
+    let (inline_text_length, text_start, body_len) = igtextbox_body_shape(payload, text_sub_type)?;
     if inline_text_length > IGTEXTBOX_MAX_TEXT_LENGTH {
         return None;
     }
@@ -3790,6 +3798,22 @@ pub struct SheetIgSymbol2dDecoded {
     /// `.sym` library path. See
     /// `docs/analysis/2026-07-26-phase35c-igsymbol2d-jsite-link.md`.
     pub jsite_ref: u32,
+    /// Style id the placement names for its body's line work, read as
+    /// the u32 at payload `+25` — a fixed offset, unlike the tag-relative
+    /// `jsite_ref`, and present in the 113-byte minimum payload.
+    ///
+    /// Level: corpus + screen. All 109 placements across the five
+    /// `test-file` fixtures resolve this id to a `JStyleSimpleLine` in
+    /// the **root** document's `StyleCluster`, and the palette that falls
+    /// out is `SmartPlant`'s item-class colouring: equipment `#800000`,
+    /// piping `#808000`, instruments `#008000`, annotation `#000000`,
+    /// electric trace `#0000FF`. A `SmartPlant` screenshot of `DWG-0201`
+    /// shows exactly those colours on exactly those placements — including
+    /// a vessel whose own `.sym` styles its strokes black, which is what
+    /// settles that the placement's style, not the library's, is the one
+    /// the body draws with. See
+    /// `docs/analysis/2026-08-24-placement-names-the-body-style.md`.
+    pub style_ref: u32,
     /// Row-major 2×2 placement matrix, read from just past
     /// `IGSYMBOL2D_MATRIX_TAG`. An un-rotated, un-mirrored symbol reads
     /// `[1.0, 0.0, 0.0, 1.0]`; a negative determinant means the placement
@@ -3879,6 +3903,12 @@ fn decode_igsymbol_payload(
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
+    let style_ref = u32::from_le_bytes([
+        payload[IGSYMBOL2D_STYLE_REF_OFFSET],
+        payload[IGSYMBOL2D_STYLE_REF_OFFSET + 1],
+        payload[IGSYMBOL2D_STYLE_REF_OFFSET + 2],
+        payload[IGSYMBOL2D_STYLE_REF_OFFSET + 3],
+    ]);
 
     let search_end = IGSYMBOL2D_TAG_SEARCH_END.min(payload.len());
     let tag_at = payload
@@ -3925,6 +3955,7 @@ fn decode_igsymbol_payload(
         parent_ref,
         sub_type_word,
         jsite_ref,
+        style_ref,
         transform: [doubles[0], doubles[1], doubles[2], doubles[3]],
         insertion: (doubles[4], doubles[5]),
     })
@@ -6798,7 +6829,11 @@ mod tests {
     /// puts the count somewhere other than `+30`, and which the decoder
     /// refused wholesale until the native layout was read out of
     /// `radsrvitem.dll`.
-    fn build_igtextbox_of_sub_type(sub_type: u16, text: &str, extra_doubles: (u16, u16)) -> Vec<u8> {
+    fn build_igtextbox_of_sub_type(
+        sub_type: u16,
+        text: &str,
+        extra_doubles: (u16, u16),
+    ) -> Vec<u8> {
         let units: Vec<u16> = text.encode_utf16().collect();
         let count = units.len() as u16;
         let (a, b) = extra_doubles;
@@ -6853,7 +6888,8 @@ mod tests {
     #[test]
     fn igtextbox_decodes_the_two_shapes_whose_count_is_not_at_plus_30() {
         for (sub_type, extras) in [(1u16, (0u16, 0u16)), (3, (2, 3))] {
-            let record = build_igtextbox_of_sub_type(sub_type, "\u{8BBE}\u{5907}\u{4F4D}\u{53F7}", extras);
+            let record =
+                build_igtextbox_of_sub_type(sub_type, "\u{8BBE}\u{5907}\u{4F4D}\u{53F7}", extras);
             let decoded = decode_igtextboxes(&record);
 
             assert_eq!(decoded.len(), 1, "sub-type {sub_type} must decode");
