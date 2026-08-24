@@ -58,7 +58,10 @@ fn main() {
                     continue;
                 };
                 let Some(symbology) = record.symbology else {
-                    println!("        id {id:<4} type 0x{:04X}  (no line symbology)", record.type_code);
+                    println!(
+                        "        id {id:<4} type 0x{:04X}  (no line symbology)",
+                        record.type_code
+                    );
                     continue;
                 };
                 let [r, g, b] = symbology.rgb();

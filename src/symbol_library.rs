@@ -27,7 +27,7 @@
 //! }
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::PidParser;
 use crate::error::PidError;
+use crate::style_link::DocumentStyleTable;
 
 /// `u32` LE signature shared by every cluster-family stream, including a
 /// symbol's `Sheet*` streams.
@@ -56,6 +57,9 @@ const PSM_ENVELOPE_LEN: usize = 6;
 /// decoders name the same span but validate values a `.sym` does not share
 /// (`igLine2d` at `+8` holds 12 in a `.pid` and 8 here).
 const PAYLOAD_HEADER_LEN: usize = 18;
+
+/// Offset of the style index inside the payload header, four bytes wide.
+const STYLE_INDEX_OFFSET: usize = 14;
 
 const TYPE_LINE: u16 = 0x0018;
 const TYPE_CIRCLE: u16 = 0x0059;
@@ -175,11 +179,44 @@ pub enum SymbolPrimitive {
     },
 }
 
+/// The colour and width one primitive draws with.
+///
+/// A symbol states its own symbology and the drawing does not state it for
+/// them: the placement record carries no style link at all, because the
+/// payload slot its `igLine2d` siblings use for the style `index` holds the
+/// `JSite` id instead. Every `.sym` carries a `StyleCluster` stream of the
+/// same shape a `.pid` does, and each of the symbol's own records indexes
+/// into it exactly as a drawing's line work indexes into the drawing's.
+///
+/// The dash a style may also name is not carried: nothing draws it yet, and
+/// a field nobody reads is a field nobody maintains.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PrimitiveStyle {
+    /// Stroke colour as `[r, g, b]`.
+    pub rgb: [u8; 3],
+    /// Stroke width in millimetres.
+    pub width_mm: f64,
+}
+
+/// One drawable primitive together with the symbology its own `.sym` states
+/// for it.
+///
+/// `style` is `None` where the record's index names nothing this reader can
+/// follow — a fill or text style, or a `.sym` with no readable style table.
+/// That is "draw it the way you would have anyway", not a failure.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StyledPrimitive {
+    /// What to draw, in the symbol's own coordinate space.
+    pub primitive: SymbolPrimitive,
+    /// What to draw it with.
+    pub style: Option<PrimitiveStyle>,
+}
+
 /// A symbol's drawable body, as read from one `.sym` file.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SymbolGeometry {
     /// Drawable primitives in the symbol's own coordinate space.
-    pub primitives: Vec<SymbolPrimitive>,
+    pub primitives: Vec<StyledPrimitive>,
     /// Records the walk stepped over because they carry no shape, keyed by
     /// PSM type code. Reported rather than dropped silently so a symbol that
     /// comes out looking too sparse can be told apart from one that is.
@@ -203,8 +240,8 @@ impl SymbolGeometry {
                 }
             });
         };
-        for primitive in &self.primitives {
-            match primitive {
+        for styled in &self.primitives {
+            match &styled.primitive {
                 SymbolPrimitive::Line { start, end } => {
                     add(start.0, start.1);
                     add(end.0, end.1);
@@ -380,7 +417,7 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
 /// that stops early or overruns means the bytes are not the layout this
 /// reader knows, and half a symbol drawn from a misread chain is worse than
 /// no symbol at all.
-fn read_sheet_chain(bytes: &[u8], out: &mut SymbolGeometry) {
+fn read_sheet_chain(bytes: &[u8], styles: Option<&DocumentStyleTable>, out: &mut SymbolGeometry) {
     if u32_le(bytes, 0) != Some(CLUSTER_MAGIC) {
         return;
     }
@@ -402,8 +439,12 @@ fn read_sheet_chain(bytes: &[u8], out: &mut SymbolGeometry) {
             return;
         }
         let type_code = raw_type & 0x0FFF;
-        match decode_primitive(type_code, &bytes[body..end]) {
-            Some(primitive) => primitives.push(primitive),
+        let payload = &bytes[body..end];
+        match decode_primitive(type_code, payload) {
+            Some(primitive) => primitives.push(StyledPrimitive {
+                primitive,
+                style: style_of(payload, styles),
+            }),
             None => *skipped.entry(type_code).or_default() += 1,
         }
         at = end;
@@ -417,6 +458,28 @@ fn read_sheet_chain(bytes: &[u8], out: &mut SymbolGeometry) {
     }
 }
 
+/// The symbology a record's own style index names, if the symbol's style
+/// table defines it as a line style.
+///
+/// The index sits at [`STYLE_INDEX_OFFSET`] of the payload, the same slot the
+/// drawing-side families carry it in — settled for those in
+/// `docs/analysis/2026-08-05-geometry-index-is-the-style-link.md`.
+fn style_of(payload: &[u8], styles: Option<&DocumentStyleTable>) -> Option<PrimitiveStyle> {
+    let table = styles?;
+    let index = u32_le(payload, STYLE_INDEX_OFFSET)?;
+    let resolved = table.resolve_line_style(index)?;
+    Some(PrimitiveStyle {
+        rgb: resolved.symbology.rgb(),
+        width_mm: resolved.symbology.width_mm(),
+    })
+}
+
+/// The storage a stream lives in, which is what a `Sheet*` and the
+/// `StyleCluster` that styles it have in common.
+fn parent_storage(stream_path: &str) -> &str {
+    stream_path.rfind('/').map_or("", |cut| &stream_path[..cut])
+}
+
 /// Read a `.sym` file's drawable body.
 ///
 /// # Errors
@@ -427,6 +490,19 @@ fn read_sheet_chain(bytes: &[u8], out: &mut SymbolGeometry) {
 /// is a real thing in the library.
 pub fn read_symbol_geometry(path: &Path) -> Result<SymbolGeometry, PidError> {
     let package = PidParser::new().parse_package(path)?;
+    // Styles are scoped to the storage they sit in, the same rule
+    // `style_link` applies to a drawing: a sheet is resolved against its own
+    // document's table and never against another's.
+    let mut tables: HashMap<&str, DocumentStyleTable> = HashMap::new();
+    for (stream_path, raw) in &package.streams {
+        if stream_path.rsplit('/').next() == Some("StyleCluster") {
+            tables.insert(
+                parent_storage(stream_path),
+                DocumentStyleTable::from_stylecluster_bytes(&raw.data),
+            );
+        }
+    }
+
     let mut geometry = SymbolGeometry::default();
     for (stream_path, raw) in &package.streams {
         let is_sheet = stream_path
@@ -437,16 +513,26 @@ pub fn read_symbol_geometry(path: &Path) -> Result<SymbolGeometry, PidError> {
             continue;
         }
         let mut sheet = SymbolGeometry::default();
-        read_sheet_chain(&raw.data, &mut sheet);
+        read_sheet_chain(
+            &raw.data,
+            tables.get(parent_storage(stream_path)),
+            &mut sheet,
+        );
 
         // A symbol often keeps more than one sheet holding the same body:
         // the angle globe valve's `Sheet63` is nine primitives that are
         // byte-identical to nine of `Sheet6`'s eleven. Drawing both doubles
         // every stroke. Duplicates are dropped across sheets but kept within
-        // one, where a repeated stroke is the symbol's own doing.
-        for primitive in sheet.primitives {
-            if !geometry.primitives.contains(&primitive) {
-                geometry.primitives.push(primitive);
+        // one, where a repeated stroke is the symbol's own doing. The shape
+        // decides that, not the symbology: the same stroke twice in two
+        // colours is still the same stroke twice.
+        for styled in sheet.primitives {
+            if !geometry
+                .primitives
+                .iter()
+                .any(|kept| kept.primitive == styled.primitive)
+            {
+                geometry.primitives.push(styled);
             }
         }
         for (code, count) in sheet.skipped_records {
@@ -654,12 +740,43 @@ mod tests {
             "the annotation Circle symbol is one circle: {:?}",
             body.primitives
         );
-        let SymbolPrimitive::Circle { center, radius } = body.primitives[0] else {
+        let SymbolPrimitive::Circle { center, radius } = body.primitives[0].primitive else {
             panic!("expected a circle, got {:?}", body.primitives[0]);
         };
         assert!((radius - 0.003_810).abs() < 1e-9, "radius {radius}");
         assert!((center.0 - 0.101_600).abs() < 1e-9, "centre x {}", center.0);
         assert!((center.1 - 0.127_000).abs() < 1e-9, "centre y {}", center.1);
+    }
+
+    /// A symbol states its own colour and width, and the reader hands them
+    /// over with the stroke they belong to.
+    ///
+    /// The colour cannot come from the drawing: an `igSymbol2d` placement
+    /// carries the `JSite` id where its siblings carry the style index, so
+    /// nothing on the placement names a style at all. It comes from the
+    /// `StyleCluster` the `.sym` carries itself. `ElecTraceLine` is the
+    /// smallest symbol that proves the join: its table defines exactly one
+    /// line style, `#0000FF` at 0.5mm, and every one of its ten strokes
+    /// indexes it -- which is why the trace-heating row draws blue.
+    #[test]
+    fn a_symbol_carries_the_colour_and_width_its_own_style_table_states() {
+        let Some(path) = fixture(r"Design/Annotation/Graphics/ElecTraceLine.sym") else {
+            return;
+        };
+        let body =
+            read_symbol_geometry(&path).expect("ElecTraceLine.sym is a readable compound file");
+        assert_eq!(body.primitives.len(), 10, "8 lines and 2 arcs");
+        for styled in &body.primitives {
+            let style = styled
+                .style
+                .unwrap_or_else(|| panic!("every stroke names a style: {styled:?}"));
+            assert_eq!(style.rgb, [0x00, 0x00, 0xFF], "{styled:?}");
+            assert!(
+                (style.width_mm - 0.5).abs() < 1e-9,
+                "width {}",
+                style.width_mm
+            );
+        }
     }
 
     #[test]
@@ -671,12 +788,12 @@ mod tests {
         let lines = body
             .primitives
             .iter()
-            .filter(|p| matches!(p, SymbolPrimitive::Line { .. }))
+            .filter(|p| matches!(p.primitive, SymbolPrimitive::Line { .. }))
             .count();
         let circles = body
             .primitives
             .iter()
-            .filter(|p| matches!(p, SymbolPrimitive::Circle { .. }))
+            .filter(|p| matches!(p.primitive, SymbolPrimitive::Circle { .. }))
             .count();
         assert!(lines >= 8, "a globe valve is drawn with lines: {lines}");
         assert!(circles >= 2, "and its seat circles: {circles}");
@@ -806,16 +923,20 @@ mod tests {
 
     #[test]
     fn bounds_take_in_the_text_insertion_point() {
+        let unstyled = |primitive| StyledPrimitive {
+            primitive,
+            style: None,
+        };
         let body = SymbolGeometry {
             primitives: vec![
-                SymbolPrimitive::Line {
+                unstyled(SymbolPrimitive::Line {
                     start: (0.0, 0.0),
                     end: (0.1, 0.1),
-                },
-                SymbolPrimitive::Text {
+                }),
+                unstyled(SymbolPrimitive::Text {
                     text: "设备名称".to_owned(),
                     at: (-0.2, 0.3),
-                },
+                }),
             ],
             skipped_records: BTreeMap::new(),
         };

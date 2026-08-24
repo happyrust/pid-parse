@@ -102,8 +102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if body.primitives.is_empty() {
             empty += 1;
         }
-        for primitive in &body.primitives {
-            match primitive {
+        for styled in &body.primitives {
+            match &styled.primitive {
                 SymbolPrimitive::Line { .. } => lines += 1,
                 SymbolPrimitive::Circle { .. } => circles += 1,
                 SymbolPrimitive::Arc { .. } => arcs += 1,
