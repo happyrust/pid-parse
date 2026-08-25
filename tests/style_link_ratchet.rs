@@ -772,6 +772,113 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
     }
 }
 
+/// Every style the librarian names lands on a record of the right family.
+///
+/// The name is bound by a gap — the `oid` eight bytes past where the text
+/// stops — so the thing that proves the gap is not that names come out, it is
+/// that they come out *sorted*: every `ps…` on a `JStylePointSymbol` and every
+/// `ls…` on a `JStyleSimpleLine`, over the whole corpus, with nothing
+/// straddling. A gap that were merely plausible would mix them.
+///
+/// The status names are why this decode exists — they turn four glyphs into
+/// `psOk` / `psWarning` / `psError` / `psApproved` — but the discipline names
+/// that come with them (`Primary Piping - New`, `Electric Signal`, …) are the
+/// drawing's own words for what each line *is*, and they are pinned here so
+/// they cannot quietly stop resolving.
+#[test]
+fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
+    const PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL: u16 = 0x0032;
+    const PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE: u16 = 0x002E;
+
+    let mut named = 0usize;
+    let mut statuses: BTreeMap<String, usize> = BTreeMap::new();
+    let mut disciplines: BTreeMap<String, usize> = BTreeMap::new();
+    let mut fixtures_seen = 0usize;
+
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            continue;
+        }
+        fixtures_seen += 1;
+        let file = std::fs::File::open(path).expect("fixture opens");
+        let mut cfb = CompoundFile::open(file).expect("fixture is a compound file");
+        let cluster_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .filter(|p| p.rsplit('/').next().unwrap_or("") == "StyleCluster")
+            .collect();
+
+        for cluster_path in &cluster_paths {
+            let Some(bytes) = read_stream(&mut cfb, cluster_path) else {
+                continue;
+            };
+            let table = DocumentStyleTable::from_stylecluster_bytes(&bytes);
+            for record in table.records() {
+                let Some(name) = record.name.as_deref() else {
+                    continue;
+                };
+                named += 1;
+                if let Some(rest) = name.strip_prefix("ps") {
+                    assert_eq!(
+                        record.type_code, PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL,
+                        "{}: {cluster_path} names ps{rest} on type 0x{:04X}",
+                        expected.fixture, record.type_code
+                    );
+                    *statuses.entry(name.to_string()).or_default() += 1;
+                } else if let Some(rest) = name.strip_prefix("ls") {
+                    assert_eq!(
+                        record.type_code, PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE,
+                        "{}: {cluster_path} names ls{rest} on type 0x{:04X}",
+                        expected.fixture, record.type_code
+                    );
+                    *statuses.entry(name.to_string()).or_default() += 1;
+                } else if name.contains(" - New") || name.contains("Instrument") {
+                    *disciplines.entry(name.to_string()).or_default() += 1;
+                }
+            }
+        }
+    }
+
+    if fixtures_seen < EXPECTED.len() {
+        eprintln!("skip: partial corpus cannot be held to corpus-wide totals");
+        return;
+    }
+
+    assert_eq!(named, 92, "styles the librarian names across the corpus");
+    let status_names: Vec<&str> = statuses.keys().map(String::as_str).collect();
+    assert_eq!(
+        status_names,
+        [
+            "lsApproved",
+            "lsError",
+            "lsOk",
+            "lsWarning",
+            "psApproved",
+            "psError",
+            "psOk",
+            "psWarning",
+        ],
+        "the review-status set is four states, each with a point form and a \
+         line form"
+    );
+    let discipline_names: Vec<&str> = disciplines.keys().map(String::as_str).collect();
+    assert_eq!(
+        discipline_names,
+        [
+            "Equipment - New",
+            "In-Line Instrument - New",
+            "Nozzle - New",
+            "Off-Line Instrument",
+            "Piping Component - New",
+            "Primary Piping - New",
+            "Secondary Piping - New",
+        ],
+        "the drawing's own word for what each line is"
+    );
+}
+
 #[test]
 fn a_sheet_never_resolves_against_another_documents_style_table() {
     // Pooling ids across documents is what hid this link for two rounds. The

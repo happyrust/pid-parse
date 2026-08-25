@@ -7542,11 +7542,87 @@ fn a_point_draws_the_symbol_its_line_terminator_names() {
     }
 }
 
+/// The marks are a review status, and the drawing says so in words.
+///
+/// The `JStyleLibrarian` at the head of every `StyleCluster` names each point
+/// symbol: `psOk`, `psWarning`, `psError`, `psApproved`. That is what the
+/// glyphs are — not decoration, and not a per-discipline tick. It also settles
+/// the blank symbol: `psOk` stores two zero-length lines because **an item
+/// that passed has nothing to draw**.
+///
+/// Every marked point in the corpus is a `psWarning` or a `psApproved`, and
+/// the blank ones are all `psOk`. Not one point is a `psError` — that state is
+/// defined by the two richest drawings and triggered by nothing in either, so
+/// the cross glyph nobody references is the state nothing is in rather than a
+/// leftover template.
+///
+/// See `docs/analysis/2026-08-25-a-point-draws-the-symbol-its-terminator-names.md`.
+#[test]
+fn a_point_marks_the_review_status_the_librarian_names() {
+    use pid_parse::style_link::MarkerStatus;
+
+    // (ok, warning, error, approved, named-something-else)
+    for (fixture, expected) in [
+        (
+            "DWG-0201GP06-01.pid",
+            (53usize, 11usize, 0usize, 0usize, 0usize),
+        ),
+        ("DWG-0202GP06-01.pid", (22, 5, 0, 0, 0)),
+        ("工艺管道及仪表流程-1.pid", (23, 1, 0, 10, 0)),
+        ("D06.pid", (9, 1, 0, 0, 0)),
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !Path::new(&path).exists() {
+            eprintln!("skipping: fixture {fixture} not found");
+            continue;
+        }
+        let styles = pid_parse::style_link::line_styles_for_file(Path::new(&path))
+            .unwrap_or_else(|e| panic!("{fixture}: line_styles_for_file failed: {e}"));
+        let doc = parse_test_file(fixture).expect("fixture exists");
+
+        let mut tally = (0usize, 0usize, 0usize, 0usize, 0usize);
+        for sheet in &doc.sheet_streams {
+            let Some(geometry) = &sheet.geometry else {
+                continue;
+            };
+            for record in &geometry.decoded_igpoints {
+                let Some(marker) = styles
+                    .get(&(sheet.path.clone(), record.oid))
+                    .and_then(|style| style.marker)
+                else {
+                    continue;
+                };
+                match marker.status {
+                    Some(MarkerStatus::Ok) => tally.0 += 1,
+                    Some(MarkerStatus::Warning) => tally.1 += 1,
+                    Some(MarkerStatus::Error) => tally.2 += 1,
+                    Some(MarkerStatus::Approved) => tally.3 += 1,
+                    None => tally.4 += 1,
+                }
+                // The status and the glyph have to agree, or one of the two
+                // is being read wrong: only `psOk` is blank.
+                assert_eq!(
+                    marker.status == Some(MarkerStatus::Ok),
+                    !marker.draws(),
+                    "{fixture}: point {} is {:?} but draws() is {}",
+                    record.oid,
+                    marker.status,
+                    marker.draws()
+                );
+            }
+        }
+        assert_eq!(
+            tally, expected,
+            "{fixture}: expected (ok, warning, error, approved, other) {expected:?}"
+        );
+    }
+}
+
 /// The glyph is the file's, and there is more than one of them.
 ///
 /// `DWG-0201`'s marked points draw a two-stroke slash; the gongyi drawing
-/// gives its ten instrument points a bent caret instead, and defines a
-/// five-millimetre cross for a third class. A renderer that hard-codes one
+/// gives its ten instrument points a check mark instead, and defines a
+/// five-millimetre cross for a third status. A renderer that hard-codes one
 /// shape gets two of the three wrong.
 #[test]
 fn a_point_symbols_glyph_is_read_from_the_group_it_owns() {

@@ -139,7 +139,7 @@ RTTI / COM 类工厂），**等级：native-reader**。
 | `0x0030` | **JStyleOverride** | 48 |
 | `0x0032` | JStylePointSymbol | 12 |
 | `0x0033` | JStyleLineTerminator | 12 |
-| `0x005A` | JStyleLibrarian（`StyleCluster` 的第一条记录） | 13 |
+| `0x005A` | JStyleLibrarian（`StyleCluster` 的第一条记录；含全部样式的作者命名，见 §6.1） | 13 |
 
 `0x0032` / `0x0033` 补录于 2026-08-05（`tools/psm_type_clsid.py 0x32 0x33` →
 `47FCC33B` / `47FCC33C`，等级 native-reader）。两者**只出现在 `StyleCluster`、
@@ -166,6 +166,13 @@ Group                +28 ──▶ 两条 Line Object     (0x0018)   **oid**
 必须按 `oid` 建索引，混进样式 id 空间会互相遮蔽——这也是它们不该进
 `STYLE_FAMILY_TYPE_CODES` 的原因。反编译还看到 `JStyleLineTerminator`
 带**两个**引用槽（对象 `+88`/`+92`，起点/终点各一），语料只用后一个。
+
+**2026-08-25（同日稍晚）：这些字形是审核状态，样式库里有它们的名字。**
+`0x005A` **JStyleLibrarian** 把每个点符号叫作 `psOk` / `psWarning` /
+`psError` / `psApproved`，各配一个同名的 `ls*` 线样式。于是
+「字形退化 = 不画」有了理由：**`psOk` 是「通过」，通过的东西不画任何东西**；
+而那个谁都不引用的 X 叉是 `psError`——四态里这张图没触发的一档，不是模板。
+名表读法见 §6.1。
 
 详见 `docs/analysis/2026-08-25-a-point-draws-the-symbol-its-terminator-names.md`。
 
@@ -225,6 +232,42 @@ Group                +28 ──▶ 两条 Line Object     (0x0018)   **oid**
 ```
 
 其余记录就是**样式实例**。
+
+### 6.1 样式库还存着每个样式的作者命名（2026-08-25）
+
+**等级：corpus，五图 210 条穷尽**
+
+目录之后，同一条 `0x005A` 记录里还有一张名表。名字是 **UTF-16、
+既没有长度前缀也没有结束符**，所以条目按「文字在哪断」定位：
+
+```text
+[名字 UTF-16，无终止符][2 字节断字][6 字节][u32 oid]
+                                      └─ 文字末尾 +8 处
+```
+
+**这里的 `oid` 是记录 payload `+0` 的那个 oid，不是样式 id**——
+和 `0x007B` / `0x0018` 一样是另一个键空间。
+
+读法要点：唯一的过滤是**绑到的 oid 必须是该流真的定义过的记录**。
+名字没有长度前缀，所以扫描只能靠可打印字符断句；一段碰巧像名字的字节
+想要成为样式名，得恰好在 +8 处撞上一个真实 oid——全语料一次都没撞上。
+
+间距 `+8` 的证据不是「能出名字」而是**能分族**：五图 210 条全部落在
+真实记录上，`ps…` 无一例外落 `0x0032`、`ls…` 无一例外落 `0x002E`。
+
+名表里有什么：
+
+- **四个审核状态**，点、线各一套：`psOk`/`lsOk`、`psWarning`/`lsWarning`、
+  `psError`/`lsError`、`psApproved`/`lsApproved`。见 §4。
+- **专业名**：`Primary Piping - New`、`Secondary Piping - New`、
+  `Equipment - New`、`Nozzle - New`、`Piping Component - New`、
+  `In-Line Instrument - New`、`Off-Line Instrument`、`Electric Signal`、
+  `Electric`、`Piping OPC`、`Connect To Process`、`Construction Status`、
+  `As Drawn`。
+- **图案/字体名**：`Solid`、`Dash`、`Dashed`、`Dash Dot`、`Dash Dot Dot`、
+  `Dash 2Dot`、`End Gap`、`Normal`、`ANSI`、`DIN`、`Chinese`、`Viewport`。
+
+`pid-parse`：`StyleRecord.name`、`DocumentStyleTable::name_of_style()`。
 
 ### 样式记录的共同形状
 

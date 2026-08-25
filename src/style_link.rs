@@ -210,7 +210,7 @@ pub const DASH_SEGMENT_COUNT_OFFSET: usize = 48;
 /// still rejecting a misframed count, which reads as an enormous number.
 pub const MAX_DASH_SEGMENTS: usize = 16;
 
-/// PSM type code of `JStylePointSymbol` — "JSL PointSymbol Style", CLSID
+/// PSM type code of `JStylePointSymbol` — `JSL PointSymbol Style`, CLSID
 /// `{47FCC33B-2D0F-11D0-A1FF-080036A1CF02}`. Level: native-reader.
 ///
 /// The class implements `IJGraphic` (`style.dll` carries the interface name
@@ -269,6 +269,37 @@ pub const GROUP_MEMBER_ENTRY_LEN: usize = 14;
 /// Most members a group may declare before the record is refused. Every
 /// corpus group declares two.
 const MAX_GROUP_MEMBERS: usize = 8;
+
+/// PSM type code of `JStyleLibrarian` — "JSL Style Librarian", CLSID
+/// `{9196D9D1-E94A-11CF-8094-080036CE6C02}`. Level: native-reader.
+///
+/// One per `StyleCluster`, first in the chain: the directory that holds the
+/// **authored name** of every style the document defines. It is deliberately
+/// absent from [`STYLE_FAMILY_TYPE_CODES`] because its `+14` is not an id in
+/// that space — see the note there — so it is collected on the way past
+/// instead, like the group and line families that carry glyphs.
+pub const PSM_TYPE_CODE_JSTYLE_LIBRARIAN: u16 = 0x005A;
+
+/// Bytes between the end of a name in the librarian and the `oid` of the
+/// object that name belongs to.
+///
+/// Level: corpus, and exhaustive in the way that matters. Names are UTF-16
+/// with no terminator and no length prefix in front of them, so the entry is
+/// keyed off where the text stops: the `u32` eight bytes later is the object.
+/// Across the five fixtures the rule binds **210 names**, every one of them to
+/// a record that stream actually defines, and it never crosses a family — each
+/// `ps…` name lands on a [`PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL`] and each `ls…`
+/// name on a [`PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE`], with no exceptions. A gap
+/// that were merely plausible would not sort the two apart.
+pub const LIBRARIAN_NAME_TO_OID_GAP: usize = 8;
+
+/// Shortest run of text the librarian scan will treat as a name.
+///
+/// The shortest real name in the corpus is `DIN`. Two is permissive on
+/// purpose: what rejects a run of incidental text is not its length but the
+/// requirement that [`LIBRARIAN_NAME_TO_OID_GAP`] bytes later there is an
+/// `oid` this stream defines.
+const MIN_LIBRARIAN_NAME_UNITS: usize = 2;
 
 /// PSM type code of `JStyleTextChar`, which carries the character height.
 pub const PSM_TYPE_CODE_JSTYLE_TEXT_CHAR: u16 = 0x002C;
@@ -544,6 +575,55 @@ impl MarkerStroke {
     }
 }
 
+/// What a point symbol's name says the mark **means**.
+///
+/// The four glyphs in this corpus are not decoration: the librarian names them
+/// `psOk`, `psWarning`, `psError` and `psApproved`, and each is paired with a
+/// like-named `JStyleSimpleLine` (`lsOk`, `lsWarning`, …) that carries the same
+/// status as a colour. So a review status is one enum with two renderings, a
+/// symbol for points and a colour for lines — which is why reading the mark off
+/// the colour alone very nearly worked, and why it could not be made to work
+/// exactly.
+///
+/// This is what makes the blank glyph legible. [`MarkerStatus::Ok`] stores two
+/// zero-length lines because **an item that passed has nothing to draw** — not
+/// because the record is damaged, and not as a sentinel this crate invented.
+///
+/// [`MarkerStatus::Error`] is defined by every drawing that defines
+/// [`MarkerStatus::Approved`] and referenced by no point in any of them: it is
+/// the state nothing in these drawings is in, not a leftover template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerStatus {
+    /// `psOk` — the item passed. The glyph is blank; nothing is drawn.
+    Ok,
+    /// `psWarning` — the slash.
+    Warning,
+    /// `psError` — the cross.
+    Error,
+    /// `psApproved` — the check mark.
+    Approved,
+}
+
+impl MarkerStatus {
+    /// The status a point symbol's authored name states, if it is one of the
+    /// four the vendor's status set uses.
+    ///
+    /// A name outside the set yields `None` rather than a catch-all variant:
+    /// this crate reports what the file says, and "some other point symbol"
+    /// is better carried by the name itself, which
+    /// [`DocumentStyleTable::name_of_style`] hands over unchanged.
+    #[must_use]
+    pub fn from_style_name(name: &str) -> Option<Self> {
+        match name {
+            "psOk" => Some(Self::Ok),
+            "psWarning" => Some(Self::Warning),
+            "psError" => Some(Self::Error),
+            "psApproved" => Some(Self::Approved),
+            _ => None,
+        }
+    }
+}
+
 /// The glyph a `JStylePointSymbol` draws, read out of the group it names.
 ///
 /// # What the file does and does not state
@@ -552,19 +632,19 @@ impl MarkerStroke {
 /// "Line Object") member of a `Group implementation` (PSM `0x007B`), read
 /// with the same payload layout
 /// [`crate::parsers::sheet_records::decode_iglines`] uses for sheet geometry.
-/// Three distinct glyphs occur across the corpus — a slash, a five-millimetre
-/// cross, and a bent two-stroke caret — and a drawing picks between them per
-/// item class.
+/// Four distinct glyphs occur across the corpus, and the librarian names each
+/// one — see [`MarkerStatus`].
 ///
 /// The **drawn size** is not. On the one drawing with screen truth
-/// (`DWG-0201`) the slash renders about 1.7 times the stated length, anchored
-/// so the point sits inside the long stroke rather than at its origin. No
-/// `f64` anywhere in that `.pid` holds either number, so the magnification and
-/// the anchoring convention belong to the viewer. `style.dll` hands its
-/// rendering to `render.dll`, which is not in the reversed set, so the site
-/// that applies them has not been read. Consumers get the glyph as stated;
-/// scaling it to match a particular viewer is their decision, not this
-/// crate's. See
+/// (`DWG-0201`) the mark renders larger than stated — between about 1.3 and
+/// 1.65 times, depending on which axis it is measured against — and the same
+/// drawing's line weights are drawn wide of their stated widths by a similar
+/// factor, so this is a view-wide scale on style-declared dimensions rather
+/// than anything specific to point symbols. Nothing in the vendor's own object
+/// model can hold it either: `PointStyle` has a graphic and a units enum but
+/// no size, `Point2d` has no scale, and `TerminatorSize` belongs to
+/// `DimensionStyle`. Consumers get the glyph as stated; scaling it to match a
+/// particular viewer is their decision, not this crate's. See
 /// `docs/analysis/2026-08-25-a-point-draws-the-symbol-its-terminator-names.md`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PointMarker {
@@ -572,6 +652,9 @@ pub struct PointMarker {
     pub point_symbol_id: u32,
     /// Style id of the `JStyleLineTerminator` that named it.
     pub line_terminator_id: u32,
+    /// What the point symbol's authored name says the mark means, when the
+    /// librarian names it one of the vendor's four statuses.
+    pub status: Option<MarkerStatus>,
     strokes: [MarkerStroke; MAX_GROUP_MEMBERS],
     len: u8,
 }
@@ -645,6 +728,15 @@ pub struct StyleRecord {
     /// The record's own style id, read at [`STYLE_ID_OFFSET`]. Unique within
     /// its document across every style family.
     pub style_id: u32,
+    /// The record's own `oid`, the `u32` every PSM payload opens with. This
+    /// is the key the librarian names styles by, and it is a different space
+    /// from [`Self::style_id`].
+    pub oid: u32,
+    /// The name the `JStyleLibrarian` gives this record, when it gives it one.
+    ///
+    /// These are the drawing's own words — `psWarning`, `Primary Piping -
+    /// New`, `Electric Signal`, `Dash Dot` — not anything this crate coined.
+    pub name: Option<String>,
     /// Byte range of the whole record — envelope included — within the
     /// stream, for provenance.
     pub byte_range: Range<usize>,
@@ -906,6 +998,10 @@ impl DocumentStyleTable {
         if u32_at(data, 0) != Some(CLUSTER_MAGIC) {
             return table;
         }
+        // The librarian is first in the chain, so its names arrive before the
+        // records they name. They are held here and bound once the walk has
+        // seen everything.
+        let mut librarian_names: Vec<(u32, String)> = Vec::new();
         let mut at = STREAM_HEADER_LEN;
         while let (Some(type_word), Some(bytes_to_follow)) =
             (u16_at(data, at), u32_at(data, at + 2))
@@ -941,6 +1037,9 @@ impl DocumentStyleTable {
                             table.strokes.insert(oid, stroke);
                         }
                     }
+                    PSM_TYPE_CODE_JSTYLE_LIBRARIAN => {
+                        librarian_names.extend(read_librarian_names(payload));
+                    }
                     _ => {}
                 }
                 at = end;
@@ -950,6 +1049,8 @@ impl DocumentStyleTable {
                 let record = StyleRecord {
                     type_code,
                     style_id,
+                    oid: u32_at(payload, 0).unwrap_or_default(),
+                    name: None,
                     byte_range: at..end,
                     symbology: read_symbology(type_code, payload),
                     base_reference: read_base_reference(payload),
@@ -983,7 +1084,49 @@ impl DocumentStyleTable {
             }
             at = end;
         }
+        table.bind_librarian_names(&librarian_names);
         table
+    }
+
+    /// Give each record the name the librarian bound to its `oid`.
+    ///
+    /// A binding whose `oid` this stream does not define is dropped. That is
+    /// the whole filter: a run of incidental text in the librarian only
+    /// becomes a name if the bytes [`LIBRARIAN_NAME_TO_OID_GAP`] past it
+    /// happen to be an `oid` that is really there, and across the corpus
+    /// nothing spurious clears it.
+    ///
+    /// First writer wins, both for the `oid` index and for the name, matching
+    /// how the rest of this module binds a chain it walks in order.
+    fn bind_librarian_names(&mut self, names: &[(u32, String)]) {
+        if names.is_empty() {
+            return;
+        }
+        let mut by_oid: BTreeMap<u32, usize> = BTreeMap::new();
+        for (slot, record) in self.records.iter().enumerate() {
+            by_oid.entry(record.oid).or_insert(slot);
+        }
+        for (oid, name) in names {
+            let Some(slot) = by_oid.get(oid) else {
+                continue;
+            };
+            let Some(record) = self.records.get_mut(*slot) else {
+                continue;
+            };
+            if record.name.is_none() {
+                record.name = Some(name.clone());
+            }
+        }
+    }
+
+    /// The name the librarian gives the style `style_id` names.
+    ///
+    /// The drawing's own word for the style — `psWarning`, `Primary Piping -
+    /// New`, `Electric Signal`. `None` means the librarian does not name it,
+    /// which most internal styles are.
+    #[must_use]
+    pub fn name_of_style(&self, style_id: u32) -> Option<&str> {
+        self.get(style_id)?.name.as_deref()
     }
 
     /// Every record in chain order.
@@ -1086,6 +1229,10 @@ impl DocumentStyleTable {
         (len > 0).then_some(PointMarker {
             point_symbol_id: symbol.style_id,
             line_terminator_id: terminator.style_id,
+            status: symbol
+                .name
+                .as_deref()
+                .and_then(MarkerStatus::from_style_name),
             strokes,
             len,
         })
@@ -1387,6 +1534,70 @@ fn read_font_name(type_code: u16, payload: &[u8]) -> Option<String> {
         return None;
     }
     Some(name)
+}
+
+/// Whether a UTF-16 code unit can be part of a style name.
+///
+/// Printable ASCII plus the CJK ideographs, which is what the corpus's names
+/// are made of. Deliberately narrow: the run has to stop where the name stops
+/// or [`LIBRARIAN_NAME_TO_OID_GAP`] measures from the wrong place, so letting
+/// in the padding and count words that surround an entry would break the
+/// binding rather than widen it.
+fn is_librarian_name_unit(unit: u16) -> bool {
+    (0x0020..=0x007E).contains(&unit) || (0x4E00..=0x9FFF).contains(&unit)
+}
+
+/// Every `(oid, name)` a `JStyleLibrarian` payload states.
+///
+/// The names are UTF-16 with neither a terminator nor a length in front of
+/// them, so an entry is found by where its text stops: the `u32`
+/// [`LIBRARIAN_NAME_TO_OID_GAP`] bytes later is the object being named. Bindings
+/// are returned unfiltered; [`DocumentStyleTable::bind_librarian_names`] drops
+/// the ones whose `oid` the stream does not define, which is what separates a
+/// name from a run of bytes that merely reads like one.
+fn read_librarian_names(payload: &[u8]) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
+    let mut units: Vec<u16> = Vec::new();
+    let mut at = 0;
+    while at + 2 <= payload.len() {
+        match u16_at(payload, at) {
+            Some(unit) if is_librarian_name_unit(unit) => {
+                units.push(unit);
+                at += 2;
+                continue;
+            }
+            _ => {}
+        }
+        push_librarian_name(payload, at, &mut units, &mut out);
+        at += 2;
+    }
+    push_librarian_name(payload, at, &mut units, &mut out);
+    out
+}
+
+/// Close off a run of name text that ended at `run_end` and, if the `u32` past
+/// the gap looks like an `oid`, record the binding.
+fn push_librarian_name(
+    payload: &[u8],
+    run_end: usize,
+    units: &mut Vec<u16>,
+    out: &mut Vec<(u32, String)>,
+) {
+    let units = std::mem::take(units);
+    if units.len() < MIN_LIBRARIAN_NAME_UNITS {
+        return;
+    }
+    let Some(oid) = u32_at(payload, run_end + LIBRARIAN_NAME_TO_OID_GAP) else {
+        return;
+    };
+    // Zero is no object. Every named record in the corpus carries a real one.
+    if oid == 0 {
+        return;
+    }
+    let Ok(name) = String::from_utf16(&units) else {
+        return;
+    };
+    out.push((oid, name));
 }
 
 fn read_text_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
@@ -2036,11 +2247,35 @@ mod tests {
     }
 
     fn point_symbol(style_id: u32, group_oid: u32) -> (u16, Vec<u8>) {
+        point_symbol_with_oid(0, style_id, group_oid)
+    }
+
+    /// A point symbol that carries its own `oid`, which is what the librarian
+    /// names it by.
+    fn point_symbol_with_oid(oid: u32, style_id: u32, group_oid: u32) -> (u16, Vec<u8>) {
         let mut payload = vec![0u8; 30];
+        payload[0..4].copy_from_slice(&oid.to_le_bytes());
         payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
         let at = POINT_SYMBOL_GROUP_REFERENCE_OFFSET;
         payload[at..at + 4].copy_from_slice(&group_oid.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL, payload)
+    }
+
+    /// A librarian holding one entry per `(name, oid)`, laid out the way the
+    /// real one is: the text, then [`LIBRARIAN_NAME_TO_OID_GAP`] bytes, then
+    /// the `oid`.
+    fn librarian(entries: &[(&str, u32)]) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; STYLE_ID_OFFSET + 4];
+        for (name, oid) in entries {
+            for unit in name.encode_utf16() {
+                payload.extend_from_slice(&unit.to_le_bytes());
+            }
+            // The unit that ends the run, then the gap, then the object.
+            payload.extend_from_slice(&0u16.to_le_bytes());
+            payload.extend_from_slice(&[0u8; LIBRARIAN_NAME_TO_OID_GAP - 2]);
+            payload.extend_from_slice(&oid.to_le_bytes());
+        }
+        (PSM_TYPE_CODE_JSTYLE_LIBRARIAN, payload)
     }
 
     fn group(oid: u32, members: &[u32]) -> (u16, Vec<u8>) {
@@ -2124,6 +2359,105 @@ mod tests {
             "every stroke is zero-length"
         );
         assert!(!marker.draws(), "so there is nothing to draw");
+    }
+
+    /// `DWG-0201`'s two status styles as the file lays them out: a librarian
+    /// naming both point symbols by `oid`, then the chain each one hangs off.
+    fn named_status_stream() -> Vec<u8> {
+        stream(&[
+            librarian(&[("psOk", 8302), ("psWarning", 8309)]),
+            simple_line_dashed(70, 69),
+            line_terminator(69, 68),
+            point_symbol_with_oid(8302, 68, 8298),
+            group(8298, &[8299, 8300]),
+            marker_line(8299, (0.0, 0.0), (0.0, 0.0)),
+            marker_line(8300, (0.0, 0.0), (0.0, 0.0)),
+            simple_line_dashed(74, 73),
+            line_terminator(73, 72),
+            point_symbol_with_oid(8309, 72, 8305),
+            group(8305, &[8306, 8308]),
+            marker_line(8306, (0.0, 0.0), (0.003, 0.006)),
+            marker_line(8308, (-0.001, -0.002), (-0.0007, -0.001)),
+        ])
+    }
+
+    /// The librarian is the only place the drawing says what its styles are
+    /// called, and the name is what turns a glyph into a meaning.
+    #[test]
+    fn the_librarian_names_a_style_by_the_oid_eight_bytes_past_its_text() {
+        let table = DocumentStyleTable::from_stylecluster_bytes(&named_status_stream());
+        assert_eq!(table.name_of_style(68), Some("psOk"));
+        assert_eq!(table.name_of_style(72), Some("psWarning"));
+        assert_eq!(
+            table.name_of_style(70),
+            None,
+            "the librarian named the point symbols, not the lines beside them"
+        );
+    }
+
+    /// A mark's meaning comes off the name, not off its colour and not off
+    /// its shape. `psOk` is the case that matters: the blank glyph is an item
+    /// that passed, and the file says so in words.
+    #[test]
+    fn a_point_symbol_carries_the_status_its_name_states() {
+        let table = DocumentStyleTable::from_stylecluster_bytes(&named_status_stream());
+
+        let blank = table
+            .resolve_line_style(70)
+            .expect("id 70 is defined")
+            .marker
+            .expect("it names a point symbol");
+        assert_eq!(blank.status, Some(MarkerStatus::Ok));
+        assert!(!blank.draws(), "an item that passed has nothing to draw");
+
+        let slash = table
+            .resolve_line_style(74)
+            .expect("id 74 is defined")
+            .marker
+            .expect("it names a point symbol");
+        assert_eq!(slash.status, Some(MarkerStatus::Warning));
+        assert!(slash.draws());
+    }
+
+    /// The `oid` gate is the whole filter on the name scan. Without it a run
+    /// of incidental text in the librarian would become a style name.
+    #[test]
+    fn a_librarian_entry_naming_an_absent_oid_is_dropped() {
+        let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
+            librarian(&[("psWarning", 404), ("psOk", 8302)]),
+            simple_line_dashed(70, 69),
+            line_terminator(69, 68),
+            point_symbol_with_oid(8302, 68, 8298),
+            group(8298, &[8299]),
+            marker_line(8299, (0.0, 0.0), (0.0, 0.0)),
+        ]));
+        assert_eq!(
+            table.name_of_style(68),
+            Some("psOk"),
+            "the entry that names a record this stream defines still binds"
+        );
+        assert!(
+            table
+                .records()
+                .iter()
+                .all(|r| r.name.as_deref() != Some("psWarning")),
+            "the entry naming an oid nobody defines binds to nothing"
+        );
+    }
+
+    /// A point symbol the librarian does not name, or names something outside
+    /// the vendor's status set, still resolves — the glyph is what this crate
+    /// promises, and the status is an extra.
+    #[test]
+    fn an_unnamed_point_symbol_still_resolves_its_glyph() {
+        let table = DocumentStyleTable::from_stylecluster_bytes(&slash_glyph_stream(74, false));
+        let marker = table
+            .resolve_line_style(74)
+            .expect("id 74 is defined")
+            .marker
+            .expect("it names a point symbol");
+        assert_eq!(marker.status, None);
+        assert!(marker.draws());
     }
 
     /// `+54` is one slot holding either kind of reference, and which one it
