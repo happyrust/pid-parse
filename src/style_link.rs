@@ -118,7 +118,8 @@ use std::path::Path;
 use crate::error::PidError;
 use crate::parsers::sheet_records::{
     decode_igboundaries, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
-    decode_igtextboxes, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+    decode_igtextboxes, IGLINE2D_PAYLOAD_LEN, PSM_TYPE_CODE_IGLINE2D,
+    PSM_TYPE_CODE_JSTYLE_OVERRIDE,
 };
 
 /// Magic word every cluster-family stream opens with, `StyleCluster`
@@ -208,6 +209,66 @@ pub const DASH_SEGMENT_COUNT_OFFSET: usize = 48;
 /// The widest in the corpus is six. Sixteen leaves generous headroom while
 /// still rejecting a misframed count, which reads as an enormous number.
 pub const MAX_DASH_SEGMENTS: usize = 16;
+
+/// PSM type code of `JStylePointSymbol` — "JSL PointSymbol Style", CLSID
+/// `{47FCC33B-2D0F-11D0-A1FF-080036A1CF02}`. Level: native-reader.
+///
+/// The class implements `IJGraphic` (`style.dll` carries the interface name
+/// `JStylePointSymbol::IJGraphicImp`), which is the whole reason a style
+/// record can own geometry: a point symbol *is* a graphic, and the shape it
+/// draws lives in a group of line records it names at
+/// [`POINT_SYMBOL_GROUP_REFERENCE_OFFSET`].
+pub const PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL: u16 = 0x0032;
+
+/// PSM type code of `JStyleLineTerminator` — "JSL Line Terminator Style",
+/// CLSID `{47FCC33C-2D0F-11D0-A1FF-080036A1CF02}`. Level: native-reader.
+///
+/// The style a line names for the mark drawn at its ends. It holds **two**
+/// reference slots — `style.dll`'s copy helper walks object `+88` and `+92`,
+/// each with its own cached object pointer, which is a start terminator and
+/// an end terminator. Every corpus record populates only the second, at
+/// [`LINE_TERMINATOR_POINT_SYMBOL_REFERENCE_OFFSET`].
+pub const PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR: u16 = 0x0033;
+
+/// PSM type code of `Group implementation` (`imagdex.dex`, CLSID
+/// `{DA02A6D0-C991-11CD-B02F-08003601BE3A}`), the container a
+/// `JStylePointSymbol` names to hold its glyph. Level: native-reader.
+///
+/// Not a style family: it is keyed by `oid` rather than by style id, and its
+/// `+14` collides with the id of the line style beside it. That collision is
+/// exactly why it is kept out of [`STYLE_FAMILY_TYPE_CODES`].
+pub const PSM_TYPE_CODE_GROUP: u16 = 0x007B;
+
+/// Offset at which a `JStyleLineTerminator` names its `JStylePointSymbol`.
+///
+/// Level: corpus, and exhaustive — every `JStyleLineTerminator` in all five
+/// fixtures names a locally defined `JStylePointSymbol` here, and the pairing
+/// is one-to-one. The guide has recorded since 2026-08-05 that the two
+/// families "only ever appear in `StyleCluster`, in equal numbers, one pair
+/// per drawing"; this is the reference that pairs them.
+pub const LINE_TERMINATOR_POINT_SYMBOL_REFERENCE_OFFSET: usize = 46;
+
+/// Offset at which a `JStylePointSymbol` names the `oid` of the group holding
+/// its glyph.
+///
+/// Level: corpus. It is an `oid`, not a style id — the group is not a style
+/// family and has no id in that space.
+pub const POINT_SYMBOL_GROUP_REFERENCE_OFFSET: usize = 26;
+
+/// Offset of a group's member count, a `u16`, within its payload.
+pub const GROUP_MEMBER_COUNT_OFFSET: usize = 16;
+
+/// Offset of a group's first member entry. Each entry is
+/// [`GROUP_MEMBER_ENTRY_LEN`] bytes: the member's `oid`, the four `i16` of
+/// its cached bounding box, and a two-byte kind word.
+pub const GROUP_MEMBER_TABLE_OFFSET: usize = 28;
+
+/// Bytes per group member entry.
+pub const GROUP_MEMBER_ENTRY_LEN: usize = 14;
+
+/// Most members a group may declare before the record is refused. Every
+/// corpus group declares two.
+const MAX_GROUP_MEMBERS: usize = 8;
 
 /// PSM type code of `JStyleTextChar`, which carries the character height.
 pub const PSM_TYPE_CODE_JSTYLE_TEXT_CHAR: u16 = 0x002C;
@@ -449,6 +510,93 @@ impl DashPattern {
     }
 }
 
+/// One stroke of a point symbol's glyph, in metres, exactly as the group's
+/// `igLine2d` member states it.
+///
+/// The coordinates are relative to the symbol's own origin, not to the sheet.
+/// Where the record draws is the consumer's business: this crate reports the
+/// glyph, and how large it renders on a screen is **not** stated anywhere in
+/// the file (see [`PointMarker`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarkerStroke {
+    /// Start of the stroke, `(x, y)` in metres.
+    pub start: (f64, f64),
+    /// End of the stroke, `(x, y)` in metres.
+    pub end: (f64, f64),
+}
+
+impl MarkerStroke {
+    /// Whether the stroke has no length.
+    ///
+    /// A zero-length line is not a line — the same rule
+    /// [`crate::parsers::sheet_records::decode_iglines`] applies to sheet
+    /// geometry — and a glyph made only of these is a symbol with nothing to
+    /// draw.
+    #[must_use]
+    pub fn is_degenerate(&self) -> bool {
+        self.start == self.end
+    }
+
+    /// Length of the stroke in millimetres.
+    #[must_use]
+    pub fn length_mm(&self) -> f64 {
+        ((self.end.0 - self.start.0).powi(2) + (self.end.1 - self.start.1).powi(2)).sqrt() * 1000.0
+    }
+}
+
+/// The glyph a `JStylePointSymbol` draws, read out of the group it names.
+///
+/// # What the file does and does not state
+///
+/// The **shape** is the file's: each stroke is an `igLine2d` (PSM `0x0018`,
+/// "Line Object") member of a `Group implementation` (PSM `0x007B`), read
+/// with the same payload layout
+/// [`crate::parsers::sheet_records::decode_iglines`] uses for sheet geometry.
+/// Three distinct glyphs occur across the corpus — a slash, a five-millimetre
+/// cross, and a bent two-stroke caret — and a drawing picks between them per
+/// item class.
+///
+/// The **drawn size** is not. On the one drawing with screen truth
+/// (`DWG-0201`) the slash renders about 1.7 times the stated length, anchored
+/// so the point sits inside the long stroke rather than at its origin. No
+/// `f64` anywhere in that `.pid` holds either number, so the magnification and
+/// the anchoring convention belong to the viewer. `style.dll` hands its
+/// rendering to `render.dll`, which is not in the reversed set, so the site
+/// that applies them has not been read. Consumers get the glyph as stated;
+/// scaling it to match a particular viewer is their decision, not this
+/// crate's. See
+/// `docs/analysis/2026-08-25-a-point-draws-the-symbol-its-terminator-names.md`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointMarker {
+    /// Style id of the `JStylePointSymbol` reached.
+    pub point_symbol_id: u32,
+    /// Style id of the `JStyleLineTerminator` that named it.
+    pub line_terminator_id: u32,
+    strokes: [MarkerStroke; MAX_GROUP_MEMBERS],
+    len: u8,
+}
+
+impl PointMarker {
+    /// The glyph's strokes, in the order the group lists them.
+    #[must_use]
+    pub fn strokes(&self) -> &[MarkerStroke] {
+        &self.strokes[..usize::from(self.len)]
+    }
+
+    /// Whether the glyph has anything to draw.
+    ///
+    /// **This is the file's own answer to "does this point show a mark".** A
+    /// blank point symbol is stored as a full group whose members are
+    /// zero-length lines, and the drawings agree: across all five fixtures
+    /// every point whose symbol is blank is absent from `SmartPlant`'s screen
+    /// and every point whose symbol draws is present, with no exceptions in
+    /// either direction.
+    #[must_use]
+    pub fn draws(&self) -> bool {
+        self.strokes().iter().any(|s| !s.is_degenerate())
+    }
+}
+
 /// Which route a geometry record took to its `JStyleSimpleLine`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StyleHop {
@@ -472,6 +620,19 @@ pub struct ResolvedLineStyle {
     /// The dash pattern that line style names, when it names one. `None`
     /// means the line draws solid — which is what most of the corpus says.
     pub dash: Option<DashPattern>,
+    /// The point symbol that line style's terminator names, when it names
+    /// one.
+    ///
+    /// Shares [`SIMPLE_LINE_DASH_REFERENCE_OFFSET`] with [`Self::dash`]: the
+    /// slot is one reference and which of the two it is depends on the family
+    /// it lands on, `JStyleSimpleDashType` or `JStyleLineTerminator`. That is
+    /// the same "the evidence is in which kind the id lands on" rule the rest
+    /// of this module resolves by, and the corpus separates cleanly — no line
+    /// style reaches both.
+    ///
+    /// `None` means the style names no terminator. That is **not** the same
+    /// as naming one whose glyph is blank; see [`PointMarker::draws`].
+    pub marker: Option<PointMarker>,
     /// Whether an override was traversed on the way.
     pub hop: StyleHop,
 }
@@ -506,7 +667,17 @@ pub struct StyleRecord {
     pub line_spacing: Option<f64>,
     /// `JStyleSimpleDashType` this record names, when it is a
     /// `JStyleSimpleLine` that draws dashed.
+    ///
+    /// The slot is shared with the terminator reference — see
+    /// [`ResolvedLineStyle::marker`] — so a populated value here does not by
+    /// itself mean the line is dashed.
     pub dash_reference: Option<u32>,
+    /// `JStylePointSymbol` this record names, when it is a
+    /// `JStyleLineTerminator`.
+    pub point_symbol_reference: Option<u32>,
+    /// `oid` of the group holding the glyph, when this is a
+    /// `JStylePointSymbol`.
+    pub group_reference: Option<u32>,
     /// The dash pattern, when this is a `JStyleSimpleDashType` whose own
     /// length agrees with its segment count.
     pub dash: Option<DashPattern>,
@@ -704,6 +875,22 @@ impl ResolvedTextHeight {
 pub struct DocumentStyleTable {
     records: Vec<StyleRecord>,
     by_id: BTreeMap<u32, usize>,
+    /// Groups and line objects, keyed by `oid`.
+    ///
+    /// These two families ride in the same stream as the styles but are not
+    /// styles: a point symbol's glyph is ordinary geometry parked in the
+    /// style table. They need their own key because their `+14` is the id of
+    /// the style they belong to, so several of them share one — indexing them
+    /// by style id would let them shadow each other and the line style.
+    groups: BTreeMap<u32, Vec<GroupMember>>,
+    strokes: BTreeMap<u32, MarkerStroke>,
+}
+
+/// One entry of a group's member table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GroupMember {
+    /// `oid` of the member record.
+    oid: u32,
 }
 
 impl DocumentStyleTable {
@@ -736,6 +923,26 @@ impl DocumentStyleTable {
             let payload = &data[payload_start..end];
             let type_code = type_word & 0x3FFF;
             if !STYLE_FAMILY_TYPE_CODES.contains(&type_code) {
+                // A point symbol's glyph rides in this stream as ordinary
+                // geometry, so the two families carrying it are collected
+                // here rather than skipped with the rest.
+                match type_code {
+                    PSM_TYPE_CODE_GROUP => {
+                        if let (Some(oid), Some(members)) =
+                            (u32_at(payload, 0), read_group_members(payload))
+                        {
+                            table.groups.insert(oid, members);
+                        }
+                    }
+                    PSM_TYPE_CODE_IGLINE2D => {
+                        if let (Some(oid), Some(stroke)) =
+                            (u32_at(payload, 0), read_marker_stroke(payload))
+                        {
+                            table.strokes.insert(oid, stroke);
+                        }
+                    }
+                    _ => {}
+                }
                 at = end;
                 continue;
             }
@@ -751,6 +958,18 @@ impl DocumentStyleTable {
                     text_alignment: read_text_alignment(type_code, payload),
                     line_spacing: read_line_spacing(type_code, payload),
                     dash_reference: read_dash_reference(type_code, payload),
+                    point_symbol_reference: read_reference_of(
+                        type_code,
+                        PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR,
+                        payload,
+                        LINE_TERMINATOR_POINT_SYMBOL_REFERENCE_OFFSET,
+                    ),
+                    group_reference: read_reference_of(
+                        type_code,
+                        PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL,
+                        payload,
+                        POINT_SYMBOL_GROUP_REFERENCE_OFFSET,
+                    ),
                     dash: read_dash_pattern(type_code, payload),
                     fill_colour: read_fill_colour(type_code, payload),
                     text_colour: read_text_colour(type_code, payload),
@@ -811,6 +1030,7 @@ impl DocumentStyleTable {
                 style_id: target.style_id,
                 symbology: target.symbology?,
                 dash: self.dash_of(target),
+                marker: self.marker_of(target),
                 hop: StyleHop::ViaOverride {
                     override_id: record.style_id,
                 },
@@ -820,7 +1040,54 @@ impl DocumentStyleTable {
             style_id: record.style_id,
             symbology: record.symbology?,
             dash: self.dash_of(record),
+            marker: self.marker_of(record),
             hop: StyleHop::Direct,
+        })
+    }
+
+    /// The point symbol a `JStyleSimpleLine`'s terminator names, when its
+    /// reference slot lands on a `JStyleLineTerminator` rather than a dash
+    /// type.
+    ///
+    /// Four hops, each one a reference the record states:
+    ///
+    /// ```text
+    /// JStyleSimpleLine     +54  -> JStyleLineTerminator (style id)
+    /// JStyleLineTerminator +46  -> JStylePointSymbol    (style id)
+    /// JStylePointSymbol    +26  -> Group                (oid)
+    /// Group                +28  -> igLine2d members     (oids)
+    /// ```
+    ///
+    /// A chain that breaks anywhere yields `None`, which reads as "this style
+    /// names no point symbol" — the same thing an absent reference means, so
+    /// nothing is lost by not distinguishing them.
+    fn marker_of(&self, line: &StyleRecord) -> Option<PointMarker> {
+        let terminator = self.get(line.dash_reference?)?;
+        if terminator.type_code != PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR {
+            return None;
+        }
+        let symbol = self.get(terminator.point_symbol_reference?)?;
+        if symbol.type_code != PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL {
+            return None;
+        }
+        let members = self.groups.get(&symbol.group_reference?)?;
+        let mut strokes = [MarkerStroke {
+            start: (0.0, 0.0),
+            end: (0.0, 0.0),
+        }; MAX_GROUP_MEMBERS];
+        let mut len = 0_u8;
+        for member in members {
+            // A member this reader cannot read is not silently dropped: the
+            // glyph would then be a different shape than the file states.
+            let stroke = *self.strokes.get(&member.oid)?;
+            *strokes.get_mut(usize::from(len))? = stroke;
+            len += 1;
+        }
+        (len > 0).then_some(PointMarker {
+            point_symbol_id: symbol.style_id,
+            line_terminator_id: terminator.style_id,
+            strokes,
+            len,
         })
     }
 
@@ -973,6 +1240,74 @@ fn read_dash_pattern(type_code: u16, payload: &[u8]) -> Option<DashPattern> {
     Some(DashPattern {
         segments,
         len: u8::try_from(count).ok()?,
+    })
+}
+
+/// A reference a record of one particular family states at `offset`.
+///
+/// Zero means "references nothing" throughout this format, and both id spaces
+/// start at 1, so zero is unambiguous.
+fn read_reference_of(type_code: u16, wanted: u16, payload: &[u8], offset: usize) -> Option<u32> {
+    if type_code != wanted {
+        return None;
+    }
+    u32_at(payload, offset).filter(|referenced| *referenced != 0)
+}
+
+/// The `oid` of every member a `Group implementation` record lists.
+///
+/// The count and the table have to agree with the record's own length, the
+/// same closure test [`read_dash_pattern`] uses: a misread count would carve
+/// members out of whatever follows. Every corpus group declares two members
+/// and closes exactly.
+fn read_group_members(payload: &[u8]) -> Option<Vec<GroupMember>> {
+    let count = usize::from(u16_at(payload, GROUP_MEMBER_COUNT_OFFSET)?);
+    if count == 0 || count > MAX_GROUP_MEMBERS {
+        return None;
+    }
+    let table_end = GROUP_MEMBER_TABLE_OFFSET.checked_add(GROUP_MEMBER_ENTRY_LEN * count)?;
+    if payload.len() < table_end {
+        return None;
+    }
+    (0..count)
+        .map(|i| {
+            u32_at(
+                payload,
+                GROUP_MEMBER_TABLE_OFFSET + GROUP_MEMBER_ENTRY_LEN * i,
+            )
+            .map(|oid| GroupMember { oid })
+        })
+        .collect()
+}
+
+/// One `igLine2d` in a `StyleCluster`, read as a glyph stroke.
+///
+/// Offsets and length are `igLine2d`'s, not new ones: `+18`/`+26`/`+34`/`+42`
+/// are `start.x`/`start.y`/`end.x`/`end.y` and the payload is
+/// [`IGLINE2D_PAYLOAD_LEN`], exactly as
+/// [`crate::parsers::sheet_records::decode_iglines`] reads them on a sheet.
+/// A record in the style table that satisfies the sheet family's own layout,
+/// and whose `+4` parent names the group listing it, is that family.
+///
+/// Unlike the sheet decoder this **keeps** a degenerate line: on a sheet a
+/// zero-length line is noise, but in a point symbol it is the file's way of
+/// saying the symbol is blank, which is the whole reason to read this.
+fn read_marker_stroke(payload: &[u8]) -> Option<MarkerStroke> {
+    if payload.len() != IGLINE2D_PAYLOAD_LEN {
+        return None;
+    }
+    let coordinates = [18, 26, 34, 42].map(|at| f64_at(payload, at));
+    let [start_x, start_y, end_x, end_y] = coordinates;
+    let (start_x, start_y, end_x, end_y) = (start_x?, start_y?, end_x?, end_y?);
+    if ![start_x, start_y, end_x, end_y]
+        .iter()
+        .all(|v| v.is_finite())
+    {
+        return None;
+    }
+    Some(MarkerStroke {
+        start: (start_x, start_y),
+        end: (end_x, end_y),
     })
 }
 
@@ -1690,6 +2025,211 @@ mod tests {
             .expect("defined")
             .dash
             .is_none());
+    }
+
+    fn line_terminator(style_id: u32, point_symbol_id: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 50];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        let at = LINE_TERMINATOR_POINT_SYMBOL_REFERENCE_OFFSET;
+        payload[at..at + 4].copy_from_slice(&point_symbol_id.to_le_bytes());
+        (PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR, payload)
+    }
+
+    fn point_symbol(style_id: u32, group_oid: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 30];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        let at = POINT_SYMBOL_GROUP_REFERENCE_OFFSET;
+        payload[at..at + 4].copy_from_slice(&group_oid.to_le_bytes());
+        (PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL, payload)
+    }
+
+    fn group(oid: u32, members: &[u32]) -> (u16, Vec<u8>) {
+        let mut payload =
+            vec![0u8; GROUP_MEMBER_TABLE_OFFSET + GROUP_MEMBER_ENTRY_LEN * members.len() + 4];
+        payload[0..4].copy_from_slice(&oid.to_le_bytes());
+        let count = u16::try_from(members.len()).expect("test groups are small");
+        payload[GROUP_MEMBER_COUNT_OFFSET..GROUP_MEMBER_COUNT_OFFSET + 2]
+            .copy_from_slice(&count.to_le_bytes());
+        for (i, member) in members.iter().enumerate() {
+            let at = GROUP_MEMBER_TABLE_OFFSET + GROUP_MEMBER_ENTRY_LEN * i;
+            payload[at..at + 4].copy_from_slice(&member.to_le_bytes());
+        }
+        (PSM_TYPE_CODE_GROUP, payload)
+    }
+
+    /// One glyph stroke, written in the `igLine2d` layout the sheet decoder
+    /// uses, with coordinates in metres.
+    fn marker_line(oid: u32, start: (f64, f64), end: (f64, f64)) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; IGLINE2D_PAYLOAD_LEN];
+        payload[0..4].copy_from_slice(&oid.to_le_bytes());
+        for (at, value) in [(18, start.0), (26, start.1), (34, end.0), (42, end.1)] {
+            payload[at..at + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        (PSM_TYPE_CODE_IGLINE2D, payload)
+    }
+
+    /// `DWG-0201`'s slash, as the file states it: a 3×6mm stroke from the
+    /// origin plus a short stub below-left of it.
+    fn slash_glyph_stream(line_id: u32, blank: bool) -> Vec<u8> {
+        let (a_end, b_start, b_end) = if blank {
+            ((0.0, 0.0), (0.0, 0.0), (0.0, 0.0))
+        } else {
+            ((0.003, 0.006), (-0.001, -0.002), (-0.0007, -0.001))
+        };
+        stream(&[
+            simple_line_dashed(line_id, 73),
+            line_terminator(73, 72),
+            point_symbol(72, 8305),
+            group(8305, &[8306, 8308]),
+            marker_line(8306, (0.0, 0.0), a_end),
+            marker_line(8308, b_start, b_end),
+        ])
+    }
+
+    /// The chain that decides whether a point shows a mark at all.
+    #[test]
+    fn a_line_style_resolves_to_the_point_symbol_its_terminator_names() {
+        let table = DocumentStyleTable::from_stylecluster_bytes(&slash_glyph_stream(74, false));
+        let marker = table
+            .resolve_line_style(74)
+            .expect("id 74 is defined")
+            .marker
+            .expect("its terminator names a point symbol");
+
+        assert_eq!(marker.line_terminator_id, 73);
+        assert_eq!(marker.point_symbol_id, 72);
+        assert!(marker.draws());
+        let strokes = marker.strokes();
+        assert_eq!(strokes.len(), 2, "the group lists two lines");
+        assert!((strokes[0].length_mm() - 6.708_203).abs() < 1e-5);
+        assert!(!strokes[1].is_degenerate());
+    }
+
+    /// The discovery this whole chain exists to serve. A point that shows
+    /// nothing on screen does **not** omit its symbol -- it names one whose
+    /// group holds zero-length lines. Reading `Some(marker)` as "draws" puts
+    /// a mark on all 53 of `DWG-0201`'s junction points.
+    #[test]
+    fn a_blank_point_symbol_is_a_group_of_zero_length_lines() {
+        let table = DocumentStyleTable::from_stylecluster_bytes(&slash_glyph_stream(70, true));
+        let marker = table
+            .resolve_line_style(70)
+            .expect("id 70 is defined")
+            .marker
+            .expect("a blank symbol is still a symbol, fully stored");
+
+        assert_eq!(marker.strokes().len(), 2, "the group is complete");
+        assert!(
+            marker.strokes().iter().all(MarkerStroke::is_degenerate),
+            "every stroke is zero-length"
+        );
+        assert!(!marker.draws(), "so there is nothing to draw");
+    }
+
+    /// `+54` is one slot holding either kind of reference, and which one it
+    /// is comes off the family it lands on -- the same rule the rest of this
+    /// module resolves by. Neither reading may leak into the other.
+    #[test]
+    fn the_shared_reference_slot_separates_a_dash_type_from_a_terminator() {
+        let dashed = stream(&[
+            dash_type(17, &[-0.014, 0.001_75]),
+            simple_line_dashed(30, 17),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&dashed);
+        let resolved = table.resolve_line_style(30).expect("defined");
+        assert!(resolved.dash.is_some(), "a dash type is still a dash");
+        assert!(
+            resolved.marker.is_none(),
+            "and carries no point symbol: {:?}",
+            resolved.marker
+        );
+
+        let table = DocumentStyleTable::from_stylecluster_bytes(&slash_glyph_stream(74, false));
+        let resolved = table.resolve_line_style(74).expect("defined");
+        assert!(resolved.marker.is_some());
+        assert!(
+            resolved.dash.is_none(),
+            "a terminator is not a dash pattern: {:?}",
+            resolved.dash
+        );
+    }
+
+    /// A chain that breaks anywhere states no symbol, rather than half of
+    /// one: a glyph missing a stroke is a different shape than the file says.
+    #[test]
+    fn a_broken_point_symbol_chain_states_no_marker() {
+        let cases = [
+            ("terminator missing", stream(&[simple_line_dashed(74, 404)])),
+            (
+                "point symbol missing",
+                stream(&[simple_line_dashed(74, 73), line_terminator(73, 404)]),
+            ),
+            (
+                "group missing",
+                stream(&[
+                    simple_line_dashed(74, 73),
+                    line_terminator(73, 72),
+                    point_symbol(72, 404),
+                ]),
+            ),
+            (
+                "a member line missing",
+                stream(&[
+                    simple_line_dashed(74, 73),
+                    line_terminator(73, 72),
+                    point_symbol(72, 8305),
+                    group(8305, &[8306, 8308]),
+                    marker_line(8306, (0.0, 0.0), (0.003, 0.006)),
+                ]),
+            ),
+        ];
+        for (what, data) in cases {
+            let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+            assert!(
+                table
+                    .resolve_line_style(74)
+                    .expect("defined")
+                    .marker
+                    .is_none(),
+                "{what}: a broken chain must not yield a partial glyph"
+            );
+        }
+    }
+
+    /// The group and its line objects carry the **owning style's** id at
+    /// `+14` -- in `DWG-0201` two `igLine2d` and two more records all read
+    /// id 71 -- so they are keyed by `oid` instead. Admitting them to the
+    /// style index would let them shadow the line style and each other.
+    #[test]
+    fn a_glyph_line_does_not_shadow_the_style_whose_id_it_carries() {
+        let mut glyph = marker_line(8306, (0.0, 0.0), (0.003, 0.006));
+        let mut twin = marker_line(8308, (-0.001, -0.002), (-0.0007, -0.001));
+        // What the real records do: both name the line style they belong to.
+        for record in [&mut glyph, &mut twin] {
+            record.1[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&74u32.to_le_bytes());
+        }
+        let data = stream(&[
+            simple_line_dashed(74, 73),
+            line_terminator(73, 72),
+            point_symbol(72, 8305),
+            group(8305, &[8306, 8308]),
+            glyph,
+            twin,
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        assert_eq!(
+            table.get(74).map(|record| record.type_code),
+            Some(PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE),
+            "id 74 is the line style, not one of the two lines carrying that id"
+        );
+        let marker = table
+            .resolve_line_style(74)
+            .expect("defined")
+            .marker
+            .expect("and the glyph still resolves, by oid");
+        assert_eq!(marker.strokes().len(), 2);
+        assert!(marker.draws());
     }
 
     #[test]

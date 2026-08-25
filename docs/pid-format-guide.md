@@ -112,6 +112,7 @@ RTTI / COM 类工厂），**等级：native-reader**。
 | `0x0059` / `0x0061` / `0x0063` / `0x007E` | Circle / Arc / Ellipse / Elliptical Arc | 语料 0 命中 |
 | `0x005D` | BspCurve Object | 语料 0 命中 |
 | `0x005E` | Point Object (`igPoint2d`) | 已解码 |
+| `0x007B` | Group implementation | 在 `StyleCluster` 里解码（点符号字形的容器，见 §4 样式族）；`Sheet*` 上的仍未解码 |
 | `0x0084` | LineString Object (`igLineString2d`) | 已解码 |
 | `0x00CE` | JSymbol | 已解码 |
 | `0x00FA` | **Dependency Object** | 仅解 header，尾部 raw |
@@ -145,6 +146,28 @@ RTTI / COM 类工厂），**等级：native-reader**。
 且每张图都成对等量**——线终止符本质上就是画在线端的点符号，成对出现符合语义。
 `probe_stylecluster_records` 一直能看见它们，只是本表漏收；
 `probe_rad_siblings_0x0029_0x0035` 只扫 `/Sheet6`，所以那个 probe 看不到。
+
+**2026-08-25：上面那句猜想坐实了，而且这一对是「点画不画」的判别码。**
+`style.dll` 的接口串里 `JStylePointSymbol` 带 **`IJGraphicImp`**——点符号样式
+本身就是个图形对象，所以一条样式记录能拥有几何。整条链是：
+
+```text
+JStyleSimpleLine     +54 ──▶ JStyleLineTerminator (0x0033)   样式 id
+JStyleLineTerminator +46 ──▶ JStylePointSymbol    (0x0032)   样式 id
+JStylePointSymbol    +26 ──▶ Group implementation (0x007B)   **oid**
+Group                +28 ──▶ 两条 Line Object     (0x0018)   **oid**
+```
+
+那两条 `0x0018` 就是字形，按本表 §5 的 `igLine2d` 布局读，一字不差。
+**字形线退化（`start == end`）= 这个点不画**；五张图与屏幕真值全对上。
+
+两条要点：`+54` 是一个槽两种落点（`0x002F` 虚线型 / `0x0033` 线终止符），
+按落到哪一类分流；`0x007B` 与 `0x0018` 的 `+14` 带的是**所属线样式的 id**，
+必须按 `oid` 建索引，混进样式 id 空间会互相遮蔽——这也是它们不该进
+`STYLE_FAMILY_TYPE_CODES` 的原因。反编译还看到 `JStyleLineTerminator`
+带**两个**引用槽（对象 `+88`/`+92`，起点/终点各一），语料只用后一个。
+
+详见 `docs/analysis/2026-08-25-a-point-draws-the-symbol-its-terminator-names.md`。
 
 > ⚠ CLSID 连号**不能线性外推 type code**：`47FCC337` 在表里被跳过，所以
 > `0x0032` 是 `47FCC33B` 而不是直觉上的 `47FCC33A`。要判断某个 code 属于谁，

@@ -7478,6 +7478,111 @@ fn igsymbol2d_placements_name_the_style_their_body_draws_with() {
     );
 }
 
+/// Whether a point shows a mark is stated by the file, not inferred from its
+/// colour.
+///
+/// A point's line style may name a `JStyleLineTerminator`, which names a
+/// `JStylePointSymbol`, which owns a group of `igLine2d` — the glyph. A blank
+/// symbol is stored as a full group whose lines are zero-length, and those
+/// are the points `SmartPlant` draws nothing for.
+///
+/// The counts below are the screen truth for `DWG-0201`: eleven marks, on ten
+/// riser tops and the vessel inlet. The rule reproduces them, and reproduces
+/// every other fixture's count too. It is strictly stronger than the colour
+/// rule it replaced — `DWG-0202` and the gongyi drawing both define a
+/// live-glyph `#FF0000` symbol that no point uses, which a colour rule cannot
+/// see at all.
+///
+/// See `docs/analysis/2026-08-25-a-point-draws-the-symbol-its-terminator-names.md`.
+#[test]
+fn a_point_draws_the_symbol_its_line_terminator_names() {
+    // Three states, and the file distinguishes all three: a live glyph, a
+    // terminator whose glyph is blank, and no terminator named at all. Only
+    // the first draws. The middle one is the discovery — a blank symbol is
+    // stored as a whole group of zero-length lines rather than by omission.
+    for (fixture, expected_drawn, expected_blank, expected_none) in [
+        ("DWG-0201GP06-01.pid", 11usize, 53usize, 11usize),
+        ("DWG-0202GP06-01.pid", 5, 22, 4),
+        ("工艺管道及仪表流程-1.pid", 11, 23, 2),
+        ("D06.pid", 1, 9, 0),
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !Path::new(&path).exists() {
+            eprintln!("skipping: fixture {fixture} not found");
+            continue;
+        }
+        let styles = pid_parse::style_link::line_styles_for_file(Path::new(&path))
+            .unwrap_or_else(|e| panic!("{fixture}: line_styles_for_file failed: {e}"));
+        let doc = parse_test_file(fixture).expect("fixture exists");
+
+        let (mut drawn, mut blank, mut none) = (0usize, 0usize, 0usize);
+        for sheet in &doc.sheet_streams {
+            let Some(geometry) = &sheet.geometry else {
+                continue;
+            };
+            for record in &geometry.decoded_igpoints {
+                let Some(style) = styles.get(&(sheet.path.clone(), record.oid)) else {
+                    continue;
+                };
+                match style.marker {
+                    Some(marker) if marker.draws() => drawn += 1,
+                    Some(_) => blank += 1,
+                    // The riser feet: a plain 54-byte line style, too short
+                    // to hold the reference at all.
+                    None => none += 1,
+                }
+            }
+        }
+        assert_eq!(
+            (drawn, blank, none),
+            (expected_drawn, expected_blank, expected_none),
+            "{fixture}: expected {expected_drawn} marked, {expected_blank} blank-glyph \
+             and {expected_none} terminator-less points"
+        );
+    }
+}
+
+/// The glyph is the file's, and there is more than one of them.
+///
+/// `DWG-0201`'s marked points draw a two-stroke slash; the gongyi drawing
+/// gives its ten instrument points a bent caret instead, and defines a
+/// five-millimetre cross for a third class. A renderer that hard-codes one
+/// shape gets two of the three wrong.
+#[test]
+fn a_point_symbols_glyph_is_read_from_the_group_it_owns() {
+    let path = Path::new("test-file/DWG-0201GP06-01.pid");
+    if !path.exists() {
+        eprintln!("skipping: fixture DWG-0201GP06-01.pid not found");
+        return;
+    }
+    let styles = pid_parse::style_link::line_styles_for_file(path).expect("index builds");
+    let marker = styles
+        .values()
+        .find_map(|style| style.marker.filter(|marker| marker.draws()))
+        .expect("DWG-0201 defines a live point symbol");
+
+    let strokes = marker.strokes();
+    assert_eq!(
+        strokes.len(),
+        2,
+        "the slash glyph is two strokes: {strokes:?}"
+    );
+    // Millimetres, as the group's igLine2d state them.
+    assert_eq!(strokes[0].start, (0.0, 0.0));
+    assert!((strokes[0].end.0 * 1000.0 - 3.0).abs() < 1e-9);
+    assert!((strokes[0].end.1 * 1000.0 - 6.0).abs() < 1e-9);
+    assert!(
+        (strokes[0].length_mm() - 6.708_203).abs() < 1e-5,
+        "long stroke reads {}mm",
+        strokes[0].length_mm()
+    );
+    assert!(
+        strokes[1].length_mm() < strokes[0].length_mm(),
+        "the second stroke is the short stub"
+    );
+    assert!(strokes.iter().all(|s| !s.is_degenerate()));
+}
+
 /// Phase 14 Slice M: cross-fixture validation that
 /// `decode_igtextboxes` emits decoded `igTextBox` text annotations
 /// (PSM type `0x004D`) from real `Sheet*` streams.
