@@ -2392,8 +2392,8 @@ pub const PSM_TYPE_CODE_IGTEXTBOX: u16 = 0x004D;
 /// from `bytes_to_follow` on that basis. It only ever described sub-type 2 —
 /// the common shape, 215 of the corpus's 260 records — and the other two
 /// shapes were refused wholesale because that arithmetic did not describe
-/// them. See [`igtextbox_body_shape`] for the real per-shape layout and
-/// [`IGTEXTBOX_MIN_PAYLOAD_LEN`] for the floor that replaced this as the
+/// them. See `igtextbox_body_shape` for the real per-shape layout and
+/// `IGTEXTBOX_MIN_PAYLOAD_LEN` for the floor that replaced this as the
 /// size gate.
 pub const IGTEXTBOX_PAYLOAD_OVERHEAD: usize = 68;
 
@@ -3485,7 +3485,7 @@ pub struct SheetIgTextBoxDecoded {
     pub index: u32,
     /// Which of the three `igTextBox` shapes this record is, from payload
     /// `+18`. Decides where the text length and the body end sit — see
-    /// [`igtextbox_body_shape`].
+    /// `igtextbox_body_shape`.
     pub text_sub_type: u16,
     /// Inline text length (UTF-16LE chars).
     pub text_length: u16,

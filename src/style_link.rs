@@ -236,7 +236,7 @@ pub const PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR: u16 = 0x0033;
 ///
 /// Not a style family: it is keyed by `oid` rather than by style id, and its
 /// `+14` collides with the id of the line style beside it. That collision is
-/// exactly why it is kept out of [`STYLE_FAMILY_TYPE_CODES`].
+/// exactly why it is kept out of `STYLE_FAMILY_TYPE_CODES`.
 pub const PSM_TYPE_CODE_GROUP: u16 = 0x007B;
 
 /// Offset at which a `JStyleLineTerminator` names its `JStylePointSymbol`.
@@ -275,7 +275,7 @@ const MAX_GROUP_MEMBERS: usize = 8;
 ///
 /// One per `StyleCluster`, first in the chain: the directory that holds the
 /// **authored name** of every style the document defines. It is deliberately
-/// absent from [`STYLE_FAMILY_TYPE_CODES`] because its `+14` is not an id in
+/// absent from `STYLE_FAMILY_TYPE_CODES` because its `+14` is not an id in
 /// that space — see the note there — so it is collected on the way past
 /// instead, like the group and line families that carry glyphs.
 pub const PSM_TYPE_CODE_JSTYLE_LIBRARIAN: u16 = 0x005A;
@@ -925,7 +925,7 @@ pub struct ResolvedTextHeight {
     /// Comes off the **paragraph** style for the same reason the alignment
     /// does — spacing between lines is a property of the run — so it is `None`
     /// for the one-hop shape, and `None` again when the stated multiple is
-    /// outside [`MIN_PLAUSIBLE_LINE_SPACING`]`..=`[`MAX_PLAUSIBLE_LINE_SPACING`].
+    /// outside `MIN_PLAUSIBLE_LINE_SPACING..=MAX_PLAUSIBLE_LINE_SPACING`.
     ///
     /// A caller only has anything to do with this when the label it belongs to
     /// has a line break in it. In this corpus that is 4 labels of 235, and
