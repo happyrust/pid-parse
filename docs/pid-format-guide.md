@@ -1,7 +1,7 @@
 # `.pid` 文件格式指南
 
 > 面向要读懂、扩展或调试 `pid-parse` 的人。
-> 最后更新：2026-08-05。
+> 最后更新：2026-08-25。
 
 ## 先读这一段
 
@@ -267,7 +267,63 @@ Group                +28 ──▶ 两条 Line Object     (0x0018)   **oid**
 - **图案/字体名**：`Solid`、`Dash`、`Dashed`、`Dash Dot`、`Dash Dot Dot`、
   `Dash 2Dot`、`End Gap`、`Normal`、`ANSI`、`DIN`、`Chinese`、`Viewport`。
 
-`pid-parse`：`StyleRecord.name`、`DocumentStyleTable::name_of_style()`。
+`pid-parse`：`StyleRecord.name`、`DocumentStyleTable::name_of_style()`、
+`style_names_for_file()`（按 `(Sheet 流, 样式 id)` 建索引，供渲染端 join）。
+
+#### 为什么名字值得解：线宽和颜色表达不了它
+
+减法先做过一遍：如果名字只是调色板的别名，那它就是个好看的标签。
+**实测是多对多**——四个调色板项各背着不止一个名字，一个名字也能横跨两项：
+
+| 调色板项 | 其实是几件事 |
+|---|---|
+| `0.180mm #008000` | `Connect To Process`×4、`Electric`×3、`Off-Line Instrument`×6 |
+| `0.350mm #000000` | `As Drawn`×43、`Dashed`×22、`Normal`×161 |
+| `0.350mm #800000` | `Equipment - New`×4、`Nozzle - New`×18 |
+| `0.350mm #808000` | `Piping Component - New`×7、`Piping OPC`×15、`Secondary Piping - New`×10 |
+| 反向：`As Drawn` | `0.350mm #000000`×43 + `0.500mm #0000FF`×12 |
+
+**管嘴和它所在的设备本体画得一模一样；三种角色的管道也一样。** 想把它们
+分开，只能读名字。两个方向都被 `style_link_ratchet` 整表钉住——哪一边塌成
+空表，都说明名字已经退化成调色板的标签，这条解码也就不再值得留着。
+
+### 6.2 样式库记录的最后一段是项目标准文件的路径（2026-08-25）
+
+**等级：corpus，13 条 librarian 记录穷尽**
+
+同一条 `0x005A` payload 的**结尾**还有一个字段：一段 UTF-16 文字，后跟
+**恰好 4 个零字节**收尾。
+
+```text
+[…名表…][来源路径 UTF-16][00 00 00 00]   ← payload 末尾
+```
+
+读法要从**后往前**读：这个字段是被尾部的零锚住的，从前往后扫只能得到
+「最后一段碰巧找到的文字」，那不是规则。零尾不在，就返回 `None`，而不是
+硬猜——13 条记录无一例外都是这个形状。
+
+语料实测：
+
+| 图纸 | 来源 |
+|---|---|
+| D06 | `\\MM-128\PID_SQPROJECT\SQPLANT\REF\PROJECTSTYLES.SPP` |
+| DWG-0201 | `\\WIN-SPID\QSMCQTAZ13\PLANT\REF\PROJECTSTYLES.SPP` |
+| DWG-0202 | `\\WIN-SPID\QSMCQTAZ13\PLANT\REF\PROJECTSTYLES.SPP` |
+| 工艺管道 | `\\SPID\XA_LNG_1_1\REFERENCE_DATA\PROJECTSTYLES.SPP` |
+| 图元库的 `StyleCluster` | `Styles.pid` |
+
+**这条路径解释了 §6.1 的词汇差异，而不只是陪着它。** 0201 和 0202 指向
+同一个 `.SPP`，而它俩正是词汇表一致的那两张；工艺管道是另一个项目（LNG），
+它就没有 `Connect To Process`、没有 `Dashed`。
+
+它还给「没名字」一个读法。工艺管道有 182 条 `igLine2d` 落在无名样式
+`0.130mm #000000` 上——把每个 `StyleCluster` 每条记录的 `+8` 绑定位逐个
+拆开看，这些 oid **一次都没出现过**，而且比该图所有被命名的 oid 都大。
+**样式库只登记从项目库导进来的样式，图里现画的一次性样式不在册**，所以
+无名不是解码漏了，它本身就是一个信号：这个样式是这张图自己的。
+
+`pid-parse`：`DocumentStyleTable::style_library_source()`、
+`style_libraries_for_file()`（按 Sheet 流建索引）。
 
 ### 样式记录的共同形状
 

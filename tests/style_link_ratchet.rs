@@ -33,7 +33,10 @@ use cfb::CompoundFile;
 use pid_parse::parsers::sheet_records::{
     decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
 };
-use pid_parse::style_link::{stylecluster_path_for_sheet, DocumentStyleTable, StyleHop};
+use pid_parse::style_link::{
+    style_libraries_for_file, style_names_for_file, stylecluster_path_for_sheet,
+    DocumentStyleTable, StyleHop,
+};
 
 /// What one fixture is expected to resolve.
 struct Expected {
@@ -876,6 +879,303 @@ fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
             "Secondary Piping - New",
         ],
         "the drawing's own word for what each line is"
+    );
+}
+
+/// The project standards file each fixture says its styles came from.
+///
+/// The two `GP06` drawings naming the same path is the reading, not a
+/// coincidence to note: they are also the two that share a style vocabulary.
+const EXPECTED_STYLE_LIBRARY: [(&str, &str); 4] = [
+    (
+        "test-file/D06.pid",
+        r"\\MM-128\PID_SQPROJECT\SQPLANT\REF\PROJECTSTYLES.SPP",
+    ),
+    (
+        "test-file/DWG-0201GP06-01.pid",
+        r"\\WIN-SPID\QSMCQTAZ13\PLANT\REF\PROJECTSTYLES.SPP",
+    ),
+    (
+        "test-file/DWG-0202GP06-01.pid",
+        r"\\WIN-SPID\QSMCQTAZ13\PLANT\REF\PROJECTSTYLES.SPP",
+    ),
+    (
+        "test-file/工艺管道及仪表流程-1.pid",
+        r"\\SPID\XA_LNG_1_1\REFERENCE_DATA\PROJECTSTYLES.SPP",
+    ),
+];
+
+/// A drawing says which standard it was drawn against.
+///
+/// A sheet's own cluster names a `.SPP` project styles file; a symbol
+/// library's cluster names `Styles.pid`. Both are the same field — the text
+/// closing the librarian payload, anchored by four zero bytes — so the two
+/// are asserted together: a change that started reading the wrong place would
+/// have to break both to stay green.
+#[test]
+fn a_style_cluster_names_the_library_it_was_read_from() {
+    let mut fixtures_seen = 0usize;
+    for (fixture, expected_source) in &EXPECTED_STYLE_LIBRARY {
+        let path = Path::new(fixture);
+        if !path.exists() {
+            eprintln!("skip: {fixture} is absent");
+            continue;
+        }
+        fixtures_seen += 1;
+        let file = std::fs::File::open(path).expect("fixture opens");
+        let mut cfb = CompoundFile::open(file).expect("fixture is a compound file");
+        let cluster_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .filter(|p| p.rsplit('/').next().unwrap_or("") == "StyleCluster")
+            .collect();
+
+        for cluster_path in &cluster_paths {
+            let Some(bytes) = read_stream(&mut cfb, cluster_path) else {
+                continue;
+            };
+            let table = DocumentStyleTable::from_stylecluster_bytes(&bytes);
+            let want = if cluster_path == "/StyleCluster" {
+                *expected_source
+            } else {
+                "Styles.pid"
+            };
+            assert_eq!(
+                table.style_library_source(),
+                Some(want),
+                "{fixture} {cluster_path}"
+            );
+        }
+    }
+    if fixtures_seen == 0 {
+        eprintln!("skip: no fixture present");
+    }
+}
+
+/// The file-level index says the same thing the clusters do.
+///
+/// [`style_libraries_for_file`] keys by sheet stream rather than by cluster,
+/// so this is not a restatement: it also pins which cluster each sheet is
+/// scoped to. A sheet resolved against the wrong document's styles — the bug
+/// `a_sheet_never_resolves_against_another_documents_style_table` guards from
+/// the other side — would show up here as a sheet reporting a library it was
+/// not drawn against.
+#[test]
+fn every_sheet_reports_the_library_its_own_document_names() {
+    for (fixture, expected_source) in &EXPECTED_STYLE_LIBRARY {
+        let path = Path::new(fixture);
+        if !path.exists() {
+            eprintln!("skip: {fixture} is absent");
+            continue;
+        }
+        let libraries = style_libraries_for_file(path).expect("fixture reads");
+        assert!(
+            !libraries.is_empty(),
+            "{fixture} names no style library on any sheet"
+        );
+        for (stream, source) in &libraries {
+            assert_eq!(
+                source, expected_source,
+                "{fixture} {stream} names a library its own document does not"
+            );
+        }
+    }
+}
+
+/// The join a renderer actually performs returns the same name the table does.
+///
+/// [`style_names_for_file`] is keyed by `(sheet stream, style id)` while
+/// [`DocumentStyleTable::name_of_style`] is keyed by style id inside one
+/// document, so the two agreeing is a statement about the *key*, not about the
+/// decode: it says a consumer holding a sheet path and a
+/// `ResolvedLineStyle::style_id` — which is all `OpenCADStudio` has at the
+/// point it files an entity onto a layer — lands on the name its own
+/// document authored, and never on a same-numbered style from another one.
+#[test]
+fn the_file_level_name_index_answers_the_join_a_renderer_makes() {
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            eprintln!("skip: {} is absent", expected.fixture);
+            continue;
+        }
+        let names = style_names_for_file(path).expect("fixture reads");
+        let file = std::fs::File::open(path).expect("fixture opens");
+        let mut cfb = CompoundFile::open(file).expect("fixture is a compound file");
+        let sheet_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .filter(|p| p.rsplit('/').next().unwrap_or("").starts_with("Sheet"))
+            .collect();
+
+        let mut joined = 0usize;
+        for sheet_path in &sheet_paths {
+            let Some(sheet) = read_stream(&mut cfb, sheet_path) else {
+                continue;
+            };
+            let Some(cluster) = read_stream(&mut cfb, &stylecluster_path_for_sheet(sheet_path))
+            else {
+                continue;
+            };
+            let table = DocumentStyleTable::from_stylecluster_bytes(&cluster);
+            // All four families that reach a line style, because they do not
+            // occur together: `D06` draws with linestrings and carries no
+            // `igLine2d` at all, so a lines-only walk would pass it vacuously.
+            let mut indices: Vec<u32> = Vec::new();
+            indices.extend(decode_iglines(&sheet).iter().map(|r| r.index));
+            indices.extend(decode_iglinestrings(&sheet).iter().map(|r| r.index));
+            indices.extend(decode_igpoints(&sheet).iter().map(|r| r.index));
+            indices.extend(decode_igsymbols(&sheet).iter().map(|r| r.style_ref));
+
+            for index in indices {
+                let Some(resolved) = table.resolve_line_style(index) else {
+                    continue;
+                };
+                let through_index = names
+                    .get(&(sheet_path.clone(), resolved.style_id))
+                    .map(String::as_str);
+                assert_eq!(
+                    through_index,
+                    table.name_of_style(resolved.style_id),
+                    "{} {sheet_path} style {}",
+                    expected.fixture,
+                    resolved.style_id
+                );
+                joined += usize::from(through_index.is_some());
+            }
+        }
+        assert!(
+            joined > 0,
+            "{} names no line style at all",
+            expected.fixture
+        );
+    }
+}
+
+/// Palette entries that carry more than one authored name, whole.
+///
+/// This is the list that says the name is worth decoding at all. Three roles
+/// of piping are drawn identically; so are a nozzle and the equipment it sits
+/// on. Nothing in the symbology can separate them.
+const EXPECTED_CROSSINGS: [&str; 4] = [
+    "0.180mm #008000 <- Connect To Process x4, Electric x3, Off-Line Instrument x6",
+    "0.350mm #000000 <- As Drawn x43, Dashed x22, Normal x161",
+    "0.350mm #800000 <- Equipment - New x4, Nozzle - New x18",
+    "0.350mm #808000 <- Piping Component - New x7, Piping OPC x15, Secondary Piping - New x10",
+];
+
+/// The one name that spans more than one palette entry, whole.
+const EXPECTED_SPANS: [&str; 1] = ["As Drawn -> 0.350mm #000000 x43, 0.500mm #0000FF x12"];
+
+/// The authored name is a classification the symbology cannot express.
+///
+/// The claim is a negative one — "you cannot recover this from width and
+/// colour" — so it is pinned as the crossings themselves rather than as a
+/// count. Both directions are asserted because they fail differently: a
+/// palette entry carrying several names means the symbology is coarser than
+/// the name, and a name spanning several entries means neither refines the
+/// other.
+///
+/// If a future change makes either list empty the name has collapsed into a
+/// label for the palette, and this decode has stopped earning its place.
+#[test]
+fn the_authored_name_cuts_the_drawing_where_width_and_colour_cannot() {
+    let mut name_to_palette: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    let mut palette_to_name: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    let mut fixtures_seen = 0usize;
+
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            continue;
+        }
+        fixtures_seen += 1;
+        let file = std::fs::File::open(path).expect("fixture opens");
+        let mut cfb = CompoundFile::open(file).expect("fixture is a compound file");
+        let sheet_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .filter(|p| p.rsplit('/').next().unwrap_or("").starts_with("Sheet"))
+            .collect();
+
+        for sheet_path in &sheet_paths {
+            let Some(sheet) = read_stream(&mut cfb, sheet_path) else {
+                continue;
+            };
+            let table = read_stream(&mut cfb, &stylecluster_path_for_sheet(sheet_path))
+                .map_or_else(DocumentStyleTable::default, |bytes| {
+                    DocumentStyleTable::from_stylecluster_bytes(&bytes)
+                });
+
+            let mut indices: Vec<u32> = Vec::new();
+            for record in decode_iglines(&sheet) {
+                indices.push(record.index);
+            }
+            for record in decode_igpoints(&sheet) {
+                indices.push(record.index);
+            }
+            for record in decode_iglinestrings(&sheet) {
+                indices.push(record.index);
+            }
+            for record in decode_igsymbols(&sheet) {
+                indices.push(record.style_ref);
+            }
+
+            for index in indices {
+                let Some(resolved) = table.resolve_line_style(index) else {
+                    continue;
+                };
+                let Some(name) = table.name_of_style(resolved.style_id) else {
+                    continue;
+                };
+                let width_mm = resolved.symbology.width_mm();
+                let [r, g, b] = resolved.symbology.rgb();
+                let palette = format!("{width_mm:.3}mm #{r:02X}{g:02X}{b:02X}");
+                *name_to_palette
+                    .entry(name.to_string())
+                    .or_default()
+                    .entry(palette.clone())
+                    .or_default() += 1;
+                *palette_to_name
+                    .entry(palette)
+                    .or_default()
+                    .entry(name.to_string())
+                    .or_default() += 1;
+            }
+        }
+    }
+
+    if fixtures_seen < EXPECTED.len() {
+        eprintln!("skip: partial corpus cannot be held to corpus-wide crossings");
+        return;
+    }
+
+    let render = |outer: &str, arrow: &str, inner: &BTreeMap<String, usize>| {
+        let spread: Vec<String> = inner.iter().map(|(k, n)| format!("{k} x{n}")).collect();
+        format!("{outer} {arrow} {}", spread.join(", "))
+    };
+
+    let crossings: Vec<String> = palette_to_name
+        .iter()
+        .filter(|(_, names)| names.len() > 1)
+        .map(|(palette, names)| render(palette, "<-", names))
+        .collect();
+    assert_eq!(
+        crossings, EXPECTED_CROSSINGS,
+        "palette entries carrying more than one authored name"
+    );
+
+    let spans: Vec<String> = name_to_palette
+        .iter()
+        .filter(|(_, palettes)| palettes.len() > 1)
+        .map(|(name, palettes)| render(name, "->", palettes))
+        .collect();
+    assert_eq!(
+        spans, EXPECTED_SPANS,
+        "authored names spanning more than one palette entry"
     );
 }
 

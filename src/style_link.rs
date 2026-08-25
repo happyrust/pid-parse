@@ -301,6 +301,16 @@ pub const LIBRARIAN_NAME_TO_OID_GAP: usize = 8;
 /// `oid` this stream defines.
 const MIN_LIBRARIAN_NAME_UNITS: usize = 2;
 
+/// Zero bytes that close a `JStyleLibrarian` payload, immediately after the
+/// text naming the file its styles were read from.
+///
+/// Level: corpus, exhaustive. All **13** librarian records in the corpus end
+/// the same way — a run of UTF-16 text, then exactly four zero bytes, then the
+/// payload — which is what makes the trailing run an anchored field rather
+/// than the last string a scan happened to find. See
+/// [`DocumentStyleTable::style_library_source`].
+pub const LIBRARIAN_SOURCE_TRAILER_LEN: usize = 4;
+
 /// PSM type code of `JStyleTextChar`, which carries the character height.
 pub const PSM_TYPE_CODE_JSTYLE_TEXT_CHAR: u16 = 0x002C;
 
@@ -976,6 +986,8 @@ pub struct DocumentStyleTable {
     /// by style id would let them shadow each other and the line style.
     groups: BTreeMap<u32, Vec<GroupMember>>,
     strokes: BTreeMap<u32, MarkerStroke>,
+    /// The file the librarian says these styles were read from.
+    library_source: Option<String>,
 }
 
 /// One entry of a group's member table.
@@ -1039,6 +1051,12 @@ impl DocumentStyleTable {
                     }
                     PSM_TYPE_CODE_JSTYLE_LIBRARIAN => {
                         librarian_names.extend(read_librarian_names(payload));
+                        // First writer wins, as everywhere else in this walk.
+                        // Two documents carry a second librarian holding a
+                        // copy of the first; they agree.
+                        if table.library_source.is_none() {
+                            table.library_source = read_librarian_source(payload);
+                        }
                     }
                     _ => {}
                 }
@@ -1122,11 +1140,47 @@ impl DocumentStyleTable {
     /// The name the librarian gives the style `style_id` names.
     ///
     /// The drawing's own word for the style — `psWarning`, `Primary Piping -
-    /// New`, `Electric Signal`. `None` means the librarian does not name it,
-    /// which most internal styles are.
+    /// New`, `Electric Signal`.
+    ///
+    /// # Why this is worth reading when width and colour are already resolved
+    ///
+    /// Because it is not a label for them. Over the corpus the two
+    /// descriptions cross: `0.350mm #800000` is both `Equipment - New` and
+    /// `Nozzle - New`, `0.350mm #808000` is `Piping OPC`, `Secondary Piping -
+    /// New` and `Piping Component - New`, and in the other direction
+    /// `As Drawn` covers two different widths. **Telling a nozzle from the
+    /// equipment it sits on is possible from the name and impossible from the
+    /// symbology.**
+    ///
+    /// # What `None` means
+    ///
+    /// That the style is the drawing's own, not one imported from the project
+    /// style library named by [`Self::style_library_source`] — the librarian
+    /// is that library's table of contents, so a style made in the drawing is
+    /// simply not in it. Three styles in the corpus are reached by geometry
+    /// and unnamed, and for each of them the `oid` appears at no name's
+    /// binding site in any cluster of its document: the file is silent about
+    /// them, rather than this decode missing them.
     #[must_use]
     pub fn name_of_style(&self, style_id: u32) -> Option<&str> {
         self.get(style_id)?.name.as_deref()
+    }
+
+    /// The file the librarian says this cluster's styles were read from.
+    ///
+    /// Level: corpus, exhaustive over all 13 librarian records. A sheet's own
+    /// `StyleCluster` names the project standards file as a UNC path —
+    /// `\\WIN-SPID\QSMCQTAZ13\PLANT\REF\PROJECTSTYLES.SPP` — and a symbol
+    /// library's cluster names `Styles.pid`.
+    ///
+    /// It is the drawing saying which standard it was drawn against, and it
+    /// reads as one: the two `GP06` fixtures name the same `.SPP` and share a
+    /// style vocabulary, while the third project names a different one and has
+    /// a visibly different vocabulary. So the path explains a difference
+    /// rather than merely accompanying it.
+    #[must_use]
+    pub fn style_library_source(&self) -> Option<&str> {
+        self.library_source.as_deref()
     }
 
     /// Every record in chain order.
@@ -1575,6 +1629,41 @@ fn read_librarian_names(payload: &[u8]) -> Vec<(u32, String)> {
     out
 }
 
+/// The file a `JStyleLibrarian` payload says its styles were read from.
+///
+/// Read backwards from the end rather than forwards, because that is where
+/// the field is anchored: the payload closes with
+/// [`LIBRARIAN_SOURCE_TRAILER_LEN`] zero bytes, and the text immediately
+/// before them is the source. Reading forwards would only ever be "the last
+/// run we found", which is not a rule.
+///
+/// Returns `None` when the trailer is not zero or the text is too short to be
+/// a name — both of which say this payload is not laid out the way every
+/// librarian in the corpus is.
+fn read_librarian_source(payload: &[u8]) -> Option<String> {
+    let text_end = payload.len().checked_sub(LIBRARIAN_SOURCE_TRAILER_LEN)?;
+    if payload.get(text_end..)?.iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    let mut units: Vec<u16> = Vec::new();
+    let mut at = text_end;
+    while at >= 2 {
+        let Some(unit) = u16_at(payload, at - 2) else {
+            break;
+        };
+        if !is_librarian_name_unit(unit) {
+            break;
+        }
+        units.push(unit);
+        at -= 2;
+    }
+    if units.len() < MIN_LIBRARIAN_NAME_UNITS {
+        return None;
+    }
+    units.reverse();
+    String::from_utf16(&units).ok()
+}
+
 /// Close off a run of name text that ended at `run_end` and, if the `u32` past
 /// the gap looks like an `oid`, record the binding.
 fn push_librarian_name(
@@ -1630,6 +1719,25 @@ pub type TextHeightIndex = BTreeMap<(String, u32), ResolvedTextHeight>;
 /// Every boundary record's fill, keyed the same way as [`LineStyleIndex`].
 pub type FillIndex = BTreeMap<(String, u32), ResolvedFill>;
 
+/// The authored name of every style a sheet can reach, keyed by that sheet's
+/// stream and the style id.
+///
+/// Keyed on the **style** rather than on the record, unlike the three indexes
+/// above, because that is what a name belongs to: a hundred lines share one
+/// `Primary Piping - New`. The sheet stream is still in the key because ids
+/// are document-scoped — see the module docs — so a caller joins with the
+/// stream it already has and the [`ResolvedLineStyle::style_id`] it already
+/// resolved.
+pub type StyleNameIndex = BTreeMap<(String, u32), String>;
+
+/// The project style library each sheet's document says it was read from,
+/// keyed by that sheet's stream.
+///
+/// Keyed by the stream alone, unlike the indexes above, because the source is
+/// a property of the document rather than of any style within it: every style
+/// a sheet can reach came from the one file named here.
+pub type StyleLibraryIndex = BTreeMap<String, String>;
+
 /// Resolve the fill of every boundary record in one `.pid`.
 ///
 /// `igBoundary2d` is the only family in this corpus that reaches a fill, and
@@ -1648,6 +1756,54 @@ pub fn fill_styles_for_file(path: &Path) -> Result<FillIndex, PidError> {
             if let Some(resolved) = table.resolve_fill(record.index) {
                 out.insert((stream.to_string(), record.oid), resolved);
             }
+        }
+    })?;
+    Ok(out)
+}
+
+/// Collect the authored name of every named style in one `.pid`.
+///
+/// The drawing's own word for what a line **is** — `Primary Piping - New`,
+/// `Nozzle - New`, `Electric Signal` — which is a classification the width
+/// and colour cannot express: see [`DocumentStyleTable::name_of_style`].
+/// Styles the librarian does not name are absent rather than defaulted,
+/// because their absence is itself the reading: they are the drawing's own,
+/// not the project library's.
+///
+/// # Errors
+///
+/// Returns [`PidError`] when the file cannot be opened or read as a compound
+/// file.
+pub fn style_names_for_file(path: &Path) -> Result<StyleNameIndex, PidError> {
+    let mut out = StyleNameIndex::new();
+    for_each_document(path, &mut |stream, _sheet, table| {
+        for record in table.records() {
+            if let Some(name) = record.name.as_deref() {
+                out.insert((stream.to_string(), record.style_id), name.to_string());
+            }
+        }
+    })?;
+    Ok(out)
+}
+
+/// Collect the project style library each sheet was drawn against.
+///
+/// The companion to [`style_names_for_file`]: that one says what the drawing
+/// calls a style, this one says which file it got the vocabulary from. The
+/// two belong together because the second bounds the first — a name is
+/// meaningful across drawings only as far as they name the same library, and
+/// on this corpus the two fixtures sharing a `.SPP` are exactly the two whose
+/// vocabularies agree. See [`DocumentStyleTable::style_library_source`].
+///
+/// # Errors
+///
+/// Returns [`PidError`] when the file cannot be opened or read as a compound
+/// file.
+pub fn style_libraries_for_file(path: &Path) -> Result<StyleLibraryIndex, PidError> {
+    let mut out = StyleLibraryIndex::new();
+    for_each_document(path, &mut |stream, _sheet, table| {
+        if let Some(source) = table.style_library_source() {
+            out.insert(stream.to_string(), source.to_string());
         }
     })?;
     Ok(out)
@@ -2443,6 +2599,61 @@ mod tests {
                 .all(|r| r.name.as_deref() != Some("psWarning")),
             "the entry naming an oid nobody defines binds to nothing"
         );
+    }
+
+    /// The librarian's own last field: the file these styles were read from,
+    /// then the zero trailer that anchors it.
+    fn librarian_with_source(entries: &[(&str, u32)], source: &str) -> (u16, Vec<u8>) {
+        let (type_code, mut payload) = librarian(entries);
+        for unit in source.encode_utf16() {
+            payload.extend_from_slice(&unit.to_le_bytes());
+        }
+        payload.extend_from_slice(&[0u8; LIBRARIAN_SOURCE_TRAILER_LEN]);
+        (type_code, payload)
+    }
+
+    /// A sheet's style cluster ends by naming the project standards file its
+    /// styles were imported from. That is the drawing stating which standard
+    /// it was drawn against, and it is the same field that tells a style made
+    /// in the drawing apart from one that came from the library.
+    #[test]
+    fn the_librarian_states_the_library_its_styles_were_read_from() {
+        const SPP: &str = r"\\WIN-SPID\QSMCQTAZ13\PLANT\REF\PROJECTSTYLES.SPP";
+        let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
+            librarian_with_source(&[("psOk", 8302)], SPP),
+            simple_line_dashed(70, 69),
+            line_terminator(69, 68),
+            point_symbol_with_oid(8302, 68, 8298),
+            group(8298, &[8299]),
+            marker_line(8299, (0.0, 0.0), (0.0, 0.0)),
+        ]));
+
+        assert_eq!(table.style_library_source(), Some(SPP));
+        assert_eq!(
+            table.name_of_style(68),
+            Some("psOk"),
+            "the trailing source does not disturb the name entries before it"
+        );
+        assert!(
+            table
+                .records()
+                .iter()
+                .all(|r| r.name.as_deref() != Some(SPP)),
+            "the source is a field of the librarian, not a name bound to a style"
+        );
+    }
+
+    /// Anchored means the anchor has to be there. Without the zero trailer
+    /// this payload is not laid out the way every librarian in the corpus is,
+    /// and guessing at the last run of text anyway is how a scan starts
+    /// inventing fields.
+    #[test]
+    fn a_librarian_without_the_zero_trailer_states_no_source() {
+        let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
+            librarian(&[("psOk", 8302)]),
+            point_symbol_with_oid(8302, 68, 8298),
+        ]));
+        assert_eq!(table.style_library_source(), None);
     }
 
     /// A point symbol the librarian does not name, or names something outside
