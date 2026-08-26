@@ -380,33 +380,42 @@ oid **一次都没出现过**，而且比该图所有被命名的 oid 都大。
 
 ### 6.3 每条名表条目自己说它是哪一族（2026-08-26）
 
-**等级：corpus，624 个文件 6028 条具名条目穷尽**
+**等级：native-reader + 厂商注册表，并有 624 个文件 6028 条条目独立印证**
 
 条目开头那个 `u16` 是**调色板序号**——原生读器拿它去索引 payload 开头那张
-目录（`palette[LOWORD(Block[0])]`）。目录每条 40 字节，开头就是一个 GUID，
-那是这个调色板自己的身份。
+目录（`palette[LOWORD(Block[0])]`）。目录每条 40 字节：`[调色板 CLSID(16)]
+[u32][u32][接口 IID(16)]`。
 
-把「条目指向的调色板 GUID」和「条目 oid 真正落在哪一族」两边 join，全语料
-6028 条，**每个 GUID 只到一族，一条不跨**：
+这张目录不是文件的自由发挥，是 `style.dll` 写死的。`sub_10058250` 里按固定
+顺序注册十三条，顺序和 GUID 跟文件里一字不差；只有 11 条的 `.sym` 是老版本
+的**前缀**。每个 CLSID 在 `jutil.dll` 的 RAD 注册表里都有厂商自己的名字
+（`tools/clsid_registry.py`）：
 
-| 调色板 GUID | 族 |
-|---|---|
-| `93ADC030-0CB6-11D0-B29B-08003622D702` | `0x002F` JSL Simple Dash Type |
-| `606FE420-0025-11D0-A1E1-080036A1CF02` | `0x002E` JSL Simple Line |
-| `606FE421-0025-11D0-A1E1-080036A1CF02` | `0x002A` JSL Simple Fill |
-| `606FE422-0025-11D0-A1E1-080036A1CF02` | `0x002C` JSL Text Character |
-| `606FE423-0025-11D0-A1E1-080036A1CF02` | `0x002D` JSL Text Paragraph |
-| `606FE424-0025-11D0-A1E1-080036A1CF02` | `0x0035`/`0x0116` JDimParameters |
-| `606FE425-0025-11D0-A1E1-080036A1CF02` | `0x001B` SmartFrame2dStyle |
-| `551147C0-0E6B-11D0-8050-08003601B3D4` | `0x002B` JSL Hatch Fill |
-| `1B5F70A1-708A-11D0-9419-08003601BE52` | `0x0032` JSL PointSymbol |
+| # | 调色板 CLSID | 厂商命名 | 落在哪一族 |
+|---|---|---|---|
+| 0 | `93ADC030-0CB6-11D0-B29B-08003622D702` | JSL Dash Style Type | `0x002F` Simple Dash Type |
+| 1 | `606FE420-0025-11D0-A1E1-080036A1CF02` | JSL Linear Style Type | `0x002E` Simple Line |
+| 2 | `606FE421-0025-11D0-A1E1-080036A1CF02` | JSL Fill Style Type | `0x002A` Simple Fill |
+| 3 | `606FE422-0025-11D0-A1E1-080036A1CF02` | JSL Text Char Style Type | `0x002C` Text Character |
+| 4 | `606FE423-0025-11D0-A1E1-080036A1CF02` | JSL Text Para Style Type | `0x002D` Text Paragraph |
+| 5 | `606FE424-0025-11D0-A1E1-080036A1CF02` | JSL Dimension Style Type | `0x0035`/`0x0116` JDimParameters |
+| 6 | `606FE425-0025-11D0-A1E1-080036A1CF02` | JSL SmartFrame Style Type | `0x001B` SmartFrame2dStyle |
+| 7 | `551147C0-0E6B-11D0-8050-08003601B3D4` | JSL Pattern Style Type | `0x002B` Hatch Fill |
+| 8 | `9C76B380-2559-11D2-ABF0-0800363C8C03` | 注册表里没有 | 无名字落在上面 |
+| 9 | `01B0AB10-4D5F-11D0-83B9-080036170502` | JSL Segmented Style Type | 无名字落在上面 |
+| 10 | `1B5F70A1-708A-11D0-9419-08003601BE52` | JSL Point Symbol Style Type | `0x0032` PointSymbol |
+| 11 | `1B5F70A2-708A-11D0-9419-08003601BE52` | JSL LinePointGenerator Style Type | 无名字落在上面 |
+| 12 | `8D7F1D46-B368-11D1-BC42-08003693E102` | JSL 3D Style Type | 无名字落在上面 |
 
-（`606FE424` 那格实测同时到 `0x0035` 和 `0x0116`，但这两个类型码在
-`radsrvitem` 表里指向**同一个 CLSID**，所以仍然只是一个类。目录里另有四个
-调色板，全语料没有任何名字落在上面。）
+**「厂商命名」这一列和「落在哪一族」这一列是各自独立得到的**：前者从
+`jutil.dll` 的注册表读，后者是把 6028 条条目的 oid 逐个 join 到它真正落上的
+记录数得出来的。九格全部对上，一格不跨。
 
-**按 GUID 建表，不按序号。** 语料里每个文件都按同一顺序列调色板，所以按序号
-也能跑对——那种对法是等着被将来某个文件推翻的巧合。
+（`606FE424` 实测同时到 `0x0035` 和 `0x0116`，但这两个类型码在 `radsrvitem`
+表里指向**同一个 CLSID**，仍然只是一个类。）
+
+**按 GUID 建表，不按序号。** 序号也能跑对——那种对法是等着被将来某个文件
+推翻的巧合。
 
 #### 这替掉了「靠 `ps` / `ls` 前缀猜族」
 

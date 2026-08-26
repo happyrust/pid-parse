@@ -328,20 +328,28 @@ const fn guid(first: u32, second: u16, third: u16, rest: [u8; 8]) -> [u8; 16] {
 
 /// The style family each palette of the librarian's directory stands for.
 ///
-/// Level: corpus, exhaustive over **6028 named entries** in 624 files. Every
-/// librarian entry opens with an index into the directory the payload begins
-/// with — `sub_100586A0` uses it as `palette[LOWORD(Block[0])]` — and each
-/// directory record opens with a GUID naming the palette. Joining the two
-/// against the family each entry's `oid` really lands on, every one of these
-/// GUIDs reaches exactly one family and nothing straddles.
+/// Level: native-reader, and the vendor says it in words. Every librarian entry
+/// opens with an index into the directory the payload begins with —
+/// `sub_100586A0` uses it as `palette[LOWORD(Block[0])]` — and each directory
+/// record opens with the palette's CLSID. `style.dll` builds that directory in
+/// `sub_10058250` as thirteen registrations in a fixed order, which is the same
+/// order and the same GUIDs every file writes; a file with fewer is an older
+/// build's shorter prefix of the list. The RAD CLSID registry in `jutil.dll`
+/// names each one — `JSL Linear Style Type/Workbench`, `JSL Point Symbol Style
+/// Type/Workbench`, and so on (`tools/clsid_registry.py`).
 ///
-/// Keyed by GUID rather than by position on purpose. The index would work on
-/// this corpus, where every file lists the same palettes in the same order,
+/// Confirmed independently against the files: joining each entry's palette
+/// against the family its `oid` really lands on, over **6028 named entries in
+/// 624 files**, every palette reaches exactly one family, nothing straddles,
+/// and every one agrees with the name the vendor gives it.
+///
+/// Keyed by GUID rather than by position on purpose. The index would work here
 /// and would be a coincidence waiting to be found out.
 ///
-/// Four more palettes exist that no name in the corpus is filed under, and two
-/// — `JDimParameters` and `SmartFrame2dStyle` — hold names for records that are
-/// not styles, so they are absent here rather than guessed at.
+/// Six of the thirteen are absent. `JSL Dimension` and `JSL SmartFrame` name
+/// records that are not styles; `JSL Segmented`, `JSL LinePointGenerator`,
+/// `JSL 3D` and one the registry does not name are palettes no name in the
+/// corpus is filed under.
 const LIBRARIAN_PALETTE_FAMILIES: [([u8; 16], u16); 7] = [
     (
         guid(
