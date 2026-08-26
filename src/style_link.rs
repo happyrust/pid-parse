@@ -343,6 +343,15 @@ const fn guid(first: u32, second: u16, third: u16, rest: [u8; 8]) -> [u8; 16] {
 /// 624 files**, every palette reaches exactly one family, nothing straddles,
 /// and every one agrees with the name the vendor gives it.
 ///
+/// Keyed by the first GUID, which is the whole record. A palette record also
+/// carries an interface IID, and it holds nothing: the registration in
+/// `sub_100759E0` derives that IID from the CLSID through a fixed `if` chain
+/// and overwrites whatever the caller passed, so it is a function of the GUID
+/// already read. Two palettes derive `IUnknown` rather than a style interface
+/// — `JSL Dimension` and `JSL SmartFrame` — which is `style.dll` saying those
+/// hold no styles, and is the same pair the corpus join finds landing on
+/// records outside the style families.
+///
 /// Keyed by GUID rather than by position on purpose. The index would work here
 /// and would be a coincidence waiting to be found out.
 ///

@@ -417,6 +417,28 @@ oid **一次都没出现过**，而且比该图所有被命名的 oid 都大。
 **按 GUID 建表，不按序号。** 序号也能跑对——那种对法是等着被将来某个文件
 推翻的巧合。
 
+#### 第二个 GUID（接口 IID）什么都不带，别读它
+
+目录每条的后 16 字节是个接口 IID。它**不是独立字段**：注册函数
+`sub_100759E0` 拿 CLSID 走一条固定的 `if` 链把 IID 算出来，然后**覆盖掉调用
+方传进来的那个**。也就是说 IID 是 CLSID 的函数，读了等于没读。
+
+```text
+JSL Dash        -> EA1ACBD2-…
+JSL Text Para   -> 0391DF90-…
+JSL Dimension   -> IUnknown
+JSL SmartFrame  -> IUnknown
+JSL Pattern     -> A99F1CA0-…
+9C76B380（未登记）-> A99F1CA0-…
+JSL Segmented   -> 250F87A1-…
+以上都不是      -> 571A3A00-…   ← 默认，所以六格共用它
+```
+
+**顺带印证了上面那张表**：全十三格里只有 `JSL Dimension` 和 `JSL SmartFrame`
+拿到 `IUnknown` 而不是某个样式接口——那是 `style.dll` 自己说这两格不装样式。
+而它俩正是 join 出来落在**非样式记录**（JDimParameters、SmartFrame2dStyle）
+上的那两格。两条路又对上了。
+
 #### 这替掉了「靠 `ps` / `ls` 前缀猜族」
 
 前缀只覆盖状态名，一共 24 条；调色板覆盖**全部 92 条**。而且它说的东西前缀
