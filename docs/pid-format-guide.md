@@ -288,11 +288,15 @@ name 同时非空才算数。此外还要求 oid 是该流真的定义过的记�
   `psError`/`lsError`、`psApproved`/`lsApproved`。见 §4。
 - **专业名**：`Primary Piping - New`、`Secondary Piping - New`、
   `Equipment - New`、`Nozzle - New`、`Piping Component - New`、
-  `In-Line Instrument - New`、`Off-Line Instrument`、`Electric Signal`、
-  `Electric`、`Piping OPC`、`Connect To Process`、`Construction Status`、
-  `As Drawn`。
-- **图案/字体名**：`Solid`、`Dash`、`Dashed`、`Dash Dot`、`Dash Dot Dot`、
-  `Dash 2Dot`、`End Gap`、`Normal`、`ANSI`、`DIN`、`Chinese`、`Viewport`。
+  `In-Line Instrument - New`、`Off-Line Instrument`、`Electric`、
+  `Piping OPC`、`Connect To Process`、`Construction Status`、`As Drawn`。
+- **图案/字体名**：`Dash`、`Dashed`、`Dash Dot`、`Dash Dot Dot`、
+  `Dash 2Dot`、`End Gap`、`Solid`、`Normal`、`ANSI`、`DIN`、`Chinese`、
+  `Viewport`、`Electric Signal`。
+
+这两栏是按名字读出来的印象分栏，**不是文件说的**。文件自己按族分——见
+§6.3，那里 `Electric Signal` 是虚线图案不是线样式、`Solid` 是填充、`Normal`
+横跨五族。分歧以 §6.3 为准。
 
 `pid-parse`：`StyleRecord.name`、`DocumentStyleTable::name_of_style()`、
 `style_names_for_file()`（按 `(Sheet 流, 样式 id)` 建索引，供渲染端 join）。
@@ -373,6 +377,54 @@ oid **一次都没出现过**，而且比该图所有被命名的 oid 都大。
 
 `pid-parse`：`DocumentStyleTable::style_library_source()`、
 `style_libraries_for_file()`（按 Sheet 流建索引）。
+
+### 6.3 每条名表条目自己说它是哪一族（2026-08-26）
+
+**等级：corpus，624 个文件 6028 条具名条目穷尽**
+
+条目开头那个 `u16` 是**调色板序号**——原生读器拿它去索引 payload 开头那张
+目录（`palette[LOWORD(Block[0])]`）。目录每条 40 字节，开头就是一个 GUID，
+那是这个调色板自己的身份。
+
+把「条目指向的调色板 GUID」和「条目 oid 真正落在哪一族」两边 join，全语料
+6028 条，**每个 GUID 只到一族，一条不跨**：
+
+| 调色板 GUID | 族 |
+|---|---|
+| `93ADC030-0CB6-11D0-B29B-08003622D702` | `0x002F` JSL Simple Dash Type |
+| `606FE420-0025-11D0-A1E1-080036A1CF02` | `0x002E` JSL Simple Line |
+| `606FE421-0025-11D0-A1E1-080036A1CF02` | `0x002A` JSL Simple Fill |
+| `606FE422-0025-11D0-A1E1-080036A1CF02` | `0x002C` JSL Text Character |
+| `606FE423-0025-11D0-A1E1-080036A1CF02` | `0x002D` JSL Text Paragraph |
+| `606FE424-0025-11D0-A1E1-080036A1CF02` | `0x0035`/`0x0116` JDimParameters |
+| `606FE425-0025-11D0-A1E1-080036A1CF02` | `0x001B` SmartFrame2dStyle |
+| `551147C0-0E6B-11D0-8050-08003601B3D4` | `0x002B` JSL Hatch Fill |
+| `1B5F70A1-708A-11D0-9419-08003601BE52` | `0x0032` JSL PointSymbol |
+
+（`606FE424` 那格实测同时到 `0x0035` 和 `0x0116`，但这两个类型码在
+`radsrvitem` 表里指向**同一个 CLSID**，所以仍然只是一个类。目录里另有四个
+调色板，全语料没有任何名字落在上面。）
+
+**按 GUID 建表，不按序号。** 语料里每个文件都按同一顺序列调色板，所以按序号
+也能跑对——那种对法是等着被将来某个文件推翻的巧合。
+
+#### 这替掉了「靠 `ps` / `ls` 前缀猜族」
+
+前缀只覆盖状态名，一共 24 条；调色板覆盖**全部 92 条**。而且它说的东西前缀
+说不了：
+
+- **`Electric Signal` 是虚线图案（`0x002F`），不是线样式。**
+- **`Solid` 是填充（`0x002A`）。**
+- `Normal` 横跨五族：`0x002A` / `0x002B` / `0x002C` / `0x002D` / `0x002E`——
+  它是各族的缺省名，不是任何一种专业。
+- `Chinese` 同时是字符样式和段落样式。
+- `ANSI` 落 JDimParameters，`Viewport` / `Office Automation` / `NewSFStyle`
+  落 SmartFrame2dStyle——这三样根本不是样式记录。
+
+`pid-parse`：`StyleRecord::librarian_family`。它应当恒等于
+`StyleRecord::type_code`——两个值来自流的两头，一头是条目指的调色板，一头是
+记录自己的信封，**它俩相等才说明名字落对了对象**，`style_link_ratchet` 全表
+钉住这一条。
 
 ### 样式记录的共同形状
 

@@ -315,6 +315,99 @@ const LIBRARIAN_ENTRY_FIXED_LEN: usize = 30;
 /// a number the file chose.
 const MAX_LIBRARIAN_STRING_UNITS: u32 = 1024;
 
+/// A GUID in the byte order the file writes one, from its canonical fields.
+const fn guid(first: u32, second: u16, third: u16, rest: [u8; 8]) -> [u8; 16] {
+    let a = first.to_le_bytes();
+    let b = second.to_le_bytes();
+    let c = third.to_le_bytes();
+    [
+        a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], rest[0], rest[1], rest[2], rest[3],
+        rest[4], rest[5], rest[6], rest[7],
+    ]
+}
+
+/// The style family each palette of the librarian's directory stands for.
+///
+/// Level: corpus, exhaustive over **6028 named entries** in 624 files. Every
+/// librarian entry opens with an index into the directory the payload begins
+/// with — `sub_100586A0` uses it as `palette[LOWORD(Block[0])]` — and each
+/// directory record opens with a GUID naming the palette. Joining the two
+/// against the family each entry's `oid` really lands on, every one of these
+/// GUIDs reaches exactly one family and nothing straddles.
+///
+/// Keyed by GUID rather than by position on purpose. The index would work on
+/// this corpus, where every file lists the same palettes in the same order,
+/// and would be a coincidence waiting to be found out.
+///
+/// Four more palettes exist that no name in the corpus is filed under, and two
+/// — `JDimParameters` and `SmartFrame2dStyle` — hold names for records that are
+/// not styles, so they are absent here rather than guessed at.
+const LIBRARIAN_PALETTE_FAMILIES: [([u8; 16], u16); 7] = [
+    (
+        guid(
+            0x93AD_C030,
+            0x0CB6,
+            0x11D0,
+            [0xB2, 0x9B, 0x08, 0x00, 0x36, 0x22, 0xD7, 0x02],
+        ),
+        PSM_TYPE_CODE_JSTYLE_SIMPLE_DASH_TYPE,
+    ),
+    (
+        guid(
+            0x606F_E420,
+            0x0025,
+            0x11D0,
+            [0xA1, 0xE1, 0x08, 0x00, 0x36, 0xA1, 0xCF, 0x02],
+        ),
+        PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE,
+    ),
+    (
+        guid(
+            0x606F_E421,
+            0x0025,
+            0x11D0,
+            [0xA1, 0xE1, 0x08, 0x00, 0x36, 0xA1, 0xCF, 0x02],
+        ),
+        PSM_TYPE_CODE_JSTYLE_SIMPLE_FILL,
+    ),
+    (
+        guid(
+            0x606F_E422,
+            0x0025,
+            0x11D0,
+            [0xA1, 0xE1, 0x08, 0x00, 0x36, 0xA1, 0xCF, 0x02],
+        ),
+        PSM_TYPE_CODE_JSTYLE_TEXT_CHAR,
+    ),
+    (
+        guid(
+            0x606F_E423,
+            0x0025,
+            0x11D0,
+            [0xA1, 0xE1, 0x08, 0x00, 0x36, 0xA1, 0xCF, 0x02],
+        ),
+        PSM_TYPE_CODE_JSTYLE_TEXT_PARA,
+    ),
+    (
+        guid(
+            0x5511_47C0,
+            0x0E6B,
+            0x11D0,
+            [0x80, 0x50, 0x08, 0x00, 0x36, 0x01, 0xB3, 0xD4],
+        ),
+        PSM_TYPE_CODE_JSTYLE_HATCH_FILL,
+    ),
+    (
+        guid(
+            0x1B5F_70A1,
+            0x708A,
+            0x11D0,
+            [0x94, 0x19, 0x08, 0x00, 0x36, 0x01, 0xBE, 0x52],
+        ),
+        PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL,
+    ),
+];
+
 /// Version at which the librarian's source object states a path as well as a
 /// name.
 ///
@@ -761,6 +854,16 @@ pub struct StyleRecord {
     /// These are the drawing's own words — `psWarning`, `Primary Piping -
     /// New`, `Electric Signal`, `Dash Dot` — not anything this crate coined.
     pub name: Option<String>,
+    /// The family the librarian filed [`Self::name`] under, when it names this
+    /// record and the palette is one this crate knows.
+    ///
+    /// It should equal [`Self::type_code`], and that is the point: the two come
+    /// from opposite ends of the stream — this from the palette the librarian
+    /// entry points at, the other from the record's own envelope — so their
+    /// agreeing says the name landed on the right object. It is what the
+    /// `ps…` / `ls…` prefixes used to stand in for, except the file states it
+    /// for every name rather than the quarter of them that are statuses.
+    pub librarian_family: Option<u16>,
     /// Byte range of the whole record — envelope included — within the
     /// stream, for provenance.
     pub byte_range: Range<usize>,
@@ -1027,7 +1130,7 @@ impl DocumentStyleTable {
         // The librarian is first in the chain, so its names arrive before the
         // records they name. They are held here and bound once the walk has
         // seen everything.
-        let mut librarian_names: Vec<(u32, String)> = Vec::new();
+        let mut librarian_names: Vec<LibrarianName> = Vec::new();
         let mut at = STREAM_HEADER_LEN;
         while let (Some(type_word), Some(bytes_to_follow)) =
             (u16_at(data, at), u32_at(data, at + 2))
@@ -1085,6 +1188,7 @@ impl DocumentStyleTable {
                     style_id,
                     oid: u32_at(payload, 0).unwrap_or_default(),
                     name: None,
+                    librarian_family: None,
                     byte_range: at..end,
                     symbology: read_symbology(type_code, payload),
                     base_reference: read_base_reference(payload),
@@ -1132,7 +1236,7 @@ impl DocumentStyleTable {
     ///
     /// First writer wins, both for the `oid` index and for the name, matching
     /// how the rest of this module binds a chain it walks in order.
-    fn bind_librarian_names(&mut self, names: &[(u32, String)]) {
+    fn bind_librarian_names(&mut self, names: &[LibrarianName]) {
         if names.is_empty() {
             return;
         }
@@ -1140,15 +1244,16 @@ impl DocumentStyleTable {
         for (slot, record) in self.records.iter().enumerate() {
             by_oid.entry(record.oid).or_insert(slot);
         }
-        for (oid, name) in names {
-            let Some(slot) = by_oid.get(oid) else {
+        for entry in names {
+            let Some(slot) = by_oid.get(&entry.oid) else {
                 continue;
             };
             let Some(record) = self.records.get_mut(*slot) else {
                 continue;
             };
             if record.name.is_none() {
-                record.name = Some(name.clone());
+                record.name = Some(entry.name.clone());
+                record.librarian_family = entry.family;
             }
         }
     }
@@ -1613,14 +1718,27 @@ fn read_font_name(type_code: u16, payload: &[u8]) -> Option<String> {
 
 /// One `JStyleLibrarian` record, read the way `style.dll` reads it.
 struct Librarian {
-    /// `(oid, name)` for every entry that states both.
-    names: Vec<(u32, String)>,
+    /// Every entry that states both a name and an object.
+    names: Vec<LibrarianName>,
     /// The file the librarian says its styles were read from.
     source: Option<String>,
 }
 
-/// One librarian entry, reduced to the two fields that name a record.
+/// One name the librarian states, and what it says about it.
+struct LibrarianName {
+    /// `oid` of the object being named.
+    oid: u32,
+    /// The authored name.
+    name: String,
+    /// The style family the entry's palette stands for, or `None` when the
+    /// palette is one `LIBRARIAN_PALETTE_FAMILIES` does not cover.
+    family: Option<u16>,
+}
+
+/// One librarian entry, reduced to the three fields that name a record.
 struct LibrarianEntry {
+    /// Index into the palette directory the payload opens with.
+    palette_index: u16,
     /// The authored name, or `None` when the entry states none — most entries
     /// state none, and a name that does not decode is treated the same way.
     name: Option<String>,
@@ -1661,6 +1779,7 @@ fn read_librarian_string(payload: &[u8], at: usize) -> Option<(Option<String>, u
 /// word is the object: the native reader throws an entry away when that word is
 /// `-1`, and registers a style only when the word and the name are both set.
 fn read_librarian_entry(payload: &[u8], at: usize) -> Option<(LibrarianEntry, usize)> {
+    let palette_index = u16_at(payload, at)?;
     let (name, after_name) = read_librarian_string(payload, at.checked_add(6)?)?;
     // The path is walked, not kept: no entry in the corpus states one. The
     // file the styles came from is the source object past the entries.
@@ -1670,7 +1789,35 @@ fn read_librarian_entry(payload: &[u8], at: usize) -> Option<(LibrarianEntry, us
     if end > payload.len() {
         return None;
     }
-    Some((LibrarianEntry { name, object }, end))
+    Some((
+        LibrarianEntry {
+            palette_index,
+            name,
+            object,
+        },
+        end,
+    ))
+}
+
+/// The family each palette of the directory stands for, in directory order.
+///
+/// The directory is walked for its GUIDs rather than skipped, so an entry's
+/// index resolves through the palette it actually names. A palette the table
+/// does not cover yields `None` and the entry simply says nothing about its
+/// family — that is a gap in the table, not a claim about the file.
+fn read_librarian_palettes(payload: &[u8], at: usize, count: u16) -> Option<Vec<Option<u16>>> {
+    let mut out = Vec::with_capacity(usize::from(count));
+    for i in 0..usize::from(count) {
+        let record_at = at.checked_add(i.checked_mul(LIBRARIAN_PALETTE_RECORD_LEN)?)?;
+        let guid: [u8; 16] = payload.get(record_at..record_at + 16)?.try_into().ok()?;
+        out.push(
+            LIBRARIAN_PALETTE_FAMILIES
+                .iter()
+                .find(|(known, _)| *known == guid)
+                .map(|(_, family)| *family),
+        );
+    }
+    Some(out)
 }
 
 /// The file object the librarian persists after its entries.
@@ -1719,10 +1866,11 @@ fn read_librarian_source(payload: &[u8], at: usize) -> Option<Option<String>> {
 /// it is that exactness, not the plausibility of any one field, that says the
 /// frame is the vendor's own.
 fn read_librarian(payload: &[u8]) -> Option<Librarian> {
-    let palettes = u16_at(payload, LIBRARIAN_BODY_OFFSET)?;
-    let entry_count_at = LIBRARIAN_BODY_OFFSET
-        .checked_add(2)?
-        .checked_add(usize::from(palettes).checked_mul(LIBRARIAN_PALETTE_RECORD_LEN)?)?;
+    let palette_count = u16_at(payload, LIBRARIAN_BODY_OFFSET)?;
+    let directory_at = LIBRARIAN_BODY_OFFSET.checked_add(2)?;
+    let palettes = read_librarian_palettes(payload, directory_at, palette_count)?;
+    let entry_count_at = directory_at
+        .checked_add(usize::from(palette_count).checked_mul(LIBRARIAN_PALETTE_RECORD_LEN)?)?;
     let entry_count = u32_at(payload, entry_count_at)?;
     // A count whose entries could not fit even if every one were empty is a
     // number read from the wrong place.
@@ -1746,7 +1894,14 @@ fn read_librarian(payload: &[u8]) -> Option<Librarian> {
         if entry.object == 0 || entry.object == u32::MAX {
             continue;
         }
-        names.push((entry.object, name));
+        names.push(LibrarianName {
+            oid: entry.object,
+            name,
+            family: palettes
+                .get(usize::from(entry.palette_index))
+                .copied()
+                .flatten(),
+        });
     }
     let source = read_librarian_source(payload, at)?;
     Some(Librarian { names, source })
@@ -2035,6 +2190,14 @@ mod tests {
         payload[SIMPLE_LINE_COLOUR_OFFSET..SIMPLE_LINE_COLOUR_OFFSET + 4]
             .copy_from_slice(&colour.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE, payload)
+    }
+
+    /// A `JStyleSimpleLine` carrying its own `oid`, which is what the
+    /// librarian names it by.
+    fn simple_line_with_oid(oid: u32, style_id: u32) -> (u16, Vec<u8>) {
+        let (type_code, mut payload) = simple_line(style_id, 0.000_35, 0);
+        payload[0..4].copy_from_slice(&oid.to_le_bytes());
+        (type_code, payload)
     }
 
     /// A `JStyleSimpleLine` of the longer of the two corpus shapes -- only
@@ -2491,22 +2654,42 @@ mod tests {
         }
     }
 
+    /// The two palettes the test librarians file names under, deliberately in
+    /// the opposite order to every real file: the lookup is by GUID, and a
+    /// fixture that agreed with the corpus on position would not show that.
+    const TEST_PALETTES: [u16; 2] = [
+        PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL,
+        PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE,
+    ];
+
     /// A librarian laid out the way `style.dll` writes one: the record header,
-    /// an empty palette directory, a stated entry count, one entry per
+    /// the palette directory, a stated entry count, one entry per
     /// `(name, oid)`, then the source object and the word that closes the
     /// payload.
     ///
-    /// `source` is `(version, name, path)`; version 1 states the name alone.
+    /// `palette` indexes `TEST_PALETTES`. `source` is `(version, name, path)`;
+    /// version 1 states the name alone.
     fn librarian_payload(
         entries: &[(&str, u32)],
+        palette: u16,
         source: Option<(u32, &str, &str)>,
     ) -> (u16, Vec<u8>) {
         let mut payload = vec![0u8; LIBRARIAN_BODY_OFFSET];
-        payload.extend_from_slice(&0u16.to_le_bytes());
+        let palette_count = u16::try_from(TEST_PALETTES.len()).expect("two palettes");
+        payload.extend_from_slice(&palette_count.to_le_bytes());
+        for family in TEST_PALETTES {
+            let guid = LIBRARIAN_PALETTE_FAMILIES
+                .iter()
+                .find(|(_, known)| *known == family)
+                .map(|(guid, _)| *guid)
+                .expect("the test palettes are families the table covers");
+            payload.extend_from_slice(&guid);
+            payload.extend_from_slice(&[0u8; LIBRARIAN_PALETTE_RECORD_LEN - 16]);
+        }
         let count = u32::try_from(entries.len()).expect("test librarians are small");
         payload.extend_from_slice(&count.to_le_bytes());
         for (name, oid) in entries {
-            payload.extend_from_slice(&0u16.to_le_bytes());
+            payload.extend_from_slice(&palette.to_le_bytes());
             payload.extend_from_slice(&0u32.to_le_bytes());
             push_librarian_string(&mut payload, name);
             push_librarian_string(&mut payload, "");
@@ -2531,9 +2714,9 @@ mod tests {
         (PSM_TYPE_CODE_JSTYLE_LIBRARIAN, payload)
     }
 
-    /// A librarian that names styles and states no source.
+    /// A librarian that files point-symbol names and states no source.
     fn librarian(entries: &[(&str, u32)]) -> (u16, Vec<u8>) {
-        librarian_payload(entries, None)
+        librarian_payload(entries, 0, None)
     }
 
     fn group(oid: u32, members: &[u32]) -> (u16, Vec<u8>) {
@@ -2709,6 +2892,7 @@ mod tests {
     fn librarian_with_source(entries: &[(&str, u32)], source: &str) -> (u16, Vec<u8>) {
         librarian_payload(
             entries,
+            0,
             Some((LIBRARIAN_SOURCE_VERSION_WITH_PATH, "Styles.pid", source)),
         )
     }
@@ -2744,6 +2928,39 @@ mod tests {
         );
     }
 
+    /// The librarian says which family a name is for, and it says it about
+    /// every name — not just the quarter of them whose first two letters are
+    /// a convention this crate could read.
+    ///
+    /// The fixture files its palettes in the opposite order to every real
+    /// file, so a lookup that went by index rather than by the palette's own
+    /// GUID would come back with the wrong family here.
+    #[test]
+    fn the_librarian_states_the_family_each_name_is_filed_under() {
+        let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
+            librarian_payload(&[("psOk", 8302)], 0, None),
+            librarian_payload(&[("Primary Piping - New", 8299)], 1, None),
+            point_symbol_with_oid(8302, 68, 8298),
+            simple_line_with_oid(8299, 70),
+        ]));
+
+        let point = table.get(68).expect("the point symbol is defined");
+        assert_eq!(point.name.as_deref(), Some("psOk"));
+        assert_eq!(
+            point.librarian_family,
+            Some(PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL),
+            "the palette says point symbol, and so does the record"
+        );
+
+        let line = table.get(70).expect("the line style is defined");
+        assert_eq!(line.name.as_deref(), Some("Primary Piping - New"));
+        assert_eq!(
+            line.librarian_family,
+            Some(PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE),
+            "a discipline name carries its family too, though it has no prefix"
+        );
+    }
+
     /// A symbol library states one string, not two. Version 1 of the source
     /// object has no path field at all, so a reader that always looked for one
     /// would run off the end of the payload — and does, which is why the
@@ -2751,7 +2968,7 @@ mod tests {
     #[test]
     fn a_version_one_source_object_states_only_a_name() {
         let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
-            librarian_payload(&[("psOk", 8302)], Some((1, "styles.scm", ""))),
+            librarian_payload(&[("psOk", 8302)], 0, Some((1, "styles.scm", ""))),
             point_symbol_with_oid(8302, 68, 8298),
         ]));
         assert_eq!(table.style_library_source(), Some("styles.scm"));
@@ -2776,7 +2993,7 @@ mod tests {
     /// at one, so the whole record is refused.
     #[test]
     fn a_librarian_the_walk_does_not_account_for_is_refused() {
-        let (type_code, mut payload) = librarian_payload(&[("psOk", 8302)], None);
+        let (type_code, mut payload) = librarian_payload(&[("psOk", 8302)], 0, None);
         payload.extend_from_slice(&[0u8; 2]);
         let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
             (type_code, payload),

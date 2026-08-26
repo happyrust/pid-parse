@@ -777,11 +777,12 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
 
 /// Every style the librarian names lands on a record of the right family.
 ///
-/// The name is bound by a gap — the `oid` eight bytes past where the text
-/// stops — so the thing that proves the gap is not that names come out, it is
-/// that they come out *sorted*: every `ps…` on a `JStylePointSymbol` and every
-/// `ls…` on a `JStyleSimpleLine`, over the whole corpus, with nothing
-/// straddling. A gap that were merely plausible would mix them.
+/// The file says which family each name is for — the entry's palette — and the
+/// record says which family it is. The two come from opposite ends of the
+/// stream, so the whole corpus agreeing is what says the names landed on the
+/// right objects. This used to be argued from the `ps…` / `ls…` prefixes,
+/// which covered only the statuses; the palette covers **every** name, so
+/// `Normal`, `Solid` and `Dash` are held to it too.
 ///
 /// The status names are why this decode exists — they turn four glyphs into
 /// `psOk` / `psWarning` / `psError` / `psApproved` — but the discipline names
@@ -790,10 +791,8 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
 /// they cannot quietly stop resolving.
 #[test]
 fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
-    const PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL: u16 = 0x0032;
-    const PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE: u16 = 0x002E;
-
     let mut named = 0usize;
+    let mut family_stated = 0usize;
     let mut statuses: BTreeMap<String, usize> = BTreeMap::new();
     let mut disciplines: BTreeMap<String, usize> = BTreeMap::new();
     let mut fixtures_seen = 0usize;
@@ -823,19 +822,16 @@ fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
                     continue;
                 };
                 named += 1;
-                if let Some(rest) = name.strip_prefix("ps") {
+                if let Some(family) = record.librarian_family {
+                    family_stated += 1;
                     assert_eq!(
-                        record.type_code, PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL,
-                        "{}: {cluster_path} names ps{rest} on type 0x{:04X}",
+                        family, record.type_code,
+                        "{}: {cluster_path} files {name} under family 0x{family:04X}, \
+                         but the record it landed on is type 0x{:04X}",
                         expected.fixture, record.type_code
                     );
-                    *statuses.entry(name.to_string()).or_default() += 1;
-                } else if let Some(rest) = name.strip_prefix("ls") {
-                    assert_eq!(
-                        record.type_code, PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE,
-                        "{}: {cluster_path} names ls{rest} on type 0x{:04X}",
-                        expected.fixture, record.type_code
-                    );
+                }
+                if name.starts_with("ps") || name.starts_with("ls") {
                     *statuses.entry(name.to_string()).or_default() += 1;
                 } else if name.contains(" - New") || name.contains("Instrument") {
                     *disciplines.entry(name.to_string()).or_default() += 1;
@@ -850,6 +846,10 @@ fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
     }
 
     assert_eq!(named, 92, "styles the librarian names across the corpus");
+    assert_eq!(
+        family_stated, named,
+        "every named style should carry the family its librarian entry states"
+    );
     let status_names: Vec<&str> = statuses.keys().map(String::as_str).collect();
     assert_eq!(
         status_names,
