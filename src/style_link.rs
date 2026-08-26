@@ -276,40 +276,54 @@ const MAX_GROUP_MEMBERS: usize = 8;
 /// One per `StyleCluster`, first in the chain: the directory that holds the
 /// **authored name** of every style the document defines. It is deliberately
 /// absent from `STYLE_FAMILY_TYPE_CODES` because its `+14` is not an id in
-/// that space — see the note there — so it is collected on the way past
-/// instead, like the group and line families that carry glyphs.
+/// that space — it is the first palette record, see `LIBRARIAN_BODY_OFFSET` —
+/// so it is collected on the way past instead, like the group and line
+/// families that carry glyphs.
 pub const PSM_TYPE_CODE_JSTYLE_LIBRARIAN: u16 = 0x005A;
 
-/// Bytes between the end of a name in the librarian and the `oid` of the
-/// object that name belongs to.
+/// Where a `JStyleLibrarian` payload's own body starts.
 ///
-/// Level: corpus, and exhaustive in the way that matters. Names are UTF-16
-/// with no terminator and no length prefix in front of them, so the entry is
-/// keyed off where the text stops: the `u32` eight bytes later is the object.
-/// Across the five fixtures the rule binds **210 names**, every one of them to
-/// a record that stream actually defines, and it never crosses a family — each
-/// `ps…` name lands on a [`PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL`] and each `ls…`
-/// name on a [`PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE`], with no exceptions. A gap
-/// that were merely plausible would not sort the two apart.
-pub const LIBRARIAN_NAME_TO_OID_GAP: usize = 8;
+/// Level: native-reader, corpus-exhaustive. `sub_100586A0` — the body behind
+/// `IJPersistImp::Load`, slot 5 of the vftable at `.rdata:0x100A32FC`, past the
+/// version-1 gate `sub_100585D0` — opens by transferring a `u16` palette count,
+/// and in every librarian of the corpus that count is at `+12`. Everything
+/// before it is the record header each `StyleCluster` record carries, which is
+/// also why this family's `+14` holds a palette record rather than a style id.
+const LIBRARIAN_BODY_OFFSET: usize = 12;
 
-/// Shortest run of text the librarian scan will treat as a name.
+/// Bytes of one palette record in the directory the librarian opens with.
 ///
-/// The shortest real name in the corpus is `DIN`. Two is permissive on
-/// purpose: what rejects a run of incidental text is not its length but the
-/// requirement that [`LIBRARIAN_NAME_TO_OID_GAP`] bytes later there is an
-/// `oid` this stream defines.
-const MIN_LIBRARIAN_NAME_UNITS: usize = 2;
+/// Level: native-reader. The first loop of `sub_100586A0` transfers `16`, `4`,
+/// `4` and `16` bytes per iteration into one 44-byte frame — a provider GUID, a
+/// pair of words, and a style-type GUID. Nothing here reads the directory; it
+/// is walked only to reach the entries behind it.
+const LIBRARIAN_PALETTE_RECORD_LEN: usize = 40;
 
-/// Zero bytes that close a `JStyleLibrarian` payload, immediately after the
-/// text naming the file its styles were read from.
+/// Bytes of a librarian entry that are not its two strings.
 ///
-/// Level: corpus, exhaustive. All **13** librarian records in the corpus end
-/// the same way — a run of UTF-16 text, then exactly four zero bytes, then the
-/// payload — which is what makes the trailing run an anchored field rather
-/// than the last string a scan happened to find. See
+/// Level: native-reader. Per entry the reader transfers a `u16` palette index,
+/// a `u32`, a length-prefixed name, a length-prefixed path, and four closing
+/// `u32` — `2 + 4 + 4 + 4 + 16`. Used only to refuse an entry count that could
+/// not fit even if every entry were empty.
+const LIBRARIAN_ENTRY_FIXED_LEN: usize = 30;
+
+/// Longest string the librarian is allowed to state.
+///
+/// The longest in the corpus is a 52-character UNC path. This is not a fact
+/// about the format but a refusal: a stated length past it means the walk is
+/// reading something that is not a librarian, and continuing would allocate on
+/// a number the file chose.
+const MAX_LIBRARIAN_STRING_UNITS: u32 = 1024;
+
+/// Version at which the librarian's source object states a path as well as a
+/// name.
+///
+/// Level: corpus, exhaustive over all 640 librarian records. The object states
+/// its own version first: at **1** it carries one string — a symbol library's
+/// `styles.scm` or `Styles.igr` — and at **2** it carries the name `Styles.pid`
+/// followed by the `.SPP` the styles were read from. See
 /// [`DocumentStyleTable::style_library_source`].
-pub const LIBRARIAN_SOURCE_TRAILER_LEN: usize = 4;
+const LIBRARIAN_SOURCE_VERSION_WITH_PATH: u32 = 2;
 
 /// PSM type code of `JStyleTextChar`, which carries the character height.
 pub const PSM_TYPE_CODE_JSTYLE_TEXT_CHAR: u16 = 0x002C;
@@ -1050,12 +1064,14 @@ impl DocumentStyleTable {
                         }
                     }
                     PSM_TYPE_CODE_JSTYLE_LIBRARIAN => {
-                        librarian_names.extend(read_librarian_names(payload));
-                        // First writer wins, as everywhere else in this walk.
-                        // Two documents carry a second librarian holding a
-                        // copy of the first; they agree.
-                        if table.library_source.is_none() {
-                            table.library_source = read_librarian_source(payload);
+                        if let Some(librarian) = read_librarian(payload) {
+                            librarian_names.extend(librarian.names);
+                            // First writer wins, as everywhere else in this
+                            // walk. Two documents carry a second librarian
+                            // holding a copy of the first; they agree.
+                            if table.library_source.is_none() {
+                                table.library_source = librarian.source;
+                            }
                         }
                     }
                     _ => {}
@@ -1108,11 +1124,11 @@ impl DocumentStyleTable {
 
     /// Give each record the name the librarian bound to its `oid`.
     ///
-    /// A binding whose `oid` this stream does not define is dropped. That is
-    /// the whole filter: a run of incidental text in the librarian only
-    /// becomes a name if the bytes [`LIBRARIAN_NAME_TO_OID_GAP`] past it
-    /// happen to be an `oid` that is really there, and across the corpus
-    /// nothing spurious clears it.
+    /// A binding whose `oid` this stream does not define is dropped, and that
+    /// is not a filter against noise — the entries are stated, not found. The
+    /// librarian is the project library's table of contents, so it lists
+    /// styles this document never imported; an entry pointing at nothing here
+    /// is the file being complete rather than this reader being wrong.
     ///
     /// First writer wins, both for the `oid` index and for the name, matching
     /// how the rest of this module binds a chain it walks in order.
@@ -1168,10 +1184,15 @@ impl DocumentStyleTable {
 
     /// The file the librarian says this cluster's styles were read from.
     ///
-    /// Level: corpus, exhaustive over all 13 librarian records. A sheet's own
-    /// `StyleCluster` names the project standards file as a UNC path —
-    /// `\\WIN-SPID\QSMCQTAZ13\PLANT\REF\PROJECTSTYLES.SPP` — and a symbol
-    /// library's cluster names `Styles.pid`.
+    /// Level: native-reader, corpus-exhaustive over all 640 librarian records.
+    /// The librarian closes with an object stating its own version: a sheet's
+    /// own `StyleCluster` states version 2 — the name `Styles.pid` and the
+    /// project standards file as a UNC path,
+    /// `\\WIN-SPID\QSMCQTAZ13\PLANT\REF\PROJECTSTYLES.SPP` — while a symbol
+    /// library states version 1, which carries the name alone: `styles.scm`,
+    /// `Styles.igr`, or an `.igr` path. This returns the path when one is
+    /// stated and the name when it is all there is, because both answer the
+    /// same question.
     ///
     /// It is the drawing saying which standard it was drawn against, and it
     /// reads as one: the two `GP06` fixtures name the same `.SPP` and share a
@@ -1590,103 +1611,145 @@ fn read_font_name(type_code: u16, payload: &[u8]) -> Option<String> {
     Some(name)
 }
 
-/// Whether a UTF-16 code unit can be part of a style name.
-///
-/// Printable ASCII plus the CJK ideographs, which is what the corpus's names
-/// are made of. Deliberately narrow: the run has to stop where the name stops
-/// or [`LIBRARIAN_NAME_TO_OID_GAP`] measures from the wrong place, so letting
-/// in the padding and count words that surround an entry would break the
-/// binding rather than widen it.
-fn is_librarian_name_unit(unit: u16) -> bool {
-    (0x0020..=0x007E).contains(&unit) || (0x4E00..=0x9FFF).contains(&unit)
+/// One `JStyleLibrarian` record, read the way `style.dll` reads it.
+struct Librarian {
+    /// `(oid, name)` for every entry that states both.
+    names: Vec<(u32, String)>,
+    /// The file the librarian says its styles were read from.
+    source: Option<String>,
 }
 
-/// Every `(oid, name)` a `JStyleLibrarian` payload states.
+/// One librarian entry, reduced to the two fields that name a record.
+struct LibrarianEntry {
+    /// The authored name, or `None` when the entry states none — most entries
+    /// state none, and a name that does not decode is treated the same way.
+    name: Option<String>,
+    /// `oid` of the object being named.
+    object: u32,
+}
+
+/// A length-prefixed UTF-16 string, and where it ends.
 ///
-/// The names are UTF-16 with neither a terminator nor a length in front of
-/// them, so an entry is found by where its text stops: the `u32`
-/// [`LIBRARIAN_NAME_TO_OID_GAP`] bytes later is the object being named. Bindings
-/// are returned unfiltered; [`DocumentStyleTable::bind_librarian_names`] drops
-/// the ones whose `oid` the stream does not define, which is what separates a
-/// name from a run of bytes that merely reads like one.
-fn read_librarian_names(payload: &[u8]) -> Vec<(u32, String)> {
-    let mut out = Vec::new();
-    let mut units: Vec<u16> = Vec::new();
-    let mut at = 0;
-    while at + 2 <= payload.len() {
-        match u16_at(payload, at) {
-            Some(unit) if is_librarian_name_unit(unit) => {
-                units.push(unit);
-                at += 2;
-                continue;
+/// The stated length is what advances the walk, so text that does not decode
+/// costs only itself: the inner `None` is "this string is unreadable", while an
+/// outer `None` is "the payload cannot hold what it says it holds", which stops
+/// the walk. Strict rather than lossy, for the reason `read_font_name` gives —
+/// a name pieced together around a replacement character is a guess this
+/// reader does not make.
+fn read_librarian_string(payload: &[u8], at: usize) -> Option<(Option<String>, usize)> {
+    let units = u32_at(payload, at)?;
+    if units > MAX_LIBRARIAN_STRING_UNITS {
+        return None;
+    }
+    let text_at = at.checked_add(4)?;
+    let end = text_at.checked_add(usize::try_from(units).ok()?.checked_mul(2)?)?;
+    let text = payload.get(text_at..end)?;
+    let wide: Vec<u16> = text
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .copied()
+        .map(u16::from_le_bytes)
+        .collect();
+    Some((String::from_utf16(&wide).ok(), end))
+}
+
+/// One entry of the librarian's table, and where the next one starts.
+///
+/// Level: native-reader. `sub_100586A0` transfers a `u16` palette index, a
+/// `u32`, the name, the path, and four closing `u32`. The **second** closing
+/// word is the object: the native reader throws an entry away when that word is
+/// `-1`, and registers a style only when the word and the name are both set.
+fn read_librarian_entry(payload: &[u8], at: usize) -> Option<(LibrarianEntry, usize)> {
+    let (name, after_name) = read_librarian_string(payload, at.checked_add(6)?)?;
+    // The path is walked, not kept: no entry in the corpus states one. The
+    // file the styles came from is the source object past the entries.
+    let (_, after_path) = read_librarian_string(payload, after_name)?;
+    let object = u32_at(payload, after_path.checked_add(4)?)?;
+    let end = after_path.checked_add(16)?;
+    if end > payload.len() {
+        return None;
+    }
+    Some((LibrarianEntry { name, object }, end))
+}
+
+/// The file object the librarian persists after its entries.
+///
+/// A `u32` says whether one follows; the object then states its own version,
+/// its name, and — from [`LIBRARIAN_SOURCE_VERSION_WITH_PATH`] — the path that
+/// name was read from. A last `u32` says whether a second object follows.
+///
+/// That last word is also the proof the whole walk was framed right: with
+/// nothing following it, the payload has to end exactly there. Returning `None`
+/// on anything else is what makes this a reading rather than a scan.
+fn read_librarian_source(payload: &[u8], at: usize) -> Option<Option<String>> {
+    let present = u32_at(payload, at)?;
+    let mut at = at.checked_add(4)?;
+    let mut source = None;
+    if present != 0 {
+        let version = u32_at(payload, at)?;
+        let (name, after_name) = read_librarian_string(payload, at.checked_add(4)?)?;
+        source = name;
+        at = after_name;
+        if version >= LIBRARIAN_SOURCE_VERSION_WITH_PATH {
+            let (path, after_path) = read_librarian_string(payload, at)?;
+            at = after_path;
+            // Both are stated; the path is the file, the name is what the
+            // drawing calls it. Prefer the file.
+            if let Some(path) = path.filter(|path| !path.is_empty()) {
+                source = Some(path);
             }
-            _ => {}
         }
-        push_librarian_name(payload, at, &mut units, &mut out);
-        at += 2;
     }
-    push_librarian_name(payload, at, &mut units, &mut out);
-    out
-}
-
-/// The file a `JStyleLibrarian` payload says its styles were read from.
-///
-/// Read backwards from the end rather than forwards, because that is where
-/// the field is anchored: the payload closes with
-/// [`LIBRARIAN_SOURCE_TRAILER_LEN`] zero bytes, and the text immediately
-/// before them is the source. Reading forwards would only ever be "the last
-/// run we found", which is not a rule.
-///
-/// Returns `None` when the trailer is not zero or the text is too short to be
-/// a name — both of which say this payload is not laid out the way every
-/// librarian in the corpus is.
-fn read_librarian_source(payload: &[u8]) -> Option<String> {
-    let text_end = payload.len().checked_sub(LIBRARIAN_SOURCE_TRAILER_LEN)?;
-    if payload.get(text_end..)?.iter().any(|byte| *byte != 0) {
+    let second = u32_at(payload, at)?;
+    let end = at.checked_add(4)?;
+    if end > payload.len() || (second == 0 && end != payload.len()) {
         return None;
     }
-    let mut units: Vec<u16> = Vec::new();
-    let mut at = text_end;
-    while at >= 2 {
-        let Some(unit) = u16_at(payload, at - 2) else {
-            break;
+    Some(source.filter(|source| !source.is_empty()))
+}
+
+/// Everything a `JStyleLibrarian` payload states, or `None` if it is not one.
+///
+/// Level: native-reader, corpus-exhaustive. The payload is a sequence, so it is
+/// walked rather than scanned: a palette directory, then a stated number of
+/// entries each stating the length of its own strings, then the source object.
+/// Across the corpus — the four sheet clusters and all 636 librarians of the
+/// symbol library — the walk accounts for **every byte of every payload**, and
+/// it is that exactness, not the plausibility of any one field, that says the
+/// frame is the vendor's own.
+fn read_librarian(payload: &[u8]) -> Option<Librarian> {
+    let palettes = u16_at(payload, LIBRARIAN_BODY_OFFSET)?;
+    let entry_count_at = LIBRARIAN_BODY_OFFSET
+        .checked_add(2)?
+        .checked_add(usize::from(palettes).checked_mul(LIBRARIAN_PALETTE_RECORD_LEN)?)?;
+    let entry_count = u32_at(payload, entry_count_at)?;
+    // A count whose entries could not fit even if every one were empty is a
+    // number read from the wrong place.
+    if usize::try_from(entry_count)
+        .ok()?
+        .checked_mul(LIBRARIAN_ENTRY_FIXED_LEN)?
+        > payload.len()
+    {
+        return None;
+    }
+
+    let mut names = Vec::new();
+    let mut at = entry_count_at.checked_add(4)?;
+    for _ in 0..entry_count {
+        let (entry, end) = read_librarian_entry(payload, at)?;
+        at = end;
+        let Some(name) = entry.name.filter(|name| !name.is_empty()) else {
+            continue;
         };
-        if !is_librarian_name_unit(unit) {
-            break;
+        // The vendor's own two ways of saying "no object".
+        if entry.object == 0 || entry.object == u32::MAX {
+            continue;
         }
-        units.push(unit);
-        at -= 2;
+        names.push((entry.object, name));
     }
-    if units.len() < MIN_LIBRARIAN_NAME_UNITS {
-        return None;
-    }
-    units.reverse();
-    String::from_utf16(&units).ok()
-}
-
-/// Close off a run of name text that ended at `run_end` and, if the `u32` past
-/// the gap looks like an `oid`, record the binding.
-fn push_librarian_name(
-    payload: &[u8],
-    run_end: usize,
-    units: &mut Vec<u16>,
-    out: &mut Vec<(u32, String)>,
-) {
-    let units = std::mem::take(units);
-    if units.len() < MIN_LIBRARIAN_NAME_UNITS {
-        return;
-    }
-    let Some(oid) = u32_at(payload, run_end + LIBRARIAN_NAME_TO_OID_GAP) else {
-        return;
-    };
-    // Zero is no object. Every named record in the corpus carries a real one.
-    if oid == 0 {
-        return;
-    }
-    let Ok(name) = String::from_utf16(&units) else {
-        return;
-    };
-    out.push((oid, name));
+    let source = read_librarian_source(payload, at)?;
+    Some(Librarian { names, source })
 }
 
 fn read_text_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
@@ -2417,21 +2480,60 @@ mod tests {
         (PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL, payload)
     }
 
-    /// A librarian holding one entry per `(name, oid)`, laid out the way the
-    /// real one is: the text, then [`LIBRARIAN_NAME_TO_OID_GAP`] bytes, then
-    /// the `oid`.
-    fn librarian(entries: &[(&str, u32)]) -> (u16, Vec<u8>) {
-        let mut payload = vec![0u8; STYLE_ID_OFFSET + 4];
-        for (name, oid) in entries {
-            for unit in name.encode_utf16() {
-                payload.extend_from_slice(&unit.to_le_bytes());
-            }
-            // The unit that ends the run, then the gap, then the object.
-            payload.extend_from_slice(&0u16.to_le_bytes());
-            payload.extend_from_slice(&[0u8; LIBRARIAN_NAME_TO_OID_GAP - 2]);
-            payload.extend_from_slice(&oid.to_le_bytes());
+    /// A length-prefixed UTF-16 string, the way every string in a librarian is
+    /// written.
+    fn push_librarian_string(payload: &mut Vec<u8>, text: &str) {
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let len = u32::try_from(units.len()).expect("test strings are short");
+        payload.extend_from_slice(&len.to_le_bytes());
+        for unit in units {
+            payload.extend_from_slice(&unit.to_le_bytes());
         }
+    }
+
+    /// A librarian laid out the way `style.dll` writes one: the record header,
+    /// an empty palette directory, a stated entry count, one entry per
+    /// `(name, oid)`, then the source object and the word that closes the
+    /// payload.
+    ///
+    /// `source` is `(version, name, path)`; version 1 states the name alone.
+    fn librarian_payload(
+        entries: &[(&str, u32)],
+        source: Option<(u32, &str, &str)>,
+    ) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; LIBRARIAN_BODY_OFFSET];
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        let count = u32::try_from(entries.len()).expect("test librarians are small");
+        payload.extend_from_slice(&count.to_le_bytes());
+        for (name, oid) in entries {
+            payload.extend_from_slice(&0u16.to_le_bytes());
+            payload.extend_from_slice(&0u32.to_le_bytes());
+            push_librarian_string(&mut payload, name);
+            push_librarian_string(&mut payload, "");
+            // The four closing words; the second is the object named.
+            payload.extend_from_slice(&0u32.to_le_bytes());
+            payload.extend_from_slice(&oid.to_le_bytes());
+            payload.extend_from_slice(&0u32.to_le_bytes());
+            payload.extend_from_slice(&0u32.to_le_bytes());
+        }
+        match source {
+            Some((version, name, path)) => {
+                payload.extend_from_slice(&1u32.to_le_bytes());
+                payload.extend_from_slice(&version.to_le_bytes());
+                push_librarian_string(&mut payload, name);
+                if version >= LIBRARIAN_SOURCE_VERSION_WITH_PATH {
+                    push_librarian_string(&mut payload, path);
+                }
+            }
+            None => payload.extend_from_slice(&0u32.to_le_bytes()),
+        }
+        payload.extend_from_slice(&0u32.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_LIBRARIAN, payload)
+    }
+
+    /// A librarian that names styles and states no source.
+    fn librarian(entries: &[(&str, u32)]) -> (u16, Vec<u8>) {
+        librarian_payload(entries, None)
     }
 
     fn group(oid: u32, members: &[u32]) -> (u16, Vec<u8>) {
@@ -2540,7 +2642,7 @@ mod tests {
     /// The librarian is the only place the drawing says what its styles are
     /// called, and the name is what turns a glyph into a meaning.
     #[test]
-    fn the_librarian_names_a_style_by_the_oid_eight_bytes_past_its_text() {
+    fn the_librarian_names_a_style_by_the_object_its_entry_states() {
         let table = DocumentStyleTable::from_stylecluster_bytes(&named_status_stream());
         assert_eq!(table.name_of_style(68), Some("psOk"));
         assert_eq!(table.name_of_style(72), Some("psWarning"));
@@ -2575,8 +2677,9 @@ mod tests {
         assert!(slash.draws());
     }
 
-    /// The `oid` gate is the whole filter on the name scan. Without it a run
-    /// of incidental text in the librarian would become a style name.
+    /// The librarian lists the whole project library, so an entry may name a
+    /// style this document never imported. Binding it to nothing is the file
+    /// being complete, and the styles that *are* here still get their names.
     #[test]
     fn a_librarian_entry_naming_an_absent_oid_is_dropped() {
         let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
@@ -2601,15 +2704,13 @@ mod tests {
         );
     }
 
-    /// The librarian's own last field: the file these styles were read from,
-    /// then the zero trailer that anchors it.
+    /// A sheet's librarian: its source object is version 2, so it states both
+    /// the name the drawing uses and the file behind it.
     fn librarian_with_source(entries: &[(&str, u32)], source: &str) -> (u16, Vec<u8>) {
-        let (type_code, mut payload) = librarian(entries);
-        for unit in source.encode_utf16() {
-            payload.extend_from_slice(&unit.to_le_bytes());
-        }
-        payload.extend_from_slice(&[0u8; LIBRARIAN_SOURCE_TRAILER_LEN]);
-        (type_code, payload)
+        librarian_payload(
+            entries,
+            Some((LIBRARIAN_SOURCE_VERSION_WITH_PATH, "Styles.pid", source)),
+        )
     }
 
     /// A sheet's style cluster ends by naming the project standards file its
@@ -2643,16 +2744,45 @@ mod tests {
         );
     }
 
-    /// Anchored means the anchor has to be there. Without the zero trailer
-    /// this payload is not laid out the way every librarian in the corpus is,
-    /// and guessing at the last run of text anyway is how a scan starts
-    /// inventing fields.
+    /// A symbol library states one string, not two. Version 1 of the source
+    /// object has no path field at all, so a reader that always looked for one
+    /// would run off the end of the payload — and does, which is why the
+    /// version is read before the string.
     #[test]
-    fn a_librarian_without_the_zero_trailer_states_no_source() {
+    fn a_version_one_source_object_states_only_a_name() {
+        let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
+            librarian_payload(&[("psOk", 8302)], Some((1, "styles.scm", ""))),
+            point_symbol_with_oid(8302, 68, 8298),
+        ]));
+        assert_eq!(table.style_library_source(), Some("styles.scm"));
+        assert_eq!(table.name_of_style(68), Some("psOk"));
+    }
+
+    /// A librarian that says it has no source object states none, rather than
+    /// the reader reaching for the last text it can find.
+    #[test]
+    fn a_librarian_with_no_source_object_states_no_source() {
         let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
             librarian(&[("psOk", 8302)]),
             point_symbol_with_oid(8302, 68, 8298),
         ]));
+        assert_eq!(table.style_library_source(), None);
+        assert_eq!(table.name_of_style(68), Some("psOk"));
+    }
+
+    /// The walk has to account for the payload exactly. One byte too many and
+    /// this is not the record the frame said it was — keeping the names it
+    /// liked anyway is the difference between reading a format and guessing
+    /// at one, so the whole record is refused.
+    #[test]
+    fn a_librarian_the_walk_does_not_account_for_is_refused() {
+        let (type_code, mut payload) = librarian_payload(&[("psOk", 8302)], None);
+        payload.extend_from_slice(&[0u8; 2]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&stream(&[
+            (type_code, payload),
+            point_symbol_with_oid(8302, 68, 8298),
+        ]));
+        assert_eq!(table.name_of_style(68), None);
         assert_eq!(table.style_library_source(), None);
     }
 

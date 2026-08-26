@@ -907,11 +907,11 @@ const EXPECTED_STYLE_LIBRARY: [(&str, &str); 4] = [
 
 /// A drawing says which standard it was drawn against.
 ///
-/// A sheet's own cluster names a `.SPP` project styles file; a symbol
-/// library's cluster names `Styles.pid`. Both are the same field — the text
-/// closing the librarian payload, anchored by four zero bytes — so the two
-/// are asserted together: a change that started reading the wrong place would
-/// have to break both to stay green.
+/// The librarian closes with an object that states its own version: a sheet's
+/// cluster states version 2, the name `Styles.pid` plus the `.SPP` file behind
+/// it, and this asserts the file. Every cluster in every fixture is checked,
+/// not just the first, so a reader that found the right text in the wrong
+/// place would have to be wrong the same way everywhere to stay green.
 #[test]
 fn a_style_cluster_names_the_library_it_was_read_from() {
     let mut fixtures_seen = 0usize;
@@ -936,20 +936,51 @@ fn a_style_cluster_names_the_library_it_was_read_from() {
                 continue;
             };
             let table = DocumentStyleTable::from_stylecluster_bytes(&bytes);
-            let want = if cluster_path == "/StyleCluster" {
-                *expected_source
-            } else {
-                "Styles.pid"
-            };
             assert_eq!(
                 table.style_library_source(),
-                Some(want),
+                Some(*expected_source),
                 "{fixture} {cluster_path}"
             );
         }
     }
     if fixtures_seen == 0 {
         eprintln!("skip: no fixture present");
+    }
+}
+
+/// A symbol library says it too, in the older shape.
+///
+/// Its source object is version 1, which has no path field at all — a reader
+/// that assumed both strings were always there would walk off the end. This is
+/// the other side of `a_style_cluster_names_the_library_it_was_read_from`:
+/// the same call, the same question, a payload that states one string instead
+/// of two.
+#[test]
+fn a_symbol_library_names_the_scheme_its_styles_came_from() {
+    const LIBRARIES: [&str; 2] = [
+        "test-file/symbols/Design/Annotation/Graphics/Circle.sym",
+        "test-file/symbols/Piping/Valves/Angle/2-Way Angle Globe Valve.sym",
+    ];
+    let mut seen = 0usize;
+    for fixture in LIBRARIES {
+        let path = Path::new(fixture);
+        if !path.exists() {
+            eprintln!("skip: {fixture} is absent");
+            continue;
+        }
+        let file = std::fs::File::open(path).expect("fixture opens");
+        let mut cfb = CompoundFile::open(file).expect("fixture is a compound file");
+        let bytes = read_stream(&mut cfb, "/StyleCluster").expect("a symbol has a style cluster");
+        let table = DocumentStyleTable::from_stylecluster_bytes(&bytes);
+        assert_eq!(
+            table.style_library_source(),
+            Some("styles.scm"),
+            "{fixture}"
+        );
+        seen += 1;
+    }
+    if seen == 0 {
+        eprintln!("skip: no symbol library present");
     }
 }
 
