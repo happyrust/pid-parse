@@ -1547,6 +1547,189 @@ fn psm_space_map_every_referrer_carries_one_tag() {
     );
 }
 
+/// A space-map member is an *incoming* edge: `value` names the object that
+/// references the entry, and that referrer's own record carries the entry's
+/// persist id in its payload -- while the entry's own record does not carry
+/// the member's value. This is the direction the 2026-08-27 join settled
+/// (`probe_psmspacemap_tag181_is_the_parent_ref`), ratcheted here on the tags
+/// whose referrer record family pins the back-reference at a fixed offset.
+///
+/// For each such tag the two counts that must not drift are the number of
+/// members, and how many of them have the entry id somewhere in the referrer
+/// record. `mentioned == with_record` on every one of them: whenever the
+/// referrer record exists, it names the entry back. Tag 249 is the one place
+/// `total != with_record` -- the single stale edge in `DWG-0201GP06-01.pid`,
+/// a member pointing at a freed `0x00FA` id whose record is gone.
+#[test]
+fn psm_space_map_members_are_incoming_edges() {
+    use std::collections::BTreeMap;
+    use std::io::Read;
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+    const SEGMENT_SHIFT: u32 = 13;
+
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+
+    // Canonical storage: "" for the top level, "JSiteN" for a registry. Both
+    // a member stream path and a record-chain stream path reduce to it, so an
+    // id only resolves against records in its own storage.
+    fn storage_of(path: &str) -> String {
+        let norm = path.replace('\\', "/");
+        let norm = norm.strip_prefix('/').unwrap_or(&norm);
+        if let Some(at) = norm.find("PSMspacemap") {
+            norm[..at].trim_end_matches('/').to_string()
+        } else if let Some((pre, _)) = norm.rsplit_once('/') {
+            pre.to_string()
+        } else {
+            String::new()
+        }
+    }
+    fn segment_of(path: &str) -> Option<u32> {
+        let leaf = path.rsplit(['/', '\\']).next()?;
+        u32::from_str_radix(leaf.strip_prefix("0x")?, 16)
+            .ok()
+            .map(|address| address >> SEGMENT_SHIFT)
+    }
+
+    // The tags whose referrer family fixes the back-reference at one offset:
+    // (total members, members whose value resolves to a record) across the
+    // four sheet fixtures. `mentioned` must equal the second on every tag.
+    let expected: BTreeMap<u16, (usize, usize)> = BTreeMap::from([
+        (181, (84, 84)),
+        (183, (357, 357)),
+        (185, (279, 279)),
+        (190, (1446, 1446)),
+        (201, (72, 72)),
+        (205, (8, 8)),
+        (249, (731, 730)),
+    ]);
+
+    let mut total: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut with_record: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut mentioned: BTreeMap<u16, usize> = BTreeMap::new();
+    // The forward reading, for the cleanest tag: a member's value is almost
+    // never in the entry's *own* record. Locks the direction, not just the
+    // fact of a link.
+    let mut tag181_members = 0usize;
+    let mut tag181_value_in_own_record = 0usize;
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+
+        // Every record-chain stream, walked, grouped storage -> oid -> payloads.
+        let mut records: BTreeMap<String, BTreeMap<u32, Vec<Vec<u8>>>> = BTreeMap::new();
+        let file = std::fs::File::open(&path).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        for stream_path in stream_paths {
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            let starts = pid_parse::parsers::sheet_records::sheet_record_starts(&data);
+            let storage = records.entry(storage_of(&stream_path)).or_default();
+            for at in starts {
+                let Some(len) = u32_at(&data, at + 2) else {
+                    continue;
+                };
+                let Some(payload) = data.get(at + 6..at + 6 + len as usize) else {
+                    continue;
+                };
+                let Some(oid) = u32_at(payload, 0) else {
+                    continue;
+                };
+                storage.entry(oid).or_default().push(payload.to_vec());
+            }
+        }
+
+        let payload_has = |payloads: &[Vec<u8>], needle: u32| -> bool {
+            payloads.iter().any(|payload| {
+                (0..payload.len().saturating_sub(3)).any(|at| u32_at(payload, at) == Some(needle))
+            })
+        };
+
+        for (map_path, map) in &doc.psm_space_maps {
+            let Some(segment) = segment_of(map_path) else {
+                continue;
+            };
+            let storage = records.get(&storage_of(map_path));
+            for entry in &map.entries {
+                let id = (segment << SEGMENT_SHIFT) | u32::from(entry.index);
+                let own = storage.and_then(|by_oid| by_oid.get(&id));
+                for member in entry.live_members() {
+                    if member.tag == 181 {
+                        tag181_members += 1;
+                        if own.is_some_and(|payloads| payload_has(payloads, member.value)) {
+                            tag181_value_in_own_record += 1;
+                        }
+                    }
+                    if !expected.contains_key(&member.tag) {
+                        continue;
+                    }
+                    any = true;
+                    *total.entry(member.tag).or_default() += 1;
+                    let Some(referrer) = storage.and_then(|by_oid| by_oid.get(&member.value))
+                    else {
+                        continue;
+                    };
+                    *with_record.entry(member.tag).or_default() += 1;
+                    if payload_has(referrer, id) {
+                        *mentioned.entry(member.tag).or_default() += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if !any {
+        return;
+    }
+
+    for (tag, (want_total, want_with_record)) in &expected {
+        let got_total = total.get(tag).copied().unwrap_or_default();
+        let got_with_record = with_record.get(tag).copied().unwrap_or_default();
+        let got_mentioned = mentioned.get(tag).copied().unwrap_or_default();
+        assert_eq!(
+            (got_total, got_with_record),
+            (*want_total, *want_with_record),
+            "tag {tag}: expected {want_total} members / {want_with_record} with a referrer record"
+        );
+        assert_eq!(
+            got_mentioned, got_with_record,
+            "tag {tag}: {got_with_record} referrer records exist but only {got_mentioned} name \
+             the entry back -- the edge should point from the member to the entry"
+        );
+    }
+
+    assert_eq!(
+        (tag181_members, tag181_value_in_own_record),
+        (84, 0),
+        "tag 181 is the reciprocal pair: the member value belongs to the referrer's record, \
+         never to the entry's own"
+    );
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
