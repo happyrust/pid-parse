@@ -41,6 +41,17 @@
   （`D06` 是 4 + 3 的干净对照）。找不到的那条记录就是**本该列出这些连接点的
   `SymbolInformation` 长形**。棘轮
   `symbol_information_long_form_lists_the_0x00c7_it_refers_to`。
+- **四个类名拿到了，`0x00BD` 两条独立证据对上。** 走
+  `radsrvitem.dll!dword_5667B068` → CLSID → `jutil.dll` RAD 注册表
+  （`tools/psm_type_clsid.py`，同轮复核五个已发布锚点全部复现）：`0x00BD` =
+  **`JSymbolInformation`**（`symbol.dex`）——与 `PSMroots` 那个 `SymbolInformation`
+  字符串**完全独立地对上**，身份升到 native-reader 级；`0x00C7` =
+  **`Double Value Object`**、`0x00EA` = **`Variables Object`**（均 `exprdex.dll`）；
+  `0x006F` = `Assoc subsystem Standard Relation implementation`（`jengine.dll`）。
+  据此把措辞修正为：长形内联的是一张**命名变量表**（不是「连接点」），
+  `0x00C7` 就是那个双精度值本身、`0x00EA` 是变量组。**表达式子系统的对象和图元
+  混在同一条记录链里**，按 type code 分家族时别默认「一条记录就是一个图元」。
+  guide §4 新增「符号信息 / 表达式族」四行。
 - 「删了没清」还是「没落盘」偏向后者：这一族**两半各自独立落盘、两边都能缺**
   （`JSite151`/`JSite396`/`JSite6963` 反过来是有长形却没有一条 `0x00C7`/`0x00EA`），
   而且**「活 id 没有记录」本来就是常态**（各存储 167 / 70 / 312 / 639 条不等，顶层

@@ -2229,21 +2229,23 @@ fn psm_roots_symbol_information_is_the_only_root_without_a_record() {
 
 /// The long form of `0x00BD` is what a missing referrer would have been.
 ///
-/// `0x00BD` has two shapes behind one 44-byte head: a stub, and — when the
-/// `u16` at `+14` is `0x0010` — a `u32` count followed by that many connect
-/// points, each `u8 1`, `u32 1`, an `f64`, a `u16` char count, a UTF-16LE name
-/// (`Left` / `Right` / `Bottom` / `Top`) and the `u32` oid of the `0x00C7`
-/// record holding that point. The eight long forms in the corpus consume
-/// their payload to the last byte under that reading, and where the named
-/// `0x00C7` lives in the same storage its own `f64` at `+12` is the one the
-/// inline entry carries — the list and the leaf records are two views of one
-/// connect point.
+/// `0x00BD` is `JSymbolInformation` (`symbol.dex`) and `0x00C7` is a
+/// `Double Value Object` (`exprdex.dll`), both named through the type-code
+/// table — so this is a symbol carrying named variables. It has two shapes
+/// behind one 44-byte head: a stub, and — when the `u16` at `+14` is `0x0010`
+/// — a `u32` count followed by that many variables, each `u8 1`, `u32 1`, an
+/// `f64` value, a `u16` char count, a UTF-16LE name (`Left` / `Right` /
+/// `Bottom` / `Top`) and the `u32` oid of the `0x00C7` holding that value.
+/// The eight long forms in the corpus consume their payload to the last byte
+/// under that reading, and where the named `0x00C7` lives in the same storage
+/// its own `f64` at `+12` is the one the inline entry carries — as it must,
+/// the record being that double.
 ///
 /// The partition is the point. Every one of the 203 `0x00C7` records is
 /// either listed by a surviving long form (12) or carries a referrer with no
 /// record (191), never both and never neither. So the records the space map
-/// points at and cannot find are exactly the `SymbolInformation` long forms
-/// that would have listed those points.
+/// points at and cannot find are exactly the `JSymbolInformation` long forms
+/// that would have listed those variables.
 #[test]
 fn symbol_information_long_form_lists_the_0x00c7_it_refers_to() {
     use std::collections::{BTreeMap, BTreeSet};
@@ -2280,9 +2282,9 @@ fn symbol_information_long_form_lists_the_0x00c7_it_refers_to() {
             .map(|address| address >> SEGMENT_SHIFT)
     }
 
-    /// `(f64, name, referenced oid)` per connect point, or `None` when the
+    /// `(f64, name, referenced oid)` per named variable, or `None` when the
     /// payload does not end exactly where the reading says it should.
-    fn connect_points(payload: &[u8]) -> Option<Vec<(f64, String, u32)>> {
+    fn named_variables(payload: &[u8]) -> Option<Vec<(f64, String, u32)>> {
         if u16_at(payload, 14)? != HAS_CONNECT_POINTS {
             return None;
         }
@@ -2386,11 +2388,11 @@ fn symbol_information_long_form_lists_the_0x00c7_it_refers_to() {
                         continue;
                     }
                     any = true;
-                    let Some(entries) = connect_points(payload) else {
+                    let Some(entries) = named_variables(payload) else {
                         assert_eq!(
                             u16_at(payload, 14),
                             Some(0),
-                            "{fixture}: a 0x00BD flagged 0x0010 did not decode as connect points"
+                            "{fixture}: a 0x00BD flagged 0x0010 did not decode as named variables"
                         );
                         stubs += 1;
                         continue;
@@ -2474,7 +2476,7 @@ fn symbol_information_long_form_lists_the_0x00c7_it_refers_to() {
     assert_eq!(
         (long_forms, stubs, points),
         (8, 37, 24),
-        "the corpus should hold 8 long-form 0x00BD records carrying 24 connect points, \
+        "the corpus should hold 8 long-form 0x00BD records carrying 24 named variables, \
          plus 37 records that stop at the head"
     );
     assert_eq!(
@@ -2485,12 +2487,12 @@ fn symbol_information_long_form_lists_the_0x00c7_it_refers_to() {
             ("Right".to_string(), 8),
             ("Top".to_string(), 6),
         ]),
-        "connect points should only be named for the four sides"
+        "the variables should only carry the four side names"
     );
     assert_eq!(
         (resolved_points, value_agrees),
         (12, 12),
-        "every connect point resolving to a 0x00C7 in the same storage should carry that \
+        "every variable resolving to a 0x00C7 in the same storage should carry that \
          record's own f64"
     );
     assert_eq!(

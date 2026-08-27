@@ -264,7 +264,8 @@ map 里作为引用者（value）出现时恒定带 tag **184**。RAD 类注册�
 （那个站点列表对象）等别的列表/容器对象，是 13 个 tag 里唯一明显跨家族的。
 
 **182 至少盖三个记录家族。** 顶层是 `_SupportOnlyList`（`0x0067`），`JSite` 里是
-`SymbolInformation`（`0x00BD`）和 `0x006F`，三者作为引用者时一律带 182。
+`JSymbolInformation`（`0x00BD`，§4 已补录类名）和 `0x006F`（`jengine` 的关系对象），
+三者作为引用者时一律带 182。
 `SymbolInformation` 同样是 `PSMroots` 直接给的名字（`D06` 的 22、`DWG-0201` 的
 77/513、工艺图的 73），而且它是全语料 96 条根记录里**唯一一个会缺记录的名字**——41
 次出现只有 25 次解析到记录（解析到时家族恒为 `0x00BD`），缺的那 16 次正是 §3.2 里
@@ -313,6 +314,24 @@ RTTI / COM 类工厂），**等级：native-reader**。
 `0x0006` OnElement、`0x000F` Parallel、`0x0015` Perpendicular、`0x0017` Tangent、
 `0x0019` KeyPoint、`0x0040` Concentric、`0x0069` Symmetric、`0x006A` Equal、
 `0x006B` Colinear、`0x0077` Fix、`0x0082` Horizontal、`0x0085` Vertical。
+
+**符号信息 / 表达式族（2026-08-27 补录）**
+
+| code | CLSID | 模块 | 类名 |
+|---|---|---|---|
+| `0x006F` | `BA7D1140-7644-101B-AC07-08003601B14E` | `jengine.dll` | Assoc subsystem Standard Relation implementation |
+| `0x00BD` | `419C0360-BB78-11CE-99F8-0800364E6302` | `symbol.dex` | **JSymbolInformation** |
+| `0x00C7` | `D97A3FB0-1601-11CE-B7EE-08003601E53B` | `exprdex.dll` | **Double Value Object** |
+| `0x00EA` | `72C7EAB1-A512-11D0-9383-080036C61102` | `exprdex.dll` | **Variables Object** |
+
+`0x00BD` 的名字有两条独立证据：type code 表查出 `JSymbolInformation`，而
+`PSMroots` 在每个 `JSite` 里直接把这些 id 叫 `SymbolInformation`。一条
+`JSymbolInformation` 长形记录内联一张**命名变量表**（`Left`/`Right`/`Bottom`/`Top`，
+每个带一个 `f64` 和它的 `Double Value Object` id），那些值同时作为 `0x00C7` 单独
+落盘、由一条 `0x00EA` 收成一组。**注意：表达式子系统的对象和图元混在同一条记录链
+里**，按 type code 分家族时别默认「一条记录就是一个图元」。这一族是 §3.2 里
+「182 有 191 个 value 没有记录」的全部来源，见
+`docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。
 
 **样式族（都在 `style.dll`，CLSID `47FCC331`…`47FCC338` 连号）**
 
