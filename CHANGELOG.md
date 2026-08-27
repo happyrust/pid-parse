@@ -23,8 +23,15 @@
   段 0 的 `m_iNext` 顶在 8192 上限、自由表只剩 79。**顺带订正**：上一条说这些 value
   「全是活 id」——在这个存储里近乎空话（8192 个 index 只有 495 个有记录），身份判定
   不依赖它。
-- 线索（未证）：`OLECRT.dll::sub_100017C0` 在外部嵌入 OLE 存储里打开
-  `SymbolInformationCluster`——符号信息本来就有第二个家。
+- **`SymbolInformationCluster` 这条线索本语料已否**：全文件搜（ASCII + UTF-16LE）
+  **0 命中**，没有这个存储，各 `JSite` 的 `PSMclustertable` 也只声明三个 cluster；
+  带 `\001Ole` 的 `JSite` 装的是**链接不是嵌入**（moniker 指向外部 `.igr` 图框模板），
+  所以 `OLECRT.dll::sub_100017C0` 打开的那个 cluster 在外部文档里。同轮把缺的东西
+  缩小了一层：`0x00BD` 有 44 字节短桩和长形（50/77/129/160，带 UTF-16 名字）两种，
+  **只有长形会引用 `0x00C7`、才进空间表当引用者**（`DWG-0201` 的 17 条里只有 2 条
+  是引用者，正是根表点名的 77 和 513），而 `JSite793` 的 11 条 `0x00BD` 全是短桩、
+  `0x006F` 一条没有——0202 缺的是**长形那一整层**。把 71 个 phantom id 当 u32 全文件
+  扫，除了空间表成员槽和 5 个根名，没留下别的字节。
 - 落地：两条棘轮（`psm_space_map_recordless_referrers_only_sit_on_0x00c7_entries`、
   `psm_roots_symbol_information_is_the_only_root_without_a_record`）、guide
   §3.2/§3.3、`PsmRootEntry::id` 的 rustdoc（它是持久 id，不是「不透明类型标记」）。
