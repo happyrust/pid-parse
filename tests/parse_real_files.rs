@@ -1432,7 +1432,7 @@ fn psm_space_map_states_how_many_member_slots_are_in_use() {
                 let at = format!("{fixture} {path} entry {}", entry.index);
 
                 // An empty slot is empty in both halves; there is no member
-                // that carries a tag without a target or the other way round.
+                // that carries a tag without a value or the other way round.
                 for member in &entry.members {
                     assert_eq!(
                         member.tag == 0,
@@ -1474,22 +1474,30 @@ fn psm_space_map_states_how_many_member_slots_are_in_use() {
     );
 }
 
-/// `tag` is a property of the object a member points at, not of the reference.
+/// `tag` is a property of the object a member's `value` names -- the
+/// **referrer**, since a member is an incoming reference -- not of the edge.
 ///
-/// The test that separates the two needs nothing outside the map: collect every
-/// object the corpus points at, and ask whether the members pointing at it
-/// agree on a tag. Agreement means the tag says what the target *is*;
-/// disagreement would mean it says what the reference is *for*. With 675 of the
-/// 2415 targets pointed at more than once and 13 tags to choose from, an
-/// edge-assigned tag could not come out unanimous.
+/// The agreement half of that needs nothing outside the map: collect every
+/// object the corpus records in a member slot, and ask whether the members
+/// naming it agree on a tag. Agreement means the tag says what that object
+/// *is*; disagreement would mean it says what the edge is *for*. With 675 of
+/// the 2415 member objects appearing on more than one entry and 13 tags to
+/// choose from, an edge-assigned tag could not come out unanimous.
+///
+/// (The direction half is settled elsewhere: the record whose oid is a
+/// member's `value` carries the entry's own id in its payload at a
+/// family-fixed offset, so the member's object is the one holding the
+/// reference. See `probe_psmspacemap_tag181_is_the_parent_ref` and
+/// `docs/analysis/2026-08-27-the-spacemap-is-an-incoming-reference-index.md`;
+/// this test only ratchets the tag-per-object agreement.)
 ///
 /// Ids are scoped by the storage that issued them -- the top-level map and each
 /// `JSite` registry number their objects independently -- so the grouping is by
 /// container, not by document.
 #[test]
-fn psm_space_map_tag_belongs_to_the_object_it_points_at() {
-    let mut targets = 0usize;
-    let mut multiply_referenced = 0usize;
+fn psm_space_map_every_referrer_carries_one_tag() {
+    let mut referrers = 0usize;
+    let mut on_multiple_entries = 0usize;
     for fixture in [
         "D06.pid",
         "DWG-0201GP06-01.pid",
@@ -1499,7 +1507,7 @@ fn psm_space_map_tag_belongs_to_the_object_it_points_at() {
         let Some(doc) = parse_test_file(fixture) else {
             continue;
         };
-        // container path -> target persist id -> (tag, how many point at it)
+        // container path -> referrer persist id -> (tag, entries it appears on)
         let mut by_container: std::collections::BTreeMap<
             &str,
             std::collections::BTreeMap<u32, (u16, usize)>,
@@ -1515,7 +1523,7 @@ fn psm_space_map_tag_belongs_to_the_object_it_points_at() {
                     let (tag, hits) = seen.entry(member.value).or_insert((member.tag, 0));
                     assert_eq!(
                         *tag, member.tag,
-                        "{fixture} {container}: object {} is referenced as class {} and as {}",
+                        "{fixture} {container}: object {} is recorded as class {} and as {}",
                         member.value, tag, member.tag
                     );
                     *hits += 1;
@@ -1523,19 +1531,19 @@ fn psm_space_map_tag_belongs_to_the_object_it_points_at() {
             }
         }
         for hits in by_container.values().flat_map(|seen| seen.values()) {
-            targets += 1;
+            referrers += 1;
             if hits.1 > 1 {
-                multiply_referenced += 1;
+                on_multiple_entries += 1;
             }
         }
     }
-    if targets == 0 {
+    if referrers == 0 {
         return;
     }
     assert_eq!(
-        (targets, multiply_referenced),
+        (referrers, on_multiple_entries),
         (2415, 675),
-        "the four sheet fixtures should point at 2415 objects, 675 of them more than once"
+        "the four sheet fixtures should record 2415 referrers, 675 of them on more than one entry"
     );
 }
 

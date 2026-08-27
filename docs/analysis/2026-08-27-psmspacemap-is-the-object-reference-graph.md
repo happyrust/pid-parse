@@ -7,6 +7,14 @@
 > 含**一处推翻**：`span` 不是「和成员数对不上的 317 条」，是我们拿错了比较对象。
 > probe：`examples/probe_psmspacemap_tag_and_span.rs`
 
+> ⚠ **2026-08-27 当天订正：方向反了。** 本文把成员当**出边**读（value = 被指对象，
+> tag = 被指对象的类）。表↔记录链 join 之后证明 **value 是引用者**，条目记的是
+> 「谁引用我」，tag 是**引用者**的类——见
+> `2026-08-27-the-spacemap-is-an-incoming-reference-index.md`。本文的**测量**
+> （§2 在用槽数、§3 活索引率、§4.1 一 value 一 tag、§4.2 三条旁证）全部成立，
+> 读的时候把「被指对象/目标」换成「引用者」、「出边」换成「入边」即可；
+> §5 的「出边表」应读作「入边表」。guide §7（三）有一句话版。
+
 ## 0. 上一轮留下的两个问题
 
 8-26 那一轮用 `radsrvitem.dll` 的 `Segment::Load` / `Segment::Save` 把帧坐实了，

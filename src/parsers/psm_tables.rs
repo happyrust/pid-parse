@@ -415,7 +415,7 @@ pub fn parse_psm_space_map(data: &[u8]) -> Option<PsmSpaceMap> {
 ///                 bit 17 is set, and that refusal is what ends the walk
 /// u16  live member count  -- how many of the slots below are in use
 /// u16  slot capacity      -- how many slots follow
-/// capacity x { u32 persist id of the target ; u16 class of the target }
+/// capacity x { u32 persist id of the referrer ; u16 class of the referrer }
 /// ```
 ///
 /// Two checks make this frame self-proving rather than merely plausible, and
@@ -432,8 +432,9 @@ pub fn parse_psm_space_map(data: &[u8]) -> Option<PsmSpaceMap> {
 /// matches the header on every one of them, and no index repeats.
 ///
 /// What the two `u16`s and the member pairs mean is settled by measurement
-/// rather than by the disassembly; see [`PsmSpaceMapMember`] and
-/// `docs/analysis/2026-08-27-psmspacemap-is-the-object-reference-graph.md`.
+/// rather than by the disassembly -- each member is an *incoming* reference,
+/// recorded on the object it points at; see [`PsmSpaceMapMember`] and
+/// `docs/analysis/2026-08-27-the-spacemap-is-an-incoming-reference-index.md`.
 ///
 /// Everything the walk accepts is consumed as `Decoded`. Anything after the
 /// entry that fails the bit-17 gate is left alone, so it surfaces as leftover.

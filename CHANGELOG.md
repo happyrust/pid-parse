@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### 方向订正：`PSMspacemap` 是「谁引用我」的反向索引（2026-08-27）
+
+- **推翻两条同日结论**：①「成员是出边、tag 是被指对象的类」——方向反了；
+  ②「`sub_56495440` 重建路径把记录 payload+4/+8 写成自己的 181/182 成员」——
+  语料 **0/84 + 0/519**（那些记录的 `+4`/`+8` 全是 0），槽位次序也对不上，这四个
+  文件不是那条路写的。
+- 定方向的是表↔记录链 join（`probe_psmspacemap_tag181_is_the_parent_ref`）：先证
+  **持久 id 就是 oid**（1948/1948 条条目在自己存储的记录链里有同 oid 记录），再把
+  两个方向逐字节扫——**条目的 id 出现在 value 的记录里**，偏移按家族固定
+  （`0x0089` 动态属性行 `+12` 1446/1446、`0x00FA` 依赖 `+16`/`+22` 730/730、
+  `0x0042` `+12..+44` 357/357、`0x0013` trailer 区 72/72、八个共形家族 `+18`/`+22`
+  279/279、igSymbol `+29` / igSmartFrame `+156` 84/84），反过来几乎全空。
+  **value 是引用者，tag 是引用者的类**；184（ViewFilterSet）这类无 payload 对应的
+  是只活在表里的应用层登记边。
+- 顺带：igSymbol2d 的 **`+29` 是 site 引用**；`181↔182` 是唯一成对的 tag
+  （84/84 互指：图形指 site、site 指回）；`/JSitesList` 流破了
+  （`'OLEM' + u32 数量 + u32 id 表`），**四图恒定的引用者 id 2 就是这个列表对象**，
+  `JSite` 的一般义是 OLE 站点；那条悬空边 369 是删掉的依赖记录留下的未清反指；
+  **1401 条记录的 `parent_ref` 非零却不进表**——这张表不索引 parent 链，不是全量
+  引用图。
+- 收口：`PsmSpaceMapMember` 等 rustdoc、`psm_tables` 帧注释、guide §3.1/§3.2/§3.3
+  按入边改写，guide §7 增第（三）条；测试改名
+  `psm_space_map_every_referrer_carries_one_tag`（断言与棘轮不变）。解码行为零变化。
+  证据：`docs/analysis/2026-08-27-the-spacemap-is-an-incoming-reference-index.md`。
+
 ### `PSMspacemap` 的 tag 不是 type code，两个类名认出来了（2026-08-27）
 
 - **否证只要一个对象。** `PSMroots` 四张图都写着 `id 20 = TopVFSet`，而 20 在顶层

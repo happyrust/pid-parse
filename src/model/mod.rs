@@ -1232,11 +1232,12 @@ pub struct PsmSegmentEntry {
 /// with `swprintf_s(L"0x%.8x", segment << 13)`, so which segment a stream is
 /// comes from its name; nothing inside the stream states it.
 ///
-/// Only objects that point at another object get an entry here, so the entry
-/// count is far below the number of live ids the header implies: segment 0 of
-/// the top-level map of `工艺管道及仪表流程-1.pid` has 337 entries against
+/// Only objects that some *other* object references get an entry here, so the
+/// entry count is far below the number of live ids the header implies: segment
+/// 0 of the top-level map of `工艺管道及仪表流程-1.pid` has 337 entries against
 /// roughly 1450 live indices. Read together, the entries are the document's
-/// object reference graph -- see [`PsmSpaceMapMember`].
+/// incoming-reference index -- for each object, who references it and what
+/// kind of thing the referrer is. See [`PsmSpaceMapMember`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmSpaceMap {
     /// Stream size in bytes as reported by the CFB directory.
@@ -1262,7 +1263,8 @@ pub struct PsmSpaceMap {
     pub trailing_bytes: usize,
 }
 
-/// One object recorded in a [`PsmSpaceMap`], and the objects it points at.
+/// One object recorded in a [`PsmSpaceMap`], and the objects that reference
+/// it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmSpaceMapEntry {
     /// Byte offset within the stream where the entry starts.
@@ -1301,33 +1303,45 @@ impl PsmSpaceMapEntry {
     }
 }
 
-/// One reference out of a [`PsmSpaceMapEntry`]: which object, and what it is.
+/// One incoming reference recorded on a [`PsmSpaceMapEntry`]: which object
+/// references the entry's object, and what kind of thing that referrer is.
 ///
-/// The vendor reader stores these as six bytes each, value first. Both halves
-/// are settled by measurement across the four sheet fixtures:
+/// The vendor reader stores these as six bytes each, value first. All of this
+/// is settled by measurement across the four sheet fixtures (see
+/// `docs/analysis/2026-08-27-the-spacemap-is-an-incoming-reference-index.md`):
 ///
 /// * `value` is a **persist id in the entry's own index space**, and it names
 ///   a live object: 3988 of the 3989 non-empty members land on an index that
 ///   is below its segment's `next_free_index` and absent from its free list,
 ///   though 29% of the indices those segments ever handed out are on a free
-///   list. (The one exception is a stale edge in `DWG-0201GP06-01.pid`.)
-/// * `tag` belongs to the **target**, not to the reference. Every one of the
-///   2415 objects the corpus points at carries a single tag, including the 675
-///   that are pointed at more than once -- zero disagreements. The same low
-///   ids carry the same tag in all four documents (`2` is always `182`, `7`
-///   always `183`, `19` always `184`), and among targets that carry an entry
-///   the tag all but fixes that entry's [`PsmSpaceMapEntry::form`].
+///   list. (The one exception is a stale edge in `DWG-0201GP06-01.pid`, left
+///   behind by a deleted `0x00FA` dependency record.)
+/// * The edge points **from `value` to the entry**, not the other way round.
+///   The record whose oid is `value` carries the entry's own persist id in
+///   its payload, at an offset fixed per record family: `0x0089`
+///   dynamic-attribute rows at `+12` (1446/1446), `0x00FA` dependencies at
+///   `+16`/`+22` (730/730), `0x0013` boundaries in their trailer references
+///   (72/72), `0x00CE` symbols at `+29` and `0x003D` frames at `+156`
+///   (84/84), and so on. The forward reading has no such backing -- a member
+///   value is almost never found in the entry's own record.
+/// * `tag` is the class of the **referrer**, the object `value` names. Every
+///   one of the 2415 referrer objects the corpus records carries a single
+///   tag, including the 675 that appear on more than one entry -- zero
+///   disagreements -- and the tag tracks the referrer's record family
+///   (`190` -> `0x0089`, `249` -> `0x00FA`, `201` -> `0x0013`, ...). A few
+///   tags (`184` view-filter sets among them) record edges that exist only
+///   here, with no payload counterpart.
 ///
 /// The tag is drawn from a fixed 14-value set the reader clearly knows in
 /// advance, which is why `sub_5647AB70` can hardcode `181` and `182` for the
-/// two members it synthesises. Which class each value names is still open --
-/// they do not line up with the PSM type codes in §4 of the format guide.
+/// two members it synthesises. The tags do not line up with the PSM type
+/// codes in §4 of the format guide.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PsmSpaceMapMember {
-    /// Persist id of the object this member points at, in the same index
-    /// space as the entry that carries it.
+    /// Persist id of the object that references this entry's object, in the
+    /// same index space as the entry that carries it.
     pub value: u32,
-    /// The class of the object [`Self::value`] names.
+    /// The class of the referrer [`Self::value`] names.
     pub tag: u16,
 }
 
