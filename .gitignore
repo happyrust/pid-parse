@@ -39,3 +39,8 @@ test-file/controlled-diff/after/*.pid
 # redistribution right, so only the two committed sample .sym files may
 # enter git; re-extract the rest locally when a corpus run needs them.
 test-file/symbols-full/
+
+# Source archives a fixture was unpacked from are kept out of git; the
+# extracted .pid is what the corpus uses. Keeps stray/empty re-extraction
+# zips from showing up as untracked noise.
+test-file/*.zip
