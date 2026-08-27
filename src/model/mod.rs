@@ -94,6 +94,15 @@ pub struct PidDocument {
     /// IDs to segment metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub psm_segment_table: Option<PsmSegmentTable>,
+    /// `PSMspacemap` decodes, keyed by the member stream's path. Each one is
+    /// a 13-bit index segment: together they say which persist ids the
+    /// document has handed out and, for every object that points at another,
+    /// which objects those are. The storage appears at the top level and again
+    /// under each `JSite` registry, and each of those is a **separate index
+    /// space** -- an id only means something inside the storage that issued
+    /// it -- so this is a map rather than a single field.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub psm_space_maps: BTreeMap<String, PsmSpaceMap>,
 
     /// Optional `/DocVersion3` history. Mutually exclusive-ish with
     /// [`Self::doc_version2`]: which one is populated depends on
@@ -210,6 +219,7 @@ impl Default for PidDocument {
             psm_roots: None,
             psm_cluster_table: None,
             psm_segment_table: None,
+            psm_space_maps: BTreeMap::new(),
             version_history: None,
             app_object_registry: None,
             tagged_storages: None,
@@ -1212,6 +1222,113 @@ pub struct PsmSegmentEntry {
     /// premature decoding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe: Option<PsmSegmentRecordProbe>,
+}
+
+/// One `PSMspacemap` member stream: the objects a 13-bit index segment holds.
+///
+/// A document's persist ids are `(segment << 13) | index`, and each segment is
+/// stored as its own member stream named after the address it starts at --
+/// `0x00000000`, `0x00002000`, `0x00004000`. `radsrvitem.dll` builds that name
+/// with `swprintf_s(L"0x%.8x", segment << 13)`, so which segment a stream is
+/// comes from its name; nothing inside the stream states it.
+///
+/// Only objects that point at another object get an entry here, so the entry
+/// count is far below the number of live ids the header implies: segment 0 of
+/// the top-level map of `工艺管道及仪表流程-1.pid` has 337 entries against
+/// roughly 1450 live indices. Read together, the entries are the document's
+/// object reference graph -- see [`PsmSpaceMapMember`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PsmSpaceMap {
+    /// Stream size in bytes as reported by the CFB directory.
+    pub size: u64,
+    /// True when the stream carries the legacy `'sseg'` magic instead of
+    /// `'tseg'`. The vendor reader accepts both but reads their entries with
+    /// different frames.
+    pub legacy: bool,
+    /// Entry count as the header states it.
+    pub stated_entry_count: u16,
+    /// How many 24-byte slots the reader preallocates. This is a capacity,
+    /// not a count: streams with no entries at all still state one.
+    pub simple_slot_capacity: u16,
+    /// The next index the writer would hand out. The vendor reader refuses a
+    /// value above `0x2000` and clamps it, since indices are 13 bits.
+    pub next_free_index: u16,
+    /// Indices returned to the free list, in the order the file lists them.
+    pub free_list: Vec<u16>,
+    /// The objects this segment holds, in on-disk order.
+    pub entries: Vec<PsmSpaceMapEntry>,
+    /// Bytes after the last entry the walk accepted.
+    #[serde(default)]
+    pub trailing_bytes: usize,
+}
+
+/// One object recorded in a [`PsmSpaceMap`], and the objects it points at.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PsmSpaceMapEntry {
+    /// Byte offset within the stream where the entry starts.
+    pub offset: usize,
+    /// The entry's index inside its segment; always below `0x2000`.
+    pub index: u16,
+    /// The head word's upper half. Only `2` and `3` occur; the vendor reader
+    /// refuses anything without bit 17, which is what ends the walk.
+    pub form: u16,
+    /// How many of the member slots are in use, as the entry states it. The
+    /// `u16` that follows is the slot *capacity*, so [`Self::members`] is
+    /// usually longer than this -- the surplus slots are all-zero padding at
+    /// the tail.
+    ///
+    /// On all 1948 entries of the four sheet fixtures this equals the number
+    /// of members that are not all-zero, with no exception, and no entry has
+    /// an empty slot in front of a used one. The reader also adds two to this
+    /// number when the form is `3`, but that is the *other* entry reader
+    /// (`sub_5647AB70`), whose frame no stream in this corpus follows.
+    pub live_member_count: u16,
+    /// `(value, tag)` pairs, in on-disk order, capacity included. Use
+    /// [`Self::live_members`] to skip the trailing empty slots.
+    pub members: Vec<PsmSpaceMapMember>,
+}
+
+impl PsmSpaceMapEntry {
+    /// The member slots this entry says are in use: the first
+    /// [`Self::live_member_count`] of [`Self::members`], clamped so a
+    /// malformed count cannot run off the end.
+    ///
+    /// Across the four sheet fixtures this prefix is exactly the set of
+    /// members that are not all-zero.
+    pub fn live_members(&self) -> &[PsmSpaceMapMember] {
+        let live = usize::from(self.live_member_count).min(self.members.len());
+        &self.members[..live]
+    }
+}
+
+/// One reference out of a [`PsmSpaceMapEntry`]: which object, and what it is.
+///
+/// The vendor reader stores these as six bytes each, value first. Both halves
+/// are settled by measurement across the four sheet fixtures:
+///
+/// * `value` is a **persist id in the entry's own index space**, and it names
+///   a live object: 3988 of the 3989 non-empty members land on an index that
+///   is below its segment's `next_free_index` and absent from its free list,
+///   though 29% of the indices those segments ever handed out are on a free
+///   list. (The one exception is a stale edge in `DWG-0201GP06-01.pid`.)
+/// * `tag` belongs to the **target**, not to the reference. Every one of the
+///   2415 objects the corpus points at carries a single tag, including the 675
+///   that are pointed at more than once -- zero disagreements. The same low
+///   ids carry the same tag in all four documents (`2` is always `182`, `7`
+///   always `183`, `19` always `184`), and among targets that carry an entry
+///   the tag all but fixes that entry's [`PsmSpaceMapEntry::form`].
+///
+/// The tag is drawn from a fixed 14-value set the reader clearly knows in
+/// advance, which is why `sub_5647AB70` can hardcode `181` and `182` for the
+/// two members it synthesises. Which class each value names is still open --
+/// they do not line up with the PSM type codes in §4 of the format guide.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct PsmSpaceMapMember {
+    /// Persist id of the object this member points at, in the same index
+    /// space as the entry that carries it.
+    pub value: u32,
+    /// The class of the object [`Self::value`] names.
+    pub tag: u16,
 }
 
 /// Phase 11b-probe — byte-level summary of a single `PSMsegmenttable` entry.

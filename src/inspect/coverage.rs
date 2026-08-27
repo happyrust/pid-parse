@@ -316,6 +316,8 @@ fn parser_for_storage(name: &str) -> Option<String> {
         Some("streams::tagged_text".into())
     } else if name.starts_with("JSite") {
         Some("streams::jsite".into())
+    } else if name == "PSMspacemap" {
+        Some("streams::psm_tables".into())
     } else {
         None
     }
@@ -328,6 +330,8 @@ fn document_field_for_storage(name: &str) -> Option<String> {
         Some("drawing_meta / general_meta".into())
     } else if name.starts_with("JSite") {
         Some("jsites".into())
+    } else if name == "PSMspacemap" {
+        Some("psm_space_maps".into())
     } else {
         None
     }

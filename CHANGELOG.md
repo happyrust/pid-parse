@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### `PSMspacemap` 的两个哑字段解开：它存的是对象引用图（2026-08-27）
+
+- **`stated_span` → `live_member_count`**。它不是成员数的副本，是**在用槽数**；紧跟着的
+  那个 `u16` 是槽容量。成员数组按位置寻址、尾部留空槽，空槽两半同时为零
+  （4446/4446 个槽上 `tag == 0` 与 `value == 0` 同真同假），而且**没有一条条目在已用槽
+  前面留洞**（0/1948）。1948 条条目上「在用槽数 == 非空槽数」零反例。上一轮记的
+  「317 条对不上」是拿它去比**容量**比错了，不是数据不齐。新增 `live_members()` 取前缀。
+- **成员的 `(value, tag)` 是一条带类型的引用**：`value` 是同一 id 空间里一个**活对象**的
+  持久 id——3989 个非空成员里 3988 个落在「小于 `m_iNext` 且不在自由表」的活索引上、0 个
+  越界，而这些段发出过的索引有 **29%** 在自由表上，蒙不出这个数。唯一例外是
+  `DWG-0201GP06-01.pid` 的一条悬空边。
+- **`tag` 属于被指对象，不属于这条引用**。判据纯在表内：被指到的 **2415** 个对象里，
+  每一个身上的 tag 都只有一种，包括被指了不止一次的 675 个，**零分歧**。旁证三条：
+  `2 → 182`、`7 → 183`、`19 → 184` 四图全中；tag 几乎钉死目标条目的 head 高半
+  （只有 `182` 混用）；四图的 tag 全部取自同一个 14 值集合。
+  **这推翻了上一轮「tag 是属性 id」的读法**——`sub_5647AB70` 写死 `181`/`182` 说明的是
+  「读器编译期就知道这些值」，不是「它们是属性槽号」。**具体哪个 tag 是哪个类仍未坐实**，
+  和 §4 的 PSM type code 表对不上。
+- **有出边的对象才有条目**：工艺图顶层第 0 段活 id 约 1450，条目只有 337 条。这张表是
+  出边表，不能当「文档有哪些对象」的答案用。
+- 解码行为零变化，改的是字段叫什么以及敢拿它做什么。回归测试两条
+  （`psm_space_map_states_how_many_member_slots_are_in_use`、
+  `psm_space_map_tag_belongs_to_the_object_it_points_at`），probe
+  `examples/probe_psmspacemap_tag_and_span.rs`，`docs/pid-format-guide.md` 新增 §3.2。
+  证据：`docs/analysis/2026-08-27-psmspacemap-is-the-object-reference-graph.md`。
+
+### `PSMspacemap` 走通了：持久 id 是从这里发出来的（2026-08-26）
+
+- **等级 native-reader**：帧出自 `radsrvitem.dll` 自己的读写函数，`Segment::Load`
+  （`sub_5647A180`）与 `Segment::Save`（`sub_5647B550`）两边一致。
+- **流名是算出来的，不是取的**：`swprintf_s(L"0x%.8x", segment << 13)`。所以
+  `0x00000000` / `0x00002000` 是第 0/1 段，**不是文件偏移**——`inspect` 里那句旧读法
+  一并改掉。**持久 id 就是 `(segment << 13) | index`**，index 13 位，一段最多 8192 个。
+- **三条自证，都是读器自己的规矩**：没有任何字段说条目区有多长，所以走链必须正好停在
+  流尾；`Segment::Load` 按 `persist_id & 0x1FFF` 归档且同一个 index 第二次出现就中止，
+  所以 index 必须 `< 0x2000` 且不重复；头里那个条目数走链根本不看，却条条相等。
+  帧错两个字节同时踩中前两条。四张图 **38 个 member 流全部走到最后一个字节，
+  66712 字节零剩余**。
+- 落地：`parsers::psm_tables::parse_psm_space_map{,_with_trace}` →
+  `PidDocument::psm_space_maps`（按 member 路径索引，顶层和每个 `JSite` 各一份），
+  byte-audit / coverage / panic-safety 同步接上，`PSMspacemap` 从 `IdentifiedOnly`
+  变成真解码。测试 `psm_space_map_walks_every_segment_to_its_last_byte`，probe
+  `probe_psmspacemap_segment_walk`（走链 + 三条校验）与 `probe_psmspacemap_shape`。
+  见 `docs/pid-format-guide.md` §3.1。
+
 ### 普查认领改为「起点相等」，第二个静默洞收口；注册表 `emits_geometry` 修真（2026-08-12）
 
 - **`unclaimed_counts` 的认领判据从区间覆盖改为起点相等**：链上记录互不重叠，

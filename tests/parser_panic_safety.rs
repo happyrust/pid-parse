@@ -36,7 +36,7 @@ use pid_parse::parsers::dynamic_attr_records::{
 use pid_parse::parsers::jproperties::parse_jproperties;
 use pid_parse::parsers::jsites_list::parse_jsites_list;
 use pid_parse::parsers::psm_tables::{
-    parse_psm_cluster_table, parse_psm_roots, parse_psm_segment_table,
+    parse_psm_cluster_table, parse_psm_roots, parse_psm_segment_table, parse_psm_space_map,
 };
 use pid_parse::parsers::relationship_probe::probe_relationships;
 use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
@@ -113,7 +113,43 @@ fn adversarial_inputs() -> Vec<Vec<u8>> {
 
     out.push(b"SmartPlantPID.a".to_vec());
 
+    push_space_map_bait(&mut out);
+
     out
+}
+
+/// Append `PSMspacemap` payloads that clear the magic sniffer and then
+/// lie about every length behind it.
+///
+/// Without these the generic corpus never gets past
+/// [`parse_psm_space_map`](pid_parse::parsers::psm_tables::parse_psm_space_map)'s
+/// first four bytes, so its free-list and entry walks would go
+/// unexercised. Both magic forms appear, and the truncation sweep chops
+/// each one into every prefix, which is what reaches the header's
+/// individual `u16` reads.
+fn push_space_map_bait(out: &mut Vec<Vec<u8>>) {
+    // A free list far longer than the stream can hold.
+    let mut runaway_free_list = b"tseg".to_vec();
+    runaway_free_list.extend_from_slice(&[0xFF; 8]);
+    out.push(runaway_free_list);
+
+    // An empty free list followed by a live entry claiming 65535
+    // members, so the entry walk's length arithmetic runs on a count
+    // the stream cannot back.
+    let mut runaway_entry = b"tseg".to_vec();
+    runaway_entry.extend_from_slice(&1u16.to_le_bytes()); // entry count
+    runaway_entry.extend_from_slice(&1u16.to_le_bytes()); // slot capacity
+    runaway_entry.extend_from_slice(&0u16.to_le_bytes()); // next free index
+    runaway_entry.extend_from_slice(&0u16.to_le_bytes()); // free-list length
+    runaway_entry.extend_from_slice(&0x0002_1FFFu32.to_le_bytes()); // live head
+    runaway_entry.extend_from_slice(&0xFFFFu16.to_le_bytes()); // span
+    runaway_entry.extend_from_slice(&0xFFFFu16.to_le_bytes()); // member count
+    out.push(runaway_entry);
+
+    // The legacy magic, whose header the reader accepts on the same terms.
+    let mut legacy = b"sseg".to_vec();
+    legacy.extend_from_slice(&[0x00; 8]);
+    out.push(legacy);
 }
 
 /// Append three deterministic xorshift32 pseudo-random byte buffers
@@ -208,6 +244,7 @@ fn exercise_all_parsers(input: &[u8]) {
     let _ = parse_psm_roots(input);
     let _ = parse_psm_cluster_table(input);
     let _ = parse_psm_segment_table(input);
+    let _ = parse_psm_space_map(input);
 
     let _ = probe_relationships(input);
 

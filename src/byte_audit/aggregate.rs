@@ -345,6 +345,11 @@ fn run_registered_parser(path: &str, data: &[u8]) -> Option<ParserTrace> {
                 }),
             }
         }
+        path if parsers::psm_tables::is_space_map_member(path) => ("parse_psm_space_map", {
+            let mut b = ParserTraceBuilder::new("parse_psm_space_map");
+            let _ = parsers::psm_tables::parse_psm_space_map_with_trace(data, &mut b);
+            Some(b)
+        }),
         path if path.ends_with("/JProperties") => ("parse_jproperties", {
             let mut b = ParserTraceBuilder::new("parse_jproperties");
             let _ = parsers::jproperties::parse_jproperties_with_trace(data, &mut b);

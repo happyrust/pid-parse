@@ -51,10 +51,13 @@ pub const KNOWN_TOP_LEVEL_STREAM_NAMES: &[&str] = &[
 /// individual stream contents are still being probed.
 ///
 /// `PSMspacemap` (added Phase 12b-1j) is a JSite-co-located storage of
-/// `tseg`-magic stream pages keyed by file offset (`/PSMspacemap/0x00000000`
-/// etc.); its members already round-trip via the writer passthrough
-/// path but still need a structural decoder, so the prefix is wired
-/// here as `IdentifiedOnly` rather than `Unknown`.
+/// `tseg`-magic streams, one per 13-bit index segment. The member name is
+/// the address the segment starts at, which the vendor writes as
+/// `swprintf_s(L"0x%.8x", segment << 13)` -- not a file offset, as the
+/// earlier reading of `/PSMspacemap/0x00000000` had it. The members now
+/// decode through [`crate::parsers::psm_tables::parse_psm_space_map`]; the
+/// prefix stays here because this list is about the storage node itself,
+/// which holds no bytes of its own.
 pub const KNOWN_TOP_LEVEL_STORAGE_PREFIXES: &[&str] =
     &["Sheet", "TaggedTxtData", "JSite", "PSMspacemap"];
 

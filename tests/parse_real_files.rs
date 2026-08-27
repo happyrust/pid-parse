@@ -1337,6 +1337,208 @@ fn psm_segment_table_decoded() {
     );
 }
 
+/// The space map is read the way `radsrvitem.dll` reads it, and the two
+/// things that prove the frame are the reader's own rules rather than
+/// anything this crate chose:
+///
+/// * nothing states how long the entry region is, so the walk has to land
+///   exactly on the end of the stream;
+/// * `Segment::Load` files each entry by `persist_id & 0x1FFF` and refuses a
+///   second entry on an index it has already filled, so indices must be under
+///   `0x2000` and must not repeat.
+///
+/// A frame off by two bytes fails both at once. The header's own entry count
+/// is a third, independent check: the walk never consults it.
+#[test]
+fn psm_space_map_walks_every_segment_to_its_last_byte() {
+    let mut checked = 0usize;
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        assert!(
+            !doc.psm_space_maps.is_empty(),
+            "{fixture} should carry at least one PSMspacemap member"
+        );
+        for (path, map) in &doc.psm_space_maps {
+            checked += 1;
+            assert!(!map.legacy, "{fixture} {path}: expected the 'tseg' form");
+            assert_eq!(
+                map.trailing_bytes, 0,
+                "{fixture} {path}: the walk must reach the last byte"
+            );
+            assert_eq!(
+                map.entries.len(),
+                usize::from(map.stated_entry_count),
+                "{fixture} {path}: walked entries must match the header's count"
+            );
+            let mut seen = std::collections::BTreeSet::new();
+            for entry in &map.entries {
+                assert!(
+                    entry.index < 0x2000,
+                    "{fixture} {path}: index {} does not fit 13 bits",
+                    entry.index
+                );
+                assert!(
+                    seen.insert(entry.index),
+                    "{fixture} {path}: index {} is claimed twice",
+                    entry.index
+                );
+                assert!(
+                    entry.form == 2 || entry.form == 3,
+                    "{fixture} {path}: head form {} is one the vendor reader would refuse",
+                    entry.form
+                );
+            }
+        }
+    }
+    assert!(
+        checked >= 38,
+        "expected the four sheet fixtures to contribute 38 space-map members, saw {checked}"
+    );
+}
+
+/// The `u16` in front of the member count is a fill level, not a copy of it:
+/// the member array is addressed by position, the surplus slots are all-zero,
+/// and they sit at the tail.
+///
+/// Three things have to hold at once for that reading to be the right one, and
+/// all three are exact across the corpus -- an off-by-one in either `u16`, or a
+/// member array that is compacted on delete rather than padded, breaks one of
+/// them immediately.
+#[test]
+fn psm_space_map_states_how_many_member_slots_are_in_use() {
+    let mut entries = 0usize;
+    let mut slots = 0usize;
+    let mut empty = 0usize;
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        for (path, map) in &doc.psm_space_maps {
+            for entry in &map.entries {
+                entries += 1;
+                slots += entry.members.len();
+                let at = format!("{fixture} {path} entry {}", entry.index);
+
+                // An empty slot is empty in both halves; there is no member
+                // that carries a tag without a target or the other way round.
+                for member in &entry.members {
+                    assert_eq!(
+                        member.tag == 0,
+                        member.value == 0,
+                        "{at}: {member:?} is half empty"
+                    );
+                }
+
+                let live = entry
+                    .members
+                    .iter()
+                    .filter(|member| member.tag != 0)
+                    .count();
+                empty += entry.members.len() - live;
+                assert_eq!(
+                    usize::from(entry.live_member_count),
+                    live,
+                    "{at}: states {} slots in use against {live} non-empty of {}",
+                    entry.live_member_count,
+                    entry.members.len()
+                );
+
+                // The used slots come first, so the stated count names a
+                // prefix rather than a subset.
+                assert!(
+                    entry.live_members().iter().all(|member| member.tag != 0),
+                    "{at}: an empty slot sits in front of a used one"
+                );
+            }
+        }
+    }
+    if entries == 0 {
+        return;
+    }
+    assert_eq!(
+        (entries, slots, empty),
+        (1948, 4446, 457),
+        "the four sheet fixtures should hold 1948 entries / 4446 slots / 457 empty"
+    );
+}
+
+/// `tag` is a property of the object a member points at, not of the reference.
+///
+/// The test that separates the two needs nothing outside the map: collect every
+/// object the corpus points at, and ask whether the members pointing at it
+/// agree on a tag. Agreement means the tag says what the target *is*;
+/// disagreement would mean it says what the reference is *for*. With 675 of the
+/// 2415 targets pointed at more than once and 13 tags to choose from, an
+/// edge-assigned tag could not come out unanimous.
+///
+/// Ids are scoped by the storage that issued them -- the top-level map and each
+/// `JSite` registry number their objects independently -- so the grouping is by
+/// container, not by document.
+#[test]
+fn psm_space_map_tag_belongs_to_the_object_it_points_at() {
+    let mut targets = 0usize;
+    let mut multiply_referenced = 0usize;
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        // container path -> target persist id -> (tag, how many point at it)
+        let mut by_container: std::collections::BTreeMap<
+            &str,
+            std::collections::BTreeMap<u32, (u16, usize)>,
+        > = std::collections::BTreeMap::new();
+        for (path, map) in &doc.psm_space_maps {
+            let container = match path.rfind("PSMspacemap") {
+                Some(at) => &path[..at],
+                None => path.as_str(),
+            };
+            let seen = by_container.entry(container).or_default();
+            for entry in &map.entries {
+                for member in entry.live_members() {
+                    let (tag, hits) = seen.entry(member.value).or_insert((member.tag, 0));
+                    assert_eq!(
+                        *tag, member.tag,
+                        "{fixture} {container}: object {} is referenced as class {} and as {}",
+                        member.value, tag, member.tag
+                    );
+                    *hits += 1;
+                }
+            }
+        }
+        for hits in by_container.values().flat_map(|seen| seen.values()) {
+            targets += 1;
+            if hits.1 > 1 {
+                multiply_referenced += 1;
+            }
+        }
+    }
+    if targets == 0 {
+        return;
+    }
+    assert_eq!(
+        (targets, multiply_referenced),
+        (2415, 675),
+        "the four sheet fixtures should point at 2415 objects, 675 of them more than once"
+    );
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {

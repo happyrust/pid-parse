@@ -26,7 +26,7 @@ use crate::byte_audit::{ByteRange, ParserTraceBuilder, TraceConfidence};
 use crate::model::{
     DecodedFieldRange, PsmClusterEntry, PsmClusterRecordDecoded, PsmClusterRecordProbe,
     PsmClusterTable, PsmRootEntry, PsmRoots, PsmSegmentEntry, PsmSegmentRecordProbe,
-    PsmSegmentTable,
+    PsmSegmentTable, PsmSpaceMap, PsmSpaceMapEntry, PsmSpaceMapMember,
 };
 
 /// `u32` LE magic that begins a `/PSMroots` stream (ASCII `'root'`).
@@ -35,6 +35,20 @@ pub const ROOT_MAGIC: u32 = 0x746F_6F72;
 pub const CLST_MAGIC: u32 = 0x7473_6C63;
 /// `u32` LE magic that begins a `/PSMsegmenttable` stream (ASCII `'stab'`).
 pub const STAB_MAGIC: u32 = 0x6261_7473;
+/// `u32` LE magic that begins a `PSMspacemap` member stream (ASCII `'tseg'`).
+pub const SPACE_MAP_MAGIC: u32 = 0x6765_7374;
+/// The legacy form of [`SPACE_MAP_MAGIC`] (ASCII `'sseg'`). `Segment::Load`
+/// still accepts it and reads its entries with a different frame; no stream in
+/// this corpus carries it.
+pub const SPACE_MAP_MAGIC_LEGACY: u32 = 0x6765_7373;
+/// The bit `sub_5647A900` refuses a `PSMspacemap` entry without. Its absence
+/// is how the vendor reader knows it has reached the end of the entries.
+const SPACE_MAP_ENTRY_LIVE: u32 = 0x0002_0000;
+/// Bytes before a `PSMspacemap` entry's member slots: head, live member
+/// count, slot capacity.
+const SPACE_MAP_ENTRY_HEAD_LEN: usize = 8;
+/// Bytes in one `(value, tag)` member slot.
+const SPACE_MAP_MEMBER_LEN: usize = 6;
 
 fn read_u32_le(data: &[u8], pos: usize) -> Option<u32> {
     if pos + 4 > data.len() {
@@ -342,6 +356,172 @@ pub fn parse_psm_segment_table_with_trace(
         flags,
         entries,
         trailing_bytes,
+    })
+}
+
+/// Is `path` a member of a `PSMspacemap` storage?
+///
+/// The storage sits both at the top level and under a `JSite` registry, and
+/// its members are named for the address the segment starts at -- the vendor
+/// builds the name with `swprintf_s(L"0x%.8x", segment << 13)`. Matching on
+/// that shape rather than on a fixed list keeps a document with more segments
+/// than the fixtures have from falling off the registered set.
+///
+/// Both the parse walk and the byte-audit registry ask this question, and
+/// they have to give the same answer: a member the audit calls a space map
+/// but the walk skips would be reported as decoded bytes nobody read.
+pub(crate) fn is_space_map_member(path: &str) -> bool {
+    let mut parts = path.rsplit('/');
+    let Some(leaf) = parts.next() else {
+        return false;
+    };
+    if parts.next() != Some("PSMspacemap") {
+        return false;
+    }
+    leaf.strip_prefix("0x")
+        .is_some_and(|hex| hex.len() == 8 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Parse one `PSMspacemap` member stream. Returns `None` if the magic does
+/// not match.
+///
+/// Thin back-compat wrapper around [`parse_psm_space_map_with_trace`];
+/// discards the trace output for callers that do not opt into byte
+/// auditing.
+pub fn parse_psm_space_map(data: &[u8]) -> Option<PsmSpaceMap> {
+    let mut trace = ParserTraceBuilder::new("parse_psm_space_map");
+    parse_psm_space_map_with_trace(data, &mut trace)
+}
+
+/// Trace-aware variant of [`parse_psm_space_map`].
+///
+/// The frame comes from `radsrvitem.dll`, which reads and writes it in two
+/// pieces. `Segment::Load` (`sub_5647A180`) and `Segment::Save`
+/// (`sub_5647B550`) agree on a fixed 12-byte header followed by the free
+/// list:
+///
+/// ```text
+/// u32  magic 'tseg' (or the legacy 'sseg')
+/// u16  entry count
+/// u16  simple-slot capacity   -- 24 * this is allocated, so it is a capacity
+/// u16  next free index        -- refused above 0x2000, since indices are 13 bits
+/// u16  free-list length n ; n x u16
+/// ```
+///
+/// The entries then follow, in the frame `sub_5647A900` transfers:
+///
+/// ```text
+/// u32  head    -- low half is the index; the reader refuses the entry unless
+///                 bit 17 is set, and that refusal is what ends the walk
+/// u16  live member count  -- how many of the slots below are in use
+/// u16  slot capacity      -- how many slots follow
+/// capacity x { u32 persist id of the target ; u16 class of the target }
+/// ```
+///
+/// Two checks make this frame self-proving rather than merely plausible, and
+/// both are the reader's own:
+///
+/// * the walk has to stop exactly where the stream does, since nothing states
+///   how many bytes the entries occupy;
+/// * `Segment::Load` requires `persist_id >> 13 == segment` for every entry and
+///   refuses a second entry on an index it has already filled, so every index
+///   must be below `0x2000` and no two may collide.
+///
+/// A frame off by even two bytes fails both at once. On the four sheet
+/// fixtures all 38 member streams walk to their last byte, the entry count
+/// matches the header on every one of them, and no index repeats.
+///
+/// What the two `u16`s and the member pairs mean is settled by measurement
+/// rather than by the disassembly; see [`PsmSpaceMapMember`] and
+/// `docs/analysis/2026-08-27-psmspacemap-is-the-object-reference-graph.md`.
+///
+/// Everything the walk accepts is consumed as `Decoded`. Anything after the
+/// entry that fails the bit-17 gate is left alone, so it surfaces as leftover.
+pub fn parse_psm_space_map_with_trace(
+    data: &[u8],
+    trace: &mut ParserTraceBuilder,
+) -> Option<PsmSpaceMap> {
+    let magic = read_u32_le(data, 0)?;
+    if magic != SPACE_MAP_MAGIC && magic != SPACE_MAP_MAGIC_LEGACY {
+        return None;
+    }
+    let stated_entry_count = read_u16_le(data, 4)?;
+    let simple_slot_capacity = read_u16_le(data, 6)?;
+    let next_free_index = read_u16_le(data, 8)?;
+    let free_len = usize::from(read_u16_le(data, 10)?);
+    trace.consume(ByteRange::new(0, 12), TraceConfidence::Decoded);
+
+    let free_end = 12usize.checked_add(free_len.checked_mul(2)?)?;
+    if free_end > data.len() {
+        return None;
+    }
+    let free_list: Vec<u16> = (0..free_len)
+        .filter_map(|i| read_u16_le(data, 12 + 2 * i))
+        .collect();
+    if free_end > 12 {
+        trace.consume(
+            ByteRange::new(12, free_end as u64),
+            TraceConfidence::Decoded,
+        );
+    }
+
+    let mut entries: Vec<PsmSpaceMapEntry> = Vec::new();
+    let mut pos = free_end;
+    while let Some(entry) = read_space_map_entry(data, pos) {
+        let end = pos + space_map_entry_len(entry.members.len());
+        trace.consume(
+            ByteRange::new(pos as u64, end as u64),
+            TraceConfidence::Decoded,
+        );
+        entries.push(entry);
+        pos = end;
+    }
+
+    Some(PsmSpaceMap {
+        size: data.len() as u64,
+        legacy: magic == SPACE_MAP_MAGIC_LEGACY,
+        stated_entry_count,
+        simple_slot_capacity,
+        next_free_index,
+        free_list,
+        entries,
+        trailing_bytes: data.len().saturating_sub(pos),
+    })
+}
+
+/// Bytes an entry occupies on the wire, given its member slot capacity.
+fn space_map_entry_len(slots: usize) -> usize {
+    SPACE_MAP_ENTRY_HEAD_LEN + SPACE_MAP_MEMBER_LEN * slots
+}
+
+/// Read one entry at `at`, or `None` where the vendor reader would refuse it
+/// -- which is the walk's terminator, not an error.
+fn read_space_map_entry(data: &[u8], at: usize) -> Option<PsmSpaceMapEntry> {
+    let head = read_u32_le(data, at)?;
+    if head & SPACE_MAP_ENTRY_LIVE == 0 {
+        return None;
+    }
+    let live_member_count = read_u16_le(data, at + 4)?;
+    let capacity = usize::from(read_u16_le(data, at + 6)?);
+    let end = at.checked_add(space_map_entry_len(capacity))?;
+    if end > data.len() {
+        return None;
+    }
+    let members = (0..capacity)
+        .map(|i| {
+            let base = at + SPACE_MAP_ENTRY_HEAD_LEN + SPACE_MAP_MEMBER_LEN * i;
+            PsmSpaceMapMember {
+                value: read_u32_le(data, base).unwrap_or_default(),
+                tag: read_u16_le(data, base + 4).unwrap_or_default(),
+            }
+        })
+        .collect();
+    Some(PsmSpaceMapEntry {
+        offset: at,
+        index: (head & 0xFFFF) as u16,
+        form: (head >> 16) as u16,
+        live_member_count,
+        members,
     })
 }
 
