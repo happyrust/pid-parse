@@ -5454,6 +5454,890 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 2026-08-27: the symbol-information / expression family
+// ---------------------------------------------------------------------------
+//
+// Four record families that live only in a `JSite<N>/PSMcluster0` — never in
+// a `Sheet*` stream — and form one parametric chain:
+//
+//   JSymbolInformation (0x00BD, symbol.dex) carries named variables
+//     ├─ each variable's value is a Double Value Object (0x00C7, exprdex.dll)
+//     ├─ those values are grouped by a Variables Object (0x00EA, exprdex.dll)
+//     └─ a Standard Relation (0x006F, jengine.dll) feeds one into a JDim
+//        (0x0115) through a JBExpression formula
+//
+// Class names come from the type-code table (`tools/psm_type_clsid.py`), and
+// for `0x00BD` independently from the `PSMroots` name `SymbolInformation`.
+// Evidence and the byte-level derivation:
+// `docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`.
+//
+// These are **audit-only** and emit no geometry. They are deliberately not
+// registered in `model::sheet_families` and have no `GeometryEmitter`: that
+// registry describes `Sheet*` families, and a no-op emitter there would claim
+// these can appear on a sheet, which they never do.
+
+/// PSM type code for `JSymbolInformation` (`symbol.dex`) — a symbol's
+/// named-variable table. Also the class `PSMroots` calls
+/// `SymbolInformation`.
+pub const PSM_TYPE_CODE_JSYMBOL_INFORMATION: u16 = 0x00BD;
+
+/// PSM type code for `Double Value Object` (`exprdex.dll`) — one named
+/// double in the expression subsystem.
+pub const PSM_TYPE_CODE_DOUBLE_VALUE: u16 = 0x00C7;
+
+/// PSM type code for `Variables Object` (`exprdex.dll`) — the group that
+/// owns a set of [`PSM_TYPE_CODE_DOUBLE_VALUE`] records.
+pub const PSM_TYPE_CODE_VARIABLES: u16 = 0x00EA;
+
+/// PSM type code for `Assoc subsystem Standard Relation implementation`
+/// (`jengine.dll`) — binds operands with a `JBExpression` formula.
+pub const PSM_TYPE_CODE_STANDARD_RELATION: u16 = 0x006F;
+
+/// Fixed payload length of a [`PSM_TYPE_CODE_DOUBLE_VALUE`] record.
+const DOUBLE_VALUE_PAYLOAD_LEN: usize = 24;
+
+/// Payload offset where a [`PSM_TYPE_CODE_VARIABLES`] member list starts.
+const VARIABLES_MEMBERS_AT: usize = 17;
+
+/// Payload length of a [`PSM_TYPE_CODE_JSYMBOL_INFORMATION`] head, before
+/// any variable table.
+const SYMBOL_INFORMATION_HEAD_LEN: usize = 44;
+
+/// `flags` value at payload `+14` that says a variable table follows the
+/// head. Every other observed value means the record stops at the head.
+const SYMBOL_INFORMATION_HAS_VARIABLES: u16 = 0x0010;
+
+/// `DE264241-E929-11CE-A608-080036C61102` — `JBExpression object`, at
+/// payload `+38` of every [`PSM_TYPE_CODE_STANDARD_RELATION`] record.
+const JBEXPRESSION_CLSID: [u8; 16] = [
+    0x41, 0x42, 0x26, 0xDE, 0x29, 0xE9, 0xCE, 0x11, 0xA6, 0x08, 0x08, 0x00, 0x36, 0xC6, 0x11, 0x02,
+];
+
+/// `D97A3FB0-1601-11CE-B7EE-08003601E53B` — `Double Value Object`, at
+/// payload `+58`, the relation expression's value type.
+const DOUBLE_VALUE_CLSID: [u8; 16] = [
+    0xB0, 0x3F, 0x7A, 0xD9, 0x01, 0x16, 0xCE, 0x11, 0xB7, 0xEE, 0x08, 0x00, 0x36, 0x01, 0xE5, 0x3B,
+];
+
+/// `0145EEC0-1602-11CE-B7EE-08003601E53B` — the interface each relation
+/// operand slot names after its oid.
+const RELATION_OPERAND_IID: [u8; 16] = [
+    0xC0, 0xEE, 0x45, 0x01, 0x02, 0x16, 0xCE, 0x11, 0xB7, 0xEE, 0x08, 0x00, 0x36, 0x01, 0xE5, 0x3B,
+];
+
+/// Payload offset of [`JBEXPRESSION_CLSID`] in a relation record.
+const RELATION_EXPRESSION_CLSID_AT: usize = 38;
+/// Payload offset of [`DOUBLE_VALUE_CLSID`] in a relation record.
+const RELATION_VALUE_CLSID_AT: usize = 58;
+/// Payload offset of the operand signature's length word.
+const RELATION_SIGNATURE_AT: usize = 74;
+
+fn u16_le(data: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(data.get(at..at + 2)?.try_into().ok()?))
+}
+
+fn u32_le(data: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+}
+
+fn f64_le(data: &[u8], at: usize) -> Option<f64> {
+    Some(f64::from_le_bytes(data.get(at..at + 8)?.try_into().ok()?))
+}
+
+/// One decoded `0x00C7` `Double Value Object`: a single named double the
+/// expression subsystem persists on its own so other objects can reference
+/// it by oid.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PsmDoubleValueDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// Persist id of this value object.
+    pub oid: u32,
+    /// The owning [`PsmVariablesDecoded`] group.
+    pub parent_ref: u32,
+    /// The value itself, payload `+12`. The same double appears inline in
+    /// the [`PsmSymbolInformationDecoded`] variable that names it.
+    pub value: f64,
+    /// Trailing pair at payload `+20` / `+22`; constant `1` / `15` across
+    /// the corpus, meaning unknown, carried for audit.
+    pub trailing: (u16, u16),
+}
+
+/// Decode every `0x00C7` `Double Value Object` record in `data`.
+///
+/// Validation: type code and zero type flags, `bytes_to_follow == 24`,
+/// non-zero `oid` and `parent_ref`, zeroed word at payload `+8`, and a
+/// finite value.
+pub fn decode_double_values(data: &[u8]) -> Vec<PsmDoubleValueDecoded> {
+    DoubleValueDecoder.scan(data)
+}
+
+/// Try to decode one `0x00C7` record at `offset`. Returns `None` on
+/// validation failure.
+pub fn decode_double_value_at(data: &[u8], offset: usize) -> Option<PsmDoubleValueDecoded> {
+    DoubleValueDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x00C7` `Double Value Object`.
+pub struct DoubleValueDecoder;
+
+impl PsmRecordDecoder for DoubleValueDecoder {
+    type Record = PsmDoubleValueDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_DOUBLE_VALUE
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + DOUBLE_VALUE_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmDoubleValueDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_DOUBLE_VALUE || header.type_flags != 0 {
+            return None;
+        }
+        if header.bytes_to_follow as usize != DOUBLE_VALUE_PAYLOAD_LEN {
+            return None;
+        }
+        let body = header.body_start;
+        let end = body.checked_add(DOUBLE_VALUE_PAYLOAD_LEN)?;
+        if end > data.len() {
+            return None;
+        }
+        let oid = u32_le(data, body)?;
+        let parent_ref = u32_le(data, body + 4)?;
+        if oid == 0 || parent_ref == 0 || u32_le(data, body + 8)? != 0 {
+            return None;
+        }
+        let value = f64_le(data, body + 12)?;
+        if !value.is_finite() {
+            return None;
+        }
+        Some(PsmDoubleValueDecoded {
+            byte_range: offset..end,
+            oid,
+            parent_ref,
+            value,
+            trailing: (u16_le(data, body + 20)?, u16_le(data, body + 22)?),
+        })
+    }
+
+    fn advance_of(&self, record: &PsmDoubleValueDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// One decoded `0x00EA` `Variables Object`: the group that owns a set of
+/// [`PsmDoubleValueDecoded`] records.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PsmVariablesDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// Persist id of this group.
+    pub oid: u32,
+    /// Persist ids of the member value objects, in on-disk order. Each
+    /// member's own `parent_ref` names this record back.
+    pub members: Vec<u32>,
+    /// Trailing word after the member list; `321` across the corpus,
+    /// meaning unknown, carried for audit.
+    pub trailing: u32,
+}
+
+/// Decode every `0x00EA` `Variables Object` record in `data`.
+///
+/// Validation: type code and zero type flags, non-zero `oid`, zeroed words
+/// at payload `+4` / `+8`, version byte `1` at `+12`, and a member count
+/// whose slots plus the trailing word account for `bytes_to_follow`
+/// exactly. Each 8-byte slot must be a zero word followed by a non-zero id.
+pub fn decode_variables(data: &[u8]) -> Vec<PsmVariablesDecoded> {
+    VariablesDecoder.scan(data)
+}
+
+/// Try to decode one `0x00EA` record at `offset`. Returns `None` on
+/// validation failure.
+pub fn decode_variables_at(data: &[u8], offset: usize) -> Option<PsmVariablesDecoded> {
+    VariablesDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x00EA` `Variables Object`.
+pub struct VariablesDecoder;
+
+impl PsmRecordDecoder for VariablesDecoder {
+    type Record = PsmVariablesDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_VARIABLES
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + VARIABLES_MEMBERS_AT + 8 + 4
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmVariablesDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_VARIABLES || header.type_flags != 0 {
+            return None;
+        }
+        let body = header.body_start;
+        let btf = header.bytes_to_follow as usize;
+        let end = body.checked_add(btf)?;
+        if end > data.len() {
+            return None;
+        }
+        let oid = u32_le(data, body)?;
+        if oid == 0 || u32_le(data, body + 4)? != 0 || u32_le(data, body + 8)? != 0 {
+            return None;
+        }
+        if *data.get(body + 12)? != 1 {
+            return None;
+        }
+        let count = u32_le(data, body + 13)? as usize;
+        // Every byte must be accounted for: head, `count` 8-byte slots, tail.
+        if count == 0 || VARIABLES_MEMBERS_AT + count.checked_mul(8)? + 4 != btf {
+            return None;
+        }
+        let mut members = Vec::with_capacity(count);
+        for index in 0..count {
+            let slot = body + VARIABLES_MEMBERS_AT + index * 8;
+            if u32_le(data, slot)? != 0 {
+                return None;
+            }
+            let member = u32_le(data, slot + 4)?;
+            if member == 0 {
+                return None;
+            }
+            members.push(member);
+        }
+        Some(PsmVariablesDecoded {
+            byte_range: offset..end,
+            oid,
+            members,
+            trailing: u32_le(data, body + VARIABLES_MEMBERS_AT + count * 8)?,
+        })
+    }
+
+    fn advance_of(&self, record: &PsmVariablesDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// One named variable inside a [`PsmSymbolInformationDecoded`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SymbolInformationVariable {
+    /// The variable's value, equal to the `value` of the
+    /// [`PsmDoubleValueDecoded`] this entry names.
+    pub value: f64,
+    /// Variable name; only `Left`, `Right`, `Bottom` and `Top` appear in
+    /// the corpus.
+    pub name: String,
+    /// Persist id of the `0x00C7` record holding the same value.
+    pub value_ref: u32,
+}
+
+/// One decoded `0x00BD` `JSymbolInformation` record.
+///
+/// Two shapes share a 44-byte head. When `flags` is
+/// [`SYMBOL_INFORMATION_HAS_VARIABLES`] a variable table follows and
+/// [`Self::variables`] is populated; otherwise the record stops at the head
+/// (or a 6-byte zero tail) and the vector is empty.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PsmSymbolInformationDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// Persist id of this symbol-information object.
+    pub oid: u32,
+    /// Parent reference from payload `+4`; zero on some records.
+    pub parent_ref: u32,
+    /// Discriminator at payload `+12`; `3` on the shape that can carry
+    /// variables, `11` on the short variant.
+    pub kind: u16,
+    /// Flag word at payload `+14` that gates the variable table.
+    pub flags: u16,
+    /// Two extents at payload `+16` / `+24`. Zero on the stub shape; their
+    /// geometric meaning is not settled, so they are carried as read.
+    pub extents: (f64, f64),
+    /// The named variables, empty unless `flags` gates them in.
+    pub variables: Vec<SymbolInformationVariable>,
+}
+
+/// Decode every `0x00BD` `JSymbolInformation` record in `data`.
+///
+/// Validation: type code and zero type flags, non-zero `oid`, zeroed word
+/// at payload `+8`, zeroed double at `+32` and the constant `4` at `+40`.
+/// When the variable table is gated in, every entry must carry the `1` /
+/// `1` lead, a finite value, a non-empty name and a non-zero value
+/// reference, and the table must end exactly at `bytes_to_follow`.
+pub fn decode_symbol_informations(data: &[u8]) -> Vec<PsmSymbolInformationDecoded> {
+    SymbolInformationDecoder.scan(data)
+}
+
+/// Try to decode one `0x00BD` record at `offset`. Returns `None` on
+/// validation failure.
+pub fn decode_symbol_information_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<PsmSymbolInformationDecoded> {
+    SymbolInformationDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x00BD` `JSymbolInformation`.
+pub struct SymbolInformationDecoder;
+
+impl PsmRecordDecoder for SymbolInformationDecoder {
+    type Record = PsmSymbolInformationDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_JSYMBOL_INFORMATION
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + SYMBOL_INFORMATION_HEAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmSymbolInformationDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_JSYMBOL_INFORMATION || header.type_flags != 0 {
+            return None;
+        }
+        let body = header.body_start;
+        let btf = header.bytes_to_follow as usize;
+        if btf < SYMBOL_INFORMATION_HEAD_LEN {
+            return None;
+        }
+        let end = body.checked_add(btf)?;
+        if end > data.len() {
+            return None;
+        }
+        let oid = u32_le(data, body)?;
+        if oid == 0 || u32_le(data, body + 8)? != 0 {
+            return None;
+        }
+        if f64_le(data, body + 32)? != 0.0 || u32_le(data, body + 40)? != 4 {
+            return None;
+        }
+        let flags = u16_le(data, body + 14)?;
+        let mut variables = Vec::new();
+        if flags == SYMBOL_INFORMATION_HAS_VARIABLES {
+            let mut at = body + SYMBOL_INFORMATION_HEAD_LEN;
+            let count = u32_le(data, at)?;
+            at += 4;
+            for _ in 0..count {
+                if *data.get(at)? != 1 || u32_le(data, at + 1)? != 1 {
+                    return None;
+                }
+                at += 5;
+                let value = f64_le(data, at)?;
+                if !value.is_finite() {
+                    return None;
+                }
+                at += 8;
+                let chars = usize::from(u16_le(data, at)?);
+                at += 2;
+                let units: Vec<u16> = (0..chars)
+                    .map(|index| u16_le(data, at + index * 2))
+                    .collect::<Option<_>>()?;
+                let name = String::from_utf16(&units).ok()?;
+                if name.is_empty() {
+                    return None;
+                }
+                at += chars * 2;
+                let value_ref = u32_le(data, at)?;
+                if value_ref == 0 {
+                    return None;
+                }
+                at += 4;
+                variables.push(SymbolInformationVariable {
+                    value,
+                    name,
+                    value_ref,
+                });
+            }
+            // The table must land exactly on the record's declared end.
+            if at != end {
+                return None;
+            }
+        }
+        Some(PsmSymbolInformationDecoded {
+            byte_range: offset..end,
+            oid,
+            parent_ref: u32_le(data, body + 4)?,
+            kind: u16_le(data, body + 12)?,
+            flags,
+            extents: (f64_le(data, body + 16)?, f64_le(data, body + 24)?),
+            variables,
+        })
+    }
+
+    fn advance_of(&self, record: &PsmSymbolInformationDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// One decoded `0x006F` `Assoc subsystem Standard Relation` record: a
+/// `JBExpression` formula over operand objects.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PsmStandardRelationDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// Persist id of the relation.
+    pub oid: u32,
+    /// Operand signature, e.g. `%>i%<i` — `%>` marks the output operand,
+    /// `%<` each input, and the letter is a type tag.
+    pub signature: String,
+    /// Operand persist ids in signature order, so the first is the output.
+    /// In the corpus the output is always a `0x0115` `JDim` and the inputs
+    /// are `0x00C7` values.
+    pub operands: Vec<u32>,
+    /// The formula, e.g. `0E$1+0.01`, where `$n` is the n-th input. The
+    /// leading `0E` is present on every record and not yet understood.
+    pub formula: String,
+}
+
+/// Decode every `0x006F` `Standard Relation` record in `data`.
+///
+/// Validation: type code and zero type flags, non-zero `oid`, the
+/// `JBExpression` and `Double Value` CLSIDs at their fixed payload
+/// offsets, one operand slot per signature marker with the expected
+/// per-slot interface GUID, and a formula that ends the record exactly.
+pub fn decode_standard_relations(data: &[u8]) -> Vec<PsmStandardRelationDecoded> {
+    StandardRelationDecoder.scan(data)
+}
+
+/// Try to decode one `0x006F` record at `offset`. Returns `None` on
+/// validation failure.
+pub fn decode_standard_relation_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<PsmStandardRelationDecoded> {
+    StandardRelationDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x006F` `Standard Relation`.
+pub struct StandardRelationDecoder;
+
+impl PsmRecordDecoder for StandardRelationDecoder {
+    type Record = PsmStandardRelationDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_STANDARD_RELATION
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + RELATION_SIGNATURE_AT + 4
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmStandardRelationDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_STANDARD_RELATION || header.type_flags != 0 {
+            return None;
+        }
+        let body = header.body_start;
+        let btf = header.bytes_to_follow as usize;
+        if btf < RELATION_SIGNATURE_AT + 4 {
+            return None;
+        }
+        let end = body.checked_add(btf)?;
+        if end > data.len() {
+            return None;
+        }
+        let oid = u32_le(data, body)?;
+        if oid == 0 {
+            return None;
+        }
+        let guid_at = |at: usize| data.get(body + at..body + at + 16);
+        if guid_at(RELATION_EXPRESSION_CLSID_AT)? != JBEXPRESSION_CLSID
+            || guid_at(RELATION_VALUE_CLSID_AT)? != DOUBLE_VALUE_CLSID
+        {
+            return None;
+        }
+
+        let mut at = body + RELATION_SIGNATURE_AT;
+        let signature_len = u32_le(data, at)? as usize;
+        at += 4;
+        let signature_bytes = data.get(at..at.checked_add(signature_len)?)?;
+        if !signature_bytes.is_ascii() {
+            return None;
+        }
+        let signature: String = signature_bytes
+            .iter()
+            .take_while(|byte| **byte != 0)
+            .map(|byte| char::from(*byte))
+            .collect();
+        at += signature_len;
+
+        // `u32 2`, `u16 0x20`, then the operand count.
+        if u32_le(data, at)? != 2 || u16_le(data, at + 4)? != 0x0020 {
+            return None;
+        }
+        let count = u32_le(data, at + 6)? as usize;
+        if count != signature.matches('%').count() || count == 0 {
+            return None;
+        }
+        at += 10;
+        let mut operands = Vec::with_capacity(count);
+        for index in 0..count {
+            // 8-byte slot marker: `0x0020`, a zero word, then `0x4000` on
+            // the first operand and `0x8000` on every later one.
+            let marker = if index == 0 { 0x4000u16 } else { 0x8000u16 };
+            if u16_le(data, at)? != 0x0020
+                || u32_le(data, at + 2)? != 0
+                || u16_le(data, at + 6)? != marker
+            {
+                return None;
+            }
+            at += 8;
+            let operand = u32_le(data, at)?;
+            if operand == 0 {
+                return None;
+            }
+            at += 4;
+            if data.get(at..at.checked_add(16)?)? != RELATION_OPERAND_IID {
+                return None;
+            }
+            at += 16;
+            operands.push(operand);
+        }
+
+        let chars = u32_le(data, at)? as usize;
+        at += 4;
+        if at.checked_add(chars.checked_mul(2)?)? != end {
+            return None;
+        }
+        let units: Vec<u16> = (0..chars)
+            .map(|index| u16_le(data, at + index * 2))
+            .collect::<Option<_>>()?;
+        let formula = String::from_utf16(&units).ok()?.replace('\0', "");
+        if formula.is_empty() {
+            return None;
+        }
+        Some(PsmStandardRelationDecoded {
+            byte_range: offset..end,
+            oid,
+            signature,
+            operands,
+            formula,
+        })
+    }
+
+    fn advance_of(&self, record: &PsmStandardRelationDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+#[cfg(test)]
+mod symbol_information_family_tests {
+    use super::*;
+
+    /// Wrap `payload` in the 6-byte PSM envelope for `type_code`.
+    fn framed(type_code: u16, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(PSM_ENVELOPE_LEN + payload.len());
+        out.extend_from_slice(&type_code.to_le_bytes());
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn double_value_payload(oid: u32, parent: u32, value: f64) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&oid.to_le_bytes());
+        payload.extend_from_slice(&parent.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&value.to_le_bytes());
+        payload.extend_from_slice(&1u16.to_le_bytes());
+        payload.extend_from_slice(&15u16.to_le_bytes());
+        payload
+    }
+
+    fn variables_payload(oid: u32, members: &[u32]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&oid.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&(members.len() as u32).to_le_bytes());
+        for member in members {
+            payload.extend_from_slice(&0u32.to_le_bytes());
+            payload.extend_from_slice(&member.to_le_bytes());
+        }
+        payload.extend_from_slice(&321u32.to_le_bytes());
+        payload
+    }
+
+    fn symbol_information_payload(oid: u32, variables: &[(f64, &str, u32)]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&oid.to_le_bytes());
+        payload.extend_from_slice(&13u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&3u16.to_le_bytes());
+        let flags = if variables.is_empty() {
+            0
+        } else {
+            SYMBOL_INFORMATION_HAS_VARIABLES
+        };
+        payload.extend_from_slice(&flags.to_le_bytes());
+        payload.extend_from_slice(&0.1016f64.to_le_bytes());
+        payload.extend_from_slice(&0.17145f64.to_le_bytes());
+        payload.extend_from_slice(&0.0f64.to_le_bytes());
+        payload.extend_from_slice(&4u32.to_le_bytes());
+        if !variables.is_empty() {
+            payload.extend_from_slice(&(variables.len() as u32).to_le_bytes());
+            for (value, name, value_ref) in variables {
+                payload.push(1);
+                payload.extend_from_slice(&1u32.to_le_bytes());
+                payload.extend_from_slice(&value.to_le_bytes());
+                let units: Vec<u16> = name.encode_utf16().collect();
+                payload.extend_from_slice(&(units.len() as u16).to_le_bytes());
+                for unit in units {
+                    payload.extend_from_slice(&unit.to_le_bytes());
+                }
+                payload.extend_from_slice(&value_ref.to_le_bytes());
+            }
+        }
+        payload
+    }
+
+    fn relation_payload(oid: u32, operands: &[u32], signature: &str, formula: &str) -> Vec<u8> {
+        let mut payload = vec![0u8; RELATION_SIGNATURE_AT];
+        payload[0..4].copy_from_slice(&oid.to_le_bytes());
+        payload[RELATION_EXPRESSION_CLSID_AT..RELATION_EXPRESSION_CLSID_AT + 16]
+            .copy_from_slice(&JBEXPRESSION_CLSID);
+        payload[RELATION_VALUE_CLSID_AT..RELATION_VALUE_CLSID_AT + 16]
+            .copy_from_slice(&DOUBLE_VALUE_CLSID);
+        let mut signature_bytes = signature.as_bytes().to_vec();
+        signature_bytes.push(0);
+        payload.extend_from_slice(&(signature_bytes.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&signature_bytes);
+        payload.extend_from_slice(&2u32.to_le_bytes());
+        payload.extend_from_slice(&0x0020u16.to_le_bytes());
+        payload.extend_from_slice(&(operands.len() as u32).to_le_bytes());
+        for (index, operand) in operands.iter().enumerate() {
+            payload.extend_from_slice(&0x0020u16.to_le_bytes());
+            payload.extend_from_slice(&0u32.to_le_bytes());
+            let marker: u16 = if index == 0 { 0x4000 } else { 0x8000 };
+            payload.extend_from_slice(&marker.to_le_bytes());
+            payload.extend_from_slice(&operand.to_le_bytes());
+            payload.extend_from_slice(&RELATION_OPERAND_IID);
+        }
+        let mut units: Vec<u16> = formula.encode_utf16().collect();
+        units.push(0);
+        payload.extend_from_slice(&(units.len() as u32).to_le_bytes());
+        for unit in units {
+            payload.extend_from_slice(&unit.to_le_bytes());
+        }
+        payload
+    }
+
+    #[test]
+    fn double_value_decodes_the_canonical_record() {
+        let data = framed(
+            PSM_TYPE_CODE_DOUBLE_VALUE,
+            &double_value_payload(30, 41, 0.0609),
+        );
+        let decoded = decode_double_values(&data);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].oid, 30);
+        assert_eq!(decoded[0].parent_ref, 41);
+        assert_eq!(decoded[0].value, 0.0609);
+        assert_eq!(decoded[0].trailing, (1, 15));
+        assert_eq!(decoded[0].byte_range, 0..data.len());
+    }
+
+    #[test]
+    fn double_value_rejects_a_wrong_length_or_zeroed_identity() {
+        let mut short = double_value_payload(30, 41, 1.0);
+        short.truncate(20);
+        assert!(decode_double_value_at(&framed(PSM_TYPE_CODE_DOUBLE_VALUE, &short), 0).is_none());
+        let zero_oid = double_value_payload(0, 41, 1.0);
+        assert!(
+            decode_double_value_at(&framed(PSM_TYPE_CODE_DOUBLE_VALUE, &zero_oid), 0).is_none()
+        );
+        let orphan = double_value_payload(30, 0, 1.0);
+        assert!(decode_double_value_at(&framed(PSM_TYPE_CODE_DOUBLE_VALUE, &orphan), 0).is_none());
+    }
+
+    #[test]
+    fn double_value_rejects_a_non_finite_value() {
+        let payload = double_value_payload(30, 41, f64::NAN);
+        assert!(decode_double_value_at(&framed(PSM_TYPE_CODE_DOUBLE_VALUE, &payload), 0).is_none());
+    }
+
+    #[test]
+    fn variables_decodes_its_member_list() {
+        let data = framed(
+            PSM_TYPE_CODE_VARIABLES,
+            &variables_payload(153, &[190, 744, 759]),
+        );
+        let decoded = decode_variables(&data);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].oid, 153);
+        assert_eq!(decoded[0].members, vec![190, 744, 759]);
+        assert_eq!(decoded[0].trailing, 321);
+        assert_eq!(decoded[0].byte_range, 0..data.len());
+    }
+
+    #[test]
+    fn variables_rejects_a_count_that_does_not_account_for_the_payload() {
+        let mut payload = variables_payload(153, &[190, 744]);
+        // Claim three members while only two slots follow.
+        payload[13..17].copy_from_slice(&3u32.to_le_bytes());
+        assert!(decode_variables_at(&framed(PSM_TYPE_CODE_VARIABLES, &payload), 0).is_none());
+    }
+
+    #[test]
+    fn variables_rejects_an_empty_list_or_a_bad_version() {
+        assert!(decode_variables_at(
+            &framed(PSM_TYPE_CODE_VARIABLES, &variables_payload(1, &[])),
+            0
+        )
+        .is_none());
+        let mut payload = variables_payload(153, &[190]);
+        payload[12] = 2;
+        assert!(decode_variables_at(&framed(PSM_TYPE_CODE_VARIABLES, &payload), 0).is_none());
+    }
+
+    #[test]
+    fn symbol_information_decodes_its_named_variables() {
+        let payload = symbol_information_payload(
+            22,
+            &[
+                (0.0609, "Left", 30),
+                (0.0609, "Right", 31),
+                (0.0354, "Top", 33),
+            ],
+        );
+        let data = framed(PSM_TYPE_CODE_JSYMBOL_INFORMATION, &payload);
+        let decoded = decode_symbol_informations(&data);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].oid, 22);
+        assert_eq!(decoded[0].flags, SYMBOL_INFORMATION_HAS_VARIABLES);
+        assert_eq!(decoded[0].extents, (0.1016, 0.17145));
+        let names: Vec<&str> = decoded[0]
+            .variables
+            .iter()
+            .map(|variable| variable.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Left", "Right", "Top"]);
+        assert_eq!(decoded[0].variables[2].value_ref, 33);
+        assert_eq!(decoded[0].byte_range, 0..data.len());
+    }
+
+    #[test]
+    fn symbol_information_decodes_the_stub_shape_with_no_variables() {
+        let data = framed(
+            PSM_TYPE_CODE_JSYMBOL_INFORMATION,
+            &symbol_information_payload(95, &[]),
+        );
+        let decoded = decode_symbol_informations(&data);
+        assert_eq!(decoded.len(), 1);
+        assert!(decoded[0].variables.is_empty());
+        assert_eq!(decoded[0].flags, 0);
+    }
+
+    #[test]
+    fn symbol_information_rejects_a_variable_table_that_overruns_the_record() {
+        let mut payload = symbol_information_payload(22, &[(1.0, "Left", 30)]);
+        // Claim two variables where only one is present.
+        payload[SYMBOL_INFORMATION_HEAD_LEN..SYMBOL_INFORMATION_HEAD_LEN + 4]
+            .copy_from_slice(&2u32.to_le_bytes());
+        assert!(decode_symbol_information_at(
+            &framed(PSM_TYPE_CODE_JSYMBOL_INFORMATION, &payload),
+            0
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn symbol_information_rejects_a_head_that_fails_its_constants() {
+        let mut payload = symbol_information_payload(22, &[]);
+        payload[40..44].copy_from_slice(&5u32.to_le_bytes());
+        assert!(decode_symbol_information_at(
+            &framed(PSM_TYPE_CODE_JSYMBOL_INFORMATION, &payload),
+            0
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn standard_relation_decodes_signature_operands_and_formula() {
+        let payload = relation_payload(44, &[24, 33], "%>i%<i", "0E$1+0.01");
+        let data = framed(PSM_TYPE_CODE_STANDARD_RELATION, &payload);
+        let decoded = decode_standard_relations(&data);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].oid, 44);
+        assert_eq!(decoded[0].signature, "%>i%<i");
+        assert_eq!(decoded[0].operands, vec![24, 33]);
+        assert_eq!(decoded[0].formula, "0E$1+0.01");
+        assert_eq!(decoded[0].byte_range, 0..data.len());
+    }
+
+    #[test]
+    fn standard_relation_rejects_an_operand_count_the_signature_does_not_promise() {
+        let payload = relation_payload(44, &[24, 33], "%>i", "0E$1");
+        assert!(
+            decode_standard_relation_at(&framed(PSM_TYPE_CODE_STANDARD_RELATION, &payload), 0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn standard_relation_rejects_a_missing_expression_class() {
+        let mut payload = relation_payload(44, &[24, 33], "%>i%<i", "0E$1");
+        payload[RELATION_EXPRESSION_CLSID_AT] ^= 0xFF;
+        assert!(
+            decode_standard_relation_at(&framed(PSM_TYPE_CODE_STANDARD_RELATION, &payload), 0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn standard_relation_rejects_a_formula_that_does_not_end_the_record() {
+        let mut payload = relation_payload(44, &[24, 33], "%>i%<i", "0E$1");
+        payload.push(0);
+        assert!(
+            decode_standard_relation_at(&framed(PSM_TYPE_CODE_STANDARD_RELATION, &payload), 0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn every_family_ignores_a_record_of_another_type() {
+        let payload = double_value_payload(30, 41, 1.0);
+        let data = framed(PSM_TYPE_CODE_IGLINE2D, &payload);
+        assert!(decode_double_values(&data).is_empty());
+        assert!(decode_variables(&data).is_empty());
+        assert!(decode_symbol_informations(&data).is_empty());
+        assert!(decode_standard_relations(&data).is_empty());
+    }
+
+    #[test]
+    fn every_family_survives_a_truncated_stream() {
+        let full = framed(
+            PSM_TYPE_CODE_JSYMBOL_INFORMATION,
+            &symbol_information_payload(22, &[(1.0, "Left", 30)]),
+        );
+        for cut in 0..full.len() {
+            let _ = decode_symbol_informations(&full[..cut]);
+            let _ = decode_double_values(&full[..cut]);
+            let _ = decode_variables(&full[..cut]);
+            let _ = decode_standard_relations(&full[..cut]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

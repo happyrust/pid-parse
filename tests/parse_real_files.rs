@@ -2730,6 +2730,161 @@ fn standard_relation_binds_a_double_value_to_a_dimension() {
     );
 }
 
+/// The four decoders for the symbol-information / expression family, run
+/// over the streams that actually hold it.
+///
+/// These records live only in a `JSite<N>/PSMcluster0`, so this walks those
+/// streams and asserts both the census and the links between the families:
+/// every `Double Value` names a `Variables` group that lists it back, every
+/// variable a `JSymbolInformation` names resolves to a `Double Value`
+/// carrying the same double, and every relation input is one of those
+/// values. Each decoder validates its own framing to the byte, so a count
+/// that survives is a count of records that read cleanly end to end.
+#[test]
+fn symbol_information_family_decodes_across_fixtures() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Read;
+
+    use pid_parse::parsers::sheet_records::{
+        decode_double_values, decode_standard_relations, decode_symbol_informations,
+        decode_variables,
+    };
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+
+    let mut values = 0usize;
+    let mut groups = 0usize;
+    let mut symbols = 0usize;
+    let mut symbols_with_variables = 0usize;
+    let mut variables = 0usize;
+    let mut relations = 0usize;
+    let mut names: BTreeMap<String, usize> = BTreeMap::new();
+    let mut value_in_its_group = 0usize;
+    let mut variable_matches_value = 0usize;
+    let mut relation_inputs_that_are_values = 0usize;
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        let file = std::fs::File::open(&path).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        for stream_path in stream_paths {
+            if !stream_path.replace('\\', "/").ends_with("/PSMcluster0") {
+                continue;
+            }
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            any = true;
+
+            let decoded_values = decode_double_values(&data);
+            let decoded_groups = decode_variables(&data);
+            let decoded_symbols = decode_symbol_informations(&data);
+            let decoded_relations = decode_standard_relations(&data);
+
+            let by_oid: BTreeMap<u32, f64> = decoded_values
+                .iter()
+                .map(|value| (value.oid, value.value))
+                .collect();
+            let group_members: BTreeMap<u32, BTreeSet<u32>> = decoded_groups
+                .iter()
+                .map(|group| (group.oid, group.members.iter().copied().collect()))
+                .collect();
+
+            values += decoded_values.len();
+            groups += decoded_groups.len();
+            symbols += decoded_symbols.len();
+            relations += decoded_relations.len();
+
+            for value in &decoded_values {
+                if group_members
+                    .get(&value.parent_ref)
+                    .is_some_and(|members| members.contains(&value.oid))
+                {
+                    value_in_its_group += 1;
+                }
+            }
+            for symbol in &decoded_symbols {
+                if symbol.variables.is_empty() {
+                    continue;
+                }
+                symbols_with_variables += 1;
+                for variable in &symbol.variables {
+                    variables += 1;
+                    *names.entry(variable.name.clone()).or_default() += 1;
+                    if by_oid.get(&variable.value_ref) == Some(&variable.value) {
+                        variable_matches_value += 1;
+                    }
+                }
+            }
+            for relation in &decoded_relations {
+                for input in relation.operands.iter().skip(1) {
+                    if by_oid.contains_key(input) {
+                        relation_inputs_that_are_values += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if !any {
+        return;
+    }
+
+    assert_eq!(
+        (values, groups, symbols, relations),
+        (203, 76, 45, 13),
+        "the four fixtures should decode 203 Double Value, 76 Variables, 45 \
+         JSymbolInformation and 13 Standard Relation records"
+    );
+    assert_eq!(
+        (symbols_with_variables, variables),
+        (8, 24),
+        "eight JSymbolInformation records should carry the corpus's 24 named variables"
+    );
+    assert_eq!(
+        names,
+        BTreeMap::from([
+            ("Bottom".to_string(), 4),
+            ("Left".to_string(), 6),
+            ("Right".to_string(), 8),
+            ("Top".to_string(), 6),
+        ]),
+        "the variables should only carry the four side names"
+    );
+    assert_eq!(
+        value_in_its_group, values,
+        "every Double Value's parent_ref should name a Variables group that lists it back"
+    );
+    assert_eq!(
+        (variable_matches_value, relation_inputs_that_are_values),
+        (12, 12),
+        "the twelve variables whose value object is in the same storage should agree with \
+         it, and those same twelve should be the relations' inputs"
+    );
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {

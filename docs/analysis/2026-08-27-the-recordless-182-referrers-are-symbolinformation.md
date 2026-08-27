@@ -284,6 +284,24 @@ id、都没有自己的条目、只带 182 这一个 tag——和一条方向指
 `standard_relation_binds_a_double_value_to_a_dimension`）+ guide §3.2/§3.3/§4
 的相应段落 + `PsmRootEntry::id` 的 rustdoc 订正。**解码行为零变化。**
 
+**解码器（2026-08-27 补）**：四个家族都按 `PsmRecordDecoder` 接进了
+`src/parsers/sheet_records.rs`——`DoubleValueDecoder` / `VariablesDecoder` /
+`SymbolInformationDecoder` / `StandardRelationDecoder`，各带 `decode_*s` 与
+`decode_*_at` 两个薄封装、DTO、16 项单测，并进了
+`tests/parser_panic_safety.rs` 的对抗语料。跨图棘轮
+`symbol_information_family_decodes_across_fixtures` 直接走 `PSMcluster0`，用真
+解码器数出 **203 / 76 / 45 / 13**，并核对三条链接：每条 Double Value 的
+`parent_ref` 指向一个把它列在成员里的 Variables 组（203/203）、
+`JSymbolInformation` 的 12 个可解析变量与值对象的 `f64` 相等、这 12 条正是关系的
+入参。
+
+> **两缝模板只走了 L4。** L6 是 `GeometryEmitter`，而 `model::sheet_families`
+> 那张注册表描述的是 **`Sheet*` 家族**；这四个家族只在 `JSite<N>/PSMcluster0` 里
+> 出现，往那张表里加一条（哪怕是 no-op emitter）等于声称它们会出现在 sheet 上，
+> 那是假的。所以**故意不注册、不给 emitter**，理由记在解码器上方的模块注释里。
+> 它们也还没挂到 `PidDocument`（`ClusterInfo` 目前只存原始 cluster），要挂是下一
+> 步，会动 schema。
+
 **下一步**：
 
 - 头上那两个 `f64`（如 0.1016 / 0.17145，看着像米）和每个变量那个 `f64` 的几何
@@ -293,9 +311,8 @@ id、都没有自己的条目、只带 182 这一个 tag——和一条方向指
 - 公式串开头那两个字符 `0E` 每条都有，含义未定（版本？值类型？）；`+12` 那个
   13/13 恒定的 GUID 和操作数槽里的 `0145EEC0-…` 都不在 `jutil.dll` 的注册表里，
   多半是接口 IID 而不是 coclass，要认得换一份注册表。
-- 这一族现在四个类名、三条记录的字节全解（`0x00BD` 长形、`0x00EA`、`0x006F`），
-  但**都还没接进解码器**——要接就走 AGENTS.md 的两缝模板，且它们是审计族、
-  不该 emit 几何。
+- 把这一族挂到 `PidDocument` 上（大概是 `ClusterInfo` 加一个可选字段），让
+  `pid-parse` 的消费者不用自己走 `PSMcluster0`；会动 JSON schema，单独一轮。
 - `SymbolInformationCluster` 这条线索**本语料已否**（§4）。要接着追只能出文件：
   外部 `.igr` 模板，或回 IDA 看 `sub_100017C0` 的读写两侧。
 - `PSMsegmenttable` 的标志字节现在有了语义（段是否在用，4/4 存储一致），

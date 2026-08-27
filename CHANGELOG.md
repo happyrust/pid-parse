@@ -62,6 +62,16 @@
   `0x0115` 都没有，所以没有尺寸也没有关系；若那 71 个 phantom 是「被删的对象」，
   同一批 `0x00C7` 上该有**两个** phantom 成员，实测只有一个——倾向 (b) 的第三条旁证。
   棘轮 `standard_relation_binds_a_double_value_to_a_dimension`。
+- **四个家族接进解码器（L4 缝）。** `DoubleValueDecoder` / `VariablesDecoder` /
+  `SymbolInformationDecoder` / `StandardRelationDecoder` 按 `PsmRecordDecoder` 实现，
+  各带 DTO、`decode_*s` / `decode_*_at` 封装、16 项单测，并进了
+  `parser_panic_safety` 对抗语料。每个都把变长尾（成员表、变量名、操作数、公式）
+  校验到字节：计数对不上 payload 就整条拒收。跨图棘轮
+  `symbol_information_family_decodes_across_fixtures` 走 `PSMcluster0` 数出
+  **203 / 76 / 45 / 13**，并核对链接（203/203 值对象回到自己的组、12 个变量与值对象
+  的 `f64` 相等、这 12 条正是关系入参）。**L6 缝故意不接**：`sheet_families` 那张
+  注册表描述 `Sheet*` 家族，而这四个只在 `JSite<N>/PSMcluster0` 里，注册一条
+  no-op emitter 等于声称它们会上 sheet。尚未挂到 `PidDocument`。
 - 「删了没清」还是「没落盘」偏向后者：这一族**两半各自独立落盘、两边都能缺**
   （`JSite151`/`JSite396`/`JSite6963` 反过来是有长形却没有一条 `0x00C7`/`0x00EA`），
   而且**「活 id 没有记录」本来就是常态**（各存储 167 / 70 / 312 / 639 条不等，顶层
