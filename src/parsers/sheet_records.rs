@@ -5744,10 +5744,9 @@ pub struct SymbolInformationVariable {
 
 /// One decoded `0x00BD` `JSymbolInformation` record.
 ///
-/// Two shapes share a 44-byte head. When `flags` is
-/// [`SYMBOL_INFORMATION_HAS_VARIABLES`] a variable table follows and
-/// [`Self::variables`] is populated; otherwise the record stops at the head
-/// (or a 6-byte zero tail) and the vector is empty.
+/// Two shapes share a 44-byte head. When `flags` is `0x0010` a variable
+/// table follows and [`Self::variables`] is populated; otherwise the record
+/// stops at the head (or a 6-byte zero tail) and the vector is empty.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PsmSymbolInformationDecoded {
     /// Byte range covering the full PSM record.
