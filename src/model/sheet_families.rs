@@ -470,8 +470,7 @@ mod tests {
         // Every registry family registers exactly one emitter, and no
         // emitter serves a family the registry does not know — the L6
         // counterpart of the cluster-wiring test.
-        let mut registry_names: Vec<&str> =
-            SHEET_RECORD_FAMILIES.iter().map(|f| f.name).collect();
+        let mut registry_names: Vec<&str> = SHEET_RECORD_FAMILIES.iter().map(|f| f.name).collect();
         registry_names.sort_unstable();
         let mut emitter_names: Vec<&str> = emitters.iter().map(|(name, _)| *name).collect();
         emitter_names.sort_unstable();

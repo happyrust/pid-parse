@@ -129,7 +129,10 @@ fn main() {
 
     println!("=== igTextBox: shape (+18) x tail kind (+20) ===");
     println!("chain records: {total}\n");
-    println!("{:>6} {:>10} {:>10} {:>10}", "shape", "tail kind", "records", "accepted");
+    println!(
+        "{:>6} {:>10} {:>10} {:>10}",
+        "shape", "tail kind", "records", "accepted"
+    );
     for ((sub, kind), count) in &cross {
         println!(
             "{sub:>6} {kind:>10} {count:>10} {:>10}",

@@ -111,19 +111,22 @@ fn main() {
             let (reason, inline) = if btf < IGTEXTBOX_PAYLOAD_OVERHEAD {
                 ("btf below the 68-byte floor", None)
             } else {
-                match payload.and_then(|p| {
-                    p.get(30..32)
-                        .map(|b| u16::from_le_bytes([b[0], b[1]]))
-                }) {
+                match payload.and_then(|p| p.get(30..32).map(|b| u16::from_le_bytes([b[0], b[1]])))
+                {
                     None => ("payload truncated", None),
-                    Some(inline) if inline > 1024 => ("stated length above the 1024 cap", Some(inline)),
+                    Some(inline) if inline > 1024 => {
+                        ("stated length above the 1024 cap", Some(inline))
+                    }
                     Some(inline) => {
                         let text_end = TEXT_START + 2 * inline as usize;
                         let len = payload.map_or(0, <[u8]>::len);
                         if text_end + 36 > len {
                             ("no room for the stated text plus the tail", Some(inline))
                         } else {
-                            ("a trailing double is non-finite or out of domain", Some(inline))
+                            (
+                                "a trailing double is non-finite or out of domain",
+                                Some(inline),
+                            )
                         }
                     }
                 }
@@ -131,8 +134,8 @@ fn main() {
             *by_reason.entry(reason).or_default() += 1;
 
             // Whatever it states, is there a label sitting at +32?
-            let sample = payload
-                .and_then(|p| utf16_at(p, TEXT_START, inline.unwrap_or(0).min(40) as usize));
+            let sample =
+                payload.and_then(|p| utf16_at(p, TEXT_START, inline.unwrap_or(0).min(40) as usize));
             let is_readable = sample.as_deref().is_some_and(reads_as_text);
             if is_readable {
                 readable += 1;

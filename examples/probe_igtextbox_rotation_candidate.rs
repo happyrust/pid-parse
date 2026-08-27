@@ -196,7 +196,10 @@ fn main() {
     println!("rotation can be stored as a direction vector instead of an angle, and");
     println!("their counts are complementary. If that is what they are, every record");
     println!("satisfies d3^2 + d4^2 == 1 and the pair names an angle.");
-    println!("{:>10} {:>10}  angles seen (deg x count)", "unit", "off-unit");
+    println!(
+        "{:>10} {:>10}  angles seen (deg x count)",
+        "unit", "off-unit"
+    );
     println!(
         "{:>10} {:>10}  {}",
         pair_unit,

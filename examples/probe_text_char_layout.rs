@@ -170,9 +170,7 @@ fn main() {
 
     println!("=== native JStyleTextChar layout, checked against the corpus ===");
     println!("0x002C records: {total}\n");
-    println!(
-        "payload length == 70 + 2*count : {size_formula_holds}/{total}"
-    );
+    println!("payload length == 70 + 2*count : {size_formula_holds}/{total}");
     for m in &mismatches {
         println!("  mismatch: {m}");
     }

@@ -151,9 +151,7 @@ fn main() {
                 }
                 for (slot, at) in METRICS.iter().enumerate() {
                     if let Some(v) = f64_at(&payload, *at) {
-                        *metrics[slot]
-                            .entry(format!("{v:.6}"))
-                            .or_default() += 1;
+                        *metrics[slot].entry(format!("{v:.6}")).or_default() += 1;
                     }
                 }
             }
