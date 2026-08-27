@@ -454,6 +454,192 @@ pub struct JSite {
     /// Every other embedded stream found inside the storage, sized
     /// and previewed for audit.
     pub raw_streams: Vec<EmbeddedStream>,
+    /// The symbol-information / expression family decoded out of this
+    /// site's `PSMcluster0`, when it holds any. `None` for the many sites
+    /// that carry only a `JProperties` blob.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_information: Option<JSiteSymbolInformation>,
+}
+
+/// The symbol-information / expression family of one `JSite`, decoded from
+/// its `PSMcluster0`.
+///
+/// The four record types form a parametric chain: a
+/// [`DecodedSymbolInformationRecord`] carries named variables, each
+/// variable's value is also persisted as a [`DecodedDoubleValueRecord`],
+/// those values are grouped by a [`DecodedVariablesRecord`], and a
+/// [`DecodedStandardRelationRecord`] feeds one into a `0x0115` dimension
+/// through a formula. Evidence:
+/// `docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`.
+///
+/// Audit-only: no member of this family produces geometry.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+pub struct JSiteSymbolInformation {
+    /// `0x00BD` `JSymbolInformation` records, in on-disk order.
+    pub symbol_informations: Vec<DecodedSymbolInformationRecord>,
+    /// `0x00C7` `Double Value Object` records.
+    pub double_values: Vec<DecodedDoubleValueRecord>,
+    /// `0x00EA` `Variables Object` groups.
+    pub variable_groups: Vec<DecodedVariablesRecord>,
+    /// `0x006F` `Standard Relation` records.
+    pub relations: Vec<DecodedStandardRelationRecord>,
+}
+
+impl JSiteSymbolInformation {
+    /// Whether the site held no record of this family at all.
+    pub fn is_empty(&self) -> bool {
+        self.symbol_informations.is_empty()
+            && self.double_values.is_empty()
+            && self.variable_groups.is_empty()
+            && self.relations.is_empty()
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::PsmDoubleValueDecoded`] — PSM type
+/// `0x00C7` `Double Value Object` (`exprdex.dll`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedDoubleValueRecord {
+    /// Inclusive byte-range start inside the cluster stream.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Persist id of the value object.
+    pub oid: u32,
+    /// The [`DecodedVariablesRecord`] group that owns it.
+    pub parent_ref: u32,
+    /// The value itself.
+    pub value: f64,
+}
+
+impl From<crate::parsers::sheet_records::PsmDoubleValueDecoded> for DecodedDoubleValueRecord {
+    fn from(record: crate::parsers::sheet_records::PsmDoubleValueDecoded) -> Self {
+        Self {
+            byte_start: record.byte_range.start,
+            byte_end: record.byte_range.end,
+            oid: record.oid,
+            parent_ref: record.parent_ref,
+            value: record.value,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::PsmVariablesDecoded`] — PSM type
+/// `0x00EA` `Variables Object` (`exprdex.dll`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedVariablesRecord {
+    /// Inclusive byte-range start inside the cluster stream.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Persist id of the group.
+    pub oid: u32,
+    /// Persist ids of the member value objects, in on-disk order.
+    pub members: Vec<u32>,
+}
+
+impl From<crate::parsers::sheet_records::PsmVariablesDecoded> for DecodedVariablesRecord {
+    fn from(record: crate::parsers::sheet_records::PsmVariablesDecoded) -> Self {
+        Self {
+            byte_start: record.byte_range.start,
+            byte_end: record.byte_range.end,
+            oid: record.oid,
+            members: record.members,
+        }
+    }
+}
+
+/// One named variable of a [`DecodedSymbolInformationRecord`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedSymbolVariable {
+    /// Variable name; only `Left`, `Right`, `Bottom` and `Top` appear in
+    /// the corpus.
+    pub name: String,
+    /// The variable's value, equal to the value of the
+    /// [`DecodedDoubleValueRecord`] it names.
+    pub value: f64,
+    /// Persist id of that value object.
+    pub value_ref: u32,
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::PsmSymbolInformationDecoded`] — PSM
+/// type `0x00BD` `JSymbolInformation` (`symbol.dex`), the class `PSMroots`
+/// also names `SymbolInformation`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedSymbolInformationRecord {
+    /// Inclusive byte-range start inside the cluster stream.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Persist id of the symbol-information object.
+    pub oid: u32,
+    /// Parent reference; zero on some records.
+    pub parent_ref: u32,
+    /// Two extents from the record head. Zero on the shape that carries no
+    /// variables; their geometric meaning is not settled.
+    pub extents: (f64, f64),
+    /// The named variables, empty on the stub shape.
+    pub variables: Vec<DecodedSymbolVariable>,
+}
+
+impl From<crate::parsers::sheet_records::PsmSymbolInformationDecoded>
+    for DecodedSymbolInformationRecord
+{
+    fn from(record: crate::parsers::sheet_records::PsmSymbolInformationDecoded) -> Self {
+        Self {
+            byte_start: record.byte_range.start,
+            byte_end: record.byte_range.end,
+            oid: record.oid,
+            parent_ref: record.parent_ref,
+            extents: record.extents,
+            variables: record
+                .variables
+                .into_iter()
+                .map(|variable| DecodedSymbolVariable {
+                    name: variable.name,
+                    value: variable.value,
+                    value_ref: variable.value_ref,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::PsmStandardRelationDecoded`] — PSM type
+/// `0x006F` `Assoc subsystem Standard Relation implementation`
+/// (`jengine.dll`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedStandardRelationRecord {
+    /// Inclusive byte-range start inside the cluster stream.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Persist id of the relation.
+    pub oid: u32,
+    /// Operand signature, e.g. `%>i%<i`.
+    pub signature: String,
+    /// Operand persist ids in signature order; the first is the output.
+    pub operands: Vec<u32>,
+    /// The formula, e.g. `0E$1+0.01`.
+    pub formula: String,
+}
+
+impl From<crate::parsers::sheet_records::PsmStandardRelationDecoded>
+    for DecodedStandardRelationRecord
+{
+    fn from(record: crate::parsers::sheet_records::PsmStandardRelationDecoded) -> Self {
+        Self {
+            byte_start: record.byte_range.start,
+            byte_end: record.byte_range.end,
+            oid: record.oid,
+            signature: record.signature,
+            operands: record.operands,
+            formula: record.formula,
+        }
+    }
 }
 
 /// Flattened `JProperties` payload — strings, key/value pairs, GUID

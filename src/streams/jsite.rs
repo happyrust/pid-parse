@@ -8,7 +8,7 @@
 
 use crate::config::ParseOptions;
 use crate::error::PidError;
-use crate::model::{EmbeddedStream, JSite, PidDocument};
+use crate::model::{EmbeddedStream, JSite, JSiteSymbolInformation, PidDocument};
 use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::PathBuf;
@@ -30,6 +30,30 @@ fn extract_unc_or_path(s: &str) -> String {
         }
     }
     s.to_string()
+}
+
+/// Run the four `PSMcluster0` decoders of the symbol-information /
+/// expression family over one site's cluster bytes.
+fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
+    use crate::parsers::sheet_records::{
+        decode_double_values, decode_standard_relations, decode_symbol_informations,
+        decode_variables,
+    };
+    JSiteSymbolInformation {
+        symbol_informations: decode_symbol_informations(data)
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+        double_values: decode_double_values(data)
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+        variable_groups: decode_variables(data).into_iter().map(Into::into).collect(),
+        relations: decode_standard_relations(data)
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+    }
 }
 
 /// Decode every top-level `JSite*` storage into
@@ -79,6 +103,19 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
             s.read_to_end(&mut data)?;
             site.has_ole_stream = true;
             site.ole_links = crate::parsers::string_scan::scan_ascii_strings(&data, 64);
+        }
+
+        // The symbol-information / expression family lives in this site's
+        // own cluster, never in a `Sheet*` stream, so it is decoded here
+        // rather than through the sheet pipeline.
+        let cluster_path = format!("{base}/PSMcluster0");
+        if let Ok(mut s) = cfb.open_stream(&cluster_path) {
+            let mut data = Vec::new();
+            s.read_to_end(&mut data)?;
+            let decoded = decode_symbol_information_family(&data);
+            if !decoded.is_empty() {
+                site.symbol_information = Some(decoded);
+            }
         }
 
         if options.keep_unknown_streams {

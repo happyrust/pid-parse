@@ -71,7 +71,13 @@
   **203 / 76 / 45 / 13**，并核对链接（203/203 值对象回到自己的组、12 个变量与值对象
   的 `f64` 相等、这 12 条正是关系入参）。**L6 缝故意不接**：`sheet_families` 那张
   注册表描述 `Sheet*` 家族，而这四个只在 `JSite<N>/PSMcluster0` 里，注册一条
-  no-op emitter 等于声称它们会上 sheet。尚未挂到 `PidDocument`。
+  no-op emitter 等于声称它们会上 sheet。
+- **挂上了 `JSite::symbol_information`**（不是 `ClusterInfo`：`parse_clusters` 只开
+  顶层 `/PSMcluster0`，而这一族只在 `JSite<N>/PSMcluster0` 里，`parse_jsites` 是唯一
+  到得了的地方）。新增 `JSiteSymbolInformation` + 四个 `Decoded*Record` 模型 DTO
+  与 `From`，`Option` + `skip_serializing_if`，没有这一族的站点序列化后一个字节不多。
+  棘轮加断言：文档 surface 的四个计数与直接解码相等，7 个有 `PSMcluster0` 的站点
+  全都带这一族。
 - 「删了没清」还是「没落盘」偏向后者：这一族**两半各自独立落盘、两边都能缺**
   （`JSite151`/`JSite396`/`JSite6963` 反过来是有长形却没有一条 `0x00C7`/`0x00EA`），
   而且**「活 id 没有记录」本来就是常态**（各存储 167 / 70 / 312 / 639 条不等，顶层

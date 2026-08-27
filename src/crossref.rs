@@ -809,6 +809,7 @@ mod tests {
             ole_links: vec![],
             properties: JProperties::default(),
             raw_streams: vec![],
+            symbol_information: None,
         }
     }
 

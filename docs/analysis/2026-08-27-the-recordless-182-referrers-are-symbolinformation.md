@@ -299,8 +299,13 @@ id、都没有自己的条目、只带 182 这一个 tag——和一条方向指
 > 那张注册表描述的是 **`Sheet*` 家族**；这四个家族只在 `JSite<N>/PSMcluster0` 里
 > 出现，往那张表里加一条（哪怕是 no-op emitter）等于声称它们会出现在 sheet 上，
 > 那是假的。所以**故意不注册、不给 emitter**，理由记在解码器上方的模块注释里。
-> 它们也还没挂到 `PidDocument`（`ClusterInfo` 目前只存原始 cluster），要挂是下一
-> 步，会动 schema。
+**模型surface（同日补）**：挂在 **`JSite::symbol_information`** 上，不是
+`ClusterInfo`——`parse_clusters` 只开顶层 `/PSMcluster0`，而这一族只在
+`JSite<N>/PSMcluster0` 里；`parse_jsites` 本来就逐个走这些存储，是唯一到得了的地方。
+新增 `JSiteSymbolInformation` + 四个 `Decoded*Record` 模型 DTO（带 `From`），
+`Option` + `skip_serializing_if`，所以没有这一族的站点序列化后一个字节不多。棘轮里加了
+一条：文档 surface 数出来的四个计数必须与直接解码相等，且**7 个**有 `PSMcluster0`
+的站点全都带这一族。
 
 **下一步**：
 
@@ -311,8 +316,7 @@ id、都没有自己的条目、只带 182 这一个 tag——和一条方向指
 - 公式串开头那两个字符 `0E` 每条都有，含义未定（版本？值类型？）；`+12` 那个
   13/13 恒定的 GUID 和操作数槽里的 `0145EEC0-…` 都不在 `jutil.dll` 的注册表里，
   多半是接口 IID 而不是 coclass，要认得换一份注册表。
-- 把这一族挂到 `PidDocument` 上（大概是 `ClusterInfo` 加一个可选字段），让
-  `pid-parse` 的消费者不用自己走 `PSMcluster0`；会动 JSON schema，单独一轮。
+- 这一族还没有 probe example（`examples/probe_*`），清单上就差这一项。
 - `SymbolInformationCluster` 这条线索**本语料已否**（§4）。要接着追只能出文件：
   外部 `.igr` 模板，或回 IDA 看 `sub_100017C0` 的读写两侧。
 - `PSMsegmenttable` 的标志字节现在有了语义（段是否在用，4/4 存储一致），

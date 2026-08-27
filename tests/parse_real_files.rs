@@ -2883,6 +2883,41 @@ fn symbol_information_family_decodes_across_fixtures() {
         "the twelve variables whose value object is in the same storage should agree with \
          it, and those same twelve should be the relations' inputs"
     );
+
+    // The same records, reached the way a consumer would: off the parsed
+    // document's JSite surface rather than by walking the cluster.
+    let mut surfaced = (0usize, 0usize, 0usize, 0usize);
+    let mut sites_with_family = 0usize;
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        for site in &doc.jsites {
+            let Some(family) = &site.symbol_information else {
+                continue;
+            };
+            sites_with_family += 1;
+            surfaced.0 += family.double_values.len();
+            surfaced.1 += family.variable_groups.len();
+            surfaced.2 += family.symbol_informations.len();
+            surfaced.3 += family.relations.len();
+        }
+    }
+    assert_eq!(
+        surfaced,
+        (values, groups, symbols, relations),
+        "PidDocument's JSite surface should carry exactly what the decoders find"
+    );
+    assert_eq!(
+        sites_with_family, 7,
+        "the seven JSite storages with a PSMcluster0 all hold at least a JSymbolInformation; \
+         the rest of the sites carry only JProperties"
+    );
 }
 
 #[test]
