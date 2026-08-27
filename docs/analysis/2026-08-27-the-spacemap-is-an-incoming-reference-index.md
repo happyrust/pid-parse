@@ -103,6 +103,12 @@ tag」就从目标的类变成了引用者的类。`PSMroots` 认出的名字全
 - **84/84**：每个持有 `(Y, 181)` 的条目 X，Y 的条目都反过来持有 `(X, 182)`。这是
   语料里唯一成对的 tag（另有 11 个 182 自环）。含义：igSymbol/igSmartFrame 在
   `+29`/`+156` 指它的 **site**，site 以 182 指回。
+- **这条 181 边就是 `igSymbol2d::jsite_ref`，两条独立证据对上了。** 解码器早从
+  payload 里（矩阵 tag 前 4 字节，Phase 35-C，132/132）读出每个符号的 `jsite_ref` =
+  它所在的 `JSite` 站点；而这里的空间表从**入边**这一侧给出同一个数：80 个 referrer
+  是 `0x00CE` 的 181 边上，`jsite_ref` 恰好等于条目（site）的持久 id，**80/80**（另 4
+  个 referrer 是 `0x003D igSmartFrame2d`，没有 `jsite_ref`）。棘轮在
+  `tests/parse_real_files.rs::psm_space_map_181_edges_match_igsymbol_jsite_ref`。
 - **四图恒定的引用者 id 2 是个真对象，不是流。** 本文初稿说「id 2 是 `/JSitesList`
   列表对象、没有 PSM 记录」——**错了**。复核发现 id 2 有自己的顶层 `PSMcluster0`
   记录：一条 12 字节 `0x0004`、`parent_ref = 1`（DocStore），四图一字节不差。它的类

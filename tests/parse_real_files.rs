@@ -1730,6 +1730,125 @@ fn psm_space_map_members_are_incoming_edges() {
     );
 }
 
+/// The tag-181 incoming edge and `igSymbol2d::jsite_ref` are the same fact
+/// reached two ways. A symbol placed in a site references it, so the site's
+/// space-map entry lists the symbol as an incoming reference tagged 181; and
+/// the symbol's own record states the site id at `jsite_ref` (the u32 before
+/// the placement-matrix tag). Decoding the referrer record and comparing the
+/// two must agree on every `igSymbol2d` edge -- 80 of the 84 tag-181 members
+/// across the four fixtures (the other four are `0x003D igSmartFrame2d`,
+/// which has no `jsite_ref`).
+#[test]
+fn psm_space_map_181_edges_match_igsymbol_jsite_ref() {
+    use std::collections::BTreeMap;
+    use std::io::Read;
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+    const SEGMENT_SHIFT: u32 = 13;
+
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+    fn storage_of(path: &str) -> String {
+        let norm = path.replace('\\', "/");
+        let norm = norm.strip_prefix('/').unwrap_or(&norm);
+        if let Some(at) = norm.find("PSMspacemap") {
+            norm[..at].trim_end_matches('/').to_string()
+        } else if let Some((pre, _)) = norm.rsplit_once('/') {
+            pre.to_string()
+        } else {
+            String::new()
+        }
+    }
+    fn segment_of(path: &str) -> Option<u32> {
+        let leaf = path.rsplit(['/', '\\']).next()?;
+        u32::from_str_radix(leaf.strip_prefix("0x")?, 16)
+            .ok()
+            .map(|address| address >> SEGMENT_SHIFT)
+    }
+
+    let mut matched = 0usize;
+    let mut mismatched: Vec<String> = Vec::new();
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let fpath = format!("test-file/{fixture}");
+        if !std::path::Path::new(&fpath).exists() {
+            continue;
+        }
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+
+        // storage -> symbol oid -> jsite_ref, via the real decoder.
+        let mut jsite_ref: BTreeMap<String, BTreeMap<u32, u32>> = BTreeMap::new();
+        let file = std::fs::File::open(&fpath).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        for stream_path in stream_paths {
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            let by_oid = jsite_ref.entry(storage_of(&stream_path)).or_default();
+            for symbol in pid_parse::parsers::sheet_records::decode_igsymbols(&data) {
+                by_oid.insert(symbol.oid, symbol.jsite_ref);
+            }
+        }
+
+        for (map_path, map) in &doc.psm_space_maps {
+            let Some(segment) = segment_of(map_path) else {
+                continue;
+            };
+            let by_oid = jsite_ref.get(&storage_of(map_path));
+            for entry in &map.entries {
+                let site_id = (segment << SEGMENT_SHIFT) | u32::from(entry.index);
+                for member in entry.live_members() {
+                    if member.tag != 181 {
+                        continue;
+                    }
+                    let Some(&referrer_jsite) = by_oid.and_then(|m| m.get(&member.value)) else {
+                        continue; // the 0x003D igSmartFrame2d referrers
+                    };
+                    any = true;
+                    if referrer_jsite == site_id {
+                        matched += 1;
+                    } else {
+                        mismatched.push(format!(
+                            "{fixture}: symbol {} on site {site_id} has jsite_ref {referrer_jsite}",
+                            member.value
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    if !any {
+        return;
+    }
+    assert!(
+        mismatched.is_empty(),
+        "every igSymbol2d tag-181 edge should have jsite_ref == the site entry: {mismatched:?}"
+    );
+    assert_eq!(
+        matched, 80,
+        "the four sheet fixtures should hold 80 igSymbol2d tag-181 edges, all agreeing"
+    );
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {

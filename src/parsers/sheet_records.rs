@@ -3797,6 +3797,13 @@ pub struct SheetIgSymbol2dDecoded {
     /// `JSite<id>` id, and the referenced site's `JProperties` names the
     /// `.sym` library path. See
     /// `docs/analysis/2026-07-26-phase35c-igsymbol2d-jsite-link.md`.
+    ///
+    /// The `PSMspacemap` corroborates this from a second, offset-independent
+    /// direction: the site's space-map entry records this symbol as an
+    /// incoming reference tagged `181`, and this `jsite_ref` equals that
+    /// entry's persist id on all 80 `igSymbol2d` edges across the four sheet
+    /// fixtures (`psm_space_map_181_edges_match_igsymbol_jsite_ref`, and
+    /// `docs/analysis/2026-08-27-the-spacemap-is-an-incoming-reference-index.md`).
     pub jsite_ref: u32,
     /// Style id the placement names for its body's line work, read as
     /// the u32 at payload `+25` — a fixed offset, unlike the tag-relative
@@ -3918,7 +3925,8 @@ fn decode_igsymbol_payload(
     let matrix_at = tag_at + IGSYMBOL2D_MATRIX_TAG.len();
 
     // The u32 immediately before the matrix tag is the `JSite<id>`
-    // storage id of the placed symbol (Phase 35-C, 132/132 records).
+    // storage id of the placed symbol (Phase 35-C, 132/132 records; the
+    // PSMspacemap's tag-181 incoming edge agrees, 80/80).
     let jsite_at = tag_at.checked_sub(4)?;
     let jsite_ref = u32::from_le_bytes([
         payload[jsite_at],
