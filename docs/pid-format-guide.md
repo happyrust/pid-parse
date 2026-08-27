@@ -325,13 +325,27 @@ RTTI / COM 类工厂），**等级：native-reader**。
 | `0x00EA` | `72C7EAB1-A512-11D0-9383-080036C61102` | `exprdex.dll` | **Variables Object** |
 
 `0x00BD` 的名字有两条独立证据：type code 表查出 `JSymbolInformation`，而
-`PSMroots` 在每个 `JSite` 里直接把这些 id 叫 `SymbolInformation`。一条
-`JSymbolInformation` 长形记录内联一张**命名变量表**（`Left`/`Right`/`Bottom`/`Top`，
-每个带一个 `f64` 和它的 `Double Value Object` id），那些值同时作为 `0x00C7` 单独
-落盘、由一条 `0x00EA` 收成一组。**注意：表达式子系统的对象和图元混在同一条记录链
-里**，按 type code 分家族时别默认「一条记录就是一个图元」。这一族是 §3.2 里
-「182 有 191 个 value 没有记录」的全部来源，见
-`docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。
+`PSMroots` 在每个 `JSite` 里直接把这些 id 叫 `SymbolInformation`。整族串起来是一条
+**参数化链**，四张图 13 条 `0x006F` 全部字节精确解开：
+
+```text
+JSymbolInformation (0x00BD 长形)  内联命名变量表 Left/Right/Bottom/Top
+        │  每个变量一个 f64 + 一个 ──▶ Double Value Object (0x00C7)
+        │                                      ▲
+        │  这些值由一条 ──▶ Variables Object (0x00EA) 收成一组
+        │                                      │ 入参
+        └──────────  Standard Relation (0x006F) ┤ 出参 ──▶ JDim Object (0x0115)
+                     内含 JBExpression + 公式 `0E$1` / `0E$1+0.01` / `0E($1+$2)/10`
+```
+
+所以每条 `0x00C7` 恰有两个引用者：**给它起名的符号信息** + **把它喂进尺寸的关系**。
+`0x006F` 的帧是「常量 GUID + `JBExpression` CLSID + 值类型 CLSID + ASCII 签名
+`%>i%<i`（`%>` 出参 / `%<` 入参）+ 每个 `%` 一个 `{u32 oid, 接口 GUID}` 槽 + 收尾的
+UTF-16 公式」。
+
+**注意：表达式子系统的对象和图元混在同一条记录链里**，按 type code 分家族时别默认
+「一条记录就是一个图元」。这一族也是 §3.2 里「182 有 191 个 value 没有记录」的全部
+来源，见 `docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。
 
 **样式族（都在 `style.dll`，CLSID `47FCC331`…`47FCC338` 连号）**
 

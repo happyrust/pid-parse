@@ -229,6 +229,39 @@ id、都没有自己的条目、只带 182 这一个 tag——和一条方向指
 说 `DWG-0202` 这 191 条，「这一层没写」比「一次删掉 71 个对象、反指一个没清」简单
 得多。**留作倾向性结论，不当定论。**
 
+### 4.3 `0x006F` 解开了：变量经表达式驱动尺寸，这一族齐了
+
+每个 `0x00C7` 在健康文件里有**两个**引用者，第二个就是 `0x006F`。13 条全语料
+`0x006F` **按一个读法全部吃到最后一个字节**：
+
+```text
++0   u32  oid ; +4 parent_ref(0) ; +8 0
++12  GUID  92DD9660-37B4-11CE-AB4F-08003601C6EB   —— 13/13 恒定，jutil 注册表里没有
++38  GUID  DE264241-E929-11CE-A608-080036C61102   —— `JBExpression object`（exprdex.dll）
++58  GUID  D97A3FB0-1601-11CE-B7EE-08003601E53B   —— `Double Value Object`，表达式的值类型
+     u32 长度 + ASCII 签名     —— `%>i%<i`（`%>` 出参、`%<` 入参，`i` 是类型字母）
+     每个 `%` 一个操作数槽 { u32 oid ; GUID 0145EEC0-1602-11CE-B7EE-08003601E53B }
+     u32 字符数 + UTF-16 公式   —— 正好收在 payload 末尾
+```
+
+**操作数才是答案**：出参 **13/13 都是 `0x0115` JDim Object**（尺寸），入参是
+**12 条 `0x00C7` Double Value**（另 2 条入参是 `0x0115`，出自那条唯一的三操作数
+关系）。公式一共四种：`0E$1`（8 条）、`0E$1+0.01`（2）、`0E$1+0.1`（2）、
+`0E($1+$2)/10`（1）。
+
+而那 **12 条 Double Value 正是 §4.1 二分里「被活着的长形列着」的那 12 条**。所以每
+条 `0x00C7` 身上两个引用者是两件不同的事：
+
+> **`JSymbolInformation` 给它起名**（`Left`/`Right`/`Bottom`/`Top`），
+> **`Standard Relation` 把它喂进一个尺寸**（`JDim = 0E$1 + 0.01` 之类）。
+
+这也把 `DWG-0202` 解释到底了：`JSite793` **一条 `0x0115` 都没有**，所以没有尺寸、
+自然没有关系（`0x006F` 为 0）；188 条 Double Value 只剩下命名那一侧的入边，而那一侧
+的记录没落盘。反过来说，如果那 71 个 phantom 是「被删的对象」，同一批 `0x00C7`
+身上该出现**两个** phantom 成员才对——实测每条只有**一个**。这是 §4.2 倾向 (b) 的
+第三条旁证。棘轮：
+`tests/parse_real_files.rs::standard_relation_binds_a_double_value_to_a_dimension`。
+
 ## 5. 对既有结论的影响
 
 - 入边方向、13 个 tag 的家族表、所有既有计数**一个没变**。
@@ -244,10 +277,11 @@ id、都没有自己的条目、只带 182 这一个 tag——和一条方向指
 
 ## 6. 已落地与下一步
 
-**已落地**：本文 + 三条棘轮
+**已落地**：本文 + 四条棘轮
 （`psm_space_map_recordless_referrers_only_sit_on_0x00c7_entries`、
 `psm_roots_symbol_information_is_the_only_root_without_a_record`、
-`symbol_information_long_form_lists_the_0x00c7_it_refers_to`）+ guide §3.2/§3.3/§4
+`symbol_information_long_form_lists_the_0x00c7_it_refers_to`、
+`standard_relation_binds_a_double_value_to_a_dimension`）+ guide §3.2/§3.3/§4
 的相应段落 + `PsmRootEntry::id` 的 rustdoc 订正。**解码行为零变化。**
 
 **下一步**：
@@ -255,10 +289,13 @@ id、都没有自己的条目、只带 182 这一个 tag——和一条方向指
 - 头上那两个 `f64`（如 0.1016 / 0.17145，看着像米）和每个变量那个 `f64` 的几何
   含义还没对上——`Left`/`Right` 共用一个值、`Bottom`/`Top` 共用另一个，但都不等于
   两个尺寸的一半，所以不是简单的半宽半高。要落实得拿符号的实际几何去比。
-- `0x006F`（`Assoc subsystem Standard Relation implementation`，165~212 字节，只在
-  有 `0x00C7` 的存储里出现，是每个变量的第二个引用者）整个没碰；它把变量关联到
-  什么，是这一族剩下的最后一块。
 - 若要把 §4.2 的 (a)/(b) 判死，得从写侧看长形的落盘条件。
+- 公式串开头那两个字符 `0E` 每条都有，含义未定（版本？值类型？）；`+12` 那个
+  13/13 恒定的 GUID 和操作数槽里的 `0145EEC0-…` 都不在 `jutil.dll` 的注册表里，
+  多半是接口 IID 而不是 coclass，要认得换一份注册表。
+- 这一族现在四个类名、三条记录的字节全解（`0x00BD` 长形、`0x00EA`、`0x006F`），
+  但**都还没接进解码器**——要接就走 AGENTS.md 的两缝模板，且它们是审计族、
+  不该 emit 几何。
 - `SymbolInformationCluster` 这条线索**本语料已否**（§4）。要接着追只能出文件：
   外部 `.igr` 模板，或回 IDA 看 `sub_100017C0` 的读写两侧。
 - `PSMsegmenttable` 的标志字节现在有了语义（段是否在用，4/4 存储一致），
@@ -272,4 +309,6 @@ cd pid-parse
 cargo test --test parse_real_files psm_space_map_recordless_referrers_only_sit_on_0x00c7_entries
 cargo test --test parse_real_files psm_roots_symbol_information_is_the_only_root_without_a_record
 cargo test --test parse_real_files symbol_information_long_form_lists_the_0x00c7_it_refers_to
+cargo test --test parse_real_files standard_relation_binds_a_double_value_to_a_dimension
+python tools/psm_type_clsid.py 0xBD 0xC7 0xEA 0x6F
 ```

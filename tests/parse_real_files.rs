@@ -2503,6 +2503,233 @@ fn symbol_information_long_form_lists_the_0x00c7_it_refers_to() {
     );
 }
 
+/// `0x006F` closes the family: a variable drives a dimension through a
+/// formula.
+///
+/// The type-code table calls it `Assoc subsystem Standard Relation
+/// implementation` (`jengine.dll`), and the payload says what it relates. A
+/// constant class GUID at `+12`, the `JBExpression object` CLSID at `+38`,
+/// the `Double Value Object` CLSID at `+58` for the expression's value type,
+/// then a `u32`-counted ASCII signature (`%>i%<i`, `%>` for the output
+/// operand and `%<` for each input), one `u32 oid` + interface-GUID slot per
+/// marker, and a `u32`-counted UTF-16 formula that ends the payload exactly.
+/// All thirteen decode with nothing left over.
+///
+/// The operands are the point. The output is always an `0x0115` JDim, and
+/// the inputs are the `0x00C7` Double Value Objects — the same twelve a
+/// surviving `JSymbolInformation` long form lists. So each of those values
+/// has exactly two referrers for two different reasons: the symbol
+/// information that names it `Left` / `Right` / `Bottom` / `Top`, and the
+/// relation that feeds it into a dimension.
+#[test]
+fn standard_relation_binds_a_double_value_to_a_dimension() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Read;
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+    /// `DE264241-E929-11CE-A608-080036C61102` — `JBExpression object`.
+    const EXPRESSION_CLSID: [u8; 16] = [
+        0x41, 0x42, 0x26, 0xDE, 0x29, 0xE9, 0xCE, 0x11, 0xA6, 0x08, 0x08, 0x00, 0x36, 0xC6, 0x11,
+        0x02,
+    ];
+    /// `D97A3FB0-1601-11CE-B7EE-08003601E53B` — `Double Value Object`.
+    const DOUBLE_VALUE_CLSID: [u8; 16] = [
+        0xB0, 0x3F, 0x7A, 0xD9, 0x01, 0x16, 0xCE, 0x11, 0xB7, 0xEE, 0x08, 0x00, 0x36, 0x01, 0xE5,
+        0x3B,
+    ];
+    /// `0145EEC0-1602-11CE-B7EE-08003601E53B` — the per-operand interface.
+    const OPERAND_IID: [u8; 16] = [
+        0xC0, 0xEE, 0x45, 0x01, 0x02, 0x16, 0xCE, 0x11, 0xB7, 0xEE, 0x08, 0x00, 0x36, 0x01, 0xE5,
+        0x3B,
+    ];
+
+    fn u16_at(data: &[u8], at: usize) -> Option<u16> {
+        Some(u16::from_le_bytes(data.get(at..at + 2)?.try_into().ok()?))
+    }
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+    fn storage_of(path: &str) -> String {
+        let norm = path.replace('\\', "/");
+        let norm = norm.strip_prefix('/').unwrap_or(&norm);
+        if let Some((pre, _)) = norm.rsplit_once('/') {
+            pre.to_string()
+        } else {
+            String::new()
+        }
+    }
+    fn find(haystack: &[u8], needle: &[u8; 16], from: usize) -> Option<usize> {
+        (from..haystack.len().saturating_sub(15)).find(|at| &haystack[*at..*at + 16] == needle)
+    }
+
+    /// `(signature, operand oids, formula)`, or `None` when the payload does
+    /// not end exactly where the reading says it should.
+    fn relation(payload: &[u8]) -> Option<(String, Vec<u32>, String)> {
+        if find(payload, &EXPRESSION_CLSID, 0)? != 38 {
+            return None;
+        }
+        let mut at = find(payload, &DOUBLE_VALUE_CLSID, 0)? + 16;
+        let signature = String::from_utf8(
+            payload
+                .get(at + 4..at + 4 + u32_at(payload, at)? as usize)?
+                .iter()
+                .take_while(|byte| **byte != 0)
+                .copied()
+                .collect(),
+        )
+        .ok()?;
+        at += 4 + u32_at(payload, at)? as usize;
+        let mut operands = Vec::new();
+        while let Some(slot) = find(payload, &OPERAND_IID, at) {
+            operands.push(u32_at(payload, slot - 4)?);
+            at = slot + 16;
+        }
+        let chars = u32_at(payload, at)? as usize;
+        (at + 4 + chars * 2 == payload.len()).then(|| {
+            let formula: String =
+                char::decode_utf16((0..chars).map_while(|i| u16_at(payload, at + 4 + i * 2)))
+                    .filter_map(Result::ok)
+                    .filter(|glyph| *glyph != '\0')
+                    .collect();
+            (signature, operands, formula)
+        })
+    }
+
+    // oid -> the (type code, payload) of every record carrying that oid.
+    type ByOid = BTreeMap<u32, Vec<(u16, Vec<u8>)>>;
+
+    let mut relations = 0usize;
+    let mut exact = 0usize;
+    let mut signatures: BTreeMap<String, usize> = BTreeMap::new();
+    let mut formulas: BTreeMap<String, usize> = BTreeMap::new();
+    let mut output_families: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut input_families: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut double_value_inputs: BTreeSet<(String, u32)> = BTreeSet::new();
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+
+        let mut records: BTreeMap<String, ByOid> = BTreeMap::new();
+        let file = std::fs::File::open(&path).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        for stream_path in stream_paths {
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            let by_oid = records.entry(storage_of(&stream_path)).or_default();
+            for at in pid_parse::parsers::sheet_records::sheet_record_starts(&data) {
+                let (Some(type_word), Some(len)) = (u16_at(&data, at), u32_at(&data, at + 2))
+                else {
+                    continue;
+                };
+                let Some(payload) = data.get(at + 6..at + 6 + len as usize) else {
+                    continue;
+                };
+                let Some(oid) = u32_at(payload, 0) else {
+                    continue;
+                };
+                by_oid
+                    .entry(oid)
+                    .or_default()
+                    .push((type_word & 0x3FFF, payload.to_vec()));
+            }
+        }
+
+        for (storage, by_oid) in &records {
+            for found in by_oid.values() {
+                for (code, payload) in found {
+                    if *code != 0x006F {
+                        continue;
+                    }
+                    any = true;
+                    relations += 1;
+                    let Some((signature, operands, formula)) = relation(payload) else {
+                        continue;
+                    };
+                    if signature.matches('%').count() != operands.len() {
+                        continue;
+                    }
+                    exact += 1;
+                    *signatures.entry(signature).or_default() += 1;
+                    *formulas.entry(formula).or_default() += 1;
+                    for (index, operand) in operands.iter().enumerate() {
+                        let family = by_oid
+                            .get(operand)
+                            .and_then(|rows| rows.first().map(|(code, _)| *code))
+                            .unwrap_or_default();
+                        if index == 0 {
+                            *output_families.entry(family).or_default() += 1;
+                        } else {
+                            *input_families.entry(family).or_default() += 1;
+                            if family == 0x00C7 {
+                                double_value_inputs.insert((storage.clone(), *operand));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !any {
+        return;
+    }
+
+    assert_eq!(
+        (relations, exact),
+        (13, 13),
+        "all thirteen 0x006F relations should decode with the operand count the signature \
+         promises and a formula that ends the payload"
+    );
+    assert_eq!(
+        signatures,
+        BTreeMap::from([("%>i%<i".to_string(), 12), ("%>i%<i%<i".to_string(), 1)]),
+        "a relation should take one output and one or two inputs"
+    );
+    assert_eq!(
+        formulas,
+        BTreeMap::from([
+            ("0E$1".to_string(), 8),
+            ("0E$1+0.01".to_string(), 2),
+            ("0E$1+0.1".to_string(), 2),
+            ("0E($1+$2)/10".to_string(), 1),
+        ]),
+        "the corpus should hold these four formulas"
+    );
+    assert_eq!(
+        (output_families, input_families),
+        (
+            BTreeMap::from([(0x0115, 13)]),
+            BTreeMap::from([(0x00C7, 12), (0x0115, 2)])
+        ),
+        "the output operand should always be a JDim, and twelve inputs should be the \
+         Double Value Objects"
+    );
+    assert_eq!(
+        double_value_inputs.len(),
+        12,
+        "the twelve Double Value inputs are the twelve a JSymbolInformation long form lists"
+    );
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
