@@ -2227,6 +2227,280 @@ fn psm_roots_symbol_information_is_the_only_root_without_a_record() {
     );
 }
 
+/// The long form of `0x00BD` is what a missing referrer would have been.
+///
+/// `0x00BD` has two shapes behind one 44-byte head: a stub, and — when the
+/// `u16` at `+14` is `0x0010` — a `u32` count followed by that many connect
+/// points, each `u8 1`, `u32 1`, an `f64`, a `u16` char count, a UTF-16LE name
+/// (`Left` / `Right` / `Bottom` / `Top`) and the `u32` oid of the `0x00C7`
+/// record holding that point. The eight long forms in the corpus consume
+/// their payload to the last byte under that reading, and where the named
+/// `0x00C7` lives in the same storage its own `f64` at `+12` is the one the
+/// inline entry carries — the list and the leaf records are two views of one
+/// connect point.
+///
+/// The partition is the point. Every one of the 203 `0x00C7` records is
+/// either listed by a surviving long form (12) or carries a referrer with no
+/// record (191), never both and never neither. So the records the space map
+/// points at and cannot find are exactly the `SymbolInformation` long forms
+/// that would have listed those points.
+#[test]
+fn symbol_information_long_form_lists_the_0x00c7_it_refers_to() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Read;
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+    const SEGMENT_SHIFT: u32 = 13;
+    const HAS_CONNECT_POINTS: u16 = 0x0010;
+
+    fn u16_at(data: &[u8], at: usize) -> Option<u16> {
+        Some(u16::from_le_bytes(data.get(at..at + 2)?.try_into().ok()?))
+    }
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+    fn f64_at(data: &[u8], at: usize) -> Option<f64> {
+        Some(f64::from_le_bytes(data.get(at..at + 8)?.try_into().ok()?))
+    }
+    fn storage_of(path: &str) -> String {
+        let norm = path.replace('\\', "/");
+        let norm = norm.strip_prefix('/').unwrap_or(&norm);
+        if let Some(at) = norm.find("PSMspacemap") {
+            norm[..at].trim_end_matches('/').to_string()
+        } else if let Some((pre, _)) = norm.rsplit_once('/') {
+            pre.to_string()
+        } else {
+            String::new()
+        }
+    }
+    fn segment_of(path: &str) -> Option<u32> {
+        let leaf = path.rsplit(['/', '\\']).next()?;
+        u32::from_str_radix(leaf.strip_prefix("0x")?, 16)
+            .ok()
+            .map(|address| address >> SEGMENT_SHIFT)
+    }
+
+    /// `(f64, name, referenced oid)` per connect point, or `None` when the
+    /// payload does not end exactly where the reading says it should.
+    fn connect_points(payload: &[u8]) -> Option<Vec<(f64, String, u32)>> {
+        if u16_at(payload, 14)? != HAS_CONNECT_POINTS {
+            return None;
+        }
+        let mut at = 44usize;
+        let count = u32_at(payload, at)?;
+        at += 4;
+        let mut out = Vec::new();
+        for _ in 0..count {
+            if *payload.get(at)? != 1 || u32_at(payload, at + 1)? != 1 {
+                return None;
+            }
+            at += 5;
+            let value = f64_at(payload, at)?;
+            at += 8;
+            let chars = usize::from(u16_at(payload, at)?);
+            at += 2;
+            let name: String =
+                char::decode_utf16((0..chars).map_while(|i| u16_at(payload, at + i * 2)))
+                    .collect::<Result<_, _>>()
+                    .ok()?;
+            if name.chars().count() != chars {
+                return None;
+            }
+            at += chars * 2;
+            out.push((value, name, u32_at(payload, at)?));
+            at += 4;
+        }
+        (at == payload.len()).then_some(out)
+    }
+
+    // oid -> the (type code, payload) of every record carrying that oid.
+    type ByOid = BTreeMap<u32, Vec<(u16, Vec<u8>)>>;
+
+    let mut long_forms = 0usize;
+    let mut stubs = 0usize;
+    let mut points = 0usize;
+    let mut resolved_points = 0usize;
+    let mut value_agrees = 0usize;
+    let mut names: BTreeMap<String, usize> = BTreeMap::new();
+    let mut c7_total = 0usize;
+    let mut c7_listed = 0usize;
+    let mut c7_with_phantom = 0usize;
+    let mut c7_both = 0usize;
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+
+        let mut records: BTreeMap<String, ByOid> = BTreeMap::new();
+        let file = std::fs::File::open(&path).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        for stream_path in stream_paths {
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            let by_oid = records.entry(storage_of(&stream_path)).or_default();
+            for at in pid_parse::parsers::sheet_records::sheet_record_starts(&data) {
+                let (Some(type_word), Some(len)) = (u16_at(&data, at), u32_at(&data, at + 2))
+                else {
+                    continue;
+                };
+                let Some(payload) = data.get(at + 6..at + 6 + len as usize) else {
+                    continue;
+                };
+                let Some(oid) = u32_at(payload, 0) else {
+                    continue;
+                };
+                by_oid
+                    .entry(oid)
+                    .or_default()
+                    .push((type_word & 0x3FFF, payload.to_vec()));
+            }
+        }
+
+        // storage -> the 0x00C7 oids some surviving long form lists
+        let mut listed: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
+        for (storage, by_oid) in &records {
+            for found in by_oid.values() {
+                for (code, payload) in found {
+                    if *code != 0x00BD {
+                        continue;
+                    }
+                    any = true;
+                    let Some(entries) = connect_points(payload) else {
+                        assert_eq!(
+                            u16_at(payload, 14),
+                            Some(0),
+                            "{fixture}: a 0x00BD flagged 0x0010 did not decode as connect points"
+                        );
+                        stubs += 1;
+                        continue;
+                    };
+                    long_forms += 1;
+                    for (value, name, referenced) in entries {
+                        points += 1;
+                        *names.entry(name).or_default() += 1;
+                        listed
+                            .entry(storage.clone())
+                            .or_default()
+                            .insert(referenced);
+                        let Some(leaf) = by_oid.get(&referenced) else {
+                            continue;
+                        };
+                        for (leaf_code, leaf_payload) in leaf {
+                            if *leaf_code != 0x00C7 {
+                                continue;
+                            }
+                            resolved_points += 1;
+                            if f64_at(leaf_payload, 12) == Some(value) {
+                                value_agrees += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // storage -> the 0x00C7 oids whose entry names a referrer with no record
+        let mut with_phantom: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
+        for (map_path, map) in &doc.psm_space_maps {
+            let Some(segment) = segment_of(map_path) else {
+                continue;
+            };
+            let storage = storage_of(map_path);
+            let Some(by_oid) = records.get(&storage) else {
+                continue;
+            };
+            for entry in &map.entries {
+                let id = (segment << SEGMENT_SHIFT) | u32::from(entry.index);
+                let is_c7 = by_oid
+                    .get(&id)
+                    .is_some_and(|found| found.iter().any(|(code, _)| *code == 0x00C7));
+                if is_c7
+                    && entry
+                        .live_members()
+                        .iter()
+                        .any(|member| !by_oid.contains_key(&member.value))
+                {
+                    with_phantom.entry(storage.clone()).or_default().insert(id);
+                }
+            }
+        }
+
+        for (storage, by_oid) in &records {
+            let listed = listed.get(storage).cloned().unwrap_or_default();
+            let phantom = with_phantom.get(storage).cloned().unwrap_or_default();
+            for (oid, found) in by_oid {
+                if !found.iter().any(|(code, _)| *code == 0x00C7) {
+                    continue;
+                }
+                c7_total += 1;
+                if listed.contains(oid) {
+                    c7_listed += 1;
+                }
+                if phantom.contains(oid) {
+                    c7_with_phantom += 1;
+                }
+                if listed.contains(oid) && phantom.contains(oid) {
+                    c7_both += 1;
+                }
+            }
+        }
+    }
+
+    if !any {
+        return;
+    }
+
+    assert_eq!(
+        (long_forms, stubs, points),
+        (8, 37, 24),
+        "the corpus should hold 8 long-form 0x00BD records carrying 24 connect points, \
+         plus 37 records that stop at the head"
+    );
+    assert_eq!(
+        names,
+        BTreeMap::from([
+            ("Bottom".to_string(), 4),
+            ("Left".to_string(), 6),
+            ("Right".to_string(), 8),
+            ("Top".to_string(), 6),
+        ]),
+        "connect points should only be named for the four sides"
+    );
+    assert_eq!(
+        (resolved_points, value_agrees),
+        (12, 12),
+        "every connect point resolving to a 0x00C7 in the same storage should carry that \
+         record's own f64"
+    );
+    assert_eq!(
+        (c7_total, c7_listed, c7_with_phantom, c7_both),
+        (203, 12, 191, 0),
+        "every 0x00C7 is either listed by a surviving 0x00BD long form or carries a \
+         referrer with no record, never both"
+    );
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
