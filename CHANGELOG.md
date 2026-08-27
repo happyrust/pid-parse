@@ -17,11 +17,11 @@
   **value 是引用者，tag 是引用者的类**；184（ViewFilterSet）这类无 payload 对应的
   是只活在表里的应用层登记边。
 - 顺带：igSymbol2d 的 **`+29` 是 site 引用**；`181↔182` 是唯一成对的 tag
-  （84/84 互指：图形指 site、site 指回）；`/JSitesList` 流破了
-  （`'OLEM' + u32 数量 + u32 id 表`），**四图恒定的引用者 id 2 就是这个列表对象**，
-  `JSite` 的一般义是 OLE 站点；那条悬空边 369 是删掉的依赖记录留下的未清反指；
-  **1401 条记录的 `parent_ref` 非零却不进表**——这张表不索引 parent 链，不是全量
-  引用图。
+  （84/84 互指：图形指 site、site 指回）；`JSite` 条目上恒定的 `(2, 182)` = 站点列表
+  对象 2 引用本站点，而对象 2 是个真对象（12 字节 `0x0004`、`parent_ref = 1`，四图
+  一致），**不是** `/JSitesList` 流、也不是无记录对象；那条悬空边 369 是删掉的依赖
+  记录留下的未清反指；**1401 条记录的 `parent_ref` 非零却不进表**——这张表不索引
+  parent 链，不是全量引用图。
 - 收口：`PsmSpaceMapMember` 等 rustdoc、`psm_tables` 帧注释、guide §3.1/§3.2/§3.3
   按入边改写，guide §7 增第（三）条；测试改名
   `psm_space_map_every_referrer_carries_one_tag`（断言与棘轮不变）。解码行为零变化。

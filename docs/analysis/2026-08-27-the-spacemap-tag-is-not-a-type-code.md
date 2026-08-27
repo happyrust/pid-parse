@@ -13,7 +13,7 @@
 > **被指对象**读；join 之后证明 value 是**引用者**（见
 > `2026-08-27-the-spacemap-is-an-incoming-reference-index.md`）。所以本文认出的
 > 名字仍然成立，但含义要倒过来：tag 184 = 「被一个 `TopVFSet`/ViewFilterSet
-> **引用**」，182 = 「被 `_SupportOnlyList`/`JSitesList` 这类列表对象引用」，
+> **引用**」，182 = 「被 `_SupportOnlyList`、站点列表对象 2 这类列表对象引用」，
 > 261/225 = 「被指向 Server/Imagineer 文档的那个 `0x004F` 对象引用」。
 > 「tag 不是 type code」的否证不受影响。下文按原样保留，读时注意换向。
 
@@ -114,8 +114,8 @@ DWG-0202GP06-01  JSite793 = Server Document      -> (794,  tag 261)
 - `StyleLibrarian` id **8192** = `(1 << 13) | 0`，`Dynamic Attributes Set Table`
   id **16384** = `(2 << 13) | 0`。它们在第 1、2 段，而本语料只有第 0 段和第 3 段有
   member 流——**根 id 和 space map 的持久 id 是同一套编号**，这两条顺带把这点又证了一遍。
-- `Server Document` / `Imagineer Document` 有自己的条目（= 有人引用它们：id 2 那个
-  列表对象和一个 `0x004F` 对象），但它们的 id **从不作为 value 出现**——按订正后的
+- `Server Document` / `Imagineer Document` 有自己的条目（= 有人引用它们：站点列表
+  对象 2 和一个 `0x004F` 对象），但它们的 id **从不作为 value 出现**——按订正后的
   方向，就是它们自己不发出这张表索引的引用，所以身上没有 tag。
 - `DocStore` id 1 同理：从不作为 value 出现。
 
