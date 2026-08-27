@@ -180,16 +180,52 @@ u16  槽容量
 - 四张图的 tag 都取自同一个 14 值集合，没有一张冒出集合外的值（各图只用到其中一部分：
   D06 没有 `201`，0202 没有 `188`/`225`/`239`）。
 
-**tag 各自对应哪个类仍未坐实**——它们和 §4 那张 PSM type code 表对不上，`205`/`249`
-只是碰巧差 `JSymbol`(206)/`Dependency Object`(250) 一个数，别当规律。已知的一个锚点是
-`JSite`：`JSiteN` 的 `N` 就是顶层 id 空间里的持久 id，七个 `JSite`（四张图）的条目
-形状完全一致——head 高半 2、在用 2 槽、第一个成员恒为 `(2, tag 182)`；而且
-**顶层 map 里没有任何一条引用指向 `JSite`**，它们在这张引用图上是源点。
+**tag 是另一套类编号，不是 §4 那张 type code 表里的码。** 别拿那张表去套它，见下面
+§3.3。已知的一个锚点是 `JSite`：`JSiteN` 的 `N` 就是顶层 id 空间里的持久 id，
+七个 `JSite`（四张图）的条目形状完全一致——head 高半 2、在用 2 槽、第一个成员恒为
+`(2, tag 182)`；而且**顶层 map 里没有任何一条引用指向 `JSite`**，它们在这张引用图上
+是源点。
 
 **4. 有出边的对象才有条目。** 条目数远小于活 id 数：工艺图顶层第 0 段 `m_iNext` 7669、
 自由表 6219，活 id 约 1450，而这一段只有 337 条条目。被指到的对象也大多没有自己的条目
 （工艺图顶层这个 id 空间里 630 个被指对象，只有 193 个有条目）。所以这张表是**出边表**，
 不是对象清单——不能拿它当「文档有哪些对象」的答案。
+
+### 3.3 tag 不是 type code，两个类名已认出（2026-08-27）
+
+**等级：native-reader（否证）+ corpus（两个名字）。** 分析见
+`docs/analysis/2026-08-27-the-spacemap-tag-is-not-a-type-code.md`，probe 是
+`probe_psmspacemap_what_the_tag_names`。
+
+**否证只要一个对象。** `PSMroots` 四张图都写着 `id 20 = TopVFSet`，而这个 20 在顶层
+map 里恒定带 tag **184**。RAD 类注册表说 `TopVFSet` 的类是 `Top ViewFilterSet`
+（`viewfil.dex`），它的两个 CLSID 在 type code 表里坐在 **87** 和 **96**。87/96 ≠ 184。
+同一套工具查 `JSL Style Librarian` 回来是 90 = `0x005A`，正是 §4 已有的那个码，所以
+不是查表方法坏了。
+
+十三个一起看也一样：把 tag 当 type code 送进表里，13 个 GUID **一个都不在 RAD 类
+注册表里**（注册表在 `jutil.dll` / `i2mnuctl.ocx` / `igrresource412.dll` /
+`jcntrls412.ocx` 各有一份，四份都搜过），而本仓已解码的六个对照码全部有名字；码
+0..400 里 230 个有名字，单看 181..261 这段 81 个码里 39 个有名字。13/13 落进没名字的
+那一半，约 1/4000。
+
+**认出来的两个**，靠 `PSMroots` 的 `id → 名字`：
+
+| tag | 名字 | 各图 id | 一致性 |
+|---|---|---|---|
+| `184` | `TopVFSet` / `Top ViewFilterSet` | 20 / 20 / 20 / 20 | 4/4 |
+| `182` | `_SupportOnlyList` | 25 / 25 / 25 / **26** | 4/4 |
+
+`_SupportOnlyList` 的 id 不是四图都一样，所以对上的是**名字**不是号。
+
+**另外两个只有结构没有名字**：每个 `JSite` 条目是 `[(2, tag 182), (X, tag ?)]`，而
+`PSMroots` 说 `JSite` 叫 `Server Document` 或 `Imagineer Document`——前者一律配
+tag `261`，后者一律配 `225`，零例外。全语料 261 恰好 4 次（四个 Server Document），
+225 恰好 3 次，而唯一没有 `Imagineer Document` 的 `DWG-0202` 正是唯一没有 225 的图。
+
+> 顺带：`StyleLibrarian` 的根 id 是 `8192 = (1<<13)|0`、`Dynamic Attributes Set Table`
+> 是 `16384 = (2<<13)|0`，落在本语料没有 member 流的第 1、2 段——**根 id 和 space map
+> 的持久 id 是同一套编号**，这是它的又一条旁证。
 
 ## 4. type code 对照表
 

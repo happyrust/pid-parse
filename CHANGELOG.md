@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### `PSMspacemap` 的 tag 不是 type code，两个类名认出来了（2026-08-27）
+
+- **否证只要一个对象。** `PSMroots` 四张图都写着 `id 20 = TopVFSet`，而 20 在顶层
+  space map 里恒定带 tag **184**。RAD 类注册表说它的类是 `Top ViewFilterSet`
+  （`viewfil.dex`），那两个 CLSID 在 `radsrvitem.dll` 的 type_code → CLSID 表里坐在
+  **87** 和 **96**。对照：同一套工具查 `JSL Style Librarian` 回来是 90 = `0x005A`，
+  正是 §4 已有的码，所以不是查表方法坏了。**别再拿 §4 的表去套 tag。**
+- 十三个一起看同向：13 个 GUID **一个都不在 RAD 类注册表里**（注册表在 `jutil.dll` /
+  `i2mnuctl.ocx` / `igrresource412.dll` / `jcntrls412.ocx` 各一份，四份都搜过），而
+  本仓已解码的六个对照码全部有名字；码 0..400 里 230 个有名字，181..261 这段 81 个里
+  39 个有名字。13/13 落进没名字的那一半，约 1/4000。
+- **认出两个**（靠 `PSMroots` 的 `id → 名字`，四图一致）：`184` = `TopVFSet` /
+  `Top ViewFilterSet`；`182` = `_SupportOnlyList`。后者的 id 不是四图都相同
+  （工艺图是 26），所以对上的是**名字**不是号。
+- **另外两个只有结构没有名字**：`PSMroots` 顺带说出 `JSite` 叫 `Server Document` /
+  `Imagineer Document`，而前者的条目一律配 tag `261`、后者一律配 `225`，零例外；
+  唯一没有 `Imagineer Document` 的 `DWG-0202` 正是唯一没有 225 的图。
+- **读器那条路走过了，是死路**：`sub_5647A900` 把成员区当一整块读进对象、一个字节
+  都不解释，而全 DLL 搜 13 个 tag 值的立即数比较**零命中**——`radsrvitem.dll` 从来
+  不测试 tag。tag 对持久层是透传数据，消费者在别的模块。顺带把 `sub_5647AB70` 说准：
+  紧凑形式先读 8 字节拆成两个 `u32`，再补上 tag `181`/`182`，所以那两个值是
+  「这种形式下每个对象都带的两个槽」。
+- 新增 probe `examples/probe_psmspacemap_what_the_tag_names.rs`，
+  `docs/pid-format-guide.md` 新增 §3.2 的续篇 §3.3。
+  证据：`docs/analysis/2026-08-27-the-spacemap-tag-is-not-a-type-code.md`。
+
 ### `PSMspacemap` 的两个哑字段解开：它存的是对象引用图（2026-08-27）
 
 - **`stated_span` → `live_member_count`**。它不是成员数的副本，是**在用槽数**；紧跟着的
