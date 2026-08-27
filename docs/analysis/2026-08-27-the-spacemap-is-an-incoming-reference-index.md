@@ -133,6 +133,14 @@ tag」就从目标的类变成了引用者的类。`PSMroots` 认出的名字全
 当 182 引用者出现**的对象（大概率是某个列表/支持结构内联存下的成员，其确切归属本轮
 未坐实）。这条留给下一轮，别再套「流对象」这个已否的解释。
 
+> ✅ **已在同日结掉**：它们是 `SymbolInformation` 对象。191/191 长在 `0x00C7`
+> 条目上；健康文件里同一个位置坐的是 `PSMroots` 写着 `SymbolInformation` 的
+> `0x00BD` 记录，而 `DWG-0202` 的 71 个无记录引用者里有 5 个根表仍然这么叫。
+> 全语料 96 条根记录里，`SymbolInformation` 是**唯一**会缺记录的名字（16/41）。
+> 证据链见 `2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。
+> 附带订正本节一句话：这些 value「全是活 id」在 `JSite793` 里近乎空话——那一段
+> 发满了 8192 个 index，只有 495 个有记录、79 个在自由表。
+
 ## 6. 这张表不是全量引用图
 
 - **1401 条记录的 payload+4（本仓叫 `parent_ref`）非零，却一条都不进表**（547 条
@@ -198,9 +206,11 @@ v12 = a2 & 0x1FFF;     // 段内 index
   `(目标 id, 引用者 id, 引用者类)`；它是 space-map 对象的一个 vtable 方法，调用方多半
   跨 DLL 虚调，静态搜不出——得从 vtable 或「6 步长成员写入」这一侧切进去，跟上一轮
   找消费者是同一堵墙。
-- 182 的 191 个无记录 value：「流对象」假说已否（§5.1）。真问题变成——`DWG-0202`
-  那 188 个活的、无独立记录、只当 182 引用者出现的对象，到底存在哪个结构里；
-  从 182 成员所在条目的记录家族反查是下一刀。
+- ~~182 的 191 个无记录 value~~ **已结**：从条目的记录家族反查这一刀切开了——
+  191/191 长在 `0x00C7` 上，那个位置在健康文件里坐的是 `SymbolInformation`
+  （`0x00BD`），见 `2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。
+  接着往下是「这些 `0x00BD` 记录去哪了」：`OLECRT.dll::sub_100017C0` 打开的
+  `SymbolInformationCluster`（外部嵌入 OLE 存储）是待验的线索。
 - 可选棘轮：把 §3 表里 100% 的几行（190/249/183/201/205/185/181）写成回归测试。
   **已落地**：`tests/parse_real_files.rs::psm_space_map_members_are_incoming_edges`。
 

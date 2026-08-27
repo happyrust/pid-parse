@@ -191,7 +191,15 @@ u16  槽容量
 | 261 / 225 / 239 | `0x004F` / `0x004F` / `0x0058` | 少数 `+14`/`+26` | 4/45、3/7、14/29 |
 
 184 这类「payload 里找不到」的边（视图过滤集成员关系等）是**只活在这张表里的应用层
-登记边**；其余是 payload 引用的镜像。`181↔182` 是语料里唯一成对的 tag：84/84，
+登记边**；其余是 payload 引用的镜像。
+
+> ⚠ 「payload 里找不到」和「引用者根本没有记录」是两回事，别混。184 的 306 条是前者
+> ——引用者记录在，只是不写这条引用。后者全语料只有 192 条：一条是 `DWG-0201` 那条
+> 悬空的 tag-249 边，另外 **191 条全是 tag 182，且全部长在 `0x00C7` 条目上**——引用者
+> 是 `SymbolInformation`（`0x00BD`）对象，这个存储没把它们的记录写下来。见 §3.3 和
+> `docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。
+
+`181↔182` 是语料里唯一成对的 tag：84/84，
 igSymbol / igSmartFrame 在 `+29` / `+156` 指它的 site，site 反过来以 182 指回
 （另有 11 个 182 自环）。
 
@@ -225,7 +233,7 @@ value 出现的对象，**每一个身上的 tag 都只有一种**，包括出�
 表**——`0x0003` 等家族的 parent 链完全不被索引。这张表只登记上表那十几种引用，
 既不能当对象清单，也不能当全量引用图。
 
-### 3.3 tag 不是 type code，两个类名已认出（2026-08-27）
+### 3.3 tag 不是 type code，三个类名已认出（2026-08-27）
 
 **等级：native-reader（否证）+ corpus（两个名字）。** 分析见
 `docs/analysis/2026-08-27-the-spacemap-tag-is-not-a-type-code.md`，probe 是
@@ -243,16 +251,25 @@ map 里作为引用者（value）出现时恒定带 tag **184**。RAD 类注册�
 0..400 里 230 个有名字，单看 181..261 这段 81 个码里 39 个有名字。13/13 落进没名字的
 那一半，约 1/4000。
 
-**认出来的两个**，靠 `PSMroots` 的 `id → 名字`（按 §3.2 的方向，这些名字是
+**认出来的三个**，靠 `PSMroots` 的 `id → 名字`（按 §3.2 的方向，这些名字是
 **引用者**的类——tag 184 的意思是「被一个 ViewFilterSet 引用」）：
 
 | tag | 引用者的名字 | 各图 id | 一致性 |
 |---|---|---|---|
 | `184` | `TopVFSet` / `Top ViewFilterSet` | 20 / 20 / 20 / 20 | 4/4 |
-| `182` | `_SupportOnlyList`（`0x0067` 一类的列表对象）| 25 / 25 / 25 / **26** | 4/4 |
+| `182` | `_SupportOnlyList`（`0x0067`，顶层）| 25 / 25 / 25 / **26** | 4/4 |
+| `182` | `SymbolInformation`（`0x00BD`，`JSite` 里）| 每站点数个 | 25/25 有记录时家族恒定 |
 
 `_SupportOnlyList` 的 id 不是四图都一样，所以对上的是**名字**不是号。182 还盖着对象 2
 （那个站点列表对象）等别的列表/容器对象，是 13 个 tag 里唯一明显跨家族的。
+
+**182 至少盖三个记录家族。** 顶层是 `_SupportOnlyList`（`0x0067`），`JSite` 里是
+`SymbolInformation`（`0x00BD`）和 `0x006F`，三者作为引用者时一律带 182。
+`SymbolInformation` 同样是 `PSMroots` 直接给的名字（`D06` 的 22、`DWG-0201` 的
+77/513、工艺图的 73），而且它是全语料 96 条根记录里**唯一一个会缺记录的名字**——41
+次出现只有 25 次解析到记录（解析到时家族恒为 `0x00BD`），缺的那 16 次正是 §3.2 里
+「182 有 191 个 value 没有记录」的由来。详见
+`docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。
 
 **另外两个只有结构没有名字**：每个 `JSite` 条目是 `[(2, tag 182), (X, tag ?)]`，而
 `PSMroots` 说 `JSite` 叫 `Server Document` 或 `Imagineer Document`——指着 Server

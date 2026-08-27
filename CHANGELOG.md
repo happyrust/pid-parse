@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### 那 191 个无记录的 182 引用者是 `SymbolInformation`（2026-08-27）
+
+- **191/191 长在 `0x00C7` 上。** 入边表里「`value` 找不到任何记录」的成员不是散
+  的：全语料 192 条无记录成员，一条是 `DWG-0201` 那条已知的悬空 tag-249 边，另外
+  **191 条全是 tag 182，且宿主条目全部是 `0x00C7` 记录**，且只出现在 `JSite`
+  存储里。`0x00C7` 是一整套结构：203 条全为 24 字节、**203/203 有条目**、
+  **203/203 的 `parent_ref` 指向一条 `0x00EA` 组容器**（`+13` 子数、`+21` 起
+  `子数 × u64` 子 id、尾部常量 321；子槽命中数 71/55/38/24 与组大小分布
+  16/17/14/24 互相印证），条目上的成员 tag **只有 182 一种**。
+- **身份由 `PSMroots` 给出。** 另外三张图里每个 `0x00C7` 条目带两个 182 成员，
+  引用者是一条 `0x00BD` 加一条 `0x006F`，而那条 `0x00BD` 正是根表写着
+  `SymbolInformation` 的对象（`D06` 22、`DWG-0201` 77/513、工艺图 73）。
+  `DWG-0202` 同一位置换成无记录 id，根表**仍把其中 5 个叫 `SymbolInformation`**。
+  横过来看全语料 96 条根记录：`SymbolInformation` 是**唯一一个会缺记录的名字**
+  （41 次里 25 次解析到记录，且家族恒为 `0x00BD`），`DocStore` / `StyleLibrarian`
+  / `TopVFSet` / `_SupportOnlyList` / 两个文档根 / DA 集合表全部 100% 有记录。
+- **为什么是 `DWG-0202`**：`JSite793` 是唯一一个有 `0x00C7` 却零 `0x006F` 的存储
+  （188↔0，别家 7↔5、4↔4、4↔4）；它的 `PSMcluster0` 跨两段 `[0, 3]`（别家 `[0]`），
+  段 0 的 `m_iNext` 顶在 8192 上限、自由表只剩 79。**顺带订正**：上一条说这些 value
+  「全是活 id」——在这个存储里近乎空话（8192 个 index 只有 495 个有记录），身份判定
+  不依赖它。
+- 线索（未证）：`OLECRT.dll::sub_100017C0` 在外部嵌入 OLE 存储里打开
+  `SymbolInformationCluster`——符号信息本来就有第二个家。
+- 落地：两条棘轮（`psm_space_map_recordless_referrers_only_sit_on_0x00c7_entries`、
+  `psm_roots_symbol_information_is_the_only_root_without_a_record`）、guide
+  §3.2/§3.3、`PsmRootEntry::id` 的 rustdoc（它是持久 id，不是「不透明类型标记」）。
+  解码行为零变化。证据：
+  `docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。
+
 ### 方向订正：`PSMspacemap` 是「谁引用我」的反向索引（2026-08-27）
 
 - **推翻两条同日结论**：①「成员是出边、tag 是被指对象的类」——方向反了；

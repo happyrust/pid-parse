@@ -1044,8 +1044,14 @@ pub struct PsmRoots {
 /// One decoded record from a [`PsmRoots`] stream.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PsmRootEntry {
-    /// Opaque 32-bit identifier (type tag). Seen values: 0x018C, 0x0149, 0x0019,
-    /// 0x0014, 0x4000, 0x2000, 0x0001, ...
+    /// Persist id of the named object, in the id space of the storage this
+    /// `PSMroots` belongs to — the same `(segment << 13) | index` numbering
+    /// the space map hands out, not an opaque type tag. 80 of the corpus's 96
+    /// root records resolve to a record with that oid in their own storage;
+    /// the 16 that do not are all `SymbolInformation`
+    /// (`tests/parse_real_files.rs::psm_roots_symbol_information_is_the_only_root_without_a_record`).
+    /// Values like `8192` / `16384` are `StyleLibrarian` and the dynamic
+    /// attribute set table sitting at index 0 of segments 1 and 2.
     pub id: u32,
     /// Offset inside the stream where this record starts (for debugging).
     pub offset: usize,

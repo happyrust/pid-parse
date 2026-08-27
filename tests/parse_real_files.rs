@@ -1849,6 +1849,384 @@ fn psm_space_map_181_edges_match_igsymbol_jsite_ref() {
     );
 }
 
+/// The members whose `value` names no record at all are not scattered: every
+/// one of them sits on a `0x00C7` entry, and `0x00C7` is one tight structure.
+///
+/// Each `0x00C7` is a 24-byte leaf whose `parent_ref` names an `0x00EA` group
+/// record, every one of them has a space-map entry, and every member on such
+/// an entry is tagged 182. Where the referrer does have a record it is a
+/// `0x00BD` (the object `PSMroots` calls `SymbolInformation`) or a `0x006F`,
+/// twelve of each; the other 191 members name nothing this storage persisted.
+/// That is the whole recordless population of the corpus apart from the one
+/// known stale `0x00FA` edge, so "no record" is a property of one layer of one
+/// structure, not a general class of object -- see
+/// `docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`.
+#[test]
+fn psm_space_map_recordless_referrers_only_sit_on_0x00c7_entries() {
+    use std::collections::BTreeMap;
+    use std::io::Read;
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+    const SEGMENT_SHIFT: u32 = 13;
+
+    fn u16_at(data: &[u8], at: usize) -> Option<u16> {
+        Some(u16::from_le_bytes(data.get(at..at + 2)?.try_into().ok()?))
+    }
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+    fn storage_of(path: &str) -> String {
+        let norm = path.replace('\\', "/");
+        let norm = norm.strip_prefix('/').unwrap_or(&norm);
+        if let Some(at) = norm.find("PSMspacemap") {
+            norm[..at].trim_end_matches('/').to_string()
+        } else if let Some((pre, _)) = norm.rsplit_once('/') {
+            pre.to_string()
+        } else {
+            String::new()
+        }
+    }
+    fn segment_of(path: &str) -> Option<u32> {
+        let leaf = path.rsplit(['/', '\\']).next()?;
+        u32::from_str_radix(leaf.strip_prefix("0x")?, 16)
+            .ok()
+            .map(|address| address >> SEGMENT_SHIFT)
+    }
+
+    // oid -> the (type code, payload) of every record carrying that oid.
+    type ByOid = BTreeMap<u32, Vec<(u16, Vec<u8>)>>;
+
+    let mut recordless_by_tag: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut recordless_on_c7 = 0usize;
+    let mut c7_records = 0usize;
+    let mut c7_with_entry = 0usize;
+    let mut c7_parent_is_0x00ea = 0usize;
+    let mut c7_member_tags: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut c7_referrer_families: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+
+        // storage -> oid -> (type code, payload) for every record-chain stream.
+        let mut records: BTreeMap<String, ByOid> = BTreeMap::new();
+        let file = std::fs::File::open(&path).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        for stream_path in stream_paths {
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            let starts = pid_parse::parsers::sheet_records::sheet_record_starts(&data);
+            let storage = records.entry(storage_of(&stream_path)).or_default();
+            for at in starts {
+                let (Some(type_word), Some(len)) = (u16_at(&data, at), u32_at(&data, at + 2))
+                else {
+                    continue;
+                };
+                let Some(payload) = data.get(at + 6..at + 6 + len as usize) else {
+                    continue;
+                };
+                let Some(oid) = u32_at(payload, 0) else {
+                    continue;
+                };
+                storage
+                    .entry(oid)
+                    .or_default()
+                    .push((type_word & 0x3FFF, payload.to_vec()));
+            }
+        }
+
+        let family_is = |by_oid: &ByOid, oid: u32, want: u16| {
+            by_oid
+                .get(&oid)
+                .is_some_and(|found| found.iter().any(|(code, _)| *code == want))
+        };
+
+        for (map_path, map) in &doc.psm_space_maps {
+            let Some(segment) = segment_of(map_path) else {
+                continue;
+            };
+            let Some(by_oid) = records.get(&storage_of(map_path)) else {
+                continue;
+            };
+            for entry in &map.entries {
+                any = true;
+                let id = (segment << SEGMENT_SHIFT) | u32::from(entry.index);
+                let on_c7 = family_is(by_oid, id, 0x00C7);
+                for member in entry.live_members() {
+                    let referrer = by_oid.get(&member.value);
+                    if referrer.is_none() {
+                        *recordless_by_tag.entry(member.tag).or_default() += 1;
+                        if on_c7 {
+                            recordless_on_c7 += 1;
+                        }
+                    }
+                    if !on_c7 {
+                        continue;
+                    }
+                    *c7_member_tags.entry(member.tag).or_default() += 1;
+                    for (code, _) in referrer.into_iter().flatten() {
+                        *c7_referrer_families.entry(*code).or_default() += 1;
+                    }
+                }
+            }
+        }
+
+        for (storage, by_oid) in &records {
+            for (oid, found) in by_oid {
+                let Some((_, payload)) = found.iter().find(|(code, _)| *code == 0x00C7) else {
+                    continue;
+                };
+                c7_records += 1;
+                if let Some(parent) = u32_at(payload, 4) {
+                    if family_is(by_oid, parent, 0x00EA) {
+                        c7_parent_is_0x00ea += 1;
+                    }
+                }
+                let has_entry = doc.psm_space_maps.iter().any(|(map_path, map)| {
+                    storage_of(map_path) == *storage
+                        && segment_of(map_path) == Some(oid >> SEGMENT_SHIFT)
+                        && map
+                            .entries
+                            .iter()
+                            .any(|entry| u32::from(entry.index) == oid & 0x1FFF)
+                });
+                if has_entry {
+                    c7_with_entry += 1;
+                }
+            }
+        }
+    }
+
+    if !any {
+        return;
+    }
+
+    assert_eq!(
+        recordless_by_tag,
+        BTreeMap::from([(182, 191), (249, 1)]),
+        "the corpus should hold 191 recordless tag-182 members plus the one stale 0x00FA edge"
+    );
+    assert_eq!(
+        recordless_on_c7, 191,
+        "every recordless tag-182 member should sit on a 0x00C7 entry"
+    );
+    assert_eq!(
+        (c7_records, c7_with_entry, c7_parent_is_0x00ea),
+        (203, 203, 203),
+        "all 203 0x00C7 records should have an entry and an 0x00EA parent"
+    );
+    assert_eq!(
+        c7_member_tags,
+        BTreeMap::from([(182, 215)]),
+        "a 0x00C7 entry should only ever be referenced with tag 182"
+    );
+    assert_eq!(
+        c7_referrer_families,
+        BTreeMap::from([(0x006F, 12), (0x00BD, 12)]),
+        "the 24 recorded referrers of a 0x00C7 should be twelve 0x006F and twelve 0x00BD"
+    );
+}
+
+/// `SymbolInformation` is the one named root the corpus does not always
+/// persist -- which is what identifies the recordless referrers.
+///
+/// Every `PSMroots` entry names an object by its persist id, and for all the
+/// other names (`DocStore`, `StyleLibrarian`, `TopVFSet`, `_SupportOnlyList`,
+/// the two document roots, the dynamic-attribute set table) that id resolves
+/// to a record in the same storage, every time. `SymbolInformation` resolves
+/// only 25 times out of 41, and when it does the record is always `0x00BD`.
+/// Five of the ones that do not resolve are members of the recordless tag-182
+/// population -- named by the root table, referenced by the space map, absent
+/// from every cluster.
+#[test]
+fn psm_roots_symbol_information_is_the_only_root_without_a_record() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Read;
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+    const SEGMENT_SHIFT: u32 = 13;
+
+    fn u16_at(data: &[u8], at: usize) -> Option<u16> {
+        Some(u16::from_le_bytes(data.get(at..at + 2)?.try_into().ok()?))
+    }
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+    fn storage_of(path: &str) -> String {
+        let norm = path.replace('\\', "/");
+        let norm = norm.strip_prefix('/').unwrap_or(&norm);
+        if let Some(at) = norm.find("PSMspacemap") {
+            norm[..at].trim_end_matches('/').to_string()
+        } else if let Some((pre, _)) = norm.rsplit_once('/') {
+            pre.to_string()
+        } else {
+            String::new()
+        }
+    }
+    fn segment_of(path: &str) -> Option<u32> {
+        let leaf = path.rsplit(['/', '\\']).next()?;
+        u32::from_str_radix(leaf.strip_prefix("0x")?, 16)
+            .ok()
+            .map(|address| address >> SEGMENT_SHIFT)
+    }
+
+    // root name -> (with a record, without one)
+    let mut by_name: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut families_by_name: BTreeMap<String, BTreeSet<u16>> = BTreeMap::new();
+    let mut recordless_roots_used_as_referrer = 0usize;
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+
+        let mut records: BTreeMap<String, BTreeMap<u32, u16>> = BTreeMap::new();
+        let mut roots: Vec<(String, u32, String)> = Vec::new();
+        let file = std::fs::File::open(&path).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        for stream_path in stream_paths {
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() {
+                continue;
+            }
+            let storage = storage_of(&stream_path);
+            if stream_path.rsplit(['/', '\\']).next() == Some("PSMroots") {
+                if let Some(parsed) = pid_parse::parsers::psm_tables::parse_psm_roots(&data) {
+                    for root in parsed.entries {
+                        roots.push((storage.clone(), root.id, root.name));
+                    }
+                }
+                continue;
+            }
+            if u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            let by_oid = records.entry(storage).or_default();
+            for at in pid_parse::parsers::sheet_records::sheet_record_starts(&data) {
+                let (Some(type_word), Some(len)) = (u16_at(&data, at), u32_at(&data, at + 2))
+                else {
+                    continue;
+                };
+                let Some(oid) = data
+                    .get(at + 6..at + 6 + len as usize)
+                    .and_then(|payload| u32_at(payload, 0))
+                else {
+                    continue;
+                };
+                by_oid.entry(oid).or_insert(type_word & 0x3FFF);
+            }
+        }
+
+        // Every id the space map records as a referrer, per storage.
+        let mut referrers: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
+        for (map_path, map) in &doc.psm_space_maps {
+            if segment_of(map_path).is_none() {
+                continue;
+            }
+            let seen = referrers.entry(storage_of(map_path)).or_default();
+            for entry in &map.entries {
+                for member in entry.live_members() {
+                    seen.insert(member.value);
+                }
+            }
+        }
+
+        for (storage, id, name) in roots {
+            any = true;
+            let counts = by_name.entry(name.clone()).or_default();
+            match records.get(&storage).and_then(|by_oid| by_oid.get(&id)) {
+                Some(code) => {
+                    counts.0 += 1;
+                    families_by_name.entry(name).or_default().insert(*code);
+                }
+                None => {
+                    counts.1 += 1;
+                    if referrers
+                        .get(&storage)
+                        .is_some_and(|seen| seen.contains(&id))
+                    {
+                        recordless_roots_used_as_referrer += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if !any {
+        return;
+    }
+
+    let unresolved: Vec<_> = by_name
+        .iter()
+        .filter(|(name, (_, without))| *without > 0 && name.as_str() != "SymbolInformation")
+        .collect();
+    assert!(
+        unresolved.is_empty(),
+        "only SymbolInformation should ever miss its record, but so did {unresolved:?}"
+    );
+    assert_eq!(
+        by_name.get("SymbolInformation").copied(),
+        Some((25, 16)),
+        "the corpus should name 41 SymbolInformation roots, 16 of them without a record"
+    );
+    assert_eq!(
+        families_by_name.get("SymbolInformation"),
+        Some(&BTreeSet::from([0x00BD])),
+        "a SymbolInformation root that does resolve should always be a 0x00BD record"
+    );
+    assert_eq!(
+        recordless_roots_used_as_referrer, 5,
+        "five recordless SymbolInformation roots should appear as space-map referrers"
+    );
+    assert_eq!(
+        by_name
+            .values()
+            .map(|(with, without)| with + without)
+            .sum::<usize>(),
+        96,
+        "the four fixtures should hold 96 PSMroots entries across all storages"
+    );
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
