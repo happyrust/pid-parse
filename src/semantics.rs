@@ -225,8 +225,15 @@ struct ScannedXml {
     objects: BTreeMap<String, ScannedObject>,
     /// Every representation with a parseable `GraphicOID`.
     representations: Vec<ScannedRepresentation>,
-    /// Representation UID → owning object UID
-    /// (`Rel DefUID="DwgRepresentationComposition"`, UID1 owns UID2).
+    /// Representation UID → owning business-object UID.
+    ///
+    /// Current DWG exports state this directly as `DrawingItems`
+    /// (`UID1 = representation`, `UID2 = business object`). Older/A01-shaped
+    /// exports omit that edge and use `DwgRepresentationComposition`
+    /// (`UID1 = business object`, `UID2 = representation`), which remains the
+    /// fallback. When both exist, `DrawingItems` is authoritative: the
+    /// composition edge otherwise assigns every representation to the drawing
+    /// container and hides its real tag/name.
     owner_of: BTreeMap<String, String>,
 }
 
@@ -320,8 +327,14 @@ fn scan_published_xml(xml: &str) -> ScannedXml {
                         match finished.tag.as_str() {
                             "Rel" => {
                                 if let Some((uid1, uid2, def_uid)) = finished.rel {
-                                    if def_uid == "DwgRepresentationComposition" {
-                                        owner_of.insert(uid2, uid1);
+                                    match def_uid.as_str() {
+                                        "DwgRepresentationComposition" => {
+                                            owner_of.entry(uid2).or_insert(uid1);
+                                        }
+                                        "DrawingItems" => {
+                                            owner_of.insert(uid1, uid2);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -472,6 +485,24 @@ mod tests {
         let pipe = index.resolve(24613).expect("pipe rep").object().clone();
         assert_eq!(pipe.class, "PIDPipeline");
         assert_eq!(pipe.item_tag.as_deref(), Some("PH- 0102102-DN250"));
+    }
+
+    #[test]
+    fn drawing_items_relation_wins_over_the_drawing_container() {
+        let xml = r#"<Container>
+  <PIDDrawing><IObject UID="DRAWING" Name="D-100"/></PIDDrawing>
+  <PIDControlSystemFunction><IObject UID="FUNCTION" Name="LIA-060201"/></PIDControlSystemFunction>
+  <PIDRepresentation><IObject UID="REP"/><IDrawingRepresentation GraphicOID="612"/></PIDRepresentation>
+  <Rel><IRel UID1="DRAWING" UID2="REP" DefUID="DwgRepresentationComposition"/></Rel>
+  <Rel><IRel UID1="REP" UID2="FUNCTION" DefUID="DrawingItems"/></Rel>
+</Container>"#;
+
+        let index = PidSemanticIndex::from_xml(xml, &empty_doc());
+        let hit = index.resolve(612).expect("representation");
+        let object = hit.object();
+        assert_eq!(object.class, "PIDControlSystemFunction");
+        assert_eq!(object.owner_uid.as_deref(), Some("FUNCTION"));
+        assert_eq!(object.label(), Some("LIA-060201"));
     }
 
     #[test]
