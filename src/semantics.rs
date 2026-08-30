@@ -513,6 +513,7 @@ mod tests {
                     bytes_to_follow: 34,
                     oid: 139,
                     parent_ref: 6,
+                    sheet_layer_ref: 0,
                     sub_type_word: 0,
                     index: 0,
                     x: 0.5,
