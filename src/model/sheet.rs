@@ -439,6 +439,8 @@ pub struct DecodedIgLine2dRecord {
     pub oid: u32,
     /// Low half of the PSM envelope's `aux` pair (payload bytes 4..7).
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this line sits on.
+    pub sheet_layer_ref: u32,
     /// High half of the PSM envelope's `aux` pair (payload bytes
     /// 8..11), verbatim. `12`, `8` and `6996` all occur on the corpus;
     /// the native reader discards this field, so nothing gates on it.
@@ -467,6 +469,7 @@ impl From<crate::parsers::sheet_records::SheetIgLine2dDecoded> for DecodedIgLine
             bytes_to_follow: d.bytes_to_follow,
             oid: d.oid,
             parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
             aux_hi: d.aux_hi,
             sub_type_word: d.sub_type_word,
             index: d.index,
@@ -508,6 +511,8 @@ pub struct DecodedIgLineString2dRecord {
     pub oid: u32,
     /// Parent reference.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this line string sits on.
+    pub sheet_layer_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
     /// Index / sub-oid.
@@ -535,6 +540,7 @@ impl From<crate::parsers::sheet_records::SheetIgLineString2dDecoded>
             bytes_to_follow: d.bytes_to_follow,
             oid: d.oid,
             parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
             sub_type_word: d.sub_type_word,
             index: d.index,
             form: d.form,
@@ -582,6 +588,8 @@ pub struct DecodedIgPoint2dRecord {
     pub oid: u32,
     /// Parent reference.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this point sits on.
+    pub sheet_layer_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
     /// Index / sub-oid.
@@ -602,6 +610,7 @@ impl From<crate::parsers::sheet_records::SheetIgPoint2dDecoded> for DecodedIgPoi
             bytes_to_follow: d.bytes_to_follow,
             oid: d.oid,
             parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
             sub_type_word: d.sub_type_word,
             index: d.index,
             x: d.point.0,
@@ -629,6 +638,8 @@ pub struct DecodedIgTextBoxRecord {
     pub oid: u32,
     /// Parent reference.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this text box sits on.
+    pub sheet_layer_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
     /// Index / sub-oid.
@@ -662,6 +673,7 @@ impl From<crate::parsers::sheet_records::SheetIgTextBoxDecoded> for DecodedIgTex
             bytes_to_follow: d.bytes_to_follow,
             oid: d.oid,
             parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
             sub_type_word: d.sub_type_word,
             index: d.index,
             text_length: d.text_length,
@@ -694,6 +706,8 @@ pub struct DecodedIgSymbol2dRecord {
     pub oid: u32,
     /// Parent reference.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this symbol placement sits on.
+    pub sheet_layer_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
     /// Numeric id of the top-level `JSite<id>` storage carrying this
@@ -736,6 +750,7 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
             bytes_to_follow: d.bytes_to_follow,
             oid: d.oid,
             parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
             sub_type_word: d.sub_type_word,
             jsite_ref: d.jsite_ref,
             style_ref: d.style_ref,
@@ -977,6 +992,8 @@ pub struct DecodedIgSmartFrame2dRecord {
     pub oid: u32,
     /// Parent reference.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this smart frame sits on.
+    pub sheet_layer_ref: u32,
     /// Content flag word at payload `+14` (record `+20`), verbatim. Bit
     /// `0x8000` is the reader's has-content test.
     pub content_flags: u32,
@@ -1006,6 +1023,7 @@ impl From<crate::parsers::sheet_records::SheetIgSmartFrame2dDecoded>
             bytes_to_follow: d.bytes_to_follow,
             oid: d.oid,
             parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
             content_flags: d.content_flags,
             link_flags: d.link_flags,
             state: match d.state {

@@ -120,6 +120,9 @@ pub struct PidGraphicEntity {
     /// Optional `GraphicOID` surfaced by `SmartPlant` representation records.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub graphic_oid: Option<u32>,
+    /// Authored sheet-layer identity carried by the source record.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub source_layer: Option<PidSourceLayer>,
     /// Concrete geometry payload.
     pub kind: PidGraphicKind,
     /// Coordinate-space, unit, and page-transform interpretation for
@@ -130,6 +133,18 @@ pub struct PidGraphicEntity {
     pub source: PidGraphicProvenance,
     /// How strongly the parser understands the entity payload.
     pub confidence: PidGeometryConfidence,
+}
+
+/// Storage-local authored sheet layer associated with one graphic record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PidSourceLayer {
+    /// Storage-local layer object id.
+    pub oid: u32,
+    /// Authored layer name when the storage's layer table resolves the id.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub name: Option<String>,
+    /// Storage-local id namespace (`/` or a nested `/JSite…` path).
+    pub storage_path: String,
 }
 
 /// Coordinate interpretation attached to a normalized graphic entity.
@@ -665,6 +680,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     id: format!("{}:text-probe:{index}", sheet.path),
                     drawing_id: None,
                     graphic_oid: None,
+                    source_layer: None,
                     kind: PidGraphicKind::Unknown {
                         note: format!("sheet text probe: {}", text.text),
                     },
@@ -710,6 +726,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     id: format!("{}:coordinate-hint:{index}", sheet.path),
                     drawing_id: None,
                     graphic_oid: None,
+                    source_layer: None,
                     kind,
                     coordinate_context: sheet_source_coordinate_context(&sheet.path),
                     source: PidGraphicProvenance {
@@ -756,6 +773,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         id: format!("{}:geometry-hint:{index}", sheet.path),
                         drawing_id: None,
                         graphic_oid: hint.graphic_oid,
+                        source_layer: None,
                         kind,
                         coordinate_context: sheet_source_coordinate_context(&sheet.path),
                         source: PidGraphicProvenance {
@@ -799,6 +817,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                         id: format!("{}:geometry-hint:{index}", sheet.path),
                         drawing_id: None,
                         graphic_oid: hint.graphic_oid,
+                        source_layer: None,
                         kind,
                         coordinate_context: sheet_source_coordinate_context(&sheet.path),
                         source: PidGraphicProvenance {
@@ -819,6 +838,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     id: format!("{}:text-probe:{index}", sheet.path),
                     drawing_id: None,
                     graphic_oid: None,
+                    source_layer: None,
                     kind: PidGraphicKind::Unknown {
                         note: format!("sheet text probe: {text}"),
                     },
@@ -890,6 +910,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                     id: format!("{}:endpoint-line:{index}", sheet.path),
                     drawing_id: None,
                     graphic_oid: None,
+                    source_layer: None,
                     kind: PidGraphicKind::Line {
                         start: PidPoint {
                             x: start.x,
@@ -921,6 +942,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
                 id: format!("{}:endpoint-probe:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: None,
+                source_layer: None,
                 kind: PidGraphicKind::Unknown {
                     note: format!(
                         "sheet endpoint probe: rel_field_x={rel_field_x} endpoints {endpoint_a} -> {endpoint_b}"
@@ -949,6 +971,20 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         for emitter in EMITTERS {
             emitter.emit(&ctx, sheet, &mut entities);
         }
+    }
+
+    let mut unresolved_layers: BTreeMap<(String, u32), usize> = BTreeMap::new();
+    for entity in &entities {
+        if let Some(layer) = entity.source_layer.as_ref().filter(|layer| layer.name.is_none()) {
+            *unresolved_layers
+                .entry((layer.storage_path.clone(), layer.oid))
+                .or_default() += 1;
+        }
+    }
+    for ((storage_path, oid), count) in unresolved_layers {
+        warnings.push(format!(
+            "{count} decoded graphic entity record(s) preserve unresolved sheet-layer oid {oid} in storage {storage_path}"
+        ));
     }
 
     let evidence_count = entities.len();
@@ -1047,6 +1083,8 @@ struct EmitContext<'a> {
     /// Decoded coordinates are metres on this page; see
     /// [`decoded_sheet_coordinate_context`].
     page: Option<PageFrame>,
+    /// `(storage path, layer oid)` to authored layer name.
+    sheet_layer_names: BTreeMap<(String, u32), &'a str>,
 }
 
 impl<'a> EmitContext<'a> {
@@ -1064,10 +1102,40 @@ impl<'a> EmitContext<'a> {
                 Some((id, path))
             })
             .collect();
+        let sheet_layer_names = doc
+            .sheet_layers
+            .values()
+            .flatten()
+            .map(|layer| {
+                (
+                    (layer.storage_path.clone(), layer.oid),
+                    layer.name.as_str(),
+                )
+            })
+            .collect();
         Self {
             jsite_symbol_paths,
             page,
+            sheet_layer_names,
         }
+    }
+
+    fn source_layer(&self, stream_path: &str, oid: u32) -> Option<PidSourceLayer> {
+        if oid == 0 {
+            return None;
+        }
+        let normalized = stream_path.replace('\\', "/");
+        let parent = normalized.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let storage_path = if parent.is_empty() { "/" } else { parent }.to_string();
+        let name = self
+            .sheet_layer_names
+            .get(&(storage_path.clone(), oid))
+            .map(|name| (*name).to_string());
+        Some(PidSourceLayer {
+            oid,
+            name,
+            storage_path,
+        })
     }
 }
 
@@ -1145,6 +1213,7 @@ impl GeometryEmitter for GLine2dEmitter {
                 id: format!("{}:primitive-line:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: Some(record.oid),
+                source_layer: None,
                 kind: PidGraphicKind::Line {
                     start: PidPoint { x: ax, y: ay },
                     end: PidPoint { x: bx, y: by },
@@ -1230,6 +1299,7 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                 id: format!("{}:igsymbol2d:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
                 kind: PidGraphicKind::SymbolInstance {
                     insertion: PidPoint {
                         x: record.insertion_x,
@@ -1299,6 +1369,7 @@ impl GeometryEmitter for IgTextBoxEmitter {
                 id: format!("{}:igtextbox:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
                 kind: PidGraphicKind::Text {
                     insertion: PidPoint {
                         x: record.trailing_double_1,
@@ -1363,6 +1434,7 @@ impl GeometryEmitter for IgPoint2dEmitter {
                 id: format!("{}:igpoint2d:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
                 kind: PidGraphicKind::Point {
                     position: PidPoint {
                         x: record.x,
@@ -1429,6 +1501,7 @@ impl GeometryEmitter for IgLineString2dEmitter {
                 id: format!("{}:iglinestring2d:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
                 kind: PidGraphicKind::Polyline {
                     points,
                     closed: false,
@@ -1486,6 +1559,7 @@ impl GeometryEmitter for IgLine2dEmitter {
                 id: format!("{}:igline2d:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
                 kind: PidGraphicKind::Line {
                     start: PidPoint {
                         x: record.start_x,
@@ -1566,6 +1640,7 @@ impl GeometryEmitter for JStyleOverrideEmitter {
                 id: format!("{}:jstyle-override:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: Some(record.oid),
+                source_layer: None,
                 kind: PidGraphicKind::Unknown {
                     note: format!(
                         "PSM 0x0030 JStyleOverride (RAD style.dll, CLSID \
@@ -1659,6 +1734,7 @@ impl GeometryEmitter for IgBoundary2dEmitter {
                 id: format!("{}:igboundary2d:{index}", sheet.path),
                 drawing_id: None,
                 graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
                 kind: PidGraphicKind::Polyline {
                     points,
                     closed: true,
@@ -2296,6 +2372,7 @@ mod tests {
             id: "/Sheet6:endpoint-line:0".into(),
             drawing_id: None,
             graphic_oid: None,
+            source_layer: None,
             kind: PidGraphicKind::Line {
                 start: PidPoint { x: 1.0, y: 2.0 },
                 end: PidPoint { x: 3.0, y: 4.0 },
@@ -2707,6 +2784,7 @@ mod tests {
             id: "sheet6:line:0".into(),
             drawing_id: Some("DID".into()),
             graphic_oid: Some(42),
+            source_layer: None,
             kind: PidGraphicKind::Line {
                 start: PidPoint { x: 1.0, y: 2.0 },
                 end: PidPoint { x: 3.0, y: 4.0 },
@@ -2781,6 +2859,7 @@ mod tests {
                 id: "decoded".into(),
                 drawing_id: None,
                 graphic_oid: None,
+                source_layer: None,
                 coordinate_context: PidCoordinateContext::default(),
                 source: PidGraphicProvenance {
                     stream_path: Some("/Sheet6".into()),
@@ -2818,6 +2897,7 @@ mod tests {
                 id: "sheet6:line:0".into(),
                 drawing_id: None,
                 graphic_oid: None,
+                source_layer: None,
                 kind: PidGraphicKind::Line {
                     start: PidPoint { x: 1.0, y: 2.0 },
                     end: PidPoint { x: 3.0, y: 4.0 },
@@ -3045,6 +3125,7 @@ mod tests {
             bytes_to_follow: 156,
             oid: 42,
             parent_ref: 6,
+            sheet_layer_ref: 0,
             content_flags: 0x5c80_8011,
             link_flags: 0x20e9_0040,
             state,

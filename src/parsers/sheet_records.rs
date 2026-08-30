@@ -2826,6 +2826,8 @@ pub struct SheetIgLine2dDecoded {
     /// sources it from object-record bookkeeping rather than from the
     /// class, so it is not part of the line's geometry.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this line sits on (payload bytes 8..11).
+    pub sheet_layer_ref: u32,
     /// High half of the PSM envelope's `aux` pair (payload bytes
     /// 8..11), verbatim. Corpus values are `12` (326 records), `8`
     /// (`A01`'s page border, 80) and `6996` (`DWG-0202/Sheet6615`, 8).
@@ -2990,6 +2992,7 @@ fn decode_igline_payload(
         bytes_to_follow,
         oid,
         parent_ref,
+        sheet_layer_ref: aux_hi,
         aux_hi,
         sub_type_word,
         index,
@@ -3045,6 +3048,8 @@ pub struct SheetIgLineString2dDecoded {
     pub oid: u32,
     /// Parent reference.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this line string sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
     /// Sub-type discriminator at payload bytes 12..13.
     pub sub_type_word: u16,
     /// Index / sub-oid at payload bytes 14..17.
@@ -3174,6 +3179,8 @@ fn decode_iglinestring_payload(
 
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let sheet_layer_ref =
+        u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
     // remaining_header at +8..11 — variable across records, not validated
     // strictly; rejected only if absurdly large.
     let remaining_header = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
@@ -3252,6 +3259,7 @@ fn decode_iglinestring_payload(
         bytes_to_follow,
         oid,
         parent_ref,
+        sheet_layer_ref,
         sub_type_word,
         index,
         form,
@@ -3300,6 +3308,8 @@ pub struct SheetIgPoint2dDecoded {
     pub oid: u32,
     /// Parent reference.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this point sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
     /// Index / sub-oid.
@@ -3385,6 +3395,8 @@ fn decode_igpoint_payload(
     let payload = data.get(header.body_start..payload_end)?;
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let sheet_layer_ref =
+        u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
     let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
 
@@ -3422,6 +3434,7 @@ fn decode_igpoint_payload(
         bytes_to_follow,
         oid,
         parent_ref,
+        sheet_layer_ref,
         sub_type_word,
         index,
         point: (x, y),
@@ -3479,6 +3492,8 @@ pub struct SheetIgTextBoxDecoded {
     pub oid: u32,
     /// Parent reference.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this text box sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
     /// Index / sub-oid.
@@ -3655,6 +3670,8 @@ fn decode_igtextbox_payload(
 
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let sheet_layer_ref =
+        u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
     let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
 
@@ -3723,6 +3740,7 @@ fn decode_igtextbox_payload(
         bytes_to_follow,
         oid,
         parent_ref,
+        sheet_layer_ref,
         sub_type_word,
         index,
         text_sub_type,
@@ -3787,6 +3805,8 @@ pub struct SheetIgSymbol2dDecoded {
     pub oid: u32,
     /// Parent reference (often the symbol library or page).
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this symbol placement sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
     /// Sub-type discriminator.
     pub sub_type_word: u16,
     /// Numeric id of the top-level `JSite<id>` storage carrying this
@@ -3909,6 +3929,8 @@ fn decode_igsymbol_payload(
 
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let sheet_layer_ref =
+        u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
     let style_ref = u32::from_le_bytes([
         payload[IGSYMBOL2D_STYLE_REF_OFFSET],
@@ -3961,6 +3983,7 @@ fn decode_igsymbol_payload(
         bytes_to_follow,
         oid,
         parent_ref,
+        sheet_layer_ref,
         sub_type_word,
         jsite_ref,
         style_ref,
@@ -5311,6 +5334,8 @@ pub struct SheetIgSmartFrame2dDecoded {
     pub oid: u32,
     /// Parent reference.
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this smart frame sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
     /// Content flag word at payload `+14`, verbatim.
     pub content_flags: u32,
     /// Link flag word at payload `+26`, verbatim.
@@ -5433,6 +5458,7 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
             bytes_to_follow: header.bytes_to_follow,
             oid: u32_at(0)?,
             parent_ref: u32_at(4)?,
+            sheet_layer_ref: u32_at(8)?,
             content_flags,
             link_flags,
             state,
