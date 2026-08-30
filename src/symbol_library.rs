@@ -159,6 +159,9 @@ pub enum SymbolPrimitive {
     Polyline {
         /// Vertices in source order.
         vertices: Vec<(f64, f64)>,
+        /// Whether the authored `form` byte closes the last vertex back to
+        /// the first (`form == 2`; `form == 1` is open on the corpus).
+        is_closed: bool,
     },
     /// Lettering the symbol carries itself (PSM `0x004D` `igTextBox`) — the
     /// `设备位号` header on an equipment table, the `HH=` on an alarm, the
@@ -264,7 +267,7 @@ impl SymbolGeometry {
                         );
                     }
                 }
-                SymbolPrimitive::Polyline { vertices } => {
+                SymbolPrimitive::Polyline { vertices, .. } => {
                     for (x, y) in vertices {
                         add(*x, *y);
                     }
@@ -404,7 +407,10 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
                 let at = POLYLINE_VERTEX_START + index * 16;
                 vertices.push((coordinate(payload, at)?, coordinate(payload, at + 8)?));
             }
-            Some(SymbolPrimitive::Polyline { vertices })
+            Some(SymbolPrimitive::Polyline {
+                vertices,
+                is_closed: payload[22] == 2,
+            })
         }
         TYPE_TEXT => decode_text(payload),
         _ => None,
@@ -919,6 +925,39 @@ mod tests {
     fn text_record_with_an_absurd_insertion_point_is_skipped() {
         let payload = text_payload(30, "XXX", (1.0e9, 0.0));
         assert_eq!(decode_primitive(TYPE_TEXT, &payload), None);
+    }
+
+    fn polyline_payload(form: u8, vertices: &[(f64, f64)]) -> Vec<u8> {
+        let mut payload = vec![0u8; POLYLINE_VERTEX_START];
+        payload[18..22].copy_from_slice(&(vertices.len() as u32).to_le_bytes());
+        payload[22] = form;
+        payload[23] = 1;
+        for (x, y) in vertices {
+            payload.extend_from_slice(&x.to_le_bytes());
+            payload.extend_from_slice(&y.to_le_bytes());
+        }
+        payload
+    }
+
+    #[test]
+    fn symbol_polyline_form_two_is_closed_and_form_one_is_open() {
+        let open = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)];
+        assert_eq!(
+            decode_primitive(TYPE_POLYLINE, &polyline_payload(1, &open)),
+            Some(SymbolPrimitive::Polyline {
+                vertices: open.to_vec(),
+                is_closed: false,
+            })
+        );
+
+        let closed = [(0.0, 0.0), (1.0, 0.0), (0.0, 0.0)];
+        assert_eq!(
+            decode_primitive(TYPE_POLYLINE, &polyline_payload(2, &closed)),
+            Some(SymbolPrimitive::Polyline {
+                vertices: closed.to_vec(),
+                is_closed: true,
+            })
+        );
     }
 
     #[test]

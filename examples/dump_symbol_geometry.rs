@@ -10,7 +10,7 @@
 //! line,x1,y1,x2,y2
 //! circle,cx,cy,r
 //! arc,cx,cy,r,start_radians,end_radians
-//! poly,x1,y1,x2,y2,...
+//! poly,closed(0|1),x1,y1,x2,y2,...
 //! ```
 //!
 //! A row whose record names a line style in the symbol's own `StyleCluster`
@@ -31,6 +31,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     };
     let path = PathBuf::from(arg);
+    if path.is_relative() && !path.is_file() {
+        eprintln!(
+            "warning: relative symbol-library path was not found: {}",
+            path.display()
+        );
+    }
     let body = read_symbol_geometry(&path)?;
 
     for styled in &body.primitives {
@@ -63,12 +69,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     center.0, center.1
                 );
             }
-            SymbolPrimitive::Polyline { vertices } => {
+            SymbolPrimitive::Polyline {
+                vertices,
+                is_closed,
+            } => {
                 let coords: Vec<String> = vertices
                     .iter()
                     .flat_map(|(x, y)| [x.to_string(), y.to_string()])
                     .collect();
-                println!("poly,{}{style}", coords.join(","));
+                println!("poly,{},{}{style}", u8::from(*is_closed), coords.join(","));
             }
             SymbolPrimitive::Text { text, at } => {
                 // Height and rotation are zero because the record carries

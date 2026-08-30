@@ -28,6 +28,9 @@ if ($Csv) {
     $rows = Get-Content -LiteralPath $Csv
 } elseif ($Sym) {
     if (-not $Title) { $Title = Split-Path $Sym -Leaf }
+    if (-not [System.IO.Path]::IsPathRooted($Sym) -and -not (Test-Path -LiteralPath $Sym -PathType Leaf)) {
+        [Console]::Error.WriteLine("warning: relative symbol path was not found: $Sym")
+    }
     $rows = & 'D:\Rust\target\release\examples\dump_symbol_geometry.exe' $Sym
 } else {
     Write-Output 'pass -Sym <file.sym> or -Csv <dump.csv>'; exit 2
@@ -45,6 +48,7 @@ foreach ($line in $rows) {
     }
     $f = $line -split ','
     if ($f.Count -lt 2) { continue }
+    if ($f[-1] -like '@*') { $f = $f[0..($f.Count - 2)] }
     $prims += , @($f[0], ($f[1..($f.Count - 1)] | ForEach-Object { [double]$_ }))
 }
 
@@ -56,7 +60,10 @@ foreach ($p in $prims) {
         'line'   { $xs += $v[0], $v[2]; $ys += $v[1], $v[3] }
         'circle' { $xs += ($v[0] - $v[2]), ($v[0] + $v[2]); $ys += ($v[1] - $v[2]), ($v[1] + $v[2]) }
         'arc'    { $xs += ($v[0] - $v[2]), ($v[0] + $v[2]); $ys += ($v[1] - $v[2]), ($v[1] + $v[2]) }
-        'poly'   { for ($i = 0; $i -lt $v.Count; $i += 2) { $xs += $v[$i]; $ys += $v[$i + 1] } }
+        'poly'   {
+            $start = if (($v.Count % 2) -eq 1) { 1 } else { 0 }
+            for ($i = $start; $i -lt $v.Count; $i += 2) { $xs += $v[$i]; $ys += $v[$i + 1] }
+        }
     }
 }
 foreach ($t in $labels) { $xs += $t[0]; $ys += $t[1] }
@@ -109,8 +116,15 @@ foreach ($p in $prims) {
             $g.DrawArc($penArc, (Px $v[0]) - $r, (Py $v[1]) - $r, 2 * $r, 2 * $r, [float](-$a1), [float](-$sweep))
         }
         'poly' {
-            for ($i = 0; $i -lt $v.Count - 2; $i += 2) {
+            $newSchema = ($v.Count % 2) -eq 1
+            $closed = $newSchema -and $v[0] -ne 0
+            $start = if ($newSchema) { 1 } else { 0 }
+            for ($i = $start; $i -lt $v.Count - 2; $i += 2) {
                 $g.DrawLine($penPoly, (Px $v[$i]), (Py $v[$i + 1]), (Px $v[$i + 2]), (Py $v[$i + 3]))
+            }
+            if ($closed) {
+                $last = $v.Count - 2
+                $g.DrawLine($penPoly, (Px $v[$last]), (Py $v[$last + 1]), (Px $v[$start]), (Py $v[$start + 1]))
             }
         }
     }
