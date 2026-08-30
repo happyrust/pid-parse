@@ -860,6 +860,11 @@ pub struct DecodedIgBoundary2dRecord {
     pub oid: u32,
     /// Parent reference (varies per record; not validated).
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this boundary sits on (payload
+    /// offset 8). Never validated — an `== <n>` rule here admits one
+    /// layer and refuses the rest. See
+    /// `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md`.
+    pub sheet_layer_ref: u32,
     /// Sub-type word at payload offset 12. Always `0x0010`.
     pub sub_type_word: u16,
     /// Index-like word at payload offset 14.
@@ -898,6 +903,7 @@ impl From<crate::parsers::sheet_records::SheetIgBoundary2dDecoded> for DecodedIg
             bytes_to_follow: d.bytes_to_follow,
             oid: d.oid,
             parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
             sub_type_word: d.sub_type_word,
             index: d.index,
             segment_count: d.segment_count,

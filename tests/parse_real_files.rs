@@ -1730,6 +1730,459 @@ fn psm_space_map_members_are_incoming_edges() {
     );
 }
 
+/// Tag 184 is the sheet / layer / view hierarchy, and its referrers do state
+/// their own membership -- by name.
+///
+/// Every family the tag touches is named by the RAD class registry:
+/// `0x0057` / `0x0060` `Top ViewFilterSet` (`viewfil.dex`), `0x0076`
+/// `SheetView`, `0x0114` `JSheet`, `0x0042` `JSheetLayerManager`, `0x0081`
+/// `JSheetLayer`. The shape is fixed: one `0x0060` per storage holding a
+/// `SheetView` and its `0x0057` sets, and each `0x0057` holding one `JSheet`,
+/// one `JSheetLayerManager` and its layers.
+///
+/// The claim worth ratcheting is the one that corrected the earlier reading of
+/// these edges as living only in the space map: a set writes the **name** of
+/// every layer it points at into its own payload as UTF-16LE, so the table
+/// resolves a name to an object rather than storing the relation outright.
+/// The two id fields that are written as ids are locked too -- the `JSheet`
+/// at a set's `+16`, and the number of sets a `0x0060` holds at its `+12`.
+///
+/// See `docs/analysis/2026-08-27-tag-184-is-the-sheet-layer-view-hierarchy.md`
+/// and `examples/probe_psmspacemap_tag184_viewfilterset_edges.rs`.
+#[test]
+fn psm_space_map_184_edges_are_the_view_filter_sets_named_layers() {
+    use std::collections::BTreeMap;
+    use std::io::Read;
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+    const SEGMENT_SHIFT: u32 = 13;
+    const VF_TOP: u16 = 0x0060;
+    const VF_SET: u16 = 0x0057;
+    const SHEET_VIEW: u16 = 0x0076;
+    const JSHEET: u16 = 0x0114;
+    const LAYER_MANAGER: u16 = 0x0042;
+    const LAYER: u16 = 0x0081;
+
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+    fn storage_of(path: &str) -> String {
+        let norm = path.replace('\\', "/");
+        let norm = norm.strip_prefix('/').unwrap_or(&norm);
+        if let Some(at) = norm.find("PSMspacemap") {
+            norm[..at].trim_end_matches('/').to_string()
+        } else if let Some((pre, _)) = norm.rsplit_once('/') {
+            pre.to_string()
+        } else {
+            String::new()
+        }
+    }
+    fn segment_of(path: &str) -> Option<u32> {
+        let leaf = path.rsplit(['/', '\\']).next()?;
+        u32::from_str_radix(leaf.strip_prefix("0x")?, 16)
+            .ok()
+            .map(|address| address >> SEGMENT_SHIFT)
+    }
+    /// A `JSheetLayer` states its name as `u32` char count at `+20` and
+    /// UTF-16LE characters from `+24`; return those raw bytes.
+    fn layer_name_bytes(payload: &[u8]) -> Option<&[u8]> {
+        let count = u32_at(payload, 20)? as usize;
+        if count == 0 || count > 128 {
+            return None;
+        }
+        payload.get(24..24 + count * 2)
+    }
+
+    let mut edges = 0usize;
+    let mut referrers: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut targets: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut layer_edges = (0usize, 0usize);
+    let mut jsheet_at_16 = (0usize, 0usize);
+    let mut sets_at_12 = (0usize, 0usize);
+    let mut layers_listed_once = (0usize, 0usize);
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+
+        let mut records: BTreeMap<String, BTreeMap<u32, (u16, Vec<u8>)>> = BTreeMap::new();
+        let file = std::fs::File::open(&path).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        for stream_path in stream_paths {
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            let starts = pid_parse::parsers::sheet_records::sheet_record_starts(&data);
+            let storage = records.entry(storage_of(&stream_path)).or_default();
+            for at in starts {
+                let Some(type_code) = u32_at(&data, at).map(|word| (word & 0x3FFF) as u16) else {
+                    continue;
+                };
+                let Some(len) = u32_at(&data, at + 2) else {
+                    continue;
+                };
+                let Some(payload) = data.get(at + 6..at + 6 + len as usize) else {
+                    continue;
+                };
+                let Some(oid) = u32_at(payload, 0) else {
+                    continue;
+                };
+                storage.entry(oid).or_insert((type_code, payload.to_vec()));
+            }
+        }
+
+        // Entry id -> its members, so a referrer's whole edge set is reachable.
+        let mut members_by_storage: BTreeMap<String, Vec<(u32, u32, u16)>> = BTreeMap::new();
+        for (map_path, map) in &doc.psm_space_maps {
+            let Some(segment) = segment_of(map_path) else {
+                continue;
+            };
+            let bucket = members_by_storage.entry(storage_of(map_path)).or_default();
+            for entry in &map.entries {
+                let id = (segment << SEGMENT_SHIFT) | u32::from(entry.index);
+                for member in entry.live_members() {
+                    bucket.push((id, member.value, member.tag));
+                }
+            }
+        }
+
+        for (storage_name, bucket) in &members_by_storage {
+            let Some(by_oid) = records.get(storage_name) else {
+                continue;
+            };
+            let family_of = |oid: u32| by_oid.get(&oid).map(|(family, _)| *family);
+
+            // Tag 183: every JSheetLayer is listed by exactly one manager.
+            for (oid, (family, _)) in by_oid {
+                if *family != LAYER {
+                    continue;
+                }
+                layers_listed_once.0 += 1;
+                let listings = bucket
+                    .iter()
+                    .filter(|(id, _, tag)| id == oid && *tag == 183)
+                    .count();
+                if listings == 1 {
+                    layers_listed_once.1 += 1;
+                }
+            }
+
+            let mut held_sets: BTreeMap<u32, usize> = BTreeMap::new();
+            for (target, referrer, tag) in bucket {
+                if *tag != 184 {
+                    continue;
+                }
+                any = true;
+                edges += 1;
+                let Some(referrer_family) = family_of(*referrer) else {
+                    continue;
+                };
+                *referrers.entry(referrer_family).or_default() += 1;
+                let Some(target_family) = family_of(*target) else {
+                    continue;
+                };
+                *targets.entry(target_family).or_default() += 1;
+                let Some((_, referrer_payload)) = by_oid.get(referrer) else {
+                    continue;
+                };
+                match target_family {
+                    LAYER => {
+                        layer_edges.0 += 1;
+                        let named = by_oid
+                            .get(target)
+                            .and_then(|(_, payload)| layer_name_bytes(payload))
+                            .is_some_and(|name| {
+                                referrer_payload
+                                    .windows(name.len())
+                                    .any(|window| window == name)
+                            });
+                        if named {
+                            layer_edges.1 += 1;
+                        }
+                    }
+                    JSHEET => {
+                        jsheet_at_16.0 += 1;
+                        if u32_at(referrer_payload, 16) == Some(*target) {
+                            jsheet_at_16.1 += 1;
+                        }
+                    }
+                    VF_SET => *held_sets.entry(*referrer).or_default() += 1,
+                    _ => {}
+                }
+            }
+            for (top, held) in &held_sets {
+                let Some((family, payload)) = by_oid.get(top) else {
+                    continue;
+                };
+                if *family != VF_TOP {
+                    continue;
+                }
+                sets_at_12.0 += 1;
+                if u32_at(payload, 12) == Some(*held as u32) {
+                    sets_at_12.1 += 1;
+                }
+            }
+        }
+    }
+
+    if !any {
+        return;
+    }
+
+    assert_eq!(edges, 366, "tag-184 member count across the four fixtures");
+    assert_eq!(
+        referrers,
+        BTreeMap::from([(VF_SET, 306), (VF_TOP, 60)]),
+        "every tag-184 referrer is one of the two Top ViewFilterSet families"
+    );
+    assert_eq!(
+        targets,
+        BTreeMap::from([
+            (LAYER_MANAGER, 49),
+            (SHEET_VIEW, 11),
+            (VF_SET, 49),
+            (LAYER, 208),
+            (JSHEET, 49),
+        ]),
+        "the 184 subgraph is the sheet / layer / view hierarchy and nothing else"
+    );
+    assert_eq!(
+        layer_edges.1, layer_edges.0,
+        "{} of {} JSheetLayer edges have the layer's own name in the referring set's payload -- \
+         the membership is written by name, not by id",
+        layer_edges.1, layer_edges.0
+    );
+    assert_eq!(layer_edges.0, 208, "JSheetLayer edge count");
+    assert_eq!(
+        jsheet_at_16,
+        (49, 49),
+        "a view filter set writes its JSheet as an id, at payload +16"
+    );
+    assert_eq!(
+        sets_at_12,
+        (11, 11),
+        "a 0x0060 states at +12 how many sets it holds -- it has no room for their ids"
+    );
+    assert_eq!(
+        layers_listed_once,
+        (290, 290),
+        "every JSheetLayer is listed by exactly one JSheetLayerManager (tag 183)"
+    );
+}
+
+/// `aux_hi` -- payload `+8`, the high half of the PSM envelope's 8-byte `aux`
+/// -- is the sheet layer the object sits on.
+///
+/// `shlyhp.dll` gave the direction: `AddObjectToSheetLayer` hands the layer to
+/// the graphic and bumps a counter in the layer, so the layer keeps a tally and
+/// the graphic keeps the reference. The tally is the layer's own `+12`, and it
+/// is what makes this measurable without guessing: the layers of a storage
+/// declare a multiset of counts, and grouping the storage's objects by `+8`
+/// has to reproduce it exactly -- every layer, zeros included. Nothing else in
+/// the first 256 bytes at either width does, in any storage.
+///
+/// The same word is the one this crate has carried since Phase 14 as
+/// `remaining_header`, then `aux_hi` -- the field whose `== 12` rule silently
+/// refused 88 real lines. `12` is not a framing constant: it is the oid of the
+/// `Labels` layer, and `8`, the value on A01's refused page border, is the oid
+/// of `Default`.
+///
+/// Three claims are ratcheted: the tally identity, that a layer is never on a
+/// layer, and that the families writing a layer are exactly the graphic ones.
+///
+/// See `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` and
+/// `examples/probe_sheetlayer_edge_lives_on_the_graphic.rs`.
+#[test]
+fn psm_aux_hi_is_the_sheet_layer_every_object_sits_on() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Read;
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+    const LAYER: u16 = 0x0081;
+    /// The layer subsystem itself: managers, view filter sets, layers, groups.
+    /// None of them is on a layer, so none is counted as a member.
+    const LAYER_SUBSYSTEM: [u16; 5] = [0x0042, 0x0057, 0x0060, 0x0081, 0x0088];
+
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+    fn storage_of(path: &str) -> String {
+        let norm = path.replace('\\', "/");
+        let norm = norm.strip_prefix('/').unwrap_or(&norm);
+        match norm.rsplit_once('/') {
+            Some((pre, _)) => pre.to_string(),
+            None => String::new(),
+        }
+    }
+
+    let mut layers_seen = 0usize;
+    let mut layers_matching = 0usize;
+    let mut objects_on_a_layer = 0usize;
+    let mut declared_total = 0usize;
+    let mut layers_with_zero_aux_hi = 0usize;
+    let mut carriers: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut layerless_outside_stylecluster = 0usize;
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        any = true;
+
+        // oid -> (family, aux_hi), first record wins. Every object of this
+        // corpus whose records repeat agrees with itself at +8, so folding
+        // records onto objects cannot move a member.
+        let mut storages: BTreeMap<String, BTreeMap<u32, (u16, u32, String)>> = BTreeMap::new();
+        let mut layer_counts: BTreeMap<String, BTreeMap<u32, u32>> = BTreeMap::new();
+        let file = std::fs::File::open(&path).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().into_owned())
+            .collect();
+        for stream_path in stream_paths {
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            let leaf = stream_path
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(&stream_path)
+                .to_string();
+            let storage = storage_of(&stream_path);
+            for at in pid_parse::parsers::sheet_records::sheet_record_starts(&data) {
+                let Some(type_code) = u32_at(&data, at).map(|word| (word & 0x3FFF) as u16) else {
+                    continue;
+                };
+                let Some(len) = u32_at(&data, at + 2) else {
+                    continue;
+                };
+                let Some(payload) = data.get(at + 6..at + 6 + len as usize) else {
+                    continue;
+                };
+                let (Some(oid), Some(aux_hi)) = (u32_at(payload, 0), u32_at(payload, 8)) else {
+                    continue;
+                };
+                if type_code == LAYER {
+                    if let Some(objects) = u32_at(payload, 12) {
+                        layer_counts
+                            .entry(storage.clone())
+                            .or_default()
+                            .entry(oid)
+                            .or_insert(objects);
+                    }
+                }
+                storages
+                    .entry(storage.clone())
+                    .or_default()
+                    .entry(oid)
+                    .or_insert((type_code, aux_hi, leaf.clone()));
+            }
+        }
+
+        for (storage, layers) in &layer_counts {
+            let objects = storages
+                .get(storage)
+                .expect("a layer's storage has records");
+            let mut observed: BTreeMap<u32, usize> = BTreeMap::new();
+            for (family, aux_hi, leaf) in objects.values() {
+                if LAYER_SUBSYSTEM.contains(family) {
+                    if *family == LAYER {
+                        layers_with_zero_aux_hi += usize::from(*aux_hi == 0);
+                    }
+                    continue;
+                }
+                if layers.contains_key(aux_hi) {
+                    *observed.entry(*aux_hi).or_default() += 1;
+                    *carriers.entry(*family).or_default() += 1;
+                } else if *aux_hi == 0 && leaf != "StyleCluster" {
+                    // Only the style library's glyph lines are graphics that
+                    // sit on no sheet; anything else would break the reading.
+                    let graphic = matches!(family, 0x0013 | 0x0018 | 0x004D | 0x005E | 0x0084);
+                    layerless_outside_stylecluster += usize::from(graphic);
+                }
+            }
+            for (oid, declared) in layers {
+                layers_seen += 1;
+                declared_total += *declared as usize;
+                let seen = observed.get(oid).copied().unwrap_or_default();
+                objects_on_a_layer += seen;
+                if seen == *declared as usize {
+                    layers_matching += 1;
+                }
+            }
+        }
+    }
+
+    if !any {
+        eprintln!("skip: no fixture present");
+        return;
+    }
+
+    assert_eq!(
+        layers_seen, 290,
+        "JSheetLayer count across the four fixtures"
+    );
+    assert_eq!(
+        layers_matching, layers_seen,
+        "{layers_matching} of {layers_seen} layers have exactly as many objects naming them at \
+         +8 as their own +12 tally declares"
+    );
+    assert_eq!(
+        (objects_on_a_layer, declared_total),
+        (1240, 1240),
+        "every object the layers count is an object that names one at +8"
+    );
+    assert_eq!(
+        layers_with_zero_aux_hi, 290,
+        "a JSheetLayer is not itself on a layer -- its own aux_hi is zero"
+    );
+    assert_eq!(
+        layerless_outside_stylecluster, 0,
+        "the only graphics with no layer are the style library's glyph lines"
+    );
+    assert_eq!(
+        carriers.keys().copied().collect::<BTreeSet<u16>>(),
+        BTreeSet::from([
+            0x0013, 0x0018, 0x003D, 0x004D, 0x0059, 0x005D, 0x005E, 0x0061, 0x0084, 0x00CE, 0x0115
+        ]),
+        "aux_hi names a layer for the graphic families and for nothing else -- not dynamic \
+         attribute rows, dependencies, styles or the layer subsystem"
+    );
+}
+
 /// The tag-181 incoming edge and `igSymbol2d::jsite_ref` are the same fact
 /// reached two ways. A symbol placed in a site references it, so the site's
 /// space-map entry lists the symbol as an incoming reference tagged 181; and
@@ -9621,6 +10074,19 @@ fn igboundaries_decoder_emits_typed_audit_records_with_provenance() {
                 assert_eq!(boundary.sub_type_word, 0x0010);
                 assert_eq!(boundary.sub_header_tail, [2, 1]);
                 assert_eq!(boundary.trailer_flag, 1);
+                // The `aux_hi == 12` gate is gone (it admitted one
+                // sheet layer and refused the rest). Every boundary
+                // reachable from a `Sheet*` stream happens to sit on
+                // `Labels` anyway, so the counts above are unchanged;
+                // the nine records the gate really refused live in
+                // `JSite*/PSMcluster0`, which this pipeline does not
+                // scan yet. See
+                // `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md`.
+                assert_eq!(
+                    boundary.sheet_layer_ref, 12,
+                    "every Sheet-stream igBoundary2d sits on `Labels` (oid 12): oid={} in {}",
+                    boundary.oid, sheet.path
+                );
                 assert!(
                     boundary.is_closed_loop(1e-9),
                     "fixture igBoundary2d must close into a loop: oid={} in {}",

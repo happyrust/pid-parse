@@ -2,6 +2,121 @@
 
 ## [Unreleased]
 
+### 厂商管这条边叫 `Layer`；`aux_hi == 12` 那道门撤了（2026-08-27）
+
+- **上一轮欠的原生确认拿到了。** `imagdex.dex` 导出一对同名存取器
+  `HGeomGetLayer` / `HGeomPutLayer`——**「一个 Geom 的 Layer」就是厂商给这条边起的
+  名字**。读侧把图元 QI 到 `204D4DD1-B174-11CE-B914-08003601C6EB`（「我能待在图层
+  上」那个接口），调 vtable **`+56`** 拿回图层对象，再 QI 到 `C3BE37E0-…` 取名字；
+  写侧经 `HGetTypedParent` → `GetSheetLayerManager`（`D126A7C0-…`）按名字查出图层，
+  交给 `AddObjectToSheetLayer`。**该接口 `+52` / `+56` 是一对 Put/Get Layer**，
+  记录 `+8` 是这个槽的持久化形态。
+- **交给图元的是图层对象的指针，不是它的 id。** 这一句 tag-184 那篇 §7 已经读出来
+  了（那里叫第 13 / 14 槽），本轮新增的是**字段偏移**：`SheetLayer::IJLayer::AddObject`
+  （vtable `+28`，`sub_1000B140`）把图层自己的 controlling `IUnknown` 交给图元的
+  `+52` 再把计数 `+1`，于是 `SheetLayer` 基址布局钉死——`+8` 成员计数（正是上一轮
+  从 `AddObjectToSheetLayer` 读到的那个）、`+12` 图层名、`+40` controlling unknown。
+- **「读侧不读」这个疑点收窄了。** `PSMSerializeOut` 是从**对象记录的台账槽**
+  （`+32/+38` 或 `+34/+40`）抄进 `aux` 的，而 `sub_564794D0` 把 payload `+4`/`+8`
+  写死登记成 tag 181/182 的**引用**。三处对上：`aux` 的两半是记录的两个引用槽，
+  引用由引擎的引用层重建、不由类的 `Load` 重建，所以 `PSMSerializeIn` 读完就扔。
+  仍**未**追到引擎「引用 ↔ oid」换算的那一步。
+- **`IGBOUNDARY2D_AUX_HI == 12` 撤掉**，`SheetIgBoundary2dDecoded` /
+  `DecodedIgBoundary2dRecord` 新增 `sheet_layer_ref`（payload `+8`）。
+  **代价比预想的小：Phase 34-D 的精确计数一条没变。** 那 9 条被挡的边界全在
+  `JSite*/PSMcluster0`，而 `streams/cluster.rs` 只把**叶名以 `Sheet` 开头**的流交给
+  几何解码器——它们本来就不在管线视野里。真正的缺口是「没人扫 `JSite`」，不是这道
+  门；但门留着，扫到那天就会静悄悄吃掉 9 条。
+- 单测 `igboundary2d_accepts_every_sheet_layer_the_corpus_carries`（`0/8/12/156/
+  199/465/u32::MAX` 逐个过）取代 `igboundary2d_rejects_wrong_remaining_header`；
+  Phase 34-D 棘轮加一条 `sheet_layer_ref == 12`，把「撤门后计数不变」钉住。
+- **接口名没拿到**：`204D4DD1` / `C3BE37E0` 在 `tools/clsid_registry.py`（只收
+  coclass）和 `D:\pid` 下的任何文本形态里都查不到。按 `shlyhp.dll` 的命名习惯
+  `C3BE37E0` 极可能是 `IJLayer`，但没有证据，不采用。
+- 分析文档 `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` 新增 §8，
+  guide §5.1 增补原生一侧并订正 §3 的「还不知道」。
+
+### `aux_hi`（payload `+8`）是图元所在的图层（2026-08-27）
+
+- **上一轮留的那条边找到了，而且它一直在我们眼皮底下。** PSM 信封 8 字节 `aux` 的
+  高半段——本仓一度叫 `remaining_header`、Phase 40 后改叫 `aux_hi`——装的是**图层的
+  持久 id**。问法换了才问得出来：不问「payload 里有没有这个小整数」（那个问题没有
+  零假设，上一轮拿诱饵一测就是平手），改问「**存在某个固定偏移，把这个存储的对象按
+  那里的值分组，能精确复原图层自己报的那张计数表吗**」——每个图层都要对，报 0 的
+  也必须真的一个都没有。
+- **`+8` 是唯一过关的。** 前 256 字节 × `u16`/`u32` × 两种键空间（图层 oid / 图层
+  号）里，别的偏移在**任何一个**存储都没过。五图 15 个存储过 14 个、320 个图层对
+  319 个、1391 对象对 1387 声明；四张主语料图上是满分 **290/290 图层、1240/1240
+  对象**，同一 oid 的多条记录在 `+8` 上打架的有 **0** 个。唯一差额在导出件
+  `A01/JSite204`（声明 103、实到 107），未解释。按「图层号」分组则 15 个存储全灭。
+- **一处订正：guide §5 的「常量 12 / 18」是采样偏差。** `12` 是 `Labels` 图层的
+  oid、`18` 是 `ConsistencyChecks` 的、`8` 是 `Default` 的（顶层这套 id 四图一致）。
+  当年量到常量，只因样本恰好同层。**Phase 40 那 88 条「第二种帧装」的被拒线由此
+  结案**：`A01` 那 80 条整圈页面边框写的正是 `8`——没有第二种帧装，只有第二个图层。
+- **一道按图层筛的门，代价第一次量出来。** `decode_igboundaries` 至今要求
+  `aux_hi == 12`，它的注释说这条规则留着是因为「没人量过这个家族没有它是什么样」。
+  量了：24 条 `igBoundary2d` 里只有 15 条能过，**9 条被挡**，都在 `JSite` 里的
+  `Default`（图层 156/199/465）。**本轮没动这道门**（已在下一条目撤掉）。
+- **`+8` 顺带给出一份「什么算图元」的名册**，家族上是干净的二分：写图层的是
+  Line 614 / Point 246 / Text 235 / LineString 137 / JSymbol 109 / Boundary 24 /
+  **JDim 14 / Circle 12 / Arc 12** / SmartFrame2d 10 / **Rectangle 3 /
+  BspCurve 1**；动态属性行（1447）、DependencyObject（366）、JStyleOverride、图层
+  子系统自己（`JSheetLayer` 290 条全 0——图层不在图层上）等四十余族**一条都不写**。
+- **所以「语料里没有圆 / 弧 / 矩形」这句话要改。** 圆 12、弧 12、矩形 3、B 样条 1，
+  条条坐在图层上；它们不在顶层 `Sheet*` 流里，而在**嵌套 `JSite` 存储的
+  `PSMcluster0`** 里——和被那道门挡掉的 9 条边界是同一块盲区。
+- **两个「不在图层上」的总体都讲得通。** 28 条 `+8 == 0` 的 `igLine2d` 全部在
+  `StyleCluster`，是点符号的字形线（不在任何图纸上）；`DWG-0202` 的 `/Sheet6615`
+  有 5 条记录指着一个不存在的图层 `6996`，该存储此前就因「5 条记录一个 space map
+  条目都没有」被标记过——**整个是孤儿**。
+- **和空间表不矛盾。** 记录头上两个引用槽都不进表：`+4`（`parent_ref`，1401 条非零
+  / 0 条入表）与 `+8`（1240 条非零 / 0 条入表）。落在 `JSheetLayer` 上的 509 条边
+  全部来自 tag 183/184/182，图元一条都没有。反过来，重建路 `sub_564794D0` 恰恰把
+  这两个槽当引用登记（写死 tag 181/182），是框架自己对「`+8` 是对象引用」的背书。
+- **边界写清楚**：`PSMSerializeIn` 把 `aux` 读进一个再不引用的局部，所以记录里这
+  4 字节是台账字段的副本。已证「写进去的是哪个对象」，**未证**「运行时从这里读」。
+- probe `examples/probe_sheetlayer_edge_lives_on_the_graphic.rs`（9 项）、棘轮
+  `psm_aux_hi_is_the_sheet_layer_every_object_sits_on`、guide 新增 §5.1 并订正 §4 /
+  §5、分析文档 `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md`。
+  **解码行为零变化。**
+
+### tag 184 是图纸-图层-视图子系统，成员按名字写（2026-08-27）
+
+- **一处订正。** 上一轮把 tag 184 那 306 条「引用者 payload 里找不到条目 id」的边
+  记成了「只活在这张表里的应用层登记边」——等于说这张表在这一处是主存储。**不是。**
+  引用者写了这些成员，写的是**名字**：`Top ViewFilterSet` 的 payload 尾部是一串
+  `{u32 字符数; UTF-16 名}`，`JSheetLayer` 自己也带名字（`+20` 字符数、`+24` 起）。
+  **208/208** 条图层入边的图层名能在引用它的集合 payload 里逐字节找到，**49/49** 个
+  集合把自己指到的图层全写齐了。表索引的是「名字 → 对象」这一层解析。
+- **七个类名全部拿到，整个子图有了名字。** `0x0057`/`0x0060` `Top ViewFilterSet`
+  （`viewfil.dex`）、`0x0076` `SheetView`（`sheetvw.dvx`）、`0x0114` `JSheet`
+  （`docext.dex`）、`0x0042` `JSheetLayerManager` / `0x0081` `JSheetLayer` /
+  `0x0088` `JSheetLayerGroup`（`shlyhp.dll`）。`0x0057`/`0x0060` 正是上一轮查
+  `TopVFSet` 时注册表回的那两个码（87/96）——当时用来否掉「tag 是 type code」，这次
+  从另一头回来当了正面证据。
+- **形状 60/60 无例外。** 每个存储恰好一个 `0x0060`，`+12` 是它持有的集合数
+  （11/11）；每个 `0x0057` 恰好一个 `JSheet`（id 写在 `+16`，49/49）、一个
+  `JSheetLayerManager`、N 个 `JSheetLayer`。tag 183 是同一子系统的全量登记：
+  `JSheetLayerManager` 的 4 步长表列 290 图层 + 56 图纸 + 11 图层组，而**290 个图层
+  每一个都恰好被一个 manager 列着**。184 = 视图选中的那 208 个子集。
+- **`0x0081 JSheetLayer` 布局由 `shlyhp.dll` 的 `Save` 给出**（native-reader）：
+  `+12` **图层上的对象数**（加入 ++/移除 --）、`+16` **图层号**（构造置 -1 =
+  未分配）、`+20` 字符数 + UTF-16 名、之后第二个名（全语料为空）和一个 u32。四种
+  长度精确收尾。**同名图层是多份对象**——每个视图过滤集各持一份，状态按视图存。
+- **`shlyhp.dll` 带完整 RTTI，图层这一侧读透了。** `SheetLayer::GetClassID` 返回的
+  CLSID 与 §4 表里 `0x0081` 的一致，模块自己签了名。导出的
+  `AddObjectToSheetLayer` 先把图元 QI 到 `204D4DD1-…`、**问图元自己在哪个图层**，
+  再摘旧挂新；图层侧只交出自己的 `IUnknown` 并调整计数。**图层不持有成员表，那条边
+  存在图元身上**——空间表里没有「图层 → 图元」的边，是因为没有这种边。
+- **两条还开着的。** `0x0057 +32` 不是图层数（36/49，差值不恒定）；图元把图层引用
+  写在自己 payload 哪个偏移还不知道——语料判不了（图层 id 是小整数，诱饵对照组下
+  `JSite329` 207 : 208，诱饵还赢），得去图元自己模块的 `Save` 里看。
+- probe `examples/probe_psmspacemap_tag184_viewfilterset_edges.rs`（11 项）、棘轮
+  `psm_space_map_184_edges_are_the_view_filter_sets_named_layers`、guide 新增 §3.4 与
+  §4 图纸/图层/视图族一节、分析文档
+  `docs/analysis/2026-08-27-tag-184-is-the-sheet-layer-view-hierarchy.md`。
+  **解码行为零变化。**
+
 ### 那 191 个无记录的 182 引用者是 `SymbolInformation`（2026-08-27）
 
 - **191/191 长在 `0x00C7` 上。** 入边表里「`value` 找不到任何记录」的成员不是散

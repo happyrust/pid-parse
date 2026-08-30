@@ -130,9 +130,31 @@ decompilation.
   the identity
   (`docs/analysis/2026-08-04-psm-type-code-registry.md`). It stays
   audit-only either way.
-- SmartPlant fixtures don't use standard IGDS `igCircle2d` (0x0059),
-  `igRectangle2d` (0x0020), `igArc2d` (0x0061), or
-  `igEllipticalArc2d` (0x007E) — zero hits cross-fixture.
+- Standard IGDS `igCircle2d` (0x0059), `igRectangle2d` (0x0020) and
+  `igArc2d` (0x0061) have zero hits **in the top-level `Sheet*`
+  streams**, which is all the decoders scan — but they do exist in
+  the corpus: 12 circles, 12 arcs, 3 rectangles and one `0x005D`
+  BspCurve live in the `PSMcluster0` streams of nested `JSite`
+  storages, each sitting on a sheet layer. Nine `0x0013
+  igBoundary2d` records live there too and are additionally refused
+  by the `aux_hi == 12` gate. `igEllipticalArc2d` (0x007E) really is
+  absent. See
+  `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` §7.
+- Payload `+8` (`aux_hi`, the high half of the PSM envelope's `aux`)
+  is **the oid of the sheet layer the object sits on** — never a
+  framing constant. Grouping a storage's objects by it reproduces
+  each `JSheetLayer`'s own `+12` object tally exactly (290/290
+  layers, 1240/1240 objects cross-fixture). The vendor names the
+  same edge `HGeomGetLayer` / `HGeomPutLayer` (`imagdex.dex`), a
+  Put/Get pair at vtable `+52` / `+56` of interface
+  `204D4DD1-B174-11CE-B914-08003601C6EB`; at runtime the graphic
+  holds a COM reference to the layer object, and the record field is
+  that reference serialized. Any rule of the form `aux_hi == <n>` is
+  a filter that admits one layer and refuses the rest; that is what
+  silently dropped 88 `igLine2d` including all of A01's page border
+  (`aux_hi == 8` is the `Default` layer). The `igBoundary2d` copy of
+  that rule is gone as of 2026-08-27; the field is now
+  `sheet_layer_ref` and is never validated.
 - `0x0013 igBoundary2d` (Phase 34-D) is a fully-typed **association**
   record: `segment_count` groups of `0x67 tag + 4×f64` re-list the
   geometry of the `igLine2d` records named by its trailer member

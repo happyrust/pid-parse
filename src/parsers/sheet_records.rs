@@ -4898,18 +4898,6 @@ pub const IGBOUNDARY2D_FIXED_PAYLOAD_LEN: usize = 49;
 /// 8-byte trailer member reference.
 pub const IGBOUNDARY2D_PER_SEGMENT_LEN: usize = 41;
 
-/// The PSM envelope `aux_hi` (payload bytes 8..11) every corpus
-/// `igBoundary2d` carries.
-///
-/// Kept as a family filter, **not** as a framing rule: `aux_hi` is
-/// envelope bookkeeping the native reader discards, so equality here
-/// is a corpus regularity rather than a format requirement. It stays
-/// because nothing has measured what this family looks like without
-/// it — the same measurement that retired the identical `igLine2d`
-/// rule (`examples/probe_phase40_igline_chain_vs_rule`) has not been
-/// run for `0x0013`.
-const IGBOUNDARY2D_AUX_HI: u32 = 12;
-
 /// One `(start, end)` segment decoded from an `igBoundary2d`
 /// segment group (`0x67 tag + 4×f64`).
 #[derive(Debug, Clone, PartialEq)]
@@ -4969,6 +4957,16 @@ pub struct SheetIgBoundary2dDecoded {
     /// Parent reference from payload offset 4 (varies per record;
     /// not validated).
     pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this boundary sits on (payload
+    /// offset 8, the high half of the PSM envelope's `aux`).
+    ///
+    /// Grouping a storage's objects by this field reproduces every
+    /// layer's own `+12` object tally exactly, and the vendor's
+    /// `HGeomGetLayer` / `HGeomPutLayer` pair reaches the same edge
+    /// through the graphic's own interface. Never validated: an
+    /// `== <n>` rule here admits one layer and refuses the rest. See
+    /// `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md`.
+    pub sheet_layer_ref: u32,
     /// Sub-type word at payload offset 12. Always `0x0010`.
     pub sub_type_word: u16,
     /// Index-like word at payload offset 14 (21 / 24 in fixtures,
@@ -5027,8 +5025,7 @@ impl SheetIgBoundary2dDecoded {
 /// Validation rules (all must hold, otherwise the offset is skipped):
 ///
 /// 1. `type_code == 0x0013`; type flags are zero;
-/// 2. `remaining_header == 12` (payload offset 8) and
-///    `sub_type_word == 0x0010` (payload offset 12);
+/// 2. `sub_type_word == 0x0010` (payload offset 12);
 /// 3. sub-header `u32` at payload offset 18 equals `1`;
 /// 4. `segment_count` (payload offset 22) is in
 ///    `1..=IGBOUNDARY2D_MAX_SEGMENT_COUNT`;
@@ -5124,9 +5121,7 @@ fn decode_igboundary_payload(
 
     let oid = read_u32(0)?;
     let parent_ref = read_u32(4)?;
-    if read_u32(8)? != IGBOUNDARY2D_AUX_HI {
-        return None;
-    }
+    let sheet_layer_ref = read_u32(8)?;
     let sub_type_word = u16::from_le_bytes([*payload.get(12)?, *payload.get(13)?]);
     if sub_type_word != 0x0010 {
         return None;
@@ -5218,6 +5213,7 @@ fn decode_igboundary_payload(
         bytes_to_follow,
         oid,
         parent_ref,
+        sheet_layer_ref,
         sub_type_word,
         index,
         segment_count,
@@ -8659,6 +8655,29 @@ mod tests {
         anchor: (f64, f64),
         member_oids: &[u32],
     ) -> Vec<u8> {
+        build_synthetic_igboundary2d_record_on_layer(
+            oid,
+            parent_ref,
+            12,
+            index,
+            segments,
+            anchor,
+            member_oids,
+        )
+    }
+
+    /// Same, with the sheet-layer reference at payload `+8` chosen by
+    /// the caller — the field the decoder used to gate on.
+    #[allow(clippy::too_many_arguments)]
+    fn build_synthetic_igboundary2d_record_on_layer(
+        oid: u32,
+        parent_ref: u32,
+        sheet_layer_ref: u32,
+        index: u32,
+        segments: &[TestSegment],
+        anchor: (f64, f64),
+        member_oids: &[u32],
+    ) -> Vec<u8> {
         let n = segments.len();
         assert_eq!(n, member_oids.len(), "test builder invariant");
         let btf = (IGBOUNDARY2D_FIXED_PAYLOAD_LEN + IGBOUNDARY2D_PER_SEGMENT_LEN * n) as u32;
@@ -8668,7 +8687,7 @@ mod tests {
         // 18-byte IGDS prefix.
         out.extend_from_slice(&oid.to_le_bytes());
         out.extend_from_slice(&parent_ref.to_le_bytes());
-        out.extend_from_slice(&IGBOUNDARY2D_AUX_HI.to_le_bytes());
+        out.extend_from_slice(&sheet_layer_ref.to_le_bytes());
         out.extend_from_slice(&0x0010u16.to_le_bytes());
         out.extend_from_slice(&index.to_le_bytes());
         // 10-byte sub-header: u32 == 1, u32 segment_count, bytes [2, 1].
@@ -8774,11 +8793,34 @@ mod tests {
         assert!(decode_igboundaries(&record).is_empty());
     }
 
+    /// Payload `+8` names the sheet layer the boundary sits on, so
+    /// every value has to survive. The corpus census behind
+    /// `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` found
+    /// nine `igBoundary2d` on layers `156` / `199` / `465` that the
+    /// old `== 12` rule refused.
     #[test]
-    fn igboundary2d_rejects_wrong_remaining_header() {
-        let mut record = canonical_igboundary_triangle();
-        record[6 + 8] = 11;
-        assert!(decode_igboundaries(&record).is_empty());
+    fn igboundary2d_accepts_every_sheet_layer_the_corpus_carries() {
+        for sheet_layer_ref in [0u32, 8, 12, 156, 199, 465, u32::MAX] {
+            let record = build_synthetic_igboundary2d_record_on_layer(
+                81,
+                71,
+                sheet_layer_ref,
+                21,
+                &[
+                    ((0.2025, 0.2202), (0.1993, 0.2210)),
+                    ((0.1993, 0.2210), (0.1993, 0.2194)),
+                    ((0.1993, 0.2194), (0.2025, 0.2202)),
+                ],
+                (0.2004, 0.2202),
+                &[91, 92, 93],
+            );
+            let decoded = decode_igboundary_at(&record, 0)
+                .unwrap_or_else(|| panic!("sheet_layer_ref {sheet_layer_ref} refused"));
+            assert_eq!(
+                decoded.sheet_layer_ref, sheet_layer_ref,
+                "carried through verbatim"
+            );
+        }
     }
 
     #[test]

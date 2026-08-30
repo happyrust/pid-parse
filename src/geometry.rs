@@ -1979,6 +1979,7 @@ mod tests {
                     bytes_to_follow: 172,
                     oid: 900,
                     parent_ref: 6,
+                    sheet_layer_ref: 12,
                     sub_type_word: 0x0010,
                     index: 1,
                     segment_count: 1,
