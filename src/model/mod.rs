@@ -104,6 +104,12 @@ pub struct PidDocument {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub psm_space_maps: BTreeMap<String, PsmSpaceMap>,
 
+    /// Authored sheet layers grouped by their storage-local id namespace.
+    /// The root storage is keyed as `/`; nested registries use paths such as
+    /// `/JSite329`. Same-name layers remain distinct objects.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sheet_layers: BTreeMap<String, Vec<SheetLayer>>,
+
     /// Optional `/DocVersion3` history. Mutually exclusive-ish with
     /// [`Self::doc_version2`]: which one is populated depends on
     /// which version of `SmartPlant` wrote the file.
@@ -220,6 +226,7 @@ impl Default for PidDocument {
             psm_cluster_table: None,
             psm_segment_table: None,
             psm_space_maps: BTreeMap::new(),
+            sheet_layers: BTreeMap::new(),
             version_history: None,
             app_object_registry: None,
             tagged_storages: None,
@@ -232,6 +239,31 @@ impl Default for PidDocument {
             layout: None,
         }
     }
+}
+
+/// One decoded `JSheetLayer` object, reconciled with its manager registration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SheetLayer {
+    /// Storage-local id namespace (`/` for the document, `/JSite…` nested).
+    pub storage_path: String,
+    /// `PSMcluster0` stream carrying the layer record.
+    pub stream_path: String,
+    /// Storage-local persistent object id.
+    pub oid: u32,
+    /// Parent reference from the PSM record envelope.
+    pub parent_ref: u32,
+    /// Authored layer name.
+    pub name: String,
+    /// Optional second persisted name.
+    pub secondary_name: Option<String>,
+    /// Number of graphic objects declared by the layer.
+    pub object_count: u32,
+    /// Layer number assigned by the writer.
+    pub layer_number: u32,
+    /// Storage-local `JSheetLayerManager` id from tag-183 reconciliation.
+    pub manager_oid: Option<u32>,
+    /// Number of manager registrations observed for this layer.
+    pub manager_registration_count: u32,
 }
 
 /// One node in the CFB directory tree as walked by the reader. Hosts

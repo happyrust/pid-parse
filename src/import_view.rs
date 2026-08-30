@@ -42,9 +42,28 @@ pub struct PidImportView {
     /// Mixed cluster / sheet / coverage summary lines, in the order
     /// `build_cluster_summaries` emits them.
     pub clusters: Vec<PidClusterSummary>,
+    /// Authored sheet layers, kept distinct by storage and oid.
+    pub sheet_layers: Vec<PidSheetLayerSummary>,
     /// Human-readable diagnostics for data the reader could not fully
     /// resolve (dangling relationship endpoints, missing roots, etc.).
     pub unresolved: Vec<String>,
+}
+
+/// UI-oriented summary of one authored `JSheetLayer`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PidSheetLayerSummary {
+    /// Storage-local id namespace.
+    pub storage_path: String,
+    /// Storage-local layer id.
+    pub oid: u32,
+    /// Authored layer name.
+    pub name: String,
+    /// Number of objects declared by the layer.
+    pub object_count: u32,
+    /// Layer number assigned by the writer.
+    pub layer_number: u32,
+    /// Reconciled manager id, absent when registration is missing or ambiguous.
+    pub manager_oid: Option<u32>,
 }
 
 /// Slim view of a single [`PidObject`] — keeps just the fields a UI
@@ -163,6 +182,19 @@ pub fn build_import_view(doc: &PidDocument) -> PidImportView {
         |cross| cross.symbol_usage.iter().map(symbol_summary_from).collect(),
     );
     let clusters = build_cluster_summaries(doc, cross.map(|c| &c.cluster_coverage));
+    let sheet_layers = doc
+        .sheet_layers
+        .values()
+        .flatten()
+        .map(|layer| PidSheetLayerSummary {
+            storage_path: layer.storage_path.clone(),
+            oid: layer.oid,
+            name: layer.name.clone(),
+            object_count: layer.object_count,
+            layer_number: layer.layer_number,
+            manager_oid: layer.manager_oid,
+        })
+        .collect();
     let unresolved = build_unresolved(doc, object_graph, cross.map(|c| &c.root_presence));
 
     PidImportView {
@@ -183,6 +215,7 @@ pub fn build_import_view(doc: &PidDocument) -> PidImportView {
         relationships,
         symbols,
         clusters,
+        sheet_layers,
         unresolved,
     }
 }

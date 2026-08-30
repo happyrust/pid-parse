@@ -1990,6 +1990,47 @@ fn psm_space_map_184_edges_are_the_view_filter_sets_named_layers() {
     );
 }
 
+/// The layer evidence is part of the decoded document rather than remaining
+/// trapped in probes: all four primary fixtures expose every storage-local
+/// `JSheetLayer`, and tag 183 reconciles each one to exactly one manager.
+#[test]
+fn jsheet_layers_are_decoded_per_storage_and_registered_once() {
+    let expected = [
+        ("D06.pid", 50usize),
+        ("DWG-0201GP06-01.pid", 110),
+        ("DWG-0202GP06-01.pid", 71),
+        ("工艺管道及仪表流程-1.pid", 59),
+    ];
+    let mut total = 0usize;
+    for (fixture, expected_layers) in expected {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let layers: Vec<_> = doc.sheet_layers.values().flatten().collect();
+        assert_eq!(layers.len(), expected_layers, "{fixture}: layer count");
+        assert!(
+            layers.iter().all(|layer| !layer.name.is_empty()),
+            "{fixture}: every layer has its authored name"
+        );
+        assert!(
+            layers.iter().all(|layer| {
+                layer.manager_oid.is_some() && layer.manager_registration_count == 1
+            }),
+            "{fixture}: every layer is registered by exactly one manager"
+        );
+        assert!(
+            layers
+                .iter()
+                .all(|layer| layer.storage_path == "/" || layer.storage_path.starts_with("/JSite")),
+            "{fixture}: storage identity stays explicit"
+        );
+        total += layers.len();
+    }
+    if total != 0 {
+        assert_eq!(total, 290, "four-fixture JSheetLayer total");
+    }
+}
+
 /// `aux_hi` -- payload `+8`, the high half of the PSM envelope's 8-byte `aux`
 /// -- is the sheet layer the object sits on.
 ///

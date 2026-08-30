@@ -13,8 +13,13 @@
 
 use crate::config::ParseOptions;
 use crate::error::PidError;
-use crate::model::PidDocument;
+use crate::model::{PidDocument, SheetLayer};
 use crate::parsers::psm_tables;
+use crate::parsers::sheet_layers::{
+    decode_sheet_layer_managers, decode_sheet_layers, PSM_TYPE_CODE_JSHEET_LAYER,
+    PSM_TYPE_CODE_JSHEET_LAYER_MANAGER,
+};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
 /// Parse the `PSMroots`, `PSMclustertable`, `PSMsegmenttable` streams if
@@ -45,7 +50,142 @@ pub fn parse_psm_tables<R: Read + std::io::Seek>(
         }
     }
     parse_space_maps(cfb, doc);
+    parse_sheet_layers(cfb, doc);
     Ok(())
+}
+
+fn storage_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let parent = normalized.rsplit_once('/').map_or("", |(parent, _)| parent);
+    if parent.is_empty() {
+        "/".to_string()
+    } else {
+        parent.to_string()
+    }
+}
+
+fn space_map_storage_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let marker = "/PSMspacemap/";
+    normalized
+        .find(marker)
+        .map_or_else(|| storage_path(&normalized), |at| {
+            let prefix = &normalized[..at];
+            if prefix.is_empty() {
+                "/".to_string()
+            } else {
+                prefix.to_string()
+            }
+        })
+}
+
+fn space_map_segment(path: &str) -> Option<u32> {
+    let leaf = path.rsplit(['/', '\\']).next()?;
+    u32::from_str_radix(leaf.strip_prefix("0x")?, 16)
+        .ok()
+        .map(|address| address >> 13)
+}
+
+/// Decode every storage's `JSheetLayer` table and reconcile tag-183 manager
+/// registrations from that storage's `PSMspacemap` index.
+fn parse_sheet_layers<R: Read + std::io::Seek>(
+    cfb: &mut ::cfb::CompoundFile<R>,
+    doc: &mut PidDocument,
+) {
+    let paths: Vec<String> = cfb
+        .walk()
+        .filter(::cfb::Entry::is_stream)
+        .map(|entry| entry.path().to_string_lossy().replace('\\', "/"))
+        .filter(|path| path.rsplit('/').next() == Some("PSMcluster0"))
+        .collect();
+
+    let mut families: BTreeMap<String, BTreeMap<u32, u16>> = BTreeMap::new();
+    let mut decoded_by_storage: BTreeMap<String, Vec<(String, crate::parsers::sheet_layers::SheetLayerDecoded)>> =
+        BTreeMap::new();
+    for path in paths {
+        let Ok(mut stream) = cfb.open_stream(&path) else {
+            continue;
+        };
+        let mut data = Vec::new();
+        if stream.read_to_end(&mut data).is_err() {
+            continue;
+        }
+        let storage = storage_path(&path);
+        let by_oid = families.entry(storage.clone()).or_default();
+        for manager in decode_sheet_layer_managers(&data) {
+            by_oid.insert(manager.oid, PSM_TYPE_CODE_JSHEET_LAYER_MANAGER);
+        }
+        let layers = decode_sheet_layers(&data);
+        for layer in &layers {
+            by_oid.insert(layer.oid, PSM_TYPE_CODE_JSHEET_LAYER);
+        }
+        decoded_by_storage
+            .entry(storage)
+            .or_default()
+            .extend(layers.into_iter().map(|layer| (path.clone(), layer)));
+    }
+
+    let mut registrations: BTreeMap<(String, u32), Vec<u32>> = BTreeMap::new();
+    for (map_path, map) in &doc.psm_space_maps {
+        let Some(segment) = space_map_segment(map_path) else {
+            continue;
+        };
+        let storage = space_map_storage_path(map_path);
+        let Some(by_oid) = families.get(&storage) else {
+            continue;
+        };
+        for entry in &map.entries {
+            let target = (segment << 13) | u32::from(entry.index);
+            if by_oid.get(&target) != Some(&PSM_TYPE_CODE_JSHEET_LAYER) {
+                continue;
+            }
+            for member in entry
+                .live_members()
+                .iter()
+                .filter(|member| member.tag == 183)
+            {
+                if by_oid.get(&member.value) == Some(&PSM_TYPE_CODE_JSHEET_LAYER_MANAGER) {
+                    registrations
+                        .entry((storage.clone(), target))
+                        .or_default()
+                        .push(member.value);
+                }
+            }
+        }
+    }
+
+    for (storage, decoded) in decoded_by_storage {
+        let mut layers: Vec<SheetLayer> = decoded
+            .into_iter()
+            .map(|(stream_path, layer)| {
+                let registrations = registrations.get(&(storage.clone(), layer.oid));
+                let managers: BTreeSet<u32> = registrations
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .collect();
+                SheetLayer {
+                    storage_path: storage.clone(),
+                    stream_path,
+                    oid: layer.oid,
+                    parent_ref: layer.parent_ref,
+                    name: layer.name,
+                    secondary_name: layer.secondary_name,
+                    object_count: layer.object_count,
+                    layer_number: layer.layer_number,
+                    manager_oid: (managers.len() == 1)
+                        .then(|| managers.iter().next().copied())
+                        .flatten(),
+                    manager_registration_count: u32::try_from(
+                        registrations.map_or(0, Vec::len),
+                    )
+                    .unwrap_or(u32::MAX),
+                }
+            })
+            .collect();
+        layers.sort_by_key(|layer| layer.oid);
+        doc.sheet_layers.insert(storage, layers);
+    }
 }
 
 /// Decode every `PSMspacemap` member the document carries.
