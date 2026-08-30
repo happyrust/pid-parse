@@ -4,16 +4,18 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
-Phase 34-F - Full Sheet Geometry Decode 合同与状态同步（complete）。
-Phase 34-D 已将 `0x0013 igBoundary2d` 落为全字段 typed audit-only
-decoder；Phase 34-E 已证明曲线家族并非普遍缺少本地 fixture，而是主要位于
-nested `/JSite*/PSMcluster0`、`StyleCluster` 和备份 `.sym` 符号库。
-本轮同步 authoritative atlas、promotion roadmap、Phase 34 verification 与
-本计划；“Phase 34 complete”仅表示当前六个注册 PID fixture 的候选已量化、
-分类并通过证据门禁，不表示 vendor 全几何格式或语义 writer 已完整实现。
-下一实施入口是提取最小 `.sym` fixture，并按 `igCircle2d` → `igArc2d` →
-`igEllipse2d` → `igEllipticalArc2d` → `igBSplineCurve2d` 独立推进 decoder
-slice。
+Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
+`JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
+`sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给
+`PidGraphicEntity`。OpenCADStudio 的消费提交在独立
+`codex/pid-real-layers` worktree，真实图层进入 XDATA/属性/摘要，隐藏类进入
+默认关闭的 `PID-HIDDEN`，DWG/DXF round-trip 已通过。
+
+`.sym` 折线闭合位已由完整 618-file corpus 证明并透传。JSite W4 按证据门
+停止：`A01/JSite204/Sheet*` 已证明且已经作为页面内容加载；其余 10 个
+chain-bearing `LdcSite/PSMcluster0` 未找到页面变换，不 emit。当前状态与提交
+列表见 `docs/plans/2026-08-31-real-sheet-layers-closeout.md`，变换缺口见
+`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`。
 
 ## 历史阶段 → goals/ 包托管说明
 2026-05-13 起 Phase 13+ 的细节迁移到 `goals/phaseNN-...` 目录（brief / plan /
