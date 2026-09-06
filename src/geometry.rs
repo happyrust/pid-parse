@@ -1079,6 +1079,9 @@ struct EmitContext<'a> {
     /// [`crate::model::DecodedIgSymbol2dRecord::jsite_ref`]
     /// (Phase 35-C).
     jsite_symbol_paths: BTreeMap<u32, &'a str>,
+    /// `(document JSite id, embedded JSheet id)` to the instance-specific
+    /// body selected by the tail of an `igSymbol2d` placement.
+    embedded_symbol_sheets: BTreeMap<(u32, u32), &'a crate::model::JSiteEmbeddedSheet>,
     /// The page the drawing's own border frame states, when it has one.
     /// Decoded coordinates are metres on this page; see
     /// [`decoded_sheet_coordinate_context`].
@@ -1113,8 +1116,15 @@ impl<'a> EmitContext<'a> {
                 )
             })
             .collect();
+        let embedded_symbol_sheets = doc
+            .jsites
+            .iter()
+            .filter_map(|site| Some((site.name.strip_prefix("JSite")?.parse::<u32>().ok()?, site)))
+            .flat_map(|(site_id, site)| site.embedded_sheets.iter().map(move |sheet| ((site_id, sheet.oid), sheet)))
+            .collect();
         Self {
             jsite_symbol_paths,
+            embedded_symbol_sheets,
             page,
             sheet_layer_names,
         }
@@ -1295,6 +1305,72 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                 record.transform_10,
                 record.transform_11,
             ]);
+            let embedded_body = ctx.embedded_symbol_sheets.get(&(record.document_site_ref, record.embedded_sheet_ref));
+            if let Some(body) = embedded_body {
+                let transform = |(x, y): (f64, f64)| PidPoint {
+                    x: record.transform_00 * x + record.transform_10 * y + record.insertion_x,
+                    y: record.transform_01 * x + record.transform_11 * y + record.insertion_y,
+                };
+                let source_layer = ctx.source_layer(&sheet.path, record.sheet_layer_ref);
+                for (primitive_index, primitive) in body.primitives.iter().enumerate() {
+                    let (primitive_oid, kind) = match primitive {
+                        crate::model::JSiteEmbeddedPrimitive::Line { oid, start, end } => (*oid, PidGraphicKind::Line { start: transform(*start), end: transform(*end) }),
+                        crate::model::JSiteEmbeddedPrimitive::Polyline { oid, points, closed } => (*oid, PidGraphicKind::Polyline { points: points.iter().copied().map(transform).collect(), closed: *closed }),
+                        // `igPoint2d` children are connection/control points,
+                        // not visible symbol strokes (the `.sym` reader makes
+                        // the same distinction).
+                        crate::model::JSiteEmbeddedPrimitive::Point { .. } => continue,
+                        crate::model::JSiteEmbeddedPrimitive::Text { oid, value, insertion, rotation: local_rotation } => (*oid, PidGraphicKind::Text {
+                            insertion: transform(*insertion), value: value.clone(), height: 0.0, rotation: rotation + local_rotation,
+                        }),
+                        crate::model::JSiteEmbeddedPrimitive::Circle { oid, center, radius } => (*oid, PidGraphicKind::Circle {
+                            center: transform(*center), radius: radius * scale[0].abs(),
+                        }),
+                        crate::model::JSiteEmbeddedPrimitive::Arc { oid, center, radius, start_angle, end_angle } => {
+                            let mut sweep = end_angle - start_angle;
+                            while sweep <= 0.0 { sweep += std::f64::consts::TAU; }
+                            let steps = ((sweep.abs() / std::f64::consts::PI * 24.0).ceil() as usize).clamp(8, 64);
+                            let points = (0..=steps).map(|step| {
+                                let angle = start_angle + sweep * step as f64 / steps as f64;
+                                transform((center.0 + radius * angle.cos(), center.1 + radius * angle.sin()))
+                            }).collect();
+                            (*oid, PidGraphicKind::Polyline { points, closed: false })
+                        }
+                    };
+                    if matches!(&kind, PidGraphicKind::Text { value, .. } if value.to_ascii_uppercase().contains("NULL")) {
+                        continue;
+                    }
+                    out.push(PidGraphicEntity {
+                        id: format!("{}:igsymbol2d:{index}:embedded:{primitive_index}", sheet.path),
+                        drawing_id: None,
+                        // The placement owns the appearance and semantic join;
+                        // the local primitive id remains in provenance.
+                        graphic_oid: Some(record.oid),
+                        source_layer: source_layer.clone(),
+                        kind,
+                        coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
+                        source: PidGraphicProvenance {
+                            // Style/semantic indices are keyed by the owning
+                            // placement in its top-level Sheet stream.
+                            stream_path: Some(sheet.path.clone()),
+                            byte_range: None,
+                            record_id: Some(format!("embedded-sheet:{}:primitive:{primitive_oid}", record.embedded_sheet_ref)),
+                            record_kind: Some(SheetRecordKind::SymbolPlacement),
+                            field_x: None,
+                            note: Some(format!("instance-specific JSheet body {} selected by igSymbol2d oid {} and transformed by its placement matrix", record.embedded_sheet_ref, record.oid)),
+                        },
+                        confidence: PidGeometryConfidence::Decoded,
+                    });
+                }
+            }
+            // The external `.sym` is the reusable authoring template. Once
+            // the drawing supplies a persisted instance-specific JSheet body,
+            // drawing both duplicates the symbol and can show stale template
+            // geometry. Keep the library path strictly as a missing-body
+            // fallback.
+            if embedded_body.is_some() {
+                continue;
+            }
             out.push(PidGraphicEntity {
                 id: format!("{}:igsymbol2d:{index}", sheet.path),
                 drawing_id: None,
@@ -1322,7 +1398,7 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                     note: Some(format!(
                         "PSM igSymbol2d record (Intergraph Sigma standard symbol instance, \
                          type 0x00CE, IGDS class tag 0xCE); oid={} parent_ref={} \
-                         sub_type=0x{:04X} jsite_ref={} insertion=({:.4}, {:.4}) \
+                         sub_type=0x{:04X} jsite_ref={} document_site_ref={} embedded_sheet_ref={} insertion=({:.4}, {:.4}) \
                          transform=[{:.4}, {:.4}, {:.4}, {:.4}]; byte layout from \
                          fixture dump; jsite_ref -> JSite<id> link from Phase 35-C \
                          cross-fixture probe (132/132)",
@@ -1330,6 +1406,8 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                         record.parent_ref,
                         record.sub_type_word,
                         record.jsite_ref,
+                        record.document_site_ref,
+                        record.embedded_sheet_ref,
                         record.insertion_x,
                         record.insertion_y,
                         record.transform_00,

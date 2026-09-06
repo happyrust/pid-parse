@@ -491,6 +491,33 @@ pub struct JSite {
     /// that carry only a `JProperties` blob.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol_information: Option<JSiteSymbolInformation>,
+    /// Instance-specific graphic bodies keyed by their persisted `JSheet`
+    /// id. Top-level `igSymbol2d` records select one body through their
+    /// tail `embedded_sheet_ref` and place it with their normal matrix.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub embedded_sheets: Vec<JSiteEmbeddedSheet>,
+}
+
+/// One `0x0114 JSheet` body embedded in a chain-bearing `JSite`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+pub struct JSiteEmbeddedSheet {
+    /// Storage-local persist id selected by an `igSymbol2d` tail reference.
+    pub oid: u32,
+    /// Drawable children whose `parent_ref` equals [`Self::oid`].
+    pub primitives: Vec<JSiteEmbeddedPrimitive>,
+}
+
+/// Drawable primitive stored below a [`JSiteEmbeddedSheet`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(missing_docs)] // Field meanings are the conventional geometry names below.
+pub enum JSiteEmbeddedPrimitive {
+    Line { oid: u32, start: (f64, f64), end: (f64, f64) },
+    Polyline { oid: u32, points: Vec<(f64, f64)>, closed: bool },
+    Point { oid: u32, position: (f64, f64) },
+    Text { oid: u32, value: String, insertion: (f64, f64), rotation: f64 },
+    Circle { oid: u32, center: (f64, f64), radius: f64 },
+    Arc { oid: u32, center: (f64, f64), radius: f64, start_angle: f64, end_angle: f64 },
 }
 
 /// The symbol-information / expression family of one `JSite`, decoded from

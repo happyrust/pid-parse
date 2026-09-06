@@ -3825,6 +3825,14 @@ pub struct SheetIgSymbol2dDecoded {
     /// fixtures (`psm_space_map_181_edges_match_igsymbol_jsite_ref`, and
     /// `docs/analysis/2026-08-27-the-spacemap-is-an-incoming-reference-index.md`).
     pub jsite_ref: u32,
+    /// `JSheet` persist id of the instance-specific body inside
+    /// [`Self::document_site_ref`], stored eight bytes from the end of the
+    /// payload. The four real drawings resolve every non-zero value to a
+    /// `0x0114 JSheet` in that site's `PSMcluster0`.
+    pub embedded_sheet_ref: u32,
+    /// Numeric id of the chain-bearing `JSite<id>` document container,
+    /// stored in the final four payload bytes.
+    pub document_site_ref: u32,
     /// Style id the placement names for its body's line work, read as
     /// the u32 at payload `+25` — a fixed offset, unlike the tag-relative
     /// `jsite_ref`, and present in the 113-byte minimum payload.
@@ -3956,6 +3964,9 @@ fn decode_igsymbol_payload(
         payload[jsite_at + 2],
         payload[jsite_at + 3],
     ]);
+    let embedded_sheet_at = payload.len().checked_sub(8)?;
+    let embedded_sheet_ref = u32::from_le_bytes(payload.get(embedded_sheet_at..embedded_sheet_at + 4)?.try_into().ok()?);
+    let document_site_ref = u32::from_le_bytes(payload.get(payload.len() - 4..)?.try_into().ok()?);
 
     // 4 doubles of placement matrix, then the translation pair.
     let mut doubles = [0f64; 6];
@@ -3986,6 +3997,8 @@ fn decode_igsymbol_payload(
         sheet_layer_ref,
         sub_type_word,
         jsite_ref,
+        embedded_sheet_ref,
+        document_site_ref,
         style_ref,
         transform: [doubles[0], doubles[1], doubles[2], doubles[3]],
         insertion: (doubles[4], doubles[5]),

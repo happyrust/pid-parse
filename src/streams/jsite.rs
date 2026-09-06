@@ -8,8 +8,8 @@
 
 use crate::config::ParseOptions;
 use crate::error::PidError;
-use crate::model::{EmbeddedStream, JSite, JSiteSymbolInformation, PidDocument};
-use std::collections::BTreeSet;
+use crate::model::{EmbeddedStream, JSite, JSiteEmbeddedPrimitive, JSiteEmbeddedSheet, JSiteSymbolInformation, PidDocument};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -54,6 +54,87 @@ fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
             .map(Into::into)
             .collect(),
     }
+}
+
+fn u16_le(data: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(data.get(at..at + 2)?.try_into().ok()?))
+}
+
+fn u32_le(data: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+}
+
+fn f64_le(data: &[u8], at: usize) -> Option<f64> {
+    Some(f64::from_le_bytes(data.get(at..at + 8)?.try_into().ok()?))
+}
+
+/// Recover the drawable children of every persisted `JSheet` in a JSite.
+/// The same record decoders used for top-level Sheet streams provide the
+/// common families; circle and arc use their native fixed layouts, which are
+/// identical to the proven `.sym` layouts.
+fn decode_embedded_sheets(data: &[u8]) -> Vec<JSiteEmbeddedSheet> {
+    use crate::parsers::sheet_records::{
+        decode_iglines, decode_iglinestrings, decode_igpoints, decode_igtextboxes,
+        sheet_record_starts,
+    };
+
+    let mut sheets = BTreeMap::<u32, Vec<JSiteEmbeddedPrimitive>>::new();
+    for at in sheet_record_starts(data) {
+        let Some(type_code) = u16_le(data, at).map(|word| word & 0x3fff) else { continue };
+        let Some(len) = u32_le(data, at + 2).map(|value| value as usize) else { continue };
+        let Some(payload) = data.get(at + 6..at + 6 + len) else { continue };
+        if type_code == 0x0114 {
+            if let Some(oid) = u32_le(payload, 0) {
+                sheets.entry(oid).or_default();
+            }
+        }
+    }
+
+    for record in decode_iglines(data) {
+        if let Some(body) = sheets.get_mut(&record.parent_ref) {
+            body.push(JSiteEmbeddedPrimitive::Line { oid: record.oid, start: record.start, end: record.end });
+        }
+    }
+    for record in decode_iglinestrings(data) {
+        if let Some(body) = sheets.get_mut(&record.parent_ref) {
+            body.push(JSiteEmbeddedPrimitive::Polyline { oid: record.oid, points: record.vertices, closed: record.form == 2 });
+        }
+    }
+    for record in decode_igpoints(data) {
+        if let Some(body) = sheets.get_mut(&record.parent_ref) {
+            body.push(JSiteEmbeddedPrimitive::Point { oid: record.oid, position: record.point });
+        }
+    }
+    for record in decode_igtextboxes(data) {
+        if let Some(body) = sheets.get_mut(&record.parent_ref) {
+            body.push(JSiteEmbeddedPrimitive::Text {
+                oid: record.oid,
+                value: record.text,
+                insertion: (record.trailing_double_1, record.trailing_double_2),
+                rotation: record.rotation_rad,
+            });
+        }
+    }
+
+    for at in sheet_record_starts(data) {
+        let Some(type_code) = u16_le(data, at).map(|word| word & 0x3fff) else { continue };
+        if !matches!(type_code, 0x0059 | 0x0061) { continue }
+        let Some(len) = u32_le(data, at + 2).map(|value| value as usize) else { continue };
+        let Some(payload) = data.get(at + 6..at + 6 + len) else { continue };
+        let (Some(oid), Some(parent_ref)) = (u32_le(payload, 0), u32_le(payload, 4)) else { continue };
+        let Some(body) = sheets.get_mut(&parent_ref) else { continue };
+        let (Some(x), Some(y), Some(radius)) = (f64_le(payload, 18), f64_le(payload, 26), f64_le(payload, 34)) else { continue };
+        if ![x, y, radius].into_iter().all(f64::is_finite) || radius <= 0.0 { continue }
+        if type_code == 0x0059 {
+            body.push(JSiteEmbeddedPrimitive::Circle { oid, center: (x, y), radius });
+        } else if let (Some(start_angle), Some(end_angle)) = (f64_le(payload, 42), f64_le(payload, 50)) {
+            if start_angle.is_finite() && end_angle.is_finite() {
+                body.push(JSiteEmbeddedPrimitive::Arc { oid, center: (x, y), radius, start_angle, end_angle });
+            }
+        }
+    }
+
+    sheets.into_iter().filter_map(|(oid, primitives)| (!primitives.is_empty()).then_some(JSiteEmbeddedSheet { oid, primitives })).collect()
 }
 
 /// Decode every top-level `JSite*` storage into
@@ -116,6 +197,7 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
             if !decoded.is_empty() {
                 site.symbol_information = Some(decoded);
             }
+            site.embedded_sheets = decode_embedded_sheets(&data);
         }
 
         if options.keep_unknown_streams {

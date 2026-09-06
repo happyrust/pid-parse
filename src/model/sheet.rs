@@ -717,6 +717,12 @@ pub struct DecodedIgSymbol2dRecord {
     /// names the `.sym` library path).
     #[serde(default)]
     pub jsite_ref: u32,
+    /// Instance-specific `JSheet` body inside [`Self::document_site_ref`].
+    #[serde(default)]
+    pub embedded_sheet_ref: u32,
+    /// Chain-bearing document `JSite` containing the embedded sheet body.
+    #[serde(default)]
+    pub document_site_ref: u32,
     /// Style id the placement names for its body's line work (payload
     /// `+25`, fixed). Resolves in the root document's `StyleCluster` on
     /// 109/109 corpus placements, and the colours match a `SmartPlant`
@@ -753,6 +759,8 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
             sheet_layer_ref: d.sheet_layer_ref,
             sub_type_word: d.sub_type_word,
             jsite_ref: d.jsite_ref,
+            embedded_sheet_ref: d.embedded_sheet_ref,
+            document_site_ref: d.document_site_ref,
             style_ref: d.style_ref,
             transform_00: d.transform[0],
             transform_01: d.transform[1],
