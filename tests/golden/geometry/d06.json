@@ -2282,6 +2282,11 @@
   {
     "id": "/Sheet6:igsymbol2d:0",
     "graphic_oid": 156,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
@@ -2346,6 +2351,11 @@
   {
     "id": "/Sheet6:igsymbol2d:1",
     "graphic_oid": 209,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
@@ -2410,6 +2420,11 @@
   {
     "id": "/Sheet6:igsymbol2d:2",
     "graphic_oid": 280,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
@@ -2474,6 +2489,11 @@
   {
     "id": "/Sheet6:igsymbol2d:3",
     "graphic_oid": 1832,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
@@ -2538,6 +2558,11 @@
   {
     "id": "/Sheet6:igsymbol2d:4",
     "graphic_oid": 1850,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
@@ -2602,6 +2627,11 @@
   {
     "id": "/Sheet6:igsymbol2d:5",
     "graphic_oid": 3298,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "symbol_instance",
       "insertion": {
@@ -2666,6 +2696,11 @@
   {
     "id": "/Sheet6:igtextbox:0",
     "graphic_oid": 294,
+    "source_layer": {
+      "oid": 12,
+      "name": "Labels",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "text",
       "insertion": {
@@ -2727,6 +2762,11 @@
   {
     "id": "/Sheet6:igtextbox:1",
     "graphic_oid": 494,
+    "source_layer": {
+      "oid": 12,
+      "name": "Labels",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "text",
       "insertion": {
@@ -2788,6 +2828,11 @@
   {
     "id": "/Sheet6:igtextbox:2",
     "graphic_oid": 3590,
+    "source_layer": {
+      "oid": 12,
+      "name": "Labels",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "text",
       "insertion": {
@@ -2849,6 +2894,11 @@
   {
     "id": "/Sheet6:igtextbox:3",
     "graphic_oid": 3591,
+    "source_layer": {
+      "oid": 12,
+      "name": "Labels",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "text",
       "insertion": {
@@ -2910,6 +2960,11 @@
   {
     "id": "/Sheet6:igpoint2d:0",
     "graphic_oid": 322,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -2968,6 +3023,11 @@
   {
     "id": "/Sheet6:igpoint2d:1",
     "graphic_oid": 325,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -3026,6 +3086,11 @@
   {
     "id": "/Sheet6:igpoint2d:2",
     "graphic_oid": 369,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -3084,6 +3149,11 @@
   {
     "id": "/Sheet6:igpoint2d:3",
     "graphic_oid": 371,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -3142,6 +3212,11 @@
   {
     "id": "/Sheet6:igpoint2d:4",
     "graphic_oid": 2353,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -3200,6 +3275,11 @@
   {
     "id": "/Sheet6:igpoint2d:5",
     "graphic_oid": 2355,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -3258,6 +3338,11 @@
   {
     "id": "/Sheet6:igpoint2d:6",
     "graphic_oid": 3139,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -3316,6 +3401,11 @@
   {
     "id": "/Sheet6:igpoint2d:7",
     "graphic_oid": 3229,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -3374,6 +3464,11 @@
   {
     "id": "/Sheet6:igpoint2d:8",
     "graphic_oid": 3285,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -3432,6 +3527,11 @@
   {
     "id": "/Sheet6:igpoint2d:9",
     "graphic_oid": 3287,
+    "source_layer": {
+      "oid": 18,
+      "name": "ConsistencyChecks",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "point",
       "position": {
@@ -3490,6 +3590,11 @@
   {
     "id": "/Sheet6:iglinestring2d:0",
     "graphic_oid": 299,
+    "source_layer": {
+      "oid": 17,
+      "name": "HiddenObjects",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "polyline",
       "points": [
@@ -3555,6 +3660,11 @@
   {
     "id": "/Sheet6:iglinestring2d:1",
     "graphic_oid": 365,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "polyline",
       "points": [
@@ -3620,6 +3730,11 @@
   {
     "id": "/Sheet6:iglinestring2d:2",
     "graphic_oid": 480,
+    "source_layer": {
+      "oid": 17,
+      "name": "HiddenObjects",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "polyline",
       "points": [
@@ -3685,6 +3800,11 @@
   {
     "id": "/Sheet6:iglinestring2d:3",
     "graphic_oid": 2349,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "polyline",
       "points": [
@@ -3750,6 +3870,11 @@
   {
     "id": "/Sheet6:iglinestring2d:4",
     "graphic_oid": 2351,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "polyline",
       "points": [
@@ -3819,6 +3944,11 @@
   {
     "id": "/Sheet6:iglinestring2d:5",
     "graphic_oid": 3289,
+    "source_layer": {
+      "oid": 8,
+      "name": "Default",
+      "storage_path": "/"
+    },
     "kind": {
       "kind": "polyline",
       "points": [
