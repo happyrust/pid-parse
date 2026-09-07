@@ -3846,6 +3846,21 @@ pub struct SheetIgSymbol2dDecoded {
     /// Insertion point in sheet units, the translation column of the same
     /// matrix.
     pub insertion: (f64, f64),
+    /// Persist id, **inside the definition cache storage**, of the `JSheet`
+    /// that holds this placement's symbol body: the payload's second-to-last
+    /// `u32`. The cache is the `LdcSite` storage [`Self::definition_site_ref`]
+    /// names; the sheet's tag-183 space-map edge leads to the layer manager
+    /// whose layers carry the body, in symbol-local coordinates. 107/107
+    /// placements across the four sheet fixtures resolve, and where the body
+    /// has circles or arcs they equal the placed `.sym`'s to a nanometre
+    /// (`docs/analysis/2026-09-07-placement-tail-names-the-cached-definition.md`).
+    pub definition_sheet_ref: u32,
+    /// Id of the top-level `LdcSite` storage (`JSite<id>`) that is the
+    /// definition cache holding [`Self::definition_sheet_ref`]: the payload's
+    /// last `u32`. Two caches exist per drawing -- `PSMroots` names them
+    /// `Server Document` (static definitions) and `Imagineer Document`
+    /// (parametric instances) -- and this word says which.
+    pub definition_site_ref: u32,
 }
 
 /// Decode every PSM-encoded `igSymbol2d` record.
@@ -3972,6 +3987,23 @@ fn decode_igsymbol_payload(
         return None;
     }
 
+    // The tail after the six doubles: an `f64 1.0`, a flag word, then
+    // `u32 has_membassy`, `u32 0`, an optional `(membassy oid, 0)` pair when
+    // that flag is set, and finally the two words that name the body --
+    // `(definition JSheet oid, LdcSite id)`. Reading them from the end is
+    // what makes the optional pair irrelevant. Payloads shorter than the
+    // matrix plus this tail cannot occur under the 113-byte floor above, but
+    // a synthetic one reads as "no definition" rather than as garbage.
+    let tail_end = payload.len();
+    let (definition_sheet_ref, definition_site_ref) = if tail_end >= matrix_at + 48 + 8 {
+        (
+            u32_le(payload, tail_end - 8).unwrap_or_default(),
+            u32_le(payload, tail_end - 4).unwrap_or_default(),
+        )
+    } else {
+        (0, 0)
+    };
+
     Some(SheetIgSymbol2dDecoded {
         byte_range: offset..payload_end,
         type_code,
@@ -3985,7 +4017,29 @@ fn decode_igsymbol_payload(
         style_ref,
         transform: [doubles[0], doubles[1], doubles[2], doubles[3]],
         insertion: (doubles[4], doubles[5]),
+        definition_sheet_ref,
+        definition_site_ref,
     })
+}
+
+/// PSM type code for `JSheet Object` (`docext.dex`): a sheet, which in a
+/// definition cache storage is one symbol body.
+pub const PSM_TYPE_CODE_JSHEET: u16 = 0x0114;
+
+/// The oid of every `JSheet` record in a record-chain stream, in on-disk
+/// order. No payload is read beyond the oid: the sheet's layers are reached
+/// through its space-map edge to a `JSheetLayerManager`, not through its
+/// own bytes.
+pub fn jsheet_oids(data: &[u8]) -> Vec<u32> {
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| {
+            let header = parse_psm_header(data, at)?;
+            (header.type_code == PSM_TYPE_CODE_JSHEET)
+                .then(|| u32_le(data, header.body_start))
+                .flatten()
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -8343,6 +8397,44 @@ mod tests {
     /// Payload offset of `transform[0]` in a record from
     /// [`build_synthetic_igsymbol2d_record`].
     const SYNTHETIC_IGSYMBOL2D_MATRIX_AT: usize = 33 + 4;
+
+    /// The last two words of the payload name the body: the definition
+    /// cache's `JSheet`, then the `LdcSite` storage that cache is. Both
+    /// payload shapes the corpus has -- 113 bytes with `has_membassy = 0`,
+    /// 121 with the flag set and a `(membassy, 0)` pair in front -- put them
+    /// at the end, which is why they are read from the end.
+    #[test]
+    fn igsymbol2d_tail_names_the_definition_sheet_and_cache() {
+        let mut short =
+            build_synthetic_igsymbol2d_record(500, 6, 399, [1.0, 0.0, 0.0, 1.0], (0.3, 0.4));
+        let len = short.len();
+        short[len - 8..len - 4].copy_from_slice(&125u32.to_le_bytes());
+        short[len - 4..].copy_from_slice(&145u32.to_le_bytes());
+        let decoded = decode_igsymbols(&short);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].definition_sheet_ref, 125);
+        assert_eq!(decoded[0].definition_site_ref, 145);
+
+        // The 121-byte shape: flag word set, then `(membassy oid, 0)`, then
+        // the same two words.
+        let mut long =
+            build_synthetic_igsymbol2d_record(500, 6, 399, [1.0, 0.0, 0.0, 1.0], (0.3, 0.4));
+        long.truncate(PSM_ENVELOPE_LEN + 93);
+        long.extend_from_slice(&0x0100_5001_u32.to_le_bytes()); // flags
+        long.extend_from_slice(&1u32.to_le_bytes()); // has_membassy
+        long.extend_from_slice(&0u32.to_le_bytes());
+        long.extend_from_slice(&142u32.to_le_bytes()); // membassy oid
+        long.extend_from_slice(&0u32.to_le_bytes());
+        long.extend_from_slice(&93u32.to_le_bytes()); // JSheet
+        long.extend_from_slice(&145u32.to_le_bytes()); // LdcSite
+        let payload_len = (long.len() - PSM_ENVELOPE_LEN) as u32;
+        long[2..6].copy_from_slice(&payload_len.to_le_bytes());
+        assert_eq!(payload_len, 121);
+        let decoded = decode_igsymbols(&long);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].definition_sheet_ref, 93);
+        assert_eq!(decoded[0].definition_site_ref, 145);
+    }
 
     #[test]
     fn igsymbol2d_decodes_canonical_unrotated_symbol() {

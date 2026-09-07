@@ -738,6 +738,14 @@ pub struct DecodedIgSymbol2dRecord {
     pub insertion_x: f64,
     /// Insertion point `y`.
     pub insertion_y: f64,
+    /// Oid, inside the definition cache storage, of the `JSheet` holding
+    /// this placement's symbol body (the payload's second-to-last `u32`).
+    #[serde(default)]
+    pub definition_sheet_ref: u32,
+    /// Id of the `LdcSite` storage (`JSite<id>`) that is the definition
+    /// cache (the payload's last `u32`).
+    #[serde(default)]
+    pub definition_site_ref: u32,
 }
 
 impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSymbol2dRecord {
@@ -760,6 +768,8 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
             transform_11: d.transform[3],
             insertion_x: d.insertion.0,
             insertion_y: d.insertion.1,
+            definition_sheet_ref: d.definition_sheet_ref,
+            definition_site_ref: d.definition_site_ref,
         }
     }
 }
