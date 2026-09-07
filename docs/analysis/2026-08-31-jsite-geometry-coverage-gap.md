@@ -82,3 +82,18 @@ transform because none exists at that level: the transform is each
 the definition-to-instance link, not a transform. The four unmatched curves are
 a probable parametric resize (`/JSite396`) and two circles of a symbol absent
 from the local library (`/JSite7559`); none contradicts the reading.
+
+## 2026-09-07, later: the gate is closed the other way round
+
+The link is the placement's own tail: the last two `u32` of every `igSymbol2d`
+payload are `(JSheet oid, LdcSite id)`, the sheet's tag-183 space-map edge
+names its layer manager, and the manager's layers carry the body
+(`2026-09-07-placement-tail-names-the-cached-definition.md`; 107/107
+placements on the four fixtures). Nothing from an `LdcSite` storage is emitted
+as page content, and nothing needs to be: the bodies reach the drawing through
+`NormalizedPidGeometry::symbol_definitions`, placed by the instance's matrix
+exactly like a `.sym` body. The `/JSite396` arcs are the Parametric Manifold
+instance resized to 35.59 mm, held in the `Imagineer Document` cache;
+`/JSite7559`'s two circles are one each of `Xa.sym` and `Xa chu.sym`, which the
+local library lacks.
+Rectangle and B-spline remain undecoded, and would join a body the same way.

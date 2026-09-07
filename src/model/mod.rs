@@ -681,34 +681,94 @@ impl From<crate::parsers::sheet_records::PsmStandardRelationDecoded>
     }
 }
 
-/// The curve records one nested `JSite` holds in its `PSMcluster0`.
+/// The geometry one nested `LdcSite` storage holds in its `PSMcluster0`: the
+/// drawing's embedded copies of the symbol bodies it places.
 ///
-/// `igCircle2d` and `igArc2d` never appear in a top-level `Sheet*` stream on
-/// this corpus; every one of them sits in a nested site, on that site's own
-/// `JSheetLayer`, in that site's own coordinates. The records read cleanly
-/// (`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md`) but the
-/// transform from the storage to the page is not proven
-/// (`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`), so this is
-/// evidence rather than drawing: [`crate::geometry::build_normalized_geometry`]
-/// names the counts in its warnings and emits nothing from here.
+/// `PSMroots` names two such storages per drawing, `Server Document` and
+/// `Imagineer Document`. Each is a document of its own with one `JSheet` per
+/// symbol body, one `JSheetLayerManager` per sheet, and the body's records on
+/// that manager's layers -- in the symbol's own coordinates, exactly as the
+/// `.sym` library draws them (20 of the corpus's 24 circles and arcs equal a
+/// placed `.sym`'s to a nanometre; the other four are a parametric resize and
+/// a symbol the local library lacks). An `igSymbol2d` names its body by
+/// `(definition_site_ref, definition_sheet_ref)`, and the placement's own
+/// matrix and insertion are the transform to the page. Evidence:
+/// `docs/analysis/2026-09-07-nested-site-curves-are-embedded-symbol-bodies.md`
+/// and `docs/analysis/2026-09-07-placement-tail-names-the-cached-definition.md`.
+///
+/// The records are kept flat and per family, each carrying the
+/// `sheet_layer_ref` that files it under a body; [`Self::definitions`] is the
+/// grouping, resolved from the storage's own space map once that has been
+/// read. Connect points (`igPoint2d`) are deliberately not carried: they draw
+/// nothing, as in the `.sym` reader.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 pub struct JSiteNestedGeometry {
     /// `0x0059` `igCircle2d` records, in on-disk order.
     pub circles: Vec<DecodedIgCircle2dRecord>,
     /// `0x0061` `igArc2d` records, in on-disk order.
     pub arcs: Vec<DecodedIgArc2dRecord>,
+    /// `0x0018` `igLine2d` records, in on-disk order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<DecodedIgLine2dRecord>,
+    /// `0x0084` `igLineString2d` records, in on-disk order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub polylines: Vec<DecodedIgLineString2dRecord>,
+    /// `0x004D` `igTextBox` records, in on-disk order -- a body's own
+    /// lettering, often the `NULL` placeholder a placement fills in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<DecodedIgTextBoxRecord>,
+    /// Oid of every `0x0114` `JSheet` in the storage, in on-disk order. The
+    /// first is the storage's own base sheet; each of the rest is one body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sheets: Vec<u32>,
+    /// The bodies, one per sheet that reaches a layer manager through the
+    /// storage's space map. Empty until the space map has been read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub definitions: Vec<EmbeddedSymbolDefinition>,
 }
 
 impl JSiteNestedGeometry {
-    /// Whether the site held no curve record at all.
+    /// Whether the site held no drawable record and no sheet at all.
     pub fn is_empty(&self) -> bool {
-        self.circles.is_empty() && self.arcs.is_empty()
+        self.circles.is_empty()
+            && self.arcs.is_empty()
+            && self.lines.is_empty()
+            && self.polylines.is_empty()
+            && self.texts.is_empty()
+            && self.sheets.is_empty()
     }
 
-    /// How many curve records the site holds, both families together.
+    /// How many drawable records the site holds, all families together.
     pub fn len(&self) -> usize {
-        self.circles.len() + self.arcs.len()
+        self.circles.len()
+            + self.arcs.len()
+            + self.lines.len()
+            + self.polylines.len()
+            + self.texts.len()
     }
+
+    /// The body one `JSheet` of this storage holds, if the sheet resolved to
+    /// a layer manager.
+    pub fn definition(&self, sheet_oid: u32) -> Option<&EmbeddedSymbolDefinition> {
+        self.definitions
+            .iter()
+            .find(|definition| definition.sheet_oid == sheet_oid)
+    }
+}
+
+/// One symbol body inside a definition cache: the `JSheet` a placement names,
+/// the `JSheetLayerManager` that sheet's tag-183 space-map edge leads to, and
+/// the layers that manager governs. Every record of the storage whose
+/// `sheet_layer_ref` is one of [`Self::layers`] is part of this body.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct EmbeddedSymbolDefinition {
+    /// Storage-local oid of the `JSheet`; what `igSymbol2d` names as
+    /// `definition_sheet_ref`.
+    pub sheet_oid: u32,
+    /// Storage-local oid of the `JSheetLayerManager` the sheet registers.
+    pub manager_oid: u32,
+    /// Storage-local oids of the layers that manager governs, ascending.
+    pub layers: Vec<u32>,
 }
 
 /// Stable model-shaped DTO mirroring

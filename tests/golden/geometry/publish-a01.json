@@ -2298,7 +2298,11 @@
       "scale": [
         1.0,
         1.0
-      ]
+      ],
+      "definition": {
+        "site": 39,
+        "sheet": 221
+      }
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2367,7 +2371,11 @@
       "scale": [
         1.0,
         1.0
-      ]
+      ],
+      "definition": {
+        "site": 121,
+        "sheet": 481
+      }
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",

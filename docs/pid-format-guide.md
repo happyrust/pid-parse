@@ -569,12 +569,30 @@ Circle / Arc 与 Phase 36 的语料字节统计逐字节互证）**——同一�
 ```
 
 **四族在这套语料里一条都不在顶层 `Sheet*` 流里**——全在嵌套 `JSite<N>/PSMcluster0`
-（圆 12 / 弧 12 / 矩形 3 / B 样条 1，见 §5.1 的名册）。Circle / Arc 已有解码器
-（`decode_igcircles` / `decode_igarcs`，走记录链门），结果挂在 `JSite::nested_geometry`
-上**只作证据、不进投影**：这些存储到页面的变换尚未证明
-（`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`），`build_normalized_geometry`
-的 warnings 会按存储点名被扣住的条数。Rectangle / BspCurve 布局已坐实但还没写解码器。
-细节：`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md`。
+（圆 12 / 弧 12 / 矩形 3 / B 样条 1，见 §5.1 的名册）。这些嵌套存储是**图纸内嵌的符号定义
+缓存**（`PSMroots` 叫它们 `Server Document` / `Imagineer Document`），里面的记录是符号本体、
+符号本地坐标、每个本体一张 `JSheet` + 一个 `JSheetLayerManager`；Circle / Arc / Line /
+LineString / TextBox 全部走记录链门解到 `JSite::nested_geometry`，按 sheet → 管理器 → 图层分组成
+`definitions`，由放置记录点名（见下）后经放置矩阵上页面。Rectangle / BspCurve 布局已坐实但
+还没写解码器。细节：`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md`、
+`docs/analysis/2026-09-07-nested-site-curves-are-embedded-symbol-bodies.md`。
+
+**`igSymbol2d`（`0x00CE`）的尾巴点名它的本体（2026-09-07，四图 107/107）**——矩阵六个 f64 之后：
+
+```text
+t+0   f64  1.0
+t+8   u32  flags（0x01005001 / 03 / 00，未解）
+t+12  u32  has_membassy
+t+16  u32  0
+[t+20 u32  membassy oid（根存储 0x0003 记录）, t+24 u32 0]   ← 仅 has_membassy == 1
+末-8  u32  定义所在 JSheet 的 oid（缓存存储内）
+末-4  u32  缓存 LdcSite 的 id（= JSite<id>）
+```
+
+payload 113 / 115 字节是 `has_membassy = 0` 的形状，121 / 123 是 1 的；**最后 8 字节永远是
+`(JSheet, LdcSite)`**，所以从末尾读。缓存里该 `JSheet` 的 spacemap 条目带一个 tag-183 成员 =
+它的 `JSheetLayerManager`，管理器管的图层上的记录就是本体
+（`docs/analysis/2026-09-07-placement-tail-names-the-cached-definition.md`）。
 
 ### 5.1 `aux_hi`（payload `+8`）是这条图元所在的图层
 

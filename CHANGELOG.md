@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+### 放置记录点名了自己的缓存本体；无库也能画符号（2026-09-07，稍后）
+
+- **定义 ↔ 实例的链接边找到了，就在放置记录自己身上。** `igSymbol2d` payload 的**最后两个 `u32`**
+  是 `(定义所在 JSheet 的 oid, 缓存 LdcSite 的 id)`；113 / 121 字节两种形状只差中间一对可选的
+  `(membassy oid, 0)`，从末尾读就与形状无关。缓存存储里该 `JSheet` 的 spacemap 条目带一个 tag-183
+  成员 = 它的 `JSheetLayerManager`，管理器管的图层上的记录就是本体。四张主图 **107/107 个放置全部
+  解析到一个真实本体**，点名的不同本体数 = 放置的不同符号数（6 / 17 / 11 / 7），曲线半径与 `.sym`
+  库逐值一致（PT 6.35 / 7.57、球阀 1.27、LG 6.35 / 7.57、ElecTraceLine 1.62×2 …）。
+  `SheetIgSymbol2dDecoded` / `DecodedIgSymbol2dRecord` 新增 `definition_sheet_ref` /
+  `definition_site_ref`。
+- **08-31 的"页面变换缺口"就此关闭，关的方向反了过来**：`LdcSite` 记录里没有矩阵，因为矩阵一直在
+  放置记录里。缓存几何不作页面内容 emit；它经 `NormalizedPidGeometry::symbol_definitions`
+  （`.sym` 读取器同一套 `SymbolPrimitive` 词汇）+ `SymbolInstance.definition` 交给渲染端，
+  按放置的旋转 / 缩放 / 插入点上页面，与库本体走同一条路。
+- **两个缓存各司其职。** `Server Document` 存静态定义；`Imagineer Document` 存**参数化实例**——
+  Cone Roof Parametric Tank、Parametric Manifold、Parametric Black Box 全指向它。08-31 那两条
+  r 35.59 mm 的弧 = Manifold 按实例参数重算的本体（库默认 20.32），棘轮里钉住了；
+  `/JSite329` sheet 49 里那份默认尺寸的模板没被任何放置点名。工艺图那两个"对不上库"的圆各属
+  `Xa.sym` / `Xa chu.sym`——库里没有的站点自定义符号，缓存里有。
+- **`JSiteNestedGeometry` 扩成完整本体**：`circles / arcs / lines / polylines / texts /
+  sheets / definitions`，五族全部走记录链门（同一条链、同一批边界，族间不可能互相误读）；
+  `link_embedded_definitions`（`streams/psm_tables.rs`）在 spacemap 与图层表读完之后按 tag-183
+  分组，一个 sheet 对两个管理器一律拒收（语料 0 例）。
+- **OpenCADStudio 侧**（`src/io/pid.rs`）：库里找不到本体的放置改画图纸自己带的本体，走同一个
+  `shape_primitive`，`apply_symbology` 照旧按放置样式重涂；`report_import` 记一行 info。
+  D06 在没有任何符号库的目录里打开：`PID-SYMBOL` 从 6 个 1.5 mm 占位圆点变成 38 个真实笔画。
+  **优先级没改**（有库仍用库）。
+- **一处副产品**：`symbol_library.rs` 把一个 `.sym` 的所有 `Sheet*` 合成一个本体，而
+  `Ball Valve Type 1.sym` 有第二张 sheet（6 线 + 1 圆 r 1.59）——库路径多画了它，缓存里 SmartPlant
+  实际放置的 flavor 没有它（D06 库 46 个实体 vs 缓存 38 个，差的 8 个正是这张 sheet）。
+  哪条路更该上屏幕待 SmartPlant 截图裁决，记在分析文档里。
+- 棘轮 `every_placement_names_a_body_the_drawing_carries`（放置 / 解析 / 不同本体 / 缓存本体数：
+  D06 6/6/6/9、0201 20/20/17/21、0202 23/23/11/12、工艺 58/58/7/10 + 9 个符号的半径）；单测
+  `igsymbol2d_tail_names_the_definition_sheet_and_cache`；golden 快照因实体新增 `definition`
+  字段重新 bless。探针 `examples/probe_which_cache_body_a_placement_uses.rs`。
+  分析：`docs/analysis/2026-09-07-placement-tail-names-the-cached-definition.md`；
+  guide §5 增补 `igSymbol2d` 尾巴布局。
+
 ### 嵌套站点里的圆和弧解出来了，先扣着不画（2026-09-07）
 
 - **`igCircle2d`（`0x0059`）/ `igArc2d`（`0x0061`）有解码器了。** 布局按 08-31 那篇

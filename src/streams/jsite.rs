@@ -58,17 +58,38 @@ fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
     }
 }
 
-/// Run the two curve decoders over one site's cluster bytes.
+/// Read the symbol bodies out of one definition-cache storage's cluster
+/// bytes: every drawable record, chain-gated, plus the `JSheet` oids that
+/// the placements name. See [`JSiteNestedGeometry`].
 ///
-/// `igCircle2d` / `igArc2d` live only in nested sites on this corpus. They
-/// are decoded here as evidence and held back from the drawing: see
-/// [`JSiteNestedGeometry`].
+/// Every family is admitted the same way -- the record has to start where
+/// the stream's own chain says a record starts -- so a byte pattern inside
+/// one record's payload cannot be read as another record, and the five
+/// families cannot disagree about which bytes are whose. Connect points are
+/// not read: they draw nothing.
 fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
-    use crate::parsers::sheet_records::{decode_igarcs, decode_igcircles};
-    JSiteNestedGeometry {
-        circles: decode_igcircles(data).into_iter().map(Into::into).collect(),
-        arcs: decode_igarcs(data).into_iter().map(Into::into).collect(),
+    use crate::parsers::sheet_records::{
+        decode_igarc_at, decode_igcircle_at, decode_igline_at, decode_iglinestring_at,
+        decode_igtextbox_at, jsheet_oids, sheet_record_starts,
+    };
+    let mut out = JSiteNestedGeometry {
+        sheets: jsheet_oids(data),
+        ..JSiteNestedGeometry::default()
+    };
+    for at in sheet_record_starts(data) {
+        if let Some(circle) = decode_igcircle_at(data, at) {
+            out.circles.push(circle.into());
+        } else if let Some(arc) = decode_igarc_at(data, at) {
+            out.arcs.push(arc.into());
+        } else if let Some(line) = decode_igline_at(data, at) {
+            out.lines.push(line.into());
+        } else if let Some(polyline) = decode_iglinestring_at(data, at) {
+            out.polylines.push(polyline.into());
+        } else if let Some(text) = decode_igtextbox_at(data, at) {
+            out.texts.push(text.into());
+        }
     }
+    out
 }
 
 /// Decode every top-level `JSite*` storage into

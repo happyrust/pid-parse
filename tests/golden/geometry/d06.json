@@ -2298,7 +2298,11 @@
       "scale": [
         1.0,
         1.0
-      ]
+      ],
+      "definition": {
+        "site": 151,
+        "sheet": 47
+      }
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2367,7 +2371,11 @@
       "scale": [
         1.0,
         -1.0
-      ]
+      ],
+      "definition": {
+        "site": 145,
+        "sheet": 93
+      }
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2436,7 +2444,11 @@
       "scale": [
         1.0,
         1.0
-      ]
+      ],
+      "definition": {
+        "site": 145,
+        "sheet": 125
+      }
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2505,7 +2517,11 @@
       "scale": [
         1.0,
         1.0
-      ]
+      ],
+      "definition": {
+        "site": 145,
+        "sheet": 220
+      }
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2574,7 +2590,11 @@
       "scale": [
         1.0,
         1.0
-      ]
+      ],
+      "definition": {
+        "site": 145,
+        "sheet": 285
+      }
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2643,7 +2663,11 @@
       "scale": [
         1.0,
         1.0
-      ]
+      ],
+      "definition": {
+        "site": 145,
+        "sheet": 312
+      }
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",

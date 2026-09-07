@@ -3565,9 +3565,9 @@ fn nested_site_curves_decode_across_fixtures() {
             assert!(
                 geometry.warnings.iter().any(|warning| {
                     warning.contains(&format!("{}/PSMcluster0", site.path))
-                        && warning.contains("held back from the drawing")
+                        && warning.contains("symbol bodies in symbol-local coordinates")
                 }),
-                "{fixture}: the curves held in {} are not named in any warning: {:?}",
+                "{fixture}: the bodies in {} are not named in any warning: {:?}",
                 site.path,
                 geometry.warnings
             );
@@ -3576,6 +3576,135 @@ fn nested_site_curves_decode_across_fixtures() {
     assert_eq!(
         surfaced, per_fixture,
         "PidDocument's JSite surface should carry exactly what the decoders find"
+    );
+}
+
+/// Every placement names the body it draws, and the drawing carries that body.
+///
+/// The last two words of an `igSymbol2d` payload are `(JSheet oid, LdcSite
+/// id)`: the definition cache storage and the sheet inside it that is this
+/// symbol's body. The sheet's tag-183 space-map edge names a layer manager,
+/// the manager's layers carry the body's records, and the placement's own
+/// matrix and insertion put them on the page
+/// (`docs/analysis/2026-09-07-placement-tail-names-the-cached-definition.md`).
+/// Ground truth is the `.sym` library: where a body has circles or arcs, they
+/// equal the placed symbol's library body to a nanometre -- except for the
+/// parametric manifold, whose cached body is the resized instance the
+/// library only has the default of.
+#[test]
+fn every_placement_names_a_body_the_drawing_carries() {
+    use std::collections::BTreeMap;
+
+    use pid_parse::symbol_library::SymbolPrimitive;
+    use pid_parse::{PidGeometryConfidence, PidGraphicKind};
+
+    // (placements, placements with a resolved body, distinct bodies named,
+    // bodies the caches carry) per fixture.
+    let mut tally: BTreeMap<&str, (usize, usize, usize, usize)> = BTreeMap::new();
+    let mut any = false;
+
+    let radii_of = |primitives: &[SymbolPrimitive]| -> Vec<u32> {
+        let mut radii: Vec<u32> = primitives
+            .iter()
+            .filter_map(|p| match p {
+                SymbolPrimitive::Circle { radius, .. } | SymbolPrimitive::Arc { radius, .. } => {
+                    Some((radius * 1e5).round() as u32)
+                }
+                _ => None,
+            })
+            .collect();
+        radii.sort_unstable();
+        radii
+    };
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        any = true;
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let mut placements = 0usize;
+        let mut resolved = 0usize;
+        let mut named: std::collections::BTreeSet<pid_parse::PidSymbolDefinitionRef> =
+            Default::default();
+        for entity in &geometry.entities {
+            if entity.confidence != PidGeometryConfidence::Decoded {
+                continue;
+            }
+            let PidGraphicKind::SymbolInstance {
+                symbol_path,
+                definition,
+                ..
+            } = &entity.kind
+            else {
+                continue;
+            };
+            placements += 1;
+            let Some(reference) = definition else {
+                continue;
+            };
+            resolved += 1;
+            named.insert(*reference);
+            let body = geometry
+                .symbol_definition(*reference)
+                .unwrap_or_else(|| panic!("{fixture}: {reference:?} is named but not carried"));
+            assert!(
+                !body.layers.is_empty(),
+                "{fixture}: {reference:?} resolved to a manager with no layers"
+            );
+            let name = symbol_path
+                .as_deref()
+                .and_then(|p| p.rsplit(['\\', '/']).next())
+                .unwrap_or_default();
+            // The bodies whose curves the library pins, in 10 µm units.
+            let expected: Option<Vec<u32>> = match (fixture, name) {
+                ("D06.pid", "PT-Pressure Transmitter.sym") => Some(vec![635, 757]),
+                ("D06.pid", "Ball Valve Type 1.sym") => Some(vec![127]),
+                ("D06.pid", "2 Way Ball Type 1.sym") => Some(vec![159]),
+                ("DWG-0201GP06-01.pid", "LG-Magnetic Float Gauge.sym") => Some(vec![635, 757]),
+                ("DWG-0201GP06-01.pid", "Ball Valve Type 2.sym") => Some(vec![127]),
+                // The resized instance, not the 20.32 mm library default.
+                ("DWG-0201GP06-01.pid", "Parametric Manifold.sym") => Some(vec![3559, 3559]),
+                ("DWG-0202GP06-01.pid", "ElecTraceLine.sym") => Some(vec![162, 162]),
+                ("DWG-0202GP06-01.pid", "DCS Field Mounted.sym") => Some(vec![635]),
+                _ => None,
+            };
+            if let Some(expected) = expected {
+                assert_eq!(
+                    radii_of(&body.primitives),
+                    expected,
+                    "{fixture}: the cached body of {name} should carry the library's curves"
+                );
+            }
+        }
+        tally.insert(
+            fixture,
+            (
+                placements,
+                resolved,
+                named.len(),
+                geometry.symbol_definitions.len(),
+            ),
+        );
+    }
+
+    if !any {
+        return;
+    }
+    assert_eq!(
+        tally,
+        BTreeMap::from([
+            ("D06.pid", (6, 6, 6, 9)),
+            ("DWG-0201GP06-01.pid", (20, 20, 17, 21)),
+            ("DWG-0202GP06-01.pid", (23, 23, 11, 12)),
+            ("工艺管道及仪表流程-1.pid", (58, 58, 7, 10)),
+        ]),
+        "(placements, resolved, distinct bodies named, bodies carried) per fixture"
     );
 }
 

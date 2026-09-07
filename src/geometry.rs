@@ -61,6 +61,49 @@ pub struct NormalizedPidGeometry {
     /// drawings actually contain.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refused_graphic_records: Vec<PidRefusedGraphicRecords>,
+    /// The symbol bodies the drawing carries inside itself, one per
+    /// definition a placement can name, in symbol-local coordinates.
+    ///
+    /// A [`PidGraphicKind::SymbolInstance`] whose `definition` is set points
+    /// into this list by `(site, sheet)`; [`Self::symbol_definition`] is the
+    /// lookup. The body is what the external `.sym` library would draw for
+    /// that placement -- the same records, the same coordinates -- read from
+    /// the drawing's own definition cache instead, so a renderer without the
+    /// library, or facing a parametric symbol the library only has the
+    /// default of, still has the shape. Placed through the instance's own
+    /// rotation, scale and insertion, exactly like a library body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub symbol_definitions: Vec<PidSymbolDefinition>,
+}
+
+/// Which embedded symbol body a placement draws: the definition cache
+/// storage and the sheet inside it, both as the `igSymbol2d` record names
+/// them (its last two words). Resolves through
+/// [`NormalizedPidGeometry::symbol_definition`].
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+pub struct PidSymbolDefinitionRef {
+    /// Id of the `LdcSite` storage (`JSite<id>`) holding the body.
+    pub site: u32,
+    /// Oid of the `JSheet` inside that storage that is the body.
+    pub sheet: u32,
+}
+
+/// One symbol body read from the drawing's own definition cache.
+///
+/// Primitives are in the symbol's local coordinates, source units (metres),
+/// and use the same vocabulary the `.sym` library reader produces, so a
+/// consumer places them with the code it already has for a library body.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PidSymbolDefinition {
+    /// Where the body lives; what placements name.
+    pub reference: PidSymbolDefinitionRef,
+    /// Storage-local oids of the layers the body's records sit on.
+    pub layers: Vec<u32>,
+    /// The body, in on-disk record order within each family: circles, arcs,
+    /// lines, polylines, then text.
+    pub primitives: Vec<crate::symbol_library::SymbolPrimitive>,
 }
 
 /// One group of undecoded graphic-class PSM records in one Sheet stream:
@@ -106,6 +149,16 @@ impl NormalizedPidGeometry {
     /// True when no source-backed entities were produced.
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty()
+    }
+
+    /// The embedded body a placement names, if the drawing carries it.
+    pub fn symbol_definition(
+        &self,
+        reference: PidSymbolDefinitionRef,
+    ) -> Option<&PidSymbolDefinition> {
+        self.symbol_definitions
+            .iter()
+            .find(|definition| definition.reference == reference)
     }
 }
 
@@ -309,6 +362,11 @@ pub enum PidGraphicKind {
         rotation: f64,
         /// X/Y scale factors.
         scale: [f64; 2],
+        /// The embedded body this placement draws, when the record names one
+        /// the drawing's definition cache resolves. Look it up with
+        /// [`NormalizedPidGeometry::symbol_definition`].
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        definition: Option<PidSymbolDefinitionRef>,
     },
     /// Annotation record decoded from PSM type `0x0030` (`JStyleOverride`,
     /// RAD `style.dll` CLSID `{47FCC338-...}`). Phase 16 Slice C/F:
@@ -639,22 +697,30 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         }
     }
 
-    // The third way content misses the drawing, and the only one where the
-    // record reads cleanly: the circles and arcs the nested sites hold are
-    // decoded (`JSite::nested_geometry`) but have no proven transform to the
-    // page, so they are held rather than placed. Named per site so a reader
-    // of a thin sheet can see what is known to be missing and where it is
-    // (`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`).
+    // The nested `LdcSite` storages are the drawing's own symbol-definition
+    // caches: their records are symbol bodies in symbol-local coordinates,
+    // reached through the placements that name them
+    // (`NormalizedPidGeometry::symbol_definitions`), never drawn as page
+    // content in their own right. Named per storage so a reader sees what
+    // the drawing carries inside itself, and what part of it no placement
+    // names (`docs/analysis/2026-09-07-placement-tail-names-the-cached-definition.md`).
     for site in &doc.jsites {
-        let Some(curves) = site.nested_geometry.as_ref() else {
+        let Some(nested) = site.nested_geometry.as_ref() else {
             continue;
         };
         warnings.push(format!(
-            "{circles} igCircle2d and {arcs} igArc2d record(s) decoded in {path}/PSMcluster0 \
-             are held back from the drawing: the storage has no proven page transform",
-            circles = curves.circles.len(),
-            arcs = curves.arcs.len(),
+            "{records} record(s) ({circles} circles, {arcs} arcs, {lines} lines, {polylines} \
+             line strings, {texts} texts) decoded in {path}/PSMcluster0 are symbol bodies in \
+             symbol-local coordinates, grouped into {bodies} definition(s) reachable through \
+             the placements that name them; they are not page content",
+            records = nested.len(),
+            circles = nested.circles.len(),
+            arcs = nested.arcs.len(),
+            lines = nested.lines.len(),
+            polylines = nested.polylines.len(),
+            texts = nested.texts.len(),
             path = site.path,
+            bodies = nested.definitions.len(),
         ));
     }
 
@@ -1047,7 +1113,93 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         warnings,
         dropped_graphic_records,
         refused_graphic_records,
+        symbol_definitions: embedded_symbol_definitions(doc),
     }
+}
+
+/// Every symbol body the drawing's definition caches carry, as the
+/// primitives a renderer places.
+///
+/// A body is the records of one [`crate::model::EmbeddedSymbolDefinition`]'s
+/// layers, converted to the `.sym` reader's vocabulary: a line string closes
+/// when its authored `form` is `2`, as in the library, and connect points are
+/// not carried. Order within a body follows the storage: circles, arcs,
+/// lines, polylines, text.
+fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
+    use crate::symbol_library::SymbolPrimitive;
+
+    let mut out = Vec::new();
+    for site in &doc.jsites {
+        let Some(nested) = site.nested_geometry.as_ref() else {
+            continue;
+        };
+        let Some(site_id) = site
+            .name
+            .strip_prefix("JSite")
+            .and_then(|id| id.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        for definition in &nested.definitions {
+            let on_body = |layer: u32| definition.layers.binary_search(&layer).is_ok();
+            let mut primitives = Vec::new();
+            for circle in nested.circles.iter().filter(|c| on_body(c.sheet_layer_ref)) {
+                primitives.push(SymbolPrimitive::Circle {
+                    center: (circle.center_x, circle.center_y),
+                    radius: circle.radius,
+                });
+            }
+            for arc in nested.arcs.iter().filter(|a| on_body(a.sheet_layer_ref)) {
+                primitives.push(SymbolPrimitive::Arc {
+                    center: (arc.center_x, arc.center_y),
+                    radius: arc.radius,
+                    start_angle: arc.start_angle,
+                    end_angle: arc.end_angle,
+                });
+            }
+            for line in nested.lines.iter().filter(|l| on_body(l.sheet_layer_ref)) {
+                primitives.push(SymbolPrimitive::Line {
+                    start: (line.start_x, line.start_y),
+                    end: (line.end_x, line.end_y),
+                });
+            }
+            for polyline in nested
+                .polylines
+                .iter()
+                .filter(|p| on_body(p.sheet_layer_ref))
+            {
+                let vertices: Vec<(f64, f64)> = polyline
+                    .vertex_xs
+                    .iter()
+                    .copied()
+                    .zip(polyline.vertex_ys.iter().copied())
+                    .collect();
+                if vertices.len() >= 2 {
+                    primitives.push(SymbolPrimitive::Polyline {
+                        vertices,
+                        is_closed: polyline.form == 2,
+                    });
+                }
+            }
+            for text in nested.texts.iter().filter(|t| on_body(t.sheet_layer_ref)) {
+                if !text.text.is_empty() {
+                    primitives.push(SymbolPrimitive::Text {
+                        text: text.text.clone(),
+                        at: (text.trailing_double_1, text.trailing_double_2),
+                    });
+                }
+            }
+            out.push(PidSymbolDefinition {
+                reference: PidSymbolDefinitionRef {
+                    site: site_id,
+                    sheet: definition.sheet_oid,
+                },
+                layers: definition.layers.clone(),
+                primitives,
+            });
+        }
+    }
+    out
 }
 
 /// Per-family emission seam (RFC §3.2, L6 counterpart of the parser-side
@@ -1108,6 +1260,10 @@ struct EmitContext<'a> {
     page: Option<PageFrame>,
     /// `(storage path, layer oid)` to authored layer name.
     sheet_layer_names: BTreeMap<(String, u32), &'a str>,
+    /// Every `(site, sheet)` the drawing's definition caches resolve to a
+    /// body, so a placement's `definition` is set only when it can be
+    /// followed.
+    symbol_definitions: std::collections::BTreeSet<PidSymbolDefinitionRef>,
 }
 
 impl<'a> EmitContext<'a> {
@@ -1131,10 +1287,15 @@ impl<'a> EmitContext<'a> {
             .flatten()
             .map(|layer| ((layer.storage_path.clone(), layer.oid), layer.name.as_str()))
             .collect();
+        let symbol_definitions = embedded_symbol_definitions(doc)
+            .into_iter()
+            .map(|definition| definition.reference)
+            .collect();
         Self {
             jsite_symbol_paths,
             page,
             sheet_layer_names,
+            symbol_definitions,
         }
     }
 
@@ -1329,6 +1490,11 @@ impl GeometryEmitter for IgSymbol2dEmitter {
                         .map(|path| (*path).to_string()),
                     rotation,
                     scale,
+                    definition: Some(PidSymbolDefinitionRef {
+                        site: record.definition_site_ref,
+                        sheet: record.definition_sheet_ref,
+                    })
+                    .filter(|reference| ctx.symbol_definitions.contains(reference)),
                 },
                 coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
@@ -2862,6 +3028,7 @@ mod tests {
                     symbol_path: Some("Piping/Valve".into()),
                     rotation: 0.0,
                     scale: [1.0, 1.0],
+                    definition: None,
                 },
                 SheetRecordKind::SymbolPlacement,
             ),
@@ -2937,6 +3104,7 @@ mod tests {
             warnings: Vec::new(),
             dropped_graphic_records: Vec::new(),
             refused_graphic_records: Vec::new(),
+            symbol_definitions: Vec::new(),
         };
 
         let value = serde_json::to_value(&geometry).expect("geometry JSON");

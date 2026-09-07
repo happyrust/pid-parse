@@ -121,7 +121,7 @@ const LIBRARY_MARKER: &str = r"\symbols\";
 /// four geometry families and one text family; the others carry connect
 /// points, line styles and object structure, none of which put anything on
 /// the sheet.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum SymbolPrimitive {
     /// Straight segment (PSM `0x0018` `igLine2d`) — 43% of all library
     /// records and the bulk of every symbol.

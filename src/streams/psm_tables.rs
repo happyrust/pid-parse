@@ -13,7 +13,7 @@
 
 use crate::config::ParseOptions;
 use crate::error::PidError;
-use crate::model::{PidDocument, SheetLayer};
+use crate::model::{EmbeddedSymbolDefinition, PidDocument, SheetLayer};
 use crate::parsers::psm_tables;
 use crate::parsers::sheet_layers::{
     decode_sheet_layer_managers, decode_sheet_layers, PSM_TYPE_CODE_JSHEET_LAYER,
@@ -51,7 +51,83 @@ pub fn parse_psm_tables<R: Read + std::io::Seek>(
     }
     parse_space_maps(cfb, doc);
     parse_sheet_layers(cfb, doc);
+    link_embedded_definitions(doc);
     Ok(())
+}
+
+/// Group each definition cache's records into symbol bodies.
+///
+/// A body is a `JSheet` of the cache storage; the sheet's space-map entry
+/// carries a tag-183 member naming its `JSheetLayerManager`, and the layers
+/// that manager governs (already reconciled on [`SheetLayer::manager_oid`])
+/// are the layers the body's records sit on. Runs after the space maps and
+/// the layer tables are read, and fills
+/// [`crate::model::JSiteNestedGeometry::definitions`] on every site that
+/// holds nested geometry. A sheet whose entry names no known manager -- the
+/// storage's own base sheet does not -- is left out rather than guessed at.
+fn link_embedded_definitions(doc: &mut PidDocument) {
+    // (storage, sheet oid) -> the manager oids its tag-183 members name.
+    let mut sheet_managers: BTreeMap<(String, u32), Vec<u32>> = BTreeMap::new();
+    for (map_path, map) in &doc.psm_space_maps {
+        let Some(segment) = space_map_segment(map_path) else {
+            continue;
+        };
+        let storage = space_map_storage_path(map_path);
+        let Some(layers) = doc.sheet_layers.get(&storage) else {
+            continue;
+        };
+        let managers: BTreeSet<u32> = layers
+            .iter()
+            .filter_map(|layer| layer.manager_oid)
+            .collect();
+        for entry in &map.entries {
+            let target = (segment << 13) | u32::from(entry.index);
+            let named: Vec<u32> = entry
+                .live_members()
+                .iter()
+                .filter(|member| member.tag == 183 && managers.contains(&member.value))
+                .map(|member| member.value)
+                .collect();
+            if !named.is_empty() {
+                sheet_managers
+                    .entry((storage.clone(), target))
+                    .or_default()
+                    .extend(named);
+            }
+        }
+    }
+
+    for site in &mut doc.jsites {
+        let Some(nested) = site.nested_geometry.as_mut() else {
+            continue;
+        };
+        let Some(layers) = doc.sheet_layers.get(&site.path) else {
+            continue;
+        };
+        let mut definitions = Vec::new();
+        for &sheet_oid in &nested.sheets {
+            let Some(managers) = sheet_managers.get(&(site.path.clone(), sheet_oid)) else {
+                continue;
+            };
+            // One manager per sheet is the shape every cache on the corpus
+            // has; two would mean the reading is wrong, so refuse it.
+            let [manager_oid] = managers.as_slice() else {
+                continue;
+            };
+            let mut governed: Vec<u32> = layers
+                .iter()
+                .filter(|layer| layer.manager_oid == Some(*manager_oid))
+                .map(|layer| layer.oid)
+                .collect();
+            governed.sort_unstable();
+            definitions.push(EmbeddedSymbolDefinition {
+                sheet_oid,
+                manager_oid: *manager_oid,
+                layers: governed,
+            });
+        }
+        nested.definitions = definitions;
+    }
 }
 
 fn storage_path(path: &str) -> String {
