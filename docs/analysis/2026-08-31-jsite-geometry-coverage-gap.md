@@ -69,7 +69,16 @@ are centred on the origin with radii 1.27 / 1.59 / 6.35 / 7.57 mm -- 6.35 mm is
 the half-inch instrument balloon -- and the arcs come in mirrored pairs about the
 origin or about a shared `y`. That is the shape of a symbol glyph drawn around
 its own insertion point, not of page content, and `symbol_library.rs` reads
-`.sym` bodies with exactly these record layouts. The next probe should test the
-nested `LdcSite` as the drawing's embedded copy of a symbol definition, with the
-`igSymbol2d` placement(s) that use it as the transform, and compare its
-primitives against the `.sym` body of the same name for duplication.
+`.sym` bodies with exactly these record layouts.
+
+Tested the same day (`probe_nested_site_curves_are_symbol_bodies`,
+`2026-09-07-nested-site-curves-are-embedded-symbol-bodies.md`): **20 of the 24
+curves are, to a nanometre, a circle or arc of a `.sym` body the same drawing
+places**, and every matched symbol has its whole curve set reproduced. The
+nested `LdcSite` is the drawing's embedded symbol-definition cache in
+symbol-local coordinates. The 12-byte `LdcSite` payload never held a page
+transform because none exists at that level: the transform is each
+`igSymbol2d` placement's own insertion and matrix, and the open question is now
+the definition-to-instance link, not a transform. The four unmatched curves are
+a probable parametric resize (`/JSite396`) and two circles of a symbol absent
+from the local library (`/JSite7559`); none contradicts the reading.
