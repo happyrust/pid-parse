@@ -197,3 +197,9 @@ jengine_1075(a2, 1, obj+75);            // u8 flag
   剩余为语义细化：Rectangle 5 个 f64 的逐个含义、BspCurve `obj+48` 标量与 4 个 u8 flag 的语义，
   建议各用一张真实图纸的实例做 fixture ratchet。
 - 回写 `pid-format-guide.md` §5 / §8.4（把四族布局并入正文），据此设计四族读取 API。
+
+> **2026-09-07 回批**：四族解码器齐了。Rectangle 的 5 个 f64 = `(origin.x, origin.y, width,
+> rotation, height / width)`，「版本化 SmartSketch 关系数据」= `u32 4` + 四条 `igLine2d` 边线的
+> oid（本文 §5 的 `u16 + u32` 是子头自己的 `+12` / `+14`，f64 从 `+18` 起）；BspCurve `obj+48`
+> 语料值 −1.0、四个 flag `04 01 01 00`，语义仍未定，原样带出。
+> 见 `2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`。

@@ -96,4 +96,29 @@ exactly like a `.sym` body. The `/JSite396` arcs are the Parametric Manifold
 instance resized to 35.59 mm, held in the `Imagineer Document` cache;
 `/JSite7559`'s two circles are one each of `Xa.sym` and `Xa chu.sym`, which the
 local library lacks.
-Rectangle and B-spline remain undecoded, and would join a body the same way.
+
+## 2026-09-07, last: rectangle and B-spline are decoded; the family list is complete
+
+The two remaining families
+(`2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`) turn out to want
+different treatment, and neither is the "emit from an `LdcSite`" this note
+guarded against:
+
+- `igRectangle2d` is the **parent** of the four `igLine2d` edges its tail
+  lists by oid; the edges are records of the same stream, already decoded and
+  emitted, and their endpoints are the rectangle's corners on all three corpus
+  records. The rectangle decodes (its bytes are claimed, its edges named) and
+  emits nothing. None of the three sits in an `LdcSite` cache anyway: one is
+  DWG-0202's orphan `/Sheet6615`, two are the A2 outer and inner borders of
+  `A01/JSite204/Sheet6`.
+- `igBspCurve2d` is a **leaf**. The corpus's one record is the curved lip of
+  `arrester breather valve(RD)` in `/JSite793`'s cache, pole for pole the
+  record the symbol's `.sym` holds, and it joins that body as
+  `SymbolPrimitive::BSpline`, drawn through the placement like every other
+  primitive. A sheet-level record would emit as a sampled polyline; the corpus
+  has none.
+
+With this the first decoder order stated above -- circle, arc, rectangle,
+B-spline -- is done, and the nested boundary (`igBoundary2d` inside a cache)
+is the only family of the original list not carried into a body; the corpus
+holds no such record.

@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+### 矩形与 B 样条有了解码器：一个是四条边的父记录，一个是叶子（2026-09-07，再后）
+
+- **`igRectangle2d`（`0x0020`）解码器。** 语料 3 条（DWG-0202 `/Sheet6615` 1 条、A01
+  `/JSite204/Sheet6` 2 条），全部 78 字节：18 字节子头 + 5×f64 + `u32 4` + 4×`u32`。5 个 f64 读作
+  `(origin.x, origin.y, width, rotation, height / width)`——A01 外框 `0.594 × 0.707071 = 420.0 mm`
+  （A2）、内框 `0.559 × 0.715564 = 400.0 mm`、原点 (25, 10) mm 把「第五个是高宽比」钉死；
+  08-31 IDA 记的「`u16 + u32`」就是子头自己的 `+12` / `+14`，f64 从 `+18` 起（guide §5 订正）。
+  **尾巴的四个 oid 是同一条流里四条 `igLine2d` 边线，端点恰是矩形四角**，三条记录无一例外——
+  这就是 08-31 说的「SmartSketch 关系数据」。边线已各自 emit，所以矩形**解码、入账、不 emit**
+  （`IgRectangle2dEmitter` no-op，`emits_geometry = false`），再画就是把四条边画两遍。
+  DWG-0202 的图形类丢弃归零（`/Sheet6615` 那条矩形是它最后一个「没有解码器」的记录），
+  A01 只剩 1 条 `0x007B`。
+- **`igBspCurve2d`（`0x005D`）解码器 + `bspline::sample`。** 变长：`u32 N` + N 个控制点 +
+  `u32 weight_flag` + [N 个权重] + `u32 M` + M 个结点 + f64 + 4 字节；degree = M − N − 1。
+  语料 1 条（DWG-0202 `/JSite793/PSMcluster0`，194 字节）：5 控制点、9 结点、三次 clamped、两节，
+  是 `arrester breather valve(RD)` 的弧形唇，`parent_ref` 就是该符号的定义 sheet；`.sym` 库里同一符号
+  有同一条记录，控制点逐值相同（到 2 ulp——缓存是再序列化副本，不是字节拷贝）。它是叶子，没有别的
+  记录替它画：顶层流里由 `IgBspCurve2dEmitter` 采样成 `Polyline`（de Boor，每节
+  `bspline::SEGMENTS_PER_SPAN = 8` 段，2 mm 的唇弦误差 < 0.01 mm）；缓存本体里成为
+  `SymbolPrimitive::BSpline { poles, weights, knots }`；`.sym` 读取器 `decode_primitive` 同样读
+  `0x005D`（此前跨过它）。三个计数都要求恰好填满 payload，多一字节少一字节都拒收；走记录链门。
+- `SheetGeometry` 新增 `decoded_igrectangles` / `decoded_igbspcurves`，`JSiteNestedGeometry` 新增
+  `rectangles` / `bsplines`（矩形只作证据、不进 `primitives`），`SHEET_RECORD_FAMILIES` 12 → 14 行，
+  `DECODED_TYPE_CODES` 11 → 13；单测 `rectangle_and_bspline_tests`（6）、`bspline::tests`（5），
+  棘轮 `rectangles_own_their_edges_and_the_bspline_reaches_its_body`；`parser_panic_safety` 收进
+  四个新入口 + `bspcurve_geometry`；`render_gap_census` 的「一条拒收一条缺解码器」改为断言 DWG-0202
+  已无缺解码器。golden 无变化（顶层流两族 0 条）。探针 `examples/probe_rectangle_and_bspline_bytes.rs`；
+  分析 `docs/analysis/2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`；guide §5 / §8.4 与
+  08-31 缺口文档回批。
+- **OpenCADStudio 侧**（`src/io/pid.rs`）：`shape_primitive` 加 `BSpline` 一臂——符号坐标系采样再逐点
+  `apply`，旋转 / 缩放 / 镜像与折线同路，段数用 `pid_parse::bspline::SEGMENTS_PER_SPAN`。DWG-0202 那只
+  arrester breather valve 的唇，有库（`.sym`）与无库（缓存本体）两条路都画，17 个顶点逐点重合
+  （`a_symbols_bspline_lip_reaches_the_drawing_from_either_body`）。
+- 未解：矩形 `rotation` 非零样本 0；B 样条尾巴 `−1.0` 与 `04 01 01 00` 语义未定，原样带出。
+
 ### 放置记录点名了自己的缓存本体；无库也能画符号（2026-09-07，稍后）
 
 - **定义 ↔ 实例的链接边找到了，就在放置记录自己身上。** `igSymbol2d` payload 的**最后两个 `u32`**

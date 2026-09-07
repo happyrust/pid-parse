@@ -375,12 +375,13 @@ RTTI / COM 类工厂），**等级：native-reader**。
 |---|---|---|
 | `0x0013` | Boundary2d Object | 解码，**故意不 emit**（与成员线重复） |
 | `0x0018` | Line Object (`igLine2d`) | 已解码 |
-| `0x0020` | Rectangle Object | 未解码 |
+| `0x0020` | Rectangle Object (`igRectangle2d`) | 已解码，**故意不 emit**（它是四条 `igLine2d` 边线的父记录，边线各自 emit） |
 | `0x0021` | ComplexString Object | 语料 0 命中 |
 | `0x003D` | SmartFrame2d Object | 已解码（页框/页幅） |
 | `0x004D` | Text Object (`igTextBox`) | 已解码 |
-| `0x0059` / `0x0061` / `0x0063` / `0x007E` | Circle / Arc / Ellipse / Elliptical Arc | 语料 0 命中 |
-| `0x005D` | BspCurve Object | 语料 0 命中 |
+| `0x0059` / `0x0061` | Circle / Arc | 已解码（全在嵌套符号定义缓存里，见 §5 曲线族） |
+| `0x0063` / `0x007E` | Ellipse / Elliptical Arc | 语料 0 命中 |
+| `0x005D` | BspCurve Object (`igBspCurve2d`) | 已解码，emit 为折线（de Boor 采样，每节 8 段） |
 | `0x005E` | Point Object (`igPoint2d`) | 已解码 |
 | `0x007B` | Group implementation | 在 `StyleCluster` 里解码（点符号字形的容器，见 §4 样式族）；`Sheet*` 上的仍未解码 |
 | `0x0084` | LineString Object (`igLineString2d`) | 已解码 |
@@ -548,34 +549,46 @@ Circle / Arc 与 Phase 36 的语料字节统计逐字节互证）**——同一�
 +58  u8     flag
 ```
 
-`igRectangle2d`（`0x0020`，变长；当前格式 = 持久化版本 5）：
+`igRectangle2d`（`0x0020`，变长；当前格式 = 持久化版本 5；语料 3 条，全部 78 字节）：
+
+```text
++0 … +17  同上（08-31 IDA 记的「u16 + u32」就是子头自己的 +12 / +14，f64 从 +18 起）
++18  5×f64  origin.x, origin.y, width, rotation（弧度；语料全 0）, height / width
++58  u32    边数 K（语料全 4）
++62  K×u32  四条边线的 oid —— 同一条流里的 igLine2d，端点恰是矩形四角
+```
+
+第五个 f64 是**高宽比**不是高：A01 的外框 `0.594 × 0.707071 = 420.0 mm`（A2），内框
+`0.559 × 0.715564 = 400.0 mm`，原点 (25, 10) mm。尾巴就是 08-31 说的「SmartSketch 关系数据」——
+矩形与它四条边的约束。**矩形有解码器但不 emit**：四条边已各自解码、各自 emit，
+它只是父记录（`IgRectangle2dEmitter` no-op，`emits_geometry = false`）。
+
+`igBspCurve2d`（`0x005D`，变长；语料 1 条，194 字节）：
 
 ```text
 +0 … +17  同上
-+18  u16 + u32
-+24  5×f64  几何核心（原点 + 轴向/尺寸 + 角，逐个语义待 fixture 确认）
-     …     版本化的 SmartSketch 关系数据（约束 / 参数化，不是绘制几何）
++18  u32 N
++22  N×(2×f64) poles                         ← 控制点
+     u32 weight_flag, [N×f64 weights]        ← 有理 NURBS 才有；语料 0
+     u32 M, M×f64 knots                      ← degree = M − N − 1（语料 5 / 9 → 三次，clamped）
+     f64（语料 −1.0）, 4×u8（语料 04 01 01 00） ← 语义未定，原样带出
 ```
 
-`igBspCurve2d`（`0x005D`，变长）：
-
-```text
-+0 … +17  同上
-     u16 + u32
-     u32 N, N×(2×f64) poles
-     u32 weight_flag, [N×f64 weights]      ← 有理 NURBS 才有
-     u32 M, M×f64 knots
-     f64, 4×u8
-```
+叶子记录，没有别的记录替它画：`IgBspCurve2dEmitter` 用 `bspline::sample`（de Boor，
+每节 `SEGMENTS_PER_SPAN = 8` 段）emit 为 `Polyline`；在缓存本体里成为 `SymbolPrimitive::BSpline`，
+`.sym` 读取器同样读 `0x005D`。语料那一条是 `arrester breather valve(RD)` 的弧形唇，缓存副本与
+`.sym` 库副本五个控制点逐值相同（到 2 ulp）。
 
 **四族在这套语料里一条都不在顶层 `Sheet*` 流里**——全在嵌套 `JSite<N>/PSMcluster0`
-（圆 12 / 弧 12 / 矩形 3 / B 样条 1，见 §5.1 的名册）。这些嵌套存储是**图纸内嵌的符号定义
+（圆 12 / 弧 12 / B 样条 1，见 §5.1 的名册）；矩形 3 条例外，坐在 DWG-0202 的孤儿存储 `/Sheet6615`
+与 A01 的 OLE 站点 `/JSite204/Sheet6`。这些嵌套存储是**图纸内嵌的符号定义
 缓存**（`PSMroots` 叫它们 `Server Document` / `Imagineer Document`），里面的记录是符号本体、
 符号本地坐标、每个本体一张 `JSheet` + 一个 `JSheetLayerManager`；Circle / Arc / Line /
-LineString / TextBox 全部走记录链门解到 `JSite::nested_geometry`，按 sheet → 管理器 → 图层分组成
-`definitions`，由放置记录点名（见下）后经放置矩阵上页面。Rectangle / BspCurve 布局已坐实但
-还没写解码器。细节：`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md`、
-`docs/analysis/2026-09-07-nested-site-curves-are-embedded-symbol-bodies.md`。
+LineString / TextBox / Rectangle / BspCurve 七族全部走记录链门解到 `JSite::nested_geometry`，
+按 sheet → 管理器 → 图层分组成 `definitions`，由放置记录点名（见下）后经放置矩阵上页面
+（矩形只作证据、不进 `primitives`）。细节：`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md`、
+`docs/analysis/2026-09-07-nested-site-curves-are-embedded-symbol-bodies.md`、
+`docs/analysis/2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`。
 
 **`igSymbol2d`（`0x00CE`）的尾巴点名它的本体（2026-09-07，四图 107/107）**——矩阵六个 f64 之后：
 
@@ -1164,6 +1177,8 @@ JStyleMultiplexer 这种名字最像 resolver 的类根本没落盘，剩下的�
 > 语料实测：DWG-0202 掉 1 条 `0x0020` Rectangle（`/Sheet6615`），A01 掉
 > 2 条 `0x0020` + 1 条 `0x007B` Group implementation（`/JSite204/Sheet6`），
 > 其余两图无图形类丢弃；标注族与 `0x00FF` 一旦出现即会点名。
+> **2026-09-07 起 `0x0020` 有解码器**（§5 曲线族），DWG-0202 的图形类丢弃归零，
+> A01 只剩那 1 条 `0x007B`。
 
 ### 8.4 未解码的族
 
@@ -1172,9 +1187,10 @@ JStyleMultiplexer 这种名字最像 resolver 的类根本没落盘，剩下的�
 
 **订正（2026-09-07）**：先前这里写的「语料 0 命中的曲线族」是采样偏差——只查了顶层
 `Sheet*` 流。`aux_hi` 名册（§5.1）显示圆 12 / 弧 12 / 矩形 3 / B 样条 1 全在嵌套
-`JSite<N>/PSMcluster0`。现状：Circle / Arc **已解码、未投影**（§5 曲线族一段）；
-`0x0020` Rectangle 的核心布局已由原生读取器坐实（推翻 Phase 34-B 「未解码」的负结论，
-但 5 个 f64 的逐个语义未定）、`0x005D` BspCurve 布局已坐实，两者都还没有解码器。
+`JSite<N>/PSMcluster0`。现状（同日稍后）：四族**全部有解码器**（§5 曲线族一段）。
+Circle / Arc / BspCurve 作为符号本体经放置矩阵上页面；`0x0020` Rectangle 解码后故意不 emit
+——它是四条 `igLine2d` 边线的父记录（`2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`）。
+Phase 34-B 那条「Rectangle 未解码」的负结论至此撤销。
 
 ### 8.5 文档欠账
 
