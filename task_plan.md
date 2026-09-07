@@ -26,7 +26,14 @@ OCS 在无库时用它替掉占位圆点。缓存几何不作页面内容 emit�
 放置记录里。见 `docs/analysis/2026-09-07-nested-site-curves-are-embedded-symbol-bodies.md`、
 `docs/analysis/2026-09-07-placement-tail-names-the-cached-definition.md`。
 悬着的：缓存 vs 库的显示优先级（库读取器会多画 `.sym` 的第二张 sheet）、缓存自身
-`StyleCluster` 未接、Rectangle / BspCurve 无解码器。
+`StyleCluster` 未接。
+
+**2026-09-07 再续（四族收口）**：`igRectangle2d` / `igBspCurve2d` 有了解码器，`imagdex.dex`
+四个曲线族全部解码。矩形是四条 `igLine2d` 边线的父记录（尾巴四个 oid = 同流边线，端点即四角，
+3/3），解码入账但不 emit；B 样条是叶子，`bspline::sample` 采样成折线、进缓存本体为
+`SymbolPrimitive::BSpline`，`.sym` 读取器同读——DWG-0202 那条是 arrester breather valve 的唇，
+与库副本逐值相同。DWG-0202 图形类丢弃归零。OCS `shape_primitive` 加 `BSpline` 一臂，有库无库
+两条路画出同一条唇。见 `docs/analysis/2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`。
 
 ## 历史阶段 → goals/ 包托管说明
 2026-05-13 起 Phase 13+ 的细节迁移到 `goals/phaseNN-...` 目录（brief / plan /
