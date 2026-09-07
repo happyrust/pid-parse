@@ -810,6 +810,7 @@ mod tests {
             properties: JProperties::default(),
             raw_streams: vec![],
             symbol_information: None,
+            nested_geometry: None,
         }
     }
 

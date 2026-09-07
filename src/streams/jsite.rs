@@ -8,7 +8,9 @@
 
 use crate::config::ParseOptions;
 use crate::error::PidError;
-use crate::model::{EmbeddedStream, JSite, JSiteSymbolInformation, PidDocument};
+use crate::model::{
+    EmbeddedStream, JSite, JSiteNestedGeometry, JSiteSymbolInformation, PidDocument,
+};
 use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::PathBuf;
@@ -53,6 +55,19 @@ fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
             .into_iter()
             .map(Into::into)
             .collect(),
+    }
+}
+
+/// Run the two curve decoders over one site's cluster bytes.
+///
+/// `igCircle2d` / `igArc2d` live only in nested sites on this corpus. They
+/// are decoded here as evidence and held back from the drawing: see
+/// [`JSiteNestedGeometry`].
+fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
+    use crate::parsers::sheet_records::{decode_igarcs, decode_igcircles};
+    JSiteNestedGeometry {
+        circles: decode_igcircles(data).into_iter().map(Into::into).collect(),
+        arcs: decode_igarcs(data).into_iter().map(Into::into).collect(),
     }
 }
 
@@ -115,6 +130,10 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
             let decoded = decode_symbol_information_family(&data);
             if !decoded.is_empty() {
                 site.symbol_information = Some(decoded);
+            }
+            let curves = decode_nested_geometry(&data);
+            if !curves.is_empty() {
+                site.nested_geometry = Some(curves);
             }
         }
 

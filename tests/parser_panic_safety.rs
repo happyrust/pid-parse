@@ -44,7 +44,8 @@ use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
     collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_attribute_fragment_at,
     decode_attribute_fragments, decode_dependency_object_at, decode_dependency_objects,
-    decode_double_value_at, decode_double_values, decode_igboundaries, decode_igboundary_at,
+    decode_double_value_at, decode_double_values, decode_igarc_at, decode_igarcs,
+    decode_igboundaries, decode_igboundary_at, decode_igcircle_at, decode_igcircles,
     decode_igline_at, decode_iglines, decode_iglinestring_at, decode_iglinestrings,
     decode_igpoint_at, decode_igpoints, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
     decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
@@ -358,6 +359,20 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = decode_symbol_information_at(input, input.len());
         let _ = decode_standard_relation_at(input, input.len() - 1);
         let _ = decode_standard_relation_at(input, input.len());
+    }
+
+    // The nested-site curve family (`0x0059` igCircle2d, `0x0061` igArc2d):
+    // fixed layouts, so the risk is the trailing flag byte and the doubles
+    // running off a short payload.
+    let _ = decode_igcircles(input);
+    let _ = decode_igarcs(input);
+    let _ = decode_igcircle_at(input, 0);
+    let _ = decode_igarc_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_igcircle_at(input, input.len() - 1);
+        let _ = decode_igcircle_at(input, input.len());
+        let _ = decode_igarc_at(input, input.len() - 1);
+        let _ = decode_igarc_at(input, input.len());
     }
 
     // PSM `0x003D` igSmartFrame2d decoder. The page a drawing's border

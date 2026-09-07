@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### 嵌套站点里的圆和弧解出来了，先扣着不画（2026-09-07）
+
+- **`igCircle2d`（`0x0059`）/ `igArc2d`（`0x0061`）有解码器了。** 布局按 08-31 那篇
+  `imagdex.dex` `IJPersist::DoIO` 反编译（`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md`）
+  读：与 `igLine2d` 同一个 18 字节子头，之后 3×f64（圆）/ 5×f64（弧，绝对起止角）+ 1 字节
+  flag，payload 43 / 59。Circle / Arc 的原生布局与 Phase 36 的语料字节统计逐字节吻合，两条
+  证据链互证。走记录链门（`sheet_record_starts`），与 `igLine2d` 同一条纪律。
+- **数对上了。** 四张主图上解出 **12 圆 + 12 弧**，与 08-27 `aux_hi` 名册**不靠解码器**
+  数出来的 12 / 12 一致；24 条**每一条**都指向所在存储自己声明的 `JSheetLayer`，顶层
+  `Sheet*` 流里 0 条。分布：D06 `/JSite145` 4 圆；0201 `/JSite329` 5 圆 5 弧、
+  `/JSite396` 2 弧；0202 `/JSite793` 1 圆 5 弧；工艺图 `/JSite7559` 2 圆。
+  棘轮：`nested_site_curves_decode_across_fixtures`。
+- **只作证据，不进投影。** 挂在 `JSite::nested_geometry`（`circles` / `arcs`），
+  `build_normalized_geometry` 按存储各推一条 warning（「… held back from the drawing:
+  the storage has no proven page transform」）。08-31 那条决定没有变：这些存储到页面的
+  变换没证明之前不 emit（`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`）；
+  变了的是「缺什么」从此有名有姓有条数，不再是一片盲区。
+- **解出来的值本身给了一条线索。** 12 个圆里 10 个圆心在 (0, 0)，半径 1.27 / 1.59 /
+  6.35 / 7.57 mm——6.35 mm 正是 1/2" 仪表圈的半径；弧成对出现（0..π 与 π..2π 各一条同心，
+  或两条半圆在同一 y 上相对）。这是**围着原点画的符号字形**的形状，不是页面内容的形状。
+  `symbol_library.rs` 读 `.sym` 时用的就是同一套 0x0059 / 0x0061 布局。下一步取证方向由此
+  改写：嵌套 `LdcSite` 很可能是符号定义的**随图副本**，变换就是引用它的 `igSymbol2d` 放置；
+  若成立，OCS 在没有符号库时可以拿它替掉 1.5 mm 的占位圆点。
+- `tests/parser_panic_safety.rs` 收进四个新入口；`pid-format-guide.md` §5 并入四族布局、
+  §8.4 订正「曲线族语料 0 命中」为采样偏差。
+- 同批入库：08-31 的 imagdex 分析文档与 11 个 `tools/idalib_imagdex_*.py` 只读脚本
+  （此前一直躺在工作区未提交）。
+
 ### 厂商管这条边叫 `Layer`；`aux_hi == 12` 那道门撤了（2026-08-27）
 
 - **上一轮欠的原生确认拿到了。** `imagdex.dex` 导出一对同名存取器

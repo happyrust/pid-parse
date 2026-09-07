@@ -639,6 +639,25 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         }
     }
 
+    // The third way content misses the drawing, and the only one where the
+    // record reads cleanly: the circles and arcs the nested sites hold are
+    // decoded (`JSite::nested_geometry`) but have no proven transform to the
+    // page, so they are held rather than placed. Named per site so a reader
+    // of a thin sheet can see what is known to be missing and where it is
+    // (`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`).
+    for site in &doc.jsites {
+        let Some(curves) = site.nested_geometry.as_ref() else {
+            continue;
+        };
+        warnings.push(format!(
+            "{circles} igCircle2d and {arcs} igArc2d record(s) decoded in {path}/PSMcluster0 \
+             are held back from the drawing: the storage has no proven page transform",
+            circles = curves.circles.len(),
+            arcs = curves.arcs.len(),
+            path = site.path,
+        ));
+    }
+
     let ctx = EmitContext::from_doc(doc, page_frame);
 
     for sheet in &doc.sheet_streams {
@@ -975,7 +994,11 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
 
     let mut unresolved_layers: BTreeMap<(String, u32), usize> = BTreeMap::new();
     for entity in &entities {
-        if let Some(layer) = entity.source_layer.as_ref().filter(|layer| layer.name.is_none()) {
+        if let Some(layer) = entity
+            .source_layer
+            .as_ref()
+            .filter(|layer| layer.name.is_none())
+        {
             *unresolved_layers
                 .entry((layer.storage_path.clone(), layer.oid))
                 .or_default() += 1;
@@ -1106,12 +1129,7 @@ impl<'a> EmitContext<'a> {
             .sheet_layers
             .values()
             .flatten()
-            .map(|layer| {
-                (
-                    (layer.storage_path.clone(), layer.oid),
-                    layer.name.as_str(),
-                )
-            })
+            .map(|layer| ((layer.storage_path.clone(), layer.oid), layer.name.as_str()))
             .collect();
         Self {
             jsite_symbol_paths,

@@ -3179,8 +3179,7 @@ fn decode_iglinestring_payload(
 
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
-    let sheet_layer_ref =
-        u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
+    let sheet_layer_ref = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
     // remaining_header at +8..11 — variable across records, not validated
     // strictly; rejected only if absurdly large.
     let remaining_header = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
@@ -3395,8 +3394,7 @@ fn decode_igpoint_payload(
     let payload = data.get(header.body_start..payload_end)?;
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
-    let sheet_layer_ref =
-        u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
+    let sheet_layer_ref = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
     let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
 
@@ -3670,8 +3668,7 @@ fn decode_igtextbox_payload(
 
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
-    let sheet_layer_ref =
-        u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
+    let sheet_layer_ref = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
     let index = u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]]);
 
@@ -3929,8 +3926,7 @@ fn decode_igsymbol_payload(
 
     let oid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let parent_ref = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
-    let sheet_layer_ref =
-        u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
+    let sheet_layer_ref = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
     let sub_type_word = u16::from_le_bytes([payload[12], payload[13]]);
     let style_ref = u32::from_le_bytes([
         payload[IGSYMBOL2D_STYLE_REF_OFFSET],
@@ -6355,6 +6351,425 @@ mod symbol_information_family_tests {
             let _ = decode_double_values(&full[..cut]);
             let _ = decode_variables(&full[..cut]);
             let _ = decode_standard_relations(&full[..cut]);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2026-09-07: the nested-site curve family (decoded, held back)
+// ---------------------------------------------------------------------------
+//
+// Two record families the vendor's own graphic predicate says draw, which
+// the corpus keeps only inside nested `JSite<N>/PSMcluster0` storages and
+// never in a top-level `Sheet*` stream: `igCircle2d` (`0x0059`, 12 records
+// across the four fixtures) and `igArc2d` (`0x0061`, 12). Their layouts are
+// native-reader grade twice over: Phase 36's byte statistics on the corpus
+// and the `imagdex.dex` `IJPersist::DoIO` workers decompiled in
+// `docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md` agree byte for
+// byte -- the 18-byte sub-header `igLine2d` opens with, then the doubles,
+// then one flag byte.
+//
+// They are decoded so the records stop being invisible, and **held back
+// from the drawing**: the storage they sit in has no proven transform to
+// the page (`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`), and
+// a circle drawn in the wrong coordinate space is worse than a circle named
+// as missing. They are deliberately not registered in
+// `model::sheet_families`, which describes what a `Sheet*` stream can hold;
+// the surface is `JSite::nested_geometry`, and `build_normalized_geometry`
+// names the held-back counts in its warnings.
+
+/// PSM type code for `igCircle2d` (`JCircle2d`, `imagdex.dex`; IGDS class
+/// tag `0x59 = 89`).
+pub const PSM_TYPE_CODE_IGCIRCLE2D: u16 = 0x0059;
+
+/// PSM type code for `igArc2d` (`JArc2d`, `imagdex.dex`; IGDS class tag
+/// `0x61 = 97`).
+pub const PSM_TYPE_CODE_IGARC2D: u16 = 0x0061;
+
+/// Payload of one `igCircle2d`: the 18-byte sub-header, then `center.x`,
+/// `center.y`, `radius` (3×f64) and one flag byte.
+pub const IGCIRCLE2D_PAYLOAD_LEN: usize = 43;
+
+/// Payload of one `igArc2d`: the 18-byte sub-header, then `center.x`,
+/// `center.y`, `radius`, `start_angle`, `end_angle` (5×f64) and one flag
+/// byte. The angles are absolute start / end angles, not a sweep
+/// (`docs/analysis/2026-07-27-ugeom2d1-curve-readers-ida.md`).
+pub const IGARC2D_PAYLOAD_LEN: usize = 59;
+
+/// Offset of the first geometry double in either payload -- the end of the
+/// `oid / parent_ref / sheet_layer_ref / sub_type_word / index` sub-header
+/// every fixed-layout geometry record opens with.
+const CURVE_GEOMETRY_AT: usize = 18;
+
+/// One decoded `0x0059` `igCircle2d` record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgCircle2dDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this circle sits on (payload `+8`), in the
+    /// layer table of the storage the record lives in.
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator (payload `+12`); semantics not decoded.
+    pub sub_type_word: u16,
+    /// Index / style reference (payload `+14`), the same slot `igLine2d`
+    /// carries its style link in.
+    pub index: u32,
+    /// Centre, in the storage's own coordinates (payload `+18`, `+26`).
+    pub center: (f64, f64),
+    /// Radius, same units (payload `+34`).
+    pub radius: f64,
+    /// The trailing byte (payload `+42`); meaning unknown, carried for
+    /// audit.
+    pub flag: u8,
+}
+
+/// One decoded `0x0061` `igArc2d` record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgArc2dDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this arc sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator (payload `+12`); semantics not decoded.
+    pub sub_type_word: u16,
+    /// Index / style reference (payload `+14`).
+    pub index: u32,
+    /// Centre, in the storage's own coordinates (payload `+18`, `+26`).
+    pub center: (f64, f64),
+    /// Radius, same units (payload `+34`).
+    pub radius: f64,
+    /// Absolute start angle, radians (payload `+42`).
+    pub start_angle: f64,
+    /// Absolute end angle, radians (payload `+50`).
+    pub end_angle: f64,
+    /// The trailing byte (payload `+58`); meaning unknown, carried for
+    /// audit.
+    pub flag: u8,
+}
+
+/// The 18-byte sub-header the fixed-layout geometry families share.
+struct CurveSubHeader {
+    oid: u32,
+    parent_ref: u32,
+    sheet_layer_ref: u32,
+    sub_type_word: u16,
+    index: u32,
+}
+
+fn curve_sub_header(payload: &[u8]) -> Option<CurveSubHeader> {
+    Some(CurveSubHeader {
+        oid: u32_le(payload, 0)?,
+        parent_ref: u32_le(payload, 4)?,
+        sheet_layer_ref: u32_le(payload, 8)?,
+        sub_type_word: u16_le(payload, 12)?,
+        index: u32_le(payload, 14)?,
+    })
+}
+
+/// `count` consecutive doubles from payload `+18`, or `None` when any is
+/// non-finite or outside the coordinate domain every other geometry family
+/// enforces.
+fn curve_doubles<const N: usize>(payload: &[u8]) -> Option<[f64; N]> {
+    let mut out = [0f64; N];
+    for (slot, value) in out.iter_mut().enumerate() {
+        let read = f64_le(payload, CURVE_GEOMETRY_AT + slot * 8)?;
+        if !read.is_finite() || read.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+            return None;
+        }
+        *value = read;
+    }
+    Some(out)
+}
+
+/// Decode every `igCircle2d` record in a record-chain stream.
+///
+/// Chain-gated like [`decode_iglines`]: a candidate has to start where the
+/// stream's own chain says a record starts ([`sheet_record_starts`]), then
+/// satisfy: type code [`PSM_TYPE_CODE_IGCIRCLE2D`]; `bytes_to_follow ==
+/// 43`; three finite in-domain doubles; `radius > 0`.
+pub fn decode_igcircles(data: &[u8]) -> Vec<SheetIgCircle2dDecoded> {
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| IgCircle2dDecoder.decode_at(data, at))
+        .collect()
+}
+
+/// Try to decode one `igCircle2d` record at `offset`. `None` on any
+/// validation failure; panic-free on arbitrary input.
+pub fn decode_igcircle_at(data: &[u8], offset: usize) -> Option<SheetIgCircle2dDecoded> {
+    IgCircle2dDecoder.decode_at(data, offset)
+}
+
+/// Decode every `igArc2d` record in a record-chain stream.
+///
+/// Same gate and rules as [`decode_igcircles`], with five doubles and
+/// `bytes_to_follow == 59`. No rule is placed on the angles beyond being
+/// finite: the native reader stores them as absolute angles and does not
+/// normalise them, so neither does this.
+pub fn decode_igarcs(data: &[u8]) -> Vec<SheetIgArc2dDecoded> {
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| IgArc2dDecoder.decode_at(data, at))
+        .collect()
+}
+
+/// Try to decode one `igArc2d` record at `offset`. `None` on any
+/// validation failure; panic-free on arbitrary input.
+pub fn decode_igarc_at(data: &[u8], offset: usize) -> Option<SheetIgArc2dDecoded> {
+    IgArc2dDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x0059` `igCircle2d`.
+pub struct IgCircle2dDecoder;
+
+impl PsmRecordDecoder for IgCircle2dDecoder {
+    type Record = SheetIgCircle2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGCIRCLE2D
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGCIRCLE2D_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgCircle2dDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGCIRCLE2D
+            || header.bytes_to_follow as usize != IGCIRCLE2D_PAYLOAD_LEN
+        {
+            return None;
+        }
+        let end = header.body_start.checked_add(IGCIRCLE2D_PAYLOAD_LEN)?;
+        let payload = data.get(header.body_start..end)?;
+        let sub = curve_sub_header(payload)?;
+        let [center_x, center_y, radius] = curve_doubles::<3>(payload)?;
+        if radius <= 0.0 {
+            return None;
+        }
+        Some(SheetIgCircle2dDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: sub.oid,
+            parent_ref: sub.parent_ref,
+            sheet_layer_ref: sub.sheet_layer_ref,
+            sub_type_word: sub.sub_type_word,
+            index: sub.index,
+            center: (center_x, center_y),
+            radius,
+            flag: *payload.get(IGCIRCLE2D_PAYLOAD_LEN - 1)?,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgCircle2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x0061` `igArc2d`.
+pub struct IgArc2dDecoder;
+
+impl PsmRecordDecoder for IgArc2dDecoder {
+    type Record = SheetIgArc2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGARC2D
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGARC2D_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgArc2dDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGARC2D
+            || header.bytes_to_follow as usize != IGARC2D_PAYLOAD_LEN
+        {
+            return None;
+        }
+        let end = header.body_start.checked_add(IGARC2D_PAYLOAD_LEN)?;
+        let payload = data.get(header.body_start..end)?;
+        let sub = curve_sub_header(payload)?;
+        let [center_x, center_y, radius, start_angle, end_angle] = curve_doubles::<5>(payload)?;
+        if radius <= 0.0 {
+            return None;
+        }
+        Some(SheetIgArc2dDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: sub.oid,
+            parent_ref: sub.parent_ref,
+            sheet_layer_ref: sub.sheet_layer_ref,
+            sub_type_word: sub.sub_type_word,
+            index: sub.index,
+            center: (center_x, center_y),
+            radius,
+            start_angle,
+            end_angle,
+            flag: *payload.get(IGARC2D_PAYLOAD_LEN - 1)?,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgArc2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+#[cfg(test)]
+mod nested_curve_family_tests {
+    use super::*;
+
+    /// One record in the 6-byte envelope, then the 18-byte sub-header,
+    /// then `doubles`, then the flag byte -- the layout §4 / §5 of the
+    /// imagdex analysis reads off the native `DoIO` workers.
+    fn curve_record(type_code: u16, layer: u32, doubles: &[f64], flag: u8) -> Vec<u8> {
+        let payload_len = CURVE_GEOMETRY_AT + doubles.len() * 8 + 1;
+        let mut out = Vec::with_capacity(PSM_ENVELOPE_LEN + payload_len);
+        out.extend_from_slice(&type_code.to_le_bytes());
+        out.extend_from_slice(&(payload_len as u32).to_le_bytes());
+        out.extend_from_slice(&4321u32.to_le_bytes()); // oid
+        out.extend_from_slice(&77u32.to_le_bytes()); // parent_ref
+        out.extend_from_slice(&layer.to_le_bytes()); // sheet_layer_ref
+        out.extend_from_slice(&0x0010u16.to_le_bytes()); // sub_type_word
+        out.extend_from_slice(&9u32.to_le_bytes()); // index
+        for value in doubles {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out.push(flag);
+        out
+    }
+
+    /// The 8-byte stream header the chain walk skips, then the records.
+    fn chain(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = vec![0u8; SHEET_STREAM_HEADER_LEN];
+        for record in records {
+            out.extend_from_slice(record);
+        }
+        out
+    }
+
+    #[test]
+    fn a_circle_reads_its_centre_radius_and_layer() {
+        let stream = chain(&[curve_record(
+            PSM_TYPE_CODE_IGCIRCLE2D,
+            156,
+            &[0.25, 0.125, 0.0075],
+            1,
+        )]);
+        let decoded = decode_igcircles(&stream);
+        assert_eq!(decoded.len(), 1);
+        let circle = &decoded[0];
+        assert_eq!(circle.byte_range, SHEET_STREAM_HEADER_LEN..stream.len());
+        assert_eq!(circle.oid, 4321);
+        assert_eq!(circle.parent_ref, 77);
+        assert_eq!(circle.sheet_layer_ref, 156);
+        assert_eq!(circle.sub_type_word, 0x0010);
+        assert_eq!(circle.index, 9);
+        assert_eq!(circle.center, (0.25, 0.125));
+        assert_eq!(circle.radius, 0.0075);
+        assert_eq!(circle.flag, 1);
+    }
+
+    #[test]
+    fn an_arc_reads_its_absolute_angles() {
+        let stream = chain(&[curve_record(
+            PSM_TYPE_CODE_IGARC2D,
+            199,
+            &[0.5, 0.25, 0.01, 0.0, std::f64::consts::FRAC_PI_2],
+            0,
+        )]);
+        let decoded = decode_igarcs(&stream);
+        assert_eq!(decoded.len(), 1);
+        let arc = &decoded[0];
+        assert_eq!(arc.sheet_layer_ref, 199);
+        assert_eq!(arc.center, (0.5, 0.25));
+        assert_eq!(arc.radius, 0.01);
+        assert_eq!(arc.start_angle, 0.0);
+        assert_eq!(arc.end_angle, std::f64::consts::FRAC_PI_2);
+    }
+
+    #[test]
+    fn the_two_families_do_not_read_each_other() {
+        let circle = curve_record(PSM_TYPE_CODE_IGCIRCLE2D, 8, &[0.1, 0.2, 0.05], 1);
+        let arc = curve_record(PSM_TYPE_CODE_IGARC2D, 8, &[0.1, 0.2, 0.05, 0.0, 1.0], 1);
+        let stream = chain(&[circle, arc]);
+        assert_eq!(decode_igcircles(&stream).len(), 1);
+        assert_eq!(decode_igarcs(&stream).len(), 1);
+        // The arc sits second in the chain; a sliding scan would also have
+        // found it, so make sure the chain gate is what admitted it.
+        assert_eq!(
+            decode_igarcs(&stream)[0].byte_range.start,
+            SHEET_STREAM_HEADER_LEN + PSM_ENVELOPE_LEN + IGCIRCLE2D_PAYLOAD_LEN
+        );
+    }
+
+    #[test]
+    fn a_circle_payload_of_the_wrong_length_is_refused() {
+        // Four doubles make a 51-byte payload: not a circle, whatever the
+        // type code says.
+        let stream = chain(&[curve_record(
+            PSM_TYPE_CODE_IGCIRCLE2D,
+            8,
+            &[0.1, 0.2, 0.05, 0.0],
+            1,
+        )]);
+        assert!(decode_igcircles(&stream).is_empty());
+    }
+
+    #[test]
+    fn a_non_positive_radius_or_a_non_finite_double_is_refused() {
+        for doubles in [[0.1, 0.2, 0.0], [0.1, 0.2, -0.05], [f64::NAN, 0.2, 0.05]] {
+            let stream = chain(&[curve_record(PSM_TYPE_CODE_IGCIRCLE2D, 8, &doubles, 1)]);
+            assert!(decode_igcircles(&stream).is_empty(), "{doubles:?}");
+        }
+        let stream = chain(&[curve_record(
+            PSM_TYPE_CODE_IGARC2D,
+            8,
+            &[0.1, 0.2, 0.05, f64::INFINITY, 1.0],
+            1,
+        )]);
+        assert!(decode_igarcs(&stream).is_empty());
+    }
+
+    #[test]
+    fn a_record_off_the_chain_is_not_a_record() {
+        // A valid circle whose stream lacks the 8-byte header: the chain
+        // walk stalls at once and nothing is admitted, exactly as for lines.
+        let bare = curve_record(PSM_TYPE_CODE_IGCIRCLE2D, 8, &[0.1, 0.2, 0.05], 1);
+        assert!(decode_igcircles(&bare).is_empty());
+        // The single-record entry point still reads it where it is.
+        assert!(decode_igcircle_at(&bare, 0).is_some());
+    }
+
+    #[test]
+    fn both_families_survive_truncation() {
+        let stream = chain(&[
+            curve_record(PSM_TYPE_CODE_IGCIRCLE2D, 8, &[0.1, 0.2, 0.05], 1),
+            curve_record(PSM_TYPE_CODE_IGARC2D, 8, &[0.1, 0.2, 0.05, 0.0, 1.0], 1),
+        ]);
+        for cut in 0..stream.len() {
+            let _ = decode_igcircles(&stream[..cut]);
+            let _ = decode_igarcs(&stream[..cut]);
+            let _ = decode_igcircle_at(&stream[..cut], cut.saturating_sub(1));
+            let _ = decode_igarc_at(&stream[..cut], cut.saturating_sub(1));
         }
     }
 }

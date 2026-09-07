@@ -53,3 +53,23 @@ same nested primitive at the resulting reference position. The first decoder
 order remains circle, arc, rectangle, B-spline, then nested boundary. Each
 family needs a count ratchet and a no-duplicate screen comparison before the
 next family opens.
+
+## 2026-09-07 update: circle and arc are decoded, still held
+
+The first half of the gate is met for the first two families. `decode_igcircles`
+/ `decode_igarcs` read the layouts the `imagdex.dex` `DoIO` workers read
+(`2026-08-31-imagdex-geometry-doio-ida.md`), find the same 12 + 12 records the
+layer-edge roster counted, every one on a layer its own storage declares, and
+surface them on `JSite::nested_geometry`. `build_normalized_geometry` names the
+held-back counts per storage in its warnings. The decision above stands: nothing
+is emitted.
+
+The decoded values point at where the transform is. Ten of the twelve circles
+are centred on the origin with radii 1.27 / 1.59 / 6.35 / 7.57 mm -- 6.35 mm is
+the half-inch instrument balloon -- and the arcs come in mirrored pairs about the
+origin or about a shared `y`. That is the shape of a symbol glyph drawn around
+its own insertion point, not of page content, and `symbol_library.rs` reads
+`.sym` bodies with exactly these record layouts. The next probe should test the
+nested `LdcSite` as the drawing's embedded copy of a symbol definition, with the
+`igSymbol2d` placement(s) that use it as the transform, and compare its
+primitives against the `.sym` body of the same name for duplication.

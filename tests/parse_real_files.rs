@@ -3414,6 +3414,171 @@ fn symbol_information_family_decodes_across_fixtures() {
     );
 }
 
+/// The curve records the nested sites hold, counted against the roster that
+/// found them without a decoder.
+///
+/// `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` grouped every
+/// record of the four fixtures by its layer edge and found 12 `igCircle2d`
+/// and 12 `igArc2d` sitting on layers, all inside nested `JSite<N>/PSMcluster0`
+/// storages and none in a top-level `Sheet*` stream. The decoders read the
+/// bytes the `imagdex.dex` `DoIO` workers read
+/// (`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md`); if they find
+/// the same 24 records, each on a layer the same storage declares, the two
+/// readings agree. That closes the first half of the exit gate in
+/// `docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md` -- a count
+/// ratchet per family -- and leaves the second half, the page transform, as
+/// the only thing between these records and the drawing.
+#[test]
+fn nested_site_curves_decode_across_fixtures() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Read;
+
+    use pid_parse::parsers::sheet_layers::decode_sheet_layers;
+    use pid_parse::parsers::sheet_records::{decode_igarcs, decode_igcircles};
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+
+    // (circles, arcs) per fixture, from the decoders walking the streams.
+    let mut per_fixture: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    let mut on_a_declared_layer = 0usize;
+    let mut on_no_layer = 0usize;
+    let mut in_a_sheet_stream = 0usize;
+    let mut any = false;
+
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        let file = std::fs::File::open(&path).expect("fixture opens");
+        let mut cfb = cfb::CompoundFile::open(file).expect("fixture is a compound file");
+        let stream_paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().replace('\\', "/"))
+            .collect();
+        for stream_path in stream_paths {
+            let leaf = stream_path.rsplit('/').next().unwrap_or_default();
+            let is_cluster = leaf == "PSMcluster0";
+            let is_sheet = leaf.starts_with("Sheet");
+            if !is_cluster && !is_sheet {
+                continue;
+            }
+            let mut data = Vec::new();
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            any = true;
+            let circles = decode_igcircles(&data);
+            let arcs = decode_igarcs(&data);
+            if is_sheet {
+                in_a_sheet_stream += circles.len() + arcs.len();
+                continue;
+            }
+            let layers: BTreeSet<u32> = decode_sheet_layers(&data)
+                .into_iter()
+                .map(|layer| layer.oid)
+                .collect();
+            for layer_ref in circles
+                .iter()
+                .map(|circle| circle.sheet_layer_ref)
+                .chain(arcs.iter().map(|arc| arc.sheet_layer_ref))
+            {
+                if layers.contains(&layer_ref) {
+                    on_a_declared_layer += 1;
+                } else {
+                    on_no_layer += 1;
+                }
+            }
+            let entry = per_fixture.entry(fixture).or_default();
+            entry.0 += circles.len();
+            entry.1 += arcs.len();
+        }
+    }
+
+    if !any {
+        return;
+    }
+
+    let circles: usize = per_fixture.values().map(|(circles, _)| circles).sum();
+    let arcs: usize = per_fixture.values().map(|(_, arcs)| arcs).sum();
+    assert_eq!(
+        (circles, arcs),
+        (12, 12),
+        "the decoders should find the 12 igCircle2d and 12 igArc2d the layer-edge roster \
+         counted; per fixture: {per_fixture:?}"
+    );
+    assert_eq!(
+        in_a_sheet_stream, 0,
+        "no curve record should sit in a top-level Sheet* stream"
+    );
+    assert_eq!(
+        (on_a_declared_layer, on_no_layer),
+        (24, 0),
+        "every curve record should name a JSheetLayer its own storage declares"
+    );
+
+    // The same records, reached the way a consumer would: off the parsed
+    // document's JSite surface rather than by walking the cluster.
+    let mut surfaced: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for fixture in [
+        "D06.pid",
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "工艺管道及仪表流程-1.pid",
+    ] {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let entry = surfaced.entry(fixture).or_default();
+        for site in &doc.jsites {
+            let Some(curves) = &site.nested_geometry else {
+                continue;
+            };
+            assert!(
+                !curves.is_empty(),
+                "{fixture} {}: an empty nested_geometry should have been left as None",
+                site.path
+            );
+            entry.0 += curves.circles.len();
+            entry.1 += curves.arcs.len();
+        }
+        // And the geometry projection names every held-back site.
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        for site in doc
+            .jsites
+            .iter()
+            .filter(|site| site.nested_geometry.is_some())
+        {
+            assert!(
+                geometry.warnings.iter().any(|warning| {
+                    warning.contains(&format!("{}/PSMcluster0", site.path))
+                        && warning.contains("held back from the drawing")
+                }),
+                "{fixture}: the curves held in {} are not named in any warning: {:?}",
+                site.path,
+                geometry.warnings
+            );
+        }
+    }
+    assert_eq!(
+        surfaced, per_fixture,
+        "PidDocument's JSite surface should carry exactly what the decoders find"
+    );
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {

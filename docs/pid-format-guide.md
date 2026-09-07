@@ -529,6 +529,53 @@ Group                +28 ──▶ 两条 Line Object     (0x0018)   **oid**
 
 坐标单位是**米**，页面在 1m 以内；渲染时乘 1000 转毫米。页幅由 `0x003D` 给出。
 
+**曲线族（2026-08-31 由 `imagdex.dex` 的 `IJPersist::DoIO` 反编译坐实，native-reader；
+Circle / Arc 与 Phase 36 的语料字节统计逐字节互证）**——同一个 18 字节子头，之后是几何：
+
+`igCircle2d`（`0x0059`，payload 43 字节）：
+
+```text
++0 … +17  同上（oid / parent_ref / 所在图层 oid / sub_type_word / index）
++18  3×f64  center.x, center.y, radius
++42  u8     flag
+```
+
+`igArc2d`（`0x0061`，payload 59 字节）：
+
+```text
++0 … +17  同上
++18  5×f64  center.x, center.y, radius, startAngle, endAngle   ← 绝对起止角，弧度
++58  u8     flag
+```
+
+`igRectangle2d`（`0x0020`，变长；当前格式 = 持久化版本 5）：
+
+```text
++0 … +17  同上
++18  u16 + u32
++24  5×f64  几何核心（原点 + 轴向/尺寸 + 角，逐个语义待 fixture 确认）
+     …     版本化的 SmartSketch 关系数据（约束 / 参数化，不是绘制几何）
+```
+
+`igBspCurve2d`（`0x005D`，变长）：
+
+```text
++0 … +17  同上
+     u16 + u32
+     u32 N, N×(2×f64) poles
+     u32 weight_flag, [N×f64 weights]      ← 有理 NURBS 才有
+     u32 M, M×f64 knots
+     f64, 4×u8
+```
+
+**四族在这套语料里一条都不在顶层 `Sheet*` 流里**——全在嵌套 `JSite<N>/PSMcluster0`
+（圆 12 / 弧 12 / 矩形 3 / B 样条 1，见 §5.1 的名册）。Circle / Arc 已有解码器
+（`decode_igcircles` / `decode_igarcs`，走记录链门），结果挂在 `JSite::nested_geometry`
+上**只作证据、不进投影**：这些存储到页面的变换尚未证明
+（`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`），`build_normalized_geometry`
+的 warnings 会按存储点名被扣住的条数。Rectangle / BspCurve 布局已坐实但还没写解码器。
+细节：`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md`。
+
 ### 5.1 `aux_hi`（payload `+8`）是这条图元所在的图层
 
 **等级：corpus（五图 × 15 个存储 × 全部记录链）**
@@ -1102,9 +1149,14 @@ JStyleMultiplexer 这种名字最像 resolver 的类根本没落盘，剩下的�
 
 ### 8.4 未解码的族
 
-`0x0020` Rectangle（Phase 34-B 负结论）、`0x0010`（638 次命中，语义未定）、
-`0x00FA` 尾部、以及语料 0 命中的曲线族（Circle / Arc / Ellipse / BspCurve /
-ComplexString）。
+`0x0010`（638 次命中，语义未定）、`0x00FA` 尾部、`0x0115` JDim（14 条、坐在图层上、
+无解码器）、以及 Ellipse / ComplexString（语料 0 命中）。
+
+**订正（2026-09-07）**：先前这里写的「语料 0 命中的曲线族」是采样偏差——只查了顶层
+`Sheet*` 流。`aux_hi` 名册（§5.1）显示圆 12 / 弧 12 / 矩形 3 / B 样条 1 全在嵌套
+`JSite<N>/PSMcluster0`。现状：Circle / Arc **已解码、未投影**（§5 曲线族一段）；
+`0x0020` Rectangle 的核心布局已由原生读取器坐实（推翻 Phase 34-B 「未解码」的负结论，
+但 5 个 f64 的逐个语义未定）、`0x005D` BspCurve 布局已坐实，两者都还没有解码器。
 
 ### 8.5 文档欠账
 

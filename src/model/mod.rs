@@ -491,6 +491,13 @@ pub struct JSite {
     /// that carry only a `JProperties` blob.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol_information: Option<JSiteSymbolInformation>,
+    /// The `igCircle2d` / `igArc2d` records decoded out of this site's
+    /// `PSMcluster0`, when it holds any. Decoded and **held back**: the
+    /// storage has no proven transform to the page, so nothing here reaches
+    /// the drawing until it does
+    /// (`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested_geometry: Option<JSiteNestedGeometry>,
 }
 
 /// The symbol-information / expression family of one `JSite`, decoded from
@@ -670,6 +677,119 @@ impl From<crate::parsers::sheet_records::PsmStandardRelationDecoded>
             signature: record.signature,
             operands: record.operands,
             formula: record.formula,
+        }
+    }
+}
+
+/// The curve records one nested `JSite` holds in its `PSMcluster0`.
+///
+/// `igCircle2d` and `igArc2d` never appear in a top-level `Sheet*` stream on
+/// this corpus; every one of them sits in a nested site, on that site's own
+/// `JSheetLayer`, in that site's own coordinates. The records read cleanly
+/// (`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md`) but the
+/// transform from the storage to the page is not proven
+/// (`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`), so this is
+/// evidence rather than drawing: [`crate::geometry::build_normalized_geometry`]
+/// names the counts in its warnings and emits nothing from here.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+pub struct JSiteNestedGeometry {
+    /// `0x0059` `igCircle2d` records, in on-disk order.
+    pub circles: Vec<DecodedIgCircle2dRecord>,
+    /// `0x0061` `igArc2d` records, in on-disk order.
+    pub arcs: Vec<DecodedIgArc2dRecord>,
+}
+
+impl JSiteNestedGeometry {
+    /// Whether the site held no curve record at all.
+    pub fn is_empty(&self) -> bool {
+        self.circles.is_empty() && self.arcs.is_empty()
+    }
+
+    /// How many curve records the site holds, both families together.
+    pub fn len(&self) -> usize {
+        self.circles.len() + self.arcs.len()
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgCircle2dDecoded`] -- PSM type
+/// `0x0059` `igCircle2d` (`imagdex.dex`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgCircle2dRecord {
+    /// Inclusive byte-range start inside the cluster stream.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Persist id of the circle.
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair, verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` the circle sits on, in the layer table of
+    /// the storage the record lives in.
+    pub sheet_layer_ref: u32,
+    /// Centre X, in the storage's own coordinates.
+    pub center_x: f64,
+    /// Centre Y, in the storage's own coordinates.
+    pub center_y: f64,
+    /// Radius, same units.
+    pub radius: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgCircle2dDecoded> for DecodedIgCircle2dRecord {
+    fn from(record: crate::parsers::sheet_records::SheetIgCircle2dDecoded) -> Self {
+        Self {
+            byte_start: record.byte_range.start,
+            byte_end: record.byte_range.end,
+            oid: record.oid,
+            parent_ref: record.parent_ref,
+            sheet_layer_ref: record.sheet_layer_ref,
+            center_x: record.center.0,
+            center_y: record.center.1,
+            radius: record.radius,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgArc2dDecoded`] -- PSM type
+/// `0x0061` `igArc2d` (`imagdex.dex`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgArc2dRecord {
+    /// Inclusive byte-range start inside the cluster stream.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Persist id of the arc.
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair, verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` the arc sits on.
+    pub sheet_layer_ref: u32,
+    /// Centre X, in the storage's own coordinates.
+    pub center_x: f64,
+    /// Centre Y, in the storage's own coordinates.
+    pub center_y: f64,
+    /// Radius, same units.
+    pub radius: f64,
+    /// Absolute start angle, radians.
+    pub start_angle: f64,
+    /// Absolute end angle, radians.
+    pub end_angle: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgArc2dDecoded> for DecodedIgArc2dRecord {
+    fn from(record: crate::parsers::sheet_records::SheetIgArc2dDecoded) -> Self {
+        Self {
+            byte_start: record.byte_range.start,
+            byte_end: record.byte_range.end,
+            oid: record.oid,
+            parent_ref: record.parent_ref,
+            sheet_layer_ref: record.sheet_layer_ref,
+            center_x: record.center.0,
+            center_y: record.center.1,
+            radius: record.radius,
+            start_angle: record.start_angle,
+            end_angle: record.end_angle,
         }
     }
 }
