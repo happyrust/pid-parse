@@ -414,10 +414,12 @@ fn the_site_record_anatomy(docs: &[Doc]) {
                 };
                 let extent = box_of(&site.geometry);
                 let doubles: Vec<String> = at
-                    .chunks_exact(8)
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
                     .enumerate()
                     .filter_map(|(index, word)| {
-                        let value = f64::from_le_bytes(word.try_into().ok()?);
+                        let value = f64::from_le_bytes(*word);
                         (value.is_finite() && value != 0.0 && value.abs() < 10.0)
                             .then(|| format!("+{}={value:.4}", index * 8))
                     })

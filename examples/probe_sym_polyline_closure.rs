@@ -32,7 +32,10 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect(&path, out);
-        } else if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("sym")) {
+        } else if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("sym"))
+        {
             out.push(path);
         }
     }
@@ -59,8 +62,12 @@ fn main() {
     let mut by_form_scope: BTreeMap<(u8, u8, bool), usize> = BTreeMap::new();
     let mut closed_samples = Vec::new();
     for path in &syms {
-        let Ok(file) = std::fs::File::open(path) else { continue };
-        let Ok(mut compound) = cfb::CompoundFile::open(file) else { continue };
+        let Ok(file) = std::fs::File::open(path) else {
+            continue;
+        };
+        let Ok(mut compound) = cfb::CompoundFile::open(file) else {
+            continue;
+        };
         files += 1;
         let streams: Vec<_> = compound
             .walk()
@@ -69,28 +76,50 @@ fn main() {
             .map(|entry| entry.path().to_path_buf())
             .collect();
         for stream_path in streams {
-            let Ok(mut stream) = compound.open_stream(&stream_path) else { continue };
+            let Ok(mut stream) = compound.open_stream(&stream_path) else {
+                continue;
+            };
             let mut bytes = Vec::new();
-            if stream.read_to_end(&mut bytes).is_err() { continue; }
+            if stream.read_to_end(&mut bytes).is_err() {
+                continue;
+            }
             for at in pid_parse::parsers::sheet_records::sheet_record_starts(&bytes) {
-                let Some(type_word) = bytes.get(at..at + 2) else { continue };
+                let Some(type_word) = bytes.get(at..at + 2) else {
+                    continue;
+                };
                 let type_code = u16::from_le_bytes(type_word.try_into().unwrap()) & 0x3fff;
-                if type_code != TYPE_POLYLINE { continue; }
-                let Some(payload_len) = u32_at(&bytes, at + 2).map(|n| n as usize) else { continue };
-                let Some(payload) = bytes.get(at + 6..at + 6 + payload_len) else { continue };
-                let Some(count) = u32_at(payload, 18).map(|n| n as usize) else { continue };
-                if count < 2 || payload.len() != 24 + count * 16 { continue; }
-                let Some(first) = f64_at(payload, 24).zip(f64_at(payload, 32)) else { continue };
+                if type_code != TYPE_POLYLINE {
+                    continue;
+                }
+                let Some(payload_len) = u32_at(&bytes, at + 2).map(|n| n as usize) else {
+                    continue;
+                };
+                let Some(payload) = bytes.get(at + 6..at + 6 + payload_len) else {
+                    continue;
+                };
+                let Some(count) = u32_at(payload, 18).map(|n| n as usize) else {
+                    continue;
+                };
+                if count < 2 || payload.len() != 24 + count * 16 {
+                    continue;
+                }
+                let Some(first) = f64_at(payload, 24).zip(f64_at(payload, 32)) else {
+                    continue;
+                };
                 let last_at = 24 + (count - 1) * 16;
-                let Some(last) = f64_at(payload, last_at).zip(f64_at(payload, last_at + 8)) else { continue };
-                let is_closed = (first.0 - last.0).abs() <= 1e-12
-                    && (first.1 - last.1).abs() <= 1e-12;
+                let Some(last) = f64_at(payload, last_at).zip(f64_at(payload, last_at + 8)) else {
+                    continue;
+                };
+                let is_closed =
+                    (first.0 - last.0).abs() <= 1e-12 && (first.1 - last.1).abs() <= 1e-12;
                 records += 1;
                 closed += usize::from(is_closed);
                 if is_closed && closed_samples.len() < 4 {
                     closed_samples.push(path.display().to_string());
                 }
-                *by_form_scope.entry((payload[22], payload[23], is_closed)).or_default() += 1;
+                *by_form_scope
+                    .entry((payload[22], payload[23], is_closed))
+                    .or_default() += 1;
             }
         }
     }

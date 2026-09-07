@@ -67,16 +67,17 @@ fn storage_path(path: &str) -> String {
 fn space_map_storage_path(path: &str) -> String {
     let normalized = path.replace('\\', "/");
     let marker = "/PSMspacemap/";
-    normalized
-        .find(marker)
-        .map_or_else(|| storage_path(&normalized), |at| {
+    normalized.find(marker).map_or_else(
+        || storage_path(&normalized),
+        |at| {
             let prefix = &normalized[..at];
             if prefix.is_empty() {
                 "/".to_string()
             } else {
                 prefix.to_string()
             }
-        })
+        },
+    )
 }
 
 fn space_map_segment(path: &str) -> Option<u32> {
@@ -100,8 +101,10 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
         .collect();
 
     let mut families: BTreeMap<String, BTreeMap<u32, u16>> = BTreeMap::new();
-    let mut decoded_by_storage: BTreeMap<String, Vec<(String, crate::parsers::sheet_layers::SheetLayerDecoded)>> =
-        BTreeMap::new();
+    let mut decoded_by_storage: BTreeMap<
+        String,
+        Vec<(String, crate::parsers::sheet_layers::SheetLayerDecoded)>,
+    > = BTreeMap::new();
     for path in paths {
         let Ok(mut stream) = cfb.open_stream(&path) else {
             continue;
@@ -159,11 +162,8 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
             .into_iter()
             .map(|(stream_path, layer)| {
                 let registrations = registrations.get(&(storage.clone(), layer.oid));
-                let managers: BTreeSet<u32> = registrations
-                    .into_iter()
-                    .flatten()
-                    .copied()
-                    .collect();
+                let managers: BTreeSet<u32> =
+                    registrations.into_iter().flatten().copied().collect();
                 SheetLayer {
                     storage_path: storage.clone(),
                     stream_path,
@@ -176,10 +176,8 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
                     manager_oid: (managers.len() == 1)
                         .then(|| managers.iter().next().copied())
                         .flatten(),
-                    manager_registration_count: u32::try_from(
-                        registrations.map_or(0, Vec::len),
-                    )
-                    .unwrap_or(u32::MAX),
+                    manager_registration_count: u32::try_from(registrations.map_or(0, Vec::len))
+                        .unwrap_or(u32::MAX),
                 }
             })
             .collect();

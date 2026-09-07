@@ -52,8 +52,10 @@ fn utf16_field(data: &[u8], at: usize) -> Option<(String, usize)> {
     let bytes_end = bytes_start.checked_add(bytes_len)?;
     let raw = data.get(bytes_start..bytes_end)?;
     let units: Vec<u16> = raw
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair))
         .collect();
     let value = String::from_utf16(&units).ok()?;
     Some((value, bytes_end))

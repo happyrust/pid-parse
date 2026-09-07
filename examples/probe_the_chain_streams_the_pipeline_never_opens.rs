@@ -350,7 +350,7 @@ fn what_would_remain(chains: &[Chain]) {
         }
     }
     println!("  no decoder exists (a new family would have to be written):");
-    let mut ranked: Vec<(&u16, &(usize, bool, Option<&'static str>))> = undecoded.iter().collect();
+    let mut ranked: Vec<CensusRow<'_>> = undecoded.iter().collect();
     ranked.sort_by_key(|(code, (count, _, _))| (std::cmp::Reverse(*count), **code));
     for (code, (count, graphic, name)) in ranked.iter().filter(|(_, (_, g, _))| *g) {
         println!(
@@ -366,7 +366,7 @@ fn what_would_remain(chains: &[Chain]) {
         .sum();
     println!("    plus {quiet} records of non-graphic families");
     println!("  a decoder walked them and refused (existing rules would need revisiting):");
-    let mut ranked: Vec<(&u16, &(usize, bool, Option<&'static str>))> = refused.iter().collect();
+    let mut ranked: Vec<CensusRow<'_>> = refused.iter().collect();
     ranked.sort_by_key(|(code, (count, _, _))| (std::cmp::Reverse(*count), **code));
     for (code, (count, graphic, name)) in ranked {
         println!(
@@ -376,6 +376,10 @@ fn what_would_remain(chains: &[Chain]) {
         );
     }
 }
+
+/// One census row as ranked above: the type code against
+/// `(count, is_graphic, class name)`.
+type CensusRow<'a> = (&'a u16, &'a (usize, bool, Option<&'static str>));
 
 /// A coordinate box, or nothing when no record contributed a point.
 #[derive(Default)]
