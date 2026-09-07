@@ -66,6 +66,7 @@ const TYPE_CIRCLE: u16 = 0x0059;
 const TYPE_ARC: u16 = 0x0061;
 const TYPE_POLYLINE: u16 = 0x0084;
 const TYPE_TEXT: u16 = 0x004D;
+const TYPE_BSPLINE: u16 = 0x005D;
 
 /// Bytes of geometry and style following a text record's characters. The
 /// first two `f64`s of it are the insertion point, and the run's constant
@@ -180,6 +181,34 @@ pub enum SymbolPrimitive {
         /// Insertion point in the symbol's own coordinate space.
         at: (f64, f64),
     },
+    /// Non-uniform B-spline curve (PSM `0x005D` `igBspCurve2d`), rational
+    /// when `weights` is non-empty. One in the reference library's placed
+    /// set -- the curved lip of `arrester breather valve(RD)` -- which the
+    /// reader used to step over. Draw it through [`crate::bspline::sample`].
+    BSpline {
+        /// Control points, in order.
+        poles: Vec<(f64, f64)>,
+        /// One weight per pole, or empty for a polynomial curve.
+        weights: Vec<f64>,
+        /// The knot vector; its length minus the pole count minus one is the
+        /// degree.
+        knots: Vec<f64>,
+    },
+}
+
+impl SymbolPrimitive {
+    /// The straight segments a B-spline draws as, `segments_per_span` to a
+    /// knot span; other primitives return nothing.
+    pub fn bspline_points(&self, segments_per_span: usize) -> Vec<(f64, f64)> {
+        match self {
+            SymbolPrimitive::BSpline {
+                poles,
+                weights,
+                knots,
+            } => crate::bspline::sample(poles, weights, knots, segments_per_span),
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// The colour and width one primitive draws with.
@@ -269,6 +298,13 @@ impl SymbolGeometry {
                 }
                 SymbolPrimitive::Polyline { vertices, .. } => {
                     for (x, y) in vertices {
+                        add(*x, *y);
+                    }
+                }
+                // The control polygon bounds the curve (convex hull
+                // property), so the poles are a safe over-estimate.
+                SymbolPrimitive::BSpline { poles, .. } => {
+                    for (x, y) in poles {
                         add(*x, *y);
                     }
                 }
@@ -390,6 +426,24 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
                 radius,
                 start_angle,
                 end_angle,
+            })
+        }
+        TYPE_BSPLINE => {
+            // The same payload shape a drawing's record has, validated the
+            // same way; a curve whose poles leave the symbol extent is not a
+            // symbol's curve.
+            let curve = crate::parsers::sheet_records::bspcurve_geometry(payload)?;
+            if curve
+                .poles
+                .iter()
+                .any(|(x, y)| x.abs() > COORDINATE_LIMIT || y.abs() > COORDINATE_LIMIT)
+            {
+                return None;
+            }
+            Some(SymbolPrimitive::BSpline {
+                poles: curve.poles,
+                weights: curve.weights,
+                knots: curve.knots,
             })
         }
         TYPE_POLYLINE if payload.len() > POLYLINE_VERTEX_START => {

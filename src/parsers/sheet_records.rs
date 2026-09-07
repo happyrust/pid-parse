@@ -6687,6 +6687,556 @@ impl PsmRecordDecoder for IgArc2dDecoder {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 2026-09-07: igRectangle2d and igBspCurve2d
+// ---------------------------------------------------------------------------
+//
+// The two remaining families of the `imagdex.dex` curve set
+// (`docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md` §5 / §5bis), each
+// checked field by field against the records the corpus holds -- three
+// rectangles and one B-spline, which is too few for statistics and exactly
+// enough to read a native layout against
+// (`docs/analysis/2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`).
+//
+// They are not alike in what they draw. A rectangle is a **parent**: its
+// five doubles are `(origin.x, origin.y, width, rotation, height / width)`,
+// and its tail lists the oids of the four `igLine2d` records that are its
+// edges -- records that sit in the same stream, decode on their own and are
+// already emitted. Drawing the rectangle would draw its edges twice, so it
+// decodes and emits nothing. A B-spline is a **leaf**: poles, optional
+// weights and knots, and nothing else draws it, so it is emitted as the
+// polyline `crate::bspline::sample` makes of it.
+
+/// PSM type code for `igRectangle2d` (`JRectangle2d`, `imagdex.dex`; IGDS
+/// class tag `0x20 = 32`).
+pub const PSM_TYPE_CODE_IGRECTANGLE2D: u16 = 0x0020;
+
+/// PSM type code for `igBspCurve2d` (`JBspCurve2d`, `imagdex.dex`; IGDS class
+/// tag `0x5D = 93`).
+pub const PSM_TYPE_CODE_IGBSPCURVE2D: u16 = 0x005D;
+
+/// Shortest `igRectangle2d` payload: the 18-byte sub-header, five doubles and
+/// the `u32` count of the edge list.
+pub const IGRECTANGLE2D_MIN_PAYLOAD_LEN: usize = CURVE_GEOMETRY_AT + 40 + 4;
+
+/// Payload offset of a rectangle's edge count.
+const IGRECTANGLE2D_EDGES_AT: usize = CURVE_GEOMETRY_AT + 40;
+
+/// Most edges a rectangle may list. Four on the corpus; the bound only stops
+/// a corrupt count from being read as a length.
+const IGRECTANGLE2D_MAX_EDGES: usize = 64;
+
+/// Shortest `igBspCurve2d` payload: sub-header, `u32 N`, two poles, the
+/// weight flag, `u32 M`, four knots (degree one), the trailing double and
+/// four flag bytes.
+pub const IGBSPCURVE2D_MIN_PAYLOAD_LEN: usize = CURVE_GEOMETRY_AT + 4 + 32 + 4 + 4 + 32 + 8 + 4;
+
+/// Most poles a B-spline may carry. Five on the corpus; same purpose as the
+/// polyline reader's vertex cap.
+const IGBSPCURVE2D_MAX_POLES: usize = 4096;
+
+/// One decoded `0x0020` `igRectangle2d` record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgRectangle2dDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this rectangle sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator (payload `+12`); semantics not decoded.
+    pub sub_type_word: u16,
+    /// Index / style reference (payload `+14`).
+    pub index: u32,
+    /// The corner the width runs from (payload `+18`, `+26`), in the
+    /// stream's own coordinates.
+    pub origin: (f64, f64),
+    /// Extent along the rectangle's own x axis (payload `+34`).
+    pub width: f64,
+    /// Angle of that axis, radians (payload `+42`). Zero on every corpus
+    /// record, so the reading rests on the native reader's bounding-box
+    /// routine rather than on data.
+    pub rotation: f64,
+    /// Height as a fraction of the width (payload `+50`): the A2 border of
+    /// the `A01` export reads `0.594 x 0.707071`, which is `594 x 420 mm`
+    /// exactly.
+    pub aspect: f64,
+    /// Oids of the `igLine2d` records that are this rectangle's edges, in
+    /// on-disk order (payload `+62` on, after the `u32` count at `+58`).
+    /// Four on every corpus record, and on every one the four lines'
+    /// endpoints are the rectangle's corners.
+    pub edges: Vec<u32>,
+}
+
+impl SheetIgRectangle2dDecoded {
+    /// Extent along the rectangle's own y axis.
+    pub fn height(&self) -> f64 {
+        self.width * self.aspect
+    }
+
+    /// The four corners, counter-clockwise from the origin, with the
+    /// rotation applied.
+    pub fn corners(&self) -> [(f64, f64); 4] {
+        let (sin, cos) = self.rotation.sin_cos();
+        let (x0, y0) = self.origin;
+        let along = |u: f64, v: f64| (x0 + u * cos - v * sin, y0 + u * sin + v * cos);
+        let (w, h) = (self.width, self.height());
+        [along(0.0, 0.0), along(w, 0.0), along(w, h), along(0.0, h)]
+    }
+}
+
+/// One decoded `0x005D` `igBspCurve2d` record: a non-uniform B-spline,
+/// rational when [`Self::weights`] is non-empty.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgBspCurve2dDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this curve sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator (payload `+12`); semantics not decoded.
+    pub sub_type_word: u16,
+    /// Index / style reference (payload `+14`).
+    pub index: u32,
+    /// Control points, in order (payload `+22` on, after `u32 N` at `+18`).
+    pub poles: Vec<(f64, f64)>,
+    /// One weight per pole when the curve is rational; empty otherwise
+    /// (the `u32` flag after the poles was zero).
+    pub weights: Vec<f64>,
+    /// The knot vector (after `u32 M`). `M - N - 1` is the degree.
+    pub knots: Vec<f64>,
+    /// The double after the knots; `-1.0` on the corpus, meaning unknown.
+    pub trailing: f64,
+    /// The four bytes that close the record; `04 01 01 00` on the corpus.
+    pub flags: [u8; 4],
+}
+
+impl SheetIgBspCurve2dDecoded {
+    /// Polynomial degree, `M - N - 1`.
+    pub fn degree(&self) -> usize {
+        self.knots.len().saturating_sub(self.poles.len() + 1)
+    }
+}
+
+/// Decode every `igRectangle2d` record in a record-chain stream.
+///
+/// Chain-gated like [`decode_iglines`]; then: type code
+/// [`PSM_TYPE_CODE_IGRECTANGLE2D`]; five finite in-domain doubles;
+/// `width > 0` and `aspect > 0`; an edge count of at most
+/// [`IGRECTANGLE2D_MAX_EDGES`] whose list accounts for the payload exactly.
+pub fn decode_igrectangles(data: &[u8]) -> Vec<SheetIgRectangle2dDecoded> {
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| IgRectangle2dDecoder.decode_at(data, at))
+        .collect()
+}
+
+/// Try to decode one `igRectangle2d` record at `offset`. `None` on any
+/// validation failure; panic-free on arbitrary input.
+pub fn decode_igrectangle_at(data: &[u8], offset: usize) -> Option<SheetIgRectangle2dDecoded> {
+    IgRectangle2dDecoder.decode_at(data, offset)
+}
+
+/// Decode every `igBspCurve2d` record in a record-chain stream.
+///
+/// Chain-gated like [`decode_iglines`]; then: type code
+/// [`PSM_TYPE_CODE_IGBSPCURVE2D`]; `2..=4096` finite in-domain poles; when
+/// rational, one finite positive weight per pole; at least `N + 2` finite
+/// non-decreasing knots; and every counted field accounting for the payload
+/// exactly, trailing double and four flag bytes included.
+pub fn decode_igbspcurves(data: &[u8]) -> Vec<SheetIgBspCurve2dDecoded> {
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| IgBspCurve2dDecoder.decode_at(data, at))
+        .collect()
+}
+
+/// Try to decode one `igBspCurve2d` record at `offset`. `None` on any
+/// validation failure; panic-free on arbitrary input.
+pub fn decode_igbspcurve_at(data: &[u8], offset: usize) -> Option<SheetIgBspCurve2dDecoded> {
+    IgBspCurve2dDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x0020` `igRectangle2d`.
+pub struct IgRectangle2dDecoder;
+
+impl PsmRecordDecoder for IgRectangle2dDecoder {
+    type Record = SheetIgRectangle2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGRECTANGLE2D
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGRECTANGLE2D_MIN_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgRectangle2dDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        let len = header.bytes_to_follow as usize;
+        if header.type_code != PSM_TYPE_CODE_IGRECTANGLE2D || len < IGRECTANGLE2D_MIN_PAYLOAD_LEN {
+            return None;
+        }
+        let end = header.body_start.checked_add(len)?;
+        let payload = data.get(header.body_start..end)?;
+        let sub = curve_sub_header(payload)?;
+        let [x, y, width, rotation, aspect] = curve_doubles::<5>(payload)?;
+        if width <= 0.0 || aspect <= 0.0 {
+            return None;
+        }
+        let edge_count = u32_le(payload, IGRECTANGLE2D_EDGES_AT)? as usize;
+        if edge_count > IGRECTANGLE2D_MAX_EDGES
+            || IGRECTANGLE2D_EDGES_AT + 4 + edge_count * 4 != payload.len()
+        {
+            return None;
+        }
+        let edges = (0..edge_count)
+            .map(|slot| u32_le(payload, IGRECTANGLE2D_EDGES_AT + 4 + slot * 4))
+            .collect::<Option<Vec<u32>>>()?;
+        Some(SheetIgRectangle2dDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: sub.oid,
+            parent_ref: sub.parent_ref,
+            sheet_layer_ref: sub.sheet_layer_ref,
+            sub_type_word: sub.sub_type_word,
+            index: sub.index,
+            origin: (x, y),
+            width,
+            rotation,
+            aspect,
+            edges,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgRectangle2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// The curve an `igBspCurve2d` payload carries after its 18-byte sub-header,
+/// read the same way from a drawing's record and from a `.sym` body's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BspCurveGeometry {
+    /// Control points, in order.
+    pub poles: Vec<(f64, f64)>,
+    /// One weight per pole when rational; empty otherwise.
+    pub weights: Vec<f64>,
+    /// The knot vector.
+    pub knots: Vec<f64>,
+    /// The double after the knots; `-1.0` on the corpus.
+    pub trailing: f64,
+    /// The four closing bytes.
+    pub flags: [u8; 4],
+}
+
+/// Read the curve out of a full `igBspCurve2d` payload (sub-header
+/// included), or `None` when any counted field fails validation or the
+/// fields do not account for the payload exactly. Validation rules are
+/// documented on [`decode_igbspcurves`].
+pub fn bspcurve_geometry(payload: &[u8]) -> Option<BspCurveGeometry> {
+    let in_domain =
+        |value: f64| value.is_finite() && value.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT;
+    let mut at = CURVE_GEOMETRY_AT;
+    let pole_count = u32_le(payload, at)? as usize;
+    if !(2..=IGBSPCURVE2D_MAX_POLES).contains(&pole_count) {
+        return None;
+    }
+    at += 4;
+    let mut poles = Vec::with_capacity(pole_count);
+    for _ in 0..pole_count {
+        let x = f64_le(payload, at)?;
+        let y = f64_le(payload, at + 8)?;
+        if !in_domain(x) || !in_domain(y) {
+            return None;
+        }
+        poles.push((x, y));
+        at += 16;
+    }
+    let rational = u32_le(payload, at)? != 0;
+    at += 4;
+    let mut weights = Vec::new();
+    if rational {
+        for _ in 0..pole_count {
+            let weight = f64_le(payload, at)?;
+            if !weight.is_finite() || weight <= 0.0 {
+                return None;
+            }
+            weights.push(weight);
+            at += 8;
+        }
+    }
+    let knot_count = u32_le(payload, at)? as usize;
+    // Degree at least one, and no more knots than a cap the corpus is
+    // nowhere near; the exact-length rule below is the real guard.
+    if knot_count < pole_count + 2 || knot_count > pole_count + IGBSPCURVE2D_MAX_POLES {
+        return None;
+    }
+    at += 4;
+    let mut knots = Vec::with_capacity(knot_count);
+    for _ in 0..knot_count {
+        let knot = f64_le(payload, at)?;
+        if !knot.is_finite() || knots.last().is_some_and(|last| knot < *last) {
+            return None;
+        }
+        knots.push(knot);
+        at += 8;
+    }
+    let trailing = f64_le(payload, at)?;
+    if !trailing.is_finite() {
+        return None;
+    }
+    at += 8;
+    let flags: [u8; 4] = payload.get(at..at + 4)?.try_into().ok()?;
+    at += 4;
+    if at != payload.len() {
+        return None;
+    }
+    Some(BspCurveGeometry {
+        poles,
+        weights,
+        knots,
+        trailing,
+        flags,
+    })
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x005D` `igBspCurve2d`.
+pub struct IgBspCurve2dDecoder;
+
+impl PsmRecordDecoder for IgBspCurve2dDecoder {
+    type Record = SheetIgBspCurve2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGBSPCURVE2D
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGBSPCURVE2D_MIN_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgBspCurve2dDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        let len = header.bytes_to_follow as usize;
+        if header.type_code != PSM_TYPE_CODE_IGBSPCURVE2D || len < IGBSPCURVE2D_MIN_PAYLOAD_LEN {
+            return None;
+        }
+        let end = header.body_start.checked_add(len)?;
+        let payload = data.get(header.body_start..end)?;
+        let sub = curve_sub_header(payload)?;
+        let curve = bspcurve_geometry(payload)?;
+        Some(SheetIgBspCurve2dDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: sub.oid,
+            parent_ref: sub.parent_ref,
+            sheet_layer_ref: sub.sheet_layer_ref,
+            sub_type_word: sub.sub_type_word,
+            index: sub.index,
+            poles: curve.poles,
+            weights: curve.weights,
+            knots: curve.knots,
+            trailing: curve.trailing,
+            flags: curve.flags,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgBspCurve2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+#[cfg(test)]
+mod rectangle_and_bspline_tests {
+    use super::*;
+
+    /// The 8-byte stream header the chain walk skips, then the records.
+    fn chain(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = vec![0u8; SHEET_STREAM_HEADER_LEN];
+        for record in records {
+            out.extend_from_slice(record);
+        }
+        out
+    }
+
+    fn sub_header(out: &mut Vec<u8>, layer: u32) {
+        out.extend_from_slice(&1909u32.to_le_bytes()); // oid
+        out.extend_from_slice(&6615u32.to_le_bytes()); // parent_ref
+        out.extend_from_slice(&layer.to_le_bytes()); // sheet_layer_ref
+        out.extend_from_slice(&0u16.to_le_bytes()); // sub_type_word
+        out.extend_from_slice(&1u32.to_le_bytes()); // index
+    }
+
+    /// The `/Sheet6615` rectangle of DWG-0202, byte for byte in shape.
+    fn rectangle_record(doubles: [f64; 5], edges: &[u32]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        sub_header(&mut payload, 6996);
+        for value in doubles {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        payload.extend_from_slice(&(edges.len() as u32).to_le_bytes());
+        for edge in edges {
+            payload.extend_from_slice(&edge.to_le_bytes());
+        }
+        let mut out = PSM_TYPE_CODE_IGRECTANGLE2D.to_le_bytes().to_vec();
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    /// The `arrester breather valve(RD)` B-spline: five poles, no weights,
+    /// a clamped cubic knot vector over two spans.
+    fn bspline_record(poles: &[(f64, f64)], weights: &[f64], knots: &[f64]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        sub_header(&mut payload, 2824);
+        payload.extend_from_slice(&(poles.len() as u32).to_le_bytes());
+        for (x, y) in poles {
+            payload.extend_from_slice(&x.to_le_bytes());
+            payload.extend_from_slice(&y.to_le_bytes());
+        }
+        payload.extend_from_slice(&u32::from(!weights.is_empty()).to_le_bytes());
+        for weight in weights {
+            payload.extend_from_slice(&weight.to_le_bytes());
+        }
+        payload.extend_from_slice(&(knots.len() as u32).to_le_bytes());
+        for knot in knots {
+            payload.extend_from_slice(&knot.to_le_bytes());
+        }
+        payload.extend_from_slice(&(-1.0f64).to_le_bytes());
+        payload.extend_from_slice(&[0x04, 0x01, 0x01, 0x00]);
+        let mut out = PSM_TYPE_CODE_IGBSPCURVE2D.to_le_bytes().to_vec();
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    const CORPUS_POLES: [(f64, f64); 5] = [
+        (0.005_041, 0.005_076),
+        (0.005_379, 0.004_890),
+        (0.006_078, 0.004_280),
+        (0.005_379, 0.003_669),
+        (0.005_041, 0.003_483),
+    ];
+    const CORPUS_KNOTS: [f64; 9] = [0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0];
+
+    #[test]
+    fn a_rectangle_reads_its_frame_and_its_four_edges() {
+        let record = rectangle_record(
+            [0.126_271, 0.092_379, 0.127_478, 0.0, 0.406_863],
+            &[4732, 5238, 6099, 6530],
+        );
+        assert_eq!(record.len(), PSM_ENVELOPE_LEN + 78);
+        let decoded = decode_igrectangles(&chain(&[record]));
+        assert_eq!(decoded.len(), 1);
+        let rectangle = &decoded[0];
+        assert_eq!(rectangle.oid, 1909);
+        assert_eq!(rectangle.sheet_layer_ref, 6996);
+        assert_eq!(rectangle.origin, (0.126_271, 0.092_379));
+        assert_eq!(rectangle.width, 0.127_478);
+        assert_eq!(rectangle.rotation, 0.0);
+        assert!((rectangle.height() - 0.051_866).abs() < 1e-6);
+        assert_eq!(rectangle.edges, vec![4732, 5238, 6099, 6530]);
+        let corners = rectangle.corners();
+        assert!((corners[2].0 - 0.253_749).abs() < 1e-6);
+        assert!((corners[2].1 - 0.144_245).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_rectangle_whose_edge_list_does_not_fill_the_payload_is_refused() {
+        let mut record = rectangle_record([0.0, 0.0, 0.594, 0.0, 0.707_071], &[369, 297, 294, 296]);
+        // Claim five edges over a four-edge payload.
+        let count_at = PSM_ENVELOPE_LEN + IGRECTANGLE2D_EDGES_AT;
+        record[count_at..count_at + 4].copy_from_slice(&5u32.to_le_bytes());
+        assert!(decode_igrectangles(&chain(&[record])).is_empty());
+        // A zero or negative extent is not a rectangle.
+        for doubles in [[0.0, 0.0, 0.0, 0.0, 0.7], [0.0, 0.0, 0.5, 0.0, -0.7]] {
+            let record = rectangle_record(doubles, &[1, 2, 3, 4]);
+            assert!(
+                decode_igrectangles(&chain(&[record])).is_empty(),
+                "{doubles:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bspline_reads_its_poles_knots_and_degree() {
+        let record = bspline_record(&CORPUS_POLES, &[], &CORPUS_KNOTS);
+        assert_eq!(record.len(), PSM_ENVELOPE_LEN + 194);
+        let decoded = decode_igbspcurves(&chain(&[record]));
+        assert_eq!(decoded.len(), 1);
+        let curve = &decoded[0];
+        assert_eq!(curve.sheet_layer_ref, 2824);
+        assert_eq!(curve.poles, CORPUS_POLES.to_vec());
+        assert!(curve.weights.is_empty());
+        assert_eq!(curve.knots, CORPUS_KNOTS.to_vec());
+        assert_eq!(curve.degree(), 3);
+        assert_eq!(curve.trailing, -1.0);
+        assert_eq!(curve.flags, [0x04, 0x01, 0x01, 0x00]);
+    }
+
+    #[test]
+    fn a_rational_bspline_carries_one_weight_per_pole() {
+        let record = bspline_record(
+            &[(0.0, 0.0), (0.01, 0.01), (0.02, 0.0)],
+            &[1.0, 0.5, 1.0],
+            &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        );
+        let decoded = decode_igbspcurves(&chain(&[record]));
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].weights, vec![1.0, 0.5, 1.0]);
+        assert_eq!(decoded[0].degree(), 2);
+    }
+
+    #[test]
+    fn a_bspline_with_a_bad_count_or_a_falling_knot_is_refused() {
+        // Knots out of order.
+        let falling = bspline_record(
+            &CORPUS_POLES,
+            &[],
+            &[0.0, 0.0, 0.0, 0.0, 1.0, 0.5, 1.0, 1.0, 1.0],
+        );
+        assert!(decode_igbspcurves(&chain(&[falling])).is_empty());
+        // Too few knots for the poles (degree zero).
+        let flat = bspline_record(&CORPUS_POLES, &[], &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
+        assert!(decode_igbspcurves(&chain(&[flat])).is_empty());
+        // A pole count that overruns the payload.
+        let mut overrun = bspline_record(&CORPUS_POLES, &[], &CORPUS_KNOTS);
+        let n_at = PSM_ENVELOPE_LEN + CURVE_GEOMETRY_AT;
+        overrun[n_at..n_at + 4].copy_from_slice(&50u32.to_le_bytes());
+        assert!(decode_igbspcurves(&chain(&[overrun])).is_empty());
+    }
+
+    #[test]
+    fn neither_family_reads_the_other_and_both_survive_truncation() {
+        let rectangle = rectangle_record([0.0, 0.0, 0.5, 0.0, 0.5], &[1, 2, 3, 4]);
+        let bspline = bspline_record(&CORPUS_POLES, &[], &CORPUS_KNOTS);
+        let stream = chain(&[rectangle, bspline]);
+        assert_eq!(decode_igrectangles(&stream).len(), 1);
+        assert_eq!(decode_igbspcurves(&stream).len(), 1);
+        for cut in 0..stream.len() {
+            let _ = decode_igrectangles(&stream[..cut]);
+            let _ = decode_igbspcurves(&stream[..cut]);
+            let _ = decode_igrectangle_at(&stream[..cut], cut.saturating_sub(1));
+            let _ = decode_igbspcurve_at(&stream[..cut], cut.saturating_sub(1));
+        }
+    }
+}
+
 #[cfg(test)]
 mod nested_curve_family_tests {
     use super::*;

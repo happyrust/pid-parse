@@ -710,15 +710,18 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         };
         warnings.push(format!(
             "{records} record(s) ({circles} circles, {arcs} arcs, {lines} lines, {polylines} \
-             line strings, {texts} texts) decoded in {path}/PSMcluster0 are symbol bodies in \
-             symbol-local coordinates, grouped into {bodies} definition(s) reachable through \
-             the placements that name them; they are not page content",
+             line strings, {texts} texts, {rectangles} rectangles, {bsplines} B-splines) decoded \
+             in {path}/PSMcluster0 are symbol bodies in symbol-local coordinates, grouped into \
+             {bodies} definition(s) reachable through the placements that name them; they are \
+             not page content",
             records = nested.len(),
             circles = nested.circles.len(),
             arcs = nested.arcs.len(),
             lines = nested.lines.len(),
             polylines = nested.polylines.len(),
             texts = nested.texts.len(),
+            rectangles = nested.rectangles.len(),
+            bsplines = nested.bsplines.len(),
             path = site.path,
             bodies = nested.definitions.len(),
         ));
@@ -1189,6 +1192,19 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     });
                 }
             }
+            // Rectangles are deliberately not here: their strokes are the
+            // four `igLine2d` edges they list, and those are in `lines`.
+            for curve in nested
+                .bsplines
+                .iter()
+                .filter(|b| on_body(b.sheet_layer_ref))
+            {
+                primitives.push(SymbolPrimitive::BSpline {
+                    poles: curve.poles(),
+                    weights: curve.weights.clone(),
+                    knots: curve.knots.clone(),
+                });
+            }
             out.push(PidSymbolDefinition {
                 reference: PidSymbolDefinitionRef {
                     site: site_id,
@@ -1337,11 +1353,15 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     // It stays in this position — after the historical emitting block —
     // because the table order is part of the golden-snapshot contract.
     &IgBoundary2dEmitter,
+    // A leaf curve nothing else draws; appended after the historical block
+    // so the earlier families keep their golden order.
+    &IgBspCurve2dEmitter,
     // Audit-only families: explicit no-op policy.
     &IgSmartFrame2dEmitter,
     &DependencyObjectEmitter,
     &SubRecord0x0010Emitter,
     &AttributeFragmentEmitter,
+    &IgRectangle2dEmitter,
 ];
 
 /// `(family name, is_no_op)` for every registered emitter, in table
@@ -2005,6 +2025,104 @@ impl GeometryEmitter for SubRecord0x0010Emitter {
     }
 }
 
+/// How many straight segments each knot span of a B-spline is drawn with;
+/// shared with the symbol-body renderers so a curve looks the same whether it
+/// reaches the page directly or through a placement.
+const BSPLINE_SEGMENTS_PER_SPAN: usize = crate::bspline::SEGMENTS_PER_SPAN;
+
+/// Emits a `Decoded` [`PidGraphicKind::Polyline`] for every `igBspCurve2d`
+/// (PSM `0x005D`): the curve sampled span by span through
+/// [`crate::bspline::sample`]. The record is a leaf -- nothing else draws it
+/// -- so unlike a rectangle it has to be emitted to be seen. None sits in a
+/// top-level `Sheet*` stream on the corpus; the one the corpus has is in a
+/// symbol body, and reaches the drawing through
+/// [`NormalizedPidGeometry::symbol_definitions`].
+struct IgBspCurve2dEmitter;
+
+impl GeometryEmitter for IgBspCurve2dEmitter {
+    fn family(&self) -> &'static str {
+        "igBspCurve2d"
+    }
+
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_igbspcurves.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            let points: Vec<PidPoint> = crate::bspline::sample(
+                &record.poles(),
+                &record.weights,
+                &record.knots,
+                BSPLINE_SEGMENTS_PER_SPAN,
+            )
+            .into_iter()
+            .map(|(x, y)| PidPoint { x, y })
+            .collect();
+            if points.len() < 2 {
+                continue;
+            }
+            out.push(PidGraphicEntity {
+                id: format!("{}:igbspcurve2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
+                kind: PidGraphicKind::Polyline {
+                    points,
+                    closed: false,
+                },
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igbspcurve2d:{index}")),
+                    record_kind: Some(SheetRecordKind::PrimitivePolyline),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igBspCurve2d record (type 0x005D); oid={} parent_ref={} \
+                         degree={} poles={} knots={} rational={}; drawn as {} segments per \
+                         knot span through de Boor evaluation",
+                        record.oid,
+                        record.parent_ref,
+                        record.degree(),
+                        record.pole_xs.len(),
+                        record.knots.len(),
+                        !record.weights.is_empty(),
+                        BSPLINE_SEGMENTS_PER_SPAN,
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+    }
+}
+
+/// No-op emitter: an `igRectangle2d` (PSM `0x0020`) is the parent of the
+/// four `igLine2d` edges it lists by oid, and those edges are records of the
+/// same stream that emit on their own. Every corpus rectangle's four edges
+/// are its four corners joined; emitting the rectangle too would draw them
+/// twice (`docs/analysis/2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`).
+struct IgRectangle2dEmitter;
+
+impl GeometryEmitter for IgRectangle2dEmitter {
+    fn family(&self) -> &'static str {
+        "igRectangle2d"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
+    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    }
+}
+
 /// No-op emitter: attribute fragments (Phase 26 view of `0x0010`)
 /// carry engineering attribute text for audit; they are not placed
 /// text geometry (no decoded insertion point).
@@ -2404,6 +2522,8 @@ mod tests {
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
+                decoded_igrectangles: Vec::new(),
+                decoded_igbspcurves: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -2506,6 +2626,8 @@ mod tests {
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
+                decoded_igrectangles: Vec::new(),
+                decoded_igbspcurves: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -2647,6 +2769,8 @@ mod tests {
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
+                decoded_igrectangles: Vec::new(),
+                decoded_igbspcurves: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -2740,6 +2864,8 @@ mod tests {
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
+                decoded_igrectangles: Vec::new(),
+                decoded_igbspcurves: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -2804,6 +2930,8 @@ mod tests {
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
+                decoded_igrectangles: Vec::new(),
+                decoded_igbspcurves: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -2888,6 +3016,8 @@ mod tests {
                 decoded_jstyle_overrides: Vec::new(),
                 decoded_sub_records_0x0010: Vec::new(),
                 decoded_attribute_fragments: Vec::new(),
+                decoded_igrectangles: Vec::new(),
+                decoded_igbspcurves: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],

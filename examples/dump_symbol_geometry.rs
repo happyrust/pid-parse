@@ -13,6 +13,10 @@
 //! poly,closed(0|1),x1,y1,x2,y2,...
 //! ```
 //!
+//! A B-spline is dumped as the open `poly` a renderer draws it as, sampled
+//! `bspline::SEGMENTS_PER_SPAN` segments to a knot span, so the plot shows the
+//! curve rather than its control polygon.
+//!
 //! A row whose record names a line style in the symbol's own `StyleCluster`
 //! carries a trailing `@RRGGBB:WW` token, `WW` being the width in hundredths
 //! of a millimetre — the same shape OpenCADStudio's drawing-level dump uses,
@@ -78,6 +82,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .flat_map(|(x, y)| [x.to_string(), y.to_string()])
                     .collect();
                 println!("poly,{},{}{style}", u8::from(*is_closed), coords.join(","));
+            }
+            SymbolPrimitive::BSpline { .. } => {
+                let coords: Vec<String> = styled
+                    .primitive
+                    .bspline_points(pid_parse::bspline::SEGMENTS_PER_SPAN)
+                    .iter()
+                    .flat_map(|(x, y)| [x.to_string(), y.to_string()])
+                    .collect();
+                println!("poly,0,{}{style}", coords.join(","));
             }
             SymbolPrimitive::Text { text, at } => {
                 // Height and rotation are zero because the record carries

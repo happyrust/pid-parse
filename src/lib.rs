@@ -87,6 +87,7 @@
 
 pub mod api;
 pub mod backup;
+pub mod bspline;
 pub mod byte_audit;
 pub mod cfb;
 mod config;

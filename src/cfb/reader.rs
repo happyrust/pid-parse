@@ -783,6 +783,8 @@ mod tests {
                 decoded_jstyle_overrides: vec![],
                 decoded_sub_records_0x0010: vec![],
                 decoded_attribute_fragments: vec![],
+                decoded_igrectangles: vec![],
+                decoded_igbspcurves: vec![],
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],

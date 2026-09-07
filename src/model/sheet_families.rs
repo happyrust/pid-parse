@@ -35,9 +35,10 @@
 
 use super::sheet::SheetGeometry;
 use crate::parsers::sheet_records::{
-    decode_attribute_fragments, decode_dependency_objects, decode_igboundaries, decode_iglines,
-    decode_iglinestrings, decode_igpoints, decode_igsymbols, decode_igtextboxes,
-    decode_jstyle_overrides, decode_primitive_lines, decode_smartframes, decode_sub_records_0x0010,
+    decode_attribute_fragments, decode_dependency_objects, decode_igboundaries, decode_igbspcurves,
+    decode_iglines, decode_iglinestrings, decode_igpoints, decode_igrectangles, decode_igsymbols,
+    decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines, decode_smartframes,
+    decode_sub_records_0x0010,
 };
 
 /// Byte-audit claim class for a family's decoded byte envelopes.
@@ -350,6 +351,54 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
                 .collect()
         },
     },
+    // A rectangle is the parent of the four `igLine2d` edges it lists; the
+    // edges are records of the same stream and emit on their own, so the
+    // rectangle decodes (its byte range is claimed, its edges are named)
+    // and emits nothing.
+    SheetRecordFamily {
+        name: "igRectangle2d",
+        type_code: 0x0020,
+        emits_geometry: false,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_igrectangles",
+        model_dto: "DecodedIgRectangle2dRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_igrectangles = decode_igrectangles(data)
+                .into_iter()
+                .map(Into::into)
+                .collect();
+        },
+        record_count: |geometry| geometry.decoded_igrectangles.len(),
+        decoded_ranges: |data| {
+            decode_igrectangles(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
+    // A B-spline is a leaf curve nothing else draws; it emits as the
+    // polyline `bspline::sample` makes of it.
+    SheetRecordFamily {
+        name: "igBspCurve2d",
+        type_code: 0x005D,
+        emits_geometry: true,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_igbspcurves",
+        model_dto: "DecodedIgBspCurve2dRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_igbspcurves = decode_igbspcurves(data)
+                .into_iter()
+                .map(Into::into)
+                .collect();
+        },
+        record_count: |geometry| geometry.decoded_igbspcurves.len(),
+        decoded_ranges: |data| {
+            decode_igbspcurves(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
 ];
 
 /// True when no family has any decoded records on `geometry`
@@ -393,8 +442,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_twelve_rows_with_unique_fields() {
-        assert_eq!(SHEET_RECORD_FAMILIES.len(), 12);
+    fn registry_has_fourteen_rows_with_unique_fields() {
+        assert_eq!(SHEET_RECORD_FAMILIES.len(), 14);
         let mut fields: Vec<&str> = SHEET_RECORD_FAMILIES
             .iter()
             .map(|f| f.geometry_field)
@@ -403,7 +452,7 @@ mod tests {
         fields.dedup();
         assert_eq!(
             fields.len(),
-            12,
+            14,
             "every registry row must own a distinct SheetGeometry field"
         );
     }

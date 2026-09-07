@@ -42,13 +42,14 @@ use pid_parse::parsers::relationship_probe::probe_relationships;
 use pid_parse::parsers::sheet_endpoint_records::parse_endpoint_records;
 use pid_parse::parsers::sheet_probe::{probe_sheet_stream, SheetProbeOptions};
 use pid_parse::parsers::sheet_records::{
-    collect_normalized_f64_pairs, coordinate_pair_spatial_analysis, decode_attribute_fragment_at,
-    decode_attribute_fragments, decode_dependency_object_at, decode_dependency_objects,
-    decode_double_value_at, decode_double_values, decode_igarc_at, decode_igarcs,
-    decode_igboundaries, decode_igboundary_at, decode_igcircle_at, decode_igcircles,
-    decode_igline_at, decode_iglines, decode_iglinestring_at, decode_iglinestrings,
-    decode_igpoint_at, decode_igpoints, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
-    decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
+    bspcurve_geometry, collect_normalized_f64_pairs, coordinate_pair_spatial_analysis,
+    decode_attribute_fragment_at, decode_attribute_fragments, decode_dependency_object_at,
+    decode_dependency_objects, decode_double_value_at, decode_double_values, decode_igarc_at,
+    decode_igarcs, decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at,
+    decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igline_at, decode_iglines,
+    decode_iglinestring_at, decode_iglinestrings, decode_igpoint_at, decode_igpoints,
+    decode_igrectangle_at, decode_igrectangles, decode_igsymbol_at, decode_igsymbols,
+    decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
     decode_primitive_line_at, decode_primitive_lines, decode_smartframe_at, decode_smartframes,
     decode_standard_relation_at, decode_standard_relations, decode_sub_record_0x0010_at,
     decode_sub_records_0x0010, decode_symbol_information_at, decode_symbol_informations,
@@ -373,6 +374,21 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = decode_igcircle_at(input, input.len());
         let _ = decode_igarc_at(input, input.len() - 1);
         let _ = decode_igarc_at(input, input.len());
+    }
+
+    // `0x0020` igRectangle2d and `0x005D` igBspCurve2d: both read counted
+    // tails -- an edge list, poles / weights / knots -- so a corrupt count
+    // must reject the record rather than index past the payload.
+    let _ = decode_igrectangles(input);
+    let _ = decode_igbspcurves(input);
+    let _ = decode_igrectangle_at(input, 0);
+    let _ = decode_igbspcurve_at(input, 0);
+    let _ = bspcurve_geometry(input);
+    if !input.is_empty() {
+        let _ = decode_igrectangle_at(input, input.len() - 1);
+        let _ = decode_igrectangle_at(input, input.len());
+        let _ = decode_igbspcurve_at(input, input.len() - 1);
+        let _ = decode_igbspcurve_at(input, input.len());
     }
 
     // PSM `0x003D` igSmartFrame2d decoder. The page a drawing's border

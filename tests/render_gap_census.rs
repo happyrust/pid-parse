@@ -33,9 +33,11 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     // decoded all 260 records of that family, so every remaining refusal
     // below is a polyline or the 0x00FA.
     ("DWG-0201GP06-01.pid", 1, 0),
-    // 4 refused linestrings on /Sheet6; /Sheet6615's one undecodable
-    // rectangle is the dropped record.
-    ("DWG-0202GP06-01.pid", 4, 1),
+    // 4 refused linestrings on /Sheet6. /Sheet6615's rectangle was the one
+    // dropped record until `igRectangle2d` got its decoder (2026-09-07); it
+    // decodes now, and emits nothing, being the parent of the four edge lines
+    // that already do.
+    ("DWG-0202GP06-01.pid", 4, 0),
     // 8 refused linestrings — population C (degenerate two-vertex), judged
     // a correct refusal.
     ("工艺管道及仪表流程-1.pid", 8, 0),
@@ -43,8 +45,10 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("D06.pid", 0, 0),
     // Clean since the sub-type layout landed: the 18 text records that used
     // to sit here were all sub-type 1 or 3, refused only because the decoder
-    // looked for their count at sub-type 2's offset.
-    ("export-test/publish-data/A01/A01.pid", 0, 3),
+    // looked for their count at sub-type 2's offset. The dropped record is
+    // /JSite204/Sheet6's one 0x007B Group implementation; the two A2 border
+    // rectangles that sat beside it decode since 2026-09-07.
+    ("export-test/publish-data/A01/A01.pid", 0, 1),
 ];
 
 /// `(fixture, decoded `igLine2d` records)` — the other side of the same
@@ -191,10 +195,14 @@ fn every_refused_graphic_record_is_named_in_a_warning() {
 
 #[test]
 fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
-    // DWG-0202 carries one of each — refused text on /Sheet6, an undecodable
-    // rectangle on /Sheet6615 — so the two wordings meet in one file. A reader
-    // who cannot tell them apart cannot tell "write a decoder" from
-    // "re-measure the one you have".
+    // DWG-0202 used to carry one of each — refused text on /Sheet6, an
+    // undecodable rectangle on /Sheet6615 — so the two wordings met in one
+    // file. The rectangle has a decoder now (it is the parent of four edge
+    // lines and emits nothing), so on this fixture only refusals remain, and
+    // the fixture's missing-decoder list must be empty: a reader who cannot
+    // tell the two apart cannot tell "write a decoder" from "re-measure the
+    // one you have", and the synthetic pair in `geometry.rs` keeps the two
+    // wordings apart where both still occur.
     let path = "test-file/DWG-0202GP06-01.pid";
     if !std::path::Path::new(path).exists() {
         eprintln!("skipping: fixture {path} not found");
@@ -217,7 +225,11 @@ fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
         .collect();
 
     assert!(!refusals.is_empty(), "the refused lines and text are named");
-    assert!(!missing.is_empty(), "the undecodable rectangle is named");
+    assert!(
+        missing.is_empty() && geometry.dropped_graphic_records.is_empty(),
+        "every graphic record of DWG-0202 has a decoder now; the /Sheet6615 rectangle was the \
+         last without one: {missing:?}"
+    );
     for warning in &refusals {
         assert!(
             !warning.contains("have no decoder"),

@@ -717,6 +717,14 @@ pub struct JSiteNestedGeometry {
     /// lettering, often the `NULL` placeholder a placement fills in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub texts: Vec<DecodedIgTextBoxRecord>,
+    /// `0x0020` `igRectangle2d` records, in on-disk order. Audit only: a
+    /// rectangle's strokes are the four `igLine2d` edges it lists, which are
+    /// in [`Self::lines`] already.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rectangles: Vec<DecodedIgRectangle2dRecord>,
+    /// `0x005D` `igBspCurve2d` records, in on-disk order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bsplines: Vec<DecodedIgBspCurve2dRecord>,
     /// Oid of every `0x0114` `JSheet` in the storage, in on-disk order. The
     /// first is the storage's own base sheet; each of the rest is one body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -730,21 +738,19 @@ pub struct JSiteNestedGeometry {
 impl JSiteNestedGeometry {
     /// Whether the site held no drawable record and no sheet at all.
     pub fn is_empty(&self) -> bool {
-        self.circles.is_empty()
-            && self.arcs.is_empty()
-            && self.lines.is_empty()
-            && self.polylines.is_empty()
-            && self.texts.is_empty()
-            && self.sheets.is_empty()
+        self.len() == 0 && self.sheets.is_empty()
     }
 
-    /// How many drawable records the site holds, all families together.
+    /// How many records the site holds, all families together (the
+    /// rectangles included, though they draw through their edges).
     pub fn len(&self) -> usize {
         self.circles.len()
             + self.arcs.len()
             + self.lines.len()
             + self.polylines.len()
             + self.texts.len()
+            + self.rectangles.len()
+            + self.bsplines.len()
     }
 
     /// The body one `JSheet` of this storage holds, if the sheet resolved to

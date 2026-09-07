@@ -151,6 +151,22 @@ pub struct SheetGeometry {
     /// `docs/analysis/2026-05-31-psm-0x0010-ida-recheck-plan.md`.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_attribute_fragments: Vec<DecodedAttributeFragment>,
+    /// PSM `0x0020` `igRectangle2d` records emitted by
+    /// [`crate::parsers::sheet_records::decode_igrectangles`].
+    ///
+    /// A rectangle is the parent of four `igLine2d` edges it lists by oid;
+    /// the edges are records of the same stream, decoded and emitted on
+    /// their own, so the rectangle itself emits nothing -- drawing it would
+    /// draw its edges twice
+    /// (`docs/analysis/2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igrectangles: Vec<DecodedIgRectangle2dRecord>,
+    /// PSM `0x005D` `igBspCurve2d` records emitted by
+    /// [`crate::parsers::sheet_records::decode_igbspcurves`]: a leaf curve
+    /// nothing else draws, emitted as the polyline [`crate::bspline::sample`]
+    /// makes of it.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igbspcurves: Vec<DecodedIgBspCurve2dRecord>,
     /// Phase 25-A read-only spatial-distribution analysis of this
     /// sheet's normalized `(x, y)` f64 pairs, emitted by
     /// [`crate::parsers::sheet_records::coordinate_pair_spatial_analysis`].
@@ -770,6 +786,139 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
             insertion_y: d.insertion.1,
             definition_sheet_ref: d.definition_sheet_ref,
             definition_site_ref: d.definition_site_ref,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgRectangle2dDecoded`] -- PSM type
+/// `0x0020` `igRectangle2d` (`imagdex.dex`), the parent of four `igLine2d`
+/// edges.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgRectangle2dRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this rectangle sits on.
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / style reference.
+    pub index: u32,
+    /// Corner the width runs from, `x`.
+    pub origin_x: f64,
+    /// Corner the width runs from, `y`.
+    pub origin_y: f64,
+    /// Extent along the rectangle's own x axis.
+    pub width: f64,
+    /// Angle of that axis, radians; zero on the corpus.
+    pub rotation: f64,
+    /// Height as a fraction of the width.
+    pub aspect: f64,
+    /// Oids of the `igLine2d` records that are its edges, in on-disk order.
+    pub edges: Vec<u32>,
+}
+
+impl DecodedIgRectangle2dRecord {
+    /// Extent along the rectangle's own y axis.
+    pub fn height(&self) -> f64 {
+        self.width * self.aspect
+    }
+}
+
+impl From<crate::parsers::sheet_records::SheetIgRectangle2dDecoded> for DecodedIgRectangle2dRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgRectangle2dDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            origin_x: d.origin.0,
+            origin_y: d.origin.1,
+            width: d.width,
+            rotation: d.rotation,
+            aspect: d.aspect,
+            edges: d.edges,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgBspCurve2dDecoded`] -- PSM type
+/// `0x005D` `igBspCurve2d` (`imagdex.dex`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgBspCurve2dRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this curve sits on.
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / style reference.
+    pub index: u32,
+    /// Control point `x` coordinates, in order.
+    pub pole_xs: Vec<f64>,
+    /// Control point `y` coordinates, in order.
+    pub pole_ys: Vec<f64>,
+    /// One weight per pole when rational; empty otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub weights: Vec<f64>,
+    /// The knot vector; its length minus the pole count minus one is the
+    /// degree.
+    pub knots: Vec<f64>,
+    /// The double after the knots; `-1.0` on the corpus, meaning unknown.
+    pub trailing: f64,
+    /// The four closing bytes; `04 01 01 00` on the corpus.
+    pub flags: [u8; 4],
+}
+
+impl DecodedIgBspCurve2dRecord {
+    /// The control points as pairs.
+    pub fn poles(&self) -> Vec<(f64, f64)> {
+        self.pole_xs
+            .iter()
+            .copied()
+            .zip(self.pole_ys.iter().copied())
+            .collect()
+    }
+
+    /// Polynomial degree, `knots - poles - 1`.
+    pub fn degree(&self) -> usize {
+        self.knots.len().saturating_sub(self.pole_xs.len() + 1)
+    }
+}
+
+impl From<crate::parsers::sheet_records::SheetIgBspCurve2dDecoded> for DecodedIgBspCurve2dRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgBspCurve2dDecoded) -> Self {
+        let (pole_xs, pole_ys) = d.poles.into_iter().unzip();
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            pole_xs,
+            pole_ys,
+            weights: d.weights,
+            knots: d.knots,
+            trailing: d.trailing,
+            flags: d.flags,
         }
     }
 }

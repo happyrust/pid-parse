@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (mut lines, mut circles, mut arcs, mut polylines) = (0usize, 0usize, 0usize, 0usize);
-    let (mut texts, mut placeholders) = (0usize, 0usize);
+    let (mut texts, mut placeholders, mut bsplines) = (0usize, 0usize, 0usize);
     let mut empty = 0usize;
     let mut failed = 0usize;
     let mut skipped: BTreeMap<u16, usize> = BTreeMap::new();
@@ -108,6 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 SymbolPrimitive::Circle { .. } => circles += 1,
                 SymbolPrimitive::Arc { .. } => arcs += 1,
                 SymbolPrimitive::Polyline { .. } => polylines += 1,
+                SymbolPrimitive::BSpline { .. } => bsplines += 1,
                 SymbolPrimitive::Text { text, .. } => {
                     texts += 1;
                     if text == PLACEHOLDER {
@@ -128,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         richest.push((body.primitives.len(), name));
     }
 
-    let total = lines + circles + arcs + polylines + texts;
+    let total = lines + circles + arcs + polylines + bsplines + texts;
     println!("\n-- library yield --");
     println!("  read failures      : {failed}");
     println!(
@@ -142,6 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    circles   {circles}");
     println!("    arcs      {arcs}");
     println!("    polylines {polylines}");
+    println!("    bsplines  {bsplines}");
     println!("    texts     {texts} (of which {placeholders} are the {PLACEHOLDER:?} placeholder)");
 
     println!("\n  stepped-over record types (no drawable shape):");

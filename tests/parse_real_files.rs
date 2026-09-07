@@ -3708,6 +3708,214 @@ fn every_placement_names_a_body_the_drawing_carries() {
     );
 }
 
+/// The corpus's three rectangles are parents of four edge lines each, and its
+/// one B-spline is a leaf that reaches the drawing as part of a symbol body.
+///
+/// A rectangle's five doubles read `(origin, width, rotation, height / width)`
+/// -- the A2 border of the `A01` export is `0.594 x 0.707071 = 594 x 420 mm`
+/// -- and its tail lists four oids that are `igLine2d` records of the same
+/// stream whose endpoints are the rectangle's corners. So the rectangle
+/// emits nothing: its edges already do. The B-spline sits in the cached body
+/// of `arrester breather valve(RD)` and in that symbol's `.sym`, pole for
+/// pole, and both readers now carry it
+/// (`docs/analysis/2026-09-07-rectangle-owns-its-edges-bspline-is-a-leaf.md`).
+#[test]
+fn rectangles_own_their_edges_and_the_bspline_reaches_its_body() {
+    use pid_parse::symbol_library::{read_symbol_geometry, SymbolPrimitive};
+    use pid_parse::PidGraphicKind;
+
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let mut rectangles_checked = 0usize;
+
+    for fixture in [
+        "DWG-0202GP06-01.pid",
+        "export-test/publish-data/A01/A01.pid",
+    ] {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        for sheet in &doc.sheet_streams {
+            let Some(geometry) = sheet.geometry.as_ref() else {
+                continue;
+            };
+            for rectangle in &geometry.decoded_igrectangles {
+                assert_eq!(
+                    rectangle.edges.len(),
+                    4,
+                    "{fixture} {}: a rectangle lists its four edges",
+                    sheet.path
+                );
+                assert_eq!(rectangle.rotation, 0.0);
+                // Every listed edge is a line of the same stream, and the
+                // four lines' endpoints are exactly the rectangle's corners.
+                let (x0, y0) = (rectangle.origin_x, rectangle.origin_y);
+                let (x1, y1) = (x0 + rectangle.width, y0 + rectangle.height());
+                let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                for edge in &rectangle.edges {
+                    let line = geometry
+                        .decoded_iglines
+                        .iter()
+                        .find(|line| line.oid == *edge)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{fixture} {}: edge {edge} is not a line of the stream",
+                                sheet.path
+                            )
+                        });
+                    for point in [(line.start_x, line.start_y), (line.end_x, line.end_y)] {
+                        assert!(
+                            corners.iter().any(|c| close(c.0, point.0) && close(c.1, point.1)),
+                            "{fixture} {}: edge {edge} endpoint {point:?} is not a corner of {corners:?}",
+                            sheet.path
+                        );
+                    }
+                }
+                rectangles_checked += 1;
+            }
+        }
+        // And the projection emits the edges, not the rectangle: no entity
+        // of the stream has the rectangle's oid.
+        let projection = pid_parse::build_normalized_geometry(&doc);
+        for sheet in &doc.sheet_streams {
+            let Some(geometry) = sheet.geometry.as_ref() else {
+                continue;
+            };
+            for rectangle in &geometry.decoded_igrectangles {
+                assert!(
+                    !projection
+                        .entities
+                        .iter()
+                        .any(|entity| entity.graphic_oid == Some(rectangle.oid)),
+                    "{fixture}: rectangle {} was emitted on top of its edges",
+                    rectangle.oid
+                );
+            }
+        }
+        if fixture == "DWG-0202GP06-01.pid" {
+            assert!(
+                projection.dropped_graphic_records.is_empty(),
+                "the /Sheet6615 rectangle was the last graphic record without a decoder"
+            );
+            assert_eq!(
+                projection
+                    .entities
+                    .iter()
+                    .filter(|e| e.source.stream_path.as_deref() == Some("/Sheet6615"))
+                    .filter(|e| e.confidence == pid_parse::PidGeometryConfidence::Decoded)
+                    .filter(|e| matches!(e.kind, PidGraphicKind::Line { .. }))
+                    .count(),
+                4,
+                "the orphan storage's decoded line work is exactly the four edge lines"
+            );
+        }
+    }
+    if rectangles_checked > 0 {
+        assert_eq!(
+            rectangles_checked, 3,
+            "three rectangles across DWG-0202 and A01, all checked"
+        );
+    }
+
+    // The B-spline: one, in the cached body of the arrester breather valve.
+    let Some(doc) = parse_test_file("DWG-0202GP06-01.pid") else {
+        return;
+    };
+    let cache = doc
+        .jsites
+        .iter()
+        .find(|site| site.path == "/JSite793")
+        .and_then(|site| site.nested_geometry.as_ref())
+        .expect("DWG-0202's definition cache");
+    assert_eq!(cache.bsplines.len(), 1);
+    let curve = &cache.bsplines[0];
+    assert_eq!(
+        (curve.pole_xs.len(), curve.knots.len(), curve.degree()),
+        (5, 9, 3)
+    );
+    assert!(curve.weights.is_empty(), "the corpus curve is polynomial");
+    assert_eq!(curve.sheet_layer_ref, 2824);
+
+    let projection = pid_parse::build_normalized_geometry(&doc);
+    let body = projection
+        .entities
+        .iter()
+        .find_map(|entity| match &entity.kind {
+            PidGraphicKind::SymbolInstance {
+                symbol_path: Some(path),
+                definition: Some(definition),
+                ..
+            } if path.ends_with("arrester breather valve(RD).sym") => {
+                projection.symbol_definition(*definition)
+            }
+            _ => None,
+        })
+        .expect("the arrester breather valve placement resolves its cached body");
+    let cached: Vec<&SymbolPrimitive> = body
+        .primitives
+        .iter()
+        .filter(|p| matches!(p, SymbolPrimitive::BSpline { .. }))
+        .collect();
+    assert_eq!(cached.len(), 1, "the cached body carries the curve");
+    let points = cached[0].bspline_points(8);
+    assert_eq!(
+        points.len(),
+        17,
+        "two knot spans of eight segments plus the end"
+    );
+    // Clamped at both ends: the curve starts and ends on its end poles.
+    let poles = curve.poles();
+    assert!(close(points[0].0, poles[0].0) && close(points[0].1, poles[0].1));
+    assert!(close(points[16].0, poles[4].0) && close(points[16].1, poles[4].1));
+
+    // The library's copy of the same symbol carries the same curve -- to a
+    // femtometre, not to the bit: one pole differs by two ulps (2e-18 m), so
+    // the cache is a re-serialised copy that went through arithmetic once,
+    // not a byte copy of the .sym record.
+    let sym = std::path::Path::new(
+        "test-file/symbols-full/Piping/Valves/2 Way Other/arrester breather valve(RD).sym",
+    );
+    if sym.exists() {
+        let library = read_symbol_geometry(sym).expect("the .sym reads");
+        let from_library: Vec<&SymbolPrimitive> = library
+            .primitives
+            .iter()
+            .map(|styled| &styled.primitive)
+            .filter(|p| matches!(p, SymbolPrimitive::BSpline { .. }))
+            .collect();
+        assert_eq!(from_library.len(), 1, "the .sym carries one B-spline");
+        let (
+            SymbolPrimitive::BSpline {
+                poles: library_poles,
+                weights: library_weights,
+                knots: library_knots,
+            },
+            SymbolPrimitive::BSpline {
+                poles: cached_poles,
+                weights: cached_weights,
+                knots: cached_knots,
+            },
+        ) = (from_library[0], cached[0])
+        else {
+            unreachable!("both filtered to B-splines");
+        };
+        let within = |a: &[f64], b: &[f64]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-15)
+        };
+        assert_eq!(library_poles.len(), cached_poles.len(), "same pole count");
+        for (index, (library_pole, cached_pole)) in
+            library_poles.iter().zip(cached_poles).enumerate()
+        {
+            assert!(
+                (library_pole.0 - cached_pole.0).abs() < 1e-15
+                    && (library_pole.1 - cached_pole.1).abs() < 1e-15,
+                "pole {index}: library {library_pole:?} vs cached {cached_pole:?}"
+            );
+        }
+        assert!(within(library_weights, cached_weights), "same weights");
+        assert!(within(library_knots, cached_knots), "same knots");
+    }
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
