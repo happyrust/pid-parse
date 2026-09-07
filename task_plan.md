@@ -17,6 +17,13 @@ chain-bearing `LdcSite/PSMcluster0` 未找到页面变换，不 emit。当前状
 列表见 `docs/plans/2026-08-31-real-sheet-layers-closeout.md`，变换缺口见
 `docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`。
 
+**2026-09-07 续（W4 重开，取证中）**：`igCircle2d` / `igArc2d` 有了解码器
+（四主图 12 + 12，与 aux_hi 名册一致），挂 `JSite::nested_geometry`、
+投影只报 warning 不 emit。逐值比对证明这 24 条里 20 条就是同图所放置符号的
+`.sym` 本体——嵌套 `LdcSite` 是内嵌符号定义缓存，坐标为符号本地坐标，
+"页面变换"在该层不存在，待解的是定义 ↔ 实例的链接边。见
+`docs/analysis/2026-09-07-nested-site-curves-are-embedded-symbol-bodies.md`。
+
 ## 历史阶段 → goals/ 包托管说明
 2026-05-13 起 Phase 13+ 的细节迁移到 `goals/phaseNN-...` 目录（brief / plan /
 verification / blockers / goal-prompt / progress.jsonl 五件套+1 模板），
