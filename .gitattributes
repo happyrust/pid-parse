@@ -1,0 +1,13 @@
+# Line endings: always LF, never CRLF, on every platform and clone
+# (same rule as OpenCADStudio, so the two repos stop drifting apart).
+* text=auto eol=lf
+
+# Binary fixtures and captures must never be line-ending normalized.
+*.pid binary
+*.sym binary
+*.mdf binary
+*.sqlite binary
+*.bin binary
+*.dmp binary
+*.zip binary
+*.png binary
