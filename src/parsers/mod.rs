@@ -33,4 +33,5 @@ pub mod string_scan;
 pub mod summary;
 pub mod tagged_stg_list;
 pub mod undecoded_census;
+pub mod view_filter_sets;
 pub mod xml_util;

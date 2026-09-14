@@ -110,6 +110,14 @@ pub struct PidDocument {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sheet_layers: BTreeMap<String, Vec<SheetLayer>>,
 
+    /// The per-sheet layer display state (`0x0057 Top ViewFilterSet`),
+    /// grouped by storage like [`Self::sheet_layers`]. Each set belongs to
+    /// one `JSheet` and states, for the layers that sheet's manager
+    /// registers, whether each is displayed and locatable; the resolved
+    /// answer is also written onto the [`SheetLayer`] it governs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub view_filter_sets: BTreeMap<String, Vec<ViewFilterSet>>,
+
     /// Optional `/DocVersion3` history. Mutually exclusive-ish with
     /// [`Self::doc_version2`]: which one is populated depends on
     /// which version of `SmartPlant` wrote the file.
@@ -227,6 +235,7 @@ impl Default for PidDocument {
             psm_segment_table: None,
             psm_space_maps: BTreeMap::new(),
             sheet_layers: BTreeMap::new(),
+            view_filter_sets: BTreeMap::new(),
             version_history: None,
             app_object_registry: None,
             tagged_storages: None,
@@ -264,6 +273,84 @@ pub struct SheetLayer {
     pub manager_oid: Option<u32>,
     /// Number of manager registrations observed for this layer.
     pub manager_registration_count: u32,
+    /// Whether the sheet's view filter set displays this layer -- the
+    /// file's own answer to "is this layer shown". `None` when no set
+    /// resolves to the layer (see [`ViewFilterSet`]).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub displayed: Option<bool>,
+    /// Whether the same set marks the layer locatable (selectable), under
+    /// the second bitmap's reading.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub locatable: Option<bool>,
+    /// Storage-local id of the `Top ViewFilterSet` those two were read from.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub view_filter_set_oid: Option<u32>,
+}
+
+/// One decoded `0x0057 Top ViewFilterSet`: the display state of one sheet's
+/// layers, resolved to the `JSheetLayer` objects it governs.
+///
+/// A set names its sheet (`sheet_ref`) and lists `(name, layer number)` for
+/// the layers it governs; the layer objects themselves are the ones the
+/// sheet's `JSheetLayerManager` registers (tag 183) under the same name and
+/// number -- 309 of 309 entries of the reference corpus resolve to exactly
+/// one object that way. The display and locate answers are bits of the
+/// set's two bitmaps at the layer's number.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ViewFilterSet {
+    /// Storage-local id namespace (`/` for the document, `/JSite…` nested).
+    pub storage_path: String,
+    /// `PSMcluster0` stream carrying the record.
+    pub stream_path: String,
+    /// Storage-local persistent object id.
+    pub oid: u32,
+    /// Storage-local id of the `JSheet` this set is the view state of.
+    pub sheet_ref: u32,
+    /// Payload `+32`; equals the layer number of `Default` on every corpus
+    /// record, read as the active layer's number.
+    pub active_layer_number: u32,
+    /// The layers the set governs, in record order.
+    pub layers: Vec<ViewFilterSetLayer>,
+    /// Per-layer display overrides (colour / width), in record order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<LayerDisplayOverride>,
+}
+
+/// One layer as a view filter set states it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ViewFilterSetLayer {
+    /// Authored layer name.
+    pub name: String,
+    /// The layer's number, the bit the set's bitmaps are read at.
+    pub layer_number: u16,
+    /// Bit of the display bitmap at that number; `None` when the bitmap is
+    /// shorter than the number.
+    pub displayed: Option<bool>,
+    /// Bit of the locate bitmap at that number.
+    pub locatable: Option<bool>,
+    /// The `JSheetLayer` object this entry resolves to through the sheet's
+    /// manager, when exactly one does.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub layer_oid: Option<u32>,
+}
+
+/// A per-layer display override a view filter set carries: the corpus has
+/// one per top-level sheet, for the claim-status layer (`NotClaimed` /
+/// `ClaimedOnlyByOthers`), greying it with a colour and a line width.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LayerDisplayOverride {
+    /// The layer the override applies to.
+    pub layer_number: u16,
+    /// Kind byte; `3` carries a colour and a width, `1` carries neither.
+    pub kind: u8,
+    /// Win32 `COLORREF` (`0x00BBGGRR`) when carried.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub colour: Option<u32>,
+    /// Line width in metres when carried.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub line_width: Option<f64>,
+    /// Closing word of the entry.
+    pub trailing_word: u32,
 }
 
 /// One node in the CFB directory tree as walked by the reader. Hosts

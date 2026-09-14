@@ -2031,6 +2031,235 @@ fn jsheet_layers_are_decoded_per_storage_and_registered_once() {
     }
 }
 
+/// The layer display state is in the file, and the parser reads it (plan
+/// 2026-09-07, L1): every `0x0057 Top ViewFilterSet` closes exactly under one
+/// layout, names its sheet, and states two bitmaps over layer numbers -- the
+/// first the display state -- plus the `(name, number)` of every layer it
+/// governs. Each entry resolves through the sheet's `JSheetLayerManager`
+/// (tag 183) to exactly one `JSheetLayer`, so every layer of every storage
+/// gets the file's own answer to "is this shown".
+///
+/// Pinned here: the count, the exact close (decoded == raw), the resolution,
+/// and the readings the importer's name criterion is measured against --
+/// `Hidden` / `HiddenObjects` off on every top-level sheet, `Default` on
+/// everywhere, `Dimension` / `Construction` off in every symbol definition,
+/// `Invisible` **on** in the two definitions that have it. Payload `+32`,
+/// unread since 08-27, equals `Default`'s layer number on every record.
+///
+/// See `docs/analysis/2026-09-14-viewfilterset-carries-the-layer-display-state.md`
+/// and `examples/probe_viewfilterset_display_state.rs`.
+#[test]
+fn view_filter_sets_state_each_sheets_layer_display_and_close_exactly() {
+    use std::io::Read;
+
+    const CHAIN_MAGIC: u32 = 0x6C90_F544;
+    const VF_SET: u16 = 0x0057;
+
+    fn u32_at(data: &[u8], at: usize) -> Option<u32> {
+        Some(u32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    }
+
+    /// Raw `0x0057` records per fixture, so a set that refused the layout
+    /// shows up as a count that does not match.
+    fn raw_set_count(name: &str) -> usize {
+        let path = format!("test-file/{name}");
+        let Ok(file) = std::fs::File::open(&path) else {
+            return 0;
+        };
+        let Ok(mut cfb) = cfb::CompoundFile::open(file) else {
+            return 0;
+        };
+        let paths: Vec<String> = cfb
+            .walk()
+            .filter(cfb::Entry::is_stream)
+            .map(|entry| entry.path().to_string_lossy().replace('\\', "/"))
+            .collect();
+        let mut count = 0usize;
+        for stream_path in paths {
+            let Ok(mut stream) = cfb.open_stream(&stream_path) else {
+                continue;
+            };
+            let mut data = Vec::new();
+            if stream.read_to_end(&mut data).is_err() || u32_at(&data, 0) != Some(CHAIN_MAGIC) {
+                continue;
+            }
+            for at in pid_parse::parsers::sheet_records::sheet_record_starts(&data) {
+                if data
+                    .get(at..at + 2)
+                    .map(|w| u16::from_le_bytes([w[0], w[1]]) & 0x3FFF)
+                    == Some(VF_SET)
+                {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    let expected = [
+        ("D06.pid", 8usize),
+        ("DWG-0201GP06-01.pid", 20),
+        ("DWG-0202GP06-01.pid", 12),
+        ("工艺管道及仪表流程-1.pid", 9),
+    ];
+    let mut total_sets = 0usize;
+    let mut total_entries = 0usize;
+    let mut invisible_in_definitions = 0usize;
+    for (fixture, expected_sets) in expected {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let sets: Vec<_> = doc.view_filter_sets.values().flatten().collect();
+        assert_eq!(
+            sets.len(),
+            expected_sets,
+            "{fixture}: view filter set count"
+        );
+        assert_eq!(
+            sets.len(),
+            raw_set_count(fixture),
+            "{fixture}: a 0x0057 record refused the layout"
+        );
+        total_sets += sets.len();
+
+        for set in &sets {
+            assert!(
+                !set.layers.is_empty(),
+                "{fixture}: set {} names no layer",
+                set.oid
+            );
+            let default = set
+                .layers
+                .iter()
+                .find(|layer| layer.name == "Default")
+                .unwrap_or_else(|| panic!("{fixture}: set {} has no Default", set.oid));
+            assert_eq!(
+                set.active_layer_number,
+                u32::from(default.layer_number),
+                "{fixture}: set {}: +32 is Default's layer number",
+                set.oid
+            );
+            for layer in &set.layers {
+                total_entries += 1;
+                assert!(
+                    layer.layer_oid.is_some(),
+                    "{fixture}: set {} entry {:?} #{} resolves to no single JSheetLayer",
+                    set.oid,
+                    layer.name,
+                    layer.layer_number
+                );
+                assert!(
+                    layer.displayed.is_some() && layer.locatable.is_some(),
+                    "{fixture}: set {} entry {:?} #{} is past its bitmaps",
+                    set.oid,
+                    layer.name,
+                    layer.layer_number
+                );
+                let top = set.storage_path == "/";
+                match layer.name.as_str() {
+                    "Default" => assert_eq!(layer.displayed, Some(true), "{fixture}: Default"),
+                    "Hidden" | "HiddenObjects" if top => assert_eq!(
+                        layer.displayed,
+                        Some(false),
+                        "{fixture}: {} on the sheet",
+                        layer.name
+                    ),
+                    "Dimension" | "Construction" => assert_eq!(
+                        layer.displayed,
+                        Some(false),
+                        "{fixture}: {} in a definition (set {})",
+                        layer.name,
+                        set.oid
+                    ),
+                    "Invisible" if !top => {
+                        invisible_in_definitions += 1;
+                        assert_eq!(
+                            layer.displayed,
+                            Some(true),
+                            "{fixture}: Invisible in a definition (set {})",
+                            set.oid
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // The sheet itself: one set, on JSheet 6, and every layer object of
+        // the root storage now carries the file's answer.
+        let top: Vec<_> = sets.iter().filter(|set| set.storage_path == "/").collect();
+        assert_eq!(top.len(), 1, "{fixture}: one view filter set on the sheet");
+        assert_eq!(top[0].sheet_ref, 6, "{fixture}: the sheet's JSheet");
+        let root_layers = doc.sheet_layers.get("/").expect("root layers");
+        assert!(
+            root_layers.iter().all(|layer| layer.displayed.is_some()),
+            "{fixture}: a root layer without a display state"
+        );
+        assert!(
+            root_layers
+                .iter()
+                .all(|layer| layer.view_filter_set_oid == Some(top[0].oid)),
+            "{fixture}: every root layer is governed by the sheet's set"
+        );
+        for (name, shown) in [
+            ("Default", true),
+            ("Labels", true),
+            ("ConsistencyChecks", true),
+            ("DrawingBorder", true),
+            ("Hidden", false),
+            ("HiddenObjects", false),
+            ("Label", false),
+        ] {
+            let layer = root_layers
+                .iter()
+                .find(|layer| layer.name == name)
+                .unwrap_or_else(|| panic!("{fixture}: no root layer {name}"));
+            assert_eq!(
+                layer.displayed,
+                Some(shown),
+                "{fixture}: {name} on the sheet"
+            );
+        }
+
+        // And it reaches the geometry the importer consumes.
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let mut hidden_entities = 0usize;
+        for entity in &geometry.entities {
+            let Some(layer) = &entity.source_layer else {
+                continue;
+            };
+            let Some(name) = layer.name.as_deref() else {
+                continue;
+            };
+            if layer.storage_path != "/" {
+                continue;
+            }
+            match name {
+                "HiddenObjects" | "Hidden" => {
+                    assert_eq!(layer.displayed, Some(false), "{fixture}: {name} entity");
+                    hidden_entities += 1;
+                }
+                "Default" | "Labels" | "ConsistencyChecks" => {
+                    assert_eq!(layer.displayed, Some(true), "{fixture}: {name} entity");
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            hidden_entities > 0,
+            "{fixture}: the sheet has content on a switched-off layer"
+        );
+    }
+    if total_sets != 0 {
+        assert_eq!(total_sets, 49, "four-fixture view filter set total");
+        assert_eq!(total_entries, 283, "four-fixture layer entry total");
+        assert_eq!(
+            invisible_in_definitions, 2,
+            "the two definitions naming Invisible display it"
+        );
+    }
+}
+
 /// `aux_hi` -- payload `+8`, the high half of the PSM envelope's 8-byte `aux`
 /// -- is the sheet layer the object sits on.
 ///

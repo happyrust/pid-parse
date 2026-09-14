@@ -198,6 +198,12 @@ pub struct PidSourceLayer {
     pub name: Option<String>,
     /// Storage-local id namespace (`/` or a nested `/JSite…` path).
     pub storage_path: String,
+    /// Whether the sheet's view filter set displays the layer -- the
+    /// drawing's own statement of the layer's visibility, read from the
+    /// `0x0057 Top ViewFilterSet` of the sheet whose manager registers the
+    /// layer. `None` when the layer resolves to no set.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub displayed: Option<bool>,
 }
 
 /// Coordinate interpretation attached to a normalized graphic entity.
@@ -1274,8 +1280,9 @@ struct EmitContext<'a> {
     /// Decoded coordinates are metres on this page; see
     /// [`decoded_sheet_coordinate_context`].
     page: Option<PageFrame>,
-    /// `(storage path, layer oid)` to authored layer name.
-    sheet_layer_names: BTreeMap<(String, u32), &'a str>,
+    /// `(storage path, layer oid)` to authored layer name and the sheet's
+    /// display state for it, when a view filter set states one.
+    sheet_layer_names: BTreeMap<(String, u32), (&'a str, Option<bool>)>,
     /// Every `(site, sheet)` the drawing's definition caches resolve to a
     /// body, so a placement's `definition` is set only when it can be
     /// followed.
@@ -1301,7 +1308,12 @@ impl<'a> EmitContext<'a> {
             .sheet_layers
             .values()
             .flatten()
-            .map(|layer| ((layer.storage_path.clone(), layer.oid), layer.name.as_str()))
+            .map(|layer| {
+                (
+                    (layer.storage_path.clone(), layer.oid),
+                    (layer.name.as_str(), layer.displayed),
+                )
+            })
             .collect();
         let symbol_definitions = embedded_symbol_definitions(doc)
             .into_iter()
@@ -1322,14 +1334,12 @@ impl<'a> EmitContext<'a> {
         let normalized = stream_path.replace('\\', "/");
         let parent = normalized.rsplit_once('/').map_or("", |(parent, _)| parent);
         let storage_path = if parent.is_empty() { "/" } else { parent }.to_string();
-        let name = self
-            .sheet_layer_names
-            .get(&(storage_path.clone(), oid))
-            .map(|name| (*name).to_string());
+        let known = self.sheet_layer_names.get(&(storage_path.clone(), oid));
         Some(PidSourceLayer {
             oid,
-            name,
+            name: known.map(|(name, _)| (*name).to_string()),
             storage_path,
+            displayed: known.and_then(|(_, displayed)| *displayed),
         })
     }
 }

@@ -13,14 +13,23 @@
 
 use crate::config::ParseOptions;
 use crate::error::PidError;
-use crate::model::{EmbeddedSymbolDefinition, PidDocument, SheetLayer};
+use crate::model::{
+    EmbeddedSymbolDefinition, LayerDisplayOverride, PidDocument, SheetLayer, ViewFilterSet,
+    ViewFilterSetLayer,
+};
+use crate::parsers::cluster_header::decode_psm_cluster0_body_records;
 use crate::parsers::psm_tables;
 use crate::parsers::sheet_layers::{
     decode_sheet_layer_managers, decode_sheet_layers, PSM_TYPE_CODE_JSHEET_LAYER,
     PSM_TYPE_CODE_JSHEET_LAYER_MANAGER,
 };
+use crate::parsers::view_filter_sets::{decode_view_filter_sets, ViewFilterSetDecoded};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
+
+/// PSM type code for `JSheet Object`, the sheet a view filter set belongs
+/// to and a layer manager registers.
+const PSM_TYPE_CODE_JSHEET: u16 = 0x0114;
 
 /// Parse the `PSMroots`, `PSMclustertable`, `PSMsegmenttable` streams if
 /// present and attach the decoded tables to the document.
@@ -181,6 +190,8 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
         String,
         Vec<(String, crate::parsers::sheet_layers::SheetLayerDecoded)>,
     > = BTreeMap::new();
+    let mut sets_by_storage: BTreeMap<String, Vec<(String, ViewFilterSetDecoded)>> =
+        BTreeMap::new();
     for path in paths {
         let Ok(mut stream) = cfb.open_stream(&path) else {
             continue;
@@ -198,13 +209,35 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
         for layer in &layers {
             by_oid.insert(layer.oid, PSM_TYPE_CODE_JSHEET_LAYER);
         }
+        // The sheets are only identities here: what a set belongs to and
+        // what a manager registers.
+        for record in decode_psm_cluster0_body_records(&data) {
+            if record.type_code == PSM_TYPE_CODE_JSHEET {
+                if let Some(oid) = record.raw_payload.get(0..4) {
+                    by_oid.insert(
+                        u32::from_le_bytes(oid.try_into().unwrap_or([0; 4])),
+                        PSM_TYPE_CODE_JSHEET,
+                    );
+                }
+            }
+        }
         decoded_by_storage
-            .entry(storage)
+            .entry(storage.clone())
             .or_default()
             .extend(layers.into_iter().map(|layer| (path.clone(), layer)));
+        sets_by_storage.entry(storage).or_default().extend(
+            decode_view_filter_sets(&data)
+                .into_iter()
+                .map(|set| (path.clone(), set)),
+        );
     }
 
+    // Tag 183, "this manager registers me", read off the space map twice
+    // over: onto every layer (its manager) and onto every sheet (the
+    // manager serving it). The second is what ties a view filter set, which
+    // names its sheet, to the layer objects it governs.
     let mut registrations: BTreeMap<(String, u32), Vec<u32>> = BTreeMap::new();
+    let mut sheet_managers: BTreeMap<(String, u32), BTreeSet<u32>> = BTreeMap::new();
     for (map_path, map) in &doc.psm_space_maps {
         let Some(segment) = space_map_segment(map_path) else {
             continue;
@@ -215,7 +248,11 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
         };
         for entry in &map.entries {
             let target = (segment << 13) | u32::from(entry.index);
-            if by_oid.get(&target) != Some(&PSM_TYPE_CODE_JSHEET_LAYER) {
+            let target_family = by_oid.get(&target).copied();
+            if !matches!(
+                target_family,
+                Some(PSM_TYPE_CODE_JSHEET_LAYER | PSM_TYPE_CODE_JSHEET)
+            ) {
                 continue;
             }
             for member in entry
@@ -223,11 +260,19 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
                 .iter()
                 .filter(|member| member.tag == 183)
             {
-                if by_oid.get(&member.value) == Some(&PSM_TYPE_CODE_JSHEET_LAYER_MANAGER) {
+                if by_oid.get(&member.value) != Some(&PSM_TYPE_CODE_JSHEET_LAYER_MANAGER) {
+                    continue;
+                }
+                if target_family == Some(PSM_TYPE_CODE_JSHEET_LAYER) {
                     registrations
                         .entry((storage.clone(), target))
                         .or_default()
                         .push(member.value);
+                } else {
+                    sheet_managers
+                        .entry((storage.clone(), target))
+                        .or_default()
+                        .insert(member.value);
                 }
             }
         }
@@ -254,10 +299,83 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
                         .flatten(),
                     manager_registration_count: u32::try_from(registrations.map_or(0, Vec::len))
                         .unwrap_or(u32::MAX),
+                    displayed: None,
+                    locatable: None,
+                    view_filter_set_oid: None,
                 }
             })
             .collect();
         layers.sort_by_key(|layer| layer.oid);
+
+        // Resolve each set's `(name, number)` entries to the layer objects
+        // registered with the manager(s) of the set's sheet, and write the
+        // set's answer onto them.
+        let sets = sets_by_storage.remove(&storage).unwrap_or_default();
+        let mut resolved_sets = Vec::with_capacity(sets.len());
+        for (stream_path, set) in sets {
+            let managers = sheet_managers
+                .get(&(storage.clone(), set.sheet_ref))
+                .cloned()
+                .unwrap_or_default();
+            let entries = set
+                .layers
+                .iter()
+                .map(|entry| {
+                    let displayed = set.is_displayed(entry.layer_number);
+                    let locatable = set.is_locatable(entry.layer_number);
+                    let candidates: Vec<usize> = layers
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, layer)| {
+                            layer.name == entry.name
+                                && layer.layer_number == u32::from(entry.layer_number)
+                                && layer.manager_oid.is_some_and(|m| managers.contains(&m))
+                        })
+                        .map(|(index, _)| index)
+                        .collect();
+                    let layer_oid = match candidates.as_slice() {
+                        [index] => {
+                            let layer = &mut layers[*index];
+                            layer.displayed = displayed;
+                            layer.locatable = locatable;
+                            layer.view_filter_set_oid = Some(set.oid);
+                            Some(layer.oid)
+                        }
+                        _ => None,
+                    };
+                    ViewFilterSetLayer {
+                        name: entry.name.clone(),
+                        layer_number: entry.layer_number,
+                        displayed,
+                        locatable,
+                        layer_oid,
+                    }
+                })
+                .collect();
+            resolved_sets.push(ViewFilterSet {
+                storage_path: storage.clone(),
+                stream_path,
+                oid: set.oid,
+                sheet_ref: set.sheet_ref,
+                active_layer_number: set.active_layer_number,
+                layers: entries,
+                overrides: set
+                    .overrides
+                    .iter()
+                    .map(|o| LayerDisplayOverride {
+                        layer_number: o.layer_number,
+                        kind: o.kind,
+                        colour: o.colour,
+                        line_width: o.line_width,
+                        trailing_word: o.trailing_word,
+                    })
+                    .collect(),
+            });
+        }
+        if !resolved_sets.is_empty() {
+            resolved_sets.sort_by_key(|set| set.oid);
+            doc.view_filter_sets.insert(storage.clone(), resolved_sets);
+        }
         doc.sheet_layers.insert(storage, layers);
     }
 }

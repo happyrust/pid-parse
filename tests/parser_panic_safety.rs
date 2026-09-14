@@ -228,6 +228,11 @@ fn exercise_all_parsers(input: &[u8]) {
     let _ = decode_psm_cluster0_body_records(input);
     let _ = decode_style_cluster_body_records(input);
     let _ = decode_unclustered_da_body_records(input);
+    // The layer subsystem's readers walk the same chain: a set's bitmaps and
+    // layer table are length-prefixed by the file, so every count must be
+    // bounds-checked against adversarial lengths.
+    let _ = pid_parse::parsers::sheet_layers::decode_sheet_layers(input);
+    let _ = pid_parse::parsers::view_filter_sets::decode_view_filter_sets(input);
     let _ = decode_cluster_body_records(input, 0);
     let _ = decode_cluster_body_record_at(input, 0);
     if !input.is_empty() {
