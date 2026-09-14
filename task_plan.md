@@ -8,7 +8,14 @@
 落地**：`0x0057 Top ViewFilterSet` 全条布局 53/53 闭合，第一张位图 = 图层显示状态，
 `SheetLayer::displayed` / `PidSourceLayer::displayed` 交给 OpenCADStudio 换掉名字判据；
 `+32` 是活动图层号。见 `docs/analysis/2026-09-14-viewfilterset-carries-the-layer-display-state.md`。
-按 D7 下一项 J1（JDim 字节取证与原生读器）。
+
+**2026-09-14 · 同一计划 J1（JDim 字节取证）第 1–4 步**：`0x0115` 18 条的帧解开并由原生读取器背书——
+`payload = 34 + main_len(+30) + 尾字（标志字含 0x0100 时才有）`，18/18 精确收尾；`+14` 是尺寸种类
+（原生在 8 种间分派，语料只出现 1 种，块长随它走）、`+42` 是尺寸值、`+92` 指向被量的 Line / Point
+并由标记字标明类、`+140` 指向 JDimGroup / 约束 / 属性集。**imagdex 侧的 DoIO 没找到**（JDim 没有
+`IJPersistImp` 子对象），块内文法留 raw，**不写解码器、不进 DTO**。见
+`docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`。
+按 D7 下一项 J2（JDim 解码器与缓存本体证据）——但 J1 留下的 raw 栏决定它只能带坐实字段。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的

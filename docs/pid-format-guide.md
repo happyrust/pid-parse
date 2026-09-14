@@ -415,7 +415,8 @@ RTTI / COM 类工厂），**等级：native-reader**。
 | `0x00CE` | JSymbol | 已解码 |
 | `0x00FA` | **Dependency Object** | 仅解 header，尾部 raw |
 | `0x00FF` | Graphics Bag | 语料 0 命中 |
-| `0x0115` / `0x0117` / `0x0118` | JDim / JBalloon / JLeader | **语料 0 命中，会静默丢弃** |
+| `0x0115` | JDim（驱动尺寸）| **18 条**（四主图 14 + A01 4），全在嵌套符号定义缓存的 `Dimension` 层上（该层文件状态为关）。帧已解：`payload = 34 + main_len(+30) + 尾字`（尾字仅当 `+26` 标志字含 `0x0100`），18/18 收尾；`+14` 是尺寸种类（8 种，语料只出现 1）、`+42` 是尺寸值、`+92` 指向被量的几何。**无解码器，仍会丢弃**；见 `docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md` |
+| `0x0117` / `0x0118` | JBalloon / JLeader | **语料 0 命中，会静默丢弃** |
 
 **约束族（不是几何，永不可画）**
 

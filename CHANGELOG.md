@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### `0x0115 JDim` 的帧解开了，块长随尺寸种类走（2026-09-14）
+
+- **字节探针** `examples/probe_jdim_bytes.rs`：18 条 JDim（四主图 14 + A01 4，DWG-0202 无）
+  逐条摆开——信封、头部字、尺寸值、引用槽、f64 扫描、带批注的十六进制，外加三张语料表。
+- **帧 18/18 精确收尾**：`payload = 34 + main_len(+30) + 尾字`，尾字**当且仅当** `+26` 标志字
+  含 `0x0100`。194 与 198 之差就是这一个尾字（主块同为 160）。
+- **原生读取器背书**（`tools/idalib_radsrv_igdimension.py`）：radsrvitem 的 igDimension 链以
+  记录头为基址（`*(WORD*)a2 == 277`），尾字取自 `*(u32*)(a2 + 40 + *(u32*)(a2 + 36))`
+  = `payload + 34 + main_len`，只在 `0x100` 下读——语料分不开的 `0x100` / `0x200`，读取器分开了。
+  `a2+40`（payload `+34`）是块首，`sub_56446B50` 给块长：种类 1/8 为 48、种类 7 为 52 等。
+- **`+14` 不是 index 而是尺寸种类**：原生在 **8 个值**间分派，每种一个块读取器；语料 18 条全是
+  种类 1，所以块 = `+34..+81` 48 字节，下一段从 `+82` 起。
+- **引用槽落到具名对象**：`+92` 在 18/18 指向 `Line Object` / `Point Object`（被量的几何），
+  其后的标记字与类一一对应（`0x00CB` ↔ 线 20/20、`0x00F0` ↔ 点 4/4）；`+140` 在 14/18 指向
+  `JDimGroup Object`（`0x0058`）/ `Vertical Constraint` / `JSheet` / `FreeFormAttrSet`。
+  08-27 spacemap tag-188 那 42 条命中由此有了落点。
+- **imagdex 侧的 DoIO 没找到**（`tools/idalib_imagdex_jdim.py`）：`JDim` / `JDimGroup` 各只到
+  一张 vtable，没有一槽碰 `jengine_1075/1076`，也没有 `IJPersistImp@JDim@@` 子对象；
+  `tagDimPersistData` 是内存载荷结构不是读取器。**因此不写解码器、不进 DTO**，块内文法留 raw。
+- 分析文档 `docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`
+  第 7 节把结论分成「坐实 / 留 raw」两栏；guide 的 `0x0115` 行从「语料 0 命中」改成实数与帧。
+
 ### 图层的显示状态从文件里读出来了：`0x0057 Top ViewFilterSet` 全条收尾（2026-09-14）
 
 - **`Top ViewFilterSet`（`0x0057`）解码器**（`src/parsers/view_filter_sets.rs`）。08-27 只认出头部与
