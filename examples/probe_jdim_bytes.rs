@@ -24,20 +24,31 @@
 //! +12  u16 sub_type 0 ; +14 u32 index 1            -- the shared envelope
 //! +18  u32 2 ; +22 u32 6 ; +26 u16 flags ; +28 u16 0 ; +30 u32 main_len
 //! +34  f64 ~3.05e-5 ; +42 f64 the dimension value ; +50 f64 ~3.05e-5 ;
-//! +58  f64 ~4.88e-4 ; +66 f64 0 ; +74 f64 0
+//! +58  f64 ~4.88e-4 ; +66 f64 0 ; +74 f64 0     -- +34..+81 is one block,
+//!                                                  48 bytes on this corpus
 //! +82  u16 blocks ; +84 f64
-//! then blocks x { u32 oid ; u16 type_code ; u16 kind ; 8 zero bytes ;
-//!                 f64 x,y ; f64 x,y ; u32 oid ; u16 type_code ;
+//! then blocks x { u32 oid ; u16 assoc class ; u16 kind ; 8 zero bytes ;
+//!                 f64 x,y ; f64 x,y ; u32 oid ; u16 assoc class ;
 //!                 f64 x,y ; f64 x,y ; f64 x,y }  -- 102 bytes, 8 more
 //!                 between one block and the next
-//! then u32 oid   -- only when the flag word has 0x0300 set
+//! then u32 oid   -- only when the flag word has 0x0100 set
 //! ```
 //!
-//! Two things make this more than a guess about where a field starts. A
-//! reference is *typed*: the u16 after the oid is the PSM type code of the
-//! record that oid names in the same storage, so a slot either resolves or
-//! it does not. And the record has to close: `34 + main_len + tail` must
-//! be the payload length, on all six lengths.
+//! Two things make this more than a guess about where a field starts. The
+//! record has to close: `34 + main_len + tail` must be the payload length,
+//! on all six lengths. And a reference slot has to resolve: the u32 must
+//! be the oid of an object in the same storage.
+//!
+//! The native reader confirms the frame (J1 step three,
+//! `tools/idalib_radsrv_igdimension.py`): `radsrvitem.dll!sub_564BB990`
+//! takes the record header as its base, so its `a2+32` is the payload's
+//! `+26`; it reads the closing dword at `a2+40+*(u32*)(a2+36)`, which is
+//! `34 + main_len`, and only under bit `0x100`. `a2+40` -- the payload's
+//! `+34` -- is where the block starts, and `sub_56446B50` sizes that block
+//! at 48 bytes for the dimension kind this corpus uses, which is why `+82`
+//! is where the next section begins. The u16 at the payload's `+14`, read
+//! here as an index because it is 1 on all 18 records, is that kind: the
+//! native reader switches on it over eight values, one block reader each.
 //!
 //! What it prints, per record: the envelope, the header words, the value in
 //! mm and in inches, the blocks with their typed references and points,
@@ -197,10 +208,14 @@ impl Jdim {
         u32_at(&self.payload, 30).unwrap_or_default() as usize
     }
 
-    /// The four closing bytes are there when the flag word has `0x0300`
-    /// set, and only then -- the reading the corpus's six lengths force.
+    /// The four closing bytes are there when the flag word has `0x0100`
+    /// set, and only then. The corpus alone cannot separate that bit from
+    /// `0x0200` -- every record carrying one carries the other -- but the
+    /// native reader can: `radsrvitem.dll!sub_564BB990` reads a dword at
+    /// `34 + main_len` under `0x100` and nothing under `0x200`
+    /// (plan 2026-09-07, J1 step three; `tools/idalib_radsrv_igdimension.py`).
     fn tail_len(&self) -> usize {
-        if self.flags() & 0x0300 == 0 {
+        if self.flags() & 0x0100 == 0 {
             0
         } else {
             4
