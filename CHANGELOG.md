@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### 图层的显示状态从文件里读出来了：`0x0057 Top ViewFilterSet` 全条收尾（2026-09-14）
+
+- **`Top ViewFilterSet`（`0x0057`）解码器**（`src/parsers/view_filter_sets.rs`）。08-27 只认出头部与
+  尾部名字表、把 `+32` 记为「没认」、中间记为「一段显示状态字节」；现在整条布局四主图 49 条 +
+  A01 4 条 **53/53 精确闭合**：`+32` 是活动图层号（= `Default` 的图层号，53/53）；`+38` 起
+  6 张 `{FF ; u16 len ; 字节}` 位图，位 n = 图层号 n，**第一张是显示状态**（顶层 `Hidden` /
+  `HiddenObjects` 五图 10/10 关、`Default` 53/53 开、定义缓存里 `Dimension` / `Construction`
+  11/11 关），第二张读作可定位（工艺图 `WaterMark` / `HeatTrace` 显示但不可选）；随后是
+  逐图层显示覆盖（认领状态层 `NotClaimed` / `ClaimedOnlyByOthers` 的灰色 + 0.18 mm 线宽）、
+  12 个零字节、名字表——**名字后的 `u16` 是图层号**，此前被算进间隙。
+- **每个图层对象拿到文件自己的答案。** 集合条目通过「集合的 JSheet → 登记它的 manager（183）→
+  同名同号图层」落到恰好一个 `JSheetLayer`（309/309），写成 `SheetLayer::displayed` /
+  `locatable` / `view_filter_set_oid`，几何实体带 `PidSourceLayer::displayed`；
+  `PidDocument::view_filter_sets` 按存储保留整条集合。四主图 290 个图层 283 个有状态，
+  余下 7 个是各嵌套存储自己那个 `Default #0`（其 sheet 没有集合）。
+- **`Invisible` 层文件说是显示的**（两个定义缓存 2/2）——OpenCADStudio 现行名字判据把它当隐藏，
+  这一处与文件相反；语料里没有画出的实体落在它上面。
+- 顺带：`0x0088 JSheetLayerGroup` 16 条逐字节同形，每存储一个叫 `Default` 的单成员组，**不是**
+  面板分组事实。
+- 金样只多 `displayed` 一个字段（`UPDATE_GEOMETRY_GOLDEN=1` 重封，实体不变）；
+  `parser_panic_safety` 收入 `decode_sheet_layers` 与 `decode_view_filter_sets`。棘轮
+  `view_filter_sets_state_each_sheets_layer_display_and_close_exactly`；分析
+  `docs/analysis/2026-09-14-viewfilterset-carries-the-layer-display-state.md`；probe
+  `probe_viewfilterset_display_state`。等级 corpus：`viewfil.dex` 的原生读器未读，位图 3–6 与
+  覆盖项的 `kind` / 尾字停在 raw。
+
 ### 矩形与 B 样条有了解码器：一个是四条边的父记录，一个是叶子（2026-09-07，再后）
 
 - **`igRectangle2d`（`0x0020`）解码器。** 语料 3 条（DWG-0202 `/Sheet6615` 1 条、A01

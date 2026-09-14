@@ -351,7 +351,32 @@ Document 的那个 `X` 一律带 tag `261`，指着 Imagineer Document 的一律
 **所以图层不持有成员表，那条边存在图元身上**——空间表里没有「图层 → 图元」的边，是
 因为压根没有这种边。IDB 在 `dlls/shlyhp.dll.i64`（`dlls/` 已 gitignore）。
 
-**一条还开着的：** `0x0057 +32` **不是**图层数（36/49，差值不恒定）。这一位没认。
+**`0x0057 Top ViewFilterSet` 的整条布局已经收尾（2026-09-14，corpus 级）**——四主图 49 条
++ A01 4 条 **53/53 精确闭合**，分析见
+`docs/analysis/2026-09-14-viewfilterset-carries-the-layer-display-state.md`，解码器
+`src/parsers/view_filter_sets.rs`，棘轮
+`tests/parse_real_files.rs::view_filter_sets_state_each_sheets_layer_display_and_close_exactly`：
+
+```text
++0   u32 oid ; +4 0 ; +8 0 ; +12 u32 2 ; +16 u32 JSheet ; +20 1 ; +24 1 ; +28 0
++32  u32 活动图层号（= 名为 Default 的图层的图层号，53/53；08-27 记的「没认」到此关闭）
++36  u16 0
+     6 × { u8 FF ; u16 len ; len 字节 }   位图，位 n = 图层号 n：第 1 张 = 显示，
+                                          第 2 张读作可定位；第 3–6 张恒 [2,2,1,1] 字节全 FF，未读
+     u16 n ; u16 2 ; n × 覆盖项            逐图层显示覆盖 { u16 图层号 ; u8 kind ; u8 1 ; u16 0 ;
+                                          [kind&2: u32 COLORREF ; f64 线宽 m] ; u32 }——
+                                          顶层每图 1 条（工艺 2），给 NotClaimed /
+                                          ClaimedOnlyByOthers 灰显
+     12 × 0
+     u32 count ; count × { u32 字符数 ; UTF-16 名 ; u16 图层号 }
+```
+
+名字后面那个 `u16` 是**图层号**，与 `JSheetLayer +16` 同一个数；条目通过「集合的 JSheet →
+登记它的 manager（183）→ 该 manager 的同名同号图层」落到**恰好一个**对象（309/309），
+结果写在 `SheetLayer::displayed` / `locatable` 与几何实体的 `PidSourceLayer::displayed` 上。
+显示位的对照组：顶层 `Hidden` / `HiddenObjects` 五图 10/10 关、`Default` 53/53 开、定义缓存里
+`Dimension` / `Construction` 11/11 关（D2 的「驱动尺寸不上屏」由此有了文件依据）、
+`Invisible` 在两个定义里**开**（名字判据在这一处与文件相反）。
 
 **图元把图层写在哪里已经结案：payload `+8`，见 §5.1。** 走通的问法不是「payload 里
 有没有出现这个小整数」——图层 id 是小整数，整表扫描必然一片命中，拿同量级非图层 oid
@@ -362,6 +387,8 @@ Document 的那个 `X` 一律带 tag `261`，指着 Imagineer Document 的一律
 一个还没解释的齐整现象：49 个集合**每一个**都在记录里写着 `Default`，而**没有一个**
 发出指向 `Default` 图层的边（49/49）。看着像「集合只登记偏离基线的图层」，但本轮没有
 任何一个字节支持「偏离」这个词，所以只记计数，不当结论用。
+**（2026-09-14 补）**显示状态不是「偏离清单」而是每个图层号一位的位图，`Default` 有自己的
+一位、恒为 1；184 边为什么绕开 `Default` 仍未解释，但它已不再是显示状态的载体候选。
 
 ## 4. type code 对照表
 
@@ -1247,6 +1274,8 @@ flowchart LR
 
 本文是索引，逐项证据见 `docs/analysis/`：
 
+- `2026-09-14-viewfilterset-carries-the-layer-display-state` — `0x0057` 全条布局 53/53
+  收尾、第一张位图 = 图层显示状态、`+32` = 活动图层号、条目经 manager 落到唯一图层（309/309）
 - `2026-08-05-geometry-index-is-the-style-link` — 几何 → 样式链路、基类块字节账、
   `+14` 与 `+22` 升 native-reader
 

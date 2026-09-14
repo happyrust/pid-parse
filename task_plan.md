@@ -4,6 +4,12 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-09-14 · 计划 `OpenCADStudio/docs/plans/2026-09-07-jdim-driving-dimensions-and-layer-panel.md` L1
+落地**：`0x0057 Top ViewFilterSet` 全条布局 53/53 闭合，第一张位图 = 图层显示状态，
+`SheetLayer::displayed` / `PidSourceLayer::displayed` 交给 OpenCADStudio 换掉名字判据；
+`+32` 是活动图层号。见 `docs/analysis/2026-09-14-viewfilterset-carries-the-layer-display-state.md`。
+按 D7 下一项 J1（JDim 字节取证与原生读器）。
+
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
 `sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给
