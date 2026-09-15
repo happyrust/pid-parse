@@ -46,10 +46,11 @@ use pid_parse::parsers::sheet_records::{
     decode_attribute_fragment_at, decode_attribute_fragments, decode_dependency_object_at,
     decode_dependency_objects, decode_double_value_at, decode_double_values, decode_igarc_at,
     decode_igarcs, decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at,
-    decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igline_at, decode_iglines,
-    decode_iglinestring_at, decode_iglinestrings, decode_igpoint_at, decode_igpoints,
-    decode_igrectangle_at, decode_igrectangles, decode_igsymbol_at, decode_igsymbols,
-    decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
+    decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igdimension_at,
+    decode_igdimensions, decode_igline_at, decode_iglines, decode_iglinestring_at,
+    decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igrectangle_at,
+    decode_igrectangles, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
+    decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
     decode_primitive_line_at, decode_primitive_lines, decode_smartframe_at, decode_smartframes,
     decode_standard_relation_at, decode_standard_relations, decode_sub_record_0x0010_at,
     decode_sub_records_0x0010, decode_symbol_information_at, decode_symbol_informations,
@@ -342,6 +343,18 @@ fn exercise_all_parsers(input: &[u8]) {
     if !input.is_empty() {
         let _ = decode_igboundary_at(input, input.len() - 1);
         let _ = decode_igboundary_at(input, input.len());
+    }
+
+    // Phase 32-J2: PSM `0x0115` igDimension / JDim. The record's own
+    // `main_len` decides where its main area ends and whether a closing
+    // word follows, and two reference slots are read at fixed offsets
+    // inside that area — so a lying length must reject the record rather
+    // than index past the payload.
+    let _ = decode_igdimensions(input);
+    let _ = decode_igdimension_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_igdimension_at(input, input.len() - 1);
+        let _ = decode_igdimension_at(input, input.len());
     }
 
     // The symbol-information / expression family (`0x00BD`, `0x00C7`,

@@ -7378,6 +7378,655 @@ mod nested_curve_family_tests {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 32-J2: PSM `igDimension` / `JDim` (type `0x0115`) — the framed record
+//
+// Byte account:
+// `docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`.
+// The 18 corpus records all sit in a symbol definition cache
+// (`/JSite<N>/PSMcluster0`) on a layer named `Dimension` that the view
+// filter set has switched off — the file says this family does not draw,
+// so nothing here emits geometry.
+//
+// The frame is the native reader's arithmetic, not a corpus fit:
+// `radsrvitem.dll!sub_564BB990` takes the *record header* as its base, so
+// its `a2+40` is the payload's `+34`, and it reads the closing dword at
+// `a2+40 + *(u32*)(a2+36)` — the payload's `34 + main_len` — and only
+// under bit `0x100` of the flag word at the payload's `+26`. The corpus
+// alone cannot separate `0x100` from `0x200` (every record carrying one
+// carries the other); the reader can, and this decoder follows the reader.
+//
+// What is *not* backed is the inside of the blocks. The block at `+34` is
+// sized by `sub_56446B50` from the dimension kind at `+14`, which the
+// native reader switches on over eight values — and this corpus only ever
+// exercises kind 1. So kind 1 is all this decoder accepts; every other kind
+// is refused rather than guessed at, which is why §7 of the analysis splits
+// the fields into "may be decoded" and "stays raw" and why the raw bytes of
+// the block area travel in the DTO untouched.
+// ---------------------------------------------------------------------------
+
+/// PSM type code for `imagdex.dex`'s `JDim Object` — the driving dimension
+/// of a parametric symbol definition, `igDimension` in the RAD registry.
+///
+/// Resolved through `radsrvitem`'s `type code → CLSID` table plus the
+/// `jutil` registry (`tools/psm_type_clsid.py`); `imagdex` carries the
+/// matching `.?AVJDim@@`, so the identity is not inferred from shape.
+pub const PSM_TYPE_CODE_IGDIMENSION: u16 = 0x0115;
+
+/// Bytes of `JDim` payload before the kind-dependent block area: the
+/// 18-byte envelope the graphic families share plus 16 bytes of header
+/// words ending in `main_len`.
+///
+/// This is the `34` of the record's frame equation,
+/// `payload = 34 + main_len + tail`.
+pub const IGDIMENSION_FRAME_PREFIX_LEN: usize = 34;
+
+/// Bit of the `+26` flag word that puts a closing `u32` at
+/// `34 + main_len`.
+///
+/// Read off `sub_564BB990`, which tests exactly this bit before reading
+/// the dword. Not `0x0300`: the two bits are inseparable in the corpus and
+/// the native reader keeps them apart.
+pub const IGDIMENSION_TAIL_WORD_FLAG: u16 = 0x0100;
+
+/// Byte length of the closing word the [`IGDIMENSION_TAIL_WORD_FLAG`] bit
+/// announces.
+const IGDIMENSION_TAIL_WORD_LEN: usize = 4;
+
+/// The one dimension kind (`+14`) this decoder reads.
+///
+/// The native reader dispatches over eight kinds, one block reader each,
+/// and all 18 corpus records are this one. The other seven get block
+/// lengths of 52 / 64 / 80 and a grammar nobody has seen bytes for.
+pub const IGDIMENSION_KIND_LINEAR: u16 = 1;
+
+/// Bit of the block's leading `u32` that grows a kind-1 block from 48
+/// bytes to 80 (`sub_56446B50`).
+///
+/// No corpus record sets it, so the 80-byte shape is as unread as the
+/// other seven kinds and is refused on the same grounds.
+const IGDIMENSION_WIDE_BLOCK_FLAG: u32 = 0x2000;
+
+/// Byte length of a kind-1 block when [`IGDIMENSION_WIDE_BLOCK_FLAG`] is
+/// clear, per `sub_56446B50`.
+pub const IGDIMENSION_LINEAR_BLOCK_LEN: usize = 48;
+
+/// Payload offset where the reference slots begin, once the kind-1 block
+/// is behind us: `34 + 48`.
+///
+/// This is why the section after the block starts at `+82` — the first
+/// probe's puzzlement over "one reading cannot cover 102 / 70 / 82" was
+/// the block length tracking the kind.
+pub const IGDIMENSION_BLOCK_AREA_START: usize =
+    IGDIMENSION_FRAME_PREFIX_LEN + IGDIMENSION_LINEAR_BLOCK_LEN;
+
+/// Payload offset of the dimension value, in metres.
+///
+/// The one block field with a reading: 18/18 corpus values are whole
+/// multiples of an inch (0.15″…4.5″), and the 35.56 mm on `D06`'s two
+/// records is the `Parametric Manifold` cache's own 35.59 mm rounded.
+const IGDIMENSION_VALUE_OFFSET: usize = 42;
+
+/// Payload offset of the reference to the geometry this dimension
+/// measures. Resolves 18/18 to a `0x0018 Line Object` or a
+/// `0x005E Point Object` in the same storage.
+const IGDIMENSION_MEASURED_SLOT: usize = 92;
+
+/// Payload offset of the reference to the group / constraint / attribute
+/// set this dimension belongs to (`0x0058 JDimGroup`,
+/// `0x0085 Vertical Constraint`, `0x0114 JSheet`, `0x0089 FreeFormAttrSet`).
+const IGDIMENSION_OWNER_SLOT: usize = 140;
+
+/// Bytes one reference slot occupies: the `u32` oid and the marker word
+/// behind it.
+const IGDIMENSION_SLOT_LEN: usize = 6;
+
+/// Smallest `JDim` payload this decoder will read: the frame prefix, the
+/// kind-1 block, the `+82` section header, and a measured-geometry slot
+/// that fits inside the main area.
+pub const IGDIMENSION_MIN_PAYLOAD_LEN: usize = IGDIMENSION_MEASURED_SLOT + IGDIMENSION_SLOT_LEN;
+
+/// One reference slot of a [`SheetIgDimensionDecoded`]: the `u32` and the
+/// marker word that follows it, both verbatim.
+///
+/// Deliberately *not* resolved. Whether `oid` names an object of the same
+/// storage is the caller's question — a decoder that answered it would
+/// need the whole stream and would turn "this file is unusual" into "this
+/// record is invalid". The marker is carried for the same reason: it pairs
+/// perfectly with the target class at the measured slot (`0x00CB` ↔ line
+/// 20/20, `0x00F0` ↔ point 4/4) and not at all at the owner slot, and a
+/// decoder that assumed the first rule would refuse the second case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SheetIgDimensionRef {
+    /// The `u32` in the slot, as stored.
+    pub oid: u32,
+    /// The `u16` immediately behind it, as stored.
+    pub marker: u16,
+}
+
+/// One decoded PSM `igDimension` / `JDim` record (type `0x0115`).
+///
+/// Carries only the fields §7 of the analysis marks as read: the frame,
+/// the dimension kind, the value, and the two reference slots. The rest of
+/// the record — the `+20` remap code, the `+22` word the native reader
+/// stores without interpreting, the other sixteen bits of `+26`, the three
+/// suspected-tolerance doubles, and the whole point/axis grammar after
+/// `+82` — is either dropped or travels verbatim in [`Self::raw_tail`].
+/// None of it is guessed at.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgDimensionDecoded {
+    /// Byte range covering the full PSM record (6-byte envelope +
+    /// payload) within the Sheet stream.
+    pub byte_range: std::ops::Range<usize>,
+    /// PSM 14-bit type code. Always [`PSM_TYPE_CODE_IGDIMENSION`].
+    pub type_code: u16,
+    /// Top 2 bits of the PSM type word, verbatim and never validated.
+    pub type_flags: u16,
+    /// `bytes_to_follow` from the PSM envelope, which the frame equation
+    /// has to reproduce exactly.
+    pub bytes_to_follow: u32,
+    /// Object identifier from payload offset 0.
+    pub oid: u32,
+    /// Parent reference from payload offset 4 — the defining sheet.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this dimension sits on (payload offset 8).
+    /// Always a layer named `Dimension` in the corpus, and that layer is
+    /// off in every view filter set; carried, never validated.
+    pub sheet_layer_ref: u32,
+    /// Sub-type word at payload offset 12 (`0` across the corpus).
+    /// Carried verbatim: an `== 0` rule here buys nothing and is how the
+    /// `igLine2d` decoder once refused 88 real records.
+    pub sub_type_word: u16,
+    /// Dimension kind at payload offset 14. Always
+    /// [`IGDIMENSION_KIND_LINEAR`] — the other seven are refused.
+    pub kind: u16,
+    /// `main_len` at payload offset 30: the bytes the record's main area
+    /// spans, starting at [`IGDIMENSION_FRAME_PREFIX_LEN`].
+    pub main_len: u32,
+    /// The closing `u32` at `34 + main_len`, present exactly when the
+    /// `+26` flag word has [`IGDIMENSION_TAIL_WORD_FLAG`] set.
+    pub tail_word: Option<u32>,
+    /// The dimension value in metres, payload offset 42.
+    pub value_m: f64,
+    /// Reference to the geometry this dimension measures (payload
+    /// offset 92).
+    pub measured: SheetIgDimensionRef,
+    /// Reference to the owning group / constraint / attribute set
+    /// (payload offset 140), when the main area reaches that far.
+    pub owner: Option<SheetIgDimensionRef>,
+    /// The block area verbatim: payload `+82 .. 34 + main_len`.
+    ///
+    /// Everything the reference slots sit in — the section count, the
+    /// three point pairs per section, the axis `±1.0`, the `π/2` on the
+    /// two 288-byte records — with the section grammar left unread,
+    /// because the corpus shows section lengths of 102 / 70 / 82 and no
+    /// single reading covers them.
+    pub raw_tail: Vec<u8>,
+}
+
+/// Decode every PSM `igDimension` record in a Sheet stream's bytes.
+///
+/// Validation rules (all must hold, otherwise the offset is skipped):
+///
+/// 1. `type_code == 0x0115`;
+/// 2. the dimension kind at payload `+14` is
+///    [`IGDIMENSION_KIND_LINEAR`];
+/// 3. the frame closes exactly:
+///    `bytes_to_follow == 34 + main_len + tail`, where `tail` is 4 when
+///    the `+26` flag word has [`IGDIMENSION_TAIL_WORD_FLAG`] set and 0
+///    otherwise;
+/// 4. the main area reaches at least [`IGDIMENSION_MIN_PAYLOAD_LEN`], so
+///    the measured-geometry slot is inside it;
+/// 5. the block's leading `u32` has [`IGDIMENSION_WIDE_BLOCK_FLAG`]
+///    clear, i.e. the kind-1 block really is 48 bytes;
+/// 6. the dimension value is finite and inside the coordinate domain.
+///
+/// A record that fails any of them is *refused*, not guessed at: the
+/// decoder claims no bytes there, which is what lets
+/// [`crate::parsers::undecoded_census::refused_record_census`] count it
+/// separately from an undecoded type code once this family is registered.
+///
+/// After accepting a record the scanner advances past it. Panic-free and
+/// bounds-checked: adversarial bytes simply fail validation.
+pub fn decode_igdimensions(data: &[u8]) -> Vec<SheetIgDimensionDecoded> {
+    IgDimensionDecoder.scan(data)
+}
+
+/// Try to decode a single PSM `igDimension` record starting at `offset`.
+/// Returns `None` when any validation rule in [`decode_igdimensions`]
+/// fails. Bounds-checked and panic-free.
+///
+/// Thin wrapper over [`IgDimensionDecoder::decode_at`].
+pub fn decode_igdimension_at(data: &[u8], offset: usize) -> Option<SheetIgDimensionDecoded> {
+    IgDimensionDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for the `igDimension` / `JDim` family
+/// (PSM type `0x0115`). Validation rules are documented on
+/// [`decode_igdimensions`]; no geometry is emitted for this family.
+pub struct IgDimensionDecoder;
+
+impl PsmRecordDecoder for IgDimensionDecoder {
+    type Record = SheetIgDimensionDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGDIMENSION
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGDIMENSION_MIN_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgDimensionDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGDIMENSION {
+            return None;
+        }
+        let payload_end = header
+            .body_start
+            .checked_add(header.bytes_to_follow as usize)?;
+        if payload_end > data.len() {
+            return None;
+        }
+        decode_igdimension_payload(data, offset, &header, payload_end)
+    }
+
+    fn advance_of(&self, record: &SheetIgDimensionDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+/// Family-specific payload validation for `igDimension`: the frame
+/// equation, the dimension kind, and the two reference slots.
+fn decode_igdimension_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+) -> Option<SheetIgDimensionDecoded> {
+    let payload = data.get(header.body_start..payload_end)?;
+
+    let read_u16 = |pos: usize| -> Option<u16> {
+        payload
+            .get(pos..pos + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    };
+    let read_u32 = |pos: usize| -> Option<u32> {
+        payload
+            .get(pos..pos + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let read_f64 = |pos: usize| -> Option<f64> {
+        payload
+            .get(pos..pos + 8)
+            .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+    };
+
+    let kind = read_u16(14)?;
+    if kind != IGDIMENSION_KIND_LINEAR {
+        return None;
+    }
+
+    // The frame, as `sub_564BB990` computes it.
+    let flag_word = read_u16(26)?;
+    let main_len = read_u32(30)?;
+    let tail_len = if flag_word & IGDIMENSION_TAIL_WORD_FLAG == 0 {
+        0
+    } else {
+        IGDIMENSION_TAIL_WORD_LEN
+    };
+    let main_end = IGDIMENSION_FRAME_PREFIX_LEN.checked_add(main_len as usize)?;
+    if main_end.checked_add(tail_len)? != payload.len() {
+        return None;
+    }
+    if main_end < IGDIMENSION_MIN_PAYLOAD_LEN {
+        return None;
+    }
+
+    // The block is 48 bytes only while this bit is clear; the 80-byte
+    // shape has never been seen and is not guessed at.
+    if read_u32(IGDIMENSION_FRAME_PREFIX_LEN)? & IGDIMENSION_WIDE_BLOCK_FLAG != 0 {
+        return None;
+    }
+
+    let value_m = read_f64(IGDIMENSION_VALUE_OFFSET)?;
+    if !value_m.is_finite() || value_m.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
+        return None;
+    }
+
+    let slot_at = |pos: usize| -> Option<SheetIgDimensionRef> {
+        Some(SheetIgDimensionRef {
+            oid: read_u32(pos)?,
+            marker: read_u16(pos + 4)?,
+        })
+    };
+    let measured = slot_at(IGDIMENSION_MEASURED_SLOT)?;
+    let owner = if main_end >= IGDIMENSION_OWNER_SLOT + IGDIMENSION_SLOT_LEN {
+        slot_at(IGDIMENSION_OWNER_SLOT)
+    } else {
+        None
+    };
+
+    let tail_word = if tail_len == 0 {
+        None
+    } else {
+        Some(read_u32(main_end)?)
+    };
+    let raw_tail = payload
+        .get(IGDIMENSION_BLOCK_AREA_START..main_end)?
+        .to_vec();
+
+    Some(SheetIgDimensionDecoded {
+        byte_range: offset..payload_end,
+        type_code: header.type_code,
+        type_flags: header.type_flags,
+        bytes_to_follow: header.bytes_to_follow,
+        oid: read_u32(0)?,
+        parent_ref: read_u32(4)?,
+        sheet_layer_ref: read_u32(8)?,
+        sub_type_word: read_u16(12)?,
+        kind,
+        main_len,
+        tail_word,
+        value_m,
+        measured,
+        owner,
+        raw_tail,
+    })
+}
+
+#[cfg(test)]
+mod jdim_family_tests {
+    use super::*;
+
+    /// `D06.pid` `/JSite145/PSMcluster0` oid 18, all 198 payload bytes as
+    /// they sit on disk — record `[1]` of
+    /// `cargo run --example probe_jdim_bytes`. Flags `0x0351`,
+    /// `main_len` 160, so the frame is `34 + 160 + 4 = 198`; the value is
+    /// 35.56 mm, the measured slot names line 56 and the owner slot names
+    /// the vertical constraint 48.
+    ///
+    /// Sixteen bytes to the row, so a row here is a row of that dump.
+    #[rustfmt::skip]
+    const CANONICAL_JDIM_PAYLOAD: [u8; 198] = [
+        // +0    oid 18        parent 15     layer 35      sub_type  kind
+        0x12, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+        // +16                              +22 = 6       flags 0x0351  main_len 160
+        0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x51, 0x03, 0x00, 0x00, 0xA0, 0x00,
+        // +32   the kind-1 block opens at +34; the value starts at +42
+        0x00, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3F, 0xD8, 0x6D, 0x17, 0x9A, 0xEB, 0x34,
+        0xA2, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3F, 0xBF, 0x0E, 0x1C, 0x3C, 0x00, 0x00,
+        0x40, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // +80   the block ends at +82; section count 1; measured slot at +92
+        0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x00, 0x00, 0x00,
+        // +96   marker 0x00CB -- the line class
+        0xCB, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0xE8, 0x48, 0x2E,
+        0xFF, 0x21, 0xC5, 0x3F, 0x87, 0x3D, 0xED, 0xF0, 0xD7, 0x64, 0xC1, 0x3F, 0xA8, 0xE8, 0x48, 0x2E,
+        // +128                                                      owner slot at +140
+        0xFF, 0x21, 0xC5, 0x3F, 0x87, 0x3D, 0xED, 0xF0, 0xD7, 0x64, 0xC1, 0x3F, 0x30, 0x00, 0x00, 0x00,
+        // +144  marker 0x0067 -- the assoc element list
+        0x67, 0x00, 0xA8, 0xE8, 0x48, 0x2E, 0xFF, 0x21, 0xC5, 0x3F, 0x87, 0x3D, 0xED, 0xF0, 0xD7, 0x64,
+        0xC1, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xF0, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xDA, 0x6D, 0x17, 0x9A, 0xEB, 0x34,
+        // +192  the main area ends at +194, then the closing word
+        0xB2, 0x3F, 0x1C, 0x00, 0x00, 0x00,
+    ];
+
+    /// Wrap a payload in the 6-byte PSM envelope the type code writes.
+    fn record(payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(PSM_ENVELOPE_LEN + payload.len());
+        out.extend_from_slice(&PSM_TYPE_CODE_IGDIMENSION.to_le_bytes());
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    /// The 8-byte stream header the chain walk skips, then the records.
+    fn chain(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = vec![0u8; SHEET_STREAM_HEADER_LEN];
+        for bytes in records {
+            out.extend_from_slice(bytes);
+        }
+        out
+    }
+
+    fn canonical() -> Vec<u8> {
+        record(&CANONICAL_JDIM_PAYLOAD)
+    }
+
+    /// The canonical payload with one field rewritten, still wrapped as a
+    /// record — the frame is left to close or not on its own.
+    fn canonical_with(patch: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+        let mut payload = CANONICAL_JDIM_PAYLOAD.to_vec();
+        patch(&mut payload);
+        record(&payload)
+    }
+
+    /// The canonical record resized so its main area spans `main_len`
+    /// bytes, with the tail word kept or dropped to match `flag_word`.
+    /// The frame still closes, so only the resizing is under test.
+    fn canonical_resized(main_len: usize, flag_word: u16) -> Vec<u8> {
+        let mut payload = CANONICAL_JDIM_PAYLOAD.to_vec();
+        payload[26..28].copy_from_slice(&flag_word.to_le_bytes());
+        payload[30..34].copy_from_slice(&(main_len as u32).to_le_bytes());
+        payload.resize(IGDIMENSION_FRAME_PREFIX_LEN + main_len, 0);
+        if flag_word & IGDIMENSION_TAIL_WORD_FLAG != 0 {
+            payload.extend_from_slice(&28u32.to_le_bytes());
+        }
+        record(&payload)
+    }
+
+    #[test]
+    fn a_real_jdim_reads_its_frame_value_and_both_reference_slots() {
+        let stream = chain(&[canonical()]);
+        let decoded = decode_igdimensions(&stream);
+        assert_eq!(decoded.len(), 1);
+        let jdim = &decoded[0];
+
+        assert_eq!(jdim.byte_range, SHEET_STREAM_HEADER_LEN..stream.len());
+        assert_eq!(jdim.type_code, PSM_TYPE_CODE_IGDIMENSION);
+        assert_eq!(jdim.type_flags, 0);
+        assert_eq!(jdim.bytes_to_follow, 198);
+        assert_eq!(jdim.oid, 18);
+        assert_eq!(jdim.parent_ref, 15);
+        assert_eq!(jdim.sheet_layer_ref, 35);
+        assert_eq!(jdim.sub_type_word, 0);
+        assert_eq!(jdim.kind, IGDIMENSION_KIND_LINEAR);
+        assert_eq!(jdim.main_len, 160);
+        assert_eq!(jdim.tail_word, Some(28));
+
+        // 35.56 mm, which is 1.4 inches.
+        assert!((jdim.value_m - 0.035_56).abs() < 1e-12, "{}", jdim.value_m);
+
+        assert_eq!(
+            jdim.measured,
+            SheetIgDimensionRef {
+                oid: 56,
+                marker: 0x00CB
+            },
+            "the line this dimension measures"
+        );
+        assert_eq!(
+            jdim.owner,
+            Some(SheetIgDimensionRef {
+                oid: 48,
+                marker: 0x0067
+            }),
+            "the vertical constraint it belongs to"
+        );
+
+        // `+82 .. 34 + 160`, verbatim and nothing more.
+        assert_eq!(jdim.raw_tail.len(), 194 - IGDIMENSION_BLOCK_AREA_START);
+        assert_eq!(
+            jdim.raw_tail.as_slice(),
+            &CANONICAL_JDIM_PAYLOAD[IGDIMENSION_BLOCK_AREA_START..194]
+        );
+    }
+
+    #[test]
+    fn a_frame_that_does_not_close_is_not_a_dimension() {
+        // `main_len` one byte past what the payload can hold.
+        for main_len in [159u32, 161] {
+            let stream = chain(&[canonical_with(|payload| {
+                payload[30..34].copy_from_slice(&main_len.to_le_bytes());
+            })]);
+            assert!(
+                decode_igdimensions(&stream).is_empty(),
+                "main_len {main_len} closes a 198-byte payload"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dimension_kind_other_than_linear_is_refused_not_guessed() {
+        for kind in [0u16, 2, 3, 4, 5, 6, 7, 8] {
+            let stream = chain(&[canonical_with(|payload| {
+                payload[14..16].copy_from_slice(&kind.to_le_bytes());
+            })]);
+            assert!(
+                decode_igdimensions(&stream).is_empty(),
+                "kind {kind} has a block length nobody has bytes for"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wide_block_head_is_refused_because_the_block_is_no_longer_48_bytes() {
+        let stream = chain(&[canonical_with(|payload| {
+            let head = u32::from_le_bytes([payload[34], payload[35], payload[36], payload[37]]);
+            payload[34..38].copy_from_slice(&(head | IGDIMENSION_WIDE_BLOCK_FLAG).to_le_bytes());
+        })]);
+        assert!(decode_igdimensions(&stream).is_empty());
+    }
+
+    #[test]
+    fn a_main_area_too_short_for_the_measured_slot_is_refused() {
+        // 34 + 63 = 97: one byte short of the slot's last byte. Read the
+        // offset directly — a record this short is below the scan's
+        // minimum length, so a `scan` that found nothing would prove
+        // nothing about the rule.
+        let stream = chain(&[canonical_resized(63, 0x0051)]);
+        assert!(decode_igdimension_at(&stream, SHEET_STREAM_HEADER_LEN).is_none());
+        // 34 + 64 = 98 is exactly enough, so the floor is a floor and not
+        // an off-by-one.
+        let stream = chain(&[canonical_resized(64, 0x0051)]);
+        assert!(decode_igdimension_at(&stream, SHEET_STREAM_HEADER_LEN).is_some());
+        assert_eq!(decode_igdimensions(&stream).len(), 1);
+    }
+
+    #[test]
+    fn a_non_finite_or_out_of_domain_value_is_refused() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1e10] {
+            let stream = chain(&[canonical_with(|payload| {
+                payload[42..50].copy_from_slice(&value.to_le_bytes());
+            })]);
+            assert!(
+                decode_igdimensions(&stream).is_empty(),
+                "value {value} is not a length"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tail_word_follows_bit_0x0100_and_not_bit_0x0200() {
+        // `0x0051` is a corpus flag word with neither bit: no tail.
+        let stream = chain(&[canonical_resized(160, 0x0051)]);
+        let decoded = decode_igdimensions(&stream);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].tail_word, None);
+        assert_eq!(decoded[0].bytes_to_follow, 194);
+
+        // `0x0200` alone still means no tail — the corpus cannot separate
+        // the two bits, `sub_564BB990` can.
+        let stream = chain(&[canonical_resized(160, 0x0251)]);
+        let decoded = decode_igdimensions(&stream);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].tail_word, None);
+    }
+
+    #[test]
+    fn the_owner_slot_is_absent_when_the_main_area_stops_short_of_it() {
+        // 34 + 111 = 145: the measured slot fits, the owner slot does not.
+        let stream = chain(&[canonical_resized(111, 0x0051)]);
+        let decoded = decode_igdimensions(&stream);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].measured.oid, 56);
+        assert_eq!(decoded[0].owner, None);
+        assert_eq!(
+            decoded[0].raw_tail.len(),
+            145 - IGDIMENSION_BLOCK_AREA_START
+        );
+    }
+
+    #[test]
+    fn a_refused_dimension_leaves_its_own_offset_unclaimed() {
+        // One readable record, then one of a kind this decoder refuses.
+        // The refusal has to show as *no claim starting there*, which is
+        // what separates a refused record from an undecoded type code in
+        // the census.
+        let good = canonical();
+        let refused = canonical_with(|payload| {
+            payload[14..16].copy_from_slice(&7u16.to_le_bytes());
+        });
+        let refused_start = SHEET_STREAM_HEADER_LEN + good.len();
+        let stream = chain(&[good, refused]);
+
+        let decoded = decode_igdimensions(&stream);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].byte_range.start, SHEET_STREAM_HEADER_LEN);
+        assert!(
+            !decoded
+                .iter()
+                .any(|record| record.byte_range.start == refused_start),
+            "a refused kind must not be claimed by this family"
+        );
+        assert!(decode_igdimension_at(&stream, refused_start).is_none());
+    }
+
+    #[test]
+    fn a_wrong_type_code_is_not_a_dimension() {
+        let mut stream = chain(&[canonical()]);
+        stream[SHEET_STREAM_HEADER_LEN] = 0x18; // igLine2d instead
+        assert!(decode_igdimensions(&stream).is_empty());
+    }
+
+    #[test]
+    fn two_back_to_back_dimensions_both_decode() {
+        let second = canonical_with(|payload| {
+            payload[0..4].copy_from_slice(&21u32.to_le_bytes());
+        });
+        let stream = chain(&[canonical(), second]);
+        let decoded = decode_igdimensions(&stream);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].oid, 18);
+        assert_eq!(decoded[1].oid, 21);
+        assert_eq!(decoded[0].byte_range.end, decoded[1].byte_range.start);
+    }
+
+    #[test]
+    fn the_decoder_survives_truncation_and_noise() {
+        let stream = chain(&[canonical()]);
+        for cut in 0..stream.len() {
+            assert!(
+                decode_igdimensions(&stream[..cut]).is_empty(),
+                "a truncated record must not decode at cut {cut}"
+            );
+            let _ = decode_igdimension_at(&stream[..cut], cut.saturating_sub(1));
+        }
+        assert!(decode_igdimensions(&[]).is_empty());
+        assert!(decode_igdimension_at(&stream, stream.len()).is_none());
+        assert!(decode_igdimension_at(&stream, usize::MAX).is_none());
+
+        let noise: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+        let _ = decode_igdimensions(&noise);
+        assert!(decode_igdimensions(&vec![0u8; 4096]).is_empty());
+        assert!(decode_igdimensions(&vec![0xFFu8; 4096]).is_empty());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
