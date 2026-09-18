@@ -4313,6 +4313,552 @@ fn jdims_are_the_driving_dimensions_of_parametric_bodies() {
     }
 }
 
+/// Evaluate a `Standard Relation` formula (`0E$1`, `0E$1+0.01`,
+/// `0E($1+$2)/10`, `0E$1/2` …) over its inputs, in whatever unit the inputs
+/// are handed in. Mirrors the evaluator of
+/// `examples/probe_parametric_chain_resolves_a_cached_body.rs`; kept out of
+/// `src` on purpose — reading the formula is evidence, not a decoder.
+fn eval_relation_formula(formula: &str, inputs: &[f64]) -> Option<f64> {
+    struct P<'a> {
+        s: &'a [u8],
+        i: usize,
+        inputs: &'a [f64],
+    }
+    impl P<'_> {
+        fn peek(&self) -> Option<u8> {
+            self.s.get(self.i).copied()
+        }
+        fn expr(&mut self) -> Option<f64> {
+            let mut v = self.term()?;
+            while let Some(op @ (b'+' | b'-')) = self.peek() {
+                self.i += 1;
+                let r = self.term()?;
+                v = if op == b'+' { v + r } else { v - r };
+            }
+            Some(v)
+        }
+        fn term(&mut self) -> Option<f64> {
+            let mut v = self.factor()?;
+            while let Some(op @ (b'*' | b'/')) = self.peek() {
+                self.i += 1;
+                let r = self.factor()?;
+                v = if op == b'*' { v * r } else { v / r };
+            }
+            Some(v)
+        }
+        fn factor(&mut self) -> Option<f64> {
+            match self.peek()? {
+                b'(' => {
+                    self.i += 1;
+                    let v = self.expr()?;
+                    (self.peek()? == b')').then(|| self.i += 1)?;
+                    Some(v)
+                }
+                b'-' => {
+                    self.i += 1;
+                    Some(-self.factor()?)
+                }
+                b'$' => {
+                    self.i += 1;
+                    let start = self.i;
+                    while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                        self.i += 1;
+                    }
+                    let n: usize = std::str::from_utf8(&self.s[start..self.i])
+                        .ok()?
+                        .parse()
+                        .ok()?;
+                    self.inputs.get(n.checked_sub(1)?).copied()
+                }
+                _ => {
+                    let start = self.i;
+                    while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'.') {
+                        self.i += 1;
+                    }
+                    std::str::from_utf8(&self.s[start..self.i])
+                        .ok()?
+                        .parse()
+                        .ok()
+                }
+            }
+        }
+    }
+    let body = formula.strip_prefix("0E")?;
+    let mut p = P {
+        s: body.as_bytes(),
+        i: 0,
+        inputs,
+    };
+    let v = p.expr()?;
+    (p.i == body.len()).then_some(v)
+}
+
+/// Ratchet for plan J3 (`OpenCADStudio/docs/plans/2026-09-07-jdim-driving-dimensions-and-layer-panel.md`):
+/// the parametric chain `SymbolInformation variable -> Double Value ->
+/// Standard Relation formula -> JDim` closes, and it closes on the
+/// **template** body — the plan's premise that a placed instance carries
+/// its own dimension values does not hold.
+///
+/// What the corpus says
+/// (`docs/analysis/2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md`):
+///
+/// * every Standard Relation's output is a `JDim` of the same storage, and
+///   the formula reproduces the stored value **with its constants read in
+///   inches** — 17/17 across the corpus; the four D06 relations with a
+///   constant (`$1+0.01`, `$1+0.1`) are what settle the unit, since they
+///   miss by millimetres when read in metres;
+/// * every body that carries a dimension is one no placement names — the
+///   library-default template in the `Server Document` storage;
+/// * every placed parametric instance (`Imagineer Document` storage) has
+///   no `JDim`, no relation, no `Double Value`: one `SymbolInformation`
+///   whose variables repeat the template's values, and baked geometry;
+/// * `DWG-0201`'s Manifold: the template's two arcs have the radius of its
+///   `Top` dimension (20.32 mm) and are centred where the lines its
+///   `Left` / `Right` dimensions measure begin; the instance's two arcs are
+///   35.59 mm, a value no dimension in the file holds, while its
+///   `SymbolInformation` still says `Top = 20.32`;
+/// * `D06`'s Cone Roof Tank instance is the template's formulas evaluated
+///   with the constants read in **millimetres** (half-width 60.96 + 0.1),
+///   so the same relation was run twice in two units.
+#[test]
+fn the_parametric_chain_closes_on_the_template_not_on_the_placed_instance() {
+    const INCH_M: f64 = 0.0254;
+    // (fixture, relations, relations that close only in inches)
+    const EXPECTED: &[(&str, usize, usize)] = &[
+        ("D06.pid", 5, 4),
+        ("DWG-0201GP06-01.pid", 4, 0),
+        ("DWG-0202GP06-01.pid", 0, 0),
+        ("工艺管道及仪表流程-1.pid", 4, 0),
+        ("export-test/publish-data/A01/A01.pid", 4, 0),
+    ];
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+
+    for (fixture, expected_relations, expected_inch_only) in EXPECTED {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let placed: std::collections::BTreeSet<(u32, u32)> = doc
+            .sheet_streams
+            .iter()
+            .filter_map(|sheet| sheet.geometry.as_ref())
+            .flat_map(|geometry| {
+                geometry
+                    .decoded_igsymbols
+                    .iter()
+                    .map(|p| (p.definition_site_ref, p.definition_sheet_ref))
+            })
+            .collect();
+        let site_id = |site: &pid_parse::model::JSite| -> u32 {
+            site.name
+                .strip_prefix("JSite")
+                .and_then(|id| id.parse().ok())
+                .unwrap_or_else(|| panic!("{fixture}: {} is not a JSite<N>", site.name))
+        };
+
+        // 1. Every relation writes a JDim of its own storage, and the
+        //    formula reproduces the stored value when read in inches.
+        let mut relations = 0usize;
+        let mut inch_only = 0usize;
+        for site in &doc.jsites {
+            let Some(info) = site.symbol_information.as_ref() else {
+                continue;
+            };
+            if info.relations.is_empty() {
+                continue;
+            }
+            let nested = site
+                .nested_geometry
+                .as_ref()
+                .unwrap_or_else(|| panic!("{fixture} {}: relations but no cache body", site.path));
+            let value_of = |oid: u32| -> f64 {
+                info.double_values
+                    .iter()
+                    .find(|d| d.oid == oid)
+                    .map(|d| d.value)
+                    .or_else(|| {
+                        nested
+                            .dimensions
+                            .iter()
+                            .find(|d| d.oid == oid)
+                            .map(|d| d.value_m)
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{fixture} {}: operand {oid} is neither a Double Value nor a JDim",
+                            site.path
+                        )
+                    })
+            };
+            for relation in &info.relations {
+                let (out, ins) = relation.operands.split_first().unwrap_or_else(|| {
+                    panic!("{fixture}: relation {} has no operands", relation.oid)
+                });
+                let jdim = nested
+                    .dimensions
+                    .iter()
+                    .find(|d| d.oid == *out)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{fixture} {}: relation {} writes {out}, which is not a JDim",
+                            site.path, relation.oid
+                        )
+                    });
+                let inputs: Vec<f64> = ins.iter().map(|oid| value_of(*oid)).collect();
+                let in_inches = eval_relation_formula(
+                    &relation.formula,
+                    &inputs.iter().map(|v| v / INCH_M).collect::<Vec<_>>(),
+                )
+                .map(|v| v * INCH_M)
+                .unwrap_or_else(|| {
+                    panic!("{fixture}: formula {:?} does not parse", relation.formula)
+                });
+                assert!(
+                    close(in_inches, jdim.value_m),
+                    "{fixture} {} relation {} {:?}: inputs {inputs:?} m give {in_inches} m in inches, the JDim holds {}",
+                    site.path,
+                    relation.oid,
+                    relation.formula,
+                    jdim.value_m
+                );
+                let in_metres =
+                    eval_relation_formula(&relation.formula, &inputs).expect("parsed once already");
+                if !close(in_metres, jdim.value_m) {
+                    inch_only += 1;
+                }
+                relations += 1;
+            }
+        }
+        assert_eq!(
+            relations, *expected_relations,
+            "{fixture}: Standard Relations"
+        );
+        assert_eq!(
+            inch_only, *expected_inch_only,
+            "{fixture}: relations whose constant only makes sense in inches"
+        );
+
+        // 2. A body with a dimension is one no placement names; a placed
+        //    parametric instance carries no dimension, no relation, and a
+        //    SymbolInformation that repeats its template's values.
+        for site in &doc.jsites {
+            let Some(nested) = site.nested_geometry.as_ref() else {
+                continue;
+            };
+            for definition in &nested.definitions {
+                let on_body = |layer: u32| definition.layers.binary_search(&layer).is_ok();
+                if nested.dimensions.iter().any(|d| on_body(d.sheet_layer_ref)) {
+                    assert!(
+                        !placed.contains(&(site_id(site), definition.sheet_oid)),
+                        "{fixture} {} sheet {}: a body with dimensions is placed",
+                        site.path,
+                        definition.sheet_oid
+                    );
+                }
+            }
+            let Some(info) = site.symbol_information.as_ref() else {
+                continue;
+            };
+            if !info.relations.is_empty() {
+                continue;
+            }
+            for record in info
+                .symbol_informations
+                .iter()
+                .filter(|r| !r.variables.is_empty())
+            {
+                assert!(
+                    nested.dimensions.is_empty() && info.double_values.is_empty(),
+                    "{fixture} {}: a placed parametric instance carries dimensions or values of its own",
+                    site.path
+                );
+                let template = doc.jsites.iter().find(|other| {
+                    other.path != site.path
+                        && other.symbol_information.as_ref().is_some_and(|other_info| {
+                            !other_info.relations.is_empty()
+                                && other_info.symbol_informations.iter().any(|t| {
+                                    t.variables.len() == record.variables.len()
+                                        && t.variables.iter().all(|tv| {
+                                            record.variables.iter().any(|iv| {
+                                                iv.name == tv.name && close(iv.value, tv.value)
+                                            })
+                                        })
+                                })
+                        })
+                });
+                assert!(
+                    template.is_some(),
+                    "{fixture} {} SymbolInformation {}: no template storage names the same variables with the same values",
+                    site.path,
+                    record.oid
+                );
+            }
+        }
+    }
+
+    // 3. DWG-0201's Parametric Manifold: template and instance side by side.
+    if let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") {
+        let cache = |path: &str| {
+            doc.jsites
+                .iter()
+                .find(|site| site.path == path)
+                .unwrap_or_else(|| panic!("{path} missing"))
+        };
+        let template = cache("/JSite329");
+        let template_body = template.nested_geometry.as_ref().expect("template cache");
+        let template_info = template
+            .symbol_information
+            .as_ref()
+            .expect("template chain");
+        let sheet_49 = template_body.definition(49).expect("the Manifold template");
+        let on_49 = |layer: u32| sheet_49.layers.binary_search(&layer).is_ok();
+        let top = template_info
+            .symbol_informations
+            .iter()
+            .flat_map(|r| r.variables.iter())
+            .find(|v| v.name == "Top" && close(v.value, 0.02032))
+            .expect("the template's Top variable");
+        let jdim_36 = template_body
+            .dimensions
+            .iter()
+            .find(|d| d.oid == 36)
+            .expect("JDim 36");
+        assert!(
+            close(jdim_36.value_m, top.value),
+            "JDim 36 is the Top variable"
+        );
+        let arcs: Vec<_> = template_body
+            .arcs
+            .iter()
+            .filter(|a| on_49(a.sheet_layer_ref))
+            .collect();
+        assert_eq!(arcs.len(), 2, "the template Manifold has two end arcs");
+        for arc in &arcs {
+            assert!(
+                close(arc.radius, jdim_36.value_m),
+                "template arc {} radius {} is the Top dimension {}",
+                arc.oid,
+                arc.radius,
+                jdim_36.value_m
+            );
+        }
+        // The Left / Right dimensions measure the stub lines that start at
+        // the arc centres and run to the body's outer ends; their value is
+        // the distance from the symbol axis (where JDim 36's line stands)
+        // to that outer end.
+        let axis_x = template_body
+            .lines
+            .iter()
+            .find(|l| l.oid == jdim_36.measured_oid)
+            .map(|l| l.start_x)
+            .expect("JDim 36 measures a line of the template");
+        for (jdim_oid, arc_index) in [(38u32, 1usize), (40, 0)] {
+            let jdim = template_body
+                .dimensions
+                .iter()
+                .find(|d| d.oid == jdim_oid)
+                .unwrap_or_else(|| panic!("JDim {jdim_oid}"));
+            let line = template_body
+                .lines
+                .iter()
+                .find(|l| l.oid == jdim.measured_oid)
+                .unwrap_or_else(|| panic!("JDim {jdim_oid} measures a line"));
+            let arc = arcs
+                .iter()
+                .find(|a| close(a.center_x, line.start_x) && close(a.center_y, line.start_y))
+                .unwrap_or_else(|| {
+                    panic!("JDim {jdim_oid}'s line starts at no arc centre (arc index {arc_index})")
+                });
+            assert!(close(arc.center_y, line.end_y));
+            assert!(
+                close((line.end_x - axis_x).abs(), jdim.value_m),
+                "JDim {jdim_oid} = {} is the axis-to-end distance {}",
+                jdim.value_m,
+                (line.end_x - axis_x).abs()
+            );
+        }
+
+        let instance = cache("/JSite396");
+        let instance_body = instance.nested_geometry.as_ref().expect("instance cache");
+        let instance_info = instance.symbol_information.as_ref().expect("instance copy");
+        assert!(
+            instance_body.dimensions.is_empty(),
+            "the placed Manifold has no JDim"
+        );
+        assert!(instance_info.relations.is_empty() && instance_info.double_values.is_empty());
+        let sheet_113 = instance_body
+            .definition(113)
+            .expect("the placed Manifold body");
+        let on_113 = |layer: u32| sheet_113.layers.binary_search(&layer).is_ok();
+        let instance_arcs: Vec<_> = instance_body
+            .arcs
+            .iter()
+            .filter(|a| on_113(a.sheet_layer_ref))
+            .collect();
+        assert_eq!(instance_arcs.len(), 2);
+        for arc in &instance_arcs {
+            assert!(
+                (arc.radius - 0.03559).abs() < 1e-5,
+                "instance arc {} r {} is the 35.59 mm of 08-31",
+                arc.oid,
+                arc.radius
+            );
+            let any_dimension_holds_it = doc.jsites.iter().any(|site| {
+                site.nested_geometry.as_ref().is_some_and(|nested| {
+                    nested
+                        .dimensions
+                        .iter()
+                        .any(|d| (d.value_m - arc.radius).abs() < 1e-6)
+                })
+            });
+            assert!(
+                !any_dimension_holds_it,
+                "no dimension in the file holds the instance radius {}",
+                arc.radius
+            );
+        }
+        let copied_top = instance_info
+            .symbol_informations
+            .iter()
+            .flat_map(|r| r.variables.iter())
+            .find(|v| v.name == "Top")
+            .expect("the instance copy names Top");
+        assert!(
+            close(copied_top.value, top.value),
+            "the instance's SymbolInformation still carries the template's Top {}",
+            top.value
+        );
+        // The ` Line2` beside it, whose formula has no constant: template
+        // sheet 501 and placed sheet 119 are the same body to the metre.
+        let extent = |nested: &pid_parse::model::JSiteNestedGeometry, sheet: u32| {
+            let definition = nested
+                .definition(sheet)
+                .unwrap_or_else(|| panic!("sheet {sheet}"));
+            let on = |layer: u32| definition.layers.binary_search(&layer).is_ok();
+            nested
+                .lines
+                .iter()
+                .filter(|l| on(l.sheet_layer_ref))
+                .flat_map(|l| [(l.start_x, l.start_y), (l.end_x, l.end_y)])
+                .fold(
+                    (f64::MAX, f64::MAX, f64::MIN, f64::MIN),
+                    |(x0, y0, x1, y1), (x, y)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+                )
+        };
+        let (t, i) = (extent(template_body, 501), extent(instance_body, 119));
+        assert!(
+            close(t.0, i.0) && close(t.1, i.1) && close(t.2, i.2) && close(t.3, i.3),
+            "Line2: template {t:?} vs instance {i:?}"
+        );
+    }
+
+    // 4. D06's Cone Roof Parametric Tank: the instance is the template's
+    //    formulas run again with the constants read in millimetres.
+    if let Some(doc) = parse_test_file("D06.pid") {
+        let template = doc
+            .jsites
+            .iter()
+            .find(|site| site.path == "/JSite145")
+            .and_then(|site| site.nested_geometry.as_ref())
+            .expect("D06 template cache");
+        let instance = doc
+            .jsites
+            .iter()
+            .find(|site| site.path == "/JSite151")
+            .and_then(|site| site.nested_geometry.as_ref())
+            .expect("D06 instance cache");
+        let left = doc
+            .jsites
+            .iter()
+            .find(|site| site.path == "/JSite145")
+            .and_then(|site| site.symbol_information.as_ref())
+            .and_then(|info| {
+                info.symbol_informations
+                    .iter()
+                    .flat_map(|r| r.variables.iter())
+                    .find(|v| v.name == "Left")
+            })
+            .expect("the template's Left variable")
+            .value;
+        let half_width = |nested: &pid_parse::model::JSiteNestedGeometry, sheet: u32| {
+            let definition = nested
+                .definition(sheet)
+                .unwrap_or_else(|| panic!("sheet {sheet}"));
+            let on = |layer: u32| definition.layers.binary_search(&layer).is_ok();
+            let (x0, x1) = nested
+                .lines
+                .iter()
+                .filter(|l| on(l.sheet_layer_ref))
+                .flat_map(|l| [l.start_x, l.end_x])
+                .fold((f64::MAX, f64::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
+            (x1 - x0) / 2.0
+        };
+        // Template: Left + 0.1 inch = 63.5 mm, which is JDim 20 / 21.
+        let template_half = half_width(template, 15);
+        assert!(
+            close(template_half, left + 0.1 * INCH_M),
+            "template half-width {template_half}"
+        );
+        for oid in [20u32, 21] {
+            let jdim = template
+                .dimensions
+                .iter()
+                .find(|d| d.oid == oid)
+                .unwrap_or_else(|| panic!("JDim {oid}"));
+            assert!(close(jdim.value_m, template_half));
+        }
+        // Instance: Left + 0.1 millimetre = 61.06 mm, and no dimension. The
+        // other two formulas agree — Bottom + 0.01 mm for the half-height,
+        // width / 10 for the roof peak — so it is the same chain run in the
+        // drawing's unit, not a body someone dragged to nearly the same size.
+        let instance_half = half_width(instance, 47);
+        assert!(
+            close(instance_half, left + 0.1e-3),
+            "instance half-width {instance_half} is not Left + 0.1 mm"
+        );
+        let bottom = doc
+            .jsites
+            .iter()
+            .find(|site| site.path == "/JSite145")
+            .and_then(|site| site.symbol_information.as_ref())
+            .and_then(|info| {
+                info.symbol_informations
+                    .iter()
+                    .flat_map(|r| r.variables.iter())
+                    .find(|v| v.name == "Bottom")
+            })
+            .expect("the template's Bottom variable")
+            .value;
+        let sheet_47 = instance.definition(47).expect("the placed tank");
+        let body: Vec<_> = instance
+            .lines
+            .iter()
+            .filter(|l| sheet_47.layers.binary_search(&l.sheet_layer_ref).is_ok())
+            .collect();
+        let peak = body
+            .iter()
+            .flat_map(|l| [l.start_y, l.end_y])
+            .fold(f64::MIN, f64::max);
+        // Floor and eaves are the two horizontal lines of the shell; the
+        // roof's two slopes meet above the eaves at the peak.
+        let (floor, eaves) = body
+            .iter()
+            .filter(|l| close(l.start_y, l.end_y))
+            .map(|l| l.start_y)
+            .fold((f64::MAX, f64::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
+        assert!(
+            close((eaves - floor) / 2.0, bottom + 0.01e-3),
+            "instance half-height {} is not Bottom + 0.01 mm",
+            (eaves - floor) / 2.0
+        );
+        assert!(
+            close(peak - eaves, 2.0 * instance_half / 10.0),
+            "instance roof peak {} is not width / 10",
+            peak - eaves
+        );
+        assert!(instance.dimensions.is_empty());
+    }
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {

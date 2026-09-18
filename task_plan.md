@@ -24,6 +24,12 @@ tag-188 46 条逐条对槽（40 落槽 + 2 假命中 + 6 组共享；尾字 = �
 （值 + 被量线两端点 + 图层；`ca1fffa`）。棘轮 D06 5 / 0201 5 / 0202 0 / 工艺 4 / A01 4。见
 `docs/analysis/2026-09-15-tag-188-members-land-in-jdim-reference-slots.md`。按 D7 下一项 J3（参数化链闭环）。
 
+**2026-09-18 · 同一计划 J3 落地（证据）**：变量 → Double Value → 公式 → JDim 17/17 闭合，**公式常数按英寸读**；
+22 条 JDim 全在五张未被放置的模板 sheet 上，放置实例本体零 JDim（副本变量 = 库默认）；D06 Tank 实例是同一公式
+按毫米再算一遍，Manifold / Black Box / Drum 被拉过且实例参数不在缓存里。棘轮
+`the_parametric_chain_closes_on_the_template_not_on_the_placed_instance`。见
+`docs/analysis/2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md`。按 D7 下一项 L3。
+
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
 `sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给

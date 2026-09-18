@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### 参数化链在模板上闭合，放置的实例身上没有它（2026-09-18）
+
+- **探针** `examples/probe_parametric_chain_resolves_a_cached_body.rs`：逐存储把 `SymbolInformation` 变量 →
+  `Double Value` → `Standard Relation` 公式 → `JDim` 接起来重算，再把模板本体与放置本体逐坐标比。
+- **17/17 条关系闭合，公式常数按英寸读**：D06 的 `0E$1+0.01` / `0E$1+0.1` 只在英寸下算得出 35.56 / 63.5 mm
+  （按米算是 45.306 / 160.96）；13 条无常数的与单位无关。入参可以是另一条 JDim（`0E($1+$2)/10`、`0E$1/2`）。
+- **JDim 只在模板上**：语料 22 条全在五张没被放置点名的模板 sheet 上（D06 15、0201 49 / 501、工艺 72、A01 96）；
+  被放置点名的实例本体（`Imagineer Document`）零 JDim、零关系、零 Double Value，只有一份变量值 = 库默认的
+  `SymbolInformation` 副本。模板上 JDim 值就是本体尺寸：Manifold 两弧 r = Top = JDim 36 = 20.32，弧心在
+  Left / Right 尺寸所量短线的起点；Tank 半宽 / 半高 / 顶尖 = JDim 20/21、18/24、19。
+- **实例几何**：` Line2` 与模板逐坐标相同；**D06 Tank 实例 = 同一套公式按毫米再算一遍**（60.96 + 0.1 mm、
+  35.306 + 0.01 mm、宽 / 10，1e-9 精确）；Manifold / Black Box / Drum 被拉过，实例参数不在文件缓存里
+  （Manifold 弧 r 35.590035 不是任何变量）。
+- 棘轮 `the_parametric_chain_closes_on_the_template_not_on_the_placed_instance`；计划原名
+  `a_parametric_instance_carries_its_own_dimension_values` 的前提被否，不用。不改投影，golden 不变。
+- 分析文档 `docs/analysis/2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md`；
+  09-07 placement-tail 文档 §4 加「参数化」一段。
+
 ### `0x0115 JDim` 有解码器了：驱动尺寸进符号本体，不画（2026-09-15 → 2026-09-18）
 
 - **解码器** `decode_igdimensions` / `IgDimensionDecoder`（`src/parsers/sheet_records.rs`，`15aa915`）：

@@ -452,6 +452,13 @@ JSymbolInformation (0x00BD 长形)  内联命名变量表 Left/Right/Bottom/Top
 `%>i%<i`（`%>` 出参 / `%<` 入参）+ 每个 `%` 一个 `{u32 oid, 接口 GUID}` 槽 + 收尾的
 UTF-16 公式」。
 
+**链闭合了（2026-09-18，`0x0115` 解开后）**：把入参值代进公式，17/17 条（四主图 13 + A01 4）算得出出参 JDim
+存的值——**公式常数按英寸读**（`$1+0.1` 是 2.4″ + 0.1″ = 63.5 mm，按米算对不上），值以米持久化；入参也可以是
+另一条 JDim。但**链只在 `Server Document` 里没被放置点名的模板 sheet 上**：`Imagineer Document` 里被点名的
+参数化实例本体没有 JDim / 关系 / Double Value，只有一份变量值 = 库默认的 `SymbolInformation` 副本；实例几何
+要么等于模板（` Line2`）、要么是同一公式**按毫米**再算一遍（D06 Tank）、要么被拉过且参数不在缓存里（Manifold 等）。
+见 `docs/analysis/2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md`。
+
 **注意：表达式子系统的对象和图元混在同一条记录链里**，按 type code 分家族时别默认
 「一条记录就是一个图元」。这一族也是 §3.2 里「182 有 191 个 value 没有记录」的全部
 来源，见 `docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。

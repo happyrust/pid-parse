@@ -67,6 +67,17 @@
 工艺图 `/JSite7559` 那两个"对不上库"的圆（r 3.81 mm，圆心 (−6.3, 0)）则各属 `Xa.sym`
 （sheet 155）与 `Xa chu.sym`（sheet 219）一只——库里没有这两个站点自定义符号，缓存里有。
 
+**参数化（2026-09-18 补，`2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md`）**：
+`0x0115 JDim` 解开之后把链接上了——`SymbolInformation` 变量 → `Double Value` → `Standard Relation` 公式 →
+JDim 值，17/17 条关系算得出存下来的值，**公式常数按英寸读**（D06 的 `$1+0.1` 是 2.4″ + 0.1″ = 63.5 mm）。
+但链**只在 `Server Document` 里那张没被点名的模板 sheet 上闭合**：语料 22 条 JDim 全在五张模板 sheet 上，
+`Imagineer Document` 里被放置点名的实例本体（sheet 47 / 113 / 119 / 21 / 481）一条 JDim、一条关系、
+一个 Double Value 都没有，只有一份变量值等于库默认的 `SymbolInformation` 副本（`value_ref` 指回模板存储）
+加算好的几何。上面那句「按实例参数重算」要收一半：Manifold 的 35.59 确是实例几何（弧 r 35.590035、Left′ 57.909，
+Right 仍 114.3），但**实例参数不在文件的缓存里**；而 D06 的 Cone Roof Tank 实例根本没被拉过——它是模板的三条公式
+**按毫米**再算一遍（半宽 60.96 + 0.1 mm、半高 35.306 + 0.01 mm、顶尖 = 宽 / 10，1e-9 精确），
+模板的 JDim 值则是同一公式按英寸算的。「缓存本体对不上库」从此分两类：单位，与拉过。
+
 ## 一处副产品：库读取器会多画一张 sheet
 
 D06 的 Ball Valve Type 1 放置：缓存本体 12 条记录（9 线 + 1 圆 r 1.27 + 1 文字 + 1 伴热线 + 2 夹套线，
