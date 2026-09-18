@@ -7403,6 +7403,17 @@ mod nested_curve_family_tests {
 // is refused rather than guessed at, which is why §7 of the analysis splits
 // the fields into "may be decoded" and "stays raw" and why the raw bytes of
 // the block area travel in the DTO untouched.
+//
+// The two references this decoder does read were then checked against the
+// file's own incoming-reference index
+// (`docs/analysis/2026-09-15-tag-188-members-land-in-jdim-reference-slots.md`):
+// the measured-geometry slot at `+92` is backed by the space map 40/40 with
+// the slot predicting the target class without a counterexample, and the
+// closing dword resolves to a `0x0058 JDimGroup` on every record that
+// carries one, with the group's member table naming the dimension back on
+// all six groups. The `+140` word the 09-14 reading had called the owner
+// failed both tests a reference has to pass and is *not* a field here — it
+// stays inside `raw_tail`.
 // ---------------------------------------------------------------------------
 
 /// PSM type code for `imagdex.dex`'s `JDim Object` — the driving dimension
@@ -7469,13 +7480,14 @@ const IGDIMENSION_VALUE_OFFSET: usize = 42;
 
 /// Payload offset of the reference to the geometry this dimension
 /// measures. Resolves 18/18 to a `0x0018 Line Object` or a
-/// `0x005E Point Object` in the same storage.
+/// `0x005E Point Object` in the same storage, and the space map records
+/// the edge on 40/40 of the members it indexes there.
+///
+/// The `u32` at `+140` is deliberately *not* a slot constant: its value
+/// is 48 or 16 in every one of four independent index spaces and resolves
+/// to a different class in each, so it is not a reference
+/// (`2026-09-15-tag-188-members-land-in-jdim-reference-slots.md` §7).
 const IGDIMENSION_MEASURED_SLOT: usize = 92;
-
-/// Payload offset of the reference to the group / constraint / attribute
-/// set this dimension belongs to (`0x0058 JDimGroup`,
-/// `0x0085 Vertical Constraint`, `0x0114 JSheet`, `0x0089 FreeFormAttrSet`).
-const IGDIMENSION_OWNER_SLOT: usize = 140;
 
 /// Bytes one reference slot occupies: the `u32` oid and the marker word
 /// behind it.
@@ -7486,16 +7498,17 @@ const IGDIMENSION_SLOT_LEN: usize = 6;
 /// that fits inside the main area.
 pub const IGDIMENSION_MIN_PAYLOAD_LEN: usize = IGDIMENSION_MEASURED_SLOT + IGDIMENSION_SLOT_LEN;
 
-/// One reference slot of a [`SheetIgDimensionDecoded`]: the `u32` and the
-/// marker word that follows it, both verbatim.
+/// The measured-geometry slot of a [`SheetIgDimensionDecoded`]: the `u32`
+/// and the marker word that follows it, both verbatim.
 ///
 /// Deliberately *not* resolved. Whether `oid` names an object of the same
 /// storage is the caller's question — a decoder that answered it would
 /// need the whole stream and would turn "this file is unusual" into "this
-/// record is invalid". The marker is carried for the same reason: it pairs
-/// perfectly with the target class at the measured slot (`0x00CB` ↔ line
-/// 20/20, `0x00F0` ↔ point 4/4) and not at all at the owner slot, and a
-/// decoder that assumed the first rule would refuse the second case.
+/// record is invalid". The marker is carried rather than validated for
+/// the same reason: it pairs perfectly with the target class in the corpus
+/// (`0x00CB` ↔ line 31/31, `0x00F0` ↔ point 8/8), but a decoder that
+/// enforced the pairing would refuse the first file that names a third
+/// class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SheetIgDimensionRef {
     /// The `u32` in the slot, as stored.
@@ -7506,13 +7519,14 @@ pub struct SheetIgDimensionRef {
 
 /// One decoded PSM `igDimension` / `JDim` record (type `0x0115`).
 ///
-/// Carries only the fields §7 of the analysis marks as read: the frame,
-/// the dimension kind, the value, and the two reference slots. The rest of
-/// the record — the `+20` remap code, the `+22` word the native reader
-/// stores without interpreting, the other sixteen bits of `+26`, the three
-/// suspected-tolerance doubles, and the whole point/axis grammar after
-/// `+82` — is either dropped or travels verbatim in [`Self::raw_tail`].
-/// None of it is guessed at.
+/// Carries only the fields the two analyses mark as read: the frame, the
+/// dimension kind, the value, the measured-geometry slot and the group the
+/// closing dword names. The rest of the record — the `+20` remap code, the
+/// `+22` word the native reader stores without interpreting, the other
+/// sixteen bits of `+26`, the three suspected-tolerance doubles, the
+/// `+140` word that is not a reference, and the whole point/axis grammar
+/// after `+82` — is either dropped or travels verbatim in
+/// [`Self::raw_tail`]. None of it is guessed at.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetIgDimensionDecoded {
     /// Byte range covering the full PSM record (6-byte envelope +
@@ -7543,17 +7557,22 @@ pub struct SheetIgDimensionDecoded {
     /// `main_len` at payload offset 30: the bytes the record's main area
     /// spans, starting at [`IGDIMENSION_FRAME_PREFIX_LEN`].
     pub main_len: u32,
-    /// The closing `u32` at `34 + main_len`, present exactly when the
-    /// `+26` flag word has [`IGDIMENSION_TAIL_WORD_FLAG`] set.
-    pub tail_word: Option<u32>,
+    /// Oid of the `0x0058 JDimGroup` this dimension belongs to: the
+    /// closing `u32` at `34 + main_len`, present exactly when the `+26`
+    /// flag word has [`IGDIMENSION_TAIL_WORD_FLAG`] set.
+    ///
+    /// Where the word sits is the native reader's arithmetic; what it
+    /// holds is corpus evidence, cross-checked from the group's side —
+    /// 13/13 resolve to a `JDimGroup` and the group's member table names
+    /// the dimension back on all six groups
+    /// (`2026-09-15-tag-188-members-land-in-jdim-reference-slots.md` §6).
+    /// Not resolved here, for the reasons on [`SheetIgDimensionRef`].
+    pub group_ref: Option<u32>,
     /// The dimension value in metres, payload offset 42.
     pub value_m: f64,
     /// Reference to the geometry this dimension measures (payload
     /// offset 92).
     pub measured: SheetIgDimensionRef,
-    /// Reference to the owning group / constraint / attribute set
-    /// (payload offset 140), when the main area reaches that far.
-    pub owner: Option<SheetIgDimensionRef>,
     /// The block area verbatim: payload `+82 .. 34 + main_len`.
     ///
     /// Everything the reference slots sit in — the section count, the
@@ -7640,7 +7659,8 @@ impl PsmRecordDecoder for IgDimensionDecoder {
 }
 
 /// Family-specific payload validation for `igDimension`: the frame
-/// equation, the dimension kind, and the two reference slots.
+/// equation, the dimension kind, the measured-geometry slot and the
+/// closing group reference.
 fn decode_igdimension_payload(
     data: &[u8],
     offset: usize,
@@ -7697,20 +7717,12 @@ fn decode_igdimension_payload(
         return None;
     }
 
-    let slot_at = |pos: usize| -> Option<SheetIgDimensionRef> {
-        Some(SheetIgDimensionRef {
-            oid: read_u32(pos)?,
-            marker: read_u16(pos + 4)?,
-        })
-    };
-    let measured = slot_at(IGDIMENSION_MEASURED_SLOT)?;
-    let owner = if main_end >= IGDIMENSION_OWNER_SLOT + IGDIMENSION_SLOT_LEN {
-        slot_at(IGDIMENSION_OWNER_SLOT)
-    } else {
-        None
+    let measured = SheetIgDimensionRef {
+        oid: read_u32(IGDIMENSION_MEASURED_SLOT)?,
+        marker: read_u16(IGDIMENSION_MEASURED_SLOT + 4)?,
     };
 
-    let tail_word = if tail_len == 0 {
+    let group_ref = if tail_len == 0 {
         None
     } else {
         Some(read_u32(main_end)?)
@@ -7730,10 +7742,9 @@ fn decode_igdimension_payload(
         sub_type_word: read_u16(12)?,
         kind,
         main_len,
-        tail_word,
+        group_ref,
         value_m,
         measured,
-        owner,
         raw_tail,
     })
 }
@@ -7746,8 +7757,9 @@ mod jdim_family_tests {
     /// they sit on disk — record `[1]` of
     /// `cargo run --example probe_jdim_bytes`. Flags `0x0351`,
     /// `main_len` 160, so the frame is `34 + 160 + 4 = 198`; the value is
-    /// 35.56 mm, the measured slot names line 56 and the owner slot names
-    /// the vertical constraint 48.
+    /// 35.56 mm, the measured slot names line 56 and the closing word
+    /// names `JDimGroup` 28. The `48` at `+140` is the constant that is
+    /// not a reference.
     ///
     /// Sixteen bytes to the row, so a row here is a row of that dump.
     #[rustfmt::skip]
@@ -7765,9 +7777,9 @@ mod jdim_family_tests {
         // +96   marker 0x00CB -- the line class
         0xCB, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0xE8, 0x48, 0x2E,
         0xFF, 0x21, 0xC5, 0x3F, 0x87, 0x3D, 0xED, 0xF0, 0xD7, 0x64, 0xC1, 0x3F, 0xA8, 0xE8, 0x48, 0x2E,
-        // +128                                                      owner slot at +140
+        // +128                                                      +140 = 48, not a reference
         0xFF, 0x21, 0xC5, 0x3F, 0x87, 0x3D, 0xED, 0xF0, 0xD7, 0x64, 0xC1, 0x3F, 0x30, 0x00, 0x00, 0x00,
-        // +144  marker 0x0067 -- the assoc element list
+        // +144  0x0067 behind it -- the assoc element list code, unread
         0x67, 0x00, 0xA8, 0xE8, 0x48, 0x2E, 0xFF, 0x21, 0xC5, 0x3F, 0x87, 0x3D, 0xED, 0xF0, 0xD7, 0x64,
         0xC1, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0xF0, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xDA, 0x6D, 0x17, 0x9A, 0xEB, 0x34,
@@ -7820,7 +7832,7 @@ mod jdim_family_tests {
     }
 
     #[test]
-    fn a_real_jdim_reads_its_frame_value_and_both_reference_slots() {
+    fn a_real_jdim_reads_its_frame_value_measured_slot_and_group() {
         let stream = chain(&[canonical()]);
         let decoded = decode_igdimensions(&stream);
         assert_eq!(decoded.len(), 1);
@@ -7836,7 +7848,11 @@ mod jdim_family_tests {
         assert_eq!(jdim.sub_type_word, 0);
         assert_eq!(jdim.kind, IGDIMENSION_KIND_LINEAR);
         assert_eq!(jdim.main_len, 160);
-        assert_eq!(jdim.tail_word, Some(28));
+        assert_eq!(
+            jdim.group_ref,
+            Some(28),
+            "the JDimGroup whose member table lists 18, 19 and 24"
+        );
 
         // 35.56 mm, which is 1.4 inches.
         assert!((jdim.value_m - 0.035_56).abs() < 1e-12, "{}", jdim.value_m);
@@ -7849,21 +7865,16 @@ mod jdim_family_tests {
             },
             "the line this dimension measures"
         );
-        assert_eq!(
-            jdim.owner,
-            Some(SheetIgDimensionRef {
-                oid: 48,
-                marker: 0x0067
-            }),
-            "the vertical constraint it belongs to"
-        );
 
-        // `+82 .. 34 + 160`, verbatim and nothing more.
+        // `+82 .. 34 + 160`, verbatim and nothing more — the `48` at
+        // `+140` is in here and nowhere else.
         assert_eq!(jdim.raw_tail.len(), 194 - IGDIMENSION_BLOCK_AREA_START);
         assert_eq!(
             jdim.raw_tail.as_slice(),
             &CANONICAL_JDIM_PAYLOAD[IGDIMENSION_BLOCK_AREA_START..194]
         );
+        let plus_140 = 140 - IGDIMENSION_BLOCK_AREA_START;
+        assert_eq!(&jdim.raw_tail[plus_140..plus_140 + 4], &48u32.to_le_bytes());
     }
 
     #[test]
@@ -7931,12 +7942,14 @@ mod jdim_family_tests {
     }
 
     #[test]
-    fn the_tail_word_follows_bit_0x0100_and_not_bit_0x0200() {
-        // `0x0051` is a corpus flag word with neither bit: no tail.
+    fn the_group_reference_follows_bit_0x0100_and_not_bit_0x0200() {
+        // `0x0051` is a corpus flag word with neither bit: no tail, and
+        // so no group — the three 194-byte records of `DWG-0201` and
+        // `A01` are exactly the ones no `JDimGroup` lists.
         let stream = chain(&[canonical_resized(160, 0x0051)]);
         let decoded = decode_igdimensions(&stream);
         assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].tail_word, None);
+        assert_eq!(decoded[0].group_ref, None);
         assert_eq!(decoded[0].bytes_to_follow, 194);
 
         // `0x0200` alone still means no tail — the corpus cannot separate
@@ -7944,17 +7957,18 @@ mod jdim_family_tests {
         let stream = chain(&[canonical_resized(160, 0x0251)]);
         let decoded = decode_igdimensions(&stream);
         assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].tail_word, None);
+        assert_eq!(decoded[0].group_ref, None);
     }
 
     #[test]
-    fn the_owner_slot_is_absent_when_the_main_area_stops_short_of_it() {
-        // 34 + 111 = 145: the measured slot fits, the owner slot does not.
+    fn a_main_area_that_stops_short_of_plus_140_still_decodes() {
+        // 34 + 111 = 145: the measured slot fits, the `+140` word does
+        // not. Nothing depends on it, so the record decodes and the raw
+        // tail simply ends where the main area does.
         let stream = chain(&[canonical_resized(111, 0x0051)]);
         let decoded = decode_igdimensions(&stream);
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].measured.oid, 56);
-        assert_eq!(decoded[0].owner, None);
         assert_eq!(
             decoded[0].raw_tail.len(),
             145 - IGDIMENSION_BLOCK_AREA_START

@@ -347,9 +347,9 @@ fn exercise_all_parsers(input: &[u8]) {
 
     // Phase 32-J2: PSM `0x0115` igDimension / JDim. The record's own
     // `main_len` decides where its main area ends and whether a closing
-    // word follows, and two reference slots are read at fixed offsets
-    // inside that area — so a lying length must reject the record rather
-    // than index past the payload.
+    // word follows, and the measured-geometry slot is read at a fixed
+    // offset inside that area — so a lying length must reject the record
+    // rather than index past the payload.
     let _ = decode_igdimensions(input);
     let _ = decode_igdimension_at(input, 0);
     if !input.is_empty() {
