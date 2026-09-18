@@ -36,9 +36,9 @@
 use super::sheet::SheetGeometry;
 use crate::parsers::sheet_records::{
     decode_attribute_fragments, decode_dependency_objects, decode_igboundaries, decode_igbspcurves,
-    decode_iglines, decode_iglinestrings, decode_igpoints, decode_igrectangles, decode_igsymbols,
-    decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines, decode_smartframes,
-    decode_sub_records_0x0010,
+    decode_igdimensions, decode_iglines, decode_iglinestrings, decode_igpoints,
+    decode_igrectangles, decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides,
+    decode_primitive_lines, decode_smartframes, decode_sub_records_0x0010,
 };
 
 /// Byte-audit claim class for a family's decoded byte envelopes.
@@ -399,6 +399,31 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
                 .collect()
         },
     },
+    // A driving dimension constrains a parametric body's geometry; it is
+    // not a stroke of it, and the file keeps every one on a `Dimension`
+    // layer it has switched off. Decoded so it stops being a silent drop
+    // and its refusals get counted, emitting nothing (plan D2).
+    SheetRecordFamily {
+        name: "igDimension",
+        type_code: 0x0115,
+        emits_geometry: false,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_igdimensions",
+        model_dto: "DecodedIgDimensionRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_igdimensions = decode_igdimensions(data)
+                .into_iter()
+                .map(Into::into)
+                .collect();
+        },
+        record_count: |geometry| geometry.decoded_igdimensions.len(),
+        decoded_ranges: |data| {
+            decode_igdimensions(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
 ];
 
 /// True when no family has any decoded records on `geometry`
@@ -442,8 +467,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_fourteen_rows_with_unique_fields() {
-        assert_eq!(SHEET_RECORD_FAMILIES.len(), 14);
+    fn registry_has_fifteen_rows_with_unique_fields() {
+        assert_eq!(SHEET_RECORD_FAMILIES.len(), 15);
         let mut fields: Vec<&str> = SHEET_RECORD_FAMILIES
             .iter()
             .map(|f| f.geometry_field)
@@ -452,7 +477,7 @@ mod tests {
         fields.dedup();
         assert_eq!(
             fields.len(),
-            14,
+            15,
             "every registry row must own a distinct SheetGeometry field"
         );
     }

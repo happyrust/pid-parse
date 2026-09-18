@@ -104,6 +104,44 @@ pub struct PidSymbolDefinition {
     /// The body, in on-disk record order within each family: circles, arcs,
     /// lines, polylines, then text.
     pub primitives: Vec<crate::symbol_library::SymbolPrimitive>,
+    /// The driving dimensions that constrain this body, in on-disk order.
+    /// Not primitives: a dimension is a value the parametric body is
+    /// resized by, not a stroke of it, and the file keeps every one on a
+    /// layer it has switched off. Empty for a body that is not parametric.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dimensions: Vec<PidSymbolDimension>,
+}
+
+/// One driving dimension of an embedded symbol body: a `0x0115` `JDim`
+/// record of the definition cache, read down to what is backed
+/// (`docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`
+/// §7, `docs/analysis/2026-09-15-tag-188-members-land-in-jdim-reference-slots.md`
+/// §10).
+///
+/// The value is the dimension's own; the geometry it measures is named by
+/// oid and, when that oid is an `igLine2d` of the same body, resolved to the
+/// line's two endpoints in the symbol's local coordinates. A dimension on a
+/// point, or on a record this crate does not carry for the cache, keeps its
+/// oid and no endpoints — nothing is guessed at.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PidSymbolDimension {
+    /// Storage-local oid of the dimension record.
+    pub oid: u32,
+    /// Storage-local oid of the `JSheetLayer` it sits on — a layer named
+    /// `Dimension` on every corpus record, switched off by the file.
+    pub sheet_layer_ref: u32,
+    /// The dimension value, metres.
+    pub value_m: f64,
+    /// Storage-local oid of the geometry this dimension measures.
+    pub measured_oid: u32,
+    /// The two endpoints of the measured `igLine2d`, symbol-local metres,
+    /// when the oid resolves to a line of this body's storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<[(f64, f64); 2]>,
+    /// Storage-local oid of the `0x0058 JDimGroup` the dimension belongs
+    /// to, when the record carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_ref: Option<u32>,
 }
 
 /// One group of undecoded graphic-class PSM records in one Sheet stream:
@@ -716,10 +754,10 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         };
         warnings.push(format!(
             "{records} record(s) ({circles} circles, {arcs} arcs, {lines} lines, {polylines} \
-             line strings, {texts} texts, {rectangles} rectangles, {bsplines} B-splines) decoded \
-             in {path}/PSMcluster0 are symbol bodies in symbol-local coordinates, grouped into \
-             {bodies} definition(s) reachable through the placements that name them; they are \
-             not page content",
+             line strings, {texts} texts, {rectangles} rectangles, {bsplines} B-splines, \
+             {dimensions} dimensions) decoded in {path}/PSMcluster0 are symbol bodies in \
+             symbol-local coordinates, grouped into {bodies} definition(s) reachable through the \
+             placements that name them; they are not page content",
             records = nested.len(),
             circles = nested.circles.len(),
             arcs = nested.arcs.len(),
@@ -728,6 +766,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
             texts = nested.texts.len(),
             rectangles = nested.rectangles.len(),
             bsplines = nested.bsplines.len(),
+            dimensions = nested.dimensions.len(),
             path = site.path,
             bodies = nested.definitions.len(),
         ));
@@ -1211,6 +1250,27 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     knots: curve.knots.clone(),
                 });
             }
+            // Dimensions are not primitives: they constrain the body
+            // rather than draw it. The measured line is looked up in the
+            // same storage; a point, or anything the cache reader does not
+            // carry, keeps its oid and no endpoints.
+            let dimensions = nested
+                .dimensions
+                .iter()
+                .filter(|d| on_body(d.sheet_layer_ref))
+                .map(|d| PidSymbolDimension {
+                    oid: d.oid,
+                    sheet_layer_ref: d.sheet_layer_ref,
+                    value_m: d.value_m,
+                    measured_oid: d.measured_oid,
+                    endpoints: nested
+                        .lines
+                        .iter()
+                        .find(|line| line.oid == d.measured_oid)
+                        .map(|line| [(line.start_x, line.start_y), (line.end_x, line.end_y)]),
+                    group_ref: d.group_ref,
+                })
+                .collect();
             out.push(PidSymbolDefinition {
                 reference: PidSymbolDefinitionRef {
                     site: site_id,
@@ -1218,6 +1278,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                 },
                 layers: definition.layers.clone(),
                 primitives,
+                dimensions,
             });
         }
     }
@@ -1372,6 +1433,7 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     &SubRecord0x0010Emitter,
     &AttributeFragmentEmitter,
     &IgRectangle2dEmitter,
+    &IgDimensionEmitter,
 ];
 
 /// `(family name, is_no_op)` for every registered emitter, in table
@@ -2133,6 +2195,29 @@ impl GeometryEmitter for IgRectangle2dEmitter {
     }
 }
 
+/// No-op emitter: an `igDimension` / `JDim` (PSM `0x0115`) is a driving
+/// dimension of a parametric symbol definition — a value the body is
+/// resized by, not a stroke of it. The file agrees: every corpus record
+/// sits on a `Dimension` layer its view filter sets have switched off, and
+/// `SmartPlant` itself draws none of them on a placement (plan D1 / D2,
+/// `docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`
+/// §1). The records reach a consumer through
+/// [`PidSymbolDefinition::dimensions`] instead.
+struct IgDimensionEmitter;
+
+impl GeometryEmitter for IgDimensionEmitter {
+    fn family(&self) -> &'static str {
+        "igDimension"
+    }
+
+    fn is_no_op(&self) -> bool {
+        true
+    }
+
+    fn emit(&self, _ctx: &EmitContext<'_>, _sheet: &SheetStream, _out: &mut Vec<PidGraphicEntity>) {
+    }
+}
+
 /// No-op emitter: attribute fragments (Phase 26 view of `0x0010`)
 /// carry engineering attribute text for audit; they are not placed
 /// text geometry (no decoded insertion point).
@@ -2534,6 +2619,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
+                decoded_igdimensions: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -2638,6 +2724,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
+                decoded_igdimensions: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -2781,6 +2868,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
+                decoded_igdimensions: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -2876,6 +2964,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
+                decoded_igdimensions: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -2942,6 +3031,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
+                decoded_igdimensions: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -3028,6 +3118,7 @@ mod tests {
                 decoded_attribute_fragments: Vec::new(),
                 decoded_igrectangles: Vec::new(),
                 decoded_igbspcurves: Vec::new(),
+                decoded_igdimensions: Vec::new(),
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
@@ -3272,10 +3363,10 @@ mod tests {
             geometry: Some(SheetGeometry {
                 undecoded_type_codes: vec![
                     crate::model::SheetUndecodedTypeCode {
-                        type_code: 0x0115,
+                        type_code: 0x0117,
                         count: 3,
                         is_graphic: true,
-                        rad_class_name: Some("igDimension".into()),
+                        rad_class_name: Some("igBalloon".into()),
                     },
                     crate::model::SheetUndecodedTypeCode {
                         type_code: 0x0077,
@@ -3294,14 +3385,14 @@ mod tests {
 
         assert_eq!(geometry.dropped_graphic_records.len(), 1);
         let dropped = &geometry.dropped_graphic_records[0];
-        assert_eq!(dropped.type_code, 0x0115);
+        assert_eq!(dropped.type_code, 0x0117);
         assert_eq!(dropped.count, 3);
         assert_eq!(dropped.stream_path, "/Sheet6");
-        assert_eq!(dropped.rad_class_name.as_deref(), Some("igDimension"));
+        assert_eq!(dropped.rad_class_name.as_deref(), Some("igBalloon"));
         assert!(
             geometry.warnings.iter().any(|warning| {
-                warning.contains("0x0115")
-                    && warning.contains("igDimension")
+                warning.contains("0x0117")
+                    && warning.contains("igBalloon")
                     && warning.contains("3 record(s)")
                     && warning.contains("/Sheet6")
             }),

@@ -167,6 +167,14 @@ pub struct SheetGeometry {
     /// makes of it.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igbspcurves: Vec<DecodedIgBspCurve2dRecord>,
+    /// PSM `0x0115` `igDimension` / `JDim` records emitted by
+    /// [`crate::parsers::sheet_records::decode_igdimensions`]: the driving
+    /// dimensions of a parametric symbol definition. Audit only — the
+    /// corpus keeps every one on a `Dimension` layer the file itself has
+    /// switched off, so nothing here is drawn
+    /// (`docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igdimensions: Vec<DecodedIgDimensionRecord>,
     /// Phase 25-A read-only spatial-distribution analysis of this
     /// sheet's normalized `(x, y)` f64 pairs, emitted by
     /// [`crate::parsers::sheet_records::coordinate_pair_spatial_analysis`].
@@ -919,6 +927,75 @@ impl From<crate::parsers::sheet_records::SheetIgBspCurve2dDecoded> for DecodedIg
             knots: d.knots,
             trailing: d.trailing,
             flags: d.flags,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgDimensionDecoded`] -- PSM type
+/// `0x0115` `igDimension` / `JDim` (`imagdex.dex`), the driving dimension of
+/// a parametric symbol definition.
+///
+/// Carries only what the two analyses mark as read
+/// (`2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`
+/// §7, `2026-09-15-tag-188-members-land-in-jdim-reference-slots.md` §10):
+/// the frame, the kind, the value, the measured-geometry slot and the
+/// group. The block area travels verbatim in [`Self::raw_tail`]; nothing in
+/// it is interpreted.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgDimensionRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference: the definition sheet this dimension belongs to.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this dimension sits on — a layer named
+    /// `Dimension` on every corpus record, switched off by the file.
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator (`0` across the corpus).
+    pub sub_type_word: u16,
+    /// Dimension kind at payload `+14`. Only linear (`1`) decodes; the
+    /// other seven kinds are refused.
+    pub kind: u16,
+    /// `main_len` at payload `+30`: the bytes the main area spans after
+    /// the 34-byte frame prefix.
+    pub main_len: u32,
+    /// Oid of the `0x0058 JDimGroup` this dimension belongs to — the
+    /// closing word at `34 + main_len`, present when the `+26` flag word
+    /// has bit `0x0100` set. Unresolved; storage-local.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub group_ref: Option<u32>,
+    /// The dimension value in metres.
+    pub value_m: f64,
+    /// Storage-local oid of the geometry this dimension measures (an
+    /// `igLine2d` or `igPoint2d` of the same storage on the corpus).
+    pub measured_oid: u32,
+    /// The marker word behind the measured slot, verbatim (`0x00CB` on
+    /// lines, `0x00F0` on points across the corpus).
+    pub measured_marker: u16,
+    /// The block area verbatim, payload `+82 .. 34 + main_len`.
+    pub raw_tail: Vec<u8>,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgDimensionDecoded> for DecodedIgDimensionRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgDimensionDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
+            sub_type_word: d.sub_type_word,
+            kind: d.kind,
+            main_len: d.main_len,
+            group_ref: d.group_ref,
+            value_m: d.value_m,
+            measured_oid: d.measured.oid,
+            measured_marker: d.measured.marker,
+            raw_tail: d.raw_tail,
         }
     }
 }

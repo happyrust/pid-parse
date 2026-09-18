@@ -785,6 +785,7 @@ mod tests {
                 decoded_attribute_fragments: vec![],
                 decoded_igrectangles: vec![],
                 decoded_igbspcurves: vec![],
+                decoded_igdimensions: vec![],
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],

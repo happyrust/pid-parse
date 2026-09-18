@@ -812,6 +812,14 @@ pub struct JSiteNestedGeometry {
     /// `0x005D` `igBspCurve2d` records, in on-disk order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bsplines: Vec<DecodedIgBspCurve2dRecord>,
+    /// `0x0115` `igDimension` / `JDim` records, in on-disk order: the
+    /// driving dimensions of the parametric bodies. Audit only — every
+    /// corpus record sits on a `Dimension` layer the file has switched off,
+    /// and a dimension is a constraint on the body's geometry, not a stroke
+    /// of it. What each one measures is the `igLine2d` (or `igPoint2d`) its
+    /// `measured_oid` names in the same storage.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dimensions: Vec<DecodedIgDimensionRecord>,
     /// Oid of every `0x0114` `JSheet` in the storage, in on-disk order. The
     /// first is the storage's own base sheet; each of the rest is one body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -829,7 +837,8 @@ impl JSiteNestedGeometry {
     }
 
     /// How many records the site holds, all families together (the
-    /// rectangles included, though they draw through their edges).
+    /// rectangles included, though they draw through their edges, and the
+    /// dimensions, though they draw nothing).
     pub fn len(&self) -> usize {
         self.circles.len()
             + self.arcs.len()
@@ -838,6 +847,7 @@ impl JSiteNestedGeometry {
             + self.texts.len()
             + self.rectangles.len()
             + self.bsplines.len()
+            + self.dimensions.len()
     }
 
     /// The body one `JSheet` of this storage holds, if the sheet resolved to

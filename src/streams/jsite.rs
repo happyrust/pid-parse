@@ -69,9 +69,9 @@ fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
 /// not read: they draw nothing.
 fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
     use crate::parsers::sheet_records::{
-        decode_igarc_at, decode_igbspcurve_at, decode_igcircle_at, decode_igline_at,
-        decode_iglinestring_at, decode_igrectangle_at, decode_igtextbox_at, jsheet_oids,
-        sheet_record_starts,
+        decode_igarc_at, decode_igbspcurve_at, decode_igcircle_at, decode_igdimension_at,
+        decode_igline_at, decode_iglinestring_at, decode_igrectangle_at, decode_igtextbox_at,
+        jsheet_oids, sheet_record_starts,
     };
     let mut out = JSiteNestedGeometry {
         sheets: jsheet_oids(data),
@@ -92,6 +92,8 @@ fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
             out.rectangles.push(rectangle.into());
         } else if let Some(curve) = decode_igbspcurve_at(data, at) {
             out.bsplines.push(curve.into());
+        } else if let Some(dimension) = decode_igdimension_at(data, at) {
+            out.dimensions.push(dimension.into());
         }
     }
     out

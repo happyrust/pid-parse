@@ -4145,6 +4145,174 @@ fn rectangles_own_their_edges_and_the_bspline_reaches_its_body() {
     }
 }
 
+/// Ratchet for plan J2 (`OpenCADStudio/docs/plans/2026-09-07-jdim-driving-dimensions-and-layer-panel.md`):
+/// the `0x0115` `JDim` records are the driving dimensions of the parametric
+/// symbol bodies, and the definition cache now carries them instead of
+/// stepping over them in silence.
+///
+/// Corpus: 18 records — D06 5 / DWG-0201 5 / DWG-0202 0 / 工艺 4, plus 4 in
+/// the A01 export (soft-skipped with its fixture). Every one sits in a
+/// `/JSite<N>/PSMcluster0` on a layer named `Dimension`, its `parent_ref` is
+/// a `JSheet` of that storage (a body some placement names, or the template
+/// body no placement does, like `/JSite329`'s sheet 49), its value is a
+/// multiple of 0.05 inch, and the geometry it measures is a line or point
+/// of the same storage
+/// (`docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`,
+/// `docs/analysis/2026-09-15-tag-188-members-land-in-jdim-reference-slots.md`).
+/// Nothing is drawn: the family emits no entity, so the golden snapshot is
+/// untouched by design.
+#[test]
+fn jdims_are_the_driving_dimensions_of_parametric_bodies() {
+    const EXPECTED: &[(&str, usize)] = &[
+        ("D06.pid", 5),
+        ("DWG-0201GP06-01.pid", 5),
+        ("DWG-0202GP06-01.pid", 0),
+        ("工艺管道及仪表流程-1.pid", 4),
+        ("export-test/publish-data/A01/A01.pid", 4),
+    ];
+    const INCH_M: f64 = 0.0254;
+
+    for (fixture, expected) in EXPECTED {
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+
+        let mut seen = 0usize;
+        for site in &doc.jsites {
+            let Some(nested) = site.nested_geometry.as_ref() else {
+                continue;
+            };
+            let layers = doc.sheet_layers.get(&site.path);
+            let line_oids: std::collections::BTreeSet<u32> =
+                nested.lines.iter().map(|line| line.oid).collect();
+            for dimension in &nested.dimensions {
+                seen += 1;
+                assert_eq!(
+                    dimension.kind, 1,
+                    "{fixture} {}: only linear decodes",
+                    site.path
+                );
+                assert!(
+                    nested.sheets.contains(&dimension.parent_ref),
+                    "{fixture} {}: JDim {} hangs off sheet {}, which is not a JSheet of the storage {:?}",
+                    site.path,
+                    dimension.oid,
+                    dimension.parent_ref,
+                    nested.sheets
+                );
+                if let Some(layers) = layers {
+                    let layer = layers
+                        .iter()
+                        .find(|layer| layer.oid == dimension.sheet_layer_ref)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{fixture} {}: JDim {} sits on layer {}, unknown to the storage",
+                                site.path, dimension.oid, dimension.sheet_layer_ref
+                            )
+                        });
+                    assert_eq!(
+                        layer.name, "Dimension",
+                        "{fixture} {}: JDim {} is on layer {:?}",
+                        site.path, dimension.oid, layer.name
+                    );
+                }
+                // A whole number of twentieths of an inch: 0.15″ … 4.5″ on
+                // the corpus, and the 35.56 mm on D06 is the Parametric
+                // Manifold cache's 35.59 mm rounded.
+                let twentieths = dimension.value_m / INCH_M * 20.0;
+                assert!(
+                    (twentieths - twentieths.round()).abs() < 1e-6 && twentieths > 0.0,
+                    "{fixture} {}: JDim {} value {} m is not a multiple of 0.05 inch",
+                    site.path,
+                    dimension.oid,
+                    dimension.value_m
+                );
+                // The measured slot's marker tells the class; the corpus only
+                // ever writes a line (0x00CB) or a point (0x00F0) there, and a
+                // line is a record of the same storage this crate carries.
+                match dimension.measured_marker {
+                    0x00CB => assert!(
+                        line_oids.contains(&dimension.measured_oid),
+                        "{fixture} {}: JDim {} measures line {}, not a line of the storage",
+                        site.path,
+                        dimension.oid,
+                        dimension.measured_oid
+                    ),
+                    0x00F0 => {}
+                    other => panic!(
+                        "{fixture} {}: JDim {} has an unread measured marker 0x{other:04X}",
+                        site.path, dimension.oid
+                    ),
+                }
+                assert!(
+                    dimension.raw_tail.len() + 82 == 34 + dimension.main_len as usize,
+                    "{fixture} {}: raw tail must span +82 .. 34 + main_len",
+                    site.path
+                );
+            }
+        }
+        assert_eq!(
+            seen, *expected,
+            "{fixture}: driving dimensions decoded out of the definition caches"
+        );
+
+        // The projection files each dimension under exactly one body, with
+        // the measured line resolved to its endpoints, and draws none of them.
+        let projection = pid_parse::build_normalized_geometry(&doc);
+        let filed: usize = projection
+            .symbol_definitions
+            .iter()
+            .map(|body| body.dimensions.len())
+            .sum();
+        assert_eq!(
+            filed, *expected,
+            "{fixture}: every dimension belongs to one definition and none to two"
+        );
+        for body in &projection.symbol_definitions {
+            for dimension in &body.dimensions {
+                assert!(
+                    body.layers.contains(&dimension.sheet_layer_ref),
+                    "{fixture}: dimension {} filed under a body whose layers do not hold it",
+                    dimension.oid
+                );
+                let nested = doc
+                    .jsites
+                    .iter()
+                    .find(|site| site.path == format!("/JSite{}", body.reference.site))
+                    .and_then(|site| site.nested_geometry.as_ref())
+                    .expect("the body's storage");
+                let measures_a_line = nested
+                    .lines
+                    .iter()
+                    .any(|line| line.oid == dimension.measured_oid);
+                assert_eq!(
+                    dimension.endpoints.is_some(),
+                    measures_a_line,
+                    "{fixture}: dimension {} resolves its endpoints exactly when it measures a line",
+                    dimension.oid
+                );
+            }
+        }
+        assert!(
+            !projection.entities.iter().any(|entity| {
+                entity
+                    .source
+                    .stream_path
+                    .as_deref()
+                    .is_some_and(|p| p.contains("PSMcluster0"))
+            }),
+            "{fixture}: nothing from a definition cache is page content"
+        );
+        assert!(
+            projection.warnings.iter().any(|warning| warning
+                .contains(&format!("{expected} dimensions"))
+                || *expected == 0),
+            "{fixture}: the cache summary counts the dimensions: {:?}",
+            projection.warnings
+        );
+    }
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {

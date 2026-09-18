@@ -59,9 +59,9 @@ pub const NATIVE_GRAPHIC_TYPE_CODES: [u16; 20] = [
 /// rules — a different diagnostic than the one this census reports.
 /// `model::sheet_families` asserts this list stays in sync with the family
 /// registry.
-pub const DECODED_TYPE_CODES: [u16; 13] = [
+pub const DECODED_TYPE_CODES: [u16; 14] = [
     0x3FE6, 0x0018, 0x0084, 0x005E, 0x004D, 0x00CE, 0x0013, 0x003D, 0x00FA, 0x0030, 0x0010, 0x0020,
-    0x005D,
+    0x005D, 0x0115,
 ];
 
 /// True when `SmartPlant`'s native graphic predicate accepts `type_code`,
@@ -304,14 +304,34 @@ mod tests {
     }
 
     #[test]
-    fn an_igdimension_record_is_counted_as_a_graphic_drop() {
-        let data = record(0x0115, 8);
+    fn an_igballoon_record_is_counted_as_a_graphic_drop() {
+        let data = record(0x0117, 8);
 
         let census = undecoded_type_code_census(&data, &[]);
 
         assert_eq!(
             census,
             vec![UndecodedTypeCodeCount {
+                type_code: 0x0117,
+                count: 1,
+                is_graphic: true,
+                rad_class_name: Some("igBalloon"),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_refused_igdimension_is_a_refusal_and_not_a_missing_decoder() {
+        // `0x0115` had a decoder from 2026-09-15 on. A dimension whose shape
+        // that decoder refuses (here: eight zero bytes, far too short for
+        // the frame) must show up as a refusal — "re-measure the decoder
+        // you have" — and never again as "write a decoder".
+        let data = record(0x0115, 8);
+
+        assert!(undecoded_type_code_census(&data, &[]).is_empty());
+        assert_eq!(
+            refused_record_census(&data, &[]),
+            vec![RefusedRecordCount {
                 type_code: 0x0115,
                 count: 1,
                 is_graphic: true,
@@ -333,7 +353,7 @@ mod tests {
 
     #[test]
     fn claimed_ranges_and_known_family_codes_are_skipped() {
-        let mut data = record(0x0115, 8);
+        let mut data = record(0x0118, 8);
         let second_start = data.len();
         data.extend(record(0x0018, 8)); // known family code, unclaimed
         data.extend(record(0x0117, 8));
@@ -341,7 +361,7 @@ mod tests {
         let claimed: Vec<Range<usize>> = std::iter::once(0..14).collect();
         let census = undecoded_type_code_census(&data, &claimed);
 
-        // 0x0115 is claimed, 0x0018 has a typed decoder, 0x0117 remains.
+        // 0x0118 is claimed, 0x0018 has a typed decoder, 0x0117 remains.
         assert_eq!(census.len(), 1);
         assert_eq!(census[0].type_code, 0x0117);
         assert_eq!(census[0].count, 1);
@@ -386,7 +406,7 @@ mod tests {
         // decoder", the other "has none". A record that answered neither is
         // what went missing for two phases.
         let mut data = record(0x0018, 50); // decoded family, unclaimed
-        data.extend(record(0x0115, 8)); // no decoder, graphic
+        data.extend(record(0x0117, 8)); // no decoder, graphic
         data.extend(record(0x0077, 8)); // no decoder, not graphic
 
         let undecoded: usize = undecoded_type_code_census(&data, &[])
@@ -446,7 +466,7 @@ mod tests {
     fn a_header_without_a_valid_continuation_is_not_counted() {
         // Plausible header whose bytes_to_follow lands mid-buffer on garbage
         // that is not a header and not end-of-stream.
-        let mut data = record(0x0115, 8);
+        let mut data = record(0x0117, 8);
         data.extend_from_slice(&[0xAA; 5]); // trailing garbage, no header
 
         let census = undecoded_type_code_census(&data, &[]);
