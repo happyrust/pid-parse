@@ -30,6 +30,11 @@ tag-188 46 条逐条对槽（40 落槽 + 2 假命中 + 6 组共享；尾字 = �
 `the_parametric_chain_closes_on_the_template_not_on_the_placed_instance`。见
 `docs/analysis/2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md`。按 D7 下一项 L3。
 
+**2026-09-18 · 同一计划 L3 落地（OCS 侧，pid-parse 无改动）**：OpenCADStudio `d0750567`——`OCS_PID_LAYER_MODE=sheet`
+时实体图层槽 = `PidSourceLayer` 的图纸图层名原样、图层表 = `sheet_layers["/"]` 的全部名字并按 `displayed` 设初值；
+默认仍是 `PID-*` 合成层。**该计划 D7 的七项（L2 → L1 → J1 → J2 → J3 → L3 → T）到此全部落地**；还开着的登记在计划
+D7 结算行（J 线的 OCS 消费口径、默认翻转、放置实例参数在文件何处）。pid-parse 侧下一步待新计划。
+
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
 `sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给
