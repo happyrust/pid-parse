@@ -17,6 +17,13 @@
 `docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`。
 按 D7 下一项 J2（JDim 解码器与缓存本体证据）——但 J1 留下的 raw 栏决定它只能带坐实字段。
 
+**2026-09-15 → 09-18 · 同一计划 J2 落地**：`0x0115` 有了解码器（只收种类 1，其余拒收；`15aa915`），
+tag-188 46 条逐条对槽（40 落槽 + 2 假命中 + 6 组共享；尾字 = 所属 `JDimGroup`；`+140` 不是引用，
+09-14 那条「归属」读法撤下；`41350ab`），DTO 定形为帧 / 种类 / 值 / `+92` / `group_ref` / `raw_tail`
+（`70554b0`），注册进 `SHEET_RECORD_FAMILIES`（不画）并挂进定义缓存与 `PidSymbolDefinition::dimensions`
+（值 + 被量线两端点 + 图层；`ca1fffa`）。棘轮 D06 5 / 0201 5 / 0202 0 / 工艺 4 / A01 4。见
+`docs/analysis/2026-09-15-tag-188-members-land-in-jdim-reference-slots.md`。按 D7 下一项 J3（参数化链闭环）。
+
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
 `sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给

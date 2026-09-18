@@ -415,7 +415,7 @@ RTTI / COM 类工厂），**等级：native-reader**。
 | `0x00CE` | JSymbol | 已解码 |
 | `0x00FA` | **Dependency Object** | 仅解 header，尾部 raw |
 | `0x00FF` | Graphics Bag | 语料 0 命中 |
-| `0x0115` | JDim（驱动尺寸）| **18 条**（四主图 14 + A01 4），全在嵌套符号定义缓存的 `Dimension` 层上（该层文件状态为关）。帧已解：`payload = 34 + main_len(+30) + 尾字`（尾字仅当 `+26` 标志字含 `0x0100`），18/18 收尾；`+14` 是尺寸种类（8 种，语料只出现 1）、`+42` 是尺寸值、`+92` 指向被量的几何。**无解码器，仍会丢弃**；见 `docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md` |
+| `0x0115` | JDim（驱动尺寸）| **18 条**（四主图 14 + A01 4），全在嵌套符号定义缓存的 `Dimension` 层上（该层文件状态为关）。**已解码（2026-09-18，`decode_igdimensions`）**：帧 `payload = 34 + main_len(+30) + 尾字`（尾字仅当 `+26` 标志字含 `0x0100`）18/18 收尾；`+14` 尺寸种类（8 种，只收种类 1，其余拒收）、`+42` 尺寸值、`+92` 被量的几何（Line / Point，标记字标类）、尾字 = 所属 `JDimGroup` 的 oid；`+82` 起块区留 `raw_tail`，`+140` **不是引用**。挂在 `JSiteNestedGeometry::dimensions` 与 `PidSymbolDefinition::dimensions`（值 + 被量线的两端点 + 图层），**按 D2 不画**；见 `docs/analysis/2026-09-14-jdim-is-a-framed-record-whose-blocks-follow-the-dimension-kind.md`、`2026-09-15-tag-188-members-land-in-jdim-reference-slots.md` |
 | `0x0117` / `0x0118` | JBalloon / JLeader | **语料 0 命中，会静默丢弃** |
 
 **约束族（不是几何，永不可画）**
@@ -664,7 +664,7 @@ payload 113 / 115 字节是 `has_membassy = 0` 的形状，121 / 123 是 1 的�
 | `0x0084` | 137 | LineString | | `0x0081` JSheetLayer（290，图层不在图层上）|
 | `0x00CE` | 109 | JSymbol | | `0x0114` JSheet、`0x0076` SheetView |
 | `0x0013` | 24 | Boundary2d | | `0x002C`/`0x002D`/`0x002E` 等样式族 |
-| `0x0115` | 14 | JDim（标注）| | 其余四十余个家族 |
+| `0x0115` | 14 | JDim（驱动尺寸，2026-09-18 起解码、不画）| | 其余四十余个家族 |
 | `0x0059` | 12 | **Circle** | | |
 | `0x0061` | 12 | **Arc** | | |
 | `0x003D` | 10 | SmartFrame2d | | |
@@ -1210,8 +1210,9 @@ JStyleMultiplexer 这种名字最像 resolver 的类根本没落盘，剩下的�
 
 ### 8.4 未解码的族
 
-`0x0010`（638 次命中，语义未定）、`0x00FA` 尾部、`0x0115` JDim（14 条、坐在图层上、
-无解码器）、以及 Ellipse / ComplexString（语料 0 命中）。
+`0x0010`（638 次命中，语义未定）、`0x00FA` 尾部、以及 Ellipse / ComplexString（语料 0 命中）。
+`0x0115` JDim 原先也在这一行（14 条、坐在图层上、无解码器），2026-09-18 起有解码器（见 §4 对照表的 `0x0115` 行），
+块内文法仍留 raw。
 
 **订正（2026-09-07）**：先前这里写的「语料 0 命中的曲线族」是采样偏差——只查了顶层
 `Sheet*` 流。`aux_hi` 名册（§5.1）显示圆 12 / 弧 12 / 矩形 3 / B 样条 1 全在嵌套

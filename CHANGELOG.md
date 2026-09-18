@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### `0x0115 JDim` 有解码器了：驱动尺寸进符号本体，不画（2026-09-15 → 2026-09-18）
+
+- **解码器** `decode_igdimensions` / `IgDimensionDecoder`（`src/parsers/sheet_records.rs`，`15aa915`）：
+  帧按 `radsrvitem` 的算术收尾（`34 + main_len + 尾字(0x0100)`），只收尺寸种类 1 且块首无 `0x2000`
+  的记录，**其余七种与 80 字节块拒收不猜**；DTO 只带帧 / `+14` 种类 / `+42` 值 / `+92` 被量的几何
+  （oid + 标记字，不解析）/ 尾字 / `raw_tail(+82..)`。18/18 语料记录解开。
+- **tag-188 逐条核对**（`examples/probe_tag188_members_land_in_jdim_slots.rs`，
+  `docs/analysis/2026-09-15-tag-188-members-land-in-jdim-reference-slots.md`）：46 条成员 = 40 落槽
+  （`+92` / `+202` / `+280`，槽预言类零反例）+ 2 假命中（f64 指数字节 `0x3F`）+ 6 组共享（同组兄弟尺寸
+  量的几何，6/6）；**尾字 = 所属 `JDimGroup` 的 oid**（13/13 解到组，组成员表回指 6/6）；
+  **`+140` 不是引用**（四个存储里只取 48 / 16、解到的类各不相同、A01 解不到），09-14 的「归属」读法撤下。
+  `rad_class_name()` 补 `0x0058 / 0x0067 / 0x0089 / 0x008C / 0x0114` 五个名字。
+- **DTO 定形**（`70554b0`）：`owner` 字段去掉（字节留在 `raw_tail`），`tail_word` 改名 `group_ref`。
+- **注册与挂接**（`ca1fffa`）：`SHEET_RECORD_FAMILIES` 加 `igDimension` 行（`emits_geometry: false`），
+  `DECODED_TYPE_CODES` 13 → 14，被拒收的 JDim 从此计入拒收普查而不是「缺解码器」；
+  `IgDimensionEmitter` 是登记在册的空发射器（D2 不画）。定义缓存 `decode_nested_geometry` 走同一记录链门
+  收 `0x0115`，挂 `JSiteNestedGeometry::dimensions`，缓存汇总 warning 多一格 `{n} dimensions`；
+  每个 `PidSymbolDefinition` 带 `dimensions: Vec<PidSymbolDimension>`（值、图层、被量 oid、被量线的两端点
+  ——只在 `+92` 解到同存储的 `igLine2d` 时给，点不给——以及 `group_ref`），**不进 `primitives`**。
+- **棘轮** `jdims_are_the_driving_dimensions_of_parametric_bodies`：D06 5 / 0201 5 / 0202 0 / 工艺 4
+  （A01 4 软跳）；`parent_ref` 是本存储的 `JSheet`、图层名 `Dimension`、值是 0.05″ 的整倍、`0x00CB` 槽指向
+  缓存里的线、每条恰归一个本体、量线的才有端点、缓存内容不上页。golden 快照不变，渲染缺口普查不变。
+
 ### `0x0115 JDim` 的帧解开了，块长随尺寸种类走（2026-09-14）
 
 - **字节探针** `examples/probe_jdim_bytes.rs`：18 条 JDim（四主图 14 + A01 4，DWG-0202 无）
