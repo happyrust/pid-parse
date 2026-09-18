@@ -76,6 +76,11 @@ pub fn is_native_graphic_type_code(type_code: u16) -> bool {
 /// The three annotation families use their `ig*` class-table names
 /// (`radsrvitem.dll!sub_56448F70`), which are better evidenced than the
 /// same-GUID-family RAD names that registry flags as low-confidence.
+///
+/// `0x0067` and `0x008C` are here because `0x0115 JDim` writes them as the
+/// word behind its `+140` value — which turned out not to be a reference
+/// at all — not because any record of those codes has been seen
+/// (`docs/analysis/2026-09-15-tag-188-members-land-in-jdim-reference-slots.md` §7).
 pub fn rad_class_name(type_code: u16) -> Option<&'static str> {
     Some(match type_code {
         0x0006 => "OnElement Constraint",
@@ -87,20 +92,25 @@ pub fn rad_class_name(type_code: u16) -> Option<&'static str> {
         0x0030 => "JSL Override Style",
         0x003D => "SmartFrame2d Object",
         0x004D => "Text Object",
+        0x0058 => "JDimGroup Object",
         0x0059 => "Circle Object",
         0x005A => "JSL Style Librarian",
         0x005D => "BspCurve Object",
         0x005E => "Point Object",
         0x0061 => "Arc Object",
         0x0063 => "Ellipse Object",
+        0x0067 => "Assoc subsystem element list",
         0x0077 => "Fix Constraint",
         0x007B => "Group implementation",
         0x007E => "Elliptical Arc Object",
         0x0084 => "LineString Object",
         0x0085 => "Vertical Constraint",
+        0x0089 => "FreeFormAttrSet",
+        0x008C => "Groups Collection Object",
         0x00CE => "JSymbol",
         0x00FA => "Dependency Object",
         0x00FF => "Graphics Bag",
+        0x0114 => "JSheet Object",
         0x0115 => "igDimension",
         0x0117 => "igBalloon",
         0x0118 => "igLeader",
