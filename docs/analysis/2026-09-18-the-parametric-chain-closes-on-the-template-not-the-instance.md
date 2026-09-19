@@ -25,13 +25,13 @@
 
 ## 2. 语料：五对模板 / 实例
 
-| 图 | 符号 | 模板（`Server Document`，无放置点名） | 实例（`Imagineer Document`，放置点名） |
-|---|---|---|---|
-| D06 | Cone Roof Parametric Tank | `/JSite145` sheet 15：6 线、5 JDim | `/JSite151` sheet 47：6 线、0 JDim |
-| 0201 | Parametric Manifold | `/JSite329` sheet 49：8 线、2 弧、3 JDim | `/JSite396` sheet 113：8 线、2 弧、0 JDim |
-| 0201 | ` Line2` | `/JSite329` sheet 501：2 线、2 JDim | `/JSite396` sheet 119：2 线、0 JDim |
-| 工艺 | Parametric Black Box | `/JSite7559` sheet 72：4 线、4 JDim | `/JSite6963` sheet 21：4 线、0 JDim |
-| A01 | Horizontal Drum | `/JSite39` sheet 96：9 线、4 JDim | `/JSite121` sheet 481：9 线、0 JDim |
+| 图 | 符号 | 模板（`Server Document`，无放置点名） | 实例（`Imagineer Document`，放置点名） | 配对依据 |
+|---|---|---|---|---|
+| D06 | Cone Roof Parametric Tank | `/JSite145` sheet 15：6 线、5 JDim | `/JSite151` sheet 47：6 线、0 JDim | `value_ref` {30,31,32,33} 解到模板存储 |
+| 0201 | Parametric Manifold | `/JSite329` sheet 49：8 线、2 弧、3 JDim | `/JSite396` sheet 113：8 线、2 弧、0 JDim | `value_ref` {16,39,50} 解到模板存储 |
+| 0201 | ` Line2` | `/JSite329` sheet 501：2 线、2 JDim | `/JSite396` sheet 119：2 线、0 JDim | `value_ref` {516} 解到模板存储 |
+| 工艺 | Parametric Black Box | `/JSite7559` sheet 72：4 线、4 JDim | `/JSite6963` sheet 21：4 线、0 JDim | 变量名 + 值全同（{43,44,45,46} 全文件解不到） |
+| A01 | Horizontal Drum | `/JSite39` sheet 96：9 线、4 JDim | `/JSite121` sheet 481：9 线、0 JDim | `value_ref` {92,93,94} 解到模板存储 |
 
 语料 22 条 JDim（四主图 18 + A01 4）**全部**在左栏的五张模板 sheet 上，这五张 sheet **没有一张被任何放置点名**；
 右栏五张被点名的 sheet 上一条 JDim 也没有。0202 没有参数化符号，两栏皆空。
@@ -40,6 +40,17 @@
 在模板存储里 4/5 对全部解到（D06 {30,31,32,33}、0201 {16,39,50} 与 {516}、A01 {92,93,94}），
 就是模板那份 `SymbolInformation` 点名的那几条 `Double Value`；工艺那对（{43,44,45,46}）在全文件解不到，
 按变量名与值配上（四个 0.0127 全同）。五对里**变量名与值全部与模板一致**——实例副本记的是库默认。
+
+**2026-09-19（计划 K1）：这张配对进了 DTO。** `PidSymbolDefinition::template`（只在实例上，指模板本体）、
+`::variables`（模板与实例都有，实例那份就是库默认副本）、`PidSymbolDimension::name`（出参它的那条关系的入参所对应的
+`SymbolInformation` 变量名；入参是别的 JDim 的取不到，`None`）与 `::formula`（关系原文）。配对分两步：先按上表
+定模板**存储**（`value_ref` 全部解到、否则名 + 值全同且那个存储有关系），那些值驱动的关系写到哪张 sheet 就是模板
+**本体**；实例存储里哪个本体归这份记录，文件没写下来——记录的 `parent_ref` 为 0，也不总写在本体之前（工艺的
+记录 27 在 sheet 21 **之后**，D06 / 0201 / A01 的都在之前），所以按**模板本体的线数与弧数**在实例存储里挑，
+挑不出唯一一个就不配（同一模板被多份记录认领时按 oid 序对位——语料里没有）。语料 5/5 配上；四主图 18 条 JDim
+15 条有名，无名恰三条：0201 JDim 503（无关系，`formula` 也 `None`）、D06 JDim 19 与 A01 JDim 82（派生尺寸，
+有 `formula` 无 `name`）。棘轮 `a_placed_parametric_body_names_its_template_and_the_template_names_its_dimensions`；
+探针第 4 节改从这几个字段读。
 
 ## 3. 关系：17/17 闭合，常数是英寸
 

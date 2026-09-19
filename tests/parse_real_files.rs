@@ -4859,6 +4859,330 @@ fn the_parametric_chain_closes_on_the_template_not_on_the_placed_instance() {
     }
 }
 
+/// Ratchet for plan K1
+/// (`OpenCADStudio/docs/plans/2026-09-18-driving-dimensions-reach-the-panel-as-library-defaults.md`):
+/// what J3 joined inside a probe is on the DTO. Each driving dimension of a
+/// template body names the variable that drives it and the formula doing
+/// it; each parametric body carries its `SymbolInformation` variables; and
+/// each placed parametric body names the template body it was placed from,
+/// so a consumer holding a placement's definition reference reaches the
+/// library defaults in two lookups and never mistakes them for the
+/// instance's own size.
+///
+/// Corpus
+/// (`docs/analysis/2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md` §2):
+/// five template / instance pairs, four paired because the instance's
+/// variables still reference the template storage's `Double Value`s and one
+/// (工艺's Black Box, whose references resolve nowhere) by variable names
+/// and values; 18 dimensions on the four main drawings of which 15 are
+/// named -- the three without a name are 0201's JDim 503 (no relation
+/// writes it, so no formula either) and the two derived dimensions whose
+/// relation reads other dimensions, D06's JDim 19 (`0E($1+$2)/10`) and
+/// A01's JDim 82 (`0E$1/2`). Nothing is drawn differently: `entities` and
+/// the golden snapshot are untouched, the schema only gains fields.
+#[test]
+fn a_placed_parametric_body_names_its_template_and_the_template_names_its_dimensions() {
+    /// (placed body, template body, paired through `value_ref`), bodies as
+    /// `(site, sheet)`.
+    type Pair = ((u32, u32), (u32, u32), bool);
+    struct Expected {
+        fixture: &'static str,
+        pairs: &'static [Pair],
+        /// Dimensions with a name, over every template body.
+        named: usize,
+        /// (oid, has a formula) for every dimension without a name.
+        unnamed: &'static [(u32, bool)],
+    }
+    const EXPECTED: &[Expected] = &[
+        Expected {
+            fixture: "D06.pid",
+            pairs: &[((151, 47), (145, 15), true)],
+            named: 4,
+            unnamed: &[(19, true)],
+        },
+        Expected {
+            fixture: "DWG-0201GP06-01.pid",
+            pairs: &[
+                ((396, 113), (329, 49), true),
+                ((396, 119), (329, 501), true),
+            ],
+            named: 4,
+            unnamed: &[(503, false)],
+        },
+        Expected {
+            fixture: "DWG-0202GP06-01.pid",
+            pairs: &[],
+            named: 0,
+            unnamed: &[],
+        },
+        Expected {
+            fixture: "工艺管道及仪表流程-1.pid",
+            pairs: &[((6963, 21), (7559, 72), false)],
+            named: 4,
+            unnamed: &[],
+        },
+        Expected {
+            fixture: "export-test/publish-data/A01/A01.pid",
+            pairs: &[((121, 481), (39, 96), true)],
+            named: 3,
+            unnamed: &[(82, true)],
+        },
+    ];
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let as_ref = |(site, sheet): (u32, u32)| pid_parse::PidSymbolDefinitionRef { site, sheet };
+
+    for expected in EXPECTED {
+        let fixture = expected.fixture;
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let placed: std::collections::BTreeSet<pid_parse::PidSymbolDefinitionRef> = doc
+            .sheet_streams
+            .iter()
+            .filter_map(|sheet| sheet.geometry.as_ref())
+            .flat_map(|geometry| {
+                geometry
+                    .decoded_igsymbols
+                    .iter()
+                    .map(|p| as_ref((p.definition_site_ref, p.definition_sheet_ref)))
+            })
+            .collect();
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+
+        // 1. Template bodies: every dimension either names a variable of the
+        //    body or is one of the listed exceptions; a name always comes
+        //    with a formula, and `0E$1` means the dimension *is* the
+        //    variable's value.
+        let mut named = 0usize;
+        let mut unnamed: Vec<(u32, bool)> = Vec::new();
+        for body in geometry
+            .symbol_definitions
+            .iter()
+            .filter(|body| !body.dimensions.is_empty())
+        {
+            assert!(
+                body.template.is_none(),
+                "{fixture} {:?}: a body carrying dimensions is a template, not a placed instance",
+                body.reference
+            );
+            assert!(
+                !body.variables.is_empty(),
+                "{fixture} {:?}: a template body without variables",
+                body.reference
+            );
+            for dimension in &body.dimensions {
+                match &dimension.name {
+                    Some(name) => {
+                        named += 1;
+                        let formula = dimension.formula.as_deref().unwrap_or_else(|| {
+                            panic!(
+                                "{fixture} {:?}: JDim {} is named {name} but has no formula",
+                                body.reference, dimension.oid
+                            )
+                        });
+                        let variable = body
+                            .variables
+                            .iter()
+                            .find(|variable| variable.name == *name)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "{fixture} {:?}: JDim {} is driven by {name}, which is not a variable of the body {:?}",
+                                    body.reference,
+                                    dimension.oid,
+                                    body.variables
+                                )
+                            });
+                        if formula == "0E$1" {
+                            assert!(
+                                close(dimension.value_m, variable.value_m),
+                                "{fixture} {:?}: JDim {} = {} is {name} = {} through `0E$1`",
+                                body.reference,
+                                dimension.oid,
+                                dimension.value_m,
+                                variable.value_m
+                            );
+                        }
+                    }
+                    None => unnamed.push((dimension.oid, dimension.formula.is_some())),
+                }
+            }
+        }
+        assert_eq!(named, expected.named, "{fixture}: named driving dimensions");
+        assert_eq!(
+            unnamed, expected.unnamed,
+            "{fixture}: the dimensions without a name, and whether a relation still writes them"
+        );
+
+        // 2. Placed instances: exactly the expected pairs, each pointing at
+        //    a body a placement names, from a body no placement names, with
+        //    the template's variables copied name for name and value for
+        //    value -- and paired through `value_ref` exactly when the
+        //    corpus says so.
+        let pairs: Vec<(u32, u32, u32, u32)> = geometry
+            .symbol_definitions
+            .iter()
+            .filter_map(|body| {
+                body.template
+                    .map(|t| (body.reference.site, body.reference.sheet, t.site, t.sheet))
+            })
+            .collect();
+        let expected_pairs: Vec<(u32, u32, u32, u32)> = expected
+            .pairs
+            .iter()
+            .map(|(instance, template, _)| (instance.0, instance.1, template.0, template.1))
+            .collect();
+        assert_eq!(
+            pairs, expected_pairs,
+            "{fixture}: placed parametric bodies and the templates they name"
+        );
+        for (instance, template, by_reference) in expected.pairs {
+            let instance_ref = as_ref(*instance);
+            let template_ref = as_ref(*template);
+            assert!(
+                placed.contains(&instance_ref) && !placed.contains(&template_ref),
+                "{fixture}: a placement names the instance {instance:?} and none names the template {template:?}"
+            );
+            let instance = geometry
+                .symbol_definition(instance_ref)
+                .expect("the pair was just listed");
+            let template = geometry
+                .symbol_definition(template_ref)
+                .unwrap_or_else(|| panic!("{fixture}: template {template_ref:?} is not a body"));
+            assert!(
+                instance.dimensions.is_empty(),
+                "{fixture} {instance_ref:?}: a placed instance carries dimensions"
+            );
+            assert_eq!(
+                instance.variables.len(),
+                template.variables.len(),
+                "{fixture} {instance_ref:?}: variables against the template's"
+            );
+            for (i, t) in instance.variables.iter().zip(&template.variables) {
+                assert!(
+                    i.name == t.name && close(i.value_m, t.value_m),
+                    "{fixture} {instance_ref:?}: variable {} = {} against the template's {} = {}",
+                    i.name,
+                    i.value_m,
+                    t.name,
+                    t.value_m
+                );
+            }
+            let references_resolve = instance.variables.iter().all(|i| {
+                template
+                    .variables
+                    .iter()
+                    .any(|t| t.value_ref == i.value_ref)
+            });
+            assert_eq!(
+                references_resolve, *by_reference,
+                "{fixture} {instance_ref:?}: whether the instance's value_refs are the template's"
+            );
+            // Two lookups from a placement to the library defaults.
+            let defaults: Vec<(&str, f64)> = geometry
+                .symbol_definition(instance_ref)
+                .and_then(|body| body.template)
+                .and_then(|template| geometry.symbol_definition(template))
+                .map(|template| {
+                    template
+                        .dimensions
+                        .iter()
+                        .filter_map(|d| d.name.as_deref().map(|name| (name, d.value_m)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            assert!(
+                !defaults.is_empty(),
+                "{fixture} {instance_ref:?}: no named library default reachable from the placement"
+            );
+        }
+
+        // 3. Everything else -- the bodies that are not parametric -- has
+        //    no variables and no template.
+        for body in geometry
+            .symbol_definitions
+            .iter()
+            .filter(|body| body.dimensions.is_empty() && body.template.is_none())
+        {
+            assert!(
+                body.variables.is_empty(),
+                "{fixture} {:?}: variables on a body that is neither a template nor a paired instance: {:?}",
+                body.reference,
+                body.variables
+            );
+        }
+    }
+
+    // D06's tank names four of its five dimensions after its four
+    // variables, and the fifth -- the roof peak, width / 10 -- after none.
+    if let Some(doc) = parse_test_file("D06.pid") {
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let tank = geometry
+            .symbol_definition(as_ref((145, 15)))
+            .expect("the tank template");
+        let mut names: Vec<Option<&str>> =
+            tank.dimensions.iter().map(|d| d.name.as_deref()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec![
+                None,
+                Some("Bottom"),
+                Some("Left"),
+                Some("Right"),
+                Some("Top")
+            ],
+            "D06 tank dimension names"
+        );
+        let peak = tank
+            .dimensions
+            .iter()
+            .find(|d| d.oid == 19)
+            .expect("JDim 19");
+        assert_eq!(peak.formula.as_deref(), Some("0E($1+$2)/10"));
+    }
+    // 0201's ` Line2`: one variable, one named dimension, and JDim 503 that
+    // nothing writes; the Manifold's three, in on-disk order.
+    if let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") {
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let line2 = geometry
+            .symbol_definition(as_ref((329, 501)))
+            .expect("the Line2 template");
+        assert_eq!(
+            line2
+                .variables
+                .iter()
+                .map(|v| (v.name.as_str(), v.value_m))
+                .collect::<Vec<_>>(),
+            vec![("Right", 0.0254)]
+        );
+        let named: Vec<(u32, Option<&str>, Option<&str>)> = line2
+            .dimensions
+            .iter()
+            .map(|d| (d.oid, d.name.as_deref(), d.formula.as_deref()))
+            .collect();
+        assert_eq!(
+            named,
+            vec![(499, Some("Right"), Some("0E$1")), (503, None, None)]
+        );
+        let manifold = geometry
+            .symbol_definition(as_ref((329, 49)))
+            .expect("the Manifold template");
+        assert_eq!(
+            manifold
+                .dimensions
+                .iter()
+                .map(|d| (d.oid, d.name.as_deref(), (d.value_m * 1e5).round() / 1e5))
+                .collect::<Vec<_>>(),
+            vec![
+                (36, Some("Top"), 0.02032),
+                (38, Some("Left"), 0.1143),
+                (40, Some("Right"), 0.1143)
+            ],
+            "the Manifold's library defaults, in on-disk order"
+        );
+    }
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {

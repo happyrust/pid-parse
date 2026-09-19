@@ -26,6 +26,12 @@
 //! chain out per storage and per body, with no sampling, and lets the
 //! numbers say which parts hold.
 //!
+//! Since plan K1 (2026-09-19) the pairing and the names live on the
+//! projection -- `PidSymbolDefinition::template` / `::variables`,
+//! `PidSymbolDimension::name` / `::formula` -- and section 4 reads them
+//! from there; sections 2 and 3 still join the raw records, as the
+//! evidence the projection was built on.
+//!
 //! ```powershell
 //! cargo run --example probe_parametric_chain_resolves_a_cached_body
 //! ```
@@ -640,269 +646,194 @@ fn section_3_arcs_against_dimensions(doc: &PidDocument) {
 }
 
 /// Template against instance, for every parametric symbol the drawing
-/// places.
+/// places -- read off the projection, now that K1 put the pairing on it.
 ///
-/// An instance storage is one whose `SymbolInformation` carries variables
-/// but whose cluster holds no relation; its `value_ref`s are then looked
-/// for in every other storage, and the storage that owns those `Double
-/// Value` oids is the template's. The template body is the sheet the
-/// template's relations write their dimensions onto; the instance body is
-/// the sheet a placement names. The two bodies are compared line for line
-/// and arc for arc, so "the instance was resized" is a diff, not a guess.
+/// [`pid_parse::PidSymbolDefinition::template`] names, for a placed
+/// parametric body, the template body it was placed from (paired through
+/// the instance's `value_ref`s when they resolve in the template storage,
+/// by variable names and values when they resolve nowhere); the template's
+/// dimensions carry the variable that drives each and the formula doing
+/// it. What is left for the probe is the evidence the DTO does not hold:
+/// that the instance is the body a placement names and the template is
+/// not, and the two bodies line for line and arc for arc, so "the instance
+/// was resized" is a diff, not a guess.
 fn section_4_template_vs_instance(doc: &PidDocument) {
+    use pid_parse::symbol_library::SymbolPrimitive;
+
     println!("\n=== 4. template against placed instance ===");
     let named = placements(doc);
+    let geometry = pid_parse::build_normalized_geometry(doc);
+    let describe = |body: &pid_parse::PidSymbolDefinition| -> String {
+        let points: Vec<(f64, f64)> = body
+            .primitives
+            .iter()
+            .filter_map(|p| match p {
+                SymbolPrimitive::Line { start, end } => Some([*start, *end]),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let arcs: Vec<String> = body
+            .primitives
+            .iter()
+            .filter_map(|p| match p {
+                SymbolPrimitive::Arc { radius, .. } => Some(mm(*radius)),
+                _ => None,
+            })
+            .collect();
+        let mut it = points.into_iter();
+        match it.next() {
+            Some(first) => {
+                let (x0, y0, x1, y1) = it.fold(
+                    (first.0, first.1, first.0, first.1),
+                    |(x0, y0, x1, y1), (x, y)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+                );
+                format!(
+                    "bbox x {x0:.7}..{x1:.7} y {y0:.7}..{y1:.7} = {} x {} mm (half {} x {}), arcs r {:?}",
+                    mm(x1 - x0),
+                    mm(y1 - y0),
+                    mm((x1 - x0) / 2.0),
+                    mm((y1 - y0) / 2.0),
+                    arcs
+                )
+            }
+            None => "no lines".to_string(),
+        }
+    };
     let mut pairs = 0usize;
-    for instance in &doc.jsites {
-        let Some(instance_info) = instance.symbol_information.as_ref() else {
+    for instance in &geometry.symbol_definitions {
+        let Some(template_ref) = instance.template else {
             continue;
         };
-        if !instance_info.relations.is_empty() {
+        let Some(template) = geometry.symbol_definition(template_ref) else {
+            println!(
+                "  /JSite{} sheet {} names template /JSite{} sheet {}, which is not a body of the projection",
+                instance.reference.site, instance.reference.sheet, template_ref.site, template_ref.sheet
+            );
+            continue;
+        };
+        let by_refs = instance.variables.iter().all(|i| {
+            template
+                .variables
+                .iter()
+                .any(|t| t.value_ref == i.value_ref)
+        });
+        let same_values = instance.variables.len() == template.variables.len()
+            && instance.variables.iter().all(|i| {
+                template
+                    .variables
+                    .iter()
+                    .any(|t| t.name == i.name && (t.value_m - i.value_m).abs() < 1e-12)
+            });
+        let placed = |reference: pid_parse::PidSymbolDefinitionRef| {
+            named.get(&(reference.site, reference.sheet)).map_or_else(
+                || "placed by nothing".to_string(),
+                |(names, count)| {
+                    format!(
+                        "placed x{count} as {}",
+                        names.iter().cloned().collect::<Vec<_>>().join(" | ")
+                    )
+                },
+            )
+        };
+        println!(
+            "  instance /JSite{} sheet {} ({}) <- template /JSite{} sheet {} ({}): paired {}",
+            instance.reference.site,
+            instance.reference.sheet,
+            placed(instance.reference),
+            template.reference.site,
+            template.reference.sheet,
+            placed(template.reference),
+            if by_refs {
+                format!(
+                    "through value_refs {:?}, which resolve in the template storage",
+                    instance
+                        .variables
+                        .iter()
+                        .map(|v| v.value_ref)
+                        .collect::<Vec<_>>()
+                )
+            } else {
+                format!(
+                    "by variable names and values (value_refs {:?} resolve in no storage)",
+                    instance
+                        .variables
+                        .iter()
+                        .map(|v| v.value_ref)
+                        .collect::<Vec<_>>()
+                )
+            }
+        );
+        println!(
+            "    variables {}: {}",
+            if same_values { "identical" } else { "DIFFER" },
+            instance
+                .variables
+                .iter()
+                .map(|v| format!("{}={} mm", v.name, mm(v.value_m)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        println!(
+            "    template dimensions ({}, {} named): {}; instance dimensions: {}",
+            template.dimensions.len(),
+            template
+                .dimensions
+                .iter()
+                .filter(|d| d.name.is_some())
+                .count(),
+            template
+                .dimensions
+                .iter()
+                .map(|d| {
+                    format!(
+                        "JDim {} {}={} mm [{}]",
+                        d.oid,
+                        d.name.as_deref().unwrap_or("-"),
+                        mm(d.value_m),
+                        d.formula.as_deref().unwrap_or("no relation")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            instance.dimensions.len()
+        );
+        println!(
+            "    template sheet {}: {}",
+            template.reference.sheet,
+            describe(template)
+        );
+        println!(
+            "    instance sheet {}: {}",
+            instance.reference.sheet,
+            describe(instance)
+        );
+        pairs += 1;
+    }
+    // Records the projection paired with nothing: variables in a storage
+    // without relations whose body no template claims.
+    for site in &doc.jsites {
+        let Some(info) = site.symbol_information.as_ref() else {
+            continue;
+        };
+        if !info.relations.is_empty() {
             continue;
         }
-        let Some(instance_nested) = instance.nested_geometry.as_ref() else {
-            continue;
-        };
-        for record in instance_info
+        let paired_here = geometry
+            .symbol_definitions
+            .iter()
+            .filter(|body| body.template.is_some() && Some(body.reference.site) == site_id(site))
+            .count();
+        let with_variables = info
             .symbol_informations
             .iter()
             .filter(|r| !r.variables.is_empty())
-        {
-            let refs: BTreeSet<u32> = record.variables.iter().map(|v| v.value_ref).collect();
-            let resolves_locally = refs
-                .iter()
-                .filter(|oid| instance_info.double_values.iter().any(|d| d.oid == **oid))
-                .count();
-            let by_refs = doc.jsites.iter().find(|site| {
-                site.path != instance.path
-                    && site.symbol_information.as_ref().is_some_and(|info| {
-                        refs.iter()
-                            .all(|oid| info.double_values.iter().any(|d| d.oid == *oid))
-                    })
-            });
-            // Fallback when the copied refs point nowhere in this file: the
-            // storage whose SymbolInformation names the same variables with
-            // the same values and has relations to drive them.
-            let same_variables = |other: &pid_parse::model::DecodedSymbolInformationRecord| {
-                other.variables.len() == record.variables.len()
-                    && other.variables.iter().all(|ov| {
-                        record
-                            .variables
-                            .iter()
-                            .any(|iv| iv.name == ov.name && (iv.value - ov.value).abs() < 1e-12)
-                    })
-            };
-            let by_values = doc.jsites.iter().find(|site| {
-                site.path != instance.path
-                    && site.symbol_information.as_ref().is_some_and(|info| {
-                        !info.relations.is_empty()
-                            && info.symbol_informations.iter().any(&same_variables)
-                    })
-            });
-            let template = match (by_refs, by_values) {
-                (Some(t), _) => t,
-                (None, Some(t)) => {
-                    println!(
-                        "  {} SymbolInformation {}: value_refs {:?} resolve in no storage ({resolves_locally} locally); paired with {} by variable names and values instead",
-                        instance.path, record.oid, refs, t.path
-                    );
-                    t
-                }
-                (None, None) => {
-                    println!(
-                        "  {} SymbolInformation {}: value_refs {:?} resolve in no storage ({resolves_locally} locally), and no storage names the same variables",
-                        instance.path, record.oid, refs
-                    );
-                    continue;
-                }
-            };
-            let template_info = template.symbol_information.as_ref().expect("matched on it");
-            let Some(template_nested) = template.nested_geometry.as_ref() else {
-                continue;
-            };
-            // For the fallback pairing the refs are the template's own, not
-            // the copied ones.
-            let refs: BTreeSet<u32> = if by_refs.is_some() {
-                refs
-            } else {
-                template_info
-                    .symbol_informations
-                    .iter()
-                    .find(|r| same_variables(r))
-                    .map(|r| r.variables.iter().map(|v| v.value_ref).collect())
-                    .unwrap_or_default()
-            };
-            // The template body: the sheet the relations fed by these
-            // values write their dimensions onto.
-            let mut frontier: BTreeSet<u32> = refs.clone();
-            let mut outputs: BTreeSet<u32> = BTreeSet::new();
-            loop {
-                let mut grew = false;
-                for relation in &template_info.relations {
-                    let Some((&out, ins)) = relation.operands.split_first() else {
-                        continue;
-                    };
-                    if ins.iter().any(|oid| frontier.contains(oid)) && outputs.insert(out) {
-                        frontier.insert(out);
-                        grew = true;
-                    }
-                }
-                if !grew {
-                    break;
-                }
-            }
-            let template_sheets: BTreeSet<u32> = template_nested
-                .dimensions
-                .iter()
-                .filter(|d| outputs.contains(&d.oid))
-                .map(|d| d.parent_ref)
-                .collect();
-            let instance_sheets: Vec<u32> = instance_nested
-                .definitions
-                .iter()
-                .map(|d| d.sheet_oid)
-                .filter(|sheet| {
-                    site_id(instance).is_some_and(|id| named.contains_key(&(id, *sheet)))
-                })
-                .collect();
-            let template_record = template_info.symbol_informations.iter().find(|r| {
-                r.variables
-                    .iter()
-                    .map(|v| v.value_ref)
-                    .collect::<BTreeSet<_>>()
-                    == refs
-            });
+            .count();
+        if with_variables != paired_here {
             println!(
-                "  instance {} SymbolInformation {} (parent {}) <- template {} SymbolInformation {} (parent {}): value_refs {:?} resolve {resolves_locally}/{} locally, {}/{} in the template",
-                instance.path,
-                record.oid,
-                record.parent_ref,
-                template.path,
-                template_record.map_or_else(|| "?".to_string(), |r| r.oid.to_string()),
-                template_record.map_or_else(|| "?".to_string(), |r| r.parent_ref.to_string()),
-                refs,
-                refs.len(),
-                refs.len(),
-                refs.len()
+                "  {}: {with_variables} SymbolInformation record(s) with variables, {paired_here} body(ies) paired with a template",
+                site.path
             );
-            let same_values = template_record.is_some_and(|t| {
-                t.variables.len() == record.variables.len()
-                    && t.variables.iter().all(|tv| {
-                        record
-                            .variables
-                            .iter()
-                            .any(|iv| iv.name == tv.name && (iv.value - tv.value).abs() < 1e-12)
-                    })
-            });
-            println!(
-                "    variables {}: {}",
-                if same_values { "identical" } else { "DIFFER" },
-                record
-                    .variables
-                    .iter()
-                    .map(|v| format!("{}={} mm", v.name, mm(v.value)))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            println!(
-                "    template body: sheet(s) {:?} with {} dimension(s) {:?} mm; instance body: sheet(s) {:?} with {} dimension(s)",
-                template_sheets,
-                outputs.len(),
-                template_nested
-                    .dimensions
-                    .iter()
-                    .filter(|d| outputs.contains(&d.oid))
-                    .map(|d| mm(d.value_m))
-                    .collect::<Vec<_>>(),
-                instance_sheets,
-                instance_nested.dimensions.len()
-            );
-            // The instance storage may hold several placed bodies (0201's
-            // holds the Manifold and ` Line2`); the one this
-            // SymbolInformation drives is taken to be the one with the
-            // template body's line count, and said so when that is not
-            // unique.
-            for &template_sheet in &template_sheets {
-                let Some(t) = template_nested.definition(template_sheet) else {
-                    continue;
-                };
-                let t_on = |layer: u32| t.layers.binary_search(&layer).is_ok();
-                let t_line_count = template_nested
-                    .lines
-                    .iter()
-                    .filter(|l| t_on(l.sheet_layer_ref))
-                    .count();
-                let candidates: Vec<u32> = instance_sheets
-                    .iter()
-                    .copied()
-                    .filter(|sheet| {
-                        instance_nested.definition(*sheet).is_some_and(|i| {
-                            instance_nested
-                                .lines
-                                .iter()
-                                .filter(|l| i.layers.binary_search(&l.sheet_layer_ref).is_ok())
-                                .count()
-                                == t_line_count
-                        })
-                    })
-                    .collect();
-                let [instance_sheet] = candidates.as_slice() else {
-                    println!(
-                        "    template sheet {template_sheet} ({t_line_count} lines): {} instance body has that line count {:?}",
-                        if candidates.is_empty() { "no" } else { "more than one" },
-                        candidates
-                    );
-                    continue;
-                };
-                let Some(i) = instance_nested.definition(*instance_sheet) else {
-                    continue;
-                };
-                let i_on = |layer: u32| i.layers.binary_search(&layer).is_ok();
-                let bbox = |xs: Vec<(f64, f64)>| -> Option<(f64, f64, f64, f64)> {
-                    let mut it = xs.into_iter();
-                    let first = it.next()?;
-                    Some(it.fold(
-                        (first.0, first.1, first.0, first.1),
-                        |(x0, y0, x1, y1), (x, y)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
-                    ))
-                };
-                let describe = |nested: &pid_parse::model::JSiteNestedGeometry,
-                                on: &dyn Fn(u32) -> bool|
-                 -> String {
-                    let points: Vec<(f64, f64)> = nested
-                        .lines
-                        .iter()
-                        .filter(|l| on(l.sheet_layer_ref))
-                        .flat_map(|l| [(l.start_x, l.start_y), (l.end_x, l.end_y)])
-                        .collect();
-                    let arcs: Vec<String> = nested
-                        .arcs
-                        .iter()
-                        .filter(|a| on(a.sheet_layer_ref))
-                        .map(|a| mm(a.radius))
-                        .collect();
-                    match bbox(points) {
-                        Some((x0, y0, x1, y1)) => format!(
-                            "bbox x {x0:.7}..{x1:.7} y {y0:.7}..{y1:.7} = {} x {} mm (half {} x {}), arcs r {:?}",
-                            mm(x1 - x0),
-                            mm(y1 - y0),
-                            mm((x1 - x0) / 2.0),
-                            mm((y1 - y0) / 2.0),
-                            arcs
-                        ),
-                        None => "no lines".to_string(),
-                    }
-                };
-                println!(
-                    "    template sheet {template_sheet}: {}",
-                    describe(template_nested, &t_on)
-                );
-                println!(
-                    "    instance sheet {instance_sheet}: {}",
-                    describe(instance_nested, &i_on)
-                );
-                pairs += 1;
-            }
         }
     }
     if pairs == 0 {

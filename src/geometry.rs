@@ -107,9 +107,53 @@ pub struct PidSymbolDefinition {
     /// The driving dimensions that constrain this body, in on-disk order.
     /// Not primitives: a dimension is a value the parametric body is
     /// resized by, not a stroke of it, and the file keeps every one on a
-    /// layer it has switched off. Empty for a body that is not parametric.
+    /// layer it has switched off. Empty for a body that is not parametric,
+    /// and empty for a **placed** parametric body too: the dimensions sit
+    /// on the library template the drawing caches beside it, never on the
+    /// instance (`docs/analysis/2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dimensions: Vec<PidSymbolDimension>,
+    /// The named variables of this body's `JSymbolInformation` record --
+    /// `Left` / `Right` / `Top` / `Bottom` and their values -- when the
+    /// record carries any. On a template these are the library defaults
+    /// the relations turn into [`Self::dimensions`]; on a placed instance
+    /// they are a copy of the same defaults, **not** the instance's own
+    /// parameters (the instance geometry differs from them on four of the
+    /// corpus's five pairs). Empty for a body that is not parametric.
+    ///
+    /// Corpus grade: on a template the record is the one whose values the
+    /// body's dimensions trace back to through the relations; on an
+    /// instance -- whose storage holds no relations -- it is the record
+    /// that pairs the body with its [`Self::template`], so the two are set
+    /// together and an instance no template claims has neither.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variables: Vec<PidSymbolVariable>,
+    /// For a placed parametric body, the library template the drawing
+    /// caches for it: the body in another storage whose `Double Value`
+    /// records the instance's variables still point at (four of five corpus
+    /// pairs) or, when those references resolve nowhere in the file, the
+    /// body whose variables carry the same names and values and are driven
+    /// by relations (the fifth). Within the instance storage the pairing
+    /// lands on the body drawn with the template body's count of lines and
+    /// arcs -- a resized instance keeps every stroke of its template -- and
+    /// is dropped when that does not single one body out. `None` on
+    /// templates and on bodies that are not parametric.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<PidSymbolDefinitionRef>,
+}
+
+/// One named variable of a symbol body's `JSymbolInformation` record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PidSymbolVariable {
+    /// The name the record gives it; `Left` / `Right` / `Top` / `Bottom` on
+    /// the corpus.
+    pub name: String,
+    /// The value, metres.
+    pub value_m: f64,
+    /// Storage-local oid of the `Double Value` record holding that value --
+    /// on a placed instance an oid of the **template's** storage, which is
+    /// how the two are paired.
+    pub value_ref: u32,
 }
 
 /// One driving dimension of an embedded symbol body: a `0x0115` `JDim`
@@ -142,6 +186,21 @@ pub struct PidSymbolDimension {
     /// to, when the record carries one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_ref: Option<u32>,
+    /// The variable that drives this dimension: the name of the one
+    /// `Double Value` the relation writing this dimension reads, when a
+    /// `JSymbolInformation` of the storage names it (`Top` for the
+    /// Manifold's arc radius). The value is the dimension's, not the
+    /// variable's -- `0E$1+0.01` puts them a hundredth of an inch apart, and
+    /// [`Self::formula`] says which. `None` when no relation writes the
+    /// dimension, or when the relation reads other dimensions instead of a
+    /// named value (`0E($1+$2)/10`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The `Standard Relation` formula that computes this dimension, as
+    /// stored (`0E$1`, `0E$1+0.01`, `0E($1+$2)/10`; `$n` is the n-th input,
+    /// constants in inches). `None` when no relation writes the dimension.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
 }
 
 /// One group of undecoded graphic-class PSM records in one Sheet stream:
@@ -1176,8 +1235,17 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
 fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
     use crate::symbol_library::SymbolPrimitive;
 
-    let mut out = Vec::new();
-    for site in &doc.jsites {
+    /// What pairing an instance with its template needs to know about a
+    /// body besides the body itself.
+    struct BodyFacts {
+        /// Index into `doc.jsites`.
+        site: usize,
+        lines: usize,
+        arcs: usize,
+    }
+
+    let mut bodies: Vec<(PidSymbolDefinition, BodyFacts)> = Vec::new();
+    for (site_index, site) in doc.jsites.iter().enumerate() {
         let Some(nested) = site.nested_geometry.as_ref() else {
             continue;
         };
@@ -1188,6 +1256,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
         else {
             continue;
         };
+        let expressions = site.symbol_information.as_ref().map(ExpressionIndex::new);
         for definition in &nested.definitions {
             let on_body = |layer: u32| definition.layers.binary_search(&layer).is_ok();
             let mut primitives = Vec::new();
@@ -1254,35 +1323,333 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
             // rather than draw it. The measured line is looked up in the
             // same storage; a point, or anything the cache reader does not
             // carry, keeps its oid and no endpoints.
-            let dimensions = nested
+            let dimensions: Vec<PidSymbolDimension> = nested
                 .dimensions
                 .iter()
                 .filter(|d| on_body(d.sheet_layer_ref))
-                .map(|d| PidSymbolDimension {
-                    oid: d.oid,
-                    sheet_layer_ref: d.sheet_layer_ref,
-                    value_m: d.value_m,
-                    measured_oid: d.measured_oid,
-                    endpoints: nested
-                        .lines
-                        .iter()
-                        .find(|line| line.oid == d.measured_oid)
-                        .map(|line| [(line.start_x, line.start_y), (line.end_x, line.end_y)]),
-                    group_ref: d.group_ref,
+                .map(|d| {
+                    let (name, formula) = expressions
+                        .as_ref()
+                        .map_or((None, None), |index| index.driver_of(d.oid));
+                    PidSymbolDimension {
+                        oid: d.oid,
+                        sheet_layer_ref: d.sheet_layer_ref,
+                        value_m: d.value_m,
+                        measured_oid: d.measured_oid,
+                        endpoints: nested
+                            .lines
+                            .iter()
+                            .find(|line| line.oid == d.measured_oid)
+                            .map(|line| [(line.start_x, line.start_y), (line.end_x, line.end_y)]),
+                        group_ref: d.group_ref,
+                        name,
+                        formula,
+                    }
                 })
                 .collect();
-            out.push(PidSymbolDefinition {
-                reference: PidSymbolDefinitionRef {
-                    site: site_id,
-                    sheet: definition.sheet_oid,
+            // The body's variables, on a template: the record whose values
+            // its dimensions trace back to. A placed instance gets its
+            // variables in the second pass, from the record that pairs it
+            // with its template.
+            let variables = expressions
+                .as_ref()
+                .filter(|_| !dimensions.is_empty())
+                .and_then(|index| index.record_behind(dimensions.iter().map(|d| d.oid).collect()))
+                .map(variables_of)
+                .unwrap_or_default();
+            let lines = nested
+                .lines
+                .iter()
+                .filter(|l| on_body(l.sheet_layer_ref))
+                .count();
+            let arcs = nested
+                .arcs
+                .iter()
+                .filter(|a| on_body(a.sheet_layer_ref))
+                .count();
+            bodies.push((
+                PidSymbolDefinition {
+                    reference: PidSymbolDefinitionRef {
+                        site: site_id,
+                        sheet: definition.sheet_oid,
+                    },
+                    layers: definition.layers.clone(),
+                    primitives,
+                    dimensions,
+                    variables,
+                    template: None,
                 },
-                layers: definition.layers.clone(),
-                primitives,
-                dimensions,
-            });
+                BodyFacts {
+                    site: site_index,
+                    lines,
+                    arcs,
+                },
+            ));
         }
     }
-    out
+
+    // Second pass: each placed parametric body names the template it was
+    // placed from. An instance storage is one whose `JSymbolInformation`
+    // records carry variables while its cluster holds no relation. Each
+    // such record still references the template storage's Double Values --
+    // or, when those resolve nowhere in the file, repeats the template's
+    // variable names and values -- and the relations fed by those values
+    // write the dimensions of exactly one body there: the template. Which
+    // body of the instance storage the record belongs to is not written
+    // down (its `parent_ref` is zero, and it is not always written before
+    // its body: 工艺's record 27 follows sheet 21), so the pairing lands on
+    // the bodies drawn with the template body's count of lines and arcs,
+    // in oid order when several records claim the same template.
+    let template_body_of = |instance_index: usize,
+                            record: &crate::model::DecodedSymbolInformationRecord|
+     -> Option<usize> {
+        let refs: std::collections::BTreeSet<u32> =
+            record.variables.iter().map(|v| v.value_ref).collect();
+        let is_template_storage = |index: usize, info: &crate::model::JSiteSymbolInformation| {
+            index != instance_index && !info.relations.is_empty()
+        };
+        let by_refs = doc.jsites.iter().enumerate().find(|(index, site)| {
+            site.symbol_information.as_ref().is_some_and(|info| {
+                is_template_storage(*index, info)
+                    && refs
+                        .iter()
+                        .all(|oid| info.double_values.iter().any(|d| d.oid == *oid))
+            })
+        });
+        let same_variables = |other: &crate::model::DecodedSymbolInformationRecord| {
+            other.variables.len() == record.variables.len()
+                && other.variables.iter().all(|ov| {
+                    record
+                        .variables
+                        .iter()
+                        .any(|iv| iv.name == ov.name && (iv.value - ov.value).abs() < 1e-12)
+                })
+        };
+        let (template_index, template_refs) = match by_refs {
+            Some((index, _)) => (index, refs),
+            None => {
+                let (index, site) = doc.jsites.iter().enumerate().find(|(index, site)| {
+                    site.symbol_information.as_ref().is_some_and(|info| {
+                        is_template_storage(*index, info)
+                            && info.symbol_informations.iter().any(&same_variables)
+                    })
+                })?;
+                let refs = site
+                    .symbol_information
+                    .as_ref()?
+                    .symbol_informations
+                    .iter()
+                    .find(|r| same_variables(r))?
+                    .variables
+                    .iter()
+                    .map(|v| v.value_ref)
+                    .collect();
+                (index, refs)
+            }
+        };
+        let template_site = &doc.jsites[template_index];
+        let index = ExpressionIndex::new(template_site.symbol_information.as_ref()?);
+        let driven = index.dimensions_driven_by(&template_refs);
+        let mut sheets: std::collections::BTreeSet<u32> = template_site
+            .nested_geometry
+            .as_ref()?
+            .dimensions
+            .iter()
+            .filter(|d| driven.contains(&d.oid))
+            .map(|d| d.parent_ref)
+            .collect();
+        let sheet = sheets.pop_first()?;
+        if !sheets.is_empty() {
+            return None;
+        }
+        bodies.iter().position(|(candidate, facts)| {
+            facts.site == template_index && candidate.reference.sheet == sheet
+        })
+    };
+    // (instance storage, template body) -> the records claiming that pair.
+    let mut claims: BTreeMap<(usize, usize), Vec<&crate::model::DecodedSymbolInformationRecord>> =
+        BTreeMap::new();
+    for (instance_index, instance) in doc.jsites.iter().enumerate() {
+        let Some(info) = instance.symbol_information.as_ref() else {
+            continue;
+        };
+        if !info.relations.is_empty() {
+            continue;
+        }
+        for record in info
+            .symbol_informations
+            .iter()
+            .filter(|record| !record.variables.is_empty())
+        {
+            if let Some(template_at) = template_body_of(instance_index, record) {
+                claims
+                    .entry((instance_index, template_at))
+                    .or_default()
+                    .push(record);
+            }
+        }
+    }
+    let mut paired: Vec<(usize, PidSymbolDefinitionRef, Vec<PidSymbolVariable>)> = Vec::new();
+    for ((instance_index, template_at), mut records) in claims {
+        let (template, template_facts) = &bodies[template_at];
+        let mut candidates: Vec<usize> = bodies
+            .iter()
+            .enumerate()
+            .filter(|(at, (body, facts))| {
+                facts.site == instance_index
+                    && body.dimensions.is_empty()
+                    && facts.lines == template_facts.lines
+                    && facts.arcs == template_facts.arcs
+                    && !paired.iter().any(|(taken, _, _)| taken == at)
+            })
+            .map(|(at, _)| at)
+            .collect();
+        if candidates.len() != records.len() {
+            continue;
+        }
+        candidates.sort_by_key(|at| bodies[*at].0.reference.sheet);
+        records.sort_by_key(|record| record.oid);
+        for (at, record) in candidates.into_iter().zip(records) {
+            paired.push((at, template.reference, variables_of(record)));
+        }
+    }
+    for (at, template, variables) in paired {
+        let body = &mut bodies[at].0;
+        body.template = Some(template);
+        body.variables = variables;
+    }
+    bodies.into_iter().map(|(body, _)| body).collect()
+}
+
+/// The variables of one `JSymbolInformation` record, in record order.
+fn variables_of(record: &crate::model::DecodedSymbolInformationRecord) -> Vec<PidSymbolVariable> {
+    record
+        .variables
+        .iter()
+        .map(|variable| PidSymbolVariable {
+            name: variable.name.clone(),
+            value_m: variable.value,
+            value_ref: variable.value_ref,
+        })
+        .collect()
+}
+
+/// The expression family of one definition-cache storage, indexed for the
+/// questions the bodies ask of it: which variable drives a dimension, which
+/// `JSymbolInformation` a template body's dimensions trace back to, and
+/// which dimensions a set of `Double Value`s drives.
+struct ExpressionIndex<'a> {
+    info: &'a crate::model::JSiteSymbolInformation,
+    /// `Double Value` oid -> the variable name a `JSymbolInformation` of the
+    /// storage gives it.
+    variable_of_value: BTreeMap<u32, &'a str>,
+    /// Relation output oid -> the relation.
+    relation_of_output: BTreeMap<u32, &'a crate::model::DecodedStandardRelationRecord>,
+}
+
+impl<'a> ExpressionIndex<'a> {
+    fn new(info: &'a crate::model::JSiteSymbolInformation) -> Self {
+        let variable_of_value = info
+            .symbol_informations
+            .iter()
+            .flat_map(|record| record.variables.iter())
+            .map(|variable| (variable.value_ref, variable.name.as_str()))
+            .collect();
+        let relation_of_output = info
+            .relations
+            .iter()
+            .filter_map(|relation| relation.operands.first().map(|out| (*out, relation)))
+            .collect();
+        Self {
+            info,
+            variable_of_value,
+            relation_of_output,
+        }
+    }
+
+    /// The variable driving dimension `oid` and the formula doing it.
+    fn driver_of(&self, oid: u32) -> (Option<String>, Option<String>) {
+        let Some(relation) = self.relation_of_output.get(&oid) else {
+            return (None, None);
+        };
+        let name = match &relation.operands[1..] {
+            [input] => self
+                .variable_of_value
+                .get(input)
+                .map(|name| (*name).to_owned()),
+            _ => None,
+        };
+        (name, Some(relation.formula.clone()))
+    }
+
+    /// The `Double Value`s a set of dimensions are computed from, following
+    /// relations whose inputs are themselves dimensions.
+    fn values_behind(
+        &self,
+        dimensions: std::collections::BTreeSet<u32>,
+    ) -> std::collections::BTreeSet<u32> {
+        let mut frontier = dimensions;
+        let mut values = std::collections::BTreeSet::new();
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(oid) = frontier.pop_first() {
+            if !seen.insert(oid) {
+                continue;
+            }
+            let Some(relation) = self.relation_of_output.get(&oid) else {
+                continue;
+            };
+            for input in &relation.operands[1..] {
+                if self.relation_of_output.contains_key(input) {
+                    frontier.insert(*input);
+                } else if self.variable_of_value.contains_key(input) {
+                    values.insert(*input);
+                }
+            }
+        }
+        values
+    }
+
+    /// The `JSymbolInformation` whose variables name every value the given
+    /// dimensions trace back to.
+    fn record_behind(
+        &self,
+        dimensions: std::collections::BTreeSet<u32>,
+    ) -> Option<&'a crate::model::DecodedSymbolInformationRecord> {
+        let values = self.values_behind(dimensions);
+        if values.is_empty() {
+            return None;
+        }
+        self.info.symbol_informations.iter().find(|record| {
+            values
+                .iter()
+                .all(|value| record.variables.iter().any(|v| v.value_ref == *value))
+        })
+    }
+
+    /// Every dimension the relations compute, directly or through other
+    /// dimensions, from the given `Double Value`s.
+    fn dimensions_driven_by(
+        &self,
+        values: &std::collections::BTreeSet<u32>,
+    ) -> std::collections::BTreeSet<u32> {
+        let mut frontier: std::collections::BTreeSet<u32> = values.clone();
+        let mut outputs = std::collections::BTreeSet::new();
+        loop {
+            let mut grew = false;
+            for relation in &self.info.relations {
+                let Some((out, inputs)) = relation.operands.split_first() else {
+                    continue;
+                };
+                if inputs.iter().any(|oid| frontier.contains(oid)) && outputs.insert(*out) {
+                    frontier.insert(*out);
+                    grew = true;
+                }
+            }
+            if !grew {
+                return outputs;
+            }
+        }
+    }
 }
 
 /// Per-family emission seam (RFC §3.2, L6 counterpart of the parser-side
