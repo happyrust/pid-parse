@@ -1521,7 +1521,7 @@ fn read_symbology(type_code: u16, payload: &[u8]) -> Option<LineSymbology> {
     let colour = u32_at(payload, SIMPLE_LINE_COLOUR_OFFSET)?;
     // Zero is a real stored value; anything else must be a normal float in
     // range, which rules out both the huge and the subnormal misframings.
-    if width_m != 0.0 && (!width_m.is_normal() || width_m < 0.0 || width_m > MAX_PLAUSIBLE_WIDTH_M)
+    if width_m != 0.0 && (!width_m.is_normal() || !(0.0..=MAX_PLAUSIBLE_WIDTH_M).contains(&width_m))
     {
         return None;
     }

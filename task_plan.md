@@ -62,7 +62,10 @@ K1 落地（`223b26d`）**：`PidSymbolDimension::name` / `::formula`、`PidSymb
 
 **2026-09-19 · 该计划在 OCS 侧收口**（`641cec3b` C2：先缓存后库、关闭层不画、`OCS_PID_SYMBOL_SOURCE` 一轮、`extent=` 量可见笔画、
 弧按顺时针对调两角；`ef93f6ba` C3 台账）——`pid_import` 54/54 × 四种环境组合；消费的就是上面 C1 的三个字段与 `b6a70a7` 的弧向约定，
-pid-parse 侧无改动。仍待办：`map_unwrap_or` 29 处旧代码的 clippy 清理提交。
+pid-parse 侧无改动。~~仍待办：`map_unwrap_or` 29 处旧代码的 clippy 清理提交。~~ **2026-09-20 已清**：不是改那 29 处——nightly 建议的
+`Option::map_or_default` 在 1.95 / 1.97 上仍 unstable，照改会把稳定版弄红；改成在 `Cargo.toml` 声明 `rust-version = "1.95"`，clippy 按 MSRV
+门控后 29 处不再报；顺带把 `style_link.rs` 一处 `manual_range_contains`（stable clippy 报、nightly 不报）改成 `RangeInclusive::contains`。
+两个工具链的 `clippy --all-targets -- -D warnings` 都零告警。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的

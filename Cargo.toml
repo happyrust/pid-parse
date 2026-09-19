@@ -2,6 +2,12 @@
 name = "pid-parse"
 version = "0.11.7"
 edition = "2021"
+# The oldest toolchain this crate is checked against (`cargo +1.95 check`
+# is green on 2026-09-20). Declared so clippy's MSRV-aware lints stop
+# proposing std APIs the stable toolchains do not have -- the nightly of
+# 2026-09-18 wanted every `.map(f).unwrap_or_default()` turned into
+# `Option::map_or_default`, which is still unstable on 1.95 / 1.97.
+rust-version = "1.95"
 description = "Layered parser for SmartPlant / Smart P&ID .pid files"
 license = "MIT OR Apache-2.0"
 

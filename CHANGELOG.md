@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### clippy `-D warnings` 重新变绿：声明 MSRV 1.95，29 处 `map_unwrap_or` 不再报（2026-09-20）
+
+- **`Cargo.toml` 加 `rust-version = "1.95"`**（`cargo +1.95 check` 与 `+stable`（1.97.1）都绿，本来就是）。2026-09-18 装的
+  nightly（rustc 1.100）把 `map_unwrap_or` 扩到 `.map(f).unwrap_or_default()`，建议改成 `Option::map_or_default`——那个方法在
+  1.95 / 1.97 上仍是 unstable（`result_option_map_or_default`），照建议改 9 个文件 29 处会把稳定版编译弄红。声明 MSRV 后
+  clippy 按 MSRV 门控这条建议，29 处不再报；**那 29 处代码一字不动**。
+- 顺带一处：`style_link.rs::read_symbology` 的宽度范围判断改写成 `!(0.0..=MAX_PLAUSIBLE_WIDTH_M).contains(&width_m)`——
+  stable 1.97 的 clippy 在这里报 `manual_range_contains`（nightly 不报），语义不变，`style_link` 53 单测过。
+- 结果：nightly 1.100 与 stable 1.97 的 `cargo clippy --all-targets -- -D warnings` **都零告警**；fmt 干净；`parse_real_files` 133 不变。
+
 ### `igArc2d` 从起角到止角是顺时针扫过的（2026-09-19，计划 C2 顺带裁出）
 
 - **约定更正，字段值不动**：`SymbolPrimitive::Arc` / `PidGraphicKind::Arc` / `SheetIgArc2dDecoded` /
