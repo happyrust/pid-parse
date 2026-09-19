@@ -40,8 +40,13 @@ K1 落地（`223b26d`）**：`PidSymbolDimension::name` / `::formula`、`PidSymb
 驱动尺寸带上驱动它的变量名与公式，放置的参数化本体点名它的模板本体（`value_ref` 解到模板存储 4/5、名 + 值 1/5；
 实例存储里按模板本体的线 / 弧数挑本体）。语料 5/5 配上、18 条 JDim 15 条有名；棘轮
 `a_placed_parametric_body_names_its_template_and_the_template_names_its_dimensions`。不改投影。
-按该计划下一项 K2（OCS 特性面板两行：「驱动尺寸（库默认）」限配上模板的放置、「本体尺寸」所有符号放置）→ K3（导入摘要
-第三行）→ K4（台账）。
+
+**2026-09-19 · 同一计划 K2 → K4 落地（OCS 侧，pid-parse 无改动），计划关闭**：OpenCADStudio `39398579`——每个符号放置的实体写
+`extent=<W>x<H>`（量 `.pid` 缓存的实例本体经放置变换）、配上模板的放置再写 `driving=<name>:<mm>;…`（取 `template.dimensions`
+有名的按 on-disk 序），特性面板两行「驱动尺寸（库默认）」/「本体尺寸」；`06c95ce1`——导入摘要第三行（0201 = 4 on 2; 2，
+全零不推）。`pid_import` 51/51 × 两种 `OCS_PID_LAYER_MODE`。本计划留下的开口：**缓存 vs 库的显示优先级**（库在场时屏幕画的是
+库模板形、面板说的是缓存实例——按 J3 的事实缓存才是 SmartPlant 画的那个，值得单开一项）；放置实例真实参数在文件何处（J3 开口）。
+pid-parse 侧下一步待新计划。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
