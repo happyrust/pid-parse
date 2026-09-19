@@ -33,7 +33,15 @@ tag-188 46 条逐条对槽（40 落槽 + 2 假命中 + 6 组共享；尾字 = �
 **2026-09-18 · 同一计划 L3 落地（OCS 侧，pid-parse 无改动）**：OpenCADStudio `d0750567`——`OCS_PID_LAYER_MODE=sheet`
 时实体图层槽 = `PidSourceLayer` 的图纸图层名原样、图层表 = `sheet_layers["/"]` 的全部名字并按 `displayed` 设初值；
 默认仍是 `PID-*` 合成层。**该计划 D7 的七项（L2 → L1 → J1 → J2 → J3 → L3 → T）到此全部落地**；还开着的登记在计划
-D7 结算行（J 线的 OCS 消费口径、默认翻转、放置实例参数在文件何处）。pid-parse 侧下一步待新计划。
+D7 结算行（J 线的 OCS 消费口径、默认翻转、放置实例参数在文件何处）。
+
+**2026-09-19 · 新计划 `OpenCADStudio/docs/plans/2026-09-18-driving-dimensions-reach-the-panel-as-library-defaults.md`
+K1 落地（`223b26d`）**：`PidSymbolDimension::name` / `::formula`、`PidSymbolDefinition::variables` / `::template`——
+驱动尺寸带上驱动它的变量名与公式，放置的参数化本体点名它的模板本体（`value_ref` 解到模板存储 4/5、名 + 值 1/5；
+实例存储里按模板本体的线 / 弧数挑本体）。语料 5/5 配上、18 条 JDim 15 条有名；棘轮
+`a_placed_parametric_body_names_its_template_and_the_template_names_its_dimensions`。不改投影。
+按该计划下一项 K2（OCS 特性面板两行：「驱动尺寸（库默认）」限配上模板的放置、「本体尺寸」所有符号放置）→ K3（导入摘要
+第三行）→ K4（台账）。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的

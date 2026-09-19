@@ -459,6 +459,14 @@ UTF-16 公式」。
 要么等于模板（` Line2`）、要么是同一公式**按毫米**再算一遍（D06 Tank）、要么被拉过且参数不在缓存里（Manifold 等）。
 见 `docs/analysis/2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md`。
 
+**名字与配对进了 DTO（2026-09-19，计划 K1）**：`PidSymbolDimension::name`（驱动它的变量名，入参是别的 JDim 的为
+`None`）/ `::formula`（关系原文）；`PidSymbolDefinition::variables`（`SymbolInformation` 变量，模板与实例都有）/
+`::template`（只在实例上，指模板本体）。模板存储按实例 `value_ref` 全解到（4/5）或名 + 值全同（工艺）定，模板本体是
+那些值驱动的关系写尺寸的那张 sheet；实例存储里哪个本体归这份记录文件没写下来（`parent_ref` 为 0，记录不总在本体之前），
+按模板本体的线 / 弧数在实例存储里挑。语料 5/5 配上、四主图 18 条 JDim 15 条有名；棘轮
+`a_placed_parametric_body_names_its_template_and_the_template_names_its_dimensions`。消费方（OpenCADStudio 特性面板）
+从放置的定义引用两跳拿到**库默认**——它不是实例的实际尺寸。
+
 **注意：表达式子系统的对象和图元混在同一条记录链里**，按 type code 分家族时别默认
 「一条记录就是一个图元」。这一族也是 §3.2 里「182 有 191 个 value 没有记录」的全部
 来源，见 `docs/analysis/2026-08-27-the-recordless-182-referrers-are-symbolinformation.md`。

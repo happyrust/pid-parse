@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### 驱动尺寸有名字了，放置的参数化本体点名它的模板（2026-09-19，计划 K1）
+
+- **DTO**（`223b26d`）：`PidSymbolDimension` 加 `name: Option<String>`（出参它的那条 `Standard Relation` 的入参所对应的
+  `SymbolInformation` 变量名；入参是别的 JDim 的——D06 JDim 19 `0E($1+$2)/10`、A01 JDim 82 `0E$1/2`——为 `None`；
+  没有关系写它的——0201 JDim 503——`name` / `formula` 皆 `None`）与 `formula: Option<String>`（关系原文）。
+  `PidSymbolDefinition` 加 `variables: Vec<PidSymbolVariable { name, value_m, value_ref }>`（模板上是尺寸追回去的那份记录，
+  实例上是库默认副本）与 `template: Option<PidSymbolDefinitionRef>`（只在实例上）。模板与非参数化本体 `template: None`，
+  两者皆非的本体 `variables` 为空。四主图 18 条 JDim **15 条有名**（含 A01 18/22）。
+- **配对两步**：模板**存储** = 实例记录的 `value_ref` 全部解到 `Double Value` 的那个有关系的存储（4/5），解不到时 = 名 + 值全同
+  且有关系的存储（工艺 Black Box）；模板**本体** = 那些值驱动的关系写尺寸的那张 sheet。实例存储里哪个本体归这份记录，文件没写
+  （`parent_ref` 为 0，记录也不总在本体之前：工艺记录 27 在 sheet 21 之后），按**模板本体的线数与弧数**在实例存储里挑，挑不出
+  唯一的不配；同一模板被多份记录认领时按 oid 序对位（语料无）。**5/5 配上**。
+- 棘轮 `a_placed_parametric_body_names_its_template_and_the_template_names_its_dimensions`（五对及各自的配对依据、15 有名 /
+  3 无名及是否仍有公式、实例变量逐条 = 模板、`0E$1` ⇒ 尺寸值 = 变量值、从放置两跳到库默认）；`parse_real_files` 130 → 131。
+  探针 `probe_parametric_chain_resolves_a_cached_body` 第 4 节改从 DTO 读；分析文档 §2 表加「配对依据」列。
+- 不改投影：golden 不变，schema 只多字段。消费方见 OpenCADStudio
+  `docs/plans/2026-09-18-driving-dimensions-reach-the-panel-as-library-defaults.md`（K2 面板两行、K3 摘要）。
+
 ### 参数化链在模板上闭合，放置的实例身上没有它（2026-09-18）
 
 - **探针** `examples/probe_parametric_chain_resolves_a_cached_body.rs`：逐存储把 `SymbolInformation` 变量 →
