@@ -46,7 +46,14 @@ K1 落地（`223b26d`）**：`PidSymbolDimension::name` / `::formula`、`PidSymb
 有名的按 on-disk 序），特性面板两行「驱动尺寸（库默认）」/「本体尺寸」；`06c95ce1`——导入摘要第三行（0201 = 4 on 2; 2，
 全零不推）。`pid_import` 51/51 × 两种 `OCS_PID_LAYER_MODE`。本计划留下的开口：**缓存 vs 库的显示优先级**（库在场时屏幕画的是
 库模板形、面板说的是缓存实例——按 J3 的事实缓存才是 SmartPlant 画的那个，值得单开一项）；放置实例真实参数在文件何处（J3 开口）。
-pid-parse 侧下一步待新计划。
+
+**2026-09-19 · 新计划 `OpenCADStudio/docs/plans/2026-09-19-draw-the-cached-body-first-and-the-library-only-when-the-drawing-carries-none.md`
+（缓存 vs 库的显示优先级；八条决策 2026-09-19 用户按推荐批准）C1 落地（`08fc95a`）**：`PidSymbolDefinition::sheet_layers` /
+`::primitive_layers` / `visible_primitives()`——缓存本体的每个图元带上所在层与该层的显示位。语料被放置点名的 43 个本体 33 个带
+关闭层图元；可见图元按放置累计 0201 81 / 0202 120 / D06 32 / 工艺 237 / A01 6；没有显示位的层只在各存储基 sheet 与 A01 OLE 站点
+（零图元、无放置）。棘轮 `a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden`。加法，不改投影。下一项 **C2**
+（OCS：先缓存后库、关闭层不画、`OCS_PID_SYMBOL_SOURCE` 一轮）→ **C3**（双仓台账）。pid-parse 侧待办：今天装上的 nightly 让
+`clippy -D warnings` 在 HEAD 上就红（`map_unwrap_or` 29 处旧代码），需一条清理提交。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的

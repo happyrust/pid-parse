@@ -650,6 +650,16 @@ payload 113 / 115 字节是 `has_membassy = 0` 的形状，121 / 123 是 1 的�
 它的 `JSheetLayerManager`，管理器管的图层上的记录就是本体
 （`docs/analysis/2026-09-07-placement-tail-names-the-cached-definition.md`）。
 
+**缓存本体的图元带层与显示位（2026-09-19，计划 C1）**：`PidSymbolDefinition::sheet_layers`（本体每层的名字与 `displayed`，
+来自该存储**自己的**图层表与 `0x0057`）、`::primitive_layers`（与 `primitives` 平行，每个图元所在层的 oid）、
+`visible_primitives()`（只给显示层上的）。缓存本体的层是**符号内部层**——`Default` / `Heat Trace` / `Jacket` / `Label` /
+`Construction` / `Dimension`，另有 `HiddenObjects` / `Hidden Objects` / `Invisible`——与图纸的 sheet layer 是两套表，同名也不是
+一个。语料里除 `Default`（与两处 `Invisible`）外全关：被放置点名的 43 个本体里 33 个带关闭层图元（伴热线、夹套线、`NULL`
+占位文字、参数化本体的构造短线），SmartPlant 屏幕上看不见它们，按放置累计 0201 112 → 81 / 0202 146 → 120 / D06 40 → 32 /
+工艺 287 → 237 / A01 12 → 6。每个缓存存储的基 sheet（`JSheet` 6，`Default` oid 8）与 A01 OLE 站点 `/JSite204` 没有 `0x0057`，
+它们的层 `displayed: None`，按显示读；这些 sheet 零图元、无放置点名。棘轮
+`a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden`。消费方（OpenCADStudio）按此先画缓存、关闭层不画。
+
 ### 5.1 `aux_hi`（payload `+8`）是这条图元所在的图层
 
 **等级：corpus（五图 × 15 个存储 × 全部记录链）**

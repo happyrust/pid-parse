@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### 缓存本体的每个图元带上所在层，本体说出哪些层文件关着（2026-09-19，计划 C1）
+
+- **DTO**（`08fc95a`）：`PidSymbolDefinition` 加 `sheet_layers: Vec<PidSymbolSheetLayer { oid, name, displayed }>`（`layers` 每个
+  oid 一条、同序；名字与显示位来自本体所在存储**自己的**图层表与 `0x0057` 视图过滤器集）与 `primitive_layers: Vec<u32>`（与
+  `primitives` 同长同序，每个图元所在层的 oid）；`visible_primitives()` 给 `displayed != Some(false)` 的层上的图元，
+  `layer_is_displayed(oid)` 是那条判据（文件没说的层按显示，与 L1 一致）。加法：现有字段不动，golden 不变（本族不发实体），
+  OpenCADStudio 照旧编译。
+- **语料**：被放置点名的 43 个本体里 **33 个带关闭层图元**（0201 15/17、0202 8/11、D06 4/6、工艺 4/7、A01 2/2），关闭层名
+  ⊆ {`Heat Trace`, `Label`, `Jacket`, `Construction`, `Dimension`}（存储里另有 `HiddenObjects` / `Hidden Objects` 关、`Invisible`
+  开两处，放置的本体不在它们上画）；缓存本体的文字**全部**在关闭层上（`NULL` 占位）。按放置累计的图元 全部 → 可见：0201 112 → 81、
+  0202 146 → 120、D06 40 → 32、工艺 287 → 237、A01 12 → 6。Manifold 实例可见 = 4 线 2 弧（4 条 `Construction` 构造线不算）、
+  ` Line2` = 1 线（`Construction` 上的刻线不算——K2 的 `extent=` 25.40x3.81 由 C2 改成 25.40x0.00）、D06 Ball Valve Type 1 =
+  6 线 1 圆、工艺 Remarks = 3 线。
+- **没有显示位的层**（计划 C1 的风险项，出现了但无害）：只在每个缓存存储自己的基 sheet（`JSheet` 6 的 `Default`，oid 8 /
+  管理器 7，没有 `0x0057` 管它）与 A01 的 OLE 站点 `/JSite204` 两张 sheet 上——这些「本体」零图元、无放置点名；
+  0201 2 / 0202 1 / D06 2 / 工艺 2 / A01 4，棘轮钉住。
+- 棘轮 `a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden`；`parse_real_files` 131 → 132。消费方见 OpenCADStudio
+  `docs/plans/2026-09-19-draw-the-cached-body-first-and-the-library-only-when-the-drawing-carries-none.md`（C2 先缓存后库、关闭层不画）。
+- 顺带：今天 13:43 装上的 nightly（rustc 1.100.0-nightly 2026-09-18）把 `map_unwrap_or` 扩到 `.map(f).unwrap_or_default()`，
+  HEAD 上 9 个文件 29 处旧代码被点名，本项零处；`clippy -D warnings` 门禁待一条清理提交。
+
 ### 驱动尺寸有名字了，放置的参数化本体点名它的模板（2026-09-19，计划 K1）
 
 - **DTO**（`223b26d`）：`PidSymbolDimension` 加 `name: Option<String>`（出参它的那条 `Standard Relation` 的入参所对应的
