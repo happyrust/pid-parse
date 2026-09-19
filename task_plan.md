@@ -60,6 +60,10 @@ K1 落地（`223b26d`）**：`PidSymbolDimension::name` / `::formula`、`PidSymb
 顺时针顶点与 `Remarks.sym` 云线凸弧朝外。棘轮 `a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle`。见
 `docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`。09-07 placement-tail 文档的「缓存 vs 库优先级」开口标已裁。
 
+**2026-09-19 · 该计划在 OCS 侧收口**（`641cec3b` C2：先缓存后库、关闭层不画、`OCS_PID_SYMBOL_SOURCE` 一轮、`extent=` 量可见笔画、
+弧按顺时针对调两角；`ef93f6ba` C3 台账）——`pid_import` 54/54 × 四种环境组合；消费的就是上面 C1 的三个字段与 `b6a70a7` 的弧向约定，
+pid-parse 侧无改动。仍待办：`map_unwrap_or` 29 处旧代码的 clippy 清理提交。
+
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
 `sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给
