@@ -101,9 +101,31 @@ pub struct PidSymbolDefinition {
     pub reference: PidSymbolDefinitionRef,
     /// Storage-local oids of the layers the body's records sit on.
     pub layers: Vec<u32>,
+    /// Those same layers with what the body's own storage says about each:
+    /// its authored name (`Default`, `Heat Trace`, `Label`, `Jacket`,
+    /// `Construction`, `Dimension` on the corpus) and whether the file
+    /// displays it. One entry per oid of [`Self::layers`], same order.
+    ///
+    /// These are the symbol's internal layers, a table of the definition
+    /// cache's own and not the drawing's -- `Heat Trace` here is the tracing
+    /// the symbol's author drew for it to show when switched on, and the
+    /// corpus switches every layer but `Default` off in every cache. A
+    /// renderer that draws the cached body therefore wants
+    /// [`Self::visible_primitives`], not [`Self::primitives`]: the strokes
+    /// on a switched-off layer are ones `SmartPlant` does not put on the
+    /// screen (the tracing, the jacket, the `NULL` placeholder lettering,
+    /// the construction lines a parametric body is built on).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sheet_layers: Vec<PidSymbolSheetLayer>,
     /// The body, in on-disk record order within each family: circles, arcs,
-    /// lines, polylines, then text.
+    /// lines, polylines, text, then B-splines.
     pub primitives: Vec<crate::symbol_library::SymbolPrimitive>,
+    /// Storage-local oid of the layer each primitive sits on: parallel to
+    /// [`Self::primitives`] -- same length, same order -- and each an oid
+    /// of [`Self::layers`], so [`Self::sheet_layers`] says what the file
+    /// does with that stroke.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub primitive_layers: Vec<u32>,
     /// The driving dimensions that constrain this body, in on-disk order.
     /// Not primitives: a dimension is a value the parametric body is
     /// resized by, not a stroke of it, and the file keeps every one on a
@@ -140,6 +162,59 @@ pub struct PidSymbolDefinition {
     /// templates and on bodies that are not parametric.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<PidSymbolDefinitionRef>,
+}
+
+impl PidSymbolDefinition {
+    /// Whether the file displays the given layer of this body: `false`
+    /// only when [`Self::sheet_layers`] carries the oid with
+    /// `displayed: Some(false)`. A layer the file says nothing about is
+    /// drawn, as the drawing's own layers are when no view filter set
+    /// resolves to them.
+    pub fn layer_is_displayed(&self, layer: u32) -> bool {
+        self.sheet_layers
+            .iter()
+            .find(|sheet_layer| sheet_layer.oid == layer)
+            .and_then(|sheet_layer| sheet_layer.displayed)
+            != Some(false)
+    }
+
+    /// The primitives on layers the file displays -- what `SmartPlant` puts
+    /// on the screen for this body -- in [`Self::primitives`] order. A
+    /// primitive [`Self::primitive_layers`] has no entry for (a body read
+    /// back from before the field existed) counts as displayed.
+    pub fn visible_primitives(
+        &self,
+    ) -> impl Iterator<Item = &crate::symbol_library::SymbolPrimitive> + '_ {
+        self.primitives
+            .iter()
+            .enumerate()
+            .filter(move |(index, _)| {
+                self.primitive_layers
+                    .get(*index)
+                    .is_none_or(|layer| self.layer_is_displayed(*layer))
+            })
+            .map(|(_, primitive)| primitive)
+    }
+}
+
+/// One layer of a cached symbol body, as the body's own storage describes
+/// it: the `JSheetLayer` record's name and the display bit the storage's
+/// `0x0057 Top ViewFilterSet` gives it. A symbol-internal layer -- a table
+/// separate from the drawing's sheet layers, even where a name repeats.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PidSymbolSheetLayer {
+    /// Storage-local oid; one of [`PidSymbolDefinition::layers`].
+    pub oid: u32,
+    /// Authored layer name, when the storage's layer table has the oid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Whether the storage's view filter set displays the layer -- the
+    /// file's own answer to "does `SmartPlant` draw the strokes on it".
+    /// `None` when no set resolves to the layer or the layer table lacks
+    /// the oid; [`PidSymbolDefinition::layer_is_displayed`] reads that as
+    /// displayed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub displayed: Option<bool>,
 }
 
 /// One named variable of a symbol body's `JSymbolInformation` record.
@@ -1257,28 +1332,60 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
             continue;
         };
         let expressions = site.symbol_information.as_ref().map(ExpressionIndex::new);
+        // The storage's own layer table: the names and display bits of the
+        // symbol-internal layers every body of this cache is drawn on.
+        let layer_table = doc.sheet_layers.get(&site.path);
         for definition in &nested.definitions {
             let on_body = |layer: u32| definition.layers.binary_search(&layer).is_ok();
+            let sheet_layers: Vec<PidSymbolSheetLayer> = definition
+                .layers
+                .iter()
+                .map(|&oid| {
+                    let layer =
+                        layer_table.and_then(|table| table.iter().find(|layer| layer.oid == oid));
+                    PidSymbolSheetLayer {
+                        oid,
+                        name: layer.map(|layer| layer.name.clone()),
+                        displayed: layer.and_then(|layer| layer.displayed),
+                    }
+                })
+                .collect();
+            // Each primitive with the layer it sits on, kept in two parallel
+            // lists so `primitives` stays the slice a library body also is.
             let mut primitives = Vec::new();
+            let mut primitive_layers = Vec::new();
+            let mut push = |primitive: SymbolPrimitive, layer: u32| {
+                primitives.push(primitive);
+                primitive_layers.push(layer);
+            };
             for circle in nested.circles.iter().filter(|c| on_body(c.sheet_layer_ref)) {
-                primitives.push(SymbolPrimitive::Circle {
-                    center: (circle.center_x, circle.center_y),
-                    radius: circle.radius,
-                });
+                push(
+                    SymbolPrimitive::Circle {
+                        center: (circle.center_x, circle.center_y),
+                        radius: circle.radius,
+                    },
+                    circle.sheet_layer_ref,
+                );
             }
             for arc in nested.arcs.iter().filter(|a| on_body(a.sheet_layer_ref)) {
-                primitives.push(SymbolPrimitive::Arc {
-                    center: (arc.center_x, arc.center_y),
-                    radius: arc.radius,
-                    start_angle: arc.start_angle,
-                    end_angle: arc.end_angle,
-                });
+                push(
+                    SymbolPrimitive::Arc {
+                        center: (arc.center_x, arc.center_y),
+                        radius: arc.radius,
+                        start_angle: arc.start_angle,
+                        end_angle: arc.end_angle,
+                    },
+                    arc.sheet_layer_ref,
+                );
             }
             for line in nested.lines.iter().filter(|l| on_body(l.sheet_layer_ref)) {
-                primitives.push(SymbolPrimitive::Line {
-                    start: (line.start_x, line.start_y),
-                    end: (line.end_x, line.end_y),
-                });
+                push(
+                    SymbolPrimitive::Line {
+                        start: (line.start_x, line.start_y),
+                        end: (line.end_x, line.end_y),
+                    },
+                    line.sheet_layer_ref,
+                );
             }
             for polyline in nested
                 .polylines
@@ -1292,18 +1399,24 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     .zip(polyline.vertex_ys.iter().copied())
                     .collect();
                 if vertices.len() >= 2 {
-                    primitives.push(SymbolPrimitive::Polyline {
-                        vertices,
-                        is_closed: polyline.form == 2,
-                    });
+                    push(
+                        SymbolPrimitive::Polyline {
+                            vertices,
+                            is_closed: polyline.form == 2,
+                        },
+                        polyline.sheet_layer_ref,
+                    );
                 }
             }
             for text in nested.texts.iter().filter(|t| on_body(t.sheet_layer_ref)) {
                 if !text.text.is_empty() {
-                    primitives.push(SymbolPrimitive::Text {
-                        text: text.text.clone(),
-                        at: (text.trailing_double_1, text.trailing_double_2),
-                    });
+                    push(
+                        SymbolPrimitive::Text {
+                            text: text.text.clone(),
+                            at: (text.trailing_double_1, text.trailing_double_2),
+                        },
+                        text.sheet_layer_ref,
+                    );
                 }
             }
             // Rectangles are deliberately not here: their strokes are the
@@ -1313,11 +1426,14 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                 .iter()
                 .filter(|b| on_body(b.sheet_layer_ref))
             {
-                primitives.push(SymbolPrimitive::BSpline {
-                    poles: curve.poles(),
-                    weights: curve.weights.clone(),
-                    knots: curve.knots.clone(),
-                });
+                push(
+                    SymbolPrimitive::BSpline {
+                        poles: curve.poles(),
+                        weights: curve.weights.clone(),
+                        knots: curve.knots.clone(),
+                    },
+                    curve.sheet_layer_ref,
+                );
             }
             // Dimensions are not primitives: they constrain the body
             // rather than draw it. The measured line is looked up in the
@@ -1374,7 +1490,9 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         sheet: definition.sheet_oid,
                     },
                     layers: definition.layers.clone(),
+                    sheet_layers,
                     primitives,
+                    primitive_layers,
                     dimensions,
                     variables,
                     template: None,

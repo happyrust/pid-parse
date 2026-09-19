@@ -5183,6 +5183,314 @@ fn a_placed_parametric_body_names_its_template_and_the_template_names_its_dimens
     }
 }
 
+/// C1 of `OpenCADStudio/docs/plans/2026-09-19-draw-the-cached-body-first-and-the-library-only-when-the-drawing-carries-none.md`:
+/// a cached body says which of its layers each stroke sits on and which of
+/// those layers the file switches off, so a renderer that draws the cached
+/// body -- the flavour `SmartPlant` actually placed -- can leave out what
+/// `SmartPlant` does not show: the heat tracing, the jacket, the `NULL`
+/// placeholder lettering, the construction lines a parametric body is built
+/// on. The numbers are the 2026-09-19 per-placement comparison the plan
+/// rests on.
+#[test]
+fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
+    use pid_parse::symbol_library::SymbolPrimitive;
+    use pid_parse::PidSymbolDefinitionRef;
+    use std::collections::BTreeSet;
+
+    /// `[lines, arcs, circles, polylines, texts, bsplines]`.
+    type Tally = [usize; 6];
+    fn tally<'a>(primitives: impl Iterator<Item = &'a SymbolPrimitive>) -> Tally {
+        let mut tally = [0usize; 6];
+        for primitive in primitives {
+            tally[match primitive {
+                SymbolPrimitive::Line { .. } => 0,
+                SymbolPrimitive::Arc { .. } => 1,
+                SymbolPrimitive::Circle { .. } => 2,
+                SymbolPrimitive::Polyline { .. } => 3,
+                SymbolPrimitive::Text { .. } => 4,
+                SymbolPrimitive::BSpline { .. } => 5,
+            }] += 1;
+        }
+        tally
+    }
+    struct Expected {
+        fixture: &'static str,
+        /// Distinct bodies the drawing's placements name.
+        placed_bodies: usize,
+        /// How many of those carry a stroke on a switched-off layer.
+        placed_bodies_with_hidden_strokes: usize,
+        /// The switched-off layers those strokes sit on, by name, sorted.
+        hidden_layers: &'static [&'static str],
+        /// Strokes summed over every placement: the whole body, then the
+        /// displayed part of it -- what a renderer drawing the cache puts
+        /// on the page before and after leaving the hidden layers out.
+        strokes_over_placements: (usize, usize),
+        /// `(site, sheet)` -> the displayed strokes of that body.
+        visible: &'static [((u32, u32), Tally)],
+        /// Layers no view filter set governs, over every body: one
+        /// `Default` per cache storage's base sheet, plus A01's OLE site.
+        layers_without_display_bit: usize,
+    }
+    const EXPECTED: &[Expected] = &[
+        Expected {
+            fixture: "DWG-0201GP06-01.pid",
+            placed_bodies: 17,
+            placed_bodies_with_hidden_strokes: 15,
+            hidden_layers: &["Construction", "Heat Trace", "Jacket", "Label"],
+            strokes_over_placements: (112, 81),
+            visible: &[
+                // The Parametric Manifold instance: its outline, without
+                // the four construction lines the body is built on.
+                ((396, 113), [4, 2, 0, 0, 0, 0]),
+                // ` Line2`: the 25.4 mm line, without the tick on
+                // `Construction` that K2's `extent=` still measures.
+                ((396, 119), [1, 0, 0, 0, 0, 0]),
+            ],
+            layers_without_display_bit: 2,
+        },
+        Expected {
+            fixture: "DWG-0202GP06-01.pid",
+            placed_bodies: 11,
+            placed_bodies_with_hidden_strokes: 8,
+            hidden_layers: &["Heat Trace", "Label"],
+            strokes_over_placements: (146, 120),
+            visible: &[],
+            layers_without_display_bit: 1,
+        },
+        Expected {
+            fixture: "D06.pid",
+            placed_bodies: 6,
+            placed_bodies_with_hidden_strokes: 4,
+            hidden_layers: &["Heat Trace", "Jacket", "Label"],
+            strokes_over_placements: (40, 32),
+            // Ball Valve Type 1: one circle, not the two the library's
+            // `.sym` draws by merging its sheets.
+            visible: &[((145, 125), [6, 0, 1, 0, 0, 0])],
+            layers_without_display_bit: 2,
+        },
+        Expected {
+            fixture: "工艺管道及仪表流程-1.pid",
+            placed_bodies: 7,
+            placed_bodies_with_hidden_strokes: 4,
+            hidden_layers: &["Heat Trace", "Label"],
+            strokes_over_placements: (287, 237),
+            // Remarks: a 1.27 mm mark of three lines, not the library's
+            // 27 mm cloud of the same name.
+            visible: &[((7559, 190), [3, 0, 0, 0, 0, 0])],
+            layers_without_display_bit: 2,
+        },
+        Expected {
+            fixture: "export-test/publish-data/A01/A01.pid",
+            placed_bodies: 2,
+            placed_bodies_with_hidden_strokes: 2,
+            hidden_layers: &["Construction", "Dimension", "Heat Trace"],
+            strokes_over_placements: (12, 6),
+            visible: &[],
+            // The base sheets of three cache storages, and the OLE site's
+            // second sheet, which has no view filter set either.
+            layers_without_display_bit: 4,
+        },
+    ];
+    /// Every layer a corpus definition cache switches off is one of these,
+    /// and every layer it displays one of those -- `Invisible` is on in
+    /// the two bodies that have it (the guide's §3.4 note: the name says
+    /// the opposite of the file). Placed bodies only ever draw on the
+    /// first five of the hidden names.
+    const HIDDEN_LAYER_NAMES: &[&str] = &[
+        "Construction",
+        "Dimension",
+        "Heat Trace",
+        "Hidden Objects",
+        "HiddenObjects",
+        "Jacket",
+        "Label",
+    ];
+    const DISPLAYED_LAYER_NAMES: &[&str] = &["Default", "Invisible"];
+
+    for expected in EXPECTED {
+        let fixture = expected.fixture;
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let placements: Vec<PidSymbolDefinitionRef> = doc
+            .sheet_streams
+            .iter()
+            .filter_map(|sheet| sheet.geometry.as_ref())
+            .flat_map(|geometry| {
+                geometry
+                    .decoded_igsymbols
+                    .iter()
+                    .map(|p| PidSymbolDefinitionRef {
+                        site: p.definition_site_ref,
+                        sheet: p.definition_sheet_ref,
+                    })
+            })
+            .collect();
+        let placed: BTreeSet<PidSymbolDefinitionRef> = placements.iter().copied().collect();
+
+        // 1. Every body: a layer for every stroke, each one of the body's;
+        //    the layer table describes exactly the body's layers, every
+        //    one named; the displayed and the switched-off names are the
+        //    known ones, and a layer without a display bit -- the `Default`
+        //    of a cache storage's own base sheet (`JSheet` 6, which no
+        //    `0x0057` set governs), or of A01's OLE site -- only ever
+        //    belongs to a body of no strokes that no placement names;
+        //    lettering is never displayed; and `visible_primitives` is the
+        //    displayed strokes in order.
+        let mut layers_without_display_bit = 0usize;
+        for body in &geometry.symbol_definitions {
+            let reference = body.reference;
+            assert_eq!(
+                body.primitive_layers.len(),
+                body.primitives.len(),
+                "{fixture} {reference:?}: a layer for every primitive"
+            );
+            assert_eq!(
+                body.sheet_layers
+                    .iter()
+                    .map(|layer| layer.oid)
+                    .collect::<Vec<_>>(),
+                body.layers,
+                "{fixture} {reference:?}: sheet_layers describe the body's layers, in order"
+            );
+            let layers: BTreeSet<u32> = body.layers.iter().copied().collect();
+            for layer in &body.primitive_layers {
+                assert!(
+                    layers.contains(layer),
+                    "{fixture} {reference:?}: a stroke on layer {layer}, which is not the body's"
+                );
+            }
+            for layer in &body.sheet_layers {
+                let name = layer.name.as_deref().unwrap_or_else(|| {
+                    panic!(
+                        "{fixture} {reference:?}: layer {} is not in the storage's layer table",
+                        layer.oid
+                    )
+                });
+                match layer.displayed {
+                    Some(true) => assert!(
+                        DISPLAYED_LAYER_NAMES.contains(&name),
+                        "{fixture} {reference:?}: a displayed layer named {name}"
+                    ),
+                    Some(false) => assert!(
+                        HIDDEN_LAYER_NAMES.contains(&name),
+                        "{fixture} {reference:?}: a switched-off layer named {name}"
+                    ),
+                    None => {
+                        layers_without_display_bit += 1;
+                        assert!(
+                            name == "Default"
+                                && body.primitives.is_empty()
+                                && !placed.contains(&reference),
+                            "{fixture} {reference:?}: layer {} ({name}) has no display bit \
+                             on a body that draws or is placed",
+                            layer.oid
+                        );
+                    }
+                }
+            }
+            for (primitive, layer) in body.primitives.iter().zip(&body.primitive_layers) {
+                if matches!(primitive, SymbolPrimitive::Text { .. }) {
+                    assert!(
+                        !body.layer_is_displayed(*layer),
+                        "{fixture} {reference:?}: lettering on a displayed layer: {primitive:?}"
+                    );
+                }
+            }
+            let visible: Vec<&SymbolPrimitive> = body.visible_primitives().collect();
+            let by_hand: Vec<&SymbolPrimitive> = body
+                .primitives
+                .iter()
+                .zip(&body.primitive_layers)
+                .filter(|(_, layer)| body.layer_is_displayed(**layer))
+                .map(|(primitive, _)| primitive)
+                .collect();
+            assert_eq!(
+                visible, by_hand,
+                "{fixture} {reference:?}: visible_primitives is the displayed strokes, in order"
+            );
+        }
+        assert_eq!(
+            layers_without_display_bit, expected.layers_without_display_bit,
+            "{fixture}: layers of cached bodies that no view filter set governs"
+        );
+
+        // 2. The bodies placements name: every one is in the cache; how
+        //    many carry a hidden stroke, and on which layers; and the
+        //    strokes a renderer draws over every placement, with and
+        //    without the hidden layers.
+        let body_of = |reference: PidSymbolDefinitionRef| {
+            geometry.symbol_definition(reference).unwrap_or_else(|| {
+                panic!(
+                    "{fixture}: a placement names {reference:?}, which the cache has no body for"
+                )
+            })
+        };
+        let mut with_hidden = 0usize;
+        let mut hidden_layers: BTreeSet<&str> = BTreeSet::new();
+        for reference in &placed {
+            let body = body_of(*reference);
+            let hidden: Vec<&str> = body
+                .primitive_layers
+                .iter()
+                .filter(|layer| !body.layer_is_displayed(**layer))
+                .map(|layer| {
+                    body.sheet_layers
+                        .iter()
+                        .find(|sheet_layer| sheet_layer.oid == *layer)
+                        .and_then(|sheet_layer| sheet_layer.name.as_deref())
+                        .unwrap_or("?")
+                })
+                .collect();
+            if !hidden.is_empty() {
+                with_hidden += 1;
+                hidden_layers.extend(hidden);
+            }
+        }
+        assert_eq!(
+            placed.len(),
+            expected.placed_bodies,
+            "{fixture}: distinct bodies the placements name"
+        );
+        assert_eq!(
+            with_hidden, expected.placed_bodies_with_hidden_strokes,
+            "{fixture}: placed bodies with a stroke on a switched-off layer"
+        );
+        assert_eq!(
+            hidden_layers.into_iter().collect::<Vec<_>>(),
+            expected.hidden_layers,
+            "{fixture}: the switched-off layers placed bodies draw on"
+        );
+        let strokes = placements.iter().map(|reference| body_of(*reference)).fold(
+            (0usize, 0usize),
+            |(all, visible), body| {
+                (
+                    all + body.primitives.len(),
+                    visible + body.visible_primitives().count(),
+                )
+            },
+        );
+        assert_eq!(
+            strokes, expected.strokes_over_placements,
+            "{fixture}: strokes over every placement, the whole body then the displayed part"
+        );
+
+        // 3. The bodies the plan names, stroke by stroke.
+        for ((site, sheet), expected_tally) in expected.visible {
+            let reference = PidSymbolDefinitionRef {
+                site: *site,
+                sheet: *sheet,
+            };
+            assert_eq!(
+                tally(body_of(reference).visible_primitives()),
+                *expected_tally,
+                "{fixture} {reference:?}: displayed strokes as [lines, arcs, circles, polylines, texts, bsplines]"
+            );
+        }
+    }
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {
