@@ -5491,6 +5491,312 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
     }
 }
 
+/// E1 of `OpenCADStudio/docs/plans/2026-09-20-a-cached-body-carries-its-own-stroke-styles.md`:
+/// a cached body carries, stroke by stroke, the colour, width and dash its
+/// own storage's `StyleCluster` states -- the same vocabulary a library body
+/// arrives in -- so a renderer can paint the body the way it paints a `.sym`
+/// body and let the placement's own style win on top. On the corpus every
+/// displayed stroke of every placed body has one; it agrees with the `.sym`
+/// wherever the library has the symbol; and the one thing it says that the
+/// placement's style does not is the dash: 57 displayed strokes over 11
+/// placements, all 3.5 / 1.75 mm, on the breather valve and wastewater pit
+/// of DWG-0202 and the `Xa` / `Xa chu` off-page connectors of 工艺.
+#[test]
+fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
+    use pid_parse::symbol_library::{PrimitiveStyle, SymbolLibrary, SymbolPrimitive};
+    use pid_parse::{PidGraphicKind, PidSymbolDefinitionRef};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// One displayed primitive with the style its storage states for it.
+    type Stroke<'a> = (&'a SymbolPrimitive, Option<&'a PrimitiveStyle>);
+    /// What one stroke draws with: `((#RRGGBB, width), dash)`, rounded.
+    type Look = ((String, i64), Vec<i64>);
+    /// A body by `(site, sheet)`, with its `(dashed, displayed)` strokes.
+    type DashedBody = ((u32, u32), (usize, usize));
+    /// A body by `(site, sheet)`, with the distinct `(#RRGGBB, width)` of
+    /// its displayed strokes, sorted.
+    type Palette = ((u32, u32), &'static [(&'static str, i64)]);
+
+    /// `#RRGGBB` and the width in hundredths of a millimetre.
+    fn palette_key(style: &PrimitiveStyle) -> (String, i64) {
+        let [r, g, b] = style.rgb;
+        (
+            format!("#{r:02X}{g:02X}{b:02X}"),
+            (style.width_mm * 100.0).round() as i64,
+        )
+    }
+    /// The dash by magnitude, in hundredths of a millimetre.
+    fn dash_key(style: &PrimitiveStyle) -> Vec<i64> {
+        style
+            .dash_mm
+            .iter()
+            .map(|mm| (mm.abs() * 100.0).round() as i64)
+            .collect()
+    }
+
+    struct Expected {
+        fixture: &'static str,
+        /// Displayed strokes summed over every placement -- every one of
+        /// them carries a style.
+        visible_over_placements: usize,
+        /// Of those, the ones whose own style draws dashed.
+        dashed_over_placements: usize,
+        /// `(site, sheet)` -> `(dashed, displayed)` strokes of the bodies
+        /// that dash anything.
+        dashed_bodies: &'static [DashedBody],
+        /// `(site, sheet)` -> the distinct `(#RRGGBB, width)` of the body's
+        /// displayed strokes, sorted: the bodies the plan names.
+        palettes: &'static [Palette],
+    }
+    const EXPECTED: &[Expected] = &[
+        Expected {
+            fixture: "DWG-0201GP06-01.pid",
+            visible_over_placements: 81,
+            dashed_over_placements: 0,
+            dashed_bodies: &[],
+            palettes: &[
+                // Cap: cyan at 0.50, as `Cap.sym` authors it.
+                ((329, 285), &[("#00FFFF", 50)]),
+                // Off-Unit: five `#00FEA0` strokes and two black ones.
+                ((329, 453), &[("#000000", 35), ("#00FEA0", 50)]),
+                // The Parametric Manifold instance: black at 0.35.
+                ((396, 113), &[("#000000", 35)]),
+            ],
+        },
+        Expected {
+            fixture: "DWG-0202GP06-01.pid",
+            visible_over_placements: 120,
+            dashed_over_placements: 12,
+            dashed_bodies: &[
+                // arrester breather valve(RD): seven lines and the B-spline
+                // lip, of 21 displayed strokes.
+                ((793, 2817), (8, 21)),
+                // Wastewater Pit: four of its seven lines.
+                ((793, 3934), (4, 7)),
+            ],
+            palettes: &[],
+        },
+        Expected {
+            fixture: "D06.pid",
+            visible_over_placements: 32,
+            dashed_over_placements: 0,
+            dashed_bodies: &[],
+            // Ball Valve Type 1: six lines at 0.13 and the one circle at
+            // 0.35, both reached through an override.
+            palettes: &[((145, 125), &[("#000000", 13), ("#000000", 35)])],
+        },
+        Expected {
+            fixture: "工艺管道及仪表流程-1.pid",
+            visible_over_placements: 237,
+            dashed_over_placements: 45,
+            dashed_bodies: &[
+                // `Xa.sym` (placed 3 times) and `Xa chu.sym` (6): a dashed
+                // circle and four dashed lines each, beside four solid
+                // `#00FEA0` ones. The library has neither symbol.
+                ((7559, 155), (5, 9)),
+                ((7559, 219), (5, 9)),
+            ],
+            palettes: &[((7559, 155), &[("#000000", 35), ("#00FEA0", 50)])],
+        },
+        Expected {
+            fixture: "export-test/publish-data/A01/A01.pid",
+            visible_over_placements: 6,
+            dashed_over_placements: 0,
+            dashed_bodies: &[],
+            palettes: &[],
+        },
+    ];
+    /// The one dash pattern any cached stroke of the corpus draws with.
+    const THE_DASH: &[i64] = &[350, 175];
+
+    let library_root = std::path::Path::new("test-file/symbols-full");
+    let mut library = library_root
+        .is_dir()
+        .then(|| SymbolLibrary::with_roots([library_root]));
+
+    for expected in EXPECTED {
+        let fixture = expected.fixture;
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let mut placements: Vec<PidSymbolDefinitionRef> = Vec::new();
+        let mut symbol_paths: BTreeMap<PidSymbolDefinitionRef, BTreeSet<String>> = BTreeMap::new();
+        for entity in &geometry.entities {
+            if let PidGraphicKind::SymbolInstance {
+                definition: Some(reference),
+                symbol_path,
+                ..
+            } = &entity.kind
+            {
+                placements.push(*reference);
+                if let Some(path) = symbol_path {
+                    symbol_paths
+                        .entry(*reference)
+                        .or_default()
+                        .insert(path.clone());
+                }
+            }
+        }
+        let placed: BTreeSet<PidSymbolDefinitionRef> = placements.iter().copied().collect();
+        let body_of = |reference: PidSymbolDefinitionRef| {
+            geometry.symbol_definition(reference).unwrap_or_else(|| {
+                panic!(
+                    "{fixture}: a placement names {reference:?}, which the cache has no body for"
+                )
+            })
+        };
+
+        // 1. Every body: a style slot for every primitive; lettering has
+        //    none; every displayed stroke of a placed body has one; and
+        //    `visible_strokes` is `visible_primitives` with the styles
+        //    beside it.
+        for body in &geometry.symbol_definitions {
+            let reference = body.reference;
+            assert_eq!(
+                body.primitive_styles.len(),
+                body.primitives.len(),
+                "{fixture} {reference:?}: a style slot for every primitive"
+            );
+            for (primitive, style) in body.primitives.iter().zip(&body.primitive_styles) {
+                if matches!(primitive, SymbolPrimitive::Text { .. }) {
+                    assert!(
+                        style.is_none(),
+                        "{fixture} {reference:?}: lettering names a paragraph style, not a line style"
+                    );
+                }
+            }
+            let strokes: Vec<Stroke<'_>> = body.visible_strokes().collect();
+            assert_eq!(
+                strokes.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
+                body.visible_primitives().collect::<Vec<_>>(),
+                "{fixture} {reference:?}: visible_strokes walks the displayed strokes in order"
+            );
+            if placed.contains(&reference) {
+                for (primitive, style) in &strokes {
+                    if !matches!(primitive, SymbolPrimitive::Text { .. }) {
+                        assert!(
+                            style.is_some(),
+                            "{fixture} {reference:?}: a displayed stroke whose style id reaches \
+                             no line style in its own storage: {primitive:?}"
+                        );
+                    }
+                }
+            }
+        }
+
+        // 2. Over every placement: how many displayed strokes, how many of
+        //    them dashed, and that every dash is the corpus's one pattern.
+        let (visible, dashed) = placements.iter().map(|reference| body_of(*reference)).fold(
+            (0usize, 0usize),
+            |(visible, dashed), body| {
+                let strokes: Vec<_> = body.visible_strokes().collect();
+                let dashed_here = strokes
+                    .iter()
+                    .filter(|(_, style)| style.is_some_and(PrimitiveStyle::is_dashed))
+                    .inspect(|(primitive, style)| {
+                        assert_eq!(
+                            dash_key(style.expect("filtered to dashed")),
+                            THE_DASH,
+                            "{fixture} {:?}: the dash of {primitive:?}",
+                            body.reference
+                        );
+                    })
+                    .count();
+                (visible + strokes.len(), dashed + dashed_here)
+            },
+        );
+        assert_eq!(
+            visible, expected.visible_over_placements,
+            "{fixture}: displayed strokes over every placement"
+        );
+        assert_eq!(
+            dashed, expected.dashed_over_placements,
+            "{fixture}: displayed strokes over every placement that draw dashed"
+        );
+
+        // 3. The bodies that dash anything, and only those.
+        let mut dashed_bodies: Vec<DashedBody> = Vec::new();
+        for reference in &placed {
+            let body = body_of(*reference);
+            let strokes: Vec<_> = body.visible_strokes().collect();
+            let dashed_here = strokes
+                .iter()
+                .filter(|(_, style)| style.is_some_and(PrimitiveStyle::is_dashed))
+                .count();
+            if dashed_here > 0 {
+                dashed_bodies.push((
+                    (reference.site, reference.sheet),
+                    (dashed_here, strokes.len()),
+                ));
+            }
+        }
+        assert_eq!(
+            dashed_bodies, expected.dashed_bodies,
+            "{fixture}: (site, sheet) -> (dashed, displayed) of the bodies that dash anything"
+        );
+
+        // 4. The palettes the plan names.
+        for ((site, sheet), palette) in expected.palettes {
+            let reference = PidSymbolDefinitionRef {
+                site: *site,
+                sheet: *sheet,
+            };
+            let seen: BTreeSet<(String, i64)> = body_of(reference)
+                .visible_strokes()
+                .filter_map(|(_, style)| style.map(palette_key))
+                .collect();
+            assert_eq!(
+                seen.iter()
+                    .map(|(rgb, width)| (rgb.as_str(), *width))
+                    .collect::<Vec<_>>(),
+                *palette,
+                "{fixture} {reference:?}: distinct (#RRGGBB, width in 0.01 mm) of the displayed strokes"
+            );
+        }
+
+        // 5. Against the library: where the reference library has the
+        //    symbol a placement names, every (#RRGGBB, width, dash) a
+        //    cached body's displayed strokes draw with is one the `.sym`'s
+        //    own strokes draw with too. Containment, not equality: the
+        //    library merges every sheet of the `.sym`, the cache holds the
+        //    one flavour placed.
+        let Some(library) = library.as_mut() else {
+            eprintln!("{fixture}: skipping the library comparison: no test-file/symbols-full");
+            continue;
+        };
+        let mut compared = 0usize;
+        for (reference, paths) in &symbol_paths {
+            let cached: BTreeSet<Look> = body_of(*reference)
+                .visible_strokes()
+                .filter_map(|(_, style)| style.map(|style| (palette_key(style), dash_key(style))))
+                .collect();
+            for path in paths {
+                let Some(body) = library.resolve(path) else {
+                    continue;
+                };
+                let in_library: BTreeSet<Look> = body
+                    .primitives
+                    .iter()
+                    .filter_map(|styled| styled.style.as_ref())
+                    .map(|style| (palette_key(style), dash_key(style)))
+                    .collect();
+                let missing: Vec<_> = cached.difference(&in_library).collect();
+                assert!(
+                    missing.is_empty(),
+                    "{fixture} {reference:?} ({path}): the cache draws with {missing:?}, \
+                     which no stroke of the .sym does"
+                );
+                compared += 1;
+            }
+        }
+        assert!(
+            compared > 0,
+            "{fixture}: at least one placed symbol is in the reference library"
+        );
+    }
+}
+
 /// An `igArc2d` runs **clockwise** from its `start_angle` to its `end_angle`
 /// (`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`).
 /// The angles themselves are ordinary -- counter-clockwise from +X, and each

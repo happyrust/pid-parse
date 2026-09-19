@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // a plot can draw them; absent where the record's style index names
         // no line style. Same trailing-token shape the drawing-level dump
         // uses, so one plotting script reads either.
-        let style = styled.style.map_or_else(String::new, |style| {
+        let style = styled.style.as_ref().map_or_else(String::new, |style| {
             let [r, g, b] = style.rgb;
             format!(
                 ",@{r:02X}{g:02X}{b:02X}:{}",

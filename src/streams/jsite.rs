@@ -11,7 +11,9 @@ use crate::error::PidError;
 use crate::model::{
     EmbeddedStream, JSite, JSiteNestedGeometry, JSiteSymbolInformation, PidDocument,
 };
-use std::collections::BTreeSet;
+use crate::style_link::DocumentStyleTable;
+use crate::symbol_library::PrimitiveStyle;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -99,6 +101,37 @@ fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
     out
 }
 
+/// Resolve the style id of every drawable stroke in `nested` against the
+/// storage's own `StyleCluster` bytes, keeping the ids that reach a line
+/// style. Lettering is left out: its id names a paragraph style, which is
+/// not a line style, and no cached text of the corpus is on a displayed
+/// layer (plan 2026-09-20, P-E6).
+fn resolve_stroke_styles(
+    nested: &JSiteNestedGeometry,
+    stylecluster: &[u8],
+) -> BTreeMap<u32, PrimitiveStyle> {
+    let table = DocumentStyleTable::from_stylecluster_bytes(stylecluster);
+    if table.is_empty() {
+        return BTreeMap::new();
+    }
+    let ids: BTreeSet<u32> = nested
+        .circles
+        .iter()
+        .map(|record| record.index)
+        .chain(nested.arcs.iter().map(|record| record.index))
+        .chain(nested.lines.iter().map(|record| record.index))
+        .chain(nested.polylines.iter().map(|record| record.index))
+        .chain(nested.bsplines.iter().map(|record| record.index))
+        .collect();
+    ids.into_iter()
+        .filter_map(|id| {
+            table
+                .resolve_line_style(id)
+                .map(|resolved| (id, PrimitiveStyle::from_resolved(&resolved)))
+        })
+        .collect()
+}
+
 /// Decode every top-level `JSite*` storage into
 /// [`PidDocument::jsites`]. Honors
 /// [`ParseOptions::parse_jsite_properties`].
@@ -162,6 +195,21 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
             let curves = decode_nested_geometry(&data);
             if !curves.is_empty() {
                 site.nested_geometry = Some(curves);
+            }
+        }
+
+        // The storage's own style table, read only for the strokes above:
+        // their `index` is a style id in *this* storage's `StyleCluster`
+        // (ids restart from 1 in every storage -- the scoping rule in
+        // `style_link`), and what the table says about each is what a
+        // renderer paints the cached body with under the placement's own
+        // style.
+        if let Some(nested) = site.nested_geometry.as_ref() {
+            let cluster_path = format!("{base}/StyleCluster");
+            if let Ok(mut s) = cfb.open_stream(&cluster_path) {
+                let mut data = Vec::new();
+                s.read_to_end(&mut data)?;
+                site.stroke_styles = resolve_stroke_styles(nested, &data);
             }
         }
 

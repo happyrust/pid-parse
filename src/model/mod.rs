@@ -585,6 +585,22 @@ pub struct JSite {
     /// (`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nested_geometry: Option<JSiteNestedGeometry>,
+    /// The line styles this storage's own `StyleCluster` states for the
+    /// strokes of [`Self::nested_geometry`], keyed by style id -- the
+    /// `index` each record carries at payload `+14`. Only the ids some
+    /// record of this storage names are kept, and only those that reach a
+    /// line style (a `JStyleSimpleLine`, directly or through one
+    /// `JStyleOverride`), so a stroke whose id is absent here asked for
+    /// something the reader could not follow, or for a text style.
+    ///
+    /// Style ids restart from 1 in every storage, which is why the table
+    /// hangs off the site and not the document: `/JSite145`'s id 7 and
+    /// `/JSite151`'s id 7 are different records. The `.sym` reader resolves
+    /// a library body's strokes against the `.sym`'s own `StyleCluster` the
+    /// same way, and the two come out in the same
+    /// [`crate::symbol_library::PrimitiveStyle`] vocabulary.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stroke_styles: BTreeMap<u32, crate::symbol_library::PrimitiveStyle>,
 }
 
 /// The symbol-information / expression family of one `JSite`, decoded from
@@ -890,6 +906,12 @@ pub struct DecodedIgCircle2dRecord {
     /// Oid of the `JSheetLayer` the circle sits on, in the layer table of
     /// the storage the record lives in.
     pub sheet_layer_ref: u32,
+    /// Style reference at payload `+14`: a style id in the `StyleCluster`
+    /// of the storage the record lives in, resolved the way
+    /// [`crate::style_link`] resolves a sheet's line work. Zero on a record
+    /// read back from before the field was carried.
+    #[serde(default)]
+    pub index: u32,
     /// Centre X, in the storage's own coordinates.
     pub center_x: f64,
     /// Centre Y, in the storage's own coordinates.
@@ -906,6 +928,7 @@ impl From<crate::parsers::sheet_records::SheetIgCircle2dDecoded> for DecodedIgCi
             oid: record.oid,
             parent_ref: record.parent_ref,
             sheet_layer_ref: record.sheet_layer_ref,
+            index: record.index,
             center_x: record.center.0,
             center_y: record.center.1,
             radius: record.radius,
@@ -928,6 +951,12 @@ pub struct DecodedIgArc2dRecord {
     pub parent_ref: u32,
     /// Oid of the `JSheetLayer` the arc sits on.
     pub sheet_layer_ref: u32,
+    /// Style reference at payload `+14`: a style id in the `StyleCluster`
+    /// of the storage the record lives in, resolved the way
+    /// [`crate::style_link`] resolves a sheet's line work. Zero on a record
+    /// read back from before the field was carried.
+    #[serde(default)]
+    pub index: u32,
     /// Centre X, in the storage's own coordinates.
     pub center_x: f64,
     /// Centre Y, in the storage's own coordinates.
@@ -950,6 +979,7 @@ impl From<crate::parsers::sheet_records::SheetIgArc2dDecoded> for DecodedIgArc2d
             oid: record.oid,
             parent_ref: record.parent_ref,
             sheet_layer_ref: record.sheet_layer_ref,
+            index: record.index,
             center_x: record.center.0,
             center_y: record.center.1,
             radius: record.radius,

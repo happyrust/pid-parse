@@ -811,6 +811,7 @@ mod tests {
             raw_streams: vec![],
             symbol_information: None,
             nested_geometry: None,
+            stroke_styles: Default::default(),
         }
     }
 

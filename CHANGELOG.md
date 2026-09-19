@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### 缓存本体带上自己的逐笔样式：接缓存存储的 `StyleCluster`（2026-09-20，计划 E1）
+
+计划 `OpenCADStudio/docs/plans/2026-09-20-a-cached-body-carries-its-own-stroke-styles.md`（八条决策 2026-09-20 用户按推荐批准）的 pid-parse 侧。
+加法，不改投影，golden 不变（快照只钉 `entities`）。
+
+- **`PidSymbolDefinition::primitive_styles: Vec<Option<PrimitiveStyle>>`**——与 `primitive_layers` 同款的平行表：每个图元的 `index` 在
+  **本存储** `/JSite<N>/StyleCluster` 里解出的颜色 / 线宽 / 虚线；文字项为 `None`（它点名的是段落样式）。`visible_strokes()` 迭代
+  `(图元, 样式)`，`visible_primitives()` 保留。缓存本体从此与库本体的 `StyledPrimitive` 是同一套词汇。
+- **`JSite::stroke_styles: BTreeMap<u32, PrimitiveStyle>`**：`parse_jsites` 读该存储自己的 `StyleCluster`，只解嵌套记录点名到的样式 id，
+  可序列化、JSON 回读不丢。样式 id 每个存储从 1 重数——`/JSite145` 的 7 与 `/JSite151` 的 7 是两条记录。
+- **`PrimitiveStyle` 加 `dash_mm: Vec<f64>`**（空 = 实线；`from_resolved` / `is_dashed`），`.sym` 读取器 `style_of` 同时填上——此前明写
+  「dash 不带」。`Copy` 变 `Clone`，加 `JsonSchema` 派生。
+- **`DecodedIgCircle2dRecord` / `DecodedIgArc2dRecord` 补 `index`**（解析层早就读了，`From` 里丢了；`serde(default)`）。
+- 顺手：`style_link::for_each_document` 路径分隔符归一——`cfb` 0.14 在 Windows 上给嵌套路径 `/JSite145\PSMcluster0`，此前 `rsplit('/')`
+  在 Windows 上会跳过任何嵌套 `Sheet*`。语料无影响（四图的嵌套存储一个 `Sheet*` 都没有，本体在 `PSMcluster0`），`style_link_ratchet` 15 不变；
+  模块文档那句「每个 `JSite<n>/` 都是带自己 `Sheet*` 的嵌套文档」按语料改。
+- **语料**（棘轮 `a_cached_body_carries_the_stroke_styles_its_own_storage_states`，`parse_real_files` 133 → 134）：被放置点名的本体，
+  可见笔画按放置累计 0201 81 / 0202 120 / D06 32 / 工艺 237 / A01 6 **全部有样式**；颜色线宽与 `.sym` 逐笔一致（容纳：缓存画的每个
+  `(颜色, 线宽, 虚线)` 都是同名 `.sym` 某一笔画的）；**虚线** 0202 12 笔（arrester breather valve(RD) 21 笔可见里 8、Wastewater Pit 7 里 4）、
+  工艺 45 笔（`Xa` ×3 / `Xa chu` ×6 各 9 里 5），D06 / 0201 / A01 0，图样都是 3.5 / 1.75 mm。放置样式 107/107 解析，09-07 文档担心的
+  「解析不到落 `ByLayer`」语料 0 例。`.sym` 侧单测 `a_symbol_carries_the_dash_its_own_style_table_states`（arrester breather valve(RD).sym
+  的七线一唇虚线）。
+- 未做（P-E6）：缓存文字的样式——语料 100% 在关闭层。OCS 侧（E2：底涂 + 虚线 linetype）另一提交。
+
 ### clippy `-D warnings` 重新变绿：声明 MSRV 1.95，29 处 `map_unwrap_or` 不再报（2026-09-20）
 
 - **`Cargo.toml` 加 `rust-version = "1.95"`**（`cargo +1.95 check` 与 `+stable`（1.97.1）都绿，本来就是）。2026-09-18 装的

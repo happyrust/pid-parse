@@ -220,23 +220,60 @@ impl SymbolPrimitive {
     }
 }
 
-/// The colour and width one primitive draws with.
+/// The colour, width and dash one primitive draws with, as the symbol's own
+/// style table states them.
 ///
-/// A symbol states its own symbology and the drawing does not state it for
-/// them: the placement record carries no style link at all, because the
-/// payload slot its `igLine2d` siblings use for the style `index` holds the
-/// `JSite` id instead. Every `.sym` carries a `StyleCluster` stream of the
-/// same shape a `.pid` does, and each of the symbol's own records indexes
-/// into it exactly as a drawing's line work indexes into the drawing's.
+/// A symbol states its own symbology: every `.sym` carries a `StyleCluster`
+/// stream of the same shape a `.pid` does, and each of the symbol's own
+/// records indexes into it exactly as a drawing's line work indexes into the
+/// drawing's. The drawing's definition cache says the same thing the same
+/// way -- each `/JSite<N>/` storage has its own `StyleCluster`, and the
+/// cached body's strokes index into that one
+/// ([`crate::JSite::stroke_styles`]) -- so a body from either source
+/// arrives with this per stroke.
 ///
-/// The dash a style may also name is not carried: nothing draws it yet, and
-/// a field nobody reads is a field nobody maintains.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// The placement record names one more style for the whole body
+/// (`igSymbol2d +25`, `docs/analysis/2026-08-24-placement-names-the-body-style.md`),
+/// and on `SmartPlant`'s screen that one's colour wins over these. What
+/// these still decide is the dash -- the placement styles of the corpus are
+/// all solid, and the dashed strokes of an off-page connector or a
+/// wastewater pit are dashed by their own style alone -- and the whole
+/// look of a body whose placement style does not resolve.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PrimitiveStyle {
     /// Stroke colour as `[r, g, b]`.
     pub rgb: [u8; 3],
     /// Stroke width in millimetres.
     pub width_mm: f64,
+    /// The dash pattern the style names, as segment lengths in millimetres
+    /// in the file's own order and sign
+    /// ([`crate::style_link::DashPattern::segments_mm`]: a renderer that
+    /// only needs the repeat uses the magnitudes), or empty for a stroke
+    /// that draws solid -- which is what most of either corpus says.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dash_mm: Vec<f64>,
+}
+
+impl PrimitiveStyle {
+    /// The style a resolved line style states, in this vocabulary.
+    #[must_use]
+    pub fn from_resolved(resolved: &crate::style_link::ResolvedLineStyle) -> Self {
+        Self {
+            rgb: resolved.symbology.rgb(),
+            width_mm: resolved.symbology.width_mm(),
+            dash_mm: resolved
+                .dash
+                .as_ref()
+                .map(crate::style_link::DashPattern::segments_mm)
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Whether the stroke draws dashed rather than solid.
+    #[must_use]
+    pub fn is_dashed(&self) -> bool {
+        !self.dash_mm.is_empty()
+    }
 }
 
 /// One drawable primitive together with the symbology its own `.sym` states
@@ -537,10 +574,7 @@ fn style_of(payload: &[u8], styles: Option<&DocumentStyleTable>) -> Option<Primi
     let table = styles?;
     let index = u32_le(payload, STYLE_INDEX_OFFSET)?;
     let resolved = table.resolve_line_style(index)?;
-    Some(PrimitiveStyle {
-        rgb: resolved.symbology.rgb(),
-        width_mm: resolved.symbology.width_mm(),
-    })
+    Some(PrimitiveStyle::from_resolved(&resolved))
 }
 
 /// The storage a stream lives in, which is what a `Sheet*` and the
@@ -838,6 +872,7 @@ mod tests {
         for styled in &body.primitives {
             let style = styled
                 .style
+                .as_ref()
                 .unwrap_or_else(|| panic!("every stroke names a style: {styled:?}"));
             assert_eq!(style.rgb, [0x00, 0x00, 0xFF], "{styled:?}");
             assert!(
@@ -845,7 +880,59 @@ mod tests {
                 "width {}",
                 style.width_mm
             );
+            assert!(!style.is_dashed(), "a solid stroke: {styled:?}");
         }
+    }
+
+    /// The dash a `.sym`'s own style names comes across with the stroke.
+    /// `arrester breather valve(RD).sym` is the library body whose cached
+    /// copy DWG-0202 places: its own table dashes seven lines and the
+    /// B-spline lip at 3.5 / 1.75 mm, and draws the rest solid.
+    #[test]
+    fn a_symbol_carries_the_dash_its_own_style_table_states() {
+        // The reference library beside the fixtures, not the small sample
+        // the other tests read: the valve is only in the full one.
+        let path = symbols_root()
+            .with_file_name("symbols-full")
+            .join(r"Piping/Valves/2 Way Other/arrester breather valve(RD).sym");
+        if !path.is_file() {
+            return;
+        }
+        let body = read_symbol_geometry(&path)
+            .expect("arrester breather valve(RD).sym is a readable compound file");
+        let dashed: Vec<&StyledPrimitive> = body
+            .primitives
+            .iter()
+            .filter(|styled| styled.style.as_ref().is_some_and(PrimitiveStyle::is_dashed))
+            .collect();
+        assert!(
+            !dashed.is_empty(),
+            "the valve's own style table dashes some of its strokes"
+        );
+        for styled in &dashed {
+            let dash: Vec<f64> = styled
+                .style
+                .as_ref()
+                .map(|style| {
+                    style
+                        .dash_mm
+                        .iter()
+                        .map(|mm| (mm.abs() * 100.0).round() / 100.0)
+                        .collect()
+                })
+                .unwrap_or_default();
+            assert_eq!(dash, vec![3.5, 1.75], "{styled:?}");
+        }
+        assert!(
+            dashed
+                .iter()
+                .any(|styled| matches!(styled.primitive, SymbolPrimitive::BSpline { .. })),
+            "the lip is one of the dashed strokes"
+        );
+        assert!(
+            body.primitives.len() > dashed.len(),
+            "and the rest of the body draws solid"
+        );
     }
 
     #[test]

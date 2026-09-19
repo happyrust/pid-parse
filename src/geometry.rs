@@ -126,6 +126,24 @@ pub struct PidSymbolDefinition {
     /// does with that stroke.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub primitive_layers: Vec<u32>,
+    /// The colour, width and dash the body's own storage states for each
+    /// primitive: parallel to [`Self::primitives`] -- same length, same
+    /// order -- each entry the record's style id looked up in that
+    /// storage's own `StyleCluster` ([`crate::JSite::stroke_styles`]), the
+    /// same vocabulary a library body's [`crate::symbol_library::StyledPrimitive`]
+    /// carries. `None` where the id reaches no line style, and for
+    /// lettering, whose id names a paragraph style instead.
+    ///
+    /// On the corpus every displayed stroke of every placed body has one,
+    /// and it agrees with the `.sym`'s own stroke for stroke where the
+    /// library has the symbol. What it adds over the placement's style
+    /// (`igSymbol2d +25`, which a renderer paints the whole body's colour
+    /// and width from) is the **dash**: the off-page connectors of 工艺 and
+    /// the breather valve and wastewater pit of DWG-0202 are dashed by their
+    /// own strokes' styles while their placements' styles are solid
+    /// (`OpenCADStudio/docs/plans/2026-09-20-a-cached-body-carries-its-own-stroke-styles.md`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub primitive_styles: Vec<Option<crate::symbol_library::PrimitiveStyle>>,
     /// The driving dimensions that constrain this body, in on-disk order.
     /// Not primitives: a dimension is a value the parametric body is
     /// resized by, not a stroke of it, and the file keeps every one on a
@@ -185,6 +203,23 @@ impl PidSymbolDefinition {
     pub fn visible_primitives(
         &self,
     ) -> impl Iterator<Item = &crate::symbol_library::SymbolPrimitive> + '_ {
+        self.visible_strokes().map(|(primitive, _)| primitive)
+    }
+
+    /// The displayed primitives with the style each one's own storage
+    /// states for it -- what a renderer drawing the cached body paints
+    /// under the placement's style -- in [`Self::primitives`] order. The
+    /// style is `None` where [`Self::primitive_styles`] has none for the
+    /// primitive, or no entry at all (a body read back from before the
+    /// field existed).
+    pub fn visible_strokes(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &crate::symbol_library::SymbolPrimitive,
+            Option<&crate::symbol_library::PrimitiveStyle>,
+        ),
+    > + '_ {
         self.primitives
             .iter()
             .enumerate()
@@ -193,7 +228,12 @@ impl PidSymbolDefinition {
                     .get(*index)
                     .is_none_or(|layer| self.layer_is_displayed(*layer))
             })
-            .map(|(_, primitive)| primitive)
+            .map(move |(index, primitive)| {
+                (
+                    primitive,
+                    self.primitive_styles.get(index).and_then(Option::as_ref),
+                )
+            })
     }
 }
 
@@ -1354,13 +1394,18 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     }
                 })
                 .collect();
-            // Each primitive with the layer it sits on, kept in two parallel
-            // lists so `primitives` stays the slice a library body also is.
+            // Each primitive with the layer it sits on and the style its
+            // own storage states for it, kept in three parallel lists so
+            // `primitives` stays the slice a library body also is. The
+            // style is the record's `index` looked up in the storage's own
+            // table; lettering names a paragraph style, so it gets none.
             let mut primitives = Vec::new();
             let mut primitive_layers = Vec::new();
-            let mut push = |primitive: SymbolPrimitive, layer: u32| {
+            let mut primitive_styles = Vec::new();
+            let mut push = |primitive: SymbolPrimitive, layer: u32, style_id: Option<u32>| {
                 primitives.push(primitive);
                 primitive_layers.push(layer);
+                primitive_styles.push(style_id.and_then(|id| site.stroke_styles.get(&id).cloned()));
             };
             for circle in nested.circles.iter().filter(|c| on_body(c.sheet_layer_ref)) {
                 push(
@@ -1369,6 +1414,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         radius: circle.radius,
                     },
                     circle.sheet_layer_ref,
+                    Some(circle.index),
                 );
             }
             for arc in nested.arcs.iter().filter(|a| on_body(a.sheet_layer_ref)) {
@@ -1380,6 +1426,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         end_angle: arc.end_angle,
                     },
                     arc.sheet_layer_ref,
+                    Some(arc.index),
                 );
             }
             for line in nested.lines.iter().filter(|l| on_body(l.sheet_layer_ref)) {
@@ -1389,6 +1436,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         end: (line.end_x, line.end_y),
                     },
                     line.sheet_layer_ref,
+                    Some(line.index),
                 );
             }
             for polyline in nested
@@ -1409,6 +1457,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                             is_closed: polyline.form == 2,
                         },
                         polyline.sheet_layer_ref,
+                        Some(polyline.index),
                     );
                 }
             }
@@ -1420,6 +1469,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                             at: (text.trailing_double_1, text.trailing_double_2),
                         },
                         text.sheet_layer_ref,
+                        None,
                     );
                 }
             }
@@ -1437,6 +1487,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         knots: curve.knots.clone(),
                     },
                     curve.sheet_layer_ref,
+                    Some(curve.index),
                 );
             }
             // Dimensions are not primitives: they constrain the body
@@ -1497,6 +1548,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     sheet_layers,
                     primitives,
                     primitive_layers,
+                    primitive_styles,
                     dimensions,
                     variables,
                     template: None,

@@ -96,11 +96,14 @@
 //!
 //! A `.pid` is not one document. The root storage has its own `Sheet*` and
 //! `StyleCluster`, and every `JSite<n>/` storage is a nested document with its
-//! own pair. **Style ids restart from 1 in each.** Resolving geometry against
-//! a pooled id set both invents matches and hides real ones — that is why an
-//! earlier probe scored 0/24 on one drawing and 212/218 on another and
-//! concluded the field was noise. [`stylecluster_path_for_sheet`] exists so
-//! callers cannot repeat it.
+//! own `StyleCluster` -- governing, on this corpus, the symbol bodies in its
+//! `PSMcluster0` rather than any `Sheet*` of its own (none of the four
+//! fixtures' nested storages carries one; `streams::jsite` resolves those
+//! bodies' strokes against it). **Style ids restart from 1 in each.**
+//! Resolving geometry against a pooled id set both invents matches and hides
+//! real ones — that is why an earlier probe scored 0/24 on one drawing and
+//! 212/218 on another and concluded the field was noise.
+//! [`stylecluster_path_for_sheet`] exists so callers cannot repeat it.
 //!
 //! This module deliberately stays out of the model layer: it reads
 //! `StyleCluster` bytes and answers questions about them, and emits no
@@ -2130,10 +2133,14 @@ fn for_each_document(
 ) -> Result<(), PidError> {
     let file = File::open(path)?;
     let mut cfb = ::cfb::CompoundFile::open(file)?;
+    // `cfb` builds entry paths with the platform separator below the root
+    // (`/JSite145\PSMcluster0` on Windows), so normalise before splitting on
+    // `/`, as the rest of the crate does -- otherwise a nested storage's
+    // sheets would be found on one platform and skipped on another.
     let sheet_paths: Vec<String> = cfb
         .walk()
         .filter(::cfb::Entry::is_stream)
-        .map(|entry| entry.path().to_string_lossy().into_owned())
+        .map(|entry| entry.path().to_string_lossy().replace('\\', "/"))
         .filter(|name| {
             name.rsplit('/')
                 .next()
