@@ -111,5 +111,10 @@ D06 的 Ball Valve Type 1 放置：缓存本体 12 条记录（9 线 + 1 圆 r 1
   显示位说明哪些不显示）够裁，截图作补充验收。
 - 缓存存储自己的 `StyleCluster`（如 `/JSite145/StyleCluster` 29 条）未接：缓存本体现在不带
   自身笔画样式，只靠放置样式重涂；放置样式解析不到的那几条会落 `ByLayer`。
+  **2026-09-20 已开单**（OpenCADStudio 计划 `docs/plans/2026-09-20-a-cached-body-carries-its-own-stroke-styles.md`，待排期）。
+  开单时四图实测：放置样式 107/107 解析——「落 `ByLayer`」在语料里是 0 例；被点名本体的 470 笔可见笔画的 `index` 在各自存储的
+  `StyleCluster` 里全部解析（落 `0x002E`，直接或经 `0x0030` 一跳），颜色线宽与 `.sym` 逐笔一致；差的是**虚线**——`.sym` 读取器不带 dash、
+  缓存解得出，0202 / 工艺 11 个放置的 57 笔可见虚线（arrester breather valve(RD)、Wastewater Pit、`Xa` / `Xa chu` OPC）今天画成实线。
+  顺带：`DecodedIgCircle2dRecord` / `DecodedIgArc2dRecord` 两个 DTO 丢了解析层读到的 `index`。
 - `t+8` 标志字与 membassy 的语义；`Site LdcSite Relation`（`0x004F`）两条各指向什么。
 - Rectangle / BspCurve 仍未解码，按本文它们也是某个本体的一部分。

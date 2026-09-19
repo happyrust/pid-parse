@@ -67,6 +67,14 @@ pid-parse 侧无改动。~~仍待办：`map_unwrap_or` 29 处旧代码的 clippy
 门控后 29 处不再报；顺带把 `style_link.rs` 一处 `manual_range_contains`（stable clippy 报、nightly 不报）改成 `RangeInclusive::contains`。
 两个工具链的 `clippy --all-targets -- -D warnings` 都零告警。
 
+**2026-09-20 · 开单：缓存本体带上自己的逐笔样式**（OpenCADStudio `docs/plans/2026-09-20-a-cached-body-carries-its-own-stroke-styles.md`，
+待排期，不动代码）——09-07 文档「缓存自身 `StyleCluster` 未接」那条开口。开单时四图实测：放置样式 107/107 解析（「落 `ByLayer`」语料 0 例）；
+被点名 41 个本体的 470 笔可见笔画的 `index` 在各自存储的 `StyleCluster` 里全部解析，颜色线宽与 `.sym` 逐笔一致；差的是**虚线**——`.sym` 读取器
+的 `PrimitiveStyle` 不带 dash、缓存解得出，0202 / 工艺 11 个放置的 57 笔可见虚线今天画成实线。pid-parse 侧要做的（E1）：圆 / 弧 DTO 补 `index`、
+`PrimitiveStyle` 加 `dash_mm`、`parse_jsites` 读 `StyleCluster` 落 `JSite.stroke_styles`、`PidSymbolDefinition::primitive_styles` +
+`visible_strokes()`、棘轮一条；顺手把 `style_link::for_each_document` 的路径分隔符归一（Windows 上 `cfb` 给 `/JSite145\PSMcluster0`，
+今天无影响——嵌套存储没有 `Sheet*`）。
+
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
 `sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给
@@ -88,8 +96,8 @@ chain-bearing `LdcSite/PSMcluster0` 未找到页面变换，不 emit。当前状
 OCS 在无库时用它替掉占位圆点。缓存几何不作页面内容 emit——08-31 要找的变换本来就在
 放置记录里。见 `docs/analysis/2026-09-07-nested-site-curves-are-embedded-symbol-bodies.md`、
 `docs/analysis/2026-09-07-placement-tail-names-the-cached-definition.md`。
-悬着的：缓存 vs 库的显示优先级（库读取器会多画 `.sym` 的第二张 sheet）、缓存自身
-`StyleCluster` 未接。
+悬着的：缓存 vs 库的显示优先级（库读取器会多画 `.sym` 的第二张 sheet；2026-09-19 已裁，见上）、缓存自身
+`StyleCluster` 未接（2026-09-20 已开单，见上）。
 
 **2026-09-07 再续（四族收口）**：`igRectangle2d` / `igBspCurve2d` 有了解码器，`imagdex.dex`
 四个曲线族全部解码。矩形是四条 `igLine2d` 边线的父记录（尾巴四个 oid = 同流边线，端点即四角，
