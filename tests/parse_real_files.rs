@@ -5491,6 +5491,276 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
     }
 }
 
+/// An `igArc2d` runs **clockwise** from its `start_angle` to its `end_angle`
+/// (`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`).
+/// The angles themselves are ordinary -- counter-clockwise from +X, and each
+/// arc's two endpoints land exactly on the corners of the line work beside
+/// it -- but the arc between them is the clockwise one: the Parametric
+/// Manifold's end caps bulge out of its shell rectangle, to exactly where
+/// the construction lines the body is built on end, and the library's
+/// `Remarks` cloud bulges out of its frame, both only when the sweep is read
+/// that way. Read the other way every one of them is its own complement and
+/// folds back inside the body. No sheet of the corpus carries an arc of its
+/// own, so a renderer meets the convention only through the cached and
+/// library bodies -- and every arc on the corpus whose sidedness the line
+/// work decides says the same.
+#[test]
+fn a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle() {
+    use pid_parse::symbol_library::{SymbolLibrary, SymbolPrimitive};
+    use pid_parse::{PidGraphicKind, PidSymbolDefinitionRef};
+    use std::f64::consts::TAU;
+
+    /// A line's two ends, in the body's own units.
+    type Segment = ((f64, f64), (f64, f64));
+
+    struct Expected {
+        fixture: &'static str,
+        /// Arcs in every cached body of the drawing.
+        arcs_in_cache: usize,
+        /// Parametric bodies whose shell rectangle and construction lines
+        /// decide the sidedness: `(site, sheet)`, a name, the arcs it
+        /// carries, and the width the body spans once the arcs are read
+        /// clockwise, in source units.
+        bodies: &'static [((u32, u32), &'static str, usize, f64)],
+    }
+    const EXPECTED: &[Expected] = &[
+        Expected {
+            fixture: "DWG-0201GP06-01.pid",
+            // The Manifold instance and its template, two caps each; the
+            // DCS access box's two half circles; the Cap's dome.
+            arcs_in_cache: 7,
+            bodies: &[
+                // Shell 101.03 mm plus two caps of r 35.59: the 172.21 mm
+                // the K2 `extent=` reads, and what the plan (P-D7) expects
+                // to stay once the construction lines are left out.
+                ((396, 113), "Parametric Manifold instance", 2, 0.17221),
+                // 228.6 mm: the library's `Left` + `Right` of 114.3 each.
+                ((329, 49), "Parametric Manifold template", 2, 0.22860),
+            ],
+        },
+        Expected {
+            fixture: "DWG-0202GP06-01.pid",
+            // Cap2's dome, the DCS box's two half circles, ElecTraceLine's
+            // two wave arcs.
+            arcs_in_cache: 5,
+            bodies: &[],
+        },
+        Expected {
+            fixture: "D06.pid",
+            arcs_in_cache: 0,
+            bodies: &[],
+        },
+        Expected {
+            fixture: "工艺管道及仪表流程-1.pid",
+            arcs_in_cache: 0,
+            bodies: &[],
+        },
+    ];
+    let norm = |angle: f64| angle.rem_euclid(TAU);
+    let apex = |center: (f64, f64), radius: f64, angle: f64| {
+        (
+            center.0 + radius * angle.cos(),
+            center.1 + radius * angle.sin(),
+        )
+    };
+    // The point halfway along the clockwise sweep, and along the
+    // counter-clockwise one.
+    let mid_clockwise = |start: f64, end: f64| norm(start - norm(start - end) / 2.0);
+    let mid_counter_clockwise = |start: f64, end: f64| norm(start + norm(end - start) / 2.0);
+    let frame_of = |lines: &[Segment]| {
+        lines.iter().fold(
+            (f64::MAX, f64::MAX, f64::MIN, f64::MIN),
+            |frame, (start, end)| {
+                (
+                    frame.0.min(start.0.min(end.0)),
+                    frame.1.min(start.1.min(end.1)),
+                    frame.2.max(start.0.max(end.0)),
+                    frame.3.max(start.1.max(end.1)),
+                )
+            },
+        )
+    };
+    let within = |frame: (f64, f64, f64, f64), point: (f64, f64)| {
+        point.0 >= frame.0 - 1e-7
+            && point.0 <= frame.2 + 1e-7
+            && point.1 >= frame.1 - 1e-7
+            && point.1 <= frame.3 + 1e-7
+    };
+    let close = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
+
+    for expected in EXPECTED {
+        let fixture = expected.fixture;
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let arcs_in_cache: usize = geometry
+            .symbol_definitions
+            .iter()
+            .flat_map(|body| body.primitives.iter())
+            .filter(|primitive| matches!(primitive, SymbolPrimitive::Arc { .. }))
+            .count();
+        assert_eq!(
+            arcs_in_cache, expected.arcs_in_cache,
+            "{fixture}: arcs over every cached body"
+        );
+
+        for ((site, sheet), name, arc_count, width) in expected.bodies {
+            let reference = PidSymbolDefinitionRef {
+                site: *site,
+                sheet: *sheet,
+            };
+            let body = geometry
+                .symbol_definition(reference)
+                .unwrap_or_else(|| panic!("{fixture}: no cached body {reference:?} ({name})"));
+            // The shell: the displayed lines. The construction lines, on a
+            // switched-off layer, run from each cap's centre to its apex.
+            let mut shell: Vec<Segment> = Vec::new();
+            let mut construction: Vec<Segment> = Vec::new();
+            for (primitive, layer) in body.primitives.iter().zip(&body.primitive_layers) {
+                if let SymbolPrimitive::Line { start, end } = primitive {
+                    if body.layer_is_displayed(*layer) {
+                        shell.push((*start, *end));
+                    } else {
+                        construction.push((*start, *end));
+                    }
+                }
+            }
+            let frame = frame_of(&shell);
+            let mut arcs = 0usize;
+            let mut reach = frame;
+            for primitive in body.visible_primitives() {
+                let SymbolPrimitive::Arc {
+                    center,
+                    radius,
+                    start_angle,
+                    end_angle,
+                } = primitive
+                else {
+                    continue;
+                };
+                arcs += 1;
+                for angle in [*start_angle, *end_angle] {
+                    assert!(
+                        within(frame, apex(*center, *radius, angle)),
+                        "{fixture} {name}: an arc endpoint off the shell: {primitive:?}"
+                    );
+                }
+                let clockwise = apex(*center, *radius, mid_clockwise(*start_angle, *end_angle));
+                let counter = apex(
+                    *center,
+                    *radius,
+                    mid_counter_clockwise(*start_angle, *end_angle),
+                );
+                assert!(
+                    !within(frame, clockwise),
+                    "{fixture} {name}: read clockwise the cap bulges out of the shell: {primitive:?}"
+                );
+                assert!(
+                    within(frame, counter),
+                    "{fixture} {name}: read counter-clockwise the cap folds back inside the shell: {primitive:?}"
+                );
+                assert!(
+                    construction.iter().any(|(start, end)| {
+                        (close(*start, *center) && close(*end, clockwise))
+                            || (close(*end, *center) && close(*start, clockwise))
+                    }),
+                    "{fixture} {name}: a construction line runs from the cap's centre to its clockwise apex: {primitive:?}"
+                );
+                reach.0 = reach.0.min(clockwise.0);
+                reach.2 = reach.2.max(clockwise.0);
+            }
+            assert_eq!(
+                arcs, *arc_count,
+                "{fixture} {name}: arcs on displayed layers"
+            );
+            assert!(
+                (reach.2 - reach.0 - width).abs() < 1e-5,
+                "{fixture} {name}: the shell plus the clockwise caps spans {:.5}, expected {width}",
+                reach.2 - reach.0
+            );
+        }
+
+        // The library's Remarks cloud (工艺 places it 35 times): the two
+        // arcs whose endpoints sit on the frame of its line work bulge out
+        // of it read clockwise, back into it read the other way. Skips
+        // without the reference library beside the fixtures.
+        if fixture != "工艺管道及仪表流程-1.pid" {
+            continue;
+        }
+        let Some(remarks) = geometry
+            .entities
+            .iter()
+            .find_map(|entity| match &entity.kind {
+                PidGraphicKind::SymbolInstance {
+                    symbol_path: Some(path),
+                    ..
+                } if path.ends_with("\\Remarks.sym") => Some(path.clone()),
+                _ => None,
+            })
+        else {
+            panic!("{fixture}: places Remarks.sym");
+        };
+        let mut library = SymbolLibrary::with_roots(["test-file/symbols-full"]);
+        let Some(cloud) = library.resolve(&remarks) else {
+            eprintln!("skipping the Remarks cloud: {remarks} is not under test-file/symbols-full");
+            continue;
+        };
+        let lines: Vec<Segment> = cloud
+            .primitives
+            .iter()
+            .filter_map(|styled| match &styled.primitive {
+                SymbolPrimitive::Line { start, end } => Some((*start, *end)),
+                _ => None,
+            })
+            .collect();
+        let frame = frame_of(&lines);
+        let mut on_frame = 0usize;
+        for styled in &cloud.primitives {
+            let SymbolPrimitive::Arc {
+                center,
+                radius,
+                start_angle,
+                end_angle,
+            } = &styled.primitive
+            else {
+                continue;
+            };
+            if ![*start_angle, *end_angle]
+                .iter()
+                .all(|angle| within(frame, apex(*center, *radius, *angle)))
+            {
+                continue;
+            }
+            on_frame += 1;
+            assert!(
+                !within(
+                    frame,
+                    apex(*center, *radius, mid_clockwise(*start_angle, *end_angle))
+                ),
+                "Remarks.sym: read clockwise the cloud's arc bulges out of the frame: {:?}",
+                styled.primitive
+            );
+            assert!(
+                within(
+                    frame,
+                    apex(
+                        *center,
+                        *radius,
+                        mid_counter_clockwise(*start_angle, *end_angle)
+                    )
+                ),
+                "Remarks.sym: read counter-clockwise the cloud's arc folds back inside: {:?}",
+                styled.primitive
+            );
+        }
+        assert_eq!(
+            on_frame, 2,
+            "Remarks.sym: the cloud's top and bottom arcs start and end on its frame"
+        );
+    }
+}
+
 #[test]
 fn version_history_decoded() {
     let Some(doc) = parse_test_file("DWG-0201GP06-01.pid") else {

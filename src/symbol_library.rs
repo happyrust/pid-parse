@@ -139,21 +139,30 @@ pub enum SymbolPrimitive {
         /// Radius; always positive across the library.
         radius: f64,
     },
-    /// Circular arc (PSM `0x0061`), swept counter-clockwise from
+    /// Circular arc (PSM `0x0061`), swept **clockwise** from
     /// [`Self::Arc::start_angle`] to [`Self::Arc::end_angle`].
     ///
     /// Both angles are absolute, not a start plus a sweep: the two arcs of
     /// `ElecTraceLine` run `2.944 -> 0.197` and `6.086 -> 3.339` radians,
-    /// which are different numbers but the same 202.6-degree sweep at the
-    /// same radius, as a repeating wave symbol requires.
+    /// which are different numbers but the same sweep at the same radius,
+    /// as a repeating wave symbol requires. The direction is the file's:
+    /// `Parametric Manifold.sym`'s end caps run `270° -> 90°` on the left
+    /// and `90° -> 270°` on the right, which bulge out of the shell only
+    /// clockwise, and the `Remarks` cloud's arcs likewise -- read
+    /// counter-clockwise every one is its own complement, folded back
+    /// inside the body. A consumer that draws arcs counter-clockwise (DXF)
+    /// swaps the two. Measured in
+    /// `docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`.
     Arc {
         /// Arc centre.
         center: (f64, f64),
         /// Radius; always positive across the library.
         radius: f64,
-        /// Start angle in radians, counter-clockwise from +X.
+        /// Start angle in radians, counter-clockwise from +X; the arc
+        /// leaves it clockwise.
         start_angle: f64,
-        /// End angle in radians, counter-clockwise from +X.
+        /// End angle in radians, counter-clockwise from +X; the arc
+        /// arrives at it clockwise.
         end_angle: f64,
     },
     /// Connected vertex run (PSM `0x0084` `igLineString2d`).

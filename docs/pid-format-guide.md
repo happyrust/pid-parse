@@ -588,9 +588,12 @@ Circle / Arc 与 Phase 36 的语料字节统计逐字节互证）**——同一�
 
 ```text
 +0 … +17  同上
-+18  5×f64  center.x, center.y, radius, startAngle, endAngle   ← 绝对起止角，弧度
-+58  u8     flag
++18  5×f64  center.x, center.y, radius, startAngle, endAngle   ← 绝对起止角，弧度；弧从 start **顺时针**走到 end
++58  u8     flag                                                ← 不是方向位（语料 0 / 1 两值走向相同）
 ```
+
+弧的走向由本体自己的线段裁出（Manifold 端帽的构造线指向顺时针顶点、`Remarks.sym` 云线凸弧朝外），
+按 DXF 逆时针约定画要对调两角；见 `docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`。
 
 `igRectangle2d`（`0x0020`，变长；当前格式 = 持久化版本 5；语料 3 条，全部 78 字节）：
 

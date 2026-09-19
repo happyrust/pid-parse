@@ -103,7 +103,12 @@ D06 的 Ball Valve Type 1 放置：缓存本体 12 条记录（9 线 + 1 圆 r 1
 
 ## 还没做的
 
-- 优先级：缓存 vs 库（见上）。需要一张 SmartPlant 截图对 Ball Valve Type 1 裁决。
+- ~~优先级：缓存 vs 库（见上）。需要一张 SmartPlant 截图对 Ball Valve Type 1 裁决。~~
+  **2026-09-19 已裁（不等截图）**：OpenCADStudio 计划
+  `docs/plans/2026-09-19-draw-the-cached-body-first-and-the-library-only-when-the-drawing-carries-none.md`——
+  有缓存本体就画缓存、关闭层上的笔画不画（C1 让本体带上层与显示位：`PidSymbolDefinition::sheet_layers` /
+  `primitive_layers` / `visible_primitives()`），库退为补位；文件自身的证据（`JFlavorManager` 点名的就是缓存、
+  显示位说明哪些不显示）够裁，截图作补充验收。
 - 缓存存储自己的 `StyleCluster`（如 `/JSite145/StyleCluster` 29 条）未接：缓存本体现在不带
   自身笔画样式，只靠放置样式重涂；放置样式解析不到的那几条会落 `ByLayer`。
 - `t+8` 标志字与 membassy 的语义；`Site LdcSite Relation`（`0x004F`）两条各指向什么。

@@ -55,6 +55,11 @@ K1 落地（`223b26d`）**：`PidSymbolDimension::name` / `::formula`、`PidSymb
 （OCS：先缓存后库、关闭层不画、`OCS_PID_SYMBOL_SOURCE` 一轮）→ **C3**（双仓台账）。pid-parse 侧待办：今天装上的 nightly 让
 `clippy -D warnings` 在 HEAD 上就红（`map_unwrap_or` 29 处旧代码），需一条清理提交。
 
+**2026-09-19 · 同一计划 C2 顺带裁出：`igArc2d` 从 `startAngle` 到 `endAngle` 是顺时针扫过的**（字段值不动，注释与消费方约定更正；
+此前按逆时针画的每条弧都是补弧——Manifold 端帽向内、`extent=` 会从 172.21 掉到 101.03）。证据是本体自带的 `Construction` 轴线指向
+顺时针顶点与 `Remarks.sym` 云线凸弧朝外。棘轮 `a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle`。见
+`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`。09-07 placement-tail 文档的「缓存 vs 库优先级」开口标已裁。
+
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
 `sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给

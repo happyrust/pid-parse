@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### `igArc2d` 从起角到止角是顺时针扫过的（2026-09-19，计划 C2 顺带裁出）
+
+- **约定更正，字段值不动**：`SymbolPrimitive::Arc` / `PidGraphicKind::Arc` / `SheetIgArc2dDecoded` /
+  `DecodedIgArc2dRecord` 的 `start_angle` / `end_angle` 仍是 IDA 坐实的绝对角（弧度，从 +X 逆时针量），
+  但弧**从 start 顺时针走到 end**——此前注释写的「逆时针」是假设，消费方照着画出来的每条弧都是补弧。
+  按 DXF 逆时针约定画要对调两角。尾字节 `+58` 不是方向位（语料 0 / 1 两值走向相同）。
+- **证据**：语料的弧全在符号本体里（0201 缓存 7 条、0202 5 条，其余图无，图纸自身零条）。Manifold 实例与模板
+  的端帽（`270° → 90°` / `90° → 270°`）只有顺时针读才凸出壳体——本体自带的 `Construction[OFF]` 轴线正好
+  从弧心画到顺时针顶点；`Remarks.sym` 云线上下两条大弧同样只有顺时针读才凸出框外。逆时针读，Manifold 实例
+  外框 172.21 mm 会掉成 101.03（端帽向内）。
+- 棘轮 `a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle`（两张 Manifold 本体逐弧：端点在壳上、
+  顺时针中点在外、逆时针中点在内、构造线指向顺时针中点、宽 0.17221 / 0.22860；`Remarks.sym` 两条弧内外分明；
+  各图缓存弧数 7 / 5 / 0 / 0）；`parse_real_files` 132 → 133。见
+  `docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`。消费方 OpenCADStudio 计划 C2 对调。
+- 顺带：09-07 placement-tail 文档「还没做的」第一条（缓存 vs 库优先级）标已裁——由上述计划裁定，不等截图。
+
 ### 缓存本体的每个图元带上所在层，本体说出哪些层文件关着（2026-09-19，计划 C1）
 
 - **DTO**（`08fc95a`）：`PidSymbolDefinition` 加 `sheet_layers: Vec<PidSymbolSheetLayer { oid, name, displayed }>`（`layers` 每个

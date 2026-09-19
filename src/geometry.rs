@@ -495,15 +495,19 @@ pub enum PidGraphicKind {
         /// Whether the last point connects back to the first.
         closed: bool,
     },
-    /// Circular arc in model space.
+    /// Circular arc in model space, swept **clockwise** from `start_angle`
+    /// to `end_angle` -- the `igArc2d` convention the cached and library
+    /// bodies prove (`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`);
+    /// no sheet of the corpus carries one directly, so this kind is the
+    /// same record read the same way rather than a measured case.
     Arc {
         /// Arc centre point.
         center: PidPoint,
         /// Radius in source drawing units.
         radius: f64,
-        /// Start angle in radians.
+        /// Start angle in radians, counter-clockwise from +X.
         start_angle: f64,
-        /// End angle in radians.
+        /// End angle in radians, counter-clockwise from +X.
         end_angle: f64,
     },
     /// Full circle in model space.

@@ -934,9 +934,11 @@ pub struct DecodedIgArc2dRecord {
     pub center_y: f64,
     /// Radius, same units.
     pub radius: f64,
-    /// Absolute start angle, radians.
+    /// Absolute start angle, radians counter-clockwise from +X; the arc
+    /// runs **clockwise** from here to `end_angle`
+    /// (`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`).
     pub start_angle: f64,
-    /// Absolute end angle, radians.
+    /// Absolute end angle, radians counter-clockwise from +X.
     pub end_angle: f64,
 }
 

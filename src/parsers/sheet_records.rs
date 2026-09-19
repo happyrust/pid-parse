@@ -6447,7 +6447,9 @@ pub const IGCIRCLE2D_PAYLOAD_LEN: usize = 43;
 /// Payload of one `igArc2d`: the 18-byte sub-header, then `center.x`,
 /// `center.y`, `radius`, `start_angle`, `end_angle` (5×f64) and one flag
 /// byte. The angles are absolute start / end angles, not a sweep
-/// (`docs/analysis/2026-07-27-ugeom2d1-curve-readers-ida.md`).
+/// (`docs/analysis/2026-07-27-ugeom2d1-curve-readers-ida.md`), and the arc
+/// runs **clockwise** from the first to the second
+/// (`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`).
 pub const IGARC2D_PAYLOAD_LEN: usize = 59;
 
 /// Offset of the first geometry double in either payload -- the end of the
@@ -6504,12 +6506,14 @@ pub struct SheetIgArc2dDecoded {
     pub center: (f64, f64),
     /// Radius, same units (payload `+34`).
     pub radius: f64,
-    /// Absolute start angle, radians (payload `+42`).
+    /// Absolute start angle, radians counter-clockwise from +X (payload
+    /// `+42`); the arc leaves it **clockwise** towards `end_angle`.
     pub start_angle: f64,
-    /// Absolute end angle, radians (payload `+50`).
+    /// Absolute end angle, radians counter-clockwise from +X (payload `+50`).
     pub end_angle: f64,
     /// The trailing byte (payload `+58`); meaning unknown, carried for
-    /// audit.
+    /// audit. Not the sweep direction: the corpus has it `0` and `1` on
+    /// arcs that both run clockwise.
     pub flag: u8,
 }
 
