@@ -646,6 +646,30 @@ pub struct DashPattern {
 }
 
 impl DashPattern {
+    /// A pattern stated from its segment lengths in metres, in the order and
+    /// sign the caller means -- for a consumer that has to make one rather
+    /// than read one (a test standing up a line style that names a dash, a
+    /// renderer wanting this vocabulary for a pattern it did not get from a
+    /// `.pid`). `None` for what no record can declare either: no segments,
+    /// more than [`MAX_DASH_SEGMENTS`], or a length that is not a finite
+    /// number. A zero-length segment is a dot, as it is when read from a
+    /// record.
+    #[must_use]
+    pub fn from_segments_m(segments_m: &[f64]) -> Option<Self> {
+        if segments_m.is_empty()
+            || segments_m.len() > MAX_DASH_SEGMENTS
+            || segments_m.iter().any(|value| !value.is_finite())
+        {
+            return None;
+        }
+        let mut segments = [0.0_f64; MAX_DASH_SEGMENTS];
+        segments[..segments_m.len()].copy_from_slice(segments_m);
+        Some(Self {
+            segments,
+            len: u8::try_from(segments_m.len()).ok()?,
+        })
+    }
+
     /// Segment lengths in metres, exactly as stored.
     #[must_use]
     pub fn segments_m(&self) -> &[f64] {
@@ -2601,6 +2625,39 @@ mod tests {
         assert!((mm[0] + 14.0).abs() < 1e-9, "sign is preserved: {mm:?}");
         assert!((mm[1] - 1.75).abs() < 1e-9);
         assert!((dash.period_m() - 0.017_85).abs() < 1e-9);
+    }
+
+    /// A pattern a consumer states itself is the pattern a record would have
+    /// been read as -- same segments, same sign, same limits -- so a test
+    /// standing up a dashed line style and a reader decoding one speak the
+    /// same value.
+    #[test]
+    fn a_dash_pattern_stated_from_its_segments_is_the_one_a_record_reads_as() {
+        let read = stream(&[
+            dash_type(17, &[-0.0035, -0.001_75]),
+            simple_line_dashed(30, 17),
+        ]);
+        let read = DocumentStyleTable::from_stylecluster_bytes(&read)
+            .resolve_line_style(30)
+            .expect("id 30 is defined")
+            .dash
+            .expect("it names a dash type");
+        let stated = DashPattern::from_segments_m(&[-0.0035, -0.001_75]).expect("two segments");
+        assert_eq!(stated, read);
+        assert_eq!(stated.segments_mm(), vec![-3.5, -1.75]);
+
+        assert!(
+            DashPattern::from_segments_m(&[]).is_none(),
+            "no segments is no pattern"
+        );
+        assert!(
+            DashPattern::from_segments_m(&[0.001; MAX_DASH_SEGMENTS + 1]).is_none(),
+            "a record cannot declare more than {MAX_DASH_SEGMENTS} either"
+        );
+        assert!(DashPattern::from_segments_m(&[0.0035, f64::NAN]).is_none());
+        let dotted = DashPattern::from_segments_m(&[0.0, 0.001]).expect("a dot and a gap");
+        assert_eq!(dotted.len(), 2);
+        assert!((dotted.period_m() - 0.001).abs() < 1e-12);
     }
 
     #[test]
