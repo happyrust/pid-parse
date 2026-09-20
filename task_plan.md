@@ -84,7 +84,14 @@ pid-parse 侧无改动。~~仍待办：`map_unwrap_or` 29 处旧代码的 clippy
 golden 不变。**E2 已在 OCS 侧落地**（OCS `3b8af2ed`，2026-09-20）：`cached_body_entities` 走 `visible_strokes()` 底涂、`paint_symbol_stroke`
 按 `dash_mm` 点名 `PID-DASH-*`、`register_dash_linetypes` 多收一遍缓存本体；`pid_import` 54 → 55 钉工艺 45 / 0202 12 / D06 0 / 0201 0。
 本仓随之只多一条 `DashPattern::from_segments_m`（`1fd69db`，OCS 单测造「放置样式自己带 dash」用；读取器行为不变）。计划收口，
-只剩 GUI 特写两张未截。
+GUI 特写两张同日补齐（OCS `e9a178e1`）。
+
+**2026-09-20 · 分析：放置实例的实际参数找到了**（`docs/analysis/2026-09-20-jflavorholder-carries-the-placed-instances-parameters.md`，
+关 09-18 J3 分析 §8 第一条开口）：在实例存储自己的 `0x00ED JFlavorHolder`（`symbol.dex`，`tools/psm_type_clsid.py` 解出）里，
+`+24` u16 个数 + 每变量 `01 01 00 00 00` + f64（米），顺序同 `JSymbolInformation` 变量表——Manifold [0.057909, 0.1143, 0.03559]、
+Black Box [0.0127, 0.113927, 0.0127, 0.078067]，与实例几何逐个数对上；没拉过的两个实例存默认值；模板存储里的是不带值的另一变体
+（`+40` 指自己的 `JSymbolInformation`）。探针 `probe_jflavorholder_carries_instance_parameters`。**只分析，未解码进 DTO**——
+下一单：`streams/jsite.rs` 收 `0x00ED` 变体 1、`PidSymbolDefinition` 加实例参数、棘轮四对、OCS 面板多一行「驱动尺寸（本图实例）」，半个工作日。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的

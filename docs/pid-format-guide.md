@@ -432,6 +432,7 @@ RTTI / COM 类工厂），**等级：native-reader**。
 | `0x00BD` | `419C0360-BB78-11CE-99F8-0800364E6302` | `symbol.dex` | **JSymbolInformation** |
 | `0x00C7` | `D97A3FB0-1601-11CE-B7EE-08003601E53B` | `exprdex.dll` | **Double Value Object** |
 | `0x00EA` | `72C7EAB1-A512-11D0-9383-080036C61102` | `exprdex.dll` | **Variables Object** |
+| `0x00ED` | `0C29A523-1143-11D0-AF3A-080036D72102` | `symbol.dex` | **JFlavorHolder**（2026-09-20 补录：每份 `JSymbolInformation` 配一条；实例存储里的那条按变量顺序存**实例的实际参数**，模板存储里的只指向自己的 `JSymbolInformation`。见 `docs/analysis/2026-09-20-jflavorholder-carries-the-placed-instances-parameters.md`；**未解码进 DTO**） |
 
 `0x00BD` 的名字有两条独立证据：type code 表查出 `JSymbolInformation`，而
 `PSMroots` 在每个 `JSite` 里直接把这些 id 叫 `SymbolInformation`。整族串起来是一条
@@ -458,6 +459,11 @@ UTF-16 公式」。
 参数化实例本体没有 JDim / 关系 / Double Value，只有一份变量值 = 库默认的 `SymbolInformation` 副本；实例几何
 要么等于模板（` Line2`）、要么是同一公式**按毫米**再算一遍（D06 Tank）、要么被拉过且参数不在缓存里（Manifold 等）。
 见 `docs/analysis/2026-09-18-the-parametric-chain-closes-on-the-template-not-the-instance.md`。
+**参数找到了（2026-09-20）**：拉过的实例的实际参数在实例存储自己的 `0x00ED JFlavorHolder` 里——`+24` 一个 `u16` 个数，
+随后每变量 `01 01 00 00 00` + `f64`（米），顺序同 `JSymbolInformation` 的变量表：Manifold [0.057909, 0.1143, 0.03559]
+→ 172.209 × 71.18、弧 r 35.59 ✓；Black Box [0.0127, 0.113927, 0.0127, 0.078067] → 126.627 × 90.767 ✓；没拉过的两个实例
+（D06 Tank、` Line2`）存的就是默认值。模板存储里的 `JFlavorHolder` 是另一变体：不带值，`+40` 指自己的 `JSymbolInformation`。
+见 `docs/analysis/2026-09-20-jflavorholder-carries-the-placed-instances-parameters.md`（只分析，未解码）。
 
 **名字与配对进了 DTO（2026-09-19，计划 K1）**：`PidSymbolDimension::name`（驱动它的变量名，入参是别的 JDim 的为
 `None`）/ `::formula`（关系原文）；`PidSymbolDefinition::variables`（`SymbolInformation` 变量，模板与实例都有）/
