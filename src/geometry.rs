@@ -263,12 +263,22 @@ pub struct PidSymbolVariable {
     /// The name the record gives it; `Left` / `Right` / `Top` / `Bottom` on
     /// the corpus.
     pub name: String,
-    /// The value, metres.
+    /// The value, metres -- the library default: on a placed instance the
+    /// `JSymbolInformation` copy repeats the template's value.
     pub value_m: f64,
     /// Storage-local oid of the `Double Value` record holding that value --
     /// on a placed instance an oid of the **template's** storage, which is
     /// how the two are paired.
     pub value_ref: u32,
+    /// The value the placed instance was actually drawn with, metres, read
+    /// off the instance storage's `0x00ED` `JFlavorHolder`
+    /// (`docs/analysis/2026-09-20-jflavorholder-carries-the-placed-instances-parameters.md`):
+    /// DWG-0201's Manifold is placed with `Left` 0.057909 and `Top`
+    /// 0.035590 where the defaults are 0.1143 and 0.02032. `None` on a
+    /// template body, and on an instance whose holder was not found or
+    /// counts differently -- then only [`Self::value_m`] is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_value_m: Option<f64>,
 }
 
 /// One driving dimension of an embedded symbol body: a `0x0115` `JDim`
@@ -1525,8 +1535,11 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
             let variables = expressions
                 .as_ref()
                 .filter(|_| !dimensions.is_empty())
-                .and_then(|index| index.record_behind(dimensions.iter().map(|d| d.oid).collect()))
-                .map(variables_of)
+                .and_then(|index| {
+                    index
+                        .record_behind(dimensions.iter().map(|d| d.oid).collect())
+                        .map(|record| variables_of(record, index.info))
+                })
                 .unwrap_or_default();
             let lines = nested
                 .lines
@@ -1683,8 +1696,12 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
         }
         candidates.sort_by_key(|at| bodies[*at].0.reference.sheet);
         records.sort_by_key(|record| record.oid);
+        let info = doc.jsites[instance_index]
+            .symbol_information
+            .as_ref()
+            .expect("the claim came from this storage's family");
         for (at, record) in candidates.into_iter().zip(records) {
-            paired.push((at, template.reference, variables_of(record)));
+            paired.push((at, template.reference, variables_of(record, info)));
         }
     }
     for (at, template, variables) in paired {
@@ -1695,15 +1712,24 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
     bodies.into_iter().map(|(body, _)| body).collect()
 }
 
-/// The variables of one `JSymbolInformation` record, in record order.
-fn variables_of(record: &crate::model::DecodedSymbolInformationRecord) -> Vec<PidSymbolVariable> {
+/// The variables of one `JSymbolInformation` record, in record order, each
+/// with the value the storage's instance-variant `JFlavorHolder` states for
+/// it where the storage is a placed instance's
+/// ([`crate::JSiteSymbolInformation::instance_values_of`]).
+fn variables_of(
+    record: &crate::model::DecodedSymbolInformationRecord,
+    info: &crate::model::JSiteSymbolInformation,
+) -> Vec<PidSymbolVariable> {
+    let instance_values = info.instance_values_of(record);
     record
         .variables
         .iter()
-        .map(|variable| PidSymbolVariable {
+        .enumerate()
+        .map(|(index, variable)| PidSymbolVariable {
             name: variable.name.clone(),
             value_m: variable.value,
             value_ref: variable.value_ref,
+            instance_value_m: instance_values.and_then(|values| values.get(index).copied()),
         })
         .collect()
 }

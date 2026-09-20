@@ -5955,6 +5955,182 @@ impl PsmRecordDecoder for SymbolInformationDecoder {
     }
 }
 
+/// PSM type code of `symbol.dex` `JFlavorHolder`
+/// (`tools/psm_type_clsid.py 0xED` → `0C29A523-1143-11D0-AF3A-080036D72102`).
+/// One per `0x00BD` `JSymbolInformation` in every nested storage; see
+/// `docs/analysis/2026-09-20-jflavorholder-carries-the-placed-instances-parameters.md`.
+pub const PSM_TYPE_CODE_JFLAVOR_HOLDER: u16 = 0x00ED;
+
+/// Payload bytes before a flavour holder's variant word: oid, ten zero
+/// bytes, the link word, the count word.
+const FLAVOR_HOLDER_HEAD_LEN: usize = 20;
+/// Byte length of one `01 01 00 00 00` + `f64` value entry.
+const FLAVOR_HOLDER_ENTRY_LEN: usize = 13;
+/// The variant word of a holder that carries the placed instance's values.
+pub const FLAVOR_HOLDER_INSTANCE: u32 = 1;
+/// The variant word of a holder that only names its `JSymbolInformation`.
+pub const FLAVOR_HOLDER_TEMPLATE: u32 = 2;
+
+/// One decoded `0x00ED` `JFlavorHolder` record.
+///
+/// Two variants share the head (oid, ten zero bytes, a link word, a `u16`
+/// value count) and the `"Sheets"` name that follows. The **instance**
+/// variant (`Imagineer Document`, the storage a placement names) then
+/// carries one `f64` per variable of the storage's `JSymbolInformation`,
+/// in that record's variable order -- the parameters the placed instance
+/// was actually drawn with, where the `JSymbolInformation` copy repeats the
+/// library defaults. The **template** variant (`Server Document`) carries no
+/// value and names its `JSymbolInformation` by oid instead. Measured on the
+/// corpus in
+/// `docs/analysis/2026-09-20-jflavorholder-carries-the-placed-instances-parameters.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PsmFlavorHolderDecoded {
+    /// Byte range covering the full PSM record.
+    pub byte_range: std::ops::Range<usize>,
+    /// Persist id of the holder.
+    pub oid: u32,
+    /// The word at payload `+14`: an oid on the instance variant (not the
+    /// placement's graphic oid; meaning unsettled), zero on the template
+    /// variant. Carried as read.
+    pub link: u32,
+    /// [`FLAVOR_HOLDER_INSTANCE`] or [`FLAVOR_HOLDER_TEMPLATE`].
+    pub variant: u32,
+    /// Persist id of the `JSymbolInformation` the template variant names
+    /// (that record's `parent_ref` is this holder's oid); `None` on the
+    /// instance variant.
+    pub symbol_information_ref: Option<u32>,
+    /// The instance's parameter values, metres, in the `JSymbolInformation`
+    /// variable order; empty on the template variant.
+    pub values: Vec<f64>,
+}
+
+/// Decode every `0x00ED` `JFlavorHolder` record in `data`.
+///
+/// Validation: type code and zero type flags, non-zero `oid`, ten zero
+/// bytes at payload `+4`, the `1` / `1` lead at `+20`, a variant word of `1`
+/// or `2`, the length-prefixed UTF-16 names in the order each variant
+/// states them (`"Sheets"`; `"SI"` + a non-zero reference + `"Sheets"`),
+/// two words, and exactly `count` finite value entries closing the record
+/// (`count` is zero on the template variant).
+pub fn decode_flavor_holders(data: &[u8]) -> Vec<PsmFlavorHolderDecoded> {
+    FlavorHolderDecoder.scan(data)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x00ED` `JFlavorHolder`.
+pub struct FlavorHolderDecoder;
+
+impl FlavorHolderDecoder {
+    /// A `u32` byte length followed by that many bytes of UTF-16LE, decoded;
+    /// the offset just past it.
+    fn utf16_at(data: &[u8], at: usize, end: usize) -> Option<(String, usize)> {
+        let bytes = usize::try_from(u32_le(data, at)?).ok()?;
+        if bytes % 2 != 0 || bytes == 0 {
+            return None;
+        }
+        let start = at.checked_add(4)?;
+        let stop = start.checked_add(bytes)?;
+        if stop > end {
+            return None;
+        }
+        let units: Vec<u16> = (0..bytes / 2)
+            .map(|index| u16_le(data, start + index * 2))
+            .collect::<Option<_>>()?;
+        Some((String::from_utf16(&units).ok()?, stop))
+    }
+}
+
+impl PsmRecordDecoder for FlavorHolderDecoder {
+    type Record = PsmFlavorHolderDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_JFLAVOR_HOLDER
+    }
+
+    fn min_record_len(&self) -> usize {
+        // Envelope + head + lead + variant + the shortest name.
+        PSM_ENVELOPE_LEN + FLAVOR_HOLDER_HEAD_LEN + 2 + 4 + 4 + 4
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmFlavorHolderDecoded> {
+        let header = parse_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_JFLAVOR_HOLDER || header.type_flags != 0 {
+            return None;
+        }
+        let body = header.body_start;
+        let btf = header.bytes_to_follow as usize;
+        let end = body.checked_add(btf)?;
+        if end > data.len() || btf < FLAVOR_HOLDER_HEAD_LEN + 2 + 4 {
+            return None;
+        }
+        let oid = u32_le(data, body)?;
+        if oid == 0 || data.get(body + 4..body + 14)?.iter().any(|b| *b != 0) {
+            return None;
+        }
+        let link = u32_le(data, body + 14)?;
+        let count = usize::from(u16_le(data, body + 18)?);
+        if u16_le(data, body + 20)? != 0x0101 {
+            return None;
+        }
+        let variant = u32_le(data, body + 22)?;
+        let mut at = body + 26;
+        let symbol_information_ref = match variant {
+            FLAVOR_HOLDER_INSTANCE => None,
+            FLAVOR_HOLDER_TEMPLATE => {
+                let (marker, next) = Self::utf16_at(data, at, end)?;
+                if marker != "SI" {
+                    return None;
+                }
+                let reference = u32_le(data, next)?;
+                if reference == 0 {
+                    return None;
+                }
+                at = next + 4;
+                Some(reference)
+            }
+            _ => return None,
+        };
+        let (name, next) = Self::utf16_at(data, at, end)?;
+        if name != "Sheets" {
+            return None;
+        }
+        // Two words this reader does not interpret, then the values.
+        at = next.checked_add(8)?;
+        if variant == FLAVOR_HOLDER_TEMPLATE && count != 0 {
+            return None;
+        }
+        let mut values = Vec::with_capacity(count);
+        for _ in 0..count {
+            if *data.get(at)? != 1 || u32_le(data, at + 1)? != 1 {
+                return None;
+            }
+            let value = f64_le(data, at + 5)?;
+            if !value.is_finite() {
+                return None;
+            }
+            values.push(value);
+            at += FLAVOR_HOLDER_ENTRY_LEN;
+        }
+        if at != end {
+            return None;
+        }
+        Some(PsmFlavorHolderDecoded {
+            byte_range: offset..end,
+            oid,
+            link,
+            variant,
+            symbol_information_ref,
+            values,
+        })
+    }
+
+    fn advance_of(&self, record: &PsmFlavorHolderDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
 /// One decoded `0x006F` `Assoc subsystem Standard Relation` record: a
 /// `JBExpression` formula over operand objects.
 #[derive(Debug, Clone, PartialEq)]

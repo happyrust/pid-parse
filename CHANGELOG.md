@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### 放置实例带上自己的实际参数：解码 `0x00ED JFlavorHolder`（2026-09-20，计划 F1）
+
+计划 `OpenCADStudio/docs/plans/2026-09-20-a-placed-instance-states-its-own-driving-dimensions.md` 的 pid-parse 侧，接
+`docs/analysis/2026-09-20-jflavorholder-carries-the-placed-instances-parameters.md`（同日的分析：09-18 J3 留下的开口
+「放置实例的实际参数在文件何处」）。加法，不改投影，golden 不变。
+
+- **`decode_flavor_holders` / `FlavorHolderDecoder`**（`parsers/sheet_records.rs`）：PSM 类型 `0x00ED`（`symbol.dex` `JFlavorHolder`，
+  `tools/psm_type_clsid.py` 解出）。两个变体同一类型码：**实例形**（`Imagineer Document`）`+18` u16 个数、`"Sheets"` 名之后每变量
+  `01 01 00 00 00` + f64（米）；**模板形**（`Server Document`）不带值，`"SI"` 名之后一个 oid 指自己的 `JSymbolInformation`。
+  校验到字节：类型 / 零标志、非零 oid、十个零字节、`01 01` 引导、变体 1 / 2、按变体的名字序、恰 `count` 条有限值收尾。
+- **`JSiteSymbolInformation::flavor_holders`**（`serde(default)`，旧数据缺项为空）+ **`instance_values_of(record)`**：同存储里按变量数
+  配对、同数者按流序对位（两条记录互不点名，holder 可在记录之前或之后——0201 在后、工艺在前）。
+- **`PidSymbolVariable::instance_value_m: Option<f64>`**：放置实例的每个变量多带这张图上实际放置成的值；模板本体为 `None`。
+  Manifold `Left` 0.057909 / `Right` 0.1143 / `Top` 0.035590（默认 0.1143 / 0.1143 / 0.02032），Black Box `Right` 0.113927 /
+  `Top` 0.078067（默认 0.0127），没拉过的 D06 Tank 与 ` Line2` 等于默认。
+- 棘轮 `parse_real_files::a_placed_instance_states_its_own_parameters_in_its_flavor_holder`（134 → 135）：四主图逐变量钉住，
+  A01 Drum 按 `Left + Right` = 本体宽、`2 × Top` = 本体高钉（159.459 × 51.917）；模板无实例值；每存储 holder 数 = `JSymbolInformation` 数，
+  模板形 holder 与它点名的记录互指。探针 `probe_jflavorholder_carries_instance_parameters`。
+
 ### 缓存本体带上自己的逐笔样式：接缓存存储的 `StyleCluster`（2026-09-20，计划 E1）
 
 计划 `OpenCADStudio/docs/plans/2026-09-20-a-cached-body-carries-its-own-stroke-styles.md`（八条决策 2026-09-20 用户按推荐批准）的 pid-parse 侧。

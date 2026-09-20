@@ -40,8 +40,8 @@ fn extract_unc_or_path(s: &str) -> String {
 /// expression family over one site's cluster bytes.
 fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
     use crate::parsers::sheet_records::{
-        decode_double_values, decode_standard_relations, decode_symbol_informations,
-        decode_variables,
+        decode_double_values, decode_flavor_holders, decode_standard_relations,
+        decode_symbol_informations, decode_variables,
     };
     JSiteSymbolInformation {
         symbol_informations: decode_symbol_informations(data)
@@ -54,6 +54,10 @@ fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
             .collect(),
         variable_groups: decode_variables(data).into_iter().map(Into::into).collect(),
         relations: decode_standard_relations(data)
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+        flavor_holders: decode_flavor_holders(data)
             .into_iter()
             .map(Into::into)
             .collect(),

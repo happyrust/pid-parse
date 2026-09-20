@@ -13904,3 +13904,224 @@ fn only_decoded_coordinates_carry_the_page_the_border_frame_states() {
     assert!(raw_hints > 0, "DWG-0201 has raw coordinate hints");
     eprintln!("page promotion: decoded={decoded}, raw_hints_left_alone={raw_hints}");
 }
+
+/// Ratchet for the 2026-09-20 finding
+/// (`docs/analysis/2026-09-20-jflavorholder-carries-the-placed-instances-parameters.md`,
+/// plan `OpenCADStudio/docs/plans/2026-09-20-a-placed-instance-states-its-own-driving-dimensions.md`):
+/// a placed parametric instance's actual parameters are on the DTO. The
+/// instance storage's `0x00ED` `JFlavorHolder` carries one value per
+/// `JSymbolInformation` variable, and `PidSymbolVariable::instance_value_m`
+/// carries it beside the library default the record itself repeats.
+///
+/// Pinned: the two stretched instances at the numbers the geometry gave
+/// the 09-18 analysis (0201's Manifold `Left'` 0.057909 / `Right` 0.1143 /
+/// `Top'` 0.035590; 工艺's Black Box `Left` 0.0127 / `Right` 0.113927 /
+/// `Bottom` 0.0127 / `Top` 0.078067), the two unstretched ones at their
+/// defaults (D06's Tank, 0201's ` Line2`), A01's Drum by the same relation
+/// the Manifold obeys (`Left + Right` is the body's width, `2 x Top` its
+/// height); every template body without an instance value; every
+/// template-variant holder naming the `JSymbolInformation` whose
+/// `parent_ref` is the holder. Nothing is drawn differently: `entities` and
+/// the golden snapshot are untouched.
+#[test]
+fn a_placed_instance_states_its_own_parameters_in_its_flavor_holder() {
+    /// (name, library default, instance value) of one variable, metres.
+    type Variable = (&'static str, f64, f64);
+    struct Expected {
+        fixture: &'static str,
+        /// (site, sheet) of the placed body -> its variables.
+        instances: &'static [((u32, u32), &'static [Variable])],
+        /// Placed bodies whose `Left + Right` / `2 x Top` must be the body's box.
+        manifold_like: &'static [(u32, u32)],
+    }
+    const EXPECTED: &[Expected] = &[
+        Expected {
+            fixture: "D06.pid",
+            instances: &[(
+                (151, 47),
+                &[
+                    ("Left", 0.06096, 0.06096),
+                    ("Right", 0.06096, 0.06096),
+                    ("Bottom", 0.035306, 0.035306),
+                    ("Top", 0.035306, 0.035306),
+                ],
+            )],
+            manifold_like: &[],
+        },
+        Expected {
+            fixture: "DWG-0201GP06-01.pid",
+            instances: &[
+                (
+                    (396, 113),
+                    &[
+                        ("Left", 0.1143, 0.057909),
+                        ("Right", 0.1143, 0.1143),
+                        ("Top", 0.02032, 0.035590),
+                    ],
+                ),
+                ((396, 119), &[("Right", 0.0254, 0.0254)]),
+            ],
+            manifold_like: &[(396, 113)],
+        },
+        Expected {
+            fixture: "工艺管道及仪表流程-1.pid",
+            instances: &[(
+                (6963, 21),
+                &[
+                    ("Left", 0.0127, 0.0127),
+                    ("Right", 0.0127, 0.113927),
+                    ("Bottom", 0.0127, 0.0127),
+                    ("Top", 0.0127, 0.078067),
+                ],
+            )],
+            manifold_like: &[],
+        },
+        Expected {
+            fixture: "export-test/publish-data/A01/A01.pid",
+            instances: &[],
+            manifold_like: &[(121, 481)],
+        },
+    ];
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+
+    for expected in EXPECTED {
+        let fixture = expected.fixture;
+        let Some(doc) = parse_test_file(fixture) else {
+            continue;
+        };
+        let geometry = pid_parse::build_normalized_geometry(&doc);
+        let body_at = |(site, sheet): (u32, u32)| {
+            geometry
+                .symbol_definitions
+                .iter()
+                .find(|body| body.reference.site == site && body.reference.sheet == sheet)
+                .unwrap_or_else(|| panic!("{fixture}: body ({site}, {sheet})"))
+        };
+
+        // 1. The pinned instances, variable by variable.
+        for (reference, variables) in expected.instances {
+            let body = body_at(*reference);
+            assert!(
+                body.template.is_some(),
+                "{fixture} {reference:?} is a placed instance"
+            );
+            let got: Vec<(&str, f64, Option<f64>)> = body
+                .variables
+                .iter()
+                .map(|v| (v.name.as_str(), v.value_m, v.instance_value_m))
+                .collect();
+            assert_eq!(
+                got.len(),
+                variables.len(),
+                "{fixture} {reference:?}: {got:?}"
+            );
+            for ((name, default, instance), (got_name, got_default, got_instance)) in
+                variables.iter().zip(&got)
+            {
+                assert_eq!(name, got_name, "{fixture} {reference:?}");
+                assert!(
+                    close(*default, *got_default),
+                    "{fixture} {reference:?} {name}: default {got_default}"
+                );
+                let got_instance = got_instance
+                    .unwrap_or_else(|| panic!("{fixture} {reference:?} {name}: no instance value"));
+                assert!(
+                    close(*instance, got_instance),
+                    "{fixture} {reference:?} {name}: instance {got_instance} (expected {instance})"
+                );
+            }
+        }
+
+        // 2. Manifold-like bodies: the instance values reproduce the body.
+        for reference in expected.manifold_like {
+            let body = body_at(*reference);
+            let value = |name: &str| {
+                body.variables
+                    .iter()
+                    .find(|v| v.name == name)
+                    .and_then(|v| v.instance_value_m)
+                    .unwrap_or_else(|| panic!("{fixture} {reference:?}: instance {name}"))
+            };
+            let (mut min_x, mut min_y, mut max_x, mut max_y) =
+                (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+            let mut grow = |x: f64, y: f64| {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            };
+            for primitive in &body.primitives {
+                match primitive {
+                    pid_parse::symbol_library::SymbolPrimitive::Line { start, end } => {
+                        grow(start.0, start.1);
+                        grow(end.0, end.1);
+                    }
+                    pid_parse::symbol_library::SymbolPrimitive::Arc { center, radius, .. }
+                    | pid_parse::symbol_library::SymbolPrimitive::Circle { center, radius } => {
+                        grow(center.0 - radius, center.1 - radius);
+                        grow(center.0 + radius, center.1 + radius);
+                    }
+                    _ => {}
+                }
+            }
+            let (width, height) = (max_x - min_x, max_y - min_y);
+            assert!(
+                close(value("Left") + value("Right"), width),
+                "{fixture} {reference:?}: Left + Right = {} against a body {width} wide",
+                value("Left") + value("Right")
+            );
+            assert!(
+                close(2.0 * value("Top"), height),
+                "{fixture} {reference:?}: 2 x Top = {} against a body {height} high",
+                2.0 * value("Top")
+            );
+        }
+
+        // 3. Templates carry no instance value; every instance body with
+        //    variables carries one per variable.
+        for body in &geometry.symbol_definitions {
+            if body.template.is_none() {
+                assert!(
+                    body.variables.iter().all(|v| v.instance_value_m.is_none()),
+                    "{fixture} {:?}: a template has no instance value",
+                    body.reference
+                );
+            } else {
+                assert!(
+                    body.variables.iter().all(|v| v.instance_value_m.is_some()),
+                    "{fixture} {:?}: a placed instance states every parameter",
+                    body.reference
+                );
+            }
+        }
+
+        // 4. The holders themselves: one per `JSymbolInformation` in every
+        //    storage, and a template-variant holder names the record that
+        //    names it back as parent.
+        for site in &doc.jsites {
+            let Some(info) = site.symbol_information.as_ref() else {
+                continue;
+            };
+            assert_eq!(
+                info.flavor_holders.len(),
+                info.symbol_informations.len(),
+                "{fixture} {}: one JFlavorHolder per JSymbolInformation",
+                site.path
+            );
+            for holder in &info.flavor_holders {
+                if let Some(named) = holder.symbol_information_ref {
+                    assert!(
+                        holder.values.is_empty()
+                            && info
+                                .symbol_informations
+                                .iter()
+                                .any(|record| record.oid == named && record.parent_ref == holder.oid),
+                        "{fixture} {} holder {}: names JSymbolInformation {named}, which names it back",
+                        site.path,
+                        holder.oid
+                    );
+                }
+            }
+        }
+    }
+}

@@ -4,7 +4,9 @@
 > 「放置实例的实际参数在文件的哪一处：五个实例四个被拉过，值不在缓存里」。**找到了**——在实例自己的
 > `/JSite<N>/PSMcluster0` 里，一条 PSM 类型 `0x00ED` 的记录，`tools/psm_type_clsid.py` 解出它是 `symbol.dex`
 > 的 **`JFlavorHolder`**。它按 `JSymbolInformation` 的变量顺序存一列 `f64`，就是这个实例被拉成现在这样的参数。
-> 方法与数字见 §2–§4；复现 §6。**只分析，未解码进 DTO**（下一步见 §5）。
+> 方法与数字见 §2–§4；复现 §6。**同日解码进 DTO**（计划 `OpenCADStudio/docs/plans/2026-09-20-a-placed-instance-states-its-own-driving-dimensions.md`
+> F1）：`decode_flavor_holders` → `JSiteSymbolInformation::flavor_holders` / `instance_values_of` → `PidSymbolVariable::instance_value_m`，
+> 棘轮 `a_placed_instance_states_its_own_parameters_in_its_flavor_holder`（A01 Drum 也按 `Left + Right` = 宽、`2 × Top` = 高钉住）。
 
 ## 1. 一句话
 

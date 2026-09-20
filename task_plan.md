@@ -90,8 +90,13 @@ GUI 特写两张同日补齐（OCS `e9a178e1`）。
 关 09-18 J3 分析 §8 第一条开口）：在实例存储自己的 `0x00ED JFlavorHolder`（`symbol.dex`，`tools/psm_type_clsid.py` 解出）里，
 `+24` u16 个数 + 每变量 `01 01 00 00 00` + f64（米），顺序同 `JSymbolInformation` 变量表——Manifold [0.057909, 0.1143, 0.03559]、
 Black Box [0.0127, 0.113927, 0.0127, 0.078067]，与实例几何逐个数对上；没拉过的两个实例存默认值；模板存储里的是不带值的另一变体
-（`+40` 指自己的 `JSymbolInformation`）。探针 `probe_jflavorholder_carries_instance_parameters`。**只分析，未解码进 DTO**——
-下一单：`streams/jsite.rs` 收 `0x00ED` 变体 1、`PidSymbolDefinition` 加实例参数、棘轮四对、OCS 面板多一行「驱动尺寸（本图实例）」，半个工作日。
+（`+40` 指自己的 `JSymbolInformation`）。探针 `probe_jflavorholder_carries_instance_parameters`。
+
+**2026-09-20 · 同日解码进 DTO（计划 `OpenCADStudio/docs/plans/2026-09-20-a-placed-instance-states-its-own-driving-dimensions.md` F1，
+用户「开单并直接做」）**：`decode_flavor_holders`（两变体都框住、只读变体 1 的值）→ `JSiteSymbolInformation::flavor_holders` +
+`instance_values_of`（按变量数配对、同数按流序）→ `PidSymbolVariable::instance_value_m`。棘轮
+`a_placed_instance_states_its_own_parameters_in_its_flavor_holder`（`parse_real_files` 134 → 135，五图含 A01）；`--lib` 1111 → 1112；
+golden 不变；clippy 零告警。OCS 侧 F2：`instance=` 写进 `PID_SEMANTICS`，面板多一行「驱动尺寸（本图实例）」。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的

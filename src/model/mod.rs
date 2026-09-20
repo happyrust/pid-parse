@@ -625,6 +625,15 @@ pub struct JSiteSymbolInformation {
     pub variable_groups: Vec<DecodedVariablesRecord>,
     /// `0x006F` `Standard Relation` records.
     pub relations: Vec<DecodedStandardRelationRecord>,
+    /// `0x00ED` `JFlavorHolder` records, in on-disk order -- one per
+    /// [`Self::symbol_informations`] entry. In the storage a placement
+    /// names, the holder carries the parameters the instance was actually
+    /// drawn with (the `JSymbolInformation` copy repeats the library
+    /// defaults); in a template storage it only names its
+    /// `JSymbolInformation`. Absent from a document read back from before
+    /// the field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flavor_holders: Vec<DecodedFlavorHolderRecord>,
 }
 
 impl JSiteSymbolInformation {
@@ -634,6 +643,80 @@ impl JSiteSymbolInformation {
             && self.double_values.is_empty()
             && self.variable_groups.is_empty()
             && self.relations.is_empty()
+            && self.flavor_holders.is_empty()
+    }
+
+    /// The parameter values a placed instance was drawn with, for one of
+    /// this storage's `JSymbolInformation` records: the values of the
+    /// instance-variant `JFlavorHolder` that counts as many values as the
+    /// record has variables, in the record's variable order. Neither record
+    /// names the other, and the holder may precede or follow its record in
+    /// the stream (0201's follow, 工艺's precedes), so the pairing is by
+    /// variable count and, among holders and records of the same count, by
+    /// rank in stream order. `None` for a template storage (whose holders
+    /// carry no value), a record without variables, or a record with no
+    /// holder of its count -- in which case the caller has only the library
+    /// defaults the record itself states.
+    pub fn instance_values_of(&self, record: &DecodedSymbolInformationRecord) -> Option<&[f64]> {
+        let count = record.variables.len();
+        if count == 0 {
+            return None;
+        }
+        let rank = self
+            .symbol_informations
+            .iter()
+            .filter(|other| other.variables.len() == count && other.byte_start < record.byte_start)
+            .count();
+        self.flavor_holders
+            .iter()
+            .filter(|holder| {
+                holder.variant == crate::parsers::sheet_records::FLAVOR_HOLDER_INSTANCE
+                    && holder.values.len() == count
+            })
+            .nth(rank)
+            .map(|holder| holder.values.as_slice())
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::PsmFlavorHolderDecoded`] — PSM type
+/// `0x00ED` `JFlavorHolder` (`symbol.dex`). Evidence:
+/// `docs/analysis/2026-09-20-jflavorholder-carries-the-placed-instances-parameters.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedFlavorHolderRecord {
+    /// Inclusive byte-range start inside the cluster stream.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Persist id of the holder.
+    pub oid: u32,
+    /// The word at payload `+14`, carried as read: an oid on the instance
+    /// variant (meaning unsettled), zero on the template variant.
+    pub link: u32,
+    /// `1` for the instance variant (carries [`Self::values`]), `2` for the
+    /// template variant (names [`Self::symbol_information_ref`]).
+    pub variant: u32,
+    /// Persist id of the `JSymbolInformation` the template variant names;
+    /// `None` on the instance variant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_information_ref: Option<u32>,
+    /// The instance's parameter values, metres, in its `JSymbolInformation`
+    /// variable order; empty on the template variant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<f64>,
+}
+
+impl From<crate::parsers::sheet_records::PsmFlavorHolderDecoded> for DecodedFlavorHolderRecord {
+    fn from(record: crate::parsers::sheet_records::PsmFlavorHolderDecoded) -> Self {
+        Self {
+            byte_start: record.byte_range.start,
+            byte_end: record.byte_range.end,
+            oid: record.oid,
+            link: record.link,
+            variant: record.variant,
+            symbol_information_ref: record.symbol_information_ref,
+            values: record.values,
+        }
     }
 }
 
