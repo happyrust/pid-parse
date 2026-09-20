@@ -79,8 +79,10 @@ pid-parse 侧无改动。~~仍待办：`map_unwrap_or` 29 处旧代码的 clippy
 `JSite::stroke_styles`、`PrimitiveStyle::dash_mm`（`.sym` 侧同填，`Copy` → `Clone`）、圆 / 弧 DTO 补 `index`、`for_each_document` 分隔符归一。
 棘轮 `a_cached_body_carries_the_stroke_styles_its_own_storage_states`（`parse_real_files` 133 → 134）：五图可见笔画 81 / 120 / 32 / 237 / 6
 全部有样式，虚线 0 / 12 / 0 / 45 / 0 且都是 3.5 / 1.75，缓存的每个 `(颜色, 线宽, 虚线)` 都在同名 `.sym` 里；`style_link_ratchet` 15 不变；
-golden 不变。下一项 **E2**（OCS：`cached_body_entities` 走 `visible_strokes()` 底涂、`paint_symbol_stroke` 带 dash → `PID-DASH-*`、
-`register_dash_linetypes` 收缓存本体的图样、`pid_import` 钉工艺 45 / 0202 12 / 其余 0）→ **E3**（台账）。
+golden 不变。**E2 已在 OCS 侧落地**（OCS `3b8af2ed`，2026-09-20）：`cached_body_entities` 走 `visible_strokes()` 底涂、`paint_symbol_stroke`
+按 `dash_mm` 点名 `PID-DASH-*`、`register_dash_linetypes` 多收一遍缓存本体；`pid_import` 54 → 55 钉工艺 45 / 0202 12 / D06 0 / 0201 0。
+本仓随之只多一条 `DashPattern::from_segments_m`（`1fd69db`，OCS 单测造「放置样式自己带 dash」用；读取器行为不变）。计划收口，
+只剩 GUI 特写两张未截。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
