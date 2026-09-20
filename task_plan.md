@@ -65,7 +65,9 @@ K1 落地（`223b26d`）**：`PidSymbolDimension::name` / `::formula`、`PidSymb
 pid-parse 侧无改动。~~仍待办：`map_unwrap_or` 29 处旧代码的 clippy 清理提交。~~ **2026-09-20 已清**：不是改那 29 处——nightly 建议的
 `Option::map_or_default` 在 1.95 / 1.97 上仍 unstable，照改会把稳定版弄红；改成在 `Cargo.toml` 声明 `rust-version = "1.95"`，clippy 按 MSRV
 门控后 29 处不再报；顺带把 `style_link.rs` 一处 `manual_range_contains`（stable clippy 报、nightly 不报）改成 `RangeInclusive::contains`。
-两个工具链的 `clippy --all-targets -- -D warnings` 都零告警。
+两个工具链的 `clippy --all-targets -- -D warnings` 都零告警。**2026-09-20 `OCS_PID_SYMBOL_SOURCE=library` 那一轮到期退役**
+（OCS `fbcd321b`，退役单 `docs/plans/2026-09-20-retire-the-library-first-symbol-source.md`）：OCS 只剩「先缓存后库」一条路，
+`pid_import` 55 → 53；pid-parse 侧无改动。
 
 **2026-09-20 · 开单：缓存本体带上自己的逐笔样式**（OpenCADStudio `docs/plans/2026-09-20-a-cached-body-carries-its-own-stroke-styles.md`，
 待排期，不动代码）——09-07 文档「缓存自身 `StyleCluster` 未接」那条开口。开单时四图实测：放置样式 107/107 解析（「落 `ByLayer`」语料 0 例）；
