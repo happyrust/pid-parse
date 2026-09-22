@@ -4,7 +4,7 @@
 > 现状：OCS `load_pid` 先 `PidParser::parse_file` 解一遍，再调 `style_link` 五个 `*_for_file(path)` 入口，每个入口**重开 CFB、重走每条 `Sheet*`、
 > 重解六族记录**。一张图开 6 次、Sheet 记录解 2 遍，且样式路径与几何路径各调一次解码器，一致性靠巧合。
 > **开工前提：OCS 上游合并（2026-09-21 15:55 起）提交落地、`stash@{0}` 的 09-21 H1/H2 处理完。** pid-parse 侧不受合并影响，可先做 S1–S3。
-> **2026-09-22 前提已满足**：OCS 合并 `f417782a`、H1/H2 `61153b6c`（`pid_import` 49/49）。**同日 S1–S3 + S5 落地**（见「进度」），S4（OCS 侧）待做。
+> **2026-09-22 前提已满足**：OCS 合并 `f417782a`、H1/H2 `61153b6c`（`pid_import` 49/49）。**同日 S1–S5 全部落地**（pid-parse `74bee65`、OCS `bbdc3d80`，见「进度」），本单关闭。
 
 ## 一句话
 
@@ -82,4 +82,8 @@
   - **验证**：`cargo check --lib --tests --examples` 干净；`--lib` **1115 / 1115**（1112 → 1115）；`--test style_link_ratchet` 15/15（<1 s → ~10 s：八次整解，可接受）；
     `--test parse_real_files` 135/135；`--test render_gap_census` 4/4；`cargo clippy --all-targets -- -D warnings` 零告警（stable 单工具链；nightly 未跑）；
     rustfmt 四个改动文件干净。
-- **S4（OCS `src/io/pid.rs` 五处改 `*_for_document(&parsed)`、`style_tables_failed` 按 S-D6、`Cargo.toml` 跟到本提交）待做**——合并前提已满足（OCS `f417782a` / `61153b6c`）。
+- **2026-09-22（同会话）✅ S4 落地，OCS `bbdc3d80`**（pid-parse 侧 `74bee65`）。`load_pid` 五处改 `*_for_document(&parsed)`；`style_tables_failed` =
+  `parsed.style_tables.get("/")` 缺或为空（S-D6），一条 warn 点名三种回退，摘要行与本地化不变；librarian 的「did not read」warn 随错误分支一起退（名字为空是事实不是失败）。
+  `Cargo.toml` 是路径依赖，不用动。**验证**：`cargo check --lib --tests --examples` 干净；`--test pid_import` **49/49**（22.9 s，改前 25–30 s）；`--lib io::pid` 52/52；
+  `rg "_for_file\(" src tests examples` 零命中；四图里 工艺 / 0201 的 `--export` DXF 与改前二进制**字节相同**；墙钟 工艺 531 → ~490 ms、0201 ~3.97 s 不变
+  （被别的段主导；本单本来就不是为快，是为一条路）。**S1–S5 全部落地，本单关闭。**
