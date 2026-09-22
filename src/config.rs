@@ -6,6 +6,12 @@
 //! [`crate::api::ParseOptions`] and [`crate::api::ParseProfile`].
 
 /// High-level parse profile.
+///
+/// Which passes each profile runs is answered by the `runs_*` methods on
+/// [`ParseOptions`], one per pass, so the reader asks "does this profile run
+/// the sheet probes?" rather than "is this Light?" -- and a fourth profile
+/// would be one more row in those methods, not one more boolean threaded
+/// through the reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseProfile {
     /// Full-fidelity parse. This is the default and preserves all current
@@ -14,6 +20,23 @@ pub enum ParseProfile {
     /// Lightweight inventory/triage parse that skips expensive semantic and
     /// derived passes.
     Light,
+    /// Everything a renderer needs to draw the sheet, and nothing that only
+    /// an inspector or a reverse-engineering probe reads (plan
+    /// `docs/plans/2026-09-21-a-geometry-parse-profile.md`). Runs the stream
+    /// inventory, the tagged text (the page-size fallback reads the
+    /// template name), the `JSite` pass (cached symbol bodies, their stroke
+    /// styles, the parametric chain, the symbol paths), the cluster pass
+    /// (every `Sheet*`'s record families, both censuses, the style tables),
+    /// the dynamic attributes, the PSM tables (sheet layers and their
+    /// display state), the sheet endpoint rescan, the object graph, the
+    /// cross-reference and the geometry hints -- the last three because the
+    /// connectivity links a renderer draws take their endpoint positions
+    /// from them. Skips the sheet text / coordinate probes and the spatial
+    /// analysis, the string scan, the object inventory, the document
+    /// registry, `DocVersion2`, the summary information and the layout.
+    /// On the corpus the Decoded and Inferred entities come out identical
+    /// to `Full`'s; only `ProbeOnly` evidence is missing.
+    Geometry,
 }
 
 /// Tunables that control how aggressively [`crate::api::PidParser`] decodes a
@@ -83,5 +106,82 @@ impl ParseOptions {
             max_preview_strings: 16,
             ..Self::default()
         }
+    }
+
+    /// Build the [`ParseProfile::Geometry`] options: what a renderer parses a
+    /// `.pid` with. XML and `JSite` properties stay on (the page-size
+    /// fallback and the symbol paths come from them); the string scan and
+    /// the unknown-stream diagnostics are off, since nothing drawn reads
+    /// them.
+    pub fn geometry() -> Self {
+        Self {
+            profile: ParseProfile::Geometry,
+            scan_strings: false,
+            parse_xml: true,
+            parse_jsite_properties: true,
+            keep_unknown_streams: false,
+            ..Self::default()
+        }
+    }
+
+    // The pass gates. Each answers for one pass of the reader pipeline, so
+    // the pipeline never compares profiles itself.
+
+    /// Whether the OLE `SummaryInformation` stream is decoded. Report
+    /// material; a renderer draws nothing from it.
+    #[must_use]
+    pub fn runs_summary(&self) -> bool {
+        self.profile != ParseProfile::Geometry
+    }
+
+    /// Whether the `TaggedTxtData` XML bodies are decoded. Off under `Light`
+    /// regardless of `parse_xml`; the `Geometry` profile needs the drawing
+    /// metadata's template name for the page-size fallback.
+    #[must_use]
+    pub fn runs_tagged_text(&self) -> bool {
+        self.parse_xml && self.profile != ParseProfile::Light
+    }
+
+    /// Whether the `JSite*` storages are decoded -- the cached symbol
+    /// bodies, their stroke styles, the parametric chain and the symbol
+    /// paths all come from this pass.
+    #[must_use]
+    pub fn runs_jsites(&self) -> bool {
+        self.parse_jsite_properties && self.profile != ParseProfile::Light
+    }
+
+    /// Whether each `Sheet*` is run through the heuristic text / coordinate
+    /// probes and the spatial analysis. Their yield is `ProbeOnly` evidence
+    /// and inferred points a renderer never draws; the record-family
+    /// decoders and both censuses run regardless.
+    #[must_use]
+    pub fn runs_sheet_probes(&self) -> bool {
+        self.profile != ParseProfile::Geometry
+    }
+
+    /// Whether the semantic passes run: dynamic attributes, PSM tables,
+    /// the sheet endpoint rescan, the object graph, the cross-reference and
+    /// the geometry hints. `Light` skips them all; `Geometry` needs every
+    /// one -- the sheet layers and their display state come from the PSM
+    /// tables, and the connectivity links' endpoint positions come from the
+    /// geometry hints, which are scored against the object graph and the
+    /// cross-reference's relationship links.
+    #[must_use]
+    pub fn runs_semantic_passes(&self) -> bool {
+        self.profile != ParseProfile::Light
+    }
+
+    /// Whether the document registry (`AppObject`, `JTaggedTxtStgList`,
+    /// version history) and `DocVersion2` are decoded. Audit material.
+    #[must_use]
+    pub fn runs_registry(&self) -> bool {
+        self.profile == ParseProfile::Full
+    }
+
+    /// Whether the derived views are built: the object inventory and the
+    /// layout model. Neither feeds the normalized geometry.
+    #[must_use]
+    pub fn runs_derived_passes(&self) -> bool {
+        self.profile == ParseProfile::Full
     }
 }

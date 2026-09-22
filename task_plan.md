@@ -104,7 +104,10 @@ Sheet 解两遍、Full 全跑而 OCS 只用一半、OCS `load_pid` 460 行 + 全
 **2026-09-22 · S1–S3 落地**：`PidDocument::style_tables`（根表在 `parse_clusters`、嵌套表在 `parse_jsites`，`JSite::stroke_styles` 改为投影）；
 五个 `style_link::*_for_document(&PidDocument)`，记录直接读 `geometry.decoded_*`；`*_for_file` 变「解一次、转调」薄壳。
 改前的字节路搬进测试作 oracle，四图五张索引逐项相等；`--lib` 1112 → 1115，`style_link_ratchet` 15 / `parse_real_files` 135 / `render_gap_census` 4 不变，
-clippy `-D warnings` 零告警。S4 同日落地（OCS `bbdc3d80`：五处改 `*_for_document(&parsed)`，`pid_import` 49/49，四图 `--export` 字节不变）——**S 单关闭**；G 单待批。
+clippy `-D warnings` 零告警。S4 同日落地（OCS `bbdc3d80`：五处改 `*_for_document(&parsed)`，`pid_import` 49/49，四图 `--export` 字节不变）——**S 单关闭**。
+**同日 G 单批准、G1 量完、G2 + G3 落地**：G1 量出 0201 的 25 条连通线端点位置靠 `populate_geometry_hints` ← `crossref` ← 对象图，三段挪回 Geometry 要跑的列；
+`ParseProfile::Geometry` / `ParseOptions::geometry()` + 七个 `runs_*` 谓词换掉管线里的 `light_profile` 布尔，`parse_clusters` 按谓词跳过 sheet 探针与 spatial；
+`tests/geometry_profile.rs` 五图钉「画的相等、少的只是探针产物」；`--lib` 1115 → 1116。G4（OCS 改用 `ParseOptions::geometry()`）待做；⑤ 单（OCS `load_pid` 返回摘要）已开、待批。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的

@@ -115,26 +115,33 @@ L1(API) → L8(Package) → Writer → CFB Write → .pid
               ↓
         PidDocument (初始化)
               ↓ Stream Pipeline（顺序执行）
-        ┌─────────────────────────────────────┐
-        │ 1. summary      → SummaryInfo       │
-        │ 2. tagged_text   → DrawingMeta       │
-        │ 3. jsite         → JSite[] 符号      │
-        │    + 嵌套 StyleCluster → style_tables[/JSite<N>] │
-        │ 4. cluster       → ClusterInfo[]     │
-        │    + 根 StyleCluster   → style_tables["/"]      │
-        │ 5. dynamic_attrs → DA Blob + 记录    │
-        │ 6. psm_tables    → PSM 索引表        │
-        │ 7. doc_registry  → 版本日志/COM注册   │
-        └─────────────────────────────────────┘
-              ↓
-        build_object_graph()  → 对象关系图
-        crossref::build_graph → 跨引用图
-        layout::derive_layout → 布局模型
+        ┌──────────────────────────────────────────────┬──────┬───────┬──────────┐
+        │ pass（顺序执行）                              │ Full │ Light │ Geometry │
+        ├──────────────────────────────────────────────┼──────┼───────┼──────────┤
+        │ 1. summary      → SummaryInfo                │  ✓   │   ✓   │    –     │
+        │ 2. tagged_text   → DrawingMeta                │  ✓   │   –   │    ✓     │
+        │ 3. jsite         → JSite[] 符号 + 缓存本体    │  ✓   │   –   │    ✓     │
+        │    + 嵌套 StyleCluster → style_tables[/JSite<N>]│  ✓   │   –   │    ✓     │
+        │ 4. cluster       → ClusterInfo[] / Sheet 族解码│  ✓   │   ✓   │    ✓     │
+        │    + 根 StyleCluster   → style_tables["/"]    │  ✓   │   ✓   │    ✓     │
+        │    + sheet 文本 / 坐标探针、spatial            │  ✓   │   ✓   │    –     │
+        │ 5. dynamic_attrs → DA Blob + 记录             │  ✓   │   –   │    ✓     │
+        │ 6. psm_tables    → PSM 索引表 / 图层 / 视图集 │  ✓   │   –   │    ✓     │
+        │ 7. doc_registry + DocVersion2                 │  ✓   │   –   │    –     │
+        │ 8. Sheet 端点二次扫描                          │  ✓   │   –   │    ✓     │
+        │ 9. build_object_inventory                     │  ✓   │   –   │    –     │
+        │10. build_object_graph                         │  ✓   │   –   │    ✓     │
+        │11. crossref::build_graph                      │  ✓   │   –   │    ✓     │
+        │12. populate_geometry_hints（连通线端点位置）   │  ✓   │   –   │    ✓     │
+        │13. layout::derive_layout                      │  ✓   │   –   │    –     │
+        └──────────────────────────────────────────────┴──────┴───────┴──────────┘
               ↓
         PidDocument (enriched) — 完整解析结果
 ```
 
 **核心设计**：**阶段式富化模型**。每个流处理器向同一个 `PidDocument` 实例追加信息。新增解码器只需在管线中插入一个新步骤，无需修改已有代码。
+三个 profile 由 `ParseOptions::runs_*` 七个按 pass 命名的谓词回答（`config.rs`），管线里每个 pass 一个 `if`、不比较 profile；
+`Geometry` 是给渲染端的（`docs/light-parse-design.md`「Geometry Profile」、`tests/geometry_profile.rs` 钉 Decoded / Inferred 线 / 本体 / 页幅 / 两普查与 Full 逐条相同）。
 
 **样式表随文档走**：每个存储的 `StyleCluster` 在上面第 3 / 4 步被走成 `DocumentStyleTable`，按存储路径存进 `PidDocument::style_tables`（键与 `sheet_layers` / `view_filter_sets` 同一套：`/`、`/JSite329`）。`style_link::line_styles_for_document` 等五个索引直接把每条 `Sheet*` 的 `geometry.decoded_*` 记录 join 到该 sheet 所在存储的表上——不重开文件、不重解记录；`*_for_file(path)` 只是「解一次、转调」的薄壳（计划 `2026-09-21-style-link-reads-the-parsed-document.md`）。
 

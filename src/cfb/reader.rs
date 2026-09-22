@@ -8,7 +8,7 @@
 //! — [`crate::api::PidParser`] is a thin facade over these
 //! functions.
 
-use crate::config::{ParseOptions, ParseProfile};
+use crate::config::ParseOptions;
 use crate::error::PidError;
 use crate::model::{PidDocument, SheetEndpoint, SheetGeometry, SheetStream, StreamEntry};
 use crate::package::{PidPackage, RawStream, StorageTimestamps};
@@ -57,7 +57,6 @@ fn parse_pid_package_from_cfb<R: Read + std::io::Seek>(
     source_path: Option<PathBuf>,
     options: &ParseOptions,
 ) -> Result<PidPackage, PidError> {
-    let light_profile = options.profile == ParseProfile::Light;
     let tree = crate::cfb::tree::build_tree(cfb, "/")?;
     // Capture the root CLSID + all non-root storage CLSIDs before we hand
     // the cfb off to the collectors — `walk()` / `root_entry()` borrow the
@@ -124,30 +123,48 @@ fn parse_pid_package_from_cfb<R: Read + std::io::Seek>(
             .collect();
     }
 
-    crate::streams::summary::parse_summary_streams(cfb, &mut doc)?;
+    // Each pass asks the options whether its profile runs it
+    // (`ParseOptions::runs_*`); the pipeline itself never compares
+    // profiles. The order is fixed by data dependencies: the semantic
+    // passes need the clusters' sheets, the endpoint rescan needs the
+    // dynamic-attribute trailers, the object graph needs those too, the
+    // cross-reference needs the graph and the endpoint records, and the
+    // geometry hints need the cross-reference -- which is why the geometry
+    // hints, though heuristic, ride with the semantic passes rather than the
+    // derived ones: the connectivity links a renderer draws take their
+    // endpoint positions from them.
+    if options.runs_summary() {
+        crate::streams::summary::parse_summary_streams(cfb, &mut doc)?;
+    }
 
-    if options.parse_xml && !light_profile {
+    if options.runs_tagged_text() {
         crate::streams::tagged_text::parse_tagged_text_streams(cfb, &mut doc, options)?;
     }
 
-    if options.parse_jsite_properties && !light_profile {
+    if options.runs_jsites() {
         crate::streams::jsite::parse_jsites(cfb, &mut doc, options)?;
     }
 
     crate::streams::cluster::parse_clusters(cfb, &mut doc, options)?;
-    if !light_profile {
+    if options.runs_semantic_passes() {
         crate::streams::dynamic_attrs::parse_dynamic_attrs(cfb, &mut doc, options)?;
         crate::streams::psm_tables::parse_psm_tables(cfb, &mut doc, options)?;
-        crate::streams::doc_registry::parse_doc_registry(cfb, &mut doc, options)?;
-        capture_doc_version2(cfb, &mut doc)?;
+        if options.runs_registry() {
+            crate::streams::doc_registry::parse_doc_registry(cfb, &mut doc, options)?;
+            capture_doc_version2(cfb, &mut doc)?;
+        }
         populate_sheet_endpoints(cfb, &mut doc)?;
 
-        build_object_inventory(&mut doc);
+        if options.runs_derived_passes() {
+            build_object_inventory(&mut doc);
+        }
         build_object_graph(&mut doc);
 
         doc.cross_reference = Some(crate::crossref::build_graph(&doc));
         populate_geometry_hints(&raw_streams, &mut doc);
-        crate::layout::derive_layout(&mut doc);
+        if options.runs_derived_passes() {
+            crate::layout::derive_layout(&mut doc);
+        }
     }
 
     Ok(PidPackage::new(source_path, raw_streams, doc)

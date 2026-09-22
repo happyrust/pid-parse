@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### 第三个解析 profile：`ParseProfile::Geometry`，只跑画一张图要的 pass（2026-09-22，计划 G2–G3）
+
+计划 `docs/plans/2026-09-21-a-geometry-parse-profile.md`（G-D1–G-D7 按推荐执行，G-D2 按 G1 实测改过）的 pid-parse 侧，接
+`docs/analysis/2026-09-21-parsing-pipeline-audit.md` ②。加法；`Full` / `Light` 行为不变。
+
+- **`ParseProfile::Geometry` + `ParseOptions::geometry()`**（`scan_strings` / `keep_unknown_streams` 关，XML 与 JSite 属性开）。跑：流清单、
+  `tagged_text`、`jsite`、`cluster`（15 族 + 双普查 + 样式表）、`dynamic_attrs`、`psm_tables`、端点二次扫描、**`build_object_graph` / `crossref` /
+  `populate_geometry_hints`**（G1 量出 0201 的 25 条连通线的端点位置靠这三段）。不跑：`summary`、`cluster` 里那遍 sheet 文本 / 坐标探针与 spatial analysis、
+  `doc_registry` / DocVersion2、`build_object_inventory`、`layout`。
+- **`ParseOptions::runs_summary / runs_tagged_text / runs_jsites / runs_sheet_probes / runs_semantic_passes / runs_registry / runs_derived_passes`**：
+  管线里 `light_profile` 那个布尔换成按 pass 命名的七个谓词，每个 pass 一个 `if`（G-D3）；`parse_clusters` 按 `runs_sheet_probes` 决定要不要
+  `probe_sheet_stream`，探针关时 `SheetGeometry.texts` / `coordinate_hints` 为空、`spatial_analysis` 为 `None`，sheet 为 `None` 当且仅当没有族记录（G-D4）。
+- 新测 `tests/geometry_profile.rs`：五图 Full 与 Geometry 各解一次，**画的实体（Decoded + 非点 Inferred）逐条相等**、`symbol_definitions` / `page_dimensions_mm` /
+  dropped / refused 相等、Full 多出来的只能是 ProbeOnly 或 `coordinate-hint` 的 Inferred 点、Geometry 没有 Full 没有的；图层表 / 视图集 / 样式表 / 嵌套本体 /
+  笔画样式 / 端点记录 / 几何 hints 逐 sheet 相等；跳过的 pass 产物为 `None`。另一条钉七个谓词对三个 profile 的回答。`cluster` 单测加「无探针无族记录 → None」。
+- 墙钟（debug，进程内先 Geometry 后 Full）：D06 25 / 24 ms、0202 159 / 172、工艺 69 / 86、A01 31 / 37；0201 Geometry 3.35 s / Full 4.45 s——
+  但**同一进程里第二次解 0201 不论哪个 profile 都慢约 1 s**，0201 的 ~3.4 s 由两个 profile 都跑的某段主导，另量。
+
 ### 样式索引改吃解好的文档：`style_link::*_for_document`，一张图只开一次（2026-09-22，计划 S1–S3）
 
 计划 `docs/plans/2026-09-21-style-link-reads-the-parsed-document.md`（S-D1–S-D7 按推荐执行）的 pid-parse 侧，接

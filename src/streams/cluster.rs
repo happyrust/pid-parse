@@ -131,9 +131,15 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
                 let tag = m.and_then(magic::magic_tag);
                 let hdr = cluster_header::parse_header(&data);
                 let (records, summary) = dynamic_attr_records::parse_attribute_records(&data);
-                let sheet_probe =
-                    sheet_probe::probe_sheet_stream(&name, &path, &data, &Default::default());
-                let geometry = sheet_geometry_from_probe(&sheet_probe, &data);
+                // The heuristic text / coordinate probes and the spatial
+                // analysis only feed `ProbeOnly` evidence and inferred
+                // points; a profile that draws rather than inspects skips
+                // them (`ParseOptions::runs_sheet_probes`). The record
+                // families and both censuses below run either way.
+                let sheet_probe = options.runs_sheet_probes().then(|| {
+                    sheet_probe::probe_sheet_stream(&name, &path, &data, &Default::default())
+                });
+                let geometry = sheet_geometry_from_probe(sheet_probe.as_ref(), &data);
 
                 (m, tag, hdr, records, Some(summary), geometry)
             } else {
@@ -231,26 +237,42 @@ fn find_entry1_before(data: &[u8], entry2_pos: usize) -> Option<usize> {
     None
 }
 
-fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Option<SheetGeometry> {
+/// The sheet's geometry evidence: the record families every profile decodes,
+/// plus -- when the profile ran the probes (`report` is `Some`) -- the
+/// heuristic text runs, coordinate hints and spatial analysis. Without the
+/// probes those three are simply empty / `None`, and a sheet is `None` as a
+/// whole exactly when no family decoded a record from it.
+fn sheet_geometry_from_probe(
+    report: Option<&SheetProbeReport>,
+    raw_data: &[u8],
+) -> Option<SheetGeometry> {
     let texts: Vec<_> = report
-        .text_runs
-        .iter()
-        .map(|run| SheetText {
-            offset: run.offset,
-            encoding: sheet_text_encoding_label(&run.encoding).to_string(),
-            text: run.text.clone(),
-            byte_len: run.byte_len,
+        .map(|report| {
+            report
+                .text_runs
+                .iter()
+                .map(|run| SheetText {
+                    offset: run.offset,
+                    encoding: sheet_text_encoding_label(&run.encoding).to_string(),
+                    text: run.text.clone(),
+                    byte_len: run.byte_len,
+                })
+                .collect()
         })
-        .collect();
+        .unwrap_or_default();
     let coordinate_hints: Vec<_> = report
-        .coordinate_hints
-        .iter()
-        .map(|hint| SheetCoordinateHintDto {
-            offset: hint.offset,
-            x: hint.x,
-            y: hint.y,
+        .map(|report| {
+            report
+                .coordinate_hints
+                .iter()
+                .map(|hint| SheetCoordinateHintDto {
+                    offset: hint.offset,
+                    x: hint.x,
+                    y: hint.y,
+                })
+                .collect()
         })
-        .collect();
+        .unwrap_or_default();
 
     // M3 registry walk (was: 11 hand-written decode+convert+assign
     // blocks). All decoders are conservative — they emit zero records
@@ -292,15 +314,17 @@ fn sheet_geometry_from_probe(report: &SheetProbeReport, raw_data: &[u8]) -> Opti
     } else {
         // Phase 25-A: read-only spatial-distribution analysis of the
         // sheet's normalized f64 pairs. `None` when the sheet carries
-        // no normalized pairs; never promotes any entity.
-        let spatial_pairs = collect_normalized_f64_pairs(raw_data);
-        geometry.spatial_analysis = if spatial_pairs.is_empty() {
-            None
-        } else {
-            Some(DecodedSpatialAnalysis::from(
-                coordinate_pair_spatial_analysis(&spatial_pairs, SPATIAL_ANALYSIS_DEFAULT_GRID_N),
-            ))
-        };
+        // no normalized pairs; never promotes any entity. Probe material,
+        // so it goes with the probes.
+        geometry.spatial_analysis = report.and_then(|_| {
+            let spatial_pairs = collect_normalized_f64_pairs(raw_data);
+            (!spatial_pairs.is_empty()).then(|| {
+                DecodedSpatialAnalysis::from(coordinate_pair_spatial_analysis(
+                    &spatial_pairs,
+                    SPATIAL_ANALYSIS_DEFAULT_GRID_N,
+                ))
+            })
+        });
         Some(geometry)
     }
 }
@@ -353,7 +377,7 @@ mod tests {
             }],
         };
 
-        let geometry = sheet_geometry_from_probe(&report, &[]).expect("geometry evidence");
+        let geometry = sheet_geometry_from_probe(Some(&report), &[]).expect("geometry evidence");
 
         assert_eq!(geometry.texts.len(), 1);
         assert_eq!(geometry.texts[0].encoding, "utf16_le");
@@ -362,5 +386,14 @@ mod tests {
         assert_eq!(geometry.coordinate_hints[0].x, 1200);
         assert_eq!(geometry.coordinate_hints[0].y, -450);
         assert!(geometry.endpoints.is_empty());
+    }
+
+    /// Without the probes a sheet that decodes no record family is no
+    /// geometry at all -- the same answer the probes gave for a sheet with
+    /// no text and no coordinate hint (plan 2026-09-21 G-D4).
+    #[test]
+    fn without_the_probes_a_sheet_with_no_family_records_has_no_geometry() {
+        assert!(sheet_geometry_from_probe(None, &[]).is_none());
+        assert!(sheet_geometry_from_probe(None, &[0u8; 64]).is_none());
     }
 }

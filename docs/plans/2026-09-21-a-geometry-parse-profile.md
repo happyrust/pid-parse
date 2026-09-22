@@ -6,7 +6,7 @@
 > `Light` 又砍过头（不跑 `jsite` → 没符号体；不跑 `psm_tables` → 没图层；不跑 `dynamic_attrs` → 没端点）。
 > **开工前提：同 `2026-09-21-style-link-reads-the-parsed-document.md`。pid-parse 侧 G1–G3 可先做。**
 > **2026-09-22 前提已满足**（OCS `f417782a` / `61153b6c`），S 单同日关闭（pid-parse `74bee65` / OCS `bbdc3d80`，`style_tables` 已在文档上）。
-> **同日用户批准本单、G1 量完**：「不跑」列有一项在被画的连通线来路上，三项挪回「跑」（见 G-D2 与进度）；G2–G5 待做。
+> **同日用户批准本单、G1 量完**：「不跑」列有一项在被画的连通线来路上，三项挪回「跑」（见 G-D2 与进度）；**G2 + G3 + G5 同日落地**（pid-parse 侧，见进度），G4（OCS 一行）待做。
 
 ## 一句话
 
@@ -72,7 +72,31 @@
 - **2026-09-22（会话 fable-5-1-47）G1 ✅**：用户「批准 G 单并先做 G1」。只读、未改代码。`pid_inspect --geometry-json` 四图，按 `confidence` / `kind` / `record_id` 前缀分类
   （数字在事实表末两行）；OCS 侧对数用 09-22 H 单 `--export` 的角色计数（0201 connectivity 25，其余三图 0，`annotation` 四图 0）。
   **结论：G-D2 原「不跑」列有一项被画**——`populate_geometry_hints` 给 `endpoint-line` 供端点位置，它又靠 `crossref` 与对象图；三项挪回「跑」列，
-  G-D2 / G2 已按此改写。G2–G5 待做；G-D1–G-D7 按用户「批准 G 单」视为放行（G-D2 以本次改写后的为准）。
+  G-D2 / G2 已按此改写。G-D1–G-D7 按用户「批准 G 单」视为放行（G-D2 以本次改写后的为准）。
+- **2026-09-22（同会话）✅ G2 + G3 + G5（pid-parse 侧）落地**，用户点选「开工 G2 + G3」。
+  - **G2** `config.rs`：`ParseProfile::Geometry`、`ParseOptions::geometry()`（`scan_strings` / `keep_unknown_streams` 关，XML / JSite 属性开），
+    七个按 pass 命名的谓词 `runs_summary / runs_tagged_text / runs_jsites / runs_sheet_probes / runs_semantic_passes / runs_registry / runs_derived_passes`（G-D1 / G-D3）。
+    `cfb/reader.rs`：`light_profile` 布尔删，管线每个 pass 一个 `if options.runs_*()`；`summary` 也进了门（Geometry 不跑）；`doc_registry` / DocVersion2 归 `runs_registry`，
+    `build_object_inventory` / `layout` 归 `runs_derived_passes`，对象图 / crossref / geometry hints 随 `runs_semantic_passes`（按 G1）。
+    `streams/cluster.rs`：`parse_clusters` 按 `runs_sheet_probes` 决定要不要 `probe_sheet_stream`；`sheet_geometry_from_probe(Option<&SheetProbeReport>, …)`，
+    探针关时 `texts` / `coordinate_hints` 空、`spatial_analysis` `None`，sheet 为 `None` 当且仅当无族记录（G-D4）。**没有传 `SheetProbeOptions` 进去**——探针整个关掉了，
+    没剩下要调的旋钮；`populate_geometry_hints` 里那遍探针照旧 `Default`。
+  - **G3** `tests/geometry_profile.rs`（新）：`the_geometry_profile_draws_what_full_draws_and_skips_only_probe_yield`——五图（四主图 + A01）Full 与 Geometry 各解一次，
+    **画的实体**（`Decoded` + 非 `Point` 的 `Inferred`）逐条 `assert_eq!`、`symbol_definitions` / `page_dimensions_mm` / dropped / refused 相等、Full 多出的只能是
+    ProbeOnly 或 `coordinate-hint` 的 Inferred 点、Geometry 没有 Full 没有的；逐 sheet：六族 + 两普查 + 端点 + `object_geometry_hints` 相等、`texts` / `coordinate_hints` 空、
+    `spatial_analysis` `None`；文档级：`sheet_layers` / `view_filter_sets` / `style_tables` / `drawing_meta` 相等、每个 JSite 的嵌套本体 / 笔画样式 / 参数化链 / 符号路径相等、
+    `summary` / `object_inventory` / `layout` / DocVersion2 / 注册表 / 未知流 为空。`the_pass_gates_answer_for_each_profile` 钉七谓词 × 三 profile。
+    `cluster` 单测加 `without_the_probes_a_sheet_with_no_family_records_has_no_geometry`。**口径与 G-D7 的差别**：G-D7 写「过滤掉 ProbeOnly 后逐条相等」，
+    但 `coordinate-hint` 的 Inferred 点本来就是探针产物、Geometry 下必然没有——改成「画的相等 + 少的只能是探针产物」两条，比原句严。
+  - **G5** 台账：`docs/light-parse-design.md` 加「Geometry Profile」一节（三列矩阵）+ 实现注记改写；`architecture-guide.md` 读取路径图改成 13 步 × 三 profile 表；
+    `CHANGELOG.md [Unreleased]` 一节；`task_plan.md` 当前阶段一段。
+  - **验证**：`cargo check --lib --tests --examples` 干净；`--lib` **1116 / 1116**（1115 → 1116）；`--test geometry_profile` 2/2（5/5 图）；
+    `--test parse_real_files` 135/135、`--test render_gap_census` 4/4、`--test style_link_ratchet` 15/15；`cargo clippy --all-targets -- -D warnings` 零告警（stable）；
+    rustfmt 四个改动文件干净。
+  - **墙钟**（debug，进程内先 Geometry 后 Full）：D06 25 / 24 ms、0202 159 / 172、工艺 69 / 86、A01 31 / 37；0201 3.35 s / 4.45 s——但先 Full 后 Geometry 时是
+    3.5–3.8 / 4.6 s，**同一进程里第二次解 0201 不论哪个 profile 都慢约 1 s**（测量方法的事，不是 profile 的），0201 的 ~3.4 s 由两个 profile 都跑的某段主导，
+    候选 `populate_geometry_hints` 的窗口评分或某条大 `Sheet*` 的族解码——**另量，不在本单**。顺带：登记不做那行写的 `pid_inspect --light`，`pid_inspect` 其实没有这个开关（`rg '"--light"'` 零命中）。
+- **G4（OCS `load_pid` 改 `PidParser::with_options(ParseOptions::geometry())`，`pid_probe` / `pid_plot_dump` 留 Full）待做**——前提已满足。
 
 ## 门禁记录
 
