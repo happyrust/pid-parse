@@ -106,15 +106,14 @@ fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
 }
 
 /// Resolve the style id of every drawable stroke in `nested` against the
-/// storage's own `StyleCluster` bytes, keeping the ids that reach a line
-/// style. Lettering is left out: its id names a paragraph style, which is
-/// not a line style, and no cached text of the corpus is on a displayed
-/// layer (plan 2026-09-20, P-E6).
+/// storage's own style table, keeping the ids that reach a line style.
+/// Lettering is left out: its id names a paragraph style, which is not a
+/// line style, and no cached text of the corpus is on a displayed layer
+/// (plan 2026-09-20, P-E6).
 fn resolve_stroke_styles(
     nested: &JSiteNestedGeometry,
-    stylecluster: &[u8],
+    table: &DocumentStyleTable,
 ) -> BTreeMap<u32, PrimitiveStyle> {
-    let table = DocumentStyleTable::from_stylecluster_bytes(stylecluster);
     if table.is_empty() {
         return BTreeMap::new();
     }
@@ -202,19 +201,23 @@ pub fn parse_jsites<R: Read + std::io::Seek>(
             }
         }
 
-        // The storage's own style table, read only for the strokes above:
-        // their `index` is a style id in *this* storage's `StyleCluster`
-        // (ids restart from 1 in every storage -- the scoping rule in
-        // `style_link`), and what the table says about each is what a
-        // renderer paints the cached body with under the placement's own
-        // style.
-        if let Some(nested) = site.nested_geometry.as_ref() {
-            let cluster_path = format!("{base}/StyleCluster");
-            if let Ok(mut s) = cfb.open_stream(&cluster_path) {
-                let mut data = Vec::new();
-                s.read_to_end(&mut data)?;
-                site.stroke_styles = resolve_stroke_styles(nested, &data);
+        // The storage's own style table. Its ids are the `index` every
+        // stroke above carries, and they restart from 1 in every storage
+        // (the scoping rule in `style_link`), so the table is kept under
+        // this storage's path in `PidDocument::style_tables` -- where a
+        // `Sheet*` of this storage would be joined to it, and where the
+        // stroke projection below comes from: what the table says about
+        // each stroke's id is what a renderer paints the cached body with
+        // under the placement's own style.
+        let cluster_path = format!("{base}/StyleCluster");
+        if let Ok(mut s) = cfb.open_stream(&cluster_path) {
+            let mut data = Vec::new();
+            s.read_to_end(&mut data)?;
+            let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+            if let Some(nested) = site.nested_geometry.as_ref() {
+                site.stroke_styles = resolve_stroke_styles(nested, &table);
             }
+            doc.style_tables.insert(base.clone(), table);
         }
 
         if options.keep_unknown_streams {

@@ -4,7 +4,7 @@
 > 现状：OCS `load_pid` 先 `PidParser::parse_file` 解一遍，再调 `style_link` 五个 `*_for_file(path)` 入口，每个入口**重开 CFB、重走每条 `Sheet*`、
 > 重解六族记录**。一张图开 6 次、Sheet 记录解 2 遍，且样式路径与几何路径各调一次解码器，一致性靠巧合。
 > **开工前提：OCS 上游合并（2026-09-21 15:55 起）提交落地、`stash@{0}` 的 09-21 H1/H2 处理完。** pid-parse 侧不受合并影响，可先做 S1–S3。
-> **2026-09-22 前提已满足**：OCS 合并 `f417782a`、H1/H2 `61153b6c`（`pid_import` 49/49）。S1–S5 仍待批、未开工。
+> **2026-09-22 前提已满足**：OCS 合并 `f417782a`、H1/H2 `61153b6c`（`pid_import` 49/49）。**同日 S1–S3 + S5 落地**（见「进度」），S4（OCS 侧）待做。
 
 ## 一句话
 
@@ -61,3 +61,25 @@
 | 删 `*_for_file` | `pid_inspect` 与探针 example 还在用；薄壳零成本 |
 | `symbol_library.rs` 读 `.sym` 的 `StyleCluster` 也走 `style_tables` | `.sym` 不是 `PidDocument`，另一条路；今天已按同一 `DocumentStyleTable` 解，不重复 |
 | 把 `style_link` 的 join 挪进 `build_normalized_geometry`（实体自带样式） | 那是把两个仓的分工重划；本单只消重复、钉一致 |
+
+## 进度
+
+- **2026-09-22（会话 fable-5-1-47）✅ S1 + S2 + S3 + S5（pid-parse 侧）落地**，用户点选「开工 pid-parse S1–S3」即放行，七条决策按推荐执行。
+  - **S1** `model/mod.rs`：`PidDocument::style_tables: BTreeMap<String, DocumentStyleTable>`，`#[serde(skip)]` + `#[schemars(skip)]`（S-D1 / S-D7）；`Default` 补项。
+  - **S2** `streams/cluster.rs`：`parse_clusters` 读到 `/StyleCluster` 时顺手 `from_stylecluster_bytes` 存 `"/"`（照读入，空也存——「流在但走不动」与「没有流」是两种发现）。
+    `streams/jsite.rs`：`parse_jsites` **只要该存储有 `StyleCluster` 流就读、就存**（此前只在有嵌套几何时才读），`resolve_stroke_styles` 改收 `&DocumentStyleTable`，
+    `JSite::stroke_styles` 成为该表的投影（S-D2）。
+  - **S3** `style_link.rs`：五个 `*_for_document(&PidDocument) -> XxxIndex`（不返回 `Result`）；`for_each_document(doc, visit: FnMut(&str, &SheetGeometry, &DocumentStyleTable))`
+    遍历 `doc.sheet_streams`，表取 `style_tables[storage_of_sheet(path)]`、空表跳过，记录直接读 `sheet.geometry.decoded_*`（S-D3 / S-D4）；
+    五个 `*_for_file` 变薄壳 `PidParser::new().parse_file(path)?` → 转调（Full：嵌套表来自 `jsite` pass，Light 不跑它）。新公开 `storage_of_sheet`；
+    `stylecluster_path_for_sheet` 保留给直读 CFB 的调用方。`File` / `Read` / 六个 `decode_*` 的 `use` 从模块顶层移走。
+  - **一处收窄 S-D4**：`geometry` 为 `None` 的 sheet **仍访问、只是没有记录**（传一份空 `SheetGeometry`），而不是跳过——按流键的 `style_names` / `style_libraries`
+    改前对这种 sheet 也回答，跳过会让「file == document」在这两张索引上失真。语料四图无此类 sheet，纯守口径。
+  - **测试**：改前的字节路（重开 CFB + 六族 `decode_*`）原样搬进 `style_link::tests::byte_route` 作 oracle——`the_document_route_indexes_what_the_byte_route_indexed`
+    四图五张索引逐项 `assert_eq!`、根表非空、表键都是存储路径、每个 `JSite::stroke_styles` 与其存储表逐 id 一致；`the_file_shell_is_the_document_route_after_one_parse`；
+    `a_sheet_is_keyed_by_the_storage_it_lives_in`。（计划原写「`*_for_file` 与 `*_for_document` 相等」，薄壳之后那是同一条路，改钉旧路。）
+  - **S5** 台账：`docs/architecture-guide.md` 读取路径图第 3 / 4 步各加一行 + 「样式表随文档走」一段；`CHANGELOG.md [Unreleased]` 一节；`task_plan.md` 当前阶段一段。
+  - **验证**：`cargo check --lib --tests --examples` 干净；`--lib` **1115 / 1115**（1112 → 1115）；`--test style_link_ratchet` 15/15（<1 s → ~10 s：八次整解，可接受）；
+    `--test parse_real_files` 135/135；`--test render_gap_census` 4/4；`cargo clippy --all-targets -- -D warnings` 零告警（stable 单工具链；nightly 未跑）；
+    rustfmt 四个改动文件干净。
+- **S4（OCS `src/io/pid.rs` 五处改 `*_for_document(&parsed)`、`style_tables_failed` 按 S-D6、`Cargo.toml` 跟到本提交）待做**——合并前提已满足（OCS `f417782a` / `61153b6c`）。

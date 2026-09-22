@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### 样式索引改吃解好的文档：`style_link::*_for_document`，一张图只开一次（2026-09-22，计划 S1–S3）
+
+计划 `docs/plans/2026-09-21-style-link-reads-the-parsed-document.md`（S-D1–S-D7 按推荐执行）的 pid-parse 侧，接
+`docs/analysis/2026-09-21-parsing-pipeline-audit.md` ①。加法 + 内部改道，五张索引在四图上**逐项等于**改前那条重开文件、重解记录的路；
+golden 不变，`style_link_ratchet` 15 / `parse_real_files` 135 / `render_gap_census` 4 不变。
+
+- **`PidDocument::style_tables: BTreeMap<String, DocumentStyleTable>`**：每个存储的 `StyleCluster` 走成的表，键 = 存储路径，与
+  `sheet_layers` / `view_filter_sets` 同一套（`/`、`/JSite329`）。根表在 `parse_clusters` 读 `/StyleCluster` 那一步顺手存（照读入，空也存）；
+  嵌套表在 `parse_jsites` 里**只要该存储有 `StyleCluster` 流就读、就存**（此前只在有嵌套几何时才读），`JSite::stroke_styles` 改为从这张表投影。
+  `serde(skip)` + `schemars(skip)`：`pid_inspect --json` schema 不变。
+- **五个 `*_for_document(&PidDocument) -> XxxIndex`**（`fill_styles` / `style_names` / `style_libraries` / `text_heights` / `line_styles`）：
+  不返回 `Result`（没有 IO 可失败）；`for_each_document` 改成遍历 `doc.sheet_streams`，表取 `style_tables[storage_of_sheet(path)]`、空表跳过，
+  记录**直接读 `sheet.geometry.decoded_*`**，不再调 `decode_*`——样式路径与几何路径用同一份解码结果，从巧合变成结构。
+  `geometry` 为 `None` 的 sheet 仍访问、只是没有记录（按流键的 `style_names` / `style_libraries` 对它的回答与改前一致；计划 S-D4 写的「跳过」在这一点上收窄）。
+- **五个 `*_for_file(path)` 变薄壳**：`PidParser::new().parse_file(path)` 一次（Full——嵌套表来自 `jsite` pass，Light 不跑它），转调对应的
+  `*_for_document`；签名与错误类型不变。`pid_inspect` / 探针 example / 棘轮测试照旧可用；`style_link_ratchet` 15 条从 <1 s 到 ~10 s
+  （八次整解），可接受。
+- **`storage_of_sheet(sheet_path)`**（新，公开）：`/Sheet6` → `/`、`/JSite329/Sheet6` → `/JSite329`；`stylecluster_path_for_sheet` 保留给直读 CFB 的调用方。
+- 测试：`style_link::tests::the_document_route_indexes_what_the_byte_route_indexed`——改前的字节路（重开 CFB + 六族 `decode_*`）**原样搬进测试模块作 oracle**，
+  四图五张索引逐项相等、根表非空、每个 `JSite::stroke_styles` 与其存储表逐 id 一致；`the_file_shell_is_the_document_route_after_one_parse`；
+  `a_sheet_is_keyed_by_the_storage_it_lives_in`。`--lib` 1112 → 1115。
+
 ### 放置实例带上自己的实际参数：解码 `0x00ED JFlavorHolder`（2026-09-20，计划 F1）
 
 计划 `OpenCADStudio/docs/plans/2026-09-20-a-placed-instance-states-its-own-driving-dimensions.md` 的 pid-parse 侧，接

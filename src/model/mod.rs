@@ -118,6 +118,24 @@ pub struct PidDocument {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub view_filter_sets: BTreeMap<String, Vec<ViewFilterSet>>,
 
+    /// Each storage's `StyleCluster`, walked into a
+    /// [`crate::style_link::DocumentStyleTable`] and keyed by the storage
+    /// path like [`Self::sheet_layers`] -- `/` for the document's own, `/JSite329`
+    /// for a nested one. Style ids restart from 1 in every storage (the
+    /// scoping rule in [`crate::style_link`]), so a table is only ever
+    /// resolved against the geometry of the storage it came from:
+    /// `crate::style_link::line_styles_for_document` and its siblings join
+    /// each `Sheet*`'s decoded records to the table under the sheet's
+    /// storage, and a `JSite`'s [`JSite::stroke_styles`] is a projection of
+    /// its entry here. A storage with no `StyleCluster` stream has no entry.
+    ///
+    /// Not serialised: `pid_inspect --json` keeps its schema, and the table
+    /// is an in-memory join partner rather than a finding (plan
+    /// 2026-09-21-style-link-reads-the-parsed-document, S-D1 / S-D7).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub style_tables: BTreeMap<String, crate::style_link::DocumentStyleTable>,
+
     /// Optional `/DocVersion3` history. Mutually exclusive-ish with
     /// [`Self::doc_version2`]: which one is populated depends on
     /// which version of `SmartPlant` wrote the file.
@@ -236,6 +254,7 @@ impl Default for PidDocument {
             psm_space_maps: BTreeMap::new(),
             sheet_layers: BTreeMap::new(),
             view_filter_sets: BTreeMap::new(),
+            style_tables: BTreeMap::new(),
             version_history: None,
             app_object_registry: None,
             tagged_storages: None,

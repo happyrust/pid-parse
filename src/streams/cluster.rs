@@ -22,6 +22,7 @@ use crate::parsers::{
     },
     undecoded_census::{refused_record_census, undecoded_type_code_census},
 };
+use crate::style_link::DocumentStyleTable;
 use std::io::Read;
 
 /// Decode every top-level cluster-family stream (`PSMcluster*`,
@@ -46,6 +47,19 @@ pub fn parse_clusters<R: Read + std::io::Seek>(
             s.read_to_end(&mut data)?;
 
             let header = cluster_header::parse_header(&data);
+
+            // The document's own style table, walked here where its bytes
+            // are already in hand, so a consumer joining `Sheet*` records to
+            // their styles (`style_link::*_for_document`) reads the parsed
+            // document instead of reopening the file. Stored as read, empty
+            // or not: an empty table under `/` says the stream was there and
+            // did not walk, which is a different finding from no stream.
+            if name == "StyleCluster" {
+                doc.style_tables.insert(
+                    "/".to_string(),
+                    DocumentStyleTable::from_stylecluster_bytes(&data),
+                );
+            }
 
             let (string_table, probe_info) = if name == "PSMcluster0" && data.len() > 32 {
                 let (table_start, method) = find_string_table_start(&data);

@@ -119,7 +119,9 @@ L1(API) → L8(Package) → Writer → CFB Write → .pid
         │ 1. summary      → SummaryInfo       │
         │ 2. tagged_text   → DrawingMeta       │
         │ 3. jsite         → JSite[] 符号      │
+        │    + 嵌套 StyleCluster → style_tables[/JSite<N>] │
         │ 4. cluster       → ClusterInfo[]     │
+        │    + 根 StyleCluster   → style_tables["/"]      │
         │ 5. dynamic_attrs → DA Blob + 记录    │
         │ 6. psm_tables    → PSM 索引表        │
         │ 7. doc_registry  → 版本日志/COM注册   │
@@ -133,6 +135,8 @@ L1(API) → L8(Package) → Writer → CFB Write → .pid
 ```
 
 **核心设计**：**阶段式富化模型**。每个流处理器向同一个 `PidDocument` 实例追加信息。新增解码器只需在管线中插入一个新步骤，无需修改已有代码。
+
+**样式表随文档走**：每个存储的 `StyleCluster` 在上面第 3 / 4 步被走成 `DocumentStyleTable`，按存储路径存进 `PidDocument::style_tables`（键与 `sheet_layers` / `view_filter_sets` 同一套：`/`、`/JSite329`）。`style_link::line_styles_for_document` 等五个索引直接把每条 `Sheet*` 的 `geometry.decoded_*` 记录 join 到该 sheet 所在存储的表上——不重开文件、不重解记录；`*_for_file(path)` 只是「解一次、转调」的薄壳（计划 `2026-09-21-style-link-reads-the-parsed-document.md`）。
 
 ### 写入路径（Write Path）
 

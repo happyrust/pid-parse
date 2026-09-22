@@ -113,16 +113,13 @@
 //! be making on its behalf.
 
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::Read;
 use std::ops::Range;
 use std::path::Path;
 
 use crate::error::PidError;
+use crate::model::{PidDocument, SheetGeometry};
 use crate::parsers::sheet_records::{
-    decode_igboundaries, decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
-    decode_igtextboxes, IGLINE2D_PAYLOAD_LEN, PSM_TYPE_CODE_IGLINE2D,
-    PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+    IGLINE2D_PAYLOAD_LEN, PSM_TYPE_CODE_IGLINE2D, PSM_TYPE_CODE_JSTYLE_OVERRIDE,
 };
 
 /// Magic word every cluster-family stream opens with, `StyleCluster`
@@ -2000,30 +1997,50 @@ pub type StyleNameIndex = BTreeMap<(String, u32), String>;
 /// a sheet can reach came from the one file named here.
 pub type StyleLibraryIndex = BTreeMap<String, String>;
 
-/// Resolve the fill of every boundary record in one `.pid`.
+// The five indexes below come in two shapes each. `*_for_document` is the
+// one with the work in it: it reads a parsed [`PidDocument`] -- every
+// `Sheet*`'s decoded records, joined to the style table stored under that
+// sheet's storage -- and cannot fail, because there is no IO left to fail.
+// `*_for_file` is the shell a caller with only a path uses: it parses the
+// file once and calls the other. Until plan
+// 2026-09-21-style-link-reads-the-parsed-document each `*_for_file` reopened
+// the compound file and ran the six decoders itself, so a drawing was opened
+// six times by a consumer wanting all five indexes and its Sheet records were
+// decoded twice, on two paths that agreed only because they happened to call
+// the same functions. The document route makes the agreement structural:
+// the records an index resolves are the records the geometry was built from.
+
+/// Resolve the fill of every boundary record in one parsed `.pid`.
 ///
 /// `igBoundary2d` is the only family in this corpus that reaches a fill, and
 /// all 20 of its records do — see
 /// `docs/analysis/2026-08-10-fill-has-a-consumer-after-all.md`. Keyed like
-/// [`line_styles_for_file`] so a renderer joins all three the same way.
+/// [`line_styles_for_document`] so a renderer joins all three the same way.
+#[must_use]
+pub fn fill_styles_for_document(doc: &PidDocument) -> FillIndex {
+    let mut out = FillIndex::new();
+    for_each_document(doc, &mut |stream, sheet, table| {
+        for record in &sheet.decoded_igboundaries {
+            if let Some(resolved) = table.resolve_fill(record.index) {
+                out.insert((stream.to_string(), record.oid), resolved);
+            }
+        }
+    });
+    out
+}
+
+/// [`fill_styles_for_document`] for a `.pid` on disk: parse it once, then
+/// index it.
 ///
 /// # Errors
 ///
 /// Returns [`PidError`] when the file cannot be opened or read as a compound
 /// file.
 pub fn fill_styles_for_file(path: &Path) -> Result<FillIndex, PidError> {
-    let mut out = FillIndex::new();
-    for_each_document(path, &mut |stream, sheet, table| {
-        for record in decode_igboundaries(sheet) {
-            if let Some(resolved) = table.resolve_fill(record.index) {
-                out.insert((stream.to_string(), record.oid), resolved);
-            }
-        }
-    })?;
-    Ok(out)
+    Ok(fill_styles_for_document(&parse_for_styles(path)?))
 }
 
-/// Collect the authored name of every named style in one `.pid`.
+/// Collect the authored name of every named style in one parsed `.pid`.
 ///
 /// The drawing's own word for what a line **is** — `Primary Piping - New`,
 /// `Nozzle - New`, `Electric Signal` — which is a classification the width
@@ -2031,98 +2048,119 @@ pub fn fill_styles_for_file(path: &Path) -> Result<FillIndex, PidError> {
 /// Styles the librarian does not name are absent rather than defaulted,
 /// because their absence is itself the reading: they are the drawing's own,
 /// not the project library's.
+#[must_use]
+pub fn style_names_for_document(doc: &PidDocument) -> StyleNameIndex {
+    let mut out = StyleNameIndex::new();
+    for_each_document(doc, &mut |stream, _sheet, table| {
+        for record in table.records() {
+            if let Some(name) = record.name.as_deref() {
+                out.insert((stream.to_string(), record.style_id), name.to_string());
+            }
+        }
+    });
+    out
+}
+
+/// [`style_names_for_document`] for a `.pid` on disk: parse it once, then
+/// index it.
 ///
 /// # Errors
 ///
 /// Returns [`PidError`] when the file cannot be opened or read as a compound
 /// file.
 pub fn style_names_for_file(path: &Path) -> Result<StyleNameIndex, PidError> {
-    let mut out = StyleNameIndex::new();
-    for_each_document(path, &mut |stream, _sheet, table| {
-        for record in table.records() {
-            if let Some(name) = record.name.as_deref() {
-                out.insert((stream.to_string(), record.style_id), name.to_string());
-            }
-        }
-    })?;
-    Ok(out)
+    Ok(style_names_for_document(&parse_for_styles(path)?))
 }
 
-/// Collect the project style library each sheet was drawn against.
+/// Collect the project style library each sheet of one parsed `.pid` was
+/// drawn against.
 ///
-/// The companion to [`style_names_for_file`]: that one says what the drawing
-/// calls a style, this one says which file it got the vocabulary from. The
-/// two belong together because the second bounds the first — a name is
-/// meaningful across drawings only as far as they name the same library, and
-/// on this corpus the two fixtures sharing a `.SPP` are exactly the two whose
-/// vocabularies agree. See [`DocumentStyleTable::style_library_source`].
+/// The companion to [`style_names_for_document`]: that one says what the
+/// drawing calls a style, this one says which file it got the vocabulary
+/// from. The two belong together because the second bounds the first — a
+/// name is meaningful across drawings only as far as they name the same
+/// library, and on this corpus the two fixtures sharing a `.SPP` are exactly
+/// the two whose vocabularies agree. See
+/// [`DocumentStyleTable::style_library_source`].
+#[must_use]
+pub fn style_libraries_for_document(doc: &PidDocument) -> StyleLibraryIndex {
+    let mut out = StyleLibraryIndex::new();
+    for_each_document(doc, &mut |stream, _sheet, table| {
+        if let Some(source) = table.style_library_source() {
+            out.insert(stream.to_string(), source.to_string());
+        }
+    });
+    out
+}
+
+/// [`style_libraries_for_document`] for a `.pid` on disk: parse it once,
+/// then index it.
 ///
 /// # Errors
 ///
 /// Returns [`PidError`] when the file cannot be opened or read as a compound
 /// file.
 pub fn style_libraries_for_file(path: &Path) -> Result<StyleLibraryIndex, PidError> {
-    let mut out = StyleLibraryIndex::new();
-    for_each_document(path, &mut |stream, _sheet, table| {
-        if let Some(source) = table.style_library_source() {
-            out.insert(stream.to_string(), source.to_string());
-        }
-    })?;
-    Ok(out)
+    Ok(style_libraries_for_document(&parse_for_styles(path)?))
 }
 
-/// Resolve the character height of every text record in one `.pid`.
+/// Resolve the character height of every text record in one parsed `.pid`.
 ///
-/// Keyed like [`line_styles_for_file`], so a renderer joins both the same
-/// way. Records whose height does not resolve are absent rather than
+/// Keyed like [`line_styles_for_document`], so a renderer joins both the
+/// same way. Records whose height does not resolve are absent rather than
 /// defaulted — see [`DocumentStyleTable::resolve_text_height`] for when that
 /// happens and why a caller should keep its own default.
+#[must_use]
+pub fn text_heights_for_document(doc: &PidDocument) -> TextHeightIndex {
+    let mut out = TextHeightIndex::new();
+    for_each_document(doc, &mut |stream, sheet, table| {
+        for record in &sheet.decoded_igtextboxes {
+            if let Some(resolved) = table.resolve_text_height(record.index) {
+                out.insert((stream.to_string(), record.oid), resolved);
+            }
+        }
+    });
+    out
+}
+
+/// [`text_heights_for_document`] for a `.pid` on disk: parse it once, then
+/// index it.
 ///
 /// # Errors
 ///
 /// Returns [`PidError`] when the file cannot be opened or read as a compound
 /// file.
 pub fn text_heights_for_file(path: &Path) -> Result<TextHeightIndex, PidError> {
-    let mut out = TextHeightIndex::new();
-    for_each_document(path, &mut |stream, sheet, table| {
-        for record in decode_igtextboxes(sheet) {
-            if let Some(resolved) = table.resolve_text_height(record.index) {
-                out.insert((stream.to_string(), record.oid), resolved);
-            }
-        }
-    })?;
-    Ok(out)
+    Ok(text_heights_for_document(&parse_for_styles(path)?))
 }
 
-/// Resolve the line style of every drawable record in one `.pid`.
+/// Resolve the line style of every drawable record in one parsed `.pid`.
 ///
-/// Walks each `Sheet*` stream, decodes the three families that carry an
-/// `index` — `igLine2d`, `igPoint2d`, `igLineString2d` — and resolves each
-/// against the `StyleCluster` of that sheet's own document.
+/// Walks each `Sheet*`, takes the three families that carry an `index` —
+/// `igLine2d`, `igPoint2d`, `igLineString2d` — plus the symbol placements,
+/// and resolves each against the `StyleCluster` of that sheet's own storage.
 ///
 /// Records whose index resolves to something with no line symbology are left
 /// out rather than defaulted, so a caller can tell "this record asks for a
 /// style I could not follow" from "this record asks for a fill".
-///
-/// # Errors
-///
-/// Returns [`PidError`] when the file cannot be opened or read as a compound
-/// file. A stream that fails to read individually is skipped rather than
-/// failing the whole index.
-pub fn line_styles_for_file(path: &Path) -> Result<LineStyleIndex, PidError> {
+#[must_use]
+pub fn line_styles_for_document(doc: &PidDocument) -> LineStyleIndex {
     let mut out = LineStyleIndex::new();
-    for_each_document(path, &mut |stream, sheet, table| {
-        let indexed = decode_iglines(sheet)
-            .into_iter()
+    for_each_document(doc, &mut |stream, sheet, table| {
+        let indexed = sheet
+            .decoded_iglines
+            .iter()
             .map(|record| (record.oid, record.index))
             .chain(
-                decode_igpoints(sheet)
-                    .into_iter()
+                sheet
+                    .decoded_igpoints
+                    .iter()
                     .map(|record| (record.oid, record.index)),
             )
             .chain(
-                decode_iglinestrings(sheet)
-                    .into_iter()
+                sheet
+                    .decoded_iglinestrings
+                    .iter()
                     .map(|record| (record.oid, record.index)),
             )
             // A symbol placement names the style its whole body draws
@@ -2132,8 +2170,9 @@ pub fn line_styles_for_file(path: &Path) -> Result<LineStyleIndex, PidError> {
             // `SmartPlant`'s screen in this reference's `#800000`. See
             // `docs/analysis/2026-08-24-placement-names-the-body-style.md`.
             .chain(
-                decode_igsymbols(sheet)
-                    .into_iter()
+                sheet
+                    .decoded_igsymbols
+                    .iter()
                     .map(|record| (record.oid, record.style_ref)),
             );
         for (oid, index) in indexed {
@@ -2141,62 +2180,64 @@ pub fn line_styles_for_file(path: &Path) -> Result<LineStyleIndex, PidError> {
                 out.insert((stream.to_string(), oid), resolved);
             }
         }
-    })?;
-    Ok(out)
+    });
+    out
 }
 
-/// Call `visit` once per `Sheet*` stream with that sheet's bytes and the
-/// style table of the document it belongs to.
+/// [`line_styles_for_document`] for a `.pid` on disk: parse it once, then
+/// index it.
 ///
-/// Sheets whose own `StyleCluster` is missing or empty are skipped rather
-/// than resolved against someone else's — see the scoping rule in the module
-/// docs.
-fn for_each_document(
-    path: &Path,
-    visit: &mut dyn FnMut(&str, &[u8], &DocumentStyleTable),
-) -> Result<(), PidError> {
-    let file = File::open(path)?;
-    let mut cfb = ::cfb::CompoundFile::open(file)?;
-    // `cfb` builds entry paths with the platform separator below the root
-    // (`/JSite145\PSMcluster0` on Windows), so normalise before splitting on
-    // `/`, as the rest of the crate does -- otherwise a nested storage's
-    // sheets would be found on one platform and skipped on another.
-    let sheet_paths: Vec<String> = cfb
-        .walk()
-        .filter(::cfb::Entry::is_stream)
-        .map(|entry| entry.path().to_string_lossy().replace('\\', "/"))
-        .filter(|name| {
-            name.rsplit('/')
-                .next()
-                .unwrap_or_default()
-                .starts_with("Sheet")
-        })
-        .collect();
+/// # Errors
+///
+/// Returns [`PidError`] when the file cannot be opened or read as a compound
+/// file.
+pub fn line_styles_for_file(path: &Path) -> Result<LineStyleIndex, PidError> {
+    Ok(line_styles_for_document(&parse_for_styles(path)?))
+}
 
-    for sheet_path in &sheet_paths {
-        let Some(sheet) = read_stream(&mut cfb, sheet_path) else {
+/// The one parse a `*_for_file` shell does. Full fidelity, because the
+/// nested storages' tables are filled by the `jsite` pass and the sheet
+/// records by the cluster pass, and the `Light` profile skips the former.
+fn parse_for_styles(path: &Path) -> Result<PidDocument, PidError> {
+    crate::api::PidParser::new().parse_file(path)
+}
+
+/// Call `visit` once per `Sheet*` of `doc` with that sheet's stream path,
+/// its decoded records and the style table of the storage it belongs to.
+///
+/// Sheets whose storage has no `StyleCluster`, or an empty one, are skipped
+/// rather than resolved against someone else's — see the scoping rule in the
+/// module docs. A sheet the reader found nothing in (`geometry` is `None`)
+/// is still visited, with no records: the two indexes keyed by stream alone
+/// ([`style_names_for_document`], [`style_libraries_for_document`]) answer
+/// for it the same as for any other sheet of that storage, which is what the
+/// byte-walking route did before the document route replaced it.
+fn for_each_document(
+    doc: &PidDocument,
+    visit: &mut dyn FnMut(&str, &SheetGeometry, &DocumentStyleTable),
+) {
+    let nothing_decoded = SheetGeometry::default();
+    for sheet in &doc.sheet_streams {
+        let Some(table) = doc.style_tables.get(&storage_of_sheet(&sheet.path)) else {
             continue;
         };
-        let table = read_stream(&mut cfb, &stylecluster_path_for_sheet(sheet_path))
-            .map_or_else(DocumentStyleTable::default, |bytes| {
-                DocumentStyleTable::from_stylecluster_bytes(&bytes)
-            });
         if table.is_empty() {
             continue;
         }
-        visit(sheet_path, &sheet, &table);
+        let geometry = sheet.geometry.as_ref().unwrap_or(&nothing_decoded);
+        visit(&sheet.path, geometry, table);
     }
-    Ok(())
 }
 
-fn read_stream<R: std::io::Read + std::io::Seek>(
-    cfb: &mut ::cfb::CompoundFile<R>,
-    path: &str,
-) -> Option<Vec<u8>> {
-    let mut stream = cfb.open_stream(path).ok()?;
-    let mut data = Vec::new();
-    stream.read_to_end(&mut data).ok()?;
-    Some(data)
+/// The storage a `Sheet*` stream lives in, as [`PidDocument::style_tables`]
+/// and [`PidDocument::sheet_layers`] key it: `/` for `/Sheet6`, `/JSite329`
+/// for `/JSite329/Sheet6`.
+#[must_use]
+pub fn storage_of_sheet(sheet_path: &str) -> String {
+    match sheet_path.rfind('/') {
+        Some(0) | None => "/".to_string(),
+        Some(at) => sheet_path[..at].to_string(),
+    }
 }
 
 /// The `StyleCluster` stream governing the geometry in `sheet_path`.
@@ -2204,7 +2245,9 @@ fn read_stream<R: std::io::Read + std::io::Seek>(
 /// `/Sheet6` is governed by `/StyleCluster`; `/JSite329/Sheet6` by
 /// `/JSite329/StyleCluster`. Resolving across that boundary is the mistake
 /// that hid this link, so route every lookup through here rather than
-/// searching for a stream whose name contains `Style`.
+/// searching for a stream whose name contains `Style`. The parsed document
+/// keeps each table under [`storage_of_sheet`]'s key instead; this is for a
+/// caller reading the compound file directly.
 #[must_use]
 pub fn stylecluster_path_for_sheet(sheet_path: &str) -> String {
     match sheet_path.rfind('/') {
@@ -3387,5 +3430,254 @@ mod tests {
             "/JSite329/Nested/StyleCluster"
         );
         assert_eq!(stylecluster_path_for_sheet("Sheet6"), "/StyleCluster");
+    }
+
+    #[test]
+    fn a_sheet_is_keyed_by_the_storage_it_lives_in() {
+        assert_eq!(storage_of_sheet("/Sheet6"), "/");
+        assert_eq!(storage_of_sheet("/JSite329/Sheet6"), "/JSite329");
+        assert_eq!(
+            storage_of_sheet("/JSite329/Nested/Sheet6615"),
+            "/JSite329/Nested"
+        );
+        assert_eq!(storage_of_sheet("Sheet6"), "/");
+    }
+
+    /// The route the five indexes took until plan
+    /// 2026-09-21-style-link-reads-the-parsed-document: reopen the compound
+    /// file, find every `Sheet*`, read its bytes and its storage's
+    /// `StyleCluster`, and run the six decoders again. Kept here as the
+    /// oracle the document route is measured against, so that "the records
+    /// an index resolves are the records the geometry was built from" is
+    /// pinned rather than assumed.
+    mod byte_route {
+        use std::io::Read;
+        use std::path::Path;
+
+        use super::super::{
+            stylecluster_path_for_sheet, DocumentStyleTable, FillIndex, LineStyleIndex,
+            StyleLibraryIndex, StyleNameIndex, TextHeightIndex,
+        };
+        use crate::parsers::sheet_records::{
+            decode_igboundaries, decode_iglines, decode_iglinestrings, decode_igpoints,
+            decode_igsymbols, decode_igtextboxes,
+        };
+
+        pub(super) struct Indexes {
+            pub(super) fills: FillIndex,
+            pub(super) names: StyleNameIndex,
+            pub(super) libraries: StyleLibraryIndex,
+            pub(super) heights: TextHeightIndex,
+            pub(super) lines: LineStyleIndex,
+        }
+
+        pub(super) fn indexes(path: &Path) -> Indexes {
+            let mut out = Indexes {
+                fills: FillIndex::new(),
+                names: StyleNameIndex::new(),
+                libraries: StyleLibraryIndex::new(),
+                heights: TextHeightIndex::new(),
+                lines: LineStyleIndex::new(),
+            };
+            for_each_document(path, &mut |stream, sheet, table| {
+                for record in decode_igboundaries(sheet) {
+                    if let Some(resolved) = table.resolve_fill(record.index) {
+                        out.fills.insert((stream.to_string(), record.oid), resolved);
+                    }
+                }
+                for record in table.records() {
+                    if let Some(name) = record.name.as_deref() {
+                        out.names
+                            .insert((stream.to_string(), record.style_id), name.to_string());
+                    }
+                }
+                if let Some(source) = table.style_library_source() {
+                    out.libraries.insert(stream.to_string(), source.to_string());
+                }
+                for record in decode_igtextboxes(sheet) {
+                    if let Some(resolved) = table.resolve_text_height(record.index) {
+                        out.heights
+                            .insert((stream.to_string(), record.oid), resolved);
+                    }
+                }
+                let indexed = decode_iglines(sheet)
+                    .into_iter()
+                    .map(|record| (record.oid, record.index))
+                    .chain(
+                        decode_igpoints(sheet)
+                            .into_iter()
+                            .map(|record| (record.oid, record.index)),
+                    )
+                    .chain(
+                        decode_iglinestrings(sheet)
+                            .into_iter()
+                            .map(|record| (record.oid, record.index)),
+                    )
+                    .chain(
+                        decode_igsymbols(sheet)
+                            .into_iter()
+                            .map(|record| (record.oid, record.style_ref)),
+                    );
+                for (oid, index) in indexed {
+                    if let Some(resolved) = table.resolve_line_style(index) {
+                        out.lines.insert((stream.to_string(), oid), resolved);
+                    }
+                }
+            });
+            out
+        }
+
+        fn for_each_document(path: &Path, visit: &mut dyn FnMut(&str, &[u8], &DocumentStyleTable)) {
+            let file = std::fs::File::open(path).expect("fixture opens");
+            let mut cfb = ::cfb::CompoundFile::open(file).expect("fixture is a compound file");
+            let sheet_paths: Vec<String> = cfb
+                .walk()
+                .filter(::cfb::Entry::is_stream)
+                .map(|entry| entry.path().to_string_lossy().replace('\\', "/"))
+                .filter(|name| {
+                    name.rsplit('/')
+                        .next()
+                        .unwrap_or_default()
+                        .starts_with("Sheet")
+                })
+                .collect();
+            for sheet_path in &sheet_paths {
+                let Some(sheet) = read_stream(&mut cfb, sheet_path) else {
+                    continue;
+                };
+                let table = read_stream(&mut cfb, &stylecluster_path_for_sheet(sheet_path))
+                    .map_or_else(DocumentStyleTable::default, |bytes| {
+                        DocumentStyleTable::from_stylecluster_bytes(&bytes)
+                    });
+                if table.is_empty() {
+                    continue;
+                }
+                visit(sheet_path, &sheet, &table);
+            }
+        }
+
+        fn read_stream<R: Read + std::io::Seek>(
+            cfb: &mut ::cfb::CompoundFile<R>,
+            path: &str,
+        ) -> Option<Vec<u8>> {
+            let mut stream = cfb.open_stream(path).ok()?;
+            let mut data = Vec::new();
+            stream.read_to_end(&mut data).ok()?;
+            Some(data)
+        }
+    }
+
+    /// The document route answers exactly what the byte route answered, on
+    /// every fixture and for all five indexes -- and it does so from one
+    /// parse, whose `style_tables` hold the document's own table under `/`.
+    /// Soft-skips a fixture that is not checked out.
+    #[test]
+    fn the_document_route_indexes_what_the_byte_route_indexed() {
+        let fixtures = [
+            "test-file/D06.pid",
+            "test-file/DWG-0201GP06-01.pid",
+            "test-file/DWG-0202GP06-01.pid",
+            "test-file/工艺管道及仪表流程-1.pid",
+        ];
+        let mut checked = 0usize;
+        for fixture in fixtures {
+            let path = Path::new(fixture);
+            if !path.is_file() {
+                eprintln!("skipping {fixture}: not checked out");
+                continue;
+            }
+            let doc = crate::api::PidParser::new()
+                .parse_file(path)
+                .expect("fixture parses");
+            let root = doc
+                .style_tables
+                .get("/")
+                .expect("the document's own StyleCluster is stored under `/`");
+            assert!(!root.is_empty(), "{fixture}: the root style table walked");
+            for storage in doc.style_tables.keys() {
+                assert!(
+                    storage == "/" || storage.starts_with("/JSite"),
+                    "{fixture}: table keyed by a path that is not a storage: {storage}"
+                );
+            }
+            // Every nested storage the reader decoded strokes for has its
+            // table here, and the strokes were resolved against that table.
+            for site in &doc.jsites {
+                if !site.stroke_styles.is_empty() {
+                    let table = doc.style_tables.get(&site.path).unwrap_or_else(|| {
+                        panic!(
+                            "{fixture}: {} resolved strokes with no table stored",
+                            site.path
+                        )
+                    });
+                    for (id, style) in &site.stroke_styles {
+                        let resolved = table.resolve_line_style(*id).unwrap_or_else(|| {
+                            panic!("{fixture}: {} id {id} unresolved", site.path)
+                        });
+                        assert_eq!(
+                            crate::symbol_library::PrimitiveStyle::from_resolved(&resolved),
+                            *style,
+                            "{fixture}: {} id {id}",
+                            site.path
+                        );
+                    }
+                }
+            }
+
+            let expected = byte_route::indexes(path);
+            assert_eq!(
+                line_styles_for_document(&doc),
+                expected.lines,
+                "{fixture}: line styles"
+            );
+            assert_eq!(
+                text_heights_for_document(&doc),
+                expected.heights,
+                "{fixture}: text heights"
+            );
+            assert_eq!(
+                fill_styles_for_document(&doc),
+                expected.fills,
+                "{fixture}: fills"
+            );
+            assert_eq!(
+                style_names_for_document(&doc),
+                expected.names,
+                "{fixture}: style names"
+            );
+            assert_eq!(
+                style_libraries_for_document(&doc),
+                expected.libraries,
+                "{fixture}: style libraries"
+            );
+            assert!(
+                !expected.lines.is_empty(),
+                "{fixture}: the oracle resolved nothing, so agreement proves nothing"
+            );
+            checked += 1;
+        }
+        eprintln!("the_document_route_indexes_what_the_byte_route_indexed: {checked}/4 fixtures");
+    }
+
+    /// The shell parses once and hands the document to the other route, so
+    /// the two spellings of every index agree by construction.
+    #[test]
+    fn the_file_shell_is_the_document_route_after_one_parse() {
+        let path = Path::new("test-file/D06.pid");
+        if !path.is_file() {
+            eprintln!("skipping test-file/D06.pid: not checked out");
+            return;
+        }
+        let doc = crate::api::PidParser::new()
+            .parse_file(path)
+            .expect("fixture parses");
+        assert_eq!(
+            line_styles_for_file(path).expect("fixture opens"),
+            line_styles_for_document(&doc)
+        );
+        assert_eq!(
+            style_names_for_file(path).expect("fixture opens"),
+            style_names_for_document(&doc)
+        );
     }
 }

@@ -98,6 +98,14 @@ Black Box [0.0127, 0.113927, 0.0127, 0.078067]，与实例几何逐个数对上�
 `a_placed_instance_states_its_own_parameters_in_its_flavor_holder`（`parse_real_files` 134 → 135，五图含 A01）；`--lib` 1111 → 1112；
 golden 不变；clippy 零告警。OCS 侧 F2：`instance=` 写进 `PID_SEMANTICS`，面板多一行「驱动尺寸（本图实例）」。
 
+**2026-09-21 · 解析流程审核 + 两张单**（`docs/analysis/2026-09-21-parsing-pipeline-audit.md`）：流程骨架对，但一张图开六次、
+Sheet 解两遍、Full 全跑而 OCS 只用一半、OCS `load_pid` 460 行 + 全局 Mutex 传摘要。开单 `docs/plans/2026-09-21-style-link-reads-the-parsed-document.md`（S）、
+`docs/plans/2026-09-21-a-geometry-parse-profile.md`（G）、OCS 侧 ⑤（`load_pid` 返回摘要，未写）。
+**2026-09-22 · S1–S3 落地**：`PidDocument::style_tables`（根表在 `parse_clusters`、嵌套表在 `parse_jsites`，`JSite::stroke_styles` 改为投影）；
+五个 `style_link::*_for_document(&PidDocument)`，记录直接读 `geometry.decoded_*`；`*_for_file` 变「解一次、转调」薄壳。
+改前的字节路搬进测试作 oracle，四图五张索引逐项相等；`--lib` 1112 → 1115，`style_link_ratchet` 15 / `parse_real_files` 135 / `render_gap_census` 4 不变，
+clippy `-D warnings` 零告警。S4（OCS 改吃 `*_for_document`）待做；G 单待批。
+
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
 `sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给
