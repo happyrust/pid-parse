@@ -7,7 +7,7 @@
 > 开出的三张单：`docs/plans/2026-09-21-style-link-reads-the-parsed-document.md`（①）、
 > `docs/plans/2026-09-21-a-geometry-parse-profile.md`（②）、OCS `docs/plans/2026-09-21-load-pid-returns-its-summary.md`（⑤）。
 > **2026-09-22 结算**：① 落地（pid-parse `74bee65` / OCS `bbdc3d80`，一张图只开一次、样式路与几何路同一份解码结果）；② 落地（pid-parse `fae2ac9` / OCS `2e9e10f5`，
-> `ParseProfile::Geometry`；G1 量出 25 条连通线的端点位置靠 geometry hints ← crossref ← 对象图，这三段 Geometry 下照跑）；③ ④ ⑤ ⑥ 归入 OCS ⑤ 单（`a6b91454` 开单，等批）；⑦ ⑧ 照旧登记不做。
+> `ParseProfile::Geometry`；G1 量出 25 条连通线的端点位置靠 geometry hints ← crossref ← 对象图，这三段 Geometry 下照跑）；③ ④ ⑤ ⑥ 归入 OCS ⑤ 单（`a6b91454` 开单）——**同日批准、落地**（OCS `edc6b495` Q1–Q3：`load_pid -> PidImport { document, summary }`，摘要以文档自定义属性随文档穿管线、开图完成时取走，`IMPORT_SUMMARIES` 删；`symbol_library` / `unit` 进摘要，米回退升 warn；`ec14ce55` Q4：`load_pid` 切四段只搬不改，四图 `--export` 三版字节一条线）；⑦ ⑧ 照旧登记不做。
 
 ## 一句话
 
@@ -75,21 +75,25 @@ OCS 侧 `load_pid` 是一个 460 行的函数、结果经全局静态 `Mutex` �
 
 符号体先取图纸缓存，缺了才去库；库靠 env 或向上 5 层搜。同一 `.pid` 挪个目录可能画得不一样。09-20 库优先开关退役后库只是兜底，风险已缩小；
 摘要有 `cache_bodies / library_bodies` 能看出来，但**命中的库路径没进摘要**。小事，随 ⑤ 一起做：`ImportSummary` 加一格 `symbol_library: Option<PathBuf>`。
+**2026-09-22 已落地**（OCS `edc6b495`）：`ImportSummary.symbol_library: Vec<PathBuf>` = `SymbolLibrary::roots()`，无库为空；`import_without_library` 测试断言临时目录下为空。
 
 ### ④ `load_pid_with_layer_mode` 460 行一口气
 
 解析、图层表、样式、字体、语义、循环、统计、取景、过滤器、摘要 10+ 个关切在一个函数里，只能靠 `pid_import` 集成测试兜底。
 09-21 单 H1 去掉 mode 分支会短一截，结构没变。建议随 ⑤ 拆「备文档 / 解样式 / 建实体 / 收尾」四段——**不另开单**，⑤ 的返回值改动会自然把收尾段切出来，其余顺手。
+**2026-09-22 已落地**（OCS `ec14ce55`）：`prepare_document` 36 / `resolve_styles` 116 / `build_document_entities` 221 / `finish` 91 行，`load_pid` 剩 41 行编排；只搬不改，四图 `--export` 与切前字节相同。
 
 ### ⑤ `IMPORT_SUMMARIES` 全局静态 `Mutex` 按路径传摘要 → 单 ⑤（OCS）
 
 `load_pid` 塞（`pid.rs:910`）、`file.rs:1823` 取。同一路径并发打开会串；回调没触发就泄漏一条；`take_` 语义要求调用方恰好取一次。
 `io/mod.rs:1245` 是唯一调用方，直接让 `load_pid` 返回 `(CadDocument, ImportSummary)`（或把摘要挂在 `CadDocument` 的导入元数据上）更干净。
+**2026-09-22 已落地**（OCS `edc6b495`）：两条都用上了——`load_pid -> Result<PidImport { document, summary }>`；`read_pid_path` 要交出外部类型 `ReadOutcome`，摘要就挂在文档的自定义属性上（`summary_info.custom_properties`，`PID_IMPORT_SUMMARY.<字段>`）穿过通用打开管线，`on_file_opened` / `io::load_file` 取走。先试的 XRecord 载体要花一个句柄、分配器不退，四图字节对不上，弃。`IMPORT_SUMMARIES` / `take_import_summary` / 测试的 `SUMMARY_MAILBOX` 全删。
 
 ### ⑥ 单位判定几乎无声
 
 `mm_per_source_unit`（`pid.rs:1031`）取第一个 Decoded 实体的 `units`，只认 `m` / `mm`，其他一律回退到米并记一条 `info`。语料全是米所以没暴露；
 英制工程会整体差 25.4 倍而只有一条 info 日志。至少升 `warn` 并进摘要（随 ⑤）。
+**2026-09-22 已落地**（OCS `edc6b495`）：`ImportUnit::read` 取代 `mm_per_source_unit`，回退记 `warn`；`ImportSummary.unit: ImportUnit { Stated { unit, mm_per_unit }, AssumedMetre }`；回退时命令行多一行（21 语种）。判定逻辑未改。
 
 ### ⑦ 页幅回退只认 A0–A4
 

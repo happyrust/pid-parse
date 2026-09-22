@@ -109,6 +109,10 @@ clippy `-D warnings` 零告警。S4 同日落地（OCS `bbdc3d80`：五处改 `*
 `ParseProfile::Geometry` / `ParseOptions::geometry()` + 七个 `runs_*` 谓词换掉管线里的 `light_profile` 布尔，`parse_clusters` 按谓词跳过 sheet 探针与 spatial；
 `tests/geometry_profile.rs` 五图钉「画的相等、少的只是探针产物」；`--lib` 1115 → 1116。G4 同日落地（OCS `2e9e10f5`：`load_pid` 改用 `ParseOptions::geometry()`，
 `pid_import` 49/49，四图 `--export` 字节不变）——**G 单关闭**；⑤ 单（OCS `load_pid` 返回摘要）已开、待批。审核 ① ② 两条由此结清，剩 ③ ④ ⑤ ⑥ 都在 ⑤ 单里。
+**同日 ⑤ 单批准并落地（OCS 侧，pid-parse 无代码改动）**：`edc6b495` Q1–Q3——`load_pid -> PidImport { document, summary }`，摘要以文档自定义属性随文档穿通用打开管线、
+开图完成时取走（XRecord 载体试过：花一个句柄不退、四图字节对不上，弃），`IMPORT_SUMMARIES` 删；`symbol_library` / `unit` 进摘要，米回退升 warn（命令行多一行，21 语种）；
+`ec14ce55` Q4——`load_pid` 切 `prepare_document` / `resolve_styles` / `build_document_entities` / `finish` 四段只搬不改。OCS `--lib io::pid` 52 → 54、`pid_import` 49 → 50，
+四图 `--export` 三版（`2e9e10f5` / `edc6b495` / `ec14ce55`）字节一条线——**⑤ 单关闭，审核 ③ ④ ⑤ ⑥ 结清；⑦ ⑧ 登记不做**。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
