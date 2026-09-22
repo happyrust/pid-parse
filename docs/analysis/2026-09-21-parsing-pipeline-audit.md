@@ -6,6 +6,8 @@
 > 每一步吃什么产出什么、哪几处是结构性的弱点。**只读审核，未跑代码**（OCS 树当日在合并上游，cargo 不插队）。
 > 开出的三张单：`docs/plans/2026-09-21-style-link-reads-the-parsed-document.md`（①）、
 > `docs/plans/2026-09-21-a-geometry-parse-profile.md`（②）、OCS `docs/plans/2026-09-21-load-pid-returns-its-summary.md`（⑤）。
+> **2026-09-22 结算**：① 落地（pid-parse `74bee65` / OCS `bbdc3d80`，一张图只开一次、样式路与几何路同一份解码结果）；② 落地（pid-parse `fae2ac9` / OCS `2e9e10f5`，
+> `ParseProfile::Geometry`；G1 量出 25 条连通线的端点位置靠 geometry hints ← crossref ← 对象图，这三段 Geometry 下照跑）；③ ④ ⑤ ⑥ 归入 OCS ⑤ 单（`a6b91454` 开单，等批）；⑦ ⑧ 照旧登记不做。
 
 ## 一句话
 

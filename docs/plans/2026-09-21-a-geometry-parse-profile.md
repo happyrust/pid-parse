@@ -1,4 +1,4 @@
-# `ParseProfile::Geometry`：给渲染消费者一条只跑它要的 pass 的路 · 小计划（2026-09-21 开单，待合并完再动）
+# `ParseProfile::Geometry`：给渲染消费者一条只跑它要的 pass 的路 · 小计划（2026-09-21 开单，2026-09-22 落地关闭）
 
 > 承接 `docs/analysis/2026-09-21-parsing-pipeline-audit.md` ②，与 `docs/light-parse-design.md`（Light profile 的由来）。
 > 现状：OCS 每打开一张 `.pid` 都以 `ParseOptions::default()`（Full）解——启发式文本 / 坐标探针、geometry hints、spatial analysis、
@@ -6,7 +6,7 @@
 > `Light` 又砍过头（不跑 `jsite` → 没符号体；不跑 `psm_tables` → 没图层；不跑 `dynamic_attrs` → 没端点）。
 > **开工前提：同 `2026-09-21-style-link-reads-the-parsed-document.md`。pid-parse 侧 G1–G3 可先做。**
 > **2026-09-22 前提已满足**（OCS `f417782a` / `61153b6c`），S 单同日关闭（pid-parse `74bee65` / OCS `bbdc3d80`，`style_tables` 已在文档上）。
-> **同日用户批准本单、G1 量完**：「不跑」列有一项在被画的连通线来路上，三项挪回「跑」（见 G-D2 与进度）；**G2 + G3 + G5 同日落地**（pid-parse 侧，见进度），G4（OCS 一行）待做。
+> **同日用户批准本单、G1 量完**：「不跑」列有一项在被画的连通线来路上，三项挪回「跑」（见 G-D2 与进度）；**G2 + G3 + G5 + G4 同日落地**（pid-parse `fae2ac9`、OCS `2e9e10f5`，见进度），本单关闭。
 
 ## 一句话
 
@@ -96,7 +96,10 @@
   - **墙钟**（debug，进程内先 Geometry 后 Full）：D06 25 / 24 ms、0202 159 / 172、工艺 69 / 86、A01 31 / 37；0201 3.35 s / 4.45 s——但先 Full 后 Geometry 时是
     3.5–3.8 / 4.6 s，**同一进程里第二次解 0201 不论哪个 profile 都慢约 1 s**（测量方法的事，不是 profile 的），0201 的 ~3.4 s 由两个 profile 都跑的某段主导，
     候选 `populate_geometry_hints` 的窗口评分或某条大 `Sheet*` 的族解码——**另量，不在本单**。顺带：登记不做那行写的 `pid_inspect --light`，`pid_inspect` 其实没有这个开关（`rg '"--light"'` 零命中）。
-- **G4（OCS `load_pid` 改 `PidParser::with_options(ParseOptions::geometry())`，`pid_probe` / `pid_plot_dump` 留 Full）待做**——前提已满足。
+- **2026-09-22（同会话）✅ G4 落地，OCS `2e9e10f5`**（pid-parse 侧 `fae2ac9`）：`load_pid` 改 `PidParser::with_options(ParseOptions::geometry())`，
+  `pid_probe` / `pid_plot_dump` 留 Full。**验证**：`--test pid_import` 49/49、`--lib io::pid` 52/52；四图 `--export` DXF 与 Full 版二进制（`bbdc3d80`）**字节相同**；
+  墙钟在噪声内不变（0201 ~4.1–4.3 s、0202 ~0.53、D06 ~0.42、工艺 ~0.48–0.53 s，进程启动 + 两 profile 共有的那段主导）。**G1–G5 全部落地，本单关闭。**
+  开着的只有登记项：0201 的 ~3.4 s 花在哪一段（另量）。
 
 ## 门禁记录
 
