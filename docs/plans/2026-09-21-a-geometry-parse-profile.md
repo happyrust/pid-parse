@@ -139,6 +139,16 @@
   - **现在的热段换人了**：剩 0.31 s 里 **`score_field_x_window_features`（基础评分，不含身份那步）197 ms**，其次 `field_x_windows` 17 / `field_x_window_features` 16 / 那遍 `probe_sheet_stream` 4 ms，
     管线其余 ~60 ms。6 025 个窗口每个都要评分——再往下要么让 `field_x_windows` 少出窝（例如先按 `endpoint_record_signature_start` 或 chunk 边界筛），要么给评分里的
     `repeated_delta_support` / 候选查找建索引；都改的是探针启发式的实现，产物应不变，仍按四图 `--export` 字节验收。未做，等拍。
+- **2026-09-23（同会话）量：`score_field_x_window_features` 的 197 ms 在哪一步**，用户点选「先量不改」。临时计时（撤回，无提交），0201 Sheet6，debug，三次一致：
+  - **`stable_marker_support` 125–151 ms（≈ 65–75 %）**；**per-feature `map` 60 ms（≈ 30 %）**；`stable_chunk_shape_support` 0.3 ms、`stable_f64_pair_shape_support` 0.2–0.6 ms。
+    （上一条猜的 `repeated_delta_support` 不在这条函数里——它属于旧的 `score_field_x_windows`，本管线不调。）
+  - 数字：features 6 025（135 条是端点记录引用，直接 −100）；**`stable_markers` 合计 209 286**（每窗 ≈ 35：`marker_candidates` 收窗口内每个 4 字节对齐、非零、≠ `field_x` 的 u32）。
+    `stable_marker_support` 对这 209 K 条做 `BTreeMap<(delta, value), HashSet<u32>>` 的 `entry().or_default().insert()`，得 **90 279 个不同键**（绝大多数 support = 1），再 `into_iter` 重建成第二张 90 K 的 BTreeMap；
+    per-feature 循环里每窗最多 35 次对这张 90 K BTreeMap 的 `get`（命中 support ≥ 3 即 break）。其余：chunk_shape 291 / f64_shape 55 / candidate_position 815；chunk_support 272 键、f64_support 2 键。
+  - 根子还是 6 025 窗 × 196 字节 = 39.8 倍重叠：sheet 本身只有 ~7 400 个对齐 u32 位，却被当标记数了 209 K 次。
+  - **候选（未做）**：(a) `stable_marker_support` 的两张 BTreeMap 换 `HashMap`（90 K 键，O(1)），估 130 → ~30 ms；(b) per-feature 的 marker `get` 跟着换，60 → ~30 ms——两条都不改产物；
+    (c) 结构性标记（`is_structural_marker_value`）现在是在 `stable_marker_support` 里过滤、`marker_candidates` 仍收——若在收集时就丢，`SheetFieldXWindowFeatures.stable_markers` 是公开产物（探针 JSON），会变，不做；
+    (d) 真正的杠杆仍是窗口数：`field_x_windows` 逐字节比对小整数命中 6 025 窗，若只认 4 字节对齐的命中，窗口数与 209 K 标记都会大降，但这改的是启发式的输入，53 条 hint 是否不变要先量。
 
 ## 门禁记录
 
