@@ -25,7 +25,7 @@
 //! are reserved for future heuristics and are not yet emitted.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Tunable thresholds for the sheet-probe heuristics; all downstream
 /// functions read their cut-offs from this struct. [`Default`] values
@@ -1033,14 +1033,23 @@ pub fn score_field_x_window_features_with_identities(
     identities: &[SheetFieldXWindowIdentity],
 ) -> Vec<SheetFieldXWindowScore> {
     let mut scores = score_field_x_window_features(features, object_field_xs);
+    // The first same-object identity for each `field_x`, in `identities`
+    // order -- what a linear `find` over `identities` answered for every
+    // score, looked up once per score instead of walked once per score.
+    let mut supporting_by_field_x: HashMap<u32, &SheetFieldXWindowIdentity> = HashMap::new();
+    for identity in identities
+        .iter()
+        .filter(|identity| identity.resolves_to_same_object)
+    {
+        supporting_by_field_x
+            .entry(identity.field_x)
+            .or_insert(identity);
+    }
     for score in &mut scores {
         if score.score < 0 {
             continue;
         }
-        if let Some(identity) = identities
-            .iter()
-            .find(|identity| identity_supports_score(identity, score))
-        {
+        if let Some(identity) = supporting_by_field_x.get(&score.field_x) {
             score.score += 35;
             score
                 .reasons
@@ -1187,6 +1196,19 @@ pub fn field_x_window_identities(
     windows: &[SheetFieldXWindow],
     identity_index: &SheetIdentityIndex,
 ) -> Vec<SheetFieldXWindowIdentity> {
+    // One table for the u32 scan below. `by_field_x` iterates in ascending
+    // `field_x` order and the linear `find` this replaces took the first
+    // identity whose `record_id` matched, so the first insert wins here too:
+    // the same answer at every byte position, without walking the whole
+    // index per position. On DWG-0201 that walk was 1.16 M positions x 94
+    // entries -- 2.8 s of a 3.2 s debug parse.
+    let mut identity_by_record_id: HashMap<u32, &SheetObjectIdentity> = HashMap::new();
+    for identity in identity_index.by_field_x.values() {
+        identity_by_record_id
+            .entry(identity.record_id)
+            .or_insert(identity);
+    }
+
     let mut identities = Vec::new();
     for window in windows {
         let mut text_offset = window.window_start;
@@ -1231,11 +1253,7 @@ pub fn field_x_window_identities(
         let mut offset = window.window_start;
         while offset + 4 <= window.window_end && offset + 4 <= data.len() {
             let value = u32_le(data, offset);
-            if let Some(identity) = identity_index
-                .by_field_x
-                .values()
-                .find(|identity| identity.record_id == value)
-            {
+            if let Some(identity) = identity_by_record_id.get(&value) {
                 identities.push(SheetFieldXWindowIdentity {
                     field_x: window.field_x,
                     offset,
@@ -1268,13 +1286,6 @@ fn utf16_le_hex_32(bytes: &[u8]) -> Option<String> {
         text.push(char::from(pair[0]));
     }
     Some(text)
-}
-
-fn identity_supports_score(
-    identity: &SheetFieldXWindowIdentity,
-    score: &SheetFieldXWindowScore,
-) -> bool {
-    identity.resolves_to_same_object && identity.field_x == score.field_x
 }
 
 fn chunk_containing_range(chunks: &[SheetChunk], start: usize, end: usize) -> Option<&SheetChunk> {

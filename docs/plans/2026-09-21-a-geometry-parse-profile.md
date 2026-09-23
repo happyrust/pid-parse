@@ -114,6 +114,19 @@
   - **候选改法（未做，另开）**：① `record_id → identity` 建一次 `HashMap`，第三个循环从 O(位 × 94) 降到 O(位)；② 三种身份先对整条 sheet 各扫一遍、再按 `[window_start, window_end)` 二分派给窗口，去掉 39.8 倍的重叠；
     ③ `score_..._with_identities` 按 `field_x` 建索引，取代每个 score 对 425 条 `identities` 的线性 `find`；④ `utf16_le_hex_32` 先校验再分配；⑤ `field_x_windows` 的 `field_xs.contains` 换 `binary_search`（已排序去重）。
     ① ③ 预计把 debug 的 3.2 s 压到 ~100 ms 量级；产物（0201 的 53 条 hint、25 条连通线）不该变，按 `tests/geometry_profile.rs` 与 OCS 四图 `--export` 字节对数验收。
+- **2026-09-23（同会话）✅ 候选改法 ① ③ 落地**，用户点选「做候选改法 ①③」。`sheet_probe.rs` 一个文件、+28 / −17 行，无新公开面：
+  - ① `field_x_window_identities`：进函数先把 `identity_index.by_field_x.values()` 按 `record_id` 收进一张 `HashMap`（`entry().or_insert`，首个为准——`by_field_x` 按 `field_x` 升序迭代，
+    原 `find` 取的正是首个命中，答案逐位相同），u32 循环里 `find` 换 `get`。
+  - ③ `score_field_x_window_features_with_identities`：先把 `resolves_to_same_object` 的 `identities` 按 `field_x` 收进 `HashMap`（首个为准，保持 `identities` 顺序语义），
+    每个 score 一次 `get`；`identity_supports_score` 无人再用，删。
+  - **验证**：rustfmt 干净、`cargo clippy --all-targets -- -D warnings` 零告警；`--lib` **1116/1116**、`--test geometry_profile` 2/2、`--test parse_real_files` **135/135**、
+    `--test render_gap_census` 4/4、`--test style_link_ratchet` 15/15（这条从 ~10 s 到 1.5 s——八次整解里的 0201 不再拖）。
+    **OCS 四图 `--export` DXF 与改前 SHA-256 逐一相等**（改前先用未改的 pid-parse 编 debug 版导出作基线：0201 188 308 B `2B1022B5…` / 0202 189 053 B `340ED098…` /
+    D06 90 882 B `763CAD1A…` / 工艺 319 578 B `B04C7215…`，与 `ec14ce55` 记录的同值；改后重编再导，四个哈希、四个字节数不变）。0201 的 53 条 hint 不变。
+  - **墙钟**（每个 profile 单开进程）：0201 debug Geometry **3.20–3.57 s → 0.51 s**、Full 3.21 → 0.54–0.57 s；release 208 → 110–133 ms。0202 65 / D06 22 / 工艺 58 ms（本来就不在热段上，不变）。
+    OCS `--export` 0201 进程墙钟 3.78 → **0.92 s**，其余三图 0.4 s 不变。
+  - **还剩什么**：0201 debug 剩的 ~0.5 s 里估 ~0.3 s 是那 116 万个字节位各做一次 `HashMap` 查找本身（debug 下的 SipHash），加 utf16 循环 63 ms——都是 39.8 倍窗口重叠喂出来的，
+    要再压就做 ②（整条 sheet 各扫一遍再按窗口区间派发）；④ ⑤ 是小头。未做，等拍。
 
 ## 门禁记录
 

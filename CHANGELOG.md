@@ -21,6 +21,9 @@
   但**同一进程里第二次解 0201 不论哪个 profile 都慢约 1 s**，0201 的 ~3.4 s 由两个 profile 都跑的某段主导，另量——
   **2026-09-23 量出**：`populate_geometry_hints` 里的 `sheet_probe::field_x_window_identities` 占 2.9 s（u32 `record_id` 滑窗循环对 94 条身份索引逐位线性 `find`；
   0201 的 57 个小整数 `field_x` 命中 6,025 个窗口，扫了图纸 39.8 倍的字节），`score_..._with_identities` 再占 0.2 s；release 下同段 191 / 208 ms。细节与候选改法见计划进度。
+- **同日两处线性查找换 `HashMap`**（`sheet_probe.rs`，无新公开面）：`field_x_window_identities` 的 u32 循环按 `record_id` 建一次表（首个为准，与原 `find` 同答案）；
+  `score_field_x_window_features_with_identities` 把同对象 `identities` 按 `field_x` 建一次表，每个 score 一次 `get`。0201 debug 解析 **3.2–3.6 s → 0.51 s**、release 208 → ~120 ms，
+  hint 53 条不变；`--lib` 1116 / `parse_real_files` 135 / `geometry_profile` 2 / `render_gap_census` 4 / `style_link_ratchet` 15 全绿，OCS 四图 `--export` 字节不变。
 
 ### 样式索引改吃解好的文档：`style_link::*_for_document`，一张图只开一次（2026-09-22，计划 S1–S3）
 
