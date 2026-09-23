@@ -99,7 +99,21 @@
 - **2026-09-22（同会话）✅ G4 落地，OCS `2e9e10f5`**（pid-parse 侧 `fae2ac9`）：`load_pid` 改 `PidParser::with_options(ParseOptions::geometry())`，
   `pid_probe` / `pid_plot_dump` 留 Full。**验证**：`--test pid_import` 49/49、`--lib io::pid` 52/52；四图 `--export` DXF 与 Full 版二进制（`bbdc3d80`）**字节相同**；
   墙钟在噪声内不变（0201 ~4.1–4.3 s、0202 ~0.53、D06 ~0.42、工艺 ~0.48–0.53 s，进程启动 + 两 profile 共有的那段主导）。**G1–G5 全部落地，本单关闭。**
-  开着的只有登记项：0201 的 ~3.4 s 花在哪一段（另量）。
+  开着的只有登记项：0201 的 ~3.4 s 花在哪一段（另量）——**2026-09-23 已量，见下一条；登记项关闭。**
+- **2026-09-23（会话 fable-5-1-23）✅ 登记项量完：0201 的 ~3.4 s 在 `populate_geometry_hints` 里的 `sheet_probe::field_x_window_identities`。**
+  方法：`reader.rs` / `cluster.rs` / `sheet_probe.rs` 临时插 `Instant` 计时（量完 `git checkout` 撤回，无提交），每个 profile 单开一个进程解一次（避开 09-22 那个「同进程第二次慢 1 s」的干扰），debug 与 release 各量。
+  - **debug，Geometry**：总 3.20–3.57 s；`populate_geometry_hints` 3.14–3.50 s（≈ 98 %），其中 **`field_x_window_identities` 2.88 s（≈ 90 %）**、
+    `score_field_x_window_features_with_identities` 0.21–0.28 s（≈ 7 %）；同段里 `field_x_windows` 17 ms、`field_x_window_features` 17 ms、那遍 `probe_sheet_stream` 4 ms。
+    管线其余全部相加 < 70 ms：`jsites` 15、`parse_clusters` 23（`decode_all_families_into` 10.7 + `claimed ranges` 10.6——族解码走了两遍）、`dynamic_attrs` 4.3、
+    `populate_sheet_endpoints` 3.6、`collect_streams_and_bytes` 3.0、`psm_tables` 2.6、`crossref` 0.9、`build_object_graph` 0.6。Full 3.21 s，与 Geometry 同——热段在两个 profile 都跑的语义 pass 里，09-22 的推测（「`populate_geometry_hints` 的窗口评分」）成立，「某条大 `Sheet*` 的族解码」不成立。
+  - **`field_x_window_identities` 内部**（`sheet_probe.rs:1185`，三个滑窗循环）：u32 `record_id` 循环 **2.82 s**——1,160,777 个字节位，每位对 `identity_index.by_field_x.values().find(|i| i.record_id == value)` 线性扫 94 条，≈ 1.1 亿次 BTreeMap 迭代；
+    utf16-hex32 循环 63 ms（每位先 `String::with_capacity(32)` 再校验）；ascii-hex32 循环 10 ms。
+  - **为什么是 0201**：Sheet6 只有 29,594 字节，但 57 个关系 `field_x` 都是小整数，`field_x_windows` 逐字节比对 u32 LE 命中 **6,025** 个窗口（每 5 个字节位一个），
+    每窗 4 + 2 × 96 = 196 字节 → 窗口字节总计 **1,178,852 = 图纸的 39.8 倍**，三个循环各扫一遍。对照 0202：28 个 `field_x` → 156 窗口 → 1.3 倍 → `field_x_window_identities` 61 ms、整图 120 ms。
+  - **release**：总 208 ms，`populate_geometry_hints` 191 ms（92 %）、`field_x_window_identities` 129 ms、`score_features` 52 ms——debug 放大 ≈ 17 倍，热段不变。
+  - **候选改法（未做，另开）**：① `record_id → identity` 建一次 `HashMap`，第三个循环从 O(位 × 94) 降到 O(位)；② 三种身份先对整条 sheet 各扫一遍、再按 `[window_start, window_end)` 二分派给窗口，去掉 39.8 倍的重叠；
+    ③ `score_..._with_identities` 按 `field_x` 建索引，取代每个 score 对 425 条 `identities` 的线性 `find`；④ `utf16_le_hex_32` 先校验再分配；⑤ `field_x_windows` 的 `field_xs.contains` 换 `binary_search`（已排序去重）。
+    ① ③ 预计把 debug 的 3.2 s 压到 ~100 ms 量级；产物（0201 的 53 条 hint、25 条连通线）不该变，按 `tests/geometry_profile.rs` 与 OCS 四图 `--export` 字节对数验收。
 
 ## 门禁记录
 

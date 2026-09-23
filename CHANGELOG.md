@@ -18,7 +18,9 @@
   dropped / refused 相等、Full 多出来的只能是 ProbeOnly 或 `coordinate-hint` 的 Inferred 点、Geometry 没有 Full 没有的；图层表 / 视图集 / 样式表 / 嵌套本体 /
   笔画样式 / 端点记录 / 几何 hints 逐 sheet 相等；跳过的 pass 产物为 `None`。另一条钉七个谓词对三个 profile 的回答。`cluster` 单测加「无探针无族记录 → None」。
 - 墙钟（debug，进程内先 Geometry 后 Full）：D06 25 / 24 ms、0202 159 / 172、工艺 69 / 86、A01 31 / 37；0201 Geometry 3.35 s / Full 4.45 s——
-  但**同一进程里第二次解 0201 不论哪个 profile 都慢约 1 s**，0201 的 ~3.4 s 由两个 profile 都跑的某段主导，另量。
+  但**同一进程里第二次解 0201 不论哪个 profile 都慢约 1 s**，0201 的 ~3.4 s 由两个 profile 都跑的某段主导，另量——
+  **2026-09-23 量出**：`populate_geometry_hints` 里的 `sheet_probe::field_x_window_identities` 占 2.9 s（u32 `record_id` 滑窗循环对 94 条身份索引逐位线性 `find`；
+  0201 的 57 个小整数 `field_x` 命中 6,025 个窗口，扫了图纸 39.8 倍的字节），`score_..._with_identities` 再占 0.2 s；release 下同段 191 / 208 ms。细节与候选改法见计划进度。
 
 ### 样式索引改吃解好的文档：`style_link::*_for_document`，一张图只开一次（2026-09-22，计划 S1–S3）
 
