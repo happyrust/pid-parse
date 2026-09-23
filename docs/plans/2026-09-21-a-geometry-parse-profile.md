@@ -127,6 +127,18 @@
     OCS `--export` 0201 进程墙钟 3.78 → **0.92 s**，其余三图 0.4 s 不变。
   - **还剩什么**：0201 debug 剩的 ~0.5 s 里估 ~0.3 s 是那 116 万个字节位各做一次 `HashMap` 查找本身（debug 下的 SipHash），加 utf16 循环 63 ms——都是 39.8 倍窗口重叠喂出来的，
     要再压就做 ②（整条 sheet 各扫一遍再按窗口区间派发）；④ ⑤ 是小头。未做，等拍。
+- **2026-09-23（同会话）✅ 候选改法 ② 落地**，用户点选「做 ②」。仍只动 `sheet_probe.rs`，无新公开面：
+  - `field_x_window_identities` 改成**三种身份各对整条 sheet 扫一遍**（`data.windows(32 / 64 / 4)`，ASCII 32-hex / UTF-16LE 32-hex / u32 `record_id`，命中且能解析到 `field_x` 的
+    收成按 offset 升序的 `IdentityHit` 表），再**每个窗口按 `[window_start, min(window_end, len) − 值长]` 用 `partition_point` 二分取命中**。
+    每窗输出仍是 ASCII → UTF-16 → `record_id`、各按 offset 升序，`delta_from_field` / `resolves_to_same_object` 仍按该窗口算——与逐窗重扫逐条相同。
+    新单测 `field_x_window_identities_report_a_hit_once_per_window_that_contains_it`：两个重叠窗口共用一条 `record_id`，各报一次、各带自己的 delta；只落在第一个窗口里的另一条只报一次。
+  - **验证**：rustfmt 干净、`cargo clippy --all-targets -- -D warnings` 零告警；`--lib` **1117/1117**（+1）、`--test geometry_profile` 2/2、`--test parse_real_files` **135/135**、
+    `--test render_gap_census` 4/4、`--test style_link_ratchet` 15/15；**OCS 四图 `--export` DXF 与改前基线 SHA-256、字节数逐一相等**（同上一条的基线）；0201 53 条 hint 不变。
+  - **墙钟**：`field_x_window_identities` 在 0201 上 **2 880 ms（原）→ ① 后 ~300 ms（估）→ 8.9 ms**；0201 debug Geometry 整解 **0.51 → 0.31–0.32 s**、Full 0.33–0.35 s；
+    release 110–133 → **77–84 ms**；OCS `--export` 0201 进程墙钟 0.92 → **0.66–0.75 s**（0202 0.47 s）。0202 / D06 / 工艺 65 / 22 / 58 ms 不变。
+  - **现在的热段换人了**：剩 0.31 s 里 **`score_field_x_window_features`（基础评分，不含身份那步）197 ms**，其次 `field_x_windows` 17 / `field_x_window_features` 16 / 那遍 `probe_sheet_stream` 4 ms，
+    管线其余 ~60 ms。6 025 个窗口每个都要评分——再往下要么让 `field_x_windows` 少出窝（例如先按 `endpoint_record_signature_start` 或 chunk 边界筛），要么给评分里的
+    `repeated_delta_support` / 候选查找建索引；都改的是探针启发式的实现，产物应不变，仍按四图 `--export` 字节验收。未做，等拍。
 
 ## 门禁记录
 

@@ -1191,17 +1191,21 @@ pub fn sheet_identity_index_from_trailers(
 }
 
 /// Scan field-x windows for source-backed identity values.
+///
+/// Each window reports, in this order, the ASCII 32-hex `DrawingID`s, the
+/// UTF-16LE ones and the DA trailer `record_id`s whose bytes start inside
+/// it, each kind in ascending offset order. The windows overlap heavily --
+/// on DWG-0201, 6,025 windows cover 39.8x the sheet's bytes -- so the sheet
+/// is scanned once per kind and every window then takes the hits inside its
+/// range by binary search, rather than each window rescanning its bytes.
 pub fn field_x_window_identities(
     data: &[u8],
     windows: &[SheetFieldXWindow],
     identity_index: &SheetIdentityIndex,
 ) -> Vec<SheetFieldXWindowIdentity> {
-    // One table for the u32 scan below. `by_field_x` iterates in ascending
-    // `field_x` order and the linear `find` this replaces took the first
-    // identity whose `record_id` matched, so the first insert wins here too:
-    // the same answer at every byte position, without walking the whole
-    // index per position. On DWG-0201 that walk was 1.16 M positions x 94
-    // entries -- 2.8 s of a 3.2 s debug parse.
+    // `by_field_x` iterates in ascending `field_x` order and the linear
+    // `find` this table replaced took the first identity whose `record_id`
+    // matched, so the first insert wins here too.
     let mut identity_by_record_id: HashMap<u32, &SheetObjectIdentity> = HashMap::new();
     for identity in identity_index.by_field_x.values() {
         identity_by_record_id
@@ -1209,65 +1213,99 @@ pub fn field_x_window_identities(
             .or_insert(identity);
     }
 
+    // The three sheet-wide scans, each sorted by offset because `windows`
+    // walks the sheet front to back.
+    let ascii_hits: Vec<IdentityHit> = data
+        .windows(32)
+        .enumerate()
+        .filter(|(_, bytes)| is_ascii_hex_32(bytes))
+        .filter_map(|(offset, bytes)| {
+            let value = String::from_utf8_lossy(bytes).into_owned();
+            let resolves_to_field_x = identity_index.field_x_for_drawing_id(&value)?;
+            Some(IdentityHit {
+                offset,
+                kind: SheetFieldXWindowIdentityKind::DrawingIdAscii,
+                value: SheetFieldXWindowIdentityValue::Text(value),
+                resolves_to_field_x,
+            })
+        })
+        .collect();
+    let utf16_hits: Vec<IdentityHit> = data
+        .windows(64)
+        .enumerate()
+        .filter_map(|(offset, bytes)| {
+            let value = utf16_le_hex_32(bytes)?;
+            let resolves_to_field_x = identity_index.field_x_for_drawing_id(&value)?;
+            Some(IdentityHit {
+                offset,
+                kind: SheetFieldXWindowIdentityKind::DrawingIdUtf16Le,
+                value: SheetFieldXWindowIdentityValue::Text(value),
+                resolves_to_field_x,
+            })
+        })
+        .collect();
+    let record_id_hits: Vec<IdentityHit> = data
+        .windows(4)
+        .enumerate()
+        .filter_map(|(offset, bytes)| {
+            let value = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            let identity = identity_by_record_id.get(&value)?;
+            Some(IdentityHit {
+                offset,
+                kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
+                value: SheetFieldXWindowIdentityValue::U32(value),
+                resolves_to_field_x: identity.field_x,
+            })
+        })
+        .collect();
+
     let mut identities = Vec::new();
     for window in windows {
-        let mut text_offset = window.window_start;
-        while text_offset + 32 <= window.window_end && text_offset + 32 <= data.len() {
-            let bytes = &data[text_offset..text_offset + 32];
-            if is_ascii_hex_32(bytes) {
-                let value = String::from_utf8_lossy(bytes).into_owned();
-                if let Some(field_x) = identity_index.field_x_for_drawing_id(&value) {
-                    identities.push(SheetFieldXWindowIdentity {
-                        field_x: window.field_x,
-                        offset: text_offset,
-                        delta_from_field: (text_offset as isize) - (window.offset as isize),
-                        kind: SheetFieldXWindowIdentityKind::DrawingIdAscii,
-                        value: SheetFieldXWindowIdentityValue::Text(value),
-                        resolves_to_field_x: Some(field_x),
-                        resolves_to_same_object: field_x == window.field_x,
-                    });
-                }
-            }
-            text_offset += 1;
-        }
-
-        let mut utf16_offset = window.window_start;
-        while utf16_offset + 64 <= window.window_end && utf16_offset + 64 <= data.len() {
-            let bytes = &data[utf16_offset..utf16_offset + 64];
-            if let Some(value) = utf16_le_hex_32(bytes) {
-                if let Some(field_x) = identity_index.field_x_for_drawing_id(&value) {
-                    identities.push(SheetFieldXWindowIdentity {
-                        field_x: window.field_x,
-                        offset: utf16_offset,
-                        delta_from_field: (utf16_offset as isize) - (window.offset as isize),
-                        kind: SheetFieldXWindowIdentityKind::DrawingIdUtf16Le,
-                        value: SheetFieldXWindowIdentityValue::Text(value),
-                        resolves_to_field_x: Some(field_x),
-                        resolves_to_same_object: field_x == window.field_x,
-                    });
-                }
-            }
-            utf16_offset += 1;
-        }
-
-        let mut offset = window.window_start;
-        while offset + 4 <= window.window_end && offset + 4 <= data.len() {
-            let value = u32_le(data, offset);
-            if let Some(identity) = identity_by_record_id.get(&value) {
+        for (hits, value_len) in [(&ascii_hits, 32), (&utf16_hits, 64), (&record_id_hits, 4)] {
+            for hit in identity_hits_inside(hits, window, data.len(), value_len) {
                 identities.push(SheetFieldXWindowIdentity {
                     field_x: window.field_x,
-                    offset,
-                    delta_from_field: (offset as isize) - (window.offset as isize),
-                    kind: SheetFieldXWindowIdentityKind::TrailerRecordId,
-                    value: SheetFieldXWindowIdentityValue::U32(value),
-                    resolves_to_field_x: Some(identity.field_x),
-                    resolves_to_same_object: identity.field_x == window.field_x,
+                    offset: hit.offset,
+                    delta_from_field: (hit.offset as isize) - (window.offset as isize),
+                    kind: hit.kind.clone(),
+                    value: hit.value.clone(),
+                    resolves_to_field_x: Some(hit.resolves_to_field_x),
+                    resolves_to_same_object: hit.resolves_to_field_x == window.field_x,
                 });
             }
-            offset += 1;
         }
     }
     identities
+}
+
+/// One resolved identity value found in a sheet, before it is attributed to
+/// the windows that contain it.
+struct IdentityHit {
+    offset: usize,
+    kind: SheetFieldXWindowIdentityKind,
+    value: SheetFieldXWindowIdentityValue,
+    resolves_to_field_x: u32,
+}
+
+/// The hits whose `value_len` bytes start inside `window` and end inside the
+/// sheet: offsets from `window_start` up to `window_end - value_len`, the
+/// same bounds the per-window scan walked. `hits` is sorted by offset.
+fn identity_hits_inside<'a>(
+    hits: &'a [IdentityHit],
+    window: &SheetFieldXWindow,
+    data_len: usize,
+    value_len: usize,
+) -> &'a [IdentityHit] {
+    let Some(last_start) = window.window_end.min(data_len).checked_sub(value_len) else {
+        return &[];
+    };
+    let first = hits.partition_point(|hit| hit.offset < window.window_start);
+    let end = hits.partition_point(|hit| hit.offset <= last_start);
+    if first < end {
+        &hits[first..end]
+    } else {
+        &[]
+    }
 }
 
 fn is_ascii_hex_32(bytes: &[u8]) -> bool {
@@ -3076,6 +3114,60 @@ mod tests {
                 resolves_to_field_x: Some(35),
                 resolves_to_same_object: true,
             }]
+        );
+    }
+
+    #[test]
+    fn field_x_window_identities_report_a_hit_once_per_window_that_contains_it() {
+        // Two field-x hits eight bytes apart, one record_id between them: both
+        // windows contain the record_id, so it is reported twice -- window by
+        // window, each with its own delta -- and a record_id outside the
+        // second window's reach is reported for the first window only.
+        let mut data = vec![0xAAu8; 16];
+        let far_record_id_offset = data.len();
+        data.extend_from_slice(&0x7001u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 4]);
+        let first_field_offset = data.len();
+        data.extend_from_slice(&35u32.to_le_bytes());
+        let shared_record_id_offset = data.len();
+        data.extend_from_slice(&0x6009u32.to_le_bytes());
+        let second_field_offset = data.len();
+        data.extend_from_slice(&36u32.to_le_bytes());
+        data.extend_from_slice(&[0xAA; 16]);
+        let windows = field_x_windows(&data, &[35, 36], 8);
+        assert_eq!(
+            windows
+                .iter()
+                .map(|window| window.offset)
+                .collect::<Vec<_>>(),
+            vec![first_field_offset, second_field_offset]
+        );
+        let index = sheet_identity_index_from_trailers(&[
+            trailer_with_identity(35, 0x6009, 0x109, Some("0123456789ABCDEF0123456789ABCDEF")),
+            trailer_with_identity(99, 0x7001, 0x109, Some("FEDCBA9876543210FEDCBA9876543210")),
+        ]);
+
+        let identities = field_x_window_identities(&data, &windows, &index);
+
+        let summary: Vec<(u32, usize, isize, bool)> = identities
+            .iter()
+            .map(|identity| {
+                (
+                    identity.field_x,
+                    identity.offset,
+                    identity.delta_from_field,
+                    identity.resolves_to_same_object,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (35, far_record_id_offset, -8, false),
+                (35, shared_record_id_offset, 4, true),
+                (36, shared_record_id_offset, -4, false),
+            ],
+            "first window: both record_ids in offset order; second window: only the shared one"
         );
     }
 

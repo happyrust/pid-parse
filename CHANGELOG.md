@@ -24,6 +24,9 @@
 - **同日两处线性查找换 `HashMap`**（`sheet_probe.rs`，无新公开面）：`field_x_window_identities` 的 u32 循环按 `record_id` 建一次表（首个为准，与原 `find` 同答案）；
   `score_field_x_window_features_with_identities` 把同对象 `identities` 按 `field_x` 建一次表，每个 score 一次 `get`。0201 debug 解析 **3.2–3.6 s → 0.51 s**、release 208 → ~120 ms，
   hint 53 条不变；`--lib` 1116 / `parse_real_files` 135 / `geometry_profile` 2 / `render_gap_census` 4 / `style_link_ratchet` 15 全绿，OCS 四图 `--export` 字节不变。
+- **同日 `field_x_window_identities` 改成整条 sheet 每种身份扫一遍、窗口二分取命中**（原来每个窗口重扫自己那 196 字节，0201 的 6,025 个窗口叠成图纸 39.8 倍的字节）：
+  每窗输出顺序、`delta_from_field`、`resolves_to_same_object` 逐条不变，新单测钉「一条命中被几个窗口包住就报几次、各带自己的 delta」。该函数在 0201 上 2.9 s → 8.9 ms，
+  0201 debug 整解 0.51 → 0.31 s、release ~120 → ~80 ms；`--lib` 1117、其余套件与四图 `--export` 字节同上不变。剩下的热段是 `score_field_x_window_features` 本身（~200 ms，6,025 个窗口逐个评分）。
 
 ### 样式索引改吃解好的文档：`style_link::*_for_document`，一张图只开一次（2026-09-22，计划 S1–S3）
 
