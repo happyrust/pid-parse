@@ -28,15 +28,21 @@ use pid_parse::{build_normalized_geometry, PidParser};
 /// `(fixture, refused graphic records, undecoded graphic records)` — both
 /// counted in records, not in `(stream, type code)` groups.
 const EXPECTED: &[(&str, usize, usize)] = &[
-    // The one refused DependencyObject. No text is refused anywhere in the
-    // corpus any more: reading the native `igTextBox` sub-type layout
-    // decoded all 260 records of that family, so every remaining refusal
-    // below is a polyline or the 0x00FA.
+    // The one refused DependencyObject: a 22-member group its decoder's
+    // `group_kind_word <= 16` bound refuses. The word is the member count --
+    // the accepted records' shortest lengths run 36 + 8k and this one is
+    // 36 + 8 x 22 -- so the bound is too tight; the family draws nothing, so
+    // no stroke is lost. No text is refused anywhere in the corpus any more:
+    // reading the native `igTextBox` sub-type layout decoded all 260 records
+    // of that family, so every remaining refusal below is a polyline or this
+    // 0x00FA. See `docs/analysis/2026-09-24-the-last-five-refusals.md`.
     ("DWG-0201GP06-01.pid", 1, 0),
-    // 4 refused linestrings on /Sheet6. /Sheet6615's rectangle was the one
-    // dropped record until `igRectangle2d` got its decoder (2026-09-07); it
-    // decodes now, and emits nothing, being the parent of the four edge lines
-    // that already do.
+    // 4 refused linestrings on /Sheet6: two coincident vertices at scope 3,
+    // all on the switched-off HiddenObjects layer -- the gongyi drawing's
+    // population C again, a correct refusal (same analysis). /Sheet6615's
+    // rectangle was the one dropped record until `igRectangle2d` got its
+    // decoder (2026-09-07); it decodes now, and emits nothing, being the
+    // parent of the four edge lines that already do.
     ("DWG-0202GP06-01.pid", 4, 0),
     // 8 refused linestrings — population C (degenerate two-vertex), judged
     // a correct refusal.
