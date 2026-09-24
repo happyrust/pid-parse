@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### 文字按自己的 run 取样式：`igTextBox` 交出格式 run，`style_link::text_styles_for_document`（2026-09-24，OCS 计划 T1）
+
+OpenCADStudio 计划 `docs/plans/2026-09-24-pid-import-status-and-next-steps.md`（N-D1–N-D11 经 Plannotator 按推荐批准）的 pid-parse 侧，接
+`docs/analysis/2026-08-22-run-beats-paragraph-default.md`（定谳「run 赢」，当时只量不接线）。加法；`text_heights_for_document` 一字未动。
+
+- **`IgTextBoxRun` / `DecodedTextRun`，`DecodedIgTextBoxRecord::runs`**：形状 2 的那一条（`+22`——解码器本来就拿它的 `(len, selector)` 校验 `count | 0x10000`——加 `+26` 的样式 id）、
+  形状 3 文本之后的 `A + B` 条，每条 `(u16 长度, u16 选择子, u32 样式 id)`，按存储顺序；形状 1 为空，DTO 空则不写。
+- **`DocumentStyleTable::resolve_run_style`**（一跳、只认 `JStyleTextChar`；指到别的——六个 fixture 上 7 条——不跟）与 **`::paragraph_layout`**（段落的对齐 / 行距，不经第二跳）。
+- **`text_styles_for_document` / `text_styles_for_file` → `TextStyleIndex`**：每条 `ResolvedTextStyle { paragraph, run, runs: TextRunStatus, alignment, line_spacing }`；
+  `paragraph` 与 `text_heights_for_document` 同一份；run 一致时取它，不一致时取覆盖字符最多的样式（`Flattened { letterings }`，平局取先出现的）；`Unresolvable` / `LengthMismatch` 不跟 run；
+  `effective()` = run 的字高 / 颜色 / 字体 + 段落的对齐 / 行距（08-22 §5 三个坑照原样处理）。
+- 棘轮（`style_link_ratchet` 15 → 17）：四图 `igTextBox` 形状 1 / 2 / 3 = 10 / 155 / 12，选择子 1 / 2 = 257 / 12，选择子 1 全指 `JStyleTextChar`，带 run 的 167 条长度和全等于字符数，
+  选择子 2 全是记录自己的段落；155 条索引 uniform 134 / flattened 11 / 无 run 10，**会变 106（字高 103、字体 54、颜色 2）**，有效字高表与三对字体迁移逐项钉住——与 08-22 探针同数；
+  段落解不出、靠 run 救回的 0 条。`text_reaches_the_height…` 里「3.175 mm 最常见」那条注释改成「这是段落默认」。`--lib` 1117 → 1118，其余套件与 golden 不变，clippy `-D warnings` 零告警。
+- OCS 侧同日落地（OCS `9eaf8593` 把 `io::pid` 拆成目录、`fde369e8` T2）：四图 `--export` 只有 TEXT 变（0201 23 / 0202 27 / D06 3 / 工艺 38 条），其余实体与头变量零差异。
+
 ### 第三个解析 profile：`ParseProfile::Geometry`，只跑画一张图要的 pass（2026-09-22，计划 G2–G3）
 
 计划 `docs/plans/2026-09-21-a-geometry-parse-profile.md`（G-D1–G-D7 按推荐执行，G-D2 按 G1 实测改过）的 pid-parse 侧，接

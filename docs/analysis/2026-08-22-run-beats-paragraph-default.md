@@ -5,6 +5,9 @@
 > 证据等级：**厂商对象模型**（`Interop.RAD2D.dll`，Intergraph 自己的 interop 程序集）
 > ＋ **native-reader**（`radsrvitem.dll` 的 run 覆盖不变式）＋ **corpus**（点值吻合）
 > 产物：`examples/probe_igtextbox_run_vs_para`、`tools/idalib_igtextbox_run_consumers.py`
+> **2026-09-24 已接线**：pid-parse `886c431`（`DecodedIgTextBoxRecord::runs`、`style_link::text_styles_for_document`，§5 三个坑照原样处理——对齐 / 行距取段落、
+> 打架取覆盖字符最多的样式并计数、无 run 用段落默认；§3 那条注释已改）、OCS `fde369e8`（OpenCADStudio 计划 `2026-09-24-pid-import-status-and-next-steps.md` T2）。
+> 棘轮复现本文 §4 的表：155 条里会变 106（字高 103、字体 54、颜色 2），打架 11。
 
 ## TL;DR
 

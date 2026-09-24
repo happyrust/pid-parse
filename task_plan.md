@@ -114,6 +114,11 @@ clippy `-D warnings` 零告警。S4 同日落地（OCS `bbdc3d80`：五处改 `*
 `ec14ce55` Q4——`load_pid` 切 `prepare_document` / `resolve_styles` / `build_document_entities` / `finish` 四段只搬不改。OCS `--lib io::pid` 52 → 54、`pid_import` 49 → 50，
 四图 `--export` 三版（`2e9e10f5` / `edc6b495` / `ec14ce55`）字节一条线——**⑤ 单关闭，审核 ③ ④ ⑤ ⑥ 结清；⑦ ⑧ 登记不做**。
 
+**2026-09-24 · OCS 计划 `2026-09-24-pid-import-status-and-next-steps.md`（`.pid` 现状盘点与下一步，Plannotator 批准）T1 落地（`886c431`）**：
+`igTextBox` 交出格式 run（`DecodedIgTextBoxRecord::runs`），`style_link::text_styles_for_document` 两条路都给、`effective()` 取 run 的字高 / 颜色 / 字体 + 段落的对齐 / 行距——
+08-22 定谳「run 赢」那条到此接线（审核 ⑧「富文本 run 合一」随之收窄为「一条文字压成一种样式」，11 条打架的计数交给 OCS 摘要）。`style_link_ratchet` 15 → 17（155 条里会变 106，与 08-22 探针同数），
+`--lib` 1118。OCS 侧同日：S（`9eaf8593`，`io::pid` 拆成目录，四图 `--export` 字节不变）、T2（`fde369e8`，四图只有 TEXT 变，`pid_import` 51）。
+
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的
 `sheet_layer_ref` 证据保持精确，已支持家族把 storage-local oid/name 交给
