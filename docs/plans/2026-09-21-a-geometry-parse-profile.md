@@ -171,6 +171,17 @@
   - **四图 `--export`**：临时补丁（`for offset in (0..=end).step_by(4)`）编 OCS 导出后立即 `git checkout` 撤回；同一时刻的 HEAD 再编一版导出对照。0202 / D06 / 工艺与对照**字节相同**，
     0201 188 539 → 182 360 B：按实体类型 × 图层数，唯一的差别是 **`LINE` @ `PID-CONNECTIVITY` 25 → 0**（实体 335 → 310），其余是随之的句柄重排与图层表少一项。
   - 对照没有用 09-23 基线：09-24 11:39 起另一会话在做文字按 run 取样式（pid-parse `886c431` + OCS `src/io/pid/*` 未提交改动），此刻工作树编出的四图都不再等于基线，与本条无关。
+- **2026-09-24（同会话）✅ OCS 的 debug 版单独优化 pid-parse**，用户点选「给 OCS 的 debug 版单独优化 pid-parse」。OCS `c926b170`：`Cargo.toml` 加 `[profile.dev.package.pid-parse] opt-level = 2`
+  （+5 行，只改编译配置；release 与 pid-parse 自己的工作区不受影响）。
+  - **为什么是 2 不是 1**：pid-parse 单独解 0201（Geometry，debug，每次单开进程，隔离 worktree 钉在 `b1a4df4`）opt-level 0 / 1 / 2 = 279–300 / 162–181 / **74–86 ms**（release ~71 ms）；
+    opt-level 1 几乎不内联 sheet probe 耗时所在的 hashbrown / SipHash 路径，只省 ~40 %。其余三图（0 → 2）：0202 64 → 18、D06 22 → 11、工艺 57 → 15 ms。
+  - **OCS `--export` 进程墙钟**（五轮交替）：0201 627–689 → **417–467 ms**，0202 409–469 → 355–415，工艺 406–471 → 364–423，D06 基本不变。
+  - **编译**（`cargo --timings`）：pid-parse 这个单元 15.4 s（0）→ 24.6 s（1）→ 28.9 s（2）；但 OpenCADStudio 从 pid-parse 的元数据起跑（0 在第 12.8 s、2 在第 13.9 s），自己要编 71–83 s，
+    pid-parse 多出来的 codegen 在这段里并行跑完——改了 pid-parse 再编 OCS，关键路径只多 ~1 s；只改 OCS 时不变。
+  - **验证**：pid-parse 按 0 / 1 / 2 与落地配置各编一版 OCS，四图 `--export` 全部等于当前基线（T2 之后：0201 `5F082D23…` / 0202 `6FABDF0F…` / D06 `907EB0A9…` / 工艺 `9D0A54BD…`）；
+    0 与 2 两版背靠背从同一份源码编出；落地后的 `cargo build` 没有重编 pid-parse（沿用 2 那次的产物，指纹一致），即落地配置就是验过的配置。
+  - 过程：这一轮没在共享工作树上打临时补丁——变体用 `cargo --config` 传，pid-parse 的单独计时用 `D:\Rust\tmp` 下的隔离 worktree（已移除）。上一条 (d) 的临时补丁曾被另一会话的
+    `pid_import` 编进去、红过一次（OCS `818e5ae9` 有过程登记）。
 
 ## 门禁记录
 
