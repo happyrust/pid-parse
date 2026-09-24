@@ -685,6 +685,35 @@ pub struct DecodedIgTextBoxRecord {
     /// follows the insertion point. `0`, `π/2` and `π` across the corpus.
     #[serde(default)]
     pub rotation_rad: f64,
+    /// The record's formatting runs, in stored order. Empty for shape 1.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub runs: Vec<DecodedTextRun>,
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::IgTextBoxRun`] — one formatting run of an
+/// `igTextBox`: `len` characters lettered with the style `style_id` names.
+/// Selector `1` names a character style, selector `2` restates the record's
+/// paragraph style.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DecodedTextRun {
+    /// Characters the run covers.
+    pub len: u16,
+    /// The slot the run loads into: `1` a character style, `2` the paragraph
+    /// style.
+    pub selector: u16,
+    /// Style id the run names, in the record's own document.
+    pub style_id: u32,
+}
+
+impl From<crate::parsers::sheet_records::IgTextBoxRun> for DecodedTextRun {
+    fn from(run: crate::parsers::sheet_records::IgTextBoxRun) -> Self {
+        Self {
+            len: run.len,
+            selector: run.selector,
+            style_id: run.style_id,
+        }
+    }
 }
 
 impl From<crate::parsers::sheet_records::SheetIgTextBoxDecoded> for DecodedIgTextBoxRecord {
@@ -707,6 +736,7 @@ impl From<crate::parsers::sheet_records::SheetIgTextBoxDecoded> for DecodedIgTex
             trailing_double_2: d.trailing_double_2,
             trailing_double_3: d.trailing_double_3,
             rotation_rad: d.rotation_rad,
+            runs: d.runs.into_iter().map(DecodedTextRun::from).collect(),
         }
     }
 }

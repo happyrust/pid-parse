@@ -3522,6 +3522,36 @@ pub struct SheetIgTextBoxDecoded {
     /// letters horizontally, up the side of a vertical pipe run, or upside
     /// down. Renderers want degrees: `rotation_rad.to_degrees()`.
     pub rotation_rad: f64,
+    /// The record's formatting runs, in stored order — see [`IgTextBoxRun`].
+    /// Empty for shape 1, which is the shape a record without runs takes.
+    pub runs: Vec<IgTextBoxRun>,
+}
+
+/// One formatting run of an `igTextBox`: `len` characters lettered with the
+/// style `style_id` names, loaded into the slot `selector` says.
+///
+/// On disk it is an 8-byte entry `(u16 len, u16 selector, u32 style_id)`.
+/// Selector 1 names the `JStyleTextChar` those characters draw in (313 of the
+/// corpus's 320 such runs; the other seven name a `JStyleTextPara` or a
+/// `JStyleSimpleLine`). Selector 2 restates the record's own paragraph style,
+/// `+14`, on all 13 that exist. The native sizer refuses a record whose
+/// selector-1 lengths do not sum to its character count, so where a record
+/// has selector-1 runs at all, every character is in one — and the paragraph
+/// style's character style is then only the default they override. Which
+/// shape a record takes follows from its runs: shape 1 has none, shape 2
+/// exactly one selector-1 run, stored ahead of the count, and shape 3 stores
+/// `A` selector-1 then `B` selector-2 runs after its text. See
+/// `docs/analysis/2026-08-22-igtextbox-tail-kind-2-and-formatting-runs.md`
+/// and `docs/analysis/2026-08-22-run-beats-paragraph-default.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IgTextBoxRun {
+    /// Characters the run covers.
+    pub len: u16,
+    /// The slot the run loads into: `1` a character style, `2` the paragraph
+    /// style.
+    pub selector: u16,
+    /// Style id the run names, in the record's own document.
+    pub style_id: u32,
 }
 
 /// Decode every PSM-encoded `igTextBox` record in a `Sheet*` stream.
@@ -3652,6 +3682,39 @@ fn igtextbox_body_shape(payload: &[u8], text_sub_type: u16) -> Option<(u16, usiz
     }
 }
 
+/// The formatting runs one `igTextBox` body stores, in stored order: none for
+/// shape 1, the single entry at the body start for shape 2 (whose `len` and
+/// `selector` are the `count | 0x10000` dword [`igtextbox_body_shape`] checks),
+/// and the `A + B` entries after the text for shape 3.
+///
+/// Every entry lies inside the body length [`igtextbox_body_shape`] measured,
+/// so on a record that decoded this cannot come up short; an entry that
+/// would is left out rather than refusing a record the other rules accepted.
+fn igtextbox_runs(payload: &[u8], text_sub_type: u16, text_length: u16) -> Vec<IgTextBoxRun> {
+    let entry = |at: usize| -> Option<IgTextBoxRun> {
+        let b = payload.get(at..at + 8)?;
+        Some(IgTextBoxRun {
+            len: u16::from_le_bytes([b[0], b[1]]),
+            selector: u16::from_le_bytes([b[2], b[3]]),
+            style_id: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+        })
+    };
+    let u16_at = |at: usize| -> usize {
+        payload
+            .get(at..at + 2)
+            .map_or(0, |b| usize::from(u16::from_le_bytes([b[0], b[1]])))
+    };
+    match text_sub_type {
+        2 => entry(IGTEXTBOX_BODY_START).into_iter().collect(),
+        3 => {
+            let count = u16_at(IGTEXTBOX_BODY_START) + u16_at(IGTEXTBOX_BODY_START + 2);
+            let first = IGTEXTBOX_BODY_START + 6 + 2 * usize::from(text_length);
+            (0..count).filter_map(|i| entry(first + 8 * i)).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Family-specific payload validation for `igTextBox` (everything
 /// after the shared PSM envelope and the minimum-size pre-check).
 fn decode_igtextbox_payload(
@@ -3729,6 +3792,7 @@ fn decode_igtextbox_payload(
         return None;
     }
     let rotation_rad = sin.atan2(cos);
+    let runs = igtextbox_runs(payload, text_sub_type, inline_text_length);
 
     Some(SheetIgTextBoxDecoded {
         byte_range: offset..payload_end,
@@ -3747,6 +3811,7 @@ fn decode_igtextbox_payload(
         trailing_double_2: trailing[1],
         trailing_double_3: trailing[2],
         rotation_rad,
+        runs,
     })
 }
 
@@ -9679,6 +9744,71 @@ mod tests {
             assert!((t.trailing_double_2 - 0.75).abs() < 1e-12);
             assert!((t.rotation_rad.to_degrees() - 90.0).abs() < 1e-9);
         }
+    }
+
+    /// Each shape hands over the formatting runs it stores, in stored order.
+    ///
+    /// Shape 2's one run is the dword the decoder already checks against the
+    /// count — its low word is the run length, its high word selector `1` —
+    /// plus the style id after it. Shape 3's `A` character-style runs and `B`
+    /// paragraph runs follow the text; the three below are how a line number
+    /// alternates two character styles between its segments and separators.
+    #[test]
+    fn igtextbox_hands_over_the_runs_each_shape_stores() {
+        let mut shape_2 = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+        shape_2[6 + 26..6 + 30].copy_from_slice(&0x42u32.to_le_bytes());
+        let decoded = decode_igtextboxes(&shape_2);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(
+            decoded[0].runs,
+            vec![IgTextBoxRun {
+                len: 8,
+                selector: 1,
+                style_id: 0x42,
+            }]
+        );
+
+        let mut shape_3 = build_igtextbox_of_sub_type(3, "250-LNG-", (2, 1));
+        let first = 6 + 28 + 2 * 8;
+        for (i, (len, selector, style_id)) in [(3u16, 1u16, 0x42u32), (5, 1, 0x46), (1, 2, 0x24)]
+            .into_iter()
+            .enumerate()
+        {
+            let at = first + 8 * i;
+            shape_3[at..at + 2].copy_from_slice(&len.to_le_bytes());
+            shape_3[at + 2..at + 4].copy_from_slice(&selector.to_le_bytes());
+            shape_3[at + 4..at + 8].copy_from_slice(&style_id.to_le_bytes());
+        }
+        let decoded = decode_igtextboxes(&shape_3);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(
+            decoded[0].runs,
+            vec![
+                IgTextBoxRun {
+                    len: 3,
+                    selector: 1,
+                    style_id: 0x42,
+                },
+                IgTextBoxRun {
+                    len: 5,
+                    selector: 1,
+                    style_id: 0x46,
+                },
+                IgTextBoxRun {
+                    len: 1,
+                    selector: 2,
+                    style_id: 0x24,
+                },
+            ]
+        );
+
+        let shape_1 = build_igtextbox_of_sub_type(1, "PUMP", (0, 0));
+        let decoded = decode_igtextboxes(&shape_1);
+        assert_eq!(decoded.len(), 1);
+        assert!(
+            decoded[0].runs.is_empty(),
+            "shape 1 is the shape without runs"
+        );
     }
 
     /// An unknown shape is refused rather than guessed at.

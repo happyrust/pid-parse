@@ -1498,6 +1498,41 @@ impl DocumentStyleTable {
         })
     }
 
+    /// Resolve a character-style run's style id to the lettering it states.
+    ///
+    /// One hop, and only onto a `JStyleTextChar`: a run's selector-1 slot
+    /// holds a character style, so an id naming anything else — seven corpus
+    /// runs name a `JStyleTextPara` or a `JStyleSimpleLine` — is not followed
+    /// the way [`Self::resolve_text_height`] would follow a paragraph. The
+    /// result carries no alignment or line spacing: those are paragraph
+    /// properties, and a run has no paragraph.
+    #[must_use]
+    pub fn resolve_run_style(&self, style_id: u32) -> Option<ResolvedTextHeight> {
+        let char_style = self.get(style_id)?;
+        if char_style.type_code != PSM_TYPE_CODE_JSTYLE_TEXT_CHAR {
+            return None;
+        }
+        Some(ResolvedTextHeight {
+            style_id: char_style.style_id,
+            height_m: char_style.char_height_m?,
+            colour: char_style.text_colour,
+            alignment: None,
+            line_spacing: None,
+            font_name: char_style.font_name.clone(),
+        })
+    }
+
+    /// The side a text record's paragraph letters from and how far apart its
+    /// lines sit, off the record `style_id` names — whether or not the
+    /// character style behind it resolves. The same two fields
+    /// [`Self::resolve_text_height`] reports, read without its second hop.
+    #[must_use]
+    pub fn paragraph_layout(&self, style_id: u32) -> (Option<TextAlignment>, Option<f64>) {
+        self.get(style_id).map_or((None, None), |para| {
+            (para.text_alignment, para.line_spacing)
+        })
+    }
+
     /// Resolve a boundary record's `index` to the fill it draws with.
     ///
     /// Same two shapes as the line case — the id names a fill outright, or it
@@ -2132,6 +2167,207 @@ pub fn text_heights_for_document(doc: &PidDocument) -> TextHeightIndex {
 /// file.
 pub fn text_heights_for_file(path: &Path) -> Result<TextHeightIndex, PidError> {
     Ok(text_heights_for_document(&parse_for_styles(path)?))
+}
+
+/// What became of a text record's character-style runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextRunStatus {
+    /// The record stores no selector-1 run — shape 1. The paragraph's
+    /// character style is the lettering, which is what it is for.
+    NoRuns,
+    /// Every selector-1 run resolves, and all to the same lettering.
+    Uniform,
+    /// Every selector-1 run resolves, but not to one lettering: `letterings`
+    /// distinct ones. [`ResolvedTextStyle::run`] is the one covering the most
+    /// characters — a flattening a renderer drawing one style per label has
+    /// to make, and should say it made.
+    Flattened {
+        /// Distinct `(height, colour, typeface)` among the record's runs.
+        letterings: usize,
+    },
+    /// A selector-1 run names something other than a `JStyleTextChar` this
+    /// document defines, or a character style whose height does not read.
+    /// The runs are not followed.
+    Unresolvable,
+    /// The selector-1 lengths do not sum to the character count — a record
+    /// the native sizer refuses. The runs are not followed.
+    LengthMismatch,
+}
+
+/// A text record's lettering from both places a `.pid` states it: the
+/// paragraph default its `+14` reaches in two hops, and its own
+/// character-style runs.
+///
+/// The runs win wherever they exist — `Interop.RAD2D.dll` models the
+/// paragraph's character style as the default and per-character lettering as
+/// ranges over it, and the native sizer makes selector-1 runs cover every
+/// character — so [`Self::effective`] takes height, colour and typeface from
+/// the run and alignment and line spacing from the paragraph, which only it
+/// states. See `docs/analysis/2026-08-22-run-beats-paragraph-default.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedTextStyle {
+    /// The paragraph route, exactly as [`text_heights_for_document`] reports
+    /// it. `None` when that route does not resolve — on this corpus, the
+    /// labels whose paragraph names the 0.254 mm character style.
+    pub paragraph: Option<ResolvedTextHeight>,
+    /// The record's run lettering: the one covering the most characters when
+    /// its runs disagree. `None` unless [`Self::runs`] is `Uniform` or
+    /// `Flattened`.
+    pub run: Option<ResolvedTextHeight>,
+    /// What became of the runs.
+    pub runs: TextRunStatus,
+    /// The paragraph's alignment, read off the record `+14` names even when
+    /// its character style does not resolve.
+    pub alignment: Option<TextAlignment>,
+    /// The paragraph's line spacing, read the same way.
+    pub line_spacing: Option<f64>,
+}
+
+impl ResolvedTextStyle {
+    /// The lettering to draw: the run's height, colour and typeface with the
+    /// paragraph's alignment and line spacing, or the paragraph route alone
+    /// where there is no run to follow.
+    #[must_use]
+    pub fn effective(&self) -> Option<ResolvedTextHeight> {
+        match &self.run {
+            Some(run) => Some(ResolvedTextHeight {
+                alignment: self.alignment,
+                line_spacing: self.line_spacing,
+                ..run.clone()
+            }),
+            None => self.paragraph.clone(),
+        }
+    }
+}
+
+/// Every text record's lettering from both routes, keyed like
+/// [`TextHeightIndex`].
+pub type TextStyleIndex = BTreeMap<(String, u32), ResolvedTextStyle>;
+
+/// The same three fields a renderer letters with, for telling two resolved
+/// styles apart.
+fn lettering_of(style: &ResolvedTextHeight) -> (u64, Option<u32>, Option<&str>) {
+    (
+        style.height_m.to_bits(),
+        style.colour,
+        style.font_name.as_deref(),
+    )
+}
+
+/// Resolve one text record against its document's style table, both routes.
+///
+/// `None` when neither route resolves — the record has no lettering this
+/// crate can state, and a caller keeps its default.
+fn resolve_text_style(
+    table: &DocumentStyleTable,
+    record: &crate::model::DecodedIgTextBoxRecord,
+) -> Option<ResolvedTextStyle> {
+    let paragraph = table.resolve_text_height(record.index);
+    let (alignment, line_spacing) = table.paragraph_layout(record.index);
+    let selector_one: Vec<_> = record.runs.iter().filter(|run| run.selector == 1).collect();
+
+    let (run, runs) = if selector_one.is_empty() {
+        (None, TextRunStatus::NoRuns)
+    } else if selector_one
+        .iter()
+        .map(|run| usize::from(run.len))
+        .sum::<usize>()
+        != usize::from(record.text_length)
+    {
+        (None, TextRunStatus::LengthMismatch)
+    } else {
+        let resolved: Option<Vec<(usize, ResolvedTextHeight)>> = selector_one
+            .iter()
+            .map(|run| {
+                table
+                    .resolve_run_style(run.style_id)
+                    .map(|style| (usize::from(run.len), style))
+            })
+            .collect();
+        match resolved {
+            None => (None, TextRunStatus::Unresolvable),
+            Some(resolved) => {
+                // Characters per style, in first-seen order, so a tie goes to
+                // the style the label starts in.
+                let mut coverage: Vec<(usize, &ResolvedTextHeight)> = Vec::new();
+                for (chars, style) in &resolved {
+                    match coverage
+                        .iter_mut()
+                        .find(|(_, seen)| seen.style_id == style.style_id)
+                    {
+                        Some((total, _)) => *total += chars,
+                        None => coverage.push((*chars, style)),
+                    }
+                }
+                let widest = coverage
+                    .iter()
+                    .fold(
+                        None::<&(usize, &ResolvedTextHeight)>,
+                        |best, entry| match best {
+                            Some(best) if best.0 >= entry.0 => Some(best),
+                            _ => Some(entry),
+                        },
+                    )
+                    .map(|(_, style)| (*style).clone());
+                let mut letterings: Vec<_> = resolved
+                    .iter()
+                    .map(|(_, style)| lettering_of(style))
+                    .collect();
+                letterings.sort_unstable();
+                letterings.dedup();
+                let status = if letterings.len() > 1 {
+                    TextRunStatus::Flattened {
+                        letterings: letterings.len(),
+                    }
+                } else {
+                    TextRunStatus::Uniform
+                };
+                (widest, status)
+            }
+        }
+    };
+
+    if paragraph.is_none() && run.is_none() {
+        return None;
+    }
+    Some(ResolvedTextStyle {
+        paragraph,
+        run,
+        runs,
+        alignment,
+        line_spacing,
+    })
+}
+
+/// Resolve the lettering of every text record in one parsed `.pid`, from its
+/// own runs as well as its paragraph default.
+///
+/// Keyed like [`text_heights_for_document`], and a superset of it: every
+/// record that index holds is here with the same paragraph resolution, plus
+/// the records whose paragraph does not resolve but whose runs do. A
+/// renderer draws [`ResolvedTextStyle::effective`].
+#[must_use]
+pub fn text_styles_for_document(doc: &PidDocument) -> TextStyleIndex {
+    let mut out = TextStyleIndex::new();
+    for_each_document(doc, &mut |stream, sheet, table| {
+        for record in &sheet.decoded_igtextboxes {
+            if let Some(resolved) = resolve_text_style(table, record) {
+                out.insert((stream.to_string(), record.oid), resolved);
+            }
+        }
+    });
+    out
+}
+
+/// [`text_styles_for_document`] for a `.pid` on disk: parse it once, then
+/// index it.
+///
+/// # Errors
+///
+/// Returns [`PidError`] when the file cannot be opened or read as a compound
+/// file.
+pub fn text_styles_for_file(path: &Path) -> Result<TextStyleIndex, PidError> {
+    Ok(text_styles_for_document(&parse_for_styles(path)?))
 }
 
 /// Resolve the line style of every drawable record in one parsed `.pid`.

@@ -321,8 +321,12 @@ fn text_reaches_the_height_its_character_style_states() {
     .map(|(key, count)| ((*key).to_string(), *count))
     .collect();
     assert_eq!(heights, expected_heights);
-    // 3.175mm is 1/8 inch and the most common size by far, so the renderer's
-    // old fixed 2.5mm was 27% too small for most of a drawing's lettering.
+    // These are the paragraph styles' character heights -- the default a
+    // label's own runs override, not what it letters at. 3.175mm (1/8 inch,
+    // also 9 pt) is the most common default by far, but most labels carrying
+    // it run at 7 pt = 2.469mm: see
+    // `text_letters_with_its_own_runs_over_the_paragraph_default` below and
+    // `docs/analysis/2026-08-22-run-beats-paragraph-default.md` §3.
     assert_eq!(heights.values().sum::<usize>(), 155);
 }
 
@@ -1218,5 +1222,276 @@ fn a_sheet_never_resolves_against_another_documents_style_table() {
     assert_eq!(
         stylecluster_path_for_sheet("/JSite329/Sheet6"),
         "/JSite329/StyleCluster"
+    );
+}
+
+/// The runs an `igTextBox` stores decode the way the native reader lays them
+/// out, on every record of the ratchet corpus.
+///
+/// Shape follows the runs (`A = B = 0` is shape 1, one selector-1 run is
+/// shape 2, anything else shape 3); selector 1 names a character style and
+/// selector 2 restates the record's own paragraph; and the native sizer's
+/// invariant -- selector-1 lengths sum to the character count -- holds on
+/// every record that has any. See
+/// `docs/analysis/2026-08-22-igtextbox-tail-kind-2-and-formatting-runs.md`.
+#[test]
+fn a_text_records_runs_decode_as_the_native_reader_lays_them_out() {
+    use pid_parse::style_link::{
+        storage_of_sheet, PSM_TYPE_CODE_JSTYLE_TEXT_CHAR, PSM_TYPE_CODE_JSTYLE_TEXT_PARA,
+    };
+
+    let mut shapes: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut selectors: BTreeMap<u16, usize> = BTreeMap::new();
+    let mut selector_one_targets: BTreeMap<String, usize> = BTreeMap::new();
+    let mut covered = 0usize;
+    let mut with_runs = 0usize;
+    let mut paragraph_restated = 0usize;
+    let mut selector_two = 0usize;
+    let mut fixtures_seen = 0usize;
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            continue;
+        }
+        fixtures_seen += 1;
+        let doc = pid_parse::PidParser::new()
+            .parse_file(path)
+            .expect("fixture parses");
+        for sheet in &doc.sheet_streams {
+            let Some(geometry) = sheet.geometry.as_ref() else {
+                continue;
+            };
+            let table = doc.style_tables.get(&storage_of_sheet(&sheet.path));
+            for record in &geometry.decoded_igtextboxes {
+                *shapes.entry(record.text_sub_type).or_default() += 1;
+                let selector_one: Vec<_> =
+                    record.runs.iter().filter(|run| run.selector == 1).collect();
+                let expected_shape = match (selector_one.len(), record.runs.len()) {
+                    (0, 0) => 1,
+                    (1, 1) => 2,
+                    _ => 3,
+                };
+                assert_eq!(
+                    record.text_sub_type, expected_shape,
+                    "{}: oid {} is shape {} but stores {:?}",
+                    sheet.path, record.oid, record.text_sub_type, record.runs
+                );
+                if !selector_one.is_empty() {
+                    with_runs += 1;
+                    let chars: usize = selector_one.iter().map(|run| usize::from(run.len)).sum();
+                    if chars == usize::from(record.text_length) {
+                        covered += 1;
+                    }
+                }
+                for run in &record.runs {
+                    *selectors.entry(run.selector).or_default() += 1;
+                    let kind = table
+                        .and_then(|table| table.get(run.style_id))
+                        .map(|style| style.type_code);
+                    if run.selector == 1 {
+                        let name = match kind {
+                            Some(PSM_TYPE_CODE_JSTYLE_TEXT_CHAR) => "JStyleTextChar".to_string(),
+                            Some(PSM_TYPE_CODE_JSTYLE_TEXT_PARA) => "JStyleTextPara".to_string(),
+                            Some(other) => format!("0x{other:04X}"),
+                            None => "undefined".to_string(),
+                        };
+                        *selector_one_targets.entry(name).or_default() += 1;
+                    } else {
+                        selector_two += 1;
+                        if run.style_id == record.index {
+                            paragraph_restated += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if fixtures_seen < EXPECTED.len() {
+        return;
+    }
+
+    assert_eq!(
+        (shapes, selectors, selector_one_targets, with_runs, covered),
+        (
+            BTreeMap::from([(1, 10), (2, 155), (3, 12)]),
+            BTreeMap::from([(1, 257), (2, 12)]),
+            BTreeMap::from([("JStyleTextChar".to_string(), 257)]),
+            167,
+            167,
+        ),
+        "(shapes, selectors, what selector 1 names, records with runs, of which covered)"
+    );
+    assert_eq!(
+        paragraph_restated, selector_two,
+        "every selector-2 run restates its record's own paragraph style"
+    );
+}
+
+/// Text letters with its own character-style runs, not the paragraph default.
+///
+/// `igTextBox +14` names a `JStyleTextPara` whose `+38` names a character
+/// style, and until 2026-09-24 that was the only lettering read. It is the
+/// paragraph's **default**: `Interop.RAD2D.dll` models per-character lettering
+/// as ranges over it, the native sizer makes selector-1 runs cover every
+/// character of a record that has any, and the runs' heights all land on
+/// half points while the defaults sit on drafting sizes. So the run wins
+/// wherever there is one, and the paragraph keeps alignment and line spacing,
+/// which only it states. These counts are how much of the drawing that moves;
+/// see `docs/analysis/2026-08-22-run-beats-paragraph-default.md`.
+#[test]
+fn text_letters_with_its_own_runs_over_the_paragraph_default() {
+    use pid_parse::style_link::{
+        text_heights_for_file, text_styles_for_file, ResolvedTextHeight, TextRunStatus,
+    };
+
+    fn lettering(style: &ResolvedTextHeight) -> (u64, Option<u32>, Option<&str>) {
+        (
+            style.height_m.to_bits(),
+            style.colour,
+            style.font_name.as_deref(),
+        )
+    }
+
+    let mut statuses: BTreeMap<String, usize> = BTreeMap::new();
+    let mut same = 0usize;
+    let mut moved = 0usize;
+    let mut moved_height = 0usize;
+    let mut moved_colour = 0usize;
+    let mut moved_font = 0usize;
+    let mut kept_layout = 0usize;
+    let mut run_only = 0usize;
+    let mut effective_heights: BTreeMap<String, usize> = BTreeMap::new();
+    let mut font_moves: BTreeMap<String, usize> = BTreeMap::new();
+    let mut fixtures_seen = 0usize;
+    for expected in &EXPECTED {
+        let path = Path::new(expected.fixture);
+        if !path.exists() {
+            continue;
+        }
+        fixtures_seen += 1;
+        let paragraph_route = text_heights_for_file(path).expect("fixture opens for text");
+        let styles = text_styles_for_file(path).expect("fixture opens for text");
+
+        for (key, paragraph) in &paragraph_route {
+            let style = styles
+                .get(key)
+                .unwrap_or_else(|| panic!("{key:?} resolves by paragraph but is not indexed"));
+            assert_eq!(
+                style.paragraph.as_ref(),
+                Some(paragraph),
+                "{key:?}: the paragraph route is reported unchanged"
+            );
+            let status = match style.runs {
+                TextRunStatus::NoRuns => "no runs".to_string(),
+                TextRunStatus::Uniform => "uniform".to_string(),
+                TextRunStatus::Flattened { letterings } => format!("flattened x{letterings}"),
+                TextRunStatus::Unresolvable => "unresolvable".to_string(),
+                TextRunStatus::LengthMismatch => "length mismatch".to_string(),
+            };
+            *statuses.entry(status).or_default() += 1;
+
+            let effective = style.effective().expect("an indexed record letters");
+            if (effective.alignment, effective.line_spacing)
+                == (paragraph.alignment, paragraph.line_spacing)
+            {
+                kept_layout += 1;
+            }
+            *effective_heights
+                .entry(format!("{:.3}mm", effective.height_mm()))
+                .or_default() += 1;
+            if lettering(&effective) == lettering(paragraph) {
+                same += 1;
+                continue;
+            }
+            moved += 1;
+            if effective.height_m != paragraph.height_m {
+                moved_height += 1;
+            }
+            if effective.colour != paragraph.colour {
+                moved_colour += 1;
+            }
+            if effective.font_name != paragraph.font_name {
+                moved_font += 1;
+                *font_moves
+                    .entry(format!(
+                        "{} -> {}",
+                        paragraph.font_name.as_deref().unwrap_or("<none>"),
+                        effective.font_name.as_deref().unwrap_or("<none>")
+                    ))
+                    .or_default() += 1;
+            }
+        }
+        run_only += styles
+            .keys()
+            .filter(|key| !paragraph_route.contains_key(*key))
+            .count();
+    }
+    if fixtures_seen < EXPECTED.len() {
+        return;
+    }
+
+    let entries: usize = statuses.values().sum();
+    // 106 of the 155 letter differently once the run wins -- the same 106 the
+    // 2026-08-22 probe measured with the resolver swapped by hand. The 49 that
+    // stay are the 10 without runs plus 39 whose run names what the paragraph
+    // does. No label's paragraph fails and its runs rescue it: the ones that
+    // reach the 0.254mm character style reach it by both routes.
+    assert_eq!(
+        (
+            entries,
+            kept_layout,
+            (same, moved, moved_height, moved_colour, moved_font),
+            run_only,
+        ),
+        (155, 155, (49, 106, 103, 2, 54), 0),
+        "(entries, kept layout, (same, moved, height, colour, typeface), run-only)"
+    );
+    // Every run height lands on a half point (1.588 = 4.5 pt, 2.469 = 7 pt,
+    // 2.822 = 8 pt, ...); the drafting sizes left are the defaults of records
+    // with no run and the runs that name one outright. 3.175mm -- 98 of the
+    // paragraph defaults -- letters 29 labels; 2.469mm letters 56.
+    let expected_heights: BTreeMap<String, usize> = [
+        ("1.500mm", 5),
+        ("1.524mm", 1),
+        ("1.588mm", 5),
+        ("1.764mm", 1),
+        ("2.032mm", 1),
+        ("2.293mm", 9),
+        ("2.464mm", 7),
+        ("2.469mm", 56),
+        ("2.500mm", 7),
+        ("2.540mm", 2),
+        ("2.646mm", 2),
+        ("2.822mm", 19),
+        ("3.175mm", 29),
+        ("3.500mm", 2),
+        ("3.528mm", 5),
+        ("3.704mm", 1),
+        ("4.233mm", 1),
+        ("6.350mm", 2),
+    ]
+    .iter()
+    .map(|(key, count)| ((*key).to_string(), *count))
+    .collect();
+    assert_eq!(effective_heights, expected_heights, "effective heights");
+    // Braggadocio is a heavy display face; the eleven labels whose paragraph
+    // names it state Arial Narrow in their own runs.
+    assert_eq!(
+        font_moves,
+        BTreeMap::from([
+            ("Arial -> Arial Narrow".to_string(), 40),
+            ("Arial -> \u{4EFF}\u{5B8B}_GB2312".to_string(), 3),
+            ("Braggadocio -> Arial Narrow".to_string(), 11),
+        ]),
+        "typeface moves"
+    );
+    assert_eq!(
+        statuses,
+        BTreeMap::from([
+            ("flattened x2".to_string(), 11),
+            ("no runs".to_string(), 10),
+            ("uniform".to_string(), 134),
+        ]),
+        "what became of each record's runs"
     );
 }
