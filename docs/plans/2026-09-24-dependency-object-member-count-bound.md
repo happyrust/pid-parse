@@ -1,7 +1,8 @@
-# `DependencyObject` 的 `+14` 是成员数：上限 16 换成字节自洽校验 · 小计划（2026-09-24 开单，等批）
+# `DependencyObject` 的 `+14` 是成员数：上限 16 换成字节自洽校验 · 小计划（2026-09-24 开单，同日批准并落地）
 
 > 起因：OpenCADStudio 计划 `docs/plans/2026-09-24-pid-import-status-and-next-steps.md` H2——`docs/analysis/2026-09-24-the-last-five-refusals.md` 判定
-> DWG-0201 `/Sheet6` 那条被拒的 `0x00FA` 是「规则过紧」，按该计划 N-D11「判成解码器缺口再开单」→ 本单。只开单，**没改代码**。
+> DWG-0201 `/Sheet6` 那条被拒的 `0x00FA` 是「规则过紧」，按该计划 N-D11「判成解码器缺口再开单」→ 本单。开单时没改代码。
+> **2026-09-24 Plannotator 批准**（`{"decision":"approved"}`，无批注），D-D1–D-D3 按推荐执行；E1 / E2 见「进度」。
 
 ## 一句话
 
@@ -40,6 +41,19 @@ DWG-0201 那条 22 个成员的组 212 = 36 + 8·22，字节形状与别的记�
 | 解出成员表、接进语义 | D-D2 |
 | 其他 `Probed` 族的上限复查 | 没有别的拒收指向它们；有了再看 |
 
+## 进度
+
+- **E1（本次提交）**：`decode_dependency_object_payload` 的规则 5 换成 `k ≥ 1` 且 `DEPENDENCY_OBJECT_FIXED_LEN (36) + DEPENDENCY_OBJECT_BYTES_PER_MEMBER (8) · k ≤ btf`；
+  `group_kind_word` 文档改说成员数。合成单测：新增 `dependency_object_bounds_its_member_count_by_the_room_for_members`（22 成员 212 字节能解、23 成员拒）；
+  原来两条用 `k = 2` 配 44 字节的合成记录改成 52 字节（语料里 `k = 2` 最短就是 52，44 字节放不下两个成员，新规则理应拒它）。
+  棘轮：`dependency_object_decoder_ratchets_fixture_counts_and_header_fields` 0201 135 → 136（四图 352 → 353，等于宽口径探针数），里面那条 `(1..=16)` 断言换成同一条字节账；
+  `render_gap_census` 0201 `(1, 0)` → `(0, 0)`，注释改写。验证：`--lib` **1119**、`parse_real_files` 135、`render_gap_census` 4、其余集成套件全绿，clippy `-D warnings` 零告警，rustfmt 干净；
+  doctest 在本机链接失败（`link.exe` 1140 / 1318 / 1180，环境问题，未验证）。
+- **E2（OCS，代码未动）**：因 OCS 主工作树当时正被另一会话改（`rvt` 接入，未提交、编不过），在 OCS `72ae8f42` 的干净 worktree 里对本仓 E1 验：`pid_import` **51/51**、
+  `--lib io::pid` **54/54**；`pid_batch_report` 六张图 **DXF 哈希全部不变**（四主图 = OCS T2 新基线），变的只有 0201 一行：`missing` 1 → 0、`refused` `0x00FA:1` → 空。
+  OCS 的批量基线 CSV 随之更新（OCS 那边的提交）。
+
 ## 门禁记录
 
 - 2026-09-24：OCS 计划 2026-09-24 H2 的结论「规则过紧，另开小单」→ 本单（会话 opus-5-5-1）。三条决策等批。
+- 2026-09-24：Plannotator 批准，用户「小单在 Plannotator 里批了，开工 E1 / E2」→ E1 / E2 开工（会话 opus-5-5-1）。

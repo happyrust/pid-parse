@@ -118,6 +118,9 @@ clippy `-D warnings` 零告警。S4 同日落地（OCS `bbdc3d80`：五处改 `*
 `igTextBox` 交出格式 run（`DecodedIgTextBoxRecord::runs`），`style_link::text_styles_for_document` 两条路都给、`effective()` 取 run 的字高 / 颜色 / 字体 + 段落的对齐 / 行距——
 08-22 定谳「run 赢」那条到此接线（审核 ⑧「富文本 run 合一」随之收窄为「一条文字压成一种样式」，11 条打架的计数交给 OCS 摘要）。`style_link_ratchet` 15 → 17（155 条里会变 106，与 08-22 探针同数），
 `--lib` 1118。OCS 侧同日：S（`9eaf8593`，`io::pid` 拆成目录，四图 `--export` 字节不变）、T2（`fde369e8`，四图只有 TEXT 变，`pid_import` 51）。
+同日 H2（`8a83602`）给 census 剩下的五条拒收定性：0202 四条是 scope 3 的零长折线（与工艺八条同一总体，正确拒收）；0201 那条 `DependencyObject` 是 `+14 ≤ 16`
+的上限过紧——`+14` 是成员数。小计划 `docs/plans/2026-09-24-dependency-object-member-count-bound.md` 同日批准并落地：规则换成 `36 + 8·k ≤ btf`，census 0201 1 → 0，
+`DependencyObject` 四图 352 → 353，`--lib` 1119；OCS 四图 `--export` 字节不变。语料上的拒收只剩 12 条零长折线。
 
 Phase 41 - 真实图层交付闭环（complete，2026-08-31）。
 `JSheetLayer` 290/290 已按 storage 解码并由 manager 对账；1240/1240 图元的

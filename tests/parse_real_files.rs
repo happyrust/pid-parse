@@ -11751,13 +11751,14 @@ fn primitive_line_decoder_finds_no_gline2d_and_holds_invariants_if_it_ever_does(
 /// This intentionally stays at parser level. It locks the stable record
 /// envelope and count evidence from `examples/probe_psm_0x00fa_shape.rs`
 /// without promoting candidate child OIDs into the public model/schema.
-/// The conservative decoder currently emits 352 records across the
-/// four-fixture set: one fewer than the broad bounded probe count
-/// because the decoder applies additional header validation.
+/// The conservative decoder emits 353 records across the four-fixture set,
+/// the broad bounded probe's count. It emitted one fewer until 2026-09-24:
+/// DWG-0201's 22-member group, refused by a `group_kind_word <= 16` bound
+/// the member count outgrew (`docs/analysis/2026-09-24-the-last-five-refusals.md`).
 #[test]
 fn dependency_object_decoder_ratchets_fixture_counts_and_header_fields() {
     let fixtures = [
-        ("DWG-0201GP06-01.pid", 135usize),
+        ("DWG-0201GP06-01.pid", 136usize),
         ("DWG-0202GP06-01.pid", 84usize),
         ("工艺管道及仪表流程-1.pid", 125usize),
         ("export-test/publish-data/A01/A01.pid", 8usize),
@@ -11812,7 +11813,12 @@ fn dependency_object_decoder_ratchets_fixture_counts_and_header_fields() {
                 assert_eq!(group.bytes_to_follow % 2, 0);
                 assert_ne!(group.oid, 0);
                 assert_eq!(group.parent_ref, 6);
-                assert!((1..=16).contains(&group.group_kind_word));
+                assert!(
+                    group.group_kind_word >= 1
+                        && 36 + 8 * usize::from(group.group_kind_word)
+                            <= group.bytes_to_follow as usize,
+                    "a group has room for the members it counts: {group:?}"
+                );
                 assert_eq!(
                     18 + group.raw_reference_payload.len(),
                     group.bytes_to_follow as usize,

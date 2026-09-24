@@ -2488,8 +2488,18 @@ pub const IGSYMBOL2D_STYLE_REF_OFFSET: usize = 25;
 /// and a sub-type discriminator, followed by a reference-like raw tail.
 pub const PSM_TYPE_CODE_DEPENDENCY_OBJECT: u16 = 0x00FA;
 
-/// Minimum `0x00FA` payload size observed in current fixtures.
+/// Minimum `0x00FA` payload size observed in current fixtures: a group of
+/// one member, `DEPENDENCY_OBJECT_FIXED_LEN + DEPENDENCY_OBJECT_BYTES_PER_MEMBER`.
 pub const DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN: usize = 44;
+
+/// The part of a `0x00FA` payload that does not grow with its member count:
+/// the 16-byte head (oid, parent, six zero bytes, the count) and the shortest
+/// trailing property block, 20 bytes.
+const DEPENDENCY_OBJECT_FIXED_LEN: usize = 36;
+
+/// What each member adds to a `0x00FA` payload: its `(u32 oid, u16 1)` entry
+/// and its `u16` flag.
+const DEPENDENCY_OBJECT_BYTES_PER_MEMBER: usize = 8;
 
 /// Maximum `0x00FA` payload size accepted by the conservative decoder.
 ///
@@ -4137,7 +4147,10 @@ pub struct SheetDependencyObjectDecoded {
     /// Parent reference. Current fixtures consistently use `6`
     /// (`PID_Page`), so the first decoder version validates it.
     pub parent_ref: u32,
-    /// Small kind/count-like word at payload offsets 14..15.
+    /// The group's member count, at payload offsets 14..15: the tail lists
+    /// that many `(u32 oid, u16 1)` members, then as many `u16` flags, then a
+    /// property block. Named for the reading it had before the byte account
+    /// closed (`docs/analysis/2026-09-24-the-last-five-refusals.md`).
     pub group_kind_word: u16,
     /// Sub-type / version-like discriminator at payload offsets 16..17.
     pub sub_type_word: u16,
@@ -4152,7 +4165,8 @@ pub struct SheetDependencyObjectDecoded {
 /// 2. `bytes_to_follow` is even and in `[44, 512]`;
 /// 3. payload exists, `oid != 0`, `parent_ref == 6`;
 /// 4. payload bytes 8..13 are zero in the current fixture family;
-/// 5. `group_kind_word` is a small non-zero discriminator.
+/// 5. `group_kind_word` -- the member count -- is non-zero and the payload
+///    has room for that many members: `36 + 8·k <= bytes_to_follow`.
 pub fn decode_dependency_objects(data: &[u8]) -> Vec<SheetDependencyObjectDecoded> {
     DependencyObjectDecoder.scan(data)
 }
@@ -4239,8 +4253,18 @@ fn decode_dependency_object_payload(
     if payload.get(8..14)? != [0u8; 6].as_slice() {
         return None;
     }
+    // The member count: a group lists each member as `(u32 oid, u16 1)`, then
+    // one `u16` flag per member, then a property block of at least 20 bytes,
+    // so a record is at least `36 + 8·k` bytes long. The bound used to be
+    // `k <= 16`, the largest count one batch of fixtures showed; DWG-0201's
+    // 22-member group follows the same layout and was refused for it. See
+    // `docs/analysis/2026-09-24-the-last-five-refusals.md`.
     let group_kind_word = u16::from_le_bytes([payload[14], payload[15]]);
-    if group_kind_word == 0 || group_kind_word > 16 {
+    if group_kind_word == 0
+        || DEPENDENCY_OBJECT_FIXED_LEN
+            + DEPENDENCY_OBJECT_BYTES_PER_MEMBER * usize::from(group_kind_word)
+            > payload.len()
+    {
         return None;
     }
     let sub_type_word = u16::from_le_bytes([payload[16], payload[17]]);
@@ -10079,9 +10103,15 @@ mod tests {
         out
     }
 
+    /// The tail a group of `members` needs at the least: `36 + 8·k` bytes of
+    /// payload, less the 18 the builder writes itself.
+    fn shortest_dependency_tail(members: usize) -> Vec<u8> {
+        vec![0x01; 36 + 8 * members - 18]
+    }
+
     #[test]
     fn dependency_object_decodes_canonical_header_and_raw_tail() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
+        let raw_tail = shortest_dependency_tail(2);
         let record = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
 
         let decoded = decode_dependency_objects(&record);
@@ -10090,15 +10120,47 @@ mod tests {
         assert_eq!(group.byte_range, 0..record.len());
         assert_eq!(group.type_code, PSM_TYPE_CODE_DEPENDENCY_OBJECT);
         assert_eq!(group.type_flags, 0);
-        assert_eq!(
-            group.bytes_to_follow,
-            DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN as u32
-        );
+        assert_eq!(group.bytes_to_follow, 52);
         assert_eq!(group.oid, 42);
         assert_eq!(group.parent_ref, 6);
         assert_eq!(group.group_kind_word, 2);
         assert_eq!(group.sub_type_word, 0x01A1);
         assert_eq!(group.raw_reference_payload, raw_tail);
+    }
+
+    /// `+14` is the member count, bounded by the room the payload has for
+    /// members rather than by the largest count one batch of fixtures showed:
+    /// DWG-0201's 22-member group (212 bytes = 36 + 8 x 22) decodes, and a
+    /// count the payload cannot hold is still refused.
+    #[test]
+    fn dependency_object_bounds_its_member_count_by_the_room_for_members() {
+        let group_of_22 = build_synthetic_dependency_object_record(
+            781,
+            6,
+            22,
+            0x02BB,
+            &shortest_dependency_tail(22),
+        );
+        let decoded = decode_dependency_objects(&group_of_22);
+        assert_eq!(
+            decoded.len(),
+            1,
+            "a 22-member group with room for 22 decodes"
+        );
+        assert_eq!(decoded[0].bytes_to_follow, 212);
+        assert_eq!(decoded[0].group_kind_word, 22);
+
+        let too_many = build_synthetic_dependency_object_record(
+            781,
+            6,
+            23,
+            0x02BB,
+            &shortest_dependency_tail(22),
+        );
+        assert!(
+            decode_dependency_objects(&too_many).is_empty(),
+            "23 members do not fit in 212 bytes"
+        );
     }
 
     #[test]
@@ -10184,9 +10246,20 @@ mod tests {
 
     #[test]
     fn dependency_object_decodes_two_back_to_back_records() {
-        let raw_tail = vec![0x01; DEPENDENCY_OBJECT_MIN_PAYLOAD_LEN - 18];
-        let first = build_synthetic_dependency_object_record(42, 6, 2, 0x01A1, &raw_tail);
-        let second = build_synthetic_dependency_object_record(43, 6, 1, 0x00B8, &raw_tail);
+        let first = build_synthetic_dependency_object_record(
+            42,
+            6,
+            2,
+            0x01A1,
+            &shortest_dependency_tail(2),
+        );
+        let second = build_synthetic_dependency_object_record(
+            43,
+            6,
+            1,
+            0x00B8,
+            &shortest_dependency_tail(1),
+        );
         let mut data = first;
         data.extend_from_slice(&second);
 

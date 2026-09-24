@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### `DependencyObject` 的 `+14` 按成员数校验：22 个成员的组不再被拒（2026-09-24，小计划 E1）
+
+计划 `docs/plans/2026-09-24-dependency-object-member-count-bound.md`（D-D1–D-D3 经 Plannotator 按推荐批准），起因 `docs/analysis/2026-09-24-the-last-five-refusals.md`。
+
+- `decode_dependency_objects` 的规则 5 从「`group_kind_word` ∈ 1..=16」换成「`k ≥ 1` 且 `36 + 8·k ≤ bytes_to_follow`」（16 字节头 + `k` 个 `(u32 成员 oid, u16 1)` + `k` 个 `u16` 标志 + 至少 20 字节属性块）；
+  `group_kind_word` 的文档改说「成员数」，字段名与 DTO 不变（D-D2）。
+- 语料：DWG-0201 `/Sheet6` 那条 22 成员的组解出来，`DependencyObject` 四图 352 → 353（0201 135 → 136，恰是宽口径探针数）；`render_gap_census` 0201 拒收 1 → 0，
+  语料上剩下的拒收只有 0202 / 工艺的零长折线（12 条，正确拒收）。合成单测两条：22 成员能解、23 成员放不进 212 字节仍拒；原来用 `k = 2` 配 44 字节的合成记录改成 52 字节（语料里 `k = 2` 最短就是 52）。
+- `--lib` 1118 → 1119，`parse_real_files` 135 / `render_gap_census` 4 / 其余集成套件全绿，clippy `-D warnings` 零告警；doctest 在本机链接失败（`link.exe` 1140 / 1318 / 1180，环境问题，与本改动无关）。
+
 ### 文字按自己的 run 取样式：`igTextBox` 交出格式 run，`style_link::text_styles_for_document`（2026-09-24，OCS 计划 T1）
 
 OpenCADStudio 计划 `docs/plans/2026-09-24-pid-import-status-and-next-steps.md`（N-D1–N-D11 经 Plannotator 按推荐批准）的 pid-parse 侧，接

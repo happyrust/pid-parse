@@ -4,6 +4,8 @@
 > 产物：`examples/probe_the_last_refusals.rs`——按 `parsers::undecoded_census` 的链走法找出没有解码记录起于其上的
 > `0x0084` / `0x00FA` 链记录，逐条重放该族的校验规则，报第一条不过的，再列同图同族被接受的记录长什么样。
 > 上游：`2026-08-11-what-refuses-the-remaining-53.md`（工艺八条零长折线判为正确拒收）、`tests/render_gap_census.rs`。
+> **同日第二节已落地**：小计划 `docs/plans/2026-09-24-dependency-object-member-count-bound.md` 批准并实施（E1），规则换成 `36 + 8·k ≤ btf`，
+> 那条 22 成员的组解出来，census 0201 1 → 0；OCS 四图 `--export` 字节不变。
 
 ## 一句话
 

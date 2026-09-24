@@ -28,15 +28,15 @@ use pid_parse::{build_normalized_geometry, PidParser};
 /// `(fixture, refused graphic records, undecoded graphic records)` — both
 /// counted in records, not in `(stream, type code)` groups.
 const EXPECTED: &[(&str, usize, usize)] = &[
-    // The one refused DependencyObject: a 22-member group its decoder's
-    // `group_kind_word <= 16` bound refuses. The word is the member count --
-    // the accepted records' shortest lengths run 36 + 8k and this one is
-    // 36 + 8 x 22 -- so the bound is too tight; the family draws nothing, so
-    // no stroke is lost. No text is refused anywhere in the corpus any more:
-    // reading the native `igTextBox` sub-type layout decoded all 260 records
-    // of that family, so every remaining refusal below is a polyline or this
-    // 0x00FA. See `docs/analysis/2026-09-24-the-last-five-refusals.md`.
-    ("DWG-0201GP06-01.pid", 1, 0),
+    // Clean since 2026-09-24. The one refusal left here was a 22-member
+    // DependencyObject its decoder's `group_kind_word <= 16` bound refused;
+    // the word is the member count -- accepted records run 36 + 8k bytes and
+    // that one is 36 + 8 x 22 -- so the bound became "room for k members" and
+    // it decodes. No text is refused anywhere in the corpus either: reading
+    // the native `igTextBox` sub-type layout decoded all 260 records of that
+    // family, so every remaining refusal below is a zero-length polyline. See
+    // `docs/analysis/2026-09-24-the-last-five-refusals.md`.
+    ("DWG-0201GP06-01.pid", 0, 0),
     // 4 refused linestrings on /Sheet6: two coincident vertices at scope 3,
     // all on the switched-off HiddenObjects layer -- the gongyi drawing's
     // population C again, a correct refusal (same analysis). /Sheet6615's
