@@ -1483,8 +1483,8 @@ pub fn classify_field_x_record_shapes(
 /// Count distinct object fields supporting each non-generic marker shape.
 pub fn stable_marker_support(
     features: &[SheetFieldXWindowFeatures],
-) -> BTreeMap<(isize, u32), usize> {
-    let mut fields_by_marker: BTreeMap<(isize, u32), HashSet<u32>> = BTreeMap::new();
+) -> HashMap<(isize, u32), usize> {
+    let mut fields_by_marker: HashMap<(isize, u32), HashSet<u32>> = HashMap::new();
     for feature in features {
         if feature.endpoint_record_start.is_some() {
             continue;

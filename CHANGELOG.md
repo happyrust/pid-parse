@@ -28,6 +28,10 @@
   每窗输出顺序、`delta_from_field`、`resolves_to_same_object` 逐条不变，新单测钉「一条命中被几个窗口包住就报几次、各带自己的 delta」。该函数在 0201 上 2.9 s → 8.9 ms，
   0201 debug 整解 0.51 → 0.31 s、release ~120 → ~80 ms；`--lib` 1117、其余套件与四图 `--export` 字节同上不变。剩下的热段是 `score_field_x_window_features` 本身（~200 ms，6,025 个窗口逐个评分）——
   同日量出其中 `stable_marker_support` 125–151 ms（209,286 条 `stable_markers` 进 `BTreeMap<(delta, value), HashSet>`，90,279 个键）、per-feature 循环 60 ms（每窗最多 35 次对那张 90 K BTreeMap 的 `get`）；候选改法登在计划进度，未做。
+- **2026-09-24 `stable_marker_support` 的两张表换 `HashMap`，per-feature 的 marker `get` 跟着 O(1)**（`sheet_probe.rs`；`stable_marker_support` 返回类型 `BTreeMap` → `HashMap`，
+  调用方只 `get` 或收集后全排序）：评分逐条不变，OCS 四图 `--export` 字节不变，`--lib` 1117 与其余套件同上。只有 per-feature 那半见效——`score_field_x_window_features` 0201 debug
+  192–205 → 168–181 ms、release 45–46 → 38–40 ms，0201 debug Geometry 整解 302–314 → 280–286 ms、release 77–79 → ~71 ms；`stable_marker_support` 本身 debug ~135 / release ~34 ms 不变
+  （成本在 209 K 次插入与 90 K 个小 `HashSet` 的分配，不在 BTreeMap 查找），细节见计划进度。
 
 ### 样式索引改吃解好的文档：`style_link::*_for_document`，一张图只开一次（2026-09-22，计划 S1–S3）
 

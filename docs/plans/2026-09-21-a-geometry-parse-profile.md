@@ -149,6 +149,18 @@
   - **候选（未做）**：(a) `stable_marker_support` 的两张 BTreeMap 换 `HashMap`（90 K 键，O(1)），估 130 → ~30 ms；(b) per-feature 的 marker `get` 跟着换，60 → ~30 ms——两条都不改产物；
     (c) 结构性标记（`is_structural_marker_value`）现在是在 `stable_marker_support` 里过滤、`marker_candidates` 仍收——若在收集时就丢，`SheetFieldXWindowFeatures.stable_markers` 是公开产物（探针 JSON），会变，不做；
     (d) 真正的杠杆仍是窗口数：`field_x_windows` 逐字节比对小整数命中 6 025 窗，若只认 4 字节对齐的命中，窗口数与 209 K 标记都会大降，但这改的是启发式的输入，53 条 hint 是否不变要先量。
+- **2026-09-24（会话 opus-5-5-2，接手 fable-5-1-23）✅ 候选 (a)(b) 落地**，用户点选「做 (a)(b)」。只动 `sheet_probe.rs` 两行：`stable_marker_support` 的累计表与返回表 `BTreeMap` → `HashMap`
+  （返回类型随之变；调用方 `score_field_x_window_features`、单测、`parse_real_files` 那条诊断只 `get` 或收集后全排序，不受影响），per-feature 循环的 marker `get` 跟着成 O(1)。
+  - **验证**：rustfmt 干净、`cargo clippy --all-targets -- -D warnings` 零告警；`--lib` **1117/1117**、`--test geometry_profile` 2/2、`--test parse_real_files` **135/135**、
+    `--test render_gap_census` 4/4、`--test style_link_ratchet` 15/15；**OCS 四图 `--export` DXF 与改前基线 SHA-256、字节数逐一相等**（先用改前的 OCS 二进制在本机重导一遍，四个哈希与基线同值，
+    再编改后版导出比对）；临时计时 example 里 0201 的 6 025 条 score 的 Debug 摘要改前改后同值（debug 与 release 一致）。
+  - **墙钟**（临时 example，已删；每个模式单开进程，改前改后交替跑）：`score_field_x_window_features` debug **192–205 → 168–181 ms**、release 45–46 → 38–40 ms；
+    0201 Geometry 整解 debug **302–314 → 280–286 ms**、release 77–79 → 70.5–70.8 ms；OCS `--export` 0201 进程墙钟 0.76–0.83 → 0.74–0.83 s（差在噪声里）。
+  - **估错的一半**：(a) 估 130 → ~30 ms，实测 `stable_marker_support` debug 132–138 → 134–142 ms、release ~34 ms，**不变**；见效的只有 (b)（per-feature 那段 debug ~60 → ~35 ms、release ~12 → ~5 ms）。
+    成本不在 BTreeMap 查找，而在 209 K 次 `entry` + 内层 `HashSet` 插入与 90 K 个小 `HashSet` 的分配——debug 下光把 209 K 个键各 SipHash 一次就 23 ms。
+    临时 example 里另试了三种同产物的写法：扁平 `HashSet<(delta, value, field_x)>` 去重计数 111–125 ms、三元组排序去重数段 96–133 ms、`HashMap<键, Vec<u32>>` 线性去重 101–114 ms——都到不了 ~30 ms，没换。
+  - **还剩什么**：0201 debug 整解 ~0.28 s 里 `stable_marker_support` ~135 ms 仍是最大头，换数据结构压不下去，只剩 (d) 这条杠杆（让 `field_x_windows` 少出窝、209 K 标记跟着降）；
+    改的是启发式的输入，53 条 hint / 四图字节会不会变要先量。未做，等拍。
 
 ## 门禁记录
 
