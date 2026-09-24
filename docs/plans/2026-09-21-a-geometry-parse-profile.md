@@ -192,6 +192,14 @@
     多占几 GB，本地 path 依赖 iced / bevy 改了也按 opt 2 重编。
   - **结论**：acadrust 值得（DWG 读快 ~2.5 倍、DXF 写快 ~20 %，`.pid` 导出也少 ~0.1 s，代价只在 rev 变时付）；`"*"` 在 acadrust 之上只再多几个百分点，不值。
     大图在 debug 下慢的大头是 OCS 自己的场景构建与 SVG 写出（成员 crate、opt 0），调依赖的优化级别解决不了。未改，等拍。
+- **2026-09-24（同会话）✅ acadrust 也按 opt-level 2 编，本条性能链收尾**，用户点选「把 acadrust 也加进 OCS 的 profile」并「到此收尾」。
+  - OCS `2582a0eb`：`Cargo.toml` 再加 `[profile.dev.package.acadrust] opt-level = 2`（+5 行）。同一份源码（OCS `6b629e2e` 的隔离 worktree）编两版：四图 `.pid` 与三张 DWG 的
+    `--export` 七份产物**字节相同**（`.pid` 四份等于当时的新基线 0201 `B9C0890C…` / 0202 `84743800…` / D06 `240B3785…` / 工艺 `E4B45DDA…`）；DWG 读 245 → 91 ms（5 MB HVAC）/ 36 → 16 ms / 42 → 14 ms，
+    写 DXF 595 → 444 / 50 → 36 / 34 → 26 ms。落地的 TOML 写法与验过的 `--config` 指纹一致（先按 TOML 编 acadrust，再带 `--config` 复跑为 Fresh）。
+  - **全链回顾（0201，debug）**：pid-parse 自身解析 3.2–3.6 s →（①③）0.51 s →（②）0.31 s →（(a)(b)）0.28 s；OCS 的 debug 版把 pid-parse 按 opt-level 2 编 → ~80 ms；release 208 → ~71 ms。
+    OCS `--export` 0201 进程墙钟 3.78 s → ~0.42 s（其中 ~0.35 s 是进程启动与 GPU 探测）。产物全程字节不变。
+  - 没做的：(d) 量过不可行（0201 丢 35 / 53 条 hint）；全部依赖 `"*"` 量过不值；大图在 debug 下的场景构建与 SVG 写出是 OCS 自己的代码，不在本链范围。
+  - 提交：pid-parse `cd100b7` / `8109e1f` / `8968bd7`（代码）与各条文档；OCS `c926b170` / `2582a0eb`（编译配置）。本链关闭。
 
 ## 门禁记录
 
