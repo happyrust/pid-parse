@@ -182,6 +182,16 @@
     0 与 2 两版背靠背从同一份源码编出；落地后的 `cargo build` 没有重编 pid-parse（沿用 2 那次的产物，指纹一致），即落地配置就是验过的配置。
   - 过程：这一轮没在共享工作树上打临时补丁——变体用 `cargo --config` 传，pid-parse 的单独计时用 `D:\Rust\tmp` 下的隔离 worktree（已移除）。上一条 (d) 的临时补丁曾被另一会话的
     `pid_import` 编进去、红过一次（OCS `818e5ae9` 有过程登记）。
+- **2026-09-24（同会话）量：OCS debug 版再给 acadrust / 全部依赖开 opt-level 2 值不值**，用户点选「量一下」。只量不改。
+  - 方法：OCS `1d754928` 的隔离 worktree（bin 改名，不动共享可执行文件）编三版——现状（只有 pid-parse 2）/ 加 `acadrust` 2 / 全部非成员依赖 `"*"` 2（单独 target 目录）；负载三版交替跑。
+  - **结果**（现状 → acadrust → 全部）：5 MB DWG `--export` 成 DXF 进程 1.42–1.69 → 1.16–1.27 → 1.09–1.13 s，其中读 DWG 227–268 → 87–116 → 89–119 ms、写 DXF 534–708 → 446–472 → 382–405 ms；
+    0201 `--export` 693–990 → 620–884 → 591–604 ms（嘈杂，同轮约 −100 / −130 ms）；`--plot-svg` 5 MB DWG 75–78 → 76–77 → 71 s（scene+pages 53–59 s、写 SVG 17 s 基本不动），
+    763 KB P&ID DXF 18.5–21.7 → 16.7–22.6 → 16.1–17.8 s，256 KB DWG 三版都 ~19 s。四类产物（0201 DXF、27.6 MB 的 DWG→DXF、两份 SVG）三版哈希全相同。
+  - **编译**：acadrust 这个单元 opt 0 41 s → opt 2 70–72 s；它还经 `ocs_plugin_api`（OCS 构建脚本的 build-dependency）给构建脚本再编一份，那份得整个编完构建脚本才能跑，
+    所以 **acadrust 重编时关键路径 +~30 s**（只在 rev 变或 clean 时发生）。全部依赖 opt 2：干净目录从零 5 min（32 线程、566 个单元、4.1 GB）；放进共享 target 等于一次性重编 ~560 个依赖单元、
+    多占几 GB，本地 path 依赖 iced / bevy 改了也按 opt 2 重编。
+  - **结论**：acadrust 值得（DWG 读快 ~2.5 倍、DXF 写快 ~20 %，`.pid` 导出也少 ~0.1 s，代价只在 rev 变时付）；`"*"` 在 acadrust 之上只再多几个百分点，不值。
+    大图在 debug 下慢的大头是 OCS 自己的场景构建与 SVG 写出（成员 crate、opt 0），调依赖的优化级别解决不了。未改，等拍。
 
 ## 门禁记录
 
