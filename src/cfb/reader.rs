@@ -15,7 +15,10 @@ use crate::package::{PidPackage, RawStream, StorageTimestamps};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+// `cfb` reports directory-entry times as `web_time::SystemTime` (std's on
+// native, its own on wasm32); the epoch we compare them to is built from
+// the same type, or the wasm32 build stops here.
+use web_time::{SystemTime, UNIX_EPOCH};
 
 /// CFB-spec epoch: 1601-01-01 UTC. `cfb` returns this value for storages
 /// whose timestamp field was never set by the producer; we treat it as

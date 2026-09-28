@@ -17,6 +17,7 @@ pub use crate::config::{ParseOptions, ParseProfile};
 use crate::error::PidError;
 use crate::model::PidDocument;
 use crate::package::PidPackage;
+use std::io::{Read, Seek};
 use std::path::Path;
 
 /// Front-door parser for `SmartPlant` `.pid` compound files.
@@ -56,6 +57,37 @@ impl PidParser {
     /// modify and write the file back via [`crate::writer::PidWriter`].
     pub fn parse_package<P: AsRef<Path>>(&self, path: P) -> Result<PidPackage, PidError> {
         crate::cfb::reader::parse_pid_package(path.as_ref(), &self.options)
+    }
+
+    /// Parse a `.pid` from any reader -- bytes already in memory, a file a
+    /// browser handed over -- into a [`PidDocument`], the way
+    /// [`Self::parse_file`] does for a path.
+    ///
+    /// The document carries no source path (`PidPackage::source_path` is
+    /// `None` on the package route), so a consumer that looks beside the
+    /// file for a symbol library or a `_Data.xml` has nothing to look
+    /// beside; on the reference corpus every placement draws the body the
+    /// drawing caches, so the page is the same.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PidError`] when the bytes do not read as a compound file.
+    pub fn parse_reader<R: Read + Seek>(&self, reader: R) -> Result<PidDocument, PidError> {
+        Ok(self.parse_package_from_reader(reader)?.parsed)
+    }
+
+    /// [`Self::parse_package`] from any reader: the decoded document with
+    /// every stream's raw bytes beside it, for a round trip through
+    /// [`crate::writer::PidWriter`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PidError`] when the bytes do not read as a compound file.
+    pub fn parse_package_from_reader<R: Read + Seek>(
+        &self,
+        reader: R,
+    ) -> Result<PidPackage, PidError> {
+        crate::cfb::reader::parse_pid_package_from_reader(reader, &self.options)
     }
 }
 

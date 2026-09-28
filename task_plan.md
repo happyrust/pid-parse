@@ -8,7 +8,8 @@
 W0（`cc6626e`）——`backup` 特性把 SQL Server 备份 / MDF / publish 那一半做成可选，wasm32 只剩 `cfb` 的 `web-time` 时间类型 6 处；
 R1 探针 `examples/probe_run_conflicts.rs` 量出 11 条 run 打架标签差别只在连字符 / 星号（R2 MTEXT 登记不做），顺带发现 **42 条类型字带 `0x8000` 的死记录被画**；
 P-D12 同日落地——`parse_live_psm_header` 让每个族都跳过原生读取器跳过的记录，第三类普查 `skipped_records`，工艺放置 58 → 31，
-见 `docs/analysis/2026-09-28-the-native-reader-skips-a-flagged-record.md`。下一项 W1（时间垫片 + `parse_reader`）。
+见 `docs/analysis/2026-09-28-the-native-reader-skips-a-flagged-record.md`。W1 同日落地：`web_time::SystemTime` 垫片后 `.pid`-only 库在 wasm32 上编过，
+`PidParser::parse_reader`，20 个数据库侧测试标 `required-features`。下一项 W2 在 OCS 侧（`load_pid_from_bytes` + web worker 路由）。
 
 **2026-09-14 · 计划 `OpenCADStudio/docs/plans/2026-09-07-jdim-driving-dimensions-and-layer-panel.md` L1
 落地**：`0x0057 Top ViewFilterSet` 全条布局 53/53 闭合，第一张位图 = 图层显示状态，

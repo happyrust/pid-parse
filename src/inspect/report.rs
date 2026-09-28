@@ -63,14 +63,14 @@ pub fn generate_package_report(pkg: &PidPackage) -> String {
         for (path, ts) in &pkg.storage_timestamps {
             let c = ts
                 .created
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|t| t.duration_since(web_time::UNIX_EPOCH).ok())
                 .map_or_else(
                     || "(none)".to_string(),
                     |d| format!("unix+{}s", d.as_secs()),
                 );
             let m = ts
                 .modified
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|t| t.duration_since(web_time::UNIX_EPOCH).ok())
                 .map_or_else(
                     || "(none)".to_string(),
                     |d| format!("unix+{}s", d.as_secs()),

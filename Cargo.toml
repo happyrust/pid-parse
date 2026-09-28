@@ -14,6 +14,13 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 base64 = "0.22"
 cfb = "0.14"
+# The `SystemTime` a CFB directory entry reports is `cfb`'s, which is
+# `web_time::SystemTime` -- `std::time::SystemTime` re-exported on native,
+# a distinct type on wasm32 -- so the storage timestamps this crate reads,
+# keeps and writes back are typed the same way; otherwise the wasm32 build
+# stops on the six comparisons in `cfb/reader.rs` and `writer/cfb_write.rs`
+# (OCS plan 2026-09-28-pid-import-next-steps W0 / W1).
+web-time = { version = "1.1", features = ["serde"] }
 quick-xml = { version = "0.39", features = ["serialize"] }
 # rusqlite with the `bundled` feature compiles a vendored sqlite3.
 # Publish XML keeps this as an in-memory relational adapter while
@@ -27,8 +34,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 encoding_rs = "0.8"
-log = "0.4"
-env_logger = "0.11"
+# Only the publish pipeline logs, and only `pid_publish_xml` initialises a
+# logger; both ride `backup`.
+log = { version = "0.4", optional = true }
+env_logger = { version = "0.11", optional = true }
 schemars = { version = "1.2.1", features = ["preserve_order"] }
 uuid = { version = "1", features = ["serde", "v5"] }
 # `zip` is gated to the central-directory reader only — we list
@@ -53,7 +62,7 @@ default = ["backup"]
 # the `.pid` reader alone -- no vendored sqlite3, no MDF reader -- which is
 # what a wasm32 consumer (OpenCADStudio's web build) can compile; see OCS
 # plan `2026-09-28-pid-import-next-steps.md` W0.
-backup = ["dep:rusqlite", "dep:oxidized-mdf", "dep:zip", "dep:sha2"]
+backup = ["dep:rusqlite", "dep:oxidized-mdf", "dep:zip", "dep:sha2", "dep:log", "dep:env_logger"]
 
 # The binaries, example and bench that read the plant database or publish
 # from it only build with the feature they need; the `.pid`-only binaries
@@ -80,6 +89,89 @@ required-features = ["backup"]
 
 [[example]]
 name = "publish_walkthrough"
+required-features = ["backup"]
+
+# The integration tests that read the plant database, publish from it or
+# drive a binary that does; `cargo test --no-default-features` builds the
+# `.pid`-only tests and skips these.
+[[test]]
+name = "backup_boot_page"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_manifest_real_file"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_msci"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_mtf"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_refdata_real_dir"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_syscatalog"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_zip_index_real_files"
+required-features = ["backup"]
+
+[[test]]
+name = "inspect_cli"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_a01_raw_residual"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_attribute_parity"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_backlog_inventory"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_dwg_generated_parity"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_dwg_mirror"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_interface_parity"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_mdf_load"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_meta_parity"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_rel_parity"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_sqlite_load"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_writer_coverage"
+required-features = ["backup"]
+
+[[test]]
+name = "publish_xml_cli"
 required-features = ["backup"]
 
 [dev-dependencies]

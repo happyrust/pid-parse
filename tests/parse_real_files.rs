@@ -50,6 +50,70 @@ fn parse_test_file(name: &str) -> Option<pid_parse::PidDocument> {
     )
 }
 
+/// A `.pid` handed over as bytes parses to the document its path parses
+/// to -- the route a browser build takes, where there is no path
+/// (`PidParser::parse_reader`; OCS plan 2026-09-28-pid-import-next-steps W1).
+///
+/// Compared on what a renderer draws from: the sheet streams by path, each
+/// one's decoded family counts, and the projected entities. The only thing
+/// the reader route cannot know is where the file sat.
+#[test]
+fn a_reader_parses_the_same_document_as_a_path() {
+    let mut checked = 0usize;
+    for fixture in [
+        "DWG-0201GP06-01.pid",
+        "DWG-0202GP06-01.pid",
+        "D06.pid",
+        "工艺管道及仪表流程-1.pid",
+        "export-test/publish-data/A01/A01.pid",
+    ] {
+        let Some(from_path) = parse_test_file(fixture) else {
+            continue;
+        };
+        let bytes = std::fs::read(format!("test-file/{fixture}")).expect("fixture reads");
+        let from_reader = PidParser::new()
+            .parse_reader(std::io::Cursor::new(bytes))
+            .unwrap_or_else(|e| panic!("{fixture}: bytes parse: {e}"));
+        checked += 1;
+
+        let shape = |doc: &pid_parse::PidDocument| -> Vec<(String, usize, usize, usize, usize)> {
+            doc.sheet_streams
+                .iter()
+                .map(|sheet| {
+                    let g = sheet.geometry.as_ref();
+                    (
+                        sheet.path.clone(),
+                        g.map_or(0, |g| g.decoded_iglines.len()),
+                        g.map_or(0, |g| g.decoded_igtextboxes.len()),
+                        g.map_or(0, |g| g.decoded_igsymbols.len()),
+                        g.map_or(0, |g| g.skipped_records.len()),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            shape(&from_reader),
+            shape(&from_path),
+            "{fixture}: the sheets and their decoded families"
+        );
+        let entities = |doc: &pid_parse::PidDocument| {
+            pid_parse::build_normalized_geometry(doc)
+                .entities
+                .into_iter()
+                .map(|entity| (entity.id, entity.graphic_oid))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            entities(&from_reader),
+            entities(&from_path),
+            "{fixture}: the projected entities"
+        );
+    }
+    if checked == 0 {
+        eprintln!("skipping: no local fixtures for the reader route");
+    }
+}
+
 fn parse_test_package(name: &str) -> Option<pid_parse::PidPackage> {
     let path = format!("test-file/{name}");
     if !std::path::Path::new(&path).exists() {

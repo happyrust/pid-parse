@@ -27,6 +27,10 @@ OpenCADStudio 计划 `docs/plans/2026-09-28-pid-import-next-steps.md` P-D12（�
   五个二进制、`publish_walkthrough` 例子、`pid_pipeline` bench 标 `required-features`。默认特性下行为不变。
 - `cargo check --lib --no-default-features --target wasm32-unknown-unknown` 只剩 6 处同因错误：`cfb` 在 wasm 上用 `web-time::SystemTime`，
   `cfb/reader.rs:91-95` 与 `writer/cfb_write.rs:78-81` 用 `std::time::SystemTime`——W1 的活。`tests/` 里 17 个 backup / publish 测试文件未标特性（默认特性不受影响）。
+- **W1（同日）**：`StorageTimestamps` / `cfb/reader.rs` / `inspect` 改用 `web_time::SystemTime`（native 上就是 `std` 的那个类型，wasm32 上与 `cfb` 同型）——
+  **`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 通过**；`PidParser::parse_reader` / `::parse_package_from_reader`（`Read + Seek`，浏览器把字节交过来的那条路；
+  `parse_pid_package_from_reader` 早就在），棘轮 `a_reader_parses_the_same_document_as_a_path` 五图逐流逐族逐实体相同；20 个 backup / publish / `inspect_cli` 测试标 `required-features`，
+  `log` / `env_logger` 随 `backup` 可选——`cargo test --no-default-features` 编得过、跑得绿（812 单测 + 未门控的集成套件），默认特性 40 个二进制 1477 全绿，clippy 两种特性零告警。
 
 ### `DependencyObject` 的 `+14` 按成员数校验：22 个成员的组不再被拒（2026-09-24，小计划 E1）
 

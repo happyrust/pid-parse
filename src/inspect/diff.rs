@@ -133,14 +133,14 @@ pub fn render(diff: &PackageDiff) -> String {
     out
 }
 
-fn render_time(t: Option<std::time::SystemTime>) -> String {
+fn render_time(t: Option<web_time::SystemTime>) -> String {
     match t {
         None => "(none)".to_string(),
         Some(st) => {
             // Render as seconds-since-UNIX_EPOCH so the output is both
             // stable and human-comparable without pulling a formatting
             // crate. Negative values (pre-1970) fall back to `Debug`.
-            match st.duration_since(std::time::UNIX_EPOCH) {
+            match st.duration_since(web_time::UNIX_EPOCH) {
                 Ok(d) => format!("unix+{}s", d.as_secs()),
                 Err(_) => format!("{st:?}"),
             }

@@ -10,8 +10,11 @@ use crate::model::PidDocument;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::time::SystemTime;
 use uuid::Uuid;
+// `cfb`'s clock type: `std::time::SystemTime` on native, `web_time`'s own
+// on wasm32. The timestamps come from and go back to `cfb`, so they are
+// typed as `cfb` types them.
+use web_time::SystemTime;
 
 /// Raw bytes of one CFB stream plus a dirty flag.
 ///
