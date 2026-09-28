@@ -18,8 +18,11 @@ quick-xml = { version = "0.39", features = ["serialize"] }
 # rusqlite with the `bundled` feature compiles a vendored sqlite3.
 # Publish XML keeps this as an in-memory relational adapter while
 # the primary plant source is now Rust MDF parsing via oxidized-mdf.
-rusqlite = { version = "0.39", features = ["bundled"] }
-oxidized-mdf = { path = "vendor/oxidized-mdf" }
+# Both ride the `backup` feature (on by default): they are the plant
+# database side of the crate, not the `.pid` reader, and a wasm32
+# consumer cannot build the vendored sqlite3.
+rusqlite = { version = "0.39", features = ["bundled"], optional = true }
+oxidized-mdf = { path = "vendor/oxidized-mdf", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -38,8 +41,46 @@ uuid = { version = "1", features = ["serde", "v5"] }
 # stored / deflate methods. The other heavy default features
 # (aes-crypto / bzip2 / xz / lzma / zstd) stay off to keep the
 # CVE surface and build time small.
-zip = { version = "8", default-features = false, features = ["deflate"] }
-sha2 = "0.11.0"
+zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
+sha2 = { version = "0.11.0", optional = true }
+
+[features]
+default = ["backup"]
+# The SmartPlant plant-database side: the SQL Server backup / MDF readers
+# (`backup`), the publish pipeline that builds `_Data.xml` / `_Meta.xml`
+# from them (`publish`) and the export-bundle driver over both
+# (`export_bundle`), with the binaries that front them. Off, the crate is
+# the `.pid` reader alone -- no vendored sqlite3, no MDF reader -- which is
+# what a wasm32 consumer (OpenCADStudio's web build) can compile; see OCS
+# plan `2026-09-28-pid-import-next-steps.md` W0.
+backup = ["dep:rusqlite", "dep:oxidized-mdf", "dep:zip", "dep:sha2"]
+
+# The binaries, example and bench that read the plant database or publish
+# from it only build with the feature they need; the `.pid`-only binaries
+# stay auto-discovered.
+[[bin]]
+name = "pid_backup_extract"
+required-features = ["backup"]
+
+[[bin]]
+name = "pid_backup_probe"
+required-features = ["backup"]
+
+[[bin]]
+name = "pid_inspect"
+required-features = ["backup"]
+
+[[bin]]
+name = "pid_msda_probe"
+required-features = ["backup"]
+
+[[bin]]
+name = "pid_publish_xml"
+required-features = ["backup"]
+
+[[example]]
+name = "publish_walkthrough"
+required-features = ["backup"]
 
 [dev-dependencies]
 pretty_assertions = "1"
@@ -52,3 +93,4 @@ criterion = { version = "0.8", default-features = false, features = ["cargo_benc
 [[bench]]
 name = "pid_pipeline"
 harness = false
+required-features = ["backup"]

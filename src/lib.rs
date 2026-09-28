@@ -86,6 +86,11 @@
 //! missing, so `cargo run --example …` is safe on any checkout.
 
 pub mod api;
+// The plant-database side -- backup / MDF readers, the publish pipeline
+// and the export-bundle driver over them -- rides the `backup` feature
+// (on by default). Without it the crate is the `.pid` reader alone, which
+// is what a wasm32 consumer can compile.
+#[cfg(feature = "backup")]
 pub mod backup;
 pub mod bspline;
 pub mod byte_audit;
@@ -93,6 +98,7 @@ pub mod cfb;
 mod config;
 pub mod crossref;
 pub mod error;
+#[cfg(feature = "backup")]
 pub mod export_bundle;
 pub mod geometry;
 pub mod import_view;
@@ -101,6 +107,7 @@ pub mod layout;
 pub mod model;
 pub mod package;
 pub mod parsers;
+#[cfg(feature = "backup")]
 pub mod publish;
 pub mod schema;
 pub mod semantics;
@@ -116,6 +123,7 @@ pub use byte_audit::{
     StreamAuditSummary, TraceConfidence,
 };
 pub use error::PidError;
+#[cfg(feature = "backup")]
 pub use export_bundle::{
     export_bundle_publish_xml, ExportBundlePlan, ExportBundlePublishPlan, ExportBundlePublishStatus,
 };
