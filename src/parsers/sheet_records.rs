@@ -2163,12 +2163,44 @@ pub struct PsmHeader {
     pub body_start: usize,
 }
 
+/// The bit of [`PsmHeader::type_flags`] the native reader tests before it
+/// reads anything else of a record: the type word's `0x8000`, which lands
+/// in the upper of the two flag bits.
+///
+/// `PSMSerializeIn` (`radsrvitem.dll` `0x564915E0`) reads the type word
+/// and `bytes_to_follow`, and when `type_word & 0x8000` is set it seeks
+/// past the payload and returns without reading the oid — the record is
+/// not an object to it (`docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md`,
+/// the `PSMSerializeIn` section). On the corpus every record so flagged is an earlier
+/// copy of a live record: same oid, same insertion, same definition, the
+/// live one always later in the stream — or, for DWG-0202's orphan
+/// `/Sheet6615`, a whole storage the drawing no longer uses. 42 of them
+/// across the five fixtures (27 `igSymbol2d`, 8 `igLine2d`, 5
+/// `igSmartFrame2d`, 1 `igTextBox`, 1 `igRectangle2d`;
+/// `examples/probe_run_conflicts.rs` and
+/// `tests/render_gap_census.rs`). Nothing sets the other bit (`0x4000`)
+/// anywhere in the corpus.
+pub const PSM_TYPE_FLAG_NATIVE_SKIP: u16 = 0b10;
+
+impl PsmHeader {
+    /// Whether the native reader skips this record without reading it —
+    /// [`PSM_TYPE_FLAG_NATIVE_SKIP`] is set in its type word.
+    #[must_use]
+    pub fn native_reader_skips(&self) -> bool {
+        self.type_flags & PSM_TYPE_FLAG_NATIVE_SKIP != 0
+    }
+}
+
 /// Parse the shared 6-byte PSM record envelope at `offset`.
 ///
 /// Returns `None` when fewer than [`PSM_ENVELOPE_LEN`] bytes remain at
 /// `offset` (or `offset` overflows). Performs **no** family validation:
 /// callers must check [`PsmHeader::type_code`] / bounds themselves.
 /// Panic-free on arbitrary input.
+///
+/// Reads flagged records too — this is the envelope as stored, and the
+/// census and the probes need to see a record the native reader skips.
+/// A family decoder goes through [`parse_live_psm_header`] instead.
 pub fn parse_psm_header(data: &[u8], offset: usize) -> Option<PsmHeader> {
     let body_start = offset.checked_add(PSM_ENVELOPE_LEN)?;
     let header = data.get(offset..body_start)?;
@@ -2179,6 +2211,20 @@ pub fn parse_psm_header(data: &[u8], offset: usize) -> Option<PsmHeader> {
         bytes_to_follow: u32::from_le_bytes([header[2], header[3], header[4], header[5]]),
         body_start,
     })
+}
+
+/// [`parse_psm_header`] for a family decoder: `None` as well when the
+/// native reader would skip the record ([`PsmHeader::native_reader_skips`]).
+///
+/// Every `decode_at` starts here, so a superseded copy of a record is not
+/// decoded by any family, not emitted as geometry, and not indexed by
+/// `style_link` — the drawing it yields is the one the native reader
+/// draws. Such a record is counted apart from the refusals by
+/// [`crate::parsers::undecoded_census::native_skipped_record_census`]: it
+/// is not a shape a decoder failed on, it is a record the file itself has
+/// retired.
+pub fn parse_live_psm_header(data: &[u8], offset: usize) -> Option<PsmHeader> {
+    parse_psm_header(data, offset).filter(|header| !header.native_reader_skips())
 }
 
 /// Offset of the first record in a `Sheet*` stream: the 8-byte stream
@@ -2684,7 +2730,7 @@ impl PsmRecordDecoder for GLine2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetPrimitiveLineDecoded> {
-        let envelope = parse_psm_header(data, offset)?;
+        let envelope = parse_live_psm_header(data, offset)?;
         if envelope.type_code != PSM_TYPE_CODE_GLINE2D {
             return None;
         }
@@ -2925,7 +2971,7 @@ impl PsmRecordDecoder for IgLine2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgLine2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGLINE2D {
             return None;
         }
@@ -3141,7 +3187,7 @@ impl PsmRecordDecoder for IgLineString2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgLineString2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGLINESTRING2D {
             return None;
         }
@@ -3367,7 +3413,7 @@ impl PsmRecordDecoder for IgPoint2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgPoint2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGPOINT2D {
             return None;
         }
@@ -3617,7 +3663,7 @@ impl PsmRecordDecoder for IgTextBoxDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgTextBoxDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGTEXTBOX {
             return None;
         }
@@ -3977,7 +4023,7 @@ impl PsmRecordDecoder for IgSymbol2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgSymbol2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGSYMBOL2D {
             return None;
         }
@@ -4199,7 +4245,7 @@ impl PsmRecordDecoder for DependencyObjectDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetDependencyObjectDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_DEPENDENCY_OBJECT {
             return None;
         }
@@ -4450,7 +4496,7 @@ impl PsmRecordDecoder for JStyleOverrideDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetJStyleOverrideDecoded> {
-        let envelope = parse_psm_header(data, offset)?;
+        let envelope = parse_live_psm_header(data, offset)?;
         if envelope.type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
             return None;
         }
@@ -4746,7 +4792,7 @@ impl PsmRecordDecoder for SubRecord0x0010Decoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetSubRecord0x0010Decoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
             return None;
         }
@@ -4886,7 +4932,7 @@ impl PsmRecordDecoder for AttributeFragmentDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetAttributeFragmentDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_SUB_RECORD_0X0010 {
             return None;
         }
@@ -5232,7 +5278,7 @@ impl PsmRecordDecoder for IgBoundary2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgBoundary2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGBOUNDARY2D {
             return None;
         }
@@ -5538,7 +5584,7 @@ impl PsmRecordDecoder for IgSmartFrame2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgSmartFrame2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGSMARTFRAME {
             return None;
         }
@@ -5755,7 +5801,7 @@ impl PsmRecordDecoder for DoubleValueDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmDoubleValueDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_DOUBLE_VALUE || header.type_flags != 0 {
             return None;
         }
@@ -5840,7 +5886,7 @@ impl PsmRecordDecoder for VariablesDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmVariablesDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_VARIABLES || header.type_flags != 0 {
             return None;
         }
@@ -5963,7 +6009,7 @@ impl PsmRecordDecoder for SymbolInformationDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmSymbolInformationDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_JSYMBOL_INFORMATION || header.type_flags != 0 {
             return None;
         }
@@ -6141,7 +6187,7 @@ impl PsmRecordDecoder for FlavorHolderDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmFlavorHolderDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_JFLAVOR_HOLDER || header.type_flags != 0 {
             return None;
         }
@@ -6274,7 +6320,7 @@ impl PsmRecordDecoder for StandardRelationDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<PsmStandardRelationDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_STANDARD_RELATION || header.type_flags != 0 {
             return None;
         }
@@ -6869,7 +6915,7 @@ impl PsmRecordDecoder for IgCircle2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgCircle2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGCIRCLE2D
             || header.bytes_to_follow as usize != IGCIRCLE2D_PAYLOAD_LEN
         {
@@ -6919,7 +6965,7 @@ impl PsmRecordDecoder for IgArc2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgArc2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGARC2D
             || header.bytes_to_follow as usize != IGARC2D_PAYLOAD_LEN
         {
@@ -7150,7 +7196,7 @@ impl PsmRecordDecoder for IgRectangle2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgRectangle2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         let len = header.bytes_to_follow as usize;
         if header.type_code != PSM_TYPE_CODE_IGRECTANGLE2D || len < IGRECTANGLE2D_MIN_PAYLOAD_LEN {
             return None;
@@ -7297,7 +7343,7 @@ impl PsmRecordDecoder for IgBspCurve2dDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgBspCurve2dDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         let len = header.bytes_to_follow as usize;
         if header.type_code != PSM_TYPE_CODE_IGBSPCURVE2D || len < IGBSPCURVE2D_MIN_PAYLOAD_LEN {
             return None;
@@ -7906,7 +7952,7 @@ impl PsmRecordDecoder for IgDimensionDecoder {
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgDimensionDecoded> {
-        let header = parse_psm_header(data, offset)?;
+        let header = parse_live_psm_header(data, offset)?;
         if header.type_code != PSM_TYPE_CODE_IGDIMENSION {
             return None;
         }
@@ -10562,12 +10608,32 @@ mod tests {
 
     #[test]
     fn sub_record_0x0010_preserves_type_flags() {
+        // The lower flag bit (type word 0x4000) rides through: the native
+        // reader does not test it.
         let payload = vec![0u8; 16];
-        let record = build_synthetic_sub_record_0x0010(0b11, &payload);
+        let record = build_synthetic_sub_record_0x0010(0b01, &payload);
         let decoded = decode_sub_records_0x0010(&record);
         assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].type_flags, 0b11);
+        assert_eq!(decoded[0].type_flags, 0b01);
         assert_eq!(decoded[0].type_code, PSM_TYPE_CODE_SUB_RECORD_0X0010);
+    }
+
+    #[test]
+    fn a_record_the_native_reader_skips_is_not_decoded_by_any_family() {
+        // The upper flag bit (type word 0x8000) is the one PSMSerializeIn
+        // seeks past before reading the oid; `parse_live_psm_header` turns
+        // every family away from it, with or without the lower bit beside.
+        let payload = vec![0u8; 16];
+        for flags in [0b10, 0b11] {
+            let record = build_synthetic_sub_record_0x0010(flags, &payload);
+            assert!(
+                decode_sub_records_0x0010(&record).is_empty(),
+                "flags {flags:#b} must be skipped"
+            );
+            let header = parse_psm_header(&record, 0).expect("envelope reads");
+            assert!(header.native_reader_skips());
+            assert!(parse_live_psm_header(&record, 0).is_none());
+        }
     }
 
     // -----------------------------------------------------------------

@@ -212,6 +212,18 @@ pub struct SheetGeometry {
     /// and [`crate::geometry::build_normalized_geometry`] names each one.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub refused_records: Vec<SheetRefusedRecord>,
+    /// Census of PSM records **the native reader skips** — their type word
+    /// carries the `0x8000` bit `PSMSerializeIn` tests before reading the
+    /// oid — emitted by
+    /// [`crate::parsers::undecoded_census::native_skipped_record_census`].
+    ///
+    /// The third kind, disjoint from the two above. No family decodes such
+    /// a record ([`crate::parsers::sheet_records::parse_live_psm_header`]),
+    /// so it is not drawn, which is what the native reader does with it; on
+    /// the corpus each one is an earlier copy of a live record of the same
+    /// oid. Recorded so the count is visible; it warns nobody.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub skipped_records: Vec<SheetSkippedRecord>,
 }
 
 /// One PSM type code observed in a Sheet stream with no typed decoder.
@@ -235,6 +247,37 @@ pub struct SheetUndecodedTypeCode {
 
 impl From<crate::parsers::undecoded_census::UndecodedTypeCodeCount> for SheetUndecodedTypeCode {
     fn from(d: crate::parsers::undecoded_census::UndecodedTypeCodeCount) -> Self {
+        Self {
+            type_code: d.type_code,
+            count: d.count,
+            is_graphic: d.is_graphic,
+            rad_class_name: d.rad_class_name.map(str::to_string),
+        }
+    }
+}
+
+/// One PSM type code whose records the native reader skips in a Sheet
+/// stream. Model-shaped mirror of
+/// [`crate::parsers::undecoded_census::SkippedRecordCount`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SheetSkippedRecord {
+    /// PSM 14-bit type code.
+    pub type_code: u16,
+    /// Chain-validated records with this code whose type word carries the
+    /// native skip bit.
+    pub count: usize,
+    /// Whether the native graphic predicate
+    /// (`radsrvitem.dll!sub_56449950`) accepts this code — `true` means
+    /// drawing the record would have added strokes the native reader
+    /// does not draw.
+    pub is_graphic: bool,
+    /// Class name from the PSM type-code registry, when known.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub rad_class_name: Option<String>,
+}
+
+impl From<crate::parsers::undecoded_census::SkippedRecordCount> for SheetSkippedRecord {
+    fn from(d: crate::parsers::undecoded_census::SkippedRecordCount) -> Self {
         Self {
             type_code: d.type_code,
             count: d.count,

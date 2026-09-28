@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### 原生读取器跳过的记录不再解码：PSM 类型字的 `0x8000` 位（2026-09-28，OCS 计划 P-D12）
+
+OpenCADStudio 计划 `docs/plans/2026-09-28-pid-import-next-steps.md` P-D12（经 zhimo 批准），起因是同单 R1 的探针 `examples/probe_run_conflicts.rs`；分析
+`docs/analysis/2026-09-28-the-native-reader-skips-a-flagged-record.md`。
+
+- **`PsmHeader::native_reader_skips` / `PSM_TYPE_FLAG_NATIVE_SKIP` / `parse_live_psm_header`**：`PSMSerializeIn`（`radsrvitem.dll`，05-14 分析）读到类型字带 `0x8000`
+  就整条跳过、不读 oid；每个族的 `decode_at` 现在从 `parse_live_psm_header` 起步，这样的记录哪个族都不解、几何不发射、`style_link` 不索引。`parse_psm_header` 照旧读出旗标（普查与探针要看见它们）。
+- **第三类普查**：`undecoded_census::native_skipped_record_census` / `SkippedRecordCount`，`SheetGeometry::skipped_records`，`NormalizedPidGeometry::skipped_graphic_records`——
+  与「无解码器」「拒收」两类不相交（那两类现在都排除带位的记录），**不进 warnings**：不画它们正是原生的做法。
+- 语料：**42 条**——工艺 `/Sheet6` `igSymbol2d` 27（13 个活放置的 1–3 份旧副本，同 oid 同插入点同本体，活副本总在更后的字节）+ `igTextBox` 1（oid 6345 的旧文本 `250-LNG-57602- - `，
+  与现文本同插入点）；0202 `/Sheet6615` `igLine2d` 4 + `igRectangle2d` 1（整个孤儿存储已退役）；0201 `/Sheet6` `igSmartFrame2d` 5（页框副本，发射器早已按范围去重）；A01 `/JSite204/Sheet6` `igLine2d` 4。
+  另一位 `0x4000` 语料里无一处置位。
+- 棘轮随之改钉：工艺放置 58 → 31、放置笔画 (287, 237) → (181, 157)、显示笔画 237 → 157；0202 `igLine2d` 46 → 42、A01 80 → 76；线样式关联 669 → 638、
+  调色板 `As Drawn` x43 → x17 / `Normal` x161 → x157 / `Equipment - New` x4 → x3；文字形状 3 12 → 11、选择子 257 / 12 → 248 / 11、带 run 167 → 166、
+  「156 条标签对 155 条索引」那条一直记着的 oid 6345 碰撞就此消失（155 = 155）；矩形 3 → 2（`/Sheet6615` 那只与四边一起退役）。`render_gap_census` 新增
+  `the_records_the_native_reader_skips_are_counted_apart`（逐流逐类型码钉住 42 条、无告警、已解码记录无一带位）；拒收 / 无解码器两表数字不动（0 / 4 / 8 / 0 / 0，0 / 0 / 0 / 0 / 1）。
+  golden 四份重签（0202 219 → 215 实体、工艺 476 → 448、A01 117 → 113、publish 副本同 0202）。`--lib` 1119 → 1121，`render_gap_census` 4 → 5，clippy `-D warnings`（两种特性）零告警。
+- OCS 侧：不改码，但四图实体数 / 放置数 / `--export` 字节会变（工艺少 27 个放置的笔画与一条文字，0202 / A01 各少 4 条线），`pid_import` 与批量基线随 OCS 计划重钉。
+
+### `backup` 特性：读 SQL Server 备份 / MDF 与 publish 的那一半可选（2026-09-28，OCS 计划 W0）
+
+- `rusqlite` / `oxidized-mdf` / `zip` / `sha2` 改可选，`[features] default = ["backup"]`；`backup` / `publish` / `export_bundle` 三模块与 `export_bundle` 的再导出挂特性；
+  五个二进制、`publish_walkthrough` 例子、`pid_pipeline` bench 标 `required-features`。默认特性下行为不变。
+- `cargo check --lib --no-default-features --target wasm32-unknown-unknown` 只剩 6 处同因错误：`cfb` 在 wasm 上用 `web-time::SystemTime`，
+  `cfb/reader.rs:91-95` 与 `writer/cfb_write.rs:78-81` 用 `std::time::SystemTime`——W1 的活。`tests/` 里 17 个 backup / publish 测试文件未标特性（默认特性不受影响）。
+
 ### `DependencyObject` 的 `+14` 按成员数校验：22 个成员的组不再被拒（2026-09-24，小计划 E1）
 
 计划 `docs/plans/2026-09-24-dependency-object-member-count-bound.md`（D-D1–D-D3 经 Plannotator 按推荐批准），起因 `docs/analysis/2026-09-24-the-last-five-refusals.md`。

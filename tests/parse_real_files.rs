@@ -3931,14 +3931,20 @@ fn every_placement_names_a_body_the_drawing_carries() {
             ("D06.pid", (6, 6, 6, 9)),
             ("DWG-0201GP06-01.pid", (20, 20, 17, 21)),
             ("DWG-0202GP06-01.pid", (23, 23, 11, 12)),
-            ("工艺管道及仪表流程-1.pid", (58, 58, 7, 10)),
+            // 58 until the skip bit was honoured: 27 of the gongyi drawing's
+            // placement records carry the type word's 0x8000 bit -- earlier
+            // copies of 13 live placements, same insertion, same body --
+            // which the native reader seeks past (`parse_live_psm_header`).
+            ("工艺管道及仪表流程-1.pid", (31, 31, 7, 10)),
         ]),
         "(placements, resolved, distinct bodies named, bodies carried) per fixture"
     );
 }
 
-/// The corpus's three rectangles are parents of four edge lines each, and its
-/// one B-spline is a leaf that reaches the drawing as part of a symbol body.
+/// The corpus's live rectangles (A01's two A2 borders; DWG-0202's third, in
+/// the orphan `/Sheet6615`, carries the type word's 0x8000 bit with its four
+/// edges and is retired) are parents of four edge lines each, and its one
+/// B-spline is a leaf that reaches the drawing as part of a symbol body.
 ///
 /// A rectangle's five doubles read `(origin, width, rotation, height / width)`
 /// -- the A2 border of the `A01` export is `0.594 x 0.707071 = 594 x 420 mm`
@@ -4033,15 +4039,20 @@ fn rectangles_own_their_edges_and_the_bspline_reaches_its_body() {
                     .filter(|e| e.confidence == pid_parse::PidGeometryConfidence::Decoded)
                     .filter(|e| matches!(e.kind, PidGraphicKind::Line { .. }))
                     .count(),
-                4,
-                "the orphan storage's decoded line work is exactly the four edge lines"
+                0,
+                "the orphan storage's four edge lines carry the type word's 0x8000 bit \
+                 the native reader skips on, so none of its line work is live"
             );
         }
     }
     if rectangles_checked > 0 {
+        // Three until the type word's 0x8000 bit was honoured: DWG-0202's
+        // `/Sheet6615` rectangle carries it like its four edges, so the
+        // orphan storage decodes nothing live and A01's two A2 borders are
+        // the corpus's rectangles.
         assert_eq!(
-            rectangles_checked, 3,
-            "three rectangles across DWG-0202 and A01, all checked"
+            rectangles_checked, 2,
+            "two live rectangles, both on A01, both checked"
         );
     }
 
@@ -5273,7 +5284,9 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
             placed_bodies: 7,
             placed_bodies_with_hidden_strokes: 4,
             hidden_layers: &["Heat Trace", "Label"],
-            strokes_over_placements: (287, 237),
+            // (287, 237) over 58 placements until the 27 retired copies
+            // (type word 0x8000, `parse_live_psm_header`) stopped counting.
+            strokes_over_placements: (181, 157),
             // Remarks: a 1.27 mm mark of three lines, not the library's
             // 27 mm cloud of the same name.
             visible: &[((7559, 190), [3, 0, 0, 0, 0, 0])],
@@ -5587,7 +5600,9 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
         },
         Expected {
             fixture: "工艺管道及仪表流程-1.pid",
-            visible_over_placements: 237,
+            // 237 over 58 placements until the 27 retired copies stopped
+            // counting (type word 0x8000, `parse_live_psm_header`).
+            visible_over_placements: 157,
             dashed_over_placements: 45,
             dashed_bodies: &[
                 // `Xa.sym` (placed 3 times) and `Xa chu.sym` (6): a dashed

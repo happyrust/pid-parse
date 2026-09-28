@@ -20,7 +20,9 @@ use crate::parsers::{
         collect_normalized_f64_pairs, coordinate_pair_spatial_analysis,
         SPATIAL_ANALYSIS_DEFAULT_GRID_N,
     },
-    undecoded_census::{refused_record_census, undecoded_type_code_census},
+    undecoded_census::{
+        native_skipped_record_census, refused_record_census, undecoded_type_code_census,
+    },
 };
 use crate::style_link::DocumentStyleTable;
 use std::io::Read;
@@ -302,6 +304,14 @@ fn sheet_geometry_from_probe(
     // bytes that family refused is invisible to the census above, which tests
     // the type code rather than the record. Same walk, same claimed ranges.
     geometry.refused_records = refused_record_census(raw_data, &claimed)
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    // The third kind: records whose type word carries the bit the native
+    // reader skips on. No decoder claims them (`parse_live_psm_header`), and
+    // the two censuses above leave them out, so they are counted here or
+    // nowhere.
+    geometry.skipped_records = native_skipped_record_census(raw_data, &claimed)
         .into_iter()
         .map(Into::into)
         .collect();

@@ -69,26 +69,28 @@ const EXPECTED: [Expected; 4] = [
         via_override: 24,
     },
     // `Sheet6615`'s four `igLine2d` — the sides of a rectangle, beside a
-    // `0x0020` Rectangle Object — are in this count now. They were refused
-    // for two phases over an `aux_hi` of 6996 rather than 12, and the fact
-    // that all four resolve to a style this document defines is one more
-    // reading that they were always records.
+    // `0x0020` Rectangle Object — were in this count from the phase that
+    // retired the `aux_hi == 12` rule (46) until the type word's 0x8000 bit
+    // was honoured: all four carry it, so the native reader never reads
+    // them and neither does any family decoder (`parse_live_psm_header`).
     Expected {
         fixture: "test-file/DWG-0202GP06-01.pid",
-        lines: 46,
+        lines: 42,
         points: 31,
         linestrings: 28,
         symbols: 23,
-        direct: 100,
+        direct: 96,
         via_override: 28,
     },
+    // 58 placements until the same bit: 27 of them are earlier copies of 13
+    // live placements (same oid, insertion and body), retired by the file.
     Expected {
         fixture: "test-file/工艺管道及仪表流程-1.pid",
         lines: 218,
         points: 36,
         linestrings: 49,
-        symbols: 58,
-        direct: 355,
+        symbols: 31,
+        direct: 328,
         via_override: 6,
     },
 ];
@@ -100,9 +102,11 @@ const EXPECTED_PALETTE: [(&str, usize); 12] = [
     ("0.100mm #008000", 10),
     ("0.130mm #000000", 182),
     ("0.180mm #008000", 13),
-    ("0.350mm #000000", 226),
+    // 226 / 22 until the 31 records carrying the type word's 0x8000 bit
+    // stopped being decoded (30 of them black, one maroon).
+    ("0.350mm #000000", 196),
     ("0.350mm #008000", 2),
-    ("0.350mm #800000", 22),
+    ("0.350mm #800000", 21),
     ("0.350mm #808000", 32),
     ("0.350mm #FE0060", 6),
     ("0.500mm #0000FF", 12),
@@ -257,7 +261,10 @@ fn every_drawable_record_reaches_a_line_width_and_colour() {
         return;
     }
 
-    assert_eq!(corpus_records, 669, "records reaching a line style");
+    // 669 until the 31 records carrying the type word's 0x8000 bit stopped
+    // being decoded (27 gongyi placements, DWG-0202's four `/Sheet6615`
+    // lines): the native reader seeks past them before reading an oid.
+    assert_eq!(corpus_records, 638, "records reaching a line style");
     let expected_palette: BTreeMap<String, usize> = EXPECTED_PALETTE
         .iter()
         .map(|(key, count)| ((*key).to_string(), *count))
@@ -515,7 +522,9 @@ fn a_second_line_and_a_widened_spacing_are_the_same_labels() {
     }
 
     let expected_cross: BTreeMap<(bool, String), usize> = [
-        ((false, "1.000"), 151),
+        // 151 until the gongyi drawing's retired copy of label oid 6345
+        // (type word 0x8000) stopped being indexed.
+        ((false, "1.000"), 150),
         ((false, "1.500"), 3),
         ((true, "1.500"), 2),
     ]
@@ -528,19 +537,17 @@ fn a_second_line_and_a_widened_spacing_are_the_same_labels() {
          we report as single, which is the reading this field is here to prevent"
     );
 
-    // 156 labels join onto the 155 index entries the sibling tests above pin,
-    // and the difference is one real collision rather than a rounding of the
-    // story: in `工艺管道及仪表流程-1.pid`, two `igTextBox` records on
-    // `/Sheet6` share oid 6345. `TextHeightIndex` is keyed by (stream, oid),
-    // so they collapse to one entry and the second label inherits the first's
-    // style. Both happen to state 1.0 and neither has a second line, so it
-    // costs this measurement nothing — but it is pinned here because the next
-    // person to compare these two totals deserves the answer rather than the
-    // discrepancy.
+    // 155 labels join onto the 155 index entries the sibling tests above pin.
+    // Until 2026-09-28 it was 156 onto 155: in `工艺管道及仪表流程-1.pid`, two
+    // `igTextBox` records on `/Sheet6` shared oid 6345 and collapsed to one
+    // (stream, oid) entry. The earlier of the two carries the type word's
+    // 0x8000 bit -- it is the label's retired text `250-LNG-57602- - `, which
+    // the native reader seeks past -- and `parse_live_psm_header` now keeps it
+    // out of every family, so the two totals agree.
     assert_eq!(
         cross.values().sum::<usize>(),
-        156,
-        "labels reaching a style, one more than the 155 distinct (stream, oid) entries"
+        155,
+        "labels reaching a style, one per distinct (stream, oid) entry"
     );
 }
 
@@ -775,7 +782,10 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
         );
     }
     if joined > 0 {
-        assert_eq!(joined, 669, "entities joined to a line style");
+        // 669 until the 31 records carrying the type word's 0x8000 bit (27
+        // gongyi placements, DWG-0202's four `/Sheet6615` lines) stopped
+        // being decoded, as the native reader never decodes them.
+        assert_eq!(joined, 638, "entities joined to a line style");
     }
 }
 
@@ -1094,15 +1104,21 @@ fn the_file_level_name_index_answers_the_join_a_renderer_makes() {
 /// This is the list that says the name is worth decoding at all. Three roles
 /// of piping are drawn identically; so are a nozzle and the equipment it sits
 /// on. Nothing in the symbology can separate them.
+///
+/// `As Drawn` read x43, `Normal` x161 and `Equipment - New` x4 until the
+/// type word's 0x8000 bit was honoured: the 27 retired placement copies on
+/// the gongyi drawing named `As Drawn` (26) and `Normal` (1), the four
+/// retired `/Sheet6615` lines on DWG-0202 `Normal` (3) and `Equipment - New`
+/// (1). The native reader never reads them; neither does this crate now.
 const EXPECTED_CROSSINGS: [&str; 4] = [
     "0.180mm #008000 <- Connect To Process x4, Electric x3, Off-Line Instrument x6",
-    "0.350mm #000000 <- As Drawn x43, Dashed x22, Normal x161",
-    "0.350mm #800000 <- Equipment - New x4, Nozzle - New x18",
+    "0.350mm #000000 <- As Drawn x17, Dashed x22, Normal x157",
+    "0.350mm #800000 <- Equipment - New x3, Nozzle - New x18",
     "0.350mm #808000 <- Piping Component - New x7, Piping OPC x15, Secondary Piping - New x10",
 ];
 
 /// The one name that spans more than one palette entry, whole.
-const EXPECTED_SPANS: [&str; 1] = ["As Drawn -> 0.350mm #000000 x43, 0.500mm #0000FF x12"];
+const EXPECTED_SPANS: [&str; 1] = ["As Drawn -> 0.350mm #000000 x17, 0.500mm #0000FF x12"];
 
 /// The authored name is a classification the symbology cannot express.
 ///
@@ -1310,14 +1326,17 @@ fn a_text_records_runs_decode_as_the_native_reader_lays_them_out() {
         return;
     }
 
+    // Shape 3 counted 12 (selectors 257 / 12, 167 with runs) until the
+    // gongyi drawing's retired copy of label oid 6345 -- nine runs, type word
+    // 0x8000 -- stopped being decoded (`parse_live_psm_header`).
     assert_eq!(
         (shapes, selectors, selector_one_targets, with_runs, covered),
         (
-            BTreeMap::from([(1, 10), (2, 155), (3, 12)]),
-            BTreeMap::from([(1, 257), (2, 12)]),
-            BTreeMap::from([("JStyleTextChar".to_string(), 257)]),
-            167,
-            167,
+            BTreeMap::from([(1, 10), (2, 155), (3, 11)]),
+            BTreeMap::from([(1, 248), (2, 11)]),
+            BTreeMap::from([("JStyleTextChar".to_string(), 248)]),
+            166,
+            166,
         ),
         "(shapes, selectors, what selector 1 names, records with runs, of which covered)"
     );

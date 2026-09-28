@@ -64,10 +64,15 @@ fn main() {
     // stream that holds one oid twice is seen for what it is: the geometry
     // emitter draws every record, the style index keeps one per oid.
     let mut by_oid: BTreeMap<(String, String, u32), Vec<String>> = BTreeMap::new();
-    // Records whose PSM type word carries a flag bit, per family. The native
-    // reader (`PSMSerializeIn`, radsrvitem.dll) skips a record whose type
-    // word has `0x8000` set -- `type_flags & 0x2` here -- before it even
+    // Decoded records whose PSM type word carries a flag bit, per family. The
+    // native reader (`PSMSerializeIn`, radsrvitem.dll) skips a record whose
+    // type word has `0x8000` set -- `type_flags & 0x2` here -- before it even
     // reads the oid; see docs/analysis/2026-05-14-radsrvitem-psm-serialize-bytes.md.
+    // This is how the 42 retired records on the corpus were first seen
+    // (docs/analysis/2026-09-28-the-native-reader-skips-a-flagged-record.md);
+    // since `parse_live_psm_header` no family decodes them, so this section
+    // is expected to read zero and `SheetGeometry::skipped_records` holds
+    // the count.
     let mut flagged: BTreeMap<(&str, u16), usize> = BTreeMap::new();
     let mut flagged_examples: Vec<String> = Vec::new();
 

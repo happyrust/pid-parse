@@ -41,6 +41,8 @@
 
 use core::ops::Range;
 
+use crate::parsers::sheet_records::PSM_TYPE_FLAG_NATIVE_SKIP;
+
 /// PSM type codes accepted by the native graphic predicate
 /// `radsrvitem.dll!sub_56449950` (the "these draw" set).
 ///
@@ -155,6 +157,29 @@ pub struct RefusedRecordCount {
     pub rad_class_name: Option<&'static str>,
 }
 
+/// One PSM type code whose records the native reader skips in this stream:
+/// their type word carries [`PSM_TYPE_FLAG_NATIVE_SKIP`], which
+/// `PSMSerializeIn` tests before reading the oid.
+///
+/// Neither of the other two kinds. A skipped record is not a type code
+/// without a decoder and not a shape a decoder refused: it is a record the
+/// file has retired — on the corpus, always an earlier copy of a live
+/// record of the same oid — and leaving it undrawn is what the native
+/// reader does. Reported so the count is visible, never warned about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedRecordCount {
+    /// PSM 14-bit type code.
+    pub type_code: u16,
+    /// Number of chain-validated records with this code whose type word
+    /// carries the skip bit.
+    pub count: usize,
+    /// Whether the native graphic predicate accepts this code — i.e.
+    /// whether drawing the record would have added strokes.
+    pub is_graphic: bool,
+    /// Class name from the PSM type-code registry, when known.
+    pub rad_class_name: Option<&'static str>,
+}
+
 /// Smallest `bytes_to_follow` a census candidate may carry. Matches the
 /// histogram probe's floor; anything smaller is header noise.
 const CENSUS_MIN_BYTES_TO_FOLLOW: usize = 8;
@@ -205,8 +230,8 @@ pub fn undecoded_type_code_census(
     data: &[u8],
     claimed: &[Range<usize>],
 ) -> Vec<UndecodedTypeCodeCount> {
-    unclaimed_counts(data, claimed, |type_code| {
-        !DECODED_TYPE_CODES.contains(&type_code)
+    unclaimed_counts(data, claimed, |type_code, native_skipped| {
+        !native_skipped && !DECODED_TYPE_CODES.contains(&type_code)
     })
     .into_iter()
     .map(|(type_code, count)| UndecodedTypeCodeCount {
@@ -236,8 +261,8 @@ pub fn undecoded_type_code_census(
 /// The graphic/non-graphic split is the same native predicate the undecoded
 /// census uses, so consumers can apply one warn rule to both.
 pub fn refused_record_census(data: &[u8], claimed: &[Range<usize>]) -> Vec<RefusedRecordCount> {
-    unclaimed_counts(data, claimed, |type_code| {
-        DECODED_TYPE_CODES.contains(&type_code)
+    unclaimed_counts(data, claimed, |type_code, native_skipped| {
+        !native_skipped && DECODED_TYPE_CODES.contains(&type_code)
     })
     .into_iter()
     .map(|(type_code, count)| RefusedRecordCount {
@@ -249,23 +274,52 @@ pub fn refused_record_census(data: &[u8], claimed: &[Range<usize>]) -> Vec<Refus
     .collect()
 }
 
-/// Walk the record chain once and count, per type code, the records that no
-/// `claimed` range covers and that `keep` selects.
+/// Count the chain-validated PSM records in `data` whose type word carries
+/// [`PSM_TYPE_FLAG_NATIVE_SKIP`] — the records the native reader skips
+/// without reading, and which
+/// [`crate::parsers::sheet_records::parse_live_psm_header`] keeps out of
+/// every family decoder for the same reason.
 ///
-/// Both censuses go through here so they cannot disagree about what a record
-/// is or which ranges are claimed — the failure that let refused records fall
-/// between them in the first place.
+/// The third kind beside [`undecoded_type_code_census`] and
+/// [`refused_record_census`], and disjoint from both: a skipped record is
+/// excluded from those two whether or not its type code has a decoder. Same
+/// walk, same claimed ranges, so the three cannot overlap or leave a record
+/// uncounted.
+pub fn native_skipped_record_census(
+    data: &[u8],
+    claimed: &[Range<usize>],
+) -> Vec<SkippedRecordCount> {
+    unclaimed_counts(data, claimed, |_, native_skipped| native_skipped)
+        .into_iter()
+        .map(|(type_code, count)| SkippedRecordCount {
+            type_code,
+            count,
+            is_graphic: is_native_graphic_type_code(type_code),
+            rad_class_name: rad_class_name(type_code),
+        })
+        .collect()
+}
+
+/// Walk the record chain once and count, per type code, the records that no
+/// `claimed` range covers and that `keep` selects — `keep` sees the 14-bit
+/// type code and whether the type word carries the native skip bit.
+///
+/// All three censuses go through here so they cannot disagree about what a
+/// record is or which ranges are claimed — the failure that let refused
+/// records fall between them in the first place.
 fn unclaimed_counts(
     data: &[u8],
     claimed: &[Range<usize>],
-    keep: impl Fn(u16) -> bool,
+    keep: impl Fn(u16, bool) -> bool,
 ) -> std::collections::BTreeMap<u16, usize> {
     let mut counts: std::collections::BTreeMap<u16, usize> = std::collections::BTreeMap::new();
     let mut off = 0usize;
     while off + 6 <= data.len() {
         if let Some(end) = psm_record_end(data, off) {
             if end == data.len() || psm_record_end(data, end).is_some() {
-                let type_code = u16::from_le_bytes([data[off], data[off + 1]]) & 0x3FFF;
+                let type_word = u16::from_le_bytes([data[off], data[off + 1]]);
+                let type_code = type_word & 0x3FFF;
+                let native_skipped = (type_word >> 14) & PSM_TYPE_FLAG_NATIVE_SKIP != 0;
                 // A claim shadows this record only when it *is* this record:
                 // the claimed range starts where the record starts. The old
                 // test was containment, and containment let a scan-based
@@ -278,7 +332,7 @@ fn unclaimed_counts(
                 // refusals; measured in
                 // `docs/analysis/2026-08-11-what-refuses-the-remaining-53.md` §5.
                 let claimed_here = claimed.iter().any(|range| range.start == off);
-                if !claimed_here && keep(type_code) {
+                if !claimed_here && keep(type_code, native_skipped) {
                     *counts.entry(type_code).or_insert(0) += 1;
                 }
                 off = end;
@@ -366,6 +420,32 @@ mod tests {
         assert_eq!(census[0].type_code, 0x0117);
         assert_eq!(census[0].count, 1);
         assert!(second_start > 0);
+    }
+
+    #[test]
+    fn a_record_the_native_reader_skips_is_neither_refused_nor_undecoded() {
+        // The same igLine2d with the type word's 0x8000 bit set -- the bit
+        // PSMSerializeIn tests before reading the oid. The file has retired
+        // this record; it is not a refusal to revisit and not a missing
+        // decoder, and the two other censuses must not count it as either.
+        let mut data = record(0x0018, 50);
+        data[1] |= 0x80;
+        assert!(undecoded_type_code_census(&data, &[]).is_empty());
+        assert!(refused_record_census(&data, &[]).is_empty());
+        assert_eq!(
+            native_skipped_record_census(&data, &[]),
+            vec![SkippedRecordCount {
+                type_code: 0x0018,
+                count: 1,
+                is_graphic: true,
+                rad_class_name: Some("Line Object"),
+            }]
+        );
+        // An undecoded type code with the bit set is skipped, not dropped.
+        let mut data = record(0x00F4, 50);
+        data[1] |= 0x80;
+        assert!(undecoded_type_code_census(&data, &[]).is_empty());
+        assert_eq!(native_skipped_record_census(&data, &[]).len(), 1);
     }
 
     #[test]

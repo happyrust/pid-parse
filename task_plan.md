@@ -4,6 +4,12 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-09-28 · OCS 计划 `OpenCADStudio/docs/plans/2026-09-28-pid-import-next-steps.md`（`.pid` 进度复盘与下一步，zhimo 批准）**：
+W0（`cc6626e`）——`backup` 特性把 SQL Server 备份 / MDF / publish 那一半做成可选，wasm32 只剩 `cfb` 的 `web-time` 时间类型 6 处；
+R1 探针 `examples/probe_run_conflicts.rs` 量出 11 条 run 打架标签差别只在连字符 / 星号（R2 MTEXT 登记不做），顺带发现 **42 条类型字带 `0x8000` 的死记录被画**；
+P-D12 同日落地——`parse_live_psm_header` 让每个族都跳过原生读取器跳过的记录，第三类普查 `skipped_records`，工艺放置 58 → 31，
+见 `docs/analysis/2026-09-28-the-native-reader-skips-a-flagged-record.md`。下一项 W1（时间垫片 + `parse_reader`）。
+
 **2026-09-14 · 计划 `OpenCADStudio/docs/plans/2026-09-07-jdim-driving-dimensions-and-layer-panel.md` L1
 落地**：`0x0057 Top ViewFilterSet` 全条布局 53/53 闭合，第一张位图 = 图层显示状态，
 `SheetLayer::displayed` / `PidSourceLayer::displayed` 交给 OpenCADStudio 换掉名字判据；

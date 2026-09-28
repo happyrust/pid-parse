@@ -61,6 +61,18 @@ pub struct NormalizedPidGeometry {
     /// drawings actually contain.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refused_graphic_records: Vec<PidRefusedGraphicRecords>,
+    /// Graphic-class PSM records **the native reader skips** — their type
+    /// word carries the `0x8000` bit `PSMSerializeIn` tests before reading
+    /// the oid — named per `(stream, type code)`.
+    ///
+    /// Not a third gap. A skipped record is one the file has retired (on
+    /// the corpus, always an earlier copy of a live record of the same oid
+    /// at the same insertion), no family decodes it, and leaving it undrawn
+    /// is what the native reader does; so it earns no warning. Listed so a
+    /// consumer can say how many the drawing carries, and so the count is
+    /// not mistaken for a refusal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_graphic_records: Vec<PidSkippedGraphicRecords>,
     /// The symbol bodies the drawing carries inside itself, one per
     /// definition a placement can name, in symbol-local coordinates.
     ///
@@ -364,6 +376,30 @@ pub struct PidRefusedGraphicRecords {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub rad_class_name: Option<String>,
     /// Chain-validated record count the family's decoder did not claim.
+    pub count: usize,
+}
+
+/// One group of graphic-class PSM records in one Sheet stream whose type
+/// word carries the bit the native reader skips on
+/// ([`crate::parsers::sheet_records::PSM_TYPE_FLAG_NATIVE_SKIP`]).
+///
+/// Retired by the file, not refused by a decoder: on the corpus every one
+/// is an earlier copy of a live record of the same oid, at the same
+/// insertion, with the live copy later in the stream, or sits in a storage
+/// the drawing no longer uses (`examples/probe_run_conflicts.rs`,
+/// `tests/render_gap_census.rs`: 42 across five fixtures). Drawing them
+/// drew the same symbol two to four times over and an old label under its
+/// replacement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PidSkippedGraphicRecords {
+    /// Full CFB path of the Sheet stream the records sit in.
+    pub stream_path: String,
+    /// PSM 14-bit type code.
+    pub type_code: u16,
+    /// Class name from the PSM type-code registry, when known.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub rad_class_name: Option<String>,
+    /// Chain-validated record count carrying the skip bit.
     pub count: usize,
 }
 
@@ -929,6 +965,26 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         }
     }
 
+    // The records the native reader skips. Listed, not warned about: they
+    // are not drawn on purpose, the same purpose the native reader has.
+    let mut skipped_graphic_records = Vec::new();
+    for sheet in &doc.sheet_streams {
+        let Some(sheet_geometry) = sheet.geometry.as_ref() else {
+            continue;
+        };
+        for census in &sheet_geometry.skipped_records {
+            if !census.is_graphic {
+                continue;
+            }
+            skipped_graphic_records.push(PidSkippedGraphicRecords {
+                stream_path: sheet.path.clone(),
+                type_code: census.type_code,
+                rad_class_name: census.rad_class_name.clone(),
+                count: census.count,
+            });
+        }
+    }
+
     // The nested `LdcSite` storages are the drawing's own symbol-definition
     // caches: their records are symbol bodies in symbol-local coordinates,
     // reached through the placements that name them
@@ -1349,6 +1405,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         warnings,
         dropped_graphic_records,
         refused_graphic_records,
+        skipped_graphic_records,
         symbol_definitions: embedded_symbol_definitions(doc),
     }
 }
@@ -3190,6 +3247,7 @@ mod tests {
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
+                skipped_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -3295,6 +3353,7 @@ mod tests {
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
+                skipped_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -3439,6 +3498,7 @@ mod tests {
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
+                skipped_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -3535,6 +3595,7 @@ mod tests {
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
+                skipped_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -3602,6 +3663,7 @@ mod tests {
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
+                skipped_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -3689,6 +3751,7 @@ mod tests {
                 spatial_analysis: None,
                 undecoded_type_codes: vec![],
                 refused_records: vec![],
+                skipped_records: vec![],
             }),
             endpoint_records: Vec::new(),
             endpoint_decode_error: None,
@@ -3902,6 +3965,7 @@ mod tests {
             warnings: Vec::new(),
             dropped_graphic_records: Vec::new(),
             refused_graphic_records: Vec::new(),
+            skipped_graphic_records: Vec::new(),
             symbol_definitions: Vec::new(),
         };
 

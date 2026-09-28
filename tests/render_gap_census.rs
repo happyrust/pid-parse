@@ -57,15 +57,131 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("export-test/publish-data/A01/A01.pid", 0, 1),
 ];
 
+/// `(fixture, graphic records the native reader skips)`, as `(type code,
+/// count)` per stream in stream order — the third kind, beside the refused
+/// and the undecoded, and disjoint from both.
+///
+/// A record whose type word carries `0x8000` is one `PSMSerializeIn` seeks
+/// past before reading its oid. On this corpus every such record is an
+/// earlier copy of a live record of the same oid at the same insertion —
+/// the file retired it and kept the bytes — and until 2026-09-28 every
+/// family decoded them and the projection drew them: 13 symbols on the
+/// gongyi drawing two to four times over, an old pipe-run label under its
+/// replacement (`examples/probe_run_conflicts.rs`, OCS plan
+/// `2026-09-28-pid-import-next-steps.md` P-D12). They are not gaps and warn
+/// nobody; they are pinned so a change in the skip rule cannot pass quietly.
+type SkippedPerStream = &'static [(&'static str, u16, usize)];
+const EXPECTED_SKIPPED: &[(&str, SkippedPerStream)] = &[
+    // Five copies of the page frame, oid 947; the frame emitter already
+    // deduplicated them by extent, so the page did not change.
+    ("DWG-0201GP06-01.pid", &[("/Sheet6", 0x003D, 5)]),
+    // The orphan storage's rectangle and its four edges -- the whole storage
+    // is retired.
+    (
+        "DWG-0202GP06-01.pid",
+        &[("/Sheet6615", 0x0018, 4), ("/Sheet6615", 0x0020, 1)],
+    ),
+    // 27 placement copies over 13 live oids (one of them three copies), and
+    // label oid 6345's earlier text `250-LNG-57602- - `.
+    (
+        "工艺管道及仪表流程-1.pid",
+        &[("/Sheet6", 0x004D, 1), ("/Sheet6", 0x00CE, 27)],
+    ),
+    ("D06.pid", &[]),
+    (
+        "export-test/publish-data/A01/A01.pid",
+        &[("/JSite204/Sheet6", 0x0018, 4)],
+    ),
+];
+
+#[test]
+fn the_records_the_native_reader_skips_are_counted_apart() {
+    let mut checked = 0usize;
+    for (fixture, expected) in EXPECTED_SKIPPED {
+        let path = format!("test-file/{fixture}");
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("skipping: fixture {path} not found");
+            continue;
+        }
+        let parsed = PidParser::new()
+            .parse_file(&path)
+            .unwrap_or_else(|err| panic!("fixture {path} should parse: {err}"));
+        let geometry = build_normalized_geometry(&parsed);
+        checked += 1;
+
+        let skipped: Vec<(&str, u16, usize)> = geometry
+            .skipped_graphic_records
+            .iter()
+            .map(|entry| (entry.stream_path.as_str(), entry.type_code, entry.count))
+            .collect();
+        assert_eq!(
+            skipped, *expected,
+            "{fixture}: graphic records carrying the native skip bit, per stream"
+        );
+        // Skipped is not refused and not dropped: no warning names them.
+        for entry in &geometry.skipped_graphic_records {
+            let code = format!("0x{:04X}", entry.type_code);
+            assert!(
+                !geometry.warnings.iter().any(|warning| {
+                    warning.contains(&code)
+                        && warning.contains(&entry.stream_path)
+                        && warning.contains(&format!("{} record(s)", entry.count))
+                }),
+                "{fixture}: the {} skipped {code} record(s) in {} must not be warned about",
+                entry.count,
+                entry.stream_path
+            );
+        }
+        // And no decoded record of any family carries the bit.
+        for sheet in &parsed.sheet_streams {
+            let Some(sheet_geometry) = sheet.geometry.as_ref() else {
+                continue;
+            };
+            let flagged = sheet_geometry
+                .decoded_igsymbols
+                .iter()
+                .map(|r| r.type_flags)
+                .chain(sheet_geometry.decoded_iglines.iter().map(|r| r.type_flags))
+                .chain(
+                    sheet_geometry
+                        .decoded_igtextboxes
+                        .iter()
+                        .map(|r| r.type_flags),
+                )
+                .chain(
+                    sheet_geometry
+                        .decoded_igsmartframes
+                        .iter()
+                        .map(|r| r.type_flags),
+                )
+                .filter(|flags| flags & 0b10 != 0)
+                .count();
+            assert_eq!(
+                flagged, 0,
+                "{fixture} {}: a decoded record carries the skip bit",
+                sheet.path
+            );
+        }
+    }
+    if checked == 0 {
+        eprintln!("skipping: no local fixtures available for the skipped-record census");
+    }
+}
+
 /// `(fixture, decoded `igLine2d` records)` — the other side of the same
 /// measurement. Retiring `aux_hi == 12` moved 88 records from the first table
 /// to this one; a rule creeping back would show up here as a shortfall.
 const EXPECTED_LINES: &[(&str, usize)] = &[
     ("DWG-0201GP06-01.pid", 24),
-    ("DWG-0202GP06-01.pid", 46),
+    // 46 until the type word's 0x8000 bit was honoured: `/Sheet6615`'s four
+    // lines carry it, and the native reader seeks past such a record before
+    // reading its oid (`parse_live_psm_header`); they are counted apart, in
+    // `the_records_the_native_reader_skips_are_counted_apart`.
+    ("DWG-0202GP06-01.pid", 42),
     ("工艺管道及仪表流程-1.pid", 218),
     ("D06.pid", 0),
-    ("export-test/publish-data/A01/A01.pid", 80),
+    // 80 until the same bit: four of `/JSite204/Sheet6`'s lines carry it.
+    ("export-test/publish-data/A01/A01.pid", 76),
 ];
 
 #[test]

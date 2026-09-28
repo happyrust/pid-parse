@@ -8049,140 +8049,6 @@
   },
   {
     "id": "/JSite204/Sheet6:igline2d:15",
-    "graphic_oid": 110,
-    "source_layer": {
-      "oid": 8,
-      "name": "Default",
-      "storage_path": "/JSite204"
-    },
-    "kind": {
-      "kind": "line",
-      "start": {
-        "x": 0.0019056915839013224,
-        "y": 0.41783401898913647
-      },
-      "end": {
-        "x": 0.022905691583901322,
-        "y": 0.4178340189891367
-      }
-    },
-    "coordinate_context": {
-      "coordinate_space": "source_sheet",
-      "units": {
-        "state": "known",
-        "unit": "m"
-      },
-      "page_transform": {
-        "state": "available",
-        "origin": {
-          "x": 0.0,
-          "y": 0.0
-        },
-        "scale": [
-          1.0,
-          1.0
-        ],
-        "page_bounds": {
-          "min": {
-            "x": 0.0,
-            "y": 0.0
-          },
-          "max": {
-            "x": 0.5940010414848328,
-            "y": 0.4200010166893005
-          }
-        },
-        "matrix": [
-          1.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0
-        ]
-      }
-    },
-    "source": {
-      "stream_path": "/JSite204/Sheet6",
-      "byte_range": {
-        "start": 1316,
-        "end": 1372
-      },
-      "record_id": "igline2d:15",
-      "record_kind": "primitive_line",
-      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=110 parent_ref=6 sub_type=0x0000 index=1 start=(0.0019, 0.4178) end=(0.0229, 0.4178) length=0.0210; byte layout from fixture dump (radsrvitem.dll-adjacent)"
-    },
-    "confidence": "decoded"
-  },
-  {
-    "id": "/JSite204/Sheet6:igline2d:16",
-    "graphic_oid": 111,
-    "source_layer": {
-      "oid": 8,
-      "name": "Default",
-      "storage_path": "/JSite204"
-    },
-    "kind": {
-      "kind": "line",
-      "start": {
-        "x": 0.022905691583901322,
-        "y": 0.4178340189891367
-      },
-      "end": {
-        "x": 0.022905691583901325,
-        "y": 0.39683401898913667
-      }
-    },
-    "coordinate_context": {
-      "coordinate_space": "source_sheet",
-      "units": {
-        "state": "known",
-        "unit": "m"
-      },
-      "page_transform": {
-        "state": "available",
-        "origin": {
-          "x": 0.0,
-          "y": 0.0
-        },
-        "scale": [
-          1.0,
-          1.0
-        ],
-        "page_bounds": {
-          "min": {
-            "x": 0.0,
-            "y": 0.0
-          },
-          "max": {
-            "x": 0.5940010414848328,
-            "y": 0.4200010166893005
-          }
-        },
-        "matrix": [
-          1.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0
-        ]
-      }
-    },
-    "source": {
-      "stream_path": "/JSite204/Sheet6",
-      "byte_range": {
-        "start": 1372,
-        "end": 1428
-      },
-      "record_id": "igline2d:16",
-      "record_kind": "primitive_line",
-      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=111 parent_ref=6 sub_type=0x0000 index=1 start=(0.0229, 0.4178) end=(0.0229, 0.3968) length=0.0210; byte layout from fixture dump (radsrvitem.dll-adjacent)"
-    },
-    "confidence": "decoded"
-  },
-  {
-    "id": "/JSite204/Sheet6:igline2d:17",
     "graphic_oid": 122,
     "source_layer": {
       "oid": 8,
@@ -8242,14 +8108,14 @@
         "start": 1512,
         "end": 1568
       },
-      "record_id": "igline2d:17",
+      "record_id": "igline2d:15",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=122 parent_ref=6 sub_type=0x0000 index=20 start=(0.0049, 0.3826) end=(0.0049, 0.3948) length=0.0121; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:18",
+    "id": "/JSite204/Sheet6:igline2d:16",
     "graphic_oid": 181,
     "source_layer": {
       "oid": 8,
@@ -8309,14 +8175,14 @@
         "start": 1568,
         "end": 1624
       },
-      "record_id": "igline2d:18",
+      "record_id": "igline2d:16",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=181 parent_ref=295 sub_type=0x0010 index=13 start=(0.0250, 0.0100) end=(0.5840, 0.0100) length=0.5590; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:19",
+    "id": "/JSite204/Sheet6:igline2d:17",
     "graphic_oid": 224,
     "source_layer": {
       "oid": 8,
@@ -8376,14 +8242,14 @@
         "start": 1624,
         "end": 1680
       },
-      "record_id": "igline2d:19",
+      "record_id": "igline2d:17",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=224 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3948) end=(0.0199, 0.3826) length=0.0122; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:20",
+    "id": "/JSite204/Sheet6:igline2d:18",
     "graphic_oid": 234,
     "source_layer": {
       "oid": 8,
@@ -8443,81 +8309,14 @@
         "start": 1680,
         "end": 1736
       },
-      "record_id": "igline2d:20",
+      "record_id": "igline2d:18",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=234 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3448) end=(0.0000, 0.3448) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:21",
-    "graphic_oid": 236,
-    "source_layer": {
-      "oid": 8,
-      "name": "Default",
-      "storage_path": "/JSite204"
-    },
-    "kind": {
-      "kind": "line",
-      "start": {
-        "x": 0.022905691583901325,
-        "y": 0.39683401898913667
-      },
-      "end": {
-        "x": 0.0019056915839013207,
-        "y": 0.39683401898913667
-      }
-    },
-    "coordinate_context": {
-      "coordinate_space": "source_sheet",
-      "units": {
-        "state": "known",
-        "unit": "m"
-      },
-      "page_transform": {
-        "state": "available",
-        "origin": {
-          "x": 0.0,
-          "y": 0.0
-        },
-        "scale": [
-          1.0,
-          1.0
-        ],
-        "page_bounds": {
-          "min": {
-            "x": 0.0,
-            "y": 0.0
-          },
-          "max": {
-            "x": 0.5940010414848328,
-            "y": 0.4200010166893005
-          }
-        },
-        "matrix": [
-          1.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0
-        ]
-      }
-    },
-    "source": {
-      "stream_path": "/JSite204/Sheet6",
-      "byte_range": {
-        "start": 1736,
-        "end": 1792
-      },
-      "record_id": "igline2d:21",
-      "record_kind": "primitive_line",
-      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=236 parent_ref=6 sub_type=0x0000 index=1 start=(0.0229, 0.3968) end=(0.0019, 0.3968) length=0.0210; byte layout from fixture dump (radsrvitem.dll-adjacent)"
-    },
-    "confidence": "decoded"
-  },
-  {
-    "id": "/JSite204/Sheet6:igline2d:22",
+    "id": "/JSite204/Sheet6:igline2d:19",
     "graphic_oid": 237,
     "source_layer": {
       "oid": 8,
@@ -8577,14 +8376,14 @@
         "start": 1792,
         "end": 1848
       },
-      "record_id": "igline2d:22",
+      "record_id": "igline2d:19",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=237 parent_ref=295 sub_type=0x0010 index=13 start=(0.5840, 0.0100) end=(0.5840, 0.4100) length=0.4000; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:23",
+    "id": "/JSite204/Sheet6:igline2d:20",
     "graphic_oid": 242,
     "source_layer": {
       "oid": 8,
@@ -8644,14 +8443,14 @@
         "start": 1848,
         "end": 1904
       },
-      "record_id": "igline2d:23",
+      "record_id": "igline2d:20",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=242 parent_ref=6 sub_type=0x0000 index=1 start=(0.0087, 0.3948) end=(0.0250, 0.3948) length=0.0163; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:24",
+    "id": "/JSite204/Sheet6:igline2d:21",
     "graphic_oid": 246,
     "source_layer": {
       "oid": 8,
@@ -8711,81 +8510,14 @@
         "start": 1904,
         "end": 1960
       },
-      "record_id": "igline2d:24",
+      "record_id": "igline2d:21",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=246 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3698) end=(0.0000, 0.3698) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:25",
-    "graphic_oid": 247,
-    "source_layer": {
-      "oid": 8,
-      "name": "Default",
-      "storage_path": "/JSite204"
-    },
-    "kind": {
-      "kind": "line",
-      "start": {
-        "x": 0.0019056915839013207,
-        "y": 0.39683401898913667
-      },
-      "end": {
-        "x": 0.0019056915839013224,
-        "y": 0.41783401898913647
-      }
-    },
-    "coordinate_context": {
-      "coordinate_space": "source_sheet",
-      "units": {
-        "state": "known",
-        "unit": "m"
-      },
-      "page_transform": {
-        "state": "available",
-        "origin": {
-          "x": 0.0,
-          "y": 0.0
-        },
-        "scale": [
-          1.0,
-          1.0
-        ],
-        "page_bounds": {
-          "min": {
-            "x": 0.0,
-            "y": 0.0
-          },
-          "max": {
-            "x": 0.5940010414848328,
-            "y": 0.4200010166893005
-          }
-        },
-        "matrix": [
-          1.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0
-        ]
-      }
-    },
-    "source": {
-      "stream_path": "/JSite204/Sheet6",
-      "byte_range": {
-        "start": 1960,
-        "end": 2016
-      },
-      "record_id": "igline2d:25",
-      "record_kind": "primitive_line",
-      "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=247 parent_ref=6 sub_type=0x0000 index=1 start=(0.0019, 0.3968) end=(0.0019, 0.4178) length=0.0210; byte layout from fixture dump (radsrvitem.dll-adjacent)"
-    },
-    "confidence": "decoded"
-  },
-  {
-    "id": "/JSite204/Sheet6:igline2d:26",
+    "id": "/JSite204/Sheet6:igline2d:22",
     "graphic_oid": 248,
     "source_layer": {
       "oid": 8,
@@ -8845,14 +8577,14 @@
         "start": 2016,
         "end": 2072
       },
-      "record_id": "igline2d:26",
+      "record_id": "igline2d:22",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=248 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2948) end=(0.0000, 0.2948) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:27",
+    "id": "/JSite204/Sheet6:igline2d:23",
     "graphic_oid": 252,
     "source_layer": {
       "oid": 8,
@@ -8912,14 +8644,14 @@
         "start": 2150,
         "end": 2206
       },
-      "record_id": "igline2d:27",
+      "record_id": "igline2d:23",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=252 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2698) end=(0.0000, 0.2698) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:28",
+    "id": "/JSite204/Sheet6:igline2d:24",
     "graphic_oid": 254,
     "source_layer": {
       "oid": 8,
@@ -8979,14 +8711,14 @@
         "start": 2206,
         "end": 2262
       },
-      "record_id": "igline2d:28",
+      "record_id": "igline2d:24",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=254 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2698) end=(0.0250, 0.2698) length=0.0051; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:29",
+    "id": "/JSite204/Sheet6:igline2d:25",
     "graphic_oid": 255,
     "source_layer": {
       "oid": 8,
@@ -9046,14 +8778,14 @@
         "start": 2262,
         "end": 2318
       },
-      "record_id": "igline2d:29",
+      "record_id": "igline2d:25",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=255 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3198) end=(0.0000, 0.3198) length=0.0199; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:30",
+    "id": "/JSite204/Sheet6:igline2d:26",
     "graphic_oid": 256,
     "source_layer": {
       "oid": 8,
@@ -9113,14 +8845,14 @@
         "start": 2318,
         "end": 2374
       },
-      "record_id": "igline2d:30",
+      "record_id": "igline2d:26",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=256 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3698) end=(0.0199, 0.3448) length=0.0250; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:31",
+    "id": "/JSite204/Sheet6:igline2d:27",
     "graphic_oid": 261,
     "source_layer": {
       "oid": 8,
@@ -9180,14 +8912,14 @@
         "start": 2452,
         "end": 2508
       },
-      "record_id": "igline2d:31",
+      "record_id": "igline2d:27",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=261 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2448) end=(0.0250, 0.2448) length=0.0051; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:32",
+    "id": "/JSite204/Sheet6:igline2d:28",
     "graphic_oid": 294,
     "source_layer": {
       "oid": 8,
@@ -9247,14 +8979,14 @@
         "start": 2508,
         "end": 2564
       },
-      "record_id": "igline2d:32",
+      "record_id": "igline2d:28",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=294 parent_ref=114 sub_type=0x0010 index=1 start=(0.5940, 0.4200) end=(0.0000, 0.4200) length=0.5940; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:33",
+    "id": "/JSite204/Sheet6:igline2d:29",
     "graphic_oid": 296,
     "source_layer": {
       "oid": 8,
@@ -9314,14 +9046,14 @@
         "start": 2648,
         "end": 2704
       },
-      "record_id": "igline2d:33",
+      "record_id": "igline2d:29",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=296 parent_ref=114 sub_type=0x0010 index=1 start=(0.0000, 0.4200) end=(0.0000, 0.0000) length=0.4200; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:34",
+    "id": "/JSite204/Sheet6:igline2d:30",
     "graphic_oid": 297,
     "source_layer": {
       "oid": 8,
@@ -9381,14 +9113,14 @@
         "start": 2704,
         "end": 2760
       },
-      "record_id": "igline2d:34",
+      "record_id": "igline2d:30",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=297 parent_ref=114 sub_type=0x0010 index=1 start=(0.5940, 0.0000) end=(0.5940, 0.4200) length=0.4200; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:35",
+    "id": "/JSite204/Sheet6:igline2d:31",
     "graphic_oid": 302,
     "source_layer": {
       "oid": 8,
@@ -9448,14 +9180,14 @@
         "start": 2760,
         "end": 2816
       },
-      "record_id": "igline2d:35",
+      "record_id": "igline2d:31",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=302 parent_ref=295 sub_type=0x0010 index=13 start=(0.0250, 0.4100) end=(0.0250, 0.0100) length=0.4000; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:36",
+    "id": "/JSite204/Sheet6:igline2d:32",
     "graphic_oid": 303,
     "source_layer": {
       "oid": 8,
@@ -9515,14 +9247,14 @@
         "start": 2816,
         "end": 2872
       },
-      "record_id": "igline2d:36",
+      "record_id": "igline2d:32",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=303 parent_ref=295 sub_type=0x0010 index=13 start=(0.5840, 0.4100) end=(0.0250, 0.4100) length=0.5590; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:37",
+    "id": "/JSite204/Sheet6:igline2d:33",
     "graphic_oid": 344,
     "source_layer": {
       "oid": 8,
@@ -9582,14 +9314,14 @@
         "start": 2938,
         "end": 2994
       },
-      "record_id": "igline2d:37",
+      "record_id": "igline2d:33",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=344 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.3198) end=(0.0250, 0.3198) length=0.0051; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:38",
+    "id": "/JSite204/Sheet6:igline2d:34",
     "graphic_oid": 353,
     "source_layer": {
       "oid": 8,
@@ -9649,14 +9381,14 @@
         "start": 2994,
         "end": 3050
       },
-      "record_id": "igline2d:38",
+      "record_id": "igline2d:34",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=353 parent_ref=6 sub_type=0x0000 index=20 start=(0.0199, 0.2698) end=(0.0199, 0.2448) length=0.0250; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:39",
+    "id": "/JSite204/Sheet6:igline2d:35",
     "graphic_oid": 369,
     "source_layer": {
       "oid": 8,
@@ -9716,14 +9448,14 @@
         "start": 3050,
         "end": 3106
       },
-      "record_id": "igline2d:39",
+      "record_id": "igline2d:35",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=369 parent_ref=114 sub_type=0x0010 index=1 start=(0.0000, 0.0000) end=(0.5940, 0.0000) length=0.5940; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:40",
+    "id": "/JSite204/Sheet6:igline2d:36",
     "graphic_oid": 614,
     "source_layer": {
       "oid": 8,
@@ -9783,14 +9515,14 @@
         "start": 3184,
         "end": 3240
       },
-      "record_id": "igline2d:40",
+      "record_id": "igline2d:36",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=614 parent_ref=6 sub_type=0x0000 index=20 start=(0.5310, 0.0099) end=(0.5310, 0.0159) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:41",
+    "id": "/JSite204/Sheet6:igline2d:37",
     "graphic_oid": 617,
     "source_layer": {
       "oid": 8,
@@ -9850,14 +9582,14 @@
         "start": 3386,
         "end": 3442
       },
-      "record_id": "igline2d:41",
+      "record_id": "igline2d:37",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=617 parent_ref=6 sub_type=0x0000 index=20 start=(0.5310, 0.0219) end=(0.5310, 0.0279) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:42",
+    "id": "/JSite204/Sheet6:igline2d:38",
     "graphic_oid": 620,
     "source_layer": {
       "oid": 8,
@@ -9917,14 +9649,14 @@
         "start": 3590,
         "end": 3646
       },
-      "record_id": "igline2d:42",
+      "record_id": "igline2d:38",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=620 parent_ref=6 sub_type=0x0000 index=20 start=(0.5160, 0.0219) end=(0.5160, 0.0279) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:43",
+    "id": "/JSite204/Sheet6:igline2d:39",
     "graphic_oid": 623,
     "source_layer": {
       "oid": 8,
@@ -9984,14 +9716,14 @@
         "start": 3794,
         "end": 3850
       },
-      "record_id": "igline2d:43",
+      "record_id": "igline2d:39",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=623 parent_ref=6 sub_type=0x0000 index=20 start=(0.4590, 0.0159) end=(0.4590, 0.0639) length=0.0480; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:44",
+    "id": "/JSite204/Sheet6:igline2d:40",
     "graphic_oid": 625,
     "source_layer": {
       "oid": 8,
@@ -10051,14 +9783,14 @@
         "start": 3924,
         "end": 3980
       },
-      "record_id": "igline2d:44",
+      "record_id": "igline2d:40",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=625 parent_ref=6 sub_type=0x0000 index=20 start=(0.4790, 0.0279) end=(0.5840, 0.0279) length=0.1050; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:45",
+    "id": "/JSite204/Sheet6:igline2d:41",
     "graphic_oid": 627,
     "source_layer": {
       "oid": 8,
@@ -10118,14 +9850,14 @@
         "start": 4054,
         "end": 4110
       },
-      "record_id": "igline2d:45",
+      "record_id": "igline2d:41",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=627 parent_ref=6 sub_type=0x0000 index=20 start=(0.4940, 0.0099) end=(0.4940, 0.0279) length=0.0180; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:46",
+    "id": "/JSite204/Sheet6:igline2d:42",
     "graphic_oid": 628,
     "source_layer": {
       "oid": 8,
@@ -10185,14 +9917,14 @@
         "start": 4110,
         "end": 4166
       },
-      "record_id": "igline2d:46",
+      "record_id": "igline2d:42",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=628 parent_ref=6 sub_type=0x0000 index=20 start=(0.4790, 0.0099) end=(0.4790, 0.0639) length=0.0540; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:47",
+    "id": "/JSite204/Sheet6:igline2d:43",
     "graphic_oid": 629,
     "source_layer": {
       "oid": 8,
@@ -10252,14 +9984,14 @@
         "start": 4166,
         "end": 4222
       },
-      "record_id": "igline2d:47",
+      "record_id": "igline2d:43",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=629 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0579) end=(0.4440, 0.0579) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:48",
+    "id": "/JSite204/Sheet6:igline2d:44",
     "graphic_oid": 630,
     "source_layer": {
       "oid": 8,
@@ -10319,14 +10051,14 @@
         "start": 4222,
         "end": 4278
       },
-      "record_id": "igline2d:48",
+      "record_id": "igline2d:44",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=630 parent_ref=6 sub_type=0x0000 index=1 start=(0.5840, 0.0219) end=(0.4440, 0.0219) length=0.1400; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:49",
+    "id": "/JSite204/Sheet6:igline2d:45",
     "graphic_oid": 634,
     "source_layer": {
       "oid": 8,
@@ -10386,14 +10118,14 @@
         "start": 4488,
         "end": 4544
       },
-      "record_id": "igline2d:49",
+      "record_id": "igline2d:45",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=634 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0519) end=(0.4440, 0.0519) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:50",
+    "id": "/JSite204/Sheet6:igline2d:46",
     "graphic_oid": 636,
     "source_layer": {
       "oid": 8,
@@ -10453,14 +10185,14 @@
         "start": 4580,
         "end": 4636
       },
-      "record_id": "igline2d:50",
+      "record_id": "igline2d:46",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=636 parent_ref=6 sub_type=0x0000 index=20 start=(0.4790, 0.0519) end=(0.5840, 0.0519) length=0.1050; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:51",
+    "id": "/JSite204/Sheet6:igline2d:47",
     "graphic_oid": 637,
     "source_layer": {
       "oid": 8,
@@ -10520,14 +10252,14 @@
         "start": 4636,
         "end": 4692
       },
-      "record_id": "igline2d:51",
+      "record_id": "igline2d:47",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=637 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0459) end=(0.4440, 0.0459) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:52",
+    "id": "/JSite204/Sheet6:igline2d:48",
     "graphic_oid": 638,
     "source_layer": {
       "oid": 8,
@@ -10587,14 +10319,14 @@
         "start": 4692,
         "end": 4748
       },
-      "record_id": "igline2d:52",
+      "record_id": "igline2d:48",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=638 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0279) end=(0.4440, 0.0279) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:53",
+    "id": "/JSite204/Sheet6:igline2d:49",
     "graphic_oid": 639,
     "source_layer": {
       "oid": 8,
@@ -10654,14 +10386,14 @@
         "start": 4748,
         "end": 4804
       },
-      "record_id": "igline2d:53",
+      "record_id": "igline2d:49",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=639 parent_ref=6 sub_type=0x0000 index=13 start=(0.5840, 0.0639) end=(0.4440, 0.0639) length=0.1400; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:54",
+    "id": "/JSite204/Sheet6:igline2d:50",
     "graphic_oid": 640,
     "source_layer": {
       "oid": 8,
@@ -10721,14 +10453,14 @@
         "start": 4804,
         "end": 4860
       },
-      "record_id": "igline2d:54",
+      "record_id": "igline2d:50",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=640 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0399) end=(0.4440, 0.0399) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:55",
+    "id": "/JSite204/Sheet6:igline2d:51",
     "graphic_oid": 641,
     "source_layer": {
       "oid": 8,
@@ -10788,14 +10520,14 @@
         "start": 4860,
         "end": 4916
       },
-      "record_id": "igline2d:55",
+      "record_id": "igline2d:51",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=641 parent_ref=6 sub_type=0x0000 index=13 start=(0.4440, 0.0099) end=(0.4440, 0.1139) length=0.1040; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:56",
+    "id": "/JSite204/Sheet6:igline2d:52",
     "graphic_oid": 643,
     "source_layer": {
       "oid": 8,
@@ -10855,14 +10587,14 @@
         "start": 4986,
         "end": 5042
       },
-      "record_id": "igline2d:56",
+      "record_id": "igline2d:52",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=643 parent_ref=6 sub_type=0x0000 index=20 start=(0.5160, 0.0099) end=(0.5160, 0.0159) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:57",
+    "id": "/JSite204/Sheet6:igline2d:53",
     "graphic_oid": 644,
     "source_layer": {
       "oid": 8,
@@ -10922,14 +10654,14 @@
         "start": 5042,
         "end": 5098
       },
-      "record_id": "igline2d:57",
+      "record_id": "igline2d:53",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=644 parent_ref=6 sub_type=0x0000 index=1 start=(0.4790, 0.0339) end=(0.4440, 0.0339) length=0.0350; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:58",
+    "id": "/JSite204/Sheet6:igline2d:54",
     "graphic_oid": 650,
     "source_layer": {
       "oid": 8,
@@ -10989,14 +10721,14 @@
         "start": 5394,
         "end": 5450
       },
-      "record_id": "igline2d:58",
+      "record_id": "igline2d:54",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=650 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.1019) end=(0.4540, 0.1079) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:59",
+    "id": "/JSite204/Sheet6:igline2d:55",
     "graphic_oid": 651,
     "source_layer": {
       "oid": 8,
@@ -11056,14 +10788,14 @@
         "start": 5450,
         "end": 5506
       },
-      "record_id": "igline2d:59",
+      "record_id": "igline2d:55",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=651 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.0959) end=(0.4540, 0.1019) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:60",
+    "id": "/JSite204/Sheet6:igline2d:56",
     "graphic_oid": 652,
     "source_layer": {
       "oid": 8,
@@ -11123,14 +10855,14 @@
         "start": 5506,
         "end": 5562
       },
-      "record_id": "igline2d:60",
+      "record_id": "igline2d:56",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=652 parent_ref=6 sub_type=0x0000 index=1 start=(0.5841, 0.0899) end=(0.4440, 0.0899) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:61",
+    "id": "/JSite204/Sheet6:igline2d:57",
     "graphic_oid": 653,
     "source_layer": {
       "oid": 8,
@@ -11190,14 +10922,14 @@
         "start": 5562,
         "end": 5618
       },
-      "record_id": "igline2d:61",
+      "record_id": "igline2d:57",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=653 parent_ref=6 sub_type=0x0000 index=1 start=(0.5841, 0.0959) end=(0.4440, 0.0959) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:62",
+    "id": "/JSite204/Sheet6:igline2d:58",
     "graphic_oid": 654,
     "source_layer": {
       "oid": 8,
@@ -11257,14 +10989,14 @@
         "start": 5618,
         "end": 5674
       },
-      "record_id": "igline2d:62",
+      "record_id": "igline2d:58",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=654 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.1079) end=(0.4540, 0.1139) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:63",
+    "id": "/JSite204/Sheet6:igline2d:59",
     "graphic_oid": 655,
     "source_layer": {
       "oid": 8,
@@ -11324,14 +11056,14 @@
         "start": 5674,
         "end": 5730
       },
-      "record_id": "igline2d:63",
+      "record_id": "igline2d:59",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=655 parent_ref=6 sub_type=0x0000 index=1 start=(0.5841, 0.1079) end=(0.4440, 0.1079) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:64",
+    "id": "/JSite204/Sheet6:igline2d:60",
     "graphic_oid": 656,
     "source_layer": {
       "oid": 8,
@@ -11391,14 +11123,14 @@
         "start": 5730,
         "end": 5786
       },
-      "record_id": "igline2d:64",
+      "record_id": "igline2d:60",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=656 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.0899) end=(0.4540, 0.0959) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:65",
+    "id": "/JSite204/Sheet6:igline2d:61",
     "graphic_oid": 657,
     "source_layer": {
       "oid": 8,
@@ -11458,14 +11190,14 @@
         "start": 5786,
         "end": 5842
       },
-      "record_id": "igline2d:65",
+      "record_id": "igline2d:61",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=657 parent_ref=6 sub_type=0x0000 index=13 start=(0.5841, 0.1139) end=(0.4440, 0.1139) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:66",
+    "id": "/JSite204/Sheet6:igline2d:62",
     "graphic_oid": 658,
     "source_layer": {
       "oid": 8,
@@ -11525,14 +11257,14 @@
         "start": 5842,
         "end": 5898
       },
-      "record_id": "igline2d:66",
+      "record_id": "igline2d:62",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=658 parent_ref=6 sub_type=0x0000 index=1 start=(0.5841, 0.1019) end=(0.4440, 0.1019) length=0.1401; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:67",
+    "id": "/JSite204/Sheet6:igline2d:63",
     "graphic_oid": 660,
     "source_layer": {
       "oid": 8,
@@ -11592,14 +11324,14 @@
         "start": 5972,
         "end": 6028
       },
-      "record_id": "igline2d:67",
+      "record_id": "igline2d:63",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=660 parent_ref=6 sub_type=0x0000 index=1 start=(0.5300, 0.0839) end=(0.5300, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:68",
+    "id": "/JSite204/Sheet6:igline2d:64",
     "graphic_oid": 661,
     "source_layer": {
       "oid": 8,
@@ -11659,14 +11391,14 @@
         "start": 6028,
         "end": 6084
       },
-      "record_id": "igline2d:68",
+      "record_id": "igline2d:64",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=661 parent_ref=6 sub_type=0x0000 index=13 start=(0.5840, 0.0839) end=(0.4440, 0.0839) length=0.1400; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:69",
+    "id": "/JSite204/Sheet6:igline2d:65",
     "graphic_oid": 663,
     "source_layer": {
       "oid": 8,
@@ -11726,14 +11458,14 @@
         "start": 6156,
         "end": 6212
       },
-      "record_id": "igline2d:69",
+      "record_id": "igline2d:65",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=663 parent_ref=6 sub_type=0x0000 index=1 start=(0.5000, 0.0839) end=(0.5000, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:70",
+    "id": "/JSite204/Sheet6:igline2d:66",
     "graphic_oid": 664,
     "source_layer": {
       "oid": 8,
@@ -11793,14 +11525,14 @@
         "start": 6212,
         "end": 6268
       },
-      "record_id": "igline2d:70",
+      "record_id": "igline2d:66",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=664 parent_ref=6 sub_type=0x0000 index=1 start=(0.5840, 0.0159) end=(0.4440, 0.0159) length=0.1400; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:71",
+    "id": "/JSite204/Sheet6:igline2d:67",
     "graphic_oid": 665,
     "source_layer": {
       "oid": 8,
@@ -11860,14 +11592,14 @@
         "start": 6268,
         "end": 6324
       },
-      "record_id": "igline2d:71",
+      "record_id": "igline2d:67",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=665 parent_ref=6 sub_type=0x0000 index=1 start=(0.4540, 0.0839) end=(0.4540, 0.0899) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:72",
+    "id": "/JSite204/Sheet6:igline2d:68",
     "graphic_oid": 669,
     "source_layer": {
       "oid": 8,
@@ -11927,14 +11659,14 @@
         "start": 6324,
         "end": 6380
       },
-      "record_id": "igline2d:72",
+      "record_id": "igline2d:68",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=669 parent_ref=6 sub_type=0x0000 index=20 start=(0.5470, 0.0099) end=(0.5470, 0.0159) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:73",
+    "id": "/JSite204/Sheet6:igline2d:69",
     "graphic_oid": 670,
     "source_layer": {
       "oid": 8,
@@ -11994,14 +11726,14 @@
         "start": 6380,
         "end": 6436
       },
-      "record_id": "igline2d:73",
+      "record_id": "igline2d:69",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=670 parent_ref=6 sub_type=0x0000 index=1 start=(0.5450, 0.0839) end=(0.5450, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:74",
+    "id": "/JSite204/Sheet6:igline2d:70",
     "graphic_oid": 671,
     "source_layer": {
       "oid": 8,
@@ -12061,14 +11793,14 @@
         "start": 6436,
         "end": 6492
       },
-      "record_id": "igline2d:74",
+      "record_id": "igline2d:70",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=671 parent_ref=6 sub_type=0x0000 index=1 start=(0.5600, 0.0839) end=(0.5600, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:75",
+    "id": "/JSite204/Sheet6:igline2d:71",
     "graphic_oid": 722,
     "source_layer": {
       "oid": 8,
@@ -12128,14 +11860,14 @@
         "start": 6520,
         "end": 6576
       },
-      "record_id": "igline2d:75",
+      "record_id": "igline2d:71",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=722 parent_ref=6 sub_type=0x0000 index=1 start=(0.5150, 0.0839) end=(0.5150, 0.1139) length=0.0300; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:76",
+    "id": "/JSite204/Sheet6:igline2d:72",
     "graphic_oid": 723,
     "source_layer": {
       "oid": 8,
@@ -12195,14 +11927,14 @@
         "start": 6576,
         "end": 6632
       },
-      "record_id": "igline2d:76",
+      "record_id": "igline2d:72",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=723 parent_ref=6 sub_type=0x0000 index=1 start=(0.0250, 0.4000) end=(0.1068, 0.4000) length=0.0818; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:77",
+    "id": "/JSite204/Sheet6:igline2d:73",
     "graphic_oid": 724,
     "source_layer": {
       "oid": 8,
@@ -12262,14 +11994,14 @@
         "start": 6632,
         "end": 6688
       },
-      "record_id": "igline2d:77",
+      "record_id": "igline2d:73",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=724 parent_ref=6 sub_type=0x0000 index=1 start=(0.1068, 0.4000) end=(0.1068, 0.4100) length=0.0100; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:78",
+    "id": "/JSite204/Sheet6:igline2d:74",
     "graphic_oid": 725,
     "source_layer": {
       "oid": 8,
@@ -12329,14 +12061,14 @@
         "start": 6688,
         "end": 6744
       },
-      "record_id": "igline2d:78",
+      "record_id": "igline2d:74",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=725 parent_ref=6 sub_type=0x0000 index=20 start=(0.5620, 0.0099) end=(0.5620, 0.0159) length=0.0060; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/JSite204/Sheet6:igline2d:79",
+    "id": "/JSite204/Sheet6:igline2d:75",
     "graphic_oid": 856,
     "source_layer": {
       "oid": 8,
@@ -12396,7 +12128,7 @@
         "start": 6814,
         "end": 6870
       },
-      "record_id": "igline2d:79",
+      "record_id": "igline2d:75",
       "record_kind": "primitive_line",
       "note": "PSM igLine2d record (Intergraph Sigma standard line, type 0x0018, IGDS class tag 0x18); oid=856 parent_ref=6 sub_type=0x0000 index=13 start=(0.0250, 0.4100) end=(0.0250, 0.4200) length=0.0100; byte layout from fixture dump (radsrvitem.dll-adjacent)"
     },
