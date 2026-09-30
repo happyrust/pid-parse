@@ -27,6 +27,7 @@
 //! the override entry are this crate's, pending the native reader in
 //! `viewfil.dex`.
 
+use crate::parsers::bounded_capacity;
 use crate::parsers::cluster_header::decode_psm_cluster0_body_records;
 
 /// PSM type code for `Top ViewFilterSet Object` (the per-sheet set).
@@ -157,7 +158,12 @@ fn decode_payload(
         return None;
     }
     at += 4;
-    let mut overrides = Vec::with_capacity(override_count);
+    // An override is at least `{u16, u8, u8, u16}` + the closing `u32`.
+    let mut overrides = Vec::with_capacity(bounded_capacity(
+        override_count,
+        payload.len().saturating_sub(at),
+        6 + 4,
+    ));
     for _ in 0..override_count {
         let layer_number = u16_at(payload, at)?;
         let kind = *payload.get(at + 2)?;

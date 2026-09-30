@@ -5905,7 +5905,12 @@ impl PsmRecordDecoder for VariablesDecoder {
         }
         let count = u32_le(data, body + 13)? as usize;
         // Every byte must be accounted for: head, `count` 8-byte slots, tail.
-        if count == 0 || VARIABLES_MEMBERS_AT + count.checked_mul(8)? + 4 != btf {
+        // Checked throughout: on a 32-bit `usize` (wasm32) a count near
+        // `u32::MAX / 8` would wrap the sum back under `btf`.
+        let closed_len = VARIABLES_MEMBERS_AT
+            .checked_add(count.checked_mul(8)?)?
+            .checked_add(4)?;
+        if count == 0 || closed_len != btf {
             return None;
         }
         let mut members = Vec::with_capacity(count);
@@ -6233,7 +6238,11 @@ impl PsmRecordDecoder for FlavorHolderDecoder {
         if variant == FLAVOR_HOLDER_TEMPLATE && count != 0 {
             return None;
         }
-        let mut values = Vec::with_capacity(count);
+        let mut values = Vec::with_capacity(crate::parsers::bounded_capacity(
+            count,
+            end.saturating_sub(at),
+            FLAVOR_HOLDER_ENTRY_LEN,
+        ));
         for _ in 0..count {
             if *data.get(at)? != 1 || u32_le(data, at + 1)? != 1 {
                 return None;

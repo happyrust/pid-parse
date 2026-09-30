@@ -4,6 +4,12 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-09-30 · OCS 计划 `OpenCADStudio/docs/plans/2026-09-29-pid-import-next-round.md` 任务 2.1–2.4（P-D16 / P-D22）**：
+不 panic 套件 `tests/arbitrary_bytes_never_panic.rs`——整条链（`parse_reader` → `build_normalized_geometry` → `style_link`）× 六类变异，线程 + 10 s 超时 + 分配看门（上限 68 157 568 B）；
+默认批 100 / 100、扩展批 3100 / 3100，**没找到 panic / 挂起 / 超额分配**，`cfb` 内部无可预检之处。`bounded_capacity` 钳住四处盘上计数驱动的预分配（`view_filter_sets` / `style_link` / `sheet_records` / `streams::summary`），
+`sheet_records` `Variables` 一处改 checked；32 位 `usize` 上会回绕的守卫改 `checked_*`（`streams::summary` 13、`cluster_header` 1、`dynamic_attr_records` 1），四个模块的小端读取函数走 `parsers::le_bytes`、越界读 0 不 panic。
+四组棘轮与 golden 不变，`--lib` 1124。下一项 3（`jsheet_oids` 改用 `parse_live_psm_header`，P-D21）。
+
 **2026-09-28 · OCS 计划 `OpenCADStudio/docs/plans/2026-09-28-pid-import-next-steps.md`（`.pid` 进度复盘与下一步，zhimo 批准）**：
 W0（`cc6626e`）——`backup` 特性把 SQL Server 备份 / MDF / publish 那一半做成可选，wasm32 只剩 `cfb` 的 `web-time` 时间类型 6 处；
 R1 探针 `examples/probe_run_conflicts.rs` 量出 11 条 run 打架标签差别只在连字符 / 星号（R2 MTEXT 登记不做），顺带发现 **42 条类型字带 `0x8000` 的死记录被画**；

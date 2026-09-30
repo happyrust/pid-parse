@@ -93,12 +93,15 @@ pub fn parse_endpoint_records(
     out
 }
 
+// Callers bound-check `p` first. Past the end these read 0 instead of
+// panicking, only so a guard that wraps on a 32-bit `usize` cannot abort the
+// page (see `super::le_bytes`).
 fn u32_le(data: &[u8], p: usize) -> u32 {
-    u32::from_le_bytes([data[p], data[p + 1], data[p + 2], data[p + 3]])
+    super::le_bytes(data, p).map_or(0, u32::from_le_bytes)
 }
 
 fn u16_le(data: &[u8], p: usize) -> u16 {
-    u16::from_le_bytes([data[p], data[p + 1]])
+    super::le_bytes(data, p).map_or(0, u16::from_le_bytes)
 }
 
 /// Phase 12b-1g self-contained byte-audit scan for endpoint records.

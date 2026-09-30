@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### 任意字节不 panic：变异套件、盘上计数钳位、32 位偏移加固（2026-09-30，OCS 计划 P-D16 / P-D22）
+
+OpenCADStudio 计划 `docs/plans/2026-09-29-pid-import-next-round.md` 任务 2.1–2.4。起因 P-D16：网页版在页面主线程解析 `.pid`，wasm32 上 panic 即 abort，一张坏图带走整页；
+P-D22：定种 xorshift64 生成变异，不加测试依赖。
+
+- **`tests/arbitrary_bytes_never_panic.rs`**：照 OCS `import()` 的调用序列跑整条链——`PidParser::with_options(ParseOptions::geometry()).parse_reader` → `Ok` 时 `build_normalized_geometry` → `style_link` 入口。
+  输入是空字节、随机字节，以及六张语料图的六类变异（截断 / 翻字节 / 整扇区清零 / 4 字节对齐处与 CFB 头计数字段 `0x2C`–`0x48` 写巨值）。
+  每例一个线程：panic 判失败，10 s 不回判挂起，计数 `#[global_allocator]` 看单次分配，上限 = max(64 MiB, 六张原图峰值 × 8) = 68 157 568 B（DWG-0201 峰值 8 519 696 B）；每例生成两次逐字节比。
+  默认批 100 / 100（debug），`#[ignore]` 扩展批 3100 / 3100（release）。**没有找到 panic、挂起或超额分配**；`cfb` 内部没有要预检的 panic，本轮样本里 P-D16 触发 ① 没有出现。
+- **预分配钳位（2.2 / 2.3）**：新 `parsers::bounded_capacity`（`count.min(remaining / min_elem.max(1))`）钳住四处盘上计数驱动的 `with_capacity`——`view_filter_sets` override 数（每条 ≥ 10 B）、
+  `style_link` librarian 调色板数（40 B）、`sheet_records` JFlavorHolder 值数（13 B）、`streams::summary` DocumentSummary 第 2 节 `num_props`（8 B）；`sheet_records` `Variables` 成员容量的闭包和
+  `17 + count·8 + 4` 改 `checked_add`。其余 19 处库代码（内存里的计数、常量或已有上限）与 161 处 `#[cfg(test)]` 判良性。属性测试 `bounded_capacity_tests`（Property 3：7³ 边界格 + 一万组随机三元组，乘积按 `u128` 算）。
+- **32 位 `usize`（wasm32）**：`u32 as usize` 之后参与加、乘的守卫改 `checked_*`——`streams::summary` 13 处（新 `fits`）、`cluster_header` 字符串表 `pos + byte_len`、`dynamic_attr_records` 段长 `cursor + section_len`；
+  `cluster_header` / `dynamic_attr_records` / `sheet_endpoint_records` / `sheet_probe` 的 8 个小端读取函数改走新 `parsers::le_bytes`（`data.get(off..off.checked_add(N)?)`），越界读 0 而不 panic。
+  调用方照旧先查界；回退只为回绕的守卫不至于 abort 整页，合法输入碰不到它。64 位上这些和都不会溢出，语料结果不动。
+- 验证：`cargo test` 41 个二进制 1484 过 / 3 忽略（`--lib` 1121 → 1124）；`--no-default-features` 16 个二进制 1059 过 / 1 忽略（`--lib` 812 → 815）；四组棘轮不变（`parse_real_files` 136、
+  `render_gap_census` 5、`style_link_ratchet` 17、`geometry_profile` 2），golden 不变；clippy `--all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 通过；
+  扩展批 release 29 s 全绿。
+
 ### 原生读取器跳过的记录不再解码：PSM 类型字的 `0x8000` 位（2026-09-28，OCS 计划 P-D12）
 
 OpenCADStudio 计划 `docs/plans/2026-09-28-pid-import-next-steps.md` P-D12（经 zhimo 批准），起因是同单 R1 的探针 `examples/probe_run_conflicts.rs`；分析

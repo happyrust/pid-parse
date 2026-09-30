@@ -2135,16 +2135,19 @@ fn add_offset_like_boundaries(data: &[u8], map: &mut BTreeMap<usize, CandidateBo
     }
 }
 
+// Callers bound-check `off` first. Past the end these read 0 instead of
+// panicking, only so a guard that wraps on a 32-bit `usize` cannot abort the
+// page (see `super::le_bytes`).
 fn u32_le(data: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+    super::le_bytes(data, off).map_or(0, u32::from_le_bytes)
 }
 
 fn u16_le(data: &[u8], off: usize) -> u16 {
-    u16::from_le_bytes([data[off], data[off + 1]])
+    super::le_bytes(data, off).map_or(0, u16::from_le_bytes)
 }
 
 fn i32_le(data: &[u8], off: usize) -> i32 {
-    i32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+    super::le_bytes(data, off).map_or(0, i32::from_le_bytes)
 }
 
 fn record_type_counts(data: &[u8]) -> BTreeMap<String, usize> {

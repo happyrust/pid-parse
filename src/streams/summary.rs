@@ -79,7 +79,11 @@ fn parse_property_set(data: &[u8]) -> Option<BTreeMap<u32, PropValue>> {
     }
 
     let num_sections = u32_le(data, 24) as usize;
-    if num_sections == 0 || data.len() < 28 + num_sections * 20 {
+    if num_sections == 0
+        || !num_sections
+            .checked_mul(20)
+            .is_some_and(|table| fits(data, 28, table))
+    {
         return None;
     }
 
@@ -89,7 +93,7 @@ fn parse_property_set(data: &[u8]) -> Option<BTreeMap<u32, PropValue>> {
 }
 
 fn parse_section(data: &[u8], offset: usize) -> Option<BTreeMap<u32, PropValue>> {
-    if offset + 8 > data.len() {
+    if !fits(data, offset, 8) {
         return None;
     }
 
@@ -106,7 +110,9 @@ fn parse_section(data: &[u8], offset: usize) -> Option<BTreeMap<u32, PropValue>>
         }
         let prop_id = u32_le(data, entry);
         let prop_offset = u32_le(data, entry + 4) as usize;
-        let abs_offset = offset + prop_offset;
+        // Saturating: past the address space is past the stream, which the
+        // checked bound in `read_typed_value` then refuses.
+        let abs_offset = offset.saturating_add(prop_offset);
 
         if let Some(val) = read_typed_value(data, abs_offset) {
             props.insert(prop_id, val);
@@ -117,7 +123,7 @@ fn parse_section(data: &[u8], offset: usize) -> Option<BTreeMap<u32, PropValue>>
 }
 
 fn read_typed_value(data: &[u8], offset: usize) -> Option<PropValue> {
-    if offset + 4 > data.len() {
+    if !fits(data, offset, 4) {
         return None;
     }
 
@@ -131,7 +137,7 @@ fn read_typed_value(data: &[u8], offset: usize) -> Option<PropValue> {
                 return None;
             }
             let len = u32_le(data, val_start) as usize;
-            if val_start + 4 + len > data.len() {
+            if !fits(data, val_start + 4, len) {
                 return None;
             }
             let bytes = &data[val_start + 4..val_start + 4 + len];
@@ -148,8 +154,8 @@ fn read_typed_value(data: &[u8], offset: usize) -> Option<PropValue> {
                 return None;
             }
             let char_count = u32_le(data, val_start) as usize;
-            let byte_len = char_count * 2;
-            if val_start + 4 + byte_len > data.len() {
+            let byte_len = char_count.checked_mul(2)?;
+            if !fits(data, val_start + 4, byte_len) {
                 return None;
             }
             let words: Vec<u16> = (0..char_count)
@@ -329,6 +335,14 @@ fn u32_le(data: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
 }
 
+/// Whether `len` bytes from `at` lie inside `data`. Checked, because `at` and
+/// `len` come off the stream as `u32`: on a 32-bit `usize` (wasm32) the
+/// unchecked `at + len > data.len()` wraps under the bound and the raw index
+/// in `u32_le` panics (OCS spec `pid-import-next-round`, design D2).
+fn fits(data: &[u8], at: usize, len: usize) -> bool {
+    at.checked_add(len).is_some_and(|end| end <= data.len())
+}
+
 // ---------------------------------------------------------------------
 // Phase 10j: DocumentSummaryInformation section 2 (user dict) decoder.
 // ---------------------------------------------------------------------
@@ -370,15 +384,20 @@ fn parse_doc_summary_section_2(data: &[u8]) -> BTreeMap<String, SummaryPropertyV
 
 fn decode_user_dict_section(data: &[u8], offset: usize) -> BTreeMap<String, SummaryPropertyValue> {
     let mut out = BTreeMap::new();
-    if offset + 8 > data.len() {
+    if !fits(data, offset, 8) {
         return out;
     }
     let _section_size = u32_le(data, offset);
     let num_props = u32_le(data, offset + 4) as usize;
     // Build the prop_id → offset table first so we can resolve Dictionary
     // (PROPID 0) before walking the user props.
-    let mut entries: Vec<(u32, usize)> = Vec::with_capacity(num_props);
     let id_list_start = offset + 8;
+    // `num_props` is the stream's word; each entry takes 8 bytes of it.
+    let mut entries: Vec<(u32, usize)> = Vec::with_capacity(crate::parsers::bounded_capacity(
+        num_props,
+        data.len() - id_list_start,
+        8,
+    ));
     for i in 0..num_props {
         let e = id_list_start + i * 8;
         if e + 8 > data.len() {
@@ -386,7 +405,9 @@ fn decode_user_dict_section(data: &[u8], offset: usize) -> BTreeMap<String, Summ
         }
         let prop_id = u32_le(data, e);
         let prop_off = u32_le(data, e + 4) as usize;
-        entries.push((prop_id, offset + prop_off));
+        // Saturating: past the address space is past the stream, which the
+        // checked bounds downstream then refuse.
+        entries.push((prop_id, offset.saturating_add(prop_off)));
     }
 
     // Phase 10j MVP: assume LPSTR dictionary (the overwhelmingly common
@@ -427,7 +448,7 @@ fn decode_user_dict_section(data: &[u8], offset: usize) -> BTreeMap<String, Summ
 /// ASCII); Phase 10k will honor the section's `CodePage` property.
 fn parse_dictionary_lpstr(data: &[u8], offset: usize) -> BTreeMap<u32, String> {
     let mut out = BTreeMap::new();
-    if offset + 4 > data.len() {
+    if !fits(data, offset, 4) {
         return out;
     }
     let num_entries = u32_le(data, offset) as usize;
@@ -439,7 +460,7 @@ fn parse_dictionary_lpstr(data: &[u8], offset: usize) -> BTreeMap<u32, String> {
         let prop_id = u32_le(data, cursor);
         let len = u32_le(data, cursor + 4) as usize;
         let name_start = cursor + 8;
-        if name_start + len > data.len() {
+        if !fits(data, name_start, len) {
             break;
         }
         let raw = &data[name_start..name_start + len];
@@ -459,7 +480,7 @@ fn parse_dictionary_lpstr(data: &[u8], offset: usize) -> BTreeMap<u32, String> {
 }
 
 fn read_user_value(data: &[u8], offset: usize) -> Option<SummaryPropertyValue> {
-    if offset + 4 > data.len() {
+    if !fits(data, offset, 4) {
         return None;
     }
     let vt = u32_le(data, offset) & 0xFFFF;
@@ -471,7 +492,7 @@ fn read_user_value(data: &[u8], offset: usize) -> Option<SummaryPropertyValue> {
                 return None;
             }
             let len = u32_le(data, val_start) as usize;
-            if val_start + 4 + len > data.len() {
+            if !fits(data, val_start + 4, len) {
                 return None;
             }
             let bytes = &data[val_start + 4..val_start + 4 + len];
@@ -488,8 +509,8 @@ fn read_user_value(data: &[u8], offset: usize) -> Option<SummaryPropertyValue> {
                 return None;
             }
             let char_count = u32_le(data, val_start) as usize;
-            let byte_len = char_count * 2;
-            if val_start + 4 + byte_len > data.len() {
+            let byte_len = char_count.checked_mul(2)?;
+            if !fits(data, val_start + 4, byte_len) {
                 return None;
             }
             let words: Vec<u16> = (0..char_count)

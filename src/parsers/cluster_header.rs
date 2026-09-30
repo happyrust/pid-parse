@@ -122,7 +122,9 @@ pub fn parse_string_table_with_trace(
             continue;
         }
 
-        if pos + byte_len > data.len() {
+        // Checked: `byte_len` is a `u32` off the stream, and on a 32-bit
+        // `usize` (wasm32) the plain sum wraps under the bound.
+        if pos.checked_add(byte_len).is_none_or(|end| end > data.len()) {
             break;
         }
 
@@ -573,12 +575,15 @@ fn find_entry1_before(data: &[u8], entry2_pos: usize) -> Option<usize> {
     None
 }
 
+// Callers bound-check `off` first. Past the end these read 0 instead of
+// panicking, only so a guard that wraps on a 32-bit `usize` cannot abort the
+// page (see `super::le_bytes`).
 fn u16_le(data: &[u8], off: usize) -> u16 {
-    u16::from_le_bytes([data[off], data[off + 1]])
+    super::le_bytes(data, off).map_or(0, u16::from_le_bytes)
 }
 
 fn u32_le(data: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+    super::le_bytes(data, off).map_or(0, u32::from_le_bytes)
 }
 
 #[cfg(test)]

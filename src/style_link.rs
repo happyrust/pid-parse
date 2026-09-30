@@ -1882,7 +1882,11 @@ fn read_librarian_entry(payload: &[u8], at: usize) -> Option<(LibrarianEntry, us
 /// does not cover yields `None` and the entry simply says nothing about its
 /// family — that is a gap in the table, not a claim about the file.
 fn read_librarian_palettes(payload: &[u8], at: usize, count: u16) -> Option<Vec<Option<u16>>> {
-    let mut out = Vec::with_capacity(usize::from(count));
+    let mut out = Vec::with_capacity(crate::parsers::bounded_capacity(
+        usize::from(count),
+        payload.len().saturating_sub(at),
+        LIBRARIAN_PALETTE_RECORD_LEN,
+    ));
     for i in 0..usize::from(count) {
         let record_at = at.checked_add(i.checked_mul(LIBRARIAN_PALETTE_RECORD_LEN)?)?;
         let guid: [u8; 16] = payload.get(record_at..record_at + 16)?.try_into().ok()?;

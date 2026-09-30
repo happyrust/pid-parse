@@ -91,11 +91,14 @@ fn try_parse_record(data: &[u8], pos: usize) -> Option<(AttributeRecord, usize)>
     let section_len = u32_le(data, cursor) as usize;
     let cursor = cursor + 4;
 
-    if section_len == 0 || cursor + section_len > data.len() + 4 {
+    // Checked: `section_len` is a `u32` off the stream, and on a 32-bit
+    // `usize` (wasm32) the plain sum wraps under the bound.
+    let section_end = cursor.checked_add(section_len)?;
+    if section_len == 0 || section_end > data.len() + 4 {
         return None;
     }
 
-    let section_end = (cursor + section_len).min(data.len());
+    let section_end = section_end.min(data.len());
     let record = parse_section_body(data, cursor, section_end)?;
     Some((record, section_end))
 }
@@ -390,8 +393,11 @@ fn is_printable_run(data: &[u8], pos: usize, min_len: usize) -> bool {
         .all(|&b| is_printable_byte(b))
 }
 
+// Callers bound-check `off` first. Past the end this reads 0 instead of
+// panicking, only so a guard that wraps on a 32-bit `usize` cannot abort the
+// page (see `super::le_bytes`).
 fn u32_le(data: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+    super::le_bytes(data, off).map_or(0, u32::from_le_bytes)
 }
 
 /// Extract the 31-byte per-record trailer that ends each `P&IDAttributes`
