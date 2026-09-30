@@ -4,6 +4,11 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-09-30 · OCS 计划 `OpenCADStudio/docs/plans/2026-09-29-pid-import-next-round.md` 任务 7（S1，P-D7）**：
+探针 `examples/probe_item_tags_without_data_xml.rs` 只凭 `.pid` 内的关联复原位号，publish 副本的 `_Data.xml` 只打分：路 a `igTextBox.parent_ref`、路 b `DependencyObject` 编组覆盖都是 0 / 16，
+路 c 符号路径 → 类给出 6 / 16、对 2 / 6；**位号总复原率 0 / 16 = 0.0 %**（< 80 %），类 2 / 16——**S 登记不做**，见 `docs/analysis/2026-09-30-item-tags-without-data-xml.md`。
+`src` 不动。阶段 A 在 pid-parse 的活到此做完；下一项 8（刷新 OCS 两份计划文档，在工作树）。
+
 **2026-09-30 · OCS 计划 `OpenCADStudio/docs/plans/2026-09-29-pid-import-next-round.md` 任务 3（P-D21）**：
 `jsheet_oids` 改用 `parse_live_psm_header`，带 `0x8000` 位的 `JSheet` 不再算活 sheet（与 22 个族解码器同一判据，P-D12）；`sheet_record_starts` 照旧不过滤。Property 6 合成字节穷举 30 条流；
 语料没有带位的 `JSheet`，四组棘轮与 golden 不变，`--lib` 1125。任务 4–6 在 OCS 工作树；pid-parse 下一项 7（S1 取证）。

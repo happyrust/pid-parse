@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### S1 取证：没有 `_Data.xml` 时文件内关联复原位号 0 / 16，S 登记不做（2026-09-30，OCS 计划 P-D7）
+
+OpenCADStudio 计划 `docs/plans/2026-09-29-pid-import-next-round.md` 任务 7（S1；09-28 单 P-D7：只取证，位号总复原率 ≥ 80 % 才提议实施单）；分析 `docs/analysis/2026-09-30-item-tags-without-data-xml.md`。
+
+- **探针 `examples/probe_item_tags_without_data_xml.rs`**（只加示例，`src` 不动，不需要 `backup` 特性）：publish 副本旁的 `_Data.xml` 只当答案键（`PidSemanticIndex` 两跳，label = `PidSemanticObject::label()`，
+  即 `ItemTag`、否则 `Name`——0202 的 `_Data.xml` 没有 `ItemTag`）；三条只读 `.pid` 的路：a `igTextBox.parent_ref`、b `DependencyObject` 编组（打分前放宽到尾部引用 + `parent_ref` 成员 + 一层子组）、
+  c 符号库路径 → 类（13 条写死的规则）。口径写在模块注释里、打分前定；按图、按路、按类报覆盖 / 准确，列失败类别与一例。
+- **数**（0202 + A01 合计；A01 的 3 条全部两跳断，分母只来自 0202）：分母 16；路 a、b 覆盖 0 / 16；路 c 覆盖 6 / 16、准确 2 / 6；**位号总复原率 0 / 16 = 0.0 %**，类复原率 2 / 16 = 12.5 %。
+  失败类别：无框指向 16、没有符号路径 10（管道 run）、类错 4（分支点用 `Piping OPC's\Off-Drawing.sym` 画，判成 PIDOPC）、两跳断 3。诊断：答案在 a ∪ b 的候选里 0 / 16；原样是某个文本框的全文 4 / 16、只有片段 2 / 16。
+- **结论**：低于 80 %，S 登记不做、不提议实施单——文本框挂的 `DependencyObject` 连不到物项，run 的 label 是属性拼成的串且没有符号路径，分支点的 OPC 符号让路径 → 类判错；样本只有一张图 16 个物项。
+- 验证：clippy `--example probe_item_tags_without_data_xml -- -D warnings` 默认特性与 `--no-default-features` 都零告警；`rustfmt --check` 干净；两次实跑输出逐行相同。
+
 ### `jsheet_oids` 只收活记录：与族解码器同一判据（2026-09-30，OCS 计划 P-D21）
 
 OpenCADStudio 计划 `docs/plans/2026-09-29-pid-import-next-round.md` 任务 3（P-D21）。
