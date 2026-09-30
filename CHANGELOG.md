@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### `jsheet_oids` 只收活记录：与族解码器同一判据（2026-09-30，OCS 计划 P-D21）
+
+OpenCADStudio 计划 `docs/plans/2026-09-29-pid-import-next-round.md` 任务 3（P-D21）。
+
+- **`jsheet_oids`**：过滤从 `parse_psm_header` 换成 `parse_live_psm_header`——类型字带 `0x8000` 的 `JSheet` 是原生读取器跳过的记录、不是活 sheet，不再进结果；
+  判据与 22 个族解码器相同（P-D12）。`sheet_record_starts` 不动：它走链，要看见每一条（含跳过的）才接得上下一条。
+- **属性测试**（Property 6）：`sheet_records` 单测 `jsheet_oids_are_the_live_sheets_for_every_skip_bit_combination` 用合成字节穷举 1–4 条 `JSheet` 的跳过位组合，共 30 条流；
+  断言 `jsheet_oids` 恰为不带位记录的 oid（按盘上顺序），`sheet_record_starts` 每条记录一个起点、一条不少。
+- 语料里没有带位的 `JSheet`，结果不动：四组棘轮不变（`parse_real_files` 136、`render_gap_census` 5、`style_link_ratchet` 17、`geometry_profile` 2），golden 不变。
+  验证：`cargo test` 41 个二进制 1485 过 / 3 忽略（`--lib` 1124 → 1125）；`--no-default-features` 16 个二进制 1060 过 / 1 忽略（`--lib` 815 → 816）；
+  clippy `--all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 通过；`rustfmt --check` 干净。
+
 ### 任意字节不 panic：变异套件、盘上计数钳位、32 位偏移加固（2026-09-30，OCS 计划 P-D16 / P-D22）
 
 OpenCADStudio 计划 `docs/plans/2026-09-29-pid-import-next-round.md` 任务 2.1–2.4。起因 P-D16：网页版在页面主线程解析 `.pid`，wasm32 上 panic 即 abort，一张坏图带走整页；

@@ -4,6 +4,10 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-09-30 · OCS 计划 `OpenCADStudio/docs/plans/2026-09-29-pid-import-next-round.md` 任务 3（P-D21）**：
+`jsheet_oids` 改用 `parse_live_psm_header`，带 `0x8000` 位的 `JSheet` 不再算活 sheet（与 22 个族解码器同一判据，P-D12）；`sheet_record_starts` 照旧不过滤。Property 6 合成字节穷举 30 条流；
+语料没有带位的 `JSheet`，四组棘轮与 golden 不变，`--lib` 1125。任务 4–6 在 OCS 工作树；pid-parse 下一项 7（S1 取证）。
+
 **2026-09-30 · OCS 计划 `OpenCADStudio/docs/plans/2026-09-29-pid-import-next-round.md` 任务 2.1–2.4（P-D16 / P-D22）**：
 不 panic 套件 `tests/arbitrary_bytes_never_panic.rs`——整条链（`parse_reader` → `build_normalized_geometry` → `style_link`）× 六类变异，线程 + 10 s 超时 + 分配看门（上限 68 157 568 B）；
 默认批 100 / 100、扩展批 3100 / 3100，**没找到 panic / 挂起 / 超额分配**，`cfb` 内部无可预检之处。`bounded_capacity` 钳住四处盘上计数驱动的预分配（`view_filter_sets` / `style_link` / `sheet_records` / `streams::summary`），

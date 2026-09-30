@@ -4147,15 +4147,23 @@ fn decode_igsymbol_payload(
 /// definition cache storage is one symbol body.
 pub const PSM_TYPE_CODE_JSHEET: u16 = 0x0114;
 
-/// The oid of every `JSheet` record in a record-chain stream, in on-disk
-/// order. No payload is read beyond the oid: the sheet's layers are reached
-/// through its space-map edge to a `JSheetLayerManager`, not through its
-/// own bytes.
+/// The oid of every live `JSheet` record in a record-chain stream, in
+/// on-disk order. No payload is read beyond the oid: the sheet's layers are
+/// reached through its space-map edge to a `JSheetLayerManager`, not
+/// through its own bytes.
+///
+/// A `JSheet` the native reader skips ([`PsmHeader::native_reader_skips`])
+/// is not a live sheet, so it is left out: the header goes through
+/// [`parse_live_psm_header`], the judgement every family decoder starts
+/// from (OCS plan `2026-09-28-pid-import-next-steps.md` P-D12, applied here
+/// by `2026-09-29-pid-import-next-round.md` P-D21). The walk stays
+/// [`sheet_record_starts`], unfiltered: it has to see every record, a
+/// skipped one included, to reach the next.
 pub fn jsheet_oids(data: &[u8]) -> Vec<u32> {
     sheet_record_starts(data)
         .into_iter()
         .filter_map(|at| {
-            let header = parse_psm_header(data, at)?;
+            let header = parse_live_psm_header(data, at)?;
             (header.type_code == PSM_TYPE_CODE_JSHEET)
                 .then(|| u32_le(data, header.body_start))
                 .flatten()
@@ -10643,6 +10651,62 @@ mod tests {
             assert!(header.native_reader_skips());
             assert!(parse_live_psm_header(&record, 0).is_none());
         }
+    }
+
+    /// A `JSheet` record as the chain stores it: the type word (`0x8000`
+    /// set when the native reader is to skip it), `bytes_to_follow = 4`,
+    /// then the oid -- all of the record [`jsheet_oids`] reads.
+    fn build_synthetic_jsheet_record(oid: u32, skipped: bool) -> Vec<u8> {
+        let skip_bit: u16 = if skipped { 0x8000 } else { 0 };
+        let type_word = PSM_TYPE_CODE_JSHEET | skip_bit;
+        let mut out = Vec::with_capacity(PSM_ENVELOPE_LEN + 4);
+        out.extend_from_slice(&type_word.to_le_bytes());
+        out.extend_from_slice(&4u32.to_le_bytes());
+        out.extend_from_slice(&oid.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn jsheet_oids_are_the_live_sheets_for_every_skip_bit_combination() {
+        // Feature: pid-import-next-round, Property 6: jsheet_oids 只收活记录
+        // **Validates: Requirements 8.1, 8.2, 8.3**
+        //
+        // Every stream of 1-4 JSheet records under every choice of the
+        // native-skip bit, enumerated: 2 + 4 + 8 + 16 = 30 streams. The
+        // sheets name only the records without the bit; the chain walk
+        // still starts at every record, a skipped one included.
+        let mut streams = 0;
+        for count in 1..=4usize {
+            for mask in 0..(1u32 << count) {
+                let skipped = |i: usize| mask & (1 << i) != 0;
+                let oids: Vec<u32> = (0..count).map(|i| 0x1000 + i as u32).collect();
+                let records: Vec<Vec<u8>> = oids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &oid)| build_synthetic_jsheet_record(oid, skipped(i)))
+                    .collect();
+                let stream = synthetic_sheet_stream(&records);
+                let case = format!("{count} records, skip mask {mask:#06b}");
+
+                let live: Vec<u32> = oids
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, _)| !skipped(i))
+                    .map(|(_, &oid)| oid)
+                    .collect();
+                assert_eq!(jsheet_oids(&stream), live, "{case}");
+
+                let mut starts = Vec::with_capacity(count);
+                let mut at = SHEET_STREAM_HEADER_LEN;
+                for record in &records {
+                    starts.push(at);
+                    at += record.len();
+                }
+                assert_eq!(sheet_record_starts(&stream), starts, "{case}");
+                streams += 1;
+            }
+        }
+        assert_eq!(streams, 30, "every length 1-4 under every skip-bit choice");
     }
 
     // -----------------------------------------------------------------
