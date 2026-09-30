@@ -5361,7 +5361,10 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
             placed_bodies: 2,
             placed_bodies_with_hidden_strokes: 2,
             hidden_layers: &["Construction", "Dimension", "Heat Trace"],
-            strokes_over_placements: (12, 6),
+            // (12, 6) until the vessel body's two `igEllipticalArc2d`
+            // heads were drawn, on its displayed layer (OCS plan
+            // `2026-09-30-a-cached-body-draws-its-elliptical-arcs`).
+            strokes_over_placements: (14, 8),
             visible: &[],
             // The base sheets of three cache storages, and the OLE site's
             // second sheet, which has no view filter set either.
@@ -5679,7 +5682,10 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
         },
         Expected {
             fixture: "export-test/publish-data/A01/A01.pid",
-            visible_over_placements: 6,
+            // 6 until the vessel body's two `igEllipticalArc2d` heads were
+            // drawn (OCS plan
+            // `2026-09-30-a-cached-body-draws-its-elliptical-arcs`).
+            visible_over_placements: 8,
             dashed_over_placements: 0,
             dashed_bodies: &[],
             palettes: &[],

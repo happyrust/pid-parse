@@ -930,6 +930,13 @@ pub struct JSiteNestedGeometry {
     /// `0x005D` `igBspCurve2d` records, in on-disk order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bsplines: Vec<DecodedIgBspCurve2dRecord>,
+    /// `0x007E` `igEllipticalArc2d` records, in on-disk order. A cached
+    /// body draws each as the exact rational B-spline
+    /// [`crate::bspline::elliptical_arc`] makes of it; the corpus's four
+    /// are A01's vessel heads (OCS plan
+    /// `2026-09-30-a-cached-body-draws-its-elliptical-arcs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub elliptical_arcs: Vec<DecodedIgEllipticalArc2dRecord>,
     /// `0x0115` `igDimension` / `JDim` records, in on-disk order: the
     /// driving dimensions of the parametric bodies. Audit only — every
     /// corpus record sits on a `Dimension` layer the file has switched off,
@@ -965,6 +972,7 @@ impl JSiteNestedGeometry {
             + self.texts.len()
             + self.rectangles.len()
             + self.bsplines.len()
+            + self.elliptical_arcs.len()
             + self.dimensions.len()
     }
 
@@ -1087,6 +1095,71 @@ impl From<crate::parsers::sheet_records::SheetIgArc2dDecoded> for DecodedIgArc2d
             radius: record.radius,
             start_angle: record.start_angle,
             end_angle: record.end_angle,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgEllipticalArc2dDecoded`] -- PSM
+/// type `0x007E` `igEllipticalArc2d` (`imagdex.dex`).
+///
+/// The ellipse is `P(t) = C + cos t · major + sin t · minor`, with
+/// `minor = ratio · (−major_y, major_x)`, the major semi-axis turned +90°;
+/// the arc runs **clockwise** -- decreasing `t` -- from `sweep_start` to
+/// `sweep_end`, as an `igArc2d` does from its start angle to its end angle.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgEllipticalArc2dRecord {
+    /// Inclusive byte-range start inside the cluster stream.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Persist id of the arc.
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair, verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` the arc sits on.
+    pub sheet_layer_ref: u32,
+    /// Style reference at payload `+14`: a style id in the `StyleCluster`
+    /// of the storage the record lives in, resolved the way
+    /// [`crate::style_link`] resolves a sheet's line work.
+    #[serde(default)]
+    pub index: u32,
+    /// Parameter the arc starts at, radians from the major semi-axis
+    /// towards the minor one; the arc leaves it **clockwise** towards
+    /// `sweep_end`.
+    pub sweep_start: f64,
+    /// Parameter the arc ends at, same measure.
+    pub sweep_end: f64,
+    /// Centre X, in the storage's own coordinates.
+    pub center_x: f64,
+    /// Centre Y, in the storage's own coordinates.
+    pub center_y: f64,
+    /// Major semi-axis vector X, same units.
+    pub major_x: f64,
+    /// Major semi-axis vector Y, same units.
+    pub major_y: f64,
+    /// Minor / major semi-axis ratio, in `(0, 1]`.
+    pub ratio: f64,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgEllipticalArc2dDecoded>
+    for DecodedIgEllipticalArc2dRecord
+{
+    fn from(record: crate::parsers::sheet_records::SheetIgEllipticalArc2dDecoded) -> Self {
+        Self {
+            byte_start: record.byte_range.start,
+            byte_end: record.byte_range.end,
+            oid: record.oid,
+            parent_ref: record.parent_ref,
+            sheet_layer_ref: record.sheet_layer_ref,
+            index: record.index,
+            sweep_start: record.sweep_start,
+            sweep_end: record.sweep_end,
+            center_x: record.center.0,
+            center_y: record.center.1,
+            major_x: record.major_axis.0,
+            major_y: record.major_axis.1,
+            ratio: record.ratio,
         }
     }
 }

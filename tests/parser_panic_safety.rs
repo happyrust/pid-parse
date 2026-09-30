@@ -47,14 +47,15 @@ use pid_parse::parsers::sheet_records::{
     decode_dependency_objects, decode_double_value_at, decode_double_values, decode_igarc_at,
     decode_igarcs, decode_igboundaries, decode_igboundary_at, decode_igbspcurve_at,
     decode_igbspcurves, decode_igcircle_at, decode_igcircles, decode_igdimension_at,
-    decode_igdimensions, decode_igline_at, decode_iglines, decode_iglinestring_at,
-    decode_iglinestrings, decode_igpoint_at, decode_igpoints, decode_igrectangle_at,
-    decode_igrectangles, decode_igsymbol_at, decode_igsymbols, decode_igtextbox_at,
-    decode_igtextboxes, decode_jstyle_override_at, decode_jstyle_overrides,
-    decode_primitive_line_at, decode_primitive_lines, decode_smartframe_at, decode_smartframes,
-    decode_standard_relation_at, decode_standard_relations, decode_sub_record_0x0010_at,
-    decode_sub_records_0x0010, decode_symbol_information_at, decode_symbol_informations,
-    decode_variables, decode_variables_at, parse_psm_header, IgLine2dDecoder, PsmRecordDecoder,
+    decode_igdimensions, decode_igellipticalarc_at, decode_igellipticalarcs, decode_igline_at,
+    decode_iglines, decode_iglinestring_at, decode_iglinestrings, decode_igpoint_at,
+    decode_igpoints, decode_igrectangle_at, decode_igrectangles, decode_igsymbol_at,
+    decode_igsymbols, decode_igtextbox_at, decode_igtextboxes, decode_jstyle_override_at,
+    decode_jstyle_overrides, decode_primitive_line_at, decode_primitive_lines,
+    decode_smartframe_at, decode_smartframes, decode_standard_relation_at,
+    decode_standard_relations, decode_sub_record_0x0010_at, decode_sub_records_0x0010,
+    decode_symbol_information_at, decode_symbol_informations, decode_variables,
+    decode_variables_at, parse_psm_header, IgLine2dDecoder, PsmRecordDecoder,
     SPATIAL_ANALYSIS_DEFAULT_GRID_N,
 };
 use pid_parse::parsers::string_scan::{scan_ascii_strings, scan_guids, scan_utf16le_strings};
@@ -392,6 +393,15 @@ fn exercise_all_parsers(input: &[u8]) {
         let _ = decode_igcircle_at(input, input.len());
         let _ = decode_igarc_at(input, input.len() - 1);
         let _ = decode_igarc_at(input, input.len());
+    }
+
+    // `0x007E` igEllipticalArc2d: the same fixed-layout risk, with seven
+    // doubles ahead of the flag byte.
+    let _ = decode_igellipticalarcs(input);
+    let _ = decode_igellipticalarc_at(input, 0);
+    if !input.is_empty() {
+        let _ = decode_igellipticalarc_at(input, input.len() - 1);
+        let _ = decode_igellipticalarc_at(input, input.len());
     }
 
     // `0x0020` igRectangle2d and `0x005D` igBspCurve2d: both read counted

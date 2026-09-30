@@ -7020,6 +7020,172 @@ impl PsmRecordDecoder for IgArc2dDecoder {
 }
 
 // ---------------------------------------------------------------------------
+// 2026-09-30: igEllipticalArc2d (cached bodies only)
+// ---------------------------------------------------------------------------
+//
+// The corpus holds four `0x007E` records, all in A01 and all inside nested
+// `JSite<N>/PSMcluster0` definition caches: `/JSite121` oids 489 / 490 are
+// the two 2:1 heads of the vessel `V 010121A` (sheet 481, placed by oid
+// 184), `/JSite39` oids 114 / 115 the heads of a body no placement names
+// (sheet 96). Like the circles and arcs above they are read for the cached
+// bodies only, and deliberately not registered in `model::sheet_families`
+// (OCS plan `2026-09-30-a-cached-body-draws-its-elliptical-arcs`, E-D4).
+//
+// The payload is the shared 18-byte sub-header, seven doubles and one flag
+// byte, measured on those four records. Unlike `igArc2d`, the two angles
+// come first:
+//
+// | payload | field |
+// |---|---|
+// | `+18` | sweep start angle |
+// | `+26` | sweep end angle |
+// | `+34`, `+42` | centre x, y |
+// | `+50`, `+58` | major semi-axis vector x, y |
+// | `+66` | minor / major ratio |
+// | `+74` | flag byte |
+//
+// The angles are parameters of `P(t) = C + cos t · major + sin t · minor`,
+// where `minor` is the major semi-axis turned +90° and scaled by the ratio.
+// What is kept from `igArc2d` is its sweep convention: the arc runs
+// **clockwise** -- decreasing `t` -- from the start angle to the end angle.
+// Read that way, all four corpus heads bulge out of their body's rectangle.
+
+/// PSM type code for `igEllipticalArc2d` ("Elliptical Arc Object",
+/// `imagdex.dex`; IGDS class tag `0x7E = 126`).
+pub const PSM_TYPE_CODE_IGELLIPTICALARC2D: u16 = 0x007E;
+
+/// Payload of one `igEllipticalArc2d`: the 18-byte sub-header, then
+/// `sweep_start`, `sweep_end`, `center.x`, `center.y`, `major_axis.x`,
+/// `major_axis.y`, `ratio` (7×f64) and one flag byte. Note the order: the
+/// angles come *before* the centre, where `igArc2d` stores them after its
+/// radius.
+pub const IGELLIPTICALARC2D_PAYLOAD_LEN: usize = 75;
+
+/// One decoded `0x007E` `igEllipticalArc2d` record.
+///
+/// The ellipse is `P(t) = center + cos t · major_axis + sin t · minor`,
+/// with `minor = ratio · (−major_axis.y, major_axis.x)` -- the major
+/// semi-axis turned +90°. The arc runs **clockwise**, with decreasing `t`,
+/// from `t = sweep_start` to `t = sweep_end`: the same convention as
+/// [`SheetIgArc2dDecoded`], clockwise from start to end. Lengths are in the
+/// storage's own units (metres in every nested cache).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetIgEllipticalArc2dDecoded {
+    /// Byte range covering the full PSM record (envelope + payload).
+    pub byte_range: std::ops::Range<usize>,
+    /// Top 2 bits of the PSM type word (record-level flags).
+    pub type_flags: u16,
+    /// Object identifier (payload `+0`).
+    pub oid: u32,
+    /// Low half of the envelope's `aux` pair (payload `+4`), verbatim.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this arc sits on (payload `+8`).
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator (payload `+12`); semantics not decoded.
+    pub sub_type_word: u16,
+    /// Index / style reference (payload `+14`).
+    pub index: u32,
+    /// Parameter the arc starts at, radians from the major semi-axis
+    /// towards the minor one (payload `+18`). The arc leaves it
+    /// **clockwise** -- decreasing `t` -- towards [`Self::sweep_end`].
+    pub sweep_start: f64,
+    /// Parameter the arc ends at, same measure (payload `+26`).
+    pub sweep_end: f64,
+    /// Centre, in the storage's own coordinates (payload `+34`, `+42`).
+    pub center: (f64, f64),
+    /// Major semi-axis vector, same units (payload `+50`, `+58`); never
+    /// zero.
+    pub major_axis: (f64, f64),
+    /// Minor / major semi-axis ratio (payload `+66`), in `(0, 1]`.
+    pub ratio: f64,
+    /// The trailing byte (payload `+74`); meaning unknown, carried for
+    /// audit.
+    pub flag: u8,
+}
+
+/// Decode every `igEllipticalArc2d` record in a record-chain stream.
+///
+/// Chain-gated like [`decode_igarcs`]: a candidate has to start where the
+/// stream's own chain says a record starts ([`sheet_record_starts`]), then
+/// satisfy: type code [`PSM_TYPE_CODE_IGELLIPTICALARC2D`];
+/// `bytes_to_follow == 75`; seven finite in-domain doubles; a non-zero
+/// major semi-axis; `0 < ratio <= 1`. As for `igArc2d`, the angles only
+/// have to be finite: they are not normalised.
+pub fn decode_igellipticalarcs(data: &[u8]) -> Vec<SheetIgEllipticalArc2dDecoded> {
+    sheet_record_starts(data)
+        .into_iter()
+        .filter_map(|at| IgEllipticalArc2dDecoder.decode_at(data, at))
+        .collect()
+}
+
+/// Try to decode one `igEllipticalArc2d` record at `offset`. `None` on any
+/// validation failure; panic-free on arbitrary input.
+pub fn decode_igellipticalarc_at(
+    data: &[u8],
+    offset: usize,
+) -> Option<SheetIgEllipticalArc2dDecoded> {
+    IgEllipticalArc2dDecoder.decode_at(data, offset)
+}
+
+/// [`PsmRecordDecoder`] adapter for `0x007E` `igEllipticalArc2d`.
+pub struct IgEllipticalArc2dDecoder;
+
+impl PsmRecordDecoder for IgEllipticalArc2dDecoder {
+    type Record = SheetIgEllipticalArc2dDecoded;
+
+    fn type_code(&self) -> u16 {
+        PSM_TYPE_CODE_IGELLIPTICALARC2D
+    }
+
+    fn min_record_len(&self) -> usize {
+        PSM_ENVELOPE_LEN + IGELLIPTICALARC2D_PAYLOAD_LEN
+    }
+
+    fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgEllipticalArc2dDecoded> {
+        let header = parse_live_psm_header(data, offset)?;
+        if header.type_code != PSM_TYPE_CODE_IGELLIPTICALARC2D
+            || header.bytes_to_follow as usize != IGELLIPTICALARC2D_PAYLOAD_LEN
+        {
+            return None;
+        }
+        let end = header
+            .body_start
+            .checked_add(IGELLIPTICALARC2D_PAYLOAD_LEN)?;
+        let payload = data.get(header.body_start..end)?;
+        let sub = curve_sub_header(payload)?;
+        let [sweep_start, sweep_end, center_x, center_y, major_x, major_y, ratio] =
+            curve_doubles::<7>(payload)?;
+        // Every double is finite and inside the domain here, so `hypot`
+        // is finite too and `<= 0` means a zero-length major axis.
+        if major_x.hypot(major_y) <= 0.0 || ratio <= 0.0 || ratio > 1.0 {
+            return None;
+        }
+        Some(SheetIgEllipticalArc2dDecoded {
+            byte_range: offset..end,
+            type_flags: header.type_flags,
+            oid: sub.oid,
+            parent_ref: sub.parent_ref,
+            sheet_layer_ref: sub.sheet_layer_ref,
+            sub_type_word: sub.sub_type_word,
+            index: sub.index,
+            sweep_start,
+            sweep_end,
+            center: (center_x, center_y),
+            major_axis: (major_x, major_y),
+            ratio,
+            flag: *payload.get(IGELLIPTICALARC2D_PAYLOAD_LEN - 1)?,
+        })
+    }
+
+    fn advance_of(&self, record: &SheetIgEllipticalArc2dDecoded) -> usize {
+        record
+            .byte_range
+            .end
+            .saturating_sub(record.byte_range.start)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 2026-09-07: igRectangle2d and igBspCurve2d
 // ---------------------------------------------------------------------------
 //
@@ -7706,6 +7872,136 @@ mod nested_curve_family_tests {
             let _ = decode_igarcs(&stream[..cut]);
             let _ = decode_igcircle_at(&stream[..cut], cut.saturating_sub(1));
             let _ = decode_igarc_at(&stream[..cut], cut.saturating_sub(1));
+        }
+    }
+
+    /// `/JSite121` oid 489's doubles, in payload order: sweep start, sweep
+    /// end, centre, major semi-axis, ratio.
+    const HEAD_DOUBLES: [f64; 7] = [
+        std::f64::consts::TAU,
+        std::f64::consts::PI,
+        -0.010_296_148_41,
+        0.0889,
+        4.768_329_956e-18,
+        -0.025_958_436_58,
+        0.5,
+    ];
+
+    fn elliptical_record(doubles: &[f64]) -> Vec<u8> {
+        curve_record(PSM_TYPE_CODE_IGELLIPTICALARC2D, 533, doubles, 1)
+    }
+
+    /// `record` with its payload cut or zero-padded to `len` bytes and its
+    /// `bytes_to_follow` saying so, so the chain still walks.
+    fn with_payload_len(mut record: Vec<u8>, len: usize) -> Vec<u8> {
+        record.resize(PSM_ENVELOPE_LEN + len, 0);
+        record[2..6].copy_from_slice(&(len as u32).to_le_bytes());
+        record
+    }
+
+    #[test]
+    fn an_elliptical_arc_reads_its_angles_first_then_centre_axis_and_ratio() {
+        let stream = chain(&[elliptical_record(&HEAD_DOUBLES)]);
+        let decoded = decode_igellipticalarcs(&stream);
+        assert_eq!(decoded.len(), 1);
+        let arc = &decoded[0];
+        assert_eq!(
+            arc.byte_range,
+            SHEET_STREAM_HEADER_LEN..SHEET_STREAM_HEADER_LEN + 6 + 75
+        );
+        assert_eq!(arc.byte_range.end, stream.len());
+        assert_eq!(arc.type_flags, 0);
+        assert_eq!(arc.oid, 4321);
+        assert_eq!(arc.parent_ref, 77);
+        assert_eq!(arc.sheet_layer_ref, 533);
+        assert_eq!(arc.sub_type_word, 0x0010);
+        assert_eq!(arc.index, 9);
+        assert_eq!(arc.sweep_start, std::f64::consts::TAU);
+        assert_eq!(arc.sweep_end, std::f64::consts::PI);
+        assert_eq!(arc.center, (-0.010_296_148_41, 0.0889));
+        assert_eq!(arc.major_axis, (4.768_329_956e-18, -0.025_958_436_58));
+        assert_eq!(arc.ratio, 0.5);
+        assert_eq!(arc.flag, 1);
+        assert_eq!(
+            decode_igellipticalarc_at(&stream, SHEET_STREAM_HEADER_LEN).as_ref(),
+            Some(arc)
+        );
+        // Nor does either neighbouring family read it.
+        assert!(decode_igarcs(&stream).is_empty());
+        assert!(decode_igcircles(&stream).is_empty());
+        // A ratio of exactly 1 is a circular arc, still admitted.
+        let mut round = HEAD_DOUBLES;
+        round[6] = 1.0;
+        assert_eq!(
+            decode_igellipticalarcs(&chain(&[elliptical_record(&round)])).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn an_elliptical_arc_off_the_gate_is_refused() {
+        let with = |slot: usize, value: f64| {
+            let mut doubles = HEAD_DOUBLES;
+            doubles[slot] = value;
+            elliptical_record(&doubles)
+        };
+        let mut skipped = elliptical_record(&HEAD_DOUBLES);
+        skipped[1] |= 0x80; // type word bit 0x8000: the native reader skips it
+        let refused = [
+            (
+                "btf 74",
+                with_payload_len(elliptical_record(&HEAD_DOUBLES), 74),
+            ),
+            (
+                "btf 76",
+                with_payload_len(elliptical_record(&HEAD_DOUBLES), 76),
+            ),
+            ("ratio 0", with(6, 0.0)),
+            ("ratio 1.5", with(6, 1.5)),
+            ("zero major axis", {
+                let mut doubles = HEAD_DOUBLES;
+                doubles[4] = 0.0;
+                doubles[5] = 0.0;
+                elliptical_record(&doubles)
+            }),
+            ("NaN angle", with(0, f64::NAN)),
+            ("NaN centre", with(2, f64::NAN)),
+            ("skip bit", skipped),
+        ];
+        for (what, record) in refused {
+            let stream = chain(&[record]);
+            assert!(
+                !sheet_record_starts(&stream).is_empty(),
+                "{what}: the chain itself must still walk"
+            );
+            assert!(decode_igellipticalarcs(&stream).is_empty(), "{what}");
+            assert!(
+                decode_igellipticalarc_at(&stream, SHEET_STREAM_HEADER_LEN).is_none(),
+                "{what}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_elliptical_arc_survives_truncation_at_every_length() {
+        let circle = curve_record(PSM_TYPE_CODE_IGCIRCLE2D, 8, &[0.1, 0.2, 0.05], 1);
+        let at = SHEET_STREAM_HEADER_LEN + circle.len();
+        let stream = chain(&[
+            circle,
+            elliptical_record(&HEAD_DOUBLES),
+            curve_record(PSM_TYPE_CODE_IGARC2D, 8, &[0.1, 0.2, 0.05, 0.0, 1.0], 1),
+        ]);
+        let end = at + PSM_ENVELOPE_LEN + IGELLIPTICALARC2D_PAYLOAD_LEN;
+        assert_eq!(decode_igellipticalarcs(&stream).len(), 1);
+        for cut in 0..=stream.len() {
+            let _ = decode_igellipticalarcs(&stream[..cut]);
+            let _ = decode_igellipticalarc_at(&stream[..cut], cut.saturating_sub(1));
+            let _ = decode_igellipticalarc_at(&stream[..cut], cut);
+            assert_eq!(
+                decode_igellipticalarc_at(&stream[..cut], at).is_some(),
+                cut >= end,
+                "cut {cut}"
+            );
         }
     }
 }

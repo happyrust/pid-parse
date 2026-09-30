@@ -70,14 +70,14 @@ fn decode_symbol_information_family(data: &[u8]) -> JSiteSymbolInformation {
 ///
 /// Every family is admitted the same way -- the record has to start where
 /// the stream's own chain says a record starts -- so a byte pattern inside
-/// one record's payload cannot be read as another record, and the five
+/// one record's payload cannot be read as another record, and the nine
 /// families cannot disagree about which bytes are whose. Connect points are
 /// not read: they draw nothing.
 fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
     use crate::parsers::sheet_records::{
         decode_igarc_at, decode_igbspcurve_at, decode_igcircle_at, decode_igdimension_at,
-        decode_igline_at, decode_iglinestring_at, decode_igrectangle_at, decode_igtextbox_at,
-        jsheet_oids, sheet_record_starts,
+        decode_igellipticalarc_at, decode_igline_at, decode_iglinestring_at, decode_igrectangle_at,
+        decode_igtextbox_at, jsheet_oids, sheet_record_starts,
     };
     let mut out = JSiteNestedGeometry {
         sheets: jsheet_oids(data),
@@ -88,6 +88,8 @@ fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
             out.circles.push(circle.into());
         } else if let Some(arc) = decode_igarc_at(data, at) {
             out.arcs.push(arc.into());
+        } else if let Some(arc) = decode_igellipticalarc_at(data, at) {
+            out.elliptical_arcs.push(arc.into());
         } else if let Some(line) = decode_igline_at(data, at) {
             out.lines.push(line.into());
         } else if let Some(polyline) = decode_iglinestring_at(data, at) {
@@ -122,6 +124,7 @@ fn resolve_stroke_styles(
         .iter()
         .map(|record| record.index)
         .chain(nested.arcs.iter().map(|record| record.index))
+        .chain(nested.elliptical_arcs.iter().map(|record| record.index))
         .chain(nested.lines.iter().map(|record| record.index))
         .chain(nested.polylines.iter().map(|record| record.index))
         .chain(nested.bsplines.iter().map(|record| record.index))

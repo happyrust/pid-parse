@@ -130,7 +130,8 @@ pub struct PidSymbolDefinition {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sheet_layers: Vec<PidSymbolSheetLayer>,
     /// The body, in on-disk record order within each family: circles, arcs,
-    /// lines, polylines, text, then B-splines.
+    /// lines, polylines, text, then B-splines, then elliptical arcs, as
+    /// rational B-splines.
     pub primitives: Vec<crate::symbol_library::SymbolPrimitive>,
     /// Storage-local oid of the layer each primitive sits on: parallel to
     /// [`Self::primitives`] -- same length, same order -- and each an oid
@@ -996,12 +997,18 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
         let Some(nested) = site.nested_geometry.as_ref() else {
             continue;
         };
+        // Elliptical arcs are named only where there are some, so the
+        // wording of every other storage stays as it was.
+        let elliptical_arcs = match nested.elliptical_arcs.len() {
+            0 => String::new(),
+            count => format!("{count} elliptical arcs, "),
+        };
         warnings.push(format!(
             "{records} record(s) ({circles} circles, {arcs} arcs, {lines} lines, {polylines} \
              line strings, {texts} texts, {rectangles} rectangles, {bsplines} B-splines, \
-             {dimensions} dimensions) decoded in {path}/PSMcluster0 are symbol bodies in \
-             symbol-local coordinates, grouped into {bodies} definition(s) reachable through the \
-             placements that name them; they are not page content",
+             {elliptical_arcs}{dimensions} dimensions) decoded in {path}/PSMcluster0 are symbol \
+             bodies in symbol-local coordinates, grouped into {bodies} definition(s) reachable \
+             through the placements that name them; they are not page content",
             records = nested.len(),
             circles = nested.circles.len(),
             arcs = nested.arcs.len(),
@@ -1416,8 +1423,10 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
 /// A body is the records of one [`crate::model::EmbeddedSymbolDefinition`]'s
 /// layers, converted to the `.sym` reader's vocabulary: a line string closes
 /// when its authored `form` is `2`, as in the library, and connect points are
-/// not carried. Order within a body follows the storage: circles, arcs,
-/// lines, polylines, text.
+/// not carried; an elliptical arc becomes the exact rational B-spline
+/// [`crate::bspline::elliptical_arc`] makes of it, since the vocabulary has
+/// no elliptical primitive. Order within a body follows the storage: circles,
+/// arcs, lines, polylines, text, B-splines, then elliptical arcs.
 fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
     use crate::symbol_library::SymbolPrimitive;
 
@@ -1556,6 +1565,35 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     curve.sheet_layer_ref,
                     Some(curve.index),
                 );
+            }
+            // Elliptical arcs last, so every body without one keeps its
+            // primitive order. There is no elliptical primitive to give
+            // them (the vocabulary is shared with the `.sym` reader and its
+            // consumers), and none is needed: an elliptical arc is a conic,
+            // which a rational quadratic B-spline draws exactly. A record
+            // that sweeps nothing is left out.
+            for arc in nested
+                .elliptical_arcs
+                .iter()
+                .filter(|a| on_body(a.sheet_layer_ref))
+            {
+                if let Some((poles, weights, knots)) = crate::bspline::elliptical_arc(
+                    (arc.center_x, arc.center_y),
+                    (arc.major_x, arc.major_y),
+                    arc.ratio,
+                    arc.sweep_start,
+                    arc.sweep_end,
+                ) {
+                    push(
+                        SymbolPrimitive::BSpline {
+                            poles,
+                            weights,
+                            knots,
+                        },
+                        arc.sheet_layer_ref,
+                        Some(arc.index),
+                    );
+                }
             }
             // Dimensions are not primitives: they constrain the body
             // rather than draw it. The measured line is looked up in the

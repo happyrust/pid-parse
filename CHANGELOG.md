@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### 缓存本体画出椭圆弧：`0x007E igEllipticalArc2d` 解码并投成精确有理二次 B 样条（2026-09-30，OCS 小单 E-D1 – E-D5）
+
+OpenCADStudio 小单 `docs/plans/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md` 工作项 E1（起因：09-30 解析缺口盘点里 A01 的设备 `V 010121A` 画成直角方箱，两端的 2:1 椭圆封头没画）；分析 `docs/analysis/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md`。
+
+- **解码器 `decode_igellipticalarcs` / `decode_igellipticalarc_at`**（`IgEllipticalArc2dDecoder` → `SheetIgEllipticalArc2dDecoded`；`PSM_TYPE_CODE_IGELLIPTICALARC2D` = `0x007E`，`IGELLIPTICALARC2D_PAYLOAD_LEN` = 75）：18 字节子头后 `+18` / `+26` 两个参数角、`+34` / `+42` 圆心、
+  `+50` / `+58` 长半轴向量、`+66` 短长轴比、`+74` 尾字节。角在最前，不是 `igArc2d` 的布局（小单 E-D2 的措辞由 OCS E3 更正）；借来的只有扫向：从 `sweep_start` 顺时针扫到 `sweep_end`，这样读四条弧都向本体外鼓。
+  门槛（E-D5）：链门控、`parse_live_psm_header`（P-D12）、btf 75、七个 f64 有限且不超出 `GLINE2D_COORDINATE_DOMAIN_LIMIT`、长半轴非零、`0 < ratio ≤ 1`；不合即拒收，不 panic。只读缓存本体，`model::sheet_families` 不登记。
+- **模型**：`JSiteNestedGeometry::elliptical_arcs`（`DecodedIgEllipticalArc2dRecord`；`serde(default, skip_serializing_if = "Vec::is_empty")`，没有这个族的图 JSON 不变），`len()` 计入。
+- **`streams::jsite`**：`decode_nested_geometry` 在 `igArc2d` 之后试 `0x007E`；`resolve_stroke_styles` 把椭圆弧的 `index` 一并查进本存储的样式表，封头带笔画样式。
+- **`bspline::elliptical_arc`**：椭圆弧 → 精确有理二次 B 样条，`n = ceil(Δ / 45°)` 段（1–8），中间控制点从圆心推出 `1 / cos(δ/2)` 倍、权 `cos(δ/2)`，节点 `[0,0,0, 1,1, …, n−1,n−1, n,n,n]`；
+  两角相等、长半轴为零、比不为正或任一输入 / 控制点非有限时 `None`，任意输入不 panic。按 `SEGMENTS_PER_SPAN` 采样约 5.6° 一段，A01 封头的弦高误差约 0.03 mm（E-D3）。
+- **缓存本体投影**（`geometry.rs::embedded_symbol_definitions`）：每条椭圆弧接在本体自己的 B 样条之后，成一条 `SymbolPrimitive::BSpline`，带 `sheet_layer_ref` 与 `Some(index)`；**`SymbolPrimitive` 不加变体、`PidSymbolDefinition` 不加字段**
+  （E-D1：OCS 两棵树编同一个 `../pid-parse` 检出，主工作树对前者穷举匹配、按字面构造后者），OCS `src` 不用改。嵌套几何告警只在 N > 0 时多一项 `N elliptical arcs`，别的存储一字不变。
+- **测试与重签**：新 `tests/elliptical_arcs.rs`——`a01s_cached_bodies_read_their_four_elliptical_arcs`（四条真记录的值）、`a01s_heads_bulge_outward_from_their_bodies`（本体 481 / 96 的两条封头都向外鼓）；`sheet_records` 单测 3 条、`bspline` 单测 5 条
+  （含 Property 1：定种 2000 例，采样点落在椭圆上、每一步顺时针）；`parser_panic_safety` 加两个新入口。A01 重签 `parse_real_files`：`strokes_over_placements` (12, 6) → (14, 8)、`visible_over_placements` 6 → 8，别的图不动。
+  **golden 不变**：`geometry_golden_snapshot` 只序列化 `geometry.entities`，封头在 `symbol_definitions` 里，六份 golden 一个字节不动。
+- 验证：`cargo test` 42 个二进制 1495 过 / 3 忽略（`--lib` 1125 → 1133）；`--no-default-features` 17 个二进制 1070 过 / 1 忽略（`--lib` 816 → 824）；棘轮 `parse_real_files` 136（含 A01 两处重签）、`render_gap_census` 5、`style_link_ratchet` 17、`geometry_profile` 2，`elliptical_arcs` 2、`parser_panic_safety` 2，golden 不变；clippy `--all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 通过；`rustfmt --check` 干净；不 panic 扩展批 release 34.5 s 全绿。
+
 ### S1 取证：没有 `_Data.xml` 时文件内关联复原位号 0 / 16，S 登记不做（2026-09-30，OCS 计划 P-D7）
 
 OpenCADStudio 计划 `docs/plans/2026-09-29-pid-import-next-round.md` 任务 7（S1；09-28 单 P-D7：只取证，位号总复原率 ≥ 80 % 才提议实施单）；分析 `docs/analysis/2026-09-30-item-tags-without-data-xml.md`。
