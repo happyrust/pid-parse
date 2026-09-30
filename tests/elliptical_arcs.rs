@@ -141,6 +141,14 @@ fn a01s_cached_bodies_read_their_four_elliptical_arcs() {
             assert_eq!(arc.index, 7, "{what}");
             assert!(near(arc.sweep_start, head.sweep_start), "{what}");
             assert!(near(arc.sweep_end, head.sweep_end), "{what}");
+            // A01 stores π one ulp short of `PI` (2π is `TAU` exactly), which
+            // is why `bspline::elliptical_arc`'s segment count allows for a
+            // rounding error.
+            for angle in [arc.sweep_start, arc.sweep_end] {
+                if near(angle, PI) {
+                    assert_eq!(angle.to_bits(), 0x4009_21FB_5444_2D17, "{what}: stored π");
+                }
+            }
             assert!(near(arc.center_x, head.center.0), "{what}");
             assert!(near(arc.center_y, head.center.1), "{what}");
             assert!(near(arc.major_x, head.major.0), "{what}");
@@ -208,6 +216,30 @@ fn a01s_heads_bulge_outward_from_their_bodies() {
         sampled.sort_by(|a, b| min_x(a).total_cmp(&min_x(b)));
         let (left, right) = (&sampled[0], &sampled[1]);
         let what = format!("site {} sheet {}", body.site, body.sheet);
+        // Both heads alike: four 45° segments each, so 9 poles, 9 weights
+        // and 12 knots, sampled as 4 × SEGMENTS_PER_SPAN + 1 = 33 points.
+        for (_, curve) in &curves[own_bsplines..] {
+            let SymbolPrimitive::BSpline {
+                poles,
+                weights,
+                knots,
+            } = curve
+            else {
+                unreachable!("the filter keeps B-splines only");
+            };
+            assert_eq!(
+                (poles.len(), weights.len(), knots.len()),
+                (9, 9, 12),
+                "{what}: a head's poles, weights and knots"
+            );
+        }
+        for points in [left, right] {
+            assert_eq!(
+                points.len(),
+                4 * SEGMENTS_PER_SPAN + 1,
+                "{what}: a head's sampled points"
+            );
+        }
         assert!(
             (min_x(left) - body.left_apex).abs() <= 1e-6,
             "{what}: left apex {}",

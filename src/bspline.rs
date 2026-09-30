@@ -127,7 +127,10 @@ fn de_boor(poles: &[[f64; 3]], knots: &[f64], degree: usize, span: usize, u: f64
 /// each a rational quadratic Bézier whose end poles lie on the ellipse and
 /// whose middle pole is the ellipse point at the segment's middle parameter
 /// pushed out from the centre by `1 / cos(δ/2)`, with weight `cos(δ/2)`;
-/// every other weight is 1. The knots are
+/// every other weight is 1. The count allows `1e-9` of a segment, so a
+/// sweep a rounding error past a multiple of 45° takes that many segments:
+/// A01 stores π one ulp short of `std::f64::consts::PI`, which puts its left
+/// head's sweep from 2π down to π a hair over 180°. The knots are
 /// `[0,0,0, 1,1, 2,2, …, n−1,n−1, n,n,n]`, `2n + 4` of them for `2n + 1`
 /// poles, which [`sample`] reads as degree 2. Sampled with
 /// [`SEGMENTS_PER_SPAN`] segments a span, each straight segment covers at
@@ -174,10 +177,12 @@ pub fn elliptical_arc(
         sweep = TAU;
     }
     // `sweep` is in (0, 2π] here, so this is 1..=8; the clamp only keeps a
-    // rounding slip from ever reaching the cast.
-    let segments = (sweep / FRAC_PI_4).ceil().clamp(1.0, 8.0) as usize;
+    // rounding slip from ever reaching the cast. The `1e-9` lets a sweep a
+    // rounding error past a multiple of 45° take that many segments.
+    let segments = (sweep / FRAC_PI_4 - 1e-9).ceil().clamp(1.0, 8.0) as usize;
     let step = sweep / segments as f64;
-    // At most π/8, so at least cos(π/8) ≈ 0.92: never a zero divisor.
+    // At most π/8 plus 1e-9 of it, so about cos(π/8) ≈ 0.92 at least: never
+    // a zero divisor.
     let half_cos = (step / 2.0).cos();
     let minor = (-major.1 * ratio, major.0 * ratio);
     // The ellipse point at `t`, pushed out from the centre by `1 / scale`.
@@ -306,7 +311,7 @@ mod tests {
         );
     }
 
-    use std::f64::consts::{FRAC_PI_4, PI, TAU};
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
     /// Seeded xorshift64 (no test dependency), seeded through splitmix64
     /// as in `parsers::tests`; `| 1` keeps the state non-zero.
@@ -460,6 +465,30 @@ mod tests {
         // From the bottom end of the axis to the top one.
         assert!((points[0].1 - (0.0889 - 0.025_958_436_58)).abs() < 1e-12);
         assert!((points[32].1 - (0.0889 + 0.025_958_436_58)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_sweep_a_rounding_error_past_a_multiple_of_45_degrees_takes_that_many_segments() {
+        // A01 stores π one ulp short of `PI`, so its 2π → π sweeps a hair
+        // over 180° and its π → 0 a hair under: four segments each.
+        let pi_stored = f64::from_bits(0x4009_21FB_5444_2D17);
+        assert_eq!(pi_stored.to_bits() + 1, PI.to_bits());
+        let lengths = |sweep_start: f64, sweep_end: f64| {
+            let (poles, weights, knots) =
+                elliptical_arc((0.0, 0.0), (0.0, -1.0), 0.5, sweep_start, sweep_end)
+                    .expect("an elliptical arc");
+            (poles.len(), weights.len(), knots.len())
+        };
+        assert_eq!(lengths(TAU, pi_stored), (9, 9, 12), "2π down to A01's π");
+        assert_eq!(lengths(pi_stored, 0.0), (9, 9, 12), "A01's π down to 0");
+        assert_eq!(lengths(FRAC_PI_2 + 1e-15, 0.0), (5, 5, 8), "90° and 1e-15");
+        // The slack is tiny: a millionth of a segment past 45° is a second
+        // segment.
+        assert_eq!(
+            lengths(FRAC_PI_4 * (1.0 + 1e-6), 0.0),
+            (5, 5, 8),
+            "45° and a millionth"
+        );
     }
 
     #[test]

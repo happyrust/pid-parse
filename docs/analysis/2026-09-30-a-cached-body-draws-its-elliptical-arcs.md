@@ -77,7 +77,10 @@ btf 75 = 18 字节子头 + 7 个 f64 + 1 个尾字节，长度单位米，是在
 
 - **`bspline::elliptical_arc`**：扫角切成 `n = ceil(Δ / 45°)` 等段（`1 ≤ n ≤ 8`，`δ = Δ / n`），每段一个有理二次 Bézier：两端控制点在椭圆上、权 1；中间控制点是段中参数的椭圆点、从圆心往外推到 `1 / cos(δ/2)` 倍，权 `cos(δ/2)`。
   节点 `[0,0,0, 1,1, 2,2, …, n−1,n−1, n,n,n]`，`2n + 4` 个配 `2n + 1` 个控制点，`bspline::sample` 按「节点数 − 控制点数 − 1」读成二次。椭圆是圆的仿射像，圆弧的这套有理二次表示经仿射原样成立，**没有逼近误差**。
-- A01 的封头：4 段、9 个控制点、节点 `[0,0,0,1,1,2,2,3,3,4,4,4]`，按 `SEGMENTS_PER_SPAN` = 8 采样得 33 点。每段不超过 45° 是为采样定的（E-D3）：OCS 每个节点跨度采 8 段，约 5.6° 一段，A01 封头的弦高误差约 0.03 mm。
+- A01 的封头：左右都是 4 段、9 个控制点、节点 `[0,0,0,1,1,2,2,3,3,4,4,4]`，按 `SEGMENTS_PER_SPAN` = 8 采样得 33 点——左封头靠下一条的余量。每段不超过 45° 是为采样定的（E-D3）：OCS 每个节点跨度采 8 段，约 5.6° 一段，A01 封头的弦高误差约 0.03 mm。
+- 段数留 1e-9 的余量：实际取 `n = ceil(Δ / 45° − 1e-9)`。A01 存的 π 是 `f64::from_bits(0x4009_21FB_5444_2D17)` = 3.1415926535897927，比 `std::f64::consts::PI` 小一个 ulp（2π 存的恰是 `TAU`；四条弧存的 π 逐位相同）。左封头（489 / 115）从 2π 扫到它，Δ = π + 4.4e-16，`Δ / 45°` 算出 4.000000000000001，
+  原先的 `ceil(Δ / 45°)` 切成五段 36°（11 个控制点、OCS 采 41 点）；右封头（490 / 114）从它扫到 0，差一丝不到 180°，是四段 45°（9 个控制点、33 点）。形状两样都精确。这是 OCS 侧的导出核对（E2a）查出来的：本仓的单测用精确的 `TAU` / `PI`，`tests/elliptical_arcs.rs` 原先不数段数。
+  现在扫角超出 45° 整数倍的只是舍入误差时就取那个倍数，左右封头都是四段、33 点。余量只有一段（45°）的 1e-9，一段至多比 45° 多出这么多，无害：有理二次形式对 180° 以下的任何一段都精确。
 - 接在本体自己的 B 样条之后（没有椭圆弧的本体，图元顺序不动），带弧的 `sheet_layer_ref` 与 `Some(index)`；`resolve_stroke_styles` 把椭圆弧的 `index` 一并查进本存储的样式表，封头有笔画样式。过了门槛的记录只有两角相等（扫角为零）时得 `None`，这一条不进本体。
 - `JSiteNestedGeometry::len()` 计入椭圆弧；缓存本体的告警只在 N > 0 时多一项 `N elliptical arcs`（夹在 `B-splines` 与 `dimensions` 之间），别的存储一字不变。
 
@@ -86,12 +89,13 @@ OCS 本来就把 B 样条图元按跨度采样成 LWPOLYLINE，所以它的 `src
 ## 钉住它的
 
 - **golden 不动。** `tests/geometry_golden_snapshot.rs`（`normalized_geometry_matches_golden_snapshot`）的 `render_snapshot` 只序列化 `geometry.entities`，封头在 `symbol_definitions` 里；小单 E1 预计的「golden 只有 A01 变、重签」没有发生，六份 golden 一个字节不动。
-- `tests/elliptical_arcs.rs`（新；fixture 不在时软跳过）：`a01s_cached_bodies_read_their_four_elliptical_arcs` 钉四条真记录的层、`index`、两角、圆心、长半轴与比（容差 1e-9）；`a01s_heads_bulge_outward_from_their_bodies` 对本体 481 与 96 各断言：
-  B 样条比本体自己的多 2 条、排在最后、在封头的层上；左封头整条在左边线外侧、右封头整条在右边线外侧，最小 / 最大 x 落在顶点上（容差 1e-6），y 不出矩形高度。
+- `tests/elliptical_arcs.rs`（新；fixture 不在时软跳过）：`a01s_cached_bodies_read_their_four_elliptical_arcs` 钉四条真记录的层、`index`、两角、圆心、长半轴与比（容差 1e-9），π 角另按位钉成 `0x4009_21FB_5444_2D17`；`a01s_heads_bulge_outward_from_their_bodies` 对本体 481 与 96 各断言：
+  B 样条比本体自己的多 2 条、排在最后、在封头的层上；每条封头 9 个控制点、9 个权、12 个节点，采样 33 点（`4 × SEGMENTS_PER_SPAN + 1`）；左封头整条在左边线外侧、右封头整条在右边线外侧，最小 / 最大 x 落在顶点上（容差 1e-6），y 不出矩形高度。
 - `sheet_records` 单测 3 条：`an_elliptical_arc_reads_its_angles_first_then_centre_axis_and_ratio`（合成记录用 489 的七个 f64 逐字段比对；`decode_igarcs` / `decode_igcircles` 不认它；比 = 1 照收）、
   `an_elliptical_arc_off_the_gate_is_refused`（btf 74 / 76、比 0 / 1.5、零长半轴、NaN 角、NaN 圆心、`0x8000` 位，各自拒收而链照走）、`an_elliptical_arc_survives_truncation_at_every_length`。
-- `bspline` 单测 5 条：`an_elliptical_arc_samples_onto_its_ellipse_clockwise_from_start_to_end`（Property 1，定种 2000 例：采样点在椭圆上 1e-9 内、首尾点是起角 / 止角处的椭圆点、每一步顺时针、点数 = 段数 × 8 + 1，含四种整圈对）、
-  `a01s_left_head_is_half_an_ellipse_bulging_left`、`a_pair_a_whole_turn_apart_is_a_full_ellipse`、`a_degenerate_or_non_finite_arc_is_none`、`random_garbage_never_panics`（两万组随机输入）。
+- `bspline` 单测 6 条：`an_elliptical_arc_samples_onto_its_ellipse_clockwise_from_start_to_end`（Property 1，定种 2000 例：采样点在椭圆上 1e-9 内、首尾点是起角 / 止角处的椭圆点、每一步顺时针、点数 = 段数 × 8 + 1，含四种整圈对）、
+  `a01s_left_head_is_half_an_ellipse_bulging_left`、`a_sweep_a_rounding_error_past_a_multiple_of_45_degrees_takes_that_many_segments`（2π → A01 存的 π 与这个 π → 0 都是 9 个控制点、9 个权、12 个节点，90° + 1e-15 是两段；余量很小，45° 多出百万分之一也是两段）、
+  `a_pair_a_whole_turn_apart_is_a_full_ellipse`、`a_degenerate_or_non_finite_arc_is_none`、`random_garbage_never_panics`（两万组随机输入）。
 - `tests/parser_panic_safety.rs` 的 `exercise_all_parsers` 加上两个新入口。
 - `tests/parse_real_files.rs` 只重签 A01：`a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden` 的 `strokes_over_placements` (12, 6) → (14, 8)（全部 / 显示的笔画，两条封头在显示着的层 533 上）；
   `a_cached_body_carries_the_stroke_styles_its_own_storage_states` 的 `visible_over_placements` 6 → 8（每条显示笔画都带样式）。两张表里别的图不动。
