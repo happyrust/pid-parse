@@ -155,11 +155,15 @@ mod tests {
     }
 
     fn unique_temp_path() -> std::path::PathBuf {
+        // Tests on parallel threads can read the same clock tick; the counter
+        // keeps their paths apart.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
         let pid = std::process::id();
-        std::env::temp_dir().join(format!("pid-parse-from-bytes-test-{pid}-{nanos}.pid"))
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!("pid-parse-from-bytes-test-{pid}-{nanos}-{n}.pid"))
     }
 
     fn write_temp_pid(bytes: &[u8]) -> std::path::PathBuf {
