@@ -11,7 +11,10 @@ OpenCADStudio 计划 `docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-me
 - **`PidSemanticObject::record_oid`**（新字段）：对象连在哪条记录上；`graphic_oid` 仍是 XML 原值（回查 `_Data.xml` 的键）。`resolve` 按 `record_oid` 查；`uid_joined()` / `stale_graphic_oids()` 交出 UID 连上几个、其中几个与 `GraphicOID` 不同。`from_xml` 不读行，照旧只按 `GraphicOID` 连。
 - 语料：A01 `uid_joined` 4、`stale_graphic_oids` 4，绘出实体连上 3 个——容器符号 184 → `PIDProcessVessel` `V 010121A`、管口符号 51 → `PIDNozzle`、管段 275 经 DependencyObject 417 → `PIDPipeline`，Full 与 Geometry 两种 profile 相同；0202 39 / 0，41 个实体的连接与只按 `GraphicOID` 时逐条相同。
 - 测试：`semantic_join` 的 A01 一条由「一条也不许连」改钉上面三条（两种 profile），并钉只按 `GraphicOID` 仍一条不连；0202 一条加 39 / 0 与逐条相同；`semantics` 单测 +5（UID 连上、无行时照旧、一个 UID 落两条记录时退回、粘连记号不算、链遍历与旗标行）。
-- 验证：⟪D2 验证⟫
+- 验证：`cargo test` 42 个二进制 1501 过 / 3 忽略（`--lib` 1134 → 1139）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；棘轮与 golden 不变；`clippy --all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 过；rustfmt 干净。
+  全量测试跑在 rustfmt 与一处 clippy 修整（`filter(|entry| entry.is_stream())` → `filter(::cfb::Entry::is_stream)`）之前，修整后重跑了 `semantics` 单测与 `semantic_join`；
+  提交后在 `fe42969` 的树上全部重跑，测试数与上面相同，两种特性的 clippy、wasm32 check、`cargo fmt --check` 也都过。
+- OCS 侧（`pid-web-open` `d8b2832d`，OCS 代码不改）：`pid_import` 54 → 55，A01 的 11 个实体挂上三个发布对象（容器放置 7、管口放置 3、管段 1）；批量基线只 A01 的 `dxf_sha256` 变（DXF 只多 82 行、一行没删），另五张不变。
 
 ### D1 取证：A01 的语义要按表示 UID 连——`GraphicOID` 是发布时的旧号（2026-10-08，OCS 计划 P-D28 / P-D32）
 
