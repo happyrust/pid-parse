@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### D1 取证：A01 的语义要按表示 UID 连——`GraphicOID` 是发布时的旧号（2026-10-08，OCS 计划 P-D28 / P-D32）
+
+OpenCADStudio 计划 `docs/plans/2026-10-08-pid-integration-unblock-and-next-steps.md` D1（P-D28）与 `docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D1′；分析 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
+
+- **探针 `examples/probe_a01_representation_uid_is_the_join.rs`**（只加示例，`src` 不动，不需要 `backup` 特性）：A01 发布的四个 `GraphicOID` 在现文件里都是顶层 `0x0089 FreeFormAttrSet`、不是图元，`PidSemanticIndex::resolve` 0 / 4；
+  每个表示 UID 以 ASCII 恰在一个顶层属性集里、该集以空间映射标签 190 挂在所述记录下——按这条连 A01 3 / 4 且全对（容器 → 184、管口 → 51、管线 → 管段 275），0202 对照 39 / 39 落在 `GraphicOID` 自己的记录上、与今天逐条相同；
+  「朴素一跳」（号改写成标签 190 项）4 / 4 但容器与管口互换，不可用。
+- 结论：可修，D2 在 `PidSemanticIndex` 的第一跳先按 UID、再按 `GraphicOID`（OCS P-D32 已批，排在 OCS 集成 M2 之后）。
+- 验证：探针 exit 0、入库前后两次输出逐字节相同；`cargo clippy --example probe_a01_representation_uid_is_the_join -- -D warnings` 默认与 `--no-default-features` 都过（入库前只把一处 `type_complexity` 拆成 `type Member`）；rustfmt 干净。
+
 ### 缓存本体画出椭圆弧：`0x007E igEllipticalArc2d` 解码并投成精确有理二次 B 样条（2026-09-30，OCS 小单 E-D1 – E-D5）
 
 OpenCADStudio 小单 `docs/plans/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md` 工作项 E1（起因：09-30 解析缺口盘点里 A01 的设备 `V 010121A` 画成直角方箱，两端的 2:1 椭圆封头没画）；分析 `docs/analysis/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md`。

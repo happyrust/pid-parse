@@ -4,6 +4,10 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-08 · OCS 计划 `OpenCADStudio/docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D1′（承接 10-08 上午单 D1 / P-D28）**：
+探针 `examples/probe_a01_representation_uid_is_the_join.rs` 查明 A01 有 `_Data.xml` 却 0 / 4 挂不上语义的原因：发布的 `GraphicOID` 都是属性集的旧号；按表示 UID（顶层 `FreeFormAttrSet 0x0089` → 空间映射标签 190 → 记录）连得 3 / 4 且全对，0202 39 / 39 不变，见 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
+`src` 不动。下一项 D2（P-D32：`PidSemanticIndex` 第一跳先 UID、再 `GraphicOID`），排在 OCS 集成 M2 之后。
+
 **2026-09-30 · OCS 小单 `OpenCADStudio/docs/plans/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md` E1（E-D1 – E-D5）**：
 A01 设备 `V 010121A` 的两端椭圆封头画出来了：`decode_igellipticalarcs` 解 `0x007E igEllipticalArc2d`（btf 75，两个参数角在最前，不是 `igArc2d` 的布局；扫向照它，从起角顺时针扫到止角），只读缓存本体，进 `JSiteNestedGeometry::elliptical_arcs`；
 `bspline::elliptical_arc` 把每条弧化成一条精确有理二次 B 样条（每段 ≤ 45°，段数留 1e-9 的余量：A01 存的 π 比 `PI` 小一个 ulp，左封头原先切成五段 36°），接在本体自己的 B 样条之后——`SymbolPrimitive` 不加变体、`PidSymbolDefinition` 不加字段，OCS `src` 不用改；A01 的四条弧都向本体外鼓，见 `docs/analysis/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md`。
