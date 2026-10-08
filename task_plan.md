@@ -4,6 +4,10 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-08 · OCS 计划 `OpenCADStudio/docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D2（P-D32）**：
+`PidSemanticIndex::load_beside` 第一跳先按表示 UID 连：再开一次 `.pid` 收顶层各记录链的活 `FreeFormAttrSet` 行，UID 以完整记号所在的行 → 顶层空间映射标签 190 → 恰好一条记录才连，否则退回 `GraphicOID`；`PidSemanticObject::record_oid` 记连在哪条记录上，`graphic_oid` 仍是 XML 原值。
+A01 绘出实体连上 3 个（184 / 51 / 275，Full 与 Geometry 相同），0202 39 / 39 与只按 `GraphicOID` 逐条相同；`from_xml` 照旧。下一项：OpenCADStudio 侧 `pid_import` 钉 A01、批量基线 A01 行重签。
+
 **2026-10-08 · OCS 计划 `OpenCADStudio/docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D1′（承接 10-08 上午单 D1 / P-D28）**：
 探针 `examples/probe_a01_representation_uid_is_the_join.rs` 查明 A01 有 `_Data.xml` 却 0 / 4 挂不上语义的原因：发布的 `GraphicOID` 都是属性集的旧号；按表示 UID（顶层 `FreeFormAttrSet 0x0089` → 空间映射标签 190 → 记录）连得 3 / 4 且全对，0202 39 / 39 不变，见 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
 `src` 不动。下一项 D2（P-D32：`PidSemanticIndex` 第一跳先 UID、再 `GraphicOID`），排在 OCS 集成 M2 之后。

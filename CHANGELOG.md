@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### D2：语义先按表示 UID 连、`GraphicOID` 兜底——A01 绘出实体 0 → 3 个连上（2026-10-08，OCS 计划 P-D32）
+
+OpenCADStudio 计划 `docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D2（P-D32）；依据 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
+
+- **`PidSemanticIndex::load_beside`** 读到 `_Data.xml` 时再开一次 `.pid`，收顶层各记录链里的活 `FreeFormAttrSet`（`0x0089`）行（类型字带 `0x8000` 的照 P-D12 不收；A01 的行都在 `/Unclustered Dynamic Attributes`，0202 有 5 个表示的行在别的顶层链里）。
+  表示 UID 以完整 ASCII 记号出现在哪些行（前后不粘字母数字、后面不粘 `.`，免得端口的 `<UID>.1` 冒充连接件）→ 顶层空间映射里以标签 190 列这些行的项 → 恰好一条记录才连，否则退回 `GraphicOID`；第二跳（DependencyObject）不变。嵌套存储（`/JSite…/`）的映射另有编号空间，不算。
+- **`PidSemanticObject::record_oid`**（新字段）：对象连在哪条记录上；`graphic_oid` 仍是 XML 原值（回查 `_Data.xml` 的键）。`resolve` 按 `record_oid` 查；`uid_joined()` / `stale_graphic_oids()` 交出 UID 连上几个、其中几个与 `GraphicOID` 不同。`from_xml` 不读行，照旧只按 `GraphicOID` 连。
+- 语料：A01 `uid_joined` 4、`stale_graphic_oids` 4，绘出实体连上 3 个——容器符号 184 → `PIDProcessVessel` `V 010121A`、管口符号 51 → `PIDNozzle`、管段 275 经 DependencyObject 417 → `PIDPipeline`，Full 与 Geometry 两种 profile 相同；0202 39 / 0，41 个实体的连接与只按 `GraphicOID` 时逐条相同。
+- 测试：`semantic_join` 的 A01 一条由「一条也不许连」改钉上面三条（两种 profile），并钉只按 `GraphicOID` 仍一条不连；0202 一条加 39 / 0 与逐条相同；`semantics` 单测 +5（UID 连上、无行时照旧、一个 UID 落两条记录时退回、粘连记号不算、链遍历与旗标行）。
+- 验证：⟪D2 验证⟫
+
 ### D1 取证：A01 的语义要按表示 UID 连——`GraphicOID` 是发布时的旧号（2026-10-08，OCS 计划 P-D28 / P-D32）
 
 OpenCADStudio 计划 `docs/plans/2026-10-08-pid-integration-unblock-and-next-steps.md` D1（P-D28）与 `docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D1′；分析 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。

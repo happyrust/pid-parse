@@ -73,6 +73,8 @@ A01 两条位号文字各有一条 kind 2 的 DependencyObject：649（`sub` 184
 - 修法（D2，OCS 计划 P-D32 已批）：`PidSemanticIndex` 多建「表示 UID → 记录 oid」表（顶层 `FreeFormAttrSet` 里以 ASCII 出现的 UID → 该集的标签 190 落点；一个 UID 落多个集、或一个集落多条记录时不取、计数），第一跳先按 UID、再按 `GraphicOID`，第二跳不变；
   `GraphicOID` 与 UID 指向不一致的条数交出作诊断（A01 4 条）。预期 A01 0 / 4 → 3 / 4（184 / 51 / 275），0202 39 / 39 逐条不变；四张主图旁没有 `_Data.xml`，不受影响。
 - 探针不进 `src`；跑法 `cargo run --example probe_a01_representation_uid_is_the_join`（默认或 `--no-default-features` 都行），几秒。
+- 之后（D2 落地时）：只读 `/Unclustered Dynamic Attributes` 的话，0202 只有 34 / 39 个表示连得上——另外 5 个表示的属性行在别的顶层记录链里（探针的普查里 `/PSMcluster0` 就有 `0x0089` 行）。
+  库里的实现与探针一样扫顶层全部记录链，39 / 39。
 
 ## 验证
 
