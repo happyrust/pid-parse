@@ -4,10 +4,15 @@
 //   - Replaced panic!() / unwrap() / todo!() with ok_or + ? for panic-free TryFrom
 //   - Added sysname, char, binary, numeric, smalldatetime, smallmoney, image,
 //     text, ntext, date, timestamp column type variants
+// Modified: 2026-10-09 by happyrust
+//   - Read sysclsobjs for the schema rows (class 50) and use sysschobjs.nsid
+//   - user_tables(): object id, schema id and name, columns and rcrows of each user table
+//   - base_page_pointers(): the heap or clustered-index rowsets only; a heap of several
+//     pages is refused rather than half read
 
 use crate::error::Error;
 use crate::pages::{BootPage, PagePointer, Record};
-use crate::PageReader;
+use crate::{ColumnInfo, PageReader, TableInfo};
 
 pub(crate) struct BaseTableData {
     sysalloc_units: Vec<SysallocUnit>,
@@ -15,12 +20,21 @@ pub(crate) struct BaseTableData {
     sysschobjs: Vec<Sysschobj>,
     sysscalartypes: Vec<Sysscalartype>,
     syscolpars: Vec<Syscolpar>,
+    sysclsobjs: Vec<Sysclsobj>,
 }
 
 const SYSROWEST_AUID: i64 = 327_680;
 const SYSSCHOBJS_IDMAJOR: i32 = 34;
 const SYSCOLPARS_IDMAJOR: i32 = 41;
 const SYSSCALARTYPE_IDMAJOR: i32 = 50;
+const SYSCLSOBJS_IDMAJOR: i32 = 64;
+
+/// `sysclsobjs.class` of a schema row.
+const SCHEMA_CLASS: u8 = 50;
+
+/// `sysrowsets.idminor` above which a rowset belongs to a nonclustered index:
+/// 0 is the heap, 1 the clustered index.
+const BASE_ROWSET_MAX_INDEX_ID: i32 = 1;
 
 macro_rules! parse_page_records {
     ( $page_reader:expr, $page_pointer:expr, $t:ty ) => {{
@@ -116,13 +130,125 @@ impl BaseTableData {
             Syscolpar
         );
 
+        let sysclsobjs_rowset = sysrow_sets
+            .iter()
+            .find(|row| row.idmajor == SYSCLSOBJS_IDMAJOR && row.idminor == 1);
+        let sysclsobjs = if sysclsobjs_rowset.is_some() {
+            parse_from_sysrow_set!(
+                &mut page_reader,
+                &sysclsobjs_rowset,
+                &sysalloc_units,
+                Sysclsobj
+            )
+        } else {
+            log::warn!("sysclsobjs not found: schema names are unknown");
+            Vec::new()
+        };
+
         Ok(Self {
             sysalloc_units,
             sysrow_sets,
             sysschobjs,
             sysscalartypes,
             syscolpars,
+            sysclsobjs,
         })
+    }
+
+    pub(crate) fn user_tables(&self) -> Result<Vec<TableInfo>, Error> {
+        self.objects_dollar()
+            .filter(|o| o.r#type == "U")
+            .map(|table| {
+                let schema_name = self
+                    .sysclsobjs
+                    .iter()
+                    .find(|schema| schema.class == SCHEMA_CLASS && schema.id == table.nsid)
+                    .map(|schema| schema.name.clone())
+                    .ok_or(Error::ParseError("table schema not found in sysclsobjs"))?;
+                Ok(TableInfo {
+                    object_id: table.id,
+                    schema_id: table.nsid,
+                    schema_name,
+                    name: table.name.clone(),
+                    columns: self.column_infos(table.id)?,
+                    rcrows: self
+                        .base_rowsets(table.id)
+                        .map(|rowset| rowset.rcrows)
+                        .sum(),
+                })
+            })
+            .collect()
+    }
+
+    fn column_infos(&self, object_id: i32) -> Result<Vec<ColumnInfo>, Error> {
+        let mut cols = self
+            .syscolpars
+            .iter()
+            .filter(|c| c.number == 0 && c.id == object_id && c.name.is_some())
+            .collect::<Vec<_>>();
+        cols.sort_by_key(|c| c.colid);
+        cols.into_iter()
+            .map(|c| {
+                let type_name = self
+                    .sysscalartypes
+                    .iter()
+                    .find(|st| st.xtype == c.xtype)
+                    .map(|st| st.name.clone())
+                    .ok_or(Error::ParseError("column type not found in sysscalartypes"))?;
+                Ok(ColumnInfo {
+                    name: c.name.clone().unwrap_or_default(),
+                    type_name,
+                    max_length: c.length,
+                    precision: c.prec as u8,
+                    scale: c.scale as u8,
+                })
+            })
+            .collect()
+    }
+
+    /// The heap or clustered-index rowsets of an object, in partition order.
+    fn base_rowsets(&self, object_id: i32) -> impl Iterator<Item = &SysrowSet> {
+        let mut rowsets = self
+            .sysrow_sets
+            .iter()
+            .filter(|rowset| {
+                rowset.idmajor == object_id && rowset.idminor <= BASE_ROWSET_MAX_INDEX_ID
+            })
+            .collect::<Vec<_>>();
+        rowsets.sort_by_key(|rowset| rowset.numpart);
+        rowsets.into_iter()
+    }
+
+    /// First in-row data page of each base rowset of an object, with the id
+    /// of the allocation unit its chain must stay in; an empty rowset has
+    /// none. Following each page's next-page pointer from there walks a
+    /// clustered index's leaf level, but not a heap: its pages are unlinked
+    /// and reachable only through its IAM pages, which the reader does not
+    /// follow, so a heap whose data pages the first page does not cover is
+    /// refused.
+    pub(crate) fn base_page_pointers(
+        &self,
+        object_id: i32,
+    ) -> Result<Vec<(PagePointer, i64)>, Error> {
+        let mut page_pointers = Vec::new();
+        for rowset in self.base_rowsets(object_id) {
+            let unit = self
+                .sysalloc_units
+                .iter()
+                .find(|unit| unit.ownerid == rowset.rowsetid && unit.r#type == 1)
+                .ok_or(Error::ParseError("in-row allocation unit not found"))?;
+            let page_pointer = PagePointer::try_from(&unit.pgfirst[..]).map_err(Error::from)?;
+            let heap = rowset.idminor == 0;
+            if heap && (unit.pcdata > 1 || (unit.pcdata == 1 && page_pointer.page_id == 0)) {
+                return Err(Error::ParseError(
+                    "heap pages are reachable only through its IAM pages, which the reader does not follow",
+                ));
+            }
+            if page_pointer.page_id != 0 {
+                page_pointers.push((page_pointer, unit.auid));
+            }
+        }
+        Ok(page_pointers)
     }
 
     fn objects_dollar(&self) -> impl Iterator<Item = &Sysschobj> {
@@ -367,6 +493,30 @@ impl<'a> TryFrom<Record<'a>> for Sysschobj {
             r#type,
             pid,
             pclass,
+        })
+    }
+}
+
+/// A `sysclsobjs` row; with class 50 it names a schema.
+#[derive(Debug)]
+struct Sysclsobj {
+    class: u8,
+    id: i32,
+    name: String,
+}
+
+impl<'a> TryFrom<Record<'a>> for Sysclsobj {
+    type Error = &'static str;
+
+    fn try_from(record: Record<'a>) -> Result<Self, Self::Error> {
+        let (class, record) = record.parse_u8()?;
+        let (id, record) = record.parse_i32()?;
+        let (name, _record) = record.parse_string()?;
+
+        Ok(Self {
+            class,
+            id,
+            name: name.ok_or("sysclsobjs name is null")?,
         })
     }
 }

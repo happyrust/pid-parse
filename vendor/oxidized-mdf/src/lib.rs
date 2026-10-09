@@ -12,6 +12,8 @@
 // Modified: 2026-10-09 by happyrust
 //   - rows / try_rows read records in slot order and leave ghost records out
 //   - Added GhostRow and MdfDatabase::ghost_rows: a table's ghost records, raw
+//   - Added MdfDatabase::from_bytes, user_tables (TableInfo / ColumnInfo: schema, columns,
+//     rcrows) and scan_table (every live or ghost record of a table with its page and slot)
 
 #![allow(dead_code)]
 // Mirror the pedantic lint subset baked into the parent `pid-parse`
@@ -86,6 +88,11 @@ impl MdfDatabase {
         Self::from_read(Box::new(file))
     }
 
+    /// Opens an MDF already held in memory.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, Error> {
+        Self::from_read(Box::new(std::io::Cursor::new(bytes)))
+    }
+
     pub fn from_read(read: Box<dyn Read>) -> Result<Self, Error> {
         let mut buffer = [0u8; 8192];
         let mut page_reader = PageReader::new(read);
@@ -121,6 +128,75 @@ impl MdfDatabase {
     /// ```
     pub fn table_names(&self) -> Vec<String> {
         self.base_table_data.tables()
+    }
+
+    /// Returns every user table with its schema, its columns and the row
+    /// count the database keeps for it, in object-id order. Unlike
+    /// [`MdfDatabase::table_names`], tables of the same name in different
+    /// schemas stay apart.
+    pub fn user_tables(&self) -> Result<Vec<TableInfo>, Error> {
+        self.base_table_data.user_tables()
+    }
+
+    /// Returns every record of the table's heap or clustered index, live and
+    /// ghost, in page-chain and slot order, each with the page and slot it
+    /// was read from. A page that cannot be read, or a live record that does
+    /// not parse, yields an `Err` in its place.
+    pub fn scan_table<'a>(
+        &'a mut self,
+        table: &'a TableInfo,
+    ) -> Result<impl Iterator<Item = Result<ScannedRecord, Error>> + 'a, Error> {
+        let (page_pointers, allocation_units): (Vec<_>, Vec<_>) = self
+            .base_table_data
+            .base_page_pointers(table.object_id)?
+            .into_iter()
+            .unzip();
+        let columns = table
+            .columns
+            .iter()
+            .map(|column| Column {
+                name: &column.name,
+                r#type: &column.type_name,
+                max_length: column.max_length,
+                precision: column.precision,
+                scale: column.scale,
+            })
+            .collect::<Vec<_>>();
+
+        Ok(self
+            .page_reader
+            .read_pages_of_pointers(page_pointers)
+            .flat_map(move |page| {
+                let page = match page {
+                    Ok(page) => page,
+                    Err(err) => return vec![Err(err)],
+                };
+                if !allocation_units.contains(&page.header().allocation_unit_id) {
+                    return vec![Err(Error::ParseError(
+                        "page chain left the allocation units of the table",
+                    ))];
+                }
+                let page_id = page.header().page_id;
+                page.slotted_records()
+                    .into_iter()
+                    .map(|slotted| {
+                        if slotted.is_ghost() {
+                            return Ok(ScannedRecord::Ghost(GhostRow {
+                                page_id,
+                                slot: slotted.slot,
+                                record_type: slotted.record_type,
+                                bytes: slotted.bytes.to_vec(),
+                            }));
+                        }
+                        let record = Record::try_from(slotted.bytes).map_err(Error::from)?;
+                        Ok(ScannedRecord::Live {
+                            page_id,
+                            slot: slotted.slot,
+                            row: parse_record_columns(&table.name, record, &columns)?,
+                        })
+                    })
+                    .collect()
+            }))
     }
 
     /// Returns the column names of the given table name.
@@ -263,6 +339,55 @@ impl MdfDatabase {
                 }),
         )
     }
+}
+
+/// A user table as the system catalog describes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableInfo {
+    /// Object id (`sysschobjs.id`).
+    pub object_id: i32,
+    /// Id of the table's schema (`sysschobjs.nsid`).
+    pub schema_id: i32,
+    /// Name of that schema (its `sysclsobjs` row, class 50).
+    pub schema_name: String,
+    /// Table name.
+    pub name: String,
+    /// Columns in column-id order.
+    pub columns: Vec<ColumnInfo>,
+    /// Rows the database counts for the table's heap or clustered index
+    /// (`sysrowsets.rcrows`, summed over partitions).
+    pub rcrows: i64,
+}
+
+/// One column of a [`TableInfo`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColumnInfo {
+    /// Column name.
+    pub name: String,
+    /// The SQL Server type the reader parses the column as.
+    pub type_name: String,
+    /// Declared length in bytes (`-1` for `max`).
+    pub max_length: i16,
+    /// Declared precision.
+    pub precision: u8,
+    /// Declared scale.
+    pub scale: u8,
+}
+
+/// A record [`MdfDatabase::scan_table`] read, with the page and slot it sits in.
+#[derive(Debug)]
+pub enum ScannedRecord {
+    /// A live row.
+    Live {
+        /// Page the record sits on.
+        page_id: u32,
+        /// The record's slot in that page.
+        slot: u16,
+        /// Its column values.
+        row: Row,
+    },
+    /// A ghost row, kept as stored.
+    Ghost(GhostRow),
 }
 
 /// A row deleted from a table whose bytes its page still holds, because the

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### S1b：MDF 读取器按 schema 认表，逐表扫到的活行等于 `rcrows`（2026-10-09，Backup Store 计划 S1b）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S1b（Q8、P3）。
+
+- **vendored `oxidized-mdf` 的 `sys.rs`**：读 `sysclsobjs`（idmajor 64）里 class 50 的 schema 行，用上 `sysschobjs.nsid`；`user_tables()` 给出每张用户表的对象 ID、schema ID 和名字、列（按列 ID）、`rcrows`（只算堆或聚集索引的 rowset，分区相加）；
+  `base_page_pointers()` 只取堆（idminor 0）或聚集索引（idminor 1）的 rowset，非聚集索引的页不当数据页；堆的页只能经 IAM 页找到、读取器不跟 IAM，所以多于一页、或 `pgfirst` 为空却有数据页的堆显式报错，不读一半。
+- **`pages.rs`**：页头再读 IndexID（6–7）和 ObjectID（24–27），得出所属分配单元 `IndexID << 48 | ObjectID << 16`；decimal 超出 `rust_decimal` 的范围时报错，不再 panic（AWLT2005 的计算列 `SalesOrderDetail.LineTotal` 不在行里存储，读取器把它当存储列读，会读出超范围的数）。
+- **`lib.rs`**：`MdfDatabase::from_bytes(Vec<u8>)`（仍走现有的顺序读页器，随机读留给 S1c）；`user_tables()` 返回 `TableInfo` / `ColumnInfo`；`scan_table(&TableInfo)` 按页链和槽号给出每条记录（`ScannedRecord::Live { page_id, slot, row }` 或 `Ghost(GhostRow)`），行按 `try_rows` 的严格口径解析，页链走出该表的分配单元时报错。按名取表的 `rows` / `try_rows` / `ghost_rows` 不变，仍取第一张同名表。
+- TEST02：用户表 156 张 = 4 个 schema 的 154 张（nsid 5 `TEST02d` 25、6 `TEST02` 22、7 `TEST02pidd` 25、8 `TEST02pid` 82）加 `sys` 下 2 张；154 张表逐表扫到的活行都等于 `rcrows`，合计 37,470；列 1,798（nvarchar 856、int 650、float 263、datetime 27、image 2）；Ghost Row 仍是那 5 行。都与计划事实表一致。A01 的 `_Data.xml` / `_Meta.xml` 与 S1a 之前逐字节相同。
+- vendored 样本：AWLT2005 分成 `dbo` 2 张、`SalesLT` 10 张，`SalesLT.Address` 扫到 450 行 = `rcrows`；spg_verein 的 `tblImportEmailParameter` 首页已属别的分配单元，`scan_table` 报错（按名的 `rows` 仍从那页读出 34 行）。
+  两个样本上还有 AWLT2005 2 张、spg_verein 16 张（含上面那张）扫不全——`xml` 类型、计算列、可空定长列、datetime2 等读取器原有的限制——都以错误给出，没有静默多行或少行；TEST02 没有这些情形。
+- 测试：`backup_mdf_reader_test02` 加一条（schema、列类型、逐表活行对 `rcrows`、合计 37,470、Ghost Row 5 行）；vendored 单测 43 → 45（分配单元、超范围 decimal），集成测试 +3（schema、`Address` 450 行、分配单元守卫）。
+- 验证：`cargo test --workspace` 43 个二进制 1505 过 / 3 忽略；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；vendored crate 的 `clippy --all-targets -D warnings` 过，单测 45 过，集成测试 22 / 23（只剩 S1a 记下的 `rows::case_5` 旧失败）。
+
 ### S1a：MDF 读取器按槽号读，Ghost Row 不再算行（2026-10-09，Backup Store 计划 S1a）
 
 计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S1a（Q10、Q12、Q13、P2）。

@@ -14,6 +14,8 @@
 //   - Record length taken from the record's own layout instead of the next slot's offset
 //   - Ghost records (types 5-7) kept out of Page::records() and handed out raw through
 //     Page::slotted_records(); the page header also yields its page id and ghost count
+//   - The page header names its allocation unit (IndexID << 48 | ObjectID << 16)
+//   - A decimal beyond the range rust_decimal holds is an Err instead of a panic
 
 use bitvec::{order::Lsb0, slice::BitSlice};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -27,6 +29,9 @@ pub(crate) struct PageHeader {
     pub(crate) next_page_pointer: Option<PagePointer>,
     pub(crate) page_id: u32,
     pub(crate) ghost_record_count: u16,
+    /// `IndexID << 48 | ObjectID << 16`: the `sysallocunits.auid` of the
+    /// allocation unit the page belongs to.
+    pub(crate) allocation_unit_id: i64,
 }
 
 #[derive(Debug)]
@@ -261,8 +266,8 @@ impl<'a> Record<'a> {
         };
 
         let (bytes, record) = self.parse_bytes_opt(required_storage_bytes)?;
-        Ok((
-            bytes.map(|bytes| {
+        let decimal = match bytes {
+            Some(bytes) => {
                 let (sign_byte, bytes) = bytes.split_at(1usize);
 
                 let x = if precision <= 9 {
@@ -284,12 +289,14 @@ impl<'a> Record<'a> {
                     ])
                 };
 
-                let mut decimal = Decimal::from_i128_with_scale(x, scale as u32);
+                let mut decimal = Decimal::try_from_i128_with_scale(x, u32::from(scale))
+                    .map_err(|_| "decimal exceeds the range rust_decimal holds")?;
                 decimal.set_sign_positive(sign_byte[0] != 0);
-                decimal
-            }),
-            record,
-        ))
+                Some(decimal)
+            }
+            None => None,
+        };
+        Ok((decimal, record))
     }
 
     pub(crate) fn parse_bit(self) -> Result<(bool, Record<'a>), &'static str> {
@@ -758,10 +765,13 @@ impl TryFrom<[u8; 8192]> for BootPage {
 /// Bytes       Content
 /// -----       -------
 /// ...         ?
+/// 06-07       IndexID (smallint)
+/// 08-15       ?
 /// 16-19       NextPageID (int)
 /// 20-21       NextPageFileID (smallint)
 /// 22-23       SlotCnt (smallint)
-/// 24-31       ?
+/// 24-27       ObjectID (int)
+/// 28-31       ?
 /// 32-35       PageID (int)
 /// 36-57       ?
 /// 58-59       GhostRecCnt (smallint)
@@ -775,7 +785,9 @@ impl TryFrom<&[u8]> for PageHeader {
             return Err("Page header must be 96 bytes.");
         }
 
-        let (bytes, _) = take_bytes(bytes, 16, "Page header must be 96 bytes.")?;
+        let (bytes, _) = take_bytes(bytes, 6, "Page header must be 96 bytes.")?;
+        let (bytes, index_id) = parse_le_u16(bytes, "Page header must be 96 bytes.")?;
+        let (bytes, _) = take_bytes(bytes, 8, "Page header must be 96 bytes.")?;
         let (bytes, next_page_bytes) = take_bytes(bytes, 6, "Page header must be 96 bytes.")?;
         let next_page_pointer = PagePointer::try_from(next_page_bytes)?;
         let next_page_pointer = if next_page_pointer.page_id > 0 {
@@ -784,7 +796,8 @@ impl TryFrom<&[u8]> for PageHeader {
             None
         };
         let (bytes, slot_count) = parse_le_u16(bytes, "Page header must be 96 bytes.")?;
-        let (bytes, _) = take_bytes(bytes, 8, "Page header must be 96 bytes.")?;
+        let (bytes, object_id) = parse_le_u32(bytes, "Page header must be 96 bytes.")?;
+        let (bytes, _) = take_bytes(bytes, 4, "Page header must be 96 bytes.")?;
         let (bytes, page_id) = parse_le_u32(bytes, "Page header must be 96 bytes.")?;
         let (bytes, _) = take_bytes(bytes, 22, "Page header must be 96 bytes.")?;
         let (_, ghost_record_count) = parse_le_u16(bytes, "Page header must be 96 bytes.")?;
@@ -794,6 +807,7 @@ impl TryFrom<&[u8]> for PageHeader {
             next_page_pointer,
             page_id,
             ghost_record_count,
+            allocation_unit_id: (i64::from(index_id) << 48) | (i64::from(object_id) << 16),
         })
     }
 }
@@ -1087,6 +1101,21 @@ mod tests {
         let (parsed_value, _record) = record.parse_decimal_opt(precision, scale).unwrap();
 
         assert_eq!(Some(expected_value), parsed_value);
+    }
+
+    #[test]
+    fn parse_decimal_beyond_the_rust_decimal_range_is_an_error() {
+        let mut bytes = vec![0u8, 0u8, 21u8, 0u8, 0x01];
+        bytes.extend_from_slice(&10i128.pow(30).to_le_bytes());
+        bytes.extend_from_slice(&[0u8, 0u8]);
+        let record = Record::try_from(&bytes[..]).unwrap();
+
+        assert_eq!(
+            Err("decimal exceeds the range rust_decimal holds"),
+            record
+                .parse_decimal_opt(38, 0)
+                .map(|(decimal, _record)| decimal)
+        );
     }
 
     #[test]
@@ -1444,5 +1473,15 @@ mod tests {
             (1234, 2),
             (page.header().page_id, page.header().ghost_record_count)
         );
+    }
+
+    #[test]
+    fn page_header_names_its_allocation_unit() {
+        let mut bytes = [0u8; 8192];
+        bytes[6..8].copy_from_slice(&256u16.to_le_bytes());
+        bytes[24..28].copy_from_slice(&2u32.to_le_bytes());
+
+        let page = Page::try_from(bytes).expect("synthetic page header should be valid");
+        assert_eq!(72057594038059008, page.header().allocation_unit_id);
     }
 }

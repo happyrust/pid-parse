@@ -1,5 +1,5 @@
 use chrono::{TimeZone, Utc};
-use oxidized_mdf::{error::Error, MdfDatabase, Value};
+use oxidized_mdf::{error::Error, MdfDatabase, ScannedRecord, Value};
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 
@@ -138,5 +138,75 @@ fn rows(
 
     assert_eq!(row.value(column), Some(&expected_value));
 
+    Ok(())
+}
+
+#[test]
+fn user_tables_keep_each_table_with_its_schema() -> Result<(), Error> {
+    let db = MdfDatabase::open("data/AWLT2005.mdf")?;
+    let tables = db.user_tables()?;
+    let schema_of = |name: &str| {
+        tables
+            .iter()
+            .find(|table| table.name == name)
+            .map(|table| table.schema_name.as_str())
+    };
+
+    assert_eq!(Some("dbo"), schema_of("BuildVersion"));
+    assert_eq!(Some("dbo"), schema_of("ErrorLog"));
+    assert_eq!(
+        10,
+        tables
+            .iter()
+            .filter(|table| table.schema_name == "SalesLT")
+            .count()
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_table_reads_every_row_the_catalog_counts() -> Result<(), Error> {
+    let mut db = MdfDatabase::from_bytes(std::fs::read("data/AWLT2005.mdf")?)?;
+    let tables = db.user_tables()?;
+    let address = tables
+        .iter()
+        .find(|table| table.schema_name == "SalesLT" && table.name == "Address")
+        .expect("SalesLT.Address");
+
+    let mut places = db
+        .scan_table(address)?
+        .filter_map(|record| match record {
+            Ok(ScannedRecord::Live { page_id, slot, .. }) => Some(Ok((page_id, slot))),
+            Ok(ScannedRecord::Ghost(_)) => None,
+            Err(err) => Some(Err(err)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    places.sort_unstable();
+    places.dedup();
+
+    assert_eq!(450, address.rcrows);
+    assert_eq!(450, places.len());
+    Ok(())
+}
+
+#[test]
+fn scan_table_stops_at_a_page_of_another_allocation_unit() -> Result<(), Error> {
+    // Its first page now belongs to another allocation unit, whose rows must
+    // not pass for this table's.
+    let mut db = MdfDatabase::open("data/spg_verein_TST.mdf")?;
+    let tables = db.user_tables()?;
+    let table = tables
+        .iter()
+        .find(|table| table.name == "tblImportEmailParameter")
+        .expect("dbo.tblImportEmailParameter");
+
+    let records = db.scan_table(table)?.collect::<Vec<_>>();
+    assert_eq!(1, table.rcrows);
+    assert!(matches!(
+        records.as_slice(),
+        [Err(Error::ParseError(
+            "page chain left the allocation units of the table"
+        ))]
+    ));
     Ok(())
 }
