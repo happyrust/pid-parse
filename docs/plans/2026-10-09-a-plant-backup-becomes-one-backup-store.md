@@ -6,11 +6,15 @@
 > 开单时没改代码。「实现层决策」P1–P9 是问答没覆盖、动手前必须定的细节，⭕ 为推荐；批了再从 S0 开工。
 >
 > **2026-10-09 用户批准**：「P1–P9 全部按推荐，Q2 的理解也对，开工 S0」。各步进度见「门禁记录」。
+>
+> **2026-10-09 补充，同日批准**：审计发现 `D:\work\cad\pid-test-data`（Plant `SQPlant`，Oracle）不在计划里，用户要求补进来，作为第三套样本（第二套 Oracle）。
+> 改动：事实表加 SQPlant；新增 P10–P12；S2a 存 zip 条目名原字节并按 GBK 解码；S2d 按 `CONNECT` 标记把表归到 owner；验收第 11 条写明按 owner 计，新增第 13 条。
+> 用户：「P10–P12 按推荐，改动稿照落」。
 
 ## 一句话
 
 新增 `pid_backup_store <Plant Backup> -o <store.sqlite>`，把一套 Plant Backup 的 Manifest、Database Dump 的 154 张表和包内文件清单写进一个 SQLite。
-SQL Server 备份逐行解码，每行带 MDF 的页号和槽号；Oracle 备份第一版只建同名空表。为此先修 vendored `oxidized-mdf` 的五处读错
+SQL Server 备份逐行解码，每行带 MDF 的页号和槽号；Oracle 备份（DWG、SQPlant）第一版只建同名空表。为此先修 vendored `oxidized-mdf` 的五处读错
 （按 schema 认表、滤掉 Ghost Row、跟着 LOB 指针读值、分开空串和 NULL、给出页和槽），最后让 publish 改读 store，用 A01 的现有测试把关。
 
 ## 已定决策（Q1–Q21）
@@ -37,7 +41,7 @@ SQL Server 备份逐行解码，每行带 MDF 的页号和槽号；Oracle 备份
 | Q18 | publish 的选择表取 pidd，第一版只换来源、不改连接；连接缺陷单独登记 | S4 |
 | Q19 | Oracle 类型映射（见「库的形状」） | S2 |
 | Q20 | Oracle 的大写名字原样保留 | S2 |
-| Q21 | 验收 12 条（见「验收」） | S1–S5 |
+| Q21 | 验收 13 条（见「验收」；第 13 条 2026-10-09 补） | S1–S5 |
 | 自定 | 只收 Manifest 列出的 154 张表，`sys` 下 2 张内部表不收；35 个视图只登记名字 | S2 |
 
 ## 事实（2026-10-09，pid-parse `fa4e268`）
@@ -64,7 +68,13 @@ SQL Server 备份逐行解码，每行带 MDF 的页号和槽号；Oracle 备份
 | Manifest 解析 | `parse_line` 去掉 `\r`、修剪 key，拼不回原文 | `src/backup/manifest.rs:120` |
 | zip | `<Plant>_p.zip` 根下 14 个条目，没有外层目录；本仓至今只读 zip 的中央目录、不解压（`Cargo.toml` 注释） | .NET `ZipFile` 列目录 |
 | 样本 | `test-file/backup-test/TEST02_p.zip`（24,368,835 字节）、`DWG-0202GP06-01_p.zip`（12,474,311 字节），都在 git 里；目录副本里的文本文件被 `.gitattributes` 改成了 LF | `git ls-files` |
-| Oracle（DWG） | 154 张表 2,039 列，6 种类型；表名列名全大写；空串存成 NULL；比 TEST02 多 241 列 | 扫 `Export.dmp` 的 DDL |
+| Oracle（DWG） | 154 张表 2,039 列（按 owner：plant 22 张 138 列、d 25 / 176、pid 82 / 1,549、pidd 25 / 176），6 种类型；表名列名全大写；空串存成 NULL；比 TEST02 多 241 列 | 按 `CONNECT` 归属扫 `Export.dmp` 的 DDL |
+| Oracle DDL 示例 | `examples/oracle_exp_schema.rs` 以表名为键存 `BTreeMap`，跨 owner 的同名表互相覆盖（两套字典 schema 共 24 个名字、`MAX_ID` 四个 owner 都有、`SPIDCACHE` 在 plant 和 pid），DWG、SQPlant 都只报 126 张 | `examples/oracle_exp_schema.rs:37, 50` |
+| Oracle owner 标记 | 每个 owner 段前有一行 `CONNECT <OWNER>`（SQPlant 36 个），表归属取前面最近的一个 | 扫 `Export.dmp` |
+| SQPlant 样本 | `D:\work\cad\pid-test-data`，只有目录、没有 zip 原件，不在 git 里，约 107 MB；16 个顶层文件，文本是原始字节（`RefData~4~680` 331,977、`PlantConfig.xml` 5,085，与 `FileSize` 行 / zip 原件一致） | 目录列表、Manifest |
+| SQPlant 库 | Oracle 12.1.0.2 `exp`，`Export.dmp` 74,489,856 字节；154 张表（22 / 25 / 82 / 25）2,024 列（plant 138、d 176、pid 1,534、pidd 176），类型同 DWG（NUMBER 只有 `(10, 0)` / `(11, 0)`，FLOAT 只有 `(126)`）；`Export.log` 365,530 行（pid 324,925，`T_DRAWING` 53）；Manifest 的 schema 名是 `SQPlant` / `SQPlantd` / `SQPlantpid` / `SQPlantpidd`，dump 的 owner 全大写 | 扫 DDL、`Export.log`、Manifest |
+| SQPlant Manifest | 322 行，BOM `FF FE`，全 CRLF，末行带换行；`ArchiveFileSize` 168,019,536 等于各 `FileSize` 行原始字节之和；`ExportFileSize` 93,585,407 不等于 dmp 大小（DWG 也不等：14,876,671 对 8,802,304）；`BackupCommand` 带 `system` 明文口令 | Manifest |
+| SQPlant zip 条目名 | 711 包 60 个条目都没设 UTF-8 标志，47 个 `.pid` 名含非 ASCII 字节、按 GBK 解码才对（如 `00/00/A井场 注采阀组工艺及自控流程图.pid`）；`zip_index` 取 `entry.name()`，zip crate 对这种名字按 CP437 解；各包条目数 711 60、681 742、682 20、684 10、685 3、804 10、809 4 | 逐条读中央目录、`src/backup/zip_index.rs:95` |
 | vendored 测试 | `integration_test.rs:119` 断言 `spg_verein_TST.mdf` 的 `tbl_Mitglied` 第 3 行 `Titel` 为 NULL；`parse_string` 的 TODO 说有一条集成测试依赖「空即 NULL」 | `vendor/oxidized-mdf/tests/integration_test.rs` |
 | 工作树 | 分支 `codex/phase32c-bundle-closeout`，几条会话共用；别的会话有未提交改动（4 个文件只差换行，1 个未跟踪的 example） | `git status` |
 
@@ -81,6 +91,9 @@ SQL Server 备份逐行解码，每行带 MDF 的页号和槽号；Oracle 备份
 | P7 | publish 怎么读 store | ⭕ 第一版 `sqlite_load` 不动：从 store 取带类型的值，按今天 `value_to_text` 的规则（datetime `%Y/%-m/%-d %H:%M:%S`、大写十六进制、Rust 写浮点）抄进内存里同名的 26 张 TEXT 表。不用 TEMP VIEW：SQLite 把 REAL 250 转成 TEXT 是 `250.0`，Rust 是 `250`，输出会变 |
 | P8 | 确定性 | ⭕ 表按 Manifest `Table` 行的顺序建；行按页链顺序、再按槽号插入；`backup_file` 按容器和条目序号排；库里不写生成时间，`store_info` 只记工具名、版本和输入的 SHA-256；先写 `<out>.tmp` 再改名。比对口径是逐表内容，不比文件字节 |
 | P9 | 默认脱敏的 store 怎么验 Manifest 拼回 | ⭕ Q21 第 6 条「逐字节相同」在 `--keep-secrets` 的 store 上验；默认 store 验「原文按 `store_redaction` 记下的位置做同样替换后，与拼回结果逐字节相同」，且每条记下的 SHA-256 等于原值的 SHA-256 |
+| P10 | SQPlant 样本放哪 | ⭕ 不进 git。测试读环境变量 `PID_PARSE_SQPLANT_BACKUP`，没设时退到 `D:\work\cad\pid-test-data`，都没有就打印 `skip: … is absent` 后跳过（沿用现有测试写法）。备选 A：只认环境变量、不写本机路径——不设就永远不跑。备选 B：拷进 `test-file/backup-test/`——约 107 MB，比现有两套 zip 原件加起来（36.8 MB）还大 |
+| P11 | zip 条目名怎么解 | ⭕ `ZipEntry` 加 `name_raw`；`backup_file` 加 `path_raw`（BLOB）和 `path_encoding`。设了 UTF-8 标志按 UTF-8；没设时纯 ASCII 记 `ascii`，否则先严格按 UTF-8 解，失败再按 GBK（`encoding_rs`，本仓已依赖），还有错字节就按 CP437 并记 `cp437`；`path` 存解出的名字。备选：照 zip crate 现状一律 CP437——SQPlant 47 个名字是乱码 |
+| P12 | Oracle 的表归哪个 owner、owner 怎么对角色 | ⭕ 每条 `CREATE TABLE` 归到它前面最近的 `CONNECT <OWNER>`，表以 (owner, 表名) 为键；owner 与 ConnInfo 第 4 字段按 ASCII 大小写不敏感比较；`dump_schema.schema_name` 存 dump 里的大写原样（Q20），Manifest 的写法留在 `manifest_field`；对不上恰好四个角色就报错。备选：按 Manifest `Table` 行归属——`Table` 行没有列，还得再和 DDL 对一次，而且同样要处理大小写 |
 
 Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `--embed-files`、默认关（S3）。
 
@@ -127,16 +140,16 @@ Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `
 
 ### S2 写 store（P4–P9；4 笔提交）
 
-- **S2a 输入和文件清单**：收目录或 zip；MTF → MDF 的探测从 bin 挪进库，`pid_backup_extract` 改调库；`backup_file` 收外层和各 Option Archive 的条目，逐条 SHA-256；目录输入写进 `store_info` 并打警告（Q7）；`Cargo.toml` 里 zip「只读中央目录」那段注释改写。测试：TEST02 zip 外层 14 个条目；与格式文档第 8 节列出的 `.pid` SHA-256 前缀对上。
-- **S2b Manifest**：保原文的拆行（保留行尾和 BOM）；`manifest_line`、`manifest_field`、`manifest_field_meaning` 和视图。脱敏（Q15）：`DBUids`、`DBPwds` 和 ConnInfo 第 1、5 个字段只留 SHA-256；`BackupCommand` 里的口令段换成 `***`，认不出口令段的格式就整段换掉。测试：两套样本按 P9 的两种口径拼回；默认 store 里按 UTF-8 和 UTF-16LE 都搜不到任何一条原值。
+- **S2a 输入和文件清单**：收目录或 zip；MTF → MDF 的探测从 bin 挪进库，`pid_backup_extract` 改调库；`backup_file` 收外层和各 Option Archive 的条目，逐条 SHA-256；目录输入写进 `store_info` 并打警告（Q7）；`Cargo.toml` 里 zip「只读中央目录」那段注释改写。测试：TEST02 zip 外层 14 个条目；与格式文档第 8 节列出的 `.pid` SHA-256 前缀对上。条目名按 P11 解。SQPlant（P10，目录输入）：顶层 16 个文件；711 包 60 条，47 条按 GBK 解出、名字里没有 U+FFFD，钉两条（`00/00/A井场 注采阀组工艺及自控流程图.pid`、`test/U01/D06.pid`）；其余各包条目数按事实表。
+- **S2b Manifest**：保原文的拆行（保留行尾和 BOM）；`manifest_line`、`manifest_field`、`manifest_field_meaning` 和视图。脱敏（Q15）：`DBUids`、`DBPwds` 和 ConnInfo 第 1、5 个字段只留 SHA-256；`BackupCommand` 里的口令段换成 `***`，认不出口令段的格式就整段换掉。测试：两套样本按 P9 的两种口径拼回；默认 store 里按 UTF-8 和 UTF-16LE 都搜不到任何一条原值。SQPlant 的 Manifest 同样按 P9 两种口径拼回；默认库按 UTF-8 和 UTF-16LE 都搜不到 `BackupCommand` 里的口令——口令在测试运行时从原 Manifest 现取，不写进测试源码。
 - **S2c SQL Server 转储**：`dump_schema`（ConnInfo 类型码 → 角色，再和 MDF 里的 schema 名对上）、`dump_table`、`dump_column`、`dump_view`、154 张数据表、`dump_ghost_row`、`dump_lob`；值按 Q9 落库。
-- **S2d Oracle 转储**：`examples/oracle_exp_schema.rs` 的扫描挪进 `src/backup/oracle_exp.rs`，example 改成调库；每个 owner 按 ConnInfo 第 4 个字段对上角色；按 Q19 / Q20 建空表，`decoded = 0`。
-- 完成标志：「验收」第 1–9、11 条在 S2 内各自变绿。
+- **S2d Oracle 转储**：`examples/oracle_exp_schema.rs` 的扫描挪进 `src/backup/oracle_exp.rs`，同时改成按 owner 归属（P12），不再按表名去重；example 改成调库、按 owner 分组打印。按 Q19 / Q20 建空表，`decoded = 0`。测试：DWG 154 张 / 2,039 列（138 / 176 / 1,549 / 176），SQPlant 154 张 / 2,024 列（138 / 176 / 1,534 / 176）；两套都是 126 个不同表名，重名的表各在自己的角色下。
+- 完成标志：「验收」第 1–9、11、13 条在 S2 内各自变绿。
 
 ### S3 命令行 `pid_backup_store`（Q17；1 笔提交）
 
 - `pid_backup_store <输入> -o <输出.sqlite> [--force] [--keep-secrets] [--embed-files]`。缺 `-o` 或参数错退出 2，运行错误退出 1；输出已存在且没加 `--force` 时拒绝；先写临时文件再改名；结束时打印表数、行数、Ghost Row、LOB、文件数、脱敏条数和警告。`Cargo.toml` 加 `[[bin]]`，`required-features = ["backup"]`。
-- 测试 `tests/backup_store_cli.rs`：`--help`、缺 `-o`、拒绝覆盖、`--force` 覆盖、TEST02 zip 成功；`--embed-files` 收进的文件字节与 zip 里的一致。README 加一节。
+- 测试 `tests/backup_store_cli.rs`：`--help`、缺 `-o`、拒绝覆盖、`--force` 覆盖、TEST02 zip 成功；SQPlant 目录输入跑通（P10 没样本则跳过）；`--embed-files` 收进的文件字节与 zip 里的一致。README 加一节。
 
 ### S4 publish 改读 store（Q13、Q18、P6、P7；1–2 笔提交）
 
@@ -163,15 +176,17 @@ Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `
 | 8 | 默认库里搜不到口令原文和加密串 | 同上 | S2 |
 | 9 | 同一输入生成两次，逐表内容相同 | `backup_store_test02` | S2 |
 | 10 | publish 改读 store 后 A01 测试通过；输出变化先说明原因 | `publish_*` + 新 parity 测试 | S1、S4 |
-| 11 | DWG：154 张空表、2,039 列，类型按 Q19，标「未解码」，Manifest 和文件清单照常入库 | `backup_store_dwg` | S2 |
+| 11 | DWG：154 张空表、2,039 列，按 owner 计，重名表各在自己的角色下；类型按 Q19，标「未解码」，Manifest 和文件清单照常入库 | `backup_store_dwg` | S2 |
 | 12 | `cargo test`、两种特性组合的 `clippy -D warnings`、`fmt` | 每笔提交前 | 全程 |
+| 13 | SQPlant（外部样本，缺则跳过）：154 张空表、2,024 列，四个角色按 P12 对上；Manifest 拼回；16 个顶层文件和各包条目数、SHA-256 对上，47 个 GBK 名字没有 U+FFFD；默认库搜不到口令原文 | `backup_store_sqplant` | S2、S3 |
 
 ## 登记不做（第一版）
 
 | 项 | 理由 |
 |---|---|
-| Oracle exp 行解码 | Q3，第二版 |
+| Oracle exp 行解码 | Q3，第二版；SQPlant 是它的主样本（365,530 行） |
 | `.pid` 解析结果、参考数据解析结果入库 | Q2，第二、三版 |
+| SQPlant 的 `.pid` 解析结果入库 | Q2，第二版；现有 `pid_inspect` 53/53 能解析，留作那时的基线 |
 | 选择表连接改成 `attribute_datatype = C<n>`，连同 writer 的优先级 | Q18，单独登记的缺陷 |
 | d 与 pidd 合并 | Q18 没选 c |
 | 视图定义、`sys` 下内部表 | 自定项 |
@@ -187,6 +202,8 @@ Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `
 - **空串改动**会碰 vendored 集成测试，S1c 先查证再改。
 - **S1 后 A01 输出可能变**：Ghost Row 在 `T_PlantItem` / `T_Equipment`，空串在 `T_Drawing`；按 Q13 先分析再接受。
 - **共用工作树**：并行编译抢 `target/` 锁、误把别人的改动卷进提交；P1 规避。
+- **外部样本**：SQPlant 不在 git 里，换机器或 CI 上第 13 条只会跳过，以本机结果为准；跳过时测试要打印原因。
+- **条目名编码**：GBK 是按字节试解的推断，别的语言环境的备份可能是别的代码页；`path_raw` 保证原字节不丢。
 
 ## 门禁记录
 
@@ -194,3 +211,4 @@ Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `
 - 2026-10-09：Q8–Q17 全部按推荐（opus-5-5-11）；`CONTEXT.md` 加 Schema Role、Ghost Row，ADR-0004 写成，Q18–Q21 全部按推荐（opus-5-5-13）。
 - 2026-10-09：本计划写成（opus-5-5-18），P1–P9 等批，没改代码。
 - 2026-10-09：用户「P1–P9 全部按推荐，Q2 的理解也对，开工 S0」（opus-5-5-18 收到后断开）→ S0（opus-5-5-17）：从 `fa4e268` 开 worktree `D:\work\plant-code\cad\pid-parse-backup-store`、分支 `backup-store-v1`；四份文档原样挪进一笔 `docs(backup)` 提交，只给本计划补了批准记录和上面那条 `CARGO_TARGET_DIR`；提交核对无误后，主树的 `CONTEXT.md` 还原、三份新文档删除。
+- 2026-10-09：审计（opus-5-5-22）发现 SQPlant（`D:\work\cad\pid-test-data`）不在计划里；用户要求补进来作为第三套样本（第二套 Oracle）。改动稿（P10–P12、S2a / S2b / S2d / S3、验收第 11 条改、第 13 条加）经用户「P10–P12 按推荐，改动稿照落」批准后落进本计划，单独一笔 `docs(plan)` 提交，没改代码。
