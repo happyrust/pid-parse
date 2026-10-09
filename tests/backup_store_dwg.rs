@@ -8,11 +8,34 @@ mod common;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use common::backup_store::{check_manifest, ManifestExpectation};
+use common::backup_store::{
+    check_manifest, check_oracle_dump, ManifestExpectation, OracleDumpExpectation,
+};
 use pid_parse::backup::{build_backup_store_in_memory, StoreOptions};
 use rusqlite::Connection;
 
 const DWG_ZIP: &str = "test-file/backup-test/DWG-0202GP06-01_p.zip";
+
+/// The Oracle dump's DDL: 154 tables under four upper-case owners,
+/// 2,039 columns (138 / 176 / 1,549 / 176) of six types, 150 NOT NULL.
+const ORACLE_DUMP: OracleDumpExpectation = OracleDumpExpectation {
+    owners: [
+        "QSMCQTAZ13_PLANT",
+        "QSMCQTAZ13_PLANTD",
+        "QSMCQTAZ13_PLANTPID",
+        "QSMCQTAZ13_PLANTPIDD",
+    ],
+    columns_per_role: [138, 176, 1_549, 176],
+    columns_by_type: &[
+        ("BLOB", 2),
+        ("DATE", 28),
+        ("FLOAT", 348),
+        ("NUMBER", 663),
+        ("NVARCHAR2", 987),
+        ("VARCHAR2", 11),
+    ],
+    not_null_columns: 150,
+};
 
 /// The Manifest: 402 lines (two roles, 156 rights); 14 SHA-256
 /// replacements plus the password of the Oracle `exp` command line.
@@ -235,5 +258,63 @@ fn dwg_store_keeps_the_manifest_and_masks_the_oracle_password() {
     assert_eq!(
         vec!["Permanent".to_string(), "Temporary".to_string()],
         kinds
+    );
+}
+
+#[test]
+fn dwg_store_registers_the_oracle_tables_empty_from_the_ddl() {
+    let Some(zip) = fixture() else {
+        return;
+    };
+    let (conn, summary) =
+        build_backup_store_in_memory(zip, &StoreOptions::default()).expect("build store");
+    assert_eq!(
+        (154, 0, 0, 0),
+        (
+            summary.tables,
+            summary.rows,
+            summary.ghost_rows,
+            summary.lobs
+        )
+    );
+    assert_eq!(
+        vec![
+            "Export.dmp: an Oracle `exp` dump; its 154 tables are registered from the DDL \
+              and left empty, their rows are not decoded in this version"
+                .to_string()
+        ],
+        summary.warnings
+    );
+    check_oracle_dump(&conn, "dwg", &ORACLE_DUMP);
+
+    // Acceptance 11: the types of one table, column by column.
+    let columns: Vec<(String, String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT c.name, c.source_type, p.type FROM dump_column c \
+                 JOIN pragma_table_info('pid__T_DRAWINGVERSION') p ON p.name = c.name \
+                 WHERE c.role = 'pid' AND c.table_name = 'T_DRAWINGVERSION' \
+                 AND c.name IN ('SP_ID', 'DATECREATED', 'SP_ACCESSMODE', 'SP_COMMENTS', \
+                 'SP_STORAGE') \
+                 ORDER BY c.ordinal",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        vec![
+            ("SP_ID", "NVARCHAR2(32)", "TEXT"),
+            ("DATECREATED", "DATE", "TEXT"),
+            ("SP_ACCESSMODE", "NUMBER(10, 0)", "INTEGER"),
+            ("SP_COMMENTS", "VARCHAR2(4000)", "TEXT"),
+            ("SP_STORAGE", "BLOB", "BLOB"),
+        ]
+        .into_iter()
+        .map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string()))
+        .collect::<Vec<_>>(),
+        columns
     );
 }

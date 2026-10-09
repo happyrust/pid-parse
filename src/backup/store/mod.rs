@@ -13,8 +13,8 @@
 //! * S2b: `Manifest.txt` line by line ([`manifest`]), with the
 //!   default redaction ([`redact`]) unless
 //!   [`StoreOptions::keep_secrets`].
-//! * S2c: the SQL Server dump, table by table, row by row.
-//! * S2d: the Oracle dump's tables, empty, from its DDL.
+//! * S2c: the SQL Server dump ([`mssql`]), table by table, row by row.
+//! * S2d: the Oracle dump's tables ([`oracle`]), empty, from its DDL.
 //!
 //! # Determinism (P8)
 //!
@@ -28,6 +28,7 @@
 pub mod input;
 pub mod manifest;
 pub mod mssql;
+pub mod oracle;
 pub mod redact;
 
 use std::ffi::OsString;
@@ -43,6 +44,7 @@ use crate::backup::zip_index::ZipNameEncoding;
 pub use input::{BackupInput, BackupInputKind, InputFile, DIRECTORY_INPUT_NOTE};
 pub use manifest::{reassemble_manifest, ManifestEncoding, MANIFEST_FILE_NAME};
 pub use mssql::store_value;
+pub use oracle::sqlite_type_of_oracle;
 pub use redact::{redact_backup_command, redact_field, RedactionRule, MASK};
 
 /// The tool name `store_info.tool_name` records.
@@ -113,12 +115,68 @@ impl SchemaRole {
 pub struct DumpSchema {
     /// The role.
     pub role: SchemaRole,
-    /// The schema's name in the Manifest (and, for SQL Server, in the dump).
+    /// The schema's name as the Manifest spells it (`TEST02pid`,
+    /// `QSMCQTAZ13_PLANTpid`).
     pub schema_name: String,
+    /// The schema's name as the dump spells it, which `dump_schema`
+    /// records: the same for SQL Server, the upper-case `CONNECT`
+    /// owner for Oracle (P12, Q20).
+    pub dump_name: String,
     /// The Manifest's database type (`1` SQL Server, `2` Oracle).
     pub db_type: String,
     /// How the role was found: `manifest-conninfo` or `schema-name-suffix` (P6).
     pub role_source: &'static str,
+}
+
+impl DumpSchema {
+    /// The schema a Manifest `Table` / `View` line's database field
+    /// names, or the error saying it is none of the four.
+    pub(super) fn of_manifest_name<'a>(
+        schemas: &'a [Self],
+        name: &str,
+        what: &'static str,
+    ) -> Result<&'a Self, BackupStoreError> {
+        schemas
+            .iter()
+            .find(|schema| schema.schema_name == name)
+            .ok_or_else(|| BackupStoreError::DumpShape {
+                what,
+                name: name.to_string(),
+            })
+    }
+}
+
+/// Writes `dump_schema` for the four schemas and `dump_view` for the
+/// Manifest's `View` lines, each view under its schema's dump spelling.
+fn write_schemas_and_views(
+    conn: &Connection,
+    manifest: &crate::backup::Manifest,
+    schemas: &[DumpSchema],
+) -> Result<(), BackupStoreError> {
+    let mut insert_schema = conn.prepare(
+        "INSERT INTO dump_schema (role, schema_name, type_code, db_type, role_source) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    for schema in schemas {
+        insert_schema.execute(params![
+            schema.role.as_str(),
+            schema.dump_name,
+            schema.role.type_code(),
+            schema.db_type,
+            schema.role_source,
+        ])?;
+    }
+    let mut insert_view =
+        conn.prepare("INSERT INTO dump_view (role, schema_name, name) VALUES (?1, ?2, ?3)")?;
+    for view in manifest.views() {
+        let schema = DumpSchema::of_manifest_name(
+            schemas,
+            &view.database,
+            "a View line names a schema outside the four plant schemas",
+        )?;
+        insert_view.execute(params![schema.role.as_str(), schema.dump_name, view.name])?;
+    }
+    Ok(())
 }
 
 /// The four plant schemas of a Manifest, from its `PlantConnInfo`
@@ -151,6 +209,7 @@ pub fn plant_schemas_from_manifest(
         schemas.push(DumpSchema {
             role,
             schema_name: schema_name.to_string(),
+            dump_name: schema_name.to_string(),
             db_type: db_type.to_string(),
             role_source: "manifest-conninfo",
         });
@@ -222,6 +281,9 @@ pub enum BackupStoreError {
     /// The MDF inside the dump could not be read.
     #[error("Export.mdf: {0}")]
     Mdf(#[from] oxidized_mdf::error::Error),
+    /// The DDL of an Oracle `exp` dump could not be scanned.
+    #[error("Export.dmp DDL: {0}")]
+    OracleDdl(#[from] crate::backup::oracle_exp::ExpDdlError),
     /// The Manifest lists a table the dump does not hold, or the dump a
     /// schema the Manifest does not name.
     #[error("dump: {what}: {name}")]
@@ -382,8 +444,9 @@ fn outer_index(input: &BackupInput, name: &str) -> Result<usize, BackupStoreErro
 
 /// The Database Dump: the file the Manifest's connection lines name
 /// (field 12, `Export.dmp`). A SQL Server MTF dump is read into its
-/// tables (S2c); an Oracle `exp` dump is recognised and recorded as
-/// `store_info.dump_kind` only, its tables waiting for S2d.
+/// tables row by row (S2c); an Oracle `exp` dump gives its tables from
+/// its DDL, empty and marked undecoded (S2d, Q3). `store_info.dump_kind`
+/// says which: `sql-server-mtf` or `oracle-exp`.
 fn write_dump(
     conn: &Connection,
     input: &mut BackupInput,
@@ -420,16 +483,14 @@ fn write_dump(
             drop(dump);
             mssql::write_sql_server_dump(conn, mdf, &manifest, &schemas, summary)?;
         }
-        Err(crate::backup::mtf::SqlServerDumpError::NotMtf(diagnostic)) => {
+        Err(crate::backup::mtf::SqlServerDumpError::NotMtf(_))
+            if crate::backup::oracle_exp::is_exp_dump(&dump) =>
+        {
             info.execute(params!["dump_kind", "oracle-exp"])?;
-            // The diagnostic opens with what the file is; the advice after
-            // the first comma is for the extraction tools, not for here.
-            let what = diagnostic
-                .split(", not a SQL Server")
-                .next()
-                .unwrap_or(&diagnostic);
+            let tables = oracle::write_oracle_dump(conn, &dump, &manifest, &schemas, summary)?;
             summary.warnings.push(format!(
-                "{dump_name}: {what}; its tables are not decoded in this version"
+                "{dump_name}: an Oracle `exp` dump; its {tables} tables are registered from \
+                 the DDL and left empty, their rows are not decoded in this version"
             ));
         }
         Err(err) => return Err(err.into()),

@@ -32,6 +32,7 @@ pub mod manifest;
 pub mod mdf_page;
 pub mod msci;
 pub mod mtf;
+pub mod oracle_exp;
 pub mod refdata;
 pub mod store;
 pub mod syscatalog;
@@ -49,6 +50,7 @@ pub use mtf::{
     locate_sql_server_streams, mdf_bytes_of_dump, MtfBlock, MtfBlockCursor, MtfBlockType, MtfError,
     MtfHeader, MtfStream, MtfStreamCursor, MtfStreamKind, SqlServerDumpError, SqlServerStreams,
 };
+pub use oracle_exp::{is_exp_dump, scan_create_tables, ExpColumn, ExpDdlError, ExpTable};
 pub use refdata::{
     classify_format, parse_refdata_filename, scan_refdata_dir, RefDataEntry, RefDataFormat,
 };

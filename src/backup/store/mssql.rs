@@ -11,7 +11,7 @@
 //! created in the order of the Manifest's `Table` lines and rows
 //! inserted in page-chain and slot order (P8).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use oxidized_mdf::{ColumnInfo, MdfDatabase, ScannedRecord, TableInfo, Value};
 use rusqlite::types::Value as SqlValue;
@@ -20,10 +20,13 @@ use rusqlite::{params, params_from_iter, Connection};
 use crate::backup::Manifest;
 
 use super::input::sha256_hex;
-use super::{BackupStoreError, DumpSchema, SchemaRole, StoreSummary};
+use super::{write_schemas_and_views, BackupStoreError, DumpSchema, SchemaRole, StoreSummary};
 
-/// The tables S2c adds; S2d fills the same catalogue for an Oracle dump.
+/// The catalogue tables of the Database Dump, shared with
+/// [`super::oracle`], which fills them for an Oracle dump (S2d).
 pub(super) const SCHEMA: &str = "
+-- schema_name is the dump's own spelling (the Manifest's for SQL
+-- Server, the upper-case CONNECT owner for Oracle: P12, Q20).
 CREATE TABLE dump_schema (
     role        TEXT PRIMARY KEY,
     schema_name TEXT NOT NULL,
@@ -32,6 +35,9 @@ CREATE TABLE dump_schema (
     role_source TEXT NOT NULL
 ) WITHOUT ROWID;
 
+-- decoded 1: rows read (SQL Server, expected_rows = rcrows);
+-- decoded 0: the table is registered from the dump's DDL and empty
+-- (Oracle, expected_rows NULL, Q3).
 CREATE TABLE dump_table (
     role          TEXT    NOT NULL,
     source_name   TEXT    NOT NULL,
@@ -43,9 +49,13 @@ CREATE TABLE dump_table (
     PRIMARY KEY (role, source_name)
 ) WITHOUT ROWID;
 
--- length is the catalogue's byte length (sys.columns.max_length: an
--- nvarchar(32) is 64, -1 is max); nullable is what the column was
--- declared, not what its rows hold.
+-- source_type is the source's type as written (nvarchar, NUMBER(11, 0)).
+-- length, precision and scale are the source's own: for SQL Server the
+-- catalogue's byte length (sys.columns.max_length: an nvarchar(32) is
+-- 64, -1 is max) and declared precision / scale; for Oracle the
+-- arguments of the type (NVARCHAR2(32) is 32, NUMBER(11, 0) is 11 / 0,
+-- FLOAT(126) is 126). nullable is what the column was declared, not
+-- what its rows hold.
 CREATE TABLE dump_column (
     role        TEXT    NOT NULL,
     table_name  TEXT    NOT NULL,
@@ -126,7 +136,8 @@ pub fn store_value(value: &Value) -> SqlValue {
     }
 }
 
-fn quote(identifier: &str) -> String {
+/// `identifier` as a double-quoted SQLite identifier.
+pub(super) fn quote(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
@@ -142,66 +153,34 @@ pub(super) fn write_sql_server_dump(
     let db = MdfDatabase::from_bytes(mdf)?;
     let tables = db.user_tables()?;
 
-    let role_of: BTreeMap<&str, SchemaRole> = schemas
-        .iter()
-        .map(|schema| (schema.schema_name.as_str(), schema.role))
-        .collect();
     let dump_schema_names: BTreeSet<&str> = tables
         .iter()
         .map(|table| table.schema_name.as_str())
         .collect();
     for schema in schemas {
-        if !dump_schema_names.contains(schema.schema_name.as_str()) {
+        if !dump_schema_names.contains(schema.dump_name.as_str()) {
             return Err(BackupStoreError::DumpShape {
                 what: "the Manifest names a schema the dump does not hold",
                 name: schema.schema_name.clone(),
             });
         }
     }
-
-    let mut insert_schema = conn.prepare(
-        "INSERT INTO dump_schema (role, schema_name, type_code, db_type, role_source) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-    )?;
-    for schema in schemas {
-        insert_schema.execute(params![
-            schema.role.as_str(),
-            schema.schema_name,
-            schema.role.type_code(),
-            schema.db_type,
-            schema.role_source,
-        ])?;
-    }
-
-    let mut insert_view =
-        conn.prepare("INSERT INTO dump_view (role, schema_name, name) VALUES (?1, ?2, ?3)")?;
-    for view in manifest.views() {
-        let role =
-            role_of
-                .get(view.database.as_str())
-                .ok_or_else(|| BackupStoreError::DumpShape {
-                    what: "a View line names a schema outside the four plant schemas",
-                    name: view.database.clone(),
-                })?;
-        insert_view.execute(params![role.as_str(), view.database, view.name])?;
-    }
+    write_schemas_and_views(conn, manifest, schemas)?;
 
     for entry in manifest.tables() {
-        let role =
-            *role_of
-                .get(entry.database.as_str())
-                .ok_or_else(|| BackupStoreError::DumpShape {
-                    what: "a Table line names a schema outside the four plant schemas",
-                    name: entry.database.clone(),
-                })?;
+        let schema = DumpSchema::of_manifest_name(
+            schemas,
+            &entry.database,
+            "a Table line names a schema outside the four plant schemas",
+        )?;
         let table = tables
             .iter()
-            .find(|table| table.schema_name == entry.database && table.name == entry.name)
+            .find(|table| table.schema_name == schema.dump_name && table.name == entry.name)
             .ok_or_else(|| BackupStoreError::DumpShape {
                 what: "the Manifest lists a table the dump does not hold",
                 name: format!("{}.{}", entry.database, entry.name),
             })?;
-        write_table(conn, &db, role, table, summary)?;
+        write_table(conn, &db, schema.role, table, summary)?;
     }
     Ok(())
 }

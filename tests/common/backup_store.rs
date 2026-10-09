@@ -332,3 +332,290 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
             .windows(needle.len())
             .any(|window| window == needle)
 }
+
+/// What an Oracle sample's dump looks like in its store (S2d): the
+/// four `CONNECT` owners by role, columns per role, and columns by
+/// Oracle type name over the 154 tables.
+pub struct OracleDumpExpectation {
+    /// The dump's upper-case owner of each role: plant, plantd, pid, pidd.
+    pub owners: [&'static str; 4],
+    /// Columns of each role's tables, in the same order.
+    pub columns_per_role: [usize; 4],
+    /// Columns by Oracle type name (`NUMBER`, `NVARCHAR2`, ...).
+    pub columns_by_type: &'static [(&'static str, usize)],
+    /// Columns declared `NOT NULL`.
+    pub not_null_columns: usize,
+}
+
+/// The table counts every Oracle sample shares: 154 tables over the
+/// four roles (22 / 25 / 82 / 25), 126 distinct names, 35 views.
+const ORACLE_TABLES_PER_ROLE: [(&str, usize); 4] =
+    [("plant", 22), ("plantd", 25), ("pid", 82), ("pidd", 25)];
+const ORACLE_DISTINCT_TABLE_NAMES: usize = 126;
+
+/// Checks the catalogue and the empty tables of an Oracle dump's store
+/// (acceptance 11 and the dump part of 13).
+pub fn check_oracle_dump(conn: &Connection, label: &str, expect: &OracleDumpExpectation) {
+    assert_eq!("oracle-exp", store_info(conn, "dump_kind"), "{label}");
+
+    // dump_schema: the dump's own spelling, type 2 (Oracle), from the Manifest.
+    let schemas: Vec<(String, String, String, String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT role, schema_name, type_code, db_type, role_source FROM dump_schema \
+                 ORDER BY CASE role WHEN 'plant' THEN 0 WHEN 'plantd' THEN 1 \
+                 WHEN 'pid' THEN 2 ELSE 3 END",
+            )
+            .unwrap();
+        stmt.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+    };
+    let roles = ["plant", "plantd", "pid", "pidd"];
+    let codes = ["2", "8", "4", "9"];
+    assert_eq!(
+        (0..4)
+            .map(|i| (
+                roles[i].to_string(),
+                expect.owners[i].to_string(),
+                codes[i].to_string(),
+                "2".to_string(),
+                "manifest-conninfo".to_string(),
+            ))
+            .collect::<Vec<_>>(),
+        schemas,
+        "{label}: dump_schema"
+    );
+
+    // dump_table: 154 empty, undecoded tables, 126 distinct names.
+    let per_role: BTreeMap<String, usize> = {
+        let mut stmt = conn
+            .prepare("SELECT role, count(*) FROM dump_table GROUP BY role")
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as usize)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        ORACLE_TABLES_PER_ROLE
+            .iter()
+            .map(|(role, n)| ((*role).to_string(), *n))
+            .collect::<BTreeMap<_, _>>(),
+        per_role,
+        "{label}: tables per role"
+    );
+    assert_eq!(
+        0,
+        count(
+            conn,
+            "SELECT count(*) FROM dump_table WHERE decoded <> 0 OR expected_rows IS NOT NULL \
+             OR rows <> 0 OR ghost_rows <> 0"
+        ),
+        "{label}: every table undecoded and empty"
+    );
+    assert_eq!(
+        ORACLE_DISTINCT_TABLE_NAMES,
+        count(conn, "SELECT count(DISTINCT source_name) FROM dump_table"),
+        "{label}: distinct table names"
+    );
+    assert_eq!(
+        vec![("MAX_ID".to_string(), 4), ("SPIDCACHE".to_string(), 2),],
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT source_name, count(*) FROM dump_table \
+                     WHERE source_name IN ('MAX_ID', 'SPIDCACHE') GROUP BY source_name \
+                     ORDER BY source_name",
+                )
+                .unwrap();
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<(String, i64)>, _>>()
+                .unwrap()
+        },
+        "{label}: same-named tables each under their own role"
+    );
+    assert_eq!(
+        0,
+        count(conn, "SELECT count(*) FROM dump_ghost_row")
+            + count(conn, "SELECT count(*) FROM dump_lob"),
+        "{label}: no ghost rows or LOBs without rows"
+    );
+    assert_eq!(
+        35,
+        count(conn, "SELECT count(*) FROM dump_view"),
+        "{label}: views"
+    );
+    assert_eq!(
+        0,
+        count(
+            conn,
+            "SELECT count(*) FROM dump_view v LEFT JOIN dump_schema s \
+             ON s.role = v.role AND s.schema_name = v.schema_name WHERE s.role IS NULL"
+        ),
+        "{label}: every view under a schema's dump spelling"
+    );
+
+    // dump_column: per role and by type; NOT NULL recorded there only.
+    let columns_per_role: BTreeMap<String, usize> = {
+        let mut stmt = conn
+            .prepare("SELECT role, count(*) FROM dump_column GROUP BY role")
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as usize)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        (0..4)
+            .map(|i| (roles[i].to_string(), expect.columns_per_role[i]))
+            .collect::<BTreeMap<_, _>>(),
+        columns_per_role,
+        "{label}: columns per role"
+    );
+    let columns_by_type: BTreeMap<String, usize> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT CASE WHEN instr(source_type, '(') > 0 \
+                 THEN substr(source_type, 1, instr(source_type, '(') - 1) ELSE source_type END, \
+                 count(*) FROM dump_column GROUP BY 1",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as usize)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        expect
+            .columns_by_type
+            .iter()
+            .map(|(t, n)| ((*t).to_string(), *n))
+            .collect::<BTreeMap<_, _>>(),
+        columns_by_type,
+        "{label}: columns by type"
+    );
+    assert_eq!(
+        expect.not_null_columns,
+        count(conn, "SELECT count(*) FROM dump_column WHERE nullable = 0"),
+        "{label}: NOT NULL columns"
+    );
+    // Q19 in the created tables: every column's declared SQLite type
+    // follows its Oracle type, and the provenance columns come last.
+    let tables: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT store_name, source_name FROM dump_table ORDER BY store_name")
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let mut checked_columns = 0usize;
+    for (store_name, source_name) in &tables {
+        assert_eq!(
+            0,
+            count(conn, &format!("SELECT count(*) FROM \"{store_name}\"")),
+            "{label}: {store_name} is empty"
+        );
+        let declared: Vec<(String, String)> = {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT name, type FROM pragma_table_info('{store_name}') ORDER BY cid"
+                ))
+                .unwrap();
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        let sources: Vec<(String, String)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT c.name, c.source_type FROM dump_column c JOIN dump_table t \
+                     ON t.role = c.role AND t.source_name = c.table_name \
+                     WHERE t.store_name = ?1 ORDER BY c.ordinal",
+                )
+                .unwrap();
+            stmt.query_map([store_name], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(sources.len() + 2, declared.len(), "{label}: {store_name}");
+        assert_eq!(
+            [
+                ("_src_page".to_string(), "INTEGER".to_string()),
+                ("_src_slot".to_string(), "INTEGER".to_string())
+            ],
+            declared[declared.len() - 2..],
+            "{label}: {store_name}"
+        );
+        for ((name, source_type), (declared_name, declared_type)) in
+            sources.iter().zip(declared.iter())
+        {
+            assert_eq!(name, declared_name, "{label}: {store_name}");
+            let type_name = source_type.split('(').next().unwrap();
+            let expected = match type_name {
+                "NUMBER" => "INTEGER",
+                "FLOAT" => "REAL",
+                "BLOB" => "BLOB",
+                "NVARCHAR2" | "VARCHAR2" | "DATE" => "TEXT",
+                other => panic!("{label}: {store_name}.{name}: unexpected type {other}"),
+            };
+            assert_eq!(
+                expected, declared_type,
+                "{label}: {store_name}.{name} {source_type}"
+            );
+            checked_columns += 1;
+        }
+        assert!(
+            source_name.bytes().all(|b| !b.is_ascii_lowercase()),
+            "{label}: {source_name} keeps the dump's upper case (Q20)"
+        );
+    }
+    assert_eq!(
+        expect.columns_per_role.iter().sum::<usize>(),
+        checked_columns,
+        "{label}: every column checked"
+    );
+    // NUMBER columns are all (p, 0) in the samples and FLOAT all (126).
+    assert_eq!(
+        0,
+        count(
+            conn,
+            "SELECT count(*) FROM dump_column WHERE source_type LIKE 'NUMBER%' \
+             AND (scale <> 0 OR precision NOT IN (10, 11))"
+        ),
+        "{label}: NUMBER(10, 0) / NUMBER(11, 0) only"
+    );
+    assert_eq!(
+        0,
+        count(
+            conn,
+            "SELECT count(*) FROM dump_column WHERE source_type LIKE 'FLOAT%' AND precision <> 126"
+        ),
+        "{label}: FLOAT(126) only"
+    );
+    assert_eq!(
+        (Some(32i64), None::<i64>, None::<i64>, 0i64),
+        conn.query_row(
+            "SELECT length, precision, scale, nullable FROM dump_column \
+             WHERE role = 'pid' AND table_name = 'T_DRAWING' AND name = 'SP_ID'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get::<_, i64>(3)?)),
+        )
+        .unwrap(),
+        "{label}: T_DRAWING.SP_ID NVARCHAR2(32) NOT NULL"
+    );
+}

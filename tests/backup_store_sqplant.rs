@@ -11,7 +11,9 @@ mod common;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use common::backup_store::{check_manifest, ManifestExpectation};
+use common::backup_store::{
+    check_manifest, check_oracle_dump, ManifestExpectation, OracleDumpExpectation,
+};
 use pid_parse::backup::store::DIRECTORY_INPUT_NOTE;
 use pid_parse::backup::{build_backup_store_in_memory, StoreOptions};
 use rusqlite::Connection;
@@ -67,6 +69,24 @@ const ARCHIVE_ENTRIES: [(&str, usize); 7] = [
     ("RefData~4~804.zip", 10),
     ("RefData~4~809.zip", 4),
 ];
+
+/// The Oracle dump's DDL: 154 tables under four upper-case owners
+/// (the Manifest spells them `SQPlant` / `SQPlantd` / `SQPlantpid` /
+/// `SQPlantpidd`), 2,024 columns (138 / 176 / 1,534 / 176) of six
+/// types, 150 NOT NULL.
+const ORACLE_DUMP: OracleDumpExpectation = OracleDumpExpectation {
+    owners: ["SQPLANT", "SQPLANTD", "SQPLANTPID", "SQPLANTPIDD"],
+    columns_per_role: [138, 176, 1_534, 176],
+    columns_by_type: &[
+        ("BLOB", 2),
+        ("DATE", 28),
+        ("FLOAT", 340),
+        ("NUMBER", 663),
+        ("NVARCHAR2", 980),
+        ("VARCHAR2", 11),
+    ],
+    not_null_columns: 150,
+};
 
 /// Names in the 711 archive stored without the UTF-8 flag and with
 /// bytes above ASCII: GBK, 47 of the 60.
@@ -155,12 +175,21 @@ fn sqplant_store_lists_the_directory_and_reads_gbk_entry_names() {
     );
     assert_eq!(
         vec![
-            "Export.dmp: input is an Oracle Database `exp` dump (EXPORT:V12.01.00); its tables \
-             are not decoded in this version"
+            "Export.dmp: an Oracle `exp` dump; its 154 tables are registered from the DDL and \
+             left empty, their rows are not decoded in this version"
                 .to_string(),
             DIRECTORY_INPUT_NOTE.to_string(),
         ],
         summary.warnings
+    );
+    assert_eq!(
+        (154, 0, 0, 0),
+        (
+            summary.tables,
+            summary.rows,
+            summary.ghost_rows,
+            summary.lobs
+        )
     );
 
     assert_eq!(
@@ -288,4 +317,8 @@ fn sqplant_store_keeps_the_manifest_and_masks_the_oracle_password() {
         vec!["SQPlant", "SQPlantpid", "SQPlantd", "SQPlantpidd"],
         schemas
     );
+
+    // Acceptance 13: the dump's tables, empty, under the owners matched
+    // to those schemas without regard to case (P12).
+    check_oracle_dump(&conn, "sqplant", &ORACLE_DUMP);
 }
