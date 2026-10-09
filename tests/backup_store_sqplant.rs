@@ -6,15 +6,34 @@
 //! The file list (S2a), then the Manifest (S2b) and the empty Oracle
 //! tables (S2d).
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use common::backup_store::{check_manifest, ManifestExpectation};
 use pid_parse::backup::store::DIRECTORY_INPUT_NOTE;
 use pid_parse::backup::{build_backup_store_in_memory, StoreOptions};
 use rusqlite::Connection;
 
 const SQPLANT_ENV: &str = "PID_PARSE_SQPLANT_BACKUP";
 const SQPLANT_DEFAULT: &str = r"D:\work\cad\pid-test-data";
+
+/// The Manifest: 322 lines; 14 SHA-256 replacements plus the password
+/// of the Oracle `exp` command line, which the test takes from the
+/// original Manifest at run time and never writes down.
+const MANIFEST: ManifestExpectation = ManifestExpectation {
+    lines: 322,
+    redactions: 15,
+    passwords_masked: 1,
+    tables: 154,
+    views: 35,
+    conn_infos: 6,
+    files: 14,
+    roles: 1,
+    rights: 78,
+    plant_name: "SQPlant",
+};
 
 /// The 16 top-level files, in byte order of their names, with sizes
 /// and format labels. Text files are the raw bytes `SmartPlant` wrote
@@ -217,4 +236,44 @@ fn sqplant_store_lists_the_directory_and_reads_gbk_entry_names() {
         };
         assert_eq!(path, decoded);
     }
+}
+
+#[test]
+fn sqplant_store_keeps_the_manifest_and_masks_the_oracle_password() {
+    let Some(dir) = fixture() else {
+        return;
+    };
+    check_manifest(Path::new(&dir), "sqplant", &MANIFEST);
+
+    let (conn, _) = build_backup_store_in_memory(Path::new(&dir), &StoreOptions::default())
+        .expect("build store");
+    let command: String = conn
+        .query_row(
+            "SELECT value FROM manifest_value WHERE key = 'BackupCommand'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        command.starts_with("Exp.exe system/***@ORCL CONSISTENT=y OWNER=(SQPlantpidd,SQPlantd,"),
+        "{command}"
+    );
+    // The Manifest spells the schemas SQPlant / SQPlantd / SQPlantpid /
+    // SQPlantpidd while the dump's owners are upper-case (P12).
+    let schemas: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT schema_name FROM manifest_conn_info WHERE scope = 'Plant' \
+                 ORDER BY schema_type_code",
+            )
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        vec!["SQPlant", "SQPlantpid", "SQPlantd", "SQPlantpidd"],
+        schemas
+    );
 }

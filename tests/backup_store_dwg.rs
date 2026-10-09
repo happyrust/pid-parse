@@ -3,13 +3,31 @@
 //! the file list (S2a), then the Manifest (S2b) and the empty Oracle
 //! tables (S2d). Skips when the `<Plant>_p.zip` original is absent.
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use common::backup_store::{check_manifest, ManifestExpectation};
 use pid_parse::backup::{build_backup_store_in_memory, StoreOptions};
 use rusqlite::Connection;
 
 const DWG_ZIP: &str = "test-file/backup-test/DWG-0202GP06-01_p.zip";
+
+/// The Manifest: 402 lines (two roles, 156 rights); 14 SHA-256
+/// replacements plus the password of the Oracle `exp` command line.
+const MANIFEST: ManifestExpectation = ManifestExpectation {
+    lines: 402,
+    redactions: 15,
+    passwords_masked: 1,
+    tables: 154,
+    views: 35,
+    conn_infos: 6,
+    files: 14,
+    roles: 2,
+    rights: 156,
+    plant_name: "QSMCQTAZ13_PLANT",
+};
 
 /// SHA-256 of the `<Plant>_p.zip` original.
 const DWG_ZIP_SHA256_PREFIX: &str = "208559916e5bf603";
@@ -170,4 +188,52 @@ fn dwg_store_lists_the_outer_files_and_every_option_archive_entry() {
             "{archive} / {path}: {sha256}"
         );
     }
+}
+
+#[test]
+fn dwg_store_keeps_the_manifest_and_masks_the_oracle_password() {
+    let Some(zip) = fixture() else {
+        return;
+    };
+    check_manifest(zip, "dwg", &MANIFEST);
+
+    let (conn, _) =
+        build_backup_store_in_memory(zip, &StoreOptions::default()).expect("build store");
+    let command: String = conn
+        .query_row(
+            "SELECT value FROM manifest_value WHERE key = 'BackupCommand'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        command.starts_with("Exp.exe SYSTEM/***@SPIDDB CONSISTENT=y OWNER=(QSMCQTAZ13_PLANTpidd,"),
+        "{command}"
+    );
+    // Oracle-only lines read through the views.
+    let (characterset, version): (String, String) = conn
+        .query_row(
+            "SELECT (SELECT value FROM manifest_value WHERE key = 'Characterset'), \
+                    (SELECT value FROM manifest_value WHERE key = 'OracleVersion')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        ("AL32UTF8", "12.1.0.2.0"),
+        (characterset.as_str(), version.as_str())
+    );
+    let kinds: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT tablespace_kind FROM manifest_table_space ORDER BY line_no")
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        vec!["Permanent".to_string(), "Temporary".to_string()],
+        kinds
+    );
 }

@@ -7,10 +7,12 @@
 //! (ADR-0004: one store per backup, dumped tables named by Schema
 //! Role). This module is being built up step by step:
 //!
-//! * S2a (this): the input ([`input`]) and the file list --
-//!   `store_info`, `backup_file` and, behind
-//!   [`StoreOptions::embed_files`], `backup_file_content`.
-//! * S2b: `Manifest.txt` line by line, with the default redaction.
+//! * S2a: the input ([`input`]) and the file list -- `store_info`,
+//!   `backup_file` and, behind [`StoreOptions::embed_files`],
+//!   `backup_file_content`.
+//! * S2b: `Manifest.txt` line by line ([`manifest`]), with the
+//!   default redaction ([`redact`]) unless
+//!   [`StoreOptions::keep_secrets`].
 //! * S2c: the SQL Server dump, table by table, row by row.
 //! * S2d: the Oracle dump's tables, empty, from its DDL.
 //!
@@ -24,6 +26,8 @@
 //! when complete.
 
 pub mod input;
+pub mod manifest;
+pub mod redact;
 
 use std::ffi::OsString;
 use std::fs;
@@ -36,6 +40,8 @@ use crate::backup::refdata::{classify_format, RefDataFormat};
 use crate::backup::zip_index::ZipNameEncoding;
 
 pub use input::{BackupInput, BackupInputKind, InputFile, DIRECTORY_INPUT_NOTE};
+pub use manifest::{reassemble_manifest, ManifestEncoding, MANIFEST_FILE_NAME};
+pub use redact::{redact_backup_command, redact_field, RedactionRule, MASK};
 
 /// The tool name `store_info.tool_name` records.
 pub const TOOL_NAME: &str = "pid_backup_store";
@@ -76,6 +82,15 @@ pub enum BackupStoreError {
         /// The index asked for.
         entry_index: usize,
     },
+    /// The input has no `Manifest.txt` among its outer files.
+    #[error("the input has no {MANIFEST_FILE_NAME} among its outer files")]
+    MissingManifest,
+    /// A store being read back is not shaped as this module writes it.
+    #[error("store: {what}")]
+    StoreShape {
+        /// What was found wanting.
+        what: &'static str,
+    },
 }
 
 /// What the caller decides about a store (Q2, Q15).
@@ -97,6 +112,10 @@ pub struct StoreSummary {
     pub files: usize,
     /// Of those, files whose bytes went into `backup_file_content`.
     pub files_embedded: usize,
+    /// Lines of `Manifest.txt`, as `manifest_line` holds them.
+    pub manifest_lines: usize,
+    /// Manifest fields replaced, as `store_redaction` lists them.
+    pub redactions: usize,
     /// Notes worth showing: the directory-input caveat and the like.
     pub warnings: Vec<String>,
 }
@@ -187,11 +206,20 @@ fn fill_store(
 ) -> Result<StoreSummary, BackupStoreError> {
     let mut input = BackupInput::open(input)?;
     conn.execute_batch(SCHEMA)?;
+    conn.execute_batch(manifest::SCHEMA)?;
 
     let mut summary = StoreSummary::default();
     let tx = conn.unchecked_transaction()?;
     write_store_info(&tx, &input, options)?;
     write_backup_files(&tx, &mut input, options, &mut summary)?;
+    let manifest_index = input
+        .files()
+        .iter()
+        .find(|file| !file.is_dir && file.name == MANIFEST_FILE_NAME)
+        .map(|file| file.entry_index)
+        .ok_or(BackupStoreError::MissingManifest)?;
+    let manifest_bytes = input.read(manifest_index)?;
+    manifest::write_manifest(&tx, &manifest_bytes, options, &mut summary)?;
     tx.commit()?;
 
     summary.warnings.extend(input.note().map(str::to_string));

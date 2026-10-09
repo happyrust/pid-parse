@@ -3,13 +3,33 @@
 //! the file list (S2a), then the Manifest (S2b) and the dump (S2c).
 //! Skips when the `<Plant>_p.zip` original is absent.
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use common::backup_store::{check_manifest, ManifestExpectation};
 use pid_parse::backup::{build_backup_store, build_backup_store_in_memory, StoreOptions};
 use rusqlite::Connection;
 
 const TEST02_ZIP: &str = "test-file/backup-test/TEST02_p.zip";
+
+/// The Manifest: 319 lines; the default redaction replaces `DBUids`,
+/// `DBPwds` and fields 1 and 5 of the six connection lines with their
+/// SHA-256 (14 fields); the SQL Server `BACKUP DATABASE` command
+/// carries no password and stays.
+const MANIFEST: ManifestExpectation = ManifestExpectation {
+    lines: 319,
+    redactions: 14,
+    passwords_masked: 0,
+    tables: 154,
+    views: 35,
+    conn_infos: 6,
+    files: 14,
+    roles: 1,
+    rights: 78,
+    plant_name: "TEST02",
+};
 
 /// SHA-256 of the `<Plant>_p.zip` original, as `store_info` records it.
 const TEST02_ZIP_SHA256_PREFIX: &str = "662ba5fd1f0f2019";
@@ -284,6 +304,73 @@ fn test02_store_embeds_file_bytes_only_when_asked() {
     assert_eq!(106_496, bytes.len());
     assert!(bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0]), "a CFB file");
     assert!(sha256.starts_with("8cccc7342c74"));
+}
+
+#[test]
+fn test02_store_keeps_the_manifest_line_by_line_and_redacts_by_default() {
+    let Some(zip) = fixture() else {
+        return;
+    };
+    check_manifest(zip, "test02", &MANIFEST);
+
+    // The SQL Server command stays as written: no password in it.
+    let (conn, _) =
+        build_backup_store_in_memory(zip, &StoreOptions::default()).expect("build store");
+    let command: String = conn
+        .query_row(
+            "SELECT value FROM manifest_value WHERE key = 'BackupCommand'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!("BACKUP DATABASE SP3DTrain_RDB_SCHEMA TO TEST02", command);
+    let database_files: Vec<(String, String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT logical_name, filegroup, content FROM manifest_database_file \
+                 ORDER BY line_no",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        vec![
+            (
+                "SP3DTrain_RDB_SCHEMA_dat".to_string(),
+                "PRIMARY".to_string(),
+                "data only".to_string()
+            ),
+            (
+                "SP3DTrain_RDB_SCHEMA_log".to_string(),
+                String::new(),
+                "log only".to_string()
+            ),
+        ],
+        database_files
+    );
+    // The 711 archive's File line and its FileSize line agree with the archive.
+    let (status, archive, files, dirs): (String, String, String, String) = conn
+        .query_row(
+            "SELECT f.status, f.archive_name_or_error, s.file_count, s.directory_count \
+             FROM manifest_file f JOIN manifest_file_size s \
+             ON s.schema_code = f.schema_code AND s.option_id = f.option_id \
+             WHERE f.option_id = '711'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        ("1", "PlantData~2~711.zip", "676", "106"),
+        (
+            status.as_str(),
+            archive.as_str(),
+            files.as_str(),
+            dirs.as_str()
+        )
+    );
 }
 
 #[test]

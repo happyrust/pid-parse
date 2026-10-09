@@ -18,6 +18,8 @@
 
 #![allow(dead_code)]
 
+pub mod backup_store;
+
 use pid_parse::publish::{
     load_drawing_graph_from_mdf, write_data_xml, write_meta_xml, PublishError, PublishStyle,
 };

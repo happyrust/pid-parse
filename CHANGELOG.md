@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### S2b：Manifest 保原文逐行入库，默认脱敏，两种口径拼回（2026-10-09，Backup Store 计划 S2b）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S2b（Q6、Q14、Q15、P5、P9）。
+
+- **`backup::store::manifest`**：`Manifest.txt` 按 BOM 认编码（`store_info.manifest_encoding` / `manifest_bom`），按行拆、每行连行尾一起存——`manifest_line`（line_no、key、raw_text、terminator）、`manifest_field`（line_no、position、value）；`reassemble_manifest` 把 BOM + 按 `line_no` 连接的 `raw_text ‖ terminator` 编回去。
+  `manifest_field_meaning` 是写进库的常量表（P5）：按格式文档第 4、10 节给每个 key 每个位置定 `decoded` / `typed_audit` / `identified_only` / `unknown`，只有 `decoded` 的有名字；视图 `manifest_root_item`、`manifest_conn_info`（带 `scope` = Site / Plant）、`manifest_database_file`、`manifest_role`、`manifest_right`、`manifest_table_entry`、`manifest_view_entry`、`manifest_file`、`manifest_file_size`、`manifest_table_space` 和单值 key 的 `manifest_value`，都从这张表生成。
+- **`backup::store::redact`（Q15）**：默认把 `DBUids`、`DBPwds`、`SiteConnInfo` / `PlantConnInfo` 第 1、5 字段换成 SHA-256；`BackupCommand` 里 `user/password@service` 的口令换成 `***`（Oracle `exp` 命令行），SQL Server 的 `BACKUP DATABASE … TO …` 没有口令、原样保留，别的形状整段换成 `***`。每处替换记进 `store_redaction`（line_no、position、rule、original_sha256）；`keep_secrets` 时一处不换、表为空。
+- 查出来的两件事（格式文档第 4 节写的「加密串」有两处不对，脱敏规则没改）：`PlantConnInfo` 第 1 字段在三套样本里都是 Plant 名（6 / 16 / 7 个字符），只有 `SiteConnInfo` 的才是 64 字符密文；`DBUids` 是四个 Plant schema 名的逗号串，Oracle 命令行的 `OWNER=(…)` 里原样还有。两者按 Q15 仍换成 SHA-256，但「库里搜不到原值」的检查对它们不成立，测试把这两处排除并钉了它们的含义。
+- 数：TEST02 319 行、DWG 402 行、SQPlant 322 行，全是 CRLF、UTF-16LE 带 BOM；默认脱敏 TEST02 14 处（全是 SHA-256），DWG、SQPlant 各 15 处（14 + 1 个口令）；视图：Table 154、View 35、ConnInfo 6（Site 1 / 7，Plant 2 / 4 / 8 / 9）、File 14、Role 1 / 2 / 1、Right 78 / 156 / 78。
+  P9 两种口径：`keep_secrets` 的 store 拼回与原件逐字节相同；默认 store 拼回等于原文按 `store_redaction` 的位置做同样替换，每条 `original_sha256` 等于原值的 SHA-256；默认 store 文件里按 UTF-8 和 UTF-16LE 都搜不到 `DBPwds`、ConnInfo 密文和两个口令（口令在测试运行时从原 Manifest 现取）。`manifest_field` 的每个 (key, position) 在 `manifest_field_meaning` 里都有行。
+- 测试：`backup_store_test02` / `backup_store_dwg` / `backup_store_sqplant` 各 +1，共用 `tests/common/backup_store.rs` 的检查；`store::manifest` 单测 4、`store::redact` 单测 4。验收第 6、8 条变绿。
+- 验证：`cargo test --workspace` 46 个二进制 1529 过 / 3 忽略（1518 → 1529）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过。vendored crate 没动。
+
 ### S2a：Backup Store 开工——收目录或 zip，`backup_file` 逐条 SHA-256，zip 条目名按 UTF-8 / GBK / CP437 解（2026-10-09，Backup Store 计划 S2a）
 
 计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S2a（Q2、Q7、Q14、P4、P8、P10、P11）。
