@@ -42,8 +42,8 @@ pub use manifest::{
 pub use mdf_page::{MdfPageCursor, MdfPageHeader, PageAddress, PageType, PAGE_SIZE};
 pub use msci::{parse_msci, MsciConfig, MsciError, MsciFile};
 pub use mtf::{
-    detect_logical_block_size, MtfBlock, MtfBlockCursor, MtfBlockType, MtfError, MtfHeader,
-    MtfStream, MtfStreamCursor, MtfStreamKind,
+    detect_logical_block_size, detect_non_mtf_dump_format, MtfBlock, MtfBlockCursor, MtfBlockType,
+    MtfError, MtfHeader, MtfStream, MtfStreamCursor, MtfStreamKind,
 };
 pub use refdata::{
     classify_format, parse_refdata_filename, scan_refdata_dir, RefDataEntry, RefDataFormat,

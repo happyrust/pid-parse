@@ -304,6 +304,46 @@ pub fn detect_logical_block_size(data: &[u8]) -> Option<u32> {
         .map(|offset| offset as u32)
 }
 
+/// Detect well-known non-MTF backup formats by sniffing the first
+/// few bytes of `data`. Returns a diagnostic string when the
+/// format is recognised but not MTF, so the caller can short-circuit
+/// with a useful error instead of the generic
+/// "tag `????`" message from [`MtfHeader::probe`]. Returns `None` for
+/// unknown formats — those still fall through to the MTF probe.
+///
+/// Supported recognitions:
+///
+/// * **Oracle Database `exp`/`expdp` dump** — starts with the
+///   3-byte `\x03\x03i` framing + ASCII `EXPORT:V<MAJOR>.<MINOR>.<PATCH>`.
+///   Observed in real `SmartPlant` DWG-flavor backup bundles where
+///   the underlying engine is Oracle 12c rather than SQL Server.
+///   These dumps need Oracle's own `imp`/`impdp` tool — `OrcaMDF`
+///   cannot read them.
+pub fn detect_non_mtf_dump_format(data: &[u8]) -> Option<String> {
+    if data.len() >= 20 && data.starts_with(b"\x03\x03iEXPORT:V") {
+        // Read the version string up to the first newline so the
+        // diagnostic includes which Oracle version produced the dump.
+        let after_magic = &data[3..]; // skip `\x03\x03i`
+        let line_end = after_magic
+            .iter()
+            .position(|&b| b == b'\n')
+            .unwrap_or(after_magic.len().min(40));
+        let header = std::str::from_utf8(&after_magic[..line_end]).unwrap_or("EXPORT:V?.?.?");
+        return Some(format!(
+            "input is an Oracle Database `exp` dump ({header}), not a \
+             SQL Server MTF backup. SmartPlant projects backed by \
+             Oracle (DWG-flavor) cannot be processed by this tool; \
+             use Oracle's own `imp` / `impdp` utility to restore the \
+             database, then export an MDF or extract rows via SQL*Plus.\n\
+             Note: the schema (CREATE TABLE statements) is still \
+             readable as plain text inside the dump — see \
+             `examples/oracle_exp_schema.rs` for a one-shot DDL \
+             scanner."
+        ));
+    }
+    None
+}
+
 /// Locate the next 512-byte-aligned offset at-or-after `start` whose
 /// first four bytes form a known MTF tag. Shared by both the
 /// block-size detector and the full cursor so both agree on what
@@ -1030,5 +1070,55 @@ mod tests {
         assert_eq!(streams.len(), 1);
         assert_eq!(streams[0].kind, MtfStreamKind::SqlData);
         assert_eq!(streams[0].body_end, 256);
+    }
+
+    #[test]
+    fn detect_non_mtf_dump_format_returns_none_for_mtf_tape_header() {
+        // Real MTF starts with `TAPE\0\0\x03\0...` — the detector
+        // must NOT claim ownership so the caller falls through to
+        // MtfHeader::probe.
+        let mtf = b"TAPE\x00\x00\x03\x00\x8C\x00\x0E\x01\x00\x00\x00\x00";
+        assert!(detect_non_mtf_dump_format(mtf).is_none());
+    }
+
+    #[test]
+    fn detect_non_mtf_dump_format_returns_none_for_unknown_bytes() {
+        // Arbitrary noise must also fall through — the detector
+        // only claims formats it can name.
+        let noise =
+            b"\xDE\xAD\xBE\xEF\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F";
+        assert!(detect_non_mtf_dump_format(noise).is_none());
+    }
+
+    #[test]
+    fn detect_non_mtf_dump_format_reports_oracle_exp_dump() {
+        // The DWG-0202GP06-01 fixture starts with
+        // `\x03\x03iEXPORT:V12.01.00\n` — a real Oracle 12c exp
+        // dump. The detector must surface a useful pointer.
+        let mut data = Vec::new();
+        data.extend_from_slice(b"\x03\x03iEXPORT:V12.01.00\nDSYSTEM\nRUSERS\n2048\n0\n");
+        let diag =
+            detect_non_mtf_dump_format(&data).expect("Oracle exp dump must be detected as non-MTF");
+        assert!(
+            diag.contains("Oracle Database `exp` dump"),
+            "diagnostic must call out Oracle: {diag}",
+        );
+        assert!(
+            diag.contains("EXPORT:V12.01.00"),
+            "diagnostic must surface the version string: {diag}",
+        );
+        assert!(
+            diag.contains("imp"),
+            "diagnostic must point users at Oracle's `imp` tool: {diag}",
+        );
+    }
+
+    #[test]
+    fn detect_non_mtf_dump_format_tolerates_short_input() {
+        // Anything shorter than 20 bytes must not panic and must
+        // fall through. Real Oracle dumps are megabytes; truncated
+        // input is more likely a misnamed file.
+        let short = b"\x03\x03iEXPORT";
+        assert!(detect_non_mtf_dump_format(short).is_none());
     }
 }
