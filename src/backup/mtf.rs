@@ -736,6 +736,121 @@ impl MtfStreamCursor<'_> {
     }
 }
 
+/// Why an `Export.dmp` did not yield the SQL Server streams a
+/// `SmartPlant` backup keeps its database in.
+///
+/// Each variant displays as the line `pid_backup_extract` printed for
+/// the same case before this lived in the library, so the two binaries
+/// and the Backup Store keep one wording.
+#[derive(Debug, Error)]
+pub enum SqlServerDumpError {
+    /// The file is a recognised dump of another engine, as
+    /// [`detect_non_mtf_dump_format`] describes it (an Oracle `exp`
+    /// export, for instance).
+    #[error("{0}")]
+    NotMtf(String),
+    /// The file does not start with an MTF `TAPE` descriptor.
+    #[error("input does not start with an MTF TAPE descriptor: {0}")]
+    NoTapeHeader(#[source] MtfError),
+    /// No `MSCI` (SQL Server configuration) stream in any descriptor block.
+    #[error("no MSCI stream found in input")]
+    MissingMsci,
+    /// No `MSDA` (SQL Server data) stream in any descriptor block.
+    #[error("no MSDA stream found in input")]
+    MissingMsda,
+}
+
+/// The two SQL Server streams of an MTF dump: where the configuration
+/// (`MSCI`) and the data (`MSDA`) bodies sit in the file.
+#[derive(Debug, Clone)]
+pub struct SqlServerStreams {
+    /// The first `MSCI` stream: filegroup and file records, see
+    /// [`crate::backup::parse_msci`].
+    pub msci: MtfStream,
+    /// The first `MSDA` stream: the SQL Server backup stream whose
+    /// body, after a leading header, is the MDF page sequence.
+    pub msda: MtfStream,
+}
+
+/// Walks every descriptor block of `data` and returns the first `MSCI`
+/// and the first `MSDA` stream. Refuses a file that is a known non-MTF
+/// dump or does not start with a `TAPE` descriptor before reading any
+/// block.
+pub fn locate_sql_server_streams(data: &[u8]) -> Result<SqlServerStreams, SqlServerDumpError> {
+    if let Some(diag) = detect_non_mtf_dump_format(data) {
+        return Err(SqlServerDumpError::NotMtf(diag));
+    }
+    MtfHeader::probe(data).map_err(SqlServerDumpError::NoTapeHeader)?;
+
+    let mut msci: Option<MtfStream> = None;
+    let mut msda: Option<MtfStream> = None;
+    for block in MtfBlockCursor::new(data) {
+        let offset_to_first_event =
+            u16::from_le_bytes([block.raw_common_header[8], block.raw_common_header[9]]) as usize;
+        let start = block.offset + offset_to_first_event;
+        let end = block.offset + block.size;
+        for stream in MtfStreamCursor::new(data, start, end) {
+            match stream.kind {
+                MtfStreamKind::SqlConfig if msci.is_none() => msci = Some(stream),
+                MtfStreamKind::SqlData if msda.is_none() => msda = Some(stream),
+                _ => {}
+            }
+        }
+    }
+
+    Ok(SqlServerStreams {
+        msci: msci.ok_or(SqlServerDumpError::MissingMsci)?,
+        msda: msda.ok_or(SqlServerDumpError::MissingMsda)?,
+    })
+}
+
+/// The header length SQL Server 2008 R2 `SmartPlant` fixtures put in
+/// front of the MDF pages inside the `MSDA` body, used when
+/// [`detect_backup_stream_header_len`] finds no page to go by.
+pub const DEFAULT_BACKUP_STREAM_HEADER_LEN: usize = 0x3F0;
+
+/// Locate the byte offset at which the first MDF page starts inside
+/// the `MSDA` body. Walks a 16-byte grid looking for a header whose
+/// `m_headerVersion == 0x01` and whose `m_type` is a canonical page
+/// type (1..=22), validating the hit by checking that the offset one
+/// page further also lands on a valid page header.
+///
+/// Falls back to [`DEFAULT_BACKUP_STREAM_HEADER_LEN`] if the scan
+/// yields nothing.
+pub fn detect_backup_stream_header_len(msda_body: &[u8]) -> usize {
+    use crate::backup::mdf_page::{MdfPageHeader, MIN_HEADER_BYTES, PAGE_SIZE};
+
+    const GRID: usize = 16;
+    // Stop scanning at 8 MiB — enough to skip any plausible
+    // backup-stream header without chewing through a 19 MB input
+    // on corrupt fixtures.
+    const SCAN_LIMIT: usize = 8 * 1024 * 1024;
+    let limit = msda_body.len().min(SCAN_LIMIT);
+    let mut offset = 0usize;
+    while offset + MIN_HEADER_BYTES <= limit {
+        if MdfPageHeader::probe(&msda_body[offset..]).is_some() {
+            let next = offset + PAGE_SIZE;
+            if next + MIN_HEADER_BYTES <= msda_body.len()
+                && MdfPageHeader::probe(&msda_body[next..]).is_some()
+            {
+                return offset;
+            }
+        }
+        offset += GRID;
+    }
+    DEFAULT_BACKUP_STREAM_HEADER_LEN
+}
+
+/// The MDF page sequence inside an MTF `Export.dmp`: the `MSDA` body
+/// with its leading backup-stream header stripped. What
+/// `pid_backup_extract --as-mdf` writes, as a slice of `data`.
+pub fn mdf_bytes_of_dump(data: &[u8]) -> Result<&[u8], SqlServerDumpError> {
+    let streams = locate_sql_server_streams(data)?;
+    let msda = &data[streams.msda.body_offset..streams.msda.body_end];
+    let header_len = detect_backup_stream_header_len(msda);
+    Ok(&msda[header_len.min(msda.len())..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

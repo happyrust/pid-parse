@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### S2a：Backup Store 开工——收目录或 zip，`backup_file` 逐条 SHA-256，zip 条目名按 UTF-8 / GBK / CP437 解（2026-10-09，Backup Store 计划 S2a）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S2a（Q2、Q7、Q14、P4、P8、P10、P11）。
+
+- **新模块 `backup::store`**（`src/backup/store/{mod,input}.rs`，随 `backup` 特性）：`build_backup_store(输入, 输出, &StoreOptions)` 先写 `<输出>.tmp` 再改名，`build_backup_store_in_memory` 给 publish 用。
+  输入是 `<Plant>_p.zip` 原件或它解开的目录：zip 按中央目录顺序列条目；目录只收顶层文件、按名字的字节序排、跳过子目录（`extracted/` 这类派生目录不属于备份），并在 `store_info.input_note` 和返回的 warnings 里写明「文本文件的换行可能被改过」（Q7）。
+- 表：`store_info`（tool_name、tool_version、input_kind、input_sha256、redacted、files_embedded、input_note）——zip 的 SHA-256 是文件本身的，目录的是「`<sha256>  <名字>\n`」清单的 SHA-256；
+  `backup_file`（id、container_id、entry_index、path、path_raw、path_encoding、is_dir、size、sha256、format）收外层文件和每个 Option Archive（`PlantData~…~<id>.zip` / `RefData~…~<id>.zip`，只展开一层；`RefData~4~703` 是 xlsx、没有 `.zip` 后缀，不展开）的全部条目，目录条目不记哈希和格式，`format` 用 `classify_format` 的分类（`zip` / `cfb` / `xml` / `ascii` / `unknown:<4 字节十六进制>`）；
+  `backup_file_content` 只在 `embed_files` 时写。id 按外层顺序、再按各包条目顺序分配，库里不写时间和路径（P8）。
+- **`zip_index`（P11）**：`ZipEntry` 加 `name_raw`、`name_encoding`；`decode_zip_entry_name`：设了 UTF-8 标志按 UTF-8，否则纯 ASCII 记 `ascii`，再试严格 UTF-8，再试 GBK（`encoding_rs`），都不行就按 zip crate 的 CP437 解并记 `cp437`。
+- **`mtf`**：`pid_backup_extract` 里找 MSCI / MSDA 流、探测备份流头长度（默认 `0x3F0`）的代码挪进库——`locate_sql_server_streams`、`detect_backup_stream_header_len`、`mdf_bytes_of_dump`、`SqlServerDumpError`（Display 文字与 bin 原来打印的一致）；bin 改调库，输出不变。`Cargo.toml` 里 zip「只读中央目录」那段注释改写。
+- 数：TEST02_p.zip 外层 14 条，包内 711 782、681 703、682 21、684 12、685 3、804 10、809 9，共 1,554 行；`01/01/A01.pid`、`A2-W-New.pid`、`CPECCHBA2-new.pid` 的 SHA-256 与格式文档第 8 节一致。
+  DWG 外层 16 条、共 802 行，`zcgc/A3jqz/DWG-0202GP06-01.pid` 与 681 / 685 两处 `wuyouchi.pid` 对上。
+  SQPlant（目录）顶层 16 个文件、共 865 行；711 包 60 条，47 条按 GBK 解出、没有 U+FFFD，`00/00/A井场 注采阀组工艺及自控流程图.pid`（3,264,512 B）和 `test/U01/D06.pid`（229,376 B）对上；681 742、682 20、684 10、685 3、804 10、809 4。
+  `mdf_bytes_of_dump(TEST02 的 Export.dmp)` 与 `extracted/Export.mdf` 逐字节相同（19,922,944 B）。
+- 测试：新 `backup_store_test02`（3 条：清单与哈希、`embed_files`、临时文件改名与两次构建逐表相同）、`backup_store_dwg`（1）、`backup_store_sqplant`（1，P10：读 `PID_PARSE_SQPLANT_BACKUP`，没设退到 `D:\work\cad\pid-test-data`，都没有则跳过）；`backup_mtf` +1，原有一条加了库与 bin 同文的断言；`zip_index` 单测 +3，`store::input` 单测 +3。验收第 7 条（TEST02、DWG）与第 13 条的文件清单部分变绿。
+- 验证：`cargo test --workspace` 46 个二进制 1518 过 / 3 忽略（43 → 46 是三个新测试文件，1506 → 1518）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；`pid_backup_extract --as-mdf --dry-run` 对 TEST02 的输出与改前相同。vendored crate 没动。
+
 ### S1c 审查后的两处修正：`text` LOB 不再按 UTF-8 猜解；计划里的「NULL 21,431」写明是 nvarchar 的数（2026-10-09，Backup Store 计划 S1c）
 
 S1c（`eda765b`）的只读审查，数全部对上；用户采纳了两条意见。

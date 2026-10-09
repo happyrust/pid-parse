@@ -40,16 +40,15 @@ log = { version = "0.4", optional = true }
 env_logger = { version = "0.11", optional = true }
 schemars = { version = "1.2.1", features = ["preserve_order"] }
 uuid = { version = "1", features = ["serde", "v5"] }
-# `zip` is gated to the central-directory reader only — we list
-# `RefData~SCHEMA~ID(.zip)?` entry metadata, never decompressing
-# payload bytes ourselves. We still need `deflate` enabled because
-# `ZipArchive::by_index` constructs a decoder for each entry up
-# front (the `zip` crate only validates compression-method support
-# when the entry is opened, not when bytes are read), and every
-# `SmartPlant`-produced archive observed in the wild uses the
-# stored / deflate methods. The other heavy default features
-# (aes-crypto / bzip2 / xz / lzma / zstd) stay off to keep the
-# CVE surface and build time small.
+# `zip` reads the archives of a plant backup: `backup::zip_index`
+# lists `RefData~SCHEMA~ID(.zip)?` / `PlantData~2~*.zip` entry metadata
+# and `backup::store` reads the `<Plant>_p.zip` and every Option
+# Archive in it entry by entry for the Backup Store's file list
+# (SHA-256 per entry, optional embedded bytes). `deflate` is the one
+# compression method needed: every `SmartPlant`-produced archive
+# observed so far uses the stored / deflate methods. The other heavy
+# default features (aes-crypto / bzip2 / xz / lzma / zstd) stay off to
+# keep the CVE surface and build time small.
 zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
 sha2 = { version = "0.11.0", optional = true }
 
@@ -116,6 +115,18 @@ required-features = ["backup"]
 
 [[test]]
 name = "backup_refdata_real_dir"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_store_dwg"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_store_sqplant"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_store_test02"
 required-features = ["backup"]
 
 [[test]]

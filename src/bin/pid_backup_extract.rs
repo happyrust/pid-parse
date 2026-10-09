@@ -31,7 +31,7 @@
 //! usage error.
 
 use pid_parse::backup::mtf::{
-    detect_non_mtf_dump_format, MtfBlockCursor, MtfStream, MtfStreamCursor, MtfStreamKind,
+    detect_backup_stream_header_len, locate_sql_server_streams, MtfStream,
 };
 use pid_parse::backup::{parse_msci, MsciConfig};
 use std::path::{Path, PathBuf};
@@ -127,49 +127,12 @@ fn run(options: CliOptions) -> Result<(), String> {
     let data = std::fs::read(&options.input)
         .map_err(|e| format!("read {}: {e}", options.input.display()))?;
 
-    // Detect non-MTF backup formats up front so the user gets a
-    // useful pointer instead of a generic "tag `????`" error.
-    if let Some(diag) = detect_non_mtf_dump_format(&data) {
-        return Err(diag);
-    }
-
-    // Sanity-check that the file is MTF-shaped before we start
-    // writing anything.
-    pid_parse::backup::mtf::MtfHeader::probe(&data)
-        .map_err(|e| format!("input does not start with an MTF TAPE descriptor: {e}"))?;
-
-    // Walk the stream tree once, collecting the first MSDA + MSCI.
-    let mut msci: Option<LocatedStream<'_>> = None;
-    let mut msda: Option<LocatedStream<'_>> = None;
-    for block in MtfBlockCursor::new(&data) {
-        let offset_to_first_event =
-            u16::from_le_bytes([block.raw_common_header[8], block.raw_common_header[9]]) as usize;
-        let start = block.offset + offset_to_first_event;
-        let end = block.offset + block.size;
-        for stream in MtfStreamCursor::new(&data, start, end) {
-            // Snapshot the byte range first so we can reference the
-            // bytes before moving `stream` into the LocatedStream.
-            let body_slice = &data[stream.body_offset..stream.body_end];
-            match stream.kind {
-                MtfStreamKind::SqlConfig if msci.is_none() => {
-                    msci = Some(LocatedStream {
-                        stream,
-                        body: body_slice,
-                    });
-                }
-                MtfStreamKind::SqlData if msda.is_none() => {
-                    msda = Some(LocatedStream {
-                        stream,
-                        body: body_slice,
-                    });
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let msci = msci.ok_or_else(|| "no MSCI stream found in input".to_string())?;
-    let msda = msda.ok_or_else(|| "no MSDA stream found in input".to_string())?;
+    // Refuses known non-MTF dumps (with a pointer to the right tool)
+    // and inputs without a TAPE descriptor before anything is written,
+    // then walks the stream tree once for the first MSCI + MSDA.
+    let streams = locate_sql_server_streams(&data).map_err(|e| e.to_string())?;
+    let msci = LocatedStream::new(&data, streams.msci);
+    let msda = LocatedStream::new(&data, streams.msda);
 
     let config = parse_msci(msci.body).map_err(|e| format!("MSCI parse: {e}"))?;
 
@@ -270,46 +233,20 @@ fn run(options: CliOptions) -> Result<(), String> {
     Ok(())
 }
 
-/// Locate the byte offset at which the first MDF page starts
-/// inside the MSDA body. Walks a 16-byte grid looking for a
-/// header whose `m_headerVersion == 0x01` and whose `m_type` is a
-/// canonical page type (1..=22), validating the hit by checking
-/// that the offset `stride` bytes further also lands on a valid
-/// page header.
-///
-/// Falls back to the canonical 0x3F0 offset observed in SQL
-/// Server 2008 R2 `SmartPlant` fixtures if the scan yields nothing.
-fn detect_backup_stream_header_len(msda_body: &[u8]) -> usize {
-    use pid_parse::backup::mdf_page::{MdfPageHeader, MIN_HEADER_BYTES, PAGE_SIZE};
-
-    const GRID: usize = 16;
-    // Stop scanning at 8 MiB — enough to skip any plausible
-    // backup-stream header without chewing through a 19 MB input
-    // on corrupt fixtures.
-    const SCAN_LIMIT: usize = 8 * 1024 * 1024;
-    let limit = msda_body.len().min(SCAN_LIMIT);
-    let mut offset = 0usize;
-    while offset + MIN_HEADER_BYTES <= limit {
-        if MdfPageHeader::probe(&msda_body[offset..]).is_some() {
-            let next = offset + PAGE_SIZE;
-            if next + MIN_HEADER_BYTES <= msda_body.len()
-                && MdfPageHeader::probe(&msda_body[next..]).is_some()
-            {
-                return offset;
-            }
-        }
-        offset += GRID;
-    }
-    // Fallback: SQL Server 2008 R2 fixture default.
-    0x3F0
-}
-
 /// Small wrapper around [`MtfStream`] that also carries the body byte
-/// slice. Avoids repeated `&data[s.body_offset..s.body_end]` calls
-/// in the walk loop.
+/// slice. Avoids repeated `&data[s.body_offset..s.body_end]` calls.
 struct LocatedStream<'a> {
     stream: MtfStream,
     body: &'a [u8],
+}
+
+impl<'a> LocatedStream<'a> {
+    fn new(data: &'a [u8], stream: MtfStream) -> Self {
+        Self {
+            body: &data[stream.body_offset..stream.body_end],
+            stream,
+        }
+    }
 }
 
 /// JSON-friendly shape for [`MsciConfig`]. Keeping it in this binary
