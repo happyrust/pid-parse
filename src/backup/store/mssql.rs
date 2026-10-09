@@ -141,18 +141,18 @@ pub(super) fn quote(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
-/// Writes the catalogue and every table of a SQL Server dump held as
-/// MDF bytes, for the tables the Manifest lists.
+/// Writes the catalogue and the tables of a SQL Server dump: with a
+/// Manifest, the tables its `Table` lines list, in that order (P8);
+/// without one (an `Export.mdf` on its own, P6), every user table of
+/// the four schemas in role and name order.
 pub(super) fn write_sql_server_dump(
     conn: &Connection,
-    mdf: Vec<u8>,
-    manifest: &Manifest,
+    db: &MdfDatabase,
+    tables: &[TableInfo],
+    manifest: Option<&Manifest>,
     schemas: &[DumpSchema],
     summary: &mut StoreSummary,
 ) -> Result<(), BackupStoreError> {
-    let db = MdfDatabase::from_bytes(mdf)?;
-    let tables = db.user_tables()?;
-
     let dump_schema_names: BTreeSet<&str> = tables
         .iter()
         .map(|table| table.schema_name.as_str())
@@ -167,20 +167,47 @@ pub(super) fn write_sql_server_dump(
     }
     write_schemas_and_views(conn, manifest, schemas)?;
 
-    for entry in manifest.tables() {
-        let schema = DumpSchema::of_manifest_name(
-            schemas,
-            &entry.database,
-            "a Table line names a schema outside the four plant schemas",
-        )?;
-        let table = tables
-            .iter()
-            .find(|table| table.schema_name == schema.dump_name && table.name == entry.name)
-            .ok_or_else(|| BackupStoreError::DumpShape {
-                what: "the Manifest lists a table the dump does not hold",
-                name: format!("{}.{}", entry.database, entry.name),
-            })?;
-        write_table(conn, &db, schema.role, table, summary)?;
+    let selected: Vec<(&DumpSchema, &TableInfo)> = match manifest {
+        Some(manifest) => {
+            let mut selected = Vec::new();
+            for entry in manifest.tables() {
+                let schema = DumpSchema::of_manifest_name(
+                    schemas,
+                    &entry.database,
+                    "a Table line names a schema outside the four plant schemas",
+                )?;
+                let table = tables
+                    .iter()
+                    .find(|table| table.schema_name == schema.dump_name && table.name == entry.name)
+                    .ok_or_else(|| BackupStoreError::DumpShape {
+                        what: "the Manifest lists a table the dump does not hold",
+                        name: format!("{}.{}", entry.database, entry.name),
+                    })?;
+                selected.push((schema, table));
+            }
+            selected
+        }
+        None => {
+            let mut selected: Vec<(&DumpSchema, &TableInfo)> = tables
+                .iter()
+                .filter_map(|table| {
+                    schemas
+                        .iter()
+                        .find(|schema| schema.dump_name == table.schema_name)
+                        .map(|schema| (schema, table))
+                })
+                .collect();
+            selected.sort_by(|(a_schema, a), (b_schema, b)| {
+                a_schema
+                    .role
+                    .cmp(&b_schema.role)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+            selected
+        }
+    };
+    for (schema, table) in selected {
+        write_table(conn, db, schema.role, table, summary)?;
     }
     Ok(())
 }

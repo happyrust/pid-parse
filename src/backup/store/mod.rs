@@ -146,11 +146,64 @@ impl DumpSchema {
     }
 }
 
+/// The four plant schemas by the suffixes of their names (P6), for a
+/// dump read without its Manifest: among `names`, exactly one `<p>`
+/// with `<p>d`, `<p>pid` and `<p>pidd` beside it; an error otherwise.
+/// `role_source` is `schema-name-suffix`, `db_type` `1` (SQL Server).
+pub fn plant_schemas_from_schema_names<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<Vec<DumpSchema>, BackupStoreError> {
+    let names: std::collections::BTreeSet<&str> = names.into_iter().collect();
+    let mut plants: Vec<&str> = names
+        .iter()
+        .filter_map(|name| name.strip_suffix("pidd"))
+        .filter(|plant| {
+            !plant.is_empty()
+                && names.contains(plant)
+                && names.contains(format!("{plant}d").as_str())
+                && names.contains(format!("{plant}pid").as_str())
+        })
+        .collect();
+    plants.dedup();
+    let plant = match plants.as_slice() {
+        [plant] => *plant,
+        [] => {
+            return Err(BackupStoreError::SchemaRoles {
+                what: "no <p>, <p>d, <p>pid, <p>pidd set of schema names in the dump",
+            })
+        }
+        _ => {
+            return Err(BackupStoreError::SchemaRoles {
+                what: "more than one <p>, <p>d, <p>pid, <p>pidd set of schema names in the dump",
+            })
+        }
+    };
+    Ok(SchemaRole::ALL
+        .iter()
+        .map(|role| {
+            let name = match role {
+                SchemaRole::Plant => plant.to_string(),
+                SchemaRole::PlantDictionary => format!("{plant}d"),
+                SchemaRole::Pid => format!("{plant}pid"),
+                SchemaRole::PidDictionary => format!("{plant}pidd"),
+            };
+            DumpSchema {
+                role: *role,
+                schema_name: name.clone(),
+                dump_name: name,
+                db_type: "1".to_string(),
+                role_source: "schema-name-suffix",
+            }
+        })
+        .collect())
+}
+
 /// Writes `dump_schema` for the four schemas and `dump_view` for the
-/// Manifest's `View` lines, each view under its schema's dump spelling.
+/// Manifest's `View` lines (none without a Manifest), each view under
+/// its schema's dump spelling.
 fn write_schemas_and_views(
     conn: &Connection,
-    manifest: &crate::backup::Manifest,
+    manifest: Option<&crate::backup::Manifest>,
     schemas: &[DumpSchema],
 ) -> Result<(), BackupStoreError> {
     let mut insert_schema = conn.prepare(
@@ -166,6 +219,9 @@ fn write_schemas_and_views(
             schema.role_source,
         ])?;
     }
+    let Some(manifest) = manifest else {
+        return Ok(());
+    };
     let mut insert_view =
         conn.prepare("INSERT INTO dump_view (role, schema_name, name) VALUES (?1, ?2, ?3)")?;
     for view in manifest.views() {
@@ -381,6 +437,39 @@ pub fn build_backup_store_in_memory(
     Ok((conn, summary))
 }
 
+/// Builds, in memory, the store of a SQL Server `Export.mdf` on its
+/// own -- no Manifest, no file list (P6): `store_info` has
+/// `input_kind` `mdf` and the MDF's SHA-256, the four Schema Roles
+/// come from the suffixes of the schema names
+/// ([`plant_schemas_from_schema_names`]), every user table of those
+/// four schemas is dumped in role and name order, and `dump_view`,
+/// `backup_file` and the Manifest tables stay empty. This is what
+/// publish reads an MDF through.
+pub fn build_backup_store_from_mdf_in_memory(
+    mdf: Vec<u8>,
+) -> Result<(Connection, StoreSummary), BackupStoreError> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch(SCHEMA)?;
+    conn.execute_batch(manifest::SCHEMA)?;
+    conn.execute_batch(mssql::SCHEMA)?;
+
+    let mut summary = StoreSummary::default();
+    let tx = conn.unchecked_transaction()?;
+    let options = StoreOptions::default();
+    write_store_info_rows(&tx, "mdf", &input::sha256_hex(&mdf), None, &options)?;
+    tx.execute(
+        "INSERT INTO store_info (key, value) VALUES ('dump_kind', 'sql-server-mdf')",
+        [],
+    )?;
+    let db = oxidized_mdf::MdfDatabase::from_bytes(mdf)?;
+    let tables = db.user_tables()?;
+    let schemas =
+        plant_schemas_from_schema_names(tables.iter().map(|table| table.schema_name.as_str()))?;
+    mssql::write_sql_server_dump(&tx, &db, &tables, None, &schemas, &mut summary)?;
+    tx.commit()?;
+    Ok((conn, summary))
+}
+
 /// The tables S2a fills. Later steps add theirs.
 const SCHEMA: &str = "
 CREATE TABLE store_info (
@@ -481,7 +570,9 @@ fn write_dump(
             info.execute(params!["dump_kind", "sql-server-mtf"])?;
             let mdf = mdf.to_vec();
             drop(dump);
-            mssql::write_sql_server_dump(conn, mdf, &manifest, &schemas, summary)?;
+            let db = oxidized_mdf::MdfDatabase::from_bytes(mdf)?;
+            let tables = db.user_tables()?;
+            mssql::write_sql_server_dump(conn, &db, &tables, Some(&manifest), &schemas, summary)?;
         }
         Err(crate::backup::mtf::SqlServerDumpError::NotMtf(_))
             if crate::backup::oracle_exp::is_exp_dump(&dump) =>
@@ -503,17 +594,36 @@ fn write_store_info(
     input: &BackupInput,
     options: &StoreOptions,
 ) -> Result<(), BackupStoreError> {
+    write_store_info_rows(
+        conn,
+        input.kind().as_str(),
+        input.sha256(),
+        input.note(),
+        options,
+    )
+}
+
+/// The `store_info` rows every store opens with: tool, version, the
+/// input's kind (`zip` / `directory` / `mdf`) and SHA-256, the
+/// options, and the input's note when it has one.
+fn write_store_info_rows(
+    conn: &Connection,
+    input_kind: &str,
+    input_sha256: &str,
+    input_note: Option<&str>,
+    options: &StoreOptions,
+) -> Result<(), BackupStoreError> {
     let mut insert = conn.prepare("INSERT INTO store_info (key, value) VALUES (?1, ?2)")?;
     let flag = |on: bool| if on { "1" } else { "0" };
     let mut rows: Vec<(&str, String)> = vec![
         ("tool_name", TOOL_NAME.to_string()),
         ("tool_version", env!("CARGO_PKG_VERSION").to_string()),
-        ("input_kind", input.kind().as_str().to_string()),
-        ("input_sha256", input.sha256().to_string()),
+        ("input_kind", input_kind.to_string()),
+        ("input_sha256", input_sha256.to_string()),
         ("redacted", flag(!options.keep_secrets).to_string()),
         ("files_embedded", flag(options.embed_files).to_string()),
     ];
-    if let Some(note) = input.note() {
+    if let Some(note) = input_note {
         rows.push(("input_note", note.to_string()));
     }
     for (key, value) in rows {

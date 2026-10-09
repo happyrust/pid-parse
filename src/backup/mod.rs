@@ -55,8 +55,8 @@ pub use refdata::{
     classify_format, parse_refdata_filename, scan_refdata_dir, RefDataEntry, RefDataFormat,
 };
 pub use store::{
-    build_backup_store, build_backup_store_in_memory, BackupInput, BackupInputKind,
-    BackupStoreError, StoreOptions, StoreSummary,
+    build_backup_store, build_backup_store_from_mdf_in_memory, build_backup_store_in_memory,
+    BackupInput, BackupInputKind, BackupStoreError, StoreOptions, StoreSummary,
 };
 pub use syscatalog::{scan_sysschobjs_rows, SysschobjsRow, SYSSCHOBJS_ROW_MARKER};
 pub use text_scan::{find_ascii_run_containing, find_utf16le_run_containing};

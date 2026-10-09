@@ -1,20 +1,26 @@
 //! Publish Data XML generation — offline `SmartPlant` pipeline terminal stage.
 //!
-//! Stage-1 pipeline reads the MDF extracted from a `SmartPlant` backup
-//! via:
+//! The pipeline reads a `SmartPlant` Plant Backup through a Backup
+//! Store ([`crate::backup::store`], plan
+//! `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md`):
 //!
-//! 1. Rust: [`crate::backup::mtf`] + the `pid_backup_extract` CLI
-//!    binary — strips the SQL Server backup stream header and writes
-//!    a reconstructable `.mdf` file.
-//! 2. Rust: [`mdf_load`] + vendored `oxidized-mdf` — reads the
-//!    publish-relevant `SmartPlant` SQL tables directly from MDF.
+//! 1. Rust: [`crate::backup::store`] — the `<Plant>_p.zip` (or its
+//!    directory, or an `Export.mdf` on its own) becomes a Backup
+//!    Store: the Database Dump's tables typed, row by row, each row
+//!    with the page and slot it came from. `pid_backup_store` writes
+//!    one to a file; publish builds one in memory when it is handed
+//!    the backup itself.
+//! 2. Rust: [`store_load`] — copies the publish-relevant tables out
+//!    of the store into an in-memory `SQLite` connection of TEXT
+//!    tables, printed as the MDF adapter printed them (P7).
 //! 3. Rust: *this module* — loads the relevant rows into the publish
 //!    DTO and emits a SmartPlant-compatible Publish Data XML document
 //!    (`<DrawingName>_Data.xml` and `<DrawingName>_Meta.xml`).
 //!
 //! ## Submodules
 //!
-//! * [`mdf_load`] — MDF → publish table adapter.
+//! * [`store_load`] — Backup Store → publish table adapter, and the
+//!   classification of what publish is handed ([`PublishInput`]).
 //! * [`sqlite_load`] — in-memory/legacy `SQLite` → object graph DTO.
 //! * [`model`] — object-graph DTO shared by the loader and the
 //!   writer. Includes the [`model::PublishStyle`] selector, which
@@ -28,7 +34,7 @@
 //!
 //! The normal path no longer depends on the C# `OrcaMDF` probe. The
 //! legacy `SQLite` loader remains for fixture compatibility and as a
-//! simple relational adapter behind the MDF reader.
+//! simple relational adapter behind the store.
 //!
 //! ## Stage-1 outstanding
 //!
@@ -50,9 +56,9 @@
 //!   in `tests/publish_dwg_mirror.rs` fire.
 
 pub mod diff;
-pub mod mdf_load;
 pub mod model;
 pub mod sqlite_load;
+pub mod store_load;
 pub mod xml_writer;
 
 pub use diff::{
@@ -62,7 +68,6 @@ pub use diff::{
     RelDefUidDiffReport, RelDetail, SemanticDiffReport, TagCountDiff, TagDiffStatus,
     WriterCoverage,
 };
-pub use mdf_load::{load_drawing_graph_from_mdf, open_mdf_as_sqlite};
 pub use model::{
     CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
     PublishRepresentation, PublishStyle,
@@ -70,5 +75,9 @@ pub use model::{
 pub use sqlite_load::{
     attach_pipe_endpoint_connections, load_codelist_index, load_drawing, load_drawing_graph,
     load_objects_by_uids, load_piping_points_for_objects, load_relationships, load_representations,
+};
+pub use store_load::{
+    classify_publish_input, copy_publish_tables, load_drawing_graph_from_mdf, open_mdf_as_sqlite,
+    open_publish_input, PublishInput, PUBLISH_TABLES,
 };
 pub use xml_writer::{write_data_xml, write_meta_xml};

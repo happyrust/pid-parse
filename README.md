@@ -100,11 +100,23 @@ cargo run --bin pid_inspect -- a.pid --diff b.pid
 
 ### Backup 解析 + Publish Data XML 生成（offline pipeline）
 
-```bash
-# 1. 从 SmartPlant 备份（Export.dmp）剥离 MTF 头得到 .mdf
-cargo run --bin pid_backup_extract -- Export.dmp --out Export.mdf
+`pid_publish_xml` 的输入是 plant 数据库，四种都收，按内容认：`pid_backup_store`
+写出的 Backup Store、Plant Backup 本身（`<Plant>_p.zip` 或它解开的目录）、单独的
+`Export.mdf`，以及 legacy 的 `Export_v2.sqlite` mirror。备份和 MDF 都先在内存里建成
+Backup Store 再读（publish 读的 24 张表从 store 的 `pid__*` 抄成 TEXT 表，`codelists` /
+`attributes` 取 `pidd__*`，见下一节）；四种输入出的 XML 逐字节相同
+（`tests/publish_store_parity.rs`）。
 
-# 2. 用 Rust MDF loader（vendor/oxidized-mdf）直接列出 drawing
+```bash
+# 1a. 直接喂 Plant Backup（zip 或目录）
+cargo run --bin pid_publish_xml -- test-file/backup-test/TEST02_p.zip --list-drawings
+
+# 1b. 或先建 Backup Store 再喂（多张图反复出时不用每次重解备份）
+cargo run --bin pid_backup_store -- test-file/backup-test/TEST02_p.zip -o TEST02.sqlite
+cargo run --bin pid_publish_xml -- TEST02.sqlite --list-drawings
+
+# 1c. 或从 SmartPlant 备份（Export.dmp）剥离 MTF 头得到 .mdf，喂 MDF
+cargo run --bin pid_backup_extract -- Export.dmp --out Export.mdf
 cargo run --bin pid_publish_xml -- Export.mdf --list-drawings
 
 # 3. 生成单张 drawing 的 _Data.xml（默认 A01 style）
@@ -127,10 +139,11 @@ cargo run --bin pid_publish_xml -- Export.mdf \
     --plant TEST02 --diff-against reference/A01_Data.xml
 ```
 
-当前公开的 publish 正确性基线只承诺 `Export.mdf` 主链。
+当前公开的 publish 正确性基线只承诺 Backup Store 主链（Plant Backup、
+Backup Store 文件、`Export.mdf` 三种输入都走它）。
 历史 `Export_v2.sqlite` mirror 仍可作为 legacy 兼容输入喂给
 `pid_publish_xml`，但不再承担 publish fidelity 验收角色；CLI
-对 `.sqlite` 输入会打印 deprecation 提示。
+对 legacy mirror（没有 `dump_table` 的 SQLite 文件）会打印 deprecation 提示。
 
 A01 `_Data.xml` 当前满足语义 diff、接口/属性/关系 parity、格式风格
 和 `_Meta.xml` parity。raw byte 精确对齐只剩 3 类 A39 证据化
@@ -182,6 +195,13 @@ cargo run --bin pid_backup_store -- TEST02_p.zip -o TEST02.sqlite --keep-secrets
 结束时 stdout 打印文件数、Manifest 行数与脱敏处数、表数 / 行数 / Ghost Row / LOB 数和警告数，警告逐条进 stderr。
 退出码：0 成功，1 输入读不了或 store 没写成（含输出已存在且没加 `--force`），2 参数错。
 
+publish 管线读的就是这个 store（`publish::store_load`）：`pid_publish_xml` 拿到 Backup Store
+文件直接读；拿到 Plant Backup 或 `Export.mdf` 就先在内存里建一个——单独的 MDF 没有 Manifest，
+四个 Schema Role 按 schema 名后缀 `<p>` / `<p>d` / `<p>pid` / `<p>pidd` 认（`dump_schema.role_source`
+= `schema-name-suffix`），`store_info.input_kind` = `mdf`。publish 的 24 张表从 `pid__*` 抄成
+TEXT 表（`codelists` / `attributes` 取 `pidd__*`），值按 MDF 适配器当年的写法：datetime
+`YYYY/M/D HH:MM:SS`、二进制大写十六进制、浮点按 Rust 的 `Display`，所以 A01 的两份 XML 一个字节不变。
+
 ## 库调用
 
 ### 只读解析
@@ -229,9 +249,15 @@ PidWriter::write_to(&pkg, &WritePlan::default(), std::path::Path::new("drawing.c
 
 ```rust
 use pid_parse::publish::{
-    load_drawing_graph_from_mdf, write_data_xml, write_meta_xml, PublishStyle,
+    load_drawing_graph, load_drawing_graph_from_mdf, open_publish_input, write_data_xml,
+    write_meta_xml, PublishStyle,
 };
 
+// 任一输入——Backup Store 文件、<Plant>_p.zip 或它的目录、Export.mdf、legacy mirror：
+let conn = open_publish_input("TEST02_p.zip".as_ref())?;
+let mut graph = load_drawing_graph(&conn, "D9635C3C898840D1990B7E8BEE1D55DA")?;
+
+// 只有 Export.mdf 时的便捷写法（同一条路：MDF → 内存 store → 抄写）：
 let mut graph = load_drawing_graph_from_mdf(
     "Export.mdf".as_ref(),
     "D9635C3C898840D1990B7E8BEE1D55DA",

@@ -49,9 +49,9 @@
   <rect x="418" y="540" width="64" height="16" fill="#ffffff" opacity="0.95"/>
   <text x="450" y="552" text-anchor="middle" font-size="10" fill="#059669">metadata</text>
   <rect x="520" y="608" width="320" height="68" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5" filter="url(#shadow)"/>
-  <text x="680" y="632" text-anchor="middle" font-size="13" font-weight="bold" fill="#1e3a5f">mdf_load.rs</text>
-  <text x="680" y="648" text-anchor="middle" font-size="11" fill="#2563eb">Stage 24 SmartPlant tables to in-memory SQLite</text>
-  <text x="680" y="664" text-anchor="middle" font-size="11" fill="#2563eb">Re-open per table (forward-only constraint)</text>
+  <text x="680" y="632" text-anchor="middle" font-size="13" font-weight="bold" fill="#1e3a5f">store_load.rs</text>
+  <text x="680" y="648" text-anchor="middle" font-size="11" fill="#2563eb">Backup Store (backup::store) → 24 SmartPlant tables as TEXT</text>
+  <text x="680" y="664" text-anchor="middle" font-size="11" fill="#2563eb">MDF / Plant Backup via an in-memory store</text>
   <line x1="680" y1="568" x2="680" y2="608" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
   <line x1="680" y1="676" x2="480" y2="728" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
   <rect x="320" y="728" width="320" height="52" rx="8" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.5" filter="url(#shadow)"/>

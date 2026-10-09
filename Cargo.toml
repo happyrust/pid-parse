@@ -194,6 +194,10 @@ name = "publish_sqlite_load"
 required-features = ["backup"]
 
 [[test]]
+name = "publish_store_parity"
+required-features = ["backup"]
+
+[[test]]
 name = "publish_writer_coverage"
 required-features = ["backup"]
 

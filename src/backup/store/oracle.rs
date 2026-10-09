@@ -115,7 +115,7 @@ pub(super) fn write_oracle_dump(
             }
         }
     }
-    write_schemas_and_views(conn, manifest, &schemas)?;
+    write_schemas_and_views(conn, Some(manifest), &schemas)?;
 
     let mut written = 0usize;
     let mut listed: BTreeSet<(&str, &str)> = BTreeSet::new();

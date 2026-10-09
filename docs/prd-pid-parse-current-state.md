@@ -59,7 +59,7 @@
 publish 路径独立于 `.pid` 容器读取，面向 SmartPlant backup/export 数据：
 
 1. `pid_backup_extract` 从 `Export.dmp` 剥离 MTF envelope，得到 `Export.mdf`。
-2. `publish::mdf_load::open_mdf_as_sqlite` 用 vendored `oxidized-mdf` 读取 MDF 中 publish 相关表，并暂存到 in-memory SQLite。
+2. `publish::store_load::open_publish_input` 把输入（Backup Store 文件、Plant Backup 的 zip / 目录、`Export.mdf`）读成 Backup Store——备份和 MDF 在内存里建（`backup::store`，vendored `oxidized-mdf` 读 MDF）——再把 publish 相关的 24 张表抄成 in-memory SQLite 的 TEXT 表。
 3. `publish::sqlite_load::load_drawing_graph` 复用 SQLite 查询层组装 `PublishDrawing` DTO：
    - drawing header。
    - representation。
