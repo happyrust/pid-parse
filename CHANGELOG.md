@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### S5：Backup Store 第一版验收收口——13 条验收逐条对到测试，文档跟上（2026-10-09，Backup Store 计划 S5）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S5（Q21）。只改文档，不改代码。
+
+- **验收对账**：13 条验收逐条对到钉住它的测试函数（计划「验收」表新增「状态」列）：1–5 在 `backup_mdf_reader_test02` 三条和 `backup_store_test02::test02_store_dumps_every_table_the_manifest_lists_with_its_provenance`；6、8 在三套样本的 Manifest 测试（共用 `check_manifest`）；7 在两套 zip 样本的文件清单测试；9 在 `test02_store_is_written_through_a_temporary_file_and_builds_the_same_twice`；10 在 `publish_store_parity` 两条 + `publish_xml_cli` 新增的一条；11 在 `dwg_store_registers_the_oracle_tables_empty_from_the_ddl`；13 在 `backup_store_sqplant` 两条 + `backup_store_cli::sqplant_directory_is_built_with_its_warnings_on_stderr`；12 是每笔提交前的门禁。数字都已在 S1–S4 的测试常量里，没有缺项、不用补测试。
+- **Q18 的连接缺陷开成 issue** [happyrust/pid-parse#27](https://github.com/happyrust/pid-parse/issues/27)（`bug`、`needs-triage`），内容即 S4 那条草稿。
+- 文档：`AGENTS.md` 测试表加 `backup_mdf_reader_test02` / `backup_store_{test02,dwg,sqplant,cli}` 五行、常用命令的数字更新（1555 / 49、vendored 67）；README 的 Backup Store 一节加「验收与复现」和两条已知待定；格式文档 `docs/analysis/2026-10-08-sppid-backup-package-format-cn.md`——头部相关代码与说明、「一句话」改成 store 的现状，4.2 / 4.3 / 9 节把 S2b 查证的两处改正（`DBUids` 是四个 Plant schema 名的逗号串，`PlantConnInfo` 第 1 字段是 Plant 名，只有 `SiteConnInfo` 的是 64 字符加密串），第 10 节补 T_Symbol 2300:1 的 NULL 和 Oracle 空表两条，第 11 节「复现方法」改成跑测试 + `pid_backup_store` / `pid_publish_xml` 命令 + 库入口；`task_plan.md` 当前阶段加 Backup Store 一条。
+- 第一版 S0–S5 到此做完。等用户定的两件事不变：T_Symbol 2300:1 那条 NOT NULL 列的 NULL 怎么写；`PlantConnInfo` 第 1 字段和 `DBUids` 要不要从脱敏名单去掉。
+- 验证：只改 Markdown / 文档；`cargo test --workspace` 49 个二进制 1555 过 / 3 忽略与 S4 相同（S5 重跑了 `backup_store_test02`、`backup_store_dwg`、`backup_store_sqplant`、`backup_store_cli`、`backup_mdf_reader_test02`、`publish_store_parity` 六个文件核对验收表里写的函数名和数字），`cargo fmt --all --check` 过。
+
 ### S4：publish 改读 Backup Store——MDF / Plant Backup / store 文件三种输入出的 A01 逐字节不变（2026-10-09，Backup Store 计划 S4）
 
 计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S4（Q13、Q18、P6、P7）。

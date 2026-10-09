@@ -3,12 +3,14 @@
 > 范围：SmartPlant Engineering Manager 生成的 plant 备份包（`<Plant>_p/`），以及包内的 `.pid` 文件清单。
 > 样本：`test-file/backup-test/TEST02_p`（SQL Server 后端）与 `test-file/backup-test/DWG-0202GP06-01_p`（Oracle 后端），两者都有同级的 `<Plant>_p.zip` 原件。
 > 口径：基于这两套样本的实测，不是 SmartPlant 官方规范。标“推断”的条目只有间接证据。
-> 相关代码：`src/backup/{manifest,refdata,mtf,msci,mdf_page,zip_index}.rs`，`src/bin/{pid_backup_probe,pid_backup_extract,pid_publish_xml}.rs`，`examples/oracle_exp_schema.rs`。
+> 相关代码：`src/backup/{manifest,refdata,mtf,msci,mdf_page,zip_index,oracle_exp}.rs`，`src/backup/store/`（Backup Store），`src/bin/{pid_backup_probe,pid_backup_extract,pid_backup_store,pid_publish_xml}.rs`，`src/publish/store_load.rs`，`examples/oracle_exp_schema.rs`。
+> 2026-10-09 起本文的数字由 Backup Store 的测试钉住（第 11 节）；第三套样本 SQPlant（Oracle，仓外）的事实见计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` 的事实表。
 
 ## 一句话
 
 备份包由一份 UTF-16LE 的 `Manifest.txt`、一份数据库 dump（`Export.dmp`）和若干按“选项 ID”命名的 `PlantData~2~*` / `RefData~4~*` 文件组成。
-数据库 dump 随后端不同而格式完全不同：SQL Server 后端是 MTF 磁带格式，pid-parse 能一路解到 MDF 和 Publish XML；Oracle 后端是传统 `exp` 导出，pid-parse 目前只能识别并拒绝。
+数据库 dump 随后端不同而格式完全不同：SQL Server 后端是 MTF 磁带格式，pid-parse 一路解到 MDF、逐行入库、再出 Publish XML；Oracle 后端是传统 `exp` 导出，pid-parse 读它的 DDL 把 154 张表按 `CONNECT` owner 登记下来（留空、标未解码），行解码排第二版。
+`pid_backup_store` 把一套备份——Manifest 全部行、Database Dump 的表、包内文件清单——写成一个 SQLite（Backup Store，ADR-0004），publish 管线从它读。
 图纸 `.pid` 在 `PlantData~2~711.zip` 里按 PlantGroup 层级存放，与库中 `T_Drawing.Path` 一一对应；模板 `.pid` 在 `RefData~4~682.zip`。
 
 ## 1. 样本概况
@@ -92,7 +94,7 @@ pid-parse 另有两个 worktree（`pid-parse-m4-m5`、`pid-parse-pid-real-geomet
 | `DbaExport` | `2` |
 | `ExportFileSize` / `ArchiveFileSize` | 字节数 |
 | `SlotCount` | `0<<|>>0`，含义未确认 |
-| `DBUids` / `DBPwds` | 加密串 |
+| `DBUids` / `DBPwds` | `DBUids` 是四个 Plant schema 名的逗号串（Oracle 的 `BackupCommand` 里 `OWNER=(…)` 原样还有），`DBPwds` 是加密串——本文初稿把两者都写成「加密串」，2026-10-09 S2b 在三套样本上查证后改正。Backup Store 默认把两者都换成 SHA-256（Q15） |
 | `BackupCommand` | SQL Server：`BACKUP DATABASE <库> TO <Plant>`；Oracle：完整的 `Exp.exe` 命令行 |
 | `Characterset` / `OracleVersion` | 仅 Oracle：`AL32UTF8` / `12.1.0.2.0` |
 | `TableSpace` | 仅 Oracle，两条（`Permanent` / `Temporary`），值是混淆串 |
@@ -103,7 +105,7 @@ pid-parse 另有两个 worktree（`pid-parse-m4-m5`、`pid-parse-pid-real-geomet
 
 | # | 含义 | TEST02 | DWG |
 |---|---|---|---|
-| 1 | 64 字符加密串 | — | — |
+| 1 | `SiteConnInfo` 行：64 字符加密串；`PlantConnInfo` 行：Plant 名（TEST02 / DWG / SQPlant 分别 6 / 16 / 7 个字符；初稿写成「加密串」，S2b 查证后改正） | `TEST02` | `QSMCQTAZ13_PLANT` |
 | 2 | schema 类型码 | 见下 | 见下 |
 | 3 | 服务器名 / Oracle 服务名 | `MM-128` | `SPIDDB` |
 | 4 | schema 名 / 用户名 | `TEST02`、`TEST02d`… | `QSMCQTAZ13_PLANT`… |
@@ -283,7 +285,7 @@ TEST02 的数字是 `Export.mdf` 里各表的存活行数（不含 ghost 记录�
   `Manifest.txt`（UTF-16）和二进制文件不受影响。
 - `TEST02_p/extracted/` 是 pid-parse 生成的派生文件（`Export.msci.*`、`Export.msda.bin`、`Export.mdf`、`Export*.sqlite`、生成的 XML），不是 SmartPlant 原始内容。
 - DWG 样本没有 `extracted/`，Oracle 后端也走不通 MTF 这条链，所以 README 里提到的 `DWG-0202GP06-01_p/extracted/Export.mdf` 实际缺失，相关测试会 soft-skip。
-- **敏感信息**：Oracle 样本的 `BackupCommand` 含 `SYSTEM` 账号的明文口令；`DBUids`、`DBPwds` 以及连接信息的第 1、5 字段是加密串。这类备份外发前需要脱敏。本文没有转录任何口令或加密串。
+- **敏感信息**：Oracle 样本的 `BackupCommand` 含 `SYSTEM` 账号的明文口令；`DBPwds`、`SiteConnInfo` 的第 1 字段和全部连接信息的第 5 字段是加密串（`DBUids` 和 `PlantConnInfo` 的第 1 字段不是，见 4.2 / 4.3）。这类备份外发前需要脱敏：`pid_backup_store` 默认把 `DBUids`、`DBPwds`、连接信息第 1、5 字段换成 SHA-256、`BackupCommand` 的口令换成 `***`（Q15，每处记进 `store_redaction`），`--keep-secrets` 才原样存。本文没有转录任何口令或加密串。
 
 ## 10. 未确认项
 
@@ -291,25 +293,42 @@ TEST02 的数字是 `Export.mdf` 里各表的存活行数（不含 ghost 记录�
 - `SlotCount` 两个字段的含义。
 - `TableSpace` 值的编码方式。
 - `Right` 行第 3 字段（恒为 `3`）以及权限 ID 与功能的对应关系。
-- 连接信息第 1 字段（64 字符加密串）承载的内容。
+- `SiteConnInfo` 第 1 字段（64 字符加密串）承载的内容（`PlantConnInfo` 的第 1 字段已查证是 Plant 名，见 4.3）。
 - 选项 ID 与 SmartPlant 选项表的对应关系目前只有间接证据。
-- Oracle `exp` 行编码的完整规则（列长度前缀、NULL 标记、NUMBER / DATE 编码）尚未实现解码。
+- Oracle `exp` 行编码的完整规则（列长度前缀、NULL 标记、NUMBER / DATE 编码）尚未实现解码；Backup Store 第一版只按 DDL 登记空表（`dump_table.decoded = 0`）。
+- SQL Server 侧：`TEST02pid.T_Symbol.SP_ID` 声明 NOT NULL，页 2300 槽 1 那条记录的空位图却把它置位（变长区存着 32 字符的 UID，定长区是指针模样的字节）；SQL Server 自己读这列会不会跳过空位图没法验，Backup Store 按空位图写 NULL（S2c）。
 
 ## 11. 复现方法
 
+本文的数字（文件数与 SHA-256、Manifest 行数、154 张表、37,470 行、Ghost Row 5、LOB 4、空串 162、NULL 50,596、Oracle 的 2,039 / 2,024 列……）由 Backup Store 的测试钉住，跑一遍就是复核：
+
 ```bash
-# MTF 描述块、流和 MSCI 摘要
-cargo run --bin pid_backup_probe -- test-file/backup-test/TEST02_p/Export.dmp
-
-# 剥离 MTF 得到 MDF（--dry-run 只报告不落盘）
-cargo run --bin pid_backup_extract -- test-file/backup-test/TEST02_p/Export.dmp --out <dir> --as-mdf --dry-run
-
-# 列出 T_Drawing
-cargo run --bin pid_publish_xml -- test-file/backup-test/TEST02_p/extracted/Export.mdf --list-drawings
-
-# Oracle 样本：pid_backup_extract 会识别为 exp 导出并报错；DDL 可用示例扫描
-cargo run --bin pid_backup_extract -- test-file/backup-test/DWG-0202GP06-01_p/Export.dmp --out <dir> --dry-run
-cargo run --example oracle_exp_schema -- test-file/backup-test/DWG-0202GP06-01_p/Export.dmp
+# SQL Server 样本 TEST02：读取器（S1）与 store（S2）
+cargo test --test backup_mdf_reader_test02 --test backup_store_test02
+# Oracle 样本 DWG（仓内）与 SQPlant（仓外，PID_PARSE_SQPLANT_BACKUP 或 D:\work\cad\pid-test-data，缺则跳过）
+cargo test --test backup_store_dwg --test backup_store_sqplant
+# 命令行与 publish：pid_backup_store 的汇总、A01 从 MDF / zip / 目录 / store 文件出同样的字节
+cargo test --test backup_store_cli --test publish_store_parity --test publish_xml_cli
 ```
 
-`Manifest.txt` 可用 `backup::manifest::parse_manifest_bytes` 读取；zip 条目可用 `backup::zip_index::list_zip_entries` 列出；`RefData~*` 的格式分类可用 `backup::refdata::scan_refdata_dir`。
+手工看一套备份：
+
+```bash
+# 整套备份 → 一个 SQLite（Backup Store；输出已存在加 --force；--keep-secrets 不脱敏；--embed-files 连文件字节也存）
+cargo run --bin pid_backup_store -- test-file/backup-test/TEST02_p.zip -o TEST02.sqlite
+cargo run --bin pid_backup_store -- test-file/backup-test/DWG-0202GP06-01_p.zip -o DWG.sqlite
+# 库里：store_info / backup_file / manifest_* 与视图 / dump_schema / dump_table / dump_column / dump_view /
+# <角色>__<表>（SQL Server 逐行带 _src_page、_src_slot；Oracle 空表 decoded = 0）/ dump_ghost_row / dump_lob
+
+# Publish：输入可以是 zip、目录、store 文件或 Export.mdf，出的 XML 相同
+cargo run --bin pid_publish_xml -- test-file/backup-test/TEST02_p.zip --list-drawings
+cargo run --bin pid_publish_xml -- TEST02.sqlite --drawing D9635C3C898840D1990B7E8BEE1D55DA --plant TEST02 --out A01_Data.xml --meta-out A01_Meta.xml
+
+# 更底层的探针
+cargo run --bin pid_backup_probe -- test-file/backup-test/TEST02_p/Export.dmp          # MTF 描述块、流和 MSCI 摘要
+cargo run --bin pid_backup_extract -- test-file/backup-test/TEST02_p/Export.dmp --out <dir> --as-mdf --dry-run   # 剥离 MTF 得到 MDF
+cargo run --bin pid_backup_extract -- test-file/backup-test/DWG-0202GP06-01_p/Export.dmp --out <dir> --dry-run   # Oracle：识别为 exp 导出并报错
+cargo run --example oracle_exp_schema -- test-file/backup-test/DWG-0202GP06-01_p/Export.dmp   # Oracle DDL 按 owner 分组打印
+```
+
+库里的入口：`backup::build_backup_store` / `build_backup_store_in_memory`（备份）、`build_backup_store_from_mdf_in_memory`（单独的 MDF）；`backup::store::reassemble_manifest` 从库拼回 `Manifest.txt`；`backup::manifest::parse_manifest_bytes` 读 Manifest；`backup::zip_index::list_zip_entries` 列 zip 条目；`backup::refdata::scan_refdata_dir` 分类 `RefData~*`；`backup::oracle_exp::scan_create_tables` 扫 Oracle DDL；`publish::open_publish_input` 把任一输入开成 publish 读的表。

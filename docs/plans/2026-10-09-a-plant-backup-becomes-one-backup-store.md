@@ -164,21 +164,23 @@ Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `
 
 ## 验收（Q21 a）
 
-| # | 条目 | 测试 | 步 |
-|---|---|---|---|
-| 1 | 行数：154 张表逐表等于 `rcrows`，合计 37,470 | `backup_mdf_reader_test02`、`backup_store_test02` | S1、S2 |
-| 2 | Ghost Row：5 张表各 1 行进 `dump_ghost_row`，字节与 MDF 相同 | 同上 | S1、S2 |
-| 3 | LOB：4 个值都是 ZIP，首条目 `Drawing.xml` / `A01-JSite204.tmp` | 同上 | S1、S2 |
-| 4 | 空串 162；NULL 按列类型计，nvarchar 21,431、全部类型 50,596 | 同上 | S1、S2 |
-| 5 | 来源：抽样行按 `_src_page` / `_src_slot` 回 MDF 重解，结果一致 | `backup_store_test02` | S2 |
-| 6 | Manifest 拼回逐字节相同（口径见 P9） | `backup_store_test02`、`backup_store_dwg` | S2 |
-| 7 | `backup_file` 条目数和每条 SHA-256 与 zip 原件一致 | 同上 | S2 |
-| 8 | 默认库里搜不到口令原文和加密串 | 同上 | S2 |
-| 9 | 同一输入生成两次，逐表内容相同 | `backup_store_test02` | S2 |
-| 10 | publish 改读 store 后 A01 测试通过；输出变化先说明原因 | `publish_*` + 新 parity 测试 | S1、S4 |
-| 11 | DWG：154 张空表、2,039 列，按 owner 计，重名表各在自己的角色下；类型按 Q19，标「未解码」，Manifest 和文件清单照常入库 | `backup_store_dwg` | S2 |
-| 12 | `cargo test`、两种特性组合的 `clippy -D warnings`、`fmt` | 每笔提交前 | 全程 |
-| 13 | SQPlant（外部样本，缺则跳过）：154 张空表、2,024 列，四个角色按 P12 对上；Manifest 拼回；16 个顶层文件和各包条目数、SHA-256 对上，47 个 GBK 名字没有 U+FFFD；默认库搜不到口令原文 | `backup_store_sqplant` | S2、S3 |
+S5 对账（2026-10-09，`7f59a3e` 之上）：13 条逐条对到测试函数，全绿；「测试」列是钉住这一条的函数（都在 `tests/` 下，文件名::函数名），数字在函数体或文件头的常量里。
+
+| # | 条目 | 测试 | 步 | 状态 |
+|---|---|---|---|---|
+| 1 | 行数：154 张表逐表等于 `rcrows`，合计 37,470 | `backup_mdf_reader_test02::test02_every_table_scans_to_the_rows_its_catalog_counts`；`backup_store_test02::test02_store_dumps_every_table_the_manifest_lists_with_its_provenance`（`dump_table.rows` = `expected_rows` 逐表，`sum(rows)` 37,470，表自身的 `count(*)` 相同） | S1b、S2c | 绿 |
+| 2 | Ghost Row：5 张表各 1 行进 `dump_ghost_row`，字节与 MDF 相同 | `backup_mdf_reader_test02::test02_ghost_rows_are_kept_apart_byte_for_byte`；`backup_store_test02::…dumps_every_table…`（5 行，record_type 6，字节等于 MDF 槽上的） | S1a、S2c | 绿 |
+| 3 | LOB：4 个值都是 ZIP，首条目 `Drawing.xml` / `A01-JSite204.tmp` | `backup_mdf_reader_test02::test02_lobs_empty_strings_nulls_and_datetime_ticks_read_as_stored`；`backup_store_test02::…dumps_every_table…`（`dump_lob` 4 行，BLOB 是 ZIP、首条目名、`sha256` 等于 BLOB 的） | S1c、S2c | 绿 |
+| 4 | 空串 162；NULL 按列类型计，nvarchar 21,431、全部类型 50,596 | 同第 3 条两处（`EMPTY_STRINGS`、`NULLS_BY_TYPE` 常量：nvarchar 21,431 / int 29,009 / float 148 / datetime 8） | S1c、S2c | 绿 |
+| 5 | 来源：抽样行按 `_src_page` / `_src_slot` 回 MDF 重解，结果一致 | `backup_store_test02::…dumps_every_table…`（`pid__T_Drawing`、`pid__T_PlantItem`、`pidd__codelists` 共 3,210 行逐列） | S2c | 绿 |
+| 6 | Manifest 拼回逐字节相同（口径见 P9） | `backup_store_test02::test02_store_keeps_the_manifest_line_by_line_and_redacts_by_default`、`backup_store_dwg::dwg_store_keeps_the_manifest_and_masks_the_oracle_password`、`backup_store_sqplant::sqplant_store_keeps_the_manifest_and_masks_the_oracle_password`，共用 `common::backup_store::check_manifest`（`keep_secrets` 库逐字节相同；默认库按 `store_redaction` 替换后相同，每条 `original_sha256` 对上） | S2b | 绿 |
+| 7 | `backup_file` 条目数和每条 SHA-256 与 zip 原件一致 | `backup_store_test02::test02_store_lists_the_outer_files_and_every_option_archive_entry`（14 外层 / 1,554 行，`.pid` 的 SHA-256 前缀按格式文档第 8 节）、`backup_store_dwg::dwg_store_lists_the_outer_files_and_every_option_archive_entry`（16 / 802）；`backup_store_test02::test02_store_embeds_file_bytes_only_when_asked` | S2a | 绿 |
+| 8 | 默认库里搜不到口令原文和加密串 | 同第 6 条三处（库文件按 UTF-8 和 UTF-16LE 搜 `DBPwds`、ConnInfo 密文、口令；口令运行时从原 Manifest 现取） | S2b | 绿 |
+| 9 | 同一输入生成两次，逐表内容相同 | `backup_store_test02::test02_store_is_written_through_a_temporary_file_and_builds_the_same_twice`（全部表含 154 张转储表逐行） | S2a、S2c | 绿 |
+| 10 | publish 改读 store 后 A01 测试通过；输出变化先说明原因 | `publish_store_parity::a01_publishes_to_the_same_bytes_from_the_mdf_the_zip_the_directory_and_a_store_file`（两份 XML 的 SHA-256 钉住：`6ab41b66…` / `44291a6c…`）、`publish_store_parity::the_staged_tables_from_the_zip_equal_those_from_the_mdf_row_for_row`、`publish_xml_cli::cli_accepts_the_plant_backup_zip_and_a_backup_store_as_input`；`publish_*` 其余 12 个文件断言未改 | S1、S4 | 绿（S1、S4 都没有输出变化） |
+| 11 | DWG：154 张空表、2,039 列，按 owner 计，重名表各在自己的角色下；类型按 Q19，标「未解码」，Manifest 和文件清单照常入库 | `backup_store_dwg::dwg_store_registers_the_oracle_tables_empty_from_the_ddl`（共用 `check_oracle_dump`：22 / 25 / 82 / 25 张，138 / 176 / 1,549 / 176 列，按类型与 NOT NULL 数，126 个不同表名，35 个视图，每表 0 行、`decoded = 0`） | S2d | 绿 |
+| 12 | `cargo test`、两种特性组合的 `clippy -D warnings`、`fmt` | 每笔提交前跑；各步提交说明和 CHANGELOG 记下数字（S5 时 `cargo test --workspace` 49 个二进制 1555 过 / 3 忽略，`--no-default-features` 1076 / 1） | 全程 | 绿 |
+| 13 | SQPlant（外部样本，缺则跳过）：154 张空表、2,024 列，四个角色按 P12 对上；Manifest 拼回；16 个顶层文件和各包条目数、SHA-256 对上，47 个 GBK 名字没有 U+FFFD；默认库搜不到口令原文 | `backup_store_sqplant::sqplant_store_lists_the_directory_and_reads_gbk_entry_names`、`backup_store_sqplant::sqplant_store_keeps_the_manifest_and_masks_the_oracle_password`（含 `check_oracle_dump`：138 / 176 / 1,534 / 176 列）、`backup_store_cli::sqplant_directory_is_built_with_its_warnings_on_stderr` | S2a–S2d、S3 | 绿（本机；无样本的机器上跳过并打印原因） |
 
 ## 登记不做（第一版）
 
@@ -231,3 +233,5 @@ Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `
 - 2026-10-09：S4（fable-5-1-5 起草 `store_load.rs` 和 P6 的 store 侧，fable-5-1-16 接着做完）：新 `src/publish/store_load.rs`，`mdf_load.rs` 删除。`open_publish_input` 按内容认四种输入（目录 / `PK\x03\x04` → Plant Backup，`.mdf` → MDF，带 `dump_table` 的 SQLite → Backup Store，其余 SQLite → legacy mirror）；Plant Backup 和 MDF 在内存里建 store，再把 24 张 publish 表按 P7 抄成 TEXT 表（`codelists` / `attributes` 取 `pidd__`，其余取 `pid__`；行按 store 的 rowid = 页链 + 槽号顺序）；`open_mdf_as_sqlite` / `load_drawing_graph_from_mdf` 保留签名、改走 store。P6：`build_backup_store_from_mdf_in_memory`，角色按 schema 名后缀认，`role_source` = `schema-name-suffix`，`input_kind` = `mdf`，`dump_kind` = `sql-server-mdf`，四个 schema 的全部用户表按角色、表名顺序入库。`pid_publish_xml` 和 `export_bundle` 收 Backup Store、Plant Backup 两种新输入（deprecation 警告只对 legacy mirror 打；目录输入的 bundle 身份取 store 的 `input_sha256` 和顶层文件大小之和）。
   数：MDF、zip、目录、store 文件四种输入，A01 的 `_Data.xml`（8,482 B，SHA-256 `6ab41b66…`）/ `_Meta.xml`（1,481 B，`44291a6c…`）逐字节相同，且与 S4 之前旧适配器的输出相同（验收第 10 条绿）；`export_bundle_publish_xml` 五种输入（加 legacy mirror）同样。抄出的 21 张业务表与旧适配器直接暂存的逐行相同（临时探针，列名、列序、行序、值全同）；`codelists` 130 → 3,206、`attributes` 80 → 798（Q18 换源），XML 不变。Q18 的连接缺陷在 TEST02 store 上查实（见事实表），issue 只写了草稿、等用户看过再开。
   测试：新 `tests/publish_store_parity.rs` 2 条（含两份 XML 的 SHA-256 钉住，Q13 的「输出若变先分析」由此有闸），`publish_xml_cli` +1，`store_load` 单测 4；`publish_*` 其余一条断言没改。验证：`cargo test --workspace` 49 个二进制 1555 过 / 3 忽略；`--no-default-features` 1076 / 1 不变；两种特性的 clippy `-D warnings`、fmt 过；rustdoc 仍是 S2c 记下的旧错。S4 做完，下一步 S5。
+- 2026-10-09：Q18 的连接缺陷按用户「照这样开」开成 issue [happyrust/pid-parse#27](https://github.com/happyrust/pid-parse/issues/27)（`bug`、`needs-triage`；fable-5-1-16）。
+- 2026-10-09：S5（fable-5-1-16）：验收 13 条逐条对到测试函数（上表「状态」列），没有缺项、不用补测试——每条的数字都已在 S1–S4 的测试常量里钉住；只改文档：`AGENTS.md` 测试表加 Backup Store 一组、常用命令的数字更新；README 的 Backup Store 一节加「验收与复现」；格式文档第 11 节「复现方法」改成跑测试 + `pid_backup_store` / `pid_publish_xml`，并把 S2b 查证的两处（`DBUids` 是 schema 名串、`PlantConnInfo` 第 1 字段是 Plant 名）改进 4.2 / 4.3 / 9 / 10 节，第 10 节补 T_Symbol 2300:1 和 Oracle 空表两条；CHANGELOG 加 S5 一节；`task_plan.md` 当前阶段加 Backup Store 一条。第一版 S0–S5 到此做完；仍等用户定的两件事（T_Symbol 2300:1 的 NULL、`PlantConnInfo` 第 1 字段与 `DBUids` 的脱敏）不改结论。

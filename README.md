@@ -202,6 +202,13 @@ publish 管线读的就是这个 store（`publish::store_load`）：`pid_publish
 TEXT 表（`codelists` / `attributes` 取 `pidd__*`），值按 MDF 适配器当年的写法：datetime
 `YYYY/M/D HH:MM:SS`、二进制大写十六进制、浮点按 Rust 的 `Display`，所以 A01 的两份 XML 一个字节不变。
 
+验收与复现：计划的 13 条验收（行数、Ghost Row、LOB、空串 / NULL、来源回核、Manifest 拼回、文件清单、
+脱敏、两次构建相同、publish 不变、DWG、门禁、SQPlant）逐条对到 `tests/backup_mdf_reader_test02.rs`、
+`tests/backup_store_{test02,dwg,sqplant,cli}.rs` 和 `tests/publish_store_parity.rs` 的函数，见计划「验收」表；
+格式文档 `docs/analysis/2026-10-08-sppid-backup-package-format-cn.md` 第 11 节给出复现命令。
+已知待定：`TEST02pid.T_Symbol.SP_ID`（NOT NULL）在页 2300 槽 1 有一个空位图置位的 NULL，库按空位图写 NULL；
+publish 的选择表连接缺陷见 [happyrust/pid-parse#27](https://github.com/happyrust/pid-parse/issues/27)。
+
 ## 库调用
 
 ### 只读解析
