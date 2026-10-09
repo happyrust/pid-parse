@@ -296,7 +296,7 @@ TEST02 的数字是 `Export.mdf` 里各表的存活行数（不含 ghost 记录�
 - `SiteConnInfo` 第 1 字段（64 字符加密串）承载的内容（`PlantConnInfo` 的第 1 字段已查证是 Plant 名，见 4.3）。
 - 选项 ID 与 SmartPlant 选项表的对应关系目前只有间接证据。
 - Oracle `exp` 行编码的完整规则（列长度前缀、NULL 标记、NUMBER / DATE 编码）尚未实现解码；Backup Store 第一版只按 DDL 登记空表（`dump_table.decoded = 0`）。
-- SQL Server 侧：`TEST02pid.T_Symbol.SP_ID` 声明 NOT NULL，页 2300 槽 1 那条记录的空位图却把它置位（变长区存着 32 字符的 UID，定长区是指针模样的字节）；SQL Server 自己读这列会不会跳过空位图没法验，Backup Store 按空位图写 NULL（S2c）。
+- SQL Server 侧：`TEST02pid.T_Symbol.SP_ID` 声明 NOT NULL，页 2300 槽 1 那条记录的空位图却把它置位（变长区存着 32 字符的 UID，定长区是指针模样的字节）；SQL Server 自己读这列会不会跳过空位图没法验；Backup Store 按空位图写 NULL（S2c，2026-10-10 定案保持）。
 
 ## 11. 复现方法
 

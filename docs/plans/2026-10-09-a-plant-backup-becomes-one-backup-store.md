@@ -189,7 +189,8 @@ S5 对账（2026-10-09，`7f59a3e` 之上）：13 条逐条对到测试函数，
 | Oracle exp 行解码 | Q3，第二版；SQPlant 是它的主样本（365,530 行） |
 | `.pid` 解析结果、参考数据解析结果入库 | Q2，第二、三版 |
 | SQPlant 的 `.pid` 解析结果入库 | Q2，第二版；现有 `pid_inspect` 53/53 能解析，留作那时的基线 |
-| 选择表连接改成 `attribute_datatype = C<n>`，连同 writer 的优先级 | Q18，单独登记的缺陷 |
+| 选择表连接改成 `attribute_datatype = C<n>`，连同 writer 的优先级 | Q18，单独登记的缺陷（[#27](https://github.com/happyrust/pid-parse/issues/27)） |
+| 「NOT NULL 列不看空位图」（`T_Symbol` 2300:1 那条 NULL 改按变长区的值写） | 用户 2026-10-10 定：按空位图写 NULL、不改；`dump_column.nullable` 让人能查到 |
 | d 与 pidd 合并 | Q18 没选 c |
 | 视图定义、`sys` 下内部表 | 自定项 |
 | Ghost Row 解成列 | Q12 |
@@ -235,3 +236,4 @@ S5 对账（2026-10-09，`7f59a3e` 之上）：13 条逐条对到测试函数，
   测试：新 `tests/publish_store_parity.rs` 2 条（含两份 XML 的 SHA-256 钉住，Q13 的「输出若变先分析」由此有闸），`publish_xml_cli` +1，`store_load` 单测 4；`publish_*` 其余一条断言没改。验证：`cargo test --workspace` 49 个二进制 1555 过 / 3 忽略；`--no-default-features` 1076 / 1 不变；两种特性的 clippy `-D warnings`、fmt 过；rustdoc 仍是 S2c 记下的旧错。S4 做完，下一步 S5。
 - 2026-10-09：Q18 的连接缺陷按用户「照这样开」开成 issue [happyrust/pid-parse#27](https://github.com/happyrust/pid-parse/issues/27)（`bug`、`needs-triage`；fable-5-1-16）。
 - 2026-10-09：S5（fable-5-1-16）：验收 13 条逐条对到测试函数（上表「状态」列），没有缺项、不用补测试——每条的数字都已在 S1–S4 的测试常量里钉住；只改文档：`AGENTS.md` 测试表加 Backup Store 一组、常用命令的数字更新；README 的 Backup Store 一节加「验收与复现」；格式文档第 11 节「复现方法」改成跑测试 + `pid_backup_store` / `pid_publish_xml`，并把 S2b 查证的两处（`DBUids` 是 schema 名串、`PlantConnInfo` 第 1 字段是 Plant 名）改进 4.2 / 4.3 / 9 / 10 节，第 10 节补 T_Symbol 2300:1 和 Oracle 空表两条；CHANGELOG 加 S5 一节；`task_plan.md` 当前阶段加 Backup Store 一条。第一版 S0–S5 到此做完；仍等用户定的两件事（T_Symbol 2300:1 的 NULL、`PlantConnInfo` 第 1 字段与 `DBUids` 的脱敏）不改结论。
+- 2026-10-10：分支推到 `origin/backup-store-v1`，PR [#28](https://github.com/happyrust/pid-parse/pull/28) 先对 `codex/phase32c-bundle-closeout` 开，再按用户要求改 base 为 `main`（`main` = `194e9e3` 是本分支的祖先，无冲突；PR 因此带上 phase32c 线上 `main` 还没有的 4 笔）。用户定：**T_Symbol 2300:1 那条按空位图写 NULL、不改**（见「登记不做」）；`PlantConnInfo` 第 1 字段与 `DBUids` 的脱敏仍待定（fable-5-1-16）。

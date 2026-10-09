@@ -7,7 +7,7 @@
 **2026-10-09 · 计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S0–S5 做完（分支 `backup-store-v1`，worktree `D:\work\plant-code\cad\pid-parse-backup-store`，未合回、未推送）**：
 一套 Plant Backup 生成一个 Backup Store（ADR-0004）。S1 修 vendored `oxidized-mdf` 五处读错（按 schema 认表、滤 Ghost Row、跟 LOB 指针、分开 `""` 与 NULL、给出页和槽，整个文件进内存随机读）；S2 `backup::store`（文件清单 + SHA-256、Manifest 保原文逐行 + 默认脱敏、SQL Server 154 张表逐行带 `_src_page` / `_src_slot`、Oracle 按 DDL 建空表标未解码）；S3 `pid_backup_store <备份> -o <store.sqlite>`；S4 publish 改读 store（`publish::store_load`，`mdf_load.rs` 删除，`pid_publish_xml` / `export_bundle` 收 Backup Store、Plant Backup、`Export.mdf`、legacy mirror 四种输入，A01 两份 XML 四种输入逐字节相同且与改前相同）；S5 验收 13 条逐条对到测试、文档收口。
 数：TEST02 154 张 37,470 行、Ghost Row 5、LOB 4、空串 162、NULL 50,596；DWG 154 张 2,039 列、SQPlant 154 张 2,024 列（仓外样本）。`cargo test --workspace` 1555 / 49 个二进制，`--no-default-features` 1076 不变。
-留给用户定：T_Symbol 2300:1 那条 NOT NULL 列的 NULL；`PlantConnInfo` 第 1 字段和 `DBUids` 的脱敏。登记不做（第二版）：Oracle exp 行解码、`.pid` / 参考数据解析结果入库、选择表连接改成 `attribute_datatype = C<n>`（[#27](https://github.com/happyrust/pid-parse/issues/27)）。
+已定（2026-10-10）：T_Symbol 2300:1 那条 NOT NULL 列按空位图写 NULL、不改。留给用户定：`PlantConnInfo` 第 1 字段和 `DBUids` 的脱敏。PR [#28](https://github.com/happyrust/pid-parse/pull/28)（base `main`）。登记不做（第二版）：Oracle exp 行解码、`.pid` / 参考数据解析结果入库、选择表连接改成 `attribute_datatype = C<n>`（[#27](https://github.com/happyrust/pid-parse/issues/27)）。
 
 **2026-10-08 · OCS 计划 `OpenCADStudio/docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D2（P-D32）**：
 `PidSemanticIndex::load_beside` 第一跳先按表示 UID 连：再开一次 `.pid` 收顶层各记录链的活 `FreeFormAttrSet` 行，UID 以完整记号所在的行 → 顶层空间映射标签 190 → 恰好一条记录才连，否则退回 `GraphicOID`；`PidSemanticObject::record_oid` 记连在哪条记录上，`graphic_oid` 仍是 XML 原值。

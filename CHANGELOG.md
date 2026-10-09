@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### 定案：`T_Symbol` 2300:1 的 NULL 按空位图写，不改（2026-10-10）
+
+S2c 查出 `TEST02pid.T_Symbol.SP_ID`（NOT NULL）在页 2300 槽 1 那条记录的空位图置位、变长区却存着 32 字符 UID，当时留给用户定。用户 2026-10-10 定：按空位图写 NULL、不改（与 Q9、50,596 的 NULL 口径一致，`dump_column.nullable` 让人能查到）。计划「登记不做」加一行，README / 格式文档第 10 节 / `task_plan.md` 的「待定」改成「已定」。分支已推到 `origin/backup-store-v1`，PR [#28](https://github.com/happyrust/pid-parse/pull/28)（base `main`）。只改文档。
+
 ### S5：Backup Store 第一版验收收口——13 条验收逐条对到测试，文档跟上（2026-10-09，Backup Store 计划 S5）
 
 计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S5（Q21）。只改文档，不改代码。
