@@ -107,6 +107,10 @@ name = "backup_msci"
 required-features = ["backup"]
 
 [[test]]
+name = "backup_mdf_reader_test02"
+required-features = ["backup"]
+
+[[test]]
 name = "backup_mtf"
 required-features = ["backup"]
 

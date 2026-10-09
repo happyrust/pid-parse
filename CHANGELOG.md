@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### S1a：MDF 读取器按槽号读，Ghost Row 不再算行（2026-10-09，Backup Store 计划 S1a）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S1a（Q10、Q12、Q13、P2）。
+
+- **vendored `oxidized-mdf` 的 `pages.rs`**：槽表按槽号读（槽 i 是页尾倒数第 i + 1 个 u16），偏移为 0 的空槽跳过，不再排序；记录长度按记录自身结构算——定长段、列数、空位图、最后一个变长列的尾偏移（高位是 complex 标志，掩掉）、有版本标记再加 14 字节，转发桩 9 字节——不再取下一个槽的偏移；
+  类型 5 / 6 / 7 的 Ghost Row 不进 `Page::records()`，由 `Page::slotted_records()` 原样给出（槽号、偏移、类型、字节）；页头多读页号（32–35）和 GhostRecCnt（58–59）。
+- **`lib.rs`**：`rows` / `try_rows` 随之按槽号出行、不含 Ghost Row；新 `MdfDatabase::ghost_rows(表名)` 按页链和槽号给出 `GhostRow { page_id, slot, record_type, bytes }`。两个文件顶部的 GPL §5(a) 修改说明各加了 2026-10-09 一段。
+- TEST02：Ghost Row 正好 5 行、都是类型 6——`T_Equipment`、`T_EquipmentOther`、`T_PlantItem`、`T_SmartFrameStorage`、`T_Symbol` 各 1 行，字节与各自的槽在 MDF 里指向的字节相同，所在页页头 GhostRecCnt 都是 1；
+  这 5 张表的活行各少 1（`T_PlantItem` 4 → 3、`T_Equipment` 2 → 1、`T_EquipmentOther` 1 → 0、`T_SmartFrameStorage` 2 → 1、`T_Symbol` 4 → 3），其余 123 个表名（各取第一张同名表）行数不变。
+- publish（Q13）：A01 的 `_Data.xml`（8,482 B）和 `_Meta.xml`（1,481 B）改前改后逐字节相同；只有 `publish_mdf_load` 钉的 `T_PlantItem` 4 → 3。
+- 测试：vendored 单测 37 → 43（乱序槽、ghost 数据记录、变长列尾偏移定长度、空槽、版本标记、页头字段）；新 `tests/backup_mdf_reader_test02.rs`（S1 的 TEST02 读取器测试，先放 Ghost Row 一条）；
+  vendored 集成测试 `tbl_Bankleitzahlen` 3549 → 3548，少的一行是该表唯一的 Ghost Row（页头 GhostRecCnt 1）。`rows::case_5`（`tbl_Mitglied` 第 1 行的 `Kontosaldo`）改动前就失败——行解析在前面的 datetime2 列停下——这次没动。
+- 验证：`cargo test --workspace` 43 个二进制 1504 过 / 3 忽略；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；`clippy --workspace --all-targets -D warnings` 两种特性都过；vendored crate 自己的 `clippy --all-targets -D warnings` 过，`cargo test` 单测 43 过、集成测试 19 / 20（只剩上面那条旧失败）；`cargo fmt --all --check` 过。
+  `check-missing-docs.sh` 现在给不出数：`cargo rustdoc --lib` 在 `decode_igrectangles`、`IGDIMENSION_LINEAR_BLOCK_LEN`、`decode_igdimensions` 三处文档链到私有项而报错（主树 `1ed140a` 上一样，9 月就有）；本笔 `pid-parse` 库代码没动。
+
 ### `pid_backup_probe` 认出 Oracle `exp` 导出，提示与 `pid_backup_extract` 相同（2026-10-09）
 
 - 起因：审计 SQPlant 备份（`D:\work\cad\pid-test-data`，Oracle 后端）时，`pid_backup_probe` 只报 `not an MTF stream: … (got tag ????)`，而 `pid_backup_extract` 早就认出是 Oracle `exp` 并给出处理建议。

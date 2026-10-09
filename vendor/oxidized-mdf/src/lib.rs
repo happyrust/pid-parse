@@ -9,6 +9,9 @@
 //   - Changed read() to read_exact() for page integrity
 //   - Upgraded to edition 2021, uuid 1.x
 //   - Added #![warn(...)] lint set to mirror parent crate's quality gate
+// Modified: 2026-10-09 by happyrust
+//   - rows / try_rows read records in slot order and leave ghost records out
+//   - Added GhostRow and MdfDatabase::ghost_rows: a table's ghost records, raw
 
 #![allow(dead_code)]
 // Mirror the pedantic lint subset baked into the parent `pid-parse`
@@ -52,7 +55,7 @@ mod pages;
 mod sys;
 
 use crate::error::Error;
-use crate::pages::{BootPage, Page, PagePointer, Record};
+use crate::pages::{BootPage, Page, PagePointer, Record, SlottedRecord};
 use crate::sys::{BaseTableData, Column};
 use chrono::{DateTime, Utc};
 use core::fmt::{Display, Formatter};
@@ -226,6 +229,54 @@ impl MdfDatabase {
                 }),
         )
     }
+
+    /// Returns the ghost rows of the given table, in page-chain and slot
+    /// order. A page that cannot be read yields an `Err` in its place.
+    pub fn ghost_rows<'a, 'b: 'a>(
+        &'b mut self,
+        table_name: &str,
+    ) -> Option<impl Iterator<Item = Result<GhostRow, Error>> + 'a> {
+        let table = self.base_table_data.table(table_name)?;
+        let page_pointers = table.page_pointers();
+
+        Some(
+            self.page_reader
+                .read_pages_of_pointers(page_pointers)
+                .flat_map(|page| {
+                    let page = match page {
+                        Ok(page) => page,
+                        Err(err) => return vec![Err(err)],
+                    };
+                    let page_id = page.header().page_id;
+                    page.slotted_records()
+                        .into_iter()
+                        .filter(SlottedRecord::is_ghost)
+                        .map(|record| {
+                            Ok(GhostRow {
+                                page_id,
+                                slot: record.slot,
+                                record_type: record.record_type,
+                                bytes: record.bytes.to_vec(),
+                            })
+                        })
+                        .collect()
+                }),
+        )
+    }
+}
+
+/// A row deleted from a table whose bytes its page still holds, because the
+/// database had not reclaimed them yet. [`MdfDatabase::rows`] never yields it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GhostRow {
+    /// Page the record sits on.
+    pub page_id: u32,
+    /// The record's slot in that page.
+    pub slot: u16,
+    /// 5 ghost index, 6 ghost data or 7 ghost version record.
+    pub record_type: u8,
+    /// The record's bytes exactly as stored.
+    pub bytes: Vec<u8>,
 }
 
 fn parse_record_columns_lenient(record: Record<'_>, columns: &[Column<'_>]) -> Row {

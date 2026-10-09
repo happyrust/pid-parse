@@ -77,8 +77,9 @@ fn first_row(file: &str, table_name: &str, column: &str, value: &str) -> Result<
     count,
     case("AWLT2005.mdf", "Address", 450),
     case("spg_verein_TST.mdf", "tbl_Mitglied", 13),
-    // TODO: 3643 should be the correct number
-    case("spg_verein_TST.mdf", "tbl_Bankleitzahlen", 3549)
+    // TODO: 3643 should be the correct number. 3549 used to count the
+    // table's one ghost record (its page header's GhostRecCnt is 1).
+    case("spg_verein_TST.mdf", "tbl_Bankleitzahlen", 3548)
 )]
 fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<(), Error> {
     let mut db = MdfDatabase::open(format!("data/{}", file))?;

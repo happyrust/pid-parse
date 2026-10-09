@@ -24,7 +24,8 @@ fn mdf_adapter_loads_a01_publish_core_tables() {
     assert_eq!(table_count(&conn, "T_Representation"), 6);
     assert_eq!(table_count(&conn, "T_Relationship"), 3);
     assert_eq!(table_count(&conn, "T_ModelItem"), 4);
-    assert_eq!(table_count(&conn, "T_PlantItem"), 4);
+    // Live rows only: the table's fourth record is a ghost (backup_mdf_reader_test02).
+    assert_eq!(table_count(&conn, "T_PlantItem"), 3);
     assert_eq!(table_count(&conn, "T_Connector"), 1);
     assert_eq!(table_count(&conn, "T_PipeRun"), 1);
     let date_created: String = conn

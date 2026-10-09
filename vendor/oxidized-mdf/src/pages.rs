@@ -9,6 +9,11 @@
 //   - Added manual i24 sign-extension for datetime2
 //   - Extended column type coverage to 27 SQL Server types
 //   - Clippy pass: div_ceil, Option::map, trimmed range parens, array literal
+// Modified: 2026-10-09 by happyrust
+//   - Slot array read in slot order (slot i at 8192 - 2(i + 1)); unused (0) slots skipped
+//   - Record length taken from the record's own layout instead of the next slot's offset
+//   - Ghost records (types 5-7) kept out of Page::records() and handed out raw through
+//     Page::slotted_records(); the page header also yields its page id and ghost count
 
 use bitvec::{order::Lsb0, slice::BitSlice};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -20,6 +25,8 @@ use uuid::Uuid;
 pub(crate) struct PageHeader {
     pub(crate) slot_count: u16,
     pub(crate) next_page_pointer: Option<PagePointer>,
+    pub(crate) page_id: u32,
+    pub(crate) ghost_record_count: u16,
 }
 
 #[derive(Debug)]
@@ -751,9 +758,13 @@ impl TryFrom<[u8; 8192]> for BootPage {
 /// Bytes       Content
 /// -----       -------
 /// ...         ?
-//  16-19       NextPageID (int)
+/// 16-19       NextPageID (int)
 /// 20-21       NextPageFileID (smallint)
 /// 22-23       SlotCnt (smallint)
+/// 24-31       ?
+/// 32-35       PageID (int)
+/// 36-57       ?
+/// 58-59       GhostRecCnt (smallint)
 /// ...         ?
 /// ```
 impl TryFrom<&[u8]> for PageHeader {
@@ -772,12 +783,113 @@ impl TryFrom<&[u8]> for PageHeader {
         } else {
             None
         };
-        let (_, slot_count) = parse_le_u16(bytes, "Page header must be 96 bytes.")?;
+        let (bytes, slot_count) = parse_le_u16(bytes, "Page header must be 96 bytes.")?;
+        let (bytes, _) = take_bytes(bytes, 8, "Page header must be 96 bytes.")?;
+        let (bytes, page_id) = parse_le_u32(bytes, "Page header must be 96 bytes.")?;
+        let (bytes, _) = take_bytes(bytes, 22, "Page header must be 96 bytes.")?;
+        let (_, ghost_record_count) = parse_le_u16(bytes, "Page header must be 96 bytes.")?;
 
         Ok(PageHeader {
             slot_count,
             next_page_pointer,
+            page_id,
+            ghost_record_count,
         })
+    }
+}
+
+/// Bytes at the start of every page that hold its header; no record starts
+/// inside them.
+const PAGE_HEADER_LEN: usize = 96;
+
+/// A forwarding stub is its status byte and the 8-byte RID of the row it
+/// forwards to.
+const FORWARDING_STUB_LEN: usize = 9;
+
+/// Bytes of the versioning tag a record carries after its last column when
+/// bit 6 of its first status byte is set.
+const VERSIONING_TAG_LEN: usize = 14;
+
+fn record_type_of(status_a: u8) -> u8 {
+    (status_a & 0b0000_1110) >> 1
+}
+
+/// Length of the record at the start of `bytes`, read from its own layout:
+/// the fixed-length region, the column count, the null bitmap, the end
+/// offset of its last variable-length column and a trailing versioning tag.
+/// The next slot's offset says nothing about it: free space or a deleted
+/// record's bytes may lie in between.
+fn record_len(bytes: &[u8]) -> Result<usize, &'static str> {
+    let (_, status) = take_bytes(bytes, 1, "record too short for header")?;
+    let status_a = status[0];
+    if record_type_of(status_a) == 2 {
+        take_bytes(bytes, FORWARDING_STUB_LEN, "forwarding stub truncated")?;
+        return Ok(FORWARDING_STUB_LEN);
+    }
+
+    let (_, header) = take_bytes(bytes, 4, "record too short for header")?;
+    let fixed_end = usize::from(u16::from_le_bytes([header[2], header[3]]));
+    if fixed_end < 4 {
+        return Err("record fixed-length size smaller than header");
+    }
+    let after_fixed = bytes
+        .get(fixed_end..)
+        .ok_or("record fixed-length region exceeds record bounds")?;
+    let (_, column_count) = parse_le_u16(after_fixed, "record too short for column count")?;
+    let mut end = fixed_end + 2;
+
+    if status_a & 0b0001_0000 != 0 {
+        end += usize::from(column_count).div_ceil(8);
+    }
+
+    if status_a & 0b0010_0000 != 0 {
+        let at_count = bytes
+            .get(end..)
+            .ok_or("record too short for variable-length column count")?;
+        let (_, variable_count) = parse_le_u16(
+            at_count,
+            "record too short for variable-length column count",
+        )?;
+        end += 2 + 2 * usize::from(variable_count);
+        if variable_count > 0 {
+            let last = bytes
+                .get(end - 2..end)
+                .ok_or("record too short for variable-length column lengths")?;
+            // The high bit marks a complex column; the low 15 bits are still its end offset.
+            let last_end = usize::from(u16::from_le_bytes([last[0], last[1]]) & 0x7FFF);
+            if last_end < end {
+                return Err("variable column end offset precedes the offset array");
+            }
+            end = last_end;
+        }
+    }
+
+    if status_a & 0b0100_0000 != 0 {
+        end += VERSIONING_TAG_LEN;
+    }
+
+    if end > bytes.len() {
+        return Err("record extends past the slot array");
+    }
+    Ok(end)
+}
+
+/// A record exactly as a slot of its page points at it.
+#[derive(Debug)]
+pub(crate) struct SlottedRecord<'a> {
+    pub(crate) slot: u16,
+    pub(crate) offset: usize,
+    /// Bits 1-3 of the first status byte.
+    pub(crate) record_type: u8,
+    /// The record's own bytes, as long as its layout says.
+    pub(crate) bytes: &'a [u8],
+}
+
+impl SlottedRecord<'_> {
+    /// Ghost index, ghost data and ghost version records (types 5-7): rows
+    /// deleted but not yet reclaimed.
+    pub(crate) fn is_ghost(&self) -> bool {
+        matches!(self.record_type, 5..=7)
     }
 }
 
@@ -792,77 +904,84 @@ impl Page {
         &self.header
     }
 
-    fn slots(&self) -> Vec<usize> {
-        let slot_count = self.header.slot_count as usize;
-        let mut slots = Vec::with_capacity(slot_count);
-
-        let Some(slot_bytes_len) = slot_count.checked_mul(2) else {
-            log::error!("Skipping malformed slot directory: slot count {slot_count} overflows");
-            return slots;
-        };
-        let Some(slot_range_start) = self.bytes.len().checked_sub(slot_bytes_len) else {
+    /// Where the slot array begins; every record ends before it. `None` when
+    /// the header claims more slots than the page holds.
+    fn slot_array_start(&self) -> Option<usize> {
+        let slot_count = usize::from(self.header.slot_count);
+        let start = self.bytes.len().checked_sub(slot_count * 2);
+        if start.is_none() {
             let page_size = self.bytes.len();
             log::error!(
                 "Skipping malformed slot directory: {slot_count} slots exceed page size {page_size}"
             );
-            return slots;
-        };
-        let mut slot_bytes = &self.bytes[slot_range_start..];
-
-        while !slot_bytes.is_empty() {
-            let (remaining_bytes, slot_value) =
-                match parse_le_u16(slot_bytes, "page slot directory entry truncated") {
-                    Ok(parsed) => parsed,
-                    Err(err) => {
-                        log::error!("Skipping malformed slot directory: {err}");
-                        return Vec::new();
-                    }
-                };
-            slots.push(slot_value as usize);
-            slot_bytes = remaining_bytes;
         }
-
-        slots.sort_unstable();
-
-        slots
+        start
     }
 
-    pub(crate) fn records<'a, 'b: 'a>(&'b self) -> Vec<Record<'a>> {
-        let mut records = Vec::with_capacity(self.header.slot_count as usize);
+    /// The slot array in slot order, each slot paired with the offset it
+    /// holds. Slot `i` is the two bytes ending `2 * i` bytes before the page
+    /// end. Unused slots (offset 0) are left out.
+    fn slot_offsets(&self, slot_array_start: usize) -> Vec<(u16, usize)> {
+        let (entries, _) = self.bytes[slot_array_start..].as_chunks::<2>();
+        entries
+            .iter()
+            .rev()
+            .enumerate()
+            .filter_map(|(slot, entry)| {
+                let offset = usize::from(u16::from_le_bytes(*entry));
+                (offset != 0).then_some((slot as u16, offset))
+            })
+            .collect()
+    }
 
-        let slots = self.slots();
-        for (index, slot) in slots.iter().enumerate() {
-            let range = match slots.get(index + 1) {
-                Some(next_slot) => *slot..*next_slot,
-                None => *slot..self.bytes.len(),
-            };
+    /// Every record the slot array points at, live and ghost, in slot order.
+    pub(crate) fn slotted_records(&self) -> Vec<SlottedRecord<'_>> {
+        let Some(records_end) = self.slot_array_start() else {
+            return Vec::new();
+        };
 
-            if range.start >= self.bytes.len()
-                || range.start >= range.end
-                || range.end > self.bytes.len()
-            {
+        let mut records = Vec::with_capacity(usize::from(self.header.slot_count));
+        for (slot, offset) in self.slot_offsets(records_end) {
+            if offset < PAGE_HEADER_LEN || offset >= records_end {
                 log::error!(
-                    "Skipping malformed record slot range {}..{} (page size {})",
-                    range.start,
-                    range.end,
-                    self.bytes.len()
+                    "Skipping malformed record slot {slot}: offset {offset} outside {PAGE_HEADER_LEN}..{records_end}"
                 );
                 continue;
             }
 
-            match Record::try_from(&self.bytes[range.clone()]) {
-                Ok(record) => records.push(record),
+            let area = &self.bytes[offset..records_end];
+            match record_len(area) {
+                Ok(len) => records.push(SlottedRecord {
+                    slot,
+                    offset,
+                    record_type: record_type_of(area[0]),
+                    bytes: &area[..len],
+                }),
                 Err(err) => {
-                    log::error!(
-                        "Skipping malformed record slot {}..{}: {}",
-                        range.start,
-                        range.end,
-                        err
-                    );
+                    log::error!("Skipping malformed record slot {slot} at offset {offset}: {err}");
                 }
             }
         }
         records
+    }
+
+    /// The live records, ghosts left out, in slot order.
+    pub(crate) fn records<'a, 'b: 'a>(&'b self) -> Vec<Record<'a>> {
+        self.slotted_records()
+            .into_iter()
+            .filter(|slotted| !slotted.is_ghost())
+            .filter_map(|slotted| match Record::try_from(slotted.bytes) {
+                Ok(record) => Some(record),
+                Err(err) => {
+                    log::error!(
+                        "Skipping malformed record slot {} at offset {}: {err}",
+                        slotted.slot,
+                        slotted.offset
+                    );
+                    None
+                }
+            })
+            .collect()
     }
 
     pub(crate) fn next_page_pointer(&self) -> Option<&PagePointer> {
@@ -1197,5 +1316,133 @@ mod tests {
         let (parsed_value, _record) = record.parse_binary().unwrap();
 
         assert_eq!(expected_value, parsed_value.unwrap());
+    }
+
+    /// A page whose slot `i` points at offset `records[i].0`, where the bytes
+    /// `records[i].1` are placed; offset 0 leaves the slot unused.
+    fn synthetic_page(records: &[(usize, &[u8])]) -> Page {
+        let mut bytes = [0u8; 8192];
+        bytes[22..24].copy_from_slice(&(records.len() as u16).to_le_bytes());
+        for (slot, (offset, record)) in records.iter().enumerate() {
+            bytes[*offset..offset + record.len()].copy_from_slice(record);
+            let entry = 8192 - 2 * (slot + 1);
+            bytes[entry..entry + 2].copy_from_slice(&(*offset as u16).to_le_bytes());
+        }
+        Page::try_from(bytes).expect("synthetic page header should be valid")
+    }
+
+    /// A record of `record_type` holding one int column and the given
+    /// variable-length values, with a null bitmap.
+    fn data_record(record_type: u8, int: i32, variable: &[&[u8]]) -> Vec<u8> {
+        let mut status_a = (record_type << 1) | 0b0001_0000;
+        if !variable.is_empty() {
+            status_a |= 0b0010_0000;
+        }
+        let mut bytes = vec![status_a, 0, 8, 0];
+        bytes.extend_from_slice(&int.to_le_bytes());
+        let column_count = 1 + variable.len();
+        bytes.extend_from_slice(&(column_count as u16).to_le_bytes());
+        bytes.resize(bytes.len() + column_count.div_ceil(8), 0);
+        if !variable.is_empty() {
+            bytes.extend_from_slice(&(variable.len() as u16).to_le_bytes());
+            let mut end = bytes.len() + 2 * variable.len();
+            for value in variable {
+                end += value.len();
+                bytes.extend_from_slice(&(end as u16).to_le_bytes());
+            }
+            for value in variable {
+                bytes.extend_from_slice(value);
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn slots_are_read_in_slot_order_not_offset_order() {
+        let first = data_record(0, 1, &[]);
+        let second = data_record(0, 2, &[]);
+        let page = synthetic_page(&[(300, &first), (96, &second)]);
+
+        let slotted = page.slotted_records();
+        assert_eq!(
+            vec![(0, 300), (1, 96)],
+            slotted
+                .iter()
+                .map(|record| (record.slot, record.offset))
+                .collect::<Vec<_>>()
+        );
+        let ints = page
+            .records()
+            .into_iter()
+            .map(|record| record.parse_i32().expect("int column").0)
+            .collect::<Vec<_>>();
+        assert_eq!(vec![1, 2], ints);
+    }
+
+    #[test]
+    fn ghost_data_record_is_left_out_of_records_and_kept_byte_for_byte() {
+        let live = data_record(0, 7, &[b"ab"]);
+        let ghost = data_record(6, 8, &[b"cd"]);
+        let page = synthetic_page(&[(96, &live), (200, &ghost)]);
+
+        assert_eq!(1, page.records().len());
+        let ghosts = page
+            .slotted_records()
+            .into_iter()
+            .filter(SlottedRecord::is_ghost)
+            .collect::<Vec<_>>();
+        assert_eq!(1, ghosts.len());
+        assert_eq!((1, 6), (ghosts[0].slot, ghosts[0].record_type));
+        assert_eq!(&ghost[..], ghosts[0].bytes);
+    }
+
+    #[test]
+    fn record_length_follows_the_last_variable_column_end_offset() {
+        let record = data_record(0, 3, &[b"xyz", b"w"]);
+        let mut with_free_space = record.clone();
+        with_free_space.extend_from_slice(&[0xEE; 20]);
+        let next = data_record(0, 4, &[]);
+        let page = synthetic_page(&[(96, &with_free_space), (96 + with_free_space.len(), &next)]);
+
+        let slotted = page.slotted_records();
+        assert_eq!(&record[..], slotted[0].bytes);
+        assert_eq!(&next[..], slotted[1].bytes);
+    }
+
+    #[test]
+    fn unused_slots_are_skipped() {
+        let record = data_record(0, 5, &[]);
+        let page = synthetic_page(&[(0, &[]), (96, &record)]);
+
+        assert_eq!(
+            vec![1],
+            page.slotted_records()
+                .iter()
+                .map(|record| record.slot)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn versioning_tag_belongs_to_the_record() {
+        let mut record = data_record(0, 6, &[b"v"]);
+        record[0] |= 0b0100_0000;
+        record.extend_from_slice(&[0xAB; 14]);
+        let page = synthetic_page(&[(96, &record)]);
+
+        assert_eq!(&record[..], page.slotted_records()[0].bytes);
+    }
+
+    #[test]
+    fn page_header_reads_page_id_and_ghost_record_count() {
+        let mut bytes = [0u8; 8192];
+        bytes[32..36].copy_from_slice(&1234u32.to_le_bytes());
+        bytes[58..60].copy_from_slice(&2u16.to_le_bytes());
+
+        let page = Page::try_from(bytes).expect("synthetic page header should be valid");
+        assert_eq!(
+            (1234, 2),
+            (page.header().page_id, page.header().ghost_record_count)
+        );
     }
 }
