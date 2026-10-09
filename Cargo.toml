@@ -86,6 +86,10 @@ required-features = ["backup"]
 name = "pid_publish_xml"
 required-features = ["backup"]
 
+[[bin]]
+name = "pid_backup_store"
+required-features = ["backup"]
+
 [[example]]
 name = "publish_walkthrough"
 required-features = ["backup"]
@@ -119,6 +123,10 @@ required-features = ["backup"]
 
 [[test]]
 name = "backup_refdata_real_dir"
+required-features = ["backup"]
+
+[[test]]
+name = "backup_store_cli"
 required-features = ["backup"]
 
 [[test]]

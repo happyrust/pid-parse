@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### S3：命令行 `pid_backup_store <Plant Backup> -o <store.sqlite>`（2026-10-09，Backup Store 计划 S3）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S3（Q17、Q15、Q2 的 `--embed-files`）。
+
+- **新 bin `src/bin/pid_backup_store.rs`**（`Cargo.toml` `[[bin]]`，`required-features = ["backup"]`）：`pid_backup_store <Plant Backup> -o <store.sqlite> [--force] [--keep-secrets] [--embed-files]`，`-o` / `--out` 必填，输入是 `<Plant>_p.zip` 或解开的目录。输出已存在且没加 `--force` 就拒绝（退出 1，文件不动）；store 由库先写 `<输出>.tmp` 再改名。参数错（缺输入、缺 `-o`、`-o` 没带路径、未知旗标、两个输入、两个 `-o`）打印 `argument error: …` 和用法后退出 2；`-h` / `--help` 把用法打到 stdout 退出 0；输入读不了或 store 没写成退出 1。成功时 stdout 四行汇总——文件数（含 embedded 数）、Manifest 行数与脱敏处数、表数 / 行数 / Ghost Row / LOB 数、警告数——警告逐条进 stderr（`warning: …`）。
+- 测试：新 `tests/backup_store_cli.rs`（5 条：`--help` / `-h`；四种参数错都退出 2、不碰输出、用法进 stderr；输入不存在退出 1、不留 `.tmp`；TEST02 建库 + 汇总逐字相同 + 库里的数 + 再跑一次被拒、文件不变 + `--force --keep-secrets --embed-files` 覆盖后 `redacted = 0`、`files_embedded = 1`、1,348 个文件（1,554 条里 206 条是目录）的字节都进了 `backup_file_content`，`PlantConfig.xml` / `Manifest.txt` 的字节与 zip 原件相同；SQPlant 目录输入跑通，stdout 865 文件 / 322 行 / 15 处脱敏 / 154 张表 0 行 / 2 条警告，stderr 两条警告逐字相同，缺样本则跳过）；bin 的单测 3（参数解析、报错文字、汇总文字）。验收第 13 条的「目录输入跑通」部分绿。
+- README 加「Backup Store：一套 Plant Backup 生成一个 SQLite」一节：用法、库里每张表是什么、退出码。
+- 验证：`cargo test --workspace` 48 个二进制 1548 过 / 3 忽略（46 → 48 是新 bin 的单测和 `backup_store_cli`，1540 → 1548）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过。vendored crate 没动；`check-missing-docs.sh` 的 `cargo rustdoc` 仍是 S2c 记下的那 4 处旧错。
+
 ### S2d：Oracle 转储——DDL 扫描进库、按 `CONNECT` owner 归属，154 张 `<角色>__<表>` 空表标「未解码」（2026-10-09，Backup Store 计划 S2d）
 
 计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S2d（Q3、Q16、Q19、Q20、P12）。

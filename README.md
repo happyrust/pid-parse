@@ -150,6 +150,38 @@ MDF 样板：
 作为入口；若该 MDF 缺失，这两组 DWG 侧测试会 soft-skip，并在
 输出中明确提示“DWG canonical-field enrichment / branch-point parity 未验证”。
 
+### Backup Store：一套 Plant Backup 生成一个 SQLite
+
+`pid_backup_store` 把一套 SmartPlant P&ID 的 Plant Backup——SmartPlant 写出的
+`<Plant>_p.zip`，或它解开的目录（只收顶层文件）——写进一个 SQLite 文件
+（计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md`，ADR-0004）：
+
+```bash
+# zip 原件 → store；输出已存在时拒绝，加 --force 才覆盖
+cargo run --bin pid_backup_store -- test-file/backup-test/TEST02_p.zip -o TEST02.sqlite
+
+# 解开的目录也行（目录输入会提示：文本文件的换行可能被改过）
+cargo run --bin pid_backup_store -- D:\backups\SQPlant -o SQPlant.sqlite --force
+
+# 保留 Manifest 里的口令和加密串原文（默认换成 SHA-256），并把每个文件的字节也存进去
+cargo run --bin pid_backup_store -- TEST02_p.zip -o TEST02.sqlite --keep-secrets --embed-files
+```
+
+库里有什么：
+
+| 表 | 内容 |
+|---|---|
+| `store_info` | 工具名、版本、输入种类（`zip` / `directory`）与 SHA-256、是否脱敏、是否收了文件字节、`dump_kind`（`sql-server-mtf` / `oracle-exp`） |
+| `backup_file`（`backup_file_content`） | 外层文件和每个 Option Archive（`PlantData~…zip` / `RefData~…zip`，只展开一层）的条目：路径（原字节 + 编码，SQPlant 的 GBK 名字能解出来）、大小、SHA-256、格式；`--embed-files` 时字节进 `backup_file_content` |
+| `manifest_line` / `manifest_field` / `manifest_field_meaning` + 视图 | `Manifest.txt` 逐行保原文（连行尾），字段按位置存；语义确认了的 key 有视图（`manifest_conn_info`、`manifest_table_entry`、`manifest_file`、`manifest_value` …）；`store_redaction` 记下默认脱敏换掉的每一处 |
+| `dump_schema` / `dump_table` / `dump_column` / `dump_view` | Database Dump 的目录：四个 Schema Role（`plant` / `plantd` / `pid` / `pidd`）、154 张表、每列的源类型与可空、35 个视图的名字 |
+| `<角色>__<表>` | SQL Server 备份（TEST02 这类）：逐行解码，`nvarchar` → TEXT（空串与 NULL 分开）、`int` → INTEGER、`float` → REAL、`datetime` → `YYYY-MM-DD HH:MM:SS.fff`、`image` → BLOB，每行带 `_src_page` / `_src_slot`，可回 MDF 核对；Oracle 备份（DWG、SQPlant）：按 `exp` dump 里的 DDL 建同名空表，`dump_table.decoded = 0`，行解码留给第二版 |
+| `dump_ghost_row` / `dump_lob` | SQL Server 的 Ghost Row 原始字节；每个 LOB 值的根页、根槽、长度和 SHA-256 |
+
+同一输入生成两次，逐表内容相同；库里不写时间和路径。先写 `<输出>.tmp` 再改名。
+结束时 stdout 打印文件数、Manifest 行数与脱敏处数、表数 / 行数 / Ghost Row / LOB 数和警告数，警告逐条进 stderr。
+退出码：0 成功，1 输入读不了或 store 没写成（含输出已存在且没加 `--force`），2 参数错。
+
 ## 库调用
 
 ### 只读解析
