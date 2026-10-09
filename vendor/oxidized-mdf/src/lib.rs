@@ -17,7 +17,9 @@
 //   - The whole file is held in memory and pages are read by id in any order; open and
 //     from_read load the file first. rows / try_rows / ghost_rows / scan_table take &self
 //   - text / ntext / image columns follow their 16-byte text pointer to the LOB's root and
-//     data fragments (PageReader::read_lob); scan_table names each LOB's root (LobRef)
+//     data fragments (PageReader::read_lob); scan_table names each LOB's root (LobRef).
+//     ntext is decoded as UTF-16LE; image and text are handed out as bytes (the code page
+//     of a text column is not known to the reader)
 //   - datetime is built from its stored days and ticks (pages::datetime_from_parts)
 //   - An nvarchar / varchar column zero bytes long is "" and no longer NULL
 
@@ -431,12 +433,13 @@ fn is_lob_type(type_name: &str) -> bool {
     matches!(type_name, "text" | "ntext" | "image")
 }
 
-/// A LOB value as [`Value`]: `image` as bytes, `ntext` as UTF-16LE text,
-/// `text` as single-byte text decoded as UTF-8.
+/// A LOB value as [`Value`]: `ntext` as UTF-16LE text, `image` as bytes,
+/// and `text` as bytes too. A `text` column is single-byte text in the
+/// code page of its collation, which the reader does not know; the bytes
+/// are handed out as stored rather than decoded by a guess.
 fn lob_value(type_name: &str, bytes: Vec<u8>) -> Value {
     match type_name {
         "ntext" => Value::String(encoding_rs::UTF_16LE.decode(&bytes).0.into_owned()),
-        "text" => Value::String(encoding_rs::UTF_8.decode(&bytes).0.into_owned()),
         _ => Value::Binary(bytes),
     }
 }
@@ -929,6 +932,21 @@ mod tests {
             Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
             _ => panic!("Unexpected result"),
         }
+    }
+
+    #[test]
+    fn a_lob_is_text_only_when_its_column_is_ntext() {
+        let utf16 = b"a\0\xe4\x00".to_vec();
+        assert_eq!(
+            Value::String(String::from("a\u{e4}")),
+            lob_value("ntext", utf16.clone())
+        );
+        // Single-byte text in an unknown code page stays bytes, as image does.
+        assert_eq!(
+            Value::Binary(utf16.clone()),
+            lob_value("text", utf16.clone())
+        );
+        assert_eq!(Value::Binary(utf16.clone()), lob_value("image", utf16));
     }
 
     #[test]

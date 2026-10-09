@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### S1c 审查后的两处修正：`text` LOB 不再按 UTF-8 猜解；计划里的「NULL 21,431」写明是 nvarchar 的数（2026-10-09，Backup Store 计划 S1c）
+
+S1c（`eda765b`）的只读审查，数全部对上；用户采纳了两条意见。
+
+- **vendored `oxidized-mdf` 的 `lib.rs`**：`lob_value` 对 `text` 列不再按 UTF-8 解成 `Value::String`，改为原字节 `Value::Binary`，和 `image` 一样。`text` 是排序规则代码页里的单字节文本，读取器不知道代码页，按 UTF-8 解会把非 ASCII 静默换成 U+FFFD；按计划「不猜」的路子，原字节交出去。`ntext` 仍按 UTF-16LE 解。TEST02 没有 `text` / `ntext` 列，行为不变；文件头的修改说明跟着改。单测 +1（`a_lob_is_text_only_when_its_column_is_ntext`）。
+- **计划**：事实表「空串 / NULL」一行和验收第 4 条原来只写「NULL 21,431」，没说是 nvarchar 列的数；现写明按列类型计——nvarchar 21,431、int 29,009、float 148、datetime 8，合计 50,596，全是空位图置位、没有「记录没存的列」——免得 S2 的 `backup_store_test02` 再对错口径。同一行补了 `T_Drawing` 4 个空串所在的列（`Description` / `Revision` / `Title` / `Version`，publish 的 `load_drawing` 不读这四列，所以 A01 输出不变是应该的）。门禁记录加审查一条，含审查时另验出的事实（4 个 LOB 都是内部自洽的 ZIP；65,536 字节那个的 ZIP 在 38,535 字节处结束、其后 27,001 字节不是全零）和留给 S2c 的两条限制。
+- 验证：`cargo test --workspace` 43 个二进制 1506 过 / 3 忽略；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；vendored crate 的 `clippy --all-targets -D warnings` 过，单测 67 过（66 + 1），集成测试 22 / 23（只剩 `rows::case_5`）。TEST02 没有 `text` 列，`backup_mdf_reader_test02` 的数不变。
+
 ### S1c：MDF 读取器随机读页、跟文本指针读 LOB、空串与 NULL 分开、datetime 整数换算（2026-10-09，Backup Store 计划 S1c）
 
 计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S1c（Q9、Q11、P2、P3）。

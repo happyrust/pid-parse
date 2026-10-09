@@ -53,7 +53,7 @@ SQL Server 备份逐行解码，每行带 MDF 的页号和槽号；Oracle 备份
 | TEST02 列 | 1,798 列：nvarchar 856、int 650、float 263、datetime 27、image 2 | `syscolpars` |
 | Ghost Row | TEST02pid 的 `T_PlantItem`、`T_Equipment`、`T_EquipmentOther`、`T_SmartFrameStorage`、`T_Symbol` 各 1 行；前两张 publish 会读 | 逐页逐槽统计 |
 | LOB | `T_DrawingVersion.SP_Storage` 3 个值（18 个 LOB 页）、`T_SmartFrameStorage.SP_Storage` 1 个值，都是 ZIP，第一个条目分别是 `Drawing.xml`、`A01-JSite204.tmp` | 同上 |
-| 空串 / NULL | 空串 162 个，分布在 10 张表（`T_Drawing` 4 个，publish 会读）；NULL 21,431 个 | 同上 |
+| 空串 / NULL | 空串 162 个，分布在 10 张表（`T_Drawing` 4 个，在 `Description` / `Revision` / `Title` / `Version`，publish 不读这四列）；NULL 按列类型计：nvarchar 21,431、int 29,009、float 148、datetime 8，合计 50,596，全是空位图置位，没有「记录没存的列」（154 张表没有短记录）。本文说「NULL 21,431」指 nvarchar 的数 | 同上；S1c 复核（2026-10-09） |
 | 读取器：按名取表 | `BaseTableData::table` 取第一张同名表；`Sysschobj.nsid` 读了没用；`sysclsobjs` 没读 | `vendor/oxidized-mdf/src/sys.rs:141, 336` |
 | 读取器：槽 | `Page::slots` 把槽偏移排序，槽号丢了；记录结尾取下一个偏移，最后一条取页尾 | `pages.rs:795–866` |
 | 读取器：Ghost Row | 记录类型 5 / 6 / 7 认出来了，但 `Page::records` 没有过滤 | `pages.rs:41–96, 830` |
@@ -135,7 +135,7 @@ Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `
 - **S1b 按 schema 认表**：读 `sysclsobjs`（class 50）得 schema 名，用上 `nsid`；`TableInfo` 带 `rcrows`；加 `from_bytes`、`user_tables`、`scan_table`。
 - **S1c 随机读、LOB、空串、datetime**：页读取改成随机访问；`image` / `text` / `ntext` 跟着 16 字节指针读 LOB 根和数据片段，只解语料里见过的 LOB 结构，别的显式报「未支持」，不猜；零长度且空位图没置位的变长列返回 `""`；datetime 毫秒改成整数换算 `(刻度 × 10 + 1) / 3`，单测钉 .000 / .003 / .007。改空串之前先查 `tbl_Mitglied` 第 3 行 `Titel` 的空位图：置位，那条断言不用动；没置位，说明断言建在旧假设上，改断言并在提交说明里写清。
 - 每个改过的 vendored 文件更新顶部的 GPL §5(a) 修改说明。
-- 本仓新测试 `tests/backup_mdf_reader_test02.rs`：154 张表逐表活行数等于 `rcrows`、合计 37,470；Ghost Row 5 张表各 1 行；LOB 4 个值都是 ZIP、首条目名对；空串 162、NULL 21,431。
+- 本仓新测试 `tests/backup_mdf_reader_test02.rs`：154 张表逐表活行数等于 `rcrows`、合计 37,470；Ghost Row 5 张表各 1 行；LOB 4 个值都是 ZIP、首条目名对；空串 162、nvarchar NULL 21,431（全部类型 50,596）。
 - **publish 的影响（Q13）**：跑 `publish_*` 12 个集成测试。钉了 `T_PlantItem` / `T_Equipment` 行数的断言会各少 1；XML 若有变化，逐处查明是 Ghost Row 还是空串引起，写进提交说明和 CHANGELOG 再接受。
 
 ### S2 写 store（P4–P9；4 笔提交）
@@ -169,7 +169,7 @@ Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `
 | 1 | 行数：154 张表逐表等于 `rcrows`，合计 37,470 | `backup_mdf_reader_test02`、`backup_store_test02` | S1、S2 |
 | 2 | Ghost Row：5 张表各 1 行进 `dump_ghost_row`，字节与 MDF 相同 | 同上 | S1、S2 |
 | 3 | LOB：4 个值都是 ZIP，首条目 `Drawing.xml` / `A01-JSite204.tmp` | 同上 | S1、S2 |
-| 4 | 空串 162、NULL 21,431 | 同上 | S1、S2 |
+| 4 | 空串 162；NULL 按列类型计，nvarchar 21,431、全部类型 50,596 | 同上 | S1、S2 |
 | 5 | 来源：抽样行按 `_src_page` / `_src_slot` 回 MDF 重解，结果一致 | `backup_store_test02` | S2 |
 | 6 | Manifest 拼回逐字节相同（口径见 P9） | `backup_store_test02`、`backup_store_dwg` | S2 |
 | 7 | `backup_file` 条目数和每条 SHA-256 与 zip 原件一致 | 同上 | S2 |
@@ -216,3 +216,5 @@ Q2 的「文件原始字节做成开关」按本计划理解为第一版就带 `
 - 2026-10-09：S1b（opus-5-5-22）：`sysclsobjs` 认 schema、`user_tables` / `scan_table` / `from_bytes`；TEST02 的 154 张表逐表活行等于 `rcrows`、合计 37,470，列 1,798，四个 schema 与事实表一致（验收第 1 条的 S1 部分绿）；另加页链出分配单元即报错、多页堆显式拒读、超范围 decimal 不再 panic。`from_bytes` 仍走顺序读页器，随机读在 S1c。
 - 2026-10-09：S1c（fable-5-1-9，接着一份未提交的 `pages.rs` 草稿做完）：整个文件进内存、按页号随机读；`image` / `text` / `ntext` 跟 16 字节文本指针读 `LARGE_ROOT_YUKON` 根、`INTERNAL` 节点和 `DATA` 片段，别的形状显式报不支持；零长度且空位未置位的变长列是 `""`；datetime 毫秒按 `(刻度 × 10 + 1) / 3`。TEST02：LOB 4 个值都是 ZIP、首条目 `A01-JSite204.tmp` / `Drawing.xml`；空串 162（10 张表，`T_Drawing` 4）；NULL 的 21,431 是 nvarchar 的数，全部类型合计 50,596 等于空位图置位数；A01 两份 XML 与 S1b 逐字节相同（验收第 3、4 条的 S1 部分绿，第 10 条 S1 部分绿）。
   查证：`tbl_Mitglied` 第 3 行 `Titel` 空位未置位，vendored 断言改为 `""`。顺手堵上：空分配单元的 `0:0` 指针以前被当第 0 页读、`T_EquipComponent` 多出一行假行，现跳过。P3 里「datetime 附原始的天数和刻度」没有做进公开接口：store 要的 `.fff` 从整数换算的 `DateTime` 直接格式化就对，换算可逆；要原始刻度另加。
+- 2026-10-09：S1c 审查（fable-5-1-2，只读复核 `eda765b`，另在临时副本里跑 vendored 单测 66 / 集成 22 / 23、clippy、fmt，自写探针扫 TEST02）：数全部对上；另验 4 个 LOB 都是内部自洽的 ZIP（EOCD → 中央目录 → 每个本地头都在它说的偏移上），65,536 字节那个的 ZIP 在 38,535 字节处结束、其后 27,001 字节不是全零（同一存储块里上一版的残留，另外三个尾部全零）；`dump_lob` 的 SHA-256 按全部字节算。
+  用户采纳两条意见落成一笔小提交：`text` LOB 不再按 UTF-8 猜解、改为原字节 `Value::Binary`（`text` 是排序规则代码页的单字节文本，读取器不知道代码页；TEST02 没有 `text` / `ntext` 列）；本计划事实表和验收第 4 条的「NULL 21,431」写明是 nvarchar 的数、全部类型 50,596。记下的两条限制留给 S2c：定长列超出记录存的列数仍走「omitted trailing column」的 break（行里缺键，写库时当 NULL），空位图按 leaf offset 顺序配、不是 `leaf_null_bit`，表结构改过的库会错，TEST02 没有短记录所以不受影响；INTERNAL 链接的尾偏移按全局偏移校验，语料只有 1 个 INTERNAL 节点，多节点时假设错了会报错、不会静默拼错。
