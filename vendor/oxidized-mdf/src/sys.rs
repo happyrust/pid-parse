@@ -11,6 +11,7 @@
 //     pages is refused rather than half read
 //   - parse() reads the catalog through a shared &PageReader (pages are read by id now)
 //   - Table::page_pointers() leaves out the 0:0 pointer of an allocation unit without pages
+//   - ColumnInfo::nullable: syscolpars.status bit 1 clear (the bit marks NOT NULL)
 
 use crate::error::Error;
 use crate::pages::{BootPage, PagePointer, Record};
@@ -33,6 +34,10 @@ const SYSCLSOBJS_IDMAJOR: i32 = 64;
 
 /// `sysclsobjs.class` of a schema row.
 const SCHEMA_CLASS: u8 = 50;
+
+/// The bit of `syscolpars.status` set on a column declared NOT NULL
+/// (`CPM_NOTNULL`; `sys.columns.is_nullable` is `1 - (status & 1)`).
+const SYSCOLPARS_STATUS_NOT_NULL: i32 = 1;
 
 /// `sysrowsets.idminor` above which a rowset belongs to a nonclustered index:
 /// 0 is the heap, 1 the clustered index.
@@ -195,6 +200,7 @@ impl BaseTableData {
                     max_length: c.length,
                     precision: c.prec as u8,
                     scale: c.scale as u8,
+                    nullable: c.status & SYSCOLPARS_STATUS_NOT_NULL == 0,
                 })
             })
             .collect()

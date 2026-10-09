@@ -27,6 +27,7 @@
 
 pub mod input;
 pub mod manifest;
+pub mod mssql;
 pub mod redact;
 
 use std::ffi::OsString;
@@ -41,10 +42,127 @@ use crate::backup::zip_index::ZipNameEncoding;
 
 pub use input::{BackupInput, BackupInputKind, InputFile, DIRECTORY_INPUT_NOTE};
 pub use manifest::{reassemble_manifest, ManifestEncoding, MANIFEST_FILE_NAME};
+pub use mssql::store_value;
 pub use redact::{redact_backup_command, redact_field, RedactionRule, MASK};
 
 /// The tool name `store_info.tool_name` records.
 pub const TOOL_NAME: &str = "pid_backup_store";
+
+/// The part a schema of the Database Dump plays for its plant (Q8,
+/// ADR-0004): what names its dumped tables, `<role>__<table>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SchemaRole {
+    /// The plant schema (`<p>`), connection type code 2.
+    Plant,
+    /// The plant dictionary (`<p>d`), type code 8.
+    PlantDictionary,
+    /// The P&ID schema (`<p>pid`), type code 4.
+    Pid,
+    /// The P&ID dictionary (`<p>pidd`), type code 9.
+    PidDictionary,
+}
+
+impl SchemaRole {
+    /// Every role, in type-code order of the Manifest's connection lines.
+    pub const ALL: [Self; 4] = [
+        Self::Plant,
+        Self::PlantDictionary,
+        Self::Pid,
+        Self::PidDictionary,
+    ];
+
+    /// The role a `PlantConnInfo` schema type code names.
+    pub fn from_type_code(code: &str) -> Option<Self> {
+        match code {
+            "2" => Some(Self::Plant),
+            "8" => Some(Self::PlantDictionary),
+            "4" => Some(Self::Pid),
+            "9" => Some(Self::PidDictionary),
+            _ => None,
+        }
+    }
+
+    /// The type code the role answers to.
+    pub fn type_code(self) -> &'static str {
+        match self {
+            Self::Plant => "2",
+            Self::PlantDictionary => "8",
+            Self::Pid => "4",
+            Self::PidDictionary => "9",
+        }
+    }
+
+    /// The prefix of the role's dumped tables and its `dump_schema.role`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Plant => "plant",
+            Self::PlantDictionary => "plantd",
+            Self::Pid => "pid",
+            Self::PidDictionary => "pidd",
+        }
+    }
+
+    /// The store table a source table of this role becomes.
+    pub fn store_table_name(self, source_name: &str) -> String {
+        format!("{}__{source_name}", self.as_str())
+    }
+}
+
+/// One schema of the dump with its role, as `dump_schema` records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DumpSchema {
+    /// The role.
+    pub role: SchemaRole,
+    /// The schema's name in the Manifest (and, for SQL Server, in the dump).
+    pub schema_name: String,
+    /// The Manifest's database type (`1` SQL Server, `2` Oracle).
+    pub db_type: String,
+    /// How the role was found: `manifest-conninfo` or `schema-name-suffix` (P6).
+    pub role_source: &'static str,
+}
+
+/// The four plant schemas of a Manifest, from its `PlantConnInfo`
+/// lines (fields 2, 4 and 8); an error unless exactly the four roles
+/// appear once each.
+pub fn plant_schemas_from_manifest(
+    manifest: &crate::backup::Manifest,
+) -> Result<Vec<DumpSchema>, BackupStoreError> {
+    let mut schemas = Vec::new();
+    for line in manifest.all("PlantConnInfo") {
+        let field = |position: usize| line.fields.get(position - 1).map(String::as_str);
+        let (Some(code), Some(schema_name), Some(db_type)) = (field(2), field(4), field(8)) else {
+            return Err(BackupStoreError::SchemaRoles {
+                what: "a PlantConnInfo line is short of its 13 fields",
+            });
+        };
+        let Some(role) = SchemaRole::from_type_code(code) else {
+            return Err(BackupStoreError::SchemaRoles {
+                what: "a PlantConnInfo line carries a schema type code other than 2 / 8 / 4 / 9",
+            });
+        };
+        if schemas
+            .iter()
+            .any(|schema: &DumpSchema| schema.role == role)
+        {
+            return Err(BackupStoreError::SchemaRoles {
+                what: "two PlantConnInfo lines carry the same schema type code",
+            });
+        }
+        schemas.push(DumpSchema {
+            role,
+            schema_name: schema_name.to_string(),
+            db_type: db_type.to_string(),
+            role_source: "manifest-conninfo",
+        });
+    }
+    if schemas.len() != SchemaRole::ALL.len() {
+        return Err(BackupStoreError::SchemaRoles {
+            what: "the Manifest does not name exactly four plant schemas",
+        });
+    }
+    schemas.sort_by_key(|schema| schema.role);
+    Ok(schemas)
+}
 
 /// What goes wrong building a store.
 #[derive(Debug, Error)]
@@ -91,6 +209,28 @@ pub enum BackupStoreError {
         /// What was found wanting.
         what: &'static str,
     },
+    /// The Manifest's connection lines do not give the four Schema Roles.
+    #[error("schema roles: {what}")]
+    SchemaRoles {
+        /// What was found wanting.
+        what: &'static str,
+    },
+    /// The Database Dump is an MTF file the SQL Server streams could
+    /// not be taken from.
+    #[error("Export.dmp: {0}")]
+    Dump(#[from] crate::backup::mtf::SqlServerDumpError),
+    /// The MDF inside the dump could not be read.
+    #[error("Export.mdf: {0}")]
+    Mdf(#[from] oxidized_mdf::error::Error),
+    /// The Manifest lists a table the dump does not hold, or the dump a
+    /// schema the Manifest does not name.
+    #[error("dump: {what}: {name}")]
+    DumpShape {
+        /// What was found wanting.
+        what: &'static str,
+        /// The schema or table in question.
+        name: String,
+    },
 }
 
 /// What the caller decides about a store (Q2, Q15).
@@ -116,6 +256,14 @@ pub struct StoreSummary {
     pub manifest_lines: usize,
     /// Manifest fields replaced, as `store_redaction` lists them.
     pub redactions: usize,
+    /// Dumped tables (`dump_table` rows).
+    pub tables: usize,
+    /// Live rows written into the dumped tables.
+    pub rows: u64,
+    /// Ghost Rows kept in `dump_ghost_row`.
+    pub ghost_rows: u64,
+    /// LOB values read, as `dump_lob` lists them.
+    pub lobs: u64,
     /// Notes worth showing: the directory-input caveat and the like.
     pub warnings: Vec<String>,
 }
@@ -207,23 +355,86 @@ fn fill_store(
     let mut input = BackupInput::open(input)?;
     conn.execute_batch(SCHEMA)?;
     conn.execute_batch(manifest::SCHEMA)?;
+    conn.execute_batch(mssql::SCHEMA)?;
 
     let mut summary = StoreSummary::default();
     let tx = conn.unchecked_transaction()?;
     write_store_info(&tx, &input, options)?;
     write_backup_files(&tx, &mut input, options, &mut summary)?;
-    let manifest_index = input
-        .files()
-        .iter()
-        .find(|file| !file.is_dir && file.name == MANIFEST_FILE_NAME)
-        .map(|file| file.entry_index)
-        .ok_or(BackupStoreError::MissingManifest)?;
-    let manifest_bytes = input.read(manifest_index)?;
+    let manifest_bytes = input.read(outer_index(&input, MANIFEST_FILE_NAME)?)?;
     manifest::write_manifest(&tx, &manifest_bytes, options, &mut summary)?;
+    write_dump(&tx, &mut input, &manifest_bytes, &mut summary)?;
     tx.commit()?;
 
     summary.warnings.extend(input.note().map(str::to_string));
     Ok(summary)
+}
+
+/// The entry index of the outer file named `name`.
+fn outer_index(input: &BackupInput, name: &str) -> Result<usize, BackupStoreError> {
+    input
+        .files()
+        .iter()
+        .find(|file| !file.is_dir && file.name == name)
+        .map(|file| file.entry_index)
+        .ok_or(BackupStoreError::MissingManifest)
+}
+
+/// The Database Dump: the file the Manifest's connection lines name
+/// (field 12, `Export.dmp`). A SQL Server MTF dump is read into its
+/// tables (S2c); an Oracle `exp` dump is recognised and recorded as
+/// `store_info.dump_kind` only, its tables waiting for S2d.
+fn write_dump(
+    conn: &Connection,
+    input: &mut BackupInput,
+    manifest_bytes: &[u8],
+    summary: &mut StoreSummary,
+) -> Result<(), BackupStoreError> {
+    let manifest = crate::backup::parse_manifest_bytes(manifest_bytes);
+    let schemas = plant_schemas_from_manifest(&manifest)?;
+    let dump_name = manifest
+        .all("PlantConnInfo")
+        .filter_map(|line| line.fields.get(11))
+        .find(|name| !name.is_empty() && *name != "None")
+        .cloned()
+        .unwrap_or_else(|| "Export.dmp".to_string());
+    let Some(index) = input
+        .files()
+        .iter()
+        .find(|file| !file.is_dir && file.name == dump_name)
+        .map(|file| file.entry_index)
+    else {
+        summary.warnings.push(format!(
+            "{dump_name}: the Database Dump the Manifest names is not among the outer files; \
+             no table dumped"
+        ));
+        return Ok(());
+    };
+    let dump = input.read(index)?;
+
+    let mut info = conn.prepare("INSERT INTO store_info (key, value) VALUES (?1, ?2)")?;
+    match crate::backup::mtf::mdf_bytes_of_dump(&dump) {
+        Ok(mdf) => {
+            info.execute(params!["dump_kind", "sql-server-mtf"])?;
+            let mdf = mdf.to_vec();
+            drop(dump);
+            mssql::write_sql_server_dump(conn, mdf, &manifest, &schemas, summary)?;
+        }
+        Err(crate::backup::mtf::SqlServerDumpError::NotMtf(diagnostic)) => {
+            info.execute(params!["dump_kind", "oracle-exp"])?;
+            // The diagnostic opens with what the file is; the advice after
+            // the first comma is for the extraction tools, not for here.
+            let what = diagnostic
+                .split(", not a SQL Server")
+                .next()
+                .unwrap_or(&diagnostic);
+            summary.warnings.push(format!(
+                "{dump_name}: {what}; its tables are not decoded in this version"
+            ));
+        }
+        Err(err) => return Err(err.into()),
+    }
+    Ok(())
 }
 
 fn write_store_info(

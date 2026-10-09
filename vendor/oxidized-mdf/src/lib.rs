@@ -22,6 +22,7 @@
 //     of a text column is not known to the reader)
 //   - datetime is built from its stored days and ticks (pages::datetime_from_parts)
 //   - An nvarchar / varchar column zero bytes long is "" and no longer NULL
+//   - ColumnInfo::nullable (syscolpars.status bit 1 clear; the bit marks NOT NULL)
 
 #![allow(dead_code)]
 // Mirror the pedantic lint subset baked into the parent `pid-parse`
@@ -392,6 +393,11 @@ pub struct ColumnInfo {
     pub precision: u8,
     /// Declared scale.
     pub scale: u8,
+    /// Whether the column admits NULL: `syscolpars.status` bit 1 clear
+    /// (the bit marks NOT NULL; `sys.columns.is_nullable` is `1 - (status & 1)`).
+    /// Says what the column was declared, not what its rows hold: a row's
+    /// null bitmap is read as stored even where it contradicts this.
+    pub nullable: bool,
 }
 
 /// A record [`MdfDatabase::scan_table`] read, with the page and slot it sits in.

@@ -149,7 +149,19 @@ fn sqplant_store_lists_the_directory_and_reads_gbk_entry_names() {
         info.get("input_note").map(String::as_str)
     );
     assert_eq!(64, info["input_sha256"].len());
-    assert_eq!(vec![DIRECTORY_INPUT_NOTE.to_string()], summary.warnings);
+    assert_eq!(
+        Some("oracle-exp"),
+        info.get("dump_kind").map(String::as_str)
+    );
+    assert_eq!(
+        vec![
+            "Export.dmp: input is an Oracle Database `exp` dump (EXPORT:V12.01.00); its tables \
+             are not decoded in this version"
+                .to_string(),
+            DIRECTORY_INPUT_NOTE.to_string(),
+        ],
+        summary.warnings
+    );
 
     assert_eq!(
         OUTER
