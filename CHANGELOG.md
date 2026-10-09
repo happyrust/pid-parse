@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### `JStyleOverride` 自带的宽 / 色 / 虚线位生效：0201 设备表格线从虚线变成 0.13 / 0.18 mm 实线（2026-10-10，计划 A0–A5）
+
+计划 `docs/plans/2026-10-10-an-override-applies-its-own-width-colour-and-dash.md`；依据 `docs/analysis/2026-10-10-an-override-repaints-width-colour-and-switches-the-dash-off.md`。
+
+- 起因：10-09 用 OCS 开 `DWG-0201GP06-01.pid` 与 SmartPlant 截图逐实体对比，设备表 14 条格线 OCS 画虚线、参考图是细实线；3 条坡度标记 OCS 粉红、参考图黑。14 条全经 `0x0030 JStyleOverride`（86 / 101 → 85 `Dashed`），而 `resolve_line_style` 只顺 `+22` 取基样式。
+- **native reader**（headless IDA 读 `style.dll`）：覆盖 `+30`（`this+96`）是属性掩码，合成例程 `sub_1002A080` 逐位把自己的字段叠到有效样式上——bit0 颜色 `+34`、bit1 线宽 `+42`、bit7 虚线类型 id `+78`（`this+188`，0 = 无；getter `sub_10027C10` 在 bit7 清时返回 NULL）、bit8 填充色 `+38`，另有 bit2–6 本 crate 不读的字段；颜色 `0x80000000` = 随层、无条件压过。
+- **`style_link`**：新常量 `OVERRIDE_MASK_OFFSET` 30 / `OVERRIDE_COLOUR_OFFSET` 34 / `OVERRIDE_WIDTH_OFFSET` 42 / `OVERRIDE_DASH_REFERENCE_OFFSET` 78 与 `OVERRIDE_STATES_COLOUR` / `_WIDTH` / `_DASH`；`StyleRecord` 新增 `override_mask` / `override_colour` / `override_width_m` / `override_dash_reference`（只在 `0x0030` 上填；颜色拒收高字节非零、`-2` 哨兵与随层字，宽度走 `read_symbology` 同一道闸且 0 不算）；
+  `resolve_line_style` 的覆盖分支按掩码逐位替换宽 / 色，bit7 时按 `+78` 取虚线（0 / 悬空 = 实线），否则沿用基样式的虚线；`marker` 仍取基样式。**`ResolvedLineStyle` 形状不变**（`style_id` 仍是基样式的，`hop` 仍是 `ViaOverride { override_id }`），OpenCADStudio 不改码。
+- 语料（探针 `examples/probe_override_applies_its_own_fields.rs`，5 图 53 条覆盖，全 90 字节）：掩码只见 `0x02` / `0x03` / `0x80` / `0x82`（线）与 `0x40000100`（填充 ×4，线几何不经过）；`+78` 只在 bit7 置位时非零，非零两条（0201 `/JSite329` 48、`/JSite396` 9）指向本表 `0x002F "Dash"`。
+  图纸级 638 条里 52 条换宽或色：0201 `0.350 #000000` 48→27、`#FE0060` 3→0、新增 0.13 ×21 / 0.18 ×3，虚线 15→1（只剩电信号线）；0202 59→38、`#FE0060` 3→0、新增 0.13 ×22 / 0.18 ×2、一个放置 `0.5 #0000FF` → `0.35 #800000`，虚线 9→1；工艺 6 条 0.35→0.13；A01 `/JSite204/Sheet6` 37 条管线 → 0.50、9 条 → 0.70；D06 不变。
+  缓存本体：09-20 P-E8 认定的 57 笔「可见虚线」（0202 阻火呼吸阀 8 + 污水池 1、工艺 `Xa` / `Xa chu` 45、关闭层伴热 9）全是 bit7 置位、`+78` = 0 的覆盖，按文件画实线；真正虚的只剩 0202 污水池直接点名 `Dashed` 的 3 条 + 0201 `/JSite396` 本体 119 的一条 0.01 mm 发丝线。本体调色盘也随覆盖变细（Cap `#00FFFF 0.5` → 黑 0.13 等）。
+- 测试：`style_link` 单测 +8（宽 + 关虚线、色 + 宽、开虚线、掩码没点名的字段不动、随层色保基色、不合理值保基值、悬空虚线 id 实线、只有覆盖读这些字段）；`symbol_library` 单测：`a_symbol_carries_the_dash_…` 改用 `Wastewater Pit.sym`（3 / 7 直接点名 `Dashed`），新增 `a_symbols_override_switches_off_the_dash_its_base_names`（RD 30 笔全实、全 0.13）；
+  `style_link_ratchet`：调色盘重钉（`0.130mm #000000` 182→231、新项 `0.180mm #000000` 5、`0.350mm #000000` 196→148、`0.350mm #800000` 21→22、`0.500mm #0000FF` 12→11、`0.350mm #FE0060` 删）、交叉 4→5 / 跨度 1→3、新增 `dwg0201s_table_rules_draw_thin_and_solid_through_their_overrides`（按 oid 钉 14 条格线 + 电信号线仍虚）；
+  `parse_real_files::a_cached_body_…` 重钉（0201 虚 0→1、0202 12→3、工艺 45→0，调色盘全 0.13；与库 `.sym` 的比对改为「缓存的每种 look 都是 `.sym` 自己 `StyleCluster` 定义得出的」——`Item Note & Label` 的缓存是 `PSMcluster0` 里的锚点十字，库读取器只走 `Sheet*`）。golden / `geometry_profile` / `render_gap_census` / `semantic_join` 不变。
+- 验证：`cargo test --workspace` 42 个二进制 **1513 过 / 3 忽略**（1503 → 1513：`--lib` 1143 → 1152、棘轮 17 → 18）；`--no-default-features` 17 个二进制 **1086 过 / 1 忽略**（1076 → 1086，`--lib` 838 → 839）；`clippy --workspace --all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 过；改动的文件 rustfmt 干净（`cargo fmt --all --check` 仍只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`）。
+  探针跑五张图 2 s；headless IDA 开的是 `style.dll.i64` 的 `%TEMP%` 副本，仓库里的 `dlls/` 一个字节没动。
+- 登记：0201 `/JSite396` 本体 119 那条 0.01 mm 虚线在 OCS 里会按放置线宽重涂成一条可见虚线（P-E1 备选该重议）；`0x80000000` 随层色以保基色近似；覆盖的填充位（bit8 / bit30）未应用到 `resolve_fill`；bit2–6 未读。OCS 侧：`pid_import` 三处重钉、批量基线预计 5 行 `dxf_sha256` 变（D06 不变），见计划 O1–O3。
+
 ### `pid_backup_probe` 认出 Oracle `exp` 导出，提示与 `pid_backup_extract` 相同（2026-10-09）
 
 - 起因：审计 SQPlant 备份（`D:\work\cad\pid-test-data`，Oracle 后端）时，`pid_backup_probe` 只报 `not an MTF stream: … (got tag ????)`，而 `pid_backup_extract` 早就认出是 Oracle `exp` 并给出处理建议。

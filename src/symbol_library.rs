@@ -885,29 +885,30 @@ mod tests {
     }
 
     /// The dash a `.sym`'s own style names comes across with the stroke.
-    /// `arrester breather valve(RD).sym` is the library body whose cached
-    /// copy DWG-0202 places: its own table dashes seven lines and the
-    /// B-spline lip at 3.5 / 1.75 mm, and draws the rest solid.
+    /// `Wastewater Pit.sym` is the library body whose cached copy DWG-0202
+    /// places: three of its seven lines name the table's `Dashed` style
+    /// outright and dash at 3.5 / 1.75 mm; the rest draw solid.
     #[test]
     fn a_symbol_carries_the_dash_its_own_style_table_states() {
         // The reference library beside the fixtures, not the small sample
-        // the other tests read: the valve is only in the full one.
+        // the other tests read: the pit is only in the full one.
         let path = symbols_root()
             .with_file_name("symbols-full")
-            .join(r"Piping/Valves/2 Way Other/arrester breather valve(RD).sym");
+            .join(r"Equipment/Vessels/Tanks/Wastewater Pit.sym");
         if !path.is_file() {
             return;
         }
-        let body = read_symbol_geometry(&path)
-            .expect("arrester breather valve(RD).sym is a readable compound file");
+        let body =
+            read_symbol_geometry(&path).expect("Wastewater Pit.sym is a readable compound file");
         let dashed: Vec<&StyledPrimitive> = body
             .primitives
             .iter()
             .filter(|styled| styled.style.as_ref().is_some_and(PrimitiveStyle::is_dashed))
             .collect();
-        assert!(
-            !dashed.is_empty(),
-            "the valve's own style table dashes some of its strokes"
+        assert_eq!(
+            dashed.len(),
+            3,
+            "the pit's own style table dashes three of its strokes: {dashed:?}"
         );
         for styled in &dashed {
             let dash: Vec<f64> = styled
@@ -922,17 +923,50 @@ mod tests {
                 })
                 .unwrap_or_default();
             assert_eq!(dash, vec![3.5, 1.75], "{styled:?}");
+            assert!(
+                matches!(styled.primitive, SymbolPrimitive::Line { .. }),
+                "the dashed strokes are lines: {styled:?}"
+            );
         }
+        assert_eq!(body.primitives.len(), 7, "and the other four draw solid");
+    }
+
+    /// An override in a `.sym`'s own table has its say over the base it
+    /// names (`style_link`, plan 2026-10-10). `arrester breather valve(RD).sym`
+    /// reaches `Dashed` for seven lines and its B-spline lip through an
+    /// override stating 0.13 mm and *no* dash, so the whole body draws
+    /// solid — which is what the drawing's cached copy on DWG-0202 says too.
+    /// Until the override's fields were read, those eight strokes read as
+    /// dashed.
+    #[test]
+    fn a_symbols_override_switches_off_the_dash_its_base_names() {
+        let path = symbols_root()
+            .with_file_name("symbols-full")
+            .join(r"Piping/Valves/2 Way Other/arrester breather valve(RD).sym");
+        if !path.is_file() {
+            return;
+        }
+        let body = read_symbol_geometry(&path)
+            .expect("arrester breather valve(RD).sym is a readable compound file");
+        assert_eq!(body.primitives.len(), 30);
         assert!(
-            dashed
+            body.primitives
                 .iter()
                 .any(|styled| matches!(styled.primitive, SymbolPrimitive::BSpline { .. })),
-            "the lip is one of the dashed strokes"
+            "the lip is still drawn"
         );
-        assert!(
-            body.primitives.len() > dashed.len(),
-            "and the rest of the body draws solid"
-        );
+        for styled in &body.primitives {
+            let style = styled
+                .style
+                .as_ref()
+                .unwrap_or_else(|| panic!("every stroke names a style: {styled:?}"));
+            assert!(!style.is_dashed(), "a solid stroke: {styled:?}");
+            assert!(
+                (style.width_mm - 0.13).abs() < 1e-9,
+                "the override's 0.13 mm, not the base's 0.35: {styled:?}"
+            );
+            assert_eq!(style.rgb, [0, 0, 0], "{styled:?}");
+        }
     }
 
     #[test]

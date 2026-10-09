@@ -131,6 +131,9 @@ end-to-end 段（`line_styles_for_file` → `resolve_line_style`），真图上�
    所以这是「该图本就没有虚线样式被引用」，不是漏读；但没有第三方语义可他证这两张
    「确实全实线」，留作观察。
 3. `0x002A` / `0x002B` 填充仍未取证（缺口 E，Phase 39）。
+4. **（2026-10-10 续）** 一条线经 `0x0030 JStyleOverride` 到达虚线基样式时，覆盖自己 `+30` 掩码的 bit7 可以把虚线**关掉**（`+78` 为 0）或**换成**另一种（`+78` 指向 `0x002F`）。
+   本文 §5「哪根线画成哪种虚线」里 0201 的 14 条、0202 的 8 条经覆盖到达 `Dashed` 的线，SmartPlant 实际画实线；
+   见 `2026-10-10-an-override-repaints-width-colour-and-switches-the-dash-off.md`。
 
 ## 8. 复现
 

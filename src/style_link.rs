@@ -10,10 +10,15 @@
 //!    └─ look the id up in the SAME document's StyleCluster
 //!         ├─ lands on 0x002E JStyleSimpleLine → width +34 (f64, metres)
 //!         │                                     colour +50 (Win32 COLORREF)
+//!         │                                     dash   +54 (JStyleSimpleDashType id)
 //!         ├─ lands on 0x002A JStyleSimpleFill → colour +30 (Win32 COLORREF)
 //!         └─ lands on 0x0030 JStyleOverride   → its +22 names a
 //!                                               JStyleSimpleLine or a
-//!                                               JStyleSimpleFill → as above
+//!                                               JStyleSimpleFill → as above,
+//!                                               then its +30 mask says which
+//!                                               of its own fields win:
+//!                                               bit0 colour +34, bit1 width
+//!                                               +42, bit7 dash +78 (0 = none)
 //! ```
 //!
 //! # Evidence
@@ -54,6 +59,19 @@
 //! a per-family one. And `+22` is not an override-specific slot — it is
 //! `JStyleBase`'s single reference, which only `JStyleOverride` populates.
 //! The resolver is base-class machinery, and this module is walking it.
+//!
+//! **An override is more than its reference.** Its own 64 bytes after the
+//! base block open with a mask (`+30`), and `style.dll` composes the
+//! effective style by copying each field the mask names over the base's:
+//! colour (`+34`, bit 0), width (`+42`, bit 1), the dash type's id (`+78`,
+//! bit 7 — zero meaning none). The loader (`sub_10028130`), the compose
+//! routine (`sub_1002A080`) and the dash getter (`sub_10027C10`) all say so,
+//! and the corpus shows what it is for: `DWG-0201`'s equipment table rules
+//! reach `Dashed 0.35 mm` through overrides that state 0.13 / 0.18 mm and no
+//! dash — and `SmartPlant` draws them as the thin solid rules the screenshot
+//! shows. Until 2026-10-10 this module read only the base, and drew them
+//! dashed. See
+//! `docs/analysis/2026-10-10-an-override-repaints-width-colour-and-switches-the-dash-off.md`.
 //!
 //! What remains corpus-level is the geometry side: that a geometry record's
 //! `index` names one of these ids. Over the four `test-file/*.pid` fixtures:
@@ -169,6 +187,57 @@ pub const STYLE_ID_OFFSET: usize = 14;
 /// populates it — 48 of 48, against zero on all 718 other style records — and
 /// the value always names a different record.
 pub const BASE_OBJECT_REFERENCE_OFFSET: usize = 22;
+
+/// Offset of the attribute mask within a `JStyleOverride` payload: which of
+/// the override's own fields replace the base style's.
+///
+/// Level: native-reader. `style.dll`'s version-3 `JStyleOverride` loader
+/// (`sub_10028130`) reads this `u32` into `this+96`, and the routine that
+/// folds an override into the effective style (`sub_1002A080`) tests it bit
+/// by bit before copying each field across: [`OVERRIDE_STATES_COLOUR`],
+/// [`OVERRIDE_STATES_WIDTH`], [`OVERRIDE_STATES_DASH`], plus bits for fields
+/// this crate does not read (`0x04`, `0x08`, `0x20` three `f64` at `+50` /
+/// `+58` / `+66`; `0x10` a `u32` at `+74`; `0x40` two `u16` at `+86` /
+/// `+88`; `0x100` the fill colour at `+38`). A bit that is clear leaves the
+/// base style's value in place. See
+/// `docs/analysis/2026-10-10-an-override-repaints-width-colour-and-switches-the-dash-off.md`.
+pub const OVERRIDE_MASK_OFFSET: usize = 30;
+
+/// Offset of the colour a `JStyleOverride` states, a Win32 `COLORREF`, read
+/// when [`OVERRIDE_STATES_COLOUR`] is set. Level: native-reader (`this+100`).
+pub const OVERRIDE_COLOUR_OFFSET: usize = 34;
+
+/// Offset of the width a `JStyleOverride` states, an `f64` in metres, read
+/// when [`OVERRIDE_STATES_WIDTH`] is set. Level: native-reader (`this+104`).
+pub const OVERRIDE_WIDTH_OFFSET: usize = 42;
+
+/// Offset at which a `JStyleOverride` names the `JStyleSimpleDashType` it
+/// draws with, read when [`OVERRIDE_STATES_DASH`] is set; zero means the
+/// line draws solid whatever its base says.
+///
+/// Level: native-reader (`this+188`): the override's dash getter
+/// (`sub_10027C10`) returns no object while the bit is clear, and while it
+/// is set resolves this id the same lazy way `JStyleBase` resolves
+/// [`BASE_OBJECT_REFERENCE_OFFSET`]. The corpus agrees: this is the only
+/// slot ever non-zero on a bit7 override, and the two that are name a
+/// `JStyleSimpleDashType` of their own table.
+pub const OVERRIDE_DASH_REFERENCE_OFFSET: usize = 78;
+
+/// [`OVERRIDE_MASK_OFFSET`] bit: the override states its own colour.
+pub const OVERRIDE_STATES_COLOUR: u32 = 0x01;
+
+/// [`OVERRIDE_MASK_OFFSET`] bit: the override states its own width.
+pub const OVERRIDE_STATES_WIDTH: u32 = 0x02;
+
+/// [`OVERRIDE_MASK_OFFSET`] bit: the override states its own dash type (or
+/// none).
+pub const OVERRIDE_STATES_DASH: u32 = 0x80;
+
+/// The colour word an override uses for "by layer": the compose routine
+/// copies it across unconditionally. This crate has no layer colour to
+/// hand back, so an override stating it keeps the base style's colour. Six
+/// corpus overrides — symbol-body strokes, all of them — state it.
+const OVERRIDE_COLOUR_BY_LAYER: u32 = 0x8000_0000;
 
 /// Offset of the line width, an `f64` in metres, within a
 /// `JStyleSimpleLine` payload. Level: native-reader.
@@ -854,12 +923,16 @@ pub enum StyleHop {
 /// A geometry record's line style, plus the route taken to reach it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResolvedLineStyle {
-    /// Style id of the `JStyleSimpleLine` finally reached.
+    /// Style id of the `JStyleSimpleLine` finally reached — the base style,
+    /// when an override was traversed.
     pub style_id: u32,
-    /// Width and colour that record declares.
+    /// Width and colour the line draws with: the base record's, with
+    /// whichever of the two an override on the way states replaced.
     pub symbology: LineSymbology,
-    /// The dash pattern that line style names, when it names one. `None`
-    /// means the line draws solid — which is what most of the corpus says.
+    /// The dash pattern the line draws with, when it draws dashed: the base
+    /// style's, unless an override on the way states a dash type of its own
+    /// or states none. `None` means the line draws solid — which is what
+    /// most of the corpus says.
     pub dash: Option<DashPattern>,
     /// The point symbol that line style's terminator names, when it names
     /// one.
@@ -914,6 +987,22 @@ pub struct StyleRecord {
     /// Style id named by [`BASE_OBJECT_REFERENCE_OFFSET`], when this record
     /// populates it. Only `JStyleOverride` does, in this corpus.
     pub base_reference: Option<u32>,
+    /// Which of its own fields a `JStyleOverride` states over its base —
+    /// the word at [`OVERRIDE_MASK_OFFSET`]. `None` for every other family.
+    pub override_mask: Option<u32>,
+    /// The colour a `JStyleOverride` states, when it states one that reads
+    /// as a plain `COLORREF` — not the "by layer" word, not the unset
+    /// sentinel. Meaningful only with [`OVERRIDE_STATES_COLOUR`] set in
+    /// [`Self::override_mask`]; the field is read regardless.
+    pub override_colour: Option<u32>,
+    /// The width in metres a `JStyleOverride` states, when it reads
+    /// plausibly (the same gate as [`Self::symbology`]). Meaningful only
+    /// with [`OVERRIDE_STATES_WIDTH`] set.
+    pub override_width_m: Option<f64>,
+    /// The `JStyleSimpleDashType` a `JStyleOverride` names, when it names
+    /// one. With [`OVERRIDE_STATES_DASH`] set and this `None`, the override
+    /// says "no dash" — a dashed base draws solid.
+    pub override_dash_reference: Option<u32>,
     /// Character height in metres, when this is a `JStyleTextChar` whose
     /// height reads plausibly.
     pub char_height_m: Option<f64>,
@@ -1233,6 +1322,15 @@ impl DocumentStyleTable {
                     byte_range: at..end,
                     symbology: read_symbology(type_code, payload),
                     base_reference: read_base_reference(payload),
+                    override_mask: read_override_mask(type_code, payload),
+                    override_colour: read_override_colour(type_code, payload),
+                    override_width_m: read_override_width(type_code, payload),
+                    override_dash_reference: read_reference_of(
+                        type_code,
+                        PSM_TYPE_CODE_JSTYLE_OVERRIDE,
+                        payload,
+                        OVERRIDE_DASH_REFERENCE_OFFSET,
+                    ),
                     char_height_m: read_char_height(type_code, payload),
                     text_char_reference: read_text_char_reference(type_code, payload),
                     text_alignment: read_text_alignment(type_code, payload),
@@ -1384,16 +1482,54 @@ impl DocumentStyleTable {
     /// "keep the current default", not as a parse failure: an override
     /// referencing a `JStyleSimpleFill` is a well-formed record describing a
     /// filled object, and 4 of the corpus's 48 overrides are exactly that.
+    ///
+    /// # An override has its own say
+    ///
+    /// A `JStyleOverride` is not only a pointer. It carries a mask
+    /// ([`OVERRIDE_MASK_OFFSET`]) and, for each bit set, a value of its own
+    /// that replaces the base style's: colour ([`OVERRIDE_STATES_COLOUR`]),
+    /// width ([`OVERRIDE_STATES_WIDTH`]) and dash type
+    /// ([`OVERRIDE_STATES_DASH`] — naming a `JStyleSimpleDashType`, or
+    /// nothing, which draws a dashed base solid). That is how `style.dll`
+    /// composes the effective style, and it is what `SmartPlant`'s screen
+    /// shows: `DWG-0201`'s equipment table rules reach `Dashed 0.35 mm`
+    /// through overrides stating width and no dash, and draw as solid 0.13 /
+    /// 0.18 mm lines. A stated value that does not read — a width outside
+    /// the plausible range, a colour that is the "by layer" word — leaves the
+    /// base's value in place rather than guessing.
+    ///
+    /// The returned [`ResolvedLineStyle::style_id`] is still the base
+    /// style's: that is the record the librarian names and the one the
+    /// terminator hangs off; what the override changed is in
+    /// [`ResolvedLineStyle::symbology`] and [`ResolvedLineStyle::dash`], and
+    /// the override itself is reachable through [`StyleHop::ViaOverride`].
     #[must_use]
     pub fn resolve_line_style(&self, style_id: u32) -> Option<ResolvedLineStyle> {
         let record = self.get(style_id)?;
         if record.type_code == PSM_TYPE_CODE_JSTYLE_OVERRIDE {
             let referenced = record.base_reference?;
             let target = self.get(referenced)?;
+            let mut symbology = target.symbology?;
+            let mask = record.override_mask.unwrap_or(0);
+            if mask & OVERRIDE_STATES_WIDTH != 0 {
+                if let Some(width_m) = record.override_width_m {
+                    symbology.width_m = width_m;
+                }
+            }
+            if mask & OVERRIDE_STATES_COLOUR != 0 {
+                if let Some(colour) = record.override_colour {
+                    symbology.colour = colour;
+                }
+            }
+            let dash = if mask & OVERRIDE_STATES_DASH != 0 {
+                self.dash_named(record.override_dash_reference)
+            } else {
+                self.dash_of(target)
+            };
             return Some(ResolvedLineStyle {
                 style_id: target.style_id,
-                symbology: target.symbology?,
-                dash: self.dash_of(target),
+                symbology,
+                dash,
                 marker: self.marker_of(target),
                 hop: StyleHop::ViaOverride {
                     override_id: record.style_id,
@@ -1466,7 +1602,15 @@ impl DocumentStyleTable {
     /// is the same thing an absent reference means, so nothing is lost by not
     /// distinguishing them here.
     fn dash_of(&self, line: &StyleRecord) -> Option<DashPattern> {
-        self.get(line.dash_reference?)?.dash
+        self.dash_named(line.dash_reference)
+    }
+
+    /// The dash pattern a reference names, if it names a
+    /// `JStyleSimpleDashType` this document defines. The same reading for a
+    /// line's own slot and an override's: no reference, a dangling one, or
+    /// one landing on another family all draw solid.
+    fn dash_named(&self, reference: Option<u32>) -> Option<DashPattern> {
+        self.get(reference?)?.dash
     }
 
     /// Resolve a text record's `index` to the character height it draws at.
@@ -1718,6 +1862,41 @@ fn read_base_reference(payload: &[u8]) -> Option<u32> {
     // Zero means "references nothing", which is what 670 of the corpus's 718
     // style records say. Style ids start at 1, so zero is unambiguous.
     u32_at(payload, BASE_OBJECT_REFERENCE_OFFSET).filter(|referenced| *referenced != 0)
+}
+
+fn read_override_mask(type_code: u16, payload: &[u8]) -> Option<u32> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
+        return None;
+    }
+    u32_at(payload, OVERRIDE_MASK_OFFSET)
+}
+
+fn read_override_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
+        return None;
+    }
+    let word = u32_at(payload, OVERRIDE_COLOUR_OFFSET)?;
+    // A `COLORREF` has a zero high byte. The "by layer" word and the unset
+    // sentinel both fail that, and both mean "not a colour of our own to
+    // draw" — the base style's stands.
+    if word == OVERRIDE_COLOUR_BY_LAYER || word == SIMPLE_FILL_COLOUR_UNSET || word >> 24 != 0 {
+        return None;
+    }
+    Some(word)
+}
+
+fn read_override_width(type_code: u16, payload: &[u8]) -> Option<f64> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_OVERRIDE {
+        return None;
+    }
+    let width_m = f64_at(payload, OVERRIDE_WIDTH_OFFSET)?;
+    // The same gate as `read_symbology`, except that zero is not a width an
+    // override can state: a stated width replaces the base's, and a line of
+    // no width is not what any override in the corpus asks for.
+    if !width_m.is_normal() || !(0.0..=MAX_PLAUSIBLE_WIDTH_M).contains(&width_m) {
+        return None;
+    }
+    Some(width_m)
 }
 
 fn read_fill_colour(type_code: u16, payload: &[u8]) -> Option<u32> {
@@ -2563,6 +2742,29 @@ mod tests {
         payload[BASE_OBJECT_REFERENCE_OFFSET..BASE_OBJECT_REFERENCE_OFFSET + 4]
             .copy_from_slice(&references.to_le_bytes());
         (PSM_TYPE_CODE_JSTYLE_OVERRIDE, payload)
+    }
+
+    /// An override that states fields of its own: the mask says which of
+    /// them count, the values are written regardless — as the corpus does
+    /// (an override stating only a width still carries a zero colour word).
+    fn override_stating(
+        style_id: u32,
+        references: u32,
+        mask: u32,
+        colour: u32,
+        width_m: f64,
+        dash_id: u32,
+    ) -> (u16, Vec<u8>) {
+        let (type_code, mut payload) = override_record(style_id, references);
+        payload[OVERRIDE_MASK_OFFSET..OVERRIDE_MASK_OFFSET + 4]
+            .copy_from_slice(&mask.to_le_bytes());
+        payload[OVERRIDE_COLOUR_OFFSET..OVERRIDE_COLOUR_OFFSET + 4]
+            .copy_from_slice(&colour.to_le_bytes());
+        payload[OVERRIDE_WIDTH_OFFSET..OVERRIDE_WIDTH_OFFSET + 8]
+            .copy_from_slice(&width_m.to_le_bytes());
+        payload[OVERRIDE_DASH_REFERENCE_OFFSET..OVERRIDE_DASH_REFERENCE_OFFSET + 4]
+            .copy_from_slice(&dash_id.to_le_bytes());
+        (type_code, payload)
     }
 
     fn simple_fill(style_id: u32, colour: u32) -> (u16, Vec<u8>) {
@@ -3558,6 +3760,200 @@ mod tests {
         );
         assert_eq!(resolved.hop, StyleHop::ViaOverride { override_id: 9 });
         assert!((resolved.symbology.width_mm() - 0.7).abs() < 1e-9);
+    }
+
+    /// `DWG-0201`'s equipment table: override 86 states `0x82` — width
+    /// 0.13 mm and no dash — over `Dashed 0.35 mm`, and the rule draws as a
+    /// thin solid line, which is what `SmartPlant`'s screen shows.
+    #[test]
+    fn an_override_stating_width_and_no_dash_draws_a_dashed_base_thin_and_solid() {
+        let data = stream(&[
+            dash_type(85, &[-0.0035, -0.00175]),
+            simple_line_dashed(3, 85),
+            override_stating(
+                86,
+                3,
+                OVERRIDE_STATES_WIDTH | OVERRIDE_STATES_DASH,
+                0,
+                0.000_13,
+                0,
+            ),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+
+        assert!(
+            table
+                .resolve_line_style(3)
+                .expect("the base")
+                .dash
+                .is_some(),
+            "the base itself still draws dashed"
+        );
+        let resolved = table.resolve_line_style(86).expect("id 86 is defined");
+        assert_eq!(resolved.style_id, 3, "the base is still the style reached");
+        assert_eq!(resolved.hop, StyleHop::ViaOverride { override_id: 86 });
+        assert!((resolved.symbology.width_mm() - 0.13).abs() < 1e-9);
+        assert_eq!(
+            resolved.symbology.rgb(),
+            [0, 0, 0],
+            "colour not stated: the base's"
+        );
+        assert_eq!(
+            resolved.dash, None,
+            "no dash stated: the base's dash is switched off"
+        );
+    }
+
+    /// `DWG-0202`'s override 109: colour `#800000` and width 0.35 mm over
+    /// `As Drawn 0.50 mm #0000FF`. Both stated, both replaced.
+    #[test]
+    fn an_override_stating_colour_and_width_replaces_both() {
+        let data = stream(&[
+            simple_line(19, 0.0005, 0x00FF_0000),
+            override_stating(
+                109,
+                19,
+                OVERRIDE_STATES_COLOUR | OVERRIDE_STATES_WIDTH,
+                0x0000_0080,
+                0.000_35,
+                0,
+            ),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        let resolved = table.resolve_line_style(109).expect("id 109 is defined");
+        assert_eq!(resolved.symbology.rgb(), [0x80, 0x00, 0x00]);
+        assert!((resolved.symbology.width_mm() - 0.35).abs() < 1e-9);
+        assert_eq!(resolved.dash, None);
+    }
+
+    /// `DWG-0201`'s `/JSite329` override 48: bit 7 with a non-zero slot
+    /// naming the storage's `Dash` type, over solid `Normal` — the override
+    /// turns a dash **on**, the one direction the table rules do not show.
+    #[test]
+    fn an_override_naming_a_dash_type_dashes_a_solid_base() {
+        let data = stream(&[
+            dash_type(8, &[-0.0035, -0.00175]),
+            simple_line(1, 0.000_35, 0),
+            override_stating(48, 1, OVERRIDE_STATES_DASH, 0, 0.0, 8),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert_eq!(table.resolve_line_style(1).expect("the base").dash, None);
+        let resolved = table.resolve_line_style(48).expect("id 48 is defined");
+        let dash = resolved.dash.expect("the override's dash type");
+        let segments = dash.segments_mm();
+        assert_eq!(segments.len(), 2);
+        assert!((segments[0] + 3.5).abs() < 1e-9 && (segments[1] + 1.75).abs() < 1e-9);
+        assert!(
+            (resolved.symbology.width_mm() - 0.35).abs() < 1e-9,
+            "width not stated (and 0.0 is not a width): the base's"
+        );
+    }
+
+    /// Fields the mask does not name are ignored even when they hold
+    /// values, and bits this crate does not read — the fill family's
+    /// `0x100` / `0x40000000` — change nothing on a line.
+    #[test]
+    fn an_override_field_its_mask_does_not_state_is_left_alone() {
+        let data = stream(&[
+            dash_type(8, &[-0.0035, -0.00175]),
+            simple_line(1, 0.000_35, 0x0000_8080),
+            override_stating(9, 1, 0x4000_0100, 0x0000_00FF, 0.000_13, 8),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        let resolved = table.resolve_line_style(9).expect("id 9 is defined");
+        assert!((resolved.symbology.width_mm() - 0.35).abs() < 1e-9);
+        assert_eq!(resolved.symbology.rgb(), [0x80, 0x80, 0x00]);
+        assert_eq!(
+            resolved.dash, None,
+            "a dash id the mask does not name is not a dash"
+        );
+        assert_eq!(
+            table.get(9).expect("defined").override_mask,
+            Some(0x4000_0100)
+        );
+    }
+
+    /// Six corpus overrides state colour `0x80000000` — "by layer" to the
+    /// compose routine. This crate has no layer colour to hand back, so the
+    /// base's colour stands; the width those overrides also state does not.
+    #[test]
+    fn an_override_stating_the_by_layer_colour_keeps_the_bases_colour() {
+        let data = stream(&[
+            simple_line(1, 0.000_35, 0x0000_8080),
+            override_stating(
+                21,
+                1,
+                OVERRIDE_STATES_COLOUR | OVERRIDE_STATES_WIDTH,
+                OVERRIDE_COLOUR_BY_LAYER,
+                0.000_01,
+                0,
+            ),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert_eq!(table.get(21).expect("defined").override_colour, None);
+        let resolved = table.resolve_line_style(21).expect("id 21 is defined");
+        assert_eq!(resolved.symbology.rgb(), [0x80, 0x80, 0x00]);
+        assert!((resolved.symbology.width_mm() - 0.01).abs() < 1e-9);
+    }
+
+    /// A stated width that cannot be a width — a framing slip's enormous
+    /// double, or the unset sentinel as a colour — leaves the base's in
+    /// place rather than surfacing it.
+    #[test]
+    fn an_override_stating_an_implausible_width_or_colour_keeps_the_bases() {
+        let data = stream(&[
+            simple_line(1, 0.000_35, 0),
+            override_stating(
+                9,
+                1,
+                OVERRIDE_STATES_COLOUR | OVERRIDE_STATES_WIDTH,
+                SIMPLE_FILL_COLOUR_UNSET,
+                1.0e9,
+                0,
+            ),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        let record = table.get(9).expect("defined");
+        assert_eq!(record.override_width_m, None);
+        assert_eq!(record.override_colour, None);
+        let resolved = table.resolve_line_style(9).expect("id 9 is defined");
+        assert!((resolved.symbology.width_mm() - 0.35).abs() < 1e-9);
+        assert_eq!(resolved.symbology.rgb(), [0, 0, 0]);
+    }
+
+    /// A dash slot naming nothing this table defines reads as no dash, the
+    /// same way a line's own dangling dash reference does.
+    #[test]
+    fn an_override_whose_dash_type_names_nothing_draws_solid() {
+        let data = stream(&[
+            dash_type(85, &[-0.0035, -0.00175]),
+            simple_line_dashed(3, 85),
+            override_stating(9, 3, OVERRIDE_STATES_DASH, 0, 0.0, 404),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert_eq!(
+            table.get(9).expect("defined").override_dash_reference,
+            Some(404)
+        );
+        assert_eq!(
+            table.resolve_line_style(9).expect("id 9 is defined").dash,
+            None
+        );
+    }
+
+    /// Only an override carries the mask and its fields; every other family
+    /// reads `None` there whatever its bytes hold.
+    #[test]
+    fn only_an_override_reads_override_fields() {
+        let data = stream(&[simple_line(3, 0.0007, 0x0000_8080), text_char(4)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        for id in [3, 4] {
+            let record = table.get(id).expect("defined");
+            assert_eq!(record.override_mask, None);
+            assert_eq!(record.override_colour, None);
+            assert_eq!(record.override_width_m, None);
+            assert_eq!(record.override_dash_reference, None);
+        }
     }
 
     #[test]
