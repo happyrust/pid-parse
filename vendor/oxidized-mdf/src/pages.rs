@@ -16,6 +16,19 @@
 //     Page::slotted_records(); the page header also yields its page id and ghost count
 //   - The page header names its allocation unit (IndexID << 48 | ObjectID << 16)
 //   - A decimal beyond the range rust_decimal holds is an Err instead of a panic
+//   - The page header names its page type
+//   - A variable-length column's complex bit is kept apart from its end offset: a complex
+//     value is an Err where in-row bytes are expected, and the 16-byte text pointer of a
+//     text / ntext / image column is read from it (TextPointer)
+//   - A zero-length variable-length column whose null bit is clear is "", no longer NULL;
+//     a variable-length column past the columns a record stores is NULL
+//   - datetime yields its stored days and 1/300-second ticks, and ticks become milliseconds
+//     by integer arithmetic, (ticks * 10 + 1) / 3, rounding as SQL Server does
+//   - Text pages: Page::text_record reads a blob-fragment record by slot (TextRecord: DATA,
+//     LARGE_ROOT_YUKON with 12-byte links, INTERNAL with 16-byte links; anything else is
+//     named, not decoded)
+//   - A variable-length column whose end offset runs past the record is an Err, no longer
+//     silently cut short
 
 use bitvec::{order::Lsb0, slice::BitSlice};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -25,6 +38,8 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub(crate) struct PageHeader {
+    /// 1 data, 2 index, 3 text mix, 4 text tree, ...
+    pub(crate) page_type: u8,
     pub(crate) slot_count: u16,
     pub(crate) next_page_pointer: Option<PagePointer>,
     pub(crate) page_id: u32,
@@ -45,7 +60,7 @@ pub struct BootPage {
 pub(crate) struct Record<'a> {
     fixed_bytes: &'a [u8],
     r#type: RecordType,
-    null_bitmap: Option<NullBitmap<'a>>,
+    columns: ColumnCursor<'a>,
     variable_columns: Option<VariableColumns<'a>>,
 }
 
@@ -82,11 +97,6 @@ fn parse_le_u32<'a>(input: &'a [u8], err: &'static str) -> Result<(&'a [u8], u32
         input,
         u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
     ))
-}
-
-fn parse_le_i16<'a>(input: &'a [u8], err: &'static str) -> Result<(&'a [u8], i16), &'static str> {
-    let (input, bytes) = take_bytes(input, 2, err)?;
-    Ok((input, i16::from_le_bytes([bytes[0], bytes[1]])))
 }
 
 impl<'a> TryFrom<&'a [u8]> for Record<'a> {
@@ -158,10 +168,69 @@ impl<'a> TryFrom<&'a [u8]> for Record<'a> {
         Ok(Self {
             fixed_bytes,
             r#type,
-            null_bitmap: null_bitmap.map(NullBitmap::new),
+            columns: ColumnCursor {
+                stored: number_of_columns,
+                next: 0,
+                null_bitmap: null_bitmap.map(BitSlice::from_slice),
+            },
             variable_columns,
         })
     }
+}
+
+/// What a `text`, `ntext` or `image` column holds in its row when the value
+/// sits on text pages: the LOB's id and the row id of its root record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TextPointer {
+    /// Every record of the LOB carries this id.
+    pub(crate) blob_id: u64,
+    pub(crate) page: PagePointer,
+    pub(crate) slot: u16,
+}
+
+/// A text pointer is the blob id (8 bytes), then the root's page id (4), file
+/// id (2) and slot (2).
+const TEXT_POINTER_LEN: usize = 16;
+
+impl TryFrom<&[u8]> for TextPointer {
+    type Error = &'static str;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() != TEXT_POINTER_LEN {
+            return Err("text pointer must be 16 bytes");
+        }
+        let (bytes, blob_id) = take_bytes(bytes, 8, "text pointer must be 16 bytes")?;
+        let (slot, page) = take_bytes(bytes, 6, "text pointer must be 16 bytes")?;
+        Ok(Self {
+            blob_id: u64::from_le_bytes(blob_id.try_into().map_err(|_| "blob id must be 8 bytes")?),
+            page: PagePointer::try_from(page)?,
+            slot: u16::from_le_bytes([slot[0], slot[1]]),
+        })
+    }
+}
+
+/// Clock ticks of 1/300 second in a day: the range of a `datetime`'s time.
+const DATETIME_TICKS_PER_DAY: i32 = 300 * 60 * 60 * 24;
+
+/// A `datetime` as stored: days since 1900-01-01 and 1/300-second ticks
+/// since midnight.
+pub(crate) type DateTimeParts = (i32, i32);
+
+/// The instant a `datetime` stored as `days` since 1900-01-01 and `ticks` of
+/// 1/300 second since midnight names. Ticks become milliseconds the way SQL
+/// Server rounds them, `(ticks * 10 + 1) / 3`: .000, .003 or .007.
+pub(crate) fn datetime_from_parts(days: i32, ticks: i32) -> Result<DateTime<Utc>, &'static str> {
+    if !(0..DATETIME_TICKS_PER_DAY).contains(&ticks) {
+        return Err("datetime ticks outside a day");
+    }
+    let millis = (i64::from(ticks) * 10 + 1) / 3;
+    Utc.with_ymd_and_hms(1900, 1, 1, 0, 0, 0)
+        .single()
+        .ok_or("Cannot construct datetime epoch 1900-01-01")?
+        .checked_add_signed(Duration::days(i64::from(days)))
+        .ok_or("Cannot parse datetime due to overflow")?
+        .checked_add_signed(Duration::milliseconds(millis))
+        .ok_or("Cannot parse datetime due to overflow")
 }
 
 impl<'a> Record<'a> {
@@ -305,35 +374,20 @@ impl<'a> Record<'a> {
         Ok((bytes[0] > 0, record))
     }
 
-    const CLOCK_TICK_MS: f64 = 10.0 / 3.0;
-
-    pub(crate) fn parse_datetime_opt(
+    /// A `datetime` as stored: days since 1900-01-01, then 1/300-second
+    /// ticks since midnight. See [`datetime_from_parts`].
+    pub(crate) fn parse_datetime_parts_opt(
         self,
-    ) -> Result<(Option<DateTime<Utc>>, Record<'a>), &'static str> {
+    ) -> Result<(Option<DateTimeParts>, Record<'a>), &'static str> {
         let (bytes, record) = self.parse_bytes_opt(8)?;
 
-        let datetime = match bytes {
-            Some(bytes) => {
-                let time = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                let days = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let parts = bytes.map(|bytes| {
+            let ticks = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            let days = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+            (days, ticks)
+        });
 
-                let datetime = Utc
-                    .with_ymd_and_hms(1900, 1, 1, 0, 0, 0)
-                    .single()
-                    .ok_or("Cannot construct datetime epoch 1900-01-01")?
-                    .checked_add_signed(Duration::milliseconds(
-                        (time as f64 * Self::CLOCK_TICK_MS) as i64,
-                    ))
-                    .ok_or("Cannot parse datetime due to overflow")?
-                    .checked_add_signed(Duration::days(days as i64))
-                    .ok_or("Cannot parse datetime due to overflow")?;
-
-                Some(datetime)
-            }
-            None => None,
-        };
-
-        Ok((datetime, record))
+        Ok((parts, record))
     }
 
     pub(crate) fn parse_smalldatetime_opt(
@@ -454,16 +508,6 @@ impl<'a> Record<'a> {
         }
     }
 
-    fn pop_next_null_bit(&mut self) -> bool {
-        if let Some(null_bitmap) = self.null_bitmap.as_mut() {
-            if let Some(null_bit) = null_bitmap.next() {
-                return null_bit;
-            }
-        }
-
-        false
-    }
-
     pub(crate) fn parse_bytes_opt(
         mut self,
         len: usize,
@@ -471,55 +515,65 @@ impl<'a> Record<'a> {
         if len > self.fixed_bytes.len() {
             return Err("requested fixed-length bytes exceed record bounds");
         }
-        let is_null = self.pop_next_null_bit();
-        let (bytes, remaining_bytes) = &self.fixed_bytes.split_at(len);
+        let (_, is_null) = self.columns.advance();
+        let (bytes, remaining_bytes) = self.fixed_bytes.split_at(len);
+        self.fixed_bytes = remaining_bytes;
 
-        let record = Self {
-            fixed_bytes: remaining_bytes,
-            r#type: self.r#type,
-            null_bitmap: self.null_bitmap,
-            variable_columns: self.variable_columns,
-        };
-
-        Ok((if is_null { None } else { Some(bytes) }, record))
+        Ok((if is_null { None } else { Some(bytes) }, self))
     }
 
-    const EMPTY_SLICE: &'static [u8] = &[];
-
-    pub(crate) fn parse_variables_bytes_opt(
+    /// The next variable-length column; `None` when it is null or the record
+    /// does not store it. A column past the last end offset the record keeps
+    /// is zero bytes long: empty, not null.
+    fn parse_variable_opt(
         mut self,
-    ) -> Result<(Option<&'a [u8]>, Record<'a>), &'static str> {
-        let is_null = self.pop_next_null_bit();
-
-        let Some(mut variable_columns) = self.variable_columns else {
-            return Err("no variable column data");
-        };
-
-        if is_null {
-            let _ = variable_columns.next_bytes()?;
-            let record = Self {
-                fixed_bytes: self.fixed_bytes,
-                r#type: self.r#type,
-                null_bitmap: self.null_bitmap,
-                variable_columns: Some(variable_columns),
-            };
-            return Ok((None, record));
+    ) -> Result<(Option<VariableValue<'a>>, Record<'a>), &'static str> {
+        let (index, is_null) = self.columns.advance();
+        if index >= self.columns.stored {
+            return Ok((None, self));
         }
 
-        let bytes = variable_columns
-            .next_bytes()?
-            // If the current variable length column index exceeds the number of stored
-            // variable length columns, the value is empty by definition (that is, 0 bytes, but not null).
-            .unwrap_or(Self::EMPTY_SLICE);
-
-        let record = Self {
-            fixed_bytes: self.fixed_bytes,
-            r#type: self.r#type,
-            null_bitmap: self.null_bitmap,
-            variable_columns: Some(variable_columns),
+        let value = match self.variable_columns.as_mut() {
+            Some(variable_columns) => variable_columns.next_value()?,
+            None => None,
         };
+        if is_null {
+            return Ok((None, self));
+        }
 
-        Ok((Some(bytes), record))
+        Ok((Some(value.unwrap_or(VariableValue::EMPTY)), self))
+    }
+
+    /// The in-row bytes of the next variable-length column, `None` when it is
+    /// null. A complex column — its data kept off the row — is an `Err`.
+    pub(crate) fn parse_variables_bytes_opt(
+        self,
+    ) -> Result<(Option<&'a [u8]>, Record<'a>), &'static str> {
+        let (value, record) = self.parse_variable_opt()?;
+        match value {
+            Some(VariableValue { complex: true, .. }) => {
+                Err("complex column (data kept off the row) is not supported")
+            }
+            value => Ok((value.map(|value| value.bytes), record)),
+        }
+    }
+
+    /// The text pointer a `text`, `ntext` or `image` column holds in its row,
+    /// `None` when it is null. Any other in-row form is not supported.
+    pub(crate) fn parse_text_pointer_opt(
+        self,
+    ) -> Result<(Option<TextPointer>, Record<'a>), &'static str> {
+        let (value, record) = self.parse_variable_opt()?;
+        match value {
+            None => Ok((None, record)),
+            Some(VariableValue {
+                bytes,
+                complex: true,
+            }) if bytes.len() == TEXT_POINTER_LEN => {
+                Ok((Some(TextPointer::try_from(bytes)?), record))
+            }
+            Some(_) => Err("LOB column holds no 16-byte text pointer in its row; not supported"),
+        }
     }
 
     pub(crate) fn parse_string_from_fixed_bytes(
@@ -554,24 +608,12 @@ impl<'a> Record<'a> {
         Ok((b, record))
     }
 
+    /// The next variable-length column as UTF-16LE text: `None` when null,
+    /// `""` when zero bytes long.
     pub(crate) fn parse_string(self) -> Result<(Option<String>, Record<'a>), &'static str> {
         let (bytes, record) = self.parse_variables_bytes_opt()?;
 
-        let s = match bytes {
-            Some(first) => {
-                if first.is_empty() {
-                    // TODO: this is an open question: is it correct to assume that an
-                    // empty array is an null string? Some SQL Server do so but is that
-                    // true for MSSQL and therefore, is this true for MDF files?
-                    // One of the integration tests demands this assumption.
-                    None
-                } else {
-                    let (s, _, _) = encoding_rs::UTF_16LE.decode(first);
-                    Some(s.into_owned())
-                }
-            }
-            None => None,
-        };
+        let s = bytes.map(|bytes| encoding_rs::UTF_16LE.decode(bytes).0.into_owned());
 
         Ok((s, record))
     }
@@ -585,37 +627,44 @@ impl<'a> Record<'a> {
     }
 }
 
+/// Walks a record's columns in order, pairing each with its null bit.
 #[derive(Debug)]
-struct NullBitmap<'a> {
-    index: usize,
-    null_bitmap: &'a BitSlice<u8, Lsb0>,
+struct ColumnCursor<'a> {
+    /// Columns the record stores: its column count. A column past it was
+    /// added to the table after the row was written and holds NULL.
+    stored: usize,
+    next: usize,
+    null_bitmap: Option<&'a BitSlice<u8, Lsb0>>,
 }
 
-impl<'a> NullBitmap<'a> {
-    fn new(null_bitmap: &'a [u8]) -> Self {
-        Self {
-            index: 0,
-            null_bitmap: BitSlice::from_slice(null_bitmap),
-        }
+impl ColumnCursor<'_> {
+    /// The next column's index and whether its null bit is set. A column
+    /// the bitmap does not reach is not null.
+    fn advance(&mut self) -> (usize, bool) {
+        let index = self.next;
+        self.next += 1;
+        let is_null = self
+            .null_bitmap
+            .is_some_and(|bits| bits.get(index).is_some_and(|bit| *bit));
+        (index, is_null)
     }
 }
 
-impl<'a> Iterator for NullBitmap<'a> {
-    type Item = bool;
+/// The in-row bytes of a variable-length column, and whether its offset
+/// entry carries the complex bit: the data lives off the row and the bytes
+/// are a text pointer, an inline root or a forwarded-fragment pointer.
+#[derive(Debug)]
+struct VariableValue<'a> {
+    bytes: &'a [u8],
+    complex: bool,
+}
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.null_bitmap.len() {
-            return None;
-        }
-
-        let index = self.index;
-        self.index += 1;
-        if self.null_bitmap[index] {
-            Some(true)
-        } else {
-            Some(false)
-        }
-    }
+impl VariableValue<'static> {
+    /// A column zero bytes long: empty, not null.
+    const EMPTY: Self = Self {
+        bytes: &[],
+        complex: false,
+    };
 }
 
 #[derive(Debug)]
@@ -654,7 +703,9 @@ impl<'a> VariableColumns<'a> {
             read_bytes_index: Some(read_bytes + variable_length_column_lengths.len()),
         })
     }
-    fn next_bytes(&mut self) -> Result<Option<&'a [u8]>, &'static str> {
+    /// The next variable-length column the record stores an offset entry
+    /// for, with its complex bit; `None` once the entries run out.
+    fn next_value(&mut self) -> Result<Option<VariableValue<'a>>, &'static str> {
         let Some(read_bytes_index) = self.read_bytes_index.take() else {
             return Ok(None);
         };
@@ -663,21 +714,15 @@ impl<'a> VariableColumns<'a> {
             return Ok(None);
         }
 
-        let (variable_length_column_lengths, end_idx) = parse_le_i16(
+        let (variable_length_column_lengths, entry) = parse_le_u16(
             self.variable_length_column_lengths,
             "variable column length entry truncated",
         )?;
         self.variable_length_column_lengths = variable_length_column_lengths;
 
-        let (complex, end_index_of_readable_bytes) = if end_idx < 0 {
-            (true, -end_idx as usize)
-        } else {
-            (false, end_idx as usize)
-        };
-
-        if complex {
-            return Ok(None);
-        }
+        // The high bit marks a complex column; the low 15 bits are its end offset.
+        let complex = entry & 0x8000 != 0;
+        let end_index_of_readable_bytes = usize::from(entry & 0x7FFF);
 
         if end_index_of_readable_bytes < read_bytes_index {
             return Err("variable column end offset precedes current read position");
@@ -686,13 +731,159 @@ impl<'a> VariableColumns<'a> {
         self.read_bytes_index = Some(end_index_of_readable_bytes);
 
         let length = end_index_of_readable_bytes - read_bytes_index;
-        let (bytes, remaining_bytes) = self
-            .variable_columns
-            .split_at(std::cmp::min(length, self.variable_columns.len()));
+        if length > self.variable_columns.len() {
+            return Err("variable column end offset exceeds record bounds");
+        }
+        let (bytes, remaining_bytes) = self.variable_columns.split_at(length);
 
         self.variable_columns = remaining_bytes;
 
-        Ok(Some(bytes))
+        Ok(Some(VariableValue { bytes, complex }))
+    }
+}
+
+/// A link from a LOB's root or internal record to one child: the offset
+/// within the LOB at which the child's bytes end, and where the child sits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LobLink {
+    pub(crate) end_offset: u64,
+    pub(crate) page: PagePointer,
+    pub(crate) slot: u16,
+}
+
+/// A record on a text page, in the shapes the `text` / `ntext` / `image`
+/// values of the corpus take. Every one starts with two status bytes, its
+/// length (2), the blob id (8) and its type (2).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum TextRecord<'a> {
+    /// `DATA` (type 3): the LOB's bytes from the parent link before this
+    /// one's end offset up to it.
+    Data(&'a [u8]),
+    /// `LARGE_ROOT_YUKON` (type 5): the root's level and its links, after
+    /// `MaxLinks` (2), `CurLinks` (2), `Level` (2) and four unread bytes;
+    /// each link is the end offset (4), page id (4), file id (2) and slot (2).
+    LargeRootYukon { level: u16, links: Vec<LobLink> },
+    /// `INTERNAL` (type 2): a node's level and its links, after `MaxLinks`,
+    /// `CurLinks` and `Level`; each link is the end offset (8), page id (4),
+    /// file id (2) and slot (2).
+    Internal { level: u16, links: Vec<LobLink> },
+    /// A type the corpus never showed (`SMALL_ROOT`, `LARGE_ROOT`,
+    /// `SUPER_LARGE_ROOT`, `NULL`, ...): named, not decoded.
+    Other(u16),
+}
+
+/// Status bytes, length, blob id and type: what every text record starts with.
+const TEXT_RECORD_HEADER_LEN: usize = 14;
+/// Where a `LARGE_ROOT_YUKON` record's links start.
+const LARGE_ROOT_LINKS_START: usize = 24;
+/// Where an `INTERNAL` record's links start.
+const INTERNAL_LINKS_START: usize = 20;
+const LARGE_ROOT_LINK_LEN: usize = 12;
+const INTERNAL_LINK_LEN: usize = 16;
+const TEXT_RECORD_TYPE_INTERNAL: u16 = 2;
+const TEXT_RECORD_TYPE_DATA: u16 = 3;
+const TEXT_RECORD_TYPE_LARGE_ROOT_YUKON: u16 = 5;
+/// Bits 1-3 of the first status byte of a blob fragment record.
+const RECORD_TYPE_BLOB_FRAGMENT: u8 = 4;
+
+impl<'a> TextRecord<'a> {
+    /// Reads the text record at the start of `bytes`, which may run on past
+    /// it; the record's own length field bounds it. Returns the blob id the
+    /// record carries along with it.
+    fn parse(bytes: &'a [u8]) -> Result<(u64, Self), &'static str> {
+        let (_, header) = take_bytes(bytes, TEXT_RECORD_HEADER_LEN, "text record too short")?;
+        if record_type_of(header[0]) != RECORD_TYPE_BLOB_FRAGMENT {
+            return Err("text record is not a blob fragment record");
+        }
+        let len = usize::from(u16::from_le_bytes([header[2], header[3]]));
+        if len < TEXT_RECORD_HEADER_LEN {
+            return Err("text record length smaller than its header");
+        }
+        let record = bytes
+            .get(..len)
+            .ok_or("text record extends past the slot array")?;
+        let blob_id = u64::from_le_bytes([
+            header[4], header[5], header[6], header[7], header[8], header[9], header[10],
+            header[11],
+        ]);
+        let kind = u16::from_le_bytes([header[12], header[13]]);
+
+        let parsed = match kind {
+            TEXT_RECORD_TYPE_DATA => TextRecord::Data(&record[TEXT_RECORD_HEADER_LEN..]),
+            TEXT_RECORD_TYPE_LARGE_ROOT_YUKON => {
+                let (level, links) = Self::parse_links(
+                    record,
+                    LARGE_ROOT_LINKS_START,
+                    LARGE_ROOT_LINK_LEN,
+                    |link| {
+                        let (link, end_offset) = parse_le_u32(link, "LOB root link truncated")?;
+                        Ok((u64::from(end_offset), link))
+                    },
+                )?;
+                TextRecord::LargeRootYukon { level, links }
+            }
+            TEXT_RECORD_TYPE_INTERNAL => {
+                let (level, links) =
+                    Self::parse_links(record, INTERNAL_LINKS_START, INTERNAL_LINK_LEN, |link| {
+                        let (link, end_offset) =
+                            take_bytes(link, 8, "LOB internal link truncated")?;
+                        Ok((
+                            u64::from_le_bytes([
+                                end_offset[0],
+                                end_offset[1],
+                                end_offset[2],
+                                end_offset[3],
+                                end_offset[4],
+                                end_offset[5],
+                                end_offset[6],
+                                end_offset[7],
+                            ]),
+                            link,
+                        ))
+                    })?;
+                TextRecord::Internal { level, links }
+            }
+            other => TextRecord::Other(other),
+        };
+        Ok((blob_id, parsed))
+    }
+
+    /// `MaxLinks`, `CurLinks` and `Level` follow the header; `CurLinks`
+    /// links of `link_len` bytes start at `links_start`, each beginning with
+    /// the end offset `end_offset` reads and continuing with page id, file
+    /// id and slot.
+    fn parse_links(
+        record: &'a [u8],
+        links_start: usize,
+        link_len: usize,
+        end_offset: impl Fn(&'a [u8]) -> Result<(u64, &'a [u8]), &'static str>,
+    ) -> Result<(u16, Vec<LobLink>), &'static str> {
+        let after_header = &record[TEXT_RECORD_HEADER_LEN..];
+        let (after_header, _max_links) =
+            parse_le_u16(after_header, "LOB node too short for its link counts")?;
+        let (after_header, cur_links) =
+            parse_le_u16(after_header, "LOB node too short for its link counts")?;
+        let (_, level) = parse_le_u16(after_header, "LOB node too short for its link counts")?;
+
+        let links_end = links_start + usize::from(cur_links) * link_len;
+        let mut links_bytes = record
+            .get(links_start..links_end)
+            .ok_or("LOB node shorter than the links it counts")?;
+        let mut links = Vec::with_capacity(usize::from(cur_links));
+        while !links_bytes.is_empty() {
+            let (link, rest) = links_bytes.split_at(link_len);
+            links_bytes = rest;
+            let (offset, link) = end_offset(link)?;
+            let (link, page_bytes) = take_bytes(link, 6, "LOB link truncated")?;
+            let page = PagePointer::try_from(page_bytes)?;
+            let (_, slot) = parse_le_u16(link, "LOB link truncated")?;
+            links.push(LobLink {
+                end_offset: offset,
+                page,
+                slot,
+            });
+        }
+        Ok((level, links))
     }
 }
 
@@ -764,7 +955,9 @@ impl TryFrom<[u8; 8192]> for BootPage {
 /// ```text
 /// Bytes       Content
 /// -----       -------
-/// ...         ?
+/// 00          HeaderVersion (tinyint)
+/// 01          Type (tinyint): 1 data, 2 index, 3 text mix, 4 text tree, ...
+/// 02-05       ?
 /// 06-07       IndexID (smallint)
 /// 08-15       ?
 /// 16-19       NextPageID (int)
@@ -785,7 +978,8 @@ impl TryFrom<&[u8]> for PageHeader {
             return Err("Page header must be 96 bytes.");
         }
 
-        let (bytes, _) = take_bytes(bytes, 6, "Page header must be 96 bytes.")?;
+        let (bytes, first) = take_bytes(bytes, 6, "Page header must be 96 bytes.")?;
+        let page_type = first[1];
         let (bytes, index_id) = parse_le_u16(bytes, "Page header must be 96 bytes.")?;
         let (bytes, _) = take_bytes(bytes, 8, "Page header must be 96 bytes.")?;
         let (bytes, next_page_bytes) = take_bytes(bytes, 6, "Page header must be 96 bytes.")?;
@@ -803,6 +997,7 @@ impl TryFrom<&[u8]> for PageHeader {
         let (_, ghost_record_count) = parse_le_u16(bytes, "Page header must be 96 bytes.")?;
 
         Ok(PageHeader {
+            page_type,
             slot_count,
             next_page_pointer,
             page_id,
@@ -946,6 +1141,42 @@ impl Page {
                 (offset != 0).then_some((slot as u16, offset))
             })
             .collect()
+    }
+
+    /// The offset one slot holds, checked to lie in the record area.
+    fn slot_offset(&self, slot: u16) -> Result<usize, &'static str> {
+        let records_end = self
+            .slot_array_start()
+            .ok_or("slot array larger than the page")?;
+        if slot >= self.header.slot_count {
+            return Err("slot beyond the page's slot count");
+        }
+        let entry = self.bytes.len() - 2 * (usize::from(slot) + 1);
+        let offset = usize::from(u16::from_le_bytes([
+            self.bytes[entry],
+            self.bytes[entry + 1],
+        ]));
+        if offset < PAGE_HEADER_LEN || offset >= records_end {
+            return Err("slot offset outside the page's record area");
+        }
+        Ok(offset)
+    }
+
+    /// Text mix (3) and text tree (4) pages hold the records of LOBs.
+    pub(crate) fn is_text_page(&self) -> bool {
+        matches!(self.header.page_type, 3 | 4)
+    }
+
+    /// The text record one slot of a text page points at, with its blob id.
+    pub(crate) fn text_record(&self, slot: u16) -> Result<(u64, TextRecord<'_>), &'static str> {
+        if !self.is_text_page() {
+            return Err("LOB record expected on a text page");
+        }
+        let offset = self.slot_offset(slot)?;
+        let records_end = self
+            .slot_array_start()
+            .ok_or("slot array larger than the page")?;
+        TextRecord::parse(&self.bytes[offset..records_end])
     }
 
     /// Every record the slot array points at, live and ghost, in slot order.
@@ -1234,8 +1465,8 @@ mod tests {
             0x00,
             0x04,
             0x00, // fixed-length size is header-only, so fixed region is empty
-            0x00,
-            0x00, // column count is irrelevant here because there is no null bitmap
+            0x01,
+            0x00, // one column (no null bitmap)
             0x01,
             0x00, // one variable-length column
             0x00,
@@ -1311,15 +1542,319 @@ mod tests {
 
     #[rstest(
         bytes,
+        expected_parts,
         expected_value,
-        case(vec![0u8, 0u8, 12u8, 0u8, 0, 0, 0, 0, 249, 148, 0, 0, 0u8, 0u8], Some(Utc.with_ymd_and_hms(2004, 6, 1, 0, 0, 0).unwrap()))
+        case(vec![0u8, 0u8, 12u8, 0u8, 0, 0, 0, 0, 249, 148, 0, 0, 0u8, 0u8], Some((38137, 0)), Some(Utc.with_ymd_and_hms(2004, 6, 1, 0, 0, 0).unwrap()))
     )]
-    fn parse_datetime(bytes: Vec<u8>, expected_value: Option<DateTime<Utc>>) {
+    fn parse_datetime(
+        bytes: Vec<u8>,
+        expected_parts: Option<(i32, i32)>,
+        expected_value: Option<DateTime<Utc>>,
+    ) {
         let record = Record::try_from(&bytes[..]).unwrap();
 
-        let (parsed_value, _record) = record.parse_datetime_opt().unwrap();
+        let (parts, _record) = record.parse_datetime_parts_opt().unwrap();
 
-        assert_eq!(expected_value, parsed_value);
+        assert_eq!(expected_parts, parts);
+        assert_eq!(
+            expected_value,
+            parts.map(|(days, ticks)| datetime_from_parts(days, ticks).unwrap())
+        );
+    }
+
+    #[rstest(
+        ticks,
+        millis,
+        case(0, 0),
+        case(1, 3),
+        case(2, 7),
+        case(3, 10),
+        case(299, 997),
+        case(300, 1000),
+        case(25_919_999, 86_399_997)
+    )]
+    fn datetime_ticks_round_to_milliseconds_as_sql_server_does(ticks: i32, millis: i64) {
+        let midnight = Utc.with_ymd_and_hms(2026, 4, 28, 0, 0, 0).unwrap();
+        let days = (midnight - Utc.with_ymd_and_hms(1900, 1, 1, 0, 0, 0).unwrap()).num_days();
+
+        let datetime = datetime_from_parts(days as i32, ticks).unwrap();
+
+        assert_eq!(midnight + Duration::milliseconds(millis), datetime);
+    }
+
+    #[test]
+    fn datetime_ticks_outside_a_day_are_an_error() {
+        assert_eq!(
+            Err("datetime ticks outside a day"),
+            datetime_from_parts(0, 25_920_000)
+        );
+        assert_eq!(
+            Err("datetime ticks outside a day"),
+            datetime_from_parts(0, -1)
+        );
+    }
+
+    #[test]
+    fn an_empty_variable_column_is_empty_and_a_null_one_is_null() {
+        let empty = data_record(0, 1, &[b""]);
+        let record = Record::try_from(&empty[..]).unwrap();
+        let (_, record) = record.parse_i32().unwrap();
+        assert_eq!(Some(String::new()), record.parse_string().unwrap().0);
+
+        // Same shape, the null bit of column 1 set.
+        let mut null = data_record(0, 1, &[b""]);
+        null[10] |= 0b10;
+        let record = Record::try_from(&null[..]).unwrap();
+        let (_, record) = record.parse_i32().unwrap();
+        assert_eq!(None, record.parse_string().unwrap().0);
+    }
+
+    #[test]
+    fn a_variable_column_the_record_does_not_store_is_null() {
+        // One int column stored; the table gained a string column later.
+        let bytes = data_record(0, 9, &[]);
+        let record = Record::try_from(&bytes[..]).unwrap();
+        let (_, record) = record.parse_i32().unwrap();
+
+        assert_eq!(None, record.parse_string().unwrap().0);
+    }
+
+    #[test]
+    fn a_trailing_variable_column_without_an_offset_entry_is_empty() {
+        // Two string columns counted, one offset entry stored: the second
+        // is zero bytes long.
+        let mut bytes = data_record(0, 2, &[b"a\0"]);
+        bytes[8] = 3;
+        let record = Record::try_from(&bytes[..]).unwrap();
+        let (_, record) = record.parse_i32().unwrap();
+        let (first, record) = record.parse_string().unwrap();
+        assert_eq!(Some(String::from("a")), first);
+
+        assert_eq!(Some(String::new()), record.parse_string().unwrap().0);
+    }
+
+    /// A record whose one variable-length column is a 16-byte text pointer
+    /// with the complex bit set in its end offset.
+    fn record_with_text_pointer(pointer: &[u8; 16]) -> Vec<u8> {
+        let mut bytes = data_record(0, 4, &[pointer]);
+        let entry = bytes.len() - 16 - 2;
+        let end = u16::from_le_bytes([bytes[entry], bytes[entry + 1]]) | 0x8000;
+        bytes[entry..entry + 2].copy_from_slice(&end.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn a_complex_column_yields_its_text_pointer_and_no_in_row_bytes() {
+        let pointer = [
+            0x00, 0x00, 0xa6, 0x0f, 0x00, 0x00, 0x00, 0x00, 0xc7, 0x08, 0x00, 0x00, 0x01, 0x00,
+            0x01, 0x00,
+        ];
+        let bytes = record_with_text_pointer(&pointer);
+
+        let record = Record::try_from(&bytes[..]).unwrap();
+        let (_, record) = record.parse_i32().unwrap();
+        assert_eq!(
+            Some(TextPointer {
+                blob_id: 0x0FA6_0000,
+                page: PagePointer {
+                    page_id: 2247,
+                    file_id: 1
+                },
+                slot: 1,
+            }),
+            record.parse_text_pointer_opt().unwrap().0
+        );
+
+        let record = Record::try_from(&bytes[..]).unwrap();
+        let (_, record) = record.parse_i32().unwrap();
+        assert_eq!(
+            Err("complex column (data kept off the row) is not supported"),
+            record.parse_string().map(|(value, _)| value)
+        );
+    }
+
+    #[test]
+    fn a_lob_column_kept_in_its_row_is_not_supported() {
+        let bytes = data_record(0, 4, &[b"in-row text"]);
+        let record = Record::try_from(&bytes[..]).unwrap();
+        let (_, record) = record.parse_i32().unwrap();
+
+        assert_eq!(
+            Err("LOB column holds no 16-byte text pointer in its row; not supported"),
+            record.parse_text_pointer_opt().map(|(value, _)| value)
+        );
+    }
+
+    #[test]
+    fn a_variable_column_running_past_the_record_is_an_error() {
+        let mut bytes = data_record(0, 4, &[b"abc"]);
+        let entry = bytes.len() - 3 - 2;
+        let past_the_end = bytes.len() as u16 + 1;
+        bytes[entry..entry + 2].copy_from_slice(&past_the_end.to_le_bytes());
+        let record = Record::try_from(&bytes[..]).unwrap();
+        let (_, record) = record.parse_i32().unwrap();
+
+        assert_eq!(
+            Err("variable column end offset exceeds record bounds"),
+            record.parse_string().map(|(value, _)| value)
+        );
+    }
+
+    /// A text record: status bytes, length, blob id, type and the body.
+    fn text_record(record_type: u8, blob_id: u64, kind: u16, body: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![record_type << 1, 0];
+        bytes.extend_from_slice(&((14 + body.len()) as u16).to_le_bytes());
+        bytes.extend_from_slice(&blob_id.to_le_bytes());
+        bytes.extend_from_slice(&kind.to_le_bytes());
+        bytes.extend_from_slice(body);
+        bytes
+    }
+
+    fn text_page(records: &[(usize, &[u8])]) -> Page {
+        let mut page = synthetic_page(records);
+        page.header.page_type = 3;
+        page.bytes[1] = 3;
+        page
+    }
+
+    #[test]
+    fn text_record_data_is_the_bytes_after_its_header() {
+        let record = text_record(4, 0x0FA6_0000, 3, b"PK\x03\x04 fragment");
+        let page = text_page(&[(96, &record)]);
+
+        assert_eq!(
+            Ok((0x0FA6_0000, TextRecord::Data(&b"PK\x03\x04 fragment"[..]))),
+            page.text_record(0)
+        );
+    }
+
+    #[test]
+    fn text_record_large_root_yukon_lists_its_links() {
+        // MaxLinks 5, CurLinks 2, Level 0, four unread bytes, two 12-byte links.
+        let mut body = vec![5, 0, 2, 0, 0, 0, 0, 0, 0, 0];
+        body.extend_from_slice(&8040u32.to_le_bytes());
+        body.extend_from_slice(&2336u32.to_le_bytes());
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.extend_from_slice(&0u16.to_le_bytes());
+        body.extend_from_slice(&8648u32.to_le_bytes());
+        body.extend_from_slice(&2247u32.to_le_bytes());
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.extend_from_slice(&3u16.to_le_bytes());
+        let record = text_record(4, 7, 5, &body);
+        let page = text_page(&[(96, &record)]);
+
+        assert_eq!(
+            Ok((
+                7,
+                TextRecord::LargeRootYukon {
+                    level: 0,
+                    links: vec![
+                        LobLink {
+                            end_offset: 8040,
+                            page: PagePointer {
+                                page_id: 2336,
+                                file_id: 1
+                            },
+                            slot: 0,
+                        },
+                        LobLink {
+                            end_offset: 8648,
+                            page: PagePointer {
+                                page_id: 2247,
+                                file_id: 1
+                            },
+                            slot: 3,
+                        },
+                    ],
+                }
+            )),
+            page.text_record(0)
+        );
+    }
+
+    #[test]
+    fn text_record_internal_lists_its_links() {
+        // MaxLinks 501, CurLinks 1, Level 0, one 16-byte link.
+        let mut body = vec![0xf5, 0x01, 1, 0, 0, 0];
+        body.extend_from_slice(&8040u64.to_le_bytes());
+        body.extend_from_slice(&2328u32.to_le_bytes());
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.extend_from_slice(&0u16.to_le_bytes());
+        let record = text_record(4, 9, 2, &body);
+        let page = text_page(&[(96, &record)]);
+
+        assert_eq!(
+            Ok((
+                9,
+                TextRecord::Internal {
+                    level: 0,
+                    links: vec![LobLink {
+                        end_offset: 8040,
+                        page: PagePointer {
+                            page_id: 2328,
+                            file_id: 1
+                        },
+                        slot: 0,
+                    }],
+                }
+            )),
+            page.text_record(0)
+        );
+    }
+
+    #[test]
+    fn text_record_of_another_type_is_named_not_decoded() {
+        let record = text_record(4, 1, 0, &[0; 20]);
+        let page = text_page(&[(96, &record)]);
+
+        assert_eq!(Ok((1, TextRecord::Other(0))), page.text_record(0));
+    }
+
+    #[test]
+    fn text_record_refuses_a_data_page_a_bad_slot_and_a_data_record() {
+        let record = text_record(4, 1, 3, b"x");
+        let data_page = synthetic_page(&[(96, &record)]);
+        assert_eq!(
+            Err("LOB record expected on a text page"),
+            data_page.text_record(0)
+        );
+
+        let page = text_page(&[(96, &record)]);
+        assert_eq!(
+            Err("slot beyond the page's slot count"),
+            page.text_record(1)
+        );
+
+        let row = data_record(0, 1, &[]);
+        let page = text_page(&[(96, &row)]);
+        assert_eq!(
+            Err("text record is not a blob fragment record"),
+            page.text_record(0)
+        );
+    }
+
+    #[test]
+    fn text_record_shorter_than_its_links_is_an_error() {
+        // CurLinks 2 but only one link's worth of bytes.
+        let mut body = vec![5, 0, 2, 0, 0, 0, 0, 0, 0, 0];
+        body.extend_from_slice(&[0; 12]);
+        let record = text_record(4, 1, 5, &body);
+        let page = text_page(&[(96, &record)]);
+
+        assert_eq!(
+            Err("LOB node shorter than the links it counts"),
+            page.text_record(0)
+        );
+    }
+
+    #[test]
+    fn page_header_names_its_page_type() {
+        let mut bytes = [0u8; 8192];
+        bytes[1] = 3;
+
+        let page = Page::try_from(bytes).expect("synthetic page header should be valid");
+        assert_eq!(3, page.header().page_type);
+        assert!(page.is_text_page());
     }
 
     #[rstest(

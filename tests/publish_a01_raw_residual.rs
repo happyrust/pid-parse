@@ -518,7 +518,7 @@ fn scan_mdf_table_for_residual_values(
     table_name: &str,
     probes: &[ResidualProbe],
 ) -> Result<TableResidualScan, String> {
-    let mut db =
+    let db =
         MdfDatabase::open(path).map_err(|err| format!("open MDF for table {table_name}: {err}"))?;
     let Some(columns) = db.column_names(table_name) else {
         return Ok(TableResidualScan::default());

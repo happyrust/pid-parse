@@ -59,7 +59,7 @@ fn columns(file: &str, table_name: &str, column_names: Vec<&str>) -> Result<(), 
     case("spg_verein_TST.mdf", "tbl_Mitglied", "Strasse", "Rebenring 56")
 )]
 fn first_row(file: &str, table_name: &str, column: &str, value: &str) -> Result<(), Error> {
-    let mut db = MdfDatabase::open(format!("data/{}", file))?;
+    let db = MdfDatabase::open(format!("data/{}", file))?;
 
     let mut rows = db.rows(table_name).unwrap();
     let first_row = rows.next().unwrap();
@@ -82,7 +82,7 @@ fn first_row(file: &str, table_name: &str, column: &str, value: &str) -> Result<
     case("spg_verein_TST.mdf", "tbl_Bankleitzahlen", 3548)
 )]
 fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<(), Error> {
-    let mut db = MdfDatabase::open(format!("data/{}", file))?;
+    let db = MdfDatabase::open(format!("data/{}", file))?;
     let rows = db.rows(table_name).unwrap();
 
     assert_eq!(rows.count(), count);
@@ -117,7 +117,10 @@ fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<(), Erro
         "Titel",
         Value::String(String::from("Dr.Dr."))
     ),
-    case("spg_verein_TST.mdf", "tbl_Mitglied", 3, "Titel", Value::Null),
+    // The row stores Titel as zero bytes with its null bit clear: an empty
+    // string. Until 2026-10-09 the reader read every zero-length string as
+    // NULL and this case pinned that.
+    case("spg_verein_TST.mdf", "tbl_Mitglied", 3, "Titel", Value::String(String::new())),
     case("spg_verein_TST.mdf", "tbl_Mitglied", 0, "Kontosaldo", Value::Null),
     case("AWLT2005.mdf", "SalesOrderHeader", 0, "DueDate", Value::DateTime(Utc.with_ymd_and_hms(2004, 6, 13, 0, 0, 0).unwrap())),
     case("AWLT2005.mdf", "Product", 0, "SellEndDate", Value::Null),
@@ -131,7 +134,7 @@ fn rows(
     column: &str,
     expected_value: Value,
 ) -> Result<(), Error> {
-    let mut db = MdfDatabase::open(format!("data/{}", file))?;
+    let db = MdfDatabase::open(format!("data/{}", file))?;
     let mut rows = db.rows(table_name).unwrap().skip(skip);
 
     let row = rows.next().unwrap();
@@ -166,7 +169,7 @@ fn user_tables_keep_each_table_with_its_schema() -> Result<(), Error> {
 
 #[test]
 fn scan_table_reads_every_row_the_catalog_counts() -> Result<(), Error> {
-    let mut db = MdfDatabase::from_bytes(std::fs::read("data/AWLT2005.mdf")?)?;
+    let db = MdfDatabase::from_bytes(std::fs::read("data/AWLT2005.mdf")?)?;
     let tables = db.user_tables()?;
     let address = tables
         .iter()
@@ -193,7 +196,7 @@ fn scan_table_reads_every_row_the_catalog_counts() -> Result<(), Error> {
 fn scan_table_stops_at_a_page_of_another_allocation_unit() -> Result<(), Error> {
     // Its first page now belongs to another allocation unit, whose rows must
     // not pass for this table's.
-    let mut db = MdfDatabase::open("data/spg_verein_TST.mdf")?;
+    let db = MdfDatabase::open("data/spg_verein_TST.mdf")?;
     let tables = db.user_tables()?;
     let table = tables
         .iter()

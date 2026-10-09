@@ -5,7 +5,8 @@
 
 use std::collections::BTreeMap;
 
-use oxidized_mdf::{GhostRow, MdfDatabase, ScannedRecord};
+use chrono::Timelike;
+use oxidized_mdf::{GhostRow, LobRef, MdfDatabase, ScannedRecord, Value};
 
 const TEST02_MDF: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
 const PAGE_SIZE: usize = 8192;
@@ -36,6 +37,69 @@ const GHOST_TABLES: [(&str, usize); 5] = [
     ("T_Symbol", 3),
 ];
 
+/// The four `image` values of TEST02 -- table, column, root page and slot,
+/// length, and the name of the first entry of the ZIP each one is -- in
+/// scan order (tables by object id, rows by page and slot).
+const LOBS: [(&str, &str, u32, u16, usize, &str); 4] = [
+    (
+        "T_SmartFrameStorage",
+        "SP_Storage",
+        2247,
+        1,
+        32_768,
+        "A01-JSite204.tmp",
+    ),
+    (
+        "T_DrawingVersion",
+        "SP_Storage",
+        2323,
+        3,
+        32_768,
+        "Drawing.xml",
+    ),
+    (
+        "T_DrawingVersion",
+        "SP_Storage",
+        2323,
+        1,
+        65_536,
+        "Drawing.xml",
+    ),
+    (
+        "T_DrawingVersion",
+        "SP_Storage",
+        2323,
+        5,
+        32_768,
+        "Drawing.xml",
+    ),
+];
+
+/// Empty strings over the 154 tables, and the tables holding them.
+const EMPTY_STRINGS: usize = 162;
+const TABLES_WITH_EMPTY_STRINGS: usize = 10;
+const EMPTY_STRINGS_IN_T_DRAWING: usize = 4;
+/// Non-null `datetime` values over the 154 tables.
+const DATETIMES: usize = 31;
+/// NULL values over the 154 tables by column type; the plan's 21,431 is the
+/// nvarchar figure. The sum, 50,596, is the number of null-bitmap bits set
+/// over the tables' live rows.
+const NULLS_BY_TYPE: [(&str, usize); 4] = [
+    ("datetime", 8),
+    ("float", 148),
+    ("int", 29_009),
+    ("nvarchar", 21_431),
+];
+
+/// The name of the first entry of a ZIP: the local file header's name.
+fn first_zip_entry_name(bytes: &[u8]) -> Option<String> {
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return None;
+    }
+    let name_len = usize::from(u16::from_le_bytes([bytes[26], bytes[27]]));
+    Some(String::from_utf8_lossy(&bytes[30..30 + name_len]).into_owned())
+}
+
 fn page(file: &[u8], page_id: u32) -> &[u8] {
     let start = page_id as usize * PAGE_SIZE;
     &file[start..start + PAGE_SIZE]
@@ -59,7 +123,7 @@ fn test02_ghost_rows_are_kept_apart_byte_for_byte() {
 
     let mut ghosts_by_table: BTreeMap<String, Vec<GhostRow>> = BTreeMap::new();
     for name in &names {
-        let mut db = MdfDatabase::open(TEST02_MDF).expect("open TEST02");
+        let db = MdfDatabase::open(TEST02_MDF).expect("open TEST02");
         let ghosts = db
             .ghost_rows(name)
             .expect("table listed by table_names")
@@ -99,7 +163,7 @@ fn test02_ghost_rows_are_kept_apart_byte_for_byte() {
     }
 
     for (table, live) in GHOST_TABLES {
-        let mut db = MdfDatabase::open(TEST02_MDF).expect("open TEST02");
+        let db = MdfDatabase::open(TEST02_MDF).expect("open TEST02");
         assert_eq!(
             live,
             db.rows(table).expect("table exists").count(),
@@ -114,7 +178,7 @@ fn test02_every_table_scans_to_the_rows_its_catalog_counts() {
         eprintln!("skip: {TEST02_MDF} is absent");
         return;
     };
-    let mut db = MdfDatabase::from_bytes(file).expect("open TEST02");
+    let db = MdfDatabase::from_bytes(file).expect("open TEST02");
     let tables = db
         .user_tables()
         .expect("every table names its schema and column types")
@@ -172,5 +236,114 @@ fn test02_every_table_scans_to_the_rows_its_catalog_counts() {
             .map(|(table, _)| (*table).to_string())
             .collect::<Vec<_>>(),
         ghost_tables
+    );
+}
+
+#[test]
+fn test02_lobs_empty_strings_nulls_and_datetime_ticks_read_as_stored() {
+    let Ok(file) = std::fs::read(TEST02_MDF) else {
+        eprintln!("skip: {TEST02_MDF} is absent");
+        return;
+    };
+    let db = MdfDatabase::from_bytes(file).expect("open TEST02");
+    let tables = db
+        .user_tables()
+        .expect("every table names its schema and column types")
+        .into_iter()
+        .filter(|table| table.schema_name != "sys")
+        .collect::<Vec<_>>();
+
+    let mut lobs: Vec<(String, LobRef, Vec<u8>)> = Vec::new();
+    let mut empty_strings: BTreeMap<String, usize> = BTreeMap::new();
+    let mut nulls_by_type: BTreeMap<String, usize> = BTreeMap::new();
+    let mut datetimes = 0usize;
+    let mut millis_last_digits: BTreeMap<u32, usize> = BTreeMap::new();
+    for table in &tables {
+        for record in db.scan_table(table).expect("a heap or B-tree leaf chain") {
+            let ScannedRecord::Live {
+                row, lobs: refs, ..
+            } = record.expect("every record reads")
+            else {
+                continue;
+            };
+            for lob in refs {
+                let Some(Value::Binary(bytes)) = row.value(&lob.column) else {
+                    panic!("{}.{}: an image value", table.name, lob.column);
+                };
+                lobs.push((table.name.clone(), lob, bytes.clone()));
+            }
+            for column in &table.columns {
+                let value = row.value(&column.name).expect("every column has a value");
+                match value {
+                    Value::Null => {
+                        *nulls_by_type.entry(column.type_name.clone()).or_default() += 1;
+                    }
+                    Value::String(s) if s.is_empty() => {
+                        *empty_strings
+                            .entry(format!("{}.{}", table.schema_name, table.name))
+                            .or_default() += 1;
+                    }
+                    Value::DateTime(datetime) => {
+                        datetimes += 1;
+                        let millis = datetime.nanosecond() / 1_000_000;
+                        assert_eq!(0, datetime.nanosecond() % 1_000_000, "whole milliseconds");
+                        *millis_last_digits.entry(millis % 10).or_default() += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        LOBS.iter()
+            .map(
+                |(table, column, root_page, root_slot, length, first_entry)| (
+                    (*table).to_string(),
+                    LobRef {
+                        column: (*column).to_string(),
+                        root_page: *root_page,
+                        root_slot: *root_slot,
+                        length: *length,
+                    },
+                    Some((*first_entry).to_string()),
+                )
+            )
+            .collect::<Vec<_>>(),
+        lobs.into_iter()
+            .map(|(table, lob, bytes)| (table, lob, first_zip_entry_name(&bytes)))
+            .collect::<Vec<_>>()
+    );
+
+    assert_eq!(EMPTY_STRINGS, empty_strings.values().sum::<usize>());
+    assert_eq!(
+        TABLES_WITH_EMPTY_STRINGS,
+        empty_strings.len(),
+        "{empty_strings:?}"
+    );
+    assert_eq!(
+        Some(&EMPTY_STRINGS_IN_T_DRAWING),
+        empty_strings.get("TEST02pid.T_Drawing")
+    );
+    assert_eq!(
+        NULLS_BY_TYPE
+            .iter()
+            .map(|(type_name, count)| ((*type_name).to_string(), *count))
+            .collect::<BTreeMap<_, _>>(),
+        nulls_by_type
+    );
+
+    // 1/300-second ticks round to .000 / .003 / .007 milliseconds, never .006.
+    // TEST02's 31 datetime values all sit on whole seconds; the rounding of
+    // the other two residues is pinned by the reader's unit tests.
+    assert_eq!(DATETIMES, datetimes);
+    assert_eq!(
+        Vec::<u32>::new(),
+        millis_last_digits
+            .keys()
+            .copied()
+            .filter(|digit| !matches!(digit, 0 | 3 | 7))
+            .collect::<Vec<_>>(),
+        "last digit of the milliseconds: {millis_last_digits:?}"
     );
 }

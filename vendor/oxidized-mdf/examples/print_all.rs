@@ -3,7 +3,7 @@ use prettytable::{Cell, Row, Table};
 use std::path::PathBuf;
 use structopt::StructOpt;
 
-fn print_rows(db: &mut MdfDatabase, table: &str, row_limit: &Option<usize>) {
+fn print_rows(db: &MdfDatabase, table: &str, row_limit: &Option<usize>) {
     let rows = match db.rows(table) {
         Some(rows) => rows,
         None => {
@@ -45,16 +45,16 @@ fn print_rows(db: &mut MdfDatabase, table: &str, row_limit: &Option<usize>) {
 fn main() {
     let opt = Opts::from_args();
 
-    let mut db = MdfDatabase::open(opt.path).unwrap();
+    let db = MdfDatabase::open(opt.path).unwrap();
 
     match opt.table {
         None => {
             for table in db.table_names() {
-                print_rows(&mut db, &table, &opt.row_limit);
+                print_rows(&db, &table, &opt.row_limit);
             }
         }
         Some(table) => {
-            print_rows(&mut db, &table, &opt.row_limit);
+            print_rows(&db, &table, &opt.row_limit);
         }
     }
 }

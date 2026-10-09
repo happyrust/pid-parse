@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### S1c：MDF 读取器随机读页、跟文本指针读 LOB、空串与 NULL 分开、datetime 整数换算（2026-10-09，Backup Store 计划 S1c）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S1c（Q9、Q11、P2、P3）。
+
+- **vendored `oxidized-mdf` 的 `lib.rs`**：整个文件读进内存，`PageReader` 按页号随机读，`open` / `from_read` 先读完再走 `from_bytes`，指向别的数据文件的页指针报错；`rows` / `try_rows` / `ghost_rows` / `scan_table` 改为 `&self`。
+  `text` / `ntext` / `image` 列由 `parse_column` 跟着行内 16 字节文本指针走 `PageReader::read_lob`：根记录须是 `LARGE_ROOT_YUKON`，level 0 的子记录是 `DATA`，level 1 的子记录是 `INTERNAL`、再往下是 `DATA`；每条记录的 blob id 须与指针相同，各片段结尾须恰在链接写的偏移上，链接走回读过的记录即报错；
+  `SMALL_ROOT`、`LARGE_ROOT`、`SUPER_LARGE_ROOT` 等语料没见过的形状显式报「不支持」，不猜。`image` 给 `Value::Binary`，`ntext` 按 UTF-16LE、`text` 按 UTF-8 解成 `Value::String`；`ScannedRecord::Live` 新增 `lobs: Vec<LobRef>`（列名、根页、根槽、长度）。
+  datetime 由 `pages::datetime_from_parts` 以 `(刻度 × 10 + 1) / 3` 的整数换算得毫秒，不再 `as i64` 截断。
+- **`pages.rs`**：`ColumnCursor` 按列走空位图，记录没存的列（列号 ≥ 记录的列数）为 NULL；变长列的 complex 位与尾偏移分开——complex 列在要行内字节的地方报错，LOB 列从中读出 `TextPointer`（blob id、页、槽）；
+  零长度且空位未置位的变长列返回 `""`，不再当 NULL；变长列尾偏移超出记录报错，不再静默截断。页头多读页类型（字节 1）；`Page::text_record(槽)` 解析文本页上的记录——`TextRecord::Data`、`LargeRootYukon`（12 字节链接）、`Internal`（16 字节链接）、`Other`。`parse_datetime_parts_opt` 给出原始天数和刻度。
+- **`sys.rs`**：`Table::page_pointers()` 跳过分配单元为空时的 `0:0` 指针。以前这个指针被当成第 0 页（文件头页）读，页上那条头记录被当成一行——`TEST02pid.T_EquipComponent`（`rcrows` 0）因此多出 1 行假行，`publish_mdf_load` 的 `strict_rows_load_a01_equip_component_table` 原本钉的就是这行，改为钉 0 行。
+- TEST02：LOB 4 个值全读出——`T_SmartFrameStorage.SP_Storage`（根 2247:1，32,768 字节，ZIP 首条目 `A01-JSite204.tmp`）、`T_DrawingVersion.SP_Storage` 3 个（根 2323:3 / 2323:1 / 2323:5，32,768 / 65,536 / 32,768 字节，首条目都是 `Drawing.xml`；65,536 的那个是 level 1，经 1 个 `INTERNAL` 节点下的 9 个片段）。
+  空串 162 个、分布在 10 张表（`TEST02pid.T_Drawing` 4 个）。NULL 按列类型：nvarchar 21,431（计划事实表的「NULL 21,431」是这个数）、int 29,009、float 148、datetime 8，合计 50,596，等于独立按页按槽数出的空位图置位数。datetime 非空值 31 个，毫秒末位都是 0（整秒），.003 / .007 的换算由单测钉。
+  A01 的 `_Data.xml`（8,482 B）/ `_Meta.xml`（1,481 B）与 S1b（`af3ac0f`）的二进制生成的逐字节相同（Q13）。
+- vendored 样本：`tbl_Mitglied` 第 3 行的 `Titel` 空位未置位、长度为零，是空串；集成测试那条钉「NULL」的断言建在旧假设上，改为 `""`。`rows::case_5` 仍是 S1a 记下的旧失败。
+- 测试：vendored 单测 45 → 66（datetime 刻度 .000 / .003 / .007 与越界、空串 / NULL / 未存列 / 无尾偏移项、文本指针、complex 列、行内 LOB 不支持、越界尾偏移、文本记录四种形状与三种拒绝、页类型）；`backup_mdf_reader_test02` +1（LOB、空串、NULL、datetime）；`Cargo.toml` 加 dev-dependency `chrono`（读取器已依赖的同一版本）。
+- 验证：`cargo test --workspace` 43 个二进制 1506 过 / 3 忽略；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；vendored crate 的 `clippy --all-targets -D warnings` 过，单测 66 过，集成测试 22 / 23（只剩 `rows::case_5`）。
+
 ### S1b：MDF 读取器按 schema 认表，逐表扫到的活行等于 `rcrows`（2026-10-09，Backup Store 计划 S1b）
 
 计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S1b（Q8、P3）。

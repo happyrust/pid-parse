@@ -9,6 +9,8 @@
 //   - user_tables(): object id, schema id and name, columns and rcrows of each user table
 //   - base_page_pointers(): the heap or clustered-index rowsets only; a heap of several
 //     pages is refused rather than half read
+//   - parse() reads the catalog through a shared &PageReader (pages are read by id now)
+//   - Table::page_pointers() leaves out the 0:0 pointer of an allocation unit without pages
 
 use crate::error::Error;
 use crate::pages::{BootPage, PagePointer, Record};
@@ -85,12 +87,9 @@ macro_rules! parse_from_sysrow_set {
 }
 
 impl BaseTableData {
-    pub(crate) fn parse(
-        mut page_reader: &mut PageReader,
-        boot_page: &BootPage,
-    ) -> Result<Self, Error> {
+    pub(crate) fn parse(page_reader: &PageReader, boot_page: &BootPage) -> Result<Self, Error> {
         let sysalloc_units = parse_page_records!(
-            &mut page_reader,
+            page_reader,
             boot_page.first_sys_indexes.clone(),
             SysallocUnit
         );
@@ -101,10 +100,10 @@ impl BaseTableData {
             .and_then(|unit| PagePointer::try_from(&unit.pgfirst[..]).ok())
             .ok_or(Error::ParseError("sysrowset page pointer not found"))?;
 
-        let sysrow_sets = parse_page_records!(&mut page_reader, sysrowset_page_pointer, SysrowSet);
+        let sysrow_sets = parse_page_records!(page_reader, sysrowset_page_pointer, SysrowSet);
 
         let sysschobjs = parse_from_sysrow_set!(
-            &mut page_reader,
+            page_reader,
             &sysrow_sets
                 .iter()
                 .find(|row| row.idmajor == SYSSCHOBJS_IDMAJOR && row.idminor == 1),
@@ -113,7 +112,7 @@ impl BaseTableData {
         );
 
         let sysscalartypes = parse_from_sysrow_set!(
-            &mut page_reader,
+            page_reader,
             &sysrow_sets
                 .iter()
                 .find(|row| row.idmajor == SYSSCALARTYPE_IDMAJOR && row.idminor == 1),
@@ -122,7 +121,7 @@ impl BaseTableData {
         );
 
         let syscolpars = parse_from_sysrow_set!(
-            &mut page_reader,
+            page_reader,
             &sysrow_sets
                 .iter()
                 .find(|row| row.idmajor == SYSCOLPARS_IDMAJOR && row.idminor == 1),
@@ -134,12 +133,7 @@ impl BaseTableData {
             .iter()
             .find(|row| row.idmajor == SYSCLSOBJS_IDMAJOR && row.idminor == 1);
         let sysclsobjs = if sysclsobjs_rowset.is_some() {
-            parse_from_sysrow_set!(
-                &mut page_reader,
-                &sysclsobjs_rowset,
-                &sysalloc_units,
-                Sysclsobj
-            )
+            parse_from_sysrow_set!(page_reader, &sysclsobjs_rowset, &sysalloc_units, Sysclsobj)
         } else {
             log::warn!("sysclsobjs not found: schema names are unknown");
             Vec::new()
@@ -326,8 +320,11 @@ impl<'a> Table<'a> {
                 .iter()
                 .find(|unit| unit.ownerid == partition.rowsetid && unit.r#type == 1)
             {
+                // An allocation unit without pages points at 0:0.
                 if let Ok(page_pointer) = PagePointer::try_from(&unit.pgfirst[..]) {
-                    page_pointers.push(page_pointer);
+                    if page_pointer.page_id != 0 {
+                        page_pointers.push(page_pointer);
+                    }
                 }
             }
         }

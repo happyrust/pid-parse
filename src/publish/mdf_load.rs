@@ -59,8 +59,8 @@ pub fn open_mdf_as_sqlite(path: &Path) -> Result<Connection, PublishError> {
     let mut tables_staged = 0u32;
     let mut total_rows = 0usize;
     for table_name in PUBLISH_TABLES {
-        let mut db = MdfDatabase::open(path)?;
-        let rows = stage_table(&mut db, &conn, table_name)?;
+        let db = MdfDatabase::open(path)?;
+        let rows = stage_table(&db, &conn, table_name)?;
         if rows > 0 {
             tables_staged += 1;
         }
@@ -86,7 +86,7 @@ pub fn load_drawing_graph_from_mdf(
 }
 
 fn stage_table(
-    db: &mut MdfDatabase,
+    db: &MdfDatabase,
     conn: &Connection,
     table_name: &str,
 ) -> Result<usize, PublishError> {

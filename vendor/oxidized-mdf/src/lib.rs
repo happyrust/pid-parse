@@ -14,6 +14,12 @@
 //   - Added GhostRow and MdfDatabase::ghost_rows: a table's ghost records, raw
 //   - Added MdfDatabase::from_bytes, user_tables (TableInfo / ColumnInfo: schema, columns,
 //     rcrows) and scan_table (every live or ghost record of a table with its page and slot)
+//   - The whole file is held in memory and pages are read by id in any order; open and
+//     from_read load the file first. rows / try_rows / ghost_rows / scan_table take &self
+//   - text / ntext / image columns follow their 16-byte text pointer to the LOB's root and
+//     data fragments (PageReader::read_lob); scan_table names each LOB's root (LobRef)
+//   - datetime is built from its stored days and ticks (pages::datetime_from_parts)
+//   - An nvarchar / varchar column zero bytes long is "" and no longer NULL
 
 #![allow(dead_code)]
 // Mirror the pedantic lint subset baked into the parent `pid-parse`
@@ -57,18 +63,26 @@ mod pages;
 mod sys;
 
 use crate::error::Error;
-use crate::pages::{BootPage, Page, PagePointer, Record, SlottedRecord};
+use crate::pages::{
+    datetime_from_parts, BootPage, LobLink, Page, PagePointer, Record, SlottedRecord, TextPointer,
+    TextRecord,
+};
 use crate::sys::{BaseTableData, Column};
 use chrono::{DateTime, Utc};
 use core::fmt::{Display, Formatter};
 use log::{error, warn};
 use rust_decimal::Decimal;
-use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use uuid::Uuid;
+
+/// Bytes of one page; an MDF is a sequence of them.
+const PAGE_SIZE: usize = 8192;
+
+/// The page the boot page sits at.
+const BOOT_PAGE_ID: u32 = 9;
 
 pub struct MdfDatabase {
     page_reader: PageReader,
@@ -77,39 +91,36 @@ pub struct MdfDatabase {
 }
 
 impl MdfDatabase {
+    /// Reads the whole file into memory and opens it; see
+    /// [`MdfDatabase::from_bytes`].
     pub fn open<P>(p: P) -> Result<Self, Error>
     where
         P: AsRef<Path>,
     {
-        let mut path = PathBuf::new();
-        path.push(p);
-
-        let file = File::open(&path)?;
-        Self::from_read(Box::new(file))
+        Self::from_bytes(std::fs::read(p)?)
     }
 
-    /// Opens an MDF already held in memory.
+    /// Opens an MDF held in memory. Every page can be read in any order,
+    /// which following a LOB's text pointer back to its pages needs.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, Error> {
-        Self::from_read(Box::new(std::io::Cursor::new(bytes)))
-    }
+        let page_reader = PageReader::new(bytes);
 
-    pub fn from_read(read: Box<dyn Read>) -> Result<Self, Error> {
-        let mut buffer = [0u8; 8192];
-        let mut page_reader = PageReader::new(read);
-
-        for _i in 0u8..9u8 {
-            page_reader.read_next_page(&mut buffer)?;
-        }
-        page_reader.read_next_page(&mut buffer)?;
-
-        let boot_page = BootPage::try_from(buffer).map_err(Error::from)?;
-        let base_table_data = BaseTableData::parse(&mut page_reader, &boot_page)?;
+        let boot_page = page_reader.read_boot_page()?;
+        let base_table_data = BaseTableData::parse(&page_reader, &boot_page)?;
 
         Ok(Self {
             page_reader,
             boot_page,
             base_table_data,
         })
+    }
+
+    /// Reads `read` to its end and opens what it held; see
+    /// [`MdfDatabase::from_bytes`].
+    pub fn from_read(mut read: Box<dyn Read>) -> Result<Self, Error> {
+        let mut bytes = Vec::new();
+        read.read_to_end(&mut bytes)?;
+        Self::from_bytes(bytes)
     }
 
     pub fn database_name(&self) -> &str {
@@ -140,10 +151,12 @@ impl MdfDatabase {
 
     /// Returns every record of the table's heap or clustered index, live and
     /// ghost, in page-chain and slot order, each with the page and slot it
-    /// was read from. A page that cannot be read, or a live record that does
-    /// not parse, yields an `Err` in its place.
+    /// was read from. A live row's `text` / `ntext` / `image` values are
+    /// read from their LOB pages and each names its root in `lobs`. A page
+    /// that cannot be read, or a live record that does not parse, yields an
+    /// `Err` in its place.
     pub fn scan_table<'a>(
-        &'a mut self,
+        &'a self,
         table: &'a TableInfo,
     ) -> Result<impl Iterator<Item = Result<ScannedRecord, Error>> + 'a, Error> {
         let (page_pointers, allocation_units): (Vec<_>, Vec<_>) = self
@@ -162,9 +175,9 @@ impl MdfDatabase {
                 scale: column.scale,
             })
             .collect::<Vec<_>>();
+        let page_reader = &self.page_reader;
 
-        Ok(self
-            .page_reader
+        Ok(page_reader
             .read_pages_of_pointers(page_pointers)
             .flat_map(move |page| {
                 let page = match page {
@@ -189,10 +202,13 @@ impl MdfDatabase {
                             }));
                         }
                         let record = Record::try_from(slotted.bytes).map_err(Error::from)?;
+                        let (row, lobs) =
+                            parse_record_columns(&table.name, record, &columns, page_reader)?;
                         Ok(ScannedRecord::Live {
                             page_id,
                             slot: slotted.slot,
-                            row: parse_record_columns(&table.name, record, &columns)?,
+                            row,
+                            lobs,
                         })
                     })
                     .collect()
@@ -237,17 +253,15 @@ impl MdfDatabase {
     /// );
     /// # }
     /// ```
-    pub fn rows<'a, 'b: 'a>(
-        &'b mut self,
-        table_name: &str,
-    ) -> Option<impl Iterator<Item = Row> + 'a> {
+    pub fn rows<'a, 'b: 'a>(&'b self, table_name: &str) -> Option<impl Iterator<Item = Row> + 'a> {
         let table = self.base_table_data.table(table_name)?;
         let page_pointers = table.page_pointers();
         let columns = table.columns;
+        let page_reader = &self.page_reader;
 
         log::debug!("reading pages of {table_name}");
         Some(
-            self.page_reader
+            page_reader
                 .read_pages_of_pointers(page_pointers)
                 .flat_map(move |page| {
                     let mut rows = Vec::new();
@@ -261,7 +275,7 @@ impl MdfDatabase {
                     };
 
                     for record in page.records().into_iter() {
-                        rows.push(parse_record_columns_lenient(record, &columns));
+                        rows.push(parse_record_columns_lenient(record, &columns, page_reader));
                     }
                     rows
                 }),
@@ -274,17 +288,18 @@ impl MdfDatabase {
     /// parse failures so callers that stage authoritative data can fail fast
     /// instead of silently producing partial output.
     pub fn try_rows<'a, 'b: 'a>(
-        &'b mut self,
+        &'b self,
         table_name: &str,
     ) -> Option<impl Iterator<Item = Result<Row, Error>> + 'a> {
         let table = self.base_table_data.table(table_name)?;
         let page_pointers = table.page_pointers();
         let columns = table.columns;
         let table_name = table_name.to_string();
+        let page_reader = &self.page_reader;
 
         log::debug!("reading pages of {table_name}");
         Some(
-            self.page_reader
+            page_reader
                 .read_pages_of_pointers(page_pointers)
                 .flat_map(move |page| {
                     let mut rows = Vec::new();
@@ -299,7 +314,10 @@ impl MdfDatabase {
                     };
 
                     for record in page.records().into_iter() {
-                        rows.push(parse_record_columns(&table_name, record, &columns));
+                        rows.push(
+                            parse_record_columns(&table_name, record, &columns, page_reader)
+                                .map(|(row, _lobs)| row),
+                        );
                     }
                     rows
                 }),
@@ -309,7 +327,7 @@ impl MdfDatabase {
     /// Returns the ghost rows of the given table, in page-chain and slot
     /// order. A page that cannot be read yields an `Err` in its place.
     pub fn ghost_rows<'a, 'b: 'a>(
-        &'b mut self,
+        &'b self,
         table_name: &str,
     ) -> Option<impl Iterator<Item = Result<GhostRow, Error>> + 'a> {
         let table = self.base_table_data.table(table_name)?;
@@ -383,11 +401,70 @@ pub enum ScannedRecord {
         page_id: u32,
         /// The record's slot in that page.
         slot: u16,
-        /// Its column values.
+        /// Its column values; a `text` / `ntext` / `image` value holds the
+        /// bytes read from its LOB pages.
         row: Row,
+        /// Where each non-null `text` / `ntext` / `image` value of the row
+        /// is rooted, in column order.
+        lobs: Vec<LobRef>,
     },
     /// A ghost row, kept as stored.
     Ghost(GhostRow),
+}
+
+/// The root record of a LOB value: what the row's 16-byte text pointer
+/// names, and where reading the value started.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LobRef {
+    /// The column holding the value.
+    pub column: String,
+    /// Page of the root record.
+    pub root_page: u32,
+    /// Slot of the root record in that page.
+    pub root_slot: u16,
+    /// Bytes the LOB holds.
+    pub length: usize,
+}
+
+/// The column types whose values live on text pages behind a text pointer.
+fn is_lob_type(type_name: &str) -> bool {
+    matches!(type_name, "text" | "ntext" | "image")
+}
+
+/// A LOB value as [`Value`]: `image` as bytes, `ntext` as UTF-16LE text,
+/// `text` as single-byte text decoded as UTF-8.
+fn lob_value(type_name: &str, bytes: Vec<u8>) -> Value {
+    match type_name {
+        "ntext" => Value::String(encoding_rs::UTF_16LE.decode(&bytes).0.into_owned()),
+        "text" => Value::String(encoding_rs::UTF_8.decode(&bytes).0.into_owned()),
+        _ => Value::Binary(bytes),
+    }
+}
+
+/// Parses one column off `record`: a LOB column through its text pointer
+/// and the pages it names, any other through [`Value::parse`]. A LOB value
+/// comes back with its [`LobRef`].
+fn parse_column<'a>(
+    column: &Column<'_>,
+    record: Record<'a>,
+    page_reader: &PageReader,
+) -> Result<(Value, Option<LobRef>, Record<'a>), &'static str> {
+    if !is_lob_type(column.r#type) {
+        let (value, record) = Value::parse(column, record)?;
+        return Ok((value, None, record));
+    }
+    let (pointer, record) = record.parse_text_pointer_opt()?;
+    let Some(pointer) = pointer else {
+        return Ok((Value::Null, None, record));
+    };
+    let bytes = page_reader.read_lob(&pointer)?;
+    let lob = LobRef {
+        column: column.name.to_string(),
+        root_page: pointer.page.page_id,
+        root_slot: pointer.slot,
+        length: bytes.len(),
+    };
+    Ok((lob_value(column.r#type, bytes), Some(lob), record))
 }
 
 /// A row deleted from a table whose bytes its page still holds, because the
@@ -404,7 +481,11 @@ pub struct GhostRow {
     pub bytes: Vec<u8>,
 }
 
-fn parse_record_columns_lenient(record: Record<'_>, columns: &[Column<'_>]) -> Row {
+fn parse_record_columns_lenient(
+    record: Record<'_>,
+    columns: &[Column<'_>],
+    page_reader: &PageReader,
+) -> Row {
     let mut parsed_columns = BTreeMap::new();
     let mut record = Some(record);
 
@@ -412,7 +493,7 @@ fn parse_record_columns_lenient(record: Record<'_>, columns: &[Column<'_>]) -> R
         let Some(rec) = record.take() else {
             break;
         };
-        let (value, remaining) = match Value::parse(column, rec) {
+        let (value, _lob, remaining) = match parse_column(column, rec, page_reader) {
             Ok(parsed) => parsed,
             Err(err) => {
                 warn!("Row parse stopped after column {column:?}: {err}");
@@ -433,15 +514,17 @@ fn parse_record_columns(
     table_name: &str,
     record: Record<'_>,
     columns: &[Column<'_>],
-) -> Result<Row, Error> {
+    page_reader: &PageReader,
+) -> Result<(Row, Vec<LobRef>), Error> {
     let mut parsed_columns = BTreeMap::new();
+    let mut lobs = Vec::new();
     let mut record = Some(record);
 
     for column in columns {
         let Some(rec) = record.take() else {
             break;
         };
-        let (value, remaining) = match Value::parse(column, rec) {
+        let (value, lob, remaining) = match parse_column(column, rec, page_reader) {
             Ok(parsed) => parsed,
             Err(err) if is_omitted_trailing_column_error(err) && !parsed_columns.is_empty() => {
                 warn!("Row parse stopped at omitted trailing column {column:?}: {err}");
@@ -458,19 +541,20 @@ fn parse_record_columns(
         };
 
         parsed_columns.insert(column.name.to_string(), value);
+        lobs.extend(lob);
         record = Some(remaining);
     }
 
-    Ok(Row {
-        columns: parsed_columns,
-    })
+    Ok((
+        Row {
+            columns: parsed_columns,
+        },
+        lobs,
+    ))
 }
 
 fn is_omitted_trailing_column_error(err: &str) -> bool {
-    matches!(
-        err,
-        "requested fixed-length bytes exceed record bounds" | "no variable column data"
-    )
+    err == "requested fixed-length bytes exceed record bounds"
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -521,7 +605,10 @@ impl Value {
                 Ok((Value::Bit(bit), r))
             }
             "datetime" => {
-                let (datetime, r) = record.parse_datetime_opt()?;
+                let (parts, r) = record.parse_datetime_parts_opt()?;
+                let datetime = parts
+                    .map(|(days, ticks)| datetime_from_parts(days, ticks))
+                    .transpose()?;
                 Ok((datetime.map_or(Value::Null, Value::DateTime), r))
             }
             "datetime2" => {
@@ -583,9 +670,10 @@ impl Value {
                 let (string, r) = record.parse_string()?;
                 Ok((string.map_or(Value::Null, Value::String), r))
             }
-            "text" | "ntext" => {
-                let (string, r) = record.parse_string()?;
-                Ok((string.map_or(Value::Null, Value::String), r))
+            // Read through their text pointer by `parse_column`, which has
+            // the pages; here they hold no in-row value to parse.
+            "text" | "ntext" | "image" => {
+                Err("LOB columns are read from their text pages, not the row alone")
             }
             "uniqueidentifier" => {
                 let (uuid, r) = record.parse_uuid()?;
@@ -604,7 +692,7 @@ impl Value {
                     r,
                 ))
             }
-            "varbinary" | "image" => {
+            "varbinary" => {
                 let (bytes, r) = record.parse_binary()?;
                 Ok((bytes.map_or(Value::Null, Value::Binary), r))
             }
@@ -632,73 +720,57 @@ impl Row {
     }
 }
 
+/// The file's bytes, read a page at a time by page id. Only the primary
+/// data file (file id 1) is known; a pointer into another file is an error.
 struct PageReader {
-    read: Box<dyn Read>,
-    page_index: u32,
-    page_cache: HashMap<PagePointer, Rc<Page>>,
+    bytes: Vec<u8>,
 }
 
+/// LOB trees of the corpus are a root with data children (level 0) or a
+/// root over internal nodes (level 1); a deeper tree is refused rather than
+/// followed into a cycle.
+const MAX_LOB_LEVEL: u16 = 2;
+
 impl PageReader {
-    fn new(read: Box<dyn Read>) -> Self {
-        Self {
-            read,
-            page_index: 0,
-            page_cache: HashMap::new(),
-        }
+    fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes }
     }
 
-    fn read_next_page(&mut self, buffer: &mut [u8; 8192]) -> Result<(), Error> {
-        let page_id = self.page_index;
-        self.read.read_exact(&mut buffer[..])?;
-        if let Ok(page) = Page::try_from(*buffer) {
-            self.page_cache.insert(
-                PagePointer {
-                    page_id,
-                    file_id: 1,
-                },
-                Rc::new(page),
-            );
-        }
-        self.page_index += 1;
-        Ok(())
+    fn page_count(&self) -> usize {
+        self.bytes.len() / PAGE_SIZE
     }
 
-    fn read_page(&mut self, page_pointer: &PagePointer) -> Result<Rc<Page>, Error> {
-        if let Some(page) = self.page_cache.get(page_pointer) {
-            return Ok(page.clone());
-        }
-        if let Some((_, page)) = self
-            .page_cache
-            .iter()
-            .find(|(pointer, _)| pointer.page_id == page_pointer.page_id)
-        {
-            return Ok(page.clone());
-        }
-
-        if self.page_index > page_pointer.page_id {
+    fn page_bytes(&self, page_pointer: &PagePointer) -> Result<[u8; PAGE_SIZE], Error> {
+        if page_pointer.file_id != 1 {
             return Err(Error::ParseError(
-                "forward-only reader cannot re-read an earlier page",
+                "page pointer names a file other than the primary data file",
             ));
         }
+        let start = page_pointer.page_id as usize * PAGE_SIZE;
+        let bytes = self
+            .bytes
+            .get(start..start + PAGE_SIZE)
+            .ok_or(Error::ParseError("page id beyond the end of the file"))?;
+        let mut buffer = [0u8; PAGE_SIZE];
+        buffer.copy_from_slice(bytes);
+        Ok(buffer)
+    }
 
-        for i in self.page_index..=page_pointer.page_id {
-            let mut buffer = [0u8; 8192];
-            self.read_next_page(&mut buffer)?;
+    fn read_boot_page(&self) -> Result<BootPage, Error> {
+        let bytes = self.page_bytes(&PagePointer {
+            page_id: BOOT_PAGE_ID,
+            file_id: 1,
+        })?;
+        BootPage::try_from(bytes).map_err(Error::from)
+    }
 
-            let page = Page::try_from(buffer).map_err(Error::from)?;
-
-            self.page_cache
-                .insert(page_pointer.with_page_id(i), Rc::new(page));
-        }
-
-        self.page_cache
-            .get(page_pointer)
-            .cloned()
-            .ok_or(Error::ParseError("page not found in cache after read"))
+    fn read_page(&self, page_pointer: &PagePointer) -> Result<Rc<Page>, Error> {
+        let bytes = self.page_bytes(page_pointer)?;
+        Page::try_from(bytes).map(Rc::new).map_err(Error::from)
     }
 
     fn read_pages_of_pointers<'a, 'b: 'a>(
-        &'b mut self,
+        &'b self,
         page_pointers: Vec<PagePointer>,
     ) -> PageIter<'a> {
         PageIter {
@@ -708,18 +780,91 @@ impl PageReader {
         }
     }
 
-    fn read_pages_of_pointer<'a, 'b: 'a>(&'b mut self, page_pointer: PagePointer) -> PageIter<'a> {
+    fn read_pages_of_pointer<'a, 'b: 'a>(&'b self, page_pointer: PagePointer) -> PageIter<'a> {
         PageIter {
             page_pointers: Box::new(std::iter::once(page_pointer)),
             page_reader: self,
             current_page: None,
         }
     }
+
+    /// The bytes of the LOB a text pointer names: its `LARGE_ROOT_YUKON`
+    /// root, then every `DATA` fragment in link order, through `INTERNAL`
+    /// nodes when the root is a level above them. Every record must carry
+    /// the pointer's blob id, and the fragments must end exactly at the
+    /// offsets the links state. Any other root shape -- a `SMALL_ROOT`
+    /// holding its data inline, the older `LARGE_ROOT`, a
+    /// `SUPER_LARGE_ROOT` -- is an error, not a guess.
+    fn read_lob(&self, pointer: &TextPointer) -> Result<Vec<u8>, &'static str> {
+        let root_page = self
+            .read_page(&pointer.page)
+            .map_err(|_| "LOB root page cannot be read")?;
+        let (blob_id, root) = root_page.text_record(pointer.slot)?;
+        if blob_id != pointer.blob_id {
+            return Err("LOB root record carries another blob id");
+        }
+        let TextRecord::LargeRootYukon { level, links } = root else {
+            return Err("LOB root is not a LARGE_ROOT_YUKON record; not supported");
+        };
+        if level >= MAX_LOB_LEVEL {
+            return Err("LOB tree deeper than the corpus shows; not supported");
+        }
+
+        let mut bytes = Vec::new();
+        let mut visited = HashSet::from([(pointer.page.page_id, pointer.slot)]);
+        self.read_lob_links(pointer.blob_id, level, &links, &mut bytes, &mut visited)?;
+        Ok(bytes)
+    }
+
+    /// Appends the children `links` name to `bytes`: `DATA` fragments under
+    /// a node at level 0, `INTERNAL` nodes a level down otherwise.
+    fn read_lob_links(
+        &self,
+        blob_id: u64,
+        level: u16,
+        links: &[LobLink],
+        bytes: &mut Vec<u8>,
+        visited: &mut HashSet<(u32, u16)>,
+    ) -> Result<(), &'static str> {
+        for link in links {
+            if !visited.insert((link.page.page_id, link.slot)) {
+                return Err("LOB links lead back to a record already read");
+            }
+            let page = self
+                .read_page(&link.page)
+                .map_err(|_| "LOB page cannot be read")?;
+            let (record_blob_id, record) = page.text_record(link.slot)?;
+            if record_blob_id != blob_id {
+                return Err("LOB record carries another blob id");
+            }
+            match (level, record) {
+                (0, TextRecord::Data(fragment)) => bytes.extend_from_slice(fragment),
+                (0, _) => return Err("LOB link at level 0 does not lead to a DATA record"),
+                (
+                    _,
+                    TextRecord::Internal {
+                        level: child_level,
+                        links: child_links,
+                    },
+                ) => {
+                    if child_level + 1 != level {
+                        return Err("LOB internal node is not one level below its parent");
+                    }
+                    self.read_lob_links(blob_id, child_level, &child_links, bytes, visited)?;
+                }
+                (_, _) => return Err("LOB link above level 0 does not lead to an INTERNAL record"),
+            }
+            if bytes.len() as u64 != link.end_offset {
+                return Err("LOB fragments do not end at the offset their link states");
+            }
+        }
+        Ok(())
+    }
 }
 
 struct PageIter<'a> {
     page_pointers: Box<dyn Iterator<Item = PagePointer>>,
-    page_reader: &'a mut PageReader,
+    page_reader: &'a PageReader,
     current_page: Option<Rc<Page>>,
 }
 
@@ -858,7 +1003,7 @@ mod tests {
         let record = Record::try_from(&bytes[..]).unwrap();
         let columns = vec![test_column("int", 4, 10, 0)];
 
-        let err = parse_record_columns("T_Test", record, &columns)
+        let err = parse_record_columns("T_Test", record, &columns, &PageReader::new(Vec::new()))
             .expect_err("truncated column should fail the whole row");
 
         assert!(matches!(

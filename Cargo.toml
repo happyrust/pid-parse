@@ -180,6 +180,10 @@ required-features = ["backup"]
 
 [dev-dependencies]
 pretty_assertions = "1"
+# `backup_mdf_reader_test02` looks at the milliseconds of the `datetime`
+# values the vendored MDF reader hands out (`chrono::DateTime`); same crate
+# and version the reader already pulls in.
+chrono = "0.4"
 # Benchmarks live in `benches/` and gate themselves on the local
 # `test-file/` fixture; see `benches/pid_pipeline.rs`. Keep criterion
 # `default-features = false` so benches compile on a plain stable
