@@ -13,10 +13,14 @@
 //! block — or one JSON document summarizing the whole stream when
 //! `--json` is present.
 //!
+//! An Oracle `exp` dump is refused with the same message
+//! `pid_backup_extract` prints for it.
+//!
 //! Exit codes: 0 = walked to end-of-stream, 1 = I/O / parse error.
 
 use pid_parse::backup::mtf::{
-    detect_logical_block_size, MtfBlockCursor, MtfHeader, MtfStreamCursor, MtfStreamKind,
+    detect_logical_block_size, detect_non_mtf_dump_format, MtfBlockCursor, MtfHeader,
+    MtfStreamCursor, MtfStreamKind,
 };
 use pid_parse::backup::{parse_msci, MsciConfig};
 use std::collections::BTreeMap;
@@ -133,6 +137,11 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    if let Some(diag) = detect_non_mtf_dump_format(&data) {
+        eprintln!("error: {diag}");
+        std::process::exit(1);
+    }
 
     let header = match MtfHeader::probe(&data) {
         Ok(h) => h,

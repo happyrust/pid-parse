@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### `pid_backup_probe` 认出 Oracle `exp` 导出，提示与 `pid_backup_extract` 相同（2026-10-09）
+
+- 起因：审计 SQPlant 备份（`D:\work\cad\pid-test-data`，Oracle 后端）时，`pid_backup_probe` 只报 `not an MTF stream: … (got tag ????)`，而 `pid_backup_extract` 早就认出是 Oracle `exp` 并给出处理建议。
+- **`backup::mtf::detect_non_mtf_dump_format`**（新公开函数，`backup` 也转出）：从 `pid_backup_extract` 原样挪进库，函数体、诊断文字和四个单测都不变；`pid_backup_extract` 改调库，输出逐字节不变。
+- `pid_backup_probe` 在 `MtfHeader::probe` 之前先问它，认出就打印 `error: <诊断>` 并以 1 退出，和 `pid_backup_extract` 一样；MTF 输入照旧。
+- 测试：`backup_mtf` 6 → 8——DWG-0202GP06-01 的 `Export.dmp` 头被认作 Oracle `exp`、`MtfHeader::probe` 报 `NotATapeStart`；两个命令对同一个 Oracle dump 都以 1 退出、stderr 逐字节相同。
+- 验证：`cargo test --workspace` 42 个二进制 1503 过 / 3 忽略（`--lib` 1139 → 1143，即挪进来的 4 个单测）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；missing-docs 0；改动的文件 rustfmt 干净（`cargo fmt --all --check` 只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`）。
+  手跑：SQPlant 的 `Export.dmp` 上两个命令 stderr 相同、都退出 1；TEST02 的 MTF 照旧走完 9 个描述块、退出 0。
+
 ### D2：语义先按表示 UID 连、`GraphicOID` 兜底——A01 绘出实体 0 → 3 个连上（2026-10-08，OCS 计划 P-D32）
 
 OpenCADStudio 计划 `docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D2（P-D32）；依据 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
