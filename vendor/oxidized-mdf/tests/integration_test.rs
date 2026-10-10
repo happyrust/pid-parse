@@ -1,5 +1,5 @@
 use chrono::{TimeZone, Utc};
-use oxidized_mdf::{error::Error, MdfDatabase, Value};
+use oxidized_mdf::{error::Error, MdfDatabase, ScannedRecord, Value};
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 
@@ -59,7 +59,7 @@ fn columns(file: &str, table_name: &str, column_names: Vec<&str>) -> Result<(), 
     case("spg_verein_TST.mdf", "tbl_Mitglied", "Strasse", "Rebenring 56")
 )]
 fn first_row(file: &str, table_name: &str, column: &str, value: &str) -> Result<(), Error> {
-    let mut db = MdfDatabase::open(format!("data/{}", file))?;
+    let db = MdfDatabase::open(format!("data/{}", file))?;
 
     let mut rows = db.rows(table_name).unwrap();
     let first_row = rows.next().unwrap();
@@ -77,11 +77,12 @@ fn first_row(file: &str, table_name: &str, column: &str, value: &str) -> Result<
     count,
     case("AWLT2005.mdf", "Address", 450),
     case("spg_verein_TST.mdf", "tbl_Mitglied", 13),
-    // TODO: 3643 should be the correct number
-    case("spg_verein_TST.mdf", "tbl_Bankleitzahlen", 3549)
+    // TODO: 3643 should be the correct number. 3549 used to count the
+    // table's one ghost record (its page header's GhostRecCnt is 1).
+    case("spg_verein_TST.mdf", "tbl_Bankleitzahlen", 3548)
 )]
 fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<(), Error> {
-    let mut db = MdfDatabase::open(format!("data/{}", file))?;
+    let db = MdfDatabase::open(format!("data/{}", file))?;
     let rows = db.rows(table_name).unwrap();
 
     assert_eq!(rows.count(), count);
@@ -116,7 +117,10 @@ fn number_of_rows(file: &str, table_name: &str, count: usize) -> Result<(), Erro
         "Titel",
         Value::String(String::from("Dr.Dr."))
     ),
-    case("spg_verein_TST.mdf", "tbl_Mitglied", 3, "Titel", Value::Null),
+    // The row stores Titel as zero bytes with its null bit clear: an empty
+    // string. Until 2026-10-09 the reader read every zero-length string as
+    // NULL and this case pinned that.
+    case("spg_verein_TST.mdf", "tbl_Mitglied", 3, "Titel", Value::String(String::new())),
     case("spg_verein_TST.mdf", "tbl_Mitglied", 0, "Kontosaldo", Value::Null),
     case("AWLT2005.mdf", "SalesOrderHeader", 0, "DueDate", Value::DateTime(Utc.with_ymd_and_hms(2004, 6, 13, 0, 0, 0).unwrap())),
     case("AWLT2005.mdf", "Product", 0, "SellEndDate", Value::Null),
@@ -130,12 +134,82 @@ fn rows(
     column: &str,
     expected_value: Value,
 ) -> Result<(), Error> {
-    let mut db = MdfDatabase::open(format!("data/{}", file))?;
+    let db = MdfDatabase::open(format!("data/{}", file))?;
     let mut rows = db.rows(table_name).unwrap().skip(skip);
 
     let row = rows.next().unwrap();
 
     assert_eq!(row.value(column), Some(&expected_value));
 
+    Ok(())
+}
+
+#[test]
+fn user_tables_keep_each_table_with_its_schema() -> Result<(), Error> {
+    let db = MdfDatabase::open("data/AWLT2005.mdf")?;
+    let tables = db.user_tables()?;
+    let schema_of = |name: &str| {
+        tables
+            .iter()
+            .find(|table| table.name == name)
+            .map(|table| table.schema_name.as_str())
+    };
+
+    assert_eq!(Some("dbo"), schema_of("BuildVersion"));
+    assert_eq!(Some("dbo"), schema_of("ErrorLog"));
+    assert_eq!(
+        10,
+        tables
+            .iter()
+            .filter(|table| table.schema_name == "SalesLT")
+            .count()
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_table_reads_every_row_the_catalog_counts() -> Result<(), Error> {
+    let db = MdfDatabase::from_bytes(std::fs::read("data/AWLT2005.mdf")?)?;
+    let tables = db.user_tables()?;
+    let address = tables
+        .iter()
+        .find(|table| table.schema_name == "SalesLT" && table.name == "Address")
+        .expect("SalesLT.Address");
+
+    let mut places = db
+        .scan_table(address)?
+        .filter_map(|record| match record {
+            Ok(ScannedRecord::Live { page_id, slot, .. }) => Some(Ok((page_id, slot))),
+            Ok(ScannedRecord::Ghost(_)) => None,
+            Err(err) => Some(Err(err)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    places.sort_unstable();
+    places.dedup();
+
+    assert_eq!(450, address.rcrows);
+    assert_eq!(450, places.len());
+    Ok(())
+}
+
+#[test]
+fn scan_table_stops_at_a_page_of_another_allocation_unit() -> Result<(), Error> {
+    // Its first page now belongs to another allocation unit, whose rows must
+    // not pass for this table's.
+    let db = MdfDatabase::open("data/spg_verein_TST.mdf")?;
+    let tables = db.user_tables()?;
+    let table = tables
+        .iter()
+        .find(|table| table.name == "tblImportEmailParameter")
+        .expect("dbo.tblImportEmailParameter");
+
+    let records = db.scan_table(table)?.collect::<Vec<_>>();
+    assert_eq!(1, table.rcrows);
+    assert!(matches!(
+        records.as_slice(),
+        [Err(Error::ParseError(
+            "page chain left the allocation units of the table"
+        ))]
+    ));
     Ok(())
 }

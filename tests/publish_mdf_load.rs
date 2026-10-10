@@ -24,7 +24,8 @@ fn mdf_adapter_loads_a01_publish_core_tables() {
     assert_eq!(table_count(&conn, "T_Representation"), 6);
     assert_eq!(table_count(&conn, "T_Relationship"), 3);
     assert_eq!(table_count(&conn, "T_ModelItem"), 4);
-    assert_eq!(table_count(&conn, "T_PlantItem"), 4);
+    // Live rows only: the table's fourth record is a ghost (backup_mdf_reader_test02).
+    assert_eq!(table_count(&conn, "T_PlantItem"), 3);
     assert_eq!(table_count(&conn, "T_Connector"), 1);
     assert_eq!(table_count(&conn, "T_PipeRun"), 1);
     let date_created: String = conn
@@ -82,14 +83,18 @@ fn strict_rows_load_a01_equip_component_table() {
         return;
     }
 
-    let mut db = MdfDatabase::open(A01_MDF_PATH).expect("open TEST02 MDF");
+    let db = MdfDatabase::open(A01_MDF_PATH).expect("open TEST02 MDF");
     let rows = db
         .try_rows("T_EquipComponent")
         .expect("T_EquipComponent exists")
         .collect::<Result<Vec<_>, _>>()
         .expect("strict rows should load T_EquipComponent");
 
-    assert!(!rows.is_empty(), "T_EquipComponent should contain rows");
+    // TEST02pid.T_EquipComponent holds no rows (`sysrowsets.rcrows` 0) and
+    // its allocation unit points at page 0:0. Until 2026-10-09 the reader
+    // took that pointer to the file header page and read its header record
+    // as a row, which this test pinned as "contains rows".
+    assert!(rows.is_empty(), "T_EquipComponent has no rows: {rows:?}");
 }
 
 #[test]
@@ -99,7 +104,7 @@ fn strict_rows_load_a01_codelists_table() {
         return;
     }
 
-    let mut db = MdfDatabase::open(A01_MDF_PATH).expect("open TEST02 MDF");
+    let db = MdfDatabase::open(A01_MDF_PATH).expect("open TEST02 MDF");
     let rows = db
         .try_rows("codelists")
         .expect("codelists exists")

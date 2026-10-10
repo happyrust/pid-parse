@@ -114,6 +114,9 @@ pub enum PublishError {
     Sqlite(String),
     /// MDF parser failure from the Rust MDF reader.
     Mdf(String),
+    /// The Backup Store an input is read through could not be built
+    /// or is not shaped as one (`backup::store`).
+    Store(String),
     /// No drawing row matched the requested UID.
     DrawingNotFound {
         /// Drawing UID requested by the caller.
@@ -126,6 +129,7 @@ impl fmt::Display for PublishError {
         match self {
             Self::Sqlite(msg) => write!(f, "SQLite: {msg}"),
             Self::Mdf(msg) => write!(f, "MDF: {msg}"),
+            Self::Store(msg) => write!(f, "Backup Store: {msg}"),
             Self::DrawingNotFound { uid } => write!(f, "drawing UID `{uid}` not found"),
         }
     }
@@ -142,6 +146,12 @@ impl From<rusqlite::Error> for PublishError {
 impl From<oxidized_mdf::error::Error> for PublishError {
     fn from(err: oxidized_mdf::error::Error) -> Self {
         Self::Mdf(err.to_string())
+    }
+}
+
+impl From<crate::backup::BackupStoreError> for PublishError {
+    fn from(err: crate::backup::BackupStoreError) -> Self {
+        Self::Store(err.to_string())
     }
 }
 

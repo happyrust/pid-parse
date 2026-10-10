@@ -2,6 +2,185 @@
 
 ## [Unreleased]
 
+### 定案：`T_Symbol` 2300:1 的 NULL 按空位图写，不改（2026-10-10）
+
+S2c 查出 `TEST02pid.T_Symbol.SP_ID`（NOT NULL）在页 2300 槽 1 那条记录的空位图置位、变长区却存着 32 字符 UID，当时留给用户定。用户 2026-10-10 定：按空位图写 NULL、不改（与 Q9、50,596 的 NULL 口径一致，`dump_column.nullable` 让人能查到）。计划「登记不做」加一行，README / 格式文档第 10 节 / `task_plan.md` 的「待定」改成「已定」。分支已推到 `origin/backup-store-v1`，PR [#28](https://github.com/happyrust/pid-parse/pull/28)（base `main`）。只改文档。
+
+### S5：Backup Store 第一版验收收口——13 条验收逐条对到测试，文档跟上（2026-10-09，Backup Store 计划 S5）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S5（Q21）。只改文档，不改代码。
+
+- **验收对账**：13 条验收逐条对到钉住它的测试函数（计划「验收」表新增「状态」列）：1–5 在 `backup_mdf_reader_test02` 三条和 `backup_store_test02::test02_store_dumps_every_table_the_manifest_lists_with_its_provenance`；6、8 在三套样本的 Manifest 测试（共用 `check_manifest`）；7 在两套 zip 样本的文件清单测试；9 在 `test02_store_is_written_through_a_temporary_file_and_builds_the_same_twice`；10 在 `publish_store_parity` 两条 + `publish_xml_cli` 新增的一条；11 在 `dwg_store_registers_the_oracle_tables_empty_from_the_ddl`；13 在 `backup_store_sqplant` 两条 + `backup_store_cli::sqplant_directory_is_built_with_its_warnings_on_stderr`；12 是每笔提交前的门禁。数字都已在 S1–S4 的测试常量里，没有缺项、不用补测试。
+- **Q18 的连接缺陷开成 issue** [happyrust/pid-parse#27](https://github.com/happyrust/pid-parse/issues/27)（`bug`、`needs-triage`），内容即 S4 那条草稿。
+- 文档：`AGENTS.md` 测试表加 `backup_mdf_reader_test02` / `backup_store_{test02,dwg,sqplant,cli}` 五行、常用命令的数字更新（1555 / 49、vendored 67）；README 的 Backup Store 一节加「验收与复现」和两条已知待定；格式文档 `docs/analysis/2026-10-08-sppid-backup-package-format-cn.md`——头部相关代码与说明、「一句话」改成 store 的现状，4.2 / 4.3 / 9 节把 S2b 查证的两处改正（`DBUids` 是四个 Plant schema 名的逗号串，`PlantConnInfo` 第 1 字段是 Plant 名，只有 `SiteConnInfo` 的是 64 字符加密串），第 10 节补 T_Symbol 2300:1 的 NULL 和 Oracle 空表两条，第 11 节「复现方法」改成跑测试 + `pid_backup_store` / `pid_publish_xml` 命令 + 库入口；`task_plan.md` 当前阶段加 Backup Store 一条。
+- 第一版 S0–S5 到此做完。等用户定的两件事不变：T_Symbol 2300:1 那条 NOT NULL 列的 NULL 怎么写；`PlantConnInfo` 第 1 字段和 `DBUids` 要不要从脱敏名单去掉。
+- 验证：只改 Markdown / 文档；`cargo test --workspace` 49 个二进制 1555 过 / 3 忽略与 S4 相同（S5 重跑了 `backup_store_test02`、`backup_store_dwg`、`backup_store_sqplant`、`backup_store_cli`、`backup_mdf_reader_test02`、`publish_store_parity` 六个文件核对验收表里写的函数名和数字），`cargo fmt --all --check` 过。
+
+### S4：publish 改读 Backup Store——MDF / Plant Backup / store 文件三种输入出的 A01 逐字节不变（2026-10-09，Backup Store 计划 S4）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S4（Q13、Q18、P6、P7）。
+
+- **新 `src/publish/store_load.rs`，旧 `src/publish/mdf_load.rs` 删除**。`open_publish_input(path)` 按内容认四种输入（`classify_publish_input` → `PublishInput`）：目录或 `PK\x03\x04` 开头的文件是 Plant Backup，`.mdf` 是 MDF，带 `dump_table` 的 SQLite 文件是 Backup Store，其余 SQLite 文件是 legacy mirror。Plant Backup 和 MDF 先在内存里建 store（`build_backup_store_in_memory` / 新的 `build_backup_store_from_mdf_in_memory`），store 文件只读打开，legacy mirror 照旧 `open_readonly`；前三种再经 `copy_publish_tables` 把 publish 读的 24 张表抄成内存里同名的 TEXT 表（P7）：`codelists` / `attributes` 取 `pidd__*`，其余 22 张取 `pid__*`（Q18，只换来源、不改连接）；store 里没有的表跳过（TEST02 没有 `T_ProcessEquipment`）；行按 store 的 rowid 顺序——即页链和槽号顺序（P8），与旧适配器一致；值按旧 `value_to_text` 的写法（`text_of`）：datetime `YYYY/M/D HH:MM:SS`（丢毫秒；`%-m` / `%-d` 去前导零，`%H` 保留），image 大写十六进制，int / float 按 Rust `Display`，`real` 按 f32 宽度，`bit` `true` / `false`，GUID 小写。`open_mdf_as_sqlite` / `load_drawing_graph_from_mdf` 保留，改成「MDF → 内存 store → 抄写」。`PublishError` 加 `Store` 变体（`From<BackupStoreError>`）。
+- **P6（`backup::store`）**：`build_backup_store_from_mdf_in_memory(mdf)` 只有 MDF、没有 Manifest——`store_info.input_kind` = `mdf`、`input_sha256` 是 MDF 的、`dump_kind` = `sql-server-mdf`；四个 Schema Role 由 `plant_schemas_from_schema_names` 按 schema 名后缀认（恰好一组 `<p>` / `<p>d` / `<p>pid` / `<p>pidd`，否则报错），`dump_schema.role_source` = `schema-name-suffix`；四个 schema 下的全部用户表按角色、再按表名顺序入库，`dump_view`、`backup_file`、Manifest 各表留空。`mssql::write_sql_server_dump` 的 Manifest 参数改成 `Option`，`write_schemas_and_views` 同；有 Manifest 时仍按 `Table` 行顺序。
+- **`pid_publish_xml`**：`<input>` 收 Backup Store、Plant Backup（zip 或目录）、`Export.mdf`、legacy mirror 四种（用法文字跟着改）；报错写明认成了哪种（`open Plant Backup …`）；deprecation 警告只对 legacy mirror（没有 `dump_table` 的 SQLite 文件）打，不再看扩展名。**`export_bundle`**：`publish_input_kind` 改成按内容认（`plant-backup` / `backup-store` / `mdf` / `sqlite`），`open_publish_input_as_sqlite` 走 `open_publish_input`；目录输入的 `ExportBundleInputIdentity` 取 store 记的那个 SHA-256（`<sha256>  <名字>\n` 清单的，等于该目录建的 store 的 `store_info.input_sha256`）和顶层文件大小之和，以前对目录会 `sha256_file` 失败。
+- 数（TEST02）：MDF、`TEST02_p.zip`、解开的目录、`pid_backup_store` 写的 store 文件四种输入，A01 的 `_Data.xml`（8,482 B，SHA-256 `6ab41b66…`）/ `_Meta.xml`（1,481 B，`44291a6c…`）逐字节相同，且与 S4 之前旧适配器的输出逐字节相同（验收第 10 条）；`export_bundle_publish_xml` 对这四种加 legacy mirror 五种输入也都出同样的字节。抄出来的 23 张表（21 张业务表 + 2 张字典表），列名、列序、行序、每个值与旧适配器从 MDF 直接暂存的逐行相同（临时探针逐行比对，65 行 / 21 张表完全一致）；两张字典表按 Q18 换了来源：`codelists` 130 → 3,206 行（13 → 127 个选择表）、`attributes` 80 → 798 行，XML 不变——`attribute_codelisted` 在两边都是 `T` / `F`，现有连接从未连上过（见下一条）。
+- **Q18 连接缺陷（只写草稿、未开 issue）**：`load_codelist_index` 把 `attributes.attribute_codelisted` 当选择表编号，它实为 `T` / `F`（pidd 216 / 582，plantd 15 / 65）；真连接是 `attribute_datatype = C<n>`（216 个 `T` 行全是 `C<n>`，582 个 `F` 行没有一个是）。A01：`EquipmentType` → `C22`，`T_Equipment.EquipmentType` = 241 → `codelist_text` 「1 diameter, 1 chamber, elliptical head horizontal drum」、`codelist_short_text` 「1D 1C 2:1 H Drum」，而参考 XML 和当前输出都是符号路径推出的「Horizontal Drum」，连上就会变；`NozzleType` → `C35`，38 → 「Flanged Nozzle」，与现在的默认值相同、不变。
+- 测试：新 `tests/publish_store_parity.rs` 2 条（四种输入逐字节相同 + 两份 XML 的 SHA-256 钉住；抄出来的表 MDF 与 zip 逐行相同、`codelists` 3,206 / `attributes` 798 / `T_PlantItem` 3、没有 `_src_page` / `_src_slot`、`codelists` 7 列）；`publish_xml_cli` +1（zip 和 store 文件作 `<input>`，XML 与 MDF 相同、不打 deprecation 警告）；`store_load` 单测 4。`publish_*` 其余 12 个文件一条断言没改、全过。
+- 文档：README 的 publish 用法与库调用、Backup Store 一节；`AGENTS.md` 架构表和测试表；`publish` / `sqlite_load` 模块文档；两张架构图和 PRD 里的 `mdf_load` 改成 `store_load`。
+- 验证：`cargo test --workspace` 49 个二进制 1555 过 / 3 忽略（1548 → 1555：`store_load` 单测 4 + `publish_store_parity` 2 + `publish_xml_cli` 1）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过。vendored crate 没动；`check-missing-docs.sh` 的 `cargo rustdoc` 仍是 S2c 记下的 `src/parsers/sheet_records.rs` 那几处旧错。
+
+### S3：命令行 `pid_backup_store <Plant Backup> -o <store.sqlite>`（2026-10-09，Backup Store 计划 S3）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S3（Q17、Q15、Q2 的 `--embed-files`）。
+
+- **新 bin `src/bin/pid_backup_store.rs`**（`Cargo.toml` `[[bin]]`，`required-features = ["backup"]`）：`pid_backup_store <Plant Backup> -o <store.sqlite> [--force] [--keep-secrets] [--embed-files]`，`-o` / `--out` 必填，输入是 `<Plant>_p.zip` 或解开的目录。输出已存在且没加 `--force` 就拒绝（退出 1，文件不动）；store 由库先写 `<输出>.tmp` 再改名。参数错（缺输入、缺 `-o`、`-o` 没带路径、未知旗标、两个输入、两个 `-o`）打印 `argument error: …` 和用法后退出 2；`-h` / `--help` 把用法打到 stdout 退出 0；输入读不了或 store 没写成退出 1。成功时 stdout 四行汇总——文件数（含 embedded 数）、Manifest 行数与脱敏处数、表数 / 行数 / Ghost Row / LOB 数、警告数——警告逐条进 stderr（`warning: …`）。
+- 测试：新 `tests/backup_store_cli.rs`（5 条：`--help` / `-h`；四种参数错都退出 2、不碰输出、用法进 stderr；输入不存在退出 1、不留 `.tmp`；TEST02 建库 + 汇总逐字相同 + 库里的数 + 再跑一次被拒、文件不变 + `--force --keep-secrets --embed-files` 覆盖后 `redacted = 0`、`files_embedded = 1`、1,348 个文件（1,554 条里 206 条是目录）的字节都进了 `backup_file_content`，`PlantConfig.xml` / `Manifest.txt` 的字节与 zip 原件相同；SQPlant 目录输入跑通，stdout 865 文件 / 322 行 / 15 处脱敏 / 154 张表 0 行 / 2 条警告，stderr 两条警告逐字相同，缺样本则跳过）；bin 的单测 3（参数解析、报错文字、汇总文字）。验收第 13 条的「目录输入跑通」部分绿。
+- README 加「Backup Store：一套 Plant Backup 生成一个 SQLite」一节：用法、库里每张表是什么、退出码。
+- 验证：`cargo test --workspace` 48 个二进制 1548 过 / 3 忽略（46 → 48 是新 bin 的单测和 `backup_store_cli`，1540 → 1548）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过。vendored crate 没动；`check-missing-docs.sh` 的 `cargo rustdoc` 仍是 S2c 记下的那 4 处旧错。
+
+### S2d：Oracle 转储——DDL 扫描进库、按 `CONNECT` owner 归属，154 张 `<角色>__<表>` 空表标「未解码」（2026-10-09，Backup Store 计划 S2d）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S2d（Q3、Q16、Q19、Q20、P12）。
+
+- **新模块 `backup::oracle_exp`**：`scan_create_tables(dump)` 按 `\n` 走整个 `exp` dump，`CONNECT <OWNER>` 行换当前 owner（只认整行是一个标识符的，二进制数据凑巧以这几个字节开头的不算），`CREATE TABLE "…" (…)  PCTFREE …` 行归到它前面最近的 owner（P12），表以 (owner, 名) 为键，不再按名去重；每列存 `name`、`type_spec`（`NUMBER(11, 0)`、`NVARCHAR2(32)`、`FLOAT(126)`、`DATE`、`BLOB` 原样，`LONG RAW` / `TIMESTAMP(6) WITH TIME ZONE` 这类多词类型也整个算类型）和 `modifiers`（`NOT NULL ENABLE`），`not_null()` 看它。`CREATE TABLE` 在任何 `CONNECT` 之前、列项不以引号开头、括号不配对、不是 exp 文件（开头不是 `\x03\x03iEXPORT:V`）都显式报错（`ExpDdlError`）。`examples/oracle_exp_schema.rs` 改成调库、按 owner 分组打印（`Cargo.toml` 给它加 `required-features = ["backup"]`）。
+- **新文件 `backup::store::oracle`**：dump 的 owner 与 Manifest `PlantConnInfo` 第 4 字段按 ASCII 大小写不敏感配，恰好一个否则报错；`dump_schema.schema_name` 存 dump 的大写原样（Q20）——`DumpSchema` 为此多了 `dump_name`（SQL Server 两者相同），`dump_schema` / `dump_view` 的写入收进 `store::mod` 的 `write_schemas_and_views` 两边共用，`dump_view.schema_name` 也是 dump 的写法（Manifest 的写法留在 `manifest_field`）。按 Manifest `Table` 行顺序建 154 张 `<角色>__<表>` 空表：列按 Q19 定 SQLite 类型（`sqlite_type_of_oracle`：NVARCHAR2 / VARCHAR2 TEXT、NUMBER(p, 0) 与 NUMBER(p) INTEGER、FLOAT REAL、DATE TEXT、BLOB BLOB；语料外的 NUMBER(p, s≠0) 和裸 NUMBER 记 TEXT，数字到时原样保留），表尾同样带 `_src_page` / `_src_slot`（Oracle 没有页，这两列可空，第二版再定放什么）；`dump_column` 的 `source_type` 是类型原样，length / precision / scale 取类型参数（NVARCHAR2(32) → 32，NUMBER(11, 0) → 11 / 0，FLOAT(126) → 126），`nullable` = 没写 NOT NULL；`dump_table.decoded = 0`、`expected_rows` NULL、rows / ghost_rows 0（Q3、Q16）。`store_info.dump_kind` = `oracle-exp`；warnings 一条写明「154 张表从 DDL 登记、留空、行未解码」；dump 的四个 owner 下有 Manifest 没列的表时另给一条警告（语料里没有）。`mssql.rs` 的 `SCHEMA` 注释写明三种列（`schema_name` 的写法、`decoded` 的含义、`length` / `precision` / `scale` 两边各取什么）。
+- 数：DWG 4 个 owner `QSMCQTAZ13_PLANT` / `QSMCQTAZ13_PLANTD` / `QSMCQTAZ13_PLANTPID` / `QSMCQTAZ13_PLANTPIDD`，154 张（22 / 25 / 82 / 25）、2,039 列（138 / 176 / 1,549 / 176），按类型 NUMBER 663、NVARCHAR2 987、VARCHAR2 11、FLOAT 348、DATE 28、BLOB 2，NOT NULL 150；SQPlant 4 个 owner `SQPLANT` / `SQPLANTD` / `SQPLANTPID` / `SQPLANTPIDD`（Manifest 写 `SQPlant` / `SQPlantd` / `SQPlantpid` / `SQPlantpidd`），154 张、2,024 列（138 / 176 / 1,534 / 176），FLOAT 340、NVARCHAR2 980、其余同 DWG，NOT NULL 150。两套都是 126 个不同表名，`MAX_ID` 四个角色各一张、`SPIDCACHE` plant / pid 各一张；NUMBER 只有 (10, 0) / (11, 0)，FLOAT 只有 (126)；视图 35；每张表 0 行，每列的 SQLite 类型按 Q19 对上；`T_DRAWINGVERSION` 的 `SP_ID` / `DATECREATED` / `SP_ACCESSMODE` / `SP_COMMENTS` / `SP_STORAGE` 钉成 TEXT / TEXT / INTEGER / TEXT / BLOB。按类型的列数和 NOT NULL 数另用 PowerShell 正则逐条数过，相同。
+- 测试：`tests/common/backup_store.rs` 加 `check_oracle_dump`（两套 Oracle 样本共用的目录与空表检查）；`backup_store_dwg` +1（`dwg_store_registers_the_oracle_tables_empty_from_the_ddl`），`backup_store_sqplant` 两条扩到转储；`oracle_exp` 单测 4、`store::oracle` 单测 2。验收第 11 条绿，第 13 条的转储部分绿。
+- 验证：`cargo test --workspace` 46 个二进制 1540 过 / 3 忽略（1533 → 1540：`oracle_exp` 单测 4 + `store::oracle` 单测 2 + `backup_store_dwg` 1）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；`cargo run --example oracle_exp_schema` 在 DWG 和 SQPlant 的 `Export.dmp` 上各报 154 张 / 4 个 owner / 126 个不同表名。vendored crate 没动。`check-missing-docs.sh` 的 `cargo rustdoc` 仍是 S2c 记下的那 4 处旧错（`src/lib.rs`、`src/parsers/sheet_records.rs`），本步没碰。
+
+### S2c：SQL Server 转储入库——154 张 `<角色>__<表>` 逐行带页号和槽号，`dump_schema` / `dump_table` / `dump_column` / `dump_view` / `dump_ghost_row` / `dump_lob`（2026-10-09，Backup Store 计划 S2c）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S2c（Q8、Q9、Q11、Q12、P6 的 `manifest-conninfo` 一侧、P8）。
+
+- **新文件 `backup::store::mssql`**，`store::mod` 配套：Manifest 的 `PlantConnInfo` 第 2 字段的类型码 2 / 8 / 4 / 9 → 角色 `plant` / `plantd` / `pid` / `pidd`（`SchemaRole`、`plant_schemas_from_manifest`，恰好四个角色各一次否则 `SchemaRoles` 错），第 4 字段是 schema 名、第 8 字段是库类型、第 12 字段是转储文件名；`dump_schema`（role、schema_name、type_code、db_type、role_source = `manifest-conninfo`）。Database Dump 按 Manifest 给的名字从外层文件里取，`mtf::mdf_bytes_of_dump` 取出 MDF、`MdfDatabase::from_bytes` 读；Manifest 命名的四个 schema 都得在 MDF 里，`Table` / `View` 行的 schema 都得是这四个之一，Manifest 列的表 MDF 里都得有（`DumpShape` 错）。
+  按 Manifest `Table` 行的顺序（P8）建 154 张 `<角色>__<源表名>`：源列按 Q9 定 SQLite 类型（`sqlite_type_of`：int 族 INTEGER、float / real REAL、image / binary BLOB、其余 TEXT），末尾 `_src_page`、`_src_slot`（Q11；源列撞名就报错）；行按 `scan_table` 的页链和槽号顺序插入，值按 `store_value`——nvarchar TEXT（`""` 与 NULL 分开）、int INTEGER、float REAL、datetime TEXT `YYYY-MM-DD HH:MM:SS.fff`、image BLOB（LOB 的全部字节）。`dump_table`（store_name、expected_rows = `rcrows`、rows、ghost_rows、decoded = 1）、`dump_column`（ordinal、name、source_type、length——目录里的字节长度，`sys.columns.max_length` 的口径，nvarchar(32) 记 64、max 记 −1——precision、scale、nullable）、`dump_view`（Manifest `View` 行，只有名字）、`dump_ghost_row`（Q12：page、slot、record_type、原始字节）、`dump_lob`（Q11：行的页槽、列、根页槽、长度、全部字节的 SHA-256）。`StoreSummary` 多了 tables / rows / ghost_rows / lobs。
+  Oracle 的转储这一步只认出来：`store_info.dump_kind` = `oracle-exp`（SQL Server 是 `sql-server-mtf`），warnings 里写明「its tables are not decoded in this version」，表等 S2d；Manifest 命名的转储文件不在外层时也只警告。
+- **vendored `oxidized-mdf`**：`ColumnInfo` 加 `nullable`，取 `syscolpars.status` 位 1 为**清**——这一位是 `CPM_NOTNULL`，`sys.columns.is_nullable` 的定义是 `1 - (status & 1)`（接手的草稿里方向反了）；TEST02 上置位的 206 列全是键列、205 列一个 NULL 都没有，未置位的 1,592 列里 569 列有 NULL，方向由此坐实。`lib.rs` / `sys.rs` 文件头的修改说明跟着改。
+- 数（TEST02）：`dump_schema` 4 行（TEST02 2、TEST02d 8、TEST02pid 4、TEST02pidd 9）；`dump_table` 154（plant 22 / plantd 25 / pid 82 / pidd 25），rows 合计 37,470、逐表等于 expected_rows，表本身的行数与之相同；`dump_view` 35（plantd 25、pid 10）；`dump_column` 1,798（nvarchar 856、int 650、float 263、datetime 27、image 2），nullable 0 的 206、1 的 1,592；`dump_ghost_row` 5（pid 的 `T_Equipment`、`T_EquipmentOther`、`T_PlantItem`、`T_SmartFrameStorage`、`T_Symbol` 各 1，record_type 6，字节与 MDF 槽指向的相同）；`dump_lob` 4（根 2247:1 32,768、2323:3 32,768、2323:1 65,536、2323:5 32,768，表里的 BLOB 都是 ZIP、首条目 `A01-JSite204.tmp` / `Drawing.xml`，`sha256` 等于 BLOB 的 SHA-256）；转储表里 NULL 按类型 nvarchar 21,431、int 29,009、float 148、datetime 8，空串 162；`T_Drawing.DateCreated` 写成 `2026-04-20 10:32:46.000`，`T_PipeRun.NominalDiameter` 250.0、`PipeRunType` 20。
+  抽样回核（验收第 5 条）：`pid__T_Drawing`（1 行）、`pid__T_PlantItem`（3）、`pidd__codelists`（3,206）每行按 `_src_page` / `_src_slot` 回 MDF 重解，3,210 行逐列与库里相同。两次构建全部表（含 154 张转储表）逐行相同（验收第 9 条）。
+- **查出来一件事**：`TEST02pid.T_Symbol` 的 `SP_ID` 声明 NOT NULL，但页 2300 槽 1 那条记录的空位图把它置位了（空位图 `46 2f`：YCoordinate、SP_ID、ScaleFactor、ParamTop–ParamRight、SP_ComponentMemberKey 全标 NULL），定长区里是指针模样的字节（`56 ad 80 f3 fe 07 00 00`），变长区却存着 32 字符的 `AC9DFB6629974E428402C938E60F4B9C`。1,798 列里只有这一处「声明 NOT NULL 却有 NULL」。库按空位图写 NULL（和 Q9、50,596 的口径一致），`dump_column.nullable` 让人能查到；要不要改成「NOT NULL 列不看空位图」，等用户定。测试钉了这一处。
+- 测试：`backup_store_test02` +1（`test02_store_dumps_every_table_the_manifest_lists_with_its_provenance`，验收第 1–5 条），两次构建那条扩到全部表（第 9 条）；`backup_store_sqplant` 钉 `dump_kind` 和 warning；`store::mssql` 单测 3。验收第 1、2、3、4、5、9 条变绿。
+- 验证：`cargo test --workspace` 46 个二进制 1533 过 / 3 忽略（1529 → 1533：`store::mssql` 单测 3 + `backup_store_test02` 1）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；vendored crate 的 `clippy --all-targets -D warnings` 过，单测 67 过，集成测试 22 / 23（只剩 S1a 记下的 `rows::case_5`）。`check-missing-docs.sh` 里的 `cargo rustdoc -W missing-docs` 报 4 处错，全在 `src/lib.rs` 和 `src/parsers/sheet_records.rs`（指向私有项的文档链接），本步没碰这两个文件；本 crate `deny(missing_docs)`，公开项的文档由编译把关。
+
+### S2b：Manifest 保原文逐行入库，默认脱敏，两种口径拼回（2026-10-09，Backup Store 计划 S2b）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S2b（Q6、Q14、Q15、P5、P9）。
+
+- **`backup::store::manifest`**：`Manifest.txt` 按 BOM 认编码（`store_info.manifest_encoding` / `manifest_bom`），按行拆、每行连行尾一起存——`manifest_line`（line_no、key、raw_text、terminator）、`manifest_field`（line_no、position、value）；`reassemble_manifest` 把 BOM + 按 `line_no` 连接的 `raw_text ‖ terminator` 编回去。
+  `manifest_field_meaning` 是写进库的常量表（P5）：按格式文档第 4、10 节给每个 key 每个位置定 `decoded` / `typed_audit` / `identified_only` / `unknown`，只有 `decoded` 的有名字；视图 `manifest_root_item`、`manifest_conn_info`（带 `scope` = Site / Plant）、`manifest_database_file`、`manifest_role`、`manifest_right`、`manifest_table_entry`、`manifest_view_entry`、`manifest_file`、`manifest_file_size`、`manifest_table_space` 和单值 key 的 `manifest_value`，都从这张表生成。
+- **`backup::store::redact`（Q15）**：默认把 `DBUids`、`DBPwds`、`SiteConnInfo` / `PlantConnInfo` 第 1、5 字段换成 SHA-256；`BackupCommand` 里 `user/password@service` 的口令换成 `***`（Oracle `exp` 命令行），SQL Server 的 `BACKUP DATABASE … TO …` 没有口令、原样保留，别的形状整段换成 `***`。每处替换记进 `store_redaction`（line_no、position、rule、original_sha256）；`keep_secrets` 时一处不换、表为空。
+- 查出来的两件事（格式文档第 4 节写的「加密串」有两处不对，脱敏规则没改）：`PlantConnInfo` 第 1 字段在三套样本里都是 Plant 名（6 / 16 / 7 个字符），只有 `SiteConnInfo` 的才是 64 字符密文；`DBUids` 是四个 Plant schema 名的逗号串，Oracle 命令行的 `OWNER=(…)` 里原样还有。两者按 Q15 仍换成 SHA-256，但「库里搜不到原值」的检查对它们不成立，测试把这两处排除并钉了它们的含义。
+- 数：TEST02 319 行、DWG 402 行、SQPlant 322 行，全是 CRLF、UTF-16LE 带 BOM；默认脱敏 TEST02 14 处（全是 SHA-256），DWG、SQPlant 各 15 处（14 + 1 个口令）；视图：Table 154、View 35、ConnInfo 6（Site 1 / 7，Plant 2 / 4 / 8 / 9）、File 14、Role 1 / 2 / 1、Right 78 / 156 / 78。
+  P9 两种口径：`keep_secrets` 的 store 拼回与原件逐字节相同；默认 store 拼回等于原文按 `store_redaction` 的位置做同样替换，每条 `original_sha256` 等于原值的 SHA-256；默认 store 文件里按 UTF-8 和 UTF-16LE 都搜不到 `DBPwds`、ConnInfo 密文和两个口令（口令在测试运行时从原 Manifest 现取）。`manifest_field` 的每个 (key, position) 在 `manifest_field_meaning` 里都有行。
+- 测试：`backup_store_test02` / `backup_store_dwg` / `backup_store_sqplant` 各 +1，共用 `tests/common/backup_store.rs` 的检查；`store::manifest` 单测 4、`store::redact` 单测 4。验收第 6、8 条变绿。
+- 验证：`cargo test --workspace` 46 个二进制 1529 过 / 3 忽略（1518 → 1529）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过。vendored crate 没动。
+
+### S2a：Backup Store 开工——收目录或 zip，`backup_file` 逐条 SHA-256，zip 条目名按 UTF-8 / GBK / CP437 解（2026-10-09，Backup Store 计划 S2a）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S2a（Q2、Q7、Q14、P4、P8、P10、P11）。
+
+- **新模块 `backup::store`**（`src/backup/store/{mod,input}.rs`，随 `backup` 特性）：`build_backup_store(输入, 输出, &StoreOptions)` 先写 `<输出>.tmp` 再改名，`build_backup_store_in_memory` 给 publish 用。
+  输入是 `<Plant>_p.zip` 原件或它解开的目录：zip 按中央目录顺序列条目；目录只收顶层文件、按名字的字节序排、跳过子目录（`extracted/` 这类派生目录不属于备份），并在 `store_info.input_note` 和返回的 warnings 里写明「文本文件的换行可能被改过」（Q7）。
+- 表：`store_info`（tool_name、tool_version、input_kind、input_sha256、redacted、files_embedded、input_note）——zip 的 SHA-256 是文件本身的，目录的是「`<sha256>  <名字>\n`」清单的 SHA-256；
+  `backup_file`（id、container_id、entry_index、path、path_raw、path_encoding、is_dir、size、sha256、format）收外层文件和每个 Option Archive（`PlantData~…~<id>.zip` / `RefData~…~<id>.zip`，只展开一层；`RefData~4~703` 是 xlsx、没有 `.zip` 后缀，不展开）的全部条目，目录条目不记哈希和格式，`format` 用 `classify_format` 的分类（`zip` / `cfb` / `xml` / `ascii` / `unknown:<4 字节十六进制>`）；
+  `backup_file_content` 只在 `embed_files` 时写。id 按外层顺序、再按各包条目顺序分配，库里不写时间和路径（P8）。
+- **`zip_index`（P11）**：`ZipEntry` 加 `name_raw`、`name_encoding`；`decode_zip_entry_name`：设了 UTF-8 标志按 UTF-8，否则纯 ASCII 记 `ascii`，再试严格 UTF-8，再试 GBK（`encoding_rs`），都不行就按 zip crate 的 CP437 解并记 `cp437`。
+- **`mtf`**：`pid_backup_extract` 里找 MSCI / MSDA 流、探测备份流头长度（默认 `0x3F0`）的代码挪进库——`locate_sql_server_streams`、`detect_backup_stream_header_len`、`mdf_bytes_of_dump`、`SqlServerDumpError`（Display 文字与 bin 原来打印的一致）；bin 改调库，输出不变。`Cargo.toml` 里 zip「只读中央目录」那段注释改写。
+- 数：TEST02_p.zip 外层 14 条，包内 711 782、681 703、682 21、684 12、685 3、804 10、809 9，共 1,554 行；`01/01/A01.pid`、`A2-W-New.pid`、`CPECCHBA2-new.pid` 的 SHA-256 与格式文档第 8 节一致。
+  DWG 外层 16 条、共 802 行，`zcgc/A3jqz/DWG-0202GP06-01.pid` 与 681 / 685 两处 `wuyouchi.pid` 对上。
+  SQPlant（目录）顶层 16 个文件、共 865 行；711 包 60 条，47 条按 GBK 解出、没有 U+FFFD，`00/00/A井场 注采阀组工艺及自控流程图.pid`（3,264,512 B）和 `test/U01/D06.pid`（229,376 B）对上；681 742、682 20、684 10、685 3、804 10、809 4。
+  `mdf_bytes_of_dump(TEST02 的 Export.dmp)` 与 `extracted/Export.mdf` 逐字节相同（19,922,944 B）。
+- 测试：新 `backup_store_test02`（3 条：清单与哈希、`embed_files`、临时文件改名与两次构建逐表相同）、`backup_store_dwg`（1）、`backup_store_sqplant`（1，P10：读 `PID_PARSE_SQPLANT_BACKUP`，没设退到 `D:\work\cad\pid-test-data`，都没有则跳过）；`backup_mtf` +1，原有一条加了库与 bin 同文的断言；`zip_index` 单测 +3，`store::input` 单测 +3。验收第 7 条（TEST02、DWG）与第 13 条的文件清单部分变绿。
+- 验证：`cargo test --workspace` 46 个二进制 1518 过 / 3 忽略（43 → 46 是三个新测试文件，1506 → 1518）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；`pid_backup_extract --as-mdf --dry-run` 对 TEST02 的输出与改前相同。vendored crate 没动。
+
+### S1c 审查后的两处修正：`text` LOB 不再按 UTF-8 猜解；计划里的「NULL 21,431」写明是 nvarchar 的数（2026-10-09，Backup Store 计划 S1c）
+
+S1c（`eda765b`）的只读审查，数全部对上；用户采纳了两条意见。
+
+- **vendored `oxidized-mdf` 的 `lib.rs`**：`lob_value` 对 `text` 列不再按 UTF-8 解成 `Value::String`，改为原字节 `Value::Binary`，和 `image` 一样。`text` 是排序规则代码页里的单字节文本，读取器不知道代码页，按 UTF-8 解会把非 ASCII 静默换成 U+FFFD；按计划「不猜」的路子，原字节交出去。`ntext` 仍按 UTF-16LE 解。TEST02 没有 `text` / `ntext` 列，行为不变；文件头的修改说明跟着改。单测 +1（`a_lob_is_text_only_when_its_column_is_ntext`）。
+- **计划**：事实表「空串 / NULL」一行和验收第 4 条原来只写「NULL 21,431」，没说是 nvarchar 列的数；现写明按列类型计——nvarchar 21,431、int 29,009、float 148、datetime 8，合计 50,596，全是空位图置位、没有「记录没存的列」——免得 S2 的 `backup_store_test02` 再对错口径。同一行补了 `T_Drawing` 4 个空串所在的列（`Description` / `Revision` / `Title` / `Version`，publish 的 `load_drawing` 不读这四列，所以 A01 输出不变是应该的）。门禁记录加审查一条，含审查时另验出的事实（4 个 LOB 都是内部自洽的 ZIP；65,536 字节那个的 ZIP 在 38,535 字节处结束、其后 27,001 字节不是全零）和留给 S2c 的两条限制。
+- 验证：`cargo test --workspace` 43 个二进制 1506 过 / 3 忽略；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；vendored crate 的 `clippy --all-targets -D warnings` 过，单测 67 过（66 + 1），集成测试 22 / 23（只剩 `rows::case_5`）。TEST02 没有 `text` 列，`backup_mdf_reader_test02` 的数不变。
+
+### S1c：MDF 读取器随机读页、跟文本指针读 LOB、空串与 NULL 分开、datetime 整数换算（2026-10-09，Backup Store 计划 S1c）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S1c（Q9、Q11、P2、P3）。
+
+- **vendored `oxidized-mdf` 的 `lib.rs`**：整个文件读进内存，`PageReader` 按页号随机读，`open` / `from_read` 先读完再走 `from_bytes`，指向别的数据文件的页指针报错；`rows` / `try_rows` / `ghost_rows` / `scan_table` 改为 `&self`。
+  `text` / `ntext` / `image` 列由 `parse_column` 跟着行内 16 字节文本指针走 `PageReader::read_lob`：根记录须是 `LARGE_ROOT_YUKON`，level 0 的子记录是 `DATA`，level 1 的子记录是 `INTERNAL`、再往下是 `DATA`；每条记录的 blob id 须与指针相同，各片段结尾须恰在链接写的偏移上，链接走回读过的记录即报错；
+  `SMALL_ROOT`、`LARGE_ROOT`、`SUPER_LARGE_ROOT` 等语料没见过的形状显式报「不支持」，不猜。`image` 给 `Value::Binary`，`ntext` 按 UTF-16LE、`text` 按 UTF-8 解成 `Value::String`；`ScannedRecord::Live` 新增 `lobs: Vec<LobRef>`（列名、根页、根槽、长度）。
+  datetime 由 `pages::datetime_from_parts` 以 `(刻度 × 10 + 1) / 3` 的整数换算得毫秒，不再 `as i64` 截断。
+- **`pages.rs`**：`ColumnCursor` 按列走空位图，记录没存的列（列号 ≥ 记录的列数）为 NULL；变长列的 complex 位与尾偏移分开——complex 列在要行内字节的地方报错，LOB 列从中读出 `TextPointer`（blob id、页、槽）；
+  零长度且空位未置位的变长列返回 `""`，不再当 NULL；变长列尾偏移超出记录报错，不再静默截断。页头多读页类型（字节 1）；`Page::text_record(槽)` 解析文本页上的记录——`TextRecord::Data`、`LargeRootYukon`（12 字节链接）、`Internal`（16 字节链接）、`Other`。`parse_datetime_parts_opt` 给出原始天数和刻度。
+- **`sys.rs`**：`Table::page_pointers()` 跳过分配单元为空时的 `0:0` 指针。以前这个指针被当成第 0 页（文件头页）读，页上那条头记录被当成一行——`TEST02pid.T_EquipComponent`（`rcrows` 0）因此多出 1 行假行，`publish_mdf_load` 的 `strict_rows_load_a01_equip_component_table` 原本钉的就是这行，改为钉 0 行。
+- TEST02：LOB 4 个值全读出——`T_SmartFrameStorage.SP_Storage`（根 2247:1，32,768 字节，ZIP 首条目 `A01-JSite204.tmp`）、`T_DrawingVersion.SP_Storage` 3 个（根 2323:3 / 2323:1 / 2323:5，32,768 / 65,536 / 32,768 字节，首条目都是 `Drawing.xml`；65,536 的那个是 level 1，经 1 个 `INTERNAL` 节点下的 9 个片段）。
+  空串 162 个、分布在 10 张表（`TEST02pid.T_Drawing` 4 个）。NULL 按列类型：nvarchar 21,431（计划事实表的「NULL 21,431」是这个数）、int 29,009、float 148、datetime 8，合计 50,596，等于独立按页按槽数出的空位图置位数。datetime 非空值 31 个，毫秒末位都是 0（整秒），.003 / .007 的换算由单测钉。
+  A01 的 `_Data.xml`（8,482 B）/ `_Meta.xml`（1,481 B）与 S1b（`af3ac0f`）的二进制生成的逐字节相同（Q13）。
+- vendored 样本：`tbl_Mitglied` 第 3 行的 `Titel` 空位未置位、长度为零，是空串；集成测试那条钉「NULL」的断言建在旧假设上，改为 `""`。`rows::case_5` 仍是 S1a 记下的旧失败。
+- 测试：vendored 单测 45 → 66（datetime 刻度 .000 / .003 / .007 与越界、空串 / NULL / 未存列 / 无尾偏移项、文本指针、complex 列、行内 LOB 不支持、越界尾偏移、文本记录四种形状与三种拒绝、页类型）；`backup_mdf_reader_test02` +1（LOB、空串、NULL、datetime）；`Cargo.toml` 加 dev-dependency `chrono`（读取器已依赖的同一版本）。
+- 验证：`cargo test --workspace` 43 个二进制 1506 过 / 3 忽略；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；vendored crate 的 `clippy --all-targets -D warnings` 过，单测 66 过，集成测试 22 / 23（只剩 `rows::case_5`）。
+
+### S1b：MDF 读取器按 schema 认表，逐表扫到的活行等于 `rcrows`（2026-10-09，Backup Store 计划 S1b）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S1b（Q8、P3）。
+
+- **vendored `oxidized-mdf` 的 `sys.rs`**：读 `sysclsobjs`（idmajor 64）里 class 50 的 schema 行，用上 `sysschobjs.nsid`；`user_tables()` 给出每张用户表的对象 ID、schema ID 和名字、列（按列 ID）、`rcrows`（只算堆或聚集索引的 rowset，分区相加）；
+  `base_page_pointers()` 只取堆（idminor 0）或聚集索引（idminor 1）的 rowset，非聚集索引的页不当数据页；堆的页只能经 IAM 页找到、读取器不跟 IAM，所以多于一页、或 `pgfirst` 为空却有数据页的堆显式报错，不读一半。
+- **`pages.rs`**：页头再读 IndexID（6–7）和 ObjectID（24–27），得出所属分配单元 `IndexID << 48 | ObjectID << 16`；decimal 超出 `rust_decimal` 的范围时报错，不再 panic（AWLT2005 的计算列 `SalesOrderDetail.LineTotal` 不在行里存储，读取器把它当存储列读，会读出超范围的数）。
+- **`lib.rs`**：`MdfDatabase::from_bytes(Vec<u8>)`（仍走现有的顺序读页器，随机读留给 S1c）；`user_tables()` 返回 `TableInfo` / `ColumnInfo`；`scan_table(&TableInfo)` 按页链和槽号给出每条记录（`ScannedRecord::Live { page_id, slot, row }` 或 `Ghost(GhostRow)`），行按 `try_rows` 的严格口径解析，页链走出该表的分配单元时报错。按名取表的 `rows` / `try_rows` / `ghost_rows` 不变，仍取第一张同名表。
+- TEST02：用户表 156 张 = 4 个 schema 的 154 张（nsid 5 `TEST02d` 25、6 `TEST02` 22、7 `TEST02pidd` 25、8 `TEST02pid` 82）加 `sys` 下 2 张；154 张表逐表扫到的活行都等于 `rcrows`，合计 37,470；列 1,798（nvarchar 856、int 650、float 263、datetime 27、image 2）；Ghost Row 仍是那 5 行。都与计划事实表一致。A01 的 `_Data.xml` / `_Meta.xml` 与 S1a 之前逐字节相同。
+- vendored 样本：AWLT2005 分成 `dbo` 2 张、`SalesLT` 10 张，`SalesLT.Address` 扫到 450 行 = `rcrows`；spg_verein 的 `tblImportEmailParameter` 首页已属别的分配单元，`scan_table` 报错（按名的 `rows` 仍从那页读出 34 行）。
+  两个样本上还有 AWLT2005 2 张、spg_verein 16 张（含上面那张）扫不全——`xml` 类型、计算列、可空定长列、datetime2 等读取器原有的限制——都以错误给出，没有静默多行或少行；TEST02 没有这些情形。
+- 测试：`backup_mdf_reader_test02` 加一条（schema、列类型、逐表活行对 `rcrows`、合计 37,470、Ghost Row 5 行）；vendored 单测 43 → 45（分配单元、超范围 decimal），集成测试 +3（schema、`Address` 450 行、分配单元守卫）。
+- 验证：`cargo test --workspace` 43 个二进制 1505 过 / 3 忽略；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；`clippy --workspace --all-targets -D warnings` 两种特性都过；`cargo fmt --all --check` 过；vendored crate 的 `clippy --all-targets -D warnings` 过，单测 45 过，集成测试 22 / 23（只剩 S1a 记下的 `rows::case_5` 旧失败）。
+
+### S1a：MDF 读取器按槽号读，Ghost Row 不再算行（2026-10-09，Backup Store 计划 S1a）
+
+计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S1a（Q10、Q12、Q13、P2）。
+
+- **vendored `oxidized-mdf` 的 `pages.rs`**：槽表按槽号读（槽 i 是页尾倒数第 i + 1 个 u16），偏移为 0 的空槽跳过，不再排序；记录长度按记录自身结构算——定长段、列数、空位图、最后一个变长列的尾偏移（高位是 complex 标志，掩掉）、有版本标记再加 14 字节，转发桩 9 字节——不再取下一个槽的偏移；
+  类型 5 / 6 / 7 的 Ghost Row 不进 `Page::records()`，由 `Page::slotted_records()` 原样给出（槽号、偏移、类型、字节）；页头多读页号（32–35）和 GhostRecCnt（58–59）。
+- **`lib.rs`**：`rows` / `try_rows` 随之按槽号出行、不含 Ghost Row；新 `MdfDatabase::ghost_rows(表名)` 按页链和槽号给出 `GhostRow { page_id, slot, record_type, bytes }`。两个文件顶部的 GPL §5(a) 修改说明各加了 2026-10-09 一段。
+- TEST02：Ghost Row 正好 5 行、都是类型 6——`T_Equipment`、`T_EquipmentOther`、`T_PlantItem`、`T_SmartFrameStorage`、`T_Symbol` 各 1 行，字节与各自的槽在 MDF 里指向的字节相同，所在页页头 GhostRecCnt 都是 1；
+  这 5 张表的活行各少 1（`T_PlantItem` 4 → 3、`T_Equipment` 2 → 1、`T_EquipmentOther` 1 → 0、`T_SmartFrameStorage` 2 → 1、`T_Symbol` 4 → 3），其余 123 个表名（各取第一张同名表）行数不变。
+- publish（Q13）：A01 的 `_Data.xml`（8,482 B）和 `_Meta.xml`（1,481 B）改前改后逐字节相同；只有 `publish_mdf_load` 钉的 `T_PlantItem` 4 → 3。
+- 测试：vendored 单测 37 → 43（乱序槽、ghost 数据记录、变长列尾偏移定长度、空槽、版本标记、页头字段）；新 `tests/backup_mdf_reader_test02.rs`（S1 的 TEST02 读取器测试，先放 Ghost Row 一条）；
+  vendored 集成测试 `tbl_Bankleitzahlen` 3549 → 3548，少的一行是该表唯一的 Ghost Row（页头 GhostRecCnt 1）。`rows::case_5`（`tbl_Mitglied` 第 1 行的 `Kontosaldo`）改动前就失败——行解析在前面的 datetime2 列停下——这次没动。
+- 验证：`cargo test --workspace` 43 个二进制 1504 过 / 3 忽略；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；`clippy --workspace --all-targets -D warnings` 两种特性都过；vendored crate 自己的 `clippy --all-targets -D warnings` 过，`cargo test` 单测 43 过、集成测试 19 / 20（只剩上面那条旧失败）；`cargo fmt --all --check` 过。
+  `check-missing-docs.sh` 现在给不出数：`cargo rustdoc --lib` 在 `decode_igrectangles`、`IGDIMENSION_LINEAR_BLOCK_LEN`、`decode_igdimensions` 三处文档链到私有项而报错（主树 `1ed140a` 上一样，9 月就有）；本笔 `pid-parse` 库代码没动。
+
+### `pid_backup_probe` 认出 Oracle `exp` 导出，提示与 `pid_backup_extract` 相同（2026-10-09）
+
+- 起因：审计 SQPlant 备份（`D:\work\cad\pid-test-data`，Oracle 后端）时，`pid_backup_probe` 只报 `not an MTF stream: … (got tag ????)`，而 `pid_backup_extract` 早就认出是 Oracle `exp` 并给出处理建议。
+- **`backup::mtf::detect_non_mtf_dump_format`**（新公开函数，`backup` 也转出）：从 `pid_backup_extract` 原样挪进库，函数体、诊断文字和四个单测都不变；`pid_backup_extract` 改调库，输出逐字节不变。
+- `pid_backup_probe` 在 `MtfHeader::probe` 之前先问它，认出就打印 `error: <诊断>` 并以 1 退出，和 `pid_backup_extract` 一样；MTF 输入照旧。
+- 测试：`backup_mtf` 6 → 8——DWG-0202GP06-01 的 `Export.dmp` 头被认作 Oracle `exp`、`MtfHeader::probe` 报 `NotATapeStart`；两个命令对同一个 Oracle dump 都以 1 退出、stderr 逐字节相同。
+- 验证：`cargo test --workspace` 42 个二进制 1503 过 / 3 忽略（`--lib` 1139 → 1143，即挪进来的 4 个单测）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；missing-docs 0；改动的文件 rustfmt 干净（`cargo fmt --all --check` 只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`）。
+  手跑：SQPlant 的 `Export.dmp` 上两个命令 stderr 相同、都退出 1；TEST02 的 MTF 照旧走完 9 个描述块、退出 0。
+
+### D2：语义先按表示 UID 连、`GraphicOID` 兜底——A01 绘出实体 0 → 3 个连上（2026-10-08，OCS 计划 P-D32）
+
+OpenCADStudio 计划 `docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D2（P-D32）；依据 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
+
+- **`PidSemanticIndex::load_beside`** 读到 `_Data.xml` 时再开一次 `.pid`，收顶层各记录链里的活 `FreeFormAttrSet`（`0x0089`）行（类型字带 `0x8000` 的照 P-D12 不收；A01 的行都在 `/Unclustered Dynamic Attributes`，0202 有 5 个表示的行在别的顶层链里）。
+  表示 UID 以完整 ASCII 记号出现在哪些行（前后不粘字母数字、后面不粘 `.`，免得端口的 `<UID>.1` 冒充连接件）→ 顶层空间映射里以标签 190 列这些行的项 → 恰好一条记录才连，否则退回 `GraphicOID`；第二跳（DependencyObject）不变。嵌套存储（`/JSite…/`）的映射另有编号空间，不算。
+- **`PidSemanticObject::record_oid`**（新字段）：对象连在哪条记录上；`graphic_oid` 仍是 XML 原值（回查 `_Data.xml` 的键）。`resolve` 按 `record_oid` 查；`uid_joined()` / `stale_graphic_oids()` 交出 UID 连上几个、其中几个与 `GraphicOID` 不同。`from_xml` 不读行，照旧只按 `GraphicOID` 连。
+- 语料：A01 `uid_joined` 4、`stale_graphic_oids` 4，绘出实体连上 3 个——容器符号 184 → `PIDProcessVessel` `V 010121A`、管口符号 51 → `PIDNozzle`、管段 275 经 DependencyObject 417 → `PIDPipeline`，Full 与 Geometry 两种 profile 相同；0202 39 / 0，41 个实体的连接与只按 `GraphicOID` 时逐条相同。
+- 测试：`semantic_join` 的 A01 一条由「一条也不许连」改钉上面三条（两种 profile），并钉只按 `GraphicOID` 仍一条不连；0202 一条加 39 / 0 与逐条相同；`semantics` 单测 +5（UID 连上、无行时照旧、一个 UID 落两条记录时退回、粘连记号不算、链遍历与旗标行）。
+- 验证：`cargo test` 42 个二进制 1501 过 / 3 忽略（`--lib` 1134 → 1139）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；棘轮与 golden 不变；`clippy --all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 过；rustfmt 干净。
+  全量测试跑在 rustfmt 与一处 clippy 修整（`filter(|entry| entry.is_stream())` → `filter(::cfb::Entry::is_stream)`）之前，修整后重跑了 `semantics` 单测与 `semantic_join`；
+  提交后在 `fe42969` 的树上全部重跑，测试数与上面相同，两种特性的 clippy、wasm32 check、`cargo fmt --check` 也都过。
+- OCS 侧（`pid-web-open` `d8b2832d`，OCS 代码不改）：`pid_import` 54 → 55，A01 的 11 个实体挂上三个发布对象（容器放置 7、管口放置 3、管段 1）；批量基线只 A01 的 `dxf_sha256` 变（DXF 只多 82 行、一行没删），另五张不变。
+
+### D1 取证：A01 的语义要按表示 UID 连——`GraphicOID` 是发布时的旧号（2026-10-08，OCS 计划 P-D28 / P-D32）
+
+OpenCADStudio 计划 `docs/plans/2026-10-08-pid-integration-unblock-and-next-steps.md` D1（P-D28）与 `docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D1′；分析 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
+
+- **探针 `examples/probe_a01_representation_uid_is_the_join.rs`**（只加示例，`src` 不动，不需要 `backup` 特性）：A01 发布的四个 `GraphicOID` 在现文件里都是顶层 `0x0089 FreeFormAttrSet`、不是图元，`PidSemanticIndex::resolve` 0 / 4；
+  每个表示 UID 以 ASCII 恰在一个顶层属性集里、该集以空间映射标签 190 挂在所述记录下——按这条连 A01 3 / 4 且全对（容器 → 184、管口 → 51、管线 → 管段 275），0202 对照 39 / 39 落在 `GraphicOID` 自己的记录上、与今天逐条相同；
+  「朴素一跳」（号改写成标签 190 项）4 / 4 但容器与管口互换，不可用。
+- 结论：可修，D2 在 `PidSemanticIndex` 的第一跳先按 UID、再按 `GraphicOID`（OCS P-D32 已批，排在 OCS 集成 M2 之后）。
+- 验证：探针 exit 0、入库前后两次输出逐字节相同；`cargo clippy --example probe_a01_representation_uid_is_the_join -- -D warnings` 默认与 `--no-default-features` 都过（入库前只把一处 `type_complexity` 拆成 `type Member`）；rustfmt 干净。
+
 ### 缓存本体画出椭圆弧：`0x007E igEllipticalArc2d` 解码并投成精确有理二次 B 样条（2026-09-30，OCS 小单 E-D1 – E-D5）
 
 OpenCADStudio 小单 `docs/plans/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md` 工作项 E1（起因：09-30 解析缺口盘点里 A01 的设备 `V 010121A` 画成直角方箱，两端的 2:1 椭圆封头没画）；分析 `docs/analysis/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md`。

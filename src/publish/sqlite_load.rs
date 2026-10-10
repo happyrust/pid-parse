@@ -1,8 +1,9 @@
 //! Load a Publish-Data DTO out of a `SQLite` connection shaped like the
 //! `SmartPlant` SQL tables.
 //!
-//! The current MDF path uses `mdf_load` to stage publish-relevant rows
-//! into an in-memory `SQLite` connection, then reuses this query layer.
+//! The normal path uses [`super::store_load`] to copy the
+//! publish-relevant tables out of a Backup Store into an in-memory
+//! `SQLite` connection, then reuses this query layer.
 //!
 //! Scope: read the drawing row, its representations and the model
 //! items they anchor, plus every relationship that ties them. The

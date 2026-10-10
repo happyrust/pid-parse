@@ -884,3 +884,69 @@ fn cli_diff_against_combined_with_out_writes_xml_and_reports_clean() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// S4: the CLI takes the Plant Backup itself and a Backup Store file
+/// as `<input>`, and publishes the same bytes from them as from the
+/// `Export.mdf`; neither draws the legacy-mirror deprecation warning.
+#[test]
+fn cli_accepts_the_plant_backup_zip_and_a_backup_store_as_input() {
+    if !fixture_available() {
+        return;
+    }
+    const TEST02_ZIP: &str = "test-file/backup-test/TEST02_p.zip";
+    if !std::path::Path::new(TEST02_ZIP).exists() {
+        eprintln!("skipping: fixture {TEST02_ZIP} not found");
+        return;
+    }
+    let dir = unique_tmp_dir("store-inputs");
+    let store_path = dir.join("TEST02.sqlite");
+    let build = Command::new(env!("CARGO_BIN_EXE_pid_backup_store"))
+        .args([TEST02_ZIP, "-o", store_path.to_str().unwrap()])
+        .output()
+        .expect("spawn pid_backup_store");
+    assert!(
+        build.status.success(),
+        "pid_backup_store should write the store; stderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let mut documents = Vec::new();
+    for input in [A01_MDF_PATH, TEST02_ZIP, store_path.to_str().unwrap()] {
+        let out = Command::new(binary_path())
+            .args([
+                input,
+                "--drawing",
+                A01_DRAWING_UID,
+                "--stdout",
+                "--plant",
+                "TEST02",
+            ])
+            .output()
+            .expect("spawn pid_publish_xml --stdout");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success(),
+            "publishing from `{input}` should succeed; stderr: {stderr}"
+        );
+        assert!(
+            !stderr.contains("deprecated"),
+            "`{input}` is not a legacy mirror and must not draw the warning; stderr: {stderr}"
+        );
+        documents.push(String::from_utf8(out.stdout).expect("utf-8 xml"));
+    }
+    assert!(
+        documents[0].contains("<PIDDrawing>"),
+        "the MDF run should render the drawing; got:\n{}",
+        documents[0]
+    );
+    assert_eq!(
+        documents[0], documents[1],
+        "the zip must publish the same _Data.xml as the MDF"
+    );
+    assert_eq!(
+        documents[0], documents[2],
+        "the Backup Store file must publish the same _Data.xml as the MDF"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

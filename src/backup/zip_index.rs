@@ -13,13 +13,23 @@
 //!
 //! This module ships **only the entry index**: open the file, parse
 //! the central directory, and return one [`ZipEntry`] per stored
-//! item. Decompressing payload bytes is left to dedicated pipelines
-//! (the `cfb` crate handles `.pid`; future steps will crack symbol
-//! catalogues). Limiting ourselves to metadata keeps the dependency
-//! footprint small — the `zip` crate is enabled with
-//! `default-features = false`, dropping aes-crypto / bzip2 / xz /
-//! lzma / zstd. Reading the central directory and per-entry
-//! metadata works in this minimal mode.
+//! item. Reading payload bytes out of a backup's archives is the
+//! Backup Store's job ([`crate::backup::store`]); the `cfb` crate
+//! handles `.pid`. The `zip` crate is enabled with
+//! `default-features = false` plus `deflate`, dropping aes-crypto /
+//! bzip2 / xz / lzma / zstd: every `SmartPlant`-produced archive
+//! observed so far uses the stored or deflate methods.
+//!
+//! # Entry names
+//!
+//! `SmartPlant` writes entry names without the UTF-8 flag. Names
+//! that are pure ASCII read as themselves; the rest are tried as
+//! strict UTF-8, then GBK (the code page the Chinese-language
+//! backups observed so far use), and only then as CP437, the ZIP
+//! default the `zip` crate falls back to. [`ZipEntry::name_raw`]
+//! keeps the bytes either way and [`ZipEntry::name_encoding`] says
+//! which reading produced [`ZipEntry::name`]; see
+//! [`decode_zip_entry_name`].
 //!
 //! # Tolerance
 //!
@@ -35,6 +45,65 @@ use std::io;
 use std::path::Path;
 
 use thiserror::Error;
+use zip::HasZipMetadata;
+
+/// How the bytes of a ZIP entry's name were read into a string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZipNameEncoding {
+    /// The entry carries the UTF-8 flag, or its bytes are valid UTF-8
+    /// with at least one byte above ASCII.
+    Utf8,
+    /// No UTF-8 flag and every byte below 0x80: the same string under
+    /// every encoding in question.
+    Ascii,
+    /// No UTF-8 flag, not valid UTF-8, decodes as GBK without error.
+    Gbk,
+    /// None of the above: the ZIP default the `zip` crate applies.
+    Cp437,
+}
+
+impl ZipNameEncoding {
+    /// The label stored beside a path: `utf-8`, `ascii`, `gbk` or `cp437`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Utf8 => "utf-8",
+            Self::Ascii => "ascii",
+            Self::Gbk => "gbk",
+            Self::Cp437 => "cp437",
+        }
+    }
+}
+
+/// Reads an entry name's bytes the way the module docs describe:
+/// `utf8_flag` set means UTF-8; otherwise ASCII as is, then strict
+/// UTF-8, then GBK, else `cp437` -- the string the `zip` crate already
+/// decoded from the same bytes under CP437.
+pub fn decode_zip_entry_name(
+    raw: &[u8],
+    utf8_flag: bool,
+    cp437: &str,
+) -> (String, ZipNameEncoding) {
+    if utf8_flag {
+        return (
+            String::from_utf8_lossy(raw).into_owned(),
+            ZipNameEncoding::Utf8,
+        );
+    }
+    if raw.is_ascii() {
+        return (
+            String::from_utf8_lossy(raw).into_owned(),
+            ZipNameEncoding::Ascii,
+        );
+    }
+    if let Ok(name) = std::str::from_utf8(raw) {
+        return (name.to_string(), ZipNameEncoding::Utf8);
+    }
+    let (name, _, had_errors) = encoding_rs::GBK.decode(raw);
+    if !had_errors {
+        return (name.into_owned(), ZipNameEncoding::Gbk);
+    }
+    (cp437.to_string(), ZipNameEncoding::Cp437)
+}
 
 /// One entry from a ZIP archive's central directory, captured as
 /// pure metadata (no payload bytes).
@@ -42,8 +111,13 @@ use thiserror::Error;
 pub struct ZipEntry {
     /// Full path inside the archive (e.g. `"Assemblies/Equipment/"`
     /// or `"CatalogIndex.xml"`). Forward-slash separated, including
-    /// any trailing slash on directory entries.
+    /// any trailing slash on directory entries. Read from
+    /// [`ZipEntry::name_raw`] as [`ZipEntry::name_encoding`] says.
     pub name: String,
+    /// The name's bytes exactly as the central directory stores them.
+    pub name_raw: Vec<u8>,
+    /// Which reading of [`ZipEntry::name_raw`] gave [`ZipEntry::name`].
+    pub name_encoding: ZipNameEncoding,
     /// Uncompressed size in bytes from the central directory record.
     pub size: u64,
     /// Stored size after compression, in bytes. Equal to `size` for
@@ -91,15 +165,25 @@ pub fn list_zip_entries_from_reader<R: io::Read + io::Seek>(
     let mut out = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
         let entry = archive.by_index(i)?;
-        out.push(ZipEntry {
-            name: entry.name().to_string(),
-            size: entry.size(),
-            compressed_size: entry.compressed_size(),
-            is_dir: entry.is_dir(),
-            crc32: entry.crc32(),
-        });
+        out.push(zip_entry_of(&entry));
     }
     Ok(out)
+}
+
+/// The [`ZipEntry`] of one archive member, its name read as the module
+/// docs describe.
+pub(crate) fn zip_entry_of<R: io::Read>(entry: &zip::read::ZipFile<'_, R>) -> ZipEntry {
+    let (name, name_encoding) =
+        decode_zip_entry_name(entry.name_raw(), entry.get_metadata().is_utf8, entry.name());
+    ZipEntry {
+        name,
+        name_raw: entry.name_raw().to_vec(),
+        name_encoding,
+        size: entry.size(),
+        compressed_size: entry.compressed_size(),
+        is_dir: entry.is_dir(),
+        crc32: entry.crc32(),
+    }
 }
 
 #[cfg(test)]
@@ -229,6 +313,49 @@ mod tests {
     fn list_empty_byte_slice_reports_zip_error() {
         let result = list_zip_entries_from_reader(Cursor::new(Vec::<u8>::new()));
         assert!(matches!(result, Err(ZipIndexError::Zip(_))));
+    }
+
+    #[test]
+    fn list_single_file_archive_reads_an_ascii_name_as_ascii() {
+        let archive = single_stored_entry_zip();
+        let entries =
+            list_zip_entries_from_reader(Cursor::new(archive)).expect("read single-entry archive");
+        assert_eq!(entries[0].name_raw, b"hello.txt");
+        assert_eq!(entries[0].name_encoding, ZipNameEncoding::Ascii);
+    }
+
+    #[test]
+    fn entry_name_with_the_utf8_flag_reads_as_utf8() {
+        let raw = "图纸/A01.pid".as_bytes();
+        assert_eq!(
+            decode_zip_entry_name(raw, true, "unused"),
+            (String::from("图纸/A01.pid"), ZipNameEncoding::Utf8)
+        );
+    }
+
+    #[test]
+    fn entry_name_without_the_flag_tries_utf8_then_gbk_then_cp437() {
+        // Valid UTF-8 bytes above ASCII: UTF-8 wins over GBK.
+        let utf8 = "井场.pid".as_bytes();
+        assert_eq!(
+            decode_zip_entry_name(utf8, false, "unused"),
+            (String::from("井场.pid"), ZipNameEncoding::Utf8)
+        );
+
+        // The GBK bytes of `A井场 注采阀组.pid`, as SmartPlant stores them.
+        let (gbk, _, had_errors) = encoding_rs::GBK.encode("A井场 注采阀组.pid");
+        assert!(!had_errors);
+        assert!(std::str::from_utf8(&gbk).is_err(), "not valid UTF-8");
+        assert_eq!(
+            decode_zip_entry_name(&gbk, false, "unused"),
+            (String::from("A井场 注采阀组.pid"), ZipNameEncoding::Gbk)
+        );
+
+        // A lone 0x81 is neither UTF-8 nor a GBK sequence: CP437 as given.
+        assert_eq!(
+            decode_zip_entry_name(&[b'x', 0x81], false, "x\u{00FC}"),
+            (String::from("x\u{00FC}"), ZipNameEncoding::Cp437)
+        );
     }
 
     #[test]

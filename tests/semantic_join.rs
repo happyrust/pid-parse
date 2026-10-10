@@ -5,20 +5,67 @@
 //! Fixtures are optional, as everywhere in this suite: tests skip cleanly
 //! when the `SmartPlant` samples are not present.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pid_parse::{PidDocument, PidParser, PidSemanticHit, PidSemanticIndex};
+use pid_parse::{
+    build_normalized_geometry, ParseOptions, PidDocument, PidParser, PidSemanticHit,
+    PidSemanticIndex,
+};
+
+const A01: &str = "test-file/export-test/publish-data/A01/A01.pid";
+const DWG0202: &str = "test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid";
 
 fn load(fixture: &str) -> Option<(PathBuf, PidDocument)> {
+    load_with(fixture, PidParser::new())
+}
+
+fn load_with(fixture: &str, parser: PidParser) -> Option<(PathBuf, PidDocument)> {
     let path = PathBuf::from(fixture);
     if !path.exists() {
         eprintln!("skipping: fixture {fixture} not found");
         return None;
     }
-    let doc = PidParser::new()
+    let doc = parser
         .parse_file(&path)
         .unwrap_or_else(|error| panic!("failed to parse {fixture}: {error}"));
     Some((path, doc))
+}
+
+/// What each drawn entity that joins resolves to: the published object's
+/// `GraphicOID`, its class and label, and the aggregate when the join went
+/// through one -- keyed by the entity's own oid, the way OpenCADStudio asks.
+type Joins = BTreeMap<u32, (u32, String, Option<String>, Option<u32>)>;
+
+fn joins(doc: &PidDocument, index: &PidSemanticIndex) -> Joins {
+    build_normalized_geometry(doc)
+        .entities
+        .iter()
+        .filter_map(|entity| entity.graphic_oid)
+        .filter_map(|oid| {
+            let hit = index.resolve(oid)?;
+            let via = match hit {
+                PidSemanticHit::Direct(_) => None,
+                PidSemanticHit::ViaDependency { dependency_oid, .. } => Some(dependency_oid),
+            };
+            let object = hit.object();
+            Some((
+                oid,
+                (
+                    object.graphic_oid,
+                    object.class.clone(),
+                    object.label().map(str::to_string),
+                    via,
+                ),
+            ))
+        })
+        .collect()
+}
+
+fn published_xml(path: &std::path::Path) -> String {
+    let stem = path.file_stem().unwrap().to_string_lossy();
+    std::fs::read_to_string(path.with_file_name(format!("{stem}_Data.xml")))
+        .expect("the publish pair ships a _Data.xml")
 }
 
 /// Every `igLineString2d` oid of the document — the family S1 proved the
@@ -33,9 +80,7 @@ fn linestring_oids(doc: &PidDocument) -> Vec<u32> {
 
 #[test]
 fn dwg0202_publish_pair_resolves_directly_and_through_aggregates() {
-    let Some((path, doc)) =
-        load("test-file/export-test/publish-data/DWG-0202GP06-01/DWG-0202GP06-01.pid")
-    else {
+    let Some((path, doc)) = load(DWG0202) else {
         return;
     };
     let index = PidSemanticIndex::load_beside(&path, &doc)
@@ -43,6 +88,20 @@ fn dwg0202_publish_pair_resolves_directly_and_through_aggregates() {
 
     // S1 §2: 39 published representations with 39 distinct GraphicOIDs.
     assert_eq!(index.len(), 39);
+
+    // The drawing was not saved after publishing: every representation's
+    // UID row describes the record its GraphicOID names, so the UID join
+    // moves nothing (docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md).
+    assert_eq!((index.uid_joined(), index.stale_graphic_oids()), (39, 0));
+    let by_graphic_oid = PidSemanticIndex::from_xml(&published_xml(&path), &doc);
+    assert_eq!(joins(&doc, &index), joins(&doc, &by_graphic_oid));
+    let joining_entities = build_normalized_geometry(&doc)
+        .entities
+        .iter()
+        .filter_map(|entity| entity.graphic_oid)
+        .filter(|oid| index.resolve(*oid).is_some())
+        .count();
+    assert_eq!(joining_entities, 41, "41 drawn entities join, as before");
 
     // Hop 1: every published oid resolves directly.
     for object in index.objects() {
@@ -82,40 +141,55 @@ fn dwg0202_publish_pair_resolves_directly_and_through_aggregates() {
 }
 
 #[test]
-fn a01_publish_pair_loads_but_claims_no_false_joins() {
-    // A01's four published oids sit in bytes the typed decode does not
-    // reach yet (S1 §4: coverage gap, not a pairing mismatch). The index
-    // must load, expose the four objects, and refuse to join any decoded
-    // sheet oid to them.
-    let Some((path, doc)) = load("test-file/export-test/publish-data/A01/A01.pid") else {
-        return;
-    };
-    let index = PidSemanticIndex::load_beside(&path, &doc)
-        .expect("the A01 publish pair ships a _Data.xml beside the .pid");
+fn a01_publish_pair_joins_by_representation_uid() {
+    // A01 was saved again after it was published: its four GraphicOIDs now
+    // name attribute rows, not graphics, and the GraphicOID join finds
+    // nothing. Each representation's UID still sits in one attribute row,
+    // and that row's space-map edge names the record it describes
+    // (docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md). The
+    // Geometry profile is the one OpenCADStudio parses with.
+    for (profile, parser) in [
+        ("full", PidParser::new()),
+        (
+            "geometry",
+            PidParser::with_options(ParseOptions::geometry()),
+        ),
+    ] {
+        let Some((path, doc)) = load_with(A01, parser) else {
+            return;
+        };
+        let index = PidSemanticIndex::load_beside(&path, &doc)
+            .expect("the A01 publish pair ships a _Data.xml beside the .pid");
 
-    assert_eq!(index.len(), 4);
+        assert_eq!(index.len(), 4, "{profile}");
+        assert_eq!(
+            (index.uid_joined(), index.stale_graphic_oids()),
+            (4, 4),
+            "{profile}: every published GraphicOID is stale, every UID joins"
+        );
+        let pipeline = Some("PH- 0102102-DN250 mm-B5-P-40.000 in".to_string());
+        assert_eq!(
+            joins(&doc, &index),
+            Joins::from([
+                (51, (24606, "PIDNozzle".to_string(), None, None)),
+                (
+                    184,
+                    (
+                        24601,
+                        "PIDProcessVessel".to_string(),
+                        Some("V 010121A".to_string()),
+                        None,
+                    ),
+                ),
+                (275, (24615, "PIDPipeline".to_string(), pipeline, Some(417))),
+            ]),
+            "{profile}: the vessel, its nozzle and the pipeline's run, nothing else"
+        );
 
-    let decoded_oids: Vec<u32> = doc
-        .sheet_streams
-        .iter()
-        .filter_map(|sheet| sheet.geometry.as_ref())
-        .flat_map(|geometry| {
-            geometry
-                .decoded_iglines
-                .iter()
-                .map(|r| r.oid)
-                .chain(geometry.decoded_iglinestrings.iter().map(|r| r.oid))
-                .chain(geometry.decoded_igpoints.iter().map(|r| r.oid))
-                .chain(geometry.decoded_igtextboxes.iter().map(|r| r.oid))
-                .chain(geometry.decoded_igsymbols.iter().map(|r| r.oid))
-        })
-        .collect();
-    assert!(!decoded_oids.is_empty(), "A01 decodes graphic records");
-    for oid in decoded_oids {
+        let by_graphic_oid = PidSemanticIndex::from_xml(&published_xml(&path), &doc);
         assert!(
-            index.resolve(oid).is_none(),
-            "A01 oid {oid} must not join: its published oids are outside \
-             the typed decode (S1 coverage-gap verdict)"
+            joins(&doc, &by_graphic_oid).is_empty(),
+            "{profile}: the GraphicOID join alone still reaches no drawn entity"
         );
     }
 }

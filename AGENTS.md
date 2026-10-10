@@ -22,7 +22,8 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | Layer | Path | Role |
 |---|---|---|
 | Vendored MDF parser | `vendor/oxidized-mdf/` | Reads SQL Server MDF files, GPL-3.0 |
-| Publish adapter | `src/publish/mdf_load.rs` | MDF → in-memory SQLite staging |
+| Backup Store | `src/backup/store/` | Plant Backup (zip / directory) or `Export.mdf` → one SQLite of typed tables (`pid_backup_store`, or in memory) |
+| Publish adapter | `src/publish/store_load.rs` | Backup Store → in-memory TEXT staging; classifies what publish is handed (`PublishInput`) |
 | Publish loader | `src/publish/sqlite_load.rs` | SQLite → `PublishDrawing` DTO |
 | XML writer | `src/publish/xml_writer.rs` | DTO → `_Data.xml` / `_Meta.xml` |
 | CLI entry | `src/bin/pid_publish_xml.rs` | End-to-end CLI |
@@ -35,15 +36,21 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 - **Dependencies** — bitvec, chrono, encoding_rs, log, nom, rust_decimal, uuid. No async crates, no byteorder.
 - **License** — GPL-3.0. Parent crate is MIT/Apache-2.0; combined binary is GPL-3.0 (see README License section).
 - **License** — GPL-3.0 (vendored from [f3rn0s/oxidized-mdf](https://gitlab.com/f3rn0s/oxidized-mdf)). OK for internal use; public distribution of `pid-parse` requires license alignment.
-- **Page reader** — forward-only; `mdf_load.rs` re-opens per table to stay deterministic.
+- **Page reader** — the whole file is held in memory and any page is read by id (S1c of the Backup Store plan); `backup::store::mssql` scans each table once through `scan_table`.
 
 ## Test gates
 
 | Test file | Scope | Fixture |
 |---|---|---|
 | `vendor/oxidized-mdf` unit tests | Parser internals | Inline byte vectors |
-| `tests/publish_mdf_load.rs` | MDF → SQLite staging | `test-file/…/Export.mdf` |
-| `tests/publish_xml_cli.rs` | End-to-end CLI | `test-file/…/Export.mdf` |
+| `tests/backup_mdf_reader_test02.rs` | Vendored reader on TEST02: 154 tables scan to `rcrows` (37,470), 5 Ghost Rows byte for byte, 4 LOBs are ZIPs, `""` apart from NULL (162 / 50,596), datetime ticks | `test-file/…/Export.mdf` |
+| `tests/backup_store_test02.rs` | Backup Store of the SQL Server sample: file list + SHA-256, Manifest reassembly both ways (P9) + redaction, 154 dumped tables with `_src_page` / `_src_slot` provenance re-read from the MDF, two builds equal (plan `2026-10-09-a-plant-backup-becomes-one-backup-store`, acceptance 1–9) | `test-file/backup-test/TEST02_p.zip` |
+| `tests/backup_store_dwg.rs` | Backup Store of the Oracle sample: file list, Manifest + password mask, 154 empty tables / 2,039 columns by `CONNECT` owner (acceptance 6–8, 11) | `test-file/backup-test/DWG-0202GP06-01_p.zip` |
+| `tests/backup_store_sqplant.rs` | Second Oracle sample, directory input, GBK entry names, 2,024 columns (acceptance 13); skips when absent | `PID_PARSE_SQPLANT_BACKUP` or `D:\work\cad\pid-test-data` |
+| `tests/backup_store_cli.rs` | `pid_backup_store` end to end: usage errors exit 2, refuse to overwrite, `--force` / `--keep-secrets` / `--embed-files`, summary text, SQPlant directory | TEST02 zip, SQPlant directory |
+| `tests/publish_mdf_load.rs` | MDF → store → TEXT staging | `test-file/…/Export.mdf` |
+| `tests/publish_store_parity.rs` | A01 publishes to the same bytes from the MDF, the `_p.zip`, its directory and a store file; SHA-256 of both documents pinned (Q13) | `test-file/…/Export.mdf`, `TEST02_p.zip` |
+| `tests/publish_xml_cli.rs` | End-to-end CLI (MDF, zip and store inputs) | `test-file/…/Export.mdf`, `TEST02_p.zip` |
 | `tests/publish_meta_parity.rs` | Meta XML shape + DWG compare | A01 ref + optional DWG fixture |
 | `tests/publish_a01_raw_residual.rs` | Residual value scanning | `test-file/…/Export.mdf` |
 | `tests/parse_real_files.rs::primitive_line_decoder_emits_decoded_lines_with_provenance` | Phase 14 GLine2d cross-fixture | `test-file/*.pid` |
@@ -224,9 +231,10 @@ is `tests/geometry_golden_snapshot.rs`
 ## Common commands
 
 ```bash
-cargo test                                        # 1000+ tests (851 unit + 91 integration, 2 DWG-gated skipped)
+cargo test --workspace                            # 1555 tests over 49 binaries (2026-10-09; 1076 with --no-default-features)
 cargo test --test publish_xml_cli -- --nocapture   # CLI integration
-cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (31 tests)
+cargo test --test backup_store_test02              # the Backup Store acceptance figures on TEST02
+cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (67 tests)
 ```
 
 ## Pre-commit gates (CI mirrors these)

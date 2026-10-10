@@ -1,9 +1,12 @@
-//! CLI: generate `SmartPlant` Publish Data XML from a `SmartPlant` MDF
-//! file using the Rust `oxidized-mdf` reader.
+//! CLI: generate `SmartPlant` Publish Data XML from a `SmartPlant`
+//! Plant Backup, read through a Backup Store.
 //!
-//! Stage-1 terminal binary. Given
+//! Given
 //!
-//! 1. a SQL Server MDF file extracted from `Export.dmp`,
+//! 1. the plant database -- a Backup Store `pid_backup_store` wrote,
+//!    the Plant Backup itself (`<Plant>_p.zip` or its directory), or
+//!    a SQL Server `Export.mdf` extracted from `Export.dmp`; the
+//!    backup and the MDF are read through an in-memory store,
 //! 2. a `SmartPlant` drawing UID (the `T_Drawing.SP_ID` value),
 //!
 //! this tool emits the drawing's `_Data.xml` and, optionally,
@@ -13,8 +16,8 @@
 //! `--list-drawings`.
 //!
 //! Historical `Export_v2.sqlite` mirrors remain accepted as a
-//! legacy compatibility adapter, but MDF is now the only public
-//! publish-fidelity baseline.
+//! legacy compatibility adapter, but the Backup Store path is the
+//! only public publish-fidelity baseline.
 //!
 //! The unresolved work is no longer "can the CLI render business
 //! objects?" but rather DWG-mirror-gated fidelity closure:
@@ -24,17 +27,16 @@
 //! Usage:
 //!
 //! ```text
-//! pid_publish_xml <mdf> --drawing UID --out <file> [--plant NAME]
-//! pid_publish_xml <mdf> --drawing UID --stdout [--plant NAME]
+//! pid_publish_xml <input> --drawing UID --out <file> [--plant NAME]
+//! pid_publish_xml <input> --drawing UID --stdout [--plant NAME]
 //! ```
 //!
 //! Exit codes: 0 = wrote document, 1 = I/O / format error, 2 =
 //! usage error.
 
-use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    diff_publish_xml, diff_rel_defuids, load_drawing_graph, open_mdf_as_sqlite, write_data_xml,
-    write_meta_xml, PublishError, PublishStyle,
+    classify_publish_input, diff_publish_xml, diff_rel_defuids, load_drawing_graph,
+    open_publish_input, write_data_xml, write_meta_xml, PublishError, PublishInput, PublishStyle,
 };
 use std::path::PathBuf;
 
@@ -83,10 +85,15 @@ enum OutputTarget {
 
 fn print_usage() {
     eprintln!(
-        "Usage: pid_publish_xml <mdf> --drawing UID [--out FILE | --stdout]\n\
+        "Usage: pid_publish_xml <input> --drawing UID [--out FILE | --stdout]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
          \x20               [--style a01|dwg]\n\
-         \x20  pid_publish_xml <mdf> --list-drawings\n\n\
+         \x20  pid_publish_xml <input> --list-drawings\n\n\
+         <input>             The plant database: a Backup Store written by\n\
+         \x20                   pid_backup_store, the Plant Backup itself (the\n\
+         \x20                   <Plant>_p.zip or its unpacked directory), or a\n\
+         \x20                   SQL Server Export.mdf; the backup and the MDF\n\
+         \x20                   are read through an in-memory Backup Store.\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
@@ -107,12 +114,13 @@ fn print_usage() {
          \x20                   (SP_ID, Name, DocumentCategory, DocumentType,\n\
          \x20                   Path) and exit 0. Mutually exclusive with the\n\
          \x20                   render flags.\n\
-         -v, --verbose       Print MDF loading diagnostics (table row counts,\n\
+         -v, --verbose       Print store loading diagnostics (table row counts,\n\
          \x20                   timing) to stderr.\n\
          Legacy compatibility historical `Export_v2.sqlite` mirrors are still\n\
-         \x20                   accepted during the transition, but MDF is the\n\
-         \x20                   only public publish-fidelity baseline and `.sqlite`\n\
-         \x20                   inputs print a deprecation warning at runtime.\n\n\
+         \x20                   accepted during the transition, but the Backup\n\
+         \x20                   Store path is the only public publish-fidelity\n\
+         \x20                   baseline and a legacy mirror prints a deprecation\n\
+         \x20                   warning at runtime.\n\n\
          At least one of --out / --stdout / --diff-against / --list-drawings\n\
          is required."
     );
@@ -121,7 +129,9 @@ fn print_usage() {
 fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     if args.len() < 2 {
         return Err(
-            "missing <mdf> argument (legacy .sqlite is still accepted during the transition)"
+            "missing <mdf> argument: the input is a Backup Store, a Plant Backup \
+                    (zip or directory) or an Export.mdf (legacy .sqlite is still \
+                    accepted during the transition)"
                 .into(),
         );
     }
@@ -409,32 +419,27 @@ fn run(options: CliOptions) -> Result<i32, String> {
     Ok(exit_code)
 }
 
+/// Opens the input by what it is (a Backup Store, a Plant Backup, an
+/// `Export.mdf` or a legacy mirror); the error names the kind the
+/// path was taken for.
 fn open_input_as_sqlite(path: &std::path::Path) -> Result<rusqlite::Connection, String> {
-    if is_mdf_path(path) {
-        open_mdf_as_sqlite(path).map_err(|e| format!("open MDF {}: {e}", path.display()))
-    } else {
-        open_readonly(path).map_err(|e| format!("open SQLite {}: {e}", path.display()))
-    }
+    let kind = match classify_publish_input(path) {
+        PublishInput::Mdf => "MDF",
+        PublishInput::PlantBackup => "Plant Backup",
+        PublishInput::BackupStore => "Backup Store",
+        PublishInput::LegacySqlite => "SQLite",
+    };
+    open_publish_input(path).map_err(|e| format!("open {kind} {}: {e}", path.display()))
 }
 
-fn is_mdf_path(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("mdf"))
-}
-
-fn is_sqlite_path(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("sqlite"))
-}
-
+/// A legacy mirror is any SQLite file that is not a Backup Store.
 fn warn_if_legacy_sqlite_input(path: &std::path::Path) {
-    if is_sqlite_path(path) {
+    if path.is_file() && classify_publish_input(path) == PublishInput::LegacySqlite {
         eprintln!(
-            "warning: `.sqlite` input is deprecated for publish fidelity; \
-             prefer `Export.mdf`. The SQLite path remains available only as \
-             a legacy compatibility adapter."
+            "warning: legacy `.sqlite` mirror input is deprecated for publish fidelity; \
+             prefer the Plant Backup, a Backup Store written by `pid_backup_store`, or \
+             `Export.mdf`. The mirror path remains available only as a legacy \
+             compatibility adapter."
         );
     }
 }

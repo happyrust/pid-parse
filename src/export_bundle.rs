@@ -60,7 +60,9 @@ pub struct ExportBundlePlan {
 /// container.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportBundlePublishPlan {
-    /// Path to the `Export.mdf` or legacy publish `SQLite` input.
+    /// Path to the plant database publish reads: a Backup Store, a
+    /// Plant Backup (zip or directory), an `Export.mdf`, or a legacy
+    /// publish `SQLite` mirror.
     pub input_path: PathBuf,
     /// Optional drawing UID to pass to the publish pipeline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -559,6 +561,25 @@ fn input_identity(
     path: &std::path::Path,
     kind: impl Into<String>,
 ) -> Result<ExportBundleInputIdentity, crate::PidError> {
+    if path.is_dir() {
+        // A Plant Backup handed over as a directory has no bytes of
+        // its own: its identity is the one its Backup Store records
+        // (`store_info.input_sha256`, the SHA-256 of a
+        // `<sha256>  <name>\n` list of its top-level files) and the
+        // sum of those files' sizes.
+        let input = crate::backup::BackupInput::open(path).map_err(|err| {
+            bundle_publish_error(format!(
+                "open Plant Backup directory {}: {err}",
+                path.display()
+            ))
+        })?;
+        return Ok(ExportBundleInputIdentity {
+            path: path.display().to_string(),
+            sha256: input.sha256().to_string(),
+            size_bytes: input.files().iter().map(|file| file.size).sum(),
+            kind: kind.into(),
+        });
+    }
     let metadata = fs::metadata(path)?;
     Ok(ExportBundleInputIdentity {
         path: path.display().to_string(),
@@ -568,12 +589,11 @@ fn input_identity(
     })
 }
 
+/// What the publish input is, by its content: `backup-store`,
+/// `plant-backup`, `mdf` or `sqlite` (a legacy mirror) -- see
+/// [`crate::publish::classify_publish_input`].
 fn publish_input_kind(path: &std::path::Path) -> &'static str {
-    match path.extension().and_then(std::ffi::OsStr::to_str) {
-        Some(ext) if ext.eq_ignore_ascii_case("sqlite") => "sqlite",
-        Some(ext) if ext.eq_ignore_ascii_case("db") => "sqlite",
-        _ => "mdf",
-    }
+    crate::publish::classify_publish_input(path).as_str()
 }
 
 fn sha256_file(path: &std::path::Path) -> Result<String, crate::PidError> {
@@ -935,16 +955,15 @@ fn write_publish_diff_if_requested(
     })
 }
 
+/// Opens the publish input -- a Backup Store, a Plant Backup, an
+/// `Export.mdf` or a legacy mirror -- as the TEXT tables the publish
+/// loader reads.
 fn open_publish_input_as_sqlite(
     path: &std::path::Path,
 ) -> Result<rusqlite::Connection, crate::PidError> {
-    if publish_input_kind(path) == "mdf" {
-        crate::publish::open_mdf_as_sqlite(path)
-            .map_err(|err| bundle_publish_error(format!("open MDF {}: {err}", path.display())))
-    } else {
-        crate::publish::sqlite_load::open_readonly(path)
-            .map_err(|err| bundle_publish_error(format!("open SQLite {}: {err}", path.display())))
-    }
+    let kind = publish_input_kind(path);
+    crate::publish::open_publish_input(path)
+        .map_err(|err| bundle_publish_error(format!("open {kind} {}: {err}", path.display())))
 }
 
 fn parse_publish_style(
@@ -1195,7 +1214,8 @@ fn escaped_stream_filename(path: &str) -> Result<String, crate::PidError> {
 }
 
 impl ExportBundlePublishPlan {
-    /// Create a publish subtree plan for an `MDF` / legacy `SQLite` input.
+    /// Create a publish subtree plan for a Backup Store / Plant Backup /
+    /// `MDF` / legacy `SQLite` input.
     pub fn new(input_path: impl Into<PathBuf>) -> Self {
         Self {
             input_path: input_path.into(),

@@ -22,6 +22,21 @@
 //!    established: aligned 4-byte windows filtered against the document's
 //!    own decoded-oid pool.
 //!
+//! **Which record a representation stands for** is answered by its UID
+//! first and its `GraphicOID` second. A drawing saved again after it was
+//! published keeps the stale numbers: on `A01` all four published
+//! `GraphicOID`s name attribute rows rather than graphics, and none of them
+//! joins. The representation's UID does not move -- it sits as ASCII in
+//! exactly one `FreeFormAttrSet` (`0x0089`) row of a top-level record chain,
+//! and the top-level space map records that row as referencing the record
+//! it describes under tag `190`.
+//! On `DWG-0202GP06-01` that record is the `GraphicOID` 39 times out of 39;
+//! on `A01` it gives the vessel, its nozzle and the pipeline back
+//! (`docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`). A UID
+//! no row holds, or one that lands on more than one record, keeps the
+//! `GraphicOID`. Only [`PidSemanticIndex::load_beside`] reads those rows: it
+//! has the `.pid`'s path, and a [`PidDocument`] keeps no attribute payloads.
+//!
 //! This layer is **strictly optional** (plan Stop clause): nothing here is
 //! called during `.pid` parsing, a missing or unreadable `_Data.xml`
 //! yields `None` from [`PidSemanticIndex::load_beside`], and no decode
@@ -29,12 +44,14 @@
 //! that is the importer's contract.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
 use crate::model::{PidDocument, SheetGeometry};
+use crate::parsers::sheet_records::{parse_live_psm_header, sheet_record_starts};
 
 /// One published representation resolved to the model object that owns it.
 ///
@@ -43,8 +60,14 @@ use crate::model::{PidDocument, SheetGeometry};
 /// relationship claims keeps `class = "PIDRepresentation"` and its own UID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PidSemanticObject {
-    /// Published `IDrawingRepresentation/@GraphicOID` — the join key.
+    /// Published `IDrawingRepresentation/@GraphicOID`, as the XML states it
+    /// -- the key back into `_Data.xml`, which a drawing saved after
+    /// publishing no longer honours (see [`Self::record_oid`]).
     pub graphic_oid: u32,
+    /// The Sheet record this object is joined on: the one its
+    /// representation UID's attribute row describes, else
+    /// [`Self::graphic_oid`].
+    pub record_oid: u32,
     /// `IObject/@UID` of the `<PIDRepresentation>` element itself.
     pub representation_uid: String,
     /// XML element name of the owning model object, e.g. `PIDPipeline`.
@@ -84,8 +107,8 @@ pub enum PidSemanticHit<'a> {
     ViaDependency {
         /// The published object whose aggregate references the queried oid.
         object: &'a PidSemanticObject,
-        /// The `DependencyObject` record's own oid (= the published
-        /// `GraphicOID` that named the aggregate).
+        /// The `DependencyObject` record's own oid (= the
+        /// [`PidSemanticObject::record_oid`] that named the aggregate).
         dependency_oid: u32,
     },
 }
@@ -106,10 +129,15 @@ impl PidSemanticHit<'_> {
 #[derive(Debug, Clone, Default)]
 pub struct PidSemanticIndex {
     source: Option<PathBuf>,
+    /// Keyed by [`PidSemanticObject::record_oid`].
     by_oid: BTreeMap<u32, PidSemanticObject>,
     /// queried oid → `DependencyObject` oids whose tails reference it,
     /// sorted so resolution is deterministic.
     reverse_dependency: BTreeMap<u32, BTreeSet<u32>>,
+    /// Representations whose record the UID join found.
+    uid_joined: usize,
+    /// Of those, the ones whose record is not their published `GraphicOID`.
+    stale_graphic_oids: usize,
 }
 
 impl PidSemanticIndex {
@@ -118,30 +146,55 @@ impl PidSemanticIndex {
     ///
     /// `None` is not an error: most drawings have no published
     /// counterpart, and the plan's Stop clause forbids treating the XML
-    /// as a parse input. `doc` supplies the dependency edges and is never
-    /// mutated.
+    /// as a parse input. `doc` supplies the dependency edges and the space
+    /// map and is never mutated; the attribute rows the UID join reads are
+    /// taken from the `.pid` itself, which is opened a second time for them
+    /// only when a `_Data.xml` was found. A `.pid` whose rows cannot be read
+    /// joins by `GraphicOID` alone, as [`Self::from_xml`] does.
     pub fn load_beside(pid_path: &Path, doc: &PidDocument) -> Option<Self> {
         let stem = pid_path.file_stem()?.to_string_lossy().into_owned();
         let xml_path = pid_path.with_file_name(format!("{stem}_Data.xml"));
         let xml = std::fs::read_to_string(&xml_path).ok()?;
-        let mut index = Self::from_xml(&xml, doc);
+        let rows = read_attribute_rows(pid_path);
+        let mut index = Self::build(&xml, doc, &rows);
         index.source = Some(xml_path);
         Some(index)
     }
 
-    /// Build the index from XML text directly (the testable seam behind
-    /// [`Self::load_beside`]).
+    /// Build the index from XML text directly, joining by `GraphicOID`
+    /// only: a [`PidDocument`] carries no attribute payloads for the UID
+    /// join (the testable seam behind [`Self::load_beside`]).
     pub fn from_xml(xml: &str, doc: &PidDocument) -> Self {
+        Self::build(xml, doc, &[])
+    }
+
+    fn build(xml: &str, doc: &PidDocument, rows: &[AttributeRow]) -> Self {
         let scan = scan_published_xml(xml);
+        let described = if rows.is_empty() {
+            BTreeMap::new()
+        } else {
+            records_described_by_attribute_rows(doc)
+        };
 
         let mut by_oid = BTreeMap::new();
+        let mut uid_joined = 0;
+        let mut stale_graphic_oids = 0;
         for representation in &scan.representations {
+            let joined = record_holding_uid(&representation.uid, rows, &described);
+            if let Some(record) = joined {
+                uid_joined += 1;
+                if record != representation.graphic_oid {
+                    stale_graphic_oids += 1;
+                }
+            }
+            let record_oid = joined.unwrap_or(representation.graphic_oid);
             let owner = scan
                 .owner_of
                 .get(&representation.uid)
                 .and_then(|owner_uid| scan.objects.get(owner_uid));
             let object = PidSemanticObject {
                 graphic_oid: representation.graphic_oid,
+                record_oid,
                 representation_uid: representation.uid.clone(),
                 class: owner.map_or_else(
                     || "PIDRepresentation".to_string(),
@@ -152,18 +205,21 @@ impl PidSemanticIndex {
                 name: owner.and_then(|owner| owner.name.clone()),
                 description: owner.and_then(|owner| owner.description.clone()),
             };
-            by_oid.insert(representation.graphic_oid, object);
+            by_oid.insert(record_oid, object);
         }
 
         Self {
             source: None,
             by_oid,
             reverse_dependency: reverse_dependency_edges(doc),
+            uid_joined,
+            stale_graphic_oids,
         }
     }
 
     /// Resolve a Sheet record oid (e.g. a drawn entity's `graphic_oid`)
-    /// to its published object, applying the two-hop rule.
+    /// to its published object, applying the two-hop rule to the records
+    /// the objects are joined on ([`PidSemanticObject::record_oid`]).
     ///
     /// Ambiguity policy: when several published aggregates reference the
     /// same oid, the smallest dependency oid wins — deterministic, and in
@@ -183,15 +239,29 @@ impl PidSemanticIndex {
         None
     }
 
-    /// Every published object, ordered by `GraphicOID`.
+    /// Every published object, ordered by the record it is joined on.
     pub fn objects(&self) -> impl Iterator<Item = &PidSemanticObject> {
         self.by_oid.values()
     }
 
     /// Number of published representations carrying a parseable
-    /// `GraphicOID`.
+    /// `GraphicOID`, counted by the record they are joined on.
     pub fn len(&self) -> usize {
         self.by_oid.len()
+    }
+
+    /// How many published representations the UID join placed: their UID
+    /// sits in exactly one attribute row's worth of records. Always `0` for
+    /// an index built by [`Self::from_xml`].
+    pub fn uid_joined(&self) -> usize {
+        self.uid_joined
+    }
+
+    /// How many of [`Self::uid_joined`] landed on a record other than their
+    /// published `GraphicOID` -- the drawing was saved after it was
+    /// published (`A01`: 4 of 4).
+    pub fn stale_graphic_oids(&self) -> usize {
+        self.stale_graphic_oids
     }
 
     /// True when the XML published nothing joinable.
@@ -425,10 +495,163 @@ fn reverse_dependency_edges(doc: &PidDocument) -> BTreeMap<u32, BTreeSet<u32>> {
     reverse
 }
 
+/// The space-map tag under which a `0x0089` attribute row is recorded as
+/// referencing the object it describes (`190 -> 0x0089`, see
+/// [`crate::model::PsmSpaceMapMember`]).
+const ATTRIBUTE_ROW_TAG: u16 = 190;
+/// PSM type code of a `FreeFormAttrSet` row.
+const FREE_FORM_ATTR_SET: u16 = 0x0089;
+/// The header magic every record-chain stream in the corpus opens with.
+const CHAIN_MAGIC: u32 = 0x6C90_F544;
+/// A space-map id is `segment << 13 | index`.
+const SEGMENT_SHIFT: u32 = 13;
+
+/// One live `FreeFormAttrSet` row of a top-level record chain.
+struct AttributeRow {
+    oid: u32,
+    payload: Vec<u8>,
+}
+
+/// The attribute rows of every top-level stream of the `.pid` -- most sit in
+/// `/Unclustered Dynamic Attributes`, but `DWG-0202GP06-01` keeps some in
+/// `/PSMcluster0` -- or none when the file cannot be read.
+fn read_attribute_rows(pid_path: &Path) -> Vec<AttributeRow> {
+    let Ok(file) = std::fs::File::open(pid_path) else {
+        return Vec::new();
+    };
+    let Ok(mut compound) = ::cfb::CompoundFile::open(file) else {
+        return Vec::new();
+    };
+    let streams: Vec<PathBuf> = compound
+        .read_root_storage()
+        .filter(::cfb::Entry::is_stream)
+        .map(|entry| entry.path().to_path_buf())
+        .collect();
+    let mut rows = Vec::new();
+    for path in streams {
+        let Ok(mut stream) = compound.open_stream(&path) else {
+            continue;
+        };
+        let mut data = Vec::new();
+        if stream.read_to_end(&mut data).is_ok() {
+            rows.extend(attribute_rows(&data));
+        }
+    }
+    rows
+}
+
+/// Every `FreeFormAttrSet` row of a stream that walks as a record chain,
+/// without the rows the native reader skips (P-D12).
+fn attribute_rows(stream: &[u8]) -> Vec<AttributeRow> {
+    let magic = stream
+        .get(0..4)
+        .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
+    if magic != Some(CHAIN_MAGIC) {
+        return Vec::new();
+    }
+    sheet_record_starts(stream)
+        .into_iter()
+        .filter_map(|at| {
+            let header = parse_live_psm_header(stream, at)?;
+            if header.type_code != FREE_FORM_ATTR_SET {
+                return None;
+            }
+            let end = header
+                .body_start
+                .checked_add(header.bytes_to_follow as usize)?;
+            let payload = stream.get(header.body_start..end)?;
+            let oid = payload
+                .get(0..4)
+                .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))?;
+            Some(AttributeRow {
+                oid,
+                payload: payload.to_vec(),
+            })
+        })
+        .collect()
+}
+
+/// Attribute row oid → the top-level records the space map says it
+/// describes: the entries that list the row as a member under
+/// [`ATTRIBUTE_ROW_TAG`]. Maps of nested storages (`/JSite…/`) number
+/// their objects in another space and are left out.
+fn records_described_by_attribute_rows(doc: &PidDocument) -> BTreeMap<u32, BTreeSet<u32>> {
+    let mut described: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+    for (path, map) in &doc.psm_space_maps {
+        let path = path.replace('\\', "/");
+        let Some((storage, segment)) = path.rsplit_once("PSMspacemap/") else {
+            continue;
+        };
+        if !matches!(storage, "" | "/") {
+            continue;
+        }
+        let Some(segment) = segment
+            .strip_prefix("0x")
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+            .map(|address| address >> SEGMENT_SHIFT)
+        else {
+            continue;
+        };
+        for entry in &map.entries {
+            let record = (segment << SEGMENT_SHIFT) | u32::from(entry.index);
+            for member in entry.live_members() {
+                if member.tag == ATTRIBUTE_ROW_TAG {
+                    described.entry(member.value).or_default().insert(record);
+                }
+            }
+        }
+    }
+    described
+}
+
+/// The one record the attribute rows holding `uid` describe, or `None` when
+/// no row holds it or its rows describe more than one record.
+fn record_holding_uid(
+    uid: &str,
+    rows: &[AttributeRow],
+    described: &BTreeMap<u32, BTreeSet<u32>>,
+) -> Option<u32> {
+    let mut records = BTreeSet::new();
+    for row in rows
+        .iter()
+        .filter(|row| holds_token(&row.payload, uid.as_bytes()))
+    {
+        if let Some(by_row) = described.get(&row.oid) {
+            records.extend(by_row);
+        }
+    }
+    match (records.len(), records.first()) {
+        (1, Some(record)) => Some(*record),
+        _ => None,
+    }
+}
+
+/// Whether `token` sits in `payload` as a whole ASCII token: not glued to a
+/// letter or digit on either side, nor to a `.` after it -- a port's
+/// `<connector UID>.1` must not answer for the connector.
+fn holds_token(payload: &[u8], token: &[u8]) -> bool {
+    if token.is_empty() || token.len() > payload.len() {
+        return false;
+    }
+    payload
+        .windows(token.len())
+        .enumerate()
+        .any(|(at, window)| {
+            let before = at.checked_sub(1).and_then(|before| payload.get(before));
+            let after = payload.get(at + token.len());
+            window == token
+                && before.is_none_or(|byte| !byte.is_ascii_alphanumeric())
+                && after.is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'.')
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{DecodedDependencyObjectRecord, DecodedIgPoint2dRecord, SheetStream};
+    use crate::model::{
+        DecodedDependencyObjectRecord, DecodedIgPoint2dRecord, PsmSpaceMap, PsmSpaceMapEntry,
+        PsmSpaceMapMember, SheetStream,
+    };
 
     const A01_LIKE_XML: &str = r#"<?xml version ="1.0" encoding="UTF-8"?>
 <Container CompSchema="PIDComponent" DocName="A01">
@@ -614,5 +837,161 @@ mod tests {
     fn a_drawing_without_published_xml_yields_none() {
         let missing = Path::new("test-file/definitely-not-here.pid");
         assert!(PidSemanticIndex::load_beside(missing, &empty_doc()).is_none());
+    }
+
+    const VESSEL_REP: &str = "CA8A0A9DD1784E3BB6913445CE3F6375";
+
+    /// The vessel of `A01` in miniature: published as `GraphicOID` 24601,
+    /// which the drawing has since reused for another row.
+    const STALE_XML: &str = r#"<Container>
+  <PIDProcessVessel><IObject UID="VESSEL" ItemTag="V 010121A"/></PIDProcessVessel>
+  <PIDRepresentation><IObject UID="CA8A0A9DD1784E3BB6913445CE3F6375"/><IDrawingRepresentation GraphicOID="24601"/></PIDRepresentation>
+  <Rel><IRel UID1="VESSEL" UID2="CA8A0A9DD1784E3BB6913445CE3F6375" DefUID="DwgRepresentationComposition"/></Rel>
+</Container>"#;
+
+    fn space_map(entries: Vec<PsmSpaceMapEntry>) -> PsmSpaceMap {
+        PsmSpaceMap {
+            size: 0,
+            legacy: false,
+            stated_entry_count: 0,
+            simple_slot_capacity: 0,
+            next_free_index: 0,
+            free_list: Vec::new(),
+            entries,
+            trailing_bytes: 0,
+        }
+    }
+
+    /// An entry recording `rows` as attribute rows that describe `index`.
+    fn described_by(index: u16, rows: &[u32]) -> PsmSpaceMapEntry {
+        PsmSpaceMapEntry {
+            offset: 0,
+            index,
+            form: 2,
+            live_member_count: u16::try_from(rows.len()).unwrap(),
+            members: rows
+                .iter()
+                .map(|&value| PsmSpaceMapMember {
+                    value,
+                    tag: ATTRIBUTE_ROW_TAG,
+                })
+                .collect(),
+        }
+    }
+
+    /// Top level: row 24593 describes record 184, rows 24601 / 24602
+    /// describe 51 / 52. A nested storage's map also lists row 24593, for
+    /// an object numbered in its own space.
+    fn doc_with_attribute_rows() -> PidDocument {
+        let mut doc = PidDocument::default();
+        doc.psm_space_maps.insert(
+            "/PSMspacemap/0x00000000".into(),
+            space_map(vec![
+                described_by(184, &[24593]),
+                described_by(51, &[24601]),
+                described_by(52, &[24602]),
+            ]),
+        );
+        doc.psm_space_maps.insert(
+            "/JSite204/PSMspacemap/0x00000000".into(),
+            space_map(vec![described_by(7, &[24593])]),
+        );
+        doc
+    }
+
+    fn row(oid: u32, value: &str) -> AttributeRow {
+        let mut payload = oid.to_le_bytes().to_vec();
+        payload.extend_from_slice(b"\0RepresentationID\0");
+        payload.extend_from_slice(value.as_bytes());
+        payload.push(0);
+        AttributeRow { oid, payload }
+    }
+
+    #[test]
+    fn a_representation_joins_the_record_its_uid_row_describes() {
+        let rows = [row(24593, VESSEL_REP)];
+        let index = PidSemanticIndex::build(STALE_XML, &doc_with_attribute_rows(), &rows);
+
+        let Some(PidSemanticHit::Direct(vessel)) = index.resolve(184) else {
+            panic!("record 184 must resolve to the vessel through its UID row");
+        };
+        assert_eq!((vessel.graphic_oid, vessel.record_oid), (24601, 184));
+        assert_eq!(vessel.label(), Some("V 010121A"));
+        assert!(
+            index.resolve(24601).is_none(),
+            "the stale GraphicOID answers for nothing once the UID has joined"
+        );
+        assert_eq!((index.uid_joined(), index.stale_graphic_oids()), (1, 1));
+    }
+
+    #[test]
+    fn without_attribute_rows_the_graphic_oid_joins_as_before() {
+        let index = PidSemanticIndex::from_xml(STALE_XML, &doc_with_attribute_rows());
+
+        let Some(PidSemanticHit::Direct(vessel)) = index.resolve(24601) else {
+            panic!("from_xml joins by GraphicOID");
+        };
+        assert_eq!(vessel.record_oid, 24601);
+        assert!(index.resolve(184).is_none());
+        assert_eq!((index.uid_joined(), index.stale_graphic_oids()), (0, 0));
+    }
+
+    #[test]
+    fn a_uid_whose_rows_describe_two_records_keeps_its_graphic_oid() {
+        let rows = [row(24601, VESSEL_REP), row(24602, VESSEL_REP)];
+        let index = PidSemanticIndex::build(STALE_XML, &doc_with_attribute_rows(), &rows);
+
+        assert!(matches!(
+            index.resolve(24601),
+            Some(PidSemanticHit::Direct(object)) if object.record_oid == 24601
+        ));
+        assert!(index.resolve(51).is_none() && index.resolve(52).is_none());
+        assert_eq!(index.uid_joined(), 0);
+    }
+
+    #[test]
+    fn a_uid_inside_a_longer_token_is_not_held() {
+        for glued in [
+            format!("{VESSEL_REP}.1"),
+            format!("{VESSEL_REP}0"),
+            format!("A{VESSEL_REP}"),
+        ] {
+            let rows = [row(24593, &glued)];
+            let index = PidSemanticIndex::build(STALE_XML, &doc_with_attribute_rows(), &rows);
+            assert!(
+                index.resolve(184).is_none(),
+                "{glued} must not hold the UID"
+            );
+            assert_eq!(index.uid_joined(), 0);
+        }
+        assert!(holds_token(VESSEL_REP.as_bytes(), VESSEL_REP.as_bytes()));
+        assert!(!holds_token(b"", VESSEL_REP.as_bytes()));
+        assert!(!holds_token(VESSEL_REP.as_bytes(), b""));
+    }
+
+    #[test]
+    fn attribute_rows_walk_the_chain_and_leave_out_flagged_rows() {
+        let mut stream = CHAIN_MAGIC.to_le_bytes().to_vec();
+        stream.extend_from_slice(&3u32.to_le_bytes());
+        for (type_word, payload) in [
+            (FREE_FORM_ATTR_SET, row(24593, VESSEL_REP).payload),
+            (FREE_FORM_ATTR_SET | 0x8000, row(24594, VESSEL_REP).payload),
+            (0x00FA, 103u32.to_le_bytes().to_vec()),
+        ] {
+            stream.extend_from_slice(&type_word.to_le_bytes());
+            stream.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_le_bytes());
+            stream.extend_from_slice(&payload);
+        }
+
+        let oids: Vec<u32> = attribute_rows(&stream).iter().map(|row| row.oid).collect();
+        assert_eq!(oids, [24593]);
+        assert!(
+            attribute_rows(&stream[4..]).is_empty(),
+            "a stream without the chain magic yields no rows"
+        );
+        assert!(
+            attribute_rows(&stream[..stream.len() - 1]).is_empty(),
+            "a chain that does not walk to its end yields no rows"
+        );
     }
 }

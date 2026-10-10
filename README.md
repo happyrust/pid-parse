@@ -100,11 +100,23 @@ cargo run --bin pid_inspect -- a.pid --diff b.pid
 
 ### Backup 解析 + Publish Data XML 生成（offline pipeline）
 
-```bash
-# 1. 从 SmartPlant 备份（Export.dmp）剥离 MTF 头得到 .mdf
-cargo run --bin pid_backup_extract -- Export.dmp --out Export.mdf
+`pid_publish_xml` 的输入是 plant 数据库，四种都收，按内容认：`pid_backup_store`
+写出的 Backup Store、Plant Backup 本身（`<Plant>_p.zip` 或它解开的目录）、单独的
+`Export.mdf`，以及 legacy 的 `Export_v2.sqlite` mirror。备份和 MDF 都先在内存里建成
+Backup Store 再读（publish 读的 24 张表从 store 的 `pid__*` 抄成 TEXT 表，`codelists` /
+`attributes` 取 `pidd__*`，见下一节）；四种输入出的 XML 逐字节相同
+（`tests/publish_store_parity.rs`）。
 
-# 2. 用 Rust MDF loader（vendor/oxidized-mdf）直接列出 drawing
+```bash
+# 1a. 直接喂 Plant Backup（zip 或目录）
+cargo run --bin pid_publish_xml -- test-file/backup-test/TEST02_p.zip --list-drawings
+
+# 1b. 或先建 Backup Store 再喂（多张图反复出时不用每次重解备份）
+cargo run --bin pid_backup_store -- test-file/backup-test/TEST02_p.zip -o TEST02.sqlite
+cargo run --bin pid_publish_xml -- TEST02.sqlite --list-drawings
+
+# 1c. 或从 SmartPlant 备份（Export.dmp）剥离 MTF 头得到 .mdf，喂 MDF
+cargo run --bin pid_backup_extract -- Export.dmp --out Export.mdf
 cargo run --bin pid_publish_xml -- Export.mdf --list-drawings
 
 # 3. 生成单张 drawing 的 _Data.xml（默认 A01 style）
@@ -127,10 +139,11 @@ cargo run --bin pid_publish_xml -- Export.mdf \
     --plant TEST02 --diff-against reference/A01_Data.xml
 ```
 
-当前公开的 publish 正确性基线只承诺 `Export.mdf` 主链。
+当前公开的 publish 正确性基线只承诺 Backup Store 主链（Plant Backup、
+Backup Store 文件、`Export.mdf` 三种输入都走它）。
 历史 `Export_v2.sqlite` mirror 仍可作为 legacy 兼容输入喂给
 `pid_publish_xml`，但不再承担 publish fidelity 验收角色；CLI
-对 `.sqlite` 输入会打印 deprecation 提示。
+对 legacy mirror（没有 `dump_table` 的 SQLite 文件）会打印 deprecation 提示。
 
 A01 `_Data.xml` 当前满足语义 diff、接口/属性/关系 parity、格式风格
 和 `_Meta.xml` parity。raw byte 精确对齐只剩 3 类 A39 证据化
@@ -149,6 +162,52 @@ MDF 样板：
 仓内已带 `tests/publish_dwg_mirror.rs` 与 `tests/publish_meta_parity.rs`
 作为入口；若该 MDF 缺失，这两组 DWG 侧测试会 soft-skip，并在
 输出中明确提示“DWG canonical-field enrichment / branch-point parity 未验证”。
+
+### Backup Store：一套 Plant Backup 生成一个 SQLite
+
+`pid_backup_store` 把一套 SmartPlant P&ID 的 Plant Backup——SmartPlant 写出的
+`<Plant>_p.zip`，或它解开的目录（只收顶层文件）——写进一个 SQLite 文件
+（计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md`，ADR-0004）：
+
+```bash
+# zip 原件 → store；输出已存在时拒绝，加 --force 才覆盖
+cargo run --bin pid_backup_store -- test-file/backup-test/TEST02_p.zip -o TEST02.sqlite
+
+# 解开的目录也行（目录输入会提示：文本文件的换行可能被改过）
+cargo run --bin pid_backup_store -- D:\backups\SQPlant -o SQPlant.sqlite --force
+
+# 保留 Manifest 里的口令和加密串原文（默认换成 SHA-256），并把每个文件的字节也存进去
+cargo run --bin pid_backup_store -- TEST02_p.zip -o TEST02.sqlite --keep-secrets --embed-files
+```
+
+库里有什么：
+
+| 表 | 内容 |
+|---|---|
+| `store_info` | 工具名、版本、输入种类（`zip` / `directory`）与 SHA-256、是否脱敏、是否收了文件字节、`dump_kind`（`sql-server-mtf` / `oracle-exp`） |
+| `backup_file`（`backup_file_content`） | 外层文件和每个 Option Archive（`PlantData~…zip` / `RefData~…zip`，只展开一层）的条目：路径（原字节 + 编码，SQPlant 的 GBK 名字能解出来）、大小、SHA-256、格式；`--embed-files` 时字节进 `backup_file_content` |
+| `manifest_line` / `manifest_field` / `manifest_field_meaning` + 视图 | `Manifest.txt` 逐行保原文（连行尾），字段按位置存；语义确认了的 key 有视图（`manifest_conn_info`、`manifest_table_entry`、`manifest_file`、`manifest_value` …）；`store_redaction` 记下默认脱敏换掉的每一处 |
+| `dump_schema` / `dump_table` / `dump_column` / `dump_view` | Database Dump 的目录：四个 Schema Role（`plant` / `plantd` / `pid` / `pidd`）、154 张表、每列的源类型与可空、35 个视图的名字 |
+| `<角色>__<表>` | SQL Server 备份（TEST02 这类）：逐行解码，`nvarchar` → TEXT（空串与 NULL 分开）、`int` → INTEGER、`float` → REAL、`datetime` → `YYYY-MM-DD HH:MM:SS.fff`、`image` → BLOB，每行带 `_src_page` / `_src_slot`，可回 MDF 核对；Oracle 备份（DWG、SQPlant）：按 `exp` dump 里的 DDL 建同名空表，`dump_table.decoded = 0`，行解码留给第二版 |
+| `dump_ghost_row` / `dump_lob` | SQL Server 的 Ghost Row 原始字节；每个 LOB 值的根页、根槽、长度和 SHA-256 |
+
+同一输入生成两次，逐表内容相同；库里不写时间和路径。先写 `<输出>.tmp` 再改名。
+结束时 stdout 打印文件数、Manifest 行数与脱敏处数、表数 / 行数 / Ghost Row / LOB 数和警告数，警告逐条进 stderr。
+退出码：0 成功，1 输入读不了或 store 没写成（含输出已存在且没加 `--force`），2 参数错。
+
+publish 管线读的就是这个 store（`publish::store_load`）：`pid_publish_xml` 拿到 Backup Store
+文件直接读；拿到 Plant Backup 或 `Export.mdf` 就先在内存里建一个——单独的 MDF 没有 Manifest，
+四个 Schema Role 按 schema 名后缀 `<p>` / `<p>d` / `<p>pid` / `<p>pidd` 认（`dump_schema.role_source`
+= `schema-name-suffix`），`store_info.input_kind` = `mdf`。publish 的 24 张表从 `pid__*` 抄成
+TEXT 表（`codelists` / `attributes` 取 `pidd__*`），值按 MDF 适配器当年的写法：datetime
+`YYYY/M/D HH:MM:SS`、二进制大写十六进制、浮点按 Rust 的 `Display`，所以 A01 的两份 XML 一个字节不变。
+
+验收与复现：计划的 13 条验收（行数、Ghost Row、LOB、空串 / NULL、来源回核、Manifest 拼回、文件清单、
+脱敏、两次构建相同、publish 不变、DWG、门禁、SQPlant）逐条对到 `tests/backup_mdf_reader_test02.rs`、
+`tests/backup_store_{test02,dwg,sqplant,cli}.rs` 和 `tests/publish_store_parity.rs` 的函数，见计划「验收」表；
+格式文档 `docs/analysis/2026-10-08-sppid-backup-package-format-cn.md` 第 11 节给出复现命令。
+已知：`TEST02pid.T_Symbol.SP_ID`（NOT NULL）在页 2300 槽 1 有一个空位图置位的 NULL，库按空位图写 NULL（2026-10-10 定案，不改；
+`dump_column.nullable` 让人能查到）；publish 的选择表连接缺陷见 [happyrust/pid-parse#27](https://github.com/happyrust/pid-parse/issues/27)。
 
 ## 库调用
 
@@ -197,9 +256,15 @@ PidWriter::write_to(&pkg, &WritePlan::default(), std::path::Path::new("drawing.c
 
 ```rust
 use pid_parse::publish::{
-    load_drawing_graph_from_mdf, write_data_xml, write_meta_xml, PublishStyle,
+    load_drawing_graph, load_drawing_graph_from_mdf, open_publish_input, write_data_xml,
+    write_meta_xml, PublishStyle,
 };
 
+// 任一输入——Backup Store 文件、<Plant>_p.zip 或它的目录、Export.mdf、legacy mirror：
+let conn = open_publish_input("TEST02_p.zip".as_ref())?;
+let mut graph = load_drawing_graph(&conn, "D9635C3C898840D1990B7E8BEE1D55DA")?;
+
+// 只有 Export.mdf 时的便捷写法（同一条路：MDF → 内存 store → 抄写）：
 let mut graph = load_drawing_graph_from_mdf(
     "Export.mdf".as_ref(),
     "D9635C3C898840D1990B7E8BEE1D55DA",

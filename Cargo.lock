@@ -763,6 +763,7 @@ version = "0.11.7"
 dependencies = [
  "base64",
  "cfb",
+ "chrono",
  "criterion",
  "encoding_rs",
  "env_logger",

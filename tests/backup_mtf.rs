@@ -7,11 +7,15 @@
 //! `writer_real_files.rs`.
 
 use pid_parse::backup::mtf::{
-    detect_logical_block_size, MtfBlockCursor, MtfBlockType, MtfHeader, COMMON_BLOCK_HEADER_LEN,
+    detect_backup_stream_header_len, detect_logical_block_size, detect_non_mtf_dump_format,
+    locate_sql_server_streams, mdf_bytes_of_dump, MtfBlockCursor, MtfBlockType, MtfError,
+    MtfHeader, SqlServerDumpError, COMMON_BLOCK_HEADER_LEN,
 };
 use std::path::Path;
+use std::process::Command;
 
 const EXPORT_DMP: &str = "test-file/backup-test/TEST02_p/Export.dmp";
+const ORACLE_EXPORT_DMP: &str = "test-file/backup-test/DWG-0202GP06-01_p/Export.dmp";
 
 /// Read the first `bytes` bytes of a fixture, or return `None` when the
 /// fixture is missing so tests can skip cleanly on CI.
@@ -164,4 +168,85 @@ fn real_export_dmp_cursor_yields_expected_prefix() {
             size
         );
     }
+}
+
+#[test]
+fn real_oracle_export_dmp_is_named_instead_of_probed_as_mtf() {
+    let Some(head) = read_head(ORACLE_EXPORT_DMP, COMMON_BLOCK_HEADER_LEN) else {
+        return;
+    };
+
+    assert!(matches!(
+        MtfHeader::probe(&head),
+        Err(MtfError::NotATapeStart { .. })
+    ));
+    let diag = detect_non_mtf_dump_format(&head).expect("an Oracle exp dump must be named");
+    assert!(diag.contains("EXPORT:V12.01.00"), "{diag}");
+}
+
+#[test]
+fn probe_and_extract_refuse_an_oracle_dump_with_the_same_message() {
+    if !Path::new(ORACLE_EXPORT_DMP).exists() {
+        eprintln!("skipping: fixture {ORACLE_EXPORT_DMP} not found");
+        return;
+    }
+
+    let probe = Command::new(env!("CARGO_BIN_EXE_pid_backup_probe"))
+        .arg(ORACLE_EXPORT_DMP)
+        .output()
+        .expect("run pid_backup_probe");
+    let extract = Command::new(env!("CARGO_BIN_EXE_pid_backup_extract"))
+        .arg(ORACLE_EXPORT_DMP)
+        .arg("--out")
+        .arg(std::env::temp_dir())
+        .arg("--dry-run")
+        .output()
+        .expect("run pid_backup_extract");
+
+    assert_eq!(probe.status.code(), Some(1));
+    assert_eq!(extract.status.code(), Some(1));
+    let probe_stderr = String::from_utf8_lossy(&probe.stderr);
+    assert!(
+        probe_stderr.contains("Oracle Database `exp` dump (EXPORT:V12.01.00)"),
+        "{probe_stderr}"
+    );
+    assert_eq!(probe_stderr, String::from_utf8_lossy(&extract.stderr));
+
+    // The library names the dump the same way, so a Backup Store built
+    // from an Oracle backup can say why it decodes no rows.
+    let data = std::fs::read(ORACLE_EXPORT_DMP).expect("read Oracle dump");
+    let err = locate_sql_server_streams(&data).expect_err("an Oracle dump has no MTF streams");
+    assert!(matches!(err, SqlServerDumpError::NotMtf(_)), "{err}");
+    assert_eq!(
+        format!("error: {err}\n"),
+        probe_stderr,
+        "the binaries print the library's wording"
+    );
+}
+
+#[test]
+fn mdf_bytes_of_dump_are_what_pid_backup_extract_as_mdf_writes() {
+    const EXPORT_MDF: &str = "test-file/backup-test/TEST02_p/extracted/Export.mdf";
+    if !Path::new(EXPORT_DMP).exists() || !Path::new(EXPORT_MDF).exists() {
+        eprintln!("skipping: fixture {EXPORT_DMP} or {EXPORT_MDF} not found");
+        return;
+    }
+    let dump = std::fs::read(EXPORT_DMP).expect("read Export.dmp");
+    let extracted = std::fs::read(EXPORT_MDF).expect("read extracted Export.mdf");
+
+    let streams = locate_sql_server_streams(&dump).expect("MSCI and MSDA streams");
+    assert_eq!(0x0E10, streams.msci.body_offset);
+    assert_eq!(3_304, streams.msci.body_len());
+    assert_eq!(0x1E10, streams.msda.body_offset);
+    assert_eq!(19_923_952, streams.msda.body_len());
+    let msda = &dump[streams.msda.body_offset..streams.msda.body_end];
+    assert_eq!(0x3F0, detect_backup_stream_header_len(msda));
+
+    let mdf = mdf_bytes_of_dump(&dump).expect("MDF bytes");
+    assert_eq!(19_922_944, mdf.len());
+    assert_eq!(extracted.len(), mdf.len());
+    assert!(
+        extracted == mdf,
+        "the extracted fixture is the dump's MDF byte for byte"
+    );
 }

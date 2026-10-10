@@ -304,6 +304,46 @@ pub fn detect_logical_block_size(data: &[u8]) -> Option<u32> {
         .map(|offset| offset as u32)
 }
 
+/// Detect well-known non-MTF backup formats by sniffing the first
+/// few bytes of `data`. Returns a diagnostic string when the
+/// format is recognised but not MTF, so the caller can short-circuit
+/// with a useful error instead of the generic
+/// "tag `????`" message from [`MtfHeader::probe`]. Returns `None` for
+/// unknown formats — those still fall through to the MTF probe.
+///
+/// Supported recognitions:
+///
+/// * **Oracle Database `exp`/`expdp` dump** — starts with the
+///   3-byte `\x03\x03i` framing + ASCII `EXPORT:V<MAJOR>.<MINOR>.<PATCH>`.
+///   Observed in real `SmartPlant` DWG-flavor backup bundles where
+///   the underlying engine is Oracle 12c rather than SQL Server.
+///   These dumps need Oracle's own `imp`/`impdp` tool — `OrcaMDF`
+///   cannot read them.
+pub fn detect_non_mtf_dump_format(data: &[u8]) -> Option<String> {
+    if data.len() >= 20 && data.starts_with(b"\x03\x03iEXPORT:V") {
+        // Read the version string up to the first newline so the
+        // diagnostic includes which Oracle version produced the dump.
+        let after_magic = &data[3..]; // skip `\x03\x03i`
+        let line_end = after_magic
+            .iter()
+            .position(|&b| b == b'\n')
+            .unwrap_or(after_magic.len().min(40));
+        let header = std::str::from_utf8(&after_magic[..line_end]).unwrap_or("EXPORT:V?.?.?");
+        return Some(format!(
+            "input is an Oracle Database `exp` dump ({header}), not a \
+             SQL Server MTF backup. SmartPlant projects backed by \
+             Oracle (DWG-flavor) cannot be processed by this tool; \
+             use Oracle's own `imp` / `impdp` utility to restore the \
+             database, then export an MDF or extract rows via SQL*Plus.\n\
+             Note: the schema (CREATE TABLE statements) is still \
+             readable as plain text inside the dump — see \
+             `examples/oracle_exp_schema.rs` for a one-shot DDL \
+             scanner."
+        ));
+    }
+    None
+}
+
 /// Locate the next 512-byte-aligned offset at-or-after `start` whose
 /// first four bytes form a known MTF tag. Shared by both the
 /// block-size detector and the full cursor so both agree on what
@@ -696,6 +736,121 @@ impl MtfStreamCursor<'_> {
     }
 }
 
+/// Why an `Export.dmp` did not yield the SQL Server streams a
+/// `SmartPlant` backup keeps its database in.
+///
+/// Each variant displays as the line `pid_backup_extract` printed for
+/// the same case before this lived in the library, so the two binaries
+/// and the Backup Store keep one wording.
+#[derive(Debug, Error)]
+pub enum SqlServerDumpError {
+    /// The file is a recognised dump of another engine, as
+    /// [`detect_non_mtf_dump_format`] describes it (an Oracle `exp`
+    /// export, for instance).
+    #[error("{0}")]
+    NotMtf(String),
+    /// The file does not start with an MTF `TAPE` descriptor.
+    #[error("input does not start with an MTF TAPE descriptor: {0}")]
+    NoTapeHeader(#[source] MtfError),
+    /// No `MSCI` (SQL Server configuration) stream in any descriptor block.
+    #[error("no MSCI stream found in input")]
+    MissingMsci,
+    /// No `MSDA` (SQL Server data) stream in any descriptor block.
+    #[error("no MSDA stream found in input")]
+    MissingMsda,
+}
+
+/// The two SQL Server streams of an MTF dump: where the configuration
+/// (`MSCI`) and the data (`MSDA`) bodies sit in the file.
+#[derive(Debug, Clone)]
+pub struct SqlServerStreams {
+    /// The first `MSCI` stream: filegroup and file records, see
+    /// [`crate::backup::parse_msci`].
+    pub msci: MtfStream,
+    /// The first `MSDA` stream: the SQL Server backup stream whose
+    /// body, after a leading header, is the MDF page sequence.
+    pub msda: MtfStream,
+}
+
+/// Walks every descriptor block of `data` and returns the first `MSCI`
+/// and the first `MSDA` stream. Refuses a file that is a known non-MTF
+/// dump or does not start with a `TAPE` descriptor before reading any
+/// block.
+pub fn locate_sql_server_streams(data: &[u8]) -> Result<SqlServerStreams, SqlServerDumpError> {
+    if let Some(diag) = detect_non_mtf_dump_format(data) {
+        return Err(SqlServerDumpError::NotMtf(diag));
+    }
+    MtfHeader::probe(data).map_err(SqlServerDumpError::NoTapeHeader)?;
+
+    let mut msci: Option<MtfStream> = None;
+    let mut msda: Option<MtfStream> = None;
+    for block in MtfBlockCursor::new(data) {
+        let offset_to_first_event =
+            u16::from_le_bytes([block.raw_common_header[8], block.raw_common_header[9]]) as usize;
+        let start = block.offset + offset_to_first_event;
+        let end = block.offset + block.size;
+        for stream in MtfStreamCursor::new(data, start, end) {
+            match stream.kind {
+                MtfStreamKind::SqlConfig if msci.is_none() => msci = Some(stream),
+                MtfStreamKind::SqlData if msda.is_none() => msda = Some(stream),
+                _ => {}
+            }
+        }
+    }
+
+    Ok(SqlServerStreams {
+        msci: msci.ok_or(SqlServerDumpError::MissingMsci)?,
+        msda: msda.ok_or(SqlServerDumpError::MissingMsda)?,
+    })
+}
+
+/// The header length SQL Server 2008 R2 `SmartPlant` fixtures put in
+/// front of the MDF pages inside the `MSDA` body, used when
+/// [`detect_backup_stream_header_len`] finds no page to go by.
+pub const DEFAULT_BACKUP_STREAM_HEADER_LEN: usize = 0x3F0;
+
+/// Locate the byte offset at which the first MDF page starts inside
+/// the `MSDA` body. Walks a 16-byte grid looking for a header whose
+/// `m_headerVersion == 0x01` and whose `m_type` is a canonical page
+/// type (1..=22), validating the hit by checking that the offset one
+/// page further also lands on a valid page header.
+///
+/// Falls back to [`DEFAULT_BACKUP_STREAM_HEADER_LEN`] if the scan
+/// yields nothing.
+pub fn detect_backup_stream_header_len(msda_body: &[u8]) -> usize {
+    use crate::backup::mdf_page::{MdfPageHeader, MIN_HEADER_BYTES, PAGE_SIZE};
+
+    const GRID: usize = 16;
+    // Stop scanning at 8 MiB — enough to skip any plausible
+    // backup-stream header without chewing through a 19 MB input
+    // on corrupt fixtures.
+    const SCAN_LIMIT: usize = 8 * 1024 * 1024;
+    let limit = msda_body.len().min(SCAN_LIMIT);
+    let mut offset = 0usize;
+    while offset + MIN_HEADER_BYTES <= limit {
+        if MdfPageHeader::probe(&msda_body[offset..]).is_some() {
+            let next = offset + PAGE_SIZE;
+            if next + MIN_HEADER_BYTES <= msda_body.len()
+                && MdfPageHeader::probe(&msda_body[next..]).is_some()
+            {
+                return offset;
+            }
+        }
+        offset += GRID;
+    }
+    DEFAULT_BACKUP_STREAM_HEADER_LEN
+}
+
+/// The MDF page sequence inside an MTF `Export.dmp`: the `MSDA` body
+/// with its leading backup-stream header stripped. What
+/// `pid_backup_extract --as-mdf` writes, as a slice of `data`.
+pub fn mdf_bytes_of_dump(data: &[u8]) -> Result<&[u8], SqlServerDumpError> {
+    let streams = locate_sql_server_streams(data)?;
+    let msda = &data[streams.msda.body_offset..streams.msda.body_end];
+    let header_len = detect_backup_stream_header_len(msda);
+    Ok(&msda[header_len.min(msda.len())..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1030,5 +1185,55 @@ mod tests {
         assert_eq!(streams.len(), 1);
         assert_eq!(streams[0].kind, MtfStreamKind::SqlData);
         assert_eq!(streams[0].body_end, 256);
+    }
+
+    #[test]
+    fn detect_non_mtf_dump_format_returns_none_for_mtf_tape_header() {
+        // Real MTF starts with `TAPE\0\0\x03\0...` — the detector
+        // must NOT claim ownership so the caller falls through to
+        // MtfHeader::probe.
+        let mtf = b"TAPE\x00\x00\x03\x00\x8C\x00\x0E\x01\x00\x00\x00\x00";
+        assert!(detect_non_mtf_dump_format(mtf).is_none());
+    }
+
+    #[test]
+    fn detect_non_mtf_dump_format_returns_none_for_unknown_bytes() {
+        // Arbitrary noise must also fall through — the detector
+        // only claims formats it can name.
+        let noise =
+            b"\xDE\xAD\xBE\xEF\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F";
+        assert!(detect_non_mtf_dump_format(noise).is_none());
+    }
+
+    #[test]
+    fn detect_non_mtf_dump_format_reports_oracle_exp_dump() {
+        // The DWG-0202GP06-01 fixture starts with
+        // `\x03\x03iEXPORT:V12.01.00\n` — a real Oracle 12c exp
+        // dump. The detector must surface a useful pointer.
+        let mut data = Vec::new();
+        data.extend_from_slice(b"\x03\x03iEXPORT:V12.01.00\nDSYSTEM\nRUSERS\n2048\n0\n");
+        let diag =
+            detect_non_mtf_dump_format(&data).expect("Oracle exp dump must be detected as non-MTF");
+        assert!(
+            diag.contains("Oracle Database `exp` dump"),
+            "diagnostic must call out Oracle: {diag}",
+        );
+        assert!(
+            diag.contains("EXPORT:V12.01.00"),
+            "diagnostic must surface the version string: {diag}",
+        );
+        assert!(
+            diag.contains("imp"),
+            "diagnostic must point users at Oracle's `imp` tool: {diag}",
+        );
+    }
+
+    #[test]
+    fn detect_non_mtf_dump_format_tolerates_short_input() {
+        // Anything shorter than 20 bytes must not panic and must
+        // fall through. Real Oracle dumps are megabytes; truncated
+        // input is more likely a misnamed file.
+        let short = b"\x03\x03iEXPORT";
+        assert!(detect_non_mtf_dump_format(short).is_none());
     }
 }

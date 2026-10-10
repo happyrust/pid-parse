@@ -4,6 +4,19 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-09 · 计划 `docs/plans/2026-10-09-a-plant-backup-becomes-one-backup-store.md` S0–S5 做完（分支 `backup-store-v1`，worktree `D:\work\plant-code\cad\pid-parse-backup-store`，未合回、未推送）**：
+一套 Plant Backup 生成一个 Backup Store（ADR-0004）。S1 修 vendored `oxidized-mdf` 五处读错（按 schema 认表、滤 Ghost Row、跟 LOB 指针、分开 `""` 与 NULL、给出页和槽，整个文件进内存随机读）；S2 `backup::store`（文件清单 + SHA-256、Manifest 保原文逐行 + 默认脱敏、SQL Server 154 张表逐行带 `_src_page` / `_src_slot`、Oracle 按 DDL 建空表标未解码）；S3 `pid_backup_store <备份> -o <store.sqlite>`；S4 publish 改读 store（`publish::store_load`，`mdf_load.rs` 删除，`pid_publish_xml` / `export_bundle` 收 Backup Store、Plant Backup、`Export.mdf`、legacy mirror 四种输入，A01 两份 XML 四种输入逐字节相同且与改前相同）；S5 验收 13 条逐条对到测试、文档收口。
+数：TEST02 154 张 37,470 行、Ghost Row 5、LOB 4、空串 162、NULL 50,596；DWG 154 张 2,039 列、SQPlant 154 张 2,024 列（仓外样本）。`cargo test --workspace` 1555 / 49 个二进制，`--no-default-features` 1076 不变。
+已定（2026-10-10）：T_Symbol 2300:1 那条 NOT NULL 列按空位图写 NULL、不改。留给用户定：`PlantConnInfo` 第 1 字段和 `DBUids` 的脱敏。PR [#28](https://github.com/happyrust/pid-parse/pull/28)（base `main`）。登记不做（第二版）：Oracle exp 行解码、`.pid` / 参考数据解析结果入库、选择表连接改成 `attribute_datatype = C<n>`（[#27](https://github.com/happyrust/pid-parse/issues/27)）。
+
+**2026-10-08 · OCS 计划 `OpenCADStudio/docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D2（P-D32）**：
+`PidSemanticIndex::load_beside` 第一跳先按表示 UID 连：再开一次 `.pid` 收顶层各记录链的活 `FreeFormAttrSet` 行，UID 以完整记号所在的行 → 顶层空间映射标签 190 → 恰好一条记录才连，否则退回 `GraphicOID`；`PidSemanticObject::record_oid` 记连在哪条记录上，`graphic_oid` 仍是 XML 原值。
+A01 绘出实体连上 3 个（184 / 51 / 275，Full 与 Geometry 相同），0202 39 / 39 与只按 `GraphicOID` 逐条相同；`from_xml` 照旧。下一项：OpenCADStudio 侧 `pid_import` 钉 A01、批量基线 A01 行重签。
+
+**2026-10-08 · OCS 计划 `OpenCADStudio/docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D1′（承接 10-08 上午单 D1 / P-D28）**：
+探针 `examples/probe_a01_representation_uid_is_the_join.rs` 查明 A01 有 `_Data.xml` 却 0 / 4 挂不上语义的原因：发布的 `GraphicOID` 都是属性集的旧号；按表示 UID（顶层 `FreeFormAttrSet 0x0089` → 空间映射标签 190 → 记录）连得 3 / 4 且全对，0202 39 / 39 不变，见 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
+`src` 不动。下一项 D2（P-D32：`PidSemanticIndex` 第一跳先 UID、再 `GraphicOID`），排在 OCS 集成 M2 之后。
+
 **2026-09-30 · OCS 小单 `OpenCADStudio/docs/plans/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md` E1（E-D1 – E-D5）**：
 A01 设备 `V 010121A` 的两端椭圆封头画出来了：`decode_igellipticalarcs` 解 `0x007E igEllipticalArc2d`（btf 75，两个参数角在最前，不是 `igArc2d` 的布局；扫向照它，从起角顺时针扫到止角），只读缓存本体，进 `JSiteNestedGeometry::elliptical_arcs`；
 `bspline::elliptical_arc` 把每条弧化成一条精确有理二次 B 样条（每段 ≤ 45°，段数留 1e-9 的余量：A01 存的 π 比 `PI` 小一个 ulp，左封头原先切成五段 36°），接在本体自己的 B 样条之后——`SymbolPrimitive` 不加变体、`PidSymbolDefinition` 不加字段，OCS `src` 不用改；A01 的四条弧都向本体外鼓，见 `docs/analysis/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md`。
