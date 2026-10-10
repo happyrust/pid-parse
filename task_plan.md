@@ -4,6 +4,10 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P2 第一步（G1：做 P2，范围收窄到设备 / 仪表 / 管件清单与表示）**：
+探针 `examples/probe_label_values_reach_their_item.rs` 找到标签值的归属链：值行 `+12` → `igTextBox` `+4` → `DependencyObject` `+22` → 被标注物项的 `P&IDAttributes` 行（`+16` 图形交叉核）。5 图 3 954 / 3 978 挂上，两端打架 0，对照属性错挂 0，归属后能给的发布值 822；
+仪表按 `SymbolAttr` 分出 219 / 287；名称规则（仪表、设备）只在参考 XML 上核过，待用户拍板。见 `docs/analysis/2026-10-10-a-label-value-reaches-its-item-through-its-text-box.md`；P1 页同时更正端口 UID 的说法。`src` 不动。下一项：用户定名称规则，然后写 `src/publish/pid_load.rs`。
+
 **2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P0–P1**：
 探针 `examples/probe_publish_from_the_pid_alone.rs` 量出只凭 `.pid` 能给回参考 publish 的多少（`D:\work\cad\PID自研软件验证` 5 图）：对象 UID 2 948 / 6 131（48.1 %；14 类全在，端口 / 工艺点 / 管线 / 分支点 6 类 3 155 个整类不在），
 表示 1 823 / 1 823 连上且全落在发布的 `GraphicOID`，关系两端都在 3 491 / 8 185（42.7 %）而关系自己的 UID 0 条，非空属性值在标签缓存 1 296 / 11 671（11.1 %；代码表引用、公称直径、拼接名称 0），见 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md`。

@@ -124,5 +124,15 @@ CLI 是 `pid_publish_xml <mdf> --drawing UID --out … --meta-out … --diff-aga
 ### P1（2026-10-10）
 
 - 分析页 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md`：对象 UID 2 948 / 6 131（48.1 %，6 类 3 155 个整类不在），表示 1 823 / 1 823，关系两端都在 3 491 / 8 185 而关系自己的 UID 0 条，属性值在标签缓存 1 296 / 11 671（11.1 %）；三档结论见该页。
-- 探针、分析页、本计划、`CHANGELOG.md`、`task_plan.md` 一个提交。
-- 下一项：G1。
+- 探针、分析页、本计划、`CHANGELOG.md`、`task_plan.md` 一个提交（`054fc4e`）。
+
+### G1（2026-10-10，用户拍板）
+
+- 「G1：做 P2，下游只要设备 / 仪表 / 管件清单和图上的表示」。P2 的验收按这个范围收窄：设备、仪表、管件及其表示、图纸，其余有出处的对象照发但不作验收。
+
+### P2 第一步：归属（2026-10-10）
+
+- 探针 `examples/probe_label_values_reach_their_item.rs`，分析 `docs/analysis/2026-10-10-a-label-value-reaches-its-item-through-its-text-box.md`：值行 `+12` → `igTextBox` `+4` → `DependencyObject` `+22` → 被标注物项的 `P&IDAttributes` 行（`+16` 图形交叉核），3 954 / 3 978 挂上、两端打架 0、对照属性错挂 0；归属后能给的发布值 822 个。
+- 仪表一对三：有 `SymbolAttr` 的 219 / 287 按 `Type` / `Class` 一一对应，68 个没有。
+- 名称规则（仪表 236 / 236、设备 13 / 13，只在参考 XML 上核）要用户拍板；顺手更正 P1 页：端口 / 工艺点 / 分支点 2 983 个的 UID 是父 UID + 后缀。
+- 下一项：用户定名称规则与公称直径换算用不用，再写 `src/publish/pid_load.rs`。

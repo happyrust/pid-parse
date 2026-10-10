@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### 标签值顺「文本框 → 依赖 → 物项属性行」挂到物项上：3 954 / 3 978，错挂 0（2026-10-10，计划 P2 第一步）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md`（G1：做 P2，下游只要设备 / 仪表 / 管件清单和图上的表示）；分析 `docs/analysis/2026-10-10-a-label-value-reaches-its-item-through-its-text-box.md`。
+
+- 结构：顶层 `0x0089` 行一行一个属性集，`+12` 是它描述的记录；标签自己的 `P&IDAttributes`（`LabelPersist`）`ModelID = 0`；值行描述 `igTextBox`，这些文本框在顶层空间映射里没有边。文本框 `+4` = 所属 `DependencyObject`，依赖 `+16` = 标签挂着的图形，`+22` = 被标注物项自己的 `P&IDAttributes` 行。
+- 探针 `examples/probe_label_values_reach_their_item.rs`（只读，不需要 `backup`）：5 图 3 978 个非空标签值挂上 3 954（99.4 %），两端打架 0，断的 24 个是图框图号 / 图名；物项发布了对应属性的全部相等（流水号 734、测量变量 438、等级 366、保温 158 …），公称直径 636 个写法不同（`2"` / `200 MM` 对 `2 in` / `200 mm`）；归属后能给出的发布值 822 / 11 671。
+- 仪表一对三：有 `SymbolAttr` 的 219 / 287 按 `Type` / `Class` 一一对应，68 个没有。名称规则只在参考 XML 上核：仪表 236 / 236 = `{MeasuredVariable}-{InstrTagSequenceNo}`，设备 13 / 13 = `{EquipPrefix}-{EquipSeqNo}`。
+- 更正 P1 页：端口 / 工艺点 / 分支点 3 155 个里 2 983 个的 UID 是「父对象 UID + 后缀」（`.1`、`.PPT`、`.BPT`），真不在文件里的是 172 条管线和 28 个 OPC。
+- 验证：探针在默认特性与 `--no-default-features` 下 clippy `-D warnings` 零告警，rustfmt 干净；5 张图约 1.4 s、80 行（全文附在分析页）。`src` 不动，测试数不变。
+
 ### 只凭 `.pid` 能给回多少 publish：对象 UID 一半、表示全部、关系自己的 UID 0（2026-10-10，计划 P0–P1）
 
 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md`（Plannotator 批准）；分析 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md`。
