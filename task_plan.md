@@ -4,6 +4,11 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P0–P1**：
+探针 `examples/probe_publish_from_the_pid_alone.rs` 量出只凭 `.pid` 能给回参考 publish 的多少（`D:\work\cad\PID自研软件验证` 5 图）：对象 UID 2 948 / 6 131（48.1 %；14 类全在，端口 / 工艺点 / 管线 / 分支点 6 类 3 155 个整类不在），
+表示 1 823 / 1 823 连上且全落在发布的 `GraphicOID`，关系两端都在 3 491 / 8 185（42.7 %）而关系自己的 UID 0 条，非空属性值在标签缓存 1 296 / 11 671（11.1 %；代码表引用、公称直径、拼接名称 0），见 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md`。
+`src` 不动。下一项 G1（用户按三档数字定导出器做不做、做到哪），之后 P2 `.pid` → `PublishDrawing` 装载器。
+
 **2026-10-10 · 计划 `docs/plans/2026-10-10-an-override-applies-its-own-width-colour-and-dash.md` A0–A5**：
 `style_link::resolve_line_style` 走 `0x0030 JStyleOverride` 时按 `+30` 掩码应用覆盖自己的字段——bit0 颜色 `+34`、bit1 线宽 `+42`、bit7 虚线类型 id `+78`（0 = 不画虚线）；`style.dll` 的合成例程 `sub_1002A080` / 虚线 getter `sub_10027C10` 坐实位名（native-reader），
 探针 `examples/probe_override_applies_its_own_fields.rs` 给出 5 图 53 条覆盖的逐字段表，见 `docs/analysis/2026-10-10-an-override-repaints-width-colour-and-switches-the-dash-off.md`。

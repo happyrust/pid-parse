@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### 只凭 `.pid` 能给回多少 publish：对象 UID 一半、表示全部、关系自己的 UID 0（2026-10-10，计划 P0–P1）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md`（Plannotator 批准）；分析 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md`。
+
+- 起因：「导出 publish 交服务」的 5 个用例（`D:\work\cad\PID自研软件验证`，P01）有 4 张不在手头的 SQPlant 备份里，而 `pid_publish_xml` 只会从库导出；先量只凭 `.pid` 能复原参考 `_Data.xml` / `_Meta.xml` 的多少。
+- 探针 `examples/probe_publish_from_the_pid_alone.rs`（只读，不需要 `backup`）的四种读法：原始字节、属性集字段与标签缓存、`P&IDAttributes` 指名、10-08 的表示 UID 连；`_Meta.xml` 逐项定位，属性另按「类 × 属性」出表。
+- 结果（5 图合计）：对象 UID 2 948 / 6 131（48.1 %）——14 类全在，信号 / 管道端口、工艺点、管道分支点、管线、信号分支点 6 类 3 155 个连原始字节都没有；表示 1 823 / 1 823 连上且全落在发布的 `GraphicOID`；关系两端都在 3 491 / 8 185（42.7 %），关系自己的 UID 0 条；
+  非空属性值在标签缓存 1 296 / 11 671（11.1 %），集中在等级 / 保温 / 测量变量 / 流水号 / 描述 / 去向 / 注释，代码表引用（`@NewConstruction`、`@EE690`、`@{GUID}`）、公称直径（`1 in` / `25 mm`）和拼接名称 0；`_Meta.xml` 只有 DocUID、DocName、`.pid` 文件名在。
+- 验证：探针在默认特性与 `--no-default-features` 下 clippy `-D warnings` 零告警，rustfmt 干净；debug 构建跑 5 张图约 40 s、输出 524 行（全文附在分析页）。`src` 不动，测试数不变。
+- 下一项：G1（用户按三档数字定导出器做不做、做到哪），之后 P2 装载器。
+
 ### `JStyleOverride` 自带的宽 / 色 / 虚线位生效：0201 设备表格线从虚线变成 0.13 / 0.18 mm 实线（2026-10-10，计划 A0–A5）
 
 计划 `docs/plans/2026-10-10-an-override-applies-its-own-width-colour-and-dash.md`；依据 `docs/analysis/2026-10-10-an-override-repaints-width-colour-and-switches-the-dash-off.md`。
