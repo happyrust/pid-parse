@@ -18,7 +18,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 /// Strip garbage prefix before a UNC path (`\\`) or drive letter path (`X:\`).
-fn extract_unc_or_path(s: &str) -> String {
+pub(crate) fn extract_unc_or_path(s: &str) -> String {
     if let Some(pos) = s.find("\\\\") {
         return s[pos..].to_string();
     }

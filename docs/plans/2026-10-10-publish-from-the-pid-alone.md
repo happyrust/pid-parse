@@ -161,3 +161,13 @@ CLI 是 `pid_publish_xml <mdf> --drawing UID --out … --meta-out … --diff-aga
 - **验证**（2026-10-10 12:0x 实跑，见 CHANGELOG）：`publish_from_pid` 3 / 3、`publish_xml_cli` 20 / 20、`--lib publish::` 207 / 207；clippy `-D warnings` 两种特性零告警；改动的 4 个 `.rs` rustfmt 干净；missing-docs 0 = 基线。全量数字见 CHANGELOG 本条。
 - **交付**：5 张图写到 `D:\work\cad\PID自研软件验证\publish\`（15 个文件），命令在分析页「导出器实测 → 交付」。
 - 待用户定的仍是上一节 ①–③；另：`_Coverage.json` 的字段名要不要改成中文 / 下游的口径，交付方看过再说。
+- 上面 P4 的五组钉数是收回下面这 68 个仪表之前的。
+
+### 小单：无 `SymbolAttr` 的仪表按符号库目录归类（2026-10-10，Q2 (b)；用户 12:11 拍板）
+
+- **判据**（探针 `examples/probe_instruments_without_symbol_attr.rs`，分析页 `docs/analysis/2026-10-10-an-instruments-library-folder-states-its-class.md`）：`Instrumentation` 的下一段目录。5 图 287 个仪表，每条库路径只对上一个参考类——`In-Line` 66 + `Relief Devices` 6 → `PIDInlineInstrument`，`Off-Line` 116 + `Actuators` 11 → `PIDInstrument`，`System Functions` 88 → `PIDControlSystemFunction`，错 0。祖先目录 `Instrumentation` 本身把在线 56 和执行机构 11 混在一起，不用。探针里预登记的 `class_by_path` 没写 `Actuators` / `Off-Line` / `Relief Devices`，干跑是无行 56 对、11 个执行机构未决，有行 98 对、122 未决，错 0；落成的是下一段目录，不是那条候选。
+- **装载** `instrument_class_by_library`：只在图形上的 `SymbolAttr` 定不了类时用（没有行，或 `Type` / `Class` 定不了）。语料上是 68 个：67 个没有行，另 I井场 `F91061AAA58349919216D6E6E579A3C5` 有一行但 `Type` / `Class` 都是空的（`In-Line\...\PV-Angle Throttle Control Valve.sym`，参考类在线仪表）。`pid_writer` 的「从不发」改成「既无有效 `SymbolAttr`、又不在这五个目录下」；`_Coverage.json` 加 `instruments_classed_by_symbol_library`；stderr 多这一计数。`jsite::extract_unc_or_path` 改为 `pub(crate)` 给出库路径。
+- **测试**：`pid_load` 单测 +1（五族目录、大小写与分隔符、不在 `Instrumentation` 下、族名是文件名、空路径）。`tests/publish_from_pid.rs` 五组钉数重钉，与参考逐块比仍是错类 / 错值 / 多发 = 0。对象 / 值 / 关系：I井场 1 459 / 1 405 / 1 695，分离器A 291 / 289 / 335，分离器B 239 / 230 / 274，低温分离器A 317 / 315 / 358，换热器CD 612 / 583 / 727。合计对象 2 918 / 6 131（+68）、值 2 822（+75 = 名字 +25、标签值 +50）、关系 3 389（+68）。按类：在线仪表 72 / 72（名字 27 / 39）、离线仪表 127 / 127（名字 113 / 118）、控制系统功能 88 / 88 不动。按库归类 31 + 2 + 2 + 5 + 28 = 68。没定类的 58 个全是 OPC。
+- **交付**：5 张图重新写入 `D:\work\cad\PID自研软件验证\publish\`（15 个文件）。
+- **验证**：`cargo test --locked --workspace --all-targets` 1 535 过 / 0 败 / 3 忽略（`--lib` 1 171 → 1 172），`--no-default-features` 1 104 过 / 1 忽略；clippy `-D warnings` 两种特性零告警；rustfmt 只报别的会话的 `examples/probe_text_anchor_by_kind.rs`；`cargo rustdoc --lib --locked -- -W missing-docs` 0（顺手把 `sheet_records.rs` 里 3 处本来就失败的私有文档链接改成代码字体）；wasm32 lib 检查过。
+- 待用户定的还是 P2–P4 的 ②（`.pid` 模式 `--diff-against` 把整类缺席算 `MISSING`）和 ③（`_Meta.xml` 合成 UID、空的 `DocVersionDate` / `FilePath`）。`_Coverage.json` 字段名的口径仍待交付方看。

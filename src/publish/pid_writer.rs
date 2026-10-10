@@ -189,7 +189,7 @@ fn drawing_items(drawing: &PidPublishDrawing, published: &BTreeSet<&str>) -> usi
 const LEFT_OUT_BY_DESIGN: [&str; 5] = [
     "ports, process points, branch points and pipelines: a .pid does not state them",
     "off-page connector items: the ModelID on an OPC's row is not always the item SmartPlant publishes",
-    "instruments without a SymbolAttr row: the file does not decide their class, so the item, its DrawingItems and its label values are left out",
+    "instruments whose graphic has neither a SymbolAttr row nor a symbol filed under an Instrumentation library family: the file does not decide their class, so the item, its DrawingItems and its label values are left out",
     "codelist attributes, nominal diameters and concatenated pipeline / component names: they come from the plant database",
     "an attribute two labels on one item disagree about",
 ];
@@ -247,6 +247,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "items_named_by_the_file": drawing.items.len(),
             "items_published": published.len(),
             "items_left_out_without_a_class": left_out.len(),
+            "instruments_classed_by_symbol_library": stats.instruments_classed_by_library,
             "representations": drawing.representations.len(),
         },
         "relationships": {
@@ -376,6 +377,7 @@ mod tests {
             label_values_reached: 4,
             label_values_published: 2,
             conflicting_attributes: 1,
+            instruments_classed_by_library: 1,
         };
         let text = write_pid_coverage_json(&drawing, Path::new(r"D:\plant\A & B.pid"));
         let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
@@ -385,6 +387,10 @@ mod tests {
         assert_eq!(report["objects"]["items_named_by_the_file"], 2);
         assert_eq!(report["objects"]["items_published"], 1);
         assert_eq!(report["objects"]["items_left_out_without_a_class"], 1);
+        assert_eq!(
+            report["objects"]["instruments_classed_by_symbol_library"],
+            1
+        );
         assert_eq!(report["objects"]["representations"], 3);
         assert_eq!(report["relationships"]["DwgRepresentationComposition"], 3);
         assert_eq!(report["relationships"]["DrawingItems"], 1);

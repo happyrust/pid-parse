@@ -196,30 +196,30 @@ fn corpus() -> Option<Vec<(String, PathBuf, PathBuf)>> {
 /// What each drawing's export emits: `(stem, objects, values, rels)`. Every
 /// one of them matches the reference; a change here is a coverage change.
 const EXPECTED: [(&str, usize, usize, usize); 5] = [
-    ("I井场 注采阀组工艺及自控流程图", 1428, 1372, 1664),
+    ("I井场 注采阀组工艺及自控流程图", 1459, 1405, 1695),
     (
         "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
+        291,
         289,
-        286,
-        333,
+        335,
     ),
     (
         "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
-        237,
-        227,
-        272,
+        239,
+        230,
+        274,
     ),
     (
         "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
-        312,
-        309,
-        353,
+        317,
+        315,
+        358,
     ),
     (
         "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
-        584,
-        553,
-        699,
+        612,
+        583,
+        727,
     ),
 ];
 

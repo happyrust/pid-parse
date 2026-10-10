@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### 没有能定类的 `SymbolAttr` 的 68 个仪表，改按符号库目录归类：仪表 287 / 287，错 0（2026-10-10，Q2 (b)）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` 的小单（用户 2026-10-10 拍板：68 个按 Q2 (b) 用符号库路径推类）。分析 `docs/analysis/2026-10-10-an-instruments-library-folder-states-its-class.md`。
+
+- 探针 `examples/probe_instruments_without_symbol_attr.rs`（只读）：5 图 287 个仪表，每条 `igSymbol2d` 库路径只对上一个参考类。`Instrumentation` 的下一段：`In-Line` 66 + `Relief Devices` 6 → `PIDInlineInstrument`，`Off-Line` 116 + `Actuators` 11 → `PIDInstrument`，`System Functions` 88 → `PIDControlSystemFunction`。祖先目录混类（无行的 67 个里 `instrumentation` 是在线 56 + 执行机构 11）。预登记候选 `class_by_path` 没写 `Actuators` / `Off-Line` / `Relief Devices`，干跑错 0、未决 11 + 122；落成的不是这条候选。
+- **`publish::pid_load::instrument_class_by_library`**：`SymbolAttr` 定不了类时才用（没有行，或 `Type` / `Class` 定不了）。语料 68 个 = 67 个没有行 + I井场 `F91061AAA58349919216D6E6E579A3C5` 的空 `SymbolAttr`（`PV-Angle Throttle Control Valve.sym`，参考类在线仪表）。`pid_writer`「从不发」的仪表一句改成「既无有效 `SymbolAttr`、又不在这五个目录下」；`_Coverage.json` 加 `objects.instruments_classed_by_symbol_library`；`pid_publish_xml` 的 stderr 多这一计数。`jsite::extract_unc_or_path` 改为 `pub(crate)`。
+- 测试：`pid_load` 单测 +1。`tests/publish_from_pid.rs` 重钉且错类 / 错值 / 多发 = 0。五图对象 / 值 / 关系：I井场 1 459 / 1 405 / 1 695，分离器A 291 / 289 / 335，分离器B 239 / 230 / 274，低温分离器A 317 / 315 / 358，换热器CD 612 / 583 / 727。合计对象 **2 918 / 6 131（+68）**、值 **2 822（+75）**、关系 **3 389（+68）**。在线仪表 15 / 72 → **72 / 72**（名字 4 / 39 → 27 / 39），离线仪表 116 / 127 → **127 / 127**（名字 111 / 118 → 113 / 118），控制系统功能 88 / 88 不动。按库归类 31 + 2 + 2 + 5 + 28 = 68。没定类而不发的 58 个全是 OPC。
+- 交付：5 张图重新写入 `D:\work\cad\PID自研软件验证\publish\`（15 个文件）。待用户定的还是 `--diff-against` 在 `.pid` 模式下的口径，和 `_Meta.xml` 的合成 UID。
+- 验证：`cargo test --locked --workspace --all-targets` **1 535 过 / 0 败 / 3 忽略**（1 534 → 1 535：`--lib` 1 171 → 1 172，即 `an_instruments_library_folder_states_its_class`），`--no-default-features` **1 104 过 / 1 忽略**（不变，这条单测在 `backup` 特性后）；`clippy --workspace --all-targets -D warnings` 两种特性零告警（探针两处：`let-else` 改成 `?`，符号路径的两层 `if let` 并成一层，干跑输出与改前逐字相同）；`cargo fmt --all -- --check` 只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`；`cargo rustdoc --lib --locked -- -W missing-docs` 0（本单的模块文档不再链私有函数。`sheet_records.rs` 里 3 处文档原来链着私有常量 `IGRECTANGLE2D_MAX_EDGES` / `IGDIMENSION_WIDE_BLOCK_FLAG`，这条命令在 `22b3bcb` 上就会失败，改成普通代码字体）；`cargo check --lib --locked --no-default-features --target wasm32-unknown-unknown` 过。
+
 ### `pid_publish_xml <file.pid> --out-dir DIR`：按 `<图名>_Data.xml` / `_Meta.xml` 交付，旁置覆盖报告 `<图名>_Coverage.json`（2026-10-10，计划 P5，Q1 (a)）
 
 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` §7 P5；在 `d1d502e`（P2–P4）之上。

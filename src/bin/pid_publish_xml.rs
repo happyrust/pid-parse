@@ -418,13 +418,15 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         .count();
     let stats = drawing.stats;
     eprintln!(
-        "Read drawing `{}` ({} UID) from the .pid alone: {} items ({} with a class), \
-         {} representations; {} of {} label values reach an item, {} attributes published, \
+        "Read drawing `{}` ({} UID) from the .pid alone: {} items ({} with a class, \
+         {} instruments classed by their symbol's library folder), {} representations; \
+         {} of {} label values reach an item, {} attributes published, \
          {} left out on disagreeing labels",
         drawing.drawing_name,
         drawing.drawing_uid,
         drawing.items.len(),
         classified,
+        stats.instruments_classed_by_library,
         drawing.representations.len(),
         stats.label_values_reached,
         stats.label_values,

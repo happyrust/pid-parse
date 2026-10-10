@@ -12,19 +12,26 @@
 //! * a label value row describes an `igTextBox`, whose `+4` is the
 //!   `DependencyObject` it belongs to, whose `+22` is the labelled item's own
 //!   `P&IDAttributes` row and whose `+16` is the graphic the label hangs on;
-//! * an instrument's class comes from the `SymbolAttr` row on its graphic.
+//! * an instrument's class comes from the `SymbolAttr` row on its graphic,
+//!   or, when that row does not name a class, from the folder its symbol is
+//!   filed under in the library (`Instrumentation\<family>\...`,
+//!   `instrument_class_by_library`).
 //!
 //! Item names are composed by the two rules the user accepted on 2026-10-10
 //! (instruments `{MeasuredVariable}-{InstrTagSequenceNo}`, equipment
 //! `{EquipPrefix}-{EquipSeqNo}`) and are marked as such.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::parsers::attribute_rows::{decode_attribute_row, AttributeRow};
-use crate::parsers::sheet_records::{parse_live_psm_header, sheet_record_starts};
+use crate::parsers::jproperties::parse_jproperties;
+use crate::parsers::sheet_records::{
+    decode_igsymbol_at, parse_live_psm_header, sheet_record_starts,
+};
+use crate::streams::jsite::extract_unc_or_path;
 
 /// The header magic every record-chain stream opens with.
 const CHAIN_MAGIC: u32 = 0x6C90_F544;
@@ -32,6 +39,7 @@ const FREE_FORM_ATTR_SET: u16 = 0x0089;
 const TEXT_BOX: u16 = 0x004D;
 const DEPENDENCY: u16 = 0x00FA;
 const POINT: u16 = 0x005E;
+const SYMBOL: u16 = 0x00CE;
 /// Payload offset of the dependency an `igTextBox` belongs to.
 const TEXT_PARENT_OFFSET: usize = 4;
 /// Payload offset of the graphic a `DependencyObject` hangs on.
@@ -137,6 +145,9 @@ pub struct PidPublishStats {
     pub label_values_published: usize,
     /// Attributes left out because two labels on one item disagree.
     pub conflicting_attributes: usize,
+    /// Instruments whose class comes from their symbol's library folder,
+    /// their graphics having no `SymbolAttr` row.
+    pub instruments_classed_by_library: usize,
 }
 
 /// A drawing's publish data as the `.pid` states it.
@@ -181,23 +192,37 @@ impl From<std::io::Error> for PidLoadError {
 }
 
 /// The live records of the root storage's record chains that the loader
-/// reads: attribute rows, and the payloads of text boxes and dependencies.
+/// reads: attribute rows, the payloads of text boxes and dependencies, and
+/// the library path of every symbol placement.
 #[derive(Default)]
 struct Records {
     families: HashMap<u32, u16>,
     payloads: HashMap<u32, Vec<u8>>,
     rows: BTreeMap<u32, AttributeRow>,
     undecoded: usize,
+    /// Symbol placement oid -> the `JSite<id>` its symbol reference names.
+    symbol_sites: HashMap<u32, u32>,
+    /// Symbol placement oid -> the `.sym` library path that site's
+    /// `JProperties` states.
+    library_paths: HashMap<u32, String>,
 }
 
 impl Records {
     fn read(path: &Path) -> Result<Self, PidLoadError> {
         let mut compound = cfb::CompoundFile::open(std::fs::File::open(path)?)?;
-        let streams: Vec<PathBuf> = compound
-            .read_root_storage()
-            .filter(cfb::Entry::is_stream)
-            .map(|entry| entry.path().to_path_buf())
-            .collect();
+        let mut streams: Vec<PathBuf> = Vec::new();
+        let mut sites: HashMap<u32, PathBuf> = HashMap::new();
+        for entry in compound.read_root_storage() {
+            if entry.is_stream() {
+                streams.push(entry.path().to_path_buf());
+            } else if let Some(id) = entry
+                .name()
+                .strip_prefix("JSite")
+                .and_then(|id| id.parse::<u32>().ok())
+            {
+                sites.insert(id, entry.path().join("JProperties"));
+            }
+        }
         let mut records = Self::default();
         for stream_path in streams {
             let mut data = Vec::new();
@@ -206,6 +231,32 @@ impl Records {
                 records.add_chain(&data);
             }
         }
+        let referenced: BTreeSet<u32> = records.symbol_sites.values().copied().collect();
+        let mut site_paths: HashMap<u32, String> = HashMap::new();
+        for site in referenced {
+            let Some(properties) = sites.get(&site) else {
+                continue;
+            };
+            let Ok(mut stream) = compound.open_stream(properties) else {
+                continue;
+            };
+            let mut data = Vec::new();
+            if stream.read_to_end(&mut data).is_err() {
+                continue;
+            }
+            if let Some(symbol) = parse_jproperties(&data)
+                .strings
+                .iter()
+                .find(|value| value.ends_with(".sym"))
+            {
+                site_paths.insert(site, extract_unc_or_path(symbol));
+            }
+        }
+        records.library_paths = records
+            .symbol_sites
+            .iter()
+            .filter_map(|(oid, site)| Some((*oid, site_paths.get(site)?.clone())))
+            .collect();
         Ok(records)
     }
 
@@ -237,6 +288,11 @@ impl Records {
                 },
                 TEXT_BOX | DEPENDENCY => {
                     self.payloads.insert(oid, payload.to_vec());
+                }
+                SYMBOL => {
+                    if let Some(symbol) = decode_igsymbol_at(data, at) {
+                        self.symbol_sites.insert(oid, symbol.jsite_ref);
+                    }
                 }
                 _ => {}
             }
@@ -274,6 +330,31 @@ fn instrument_class(symbol_attr: Option<&AttributeRow>) -> Option<&'static str> 
     match row.text("Type") {
         Some("System functions") => Some("PIDControlSystemFunction"),
         Some("Off-line instruments") => Some("PIDInstrument"),
+        _ => None,
+    }
+}
+
+/// An instrument's class from the folder its symbol is filed under: the
+/// library segment right after `Instrumentation`. Over the corpus's 287
+/// instruments the folder and the published class never disagree
+/// (`In-Line` 66 and `Relief Devices` 6 in-line, `Off-Line` 116 and
+/// `Actuators` 11 instruments, `System Functions` 88 control system
+/// functions; `docs/analysis/2026-10-10-an-instruments-library-folder-states-its-class.md`).
+/// Used when no graphic's `SymbolAttr` names a class: no row, or a row whose
+/// `Type` / `Class` do not (one empty row on this corpus).
+fn instrument_class_by_library(path: &str) -> Option<&'static str> {
+    let segments: Vec<&str> = path
+        .split(['\\', '/'])
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let (_, directories) = segments.split_last()?;
+    let at = directories
+        .iter()
+        .position(|directory| directory.eq_ignore_ascii_case("Instrumentation"))?;
+    match directories.get(at + 1)?.to_ascii_lowercase().as_str() {
+        "in-line" | "relief devices" => Some("PIDInlineInstrument"),
+        "off-line" | "actuators" => Some("PIDInstrument"),
+        "system functions" => Some("PIDControlSystemFunction"),
         _ => None,
     }
 }
@@ -429,25 +510,34 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
         .map(|(uid, _)| uid.to_string())
         .ok_or(PidLoadError::NoDrawing)?;
 
-    let classes: BTreeMap<&str, Option<&'static str>> = item_types
-        .iter()
-        .map(|(uid, item_type)| {
-            let class = match CLASS_OF_ITEM_TYPE
-                .iter()
-                .find(|(kind, _)| *kind == item_type.as_str())
-            {
-                _ if UNCLASSED_ITEM_TYPES.contains(&item_type.as_str()) => None,
-                Some((_, "")) => item_graphics
-                    .get(uid)
-                    .into_iter()
-                    .flatten()
-                    .find_map(|graphic| instrument_class(symbol_attr.get(graphic).copied())),
-                Some((_, class)) => Some(*class),
-                None => None,
-            };
-            (uid.as_str(), class)
-        })
-        .collect();
+    let mut classes: BTreeMap<&str, Option<&'static str>> = BTreeMap::new();
+    for (uid, item_type) in &item_types {
+        let class = match CLASS_OF_ITEM_TYPE
+            .iter()
+            .find(|(kind, _)| *kind == item_type.as_str())
+        {
+            _ if UNCLASSED_ITEM_TYPES.contains(&item_type.as_str()) => None,
+            Some((_, "")) => {
+                let graphics = item_graphics.get(uid).into_iter().flatten();
+                let by_symbol_attr = graphics
+                    .clone()
+                    .find_map(|graphic| instrument_class(symbol_attr.get(graphic).copied()));
+                by_symbol_attr.or_else(|| {
+                    let by_library = graphics.clone().find_map(|graphic| {
+                        records
+                            .library_paths
+                            .get(graphic)
+                            .and_then(|path| instrument_class_by_library(path))
+                    });
+                    stats.instruments_classed_by_library += usize::from(by_library.is_some());
+                    by_library
+                })
+            }
+            Some((_, class)) => Some(*class),
+            None => None,
+        };
+        classes.insert(uid.as_str(), class);
+    }
 
     // (item, interface, attribute) -> (values, first row giving each).
     let mut found: BTreeMap<(&str, &'static str, &'static str), BTreeMap<String, u32>> =
@@ -630,6 +720,59 @@ mod tests {
         assert_eq!(instrument_class(Some(&inline)), Some("PIDInlineInstrument"));
         assert_eq!(instrument_class(Some(&off_line)), Some("PIDInstrument"));
         assert_eq!(instrument_class(None), None);
+    }
+
+    #[test]
+    fn an_instruments_library_folder_states_its_class() {
+        let library = r"\\MM-128\PID_SQProject\SQPlant\Ref\Symbols\Instrumentation";
+        assert_eq!(
+            instrument_class_by_library(&format!(
+                r"{library}\In-Line\Valves\2 Way Common\2 Way Generic Body Type 1.sym"
+            )),
+            Some("PIDInlineInstrument")
+        );
+        assert_eq!(
+            instrument_class_by_library(&format!(
+                r"{library}\Relief Devices\Safety Valve Type 2.sym"
+            )),
+            Some("PIDInlineInstrument")
+        );
+        assert_eq!(
+            instrument_class_by_library(&format!(r"{library}\Actuators\Diaphragm Actuator.sym")),
+            Some("PIDInstrument")
+        );
+        assert_eq!(
+            instrument_class_by_library(&format!(
+                r"{library}\Off-Line\Without Implied Components\Pressure\PG-Pressure Gauge.sym"
+            )),
+            Some("PIDInstrument")
+        );
+        assert_eq!(
+            instrument_class_by_library(&format!(
+                r"{library}\System Functions\D C S\DCS Func Access in Prime Loc.sym"
+            )),
+            Some("PIDControlSystemFunction")
+        );
+        assert_eq!(
+            instrument_class_by_library("C:/Symbols/INSTRUMENTATION/IN-LINE/x.sym"),
+            Some("PIDInlineInstrument"),
+            "segments compare case-insensitively, either separator"
+        );
+        assert_eq!(
+            instrument_class_by_library(&format!(r"{library}\Unknown Family\x.sym")),
+            None
+        );
+        assert_eq!(
+            instrument_class_by_library(r"\\MM-128\Symbols\Piping\Valves\Gate Valve.sym"),
+            None,
+            "not under Instrumentation"
+        );
+        assert_eq!(
+            instrument_class_by_library(r"\\MM-128\Symbols\Instrumentation\In-Line.sym"),
+            None,
+            "the family is a folder, not the file"
+        );
+        assert_eq!(instrument_class_by_library(""), None);
     }
 
     #[test]

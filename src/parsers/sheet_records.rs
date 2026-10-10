@@ -7330,7 +7330,7 @@ impl SheetIgBspCurve2dDecoded {
 /// Chain-gated like [`decode_iglines`]; then: type code
 /// [`PSM_TYPE_CODE_IGRECTANGLE2D`]; five finite in-domain doubles;
 /// `width > 0` and `aspect > 0`; an edge count of at most
-/// [`IGRECTANGLE2D_MAX_EDGES`] whose list accounts for the payload exactly.
+/// `IGRECTANGLE2D_MAX_EDGES` whose list accounts for the payload exactly.
 pub fn decode_igrectangles(data: &[u8]) -> Vec<SheetIgRectangle2dDecoded> {
     sheet_record_starts(data)
         .into_iter()
@@ -8086,7 +8086,7 @@ pub const IGDIMENSION_KIND_LINEAR: u16 = 1;
 /// other seven kinds and is refused on the same grounds.
 const IGDIMENSION_WIDE_BLOCK_FLAG: u32 = 0x2000;
 
-/// Byte length of a kind-1 block when [`IGDIMENSION_WIDE_BLOCK_FLAG`] is
+/// Byte length of a kind-1 block when `IGDIMENSION_WIDE_BLOCK_FLAG` is
 /// clear, per `sub_56446B50`.
 pub const IGDIMENSION_LINEAR_BLOCK_LEN: usize = 48;
 
@@ -8224,7 +8224,7 @@ pub struct SheetIgDimensionDecoded {
 ///    otherwise;
 /// 4. the main area reaches at least [`IGDIMENSION_MIN_PAYLOAD_LEN`], so
 ///    the measured-geometry slot is inside it;
-/// 5. the block's leading `u32` has [`IGDIMENSION_WIDE_BLOCK_FLAG`]
+/// 5. the block's leading `u32` has `IGDIMENSION_WIDE_BLOCK_FLAG`
 ///    clear, i.e. the kind-1 block really is 48 bytes;
 /// 6. the dimension value is finite and inside the coordinate domain.
 ///

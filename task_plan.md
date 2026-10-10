@@ -4,6 +4,10 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` 小单（Q2 (b)：无 `SymbolAttr` 的仪表按符号库目录归类）**：
+`instrument_class_by_library` 在 `SymbolAttr` 定不了类时，用 `Instrumentation` 的下一段：`In-Line` / `Relief Devices` → `PIDInlineInstrument`，`Off-Line` / `Actuators` → `PIDInstrument`，`System Functions` → `PIDControlSystemFunction`。5 图 287 个仪表目录与参考类错 0；收回 68 个（67 个没有行，1 个空 `SymbolAttr`）。
+仪表 219 / 287 → 287 / 287，对象 2 850 → 2 918、值 2 747 → 2 822、关系 3 321 → 3 389，错类 / 错值 / 多发 = 0。见 `docs/analysis/2026-10-10-an-instruments-library-folder-states-its-class.md`。`cargo test --workspace --all-targets` 1 534 → 1 535（`--lib` 1 171 → 1 172），`--no-default-features` 1 104 不变，clippy / rustfmt / missing-docs / wasm32 过。5 张图重新交付到 `D:\work\cad\PID自研软件验证\publish\`。待用户定的还是 `.pid` 模式 `--diff-against` 的口径和 `_Meta.xml` 的合成 UID。
+
 **2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P5（Q1 (a)：交到目录）**：
 `pid_publish_xml <file.pid> --out-dir DIR` 往目录写 `<图名>_Data.xml`、`<图名>_Meta.xml` 和覆盖报告 `<图名>_Coverage.json`（`publish::pid_writer::write_pid_coverage_json`：来源、图纸身份、各项计数、按类表、没定类而不发的物项清单、本模式从不发什么）；与 `--out` / `--stdout` / `--meta-out` 互斥、非 `.pid` 输入拒绝。
 `pid_writer` 单测 +1、`publish_from_pid` +2；`cargo test --workspace --all-targets` 1 531 → 1 534，`--no-default-features` 1 104 不变，clippy / rustfmt / missing-docs 过。5 张图交付到 `D:\work\cad\PID自研软件验证\publish\`。待用户定的仍是下条 ①–③（68 个无 `SymbolAttr` 的仪表、`--diff-against` 口径、`_Meta.xml` 合成 UID）。

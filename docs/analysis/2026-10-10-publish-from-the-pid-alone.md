@@ -174,19 +174,21 @@ Q2 已按推荐选 (a)（只发找得到出处的）。照这条，只凭 `.pid`
 关系与属性要等 P2 第一步的逐条证据，上限分别是 43 % 和 11 %。管线、端口、工艺点这一层——承载管线号和连接关系的对象——整类缺席。
 若「交服务」要的是完整的 publish，这条路给不了，得走库（手头备份里只有 I井场）；若下游只要设备 / 仪表 / 管件清单及其在图上的表示，这条路够用。由你在 G1 定。
 
-## 导出器实测（同日，P2–P4）
+## 导出器实测（同日，P2–P4；小单之后的钉数）
 
 G1 定了「做 P2，下游只要设备 / 仪表 / 管件清单和图上的表示」，Q2 按 (a)：只发在 `.pid` 里找得到出处的。导出器是 `pid_publish_xml <file.pid>`（`src/publish/pid_load.rs` 装载、`src/publish/pid_writer.rs` 写出，`0x0089` 行由 `src/parsers/attribute_rows.rs` 正式解码）。
 `tests/publish_from_pid.rs` 把每张图生成的 `_Data.xml` 与参考逐块比：发出的对象必须以同一 UID、同一类出现在参考里，发出的每个值必须与参考相等，发出的每条 `<Rel>` 必须以同一 UID、两端、`DefUID` 存在——**错一个就红**；发出数逐图钉死，覆盖只许有意地动。
 
+下表是 Q2 (b) 小单之后的：68 个原先定不了类的仪表改按符号库目录归类（`docs/analysis/2026-10-10-an-instruments-library-folder-states-its-class.md`）。收回前的合计是对象 2 850 / 6 131、值 2 747、关系 3 321。
+
 | 图 | 发出对象 / 参考 | 发出值（错） | 发出关系 / 参考 |
 |---|---:|---:|---:|
-| I井场 注采阀组 | 1 428 / 3 093 | 1 372（0） | 1 664 / 4 107 |
-| 一级闪蒸分离器A | 289 / 570 | 286（0） | 333 / 767 |
-| 一级闪蒸分离器B | 237 / 470 | 227（0） | 272 / 627 |
-| 低温分离器A | 312 / 679 | 309（0） | 353 / 884 |
-| 换热器CD及外输阀组 | 584 / 1 319 | 553（0） | 699 / 1 800 |
-| **合计** | **2 850 / 6 131（46.5 %）** | **2 747（0）** | **3 321 / 8 185（40.6 %）** |
+| I井场 注采阀组 | 1 459 / 3 093 | 1 405（0） | 1 695 / 4 107 |
+| 一级闪蒸分离器A | 291 / 570 | 289（0） | 335 / 767 |
+| 一级闪蒸分离器B | 239 / 470 | 230（0） | 274 / 627 |
+| 低温分离器A | 317 / 679 | 315（0） | 358 / 884 |
+| 换热器CD及外输阀组 | 612 / 1 319 | 583（0） | 727 / 1 800 |
+| **合计** | **2 918 / 6 131（47.6 %）** | **2 822（0）** | **3 389 / 8 185（41.4 %）** |
 
 按类（发出 / 参考；有 `IObject.Name` 的：发出 / 参考）：
 
@@ -195,9 +197,9 @@ G1 定了「做 P2，下游只要设备 / 仪表 / 管件清单和图上的表�
 | PIDRepresentation | 1 823 / 1 823 | — | 每个带 `GraphicOID`（物项 `P&IDAttributes` 行描述的记录） |
 | PIDDrawing | 5 / 5 | 5 / 5 | `DrawingNo`；名字取文件名 |
 | PIDProcessVessel / PIDProcessEquipment / PIDMechanicalEquipment / PIDHeatTransferEquipment | 5 / 5、13 / 13、4 / 4、1 / 1 | 13 / 13 | 名字按 `{EquipPrefix}-{EquipSeqNo}` |
-| PIDControlSystemFunction | 88 / 88 | 79 / 79 | 类由 `SymbolAttr.Type` = `System functions` |
-| PIDInstrument | 116 / 127 | 111 / 118 | `SymbolAttr.Type` = `Off-line instruments`；名字按 `{MeasuredVariable}-{InstrTagSequenceNo}` |
-| PIDInlineInstrument | 15 / 72 | 4 / 39 | `SymbolAttr.Class` = `Instrument In-Line Component` |
+| PIDControlSystemFunction | 88 / 88 | 79 / 79 | 类由 `SymbolAttr.Type` = `System functions`，或库目录 `System Functions` |
+| PIDInstrument | 127 / 127 | 113 / 118 | `SymbolAttr.Type` = `Off-line instruments`，或库目录 `Off-Line` / `Actuators`；名字按 `{MeasuredVariable}-{InstrTagSequenceNo}` |
+| PIDInlineInstrument | 72 / 72 | 27 / 39 | `SymbolAttr.Class` = `Instrument In-Line Component`，或库目录 `In-Line` / `Relief Devices` |
 | PIDPipingComponent | 264 / 264 | 0 / 152 | 类型 / 名字的规则在库里，不发 |
 | PIDPipingConnector | 341 / 341 | 0 / 219 | 管段号是拼接串，不发；`PipingConnectorSeqNo` 等有出处的发 |
 | PIDSignalConnector | 83 / 83 | 0 / 0 | |
@@ -206,11 +208,11 @@ G1 定了「做 P2，下游只要设备 / 仪表 / 管件清单和图上的表�
 | PIDBranchPoint（OPC） | 0 / 58 | 0 / 58 | **故意不发**：OPC 行上的 `ModelID` 不一定是 SmartPlant 发布的那个物项（语料 53 个里 23 个不在参考里） |
 | PIDPipeline、PIDPipingPort、PIDProcessPoint、PIDPipingBranchPoint、PIDSignalBranchPoint、PIDSignalPort | 0 / 172、0 / 718、0 / 341、0 / 183、0 / 16、0 / 1 725 | — | 文件里没有（见上文「`.pid` 里没有」与「更正」） |
 
-发出的 2 747 个值 = 1 823 个 `GraphicOID` + 5 个图名 + 207 个按规则拼的名字（设备 13、仪表 194）+ 约 712 个标签值；3 321 条关系 = 1 823 条 `DwgRepresentationComposition` + 1 498 条 `DrawingItems`，UID 按 SmartPlant 的 `{前缀}-{UID1}-{UID2}` 拼。
-以分离器B 为例，CLI 一行：100 个物项（85 个定得了类）、151 个表示，406 个标签值 400 个挂上物项、61 条属性发出、0 条因两张标签打架而弃。
+发出的 2 822 个值 = 1 823 个 `GraphicOID` + 5 个图名 + 232 个按规则拼的名字（设备 13、仪表 219）+ 762 个标签值；3 389 条关系 = 1 823 条 `DwgRepresentationComposition` + 1 566 条 `DrawingItems`，UID 按 SmartPlant 的 `{前缀}-{UID1}-{UID2}` 拼。
+以分离器B 为例，CLI 一行：100 个物项（87 个定得了类，其中 2 个按库目录）、151 个表示，406 个标签值 400 个挂上物项、63 条属性发出、0 条因两张标签打架而弃。
 
-**有意不发的**（按 Q2 (a)）：
-- 没有 `SymbolAttr` 的 68 个仪表（127 − 116 离线 + 72 − 15 在线）：文件定不了类，物项、它的 `DrawingItems` 和挂在它上的标签值一起不发。发出的 219 个仪表里 25 个缺名字的一半零件、没拼（参考里也有 51 个仪表没有名字）。
+**有意不发的**（按 Q2 (a)，仪表这一条已按 Q2 (b) 收回）：
+- 仪表 287 / 287 都发。原先不发的 68 个是 `SymbolAttr` 定不了类的（67 个没有行，1 个空行），现在按 `Instrumentation` 的下一段目录归类，错类 0。发出的 287 个里 68 个缺名字的一半零件、没拼（参考里 51 个仪表没有名字；发出的名字 219 / 236）。
 - 落在 `DependencyObject` 上的 `Symbol` 行（语料 518 / 518 SmartPlant 都没发布）不当表示；落在点（`0x005E`）上的当表示发、但不发 `DrawingItems`（SmartPlant 把它连到自己的分支点对象，不是行上写的管段）。
 - 标签值只发按类有明确落点的那几个属性（`MeasuredVariableCode`、`TagSequenceNo`（仪表 / 管段 / 设备三个落点）、`TagPrefix`、`PipingMaterialsClass`、`InsulationSpec`、`Description`、`ToFromText`、`Note.Body`）；公称直径写法不同、不发；代码表属性不发；同一物项两张标签给出不同值则整个属性不发（语料 0 条）。
 - `_Meta.xml`：信封、`DocUID`、`DocName`、`.pid` 文件名与参考相同；`DocumentVersion` / `DocumentRevision` / `File` 三个对象和三条 `Rel` 的 UID 是 `write_meta_xml` 合成的，`DocVersionDate`、`FilePath` 留空——这些不在文件里（见上文 `_Meta.xml` 一节）。留合成值、置空还是不发，由用户定。
