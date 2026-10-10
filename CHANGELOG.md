@@ -18,7 +18,10 @@
   `parse_real_files::a_cached_body_…` 重钉（0201 虚 0→1、0202 12→3、工艺 45→0，调色盘全 0.13；与库 `.sym` 的比对改为「缓存的每种 look 都是 `.sym` 自己 `StyleCluster` 定义得出的」——`Item Note & Label` 的缓存是 `PSMcluster0` 里的锚点十字，库读取器只走 `Sheet*`）。golden / `geometry_profile` / `render_gap_census` / `semantic_join` 不变。
 - 验证：`cargo test --workspace` 42 个二进制 **1513 过 / 3 忽略**（1503 → 1513：`--lib` 1143 → 1152、棘轮 17 → 18）；`--no-default-features` 17 个二进制 **1086 过 / 1 忽略**（1076 → 1086，`--lib` 838 → 839）；`clippy --workspace --all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 过；改动的文件 rustfmt 干净（`cargo fmt --all --check` 仍只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`）。
   探针跑五张图 2 s；headless IDA 开的是 `style.dll.i64` 的 `%TEMP%` 副本，仓库里的 `dlls/` 一个字节没动。
-- 登记：0201 `/JSite396` 本体 119 那条 0.01 mm 虚线在 OCS 里会按放置线宽重涂成一条可见虚线（P-E1 备选该重议）；`0x80000000` 随层色以保基色近似；覆盖的填充位（bit8 / bit30）未应用到 `resolve_fill`；bit2–6 未读。OCS 侧：`pid_import` 三处重钉、批量基线预计 5 行 `dxf_sha256` 变（D06 不变），见计划 O1–O3。
+- 登记：0201 `/JSite396` 本体 119 那条 0.01 mm 虚线在 OCS 里会按放置线宽重涂成一条可见虚线（P-E1 备选该重议）；`0x80000000` 随层色以保基色近似；覆盖的填充位（bit8 / bit30）未应用到 `resolve_fill`；bit2–6 未读。
+- OCS 侧（`main` `b795b0f7`，OCS 代码不改）：`pid_import` 三处重钉（0201 调色盘 `35 #000000` 43→22、`#FE0060` 删、新增 0.13 ×21 / 0.18 ×3；图纸虚线只剩电信号线一条；缓存本体虚线 工艺 45 / 0202 12 / 0201 0 → 0 / 3 / 1）52 / 52，`--lib io::pid` 54 / 54；
+  批量基线六行 `dxf_sha256` 全变——`main` 的基线自 09-28 没再签过（上游合并后多写三个 `$*FRAME` 头变量、A01 `drawn` 122→124），改前→改后在同一棵树比：17 列不动、实体数不动，DXF 逐实体只有 `370` / `62` / `420` / `6` 变，D06 实体一字不变。GUI 复核进 `docs/evidence/2026-10-10-pid-table-rules-after-override-fix/`。
+  0201 的 14 条格线按 DXF 核：0.13 的 11 条是 10 横 + 中间竖线，0.18 的 3 条是三条竖线（不是「横 0.13、竖 0.18」）。`pid-web-open` 的 `pid_import` 待 X2 提交后同样重钉。
 
 ### `pid_backup_probe` 认出 Oracle `exp` 导出，提示与 `pid_backup_extract` 相同（2026-10-09）
 

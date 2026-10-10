@@ -8,7 +8,8 @@
 `style_link::resolve_line_style` 走 `0x0030 JStyleOverride` 时按 `+30` 掩码应用覆盖自己的字段——bit0 颜色 `+34`、bit1 线宽 `+42`、bit7 虚线类型 id `+78`（0 = 不画虚线）；`style.dll` 的合成例程 `sub_1002A080` / 虚线 getter `sub_10027C10` 坐实位名（native-reader），
 探针 `examples/probe_override_applies_its_own_fields.rs` 给出 5 图 53 条覆盖的逐字段表，见 `docs/analysis/2026-10-10-an-override-repaints-width-colour-and-switches-the-dash-off.md`。
 0201 设备表 14 条格线从 `Dashed 0.35` 虚线变成 0.13 / 0.18 mm 黑实线（与 SmartPlant 截图一致）；语料调色盘 52 / 638 条换宽或色，09-20 P-E8 的 57 笔本体「可见虚线」全是覆盖关掉的，按文件画实线。
-`ResolvedLineStyle` 形状不变，OCS 不改码。下一项：OpenCADStudio 侧 `pid_import` 三处重钉（0201 调色盘、虚线线型、缓存本体虚线）、批量基线预计 5 行 `dxf_sha256` 重签（D06 不变）、GUI 复核设备表局部（计划 O1–O4）。
+`ResolvedLineStyle` 形状不变，OCS 不改码。OCS 侧已落地（`main` `b795b0f7`，计划 O1–O4）：`pid_import` 三处重钉 52 / 52、批量基线六行 `dxf_sha256` 重签（六行全变：`main` 基线自 09-28 没再签过，改前→改后只有 `370` / `62` / `420` / `6` 组码变、D06 实体不变）、GUI 复核设备表 14 条格线细实线。
+下一项：`pid-web-open`（`ocs-pid-0928`）的 `pid_import` 等 X2 提交后按同样数字重钉。
 
 **2026-10-08 · OCS 计划 `OpenCADStudio/docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D2（P-D32）**：
 `PidSemanticIndex::load_beside` 第一跳先按表示 UID 连：再开一次 `.pid` 收顶层各记录链的活 `FreeFormAttrSet` 行，UID 以完整记号所在的行 → 顶层空间映射标签 190 → 恰好一条记录才连，否则退回 `GraphicOID`；`PidSemanticObject::record_oid` 记连在哪条记录上，`graphic_oid` 仍是 XML 原值。
