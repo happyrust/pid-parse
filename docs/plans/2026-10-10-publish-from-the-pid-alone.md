@@ -170,4 +170,8 @@ CLI 是 `pid_publish_xml <mdf> --drawing UID --out … --meta-out … --diff-aga
 - **测试**：`pid_load` 单测 +1（五族目录、大小写与分隔符、不在 `Instrumentation` 下、族名是文件名、空路径）。`tests/publish_from_pid.rs` 五组钉数重钉，与参考逐块比仍是错类 / 错值 / 多发 = 0。对象 / 值 / 关系：I井场 1 459 / 1 405 / 1 695，分离器A 291 / 289 / 335，分离器B 239 / 230 / 274，低温分离器A 317 / 315 / 358，换热器CD 612 / 583 / 727。合计对象 2 918 / 6 131（+68）、值 2 822（+75 = 名字 +25、标签值 +50）、关系 3 389（+68）。按类：在线仪表 72 / 72（名字 27 / 39）、离线仪表 127 / 127（名字 113 / 118）、控制系统功能 88 / 88 不动。按库归类 31 + 2 + 2 + 5 + 28 = 68。没定类的 58 个全是 OPC。
 - **交付**：5 张图重新写入 `D:\work\cad\PID自研软件验证\publish\`（15 个文件）。
 - **验证**：`cargo test --locked --workspace --all-targets` 1 535 过 / 0 败 / 3 忽略（`--lib` 1 171 → 1 172），`--no-default-features` 1 104 过 / 1 忽略；clippy `-D warnings` 两种特性零告警；rustfmt 只报别的会话的 `examples/probe_text_anchor_by_kind.rs`；`cargo rustdoc --lib --locked -- -W missing-docs` 0（顺手把 `sheet_records.rs` 里 3 处本来就失败的私有文档链接改成代码字体）；wasm32 lib 检查过。
-- 待用户定的还是 P2–P4 的 ②（`.pid` 模式 `--diff-against` 把整类缺席算 `MISSING`）和 ③（`_Meta.xml` 合成 UID、空的 `DocVersionDate` / `FilePath`）。`_Coverage.json` 字段名的口径仍待交付方看。
+- 待用户定的还是 P2–P4 的 ③（`_Meta.xml` 合成 UID、空的 `DocVersionDate` / `FilePath`）。`_Coverage.json` 字段名的口径仍待交付方看。
+
+### ② `.pid` 的 `--diff-against` 口径（2026-10-10）
+
+改。数据库输入的标签计数报告不动：参考里有、我们一个都没发的类，在那条路上仍是 `MISSING`、退出 1。`.pid` 输入改走 `publish::diff::diff_pid_export`，和 `tests/publish_from_pid.rs` 同一套——发出的对象须同 UID 同类、每个值须相等、每条 `<Rel>` 须同 UID / 两端 / `DefUID`，错一个退出 1。整类缺席（管线、端口、工艺点、分支点、OPC）是这个模式有意不发的，不算 `MISSING`，不因此失败。5 张图 `--diff-against` 各自的参考 `_Data.xml` 退出 0。

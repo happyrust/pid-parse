@@ -33,7 +33,7 @@
 
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    diff_publish_xml, diff_rel_defuids, load_drawing_graph, load_publish_from_pid,
+    diff_pid_export, diff_publish_xml, diff_rel_defuids, load_drawing_graph, load_publish_from_pid,
     open_mdf_as_sqlite, write_data_xml, write_meta_xml, write_pid_coverage_json,
     write_pid_data_xml, write_pid_meta_xml, PublishError, PublishStyle,
 };
@@ -110,8 +110,12 @@ fn print_usage() {
          \x20                   needed). Mutually exclusive with --out / --stdout\n\
          \x20                   / --meta-out.\n\
          --diff-against FILE compare the generated _Data.xml against a reference\n\
-         \x20                   SmartPlant export and print a SemanticDiffReport\n\
-         \x20                   to stdout. Exits 1 when any tag varieties differ.\n\
+         \x20                   SmartPlant export. A database input prints the tag\n\
+         \x20                   and Rel-DefUID count report and exits 1 when any\n\
+         \x20                   variety differs. A .pid input scores emitted objects,\n\
+         \x20                   values and Rels: one the reference does not carry\n\
+         \x20                   exits 1. Classes this mode does not publish are not\n\
+         \x20                   MISSING.\n\
          --plant NAME        Plant value for the <Container> root attribute\n\
          \x20                   (default: \"P01\" — override with the real plant).\n\
          --style a01|dwg     Pick the IObject attribute convention used in the\n\
@@ -457,7 +461,7 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         }
     }
     match &options.diff_against {
-        Some(ref_path) => report_diff(ref_path, &xml),
+        Some(ref_path) => report_pid_diff(ref_path, &xml),
         None => Ok(0),
     }
 }
@@ -476,6 +480,41 @@ fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Print the `.pid` export's object / value / rel score. Absence of a class
+/// this mode does not publish is not a finding; an emitted object, value or
+/// rel the reference does not carry exits 1.
+fn report_pid_diff(ref_path: &Path, xml: &str) -> Result<i32, String> {
+    let reference = std::fs::read_to_string(ref_path)
+        .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
+    let diff = diff_pid_export(xml, &reference);
+    print!("{diff}");
+    if diff.is_clean() {
+        eprintln!(
+            "Semantic diff against {} is clean in .pid mode ({} objects, {} values, {} rels).",
+            ref_path.display(),
+            diff.objects,
+            diff.values,
+            diff.rels,
+        );
+        Ok(0)
+    } else {
+        eprintln!(
+            "Semantic diff against {} surfaced findings in .pid mode:\n  \
+             objects extra={} wrong_class={}\n  \
+             values different={} not_in_reference={}\n  \
+             rels not_in_reference={}\n\
+             exit 1.",
+            ref_path.display(),
+            diff.objects_not_in_reference,
+            diff.objects_of_another_class,
+            diff.values_different,
+            diff.values_not_in_reference,
+            diff.rels_not_in_reference,
+        );
+        Ok(1)
+    }
 }
 
 /// Print the semantic diff of `xml` against the reference at `ref_path`;

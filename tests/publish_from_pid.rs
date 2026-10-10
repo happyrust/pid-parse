@@ -356,6 +356,34 @@ fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
 }
 
 #[test]
+fn diff_against_a_pid_exits_zero_when_nothing_emitted_is_wrong() {
+    let Some(drawings) = corpus() else {
+        eprintln!("skip: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
+        return;
+    };
+    for (stem, pid, reference) in &drawings {
+        let output = Command::new(CLI)
+            .arg(pid)
+            .args(["--diff-against"])
+            .arg(reference)
+            .args(["--plant", "P01"])
+            .output()
+            .expect("spawn pid_publish_xml --diff-against");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "{stem} exit {:?}\n{stderr}\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            stderr.contains("is clean in .pid mode"),
+            "{stem} stderr:\n{stderr}"
+        );
+    }
+}
+
+#[test]
 fn out_dir_is_refused_beside_out_and_for_a_database_input() {
     let out_dir = unique_out_dir("refused");
     let beside_out = Command::new(CLI)

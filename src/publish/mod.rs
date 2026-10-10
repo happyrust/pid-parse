@@ -58,10 +58,10 @@ pub mod sqlite_load;
 pub mod xml_writer;
 
 pub use diff::{
-    coverage_against_reference, diff_publish_xml, diff_rel_defuids,
+    coverage_against_reference, diff_pid_export, diff_publish_xml, diff_rel_defuids,
     parse_attrs_per_interface_per_tag, parse_interfaces_per_tag, parse_pid_tag_counts,
-    parse_rel_defuid_counts, parse_rel_details, supported_pid_tags, CoverageRow, RelDefUidDiff,
-    RelDefUidDiffReport, RelDetail, SemanticDiffReport, TagCountDiff, TagDiffStatus,
+    parse_rel_defuid_counts, parse_rel_details, supported_pid_tags, CoverageRow, PidExportDiff,
+    RelDefUidDiff, RelDefUidDiffReport, RelDetail, SemanticDiffReport, TagCountDiff, TagDiffStatus,
     WriterCoverage,
 };
 pub use mdf_load::{load_drawing_graph_from_mdf, open_mdf_as_sqlite};

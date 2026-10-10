@@ -216,7 +216,7 @@ G1 定了「做 P2，下游只要设备 / 仪表 / 管件清单和图上的表�
 - 落在 `DependencyObject` 上的 `Symbol` 行（语料 518 / 518 SmartPlant 都没发布）不当表示；落在点（`0x005E`）上的当表示发、但不发 `DrawingItems`（SmartPlant 把它连到自己的分支点对象，不是行上写的管段）。
 - 标签值只发按类有明确落点的那几个属性（`MeasuredVariableCode`、`TagSequenceNo`（仪表 / 管段 / 设备三个落点）、`TagPrefix`、`PipingMaterialsClass`、`InsulationSpec`、`Description`、`ToFromText`、`Note.Body`）；公称直径写法不同、不发；代码表属性不发；同一物项两张标签给出不同值则整个属性不发（语料 0 条）。
 - `_Meta.xml`：信封、`DocUID`、`DocName`、`.pid` 文件名与参考相同；`DocumentVersion` / `DocumentRevision` / `File` 三个对象和三条 `Rel` 的 UID 是 `write_meta_xml` 合成的，`DocVersionDate`、`FilePath` 留空——这些不在文件里（见上文 `_Meta.xml` 一节）。留合成值、置空还是不发，由用户定。
-- `--diff-against` 的旧报告把整类缺席算 `MISSING`、退出 1；在 `.pid` 模式下那是设计使然，本模式的门是测试里的「多发 / 错类 / 错值 / 多发关系 = 0」。
+- `--diff-against` 在 `.pid` 模式下跟测试同一套（2026-10-10 定的）：发出的对象、值和 `<Rel>` 必须在参考里对上，错一个退出 1；参考里有、本模式不发的类不算 `MISSING`。数据库输入仍是原来的标签 / `DefUID` 计数报告。
 
 **交付（P5，Q1 按 (a)）**：`--out-dir DIR` 一次写出 `<图名>_Data.xml`、`<图名>_Meta.xml` 和覆盖报告 `<图名>_Coverage.json`（来源、图纸身份、各项计数、按类表、没定类而不发的物项清单、本模式从不发什么）。5 张图一行跑完：
 
