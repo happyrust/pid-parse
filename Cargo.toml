@@ -147,6 +147,10 @@ name = "publish_dwg_mirror"
 required-features = ["backup"]
 
 [[test]]
+name = "publish_from_pid"
+required-features = ["backup"]
+
+[[test]]
 name = "publish_interface_parity"
 required-features = ["backup"]
 

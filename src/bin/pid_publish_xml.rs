@@ -33,10 +33,11 @@
 
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    diff_publish_xml, diff_rel_defuids, load_drawing_graph, open_mdf_as_sqlite, write_data_xml,
-    write_meta_xml, PublishError, PublishStyle,
+    diff_publish_xml, diff_rel_defuids, load_drawing_graph, load_publish_from_pid,
+    open_mdf_as_sqlite, write_data_xml, write_meta_xml, write_pid_data_xml, write_pid_meta_xml,
+    PublishError, PublishStyle,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 struct CliOptions {
@@ -86,7 +87,13 @@ fn print_usage() {
         "Usage: pid_publish_xml <mdf> --drawing UID [--out FILE | --stdout]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
          \x20               [--style a01|dwg]\n\
-         \x20  pid_publish_xml <mdf> --list-drawings\n\n\
+         \x20  pid_publish_xml <mdf> --list-drawings\n\
+         \x20  pid_publish_xml <file.pid> [--out FILE | --stdout] [--meta-out FILE]\n\
+         \x20               [--diff-against FILE] [--plant NAME]\n\n\
+         A .pid input is read on its own, with no plant database: it is one\n\
+         drawing, so --drawing / --style / --list-drawings do not apply, and\n\
+         only what the file states is written (no derived ports, pipelines or\n\
+         default attributes).\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
@@ -213,6 +220,13 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         (None, false) => None,
     };
 
+    let pid_input = is_pid_path(&input_path);
+    if pid_input && (list_drawings || drawing_uid.is_some()) {
+        return Err(
+            "a .pid input is one drawing: --list-drawings and --drawing do not apply".into(),
+        );
+    }
+
     if list_drawings {
         // --list-drawings is its own self-contained mode. It
         // requires NONE of --drawing / --out / --stdout /
@@ -234,7 +248,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
             return Err("--list-drawings is mutually exclusive with --meta-out".into());
         }
     } else {
-        if drawing_uid.is_none() {
+        if drawing_uid.is_none() && !pid_input {
             return Err("--drawing UID is required (or use --list-drawings)".into());
         }
         if output.is_none() && diff_against.is_none() {
@@ -296,6 +310,9 @@ fn main() {
 ///   from the reference (used as a CI gate). Real I/O / `SQLite`
 ///   errors short-circuit through `Err(String)` instead.
 fn run(options: CliOptions) -> Result<i32, String> {
+    if is_pid_path(&options.input_path) {
+        return run_pid(&options);
+    }
     warn_if_legacy_sqlite_input(&options.input_path);
     let conn = open_input_as_sqlite(&options.input_path)?;
 
@@ -340,17 +357,7 @@ fn run(options: CliOptions) -> Result<i32, String> {
         graph.relationships.len(),
     );
 
-    if let Some(target) = &options.output {
-        match target {
-            OutputTarget::Stdout => {
-                print!("{xml}");
-            }
-            OutputTarget::File(path) => {
-                write_file(path, &xml)?;
-                eprintln!("Wrote {} ({} bytes).", path.display(), xml.len());
-            }
-        }
-    }
+    emit_data(&options, &xml)?;
 
     if let Some(meta_path) = &options.meta_output {
         let meta_xml = write_meta_xml(&graph, &options.plant_name)
@@ -359,11 +366,75 @@ fn run(options: CliOptions) -> Result<i32, String> {
         eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
     }
 
+    match &options.diff_against {
+        Some(ref_path) => report_diff(ref_path, &xml),
+        None => Ok(0),
+    }
+}
+
+/// `.pid` input: read the drawing from the file alone and write only what
+/// it states.
+fn run_pid(options: &CliOptions) -> Result<i32, String> {
+    let drawing = load_publish_from_pid(&options.input_path)
+        .map_err(|e| format!("read {}: {e}", options.input_path.display()))?;
+    let xml = write_pid_data_xml(&drawing, &options.plant_name);
+    let classified = drawing
+        .items
+        .iter()
+        .filter(|item| item.class.is_some())
+        .count();
+    let stats = drawing.stats;
+    eprintln!(
+        "Read drawing `{}` ({} UID) from the .pid alone: {} items ({} with a class), \
+         {} representations; {} of {} label values reach an item, {} attributes published, \
+         {} left out on disagreeing labels",
+        drawing.drawing_name,
+        drawing.drawing_uid,
+        drawing.items.len(),
+        classified,
+        drawing.representations.len(),
+        stats.label_values_reached,
+        stats.label_values,
+        stats.label_values_published,
+        stats.conflicting_attributes,
+    );
+    emit_data(options, &xml)?;
+    if let Some(meta_path) = &options.meta_output {
+        let meta_xml = write_pid_meta_xml(&drawing, &options.plant_name)
+            .map_err(|e| format!("render meta XML: {e}"))?;
+        write_file(meta_path, &meta_xml)?;
+        eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
+    }
+    match &options.diff_against {
+        Some(ref_path) => report_diff(ref_path, &xml),
+        None => Ok(0),
+    }
+}
+
+/// Write the rendered `_Data.xml` to the requested target, if any.
+fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
+    if let Some(target) = &options.output {
+        match target {
+            OutputTarget::Stdout => {
+                print!("{xml}");
+            }
+            OutputTarget::File(path) => {
+                write_file(path, xml)?;
+                eprintln!("Wrote {} ({} bytes).", path.display(), xml.len());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Print the semantic diff of `xml` against the reference at `ref_path`;
+/// the exit code is 1 when it surfaces findings.
+fn report_diff(ref_path: &Path, xml: &str) -> Result<i32, String> {
     let mut exit_code = 0;
-    if let Some(ref_path) = &options.diff_against {
+    {
         let reference = std::fs::read_to_string(ref_path)
             .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
-        let tag_report = diff_publish_xml(&xml, &reference);
+        let tag_report = diff_publish_xml(xml, &reference);
         // Surface the report on stdout so it can be redirected to
         // a file or compared in tests; the "Loaded drawing..." line
         // stays on stderr.
@@ -374,7 +445,7 @@ fn run(options: CliOptions) -> Result<i32, String> {
         // Rel block answers the complementary question "are all
         // cross-references emitted?" A drawing can pass one and
         // fail the other — the combined report catches both.
-        let rel_report = diff_rel_defuids(&xml, &reference);
+        let rel_report = diff_rel_defuids(xml, &reference);
         println!();
         println!("{rel_report}");
 
@@ -421,6 +492,12 @@ fn is_mdf_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("mdf"))
+}
+
+fn is_pid_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pid"))
 }
 
 fn is_sqlite_path(path: &std::path::Path) -> bool {

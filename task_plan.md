@@ -4,6 +4,11 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P2–P4（只凭 `.pid` 的导出器落地）**：
+`src/parsers/attribute_rows.rs` 正式解码顶层 `0x0089` 行；`src/publish/pid_load.rs` 只凭 `.pid` 装出图纸 / 物项 / 表示 / 带出处的标签值（`IObject.Name` 按用户批准的两条规则拼；无 `SymbolAttr` 的仪表与 OPC 不定类、不发）；`src/publish/pid_writer.rs` + `pid_publish_xml <file.pid>` 写 `_Data.xml` / `_Meta.xml`，只发文件说了的；`tests/publish_from_pid.rs` 与参考逐块比、错 0、逐图钉数。
+5 图合计对象 2 850 / 6 131（表示 1 823 / 1 823、设备 23 / 23、仪表 219 / 287、管件 264 / 264、管段 341 / 341）、值 2 747（错 0）、关系 3 321 / 8 185；`cargo test --workspace` 1513 → 1532，`--no-default-features` 1086 → 1097，clippy / wasm32 / rustfmt 过。见分析页「导出器实测」与计划 §7。
+待用户定：68 个无 `SymbolAttr` 的仪表要不要按规则推类（Q2 (b)）、`.pid` 模式 `--diff-against` 的口径、`_Meta.xml` 合成 UID 留不留。下一项 P5（Q1 (a)：`--out-dir`、`<DocName>_Data.xml` 命名、覆盖报告 JSON）。
+
 **2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P2 第一步（G1：做 P2，范围收窄到设备 / 仪表 / 管件清单与表示）**：
 探针 `examples/probe_label_values_reach_their_item.rs` 找到标签值的归属链：值行 `+12` → `igTextBox` `+4` → `DependencyObject` `+22` → 被标注物项的 `P&IDAttributes` 行（`+16` 图形交叉核）。5 图 3 954 / 3 978 挂上，两端打架 0，对照属性错挂 0，归属后能给的发布值 822；
 仪表按 `SymbolAttr` 分出 219 / 287；名称规则（仪表、设备）只在参考 XML 上核过，待用户拍板。见 `docs/analysis/2026-10-10-a-label-value-reaches-its-item-through-its-text-box.md`；P1 页同时更正端口 UID 的说法。`src` 不动。下一项：用户定名称规则，然后写 `src/publish/pid_load.rs`。

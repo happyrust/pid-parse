@@ -2610,7 +2610,7 @@ fn classify_relationship(rel: &PublishRelationship, type_by_uid: &HashMap<&str, 
 /// value from UID1 / UID2. Matches the SPPID reference convention:
 /// `DRC-` / `DRI-` / `EQC-` / `PCN-` / `PE1-` / `PE2-` /
 /// `PPC-` / `PTF-` / `SPC-` / `PRP-`.
-fn defuid_prefix(def_uid: &str) -> &'static str {
+pub(crate) fn defuid_prefix(def_uid: &str) -> &'static str {
     match def_uid {
         "DwgRepresentationComposition" => "DRC",
         "DrawingItems" => "DRI",
@@ -2630,7 +2630,7 @@ fn defuid_prefix(def_uid: &str) -> &'static str {
 /// delimiters so we only need to escape the five canonical
 /// entities plus CR/LF (which SPPID stores verbatim as
 /// `&#13;&#10;` inside attribute values).
-fn escape_attr(s: &str) -> String {
+pub(crate) fn escape_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

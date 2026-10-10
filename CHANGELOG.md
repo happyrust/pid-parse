@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### 只凭 `.pid` 的 publish 导出器落地：5 图发出 2 850 个对象 / 2 747 个值 / 3 321 条关系，与参考逐值相同、错 0（2026-10-10，计划 P2–P4）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P2–P4（G1：做 P2，下游只要设备 / 仪表 / 管件清单和图上的表示；Q2 (a) 只发在文件里找得到出处的）；实测写在 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md`「导出器实测」一节。
+
+- **`parsers::attribute_rows`**（新，不需要 `backup`）：`decode_attribute_row` 正式解码顶层记录链里的 `0x0089` `FreeFormAttrSet` 行——`+0` 自身 oid、`+12` 所描述的记录、`+20` 集头（`0x0000` 框 + NUL 结尾 ASCII 类名，长度字须正好框住），其后 `0x8010` 文本（UTF-8 否则 GBK）/ `0x0003` i32 / `0x000B` 布尔三种字段到第一个不认识的框为止；`AttributeRow::text(name)` 取第一个同名文本字段。11 条合成字节单测（含逐字节截断不 panic），登记进 `parser_panic_safety`。
+- **`publish::pid_load`**（新，`backup`）：`load_publish_from_pid(path) -> PidPublishDrawing`。`P&IDAttributes` 的 `DrawingNo` → 图纸、`DrawingID` → 表示（`GraphicOID` = 行描述的记录）、`ModelID` + `ModelItemType` → 物项（11 种类型映射到发布类，`Instrument` 按图形上 `SymbolAttr` 的 `Type` / `Class` 分 `PIDInstrument` / `PIDControlSystemFunction` / `PIDInlineInstrument`，没有就不定类；`OPC` 故意不定类）；落在 `DependencyObject` 上的 `Symbol` 行不当表示（语料 518 / 518 未发布），落在点上的表示不连物项。标签值走 `igTextBox +4 → DependencyObject +22 / +16` 归属（两端不一致即弃），按类落到 (接口, 属性)，同一属性两值打架整个不发；`IObject.Name` 按用户批准的两条规则拼（仪表 `{MeasuredVariable}-{InstrTagSequenceNo}`、设备 `{EquipPrefix}-{EquipSeqNo}`），每个值带出处 `PidValueSource::{Label{row}, NameRule}`。5 条单测。
+- **`publish::pid_writer`**（新）+ **`pid_publish_xml <file.pid>`**：用户选了独立写出器——只发文件说了的：`IObject` + 有值的接口、表示的 `GraphicOID`、`DwgRepresentationComposition` / `DrawingItems` 两条关系（UID 按 `{前缀}-{UID1}-{UID2}`）；`_Meta.xml` 套 `write_meta_xml` 的信封。CLI 以 `.pid` 扩展名认输入，`--out` / `--stdout` / `--meta-out` / `--diff-against` / `--plant` 照旧，`--drawing` / `--style` / `--list-drawings` 对 `.pid` 报错；MDF 路的输出不变（`publish_xml_cli` 20 / 20）。`xml_writer` 只把 `defuid_prefix` / `escape_attr` 开成 `pub(crate)`。
+- **`tests/publish_from_pid.rs`**（新，`backup`；语料不在就 soft-skip）：生成的 `_Data.xml` 与参考逐块比——发出的对象须同 UID 同类、每个值须相等、每条 `<Rel>` 须同 UID / 两端 / `DefUID`——**错一个就红**，并钉每图发出数（对象 / 值 / 关系）：I井场 1 428 / 1 372 / 1 664、分离器A 289 / 286 / 333、分离器B 237 / 227 / 272、低温分离器A 312 / 309 / 353、换热器CD 584 / 553 / 699。
+- 结果（5 图合计）：对象 **2 850 / 6 131（46.5 %）**——表示 1 823 / 1 823、图纸 5 / 5、设备 23 / 23（名字 13 / 13）、仪表 219 / 287（名字 194 / 236）、管件 264 / 264、管段 341 / 341、信号段 83 / 83、管口 36 / 36、注释 56 / 56；OPC 0 / 58 与管线 / 端口 / 工艺点 / 分支点 0 / 3 155 有意不发。值 **2 747（错 0）** = `GraphicOID` 1 823 + 图名 5 + 拼的名字 207 + 标签值约 712（参考非空值 11 671）。关系 **3 321 / 8 185** = `DRC` 1 823 + `DrawingItems` 1 498。
+- 有意不发：68 个没有 `SymbolAttr` 的仪表（类定不了，连带其 `DrawingItems` 与标签值）；公称直径（写法不同）；代码表属性；`_Meta.xml` 里版本 / 修订 / 文件三个对象与三条 `Rel` 的 UID 由 `write_meta_xml` 合成、`DocVersionDate` / `FilePath` 空。`.pid` 模式下 `--diff-against` 的旧报告把整类缺席算 `MISSING`、退出 1，本模式的门是测试。
+- 验证：`cargo test --locked --workspace` 43 个二进制 **1532 过 / 3 忽略**（1513 → 1532：`--lib` 1152 → 1170、`publish_from_pid` +1）；`--all-targets` 1531 / 3；`--no-default-features` 17 个二进制 **1097 过 / 1 忽略**（1086 → 1097）；`clippy --workspace --all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 过；本单 5 个 `.rs` rustfmt 干净（`cargo fmt --all --check` 仍只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`）。CLI 在分离器B 上实跑：100 个物项（85 个有类）、151 个表示、406 个标签值 400 个挂上、61 条属性发出、0 条冲突。
+- 下一项：P5（Q1 (a)）`--out-dir` + `<DocName>_Data.xml` 命名 + 覆盖报告 JSON；68 个仪表的分类、`--diff-against` 口径、`_Meta.xml` 合成 UID 要用户定。
+
 ### 标签值顺「文本框 → 依赖 → 物项属性行」挂到物项上：3 954 / 3 978，错挂 0（2026-10-10，计划 P2 第一步）
 
 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md`（G1：做 P2，下游只要设备 / 仪表 / 管件清单和图上的表示）；分析 `docs/analysis/2026-10-10-a-label-value-reaches-its-item-through-its-text-box.md`。
