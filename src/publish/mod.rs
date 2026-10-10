@@ -73,7 +73,7 @@ pub use pid_load::{
     load_publish_from_pid, PidLoadError, PidPublishAttribute, PidPublishDrawing, PidPublishItem,
     PidPublishRepresentation, PidPublishStats, PidValueSource,
 };
-pub use pid_writer::{write_pid_data_xml, write_pid_meta_xml};
+pub use pid_writer::{write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml};
 pub use sqlite_load::{
     attach_pipe_endpoint_connections, load_codelist_index, load_drawing, load_drawing_graph,
     load_objects_by_uids, load_piping_points_for_objects, load_relationships, load_representations,

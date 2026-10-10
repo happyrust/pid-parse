@@ -34,8 +34,8 @@
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
     diff_publish_xml, diff_rel_defuids, load_drawing_graph, load_publish_from_pid,
-    open_mdf_as_sqlite, write_data_xml, write_meta_xml, write_pid_data_xml, write_pid_meta_xml,
-    PublishError, PublishStyle,
+    open_mdf_as_sqlite, write_data_xml, write_meta_xml, write_pid_coverage_json,
+    write_pid_data_xml, write_pid_meta_xml, PublishError, PublishStyle,
 };
 use std::path::{Path, PathBuf};
 
@@ -51,6 +51,11 @@ struct CliOptions {
     /// would interleave two unrelated XML documents on the same
     /// stream.
     meta_output: Option<PathBuf>,
+    /// `.pid` input only: the directory the delivery goes to, as
+    /// `<DocName>_Data.xml`, `<DocName>_Meta.xml` and the coverage
+    /// report `<DocName>_Coverage.json`. Mutually exclusive with
+    /// `--out` / `--stdout` / `--meta-out`.
+    out_dir: Option<PathBuf>,
     /// Optional reference `_Data.xml` to diff the generated output
     /// against. When set, the binary prints a [`SemanticDiffReport`]
     /// to stdout and exits 0 if no differences (clean) or 1 if any
@@ -88,8 +93,8 @@ fn print_usage() {
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
          \x20               [--style a01|dwg]\n\
          \x20  pid_publish_xml <mdf> --list-drawings\n\
-         \x20  pid_publish_xml <file.pid> [--out FILE | --stdout] [--meta-out FILE]\n\
-         \x20               [--diff-against FILE] [--plant NAME]\n\n\
+         \x20  pid_publish_xml <file.pid> [--out FILE | --stdout | --out-dir DIR]\n\
+         \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\n\
          A .pid input is read on its own, with no plant database: it is one\n\
          drawing, so --drawing / --style / --list-drawings do not apply, and\n\
          only what the file states is written (no derived ports, pipelines or\n\
@@ -99,6 +104,11 @@ fn print_usage() {
          --stdout            write the _Data.xml document to stdout instead.\n\
          --meta-out FILE     write the companion _Meta.xml document to FILE.\n\
          \x20                   Requires --out (incompatible with --stdout).\n\
+         --out-dir DIR       .pid input only: write <DocName>_Data.xml,\n\
+         \x20                   <DocName>_Meta.xml and the coverage report\n\
+         \x20                   <DocName>_Coverage.json into DIR (created if\n\
+         \x20                   needed). Mutually exclusive with --out / --stdout\n\
+         \x20                   / --meta-out.\n\
          --diff-against FILE compare the generated _Data.xml against a reference\n\
          \x20                   SmartPlant export and print a SemanticDiffReport\n\
          \x20                   to stdout. Exits 1 when any tag varieties differ.\n\
@@ -120,8 +130,8 @@ fn print_usage() {
          \x20                   accepted during the transition, but MDF is the\n\
          \x20                   only public publish-fidelity baseline and `.sqlite`\n\
          \x20                   inputs print a deprecation warning at runtime.\n\n\
-         At least one of --out / --stdout / --diff-against / --list-drawings\n\
-         is required."
+         At least one of --out / --stdout / --out-dir / --diff-against /\n\
+         --list-drawings is required."
     );
 }
 
@@ -136,6 +146,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut drawing_uid: Option<String> = None;
     let mut out_path: Option<PathBuf> = None;
     let mut meta_out_path: Option<PathBuf> = None;
+    let mut out_dir: Option<PathBuf> = None;
     let mut diff_against: Option<PathBuf> = None;
     let mut stdout = false;
     let mut plant_name: Option<String> = None;
@@ -165,6 +176,13 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     .get(i + 1)
                     .ok_or_else(|| "--meta-out requires a path".to_string())?;
                 meta_out_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--out-dir" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--out-dir requires a directory".to_string())?;
+                out_dir = Some(PathBuf::from(value));
                 i += 2;
             }
             "--diff-against" => {
@@ -226,6 +244,18 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
             "a .pid input is one drawing: --list-drawings and --drawing do not apply".into(),
         );
     }
+    if out_dir.is_some() {
+        if !pid_input {
+            return Err("--out-dir applies to a .pid input only".into());
+        }
+        if output.is_some() || meta_out_path.is_some() {
+            return Err(
+                "--out-dir names every file itself: it is mutually exclusive with \
+                 --out / --stdout / --meta-out"
+                    .into(),
+            );
+        }
+    }
 
     if list_drawings {
         // --list-drawings is its own self-contained mode. It
@@ -251,9 +281,11 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         if drawing_uid.is_none() && !pid_input {
             return Err("--drawing UID is required (or use --list-drawings)".into());
         }
-        if output.is_none() && diff_against.is_none() {
+        if output.is_none() && diff_against.is_none() && out_dir.is_none() {
             return Err(
-                "at least one of --out FILE / --stdout / --diff-against FILE / --list-drawings is required".into(),
+                "at least one of --out FILE / --stdout / --diff-against FILE / --list-drawings \
+                 is required (or --out-dir DIR for a .pid input)"
+                    .into(),
             );
         }
     }
@@ -267,6 +299,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         drawing_uid,
         output,
         meta_output: meta_out_path,
+        out_dir,
         diff_against,
         plant_name: plant_name.unwrap_or_else(|| "P01".to_string()),
         style: style.unwrap_or_default(),
@@ -404,6 +437,22 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             .map_err(|e| format!("render meta XML: {e}"))?;
         write_file(meta_path, &meta_xml)?;
         eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
+    }
+    if let Some(dir) = &options.out_dir {
+        // The delivery: the two documents under the names SmartPlant's
+        // own publish gives them, and the coverage report beside them.
+        let meta_xml = write_pid_meta_xml(&drawing, &options.plant_name)
+            .map_err(|e| format!("render meta XML: {e}"))?;
+        let report = write_pid_coverage_json(&drawing, &options.input_path);
+        for (suffix, contents) in [
+            ("_Data.xml", xml.as_str()),
+            ("_Meta.xml", meta_xml.as_str()),
+            ("_Coverage.json", report.as_str()),
+        ] {
+            let path = dir.join(format!("{}{suffix}", drawing.drawing_name));
+            write_file(&path, contents)?;
+            eprintln!("Wrote {} ({} bytes).", path.display(), contents.len());
+        }
     }
     match &options.diff_against {
         Some(ref_path) => report_diff(ref_path, &xml),

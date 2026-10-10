@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### `pid_publish_xml <file.pid> --out-dir DIR`：按 `<图名>_Data.xml` / `_Meta.xml` 交付，旁置覆盖报告 `<图名>_Coverage.json`（2026-10-10，计划 P5，Q1 (a)）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` §7 P5；在 `d1d502e`（P2–P4）之上。
+
+- CLI 新开关 `--out-dir DIR`（只对 `.pid` 输入）：往 `DIR`（不在就建）写 `<DocName>_Data.xml`、`<DocName>_Meta.xml`、`<DocName>_Coverage.json`，`DocName` 即图名，与 SmartPlant 自己发布的命名一致；与 `--out` / `--stdout` / `--meta-out` 互斥，非 `.pid` 输入报参数错（退出 2，不写文件）；`--diff-against` / `--plant` 照旧可搭。MDF 路一字不改（`publish_xml_cli` 20 / 20）。
+- `publish::pid_writer::write_pid_coverage_json(drawing, source)`：来源、图纸 UID / 名、两份文件名、对象计数（文件指名的物项 / 发出的 / 没定类的 / 表示）、关系计数、属性值计数（标签值 / 挂上 / 发出 / 拼的名字 / 因打架弃的）、`0x0089` 行解码 / 未解数、按类（对象 / 有名字 / 属性值）、没定类而不发的物项清单（UID + `ModelItemType`）、固定一段「本模式从不发什么」。`DrawingItems` 计数与写出器共用 `published_items` / `drawing_items`。
+- 测试：`pid_writer` 单测 +1；`tests/publish_from_pid.rs` +2（`--out-dir` 三个文件与库函数输出逐字节相同、报告可解析；旁有 `--out` 或输入是 `.mdf` 时退出 2 且目录不建）。
+- 验证：`cargo test --locked --workspace --all-targets` **1 534 过 / 0 败 / 3 忽略**（1 531 → 1 534：`--lib` 1 170 → 1 171、`publish_from_pid` 1 → 3），`--no-default-features` **1 104 过 / 1 忽略**（不变）；`clippy --workspace --all-targets -D warnings` 两种特性零告警；`cargo fmt --all --check` 只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`；missing-docs 0 = 基线 0。
+- 交付：5 张图跑进 `D:\work\cad\PID自研软件验证\publish\`（15 个文件），一行命令在分析页「导出器实测 → 交付」。待用户定的仍是 P2–P4 条目里的 ①–③。
+
 ### 只凭 `.pid` 的 publish 导出器落地：5 图发出 2 850 个对象 / 2 747 个值 / 3 321 条关系，与参考逐值相同、错 0（2026-10-10，计划 P2–P4）
 
 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P2–P4（G1：做 P2，下游只要设备 / 仪表 / 管件清单和图上的表示；Q2 (a) 只发在文件里找得到出处的）；实测写在 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md`「导出器实测」一节。

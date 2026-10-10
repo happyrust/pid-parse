@@ -152,3 +152,12 @@ CLI 是 `pid_publish_xml <mdf> --drawing UID --out … --meta-out … --diff-aga
 - **偏离与待定**：① 没有 `SymbolAttr` 的 68 个仪表（离线 11、在线 57）整个不发，连带其 `DrawingItems` 与标签值；要收回得按 Q2 (b) 另开小单（候选判据：符号库路径、标签属性）。② `.pid` 模式下 `--diff-against` 的旧报告把整类缺席算 `MISSING`、退出 1——在本模式是设计使然，门以测试的「多发 / 错值 = 0」为准；报告要不要改口径待定。③ `_Meta.xml` 三个对象与三条 `Rel` 的 UID 是合成的、`DocVersionDate` / `FilePath` 空（不在文件里）；留、置空还是不发 `_Meta.xml`，待定。④ 输入按扩展名认，没有 Q4 (a) 写的 `--pid` 开关。⑤ 工作树上 37 个文件的 mtime 全是 10:43:29（一次整树重写），代码的真实写就时间不可考。
 - **提交**：只 `git add` 本单 14 个路径（上述 10 个代码 / 测试 / `Cargo.toml` 路径 + 本计划、分析页、`CHANGELOG.md`、`task_plan.md`）；别的会话的 4 M + 1 ?? 一字未动。
 - 下一项：P5（Q1 (a)）——`pid_publish_xml <file.pid> --out-dir DIR`，按 `<DocName>_Data.xml` / `<DocName>_Meta.xml` 命名，旁置覆盖报告 JSON；上面 ①–③ 要用户定。
+
+### P5 交付（2026-10-10，Q1 按 (a)；会话 fable-5-1-54，在 `d1d502e` 之上）
+
+- **CLI** `pid_publish_xml <file.pid> --out-dir DIR [--plant NAME] [--diff-against REF]`：往 `DIR`（不在就建）写 `<DocName>_Data.xml`、`<DocName>_Meta.xml` 和覆盖报告 `<DocName>_Coverage.json`，`DocName` 即图名（`.pid` 文件名去后缀，与 SmartPlant 自己发布的命名一致）。与 `--out` / `--stdout` / `--meta-out` 互斥，非 `.pid` 输入报参数错（退出 2，什么都不写）；MDF 路不变。
+- **覆盖报告** `publish::pid_writer::write_pid_coverage_json(drawing, source)`：来源文件、图纸 UID / 名、两份文件名、对象计数（文件指名的物项 / 发出的 / 没定类的 / 表示）、关系计数（`DwgRepresentationComposition` / `DrawingItems`）、属性值计数（标签值 / 挂上的 / 发出的 / 拼的名字 / 因打架弃的）、`0x0089` 行解码 / 未解数、按类（对象 / 有名字 / 属性值）、没定类而不发的物项清单（UID + `ModelItemType`）、固定一段「本模式从不发什么」（端口 / 工艺点 / 分支点 / 管线、OPC 物项、无 `SymbolAttr` 的仪表、代码表 / 公称直径 / 拼接名、打架的属性）。`DrawingItems` 的计数与写出器走同一个 `published_items` / `drawing_items`，两边不会不一致。
+- **测试**：`pid_writer` 单测 +1（报告每项计数、`left_out` 清单、尾随换行）；`tests/publish_from_pid.rs` +2——CLI `--out-dir` 写出的三个文件与 `write_pid_data_xml` / `write_pid_meta_xml` 的输出逐字节相同、报告可解析且图纸身份 / 表示数对得上；`--out-dir` 旁有 `--out`、或输入是 `.mdf` 时退出 2 且目录不被创建。
+- **验证**（2026-10-10 12:0x 实跑，见 CHANGELOG）：`publish_from_pid` 3 / 3、`publish_xml_cli` 20 / 20、`--lib publish::` 207 / 207；clippy `-D warnings` 两种特性零告警；改动的 4 个 `.rs` rustfmt 干净；missing-docs 0 = 基线。全量数字见 CHANGELOG 本条。
+- **交付**：5 张图写到 `D:\work\cad\PID自研软件验证\publish\`（15 个文件），命令在分析页「导出器实测 → 交付」。
+- 待用户定的仍是上一节 ①–③；另：`_Coverage.json` 的字段名要不要改成中文 / 下游的口径，交付方看过再说。

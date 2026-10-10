@@ -4,6 +4,10 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P5（Q1 (a)：交到目录）**：
+`pid_publish_xml <file.pid> --out-dir DIR` 往目录写 `<图名>_Data.xml`、`<图名>_Meta.xml` 和覆盖报告 `<图名>_Coverage.json`（`publish::pid_writer::write_pid_coverage_json`：来源、图纸身份、各项计数、按类表、没定类而不发的物项清单、本模式从不发什么）；与 `--out` / `--stdout` / `--meta-out` 互斥、非 `.pid` 输入拒绝。
+`pid_writer` 单测 +1、`publish_from_pid` +2；`cargo test --workspace --all-targets` 1 531 → 1 534，`--no-default-features` 1 104 不变，clippy / rustfmt / missing-docs 过。5 张图交付到 `D:\work\cad\PID自研软件验证\publish\`。待用户定的仍是下条 ①–③（68 个无 `SymbolAttr` 的仪表、`--diff-against` 口径、`_Meta.xml` 合成 UID）。
+
 **2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P2–P4（只凭 `.pid` 的导出器落地）**：
 `src/parsers/attribute_rows.rs` 正式解码顶层 `0x0089` 行；`src/publish/pid_load.rs` 只凭 `.pid` 装出图纸 / 物项 / 表示 / 带出处的标签值（`IObject.Name` 按用户批准的两条规则拼；无 `SymbolAttr` 的仪表与 OPC 不定类、不发）；`src/publish/pid_writer.rs` + `pid_publish_xml <file.pid>` 写 `_Data.xml` / `_Meta.xml`，只发文件说了的；`tests/publish_from_pid.rs` 与参考逐块比、错 0、逐图钉数。
 5 图合计对象 2 850 / 6 131（表示 1 823 / 1 823、设备 23 / 23、仪表 219 / 287、管件 264 / 264、管段 341 / 341）、值 2 747（错 0）、关系 3 321 / 8 185；`cargo test --workspace` 1513 → 1532，`--no-default-features` 1086 → 1097，clippy / wasm32 / rustfmt 过。见分析页「导出器实测」与计划 §7。

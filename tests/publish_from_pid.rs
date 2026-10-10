@@ -9,11 +9,16 @@
 //! with the same UID, ends and `DefUID`. Wrong is zero; what is emitted is
 //! pinned per drawing so coverage only moves on purpose. Soft-skips when the
 //! corpus is absent.
+//!
+//! The delivery (P5): `pid_publish_xml <file.pid> --out-dir DIR` writes
+//! `<DocName>_Data.xml`, `<DocName>_Meta.xml` and `<DocName>_Coverage.json`
+//! into `DIR`, and refuses the flag beside `--out` or for a database input.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use pid_parse::publish::{load_publish_from_pid, write_pid_data_xml};
+use pid_parse::publish::{load_publish_from_pid, write_pid_data_xml, write_pid_meta_xml};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
@@ -293,4 +298,81 @@ fn the_pid_alone_export_matches_the_reference_wherever_it_says_anything() {
     if drawings.len() == EXPECTED.len() {
         assert!(moved.is_empty(), "coverage moved: {moved:#?}");
     }
+}
+
+const CLI: &str = env!("CARGO_BIN_EXE_pid_publish_xml");
+
+/// A directory of this process's own under the system temp dir.
+fn unique_out_dir(label: &str) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    std::env::temp_dir().join(format!("pid-parse-{label}-{}-{nanos}", std::process::id()))
+}
+
+#[test]
+fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
+    let Some(drawings) = corpus() else {
+        eprintln!("skip: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
+        return;
+    };
+    let (stem, pid, _) = &drawings[0];
+    let out_dir = unique_out_dir("out-dir");
+    let output = Command::new(CLI)
+        .arg(pid)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .args(["--plant", "P01"])
+        .output()
+        .expect("spawn pid_publish_xml --out-dir");
+    assert!(
+        output.status.success(),
+        "exit {:?}: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let drawing = load_publish_from_pid(pid).expect("the .pid loads");
+    let read = |suffix: &str| {
+        std::fs::read_to_string(out_dir.join(format!("{stem}{suffix}")))
+            .unwrap_or_else(|e| panic!("{stem}{suffix} in {}: {e}", out_dir.display()))
+    };
+    assert_eq!(read("_Data.xml"), write_pid_data_xml(&drawing, "P01"));
+    assert_eq!(
+        read("_Meta.xml"),
+        write_pid_meta_xml(&drawing, "P01").expect("meta renders")
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&read("_Coverage.json")).expect("the report is JSON");
+    assert_eq!(report["drawing"]["uid"], drawing.drawing_uid.as_str());
+    assert_eq!(report["drawing"]["name"], stem.as_str());
+    assert_eq!(
+        report["objects"]["representations"],
+        drawing.representations.len()
+    );
+    assert_eq!(report["files"]["data"], format!("{stem}_Data.xml"));
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn out_dir_is_refused_beside_out_and_for_a_database_input() {
+    let out_dir = unique_out_dir("refused");
+    let beside_out = Command::new(CLI)
+        .args(["drawing.pid", "--out-dir"])
+        .arg(&out_dir)
+        .args(["--out", "drawing_Data.xml"])
+        .output()
+        .expect("spawn pid_publish_xml --out-dir --out");
+    assert_eq!(beside_out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&beside_out.stderr).contains("mutually exclusive"));
+
+    let database = Command::new(CLI)
+        .args(["Export.mdf", "--drawing", "X", "--out-dir"])
+        .arg(&out_dir)
+        .output()
+        .expect("spawn pid_publish_xml <mdf> --out-dir");
+    assert_eq!(database.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&database.stderr).contains(".pid input only"));
+    assert!(!out_dir.exists(), "a refused invocation writes nothing");
 }
