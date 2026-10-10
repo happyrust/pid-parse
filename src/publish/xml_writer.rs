@@ -153,6 +153,22 @@ pub fn write_meta_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
     Ok(buf)
 }
 
+/// `_Meta.xml` for a `.pid` export. The container carries `DocUID` and
+/// `DocName`, which the file states. `DocumentVersion`, `DocumentRevision`,
+/// `File` and the three rels are left out: their UIDs, `DocVersionDate` and
+/// `FilePath` are not in the `.pid`, and a composed UID would not be the one
+/// `SmartPlant` published. The database path keeps [`write_meta_xml`].
+pub(crate) fn write_meta_envelope(
+    drawing: &PublishDrawing,
+    plant_name: &str,
+) -> Result<String, PublishError> {
+    let mut buf = String::with_capacity(512);
+    writeln!(buf, r#"<?xml version ="1.0" encoding="UTF-8"?>"#).map_err(fmt_err)?;
+    write_meta_container_open(&mut buf, drawing, plant_name)?;
+    writeln!(buf, "  </Container>").map_err(fmt_err)?;
+    Ok(buf)
+}
+
 /// Emit every `PublishObject` as the corresponding `SmartPlant` XML
 /// tag (`<PIDProcessVessel>` / `<PIDNozzle>` / ...). Stage-1
 /// handles the four item types the TEST02 A01 fixture exercises

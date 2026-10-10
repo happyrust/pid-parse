@@ -23,7 +23,7 @@ use serde_json::json;
 
 use super::model::{PublishDrawing, PublishError};
 use super::pid_load::{PidPublishDrawing, PidPublishItem, PidValueSource};
-use super::xml_writer::{defuid_prefix, escape_attr, write_meta_xml};
+use super::xml_writer::{defuid_prefix, escape_attr, write_meta_envelope};
 
 const SOFTWARE_VERSION: &str = "10.00.31.0023";
 const SCHEMA_VERSION: &str = "04.02.17.01";
@@ -38,13 +38,14 @@ pub fn write_pid_data_xml(drawing: &PidPublishDrawing, plant_name: &str) -> Stri
     buf
 }
 
-/// Render the `_Meta.xml` companion: the document-versioning envelope of
-/// [`write_meta_xml`] for the drawing's UID and name.
+/// Render the `_Meta.xml` companion. The container states the drawing UID
+/// and name. Version, revision and file objects are not emitted: the `.pid`
+/// does not carry their UIDs, `DocVersionDate` or `FilePath`.
 pub fn write_pid_meta_xml(
     drawing: &PidPublishDrawing,
     plant_name: &str,
 ) -> Result<String, PublishError> {
-    write_meta_xml(
+    write_meta_envelope(
         &PublishDrawing::new(drawing.drawing_uid.clone(), drawing.drawing_name.clone()),
         plant_name,
     )
@@ -411,5 +412,18 @@ mod tests {
             Some(LEFT_OUT_BY_DESIGN.len())
         );
         assert!(text.ends_with("}\n"));
+    }
+
+    #[test]
+    fn a_pid_meta_xml_states_the_drawing_and_does_not_invent_version_objects() {
+        let text = write_pid_meta_xml(&drawing(), "P01").expect("meta");
+        assert!(text.contains(r#"DocUID="D1""#), "{text}");
+        assert!(text.contains(r#"DocName="A &amp; B""#), "{text}");
+        assert!(!text.contains("DocumentVersion"), "{text}");
+        assert!(!text.contains("DocumentRevision"), "{text}");
+        assert!(!text.contains("<File"), "{text}");
+        assert!(!text.contains("DocVersionDate"), "{text}");
+        assert!(!text.contains("FilePath"), "{text}");
+        assert!(!text.contains("<Rel"), "{text}");
     }
 }

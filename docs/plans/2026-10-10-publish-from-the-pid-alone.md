@@ -170,7 +170,11 @@ CLI 是 `pid_publish_xml <mdf> --drawing UID --out … --meta-out … --diff-aga
 - **测试**：`pid_load` 单测 +1（五族目录、大小写与分隔符、不在 `Instrumentation` 下、族名是文件名、空路径）。`tests/publish_from_pid.rs` 五组钉数重钉，与参考逐块比仍是错类 / 错值 / 多发 = 0。对象 / 值 / 关系：I井场 1 459 / 1 405 / 1 695，分离器A 291 / 289 / 335，分离器B 239 / 230 / 274，低温分离器A 317 / 315 / 358，换热器CD 612 / 583 / 727。合计对象 2 918 / 6 131（+68）、值 2 822（+75 = 名字 +25、标签值 +50）、关系 3 389（+68）。按类：在线仪表 72 / 72（名字 27 / 39）、离线仪表 127 / 127（名字 113 / 118）、控制系统功能 88 / 88 不动。按库归类 31 + 2 + 2 + 5 + 28 = 68。没定类的 58 个全是 OPC。
 - **交付**：5 张图重新写入 `D:\work\cad\PID自研软件验证\publish\`（15 个文件）。
 - **验证**：`cargo test --locked --workspace --all-targets` 1 535 过 / 0 败 / 3 忽略（`--lib` 1 171 → 1 172），`--no-default-features` 1 104 过 / 1 忽略；clippy `-D warnings` 两种特性零告警；rustfmt 只报别的会话的 `examples/probe_text_anchor_by_kind.rs`；`cargo rustdoc --lib --locked -- -W missing-docs` 0（顺手把 `sheet_records.rs` 里 3 处本来就失败的私有文档链接改成代码字体）；wasm32 lib 检查过。
-- 待用户定的还是 P2–P4 的 ③（`_Meta.xml` 合成 UID、空的 `DocVersionDate` / `FilePath`）。`_Coverage.json` 字段名的口径仍待交付方看。
+- `_Coverage.json` 字段名的口径仍待交付方看。
+
+### ③ `_Meta.xml`（2026-10-10）
+
+仍发。`.pid` 里有 `DocUID`（`DrawingNo`）和 `DocName`，信封上照写。不发 `DocumentVersion` / `DocumentRevision` / `File` 和三条 `Rel`：这三个对象的 UID、三条关系的 UID、`DocVersionDate`、`FilePath` 都不在文件里（分析页「`_Meta.xml`」一节）。合成 UID 不是 SmartPlant 发布的那个，置空 UID 的对象下游也接不住。`.pid` 文件名在原始字节里，但 `File` 的 UID 不在，所以文件对象也不发。数据库输入的 `write_meta_xml` 一字不改。
 
 ### ② `.pid` 的 `--diff-against` 口径（2026-10-10）
 
