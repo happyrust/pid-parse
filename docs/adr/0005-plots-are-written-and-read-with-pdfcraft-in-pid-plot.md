@@ -1,0 +1,11 @@
+# Plots are written and read with pdfcraft, inside a separate `pid-plot` crate
+
+Status: Accepted (grill-with-docs Q8, Q15-Q17, 2026-10-12)
+
+The Rendered Plot is written, and both it and the Reference Plot are read back for the Plot Comparison, with pdfcraft (`storytold/pdfcraft`, MIT OR Apache-2.0), because the comparison needs a PDF reader as much as a writer and krilla, pdf-writer and printpdf only write. pdfcraft is not on crates.io. `pid-plot` depends on `pdfcraft-cos`, `pdfcraft-content`, `pdfcraft-fonts` and `pdfcraft-render` from git, all pinned at `0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e`. That commit's render crate calls patched hayro and lopdf that live in the same commit's `vendor/` tree. Cargo cannot name a subdirectory of a git dependency, and the crates.io releases do not build against it, so those four trees are mirrored at `vendor/pdfcraft-pin` and applied with `[patch.crates-io]` (`hayro`, `hayro-interpret`, `hayro-syntax`, `lopdf`). The patch does not put them on the parser crate. The workspace lists `members = ["pid-plot"]` only — the root package is an implicit member, and `"."` must not be listed — and excludes `vendor/oxidized-mdf` plus the four mirrored trees. wasm32 and `--no-default-features` stay on `-p pid-parse` in `AGENTS.md`; `ci.yml` has no workspace-wide wasm job. Only `pid-plot` depends on pdfcraft: the parser crate keeps its wasm32 build, its dependency tree and ADR-0001's read-only boundary. One library writing and reading could let a shared mistake agree with itself, so the first extraction of every Reference Plot is checked once against PyMuPDF (I井场: 11,291 line segments, 590 text spans).
+
+## Consequences
+
+- pdfcraft has no vector-drawing API; `pid-plot` assembles pages from `pdfcraft-cos` objects and `pdfcraft-content` operators.
+- `pdfcraft-fonts` embeds only fonts that declare an open licence, whole and unsubset, so phase-one plots carry an open-licence CJK TrueType font (Noto Sans SC / Source Han Sans) of ten megabytes or more; matching the Reference Plot's SimSun, FangSong and Arial Narrow waits for phase two.
+- Re-pinning pdfcraft replaces the git rev and the four mirrored trees under `vendor/pdfcraft-pin` in the same change, then runs the full gate. It is 0.x and moves daily.
