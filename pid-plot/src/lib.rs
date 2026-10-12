@@ -11,10 +11,9 @@
 
 pub mod model;
 pub mod read;
+pub mod write;
 
 /// Confirms the pinned PDF toolchain and the parser are linked into this crate.
-///
-/// Nothing is drawn. Later tickets write and read plots through these crates.
 #[must_use]
 pub fn pdf_toolchain_is_linked() -> bool {
     std::mem::size_of::<pdfcraft_cos::Object>() > 0
