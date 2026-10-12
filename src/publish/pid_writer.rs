@@ -87,6 +87,9 @@ fn write_document(
     for point in &drawing.branch_points {
         write_branch_point(buf, point)?;
     }
+    for port in &drawing.ports {
+        write_port(buf, port)?;
+    }
     let published = published_items(drawing);
     for representation in &drawing.representations {
         writeln!(buf, "   <PIDRepresentation>")?;
@@ -132,6 +135,14 @@ fn write_document(
         // on all 199 reference `DrawingItems` rows whose UID2 ends in `.BPT`.
         write_rel(buf, "DrawingItems", &point.representation_uid, &point.uid)?;
     }
+    for port in &drawing.ports {
+        let def_uid = if port.class == "PIDSignalPort" {
+            "SignalPortComposition"
+        } else {
+            "PipingPortComposition"
+        };
+        write_rel(buf, def_uid, &port.uid, &port.parent_uid)?;
+    }
     writeln!(buf, "  </Container>")
 }
 
@@ -160,6 +171,60 @@ fn write_branch_point(buf: &mut String, point: &PidBranchPoint) -> std::fmt::Res
         writeln!(buf, "      <{interface}/>")?;
     }
     writeln!(buf, "   </{}>", point.class)
+}
+
+fn write_port(buf: &mut String, port: &super::pid_load::PidPort) -> std::fmt::Result {
+    let interfaces: &[&str] = if port.class == "PIDSignalPort" {
+        &[
+            "IConnection",
+            "ISignalConnection",
+            "ISignalPort",
+            "IPipingConnection",
+            "IFacilityPoint",
+            "IPIDTypical",
+        ]
+    } else {
+        &[
+            "IConnection",
+            "IPipingPort",
+            "IPipingConnection",
+            "IPort",
+            "IPipeCrossSectionItem",
+        ]
+    };
+    writeln!(buf, "   <{}>", port.class)?;
+    let name = port
+        .attributes
+        .iter()
+        .find(|attribute| attribute.interface == "IObject" && attribute.name == "Name")
+        .map_or("", |attribute| attribute.value.as_str());
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}" Name="{}"/>"#,
+        escape_attr(&port.uid),
+        escape_attr(name)
+    )?;
+    for interface in interfaces {
+        let mut pairs = String::new();
+        for attribute in port
+            .attributes
+            .iter()
+            .filter(|attribute| attribute.interface == *interface)
+        {
+            write!(
+                pairs,
+                r#" {}="{}""#,
+                attribute.name,
+                escape_attr(&attribute.value)
+            )?;
+        }
+        if pairs.is_empty() {
+            writeln!(buf, "      <{interface}/>")?;
+        } else {
+            writeln!(buf, "      <{interface}{pairs}/>")?;
+        }
+    }
+    writeln!(buf, "   </{}>", port.class)
 }
 
 fn write_item(buf: &mut String, item: &PidPublishItem, class: &str) -> std::fmt::Result {
@@ -305,6 +370,26 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             classes.insert(class, (count, 0, 0));
         }
     }
+    for class in ["PIDPipingPort", "PIDSignalPort"] {
+        let matched: Vec<_> = drawing
+            .ports
+            .iter()
+            .filter(|port| port.class == class)
+            .collect();
+        if matched.is_empty() {
+            continue;
+        }
+        let with_name = matched
+            .iter()
+            .filter(|port| {
+                port.attributes
+                    .iter()
+                    .any(|attribute| attribute.interface == "IObject" && attribute.name == "Name")
+            })
+            .count();
+        let values = matched.iter().map(|port| port.attributes.len()).sum();
+        classes.insert(class, (matched.len(), with_name, values));
+    }
     let left_out: Vec<serde_json::Value> = drawing
         .items
         .iter()
@@ -320,7 +405,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             )
         })
         .collect();
-    let report = json!({
+    let mut report = json!({
         "source": source.display().to_string(),
         "drawing": { "uid": drawing.drawing_uid, "name": drawing.drawing_name },
         "files": {
@@ -358,6 +443,57 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
         "left_out": left_out,
         "left_out_by_design": LEFT_OUT_BY_DESIGN,
     });
+    if let Some(exp) = &drawing.exp {
+        if let Some(list) = report
+            .get_mut("left_out_by_design")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            list[0] = json!(
+                "ports: emitted from the Oracle exp for parents this .pid already publishes; pipelines are still not stated"
+            );
+        }
+        let piping = drawing
+            .ports
+            .iter()
+            .filter(|port| port.class == "PIDPipingPort")
+            .count();
+        let signal = drawing.ports.len() - piping;
+        let backup_rows = drawing
+            .ports
+            .iter()
+            .flat_map(|port| &port.attributes)
+            .filter(|attribute| matches!(attribute.source, PidValueSource::BackupRow { .. }))
+            .count();
+        if let Some(objects) = report
+            .get_mut("objects")
+            .and_then(|value| value.as_object_mut())
+        {
+            objects.insert("piping_ports".to_string(), json!(piping));
+            objects.insert("signal_ports".to_string(), json!(signal));
+        }
+        if let Some(relationships) = report
+            .get_mut("relationships")
+            .and_then(|value| value.as_object_mut())
+        {
+            relationships.insert("PipingPortComposition".to_string(), json!(piping));
+            relationships.insert("SignalPortComposition".to_string(), json!(signal));
+        }
+        if let Some(values) = report
+            .get_mut("attribute_values")
+            .and_then(|value| value.as_object_mut())
+        {
+            values.insert("backup_rows".to_string(), json!(backup_rows));
+        }
+        report["oracle_exp"] = json!({
+            "dump": exp.dump_path,
+            "piping_ports": piping,
+            "signal_ports": signal,
+            "piping_port_composition": piping,
+            "signal_port_composition": signal,
+            "backup_row_values": backup_rows,
+            "nominal_diameter_unspelled": exp.nominal_diameter_unspelled,
+        });
+    }
     let mut text = serde_json::to_string_pretty(&report).unwrap_or_default();
     text.push('\n');
     text
@@ -406,6 +542,8 @@ mod tests {
             ],
             process_points: Vec::new(),
             branch_points: Vec::new(),
+            ports: Vec::new(),
+            exp: None,
             representations: vec![
                 PidPublishRepresentation {
                     uid: "R1".to_string(),

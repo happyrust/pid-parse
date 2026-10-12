@@ -15,7 +15,9 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use super::pid_load::PidPublishDrawing;
+use super::pid_load::{
+    ExpPublish, PidPort, PidPublishAttribute, PidPublishDrawing, PidValueSource,
+};
 
 const CHARSET_AL16UTF16: u16 = 2000;
 const CHARSET_FORM: u16 = 2;
@@ -167,6 +169,131 @@ pub fn ports_for_parents(tables: &PortTables, parents: &HashSet<String>) -> Draw
             .filter(|point| parents.contains(&point.plant_item_id))
             .cloned()
             .collect(),
+    }
+}
+
+/// Spell a flow-direction code the way the reference writes it.
+///
+/// The five codes are the table in
+/// `docs/analysis/n2a-port-relation-filter.md`. Anything else is not written.
+#[must_use]
+pub fn flow_spelling(code: i64) -> Option<&'static str> {
+    match code {
+        1 | 5 => Some("@{23F94152-B87D-11D6-80D4-00A0C92487AF}"),
+        2 => Some("@{23F94146-B87D-11D6-80D4-00A0C92487AF}"),
+        3 => Some("@{23F9414C-B87D-11D6-80D4-00A0C92487AF}"),
+        4 => Some("@{BCB3F097-66CA-487B-9AF4-D8FCF18624A3}"),
+        _ => None,
+    }
+}
+
+/// Spell a nominal-diameter code the way the reference writes it.
+///
+/// Below 5000 the code is millimetres (`25` → `25 mm`). Above 5000,
+/// `(code - 5000) / 32` is inches (`5032` → `1 in`, `5024` → `0.75 in`,
+/// `5384` → `12 in`). A code that does not land on that grid is `None`.
+#[must_use]
+pub fn nominal_spelling(code: i64) -> Option<String> {
+    if (1..5000).contains(&code) {
+        return Some(format!("{code} mm"));
+    }
+    if code <= 5000 {
+        return None;
+    }
+    let ticks = code - 5000;
+    if (ticks * 100) % 32 != 0 {
+        return None;
+    }
+    let hundredths = ticks * 100 / 32;
+    let whole = hundredths / 100;
+    let fraction = hundredths % 100;
+    let body = if fraction == 0 {
+        format!("{whole}")
+    } else if fraction % 10 == 0 {
+        format!("{whole}.{}", fraction / 10)
+    } else {
+        format!("{whole}.{fraction:02}")
+    };
+    Some(format!("{body} in"))
+}
+
+/// Hang the dump's port rows on items [`published_parent_ids`] already emits.
+///
+/// [`super::pid_load::load_publish_from_pid`] itself is unchanged.
+pub fn attach_oracle_ports(
+    drawing: &mut PidPublishDrawing,
+    tables: &PortTables,
+    dump: &std::path::Path,
+) {
+    let parents = published_parent_ids(drawing);
+    let selected = ports_for_parents(tables, &parents);
+    let mut ports = Vec::with_capacity(selected.piping.len() + selected.signal.len());
+    let mut unspelled = 0usize;
+    for point in &selected.piping {
+        if point
+            .nominal_diameter
+            .is_some_and(|code| nominal_spelling(code).is_none())
+        {
+            unspelled += 1;
+        }
+        ports.push(piping_port(point));
+    }
+    for point in &selected.signal {
+        ports.push(signal_port(point));
+    }
+    drawing.ports = ports;
+    drawing.exp = Some(ExpPublish {
+        dump_path: dump.display().to_string(),
+        nominal_diameter_unspelled: unspelled,
+    });
+}
+
+fn backup(table: &'static str, column: &'static str) -> PidValueSource {
+    PidValueSource::BackupRow { table, column }
+}
+
+fn piping_port(point: &PipingPoint) -> PidPort {
+    let mut attributes = vec![PidPublishAttribute {
+        interface: "IObject",
+        name: "Name",
+        value: point.number.to_string(),
+        source: backup("T_PIPINGPOINT", "PIPINGPOINTNUMBER"),
+    }];
+    if let Some(code) = point.flow_direction.and_then(flow_spelling) {
+        attributes.push(PidPublishAttribute {
+            interface: "IConnection",
+            name: "ConnectionFlowDirection",
+            value: code.to_string(),
+            source: backup("T_PIPINGPOINT", "FLOWDIRECTION"),
+        });
+    }
+    if let Some(spelled) = point.nominal_diameter.and_then(nominal_spelling) {
+        attributes.push(PidPublishAttribute {
+            interface: "IPipeCrossSectionItem",
+            name: "NominalDiameter",
+            value: spelled,
+            source: backup("T_PIPINGPOINT", "NOMINALDIAMETER"),
+        });
+    }
+    PidPort {
+        uid: point.uid(),
+        parent_uid: point.plant_item_id.clone(),
+        class: "PIDPipingPort",
+        attributes,
+    }
+}
+
+fn signal_port(point: &SignalPoint) -> PidPort {
+    PidPort {
+        uid: point.uid(),
+        parent_uid: point.plant_item_id.clone(),
+        class: "PIDSignalPort",
+        attributes: vec![PidPublishAttribute {
+            interface: "IObject",
+            name: "Name",
+            value: point.number.to_string(),
+            source: backup("T_SIGNALPOINT", "SIGNALPOINTNUMBER"),
+        }],
     }
 }
 
@@ -509,6 +636,20 @@ fn find_slice(hay: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nominal_and_flow_spellings_match_the_reference() {
+        assert_eq!(nominal_spelling(25).as_deref(), Some("25 mm"));
+        assert_eq!(nominal_spelling(5024).as_deref(), Some("0.75 in"));
+        assert_eq!(nominal_spelling(5032).as_deref(), Some("1 in"));
+        assert_eq!(nominal_spelling(5384).as_deref(), Some("12 in"));
+        assert_eq!(nominal_spelling(0), None);
+        assert_eq!(
+            flow_spelling(3),
+            Some("@{23F9414C-B87D-11D6-80D4-00A0C92487AF}")
+        );
+        assert_eq!(flow_spelling(9), None);
+    }
 
     #[test]
     fn oracle_number_samples() {

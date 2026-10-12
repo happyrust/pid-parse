@@ -18,7 +18,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use pid_parse::publish::{load_publish_from_pid, write_pid_data_xml, write_pid_meta_xml};
+use pid_parse::publish::{
+    load_publish_from_pid, write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml,
+};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
@@ -384,6 +386,112 @@ fn diff_against_a_pid_exits_zero_when_nothing_emitted_is_wrong() {
 }
 
 #[test]
+fn ijingchang_oracle_exp_matches_the_pinned_reference() {
+    let dump = PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");
+    let Some(drawings) = corpus() else {
+        eprintln!("skip: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
+        return;
+    };
+    let Some((_, pid, reference_xml)) =
+        drawings.iter().find(|(stem, ..)| stem.starts_with("I井场"))
+    else {
+        eprintln!("skip: I井场 is not in the corpus");
+        return;
+    };
+    if !dump.is_file() {
+        eprintln!("skip: oracle exp dump is missing");
+        return;
+    }
+    let mut drawing = load_publish_from_pid(pid).expect("the .pid loads");
+    let bytes = std::fs::read(&dump).expect("dump");
+    let tables = pid_parse::publish::oracle_exp::read_port_tables(&bytes).expect("exp rows");
+    pid_parse::publish::oracle_exp::attach_oracle_ports(&mut drawing, &tables, &dump);
+    let generated = read_document(&write_pid_data_xml(&drawing, "P01"));
+    let reference = read_document(&std::fs::read_to_string(reference_xml).expect("reference"));
+    let mut listing = Vec::new();
+    let score = score(&generated, &reference, &mut listing);
+    assert!(
+        listing.is_empty(),
+        "{} findings, first: {:?}",
+        listing.len(),
+        listing.iter().take(8).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        (score.objects, score.values, score.rels),
+        (3_012, 3_182, 3_248)
+    );
+    let piping = generated
+        .objects
+        .values()
+        .filter(|(class, _)| class == "PIDPipingPort")
+        .count();
+    let signal = generated
+        .objects
+        .values()
+        .filter(|(class, _)| class == "PIDSignalPort")
+        .count();
+    assert_eq!((piping, signal), (362, 915));
+    let piping_rels = generated
+        .rels
+        .iter()
+        .filter(|rel| rel.3 == "PipingPortComposition")
+        .count();
+    let signal_rels = generated
+        .rels
+        .iter()
+        .filter(|rel| rel.3 == "SignalPortComposition")
+        .count();
+    assert_eq!((piping_rels, signal_rels), (362, 915));
+    let report: serde_json::Value =
+        serde_json::from_str(&write_pid_coverage_json(&drawing, pid)).expect("coverage json");
+    assert_eq!(report["oracle_exp"]["piping_ports"], 362);
+    assert_eq!(report["oracle_exp"]["signal_ports"], 915);
+    assert_eq!(report["oracle_exp"]["nominal_diameter_unspelled"], 0);
+    assert!(report["left_out_by_design"][0]
+        .as_str()
+        .unwrap_or("")
+        .contains("Oracle exp"));
+}
+
+#[test]
+fn diff_against_oracle_exp_exits_zero_for_ijingchang() {
+    let dump = PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");
+    let Some(drawings) = corpus() else {
+        eprintln!("skip: no <stem>.pid beside a <stem>_Data.xml (set {CORPUS_ENV})");
+        return;
+    };
+    let Some((stem, pid, reference)) = drawings.iter().find(|(stem, ..)| stem.starts_with("I井场"))
+    else {
+        eprintln!("skip: I井场 is not in the corpus");
+        return;
+    };
+    if !dump.is_file() {
+        eprintln!("skip: oracle exp dump is missing");
+        return;
+    }
+    let output = Command::new(CLI)
+        .arg(pid)
+        .arg("--diff-against")
+        .arg(reference)
+        .arg("--oracle-exp")
+        .arg(&dump)
+        .args(["--plant", "P01"])
+        .output()
+        .expect("spawn pid_publish_xml --oracle-exp");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "{stem} exit {:?}\n{stderr}\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        stderr.contains("is clean in oracle-exp mode"),
+        "{stem} stderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn out_dir_is_refused_beside_out_and_for_a_database_input() {
     let out_dir = unique_out_dir("refused");
     let beside_out = Command::new(CLI)
@@ -402,5 +510,20 @@ fn out_dir_is_refused_beside_out_and_for_a_database_input() {
         .expect("spawn pid_publish_xml <mdf> --out-dir");
     assert_eq!(database.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&database.stderr).contains(".pid input only"));
+    let exp_on_database = Command::new(CLI)
+        .args([
+            "Export.mdf",
+            "--drawing",
+            "X",
+            "--out",
+            "x.xml",
+            "--oracle-exp",
+            "Export.dmp",
+        ])
+        .output()
+        .expect("spawn pid_publish_xml <mdf> --oracle-exp");
+    assert_eq!(exp_on_database.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&exp_on_database.stderr)
+        .contains("--oracle-exp applies to a .pid input only"));
     assert!(!out_dir.exists(), "a refused invocation writes nothing");
 }

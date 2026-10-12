@@ -111,6 +111,14 @@ pub enum PidValueSource {
         /// Address of the rule in `EFAdapter.dll`.
         address: &'static str,
     },
+    /// A column of one row in the plant-database backup (`exp`), not a
+    /// value computed from the `.pid`.
+    BackupRow {
+        /// Table the row was read from, e.g. `T_PIPINGPOINT`.
+        table: &'static str,
+        /// Column the value was read from, e.g. `PIPINGPOINTNUMBER`.
+        column: &'static str,
+    },
 }
 
 /// One published attribute value of an item.
@@ -190,6 +198,36 @@ pub struct PidProcessPoint {
     pub source: PidValueSource,
 }
 
+/// One piping or signal port attached from an Oracle `exp` dump.
+///
+/// The `.pid` does not state the point number. [`PidPublishDrawing::ports`]
+/// stays empty unless [`super::oracle_exp::attach_oracle_ports`] ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PidPort {
+    /// Parent UID, a dot, and the point number.
+    pub uid: String,
+    /// `SP_PLANTITEMID`: the published item this port hangs on.
+    pub parent_uid: String,
+    /// `PIDPipingPort` or `PIDSignalPort`.
+    pub class: &'static str,
+    /// `Name`, and for a piping port the flow and nominal diameter when
+    /// the backup states them. Every value is
+    /// [`PidValueSource::BackupRow`].
+    pub attributes: Vec<PidPublishAttribute>,
+}
+
+/// The Oracle `exp` an export was read from.
+///
+/// Absent on a `.pid`-only drawing, and then the coverage report does
+/// not mention a dump.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpPublish {
+    /// Path of the dump, as the caller passed it.
+    pub dump_path: String,
+    /// `NOMINALDIAMETER` codes that did not become a reference spelling.
+    pub nominal_diameter_unspelled: usize,
+}
+
 /// One branch point derived from a point symbol drawn on a run.
 ///
 /// `ConstructUIDForBranchPoint` (`0x5F5CFC10`) is the representation's
@@ -221,6 +259,10 @@ pub struct PidPublishDrawing {
     pub process_points: Vec<PidProcessPoint>,
     /// Branch points derived from point symbols on runs, ordered by UID.
     pub branch_points: Vec<PidBranchPoint>,
+    /// Piping and signal ports from an Oracle `exp`. Empty on a `.pid`-only load.
+    pub ports: Vec<PidPort>,
+    /// Set when [`super::oracle_exp::attach_oracle_ports`] ran.
+    pub exp: Option<ExpPublish>,
     /// Representations, ordered by UID.
     pub representations: Vec<PidPublishRepresentation>,
     /// How much of the file was read.
@@ -802,6 +844,8 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
         items,
         process_points,
         branch_points: branch_points.into_values().collect(),
+        ports: Vec::new(),
+        exp: None,
         representations: representations.into_values().collect(),
         stats,
     })

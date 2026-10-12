@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### publish 用 `--oracle-exp` 发出 I井场端口和 `PPC` / `SPC`（2026-10-12，N5-2）
+
+计划 `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-2（t-1967）。`load_publish_from_pid` 不变。`--oracle-exp <dump>` 把 N5-1 挑出的行挂上再写。不给这个参数时输出与原来逐字节相同。
+
+- 端口 UID 是父 UID 加 `.` 加点号，`IObject.Name` 是点号。管道端口的流向写成 `@{GUID}`（序号 1 和 5、2、3、4），空就不写。公称直径：小于 5000 是 `{代码} mm`，大于 5000 是 `(代码 − 5000) / 32` 英寸（`5032` → `1 in`，`5024` → `0.75 in`，`5384` → `12 in`），对不上参考写法的不写并计数。信号端口只有 `Name`。出处是 `PidValueSource::BackupRow { table, column }`，不记成 `DerivedByNativeRule`。
+- `PIDPipingPort` 的接口是 `IObject`、`IConnection`、`IPipingPort`、`IPipingConnection`、`IPort`、`IPipeCrossSectionItem`。`PIDSignalPort` 的接口是 `IObject`、`IConnection`、`ISignalConnection`、`ISignalPort`、`IPipingConnection`、`IFacilityPoint`、`IPIDTypical`。关系 `PPC-{端口}-{父}` / `SPC-{端口}-{父}`，`UID1` 是端口，`UID2` 是父。
+- I井场 exp 模式：对象 3 012、值 3 182、关系 3 248，错类 / 错值 / 多发 0。管道端口 362、信号端口 915，`PPC` / `SPC` 各 362 / 915。没换算出来的公称直径 0。`.pid` 模式五组钉数不动。另外 4 张图的 `publish\` 文件没有重写。
+- 验证（2026-10-12 实跑）：`pid_publish_xml --oracle-exp --diff-against --plant P01` 退出 0，clean 行 `3012 objects, 3182 values, 3248 rels`，extra / wrong class / different / not in reference 都是 0。`publish\` 的 I井场三件与临时目录输出 SHA256 相同（20:51:39）。另外 4 张图三件时间戳仍是 11:40:21。`cargo test --locked --workspace --lib --bins --tests` 退出 101（1 556 过 / 1 败 / 3 忽略，`--lib` 1 185，`publish_from_pid` 6 / 6）。那 1 败是别人未提交的 `pid-plot` `five_drawings_round_trip_through_pdf`（span 37 对 36），本单没改。`--no-default-features` 的 `-p pid-parse --lib --bins --tests` 0 败（1 094 过 / 1 忽略）。clippy `-D warnings`：`-p pid-parse` 两种特性零告警；`--workspace` 退出 101，告警是已提交的 `pid-plot/src/compare.rs:794`（`150ab41`）。改动的 `.rs` rustfmt 干净。`cargo rustdoc --lib --locked -p pid-parse -- -W missing-docs` 0。wasm32 lib check 过。`--all-targets` 测试 NOT RUN：`--no-run` 退出 0，example 是别的会话的文件，本单不跑。
+
 ### publish 从 Oracle exp 读出端口行，还不写 XML（2026-10-12，N5-1）
 
 计划 `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-1（t-1966）。`src/publish/oracle_exp.rs`。行格式同 `examples/probe_oracle_exp_rows.rs` 与 `docs/analysis/n5-exp-rows.md`。

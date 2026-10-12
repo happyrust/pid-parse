@@ -4,6 +4,9 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-12 · 计划 `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-2（t-1967）**：
+`pid_publish_xml --oracle-exp` 把 I井场端口写成 `PIDPipingPort` / `PIDSignalPort` 和 `PPC` / `SPC`。对象 3 012、值 3 182、关系 3 248，错 0。端口 1 277，组成关系 1 277。Q1 / Q3 / Q4 选 (a)。不给参数时 `.pid` 模式钉数不动。`--diff-against --oracle-exp` 退出 0。I井场 `publish\` 三件时间戳 20:51:39，与临时目录输出 SHA256 相同。另外 4 张图三件仍是 11:40:21。`cargo test --locked --workspace --lib --bins --tests` 1 556 过 / 1 败 / 3 忽略（`--lib` 1 185，`publish_from_pid` 6 / 6）；那 1 败是别人未提交的 `pid-plot` `five_drawings_round_trip_through_pdf`。`--no-default-features` 1 094 过 / 1 忽略。clippy：`-p pid-parse` 两种特性零告警；`--workspace` 被 `pid-plot/src/compare.rs:794` 挡住。wasm32 lib 过。`--all-targets` 测试 NOT RUN（`--no-run` 退出 0）。
+
 **2026-10-12 · 计划 `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-1（t-1966）**：
 Oracle exp 的端口行读进 `src/publish/oracle_exp.rs`，不写 XML。`APPLICATIONS` 钉不住就不读后面的表。全表管道点 9 628、信号点 22 057。I井场按已发物项挑出管道 362、信号 915，UID 与参考错 0，多发 0。Q2 选 (a)。`cargo test --locked --workspace --lib --bins --tests` 1 538 过 / 3 忽略（`--lib` 1 184，`publish_from_pid` 4 / 4）；`--no-default-features` 1 094 过 / 1 忽略（`--lib` 850）。clippy 两种特性零告警。wasm32 lib 过。`--all-targets` 测试 NOT RUN（`--no-run` 退出 0，example 是别的会话未提交的文件）。
 

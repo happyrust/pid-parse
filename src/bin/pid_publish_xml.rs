@@ -80,6 +80,9 @@ struct CliOptions {
     /// output to produce.
     list_drawings: bool,
     verbose: bool,
+    /// Oracle conventional `exp` dump. `.pid` input only. Ports whose
+    /// parent this file already publishes are emitted from it.
+    oracle_exp: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,7 +98,8 @@ fn print_usage() {
          \x20               [--style a01|dwg]\n\
          \x20  pid_publish_xml <mdf> --list-drawings\n\
          \x20  pid_publish_xml <file.pid> [--out FILE | --stdout | --out-dir DIR]\n\
-         \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\n\
+         \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
+         \x20               [--oracle-exp FILE]\n\n\
          A .pid input is read on its own, with no plant database: it is one\n\
          drawing, so --drawing / --style / --list-drawings do not apply, and\n\
          only what the file states is written (no derived ports, pipelines or\n\
@@ -116,7 +120,12 @@ fn print_usage() {
          \x20                   variety differs. A .pid input scores emitted objects,\n\
          \x20                   values and Rels: one the reference does not carry\n\
          \x20                   exits 1. Classes this mode does not publish are not\n\
-         \x20                   MISSING.\n\
+         \x20                   MISSING. With --oracle-exp the clean line says\n\
+         \x20                   oracle-exp mode.\n\
+         --oracle-exp FILE   .pid input only: read piping and signal ports from\n\
+         \x20                   an Oracle exp dump and emit them for parents this\n\
+         \x20                   file already publishes. Without it the output is\n\
+         \x20                   the .pid alone.\n\
          --plant NAME        Plant value for the <Container> root attribute\n\
          \x20                   (default: \"P01\" — override with the real plant).\n\
          --style a01|dwg     Pick the IObject attribute convention used in the\n\
@@ -158,6 +167,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut style: Option<PublishStyle> = None;
     let mut list_drawings = false;
     let mut verbose = false;
+    let mut oracle_exp: Option<PathBuf> = None;
 
     let mut i = 2;
     while i < args.len() {
@@ -232,6 +242,13 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 verbose = true;
                 i += 1;
             }
+            "--oracle-exp" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--oracle-exp requires a path".to_string())?;
+                oracle_exp = Some(PathBuf::from(value));
+                i += 2;
+            }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
@@ -244,6 +261,9 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     };
 
     let pid_input = is_pid_path(&input_path);
+    if oracle_exp.is_some() && !pid_input {
+        return Err("--oracle-exp applies to a .pid input only".into());
+    }
     if pid_input && (list_drawings || drawing_uid.is_some()) {
         return Err(
             "a .pid input is one drawing: --list-drawings and --drawing do not apply".into(),
@@ -310,6 +330,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         style: style.unwrap_or_default(),
         list_drawings,
         verbose,
+        oracle_exp,
     })
 }
 
@@ -413,8 +434,15 @@ fn run(options: CliOptions) -> Result<i32, String> {
 /// `.pid` input: read the drawing from the file alone and write only what
 /// it states.
 fn run_pid(options: &CliOptions) -> Result<i32, String> {
-    let drawing = load_publish_from_pid(&options.input_path)
+    let mut drawing = load_publish_from_pid(&options.input_path)
         .map_err(|e| format!("read {}: {e}", options.input_path.display()))?;
+    if let Some(dump_path) = &options.oracle_exp {
+        let dump =
+            std::fs::read(dump_path).map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let tables = pid_parse::publish::oracle_exp::read_port_tables(&dump)
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        pid_parse::publish::oracle_exp::attach_oracle_ports(&mut drawing, &tables, dump_path);
+    }
     let xml = write_pid_data_xml(&drawing, &options.plant_name);
     let classified = drawing
         .items
@@ -467,7 +495,7 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         }
     }
     match &options.diff_against {
-        Some(ref_path) => report_pid_diff(ref_path, &xml),
+        Some(ref_path) => report_pid_diff(ref_path, &xml, options.oracle_exp.is_some()),
         None => Ok(0),
     }
 }
@@ -491,14 +519,15 @@ fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
 /// Print the `.pid` export's object / value / rel score. Absence of a class
 /// this mode does not publish is not a finding; an emitted object, value or
 /// rel the reference does not carry exits 1.
-fn report_pid_diff(ref_path: &Path, xml: &str) -> Result<i32, String> {
+fn report_pid_diff(ref_path: &Path, xml: &str, oracle_exp: bool) -> Result<i32, String> {
     let reference = std::fs::read_to_string(ref_path)
         .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
     let diff = diff_pid_export(xml, &reference);
     print!("{diff}");
     if diff.is_clean() {
+        let mode = if oracle_exp { "oracle-exp" } else { ".pid" };
         eprintln!(
-            "Semantic diff against {} is clean in .pid mode ({} objects, {} values, {} rels).",
+            "Semantic diff against {} is clean in {mode} mode ({} objects, {} values, {} rels).",
             ref_path.display(),
             diff.objects,
             diff.values,

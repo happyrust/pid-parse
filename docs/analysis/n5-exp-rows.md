@@ -94,3 +94,13 @@ cargo run --example probe_oracle_exp_rows
 行格式没改，搬进 `src/publish/oracle_exp.rs`。`APPLICATIONS` 钉不住就不读 `T_PIPINGPOINT` / `T_SIGNALPOINT`。对外是管道点四列（流向和公称直径可空）和信号点两列，再按已发物项的 UID 集合挑一张图。不写 XML。
 
 库侧实跑（`ijingchang_ports_match_the_reference`）：全表 9 628 / 22 057；I井场管道 362、信号 915；UID 错 0；多发 0。上面各节的探针数字没有重跑。
+
+## 导出器实测（2026-10-12，t-1967）
+
+`pid_publish_xml <I井场.pid> --oracle-exp Export.dmp`。父项仍是 `.pid` 已发出的物项。流向本图只实测了序号 2 和 3；1、4、5 的 `@{GUID}` 按 n2a 的表写，这张图没有出现。
+
+- 对象 3 012、值 3 182、关系 3 248。错类 / 错值 / 多发 0。
+- `PIDPipingPort` 362、`PIDSignalPort` 915。`PipingPortComposition` 362、`SignalPortComposition` 915。
+- 公称直径没拼出来的代码：0。
+- 不给 `--oracle-exp` 时五组钉数仍是 N4-3 末态（I井场 1 735 / 1 530 / 1 971）。另外 4 张图没有重写。
+- 2026-10-12 收尾实跑：`--diff-against --oracle-exp` 退出 0（3 012 / 3 182 / 3 248，错类 / 错值 / 多发 0）。`publish\` 里 I井场三件与这次临时目录输出逐字节相同，时间戳仍是 20:51:39。另外 4 张图三件时间戳仍是 11:40:21。
