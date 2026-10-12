@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### publish 用 `--oracle-exp` 发出 I井场的六种连通关系（2026-10-13，N7）
+
+分析页 `docs/analysis/n7-connectivity-rows.md`（t-22 的「拼两端」加本次的「定 DefUID」）。探针 `examples/probe_oracle_exp_connectivity.rs` 多打一段 `rule=item_both_sides_is_tap`。`load_publish_from_pid` 不变；不给 `--oracle-exp` 时输出与原来逐字节相同。
+
+- 两端：`T_CONNECTOR` 行的表示在本图、物项在 `T_PIPERUN` / `T_SIGNALRUN` 的，段是 `UID2`；`SP_CONNECTITEM1ID` + `STARTOBJECT`（起始侧）和 `SP_CONNECTITEM2ID` + `ENDOBJECT`（结束侧）各拼一个符号端 `UID1`：点表里的端口 `父项.点号`、段上的表示 `表示.BPT`、OPC 取一对 Id 里字典序较小的。I井场 738 对，与参考多 0 缺 0。
+- 定义：按符号端的物项（端口的父项；`.BPT` 和 OPC 是自己）并同一段上的侧别。两侧都出现过的物项，它与该段的每一对都是 `PipingTapOrFitting` / `SignalTapOrFitting`；只在起始侧是 `*End1Conn`，只在结束侧是 `*End2Conn`；管道 / 信号按段的表。738 对的定义与参考逐条相同，错 0（`PTF` 369、`PE1` 129、`PE2` 143、`SE1` 38、`SE2` 46、`STF` 13）。这就是 `sub_5F5E7A80` 问连接对象要的那个端序号：段穿过的物项不在端点上（`0xFFFF`）取 Tap 名。
+- 写出：`pid_writer` 只写两端都是本图已发出对象的，`UID1` 符号端、`UID2` 段，UID 前缀按 `FillUpRelDefArray`（`SE1` / `SE2` / `STF` / `ITN` 补进 `defuid_prefix`）。I井场写出 736 条（`PE1` 128、`PE2` 142，其余同参考），留下 2 条 OPC 端的：那两个 `PIDBranchPoint` 本导出不发。覆盖报告 `relationships` 下按六种定义计数；`oracle_exp.connectivity_ends` 738、`connectivity_rels` 736、`connectivity_ends_left_out` 2。
+- I井场 exp 模式：对象 3 012、值 3 182、关系 3 248 → 3 984，错类 / 错值 / 多发 0。`.pid` 模式五组钉数不动。`publish\` 的 I井场三件已重写（01:18:31），另外 4 张图三件未动（11:40:21）。
+- 验证（2026-10-13 实跑）：`pid_publish_xml --oracle-exp --diff-against --plant P01` 退出 0，clean 行 `3012 objects, 3182 values, 3984 rels`，stderr `738 pairs, 736 written as <Rel>, 2 left out`。`cargo test --locked --workspace --lib --bins --tests` 退出 101（1 564 过 / 1 败 / 3 忽略，`--lib` 1 189，`publish_from_pid` 6 / 6）；那 1 败仍是别人未提交的 `pid-plot` `five_drawings_round_trip_through_pdf`，本单没改 pid-plot。`-p pid-parse --no-default-features --lib --bins --tests` 0 败（1 094 过 / 1 忽略，`--lib` 850）。clippy `-D warnings`：`-p pid-parse` 两种特性的 lib / bins / tests 零告警，探针 example 同样。改动的 7 个 `.rs` `rustfmt --check --edition 2021` 干净。`cargo rustdoc --lib --locked -p pid-parse -- -W missing-docs` 0。`cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` 过。`--all-targets` 测试 NOT RUN：`--no-run` 退出 0（唯一告警是已提交的 `pid-plot/src/compare.rs:794`），example 是别的会话的文件，本单只跑了 N7 这一个探针。
+
 ### publish 用 `--oracle-exp` 发出 I井场端口和 `PPC` / `SPC`（2026-10-12，N5-2）
 
 计划 `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-2（t-1967）。`load_publish_from_pid` 不变。`--oracle-exp <dump>` 把 N5-1 挑出的行挂上再写。不给这个参数时输出与原来逐字节相同。

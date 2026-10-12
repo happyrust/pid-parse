@@ -198,6 +198,32 @@ pub struct PidProcessPoint {
     pub source: PidValueSource,
 }
 
+/// One connectivity relationship from `T_CONNECTOR`.
+///
+/// `symbol_uid` is the reference `UID1` (a port, a `.BPT`, or the lesser
+/// OPC id). `run_uid` is the reference `UID2` (`T_PIPERUN` or
+/// `T_SIGNALRUN`). `def_uid` is decided by the symbol's item, not by the
+/// pair alone: an item the run passes through has points on both the
+/// start and the end side of that run's connectors and every pair of it
+/// is `TapOrFitting`; an item seen on one side only is the run's
+/// `End1Conn` (start side) or `End2Conn` (end side)
+/// (`docs/analysis/n7-connectivity-rows.md`, "定 `DefUID`"). The XML
+/// writer emits the `<Rel>` when both ends are published objects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectivityEnd {
+    /// Port, branch point, or OPC uid.
+    pub symbol_uid: String,
+    /// Pipe-run or signal-run uid.
+    pub run_uid: String,
+    /// The pair was seen on `SP_CONNECTITEM1ID` + `STARTOBJECT`.
+    pub on_start: bool,
+    /// The pair was seen on `SP_CONNECTITEM2ID` + `ENDOBJECT`.
+    pub on_end: bool,
+    /// `PipingTapOrFitting`, `PipingEnd1Conn`, `PipingEnd2Conn`,
+    /// `SignalTapOrFitting`, `SignalEnd1Conn` or `SignalEnd2Conn`.
+    pub def_uid: &'static str,
+}
+
 /// One piping or signal port attached from an Oracle `exp` dump.
 ///
 /// The `.pid` does not state the point number. [`PidPublishDrawing::ports`]
@@ -261,6 +287,10 @@ pub struct PidPublishDrawing {
     pub branch_points: Vec<PidBranchPoint>,
     /// Piping and signal ports from an Oracle `exp`. Empty on a `.pid`-only load.
     pub ports: Vec<PidPort>,
+    /// Connectivity relationships from an Oracle `exp`. Empty until
+    /// [`super::oracle_exp::connectivity_ends_for_drawing`] runs. Written as
+    /// `<Rel>` when both ends are published objects.
+    pub connectivity_ends: Vec<ConnectivityEnd>,
     /// Set when [`super::oracle_exp::attach_oracle_ports`] ran.
     pub exp: Option<ExpPublish>,
     /// Representations, ordered by UID.
@@ -845,6 +875,7 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
         process_points,
         branch_points: branch_points.into_values().collect(),
         ports: Vec::new(),
+        connectivity_ends: Vec::new(),
         exp: None,
         representations: representations.into_values().collect(),
         stats,

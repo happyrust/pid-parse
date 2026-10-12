@@ -2625,7 +2625,7 @@ fn classify_relationship(rel: &PublishRelationship, type_by_uid: &HashMap<&str, 
 /// Prefix used when composing the `<Rel><IObject UID="...">`
 /// value from UID1 / UID2. Matches the SPPID reference convention:
 /// `DRC-` / `DRI-` / `EQC-` / `PCN-` / `PE1-` / `PE2-` /
-/// `PPC-` / `PTF-` / `SPC-` / `PRP-`.
+/// `PPC-` / `PTF-` / `SPC-` / `PRP-` / `SE1-` / `SE2-` / `STF-` / `ITN-`.
 pub(crate) fn defuid_prefix(def_uid: &str) -> &'static str {
     match def_uid {
         "DwgRepresentationComposition" => "DRC",
@@ -2638,6 +2638,12 @@ pub(crate) fn defuid_prefix(def_uid: &str) -> &'static str {
         "PipingTapOrFitting" => "PTF",
         "SignalPortComposition" => "SPC",
         "ProcessPointCollection" => "PRP",
+        // `FillUpRelDefArray` (`docs/analysis/n2a-port-relation-filter.md`,
+        // question 2): the signal counterparts and item notes.
+        "SignalEnd1Conn" => "SE1",
+        "SignalEnd2Conn" => "SE2",
+        "SignalTapOrFitting" => "STF",
+        "PBSItemNotes" => "ITN",
         _ => "REL",
     }
 }

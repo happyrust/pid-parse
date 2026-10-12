@@ -4,6 +4,9 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-13 · 分析页 `docs/analysis/n7-connectivity-rows.md` N7（t-22 拼两端 + 定 DefUID）**：
+`pid_publish_xml --oracle-exp` 把 I井场的 `PipingTapOrFitting` / `PipingEnd1Conn` / `PipingEnd2Conn` / `SignalEnd1Conn` / `SignalEnd2Conn` / `SignalTapOrFitting` 写成 `<Rel>`。定义按符号端的物项在同一段两侧是否都出现：都出现是 Tap，只在起始侧 End1，只在结束侧 End2。738 对定义与参考逐条相同，错 0；写出 736（2 条 OPC 端的对象本导出不发）。关系 3 248 → 3 984，对象 / 值不动，`--diff-against --oracle-exp` 退出 0。I井场 `publish\` 三件已重写（01:18:31），另外 4 张图三件仍是 11:40:21。`cargo test --locked --workspace --lib --bins --tests` 1 564 过 / 1 败 / 3 忽略（`--lib` 1 189，`publish_from_pid` 6 / 6）；那 1 败仍是别人未提交的 `pid-plot` `five_drawings_round_trip_through_pdf`。`--no-default-features` 1 094 过 / 1 忽略。clippy `-p pid-parse` 两种特性零告警，探针 example 同样。rustfmt 干净。rustdoc missing-docs 0。wasm32 lib 过。`--all-targets` 测试 NOT RUN（`--no-run` 退出 0）。
+
 **2026-10-12 · 计划 `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-2（t-1967）**：
 `pid_publish_xml --oracle-exp` 把 I井场端口写成 `PIDPipingPort` / `PIDSignalPort` 和 `PPC` / `SPC`。对象 3 012、值 3 182、关系 3 248，错 0。端口 1 277，组成关系 1 277。Q1 / Q3 / Q4 选 (a)。不给参数时 `.pid` 模式钉数不动。`--diff-against --oracle-exp` 退出 0。I井场 `publish\` 三件时间戳 20:51:39，与临时目录输出 SHA256 相同。另外 4 张图三件仍是 11:40:21。`cargo test --locked --workspace --lib --bins --tests` 1 556 过 / 1 败 / 3 忽略（`--lib` 1 185，`publish_from_pid` 6 / 6）；那 1 败是别人未提交的 `pid-plot` `five_drawings_round_trip_through_pdf`。`--no-default-features` 1 094 过 / 1 忽略。clippy：`-p pid-parse` 两种特性零告警；`--workspace` 被 `pid-plot/src/compare.rs:794` 挡住。wasm32 lib 过。`--all-targets` 测试 NOT RUN（`--no-run` 退出 0）。
 

@@ -31,7 +31,7 @@
 //! Exit codes: 0 = wrote document, 1 = I/O / format error, 2 =
 //! usage error.
 
-use pid_parse::publish::pid_writer::derived_by_native_rule_count;
+use pid_parse::publish::pid_writer::{connectivity_rel_counts, derived_by_native_rule_count};
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
     diff_pid_export, diff_publish_xml, diff_rel_defuids, load_drawing_graph, load_publish_from_pid,
@@ -442,6 +442,17 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         let tables = pid_parse::publish::oracle_exp::read_port_tables(&dump)
             .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
         pid_parse::publish::oracle_exp::attach_oracle_ports(&mut drawing, &tables, dump_path);
+        drawing.connectivity_ends = pid_parse::publish::oracle_exp::connectivity_ends_for_drawing(
+            &dump,
+            &drawing.drawing_uid,
+        )
+        .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let (written, left_out) = connectivity_rel_counts(&drawing);
+        eprintln!(
+            "oracle-exp connectivity: {} pairs, {written} written as <Rel>, \
+             {left_out} left out because an end is not a published object",
+            drawing.connectivity_ends.len()
+        );
     }
     let xml = write_pid_data_xml(&drawing, &options.plant_name);
     let classified = drawing

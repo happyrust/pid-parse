@@ -11,6 +11,9 @@
 //! `{prefix}-{UID1}-{UID2}` UIDs `SmartPlant` gives them. Items whose class the
 //! file does not decide are left out, and so are their `DrawingItems`. The
 //! `<Container>` envelope constants are `SmartPlant`'s, not the file's.
+//! With an Oracle `exp` attached, the ports, their compositions and the
+//! six connectivity definitions ([`PidPublishDrawing::connectivity_ends`])
+//! follow, the latter only between two published objects.
 //!
 //! [`write_pid_coverage_json`] renders the report that goes beside the two
 //! documents (plan P5): what the file named, what was written, what was left
@@ -23,7 +26,9 @@ use std::path::Path;
 use serde_json::json;
 
 use super::model::{PublishDrawing, PublishError};
-use super::pid_load::{PidBranchPoint, PidPublishDrawing, PidPublishItem, PidValueSource};
+use super::pid_load::{
+    ConnectivityEnd, PidBranchPoint, PidPublishDrawing, PidPublishItem, PidValueSource,
+};
 use super::xml_writer::{defuid_prefix, escape_attr, write_meta_envelope};
 
 const SOFTWARE_VERSION: &str = "10.00.31.0023";
@@ -143,7 +148,52 @@ fn write_document(
         };
         write_rel(buf, def_uid, &port.uid, &port.parent_uid)?;
     }
+    for end in connectivity_rels(drawing) {
+        // UID1 is the symbol end (port, branch point or OPC), UID2 the
+        // run. Measured on all 738 reference rows of the six definitions.
+        write_rel(buf, end.def_uid, &end.symbol_uid, &end.run_uid)?;
+    }
     writeln!(buf, "  </Container>")
+}
+
+/// The connectivity relationships the `_Data.xml` carries: those whose
+/// symbol end and run end are both published objects.
+fn connectivity_rels(drawing: &PidPublishDrawing) -> Vec<&ConnectivityEnd> {
+    if drawing.connectivity_ends.is_empty() {
+        return Vec::new();
+    }
+    let objects = published_objects(drawing);
+    drawing
+        .connectivity_ends
+        .iter()
+        .filter(|end| {
+            objects.contains(end.symbol_uid.as_str()) && objects.contains(end.run_uid.as_str())
+        })
+        .collect()
+}
+
+/// Every object UID the `_Data.xml` carries besides the drawing: the
+/// classified items, the process points, the branch points and the ports.
+fn published_objects(drawing: &PidPublishDrawing) -> BTreeSet<&str> {
+    let mut objects = published_items(drawing);
+    objects.extend(
+        drawing
+            .process_points
+            .iter()
+            .map(|point| point.uid.as_str()),
+    );
+    objects.extend(drawing.branch_points.iter().map(|point| point.uid.as_str()));
+    objects.extend(drawing.ports.iter().map(|port| port.uid.as_str()));
+    objects
+}
+
+/// Connectivity relationships written, and the ones held back because an
+/// end is not a published object. The same two numbers are
+/// `oracle_exp.connectivity_rels` / `oracle_exp.connectivity_ends_left_out`
+/// in [`write_pid_coverage_json`].
+pub fn connectivity_rel_counts(drawing: &PidPublishDrawing) -> (usize, usize) {
+    let written = connectivity_rels(drawing).len();
+    (written, drawing.connectivity_ends.len() - written)
 }
 
 fn write_branch_point(buf: &mut String, point: &PidBranchPoint) -> std::fmt::Result {
@@ -471,12 +521,20 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             objects.insert("piping_ports".to_string(), json!(piping));
             objects.insert("signal_ports".to_string(), json!(signal));
         }
+        let written = connectivity_rels(drawing);
+        let mut by_def: BTreeMap<&str, usize> = BTreeMap::new();
+        for end in &written {
+            *by_def.entry(end.def_uid).or_default() += 1;
+        }
         if let Some(relationships) = report
             .get_mut("relationships")
             .and_then(|value| value.as_object_mut())
         {
             relationships.insert("PipingPortComposition".to_string(), json!(piping));
             relationships.insert("SignalPortComposition".to_string(), json!(signal));
+            for (def_uid, count) in &by_def {
+                relationships.insert((*def_uid).to_string(), json!(count));
+            }
         }
         if let Some(values) = report
             .get_mut("attribute_values")
@@ -492,6 +550,9 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "signal_port_composition": signal,
             "backup_row_values": backup_rows,
             "nominal_diameter_unspelled": exp.nominal_diameter_unspelled,
+            "connectivity_ends": drawing.connectivity_ends.len(),
+            "connectivity_rels": written.len(),
+            "connectivity_ends_left_out": drawing.connectivity_ends.len() - written.len(),
         });
     }
     let mut text = serde_json::to_string_pretty(&report).unwrap_or_default();
@@ -543,6 +604,7 @@ mod tests {
             process_points: Vec::new(),
             branch_points: Vec::new(),
             ports: Vec::new(),
+            connectivity_ends: Vec::new(),
             exp: None,
             representations: vec![
                 PidPublishRepresentation {
@@ -753,5 +815,55 @@ mod tests {
         assert_eq!(report["classes"]["PIDPipingBranchPoint"]["objects"], 1);
         assert_eq!(report["classes"]["PIDSignalBranchPoint"]["objects"], 1);
         assert_eq!(report["attribute_values"]["derived_by_native_rule"], 2);
+    }
+
+    #[test]
+    fn a_connectivity_rel_is_written_only_between_two_published_objects() {
+        use crate::publish::pid_load::{ConnectivityEnd, ExpPublish, PidPort};
+        let mut drawing = drawing();
+        drawing.items.push(PidPublishItem {
+            uid: "RUN".to_string(),
+            model_item_type: "PipeRun".to_string(),
+            class: Some("PIDPipingConnector"),
+            attributes: Vec::new(),
+        });
+        drawing.ports.push(PidPort {
+            uid: "I1.1".to_string(),
+            parent_uid: "I1".to_string(),
+            class: "PIDPipingPort",
+            attributes: Vec::new(),
+        });
+        drawing.exp = Some(ExpPublish {
+            dump_path: "Export.dmp".to_string(),
+            nominal_diameter_unspelled: 0,
+        });
+        let end = |symbol: &str, run: &str, def_uid| ConnectivityEnd {
+            symbol_uid: symbol.to_string(),
+            run_uid: run.to_string(),
+            on_start: true,
+            on_end: false,
+            def_uid,
+        };
+        drawing.connectivity_ends = vec![
+            end("I1.1", "RUN", "PipingEnd1Conn"),
+            // The symbol end is not a published object: held back.
+            end("OPC", "RUN", "PipingEnd2Conn"),
+            // The run is not a published object: held back.
+            end("I1.1", "I2", "PipingTapOrFitting"),
+        ];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(xml.contains(
+            "   <Rel>\n      <IObject UID=\"PE1-I1.1-RUN\"/>\n      <IRel UID1=\"I1.1\" UID2=\"RUN\" DefUID=\"PipingEnd1Conn\"/>\n   </Rel>\n"
+        ));
+        assert!(!xml.contains("UID1=\"OPC\""), "{xml}");
+        assert!(!xml.contains("DefUID=\"PipingTapOrFitting\""), "{xml}");
+        assert_eq!(connectivity_rel_counts(&drawing), (1, 2));
+        let text = write_pid_coverage_json(&drawing, Path::new("a.pid"));
+        let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(report["relationships"]["PipingEnd1Conn"], 1);
+        assert!(report["relationships"].get("PipingEnd2Conn").is_none());
+        assert_eq!(report["oracle_exp"]["connectivity_ends"], 3);
+        assert_eq!(report["oracle_exp"]["connectivity_rels"], 1);
+        assert_eq!(report["oracle_exp"]["connectivity_ends_left_out"], 2);
     }
 }

@@ -406,6 +406,9 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     let bytes = std::fs::read(&dump).expect("dump");
     let tables = pid_parse::publish::oracle_exp::read_port_tables(&bytes).expect("exp rows");
     pid_parse::publish::oracle_exp::attach_oracle_ports(&mut drawing, &tables, &dump);
+    drawing.connectivity_ends =
+        pid_parse::publish::oracle_exp::connectivity_ends_for_drawing(&bytes, &drawing.drawing_uid)
+            .expect("exp connectivity");
     let generated = read_document(&write_pid_data_xml(&drawing, "P01"));
     let reference = read_document(&std::fs::read_to_string(reference_xml).expect("reference"));
     let mut listing = Vec::new();
@@ -416,9 +419,27 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
         listing.len(),
         listing.iter().take(8).collect::<Vec<_>>()
     );
+    // N7: the 738 connectivity pairs less the 2 whose symbol end is an OPC
+    // branch point this export does not publish.
     assert_eq!(
         (score.objects, score.values, score.rels),
-        (3_012, 3_182, 3_248)
+        (3_012, 3_182, 3_984)
+    );
+    let rels_of = |def_uid: &str| generated.rels.iter().filter(|rel| rel.3 == def_uid).count();
+    assert_eq!(
+        [
+            rels_of("PipingTapOrFitting"),
+            rels_of("PipingEnd1Conn"),
+            rels_of("PipingEnd2Conn"),
+            rels_of("SignalEnd1Conn"),
+            rels_of("SignalEnd2Conn"),
+            rels_of("SignalTapOrFitting"),
+        ],
+        [369, 128, 142, 38, 46, 13]
+    );
+    assert_eq!(
+        pid_parse::publish::pid_writer::connectivity_rel_counts(&drawing),
+        (736, 2)
     );
     let piping = generated
         .objects
@@ -447,6 +468,10 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert_eq!(report["oracle_exp"]["piping_ports"], 362);
     assert_eq!(report["oracle_exp"]["signal_ports"], 915);
     assert_eq!(report["oracle_exp"]["nominal_diameter_unspelled"], 0);
+    assert_eq!(report["oracle_exp"]["connectivity_ends"], 738);
+    assert_eq!(report["oracle_exp"]["connectivity_rels"], 736);
+    assert_eq!(report["oracle_exp"]["connectivity_ends_left_out"], 2);
+    assert_eq!(report["relationships"]["PipingTapOrFitting"], 369);
     assert!(report["left_out_by_design"][0]
         .as_str()
         .unwrap_or("")
