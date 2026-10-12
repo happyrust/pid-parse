@@ -1375,6 +1375,7 @@ dependencies = [
  "pdfcraft-fonts",
  "pdfcraft-render",
  "pid-parse",
+ "png",
  "serde",
  "serde_json",
 ]

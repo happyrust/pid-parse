@@ -12,7 +12,7 @@ use pid_parse::symbol_library::{SymbolLibrary, SymbolPrimitive};
 use pid_parse::{
     PidGeometryConfidence, PidGraphicEntity, PidGraphicKind, PidParser, build_normalized_geometry,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const MM_PER_METRE: f64 = 1000.0;
 
@@ -28,10 +28,25 @@ pub struct PaperModel {
     pub primitives: Vec<PaperPrimitive>,
     /// Symbol files the drawing names and the library does not have.
     pub missing_symbols: Vec<String>,
+    /// 30 mm squares around symbols that were not drawn at all.
+    ///
+    /// Half-size is 15 mm, the M4 mask when the drawing records no symbol box.
+    pub missing_boxes: Vec<MissingSymbolBox>,
     /// Distinct symbol files the library resolved.
     pub symbols_found: usize,
     /// Distinct symbol files the drawing names.
     pub symbols_referenced: usize,
+}
+
+/// A 30 mm square around a symbol the library did not draw.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MissingSymbolBox {
+    /// Library-relative path.
+    pub path: String,
+    /// Inclusive minimum, paper millimetres.
+    pub min_mm: [f64; 2],
+    /// Inclusive maximum, paper millimetres.
+    pub max_mm: [f64; 2],
 }
 
 /// One paper-space primitive.
@@ -155,6 +170,7 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
     let mut referenced = std::collections::BTreeSet::new();
     let mut found = std::collections::BTreeSet::new();
     let mut missing = std::collections::BTreeSet::new();
+    let mut missing_boxes = Vec::new();
 
     for entity in &geometry.entities {
         match &entity.kind {
@@ -212,6 +228,7 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                         );
                     }
                 } else if let Some(key) = key {
+                    missing_boxes.push(missing_box(&key, [insertion.x, insertion.y]));
                     missing.insert(key);
                 }
             }
@@ -224,6 +241,7 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
         page_mm,
         primitives,
         missing_symbols: missing.into_iter().collect(),
+        missing_boxes,
         symbols_found: found.len(),
         symbols_referenced: referenced.len(),
     })
@@ -273,6 +291,16 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
     let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-file/symbols-full");
     let label = vec![bundled.display().to_string()];
     (vec![bundled], label)
+}
+
+fn missing_box(path: &str, insertion_m: [f64; 2]) -> MissingSymbolBox {
+    let origin = [insertion_m[0] * MM_PER_METRE, insertion_m[1] * MM_PER_METRE];
+    const HALF_MM: f64 = 15.0;
+    MissingSymbolBox {
+        path: path.to_string(),
+        min_mm: [origin[0] - HALF_MM, origin[1] - HALF_MM],
+        max_mm: [origin[0] + HALF_MM, origin[1] + HALF_MM],
+    }
 }
 
 fn symbol_key(path: &str) -> String {

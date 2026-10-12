@@ -9,6 +9,7 @@
     rustdoc::private_intra_doc_links
 )]
 
+pub mod compare;
 pub mod model;
 pub mod read;
 pub mod write;

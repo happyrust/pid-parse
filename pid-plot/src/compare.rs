@@ -1,0 +1,863 @@
+//! Compare a reference plot with one this crate wrote.
+//!
+//! Both sides are joined into centerlines where collinear gaps are under 3 mm.
+//! A uniform scale and a translation are fit from long lines. Coverage samples
+//! the reference every 0.5 mm; a sample counts when our nearest segment is
+//! within 0.5 mm. Text matches after whitespace is collapsed, within 1 mm.
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use serde::Serialize;
+
+use crate::read::{InkSegment, PlotInk, TextSpan};
+
+const JOIN_GAP_MM: f64 = 3.0;
+const COVER_MM: f64 = 0.5;
+const SAMPLE_MM: f64 = 0.5;
+const TEXT_MM: f64 = 1.0;
+const LONG_MM: f64 = 8.0;
+const SCALE_LIMIT: f64 = 0.002;
+const SHIFT_LIMIT_MM: f64 = 5.0;
+
+/// Why a comparison could not be written out.
+#[derive(Debug)]
+pub enum CompareError {
+    /// The page has no area.
+    EmptyPage,
+    /// The overlay or the report could not be written.
+    Io(String),
+}
+
+impl std::fmt::Display for CompareError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyPage => write!(f, "the page has no area"),
+            Self::Io(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for CompareError {}
+
+/// A rectangle that is reference-data-missing, not a content error.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaskRect {
+    /// What the rectangle stands for.
+    pub label: String,
+    /// Inclusive minimum, paper millimetres.
+    pub min_mm: [f64; 2],
+    /// Inclusive maximum, paper millimetres.
+    pub max_mm: [f64; 2],
+}
+
+impl MaskRect {
+    /// Whether `point` lies inside the rectangle.
+    #[must_use]
+    pub fn contains(&self, point: [f64; 2]) -> bool {
+        point[0] >= self.min_mm[0]
+            && point[0] <= self.max_mm[0]
+            && point[1] >= self.min_mm[1]
+            && point[1] <= self.max_mm[1]
+    }
+}
+
+/// Title-block corner for an A0 or A1 sheet.
+///
+/// 180 mm by 50 mm at the bottom-right. The template files are not on this
+/// machine, so this is the M4 rectangle, not a surveyed `.igr`.
+#[must_use]
+pub fn template_masks(page_mm: [f64; 2]) -> Vec<MaskRect> {
+    let title_w = 180.0_f64;
+    let title_h = 50.0_f64;
+    vec![MaskRect {
+        label: "title-block".to_string(),
+        min_mm: [(page_mm[0] - title_w).max(0.0), 0.0],
+        max_mm: [page_mm[0], title_h.min(page_mm[1])],
+    }]
+}
+
+/// Scale and translation taking reference millimetres into our plot.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Fit {
+    /// `our ≈ scale * reference + translation`.
+    pub scale: f64,
+    /// Translation in millimetres, our space.
+    pub translation_mm: [f64; 2],
+    /// Long-line pairs used.
+    pub pairs: usize,
+    /// Scale within 0.2% of 1 and shift within 5 mm.
+    pub within_threshold: bool,
+    /// Set when the fit is outside the threshold or could not be solved.
+    pub finding: Option<String>,
+}
+
+/// One text run that did not pair.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct UnmatchedText {
+    /// Whitespace-collapsed characters.
+    pub text: String,
+    /// Baseline start, paper millimetres.
+    pub origin_mm: [f64; 2],
+}
+
+/// The three ratchet numbers, plus the fit and the text that missed.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CompareReport {
+    /// Reference page, millimetres.
+    pub page_mm: [f64; 2],
+    /// How our plot sits on the reference.
+    pub fit: Fit,
+    /// Reference centerline length outside the masks.
+    pub reference_length_mm: f64,
+    /// Of that length, the part within 0.5 mm of our ink.
+    pub covered_length_mm: f64,
+    /// Covered length over reference length. 0 when the reference length is 0.
+    pub coverage: f64,
+    /// Our centerline length outside the masks and farther than 0.5 mm from the reference.
+    pub extra_length_mm: f64,
+    /// Reference text runs outside the masks.
+    pub text_reference: usize,
+    /// Our text runs outside the masks.
+    pub text_ours: usize,
+    /// Runs that matched.
+    pub text_matched: usize,
+    /// Reference length inside a mask.
+    pub masked_reference_length_mm: f64,
+    /// Text runs inside a mask.
+    pub masked_text: usize,
+    /// Reference runs that did not match.
+    pub unmatched_reference_text: Vec<UnmatchedText>,
+    /// Our runs that did not match.
+    pub unmatched_our_text: Vec<UnmatchedText>,
+}
+
+/// Compare `reference` with `ours`. Masks are excluded from the three numbers.
+#[must_use]
+pub fn compare_plots(reference: &PlotInk, ours: &PlotInk, masks: &[MaskRect]) -> CompareReport {
+    let reference_lines = join_centerlines(&reference.segments);
+    let our_lines = join_centerlines(&ours.segments);
+    let fit = fit_lines(&reference_lines, &our_lines);
+    let our_in_ref: Vec<Line> = our_lines
+        .iter()
+        .map(|line| line.mapped(|point| into_reference(point, &fit)))
+        .collect();
+    let reference_index = Grid::new(&reference_lines);
+    let our_index = Grid::new(&our_in_ref);
+    let (reference_length, covered, masked_reference) =
+        cover(&reference_lines, &our_index, masks, true);
+    let (_, extra, _) = cover(&our_in_ref, &reference_index, masks, false);
+    let text = match_text(&reference.spans, &ours.spans, &fit, masks);
+    let coverage = if reference_length > 0.0 {
+        covered / reference_length
+    } else {
+        0.0
+    };
+    CompareReport {
+        page_mm: reference.page_mm,
+        fit,
+        reference_length_mm: reference_length,
+        covered_length_mm: covered,
+        coverage,
+        extra_length_mm: extra,
+        text_reference: text.reference,
+        text_ours: text.ours,
+        text_matched: text.matched,
+        masked_reference_length_mm: masked_reference,
+        masked_text: text.masked,
+        unmatched_reference_text: text.unmatched_reference,
+        unmatched_our_text: text.unmatched_ours,
+    }
+}
+
+/// Write the report as pretty JSON.
+pub fn write_report(path: &Path, report: &CompareReport) -> Result<(), CompareError> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|error| CompareError::Io(error.to_string()))?;
+    }
+    let json = serde_json::to_string_pretty(report)
+        .map_err(|error| CompareError::Io(error.to_string()))?;
+    std::fs::write(path, json).map_err(|error| CompareError::Io(error.to_string()))
+}
+
+/// Write a 1 px/mm overlay. Reference ink is blue, ours is red, overlap is purple.
+pub fn write_overlay(
+    path: &Path,
+    reference: &PlotInk,
+    ours: &PlotInk,
+    fit: &Fit,
+) -> Result<(), CompareError> {
+    let width = reference.page_mm[0].round().max(1.0) as u32;
+    let height = reference.page_mm[1].round().max(1.0) as u32;
+    if width > 20_000 || height > 20_000 {
+        return Err(CompareError::EmptyPage);
+    }
+    let mut pixels = vec![0u8; (width as usize) * (height as usize) * 3];
+    paint(
+        &mut pixels,
+        width,
+        height,
+        &join_centerlines(&reference.segments),
+        [30, 80, 210],
+    );
+    let our_lines = join_centerlines(&ours.segments)
+        .into_iter()
+        .map(|line| line.mapped(|point| into_reference(point, fit)))
+        .collect::<Vec<_>>();
+    paint(&mut pixels, width, height, &our_lines, [210, 50, 40]);
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|error| CompareError::Io(error.to_string()))?;
+    }
+    let file = std::fs::File::create(path).map_err(|error| CompareError::Io(error.to_string()))?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .map_err(|error| CompareError::Io(error.to_string()))?
+        .write_image_data(&pixels)
+        .map_err(|error| CompareError::Io(error.to_string()))
+}
+
+#[derive(Clone, Copy)]
+struct Line {
+    a: [f64; 2],
+    b: [f64; 2],
+}
+
+impl Line {
+    fn length(self) -> f64 {
+        hypot(self.a, self.b)
+    }
+
+    fn direction(self) -> [f64; 2] {
+        let length = self.length();
+        if length < 1e-9 {
+            [1.0, 0.0]
+        } else {
+            [
+                (self.b[0] - self.a[0]) / length,
+                (self.b[1] - self.a[1]) / length,
+            ]
+        }
+    }
+
+    fn midpoint(self) -> [f64; 2] {
+        [(self.a[0] + self.b[0]) * 0.5, (self.a[1] + self.b[1]) * 0.5]
+    }
+
+    fn mapped(self, mut map: impl FnMut([f64; 2]) -> [f64; 2]) -> Self {
+        Self {
+            a: map(self.a),
+            b: map(self.b),
+        }
+    }
+}
+
+fn join_centerlines(segments: &[InkSegment]) -> Vec<Line> {
+    let lines: Vec<Line> = segments
+        .iter()
+        .filter(|segment| hypot(segment.start_mm, segment.end_mm) >= 1e-4)
+        .map(|segment| Line {
+            a: segment.start_mm,
+            b: segment.end_mm,
+        })
+        .collect();
+    if lines.is_empty() {
+        return lines;
+    }
+    let mut union = UnionFind::new(lines.len());
+    let grid = endpoint_grid(&lines);
+    for (index, line) in lines.iter().enumerate() {
+        for end in [line.a, line.b] {
+            for other in grid.near(end, JOIN_GAP_MM) {
+                if other <= index {
+                    continue;
+                }
+                if can_join(*line, lines[other]) {
+                    union.join(index, other);
+                }
+            }
+        }
+    }
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for index in 0..lines.len() {
+        groups.entry(union.find(index)).or_default().push(index);
+    }
+    groups
+        .into_values()
+        .filter_map(|members| merge_group(&lines, &members))
+        .collect()
+}
+
+fn can_join(left: Line, right: Line) -> bool {
+    let direction = left.direction();
+    let other = right.direction();
+    let dot = (direction[0] * other[0] + direction[1] * other[1]).abs();
+    if dot < 0.999 {
+        return false;
+    }
+    let perp = |point: [f64; 2]| {
+        let vx = point[0] - left.a[0];
+        let vy = point[1] - left.a[1];
+        (vx * -direction[1] + vy * direction[0]).abs()
+    };
+    if perp(right.a) > 0.4 || perp(right.b) > 0.4 {
+        return false;
+    }
+    let project = |point: [f64; 2]| {
+        (point[0] - left.a[0]) * direction[0] + (point[1] - left.a[1]) * direction[1]
+    };
+    let left_end = left.length();
+    let right_min = project(right.a).min(project(right.b));
+    let right_max = project(right.a).max(project(right.b));
+    let gap = if right_max < 0.0 {
+        -right_max
+    } else if left_end < right_min {
+        right_min - left_end
+    } else {
+        0.0
+    };
+    gap <= JOIN_GAP_MM && ends_meet(left, right)
+}
+
+fn ends_meet(left: Line, right: Line) -> bool {
+    [left.a, left.b].into_iter().any(|end| {
+        [right.a, right.b]
+            .into_iter()
+            .any(|other| hypot(end, other) <= JOIN_GAP_MM)
+    })
+}
+
+fn merge_group(lines: &[Line], members: &[usize]) -> Option<Line> {
+    let first = lines[*members.first()?];
+    let direction = first.direction();
+    let mut min_t = 0.0;
+    let mut max_t = 0.0;
+    let mut min_point = first.a;
+    let mut max_point = first.a;
+    for member in members {
+        for point in [lines[*member].a, lines[*member].b] {
+            let t = (point[0] - first.a[0]) * direction[0] + (point[1] - first.a[1]) * direction[1];
+            if t < min_t {
+                min_t = t;
+                min_point = point;
+            }
+            if t > max_t {
+                max_t = t;
+                max_point = point;
+            }
+        }
+    }
+    (hypot(min_point, max_point) >= 1e-4).then_some(Line {
+        a: min_point,
+        b: max_point,
+    })
+}
+
+fn fit_lines(reference: &[Line], ours: &[Line]) -> Fit {
+    let our_grid = Grid::new(ours);
+    let mut pairs = Vec::new();
+    for line in reference.iter().filter(|line| line.length() >= LONG_MM) {
+        let Some(other) = nearest_aligned(*line, &our_grid, 50.0) else {
+            continue;
+        };
+        pairs.push((line.midpoint(), other.midpoint()));
+    }
+    if pairs.len() < 4 {
+        return Fit {
+            scale: 1.0,
+            translation_mm: [0.0, 0.0],
+            pairs: pairs.len(),
+            within_threshold: true,
+            finding: Some(format!(
+                "only {} long-line pairs, fit left at identity",
+                pairs.len()
+            )),
+        };
+    }
+    let fit = solve_fit(&pairs).unwrap_or(Fit {
+        scale: 1.0,
+        translation_mm: [0.0, 0.0],
+        pairs: pairs.len(),
+        within_threshold: true,
+        finding: Some("the long-line fit did not solve".to_string()),
+    });
+    let kept: Vec<_> = pairs
+        .into_iter()
+        .filter(|(reference_point, our_point)| {
+            let predicted = [
+                fit.scale * reference_point[0] + fit.translation_mm[0],
+                fit.scale * reference_point[1] + fit.translation_mm[1],
+            ];
+            hypot(predicted, *our_point) <= 3.0
+        })
+        .collect();
+    if kept.len() >= 4 && kept.len() != fit.pairs {
+        return solve_fit(&kept).unwrap_or(fit);
+    }
+    fit
+}
+
+fn solve_fit(pairs: &[([f64; 2], [f64; 2])]) -> Option<Fit> {
+    let n = pairs.len() as f64;
+    let mut sum_rr = 0.0;
+    let mut sum_rx = 0.0;
+    let mut sum_ry = 0.0;
+    let mut sum_dot = 0.0;
+    let mut sum_ox = 0.0;
+    let mut sum_oy = 0.0;
+    for (reference_point, our_point) in pairs {
+        sum_rr += reference_point[0] * reference_point[0] + reference_point[1] * reference_point[1];
+        sum_rx += reference_point[0];
+        sum_ry += reference_point[1];
+        sum_dot += reference_point[0] * our_point[0] + reference_point[1] * our_point[1];
+        sum_ox += our_point[0];
+        sum_oy += our_point[1];
+    }
+    let solution = solve3(
+        [[sum_rr, sum_rx, sum_ry], [sum_rx, n, 0.0], [sum_ry, 0.0, n]],
+        [sum_dot, sum_ox, sum_oy],
+    )?;
+    let scale = solution[0];
+    let translation = [solution[1], solution[2]];
+    if !scale.is_finite() || scale < 0.5 || scale > 1.5 {
+        return None;
+    }
+    let shift = translation[0].hypot(translation[1]);
+    let within = (scale - 1.0).abs() <= SCALE_LIMIT && shift <= SHIFT_LIMIT_MM;
+    let finding = if within {
+        None
+    } else {
+        Some(format!(
+            "fit scale {scale:.6}, translation {:.2} {:.2} mm",
+            translation[0], translation[1]
+        ))
+    };
+    Some(Fit {
+        scale,
+        translation_mm: translation,
+        pairs: pairs.len(),
+        within_threshold: within,
+        finding,
+    })
+}
+
+fn solve3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> Option<[f64; 3]> {
+    for col in 0..3 {
+        let mut pivot = col;
+        for row in col + 1..3 {
+            if a[row][col].abs() > a[pivot][col].abs() {
+                pivot = row;
+            }
+        }
+        if a[pivot][col].abs() < 1e-12 {
+            return None;
+        }
+        a.swap(col, pivot);
+        b.swap(col, pivot);
+        let diag = a[col][col];
+        for row in col + 1..3 {
+            let factor = a[row][col] / diag;
+            for k in col..3 {
+                a[row][k] -= factor * a[col][k];
+            }
+            b[row] -= factor * b[col];
+        }
+    }
+    let mut x = [0.0; 3];
+    for row in (0..3).rev() {
+        let mut acc = b[row];
+        for col in row + 1..3 {
+            acc -= a[row][col] * x[col];
+        }
+        x[row] = acc / a[row][row];
+    }
+    x.iter().all(|value| value.is_finite()).then_some(x)
+}
+
+fn into_reference(point: [f64; 2], fit: &Fit) -> [f64; 2] {
+    [
+        (point[0] - fit.translation_mm[0]) / fit.scale,
+        (point[1] - fit.translation_mm[1]) / fit.scale,
+    ]
+}
+
+fn nearest_aligned(line: Line, grid: &Grid, limit: f64) -> Option<Line> {
+    let want = line.direction();
+    let mut best: Option<(f64, Line)> = None;
+    for index in grid.near(line.midpoint(), limit) {
+        let other = grid.lines[index];
+        let dot = (want[0] * other.direction()[0] + want[1] * other.direction()[1]).abs();
+        if dot < 0.99 || other.length() < LONG_MM {
+            continue;
+        }
+        let distance = hypot(line.midpoint(), other.midpoint());
+        if distance <= limit && best.is_none_or(|(best_distance, _)| distance < best_distance) {
+            best = Some((distance, other));
+        }
+    }
+    best.map(|(_, other)| other)
+}
+
+struct CoverText {
+    reference: usize,
+    ours: usize,
+    matched: usize,
+    masked: usize,
+    unmatched_reference: Vec<UnmatchedText>,
+    unmatched_ours: Vec<UnmatchedText>,
+}
+
+fn match_text(
+    reference: &[TextSpan],
+    ours: &[TextSpan],
+    fit: &Fit,
+    masks: &[MaskRect],
+) -> CoverText {
+    let mut used = vec![false; ours.len()];
+    let mut matched = 0;
+    let mut masked = 0;
+    let mut unmatched_reference = Vec::new();
+    let mut reference_count = 0;
+    for span in reference {
+        if masks.iter().any(|mask| mask.contains(span.origin_mm)) {
+            masked += 1;
+            continue;
+        }
+        reference_count += 1;
+        let wanted = normalize(&span.text);
+        let found = ours.iter().enumerate().find(|(index, other)| {
+            !used[*index]
+                && normalize(&other.text) == wanted
+                && hypot(span.origin_mm, into_reference(other.origin_mm, fit)) <= TEXT_MM
+        });
+        if let Some((index, _)) = found {
+            used[index] = true;
+            matched += 1;
+        } else {
+            unmatched_reference.push(unmatched(span));
+        }
+    }
+    let mut unmatched_ours = Vec::new();
+    let mut our_count = 0;
+    for (index, span) in ours.iter().enumerate() {
+        let origin = into_reference(span.origin_mm, fit);
+        if masks.iter().any(|mask| mask.contains(origin)) {
+            masked += 1;
+            continue;
+        }
+        our_count += 1;
+        if !used[index] {
+            unmatched_ours.push(UnmatchedText {
+                text: normalize(&span.text),
+                origin_mm: origin,
+            });
+        }
+    }
+    CoverText {
+        reference: reference_count,
+        ours: our_count,
+        matched,
+        masked,
+        unmatched_reference,
+        unmatched_ours,
+    }
+}
+
+fn unmatched(span: &TextSpan) -> UnmatchedText {
+    UnmatchedText {
+        text: normalize(&span.text),
+        origin_mm: span.origin_mm,
+    }
+}
+
+fn normalize(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn cover(
+    lines: &[Line],
+    other: &Grid,
+    masks: &[MaskRect],
+    reference_side: bool,
+) -> (f64, f64, f64) {
+    let mut open = 0.0;
+    let mut hit = 0.0;
+    let mut masked = 0.0;
+    for line in lines {
+        let length = line.length();
+        if length < 1e-6 {
+            continue;
+        }
+        let pieces = ((length / SAMPLE_MM).round() as usize).max(1);
+        let weight = length / pieces as f64;
+        for piece in 0..pieces {
+            let t = (piece as f64 + 0.5) / pieces as f64;
+            let point = [
+                line.a[0] + (line.b[0] - line.a[0]) * t,
+                line.a[1] + (line.b[1] - line.a[1]) * t,
+            ];
+            if masks.iter().any(|mask| mask.contains(point)) {
+                if reference_side {
+                    masked += weight;
+                }
+                continue;
+            }
+            open += weight;
+            let near = other.near(point, COVER_MM).into_iter().any(|index| {
+                dist_point_seg(point, other.lines[index].a, other.lines[index].b) <= COVER_MM
+            });
+            if near {
+                hit += weight;
+            }
+        }
+    }
+    if reference_side {
+        (open, hit, masked)
+    } else {
+        (open, open - hit, masked)
+    }
+}
+
+fn paint(pixels: &mut [u8], width: u32, height: u32, lines: &[Line], color: [u8; 3]) {
+    for line in lines {
+        draw_line(pixels, width, height, line.a, line.b, color);
+    }
+}
+
+fn draw_line(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    start: [f64; 2],
+    end: [f64; 2],
+    color: [u8; 3],
+) {
+    let mut x0 = start[0].round() as i32;
+    let mut y0 = height as i32 - 1 - start[1].round() as i32;
+    let x1 = end[0].round() as i32;
+    let y1 = height as i32 - 1 - end[1].round() as i32;
+    let dx = (x1 - x0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let dy = -(y1 - y0).abs();
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    loop {
+        if x0 >= 0 && y0 >= 0 && (x0 as u32) < width && (y0 as u32) < height {
+            let offset = (y0 as usize * width as usize + x0 as usize) * 3;
+            let pixel = &mut pixels[offset..offset + 3];
+            if pixel.iter().all(|channel| *channel == 0) {
+                pixel.copy_from_slice(&color);
+            } else {
+                pixel.copy_from_slice(&[140, 40, 170]);
+            }
+        }
+        if x0 == x1 && y0 == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x0 += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+fn dist_point_seg(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> f64 {
+    let ab = [end[0] - start[0], end[1] - start[1]];
+    let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+    if len2 < 1e-12 {
+        return hypot(point, start);
+    }
+    let t =
+        (((point[0] - start[0]) * ab[0] + (point[1] - start[1]) * ab[1]) / len2).clamp(0.0, 1.0);
+    hypot(point, [start[0] + ab[0] * t, start[1] + ab[1] * t])
+}
+
+fn hypot(start: [f64; 2], end: [f64; 2]) -> f64 {
+    (start[0] - end[0]).hypot(start[1] - end[1])
+}
+
+struct UnionFind {
+    parent: Vec<usize>,
+}
+
+impl UnionFind {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+        }
+    }
+
+    fn find(&mut self, index: usize) -> usize {
+        let parent = self.parent[index];
+        if parent == index {
+            index
+        } else {
+            let root = self.find(parent);
+            self.parent[index] = root;
+            root
+        }
+    }
+
+    fn join(&mut self, left: usize, right: usize) {
+        let left = self.find(left);
+        let right = self.find(right);
+        if left != right {
+            self.parent[right] = left;
+        }
+    }
+}
+
+struct Grid {
+    cell: f64,
+    lines: Vec<Line>,
+    buckets: HashMap<(i32, i32), Vec<usize>>,
+}
+
+impl Grid {
+    fn new(lines: &[Line]) -> Self {
+        let mut grid = Self {
+            cell: 5.0,
+            lines: lines.to_vec(),
+            buckets: HashMap::new(),
+        };
+        for (index, line) in lines.iter().enumerate() {
+            grid.insert(index, *line);
+        }
+        grid
+    }
+
+    fn insert(&mut self, index: usize, line: Line) {
+        for key in cells_of(line, self.cell) {
+            self.buckets.entry(key).or_default().push(index);
+        }
+    }
+
+    fn near(&self, point: [f64; 2], radius: f64) -> Vec<usize> {
+        let key = cell_key(point, self.cell);
+        let reach = (radius / self.cell).ceil() as i32 + 1;
+        let mut hits = Vec::new();
+        for dy in -reach..=reach {
+            for dx in -reach..=reach {
+                if let Some(bucket) = self.buckets.get(&(key.0 + dx, key.1 + dy)) {
+                    hits.extend(bucket.iter().copied());
+                }
+            }
+        }
+        hits.sort_unstable();
+        hits.dedup();
+        hits
+    }
+}
+
+fn endpoint_grid(lines: &[Line]) -> Grid {
+    Grid::new(lines)
+}
+
+fn cells_of(line: Line, cell: f64) -> Vec<(i32, i32)> {
+    let mut keys = vec![cell_key(line.a, cell), cell_key(line.b, cell)];
+    let steps = (line.length() / cell).ceil() as usize + 1;
+    for step in 0..steps {
+        let t = step as f64 / steps as f64;
+        keys.push(cell_key(
+            [
+                line.a[0] + (line.b[0] - line.a[0]) * t,
+                line.a[1] + (line.b[1] - line.a[1]) * t,
+            ],
+            cell,
+        ));
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    keys
+}
+
+fn cell_key(point: [f64; 2], cell: f64) -> (i32, i32) {
+    (
+        (point[0] / cell).floor() as i32,
+        (point[1] / cell).floor() as i32,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compare_plots, template_masks};
+    use crate::read::{InkSegment, PlotInk, TextSpan};
+
+    fn ink(segments: Vec<InkSegment>, spans: Vec<TextSpan>) -> PlotInk {
+        PlotInk {
+            page_mm: [200.0, 100.0],
+            segments,
+            spans,
+        }
+    }
+
+    fn line(start: [f64; 2], end: [f64; 2]) -> InkSegment {
+        InkSegment {
+            start_mm: start,
+            end_mm: end,
+            width_mm: 0.2,
+        }
+    }
+
+    fn word(origin: [f64; 2]) -> TextSpan {
+        TextSpan {
+            text: "Ab".into(),
+            origin_mm: origin,
+            height_mm: 4.0,
+            direction: [1.0, 0.0],
+        }
+    }
+
+    #[test]
+    fn an_identical_plot_is_fully_covered() {
+        let plot = ink(
+            vec![line([0.0, 10.0], [40.0, 10.0])],
+            vec![word([5.0, 20.0])],
+        );
+        let report = compare_plots(&plot, &plot, &[]);
+        assert!(report.coverage > 0.99, "{}", report.coverage);
+        assert!(report.extra_length_mm < 0.2, "{}", report.extra_length_mm);
+        assert_eq!(report.text_matched, 1);
+        assert!(report.fit.within_threshold, "{:?}", report.fit);
+    }
+
+    #[test]
+    fn a_ten_millimetre_shift_is_a_finding() {
+        // 40 mm apart, shifted 10 mm. A 20 mm spacing would put each
+        // reference line exactly between two of ours, so the nearest
+        // neighbour would not be the shifted copy.
+        let reference = ink(
+            vec![
+                line([0.0, 0.0], [80.0, 0.0]),
+                line([0.0, 40.0], [80.0, 40.0]),
+                line([0.0, 80.0], [80.0, 80.0]),
+                line([0.0, 120.0], [80.0, 120.0]),
+            ],
+            vec![],
+        );
+        let ours = ink(
+            vec![
+                line([0.0, 10.0], [80.0, 10.0]),
+                line([0.0, 50.0], [80.0, 50.0]),
+                line([0.0, 90.0], [80.0, 90.0]),
+                line([0.0, 130.0], [80.0, 130.0]),
+            ],
+            vec![],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert!(!report.fit.within_threshold, "{:?}", report.fit);
+        assert!(report.fit.finding.is_some());
+        assert!(report.coverage > 0.95, "{}", report.coverage);
+    }
+}
