@@ -201,3 +201,35 @@ G2：用户 10-12 选 2，开 N4-0 … N4-4。
 
 - **验证**：`cargo test --locked --workspace --lib --bins --tests` 全过（`--lib` 1 175、`publish_from_pid` 4 / 4），`--no-default-features` 全过（`--lib` 850）；clippy `-D warnings` 两种特性零告警（lib / bins / tests）；rustfmt；missing-docs 0；wasm32 lib 过。`--all-targets` NOT RUN：别的会话未提交的 `examples/probe_ports_from_connect_points.rs` 此刻编不过、`probe_dash_scale_field_candidates.rs` clippy 不过。5 图 `--diff-against` 退出 0，五组钉数不变；`publish\` 15 个文件重写，`derived_by_native_rule` 都是 0。
 - 会话：grok-4.7-27 写了代码与文档后掉线，fable-5-1-14（指挥官）核对、补 rustdoc 英文、跑门、提交。
+
+### N4-2 工艺点（2026-10-12，提交 `fa16824`）
+
+已发布的 `PIDPipingConnector` 各发一条 `PIDProcessPoint` 和一条 `ProcessPointCollection`。UID 是管段 `ModelID` 加 `.PPT`，关系 UID 是 `PRP-{工艺点}-{管段}`，`UID2` 是管段。规则地址 `ConstructUIDForProcessPoint`（`0x5F5CFD40`）、`ConstructUIDForRelationship`（`0x5F5D0280`，前缀 `PRP`）。探针 `examples/probe_n4_ports_and_process_points.rs`，数在 `docs/analysis/n2a-port-relation-filter.md`「N4-2 探针」。
+
+- 五图工艺点 341 对 341，多 0、缺 0；关系 341 对 341。参考里没有 `Name`，也没有 `ConnectionFlowDirection`。提交说明：no extra values。
+- 端口不发。`PipingPointNumber`、`SignalPointNumber`、`FlowDirection`、`SignalPoint` 在五张 `.pid` 的 ASCII 和 UTF-16 都是 0 处。`PipingPoint` 只在分离器 A 出现 6 次，是标签类名，不是点对象。`_ConnectPoint`：I井场 179、分离器 A 103、分离器 B 101、低温分离器 A 135、换热器 CD 163；`index` 15 / 12 / 12 / 7 / 13，`sub_type` 全是 `0x4`。
+- 管道端口 / 发出 / 信号端口 / 发出 / 参考里有流向的管道端口：I井场 362 / 0 / 915 / 0 / 152，分离器 A 63 / 0 / 107 / 0 / 35，分离器 B 53 / 0 / 107 / 0 / 33，低温分离器 A 68 / 0 / 197 / 0 / 38，换热器 CD 172 / 0 / 399 / 0 / 40。合计 718 / 0 / 1 725 / 0 / 298。`PPC` / `SPC` 不发。
+- `tests/publish_from_pid.rs` 的 `EXPECTED` 值列不动。对象 / 关系：I井场 1 459 / 1 695 → 1 628 / 1 864，分离器A 291 / 335 → 330 / 374，分离器B 239 / 274 → 268 / 303，低温分离器A 317 / 358 → 358 / 399，换热器CD 612 / 727 → 675 / 790。cargo、clippy、`--diff-against`：未记录。
+
+### N4-1 公称直径（2026-10-12，任务 t-1490）
+
+`_NominalDiameter` 的 `ItemValue` 换成发布格式后，以 `PidValueSource::DerivedByNativeRule { analysis_page: docs/analysis/n2a-name-diameter-codelist-meta.md, address: 0x5F52BDE0 }` 写上 `IPipeCrossSectionItem.NominalDiameter`。`N"` / `a/b"` / `N-a/b"` → `N in`，`N MM` → `N mm`，裸数字 → `N mm`（5 图对照错 0 才当毫米发）。换不出来的不发，计入 `_Coverage.json` 的 `attribute_values.nominal_diameter_not_emitted`。本单发出 273 条（管件 152、管段 101、直连仪表 20），错 0；参考里另外 605 处在本模式还不发的对象上。值钉数 2 822 → 3 095。对象和关系钉数不动：`b39ff7e` 的 `EXPECTED` 只改了值列。
+
+- **验证**：`cargo test --locked --workspace --lib --bins --tests` 0 败（`--lib` 1 176，`publish_from_pid` 4 / 4）；`--no-default-features` 0 败（`--lib` 850）；clippy `-D warnings` 两种特性零告警；rustfmt；missing-docs 0。`--all-targets` NOT RUN：别的会话未提交的 example 编不过。5 图 `--diff-against` 退出 0，`derived_by_native_rule` 37 / 26 / 53 / 32 / 125，未换算 0；`publish\` 15 个文件重写。`b39ff7e` 的 `EXPECTED` 只改值列：分离器A 330 / 326 / 374，分离器B 268 / 256 / 303，换热器CD 675 / 636 / 790，低温分离器A 358 / 347 / 399，I井场 1 628 / 1 530 / 1 864。值合计 2 822 → 3 095；对象 2 918、关系 3 389 是 N4-2 之前的合计，不是这一笔。
+
+### N4-3 分支点（2026-10-12，提交 `cec947e`）
+
+点符号发分支点。`DrawingItemType = Symbol` 且描述记录是 `igPoint2d`（`0x005E`）：`PipeRun` → `PIDPipingBranchPoint`，`SignalRun` → `PIDSignalBranchPoint`。UID = `DrawingID` & `.` & `BPT`（`ConstructUIDForBranchPoint`，`0x5F5CFC10`）。`DrawingItems` 是 `DRI-{DrawingID}-{DrawingID.BPT}`，表示在 `UID1`，分支点在 `UID2`。探针 `examples/probe_branch_points_from_representations.rs`，数在 `docs/analysis/n2a-port-relation-filter.md`「N4-3 探针」。`PIDBranchPoint`（OPC）仍不发。Name 全空。
+
+- 五图 199 对 199，错 0、多 0、缺 0。管道 183（I井场 97、分离器 A 22、分离器 B 14、低温分离器 A 15、换热器 CD 35），信号 16（10 / 1 / 1 / 1 / 3）。关系 199 对 199。提交说明：对象和关系各加 199，值不动。
+- 管道接口：`IConnection`、`IPipingConnection`、`IDrawingItem`、`IPipingBranchPoint`、`IDocumentItem`。信号接口：`IConnection`、`IDrawingItem`、`ISignalConnection`、`ISignalBranchPoint`、`IFacilityPoint`、`IDocumentItem`。
+- `EXPECTED`（对象 / 值 / 关系）：I井场 1 628 / 1 530 / 1 864 → 1 735 / 1 530 / 1 971，分离器A 330 / 326 / 374 → 353 / 326 / 397，分离器B 268 / 256 / 303 → 283 / 256 / 318，低温分离器A 358 / 347 / 399 → 374 / 347 / 415，换热器CD 675 / 636 / 790 → 713 / 636 / 828。cargo、clippy、`--diff-against`：未记录。本单提交说明写明 CHANGELOG、计划和 `task_plan` 当时没进暂存，因为工作树里还有 N4-1 的未提交文字。
+
+### N4-4 连通关系（2026-10-12，提交 `7fdeae8`）
+
+连通关系不发。探针 `examples/probe_connectivity_relationships.rs`，数在 `docs/analysis/n2a-port-relation-filter.md`「N4-4 探针」。关系行只存 `Relationship.<guid>`，管口行和注释行没有父项。Sheet 端点对在五张图上解不出图纸 id，所以那八种定义和 `PipingConnectors` 都不进装载。
+
+- `ModelItemType = Relationship` 的行：I井场 946、分离器 A 191、分离器 B 153、低温分离器 A 200、换热器 CD 411。字段只有 `ProjectNumber`、`DrawingNo`、空的 `DrawingItemType`、空的 `DrawingID`、`ModelItemType`、`ModelID`、`Flag`。
+- Sheet 端点对：I井场 26、分离器 A 36、分离器 B 2、低温分离器 A 78、换热器 CD 412，`both_drawing_ids = 0`。
+- 发出都是 0。参考 / 两端都已发出：`PipingEnd1Conn` 283 / 93，`PipingEnd2Conn` 279 / 117，`SignalEnd1Conn` 75 / 5，`SignalEnd2Conn` 83 / 12，`PipingTapOrFitting` 738 / 164，`SignalTapOrFitting` 35 / 15，`EquipmentComponentComposition` 36 / 36，`PBSItemNotes` 7 / 7，`PipingConnectors` 219 / 0。从图纸配上的都是 0。`EquipmentComponentComposition` 实测是管口在 `UID1`、设备在 `UID2`。
+- `tests/publish_from_pid.rs` 不在这笔提交里，钉数不改。cargo、clippy、`--diff-against`：未记录。

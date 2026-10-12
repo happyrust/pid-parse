@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### publish 不发连通关系：`.pid` 里配不成对（2026-10-12，N4-4）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-4。提交 `7fdeae8`。探针 `examples/probe_connectivity_relationships.rs`。分析页 `docs/analysis/n2a-port-relation-filter.md`「N4-4 探针」。
+
+- `P&IDAttributes` 里 `ModelItemType = Relationship` 的行没有两端，`ModelID` 是 `Relationship.<guid>`。行数：I井场 946、分离器 A 191、分离器 B 153、低温分离器 A 200、换热器 CD 411。管口行和注释行也只有那七个身份字段。
+- Sheet 端点对解出的 `source_drawing_id` / `target_drawing_id` 在这五张图上都是空的：I井场 26、分离器 A 36、分离器 B 2、低温分离器 A 78、换热器 CD 412，`both_drawing_ids = 0`。
+- 八种定义和 `PipingConnectors` 都不进装载，从图纸配上的都是 0。参考 / 两端都已发出：`PipingEnd1Conn` 283 / 93，`PipingEnd2Conn` 279 / 117，`SignalEnd1Conn` 75 / 5，`SignalEnd2Conn` 83 / 12，`PipingTapOrFitting` 738 / 164，`SignalTapOrFitting` 35 / 15，`EquipmentComponentComposition` 36 / 36，`PBSItemNotes` 7 / 7，`PipingConnectors` 219 / 0。`tests/publish_from_pid.rs` 不在这笔提交里。cargo、clippy、`--diff-against`：未记录。
+
+### publish 发出分支点：点符号的 UID 是表示 Id 加 `.BPT`（2026-10-12，N4-3）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-3。提交 `cec947e`。探针 `examples/probe_branch_points_from_representations.rs`。分析页 `docs/analysis/n2a-port-relation-filter.md`「N4-3 探针」。
+
+- `DrawingItemType = Symbol` 且描述记录是 `igPoint2d`（`0x005E`）。`PipeRun` 发 `PIDPipingBranchPoint`，`SignalRun` 发 `PIDSignalBranchPoint`，UID = `DrawingID` & `.` & `BPT`（`ConstructUIDForBranchPoint`，`0x5F5CFC10`）。`DrawingItems` 是 `DRI-{DrawingID}-{DrawingID.BPT}`，表示在 `UID1`，分支点在 `UID2`。`PIDBranchPoint`（OPC）仍不发。Name 全空。
+- 五图 199 对 199，错 0、多 0、缺 0。管道 183（I井场 97、分离器 A 22、分离器 B 14、低温分离器 A 15、换热器 CD 35），信号 16（10 / 1 / 1 / 1 / 3）。关系 199 对 199。提交说明：对象和关系各加 199，值不动。
+- `tests/publish_from_pid.rs` 的 `EXPECTED`（对象 / 值 / 关系）：I井场 1 628 / 1 530 / 1 864 → 1 735 / 1 530 / 1 971，分离器A 330 / 326 / 374 → 353 / 326 / 397，分离器B 268 / 256 / 303 → 283 / 256 / 318，低温分离器A 358 / 347 / 399 → 374 / 347 / 415，换热器CD 675 / 636 / 790 → 713 / 636 / 828。cargo、clippy、`--diff-against`：未记录。
+
+### publish 发出公称直径：标签文本换成 `N in` / `N mm`（2026-10-12，N4-1）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-1（t-1490）。探针 `examples/probe_n4_nominal_diameter.rs`。
+
+- `_NominalDiameter` 不按原文发。`N"` / `a/b"` / `N-a/b"` → `N in`，`N MM` → `N mm`，裸数字 → `N mm`（5 图错 0）。挂 `IPipeCrossSectionItem.NominalDiameter`，出处 `DerivedByNativeRule`，分析页 `docs/analysis/n2a-name-diameter-codelist-meta.md`，地址 `0x5F52BDE0`（DLL 从整数码换算；`.pid` 里没有码，发的是测过的标签拼法）。
+- 5 图发出 273 条，错 0（管件 152、管段 101、直连仪表 20）。换不出来的计入 `attribute_values.nominal_diameter_not_emitted`，这 5 图是 0。值 2 822 → 3 095。对象和关系钉数不动：`b39ff7e` 的 `EXPECTED` 只改了值列。对象 2 918、关系 3 389 是 N4-2 之前的合计，不是这一笔。
+- 验证（2026-10-12 实跑）：`cargo test --locked --workspace --lib --bins --tests` 0 败（`--lib` 1 176，`publish_from_pid` 4 / 4，`publish_xml_cli` 20 / 20）；`--no-default-features` 的 `--lib --bins --tests` 0 败（`--lib` 850，本测试在 `backup` 特性里所以不进这一档）；clippy `-D warnings` 两种特性在 lib / bins / tests 上零告警，探针 example 同样零告警；改动的 `.rs` rustfmt 干净；`cargo rustdoc --lib --locked -- -W missing-docs` 0。`--all-targets` **NOT RUN**：别的会话未提交的 `examples/probe_ports_from_connect_points.rs`、`probe_dash_scale_field_candidates.rs` 编不过。5 图 `--diff-against` 都退出 0（`b39ff7e` 的 `EXPECTED`：分离器A 330 / 326 / 374，分离器B 268 / 256 / 303，换热器CD 675 / 636 / 790，低温分离器A 358 / 347 / 399，I井场 1 628 / 1 530 / 1 864），`derived_by_native_rule` 分别是 37 / 26 / 53 / 32 / 125（与这五张图的值列之差相同），`nominal_diameter_not_emitted` 都是 0。15 个文件重写到 `D:\work\cad\PID自研软件验证\publish\`。
+
+### publish 发出工艺点：已发布管段各一条 `PIDProcessPoint`（2026-10-12，N4-2）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-2。提交 `fa16824`。探针 `examples/probe_n4_ports_and_process_points.rs`。分析页 `docs/analysis/n2a-port-relation-filter.md`「N4-2 探针」。
+
+- 每个已发布的 `PIDPipingConnector`（管段 `ModelID`）拼 `UID.PPT`。关系是 `ProcessPointCollection`，UID `PRP-{工艺点 UID}-{管段 UID}`，`UID2` 是管段。规则 `ConstructUIDForProcessPoint`（`0x5F5CFD40`）和 `ConstructUIDForRelationship`（`0x5F5D0280`，前缀 `PRP`）。五图 341 对 341，多 0、缺 0，关系同样 341 对 341。参考里没有 `Name`，也没有 `ConnectionFlowDirection`。提交说明：no extra values。
+- 端口不发。五张 `.pid` 里 `PipingPointNumber`、`SignalPointNumber`、`FlowDirection`、`SignalPoint` 的 ASCII 和 UTF-16 都是 0 处。合计管道端口 718 发出 0、信号端口 1 725 发出 0、参考里有流向的管道端口 298（分图在分析页）。`PPC` / `SPC` 不发。
+- `tests/publish_from_pid.rs` 的 `EXPECTED`（对象 / 值 / 关系）：I井场 1 459 / 1 405 / 1 695 → 1 628 / 1 405 / 1 864，分离器A 291 / 289 / 335 → 330 / 289 / 374，分离器B 239 / 230 / 274 → 268 / 230 / 303，低温分离器A 317 / 315 / 358 → 358 / 315 / 399，换热器CD 612 / 583 / 727 → 675 / 583 / 790。值列不动。cargo、clippy、`--diff-against`：未记录。
+
 ### publish 出处多一种「按原生规则算出」：`DerivedByNativeRule`，5 图新计数为 0（2026-10-12，N4-0）
 
 计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-0（t-1489）。N2a 三页（t-1269 / t-1270 / t-1271）记入该计划 §7。

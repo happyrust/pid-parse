@@ -4,6 +4,18 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-12 · 计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-4（`7fdeae8`）**：
+连通关系不发。`Relationship` 行的 `ModelID` 是 `Relationship.<guid>`，没有两端（I井场 946、分离器 A 191、分离器 B 153、低温分离器 A 200、换热器 CD 411）。Sheet 端点对解出来的两端都是空的（同一图序 26 / 36 / 2 / 78 / 412，`both_drawing_ids = 0`）。八种定义加 `PipingConnectors` 从图纸配上的都是 0；参考条数见分析页 `docs/analysis/n2a-port-relation-filter.md`「N4-4 探针」（`PipingEnd1Conn` 283 到 `PipingConnectors` 219）。`tests/publish_from_pid.rs` 不在这笔提交里。cargo：未记录。
+
+**2026-10-12 · 计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-3（`cec947e`）**：
+点符号发分支点。`PipeRun` → `PIDPipingBranchPoint`，`SignalRun` → `PIDSignalBranchPoint`，UID 是表示的 `DrawingID` 加 `.BPT`（`ConstructUIDForBranchPoint`，`0x5F5CFC10`）。五图 199 对 199，错 0：管道 183（97 / 22 / 14 / 15 / 35），信号 16（10 / 1 / 1 / 1 / 3）。Name 全空。关系 199 对 199。提交说明：对象和关系各加 199，值不动。`EXPECTED` 末态：I井场 1 735 / 1 530 / 1 971，分离器A 353 / 326 / 397，分离器B 283 / 256 / 318，低温分离器A 374 / 347 / 415，换热器CD 713 / 636 / 828。cargo：未记录。
+
+**2026-10-12 · 计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-1（t-1490）**：
+`_NominalDiameter` 标签换成 `N in` / `N mm` 后发出 `IPipeCrossSectionItem.NominalDiameter`（`DerivedByNativeRule`，地址 `0x5F52BDE0`）。5 图 273 条错 0；裸数字当毫米也错 0，所以发。值 2 822 → 3 095。换不出来的只计数，这 5 图是 0。
+
+**2026-10-12 · 计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-2（`fa16824`）**：
+已发布管段各发一条 `PIDProcessPoint`（`ModelID` 加 `.PPT`）和一条 `ProcessPointCollection`（`PRP`，`UID2` 是管段）。规则 `ConstructUIDForProcessPoint`（`0x5F5CFD40`）。五图 341 对 341，多 0、缺 0，关系 341 对 341；没有 `Name`，也没有 `ConnectionFlowDirection`。端口不发：`PipingPointNumber` / `SignalPointNumber` / `FlowDirection` 在 `.pid` 里是 0 处；管道端口 718、信号端口 1 725，发出都是 0。`EXPECTED` 值列不动，对象 / 关系：I井场 1 459 / 1 695 → 1 628 / 1 864，分离器A 291 / 335 → 330 / 374，分离器B 239 / 274 → 268 / 303，低温分离器A 317 / 358 → 358 / 399，换热器CD 612 / 727 → 675 / 790。cargo：未记录。
+
 **2026-10-12 · 计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-0（t-1489）**：
 `PidValueSource` 增加 `DerivedByNativeRule { analysis_page, address }`。`_Coverage.json` 增加 `attribute_values.derived_by_native_rule`，stderr 同步；5 图此刻为 0。仪表 / 设备名仍是 `NameRule`，改口为 5 图实测规则（236 / 13 错 0），写出器侧无拼接证据。N2a 三页记入计划 §7。规则与发出的值未改。
 
