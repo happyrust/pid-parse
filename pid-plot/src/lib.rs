@@ -9,6 +9,7 @@
     rustdoc::private_intra_doc_links
 )]
 
+pub mod model;
 pub mod read;
 
 /// Confirms the pinned PDF toolchain and the parser are linked into this crate.
