@@ -54,7 +54,7 @@
 | `TagPrefix` | `EquipPrefix` | 30 | 0 | 0 |
 | `NominalDiameter` | `NominalDiameter` | 0 | 636 | 0 |
 
-- 公称直径 636 个全不等是写法不同：标签是 `2"`、`1"`、`2-1/2"`、`200`、`200 MM`、`25 MM`，发布是 `2 in`、`1 in`、`200 mm`、`25 mm`。
+- 公称直径 636 个全不等是写法不同：标签是 `2"`、`1"`、`2-1/2"`、`200`、`200 MM`、`25 MM`，发布是 `2 in`、`1 in`、`200 mm`、`25 mm`。N4-1（2026-10-12）按这个对照把标签文本换成发布格式再发，5 图 273 个物项错 0，见 `docs/analysis/n2a-name-diameter-codelist-meta.md`「标签文本换算」。上面这张表仍是换算前的原文对照。
 - 不在对照里的标签属性也挂上了，但发布块里没有同值的属性：介质代号 `OperFluidCode` 276、流体系统 `FluidSystem` 100 发布成代码表引用；管件代号 `PipingComponentCode` 304 只出现在拼好的名称里；`OpeningAction` 212、报警值 96、`SP_SetPressure` 8 不发布。
 - 「未发布」112 个都是那 28 个不在 `_Data.xml` 里的 OPC 物项的描述和去向（各 56）。
 

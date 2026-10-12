@@ -428,6 +428,7 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
          {} instruments classed by their symbol's library folder), {} representations; \
          {} of {} label values reach an item, {} attributes published, \
          {} derived by a native rule, \
+         {} nominal diameters left unconverted, \
          {} left out on disagreeing labels",
         drawing.drawing_name,
         drawing.drawing_uid,
@@ -439,6 +440,7 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         stats.label_values,
         stats.label_values_published,
         derived,
+        stats.nominal_diameter_not_emitted,
         stats.conflicting_attributes,
     );
     emit_data(options, &xml)?;

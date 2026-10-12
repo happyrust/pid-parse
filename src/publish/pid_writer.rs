@@ -223,7 +223,7 @@ const LEFT_OUT_BY_DESIGN: [&str; 5] = [
     "ports and branch points: a .pid does not state the point number, so they are not emitted; pipelines are not stated either",
     "off-page connector items: the ModelID on an OPC's row is not always the item SmartPlant publishes",
     "instruments whose graphic has neither a SymbolAttr row nor a symbol filed under an Instrumentation library family: the file does not decide their class, so the item, its DrawingItems and its label values are left out",
-    "codelist attributes, nominal diameters and concatenated pipeline / component names: they come from the plant database",
+    "codelist attributes and concatenated pipeline / component names: they come from the plant database",
     "an attribute two labels on one item disagree about",
 ];
 
@@ -298,6 +298,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "published_from_labels": stats.label_values_published,
             "composed_names": composed_names,
             "derived_by_native_rule": derived_by_native_rule_count(drawing),
+            "nominal_diameter_not_emitted": stats.nominal_diameter_not_emitted,
             "left_out_on_disagreeing_labels": stats.conflicting_attributes,
         },
         "attribute_rows": {
@@ -419,6 +420,7 @@ mod tests {
             label_values_published: 2,
             conflicting_attributes: 1,
             instruments_classed_by_library: 1,
+            nominal_diameter_not_emitted: 0,
         };
         let text = write_pid_coverage_json(&drawing, Path::new(r"D:\plant\A & B.pid"));
         let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
@@ -438,6 +440,10 @@ mod tests {
         assert_eq!(report["attribute_values"]["published_from_labels"], 2);
         assert_eq!(report["attribute_values"]["composed_names"], 1);
         assert_eq!(report["attribute_values"]["derived_by_native_rule"], 0);
+        assert_eq!(
+            report["attribute_values"]["nominal_diameter_not_emitted"],
+            0
+        );
         assert_eq!(
             report["attribute_values"]["left_out_on_disagreeing_labels"],
             1

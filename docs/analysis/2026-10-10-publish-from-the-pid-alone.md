@@ -183,12 +183,12 @@ G1 定了「做 P2，下游只要设备 / 仪表 / 管件清单和图上的表�
 
 | 图 | 发出对象 / 参考 | 发出值（错） | 发出关系 / 参考 |
 |---|---:|---:|---:|
-| I井场 注采阀组 | 1 459 / 3 093 | 1 405（0） | 1 695 / 4 107 |
-| 一级闪蒸分离器A | 291 / 570 | 289（0） | 335 / 767 |
-| 一级闪蒸分离器B | 239 / 470 | 230（0） | 274 / 627 |
-| 低温分离器A | 317 / 679 | 315（0） | 358 / 884 |
-| 换热器CD及外输阀组 | 612 / 1 319 | 583（0） | 727 / 1 800 |
-| **合计** | **2 918 / 6 131（47.6 %）** | **2 822（0）** | **3 389 / 8 185（41.4 %）** |
+| I井场 注采阀组 | 1 459 / 3 093 | 1 530（0） | 1 695 / 4 107 |
+| 一级闪蒸分离器A | 291 / 570 | 326（0） | 335 / 767 |
+| 一级闪蒸分离器B | 239 / 470 | 256（0） | 274 / 627 |
+| 低温分离器A | 317 / 679 | 347（0） | 358 / 884 |
+| 换热器CD及外输阀组 | 612 / 1 319 | 636（0） | 727 / 1 800 |
+| **合计** | **2 918 / 6 131（47.6 %）** | **3 095（0）** | **3 389 / 8 185（41.4 %）** |
 
 按类（发出 / 参考；有 `IObject.Name` 的：发出 / 参考）：
 
@@ -199,22 +199,22 @@ G1 定了「做 P2，下游只要设备 / 仪表 / 管件清单和图上的表�
 | PIDProcessVessel / PIDProcessEquipment / PIDMechanicalEquipment / PIDHeatTransferEquipment | 5 / 5、13 / 13、4 / 4、1 / 1 | 13 / 13 | 名字是 5 图实测规则 `{EquipPrefix}-{EquipSeqNo}`（236 / 13 错 0），写出器侧无拼接证据，见 n2a 页 |
 | PIDControlSystemFunction | 88 / 88 | 79 / 79 | 类由 `SymbolAttr.Type` = `System functions`，或库目录 `System Functions` |
 | PIDInstrument | 127 / 127 | 113 / 118 | `SymbolAttr.Type` = `Off-line instruments`，或库目录 `Off-Line` / `Actuators`；名字是 5 图实测规则 `{MeasuredVariable}-{InstrTagSequenceNo}`（236 / 13 错 0），写出器侧无拼接证据，见 n2a 页 |
-| PIDInlineInstrument | 72 / 72 | 27 / 39 | `SymbolAttr.Class` = `Instrument In-Line Component`，或库目录 `In-Line` / `Relief Devices` |
-| PIDPipingComponent | 264 / 264 | 0 / 152 | 类型 / 名字的规则在库里，不发 |
-| PIDPipingConnector | 341 / 341 | 0 / 219 | 管段号是拼接串，不发；`PipingConnectorSeqNo` 等有出处的发 |
+| PIDInlineInstrument | 72 / 72 | 27 / 39 | `SymbolAttr.Class` = `Instrument In-Line Component`，或库目录 `In-Line` / `Relief Devices`；`IPipeCrossSectionItem.NominalDiameter` 20 条 |
+| PIDPipingComponent | 264 / 264 | 0 / 152 | 类型 / 名字的规则在库里，不发；`IPipeCrossSectionItem.NominalDiameter` 152 条 |
+| PIDPipingConnector | 341 / 341 | 0 / 219 | 管段号是拼接串，不发；`PipingConnectorSeqNo` 等有出处的发；`IPipeCrossSectionItem.NominalDiameter` 101 条 |
 | PIDSignalConnector | 83 / 83 | 0 / 0 | |
 | PIDNozzle | 36 / 36 | 0 / 0 | |
 | PIDNote | 56 / 56 | 0 / 0 | `NoteText` 来自 `Note.Body` |
 | PIDBranchPoint（OPC） | 0 / 58 | 0 / 58 | **故意不发**：OPC 行上的 `ModelID` 不一定是 SmartPlant 发布的那个物项（语料 53 个里 23 个不在参考里） |
 | PIDPipeline、PIDPipingPort、PIDProcessPoint、PIDPipingBranchPoint、PIDSignalBranchPoint、PIDSignalPort | 0 / 172、0 / 718、0 / 341、0 / 183、0 / 16、0 / 1 725 | — | 文件里没有（见上文「`.pid` 里没有」与「更正」） |
 
-发出的 2 822 个值 = 1 823 个 `GraphicOID` + 5 个图名 + 232 个名字（设备 13、仪表 219）+ 762 个标签值。仪表 / 设备名是 5 图实测规则（236 / 13 错 0），写出器侧无拼接证据，见 n2a 页（`docs/analysis/n2a-name-diameter-codelist-meta.md`）。3 389 条关系 = 1 823 条 `DwgRepresentationComposition` + 1 566 条 `DrawingItems`，UID 按 SmartPlant 的 `{前缀}-{UID1}-{UID2}` 拼。
+发出的 3 095 个值 = 1 823 个 `GraphicOID` + 5 个图名 + 232 个名字（设备 13、仪表 219）+ 762 个标签值 + 273 个公称直径。仪表 / 设备名是 5 图实测规则（236 / 13 错 0），写出器侧无拼接证据，见 n2a 页（`docs/analysis/n2a-name-diameter-codelist-meta.md`）。公称直径是同一页的标签文本换算（`N"` / `a/b"` → `N in`，`N MM` 与裸数字 → `N mm`），273 条错 0，出处 `DerivedByNativeRule`，地址 `0x5F52BDE0`。3 389 条关系 = 1 823 条 `DwgRepresentationComposition` + 1 566 条 `DrawingItems`，UID 按 SmartPlant 的 `{前缀}-{UID1}-{UID2}` 拼。
 以分离器B 为例，CLI 一行：100 个物项（87 个定得了类，其中 2 个按库目录）、151 个表示，406 个标签值 400 个挂上物项、63 条属性发出、0 条因两张标签打架而弃。
 
 **有意不发的**（按 Q2 (a)，仪表这一条已按 Q2 (b) 收回）：
 - 仪表 287 / 287 都发。原先不发的 68 个是 `SymbolAttr` 定不了类的（67 个没有行，1 个空行），现在按 `Instrumentation` 的下一段目录归类，错类 0。发出的 287 个里 68 个缺名字的一半零件、没拼（参考里 51 个仪表没有名字；发出的名字 219 / 236）。
 - 落在 `DependencyObject` 上的 `Symbol` 行（语料 518 / 518 SmartPlant 都没发布）不当表示；落在点（`0x005E`）上的当表示发、但不发 `DrawingItems`（SmartPlant 把它连到自己的分支点对象，不是行上写的管段）。
-- 标签值只发按类有明确落点的那几个属性（`MeasuredVariableCode`、`TagSequenceNo`（仪表 / 管段 / 设备三个落点）、`TagPrefix`、`PipingMaterialsClass`、`InsulationSpec`、`Description`、`ToFromText`、`Note.Body`）；公称直径写法不同、不发；代码表属性不发；同一物项两张标签给出不同值则整个属性不发（语料 0 条）。
+- 标签值只发按类有明确落点的那几个属性（`MeasuredVariableCode`、`TagSequenceNo`（仪表 / 管段 / 设备三个落点）、`TagPrefix`、`PipingMaterialsClass`、`InsulationSpec`、`Description`、`ToFromText`、`Note.Body`）。公称直径不按标签原文发：`N"` / `a/b"` / `N-a/b"` → `N in`，`N MM` 与裸数字 → `N mm`，挂 `IPipeCrossSectionItem.NominalDiameter`（5 图 273 条，错 0）；换不出来的不发、只计数。代码表属性不发；同一物项两张标签给出不同值则整个属性不发（语料 0 条）。
 - `_Meta.xml`（2026-10-10 定的）：仍发。信封上的 `DocUID`、`DocName` 在文件里。`DocumentVersion` / `DocumentRevision` / `File` 三个对象和三条 `Rel` 不发——它们的 UID、`DocVersionDate`、`FilePath` 都不在 `.pid` 里，合成 UID 对不上 SmartPlant 发布的那个。数据库路的 `write_meta_xml` 仍发那三块。`.pid` 文件名在原始字节里，但 `File` 对象的 UID 不在，所以这个对象也不发。
 - `--diff-against` 在 `.pid` 模式下跟测试同一套（2026-10-10 定的）：发出的对象、值和 `<Rel>` 必须在参考里对上，错一个退出 1；参考里有、本模式不发的类不算 `MISSING`。数据库输入仍是原来的标签 / `DefUID` 计数报告。
 

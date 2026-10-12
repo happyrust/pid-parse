@@ -22,6 +22,14 @@
 //! equipment `{EquipPrefix}-{EquipSeqNo}` 13 / 13, none wrong) and are marked
 //! [`PidValueSource::NameRule`]. `EFAdapter.dll` holds no evidence of
 //! concatenating them (`docs/analysis/n2a-name-diameter-codelist-meta.md`).
+//!
+//! A `_NominalDiameter` label is not copied out as written. `N"`, `a/b"`
+//! and `N-a/b"` become `N in`, `N MM` becomes `N mm`, and a bare number
+//! becomes `N mm` — on the five drawings each of those spellings equals
+//! the reference, and a label that does not parse is counted and left
+//! out. The value is [`PidValueSource::DerivedByNativeRule`]: the DLL's
+//! `NominalDiameterConv` (`0x5F52BDE0`) formats an integer code, which
+//! the `.pid` does not carry, so the spelling above is the measured rule.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -159,6 +167,9 @@ pub struct PidPublishStats {
     pub label_values_published: usize,
     /// Attributes left out because two labels on one item disagree.
     pub conflicting_attributes: usize,
+    /// `_NominalDiameter` labels that did not become a published value:
+    /// the text did not parse, or one item carried two different spellings.
+    pub nominal_diameter_not_emitted: usize,
     /// Instruments whose class comes from their symbol's library folder,
     /// their graphics having no `SymbolAttr` row.
     pub instruments_classed_by_library: usize,
@@ -390,6 +401,74 @@ fn instrument_class_by_library(path: &str) -> Option<&'static str> {
     }
 }
 
+/// `_NominalDiameter` label text as `SmartPlant` publishes it, or `None`
+/// when the text is not one of the three spellings measured on the five
+/// drawings (`examples/probe_n4_nominal_diameter.rs`: 273 items, none wrong).
+fn publish_nominal_diameter(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    if let Some(body) = text.strip_suffix('"') {
+        return parse_measure(body).map(|number| format!("{number} in"));
+    }
+    let upper = text.to_ascii_uppercase();
+    if let Some(body) = upper.strip_suffix("MM") {
+        let body = body.trim();
+        if body.is_empty() {
+            return None;
+        }
+        return parse_measure(body).map(|number| format!("{number} mm"));
+    }
+    if text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return parse_measure(text).map(|number| format!("{number} mm"));
+    }
+    None
+}
+
+/// An integer, a fraction `a/b`, or a mixed number `N-a/b` / `N a/b`,
+/// written without a trailing zero.
+fn parse_measure(text: &str) -> Option<String> {
+    let text = text.trim();
+    if let Some((whole, fraction)) = text.split_once([' ', '-']) {
+        let whole = parse_unsigned(whole)?;
+        let (numerator, denominator) = fraction.split_once('/')?;
+        let numerator = parse_unsigned(numerator)?;
+        let denominator = parse_unsigned(denominator)?;
+        return format_ratio(whole * denominator + numerator, denominator);
+    }
+    if let Some((numerator, denominator)) = text.split_once('/') {
+        return format_ratio(parse_unsigned(numerator)?, parse_unsigned(denominator)?);
+    }
+    parse_unsigned(text).map(|number| number.to_string())
+}
+
+fn parse_unsigned(text: &str) -> Option<i64> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn format_ratio(numerator: i64, denominator: i64) -> Option<String> {
+    if denominator <= 0 || numerator < 0 {
+        return None;
+    }
+    let whole = numerator / denominator;
+    let mut remainder = numerator % denominator;
+    if remainder == 0 {
+        return Some(whole.to_string());
+    }
+    let mut digits = String::new();
+    for _ in 0..6 {
+        remainder *= 10;
+        let digit = (remainder / denominator) as u32;
+        digits.push(char::from_digit(digit, 10)?);
+        remainder %= denominator;
+        if remainder == 0 {
+            return Some(format!("{whole}.{digits}"));
+        }
+    }
+    None
+}
+
 /// The published attribute a label property fills on an item of `class`.
 fn published_attribute(property: &str, class: &str) -> Option<(&'static str, &'static str)> {
     let instrument = INSTRUMENT_CLASSES.contains(&class);
@@ -573,6 +652,8 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
     // (item, interface, attribute) -> (values, first row giving each).
     let mut found: BTreeMap<(&str, &'static str, &'static str), BTreeMap<String, u32>> =
         BTreeMap::new();
+    // item -> converted nominal diameter -> how many labels spelled it.
+    let mut diameters: BTreeMap<&str, BTreeMap<String, usize>> = BTreeMap::new();
     for (oid, row) in &records.rows {
         let values = label_values(row);
         if values.is_empty() {
@@ -587,6 +668,19 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
             continue;
         };
         for (property, value) in values {
+            if property == "NominalDiameter" {
+                match publish_nominal_diameter(&value) {
+                    Some(published) => {
+                        *diameters
+                            .entry(*item)
+                            .or_default()
+                            .entry(published)
+                            .or_insert(0) += 1;
+                    }
+                    None => stats.nominal_diameter_not_emitted += 1,
+                }
+                continue;
+            }
             if let Some((interface, name)) = published_attribute(&property, class) {
                 found
                     .entry((*item, interface, name))
@@ -595,6 +689,27 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
                     .or_insert(*oid);
             }
         }
+    }
+
+    let mut derived: BTreeMap<&str, PidPublishAttribute> = BTreeMap::new();
+    for (item, values) in diameters {
+        if values.len() != 1 {
+            stats.nominal_diameter_not_emitted += values.values().sum::<usize>();
+            continue;
+        }
+        let (value, _) = values.into_iter().next().expect("one spelling");
+        derived.insert(
+            item,
+            PidPublishAttribute {
+                interface: "IPipeCrossSectionItem",
+                name: "NominalDiameter",
+                value,
+                source: PidValueSource::DerivedByNativeRule {
+                    analysis_page: "docs/analysis/n2a-name-diameter-codelist-meta.md",
+                    address: "0x5F52BDE0",
+                },
+            },
+        );
     }
 
     let mut attributes: BTreeMap<&str, Vec<PidPublishAttribute>> = BTreeMap::new();
@@ -622,6 +737,9 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
             let class = classes.get(uid.as_str()).copied().flatten();
             let mut attributes = attributes.remove(uid.as_str()).unwrap_or_default();
             stats.label_values_published += attributes.len();
+            if let Some(diameter) = derived.remove(uid.as_str()) {
+                attributes.push(diameter);
+            }
             if let Some(name) = class.and_then(|class| composed_name(class, &attributes)) {
                 attributes.push(name);
             }
@@ -897,6 +1015,27 @@ mod tests {
         );
         assert_eq!(composed_name("PIDProcessVessel", &vessel[..1]), None);
         assert_eq!(composed_name("PIDPipingComponent", &vessel), None);
+    }
+
+    #[test]
+    fn a_nominal_diameter_label_becomes_the_published_spelling() {
+        assert_eq!(publish_nominal_diameter("1\""), Some("1 in".to_string()));
+        assert_eq!(
+            publish_nominal_diameter("3/4\""),
+            Some("0.75 in".to_string())
+        );
+        assert_eq!(
+            publish_nominal_diameter("1-1/2\""),
+            Some("1.5 in".to_string())
+        );
+        assert_eq!(
+            publish_nominal_diameter("1/2\""),
+            Some("0.5 in".to_string())
+        );
+        assert_eq!(publish_nominal_diameter("25 MM"), Some("25 mm".to_string()));
+        assert_eq!(publish_nominal_diameter("200"), Some("200 mm".to_string()));
+        assert_eq!(publish_nominal_diameter("2 in"), None);
+        assert_eq!(publish_nominal_diameter(""), None);
     }
 
     #[test]

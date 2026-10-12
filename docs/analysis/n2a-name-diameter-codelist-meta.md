@@ -64,6 +64,18 @@ UoM 这一支在 `0x5F52C623` 调用 `sub_5F5D35E0`（错误串 `:ConvertNominal
 
 `< 5000` / `/ 32` 这套整数码没有对回五份 `.pid`（发布 XML 里只有已经格式化的字符串）。这项 **NOT RUN**，不把编码写成成立。图纸标签集是 `1"` / `25 MM` / `200`，不是 `2 in` / `200 mm`，出处是 N2b 那一页，这里不重做。
 
+### 标签文本换算（N4-1，2026-10-12）
+
+`NominalDiameterConv`（`sub_5F52BDE0`，`0x5F52BDE0`）吃的是整数码。五份 `.pid` 里没有这个码，只有 `_NominalDiameter` 标签的 `ItemValue`。探针 `examples/probe_n4_nominal_diameter.rs` 把标签挂到物项上，再对参考里同一 UID 的 `IPipeCrossSectionItem.NominalDiameter`：
+
+| 标签 | 发布 | 标签行 | 物项（去重后） | 错 |
+|---|---|---:|---:|---:|
+| `N"`、`a/b"`、`N-a/b"` | `N in`（`3/4"` → `0.75 in`，`1-1/2"` → `1.5 in`） | 178 | 178 | 0 |
+| `N MM` | `N mm` | 50 | 30 | 0 |
+| 裸数字 | `N mm` | 90 | 65 | 0 |
+
+318 行标签、273 个物项，错 0，没有两种拼法打架，也没有挂上了却对不上参考的。其余 878 − 273 = 605 处参考公称直径不在这些标签上（端口等本模式还不发的对象）。裸数字当毫米在这 5 图上错 0，所以发；换不出来的文本不发，只计 `nominal_diameter_not_emitted`（这 5 图是 0）。发出的接口是参考里的 `IPipeCrossSectionItem`，类是 `PIDPipingComponent` 152、`PIDPipingConnector` 101、`PIDInlineInstrument` 20。
+
 ## 5. 代码表引用
 
 `EnumToStringConv` 是 `sub_5F564800`。它引用 `Name`（`0x5F5079E0`）和 `Description`（`0x5F508C8C`），对应 map 里的 `EFAdapter.EnumToStringConv,<Name>` 和 `<Description>`。同函数拼的 SQL 字面量：

@@ -54,6 +54,8 @@ ASCII 串 `SPenums` 在 `0x570B476C`，唯一交叉引用是数据 `0x570B2948`�
 
 写法规则：标签集名叫 `_NominalDiameter`，用 `ItemFilter` 限定管件、管段或仪表，绑定 `ItemProperty.NominalDiameter`。格式串大多为空（`vbNullString`）。存下来的是图纸自己的写法（英寸记号 `1"`、`3/4"`，或毫米数字 / `25 MM`），不是发布 XML 的 `1 in` / `2 in` / `200 mm`。这和 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md` 说的「标签集对不上 878 个发布值」是同一件事；那一页没打开标签，这里把字段读出来了。
 
+N4-1（2026-10-12）在写出侧把这些 `ItemValue` 换成发布格式，规则和 5 图核对记在 `docs/analysis/n2a-name-diameter-codelist-meta.md`「标签文本换算」一节。本页仍只描述图纸写入侧，不改这里的结论。
+
 ## 复现
 
 不碰另外两个目录（`pidobjmgrai\`、`pidobjmgrai-q2\`），不 `--stateful`，不 `stop` 别人的 `idalib`。下面命令用完会自己停掉本次实例。
