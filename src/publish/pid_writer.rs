@@ -23,7 +23,7 @@ use std::path::Path;
 use serde_json::json;
 
 use super::model::{PublishDrawing, PublishError};
-use super::pid_load::{PidPublishDrawing, PidPublishItem, PidValueSource};
+use super::pid_load::{PidBranchPoint, PidPublishDrawing, PidPublishItem, PidValueSource};
 use super::xml_writer::{defuid_prefix, escape_attr, write_meta_envelope};
 
 const SOFTWARE_VERSION: &str = "10.00.31.0023";
@@ -84,6 +84,9 @@ fn write_document(
         writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&point.uid))?;
         writeln!(buf, "   </PIDProcessPoint>")?;
     }
+    for point in &drawing.branch_points {
+        write_branch_point(buf, point)?;
+    }
     let published = published_items(drawing);
     for representation in &drawing.representations {
         writeln!(buf, "   <PIDRepresentation>")?;
@@ -124,7 +127,39 @@ fn write_document(
             &point.connector_uid,
         )?;
     }
+    for point in &drawing.branch_points {
+        // UID1 is the representation. UID2 is the branch point. Measured
+        // on all 199 reference `DrawingItems` rows whose UID2 ends in `.BPT`.
+        write_rel(buf, "DrawingItems", &point.representation_uid, &point.uid)?;
+    }
     writeln!(buf, "  </Container>")
+}
+
+fn write_branch_point(buf: &mut String, point: &PidBranchPoint) -> std::fmt::Result {
+    let interfaces: &[&str] = if point.class == "PIDSignalBranchPoint" {
+        &[
+            "IConnection",
+            "IDrawingItem",
+            "ISignalConnection",
+            "ISignalBranchPoint",
+            "IFacilityPoint",
+            "IDocumentItem",
+        ]
+    } else {
+        &[
+            "IConnection",
+            "IPipingConnection",
+            "IDrawingItem",
+            "IPipingBranchPoint",
+            "IDocumentItem",
+        ]
+    };
+    writeln!(buf, "   <{}>", point.class)?;
+    writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&point.uid))?;
+    for interface in interfaces {
+        writeln!(buf, "      <{interface}/>")?;
+    }
+    writeln!(buf, "   </{}>", point.class)
 }
 
 fn write_item(buf: &mut String, item: &PidPublishItem, class: &str) -> std::fmt::Result {
@@ -188,7 +223,8 @@ fn published_items(drawing: &PidPublishDrawing) -> BTreeSet<&str> {
 }
 
 /// The `DrawingItems` relationships the `_Data.xml` carries: one for every
-/// representation whose stated item is published.
+/// representation whose stated item is published, plus one for every
+/// derived branch point.
 fn drawing_items(drawing: &PidPublishDrawing, published: &BTreeSet<&str>) -> usize {
     drawing
         .representations
@@ -200,6 +236,7 @@ fn drawing_items(drawing: &PidPublishDrawing, published: &BTreeSet<&str>) -> usi
                 .is_some_and(|uid| published.contains(uid))
         })
         .count()
+        + drawing.branch_points.len()
 }
 
 /// Published values fixed by an `EFAdapter.dll` rule
@@ -214,13 +251,14 @@ pub fn derived_by_native_rule_count(drawing: &PidPublishDrawing) -> usize {
         .flat_map(|item| &item.attributes)
         .filter(|attribute| matches!(attribute.source, PidValueSource::DerivedByNativeRule { .. }))
         .count();
-    // Each process-point UID is one derived value (`0x5F5CFD40`).
-    attributes + drawing.process_points.len()
+    // Each process-point UID is one derived value (`0x5F5CFD40`), and
+    // each branch-point UID is one (`0x5F5CFC10`).
+    attributes + drawing.process_points.len() + drawing.branch_points.len()
 }
 
 /// What a `.pid`-only export never carries, for the reader of the report.
 const LEFT_OUT_BY_DESIGN: [&str; 5] = [
-    "ports and branch points: a .pid does not state the point number, so they are not emitted; pipelines are not stated either",
+    "ports: a .pid does not state the point number, so they are not emitted; pipelines are not stated either",
     "off-page connector items: the ModelID on an OPC's row is not always the item SmartPlant publishes",
     "instruments whose graphic has neither a SymbolAttr row nor a symbol filed under an Instrumentation library family: the file does not decide their class, so the item, its DrawingItems and its label values are left out",
     "codelist attributes and concatenated pipeline / component names: they come from the plant database",
@@ -257,6 +295,16 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
     if !drawing.process_points.is_empty() {
         classes.insert("PIDProcessPoint", (drawing.process_points.len(), 0, 0));
     }
+    for class in ["PIDPipingBranchPoint", "PIDSignalBranchPoint"] {
+        let count = drawing
+            .branch_points
+            .iter()
+            .filter(|point| point.class == class)
+            .count();
+        if count > 0 {
+            classes.insert(class, (count, 0, 0));
+        }
+    }
     let left_out: Vec<serde_json::Value> = drawing
         .items
         .iter()
@@ -286,6 +334,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "instruments_classed_by_symbol_library": stats.instruments_classed_by_library,
             "representations": drawing.representations.len(),
             "process_points": drawing.process_points.len(),
+            "branch_points": drawing.branch_points.len(),
         },
         "relationships": {
             "DwgRepresentationComposition": drawing.representations.len(),
@@ -318,8 +367,8 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
 mod tests {
     use super::*;
     use crate::publish::pid_load::{
-        PidProcessPoint, PidPublishAttribute, PidPublishRepresentation, PidPublishStats,
-        PidValueSource,
+        PidBranchPoint, PidProcessPoint, PidPublishAttribute, PidPublishRepresentation,
+        PidPublishStats, PidValueSource,
     };
 
     fn drawing() -> PidPublishDrawing {
@@ -356,6 +405,7 @@ mod tests {
                 },
             ],
             process_points: Vec::new(),
+            branch_points: Vec::new(),
             representations: vec![
                 PidPublishRepresentation {
                     uid: "R1".to_string(),
@@ -526,5 +576,44 @@ mod tests {
         assert_eq!(report["relationships"]["ProcessPointCollection"], 1);
         assert_eq!(report["classes"]["PIDProcessPoint"]["objects"], 1);
         assert_eq!(report["attribute_values"]["derived_by_native_rule"], 1);
+    }
+
+    #[test]
+    fn a_branch_point_is_the_representation_uid_plus_bpt() {
+        let mut drawing = drawing();
+        drawing.branch_points.push(PidBranchPoint {
+            uid: "REP.BPT".to_string(),
+            representation_uid: "REP".to_string(),
+            class: "PIDPipingBranchPoint",
+            source: PidValueSource::DerivedByNativeRule {
+                analysis_page: "docs/analysis/n2a-port-relation-filter.md",
+                address: "0x5F5CFC10",
+            },
+        });
+        drawing.branch_points.push(PidBranchPoint {
+            uid: "SIG.BPT".to_string(),
+            representation_uid: "SIG".to_string(),
+            class: "PIDSignalBranchPoint",
+            source: PidValueSource::DerivedByNativeRule {
+                analysis_page: "docs/analysis/n2a-port-relation-filter.md",
+                address: "0x5F5CFC10",
+            },
+        });
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(xml.contains(
+            "   <PIDPipingBranchPoint>\n      <IObject UID=\"REP.BPT\"/>\n      <IConnection/>\n      <IPipingConnection/>\n      <IDrawingItem/>\n      <IPipingBranchPoint/>\n      <IDocumentItem/>\n   </PIDPipingBranchPoint>\n"
+        ));
+        assert!(xml.contains(
+            "   <PIDSignalBranchPoint>\n      <IObject UID=\"SIG.BPT\"/>\n      <IConnection/>\n      <IDrawingItem/>\n      <ISignalConnection/>\n      <ISignalBranchPoint/>\n      <IFacilityPoint/>\n      <IDocumentItem/>\n   </PIDSignalBranchPoint>\n"
+        ));
+        assert!(xml.contains(
+            "   <Rel>\n      <IObject UID=\"DRI-REP-REP.BPT\"/>\n      <IRel UID1=\"REP\" UID2=\"REP.BPT\" DefUID=\"DrawingItems\"/>\n   </Rel>\n"
+        ));
+        let text = write_pid_coverage_json(&drawing, Path::new("a.pid"));
+        let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(report["objects"]["branch_points"], 2);
+        assert_eq!(report["classes"]["PIDPipingBranchPoint"]["objects"], 1);
+        assert_eq!(report["classes"]["PIDSignalBranchPoint"]["objects"], 1);
+        assert_eq!(report["attribute_values"]["derived_by_native_rule"], 2);
     }
 }

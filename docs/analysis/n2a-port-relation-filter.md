@@ -158,3 +158,13 @@ ida-bridge supervisor stop <cid>
 | 低温分离器 A | 68 | 0 | 197 | 0 | 38 |
 | 换热器 CD | 172 | 0 | 399 | 0 | 40 |
 | **合计** | **718** | **0** | **1,725** | **0** | **298** |
+
+## N4-3 探针：分支点按管线类型分，UID 是表示自己的 Id 加 `.BPT`
+
+探针 `examples/probe_branch_points_from_representations.rs`（`cargo run --example probe_branch_points_from_representations`）。只读五张 `.pid` 和旁边的 `_Data.xml`。
+
+候选在计分前写死：`DrawingItemType = Symbol` 且描述记录是 `igPoint2d`（`0x005E`）的行是分支点表示。`ModelItemType = PipeRun` 发 `PIDPipingBranchPoint`，`SignalRun` 发 `PIDSignalBranchPoint`，UID = `DrawingID` & `.` & `BPT`（`ConstructUIDForBranchPoint`，`0x5F5CFC10`）。别的类型不发。`DrawingItems` 是 `DRI-{DrawingID}-{DrawingID.BPT}`，表示在 `UID1`，分支点在 `UID2`。行上没有符号路径，字段只有 `DrawingID`、`DrawingItemType`、`DrawingNo`、`Flag`、`ModelID`、`ModelItemType`、`ProjectNumber`。
+
+五图 199 对 199，错 0、多 0、缺 0。管道 183（I井场 97、分离器 A 22、分离器 B 14、低温分离器 A 15、换热器 CD 35），信号 16（10 / 1 / 1 / 1 / 3）。和装载里 `item_uid = None` 的表示是同一集合。参考里 Name 全空。关系 199 对 199。
+
+管道接口：`IConnection`、`IPipingConnection`、`IDrawingItem`、`IPipingBranchPoint`、`IDocumentItem`。信号接口：`IConnection`、`IDrawingItem`、`ISignalConnection`、`ISignalBranchPoint`、`IFacilityPoint`、`IDocumentItem`。`PIDBranchPoint`（OPC）仍不发。

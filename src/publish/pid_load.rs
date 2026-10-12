@@ -190,6 +190,24 @@ pub struct PidProcessPoint {
     pub source: PidValueSource,
 }
 
+/// One branch point derived from a point symbol drawn on a run.
+///
+/// `ConstructUIDForBranchPoint` (`0x5F5CFC10`) is the representation's
+/// own id plus `.BPT`. `PipeRun` publishes `PIDPipingBranchPoint` and
+/// `SignalRun` publishes `PIDSignalBranchPoint`
+/// (`docs/analysis/n2a-port-relation-filter.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PidBranchPoint {
+    /// The branch-point UID: the representation id plus `.BPT`.
+    pub uid: String,
+    /// The representation this point is drawn as.
+    pub representation_uid: String,
+    /// `PIDPipingBranchPoint` or `PIDSignalBranchPoint`.
+    pub class: &'static str,
+    /// The native rule that fixed [`Self::uid`] and [`Self::class`].
+    pub source: PidValueSource,
+}
+
 /// A drawing's publish data as the `.pid` states it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PidPublishDrawing {
@@ -201,6 +219,8 @@ pub struct PidPublishDrawing {
     pub items: Vec<PidPublishItem>,
     /// Process points derived from published pipe runs, ordered by UID.
     pub process_points: Vec<PidProcessPoint>,
+    /// Branch points derived from point symbols on runs, ordered by UID.
+    pub branch_points: Vec<PidBranchPoint>,
     /// Representations, ordered by UID.
     pub representations: Vec<PidPublishRepresentation>,
     /// How much of the file was read.
@@ -566,6 +586,7 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
     let mut item_types: BTreeMap<String, String> = BTreeMap::new();
     let mut item_graphics: HashMap<String, Vec<u32>> = HashMap::new();
     let mut representations = BTreeMap::new();
+    let mut branch_points = BTreeMap::new();
     for row in records.rows.values() {
         if row.class == "SymbolAttr" {
             symbol_attr.insert(row.described, row);
@@ -604,6 +625,23 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
             .text("DrawingID")
             .filter(|uid| uid.len() > 1 && !unpublished)
         {
+            if branch_point {
+                if let Some(class) = branch_point_class(item_type) {
+                    let point_uid = format!("{uid}.BPT");
+                    branch_points.insert(
+                        point_uid.clone(),
+                        PidBranchPoint {
+                            uid: point_uid,
+                            representation_uid: uid.to_string(),
+                            class,
+                            source: PidValueSource::DerivedByNativeRule {
+                                analysis_page: "docs/analysis/n2a-port-relation-filter.md",
+                                address: "0x5F5CFC10",
+                            },
+                        },
+                    );
+                }
+            }
             representations.insert(
                 uid.to_string(),
                 PidPublishRepresentation {
@@ -763,6 +801,7 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
         drawing_name,
         items,
         process_points,
+        branch_points: branch_points.into_values().collect(),
         representations: representations.into_values().collect(),
         stats,
     })
@@ -773,6 +812,18 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
 /// The UID is the connector's id plus `.PPT` (`0x5F5CFD40`). A run the
 /// file does not class is skipped: it is not a published connector, so
 /// the reference has no process point on it either.
+/// `PipeRun` is a piping branch point, `SignalRun` a signal one.
+///
+/// Any other type is not emitted: the five drawings have none
+/// (`examples/probe_branch_points_from_representations.rs`, 199 / 199).
+fn branch_point_class(model_item_type: &str) -> Option<&'static str> {
+    match model_item_type {
+        "PipeRun" => Some("PIDPipingBranchPoint"),
+        "SignalRun" => Some("PIDSignalBranchPoint"),
+        _ => None,
+    }
+}
+
 fn process_points_of(items: &[PidPublishItem]) -> Vec<PidProcessPoint> {
     items
         .iter()
@@ -1015,6 +1066,17 @@ mod tests {
         );
         assert_eq!(composed_name("PIDProcessVessel", &vessel[..1]), None);
         assert_eq!(composed_name("PIDPipingComponent", &vessel), None);
+    }
+
+    #[test]
+    fn a_point_on_a_pipe_run_is_a_piping_branch_point() {
+        assert_eq!(branch_point_class("PipeRun"), Some("PIDPipingBranchPoint"));
+        assert_eq!(
+            branch_point_class("SignalRun"),
+            Some("PIDSignalBranchPoint")
+        );
+        assert_eq!(branch_point_class("OPC"), None);
+        assert_eq!(branch_point_class("PipingComp"), None);
     }
 
     #[test]
