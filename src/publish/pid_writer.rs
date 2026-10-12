@@ -186,6 +186,20 @@ fn drawing_items(drawing: &PidPublishDrawing, published: &BTreeSet<&str>) -> usi
         .count()
 }
 
+/// Published values fixed by an `EFAdapter.dll` rule
+/// ([`PidValueSource::DerivedByNativeRule`]). The same number is
+/// `attribute_values.derived_by_native_rule` in [`write_pid_coverage_json`]
+/// and the `.pid` line on stderr.
+pub fn derived_by_native_rule_count(drawing: &PidPublishDrawing) -> usize {
+    drawing
+        .items
+        .iter()
+        .filter(|item| item.class.is_some())
+        .flat_map(|item| &item.attributes)
+        .filter(|attribute| matches!(attribute.source, PidValueSource::DerivedByNativeRule { .. }))
+        .count()
+}
+
 /// What a `.pid`-only export never carries, for the reader of the report.
 const LEFT_OUT_BY_DESIGN: [&str; 5] = [
     "ports, process points, branch points and pipelines: a .pid does not state them",
@@ -260,6 +274,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "label_values_reaching_an_item": stats.label_values_reached,
             "published_from_labels": stats.label_values_published,
             "composed_names": composed_names,
+            "derived_by_native_rule": derived_by_native_rule_count(drawing),
             "left_out_on_disagreeing_labels": stats.conflicting_attributes,
         },
         "attribute_rows": {
@@ -397,6 +412,7 @@ mod tests {
         assert_eq!(report["relationships"]["DrawingItems"], 1);
         assert_eq!(report["attribute_values"]["published_from_labels"], 2);
         assert_eq!(report["attribute_values"]["composed_names"], 1);
+        assert_eq!(report["attribute_values"]["derived_by_native_rule"], 0);
         assert_eq!(
             report["attribute_values"]["left_out_on_disagreeing_labels"],
             1
@@ -412,6 +428,34 @@ mod tests {
             Some(LEFT_OUT_BY_DESIGN.len())
         );
         assert!(text.ends_with("}\n"));
+    }
+
+    #[test]
+    fn a_native_rule_value_is_counted_apart_from_labels_and_name_rules() {
+        let mut drawing = drawing();
+        drawing.items[0].attributes.push(PidPublishAttribute {
+            interface: "IObject",
+            name: "Description",
+            value: "derived".to_string(),
+            source: PidValueSource::DerivedByNativeRule {
+                analysis_page: "docs/analysis/n2a-port-relation-filter.md",
+                address: "0x5F5CEF20",
+            },
+        });
+        drawing.items[1].attributes.push(PidPublishAttribute {
+            interface: "IObject",
+            name: "Description",
+            value: "not published".to_string(),
+            source: PidValueSource::DerivedByNativeRule {
+                analysis_page: "docs/analysis/n2a-port-relation-filter.md",
+                address: "0x5F5CEF20",
+            },
+        });
+        let text = write_pid_coverage_json(&drawing, Path::new("a.pid"));
+        let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(report["attribute_values"]["derived_by_native_rule"], 1);
+        assert_eq!(report["attribute_values"]["composed_names"], 1);
+        assert_eq!(derived_by_native_rule_count(&drawing), 1);
     }
 
     #[test]

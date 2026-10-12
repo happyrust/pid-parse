@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### publish 出处多一种「按原生规则算出」：`DerivedByNativeRule`，5 图新计数为 0（2026-10-12，N4-0）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-0（t-1489）。N2a 三页（t-1269 / t-1270 / t-1271）记入该计划 §7。
+
+- `PidValueSource::DerivedByNativeRule { analysis_page, address }`：由 `.pid` 里的值按 `EFAdapter.dll` 的原生规则确定地算出。N4-1 / N4-2 / N4-3 再用；本单没有值改挂这个变体，规则和发出的值都不改。
+- `_Coverage.json` 的 `attribute_values.derived_by_native_rule` 与标签值、`composed_names` 分开数（只数定了类的物项）。`pid_publish_xml` 的 stderr 同步「N derived by a native rule」。5 图此刻为 0。
+- 仪表 / 设备名仍是 `NameRule`。出处改口：5 图实测规则（236 / 13 错 0），写出器侧无拼接证据，见 `docs/analysis/n2a-name-diameter-codelist-meta.md`。
+- 验证（2026-10-12 实跑）：`cargo test --locked --workspace --lib --bins --tests` 全过（`--lib` 1 175，`publish_from_pid` 4 / 4，`publish_xml_cli` 20 / 20），`--no-default-features` 同样全过（`--lib` 850）；clippy `-D warnings` 两种特性在 lib / bins / tests 上零告警；三个改动的 `.rs` rustfmt 干净；`cargo rustdoc --lib --locked -- -W missing-docs` 0；wasm32 lib 检查过。`--all-targets` **NOT RUN**：别的会话正在写的 `examples/probe_ports_from_connect_points.rs`（未提交）此刻编不过，`examples/probe_dash_scale_field_candidates.rs`（未提交）clippy 不过，都不是本单的文件。5 图 `--diff-against` 都退出 0，钉数不变（分离器A 291 / 289 / 335，分离器B 239 / 230 / 274，换热器CD 612 / 583 / 727，低温分离器A 317 / 315 / 358，I井场 1 459 / 1 405 / 1 695）；5 图重新写入 `D:\work\cad\PID自研软件验证\publish\`（15 个文件），`derived_by_native_rule` 都是 0。
+
 ### `.pid` 的 `_Meta.xml` 只留文件里有的 `DocUID` 和 `DocName`（2026-10-10）
 
 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` 的 ③。分析页「`_Meta.xml`」：版本 / 修订 / 文件三个对象的 UID、三条 `Rel` 的 UID、`DocVersionDate`、`FilePath` 都不在 `.pid` 里。

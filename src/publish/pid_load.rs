@@ -17,9 +17,11 @@
 //!   filed under in the library (`Instrumentation\<family>\...`,
 //!   `instrument_class_by_library`).
 //!
-//! Item names are composed by the two rules the user accepted on 2026-10-10
-//! (instruments `{MeasuredVariable}-{InstrTagSequenceNo}`, equipment
-//! `{EquipPrefix}-{EquipSeqNo}`) and are marked as such.
+//! Item names are composed by two rules measured on the five reference
+//! drawings (instruments `{MeasuredVariable}-{InstrTagSequenceNo}` 236 / 236,
+//! equipment `{EquipPrefix}-{EquipSeqNo}` 13 / 13, none wrong) and are marked
+//! [`PidValueSource::NameRule`]. `EFAdapter.dll` holds no evidence of
+//! concatenating them (`docs/analysis/n2a-name-diameter-codelist-meta.md`).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -87,8 +89,20 @@ pub enum PidValueSource {
         /// Oid of the `0x0089` value row.
         row: u32,
     },
-    /// Composed from the item's other values by an accepted naming rule.
+    /// Composed from the item's other values by a naming rule measured on
+    /// the five reference drawings (236 / 13 names, none wrong). The rule is
+    /// `{MeasuredVariable}-{InstrTagSequenceNo}` or `{EquipPrefix}-{EquipSeqNo}`;
+    /// `EFAdapter.dll` holds no evidence of concatenating these names
+    /// (`docs/analysis/n2a-name-diameter-codelist-meta.md`).
     NameRule(&'static str),
+    /// Fixed by an `EFAdapter.dll` rule from values the `.pid` already
+    /// states, apart from a label row or a measured name rule.
+    DerivedByNativeRule {
+        /// Analysis page that records the rule, repo-relative.
+        analysis_page: &'static str,
+        /// Address of the rule in `EFAdapter.dll`.
+        address: &'static str,
+    },
 }
 
 /// One published attribute value of an item.

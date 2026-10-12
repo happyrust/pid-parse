@@ -4,6 +4,9 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-12 · 计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-0（t-1489）**：
+`PidValueSource` 增加 `DerivedByNativeRule { analysis_page, address }`。`_Coverage.json` 增加 `attribute_values.derived_by_native_rule`，stderr 同步；5 图此刻为 0。仪表 / 设备名仍是 `NameRule`，改口为 5 图实测规则（236 / 13 错 0），写出器侧无拼接证据。N2a 三页记入计划 §7。规则与发出的值未改。
+
 **2026-10-10 · 计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` 小单（Q2 (b)：无 `SymbolAttr` 的仪表按符号库目录归类）**：
 `instrument_class_by_library` 在 `SymbolAttr` 定不了类时，用 `Instrumentation` 的下一段：`In-Line` / `Relief Devices` → `PIDInlineInstrument`，`Off-Line` / `Actuators` → `PIDInstrument`，`System Functions` → `PIDControlSystemFunction`。5 图 287 个仪表目录与参考类错 0；收回 68 个（67 个没有行，1 个空 `SymbolAttr`）。
 仪表 219 / 287 → 287 / 287，对象 2 850 → 2 918、值 2 747 → 2 822、关系 3 321 → 3 389，错类 / 错值 / 多发 = 0。见 `docs/analysis/2026-10-10-an-instruments-library-folder-states-its-class.md`。`cargo test --workspace --all-targets` 1 534 → 1 535（`--lib` 1 171 → 1 172），`--no-default-features` 1 104 不变，clippy / rustfmt / missing-docs / wasm32 过。5 张图重新交付到 `D:\work\cad\PID自研软件验证\publish\`。`.pid` 的 `--diff-against` 已改成和测试同一套（多发 / 错值退出 1，整类缺席不算 `MISSING`；数据库输入的计数报告不动）。`.pid` 的 `_Meta.xml` 只留信封上的 `DocUID` / `DocName`，不发合成 UID 的版本 / 修订 / 文件对象。`_Coverage.json` 的字段名口径还待交付方看。

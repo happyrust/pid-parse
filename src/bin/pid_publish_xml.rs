@@ -31,6 +31,7 @@
 //! Exit codes: 0 = wrote document, 1 = I/O / format error, 2 =
 //! usage error.
 
+use pid_parse::publish::pid_writer::derived_by_native_rule_count;
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
     diff_pid_export, diff_publish_xml, diff_rel_defuids, load_drawing_graph, load_publish_from_pid,
@@ -421,10 +422,12 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         .filter(|item| item.class.is_some())
         .count();
     let stats = drawing.stats;
+    let derived = derived_by_native_rule_count(&drawing);
     eprintln!(
         "Read drawing `{}` ({} UID) from the .pid alone: {} items ({} with a class, \
          {} instruments classed by their symbol's library folder), {} representations; \
          {} of {} label values reach an item, {} attributes published, \
+         {} derived by a native rule, \
          {} left out on disagreeing labels",
         drawing.drawing_name,
         drawing.drawing_uid,
@@ -435,6 +438,7 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         stats.label_values_reached,
         stats.label_values,
         stats.label_values_published,
+        derived,
         stats.conflicting_attributes,
     );
     emit_data(options, &xml)?;

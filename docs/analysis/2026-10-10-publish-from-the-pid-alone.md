@@ -196,9 +196,9 @@ G1 定了「做 P2，下游只要设备 / 仪表 / 管件清单和图上的表�
 |---|---:|---:|---|
 | PIDRepresentation | 1 823 / 1 823 | — | 每个带 `GraphicOID`（物项 `P&IDAttributes` 行描述的记录） |
 | PIDDrawing | 5 / 5 | 5 / 5 | `DrawingNo`；名字取文件名 |
-| PIDProcessVessel / PIDProcessEquipment / PIDMechanicalEquipment / PIDHeatTransferEquipment | 5 / 5、13 / 13、4 / 4、1 / 1 | 13 / 13 | 名字按 `{EquipPrefix}-{EquipSeqNo}` |
+| PIDProcessVessel / PIDProcessEquipment / PIDMechanicalEquipment / PIDHeatTransferEquipment | 5 / 5、13 / 13、4 / 4、1 / 1 | 13 / 13 | 名字是 5 图实测规则 `{EquipPrefix}-{EquipSeqNo}`（236 / 13 错 0），写出器侧无拼接证据，见 n2a 页 |
 | PIDControlSystemFunction | 88 / 88 | 79 / 79 | 类由 `SymbolAttr.Type` = `System functions`，或库目录 `System Functions` |
-| PIDInstrument | 127 / 127 | 113 / 118 | `SymbolAttr.Type` = `Off-line instruments`，或库目录 `Off-Line` / `Actuators`；名字按 `{MeasuredVariable}-{InstrTagSequenceNo}` |
+| PIDInstrument | 127 / 127 | 113 / 118 | `SymbolAttr.Type` = `Off-line instruments`，或库目录 `Off-Line` / `Actuators`；名字是 5 图实测规则 `{MeasuredVariable}-{InstrTagSequenceNo}`（236 / 13 错 0），写出器侧无拼接证据，见 n2a 页 |
 | PIDInlineInstrument | 72 / 72 | 27 / 39 | `SymbolAttr.Class` = `Instrument In-Line Component`，或库目录 `In-Line` / `Relief Devices` |
 | PIDPipingComponent | 264 / 264 | 0 / 152 | 类型 / 名字的规则在库里，不发 |
 | PIDPipingConnector | 341 / 341 | 0 / 219 | 管段号是拼接串，不发；`PipingConnectorSeqNo` 等有出处的发 |
@@ -208,7 +208,7 @@ G1 定了「做 P2，下游只要设备 / 仪表 / 管件清单和图上的表�
 | PIDBranchPoint（OPC） | 0 / 58 | 0 / 58 | **故意不发**：OPC 行上的 `ModelID` 不一定是 SmartPlant 发布的那个物项（语料 53 个里 23 个不在参考里） |
 | PIDPipeline、PIDPipingPort、PIDProcessPoint、PIDPipingBranchPoint、PIDSignalBranchPoint、PIDSignalPort | 0 / 172、0 / 718、0 / 341、0 / 183、0 / 16、0 / 1 725 | — | 文件里没有（见上文「`.pid` 里没有」与「更正」） |
 
-发出的 2 822 个值 = 1 823 个 `GraphicOID` + 5 个图名 + 232 个按规则拼的名字（设备 13、仪表 219）+ 762 个标签值；3 389 条关系 = 1 823 条 `DwgRepresentationComposition` + 1 566 条 `DrawingItems`，UID 按 SmartPlant 的 `{前缀}-{UID1}-{UID2}` 拼。
+发出的 2 822 个值 = 1 823 个 `GraphicOID` + 5 个图名 + 232 个名字（设备 13、仪表 219）+ 762 个标签值。仪表 / 设备名是 5 图实测规则（236 / 13 错 0），写出器侧无拼接证据，见 n2a 页（`docs/analysis/n2a-name-diameter-codelist-meta.md`）。3 389 条关系 = 1 823 条 `DwgRepresentationComposition` + 1 566 条 `DrawingItems`，UID 按 SmartPlant 的 `{前缀}-{UID1}-{UID2}` 拼。
 以分离器B 为例，CLI 一行：100 个物项（87 个定得了类，其中 2 个按库目录）、151 个表示，406 个标签值 400 个挂上物项、63 条属性发出、0 条因两张标签打架而弃。
 
 **有意不发的**（按 Q2 (a)，仪表这一条已按 Q2 (b) 收回）：
