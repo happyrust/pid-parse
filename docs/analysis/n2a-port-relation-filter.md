@@ -168,3 +168,27 @@ ida-bridge supervisor stop <cid>
 五图 199 对 199，错 0、多 0、缺 0。管道 183（I井场 97、分离器 A 22、分离器 B 14、低温分离器 A 15、换热器 CD 35），信号 16（10 / 1 / 1 / 1 / 3）。和装载里 `item_uid = None` 的表示是同一集合。参考里 Name 全空。关系 199 对 199。
 
 管道接口：`IConnection`、`IPipingConnection`、`IDrawingItem`、`IPipingBranchPoint`、`IDocumentItem`。信号接口：`IConnection`、`IDrawingItem`、`ISignalConnection`、`ISignalBranchPoint`、`IFacilityPoint`、`IDocumentItem`。`PIDBranchPoint`（OPC）仍不发。
+
+## N4-4 探针：连通关系的两端不在图纸属性里
+
+探针 `examples/probe_connectivity_relationships.rs`（`cargo run --example probe_connectivity_relationships`）。只读五张 `.pid` 和旁边的 `_Data.xml`。关系 UID 仍按第 2 问的前缀表核过，错 0。本页要问的是两端能不能从 `.pid` 读出来。
+
+`P&IDAttributes` 里 `ModelItemType = Relationship` 的行（I井场 946、分离器 A 191、分离器 B 153、低温分离器 A 200、换热器 CD 411）只有 `ProjectNumber`、`DrawingNo`、空的 `DrawingItemType`、空的 `DrawingID`、`ModelItemType`、`ModelID = Relationship.<guid>`、`Flag`。没有两端。管口行和注释行也只有这七个身份字段，没有设备 Id，没有宿主物项。
+
+读出器已经会把 Sheet 端点对解成 `source_drawing_id` / `target_drawing_id`。这五张图上解出来的两端都是空：I井场 26 条、分离器 A 36、分离器 B 2、低温分离器 A 78、换热器 CD 412，`both_drawing_ids = 0`。
+
+所以这八种都不进装载。两端即使都是已经发出的对象，也配不成对。`PipingConnectors` 另有原因：一端是管线，图纸不发管线。
+
+| `DefUID` | 参考 | 两端都已发出 | 从图纸配上 | 发出 |
+|---|---:|---:|---:|---:|
+| `PipingEnd1Conn` | 283 | 93 | 0 | 0 |
+| `PipingEnd2Conn` | 279 | 117 | 0 | 0 |
+| `SignalEnd1Conn` | 75 | 5 | 0 | 0 |
+| `SignalEnd2Conn` | 83 | 12 | 0 | 0 |
+| `PipingTapOrFitting` | 738 | 164 | 0 | 0 |
+| `SignalTapOrFitting` | 35 | 15 | 0 | 0 |
+| `EquipmentComponentComposition` | 36 | 36 | 0 | 0 |
+| `PBSItemNotes` | 7 | 7 | 0 | 0 |
+| `PipingConnectors` | 219 | 0 | 0 | 0 |
+
+「两端都已发出」只说明那两个 UID 本模式已经会发（分支点、管段、设备、管口、注释），不是说图纸写了它们的配对。端连接里没发出的那一端主要是端口。`EquipmentComponentComposition` 实测是管口在 `UID1`、设备在 `UID2`，和「设备在 UID1」的口头方向相反；配不上，所以这个方向不影响发出。
