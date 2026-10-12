@@ -6,7 +6,8 @@
 //! An object carries `IObject` and only the interfaces it has values for; a
 //! representation its `GraphicOID`; the relationships are the two the items'
 //! own rows state -- `DwgRepresentationComposition` (drawing -> representation)
-//! and `DrawingItems` (representation -> item) -- under the
+//! and `DrawingItems` (representation -> item) -- plus one
+//! `ProcessPointCollection` per derived process point, under the
 //! `{prefix}-{UID1}-{UID2}` UIDs `SmartPlant` gives them. Items whose class the
 //! file does not decide are left out, and so are their `DrawingItems`. The
 //! `<Container>` envelope constants are `SmartPlant`'s, not the file's.
@@ -78,6 +79,11 @@ fn write_document(
             write_item(buf, item, class)?;
         }
     }
+    for point in &drawing.process_points {
+        writeln!(buf, "   <PIDProcessPoint>")?;
+        writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&point.uid))?;
+        writeln!(buf, "   </PIDProcessPoint>")?;
+    }
     let published = published_items(drawing);
     for representation in &drawing.representations {
         writeln!(buf, "   <PIDRepresentation>")?;
@@ -107,6 +113,16 @@ fn write_document(
         {
             write_rel(buf, "DrawingItems", &representation.uid, item_uid)?;
         }
+    }
+    for point in &drawing.process_points {
+        // UID2 is the pipe run. UID1 is the process point. Measured on
+        // all 341 reference `ProcessPointCollection` rows.
+        write_rel(
+            buf,
+            "ProcessPointCollection",
+            &point.uid,
+            &point.connector_uid,
+        )?;
     }
     writeln!(buf, "  </Container>")
 }
@@ -191,18 +207,20 @@ fn drawing_items(drawing: &PidPublishDrawing, published: &BTreeSet<&str>) -> usi
 /// `attribute_values.derived_by_native_rule` in [`write_pid_coverage_json`]
 /// and the `.pid` line on stderr.
 pub fn derived_by_native_rule_count(drawing: &PidPublishDrawing) -> usize {
-    drawing
+    let attributes = drawing
         .items
         .iter()
         .filter(|item| item.class.is_some())
         .flat_map(|item| &item.attributes)
         .filter(|attribute| matches!(attribute.source, PidValueSource::DerivedByNativeRule { .. }))
-        .count()
+        .count();
+    // Each process-point UID is one derived value (`0x5F5CFD40`).
+    attributes + drawing.process_points.len()
 }
 
 /// What a `.pid`-only export never carries, for the reader of the report.
 const LEFT_OUT_BY_DESIGN: [&str; 5] = [
-    "ports, process points, branch points and pipelines: a .pid does not state them",
+    "ports and branch points: a .pid does not state the point number, so they are not emitted; pipelines are not stated either",
     "off-page connector items: the ModelID on an OPC's row is not always the item SmartPlant publishes",
     "instruments whose graphic has neither a SymbolAttr row nor a symbol filed under an Instrumentation library family: the file does not decide their class, so the item, its DrawingItems and its label values are left out",
     "codelist attributes, nominal diameters and concatenated pipeline / component names: they come from the plant database",
@@ -236,6 +254,9 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             .filter(|attribute| matches!(attribute.source, PidValueSource::NameRule(_)))
             .count();
     }
+    if !drawing.process_points.is_empty() {
+        classes.insert("PIDProcessPoint", (drawing.process_points.len(), 0, 0));
+    }
     let left_out: Vec<serde_json::Value> = drawing
         .items
         .iter()
@@ -264,10 +285,12 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "items_left_out_without_a_class": left_out.len(),
             "instruments_classed_by_symbol_library": stats.instruments_classed_by_library,
             "representations": drawing.representations.len(),
+            "process_points": drawing.process_points.len(),
         },
         "relationships": {
             "DwgRepresentationComposition": drawing.representations.len(),
             "DrawingItems": drawing_items(drawing, &published),
+            "ProcessPointCollection": drawing.process_points.len(),
         },
         "attribute_values": {
             "label_values": stats.label_values,
@@ -294,7 +317,8 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
 mod tests {
     use super::*;
     use crate::publish::pid_load::{
-        PidPublishAttribute, PidPublishRepresentation, PidPublishStats,
+        PidProcessPoint, PidPublishAttribute, PidPublishRepresentation, PidPublishStats,
+        PidValueSource,
     };
 
     fn drawing() -> PidPublishDrawing {
@@ -330,6 +354,7 @@ mod tests {
                     attributes: Vec::new(),
                 },
             ],
+            process_points: Vec::new(),
             representations: vec![
                 PidPublishRepresentation {
                     uid: "R1".to_string(),
@@ -469,5 +494,31 @@ mod tests {
         assert!(!text.contains("DocVersionDate"), "{text}");
         assert!(!text.contains("FilePath"), "{text}");
         assert!(!text.contains("<Rel"), "{text}");
+    }
+
+    #[test]
+    fn a_process_point_is_the_connector_uid_plus_ppt_and_one_collection() {
+        let mut drawing = drawing();
+        drawing.process_points.push(PidProcessPoint {
+            uid: "RUN.PPT".to_string(),
+            connector_uid: "RUN".to_string(),
+            source: PidValueSource::DerivedByNativeRule {
+                analysis_page: "docs/analysis/n2a-port-relation-filter.md",
+                address: "0x5F5CFD40",
+            },
+        });
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(xml.contains(
+            "   <PIDProcessPoint>\n      <IObject UID=\"RUN.PPT\"/>\n   </PIDProcessPoint>\n"
+        ));
+        assert!(xml.contains(
+            "   <Rel>\n      <IObject UID=\"PRP-RUN.PPT-RUN\"/>\n      <IRel UID1=\"RUN.PPT\" UID2=\"RUN\" DefUID=\"ProcessPointCollection\"/>\n   </Rel>\n"
+        ));
+        let text = write_pid_coverage_json(&drawing, Path::new("a.pid"));
+        let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(report["objects"]["process_points"], 1);
+        assert_eq!(report["relationships"]["ProcessPointCollection"], 1);
+        assert_eq!(report["classes"]["PIDProcessPoint"]["objects"], 1);
+        assert_eq!(report["attribute_values"]["derived_by_native_rule"], 1);
     }
 }

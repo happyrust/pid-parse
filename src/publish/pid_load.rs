@@ -164,6 +164,21 @@ pub struct PidPublishStats {
     pub instruments_classed_by_library: usize,
 }
 
+/// One process point derived from a published pipe run.
+///
+/// `ConstructUIDForProcessPoint` (`0x5F5CFD40`) is the run's own id plus
+/// `.PPT`. The drawing does not store that UID
+/// (`docs/analysis/n2a-port-relation-filter.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PidProcessPoint {
+    /// The process-point UID: the connector id plus `.PPT`.
+    pub uid: String,
+    /// The published piping connector this point hangs on.
+    pub connector_uid: String,
+    /// The native rule that fixed [`Self::uid`].
+    pub source: PidValueSource,
+}
+
 /// A drawing's publish data as the `.pid` states it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PidPublishDrawing {
@@ -173,6 +188,8 @@ pub struct PidPublishDrawing {
     pub drawing_name: String,
     /// Model items, ordered by UID.
     pub items: Vec<PidPublishItem>,
+    /// Process points derived from published pipe runs, ordered by UID.
+    pub process_points: Vec<PidProcessPoint>,
     /// Representations, ordered by UID.
     pub representations: Vec<PidPublishRepresentation>,
     /// How much of the file was read.
@@ -599,7 +616,7 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
         }
     }
 
-    let items = item_types
+    let items: Vec<PidPublishItem> = item_types
         .iter()
         .map(|(uid, item_type)| {
             let class = classes.get(uid.as_str()).copied().flatten();
@@ -617,6 +634,7 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
             }
         })
         .collect();
+    let process_points = process_points_of(&items);
 
     let drawing_name = path
         .file_stem()
@@ -626,9 +644,30 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
         drawing_uid,
         drawing_name,
         items,
+        process_points,
         representations: representations.into_values().collect(),
         stats,
     })
+}
+
+/// One process point per published pipe run.
+///
+/// The UID is the connector's id plus `.PPT` (`0x5F5CFD40`). A run the
+/// file does not class is skipped: it is not a published connector, so
+/// the reference has no process point on it either.
+fn process_points_of(items: &[PidPublishItem]) -> Vec<PidProcessPoint> {
+    items
+        .iter()
+        .filter(|item| item.class == Some("PIDPipingConnector"))
+        .map(|item| PidProcessPoint {
+            uid: format!("{}.PPT", item.uid),
+            connector_uid: item.uid.clone(),
+            source: PidValueSource::DerivedByNativeRule {
+                analysis_page: "docs/analysis/n2a-port-relation-filter.md",
+                address: "0x5F5CFD40",
+            },
+        })
+        .collect()
 }
 
 /// `IObject.Name` by the accepted rules, when both parts are present.
@@ -858,5 +897,40 @@ mod tests {
         );
         assert_eq!(composed_name("PIDProcessVessel", &vessel[..1]), None);
         assert_eq!(composed_name("PIDPipingComponent", &vessel), None);
+    }
+
+    #[test]
+    fn a_published_pipe_run_gains_one_process_point() {
+        let items = [
+            PidPublishItem {
+                uid: "RUN".to_string(),
+                model_item_type: "PipeRun".to_string(),
+                class: Some("PIDPipingConnector"),
+                attributes: Vec::new(),
+            },
+            PidPublishItem {
+                uid: "VALVE".to_string(),
+                model_item_type: "PipingComp".to_string(),
+                class: Some("PIDPipingComponent"),
+                attributes: Vec::new(),
+            },
+            PidPublishItem {
+                uid: "HIDDEN".to_string(),
+                model_item_type: "PipeRun".to_string(),
+                class: None,
+                attributes: Vec::new(),
+            },
+        ];
+        let points = process_points_of(&items);
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].uid, "RUN.PPT");
+        assert_eq!(points[0].connector_uid, "RUN");
+        assert!(matches!(
+            points[0].source,
+            PidValueSource::DerivedByNativeRule {
+                address: "0x5F5CFD40",
+                ..
+            }
+        ));
     }
 }

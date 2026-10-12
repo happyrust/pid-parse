@@ -74,3 +74,7 @@ ida-bridge supervisor stop <cid>
 `<cid>` 用 `start-idalib` 印出的 `client_id`。本轮是 `idalib-38296`，已经停掉。
 
 字节扫描（确认 `.PPT` / `ProcessPoint` / `PipingPort` 不在文件里）对副本做即可，不必入库。原件 SHA-256 用 `Get-FileHash -Algorithm SHA256` 对 `dlls\pidobjmgrai.dll` 再算，应仍是上面那一串。
+
+## N4-2 再量了一次图纸
+
+`examples/probe_n4_ports_and_process_points.rs` 扫了五张 `.pid` 的全部流。`PipingPointNumber`、`SignalPointNumber`、`FlowDirection`、`SignalPoint` 的 ASCII 和 UTF-16 都是 0 处，和本页「连接点创建不写进 `P&IDAttributes`」一致。工艺点的 `.PPT` 也不在文件里：发布 UID 是管段自己的 `ModelID` 加后缀，不是图纸上的一个字段。数和对照见 `docs/analysis/n2a-port-relation-filter.md` 的 N4-2 一节。

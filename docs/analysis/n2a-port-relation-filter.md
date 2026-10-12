@@ -137,3 +137,24 @@ ida-bridge supervisor stop <cid>
 建库前对 `dlls\EFAdapter.dll` 和副本各算一次 SHA-256，应都是上面那一串。做完再算一次原件，应仍相同。UTF-16 串表用 `D:\ida_scratch\publish-native\strlist_unicode.py`。
 
 五图核对是只读 PowerShell / Python，读 `D:\work\cad\PID自研软件验证\*_Data.xml`，不写回。派生 UID 按上一节的四条规则重算，关系 UID 按前缀表重算。
+
+## N4-2 探针：工艺点可以从已发布的管段发出，端口的点号不在图纸里
+
+探针 `examples/probe_n4_ports_and_process_points.rs`（`cargo run --example probe_n4_ports_and_process_points`）。只读五张 `.pid` 和旁边的 `_Data.xml`，不写 `publish\`。
+
+关系两端按第 2 问的前缀表重算：718 条 `PipingPortComposition`、1,725 条 `SignalPortComposition`、341 条 `ProcessPointCollection` 全部是 `UID2` 为父、`UID1` 为端口或工艺点，关系 UID 等于 `前缀-UID1-UID2`。错 0。
+
+工艺点不需要图纸上另有一条记录。每个已经发布的 `PIDPipingConnector`（管段 `ModelID`）拼 `UID.PPT`，关系是 `PRP-{工艺点 UID}-{管段 UID}`。五图 341 对 341，多 0、缺 0，关系同样 341 对 341。规则地址是 `ConstructUIDForProcessPoint`（`0x5F5CFD40`）和 `ConstructUIDForRelationship`（`0x5F5D0280`，前缀 `PRP`）。参考里工艺点没有 `Name`，也没有 `ConnectionFlowDirection`。这一类按「五图错 0 才发」可以发。
+
+端口发不出来。五张 `.pid` 的全部流里，ASCII 和 UTF-16 的 `PipingPointNumber`、`SignalPointNumber`、`FlowDirection`、`SignalPoint` 都是 0 处。`PipingPoint` 只在分离器 A 出现 6 次，是标签类名 `_PipingPoint1.NominalDiameter` 和 `_PipingPoint2.NominalDiameter`，不是点对象。符号缓存 `JSite*/PSMcluster0` 里的 `_ConnectPoint`（I井场 179、分离器 A 103、分离器 B 101、低温分离器 A 135、换热器 CD 163）只有 `MaxConnectedLines`，有的还有 `AngleCount`，没有点号，也没有流向。这些点记录的 `index` 几乎是常数（15 / 12 / 12 / 7 / 13），不是参考端口名里的 `1`–`8`；`sub_type` 全是 `0x4`，分不出管道点和信号点。
+
+所以 `PIDPipingPort`、`PIDSignalPort`、`PPC`、`SPC` 和 `ConnectionFlowDirection` 都不发，只计数。差就是参考里的全部，不是少数对不上：
+
+| 图 | 管道端口 | 发出 | 信号端口 | 发出 | 参考里有流向的管道端口 |
+|---|---:|---:|---:|---:|---:|
+| I井场 | 362 | 0 | 915 | 0 | 152 |
+| 分离器 A | 63 | 0 | 107 | 0 | 35 |
+| 分离器 B | 53 | 0 | 107 | 0 | 33 |
+| 低温分离器 A | 68 | 0 | 197 | 0 | 38 |
+| 换热器 CD | 172 | 0 | 399 | 0 | 40 |
+| **合计** | **718** | **0** | **1,725** | **0** | **298** |
