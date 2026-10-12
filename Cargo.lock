@@ -1369,11 +1369,14 @@ name = "pid-plot"
 version = "0.1.0"
 dependencies = [
  "hayro",
+ "kurbo",
  "pdfcraft-content",
  "pdfcraft-cos",
  "pdfcraft-fonts",
  "pdfcraft-render",
  "pid-parse",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

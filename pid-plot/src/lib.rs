@@ -1,14 +1,15 @@
 //! Paper-space plots of a parsed `.pid` drawing.
 //!
 //! `pid-parse` stays a reader. This crate is the only workspace member that
-//! links pdfcraft. Drawing and comparison come later; the skeleton only
-//! keeps that link real.
+//! links pdfcraft.
 
 #![deny(
     missing_docs,
     rustdoc::broken_intra_doc_links,
     rustdoc::private_intra_doc_links
 )]
+
+pub mod read;
 
 /// Confirms the pinned PDF toolchain and the parser are linked into this crate.
 ///
