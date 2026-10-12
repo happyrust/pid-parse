@@ -5,14 +5,15 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use pid_plot::fonts::prepare_local_fonts;
 use pid_plot::model::lay_out_drawing;
-use pid_plot::write::write_plot;
+use pid_plot::write::{PlotFont, write_plot};
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let Some(pid) = args.next() else {
         eprintln!("usage: pid_plot <drawing.pid> <out.pdf> [corpus]");
-        eprintln!("PID_PLOT_CJK_FONT must be a static TrueType/OpenType file under 16 MiB");
+        eprintln!("typefaces come from the Windows font folder");
         return ExitCode::from(2);
     };
     let Some(out) = args.next() else {
@@ -20,20 +21,6 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     let corpus = args.next().map_or_else(default_corpus, PathBuf::from);
-    let font_path = match env::var("PID_PLOT_CJK_FONT") {
-        Ok(path) => PathBuf::from(path),
-        Err(_) => {
-            eprintln!("PID_PLOT_CJK_FONT is unset");
-            return ExitCode::from(2);
-        }
-    };
-    let font = match fs::read(&font_path) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            eprintln!("read {}: {error}", font_path.display());
-            return ExitCode::from(1);
-        }
-    };
     let model = match lay_out_drawing(PathBuf::from(&pid).as_path(), &corpus) {
         Ok(model) => model,
         Err(error) => {
@@ -41,7 +28,33 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let pdf = match write_plot(&model, &font) {
+    let mut prepared = match prepare_local_fonts(&[&model]) {
+        Ok(faces) => faces,
+        Err(error) => {
+            eprintln!("{pid}: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    if let Ok(path) = env::var("PID_PLOT_CJK_FONT") {
+        match fs::read(&path) {
+            Ok(bytes) => prepared.push(pid_plot::fonts::PreparedFont {
+                key: String::new(),
+                bytes,
+            }),
+            Err(error) => {
+                eprintln!("read {path}: {error}");
+                return ExitCode::from(1);
+            }
+        }
+    }
+    let fonts: Vec<PlotFont<'_>> = prepared
+        .iter()
+        .map(|face| PlotFont {
+            key: &face.key,
+            bytes: &face.bytes,
+        })
+        .collect();
+    let pdf = match write_plot(&model, &fonts) {
         Ok(pdf) => pdf,
         Err(error) => {
             eprintln!("{pid}: {error}");

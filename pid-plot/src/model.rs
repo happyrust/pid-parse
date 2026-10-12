@@ -3,8 +3,9 @@
 //! Coordinates are millimetres, origin at the bottom-left, y up. A symbol
 //! body is placed by scaling, then rotating counter-clockwise, then
 //! translating by the insertion point. A negative scale mirrors. Text keeps
-//! the insertion point as its anchor. The sheet frame is not part of the
-//! table.
+//! the insertion point as its anchor. A symbol's own lettering that is only
+//! the placeholder `NULL` stays out of the table; text the drawing itself
+//! records is kept. The sheet frame is not part of the table.
 
 use std::path::{Path, PathBuf};
 
@@ -110,6 +111,10 @@ pub enum PaperShape {
         rotation: f64,
         /// Characters.
         value: String,
+        /// Typeface the style table names. Symbol lettering has none: its
+        /// record does not carry a font.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        font: Option<String>,
     },
 }
 
@@ -160,6 +165,7 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
         .map_err(|error| PaperModelError {
             message: error.to_string(),
         })?;
+    let styles = pid_parse::style_link::text_styles_for_document(&doc);
     let geometry = build_normalized_geometry(&doc);
     let (roots, library) = symbol_library(corpus);
     let mut symbols = SymbolLibrary::with_roots(roots);
@@ -232,7 +238,7 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                     missing.insert(key);
                 }
             }
-            _ => push_entity(&mut primitives, entity, page_mm),
+            _ => push_entity(&mut primitives, entity, page_mm, &styles),
         }
     }
 
@@ -303,6 +309,15 @@ fn missing_box(path: &str, insertion_m: [f64; 2]) -> MissingSymbolBox {
     }
 }
 
+/// Symbol-body lettering whose whole run is the template placeholder.
+///
+/// Whitespace is collapsed first, so ` NULL ` is the same word. A run that
+/// still carries other characters, such as `HH=NULL`, is lettering.
+fn symbol_text_is_null_placeholder(text: &str) -> bool {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed == "NULL"
+}
+
 fn symbol_key(path: &str) -> String {
     pid_parse::symbol_library::library_relative_path(path)
         .unwrap_or(path)
@@ -314,6 +329,7 @@ fn push_entity(
     out: &mut Vec<PaperPrimitive>,
     entity: &PidGraphicEntity,
     page_mm: Option<[f64; 2]>,
+    styles: &pid_parse::style_link::TextStyleIndex,
 ) {
     let placement = Placement {
         insertion: [0.0, 0.0],
@@ -378,6 +394,24 @@ fn push_entity(
             height,
             rotation,
         } => {
+            let styled = entity.source.stream_path.as_ref().and_then(|stream| {
+                entity.graphic_oid.and_then(|oid| {
+                    styles
+                        .get(&(stream.clone(), oid))
+                        .and_then(|style| style.effective())
+                })
+            });
+            let height_mm = if height.abs() > 1e-9 {
+                Some(height.abs() * MM_PER_METRE)
+            } else if let Some(millimetres) = styled
+                .as_ref()
+                .map(pid_parse::style_link::ResolvedTextHeight::height_mm)
+                .filter(|millimetres| *millimetres > 0.0)
+            {
+                Some(millimetres)
+            } else {
+                Some(0.0)
+            };
             out.push(primitive(
                 entity,
                 &placement,
@@ -388,9 +422,10 @@ fn push_entity(
                         0.0,
                         [1.0, 1.0],
                     ),
-                    height_mm: Some(height.abs() * MM_PER_METRE),
+                    height_mm,
                     rotation: *rotation,
                     value: value.clone(),
+                    font: styled.and_then(|style| style.font_name),
                 },
             ));
         }
@@ -461,17 +496,23 @@ fn push_symbol_primitive(
                 .collect(),
             closed: *is_closed,
         },
-        SymbolPrimitive::Text { text, at } => PaperShape::Text {
-            origin_mm: place_metres(
-                [at.0, at.1],
-                placement.insertion,
-                placement.rotation,
-                placement.scale,
-            ),
-            height_mm: None,
-            rotation: placement.rotation,
-            value: text.clone(),
-        },
+        SymbolPrimitive::Text { text, at } => {
+            if symbol_text_is_null_placeholder(text) {
+                return;
+            }
+            PaperShape::Text {
+                origin_mm: place_metres(
+                    [at.0, at.1],
+                    placement.insertion,
+                    placement.rotation,
+                    placement.scale,
+                ),
+                height_mm: None,
+                rotation: placement.rotation,
+                value: text.clone(),
+                font: None,
+            }
+        }
         SymbolPrimitive::BSpline { .. } => {
             let points = primitive_shape.bspline_points(8);
             PaperShape::Polyline {
@@ -568,7 +609,35 @@ fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::place_metres;
+    use pid_parse::symbol_library::SymbolPrimitive;
+    use pid_parse::{
+        PidCoordinateContext, PidGeometryConfidence, PidGraphicEntity, PidGraphicKind,
+        PidGraphicProvenance, PidPoint,
+    };
+
+    use super::{PaperShape, Placement, place_metres, push_entity, push_symbol_primitive};
+
+    fn entity(kind: PidGraphicKind) -> PidGraphicEntity {
+        PidGraphicEntity {
+            id: "t".to_string(),
+            drawing_id: None,
+            graphic_oid: None,
+            source_layer: None,
+            kind,
+            coordinate_context: PidCoordinateContext::default(),
+            source: PidGraphicProvenance::default(),
+            confidence: PidGeometryConfidence::Decoded,
+        }
+    }
+
+    fn placement() -> Placement {
+        Placement {
+            insertion: [0.0, 0.0],
+            rotation: 0.0,
+            scale: [1.0, 1.0],
+            symbol: Some("valve.sym".to_string()),
+        }
+    }
 
     #[test]
     fn placement_adds_the_insertion_in_millimetres() {
@@ -601,5 +670,66 @@ mod tests {
         let paper = place_metres([0.0, 0.0], [0.25, 0.5], 0.0, [1.0, 1.0]);
         assert!((paper[0] - 250.0).abs() < 1e-6);
         assert!((paper[1] - 500.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_symbol_placeholder_null_is_left_out_of_the_table() {
+        let mut out = Vec::new();
+        push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &placement(),
+            &SymbolPrimitive::Text {
+                text: " NULL ".to_string(),
+                at: (0.0, 0.0),
+            },
+            None,
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn a_symbol_label_that_mentions_null_stays_in_the_table() {
+        let mut out = Vec::new();
+        push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &placement(),
+            &SymbolPrimitive::Text {
+                text: "HH=NULL".to_string(),
+                at: (0.01, 0.0),
+            },
+            None,
+        );
+        assert_eq!(out.len(), 1);
+        let PaperShape::Text { value, .. } = &out[0].shape else {
+            panic!("{:?}", out[0].shape);
+        };
+        assert_eq!(value, "HH=NULL");
+    }
+
+    #[test]
+    fn drawing_text_that_says_null_is_still_drawn() {
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &entity(PidGraphicKind::Text {
+                insertion: PidPoint { x: 0.1, y: 0.2 },
+                value: "NULL".to_string(),
+                height: 0.0025,
+                rotation: 0.0,
+            }),
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+        );
+        assert_eq!(out.len(), 1);
+        let PaperShape::Text { value, .. } = &out[0].shape else {
+            panic!("{:?}", out[0].shape);
+        };
+        assert_eq!(value, "NULL");
     }
 }

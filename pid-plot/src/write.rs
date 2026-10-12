@@ -6,9 +6,11 @@
 //! circles are flattened at the same 0.05 mm chord the reader uses, then stored
 //! as straight segments, so a read-back can match the table endpoint for endpoint.
 //!
-//! The font must be a static TrueType or OpenType face pdfcraft will embed
-//! whole: under 16 MiB, not a collection, not a variable font. `pid_plot` reads
-//! that file from `PID_PLOT_CJK_FONT`.
+//! Each text run is set in the face [`crate::fonts::typeface_key`] names.
+//! A style height that was measured on the reference plots is written at
+//! that plot's `Tf`; every other height stays the style height in points.
+//! Every face must be a static TrueType or OpenType program pdfcraft will
+//! embed: under 16 MiB, not a collection, not a variable font.
 
 use std::f64::consts::TAU;
 
@@ -18,6 +20,7 @@ use pdfcraft_cos::{Dict, Document, Object, PdfString, Stream};
 use pdfcraft_fonts::embedding::{self, embed};
 use pdfcraft_fonts::pdf::Metrics;
 
+use crate::fonts::typeface_key;
 use crate::model::{PaperModel, PaperShape};
 use crate::read::CHORD_MM;
 
@@ -25,6 +28,14 @@ const PT_PER_MM: f64 = 72.0 / 25.4;
 const STROKE_MM: f64 = 0.25;
 /// Body size for symbol text whose source record does not carry one.
 pub const DEFAULT_TEXT_MM: f64 = 2.5;
+
+/// One face [`write_plot`] may select for a text run.
+pub struct PlotFont<'a> {
+    /// Canonical name from [`typeface_key`]. Empty means last resort only.
+    pub key: &'a str,
+    /// Static TrueType or OpenType bytes.
+    pub bytes: &'a [u8],
+}
 
 /// Why a paper model could not be written.
 #[derive(Debug)]
@@ -52,22 +63,36 @@ impl std::fmt::Display for PlotWriteError {
 
 impl std::error::Error for PlotWriteError {}
 
-/// Write `model` to PDF bytes using `font_bytes` for every text run.
-pub fn write_plot(model: &PaperModel, font_bytes: &[u8]) -> Result<Vec<u8>, PlotWriteError> {
+/// Write `model` to PDF bytes, setting each run in the matching face.
+pub fn write_plot(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Result<Vec<u8>, PlotWriteError> {
+    if fonts.is_empty() {
+        return Err(PlotWriteError::Font("no font was provided".into()));
+    }
     let [page_w, page_h] = resolved_page(model)?;
-    let (family, _) = embedding::names(font_bytes).map_err(PlotWriteError::Font)?;
 
     let mut doc = Document::new_empty();
-    let mut fonts = Dict::new();
-    let resource =
-        embed(&mut doc, &mut fonts, font_bytes, &family).map_err(PlotWriteError::Font)?;
-    let font_ref = fonts.get(resource.as_bytes()).cloned().ok_or_else(|| {
-        PlotWriteError::Font("embedded font is missing from the resource dict".into())
-    })?;
-    let font_dict = doc
-        .dict(&font_ref)
-        .ok_or_else(|| PlotWriteError::Font("embedded font is not a dictionary".into()))?;
-    let metrics = Metrics::from_dict(&doc, &font_dict);
+    let mut font_resources = Dict::new();
+    let mut ready = Vec::new();
+    for font in fonts {
+        let (family, _) = embedding::names(font.bytes).map_err(PlotWriteError::Font)?;
+        let resource = embed(&mut doc, &mut font_resources, font.bytes, &family)
+            .map_err(PlotWriteError::Font)?;
+        let font_ref = font_resources
+            .get(resource.as_bytes())
+            .cloned()
+            .ok_or_else(|| {
+                PlotWriteError::Font("embedded font is missing from the resource dict".into())
+            })?;
+        let font_dict = doc
+            .dict(&font_ref)
+            .ok_or_else(|| PlotWriteError::Font("embedded font is not a dictionary".into()))?;
+        ready.push(ReadyFace {
+            key: font.key,
+            resource,
+            metrics: Metrics::from_dict(&doc, &font_dict),
+        });
+    }
+    let fonts = ready;
 
     let decoded_ocg = add_ocg(&mut doc, "Decoded");
     let inferred_ocg = add_ocg(&mut doc, "Inferred");
@@ -91,19 +116,15 @@ pub fn write_plot(model: &PaperModel, font_bytes: &[u8]) -> Result<Vec<u8>, Plot
 
     let mut ops = Vec::new();
     let page = [page_w, page_h];
-    push_layer(
-        &mut ops, model, &metrics, &resource, "decoded", "Decoded", page,
-    )?;
-    push_layer(
-        &mut ops, model, &metrics, &resource, "inferred", "Inferred", page,
-    )?;
+    push_layer(&mut ops, model, &fonts, "decoded", "Decoded", page)?;
+    push_layer(&mut ops, model, &fonts, "inferred", "Inferred", page)?;
 
     let contents = doc.add(Object::Stream(Stream::flate(
         Dict::new(),
         &serialize_ops(&ops),
     )));
     let mut resources = Dict::new();
-    resources.set(b"Font".to_vec(), Object::Dict(fonts));
+    resources.set(b"Font".to_vec(), Object::Dict(font_resources));
     let mut properties = Dict::new();
     properties.set(b"Decoded".to_vec(), Object::Ref(decoded_ocg));
     properties.set(b"Inferred".to_vec(), Object::Ref(inferred_ocg));
@@ -161,11 +182,16 @@ fn pages_ref(doc: &Document) -> Result<pdfcraft_cos::ObjRef, PlotWriteError> {
     }
 }
 
+struct ReadyFace<'a> {
+    key: &'a str,
+    resource: String,
+    metrics: Metrics,
+}
+
 fn push_layer(
     ops: &mut Vec<Op>,
     model: &PaperModel,
-    metrics: &Metrics,
-    resource: &str,
+    fonts: &[ReadyFace<'_>],
     confidence: &str,
     property: &str,
     page: [f64; 2],
@@ -210,10 +236,19 @@ fn push_layer(
             height_mm,
             rotation,
             value,
+            font,
         } = &primitive.shape
         {
+            let face = face_for(fonts, font.as_deref(), value)?;
             show_text(
-                ops, metrics, resource, *origin_mm, *height_mm, *rotation, value,
+                ops,
+                &face.metrics,
+                &face.resource,
+                typeface_key(font.as_deref(), value),
+                *origin_mm,
+                *height_mm,
+                *rotation,
+                value,
             )?;
         }
     }
@@ -279,10 +314,35 @@ fn chain(ops: &mut Vec<Op>, points: &[[f64; 2]], page: [f64; 2]) -> bool {
     any
 }
 
+fn face_for<'a>(
+    faces: &'a [ReadyFace<'a>],
+    requested: Option<&str>,
+    text: &str,
+) -> Result<&'a ReadyFace<'a>, PlotWriteError> {
+    let key = typeface_key(requested, text);
+    if let Some(face) = faces
+        .iter()
+        .find(|face| face.key == key && face.metrics.encode(text).is_some())
+    {
+        return Ok(face);
+    }
+    faces
+        .iter()
+        .find(|face| face.metrics.encode(text).is_some())
+        .ok_or_else(|| {
+            let have: Vec<&str> = faces.iter().map(|face| face.key).collect();
+            PlotWriteError::Font(format!(
+                "no face can draw {text:?} (wanted {key}; embedded {})",
+                have.join(", ")
+            ))
+        })
+}
+
 fn show_text(
     ops: &mut Vec<Op>,
     metrics: &Metrics,
     resource: &str,
+    typeface: &str,
     origin_mm: [f64; 2],
     height_mm: Option<f64>,
     rotation: f64,
@@ -299,7 +359,7 @@ fn show_text(
         .encode(value)
         .ok_or_else(|| missing_glyph(metrics, value))?;
     let (sin, cos) = rotation.sin_cos();
-    let size = height_mm * PT_PER_MM;
+    let size = plotted_size_pt(typeface, height_mm);
     ops.push(Op::new("BT", Vec::new()));
     ops.push(Op::new(
         "Tf",
@@ -520,6 +580,41 @@ fn push_chain(out: &mut Vec<([f64; 2], [f64; 2])>, points: &[[f64; 2]], page: [f
     }
 }
 
+/// `Tf` for one run.
+///
+/// The five reference plots do not scale a style height by one factor.
+/// Heights measured there are written at the `Tf` those plots used. A
+/// height that was not measured stays the style height in points.
+fn plotted_size_pt(typeface: &str, height_mm: f64) -> f64 {
+    let style_pt = height_mm * PT_PER_MM;
+    let hundredths = (style_pt * 100.0).round() as i64;
+    measured_tf(typeface, hundredths).unwrap_or(style_pt)
+}
+
+/// Reference `Tf` for a typeface and a style height in hundredths of a point.
+fn measured_tf(typeface: &str, hundredths: i64) -> Option<f64> {
+    const PAIRS: &[(&str, i64, f64)] = &[
+        ("Arial Narrow", 700, 10.17),
+        ("Arial Narrow", 1000, 14.40),
+        ("Arial", 900, 12.45),
+        ("FangSong", 700, 10.56),
+        ("FangSong", 720, 10.56),
+        ("FangSong", 900, 13.44),
+        ("SimSun", 698, 10.08),
+        ("SimSun", 709, 10.56),
+        ("SimSun", 720, 10.56),
+        ("SimSun", 850, 12.48),
+        ("SimSun", 907, 13.44),
+        ("SimSun", 992, 14.40),
+        ("SimSun", 1134, 16.80),
+        ("SimSun", 1276, 18.72),
+    ];
+    PAIRS
+        .iter()
+        .find(|row| row.0 == typeface && row.1 == hundredths)
+        .map(|row| row.2)
+}
+
 fn pt(mm: f64) -> Object {
     Object::Real(mm * PT_PER_MM)
 }
@@ -536,9 +631,11 @@ fn hypot(start: [f64; 2], end: [f64; 2]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::write_plot;
+    use super::{plotted_size_pt, write_plot};
     use crate::model::{PaperModel, PaperPrimitive, PaperShape};
     use crate::read::read_plot;
+
+    use super::PlotFont;
 
     fn primitive(confidence: &'static str, shape: PaperShape) -> PaperPrimitive {
         PaperPrimitive {
@@ -548,6 +645,21 @@ mod tests {
             symbol: None,
             shape,
         }
+    }
+
+    #[test]
+    fn measured_style_heights_use_the_reference_tf() {
+        let mm = |pt: f64| pt * 25.4 / 72.0;
+        assert_eq!(plotted_size_pt("Arial Narrow", mm(7.0)), 10.17);
+        assert_eq!(plotted_size_pt("Arial Narrow", mm(10.0)), 14.40);
+        assert_eq!(plotted_size_pt("Arial", mm(9.0)), 12.45);
+        assert_eq!(plotted_size_pt("FangSong", mm(7.0)), 10.56);
+        assert_eq!(plotted_size_pt("FangSong", mm(7.2)), 10.56);
+        assert_eq!(plotted_size_pt("SimSun", 2.4638), 10.08);
+        assert_eq!(plotted_size_pt("SimSun", 2.5), 10.56);
+        assert_eq!(plotted_size_pt("SimSun", 3.0), 12.48);
+        let plain = 5.0 * 72.0 / 25.4;
+        assert!((plotted_size_pt("Arial Narrow", 5.0) - plain).abs() < 1e-9);
     }
 
     #[test]
@@ -570,6 +682,7 @@ mod tests {
                         height_mm: Some(5.0),
                         rotation: 0.0,
                         value: "Ab".into(),
+                        font: None,
                     },
                 ),
                 primitive(
@@ -592,7 +705,14 @@ mod tests {
             symbols_found: 0,
             symbols_referenced: 0,
         };
-        let pdf = write_plot(&model, pdfcraft_fonts::INTER_REGULAR).expect("write");
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
         let ink = read_plot(&pdf).expect("read");
         assert!((ink.page_mm[0] - 200.0).abs() < 0.05);
         assert!((ink.page_mm[1] - 100.0).abs() < 0.05);

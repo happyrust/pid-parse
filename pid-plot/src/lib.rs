@@ -10,6 +10,7 @@
 )]
 
 pub mod compare;
+pub mod fonts;
 pub mod model;
 pub mod read;
 pub mod write;

@@ -3,9 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use pid_plot::fonts::prepare_local_fonts;
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::read_plot;
-use pid_plot::write::{DEFAULT_TEXT_MM, stroked_segments, write_plot};
+use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot};
 
 const DRAWINGS: [&str; 5] = [
     "I井场 注采阀组工艺及自控流程图",
@@ -30,36 +31,31 @@ fn five_drawings_round_trip_through_pdf() {
         eprintln!("skipping rendered plots; {} is absent", first.display());
         return;
     }
-    let source_font = PathBuf::from(r"C:\Windows\Fonts\NotoSansSC-VF.ttf");
-    if !source_font.is_file() {
-        eprintln!(
-            "skipping rendered plots; {} is absent",
-            source_font.display()
-        );
+    if !PathBuf::from(r"C:\Windows\Fonts\arial.ttf").is_file() {
+        eprintln!("skipping rendered plots; Windows fonts are absent");
         return;
     }
 
     let mut models = Vec::new();
-    let mut chars = String::from(" ");
     for name in DRAWINGS {
         let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus)
             .unwrap_or_else(|error| panic!("{name}: {error}"));
-        for primitive in &model.primitives {
-            if let PaperShape::Text { value, .. } = &primitive.shape {
-                chars.push_str(value);
-            }
-        }
         models.push((name, model));
     }
-
-    let font_path = std::env::temp_dir().join("pid-plot-noto-sans-sc-subset.ttf");
-    subset_font(&source_font, &font_path, &chars);
-    let font = std::fs::read(&font_path).unwrap_or_else(|error| panic!("read font: {error}"));
+    let refs: Vec<&PaperModel> = models.iter().map(|(_, model)| model).collect();
+    let prepared = prepare_local_fonts(&refs).unwrap_or_else(|error| panic!("fonts: {error}"));
+    let fonts: Vec<PlotFont<'_>> = prepared
+        .iter()
+        .map(|face| PlotFont {
+            key: &face.key,
+            bytes: &face.bytes,
+        })
+        .collect();
     let plot_dir = corpus.join("plot");
     std::fs::create_dir_all(&plot_dir).unwrap_or_else(|error| panic!("mkdir plot: {error}"));
 
     for (name, model) in &models {
-        let pdf = write_plot(model, &font).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let pdf = write_plot(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
         let out = plot_dir.join(format!("{name}.pdf"));
         std::fs::write(&out, &pdf)
             .unwrap_or_else(|error| panic!("write {}: {error}", out.display()));
@@ -86,6 +82,16 @@ fn five_drawings_round_trip_through_pdf() {
             );
         }
         let expected_text = text_runs(model);
+        if ink.spans.len() != expected_text.len() {
+            eprintln!("READ {name}");
+            for span in &ink.spans {
+                eprintln!("  {:?} {:?}", span.text, span.origin_mm);
+            }
+            eprintln!("MODEL {name}");
+            for value in &expected_text {
+                eprintln!("  {value:?}");
+            }
+        }
         assert_eq!(
             ink.spans.len(),
             expected_text.len(),
@@ -116,6 +122,7 @@ fn text_runs(model: &PaperModel) -> Vec<&str> {
                 height_mm,
                 rotation,
                 origin_mm,
+                ..
             } = &primitive.shape
             {
                 let height = height_mm.unwrap_or(DEFAULT_TEXT_MM);
@@ -139,21 +146,6 @@ fn near(point: [f64; 2], expected: [f64; 2]) -> bool {
     (point[0] - expected[0]).abs() < 0.08 && (point[1] - expected[1]).abs() < 0.08
 }
 
-fn subset_font(source: &Path, dest: &Path, text: &str) {
-    let script = std::env::temp_dir().join("pid-plot-subset-font.py");
-    let text_path = std::env::temp_dir().join("pid-plot-subset-chars.txt");
-    std::fs::write(&script, SUBSET_PY).expect("write subset script");
-    std::fs::write(&text_path, text).expect("write chars");
-    let status = Command::new("python")
-        .arg(&script)
-        .arg(source)
-        .arg(dest)
-        .arg(&text_path)
-        .status()
-        .unwrap_or_else(|error| panic!("python: {error}"));
-    assert!(status.success(), "font subset failed");
-}
-
 fn pymupdf_opens(pdf: &Path, texts: &[&str]) {
     let script = std::env::temp_dir().join("pid-plot-pymupdf-check.py");
     std::fs::write(&script, PYMUPDF_PY).expect("write pymupdf script");
@@ -172,31 +164,6 @@ fn pymupdf_opens(pdf: &Path, texts: &[&str]) {
         pdf.display()
     );
 }
-
-const SUBSET_PY: &str = r#"
-import sys
-from fontTools.ttLib import TTFont
-from fontTools.varLib.instancer import instantiateVariableFont
-from fontTools.subset import Subsetter, Options
-
-source, dest, text_path = sys.argv[1:4]
-text = open(text_path, encoding="utf-8").read()
-font = TTFont(source)
-if "fvar" in font:
-    instantiateVariableFont(font, {}, inplace=True, overlap=True)
-for tag in ("fvar", "gvar", "avar", "cvar", "HVAR", "VVAR", "MVAR", "STAT"):
-    if tag in font:
-        del font[tag]
-options = Options()
-options.name_IDs = ["*"]
-options.notdef_outline = True
-options.recommended_glyphs = True
-subsetter = Subsetter(options=options)
-subsetter.populate(text=text)
-subsetter.subset(font)
-font.save(dest)
-print("subset bytes", __import__("os").path.getsize(dest))
-"#;
 
 const PYMUPDF_PY: &str = r#"
 import sys
