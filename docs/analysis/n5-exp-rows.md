@@ -88,3 +88,9 @@ cargo run --example probe_oracle_exp_rows
 ```
 
 可选三个参数：dump、参考 `_Data.xml`、已发 `_Data.xml`。缺省就是上面这三个路径。
+
+## N5-1 读进库（2026-10-12，t-1966）
+
+行格式没改，搬进 `src/publish/oracle_exp.rs`。`APPLICATIONS` 钉不住就不读 `T_PIPINGPOINT` / `T_SIGNALPOINT`。对外是管道点四列（流向和公称直径可空）和信号点两列，再按已发物项的 UID 集合挑一张图。不写 XML。
+
+库侧实跑（`ijingchang_ports_match_the_reference`）：全表 9 628 / 22 057；I井场管道 362、信号 915；UID 错 0；多发 0。上面各节的探针数字没有重跑。

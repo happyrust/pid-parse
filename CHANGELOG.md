@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### publish 从 Oracle exp 读出端口行，还不写 XML（2026-10-12，N5-1）
+
+计划 `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-1（t-1966）。`src/publish/oracle_exp.rs`。行格式同 `examples/probe_oracle_exp_rows.rs` 与 `docs/analysis/n5-exp-rows.md`。
+
+- `APPLICATIONS` 第一行必须是 `ID` 1、`SmartPlant PID`、`SPPID`，否则返回错误，不读后面的表。字符列是 UTF-16BE（字符集 2000）。NULL 是 `0xFFFE`，表尾是 `0xFFFF`。
+- `T_PIPINGPOINT` 9 628 行，`T_SIGNALPOINT` 22 057 行。管道点带 `SP_PLANTITEMID`、`PIPINGPOINTNUMBER`、可空的 `FLOWDIRECTION` 和 `NOMINALDIAMETER`；信号点带 `SP_PLANTITEMID`、`SIGNALPOINTNUMBER`。按本 `.pid` 已发出的物项挑 I井场：管道 362、信号 915。拼出的 UID 与参考错 0。父项已发、参考里却没有：0。
+- 不写 XML，不改 `pid_load` / `pid_writer` / CLI。`publish_from_pid` 的五组钉数不动。
+- 验证（2026-10-12 实跑）：`cargo test --locked --workspace --lib --bins --tests` 0 败（1 538 过 / 3 忽略，`--lib` 1 184，`publish_from_pid` 4 / 4，钉数不动）；`--no-default-features` 的 `--lib --bins --tests` 0 败（1 094 过 / 1 忽略，`--lib` 850，本测试在 `backup` 特性里所以不进这一档）。clippy `-D warnings` 两种特性在 lib / bins / tests 上零告警。改动的 `.rs` rustfmt 干净。`cargo rustdoc --lib --locked -- -W missing-docs` 0。`cargo check --lib --locked --no-default-features --target wasm32-unknown-unknown` 过。`--all-targets` 测试 NOT RUN：`cargo test --locked --workspace --all-targets --no-run` 退出 0，没有被未提交的 example 卡住；那些 example 仍是别的会话的文件，本单不跑。
+
 ### publish 不发连通关系：`.pid` 里配不成对（2026-10-12，N4-4）
 
 计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-4。提交 `7fdeae8`。探针 `examples/probe_connectivity_relationships.rs`。分析页 `docs/analysis/n2a-port-relation-filter.md`「N4-4 探针」。

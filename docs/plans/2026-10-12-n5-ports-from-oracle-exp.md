@@ -111,3 +111,12 @@ dump 里有这些表：`T_PIPELINE`、`T_PIPERUN`、`T_PLANTITEMGROUP`、`T_CONN
 - 接 grok-4.7-55（用户 14:32 那句之后掉线，计划没写）与 grok-4.7-65（16:26 建组后即离线）。核对：池子 21/21 完成；仓库 `a287078` 与 origin 同步；#29 开着；工作树里 N4-1 的三段文档没提交（→ N5-0）。
 - §1 的数字：临时 Python 脚本只读 5 份参考 `_Data.xml`、`publish\` 下 5 份 `_Data.xml` 和 `Export.dmp`，脚本不入库。
 - 没改 `src`，没跑 cargo，没提交。
+
+### N5-1 端口行读进库（2026-10-12，任务 t-1966）
+
+用户已通过，Q2 选 (a)：父项是本 `.pid` 已发出的物项，不读参考 XML 来挑行。`src/publish/oracle_exp.rs` 在 `publish` 模块里登记，和 `sqlite_load` 同一个 `backup` 特性门。不写 XML，不改 `pid_load` 的发出口径、`pid_writer`、CLI。
+
+- `APPLICATIONS` 第一行不是 `ID` 1、`SmartPlant PID`、`SPPID` 就返回 `FormatUnpinned`，端口表不读。字符列字符集不是 2000 或形式不是 2 就报错。
+- 全表 `T_PIPINGPOINT` 9 628 行、`T_SIGNALPOINT` 22 057 行，点号都能解成整数。I井场按已发物项挑出管道 362、信号 915。UID（父 UID + `.` + 点号）与参考 `PIDPipingPort` / `PIDSignalPort` 错 0。父项已发、参考里却没有：0。
+- 手造片段的单测盖了 NULL、UTF-16BE、`NUMBER`（`80` = 0、`c1 02` = 1、`c2 1a 34` = 2551、`3e 64 66` = −1）、表尾、`APPLICATIONS` 钉不住。I井场对照在同一个模块的 `ijingchang_ports_match_the_reference`：dump、`.pid` 或参考 XML 缺一就 soft-skip。没有另建 `tests/publish_oracle_exp.rs`，因为 `Cargo.toml` 里别人未提交的改动还在，而显式 `[[test]]` 关掉了自动发现。
+- **验证**（2026-10-12 实跑）：`cargo test --locked --workspace --lib --bins --tests` 0 败（1 538 过 / 3 忽略，`--lib` 1 184，`publish_from_pid` 4 / 4，钉数不动）；`--no-default-features` 0 败（1 094 过 / 1 忽略，`--lib` 850）。clippy `-D warnings` 两种特性在 lib / bins / tests 上零告警。改动的 `.rs` rustfmt 干净。`cargo rustdoc --lib --locked -- -W missing-docs` 0。wasm32：`cargo check --lib --locked --no-default-features --target wasm32-unknown-unknown` 过。`--all-targets` 测试 NOT RUN：`--no-run` 退出 0，未提交的 example 没有挡住编译，本单不跑那些探针。
