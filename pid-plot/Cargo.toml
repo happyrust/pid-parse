@@ -1,0 +1,18 @@
+[package]
+name = "pid-plot"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "Rendered plots and plot comparison for pid-parse drawings"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# The reader only. Plant-database features stay out of the plot crate.
+pid-parse = { path = "..", default-features = false }
+# Pinned together so one `cargo update` cannot mix commits.
+pdfcraft-cos = { git = "https://github.com/storytold/pdfcraft", rev = "0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e" }
+pdfcraft-content = { git = "https://github.com/storytold/pdfcraft", rev = "0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e" }
+pdfcraft-fonts = { git = "https://github.com/storytold/pdfcraft", rev = "0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e" }
+pdfcraft-render = { git = "https://github.com/storytold/pdfcraft", rev = "0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e" }
+hayro = "0.7.1"

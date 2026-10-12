@@ -242,6 +242,14 @@ cargo fmt --all -- --check        # apply with `cargo fmt --all`
 bash .github/scripts/check-missing-docs.sh   # rustdoc ratchet
 ```
 
+`pid-plot` links pdfcraft, so these two stay on the parser crate and must
+not be widened to `--workspace`:
+
+```bash
+cargo test --locked -p pid-parse --no-default-features --lib
+cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown
+```
+
 ### `missing_docs` ratchet
 
 `.github/missing-docs-baseline.txt` stores the maximum number of

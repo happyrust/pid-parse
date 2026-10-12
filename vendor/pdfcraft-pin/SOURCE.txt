@@ -1,0 +1,2 @@
+Mirrored from https://github.com/storytold/pdfcraft commit 0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e, directory vendor/.
+Do not edit these trees. When pid-plot's pdfcraft rev changes, replace them from that commit.
