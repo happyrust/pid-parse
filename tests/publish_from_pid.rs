@@ -409,6 +409,18 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     drawing.connectivity_ends =
         pid_parse::publish::oracle_exp::connectivity_ends_for_drawing(&bytes, &drawing.drawing_uid)
             .expect("exp connectivity");
+    drawing.exp_relations =
+        pid_parse::publish::oracle_exp::composition_relations(&bytes).expect("exp compositions");
+    let mut opc_points =
+        pid_parse::publish::oracle_exp::opc_points_for_drawing(&bytes, &drawing.drawing_uid)
+            .expect("exp opc");
+    let representations: HashSet<&str> = drawing
+        .representations
+        .iter()
+        .map(|representation| representation.uid.as_str())
+        .collect();
+    opc_points.retain(|point| representations.contains(point.representation_uid.as_str()));
+    drawing.opc_points = opc_points;
     let generated = read_document(&write_pid_data_xml(&drawing, "P01"));
     let reference = read_document(&std::fs::read_to_string(reference_xml).expect("reference"));
     let mut listing = Vec::new();
@@ -419,11 +431,11 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
         listing.len(),
         listing.iter().take(8).collect::<Vec<_>>()
     );
-    // N7: the 738 connectivity pairs less the 2 whose symbol end is an OPC
-    // branch point this export does not publish.
+    // N8: 7 nozzle compositions, 6 item notes, and the 2 OPC branch
+    // points (with their DrawingItems and the 2 connectivity rows).
     assert_eq!(
         (score.objects, score.values, score.rels),
-        (3_012, 3_182, 3_984)
+        (3_014, 3_188, 4_001)
     );
     let rels_of = |def_uid: &str| generated.rels.iter().filter(|rel| rel.3 == def_uid).count();
     assert_eq!(
@@ -435,12 +447,18 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
             rels_of("SignalEnd2Conn"),
             rels_of("SignalTapOrFitting"),
         ],
-        [369, 128, 142, 38, 46, 13]
+        [369, 129, 143, 38, 46, 13]
     );
     assert_eq!(
         pid_parse::publish::pid_writer::connectivity_rel_counts(&drawing),
-        (736, 2)
+        (738, 0)
     );
+    assert_eq!(
+        pid_parse::publish::pid_writer::composition_rel_counts(&drawing),
+        (377, 7, 114, 6)
+    );
+    assert_eq!(rels_of("EquipmentComponentComposition"), 7);
+    assert_eq!(rels_of("PBSItemNotes"), 6);
     let piping = generated
         .objects
         .values()
@@ -469,8 +487,15 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert_eq!(report["oracle_exp"]["signal_ports"], 915);
     assert_eq!(report["oracle_exp"]["nominal_diameter_unspelled"], 0);
     assert_eq!(report["oracle_exp"]["connectivity_ends"], 738);
-    assert_eq!(report["oracle_exp"]["connectivity_rels"], 736);
-    assert_eq!(report["oracle_exp"]["connectivity_ends_left_out"], 2);
+    assert_eq!(report["oracle_exp"]["connectivity_rels"], 738);
+    assert_eq!(report["oracle_exp"]["connectivity_ends_left_out"], 0);
+    assert_eq!(report["oracle_exp"]["opc_branch_points"], 2);
+    assert_eq!(report["oracle_exp"]["equipment_compositions"], 377);
+    assert_eq!(report["oracle_exp"]["equipment_composition_rels"], 7);
+    assert_eq!(report["oracle_exp"]["item_notes"], 114);
+    assert_eq!(report["oracle_exp"]["item_note_rels"], 6);
+    assert_eq!(report["relationships"]["EquipmentComponentComposition"], 7);
+    assert_eq!(report["relationships"]["PBSItemNotes"], 6);
     assert_eq!(report["relationships"]["PipingTapOrFitting"], 369);
     assert!(report["left_out_by_design"][0]
         .as_str()

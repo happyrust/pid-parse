@@ -16,7 +16,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use super::pid_load::{
-    ConnectivityEnd, ExpPublish, PidPort, PidPublishAttribute, PidPublishDrawing, PidValueSource,
+    ConnectivityEnd, ExpPublish, ExpRelation, PidOpcPoint, PidPort, PidPublishAttribute,
+    PidPublishDrawing, PidValueSource,
 };
 
 const CHARSET_AL16UTF16: u16 = 2000;
@@ -788,6 +789,179 @@ pub fn connectivity_ends_for_drawing(
     Ok(list)
 }
 
+/// Nozzle compositions and item notes in the dump.
+///
+/// `T_NOZZLE` gives `EquipmentComponentComposition` (`SP_ID` the nozzle,
+/// `SP_EQUIPMENTID` the equipment). `T_NOTE` gives `PBSItemNotes`
+/// (`SP_ITEMNOTEID` the note, `SP_MODELITEMID` the model item). A model
+/// item that is itself an item note (`T_ITEMNOTE.SP_ID`) is left out:
+/// on I井场 those rows are note-to-note and the reference publishes none
+/// of them as `PBSItemNotes`. The writer then keeps a row only when both
+/// ends are objects this drawing already publishes. OPC branch points
+/// are not read.
+///
+/// # Errors
+///
+/// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not pin
+/// the row format, and [`ExpError::Table`] when a followed table is not
+/// that format. `T_NOTE` has a byte-string and date columns; those cells
+/// are skipped.
+pub fn composition_relations(dump: &[u8]) -> Result<Vec<ExpRelation>, ExpError> {
+    let applications = read_table(dump, "APPLICATIONS")?;
+    if !applications_pinned(&applications) {
+        return Err(ExpError::FormatUnpinned);
+    }
+    let nozzles = read_table_tolerant(dump, "T_NOZZLE")?;
+    let notes = read_table_tolerant(dump, "T_NOTE")?;
+    let item_notes = read_table_tolerant(dump, "T_ITEMNOTE")?;
+    let item_note_ids = id_set(&item_notes, "SP_ID")?;
+
+    let mut rels = Vec::new();
+    let nozzle_id = column_index(&nozzles, "SP_ID")?;
+    let equipment_id = column_index(&nozzles, "SP_EQUIPMENTID")?;
+    for row in &nozzles.rows {
+        let Some(nozzle) = text_of(row, nozzle_id) else {
+            continue;
+        };
+        let Some(equipment) = text_of(row, equipment_id) else {
+            continue;
+        };
+        rels.push(ExpRelation {
+            def_uid: "EquipmentComponentComposition",
+            uid1: norm_uid(nozzle),
+            uid2: norm_uid(equipment),
+        });
+    }
+    let note_id = column_index(&notes, "SP_ITEMNOTEID")?;
+    let model_id = column_index(&notes, "SP_MODELITEMID")?;
+    for row in &notes.rows {
+        let Some(note) = text_of(row, note_id) else {
+            continue;
+        };
+        let Some(model) = text_of(row, model_id) else {
+            continue;
+        };
+        let model = norm_uid(model);
+        if item_note_ids.contains(&model) {
+            continue;
+        }
+        rels.push(ExpRelation {
+            def_uid: "PBSItemNotes",
+            uid1: norm_uid(note),
+            uid2: model,
+        });
+    }
+    rels.sort_by(|left, right| {
+        (left.def_uid, &left.uid1, &left.uid2).cmp(&(right.def_uid, &right.uid1, &right.uid2))
+    });
+    rels.dedup();
+    Ok(rels)
+}
+
+/// Off-page connectors drawn on `drawing_uid`.
+///
+/// A row is a `T_REPRESENTATION` whose drawing is this one and whose
+/// model item is in `T_OPC`. The published UID is the lesser of that
+/// item and `SP_PAIREDWITHID` (the same id the connectivity end uses).
+/// `Name` / `ToFromText` / `Description` come from the drawn side, and
+/// from the other side only when the drawn side is empty. The caller
+/// drops a point whose representation this `.pid` does not publish.
+///
+/// # Errors
+///
+/// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not pin
+/// the row format, and [`ExpError::Table`] when a followed table is not
+/// that format. Byte-string and date cells are skipped.
+pub fn opc_points_for_drawing(
+    dump: &[u8],
+    drawing_uid: &str,
+) -> Result<Vec<PidOpcPoint>, ExpError> {
+    let applications = read_table(dump, "APPLICATIONS")?;
+    if !applications_pinned(&applications) {
+        return Err(ExpError::FormatUnpinned);
+    }
+    let drawing_uid = norm_uid(drawing_uid);
+    let opc = read_table_tolerant(dump, "T_OPC")?;
+    let reps = read_table_tolerant(dump, "T_REPRESENTATION")?;
+    let models = read_table_tolerant(dump, "T_MODELITEM")?;
+
+    let opc_id = column_index(&opc, "SP_ID")?;
+    let opc_paired = column_index(&opc, "SP_PAIREDWITHID")?;
+    let opc_tag = column_index(&opc, "OPCTAG")?;
+    let opc_text = column_index(&opc, "TOFROMTEXT")?;
+    let mut rows_of = HashMap::<String, (String, String, String)>::new();
+    for row in &opc.rows {
+        let Some(id) = text_of(row, opc_id) else {
+            continue;
+        };
+        rows_of.insert(
+            norm_uid(id),
+            (
+                text_of(row, opc_paired).map(norm_uid).unwrap_or_default(),
+                text_of(row, opc_tag).unwrap_or("").to_string(),
+                text_of(row, opc_text).unwrap_or("").to_string(),
+            ),
+        );
+    }
+    let model_id = column_index(&models, "SP_ID")?;
+    let model_description = column_index(&models, "DESCRIPTION")?;
+    let mut descriptions = HashMap::<String, String>::new();
+    for row in &models.rows {
+        let Some(id) = text_of(row, model_id) else {
+            continue;
+        };
+        if let Some(description) = text_of(row, model_description) {
+            descriptions.insert(norm_uid(id), description.to_string());
+        }
+    }
+
+    let rep_id = column_index(&reps, "SP_ID")?;
+    let rep_model = column_index(&reps, "SP_MODELITEMID")?;
+    let rep_drawing = column_index(&reps, "SP_DRAWINGID")?;
+    let mut points = Vec::new();
+    for row in &reps.rows {
+        if text_of(row, rep_drawing).map(norm_uid).as_deref() != Some(drawing_uid.as_str()) {
+            continue;
+        }
+        let Some(model) = text_of(row, rep_model).map(norm_uid) else {
+            continue;
+        };
+        let Some((paired, tag, to_from)) = rows_of.get(&model) else {
+            continue;
+        };
+        let Some(representation) = text_of(row, rep_id) else {
+            continue;
+        };
+        let other = rows_of.get(paired);
+        let name = if !tag.is_empty() {
+            tag.clone()
+        } else {
+            other.map(|(_, tag, _)| tag.clone()).unwrap_or_default()
+        };
+        let to_from_text = if !to_from.is_empty() {
+            to_from.clone()
+        } else {
+            other.map(|(_, _, text)| text.clone()).unwrap_or_default()
+        };
+        let description = descriptions
+            .get(&model)
+            .cloned()
+            .filter(|text| !text.is_empty())
+            .or_else(|| descriptions.get(paired).cloned())
+            .unwrap_or_default();
+        points.push(PidOpcPoint {
+            uid: lesser_id(&model, paired),
+            representation_uid: norm_uid(representation),
+            name,
+            description,
+            to_from_text,
+        });
+    }
+    points.sort_by(|left, right| left.uid.cmp(&right.uid));
+    points.dedup_by(|left, right| left.uid == right.uid);
+    Ok(points)
+}
+
 /// The item a symbol end belongs to: a port's parent (`PARENT.N` → `PARENT`),
 /// a branch point (`REP.BPT`) or an OPC by itself.
 fn item_of_symbol(symbol_uid: &str) -> String {
@@ -836,10 +1010,7 @@ fn symbol_uids(index: &EndIndex<'_>, rep_id: &str, object_index: Option<i64>) ->
         return vec![format!("{rep_id}.BPT")];
     }
     if let Some(paired) = index.opc_pair.get(model) {
-        return vec![match paired {
-            Some(other) if !other.is_empty() && model.as_str() > other.as_str() => other.clone(),
-            _ => model.clone(),
-        }];
+        return vec![lesser_id(model, paired.as_deref().unwrap_or(""))];
     }
     let Some(point) = object_index.filter(|value| *value > 0) else {
         return Vec::new();
@@ -916,6 +1087,16 @@ fn norm_uid(text: &str) -> String {
         out.extend(ch.to_uppercase());
     }
     out
+}
+
+/// The published OPC uid: the lesser of the two ids, or `model` when the
+/// pair is empty. Same order `symbol_uids` uses for a connectivity end.
+fn lesser_id(model: &str, paired: &str) -> String {
+    if !paired.is_empty() && model > paired {
+        paired.to_string()
+    } else {
+        model.to_string()
+    }
 }
 
 fn read_table_tolerant(dump: &[u8], name: &str) -> Result<Table, ExpError> {
@@ -1321,6 +1502,116 @@ mod tests {
     }
 
     #[test]
+    fn ijingchang_nozzle_and_note_rows_match_the_reference() {
+        let dump_path = std::path::PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");
+        let corpus = std::path::PathBuf::from(r"D:\work\cad\PID自研软件验证");
+        let stem = "I井场 注采阀组工艺及自控流程图";
+        let pid = corpus.join(format!("{stem}.pid"));
+        let reference_path = corpus.join(format!("{stem}_Data.xml"));
+        if !dump_path.is_file() || !pid.is_file() || !reference_path.is_file() {
+            eprintln!("skip: oracle exp corpus or I井场 .pid is missing");
+            return;
+        }
+        let dump = std::fs::read(&dump_path).unwrap();
+        let drawing = super::super::pid_load::load_publish_from_pid(&pid).unwrap();
+        let rels = composition_relations(&dump).unwrap();
+        let nozzles = rels
+            .iter()
+            .filter(|rel| rel.def_uid == "EquipmentComponentComposition")
+            .count();
+        let notes = rels
+            .iter()
+            .filter(|rel| rel.def_uid == "PBSItemNotes")
+            .count();
+        assert_eq!((nozzles, notes), (377, 114));
+
+        let published = drawing
+            .items
+            .iter()
+            .filter(|item| item.class.is_some())
+            .map(|item| item.uid.as_str())
+            .collect::<HashSet<_>>();
+        let kept = |def_uid: &str| {
+            rels.iter()
+                .filter(|rel| {
+                    rel.def_uid == def_uid
+                        && published.contains(rel.uid1.as_str())
+                        && published.contains(rel.uid2.as_str())
+                })
+                .map(|rel| (rel.uid1.clone(), rel.uid2.clone()))
+                .collect::<HashSet<_>>()
+        };
+        let xml = std::fs::read_to_string(&reference_path).unwrap();
+        let reference_nozzles = reference_uid_pairs(&xml, &["EquipmentComponentComposition"]);
+        let reference_notes = reference_uid_pairs(&xml, &["PBSItemNotes"]);
+        let got_nozzles = kept("EquipmentComponentComposition");
+        let got_notes = kept("PBSItemNotes");
+        assert_eq!(
+            (
+                got_nozzles.len(),
+                reference_nozzles.difference(&got_nozzles).count(),
+                got_nozzles.difference(&reference_nozzles).count(),
+            ),
+            (7, 0, 0)
+        );
+        assert_eq!(
+            (
+                got_notes.len(),
+                reference_notes.difference(&got_notes).count(),
+                got_notes.difference(&reference_notes).count(),
+            ),
+            (6, 0, 0)
+        );
+    }
+
+    #[test]
+    fn ijingchang_opc_points_match_the_reference() {
+        let dump_path = std::path::PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");
+        let corpus = std::path::PathBuf::from(r"D:\work\cad\PID自研软件验证");
+        let stem = "I井场 注采阀组工艺及自控流程图";
+        let pid = corpus.join(format!("{stem}.pid"));
+        let reference_path = corpus.join(format!("{stem}_Data.xml"));
+        if !dump_path.is_file() || !pid.is_file() || !reference_path.is_file() {
+            eprintln!("skip: oracle exp corpus or I井场 .pid is missing");
+            return;
+        }
+        let dump = std::fs::read(&dump_path).unwrap();
+        let drawing = super::super::pid_load::load_publish_from_pid(&pid).unwrap();
+        let points = opc_points_for_drawing(&dump, &drawing.drawing_uid).unwrap();
+        let representations = drawing
+            .representations
+            .iter()
+            .map(|representation| representation.uid.as_str())
+            .collect::<HashSet<_>>();
+        let kept = points
+            .into_iter()
+            .filter(|point| representations.contains(point.representation_uid.as_str()))
+            .collect::<Vec<_>>();
+        let xml = std::fs::read_to_string(&reference_path).unwrap();
+        let reference = reference_opc_points(&xml);
+        let got = kept
+            .iter()
+            .map(|point| point.uid.clone())
+            .collect::<HashSet<_>>();
+        let wanted = reference.keys().cloned().collect::<HashSet<_>>();
+        assert_eq!(
+            (
+                kept.len(),
+                wanted.difference(&got).count(),
+                got.difference(&wanted).count()
+            ),
+            (2, 0, 0)
+        );
+        for point in &kept {
+            let (name, description, to_from, representation) = &reference[&point.uid];
+            assert_eq!(&point.name, name, "{}", point.uid);
+            assert_eq!(&point.description, description, "{}", point.uid);
+            assert_eq!(&point.to_from_text, to_from, "{}", point.uid);
+            assert_eq!(&point.representation_uid, representation, "{}", point.uid);
+        }
+    }
+
+    #[test]
     fn the_item_of_a_symbol_end_is_the_port_parent_or_the_point_itself() {
         assert_eq!(item_of_symbol("AAD117E6.1"), "AAD117E6");
         assert_eq!(item_of_symbol("AAD117E6.12"), "AAD117E6");
@@ -1356,6 +1647,108 @@ mod tests {
             "SignalEnd2Conn",
             "SignalTapOrFitting",
         ];
+        reference_rel_map(xml, &DEFS)
+    }
+
+    /// Reference rows of `defs`: `(UID1, UID2)`.
+    fn reference_uid_pairs(xml: &str, defs: &[&str]) -> HashSet<(String, String)> {
+        reference_rel_map(xml, defs).into_keys().collect()
+    }
+
+    /// `PIDBranchPoint` UID → `(Name, Description, ToFromText, representation)`.
+    fn reference_opc_points(xml: &str) -> HashMap<String, (String, String, String, String)> {
+        let mut reader = quick_xml::Reader::from_str(xml);
+        reader.config_mut().trim_text(true);
+        let mut points = HashMap::new();
+        let mut drawing = HashMap::<String, String>::new();
+        let mut depth = 0usize;
+        let mut tag = String::new();
+        let mut uid = String::new();
+        let mut name = String::new();
+        let mut description = String::new();
+        let mut to_from = String::new();
+        let mut uid1 = String::new();
+        let mut uid2 = String::new();
+        let mut def = String::new();
+        loop {
+            match reader.read_event() {
+                Ok(quick_xml::events::Event::Start(start)) => {
+                    if depth == 1 {
+                        tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                        uid.clear();
+                        name.clear();
+                        description.clear();
+                        to_from.clear();
+                        uid1.clear();
+                        uid2.clear();
+                        def.clear();
+                    } else if depth == 2 {
+                        take_opc(&start, &mut uid, &mut name, &mut description, &mut to_from);
+                        take_rel(&start, &mut uid1, &mut uid2, &mut def);
+                    }
+                    depth += 1;
+                }
+                Ok(quick_xml::events::Event::Empty(start)) => {
+                    if depth == 2 {
+                        take_opc(&start, &mut uid, &mut name, &mut description, &mut to_from);
+                        take_rel(&start, &mut uid1, &mut uid2, &mut def);
+                    }
+                }
+                Ok(quick_xml::events::Event::End(_)) => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 1 && tag == "PIDBranchPoint" && !uid.is_empty() {
+                        points.insert(
+                            norm_uid(&uid),
+                            (
+                                name.clone(),
+                                description.clone(),
+                                to_from.clone(),
+                                String::new(),
+                            ),
+                        );
+                    }
+                    if depth == 1 && tag == "Rel" && def == "DrawingItems" {
+                        drawing.insert(norm_uid(&uid2), norm_uid(&uid1));
+                    }
+                }
+                Ok(quick_xml::events::Event::Eof) => break,
+                Err(err) => panic!("reference xml: {err}"),
+                _ => {}
+            }
+        }
+        for (uid, representation) in drawing {
+            if let Some(point) = points.get_mut(&uid) {
+                point.3 = representation;
+            }
+        }
+        points
+    }
+
+    fn take_opc(
+        start: &quick_xml::events::BytesStart<'_>,
+        uid: &mut String,
+        name: &mut String,
+        description: &mut String,
+        to_from: &mut String,
+    ) {
+        let interface = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+        for attribute in start.attributes().flatten() {
+            let key = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
+            let value = attribute
+                .unescape_value()
+                .map(std::borrow::Cow::into_owned)
+                .unwrap_or_default();
+            match (interface.as_str(), key.as_str()) {
+                ("IObject", "UID") => *uid = value,
+                ("IObject", "Name") => *name = value,
+                ("IObject", "Description") => *description = value,
+                ("IOffpageConnector", "ToFromText") => *to_from = value,
+                _ => {}
+            }
+        }
+    }
+
+    fn reference_rel_map(xml: &str, defs: &[&str]) -> HashMap<(String, String), String> {
         let mut reader = quick_xml::Reader::from_str(xml);
         reader.config_mut().trim_text(true);
         let mut pairs = HashMap::new();
@@ -1384,7 +1777,7 @@ mod tests {
                 }
                 Ok(quick_xml::events::Event::End(_)) => {
                     depth = depth.saturating_sub(1);
-                    if depth == 1 && tag == "Rel" && DEFS.contains(&def.as_str()) {
+                    if depth == 1 && tag == "Rel" && defs.contains(&def.as_str()) {
                         pairs.insert((norm_uid(&uid1), norm_uid(&uid2)), def.clone());
                     }
                 }

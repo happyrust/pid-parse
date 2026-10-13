@@ -66,3 +66,16 @@ cargo run --example probe_oracle_exp_small_classes
 ```
 
 可选三个参数：dump、参考 `_Data.xml`、已发 `_Data.xml`。缺省就是上面这三个路径。
+
+## 导出器（2026-10-13）
+
+`--oracle-exp` 写出上面两条，不写 OPC。
+
+- `EquipmentComponentComposition`：`T_NOZZLE` 的 `SP_ID` → `SP_EQUIPMENTID`，全库 377 对。两端都是本图已发对象才写 `<Rel>`。I井场写出 7，与参考多 0 缺 0。
+- `PBSItemNotes`：`T_NOTE` 的 `SP_ITEMNOTEID` → `SP_MODELITEMID`。`SP_MODELITEMID` 自己在 `T_ITEMNOTE.SP_ID` 里的不发（I井场 5 条注释→注释，参考没有这 5 条关系）。去掉之后全库 114 对，I井场写出 6，与参考多 0 缺 0。
+- 对象 / 值不动（3 012 / 3 182）。关系 3 984 → 3 997。两个 `PIDBranchPoint` 仍不发，少的仍是 2 条 `DrawingItems` 和 2 条 `PipingEnd1Conn` / `PipingEnd2Conn`。
+- `publish\` 的 I井场三件已按这次输出重写。另外 4 张图未动。
+
+## OPC 分支点（2026-10-13）
+
+本图上的表示，物项在 `T_OPC` 里的，发出 `PIDBranchPoint`。UID 取 `SP_ID` 和 `SP_PAIREDWITHID` 里较小的那个。`Name` / `Description` / `ToFromText` 取画出那一侧（`OPCTAG`、`T_MODELITEM.DESCRIPTION`、`TOFROMTEXT`）。I井场 2 个，表示就是上面少的那两条 `DrawingItems` 的表示端。连通 2 条跟着写出。对象 3 014、值 3 188、关系 4 001，与参考多 0。剩下的差是 79 个管线和 106 条 `PipingConnectors`。

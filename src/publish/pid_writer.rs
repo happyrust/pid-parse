@@ -11,9 +11,12 @@
 //! `{prefix}-{UID1}-{UID2}` UIDs `SmartPlant` gives them. Items whose class the
 //! file does not decide are left out, and so are their `DrawingItems`. The
 //! `<Container>` envelope constants are `SmartPlant`'s, not the file's.
-//! With an Oracle `exp` attached, the ports, their compositions and the
+//! With an Oracle `exp` attached, the ports, their compositions, the
 //! six connectivity definitions ([`PidPublishDrawing::connectivity_ends`])
-//! follow, the latter only between two published objects.
+//! and the nozzle / item-note relations
+//! ([`PidPublishDrawing::exp_relations`]) follow, and so do the off-page
+//! `PIDBranchPoint` objects ([`PidPublishDrawing::opc_points`]). A
+//! relation is written only between two published objects.
 //!
 //! [`write_pid_coverage_json`] renders the report that goes beside the two
 //! documents (plan P5): what the file named, what was written, what was left
@@ -27,7 +30,8 @@ use serde_json::json;
 
 use super::model::{PublishDrawing, PublishError};
 use super::pid_load::{
-    ConnectivityEnd, PidBranchPoint, PidPublishDrawing, PidPublishItem, PidValueSource,
+    ConnectivityEnd, ExpRelation, PidBranchPoint, PidOpcPoint, PidPublishDrawing, PidPublishItem,
+    PidValueSource,
 };
 use super::xml_writer::{defuid_prefix, escape_attr, write_meta_envelope};
 
@@ -92,6 +96,9 @@ fn write_document(
     for point in &drawing.branch_points {
         write_branch_point(buf, point)?;
     }
+    for point in &drawing.opc_points {
+        write_opc_point(buf, point)?;
+    }
     for port in &drawing.ports {
         write_port(buf, port)?;
     }
@@ -140,6 +147,12 @@ fn write_document(
         // on all 199 reference `DrawingItems` rows whose UID2 ends in `.BPT`.
         write_rel(buf, "DrawingItems", &point.representation_uid, &point.uid)?;
     }
+    for point in &drawing.opc_points {
+        // UID1 is the representation drawn on this sheet. UID2 is the
+        // lesser OPC id. Measured on I井场: the 2 rows the `.pid` does not
+        // class, because that class is left empty without an exp.
+        write_rel(buf, "DrawingItems", &point.representation_uid, &point.uid)?;
+    }
     for port in &drawing.ports {
         let def_uid = if port.class == "PIDSignalPort" {
             "SignalPortComposition"
@@ -152,6 +165,11 @@ fn write_document(
         // UID1 is the symbol end (port, branch point or OPC), UID2 the
         // run. Measured on all 738 reference rows of the six definitions.
         write_rel(buf, end.def_uid, &end.symbol_uid, &end.run_uid)?;
+    }
+    for rel in composition_rels(drawing) {
+        // UID1 is the nozzle or the note, UID2 the equipment or the
+        // annotated item. Measured on I井场: 7 compositions, 6 item notes.
+        write_rel(buf, rel.def_uid, &rel.uid1, &rel.uid2)?;
     }
     writeln!(buf, "  </Container>")
 }
@@ -183,6 +201,7 @@ fn published_objects(drawing: &PidPublishDrawing) -> BTreeSet<&str> {
             .map(|point| point.uid.as_str()),
     );
     objects.extend(drawing.branch_points.iter().map(|point| point.uid.as_str()));
+    objects.extend(drawing.opc_points.iter().map(|point| point.uid.as_str()));
     objects.extend(drawing.ports.iter().map(|port| port.uid.as_str()));
     objects
 }
@@ -194,6 +213,39 @@ fn published_objects(drawing: &PidPublishDrawing) -> BTreeSet<&str> {
 pub fn connectivity_rel_counts(drawing: &PidPublishDrawing) -> (usize, usize) {
     let written = connectivity_rels(drawing).len();
     (written, drawing.connectivity_ends.len() - written)
+}
+
+/// Nozzle and item-note rows kept from the exp, and how many of each
+/// become a `<Rel>` because both ends are published objects.
+///
+/// The four numbers are `(nozzle rows, nozzle rels, note rows, note rels)`.
+pub fn composition_rel_counts(drawing: &PidPublishDrawing) -> (usize, usize, usize, usize) {
+    let written = composition_rels(drawing);
+    let nozzles = drawing
+        .exp_relations
+        .iter()
+        .filter(|rel| rel.def_uid == "EquipmentComponentComposition")
+        .count();
+    let notes = drawing.exp_relations.len() - nozzles;
+    let nozzle_rels = written
+        .iter()
+        .filter(|rel| rel.def_uid == "EquipmentComponentComposition")
+        .count();
+    let note_rels = written.len() - nozzle_rels;
+    (nozzles, nozzle_rels, notes, note_rels)
+}
+
+/// Nozzle compositions and item notes whose ends are both published.
+fn composition_rels(drawing: &PidPublishDrawing) -> Vec<&ExpRelation> {
+    if drawing.exp_relations.is_empty() {
+        return Vec::new();
+    }
+    let objects = published_objects(drawing);
+    drawing
+        .exp_relations
+        .iter()
+        .filter(|rel| objects.contains(rel.uid1.as_str()) && objects.contains(rel.uid2.as_str()))
+        .collect()
 }
 
 fn write_branch_point(buf: &mut String, point: &PidBranchPoint) -> std::fmt::Result {
@@ -221,6 +273,43 @@ fn write_branch_point(buf: &mut String, point: &PidBranchPoint) -> std::fmt::Res
         writeln!(buf, "      <{interface}/>")?;
     }
     writeln!(buf, "   </{}>", point.class)
+}
+
+fn write_opc_point(buf: &mut String, point: &PidOpcPoint) -> std::fmt::Result {
+    writeln!(buf, "   <PIDBranchPoint>")?;
+    let mut object = format!(r#"UID="{}""#, escape_attr(&point.uid));
+    if !point.name.is_empty() {
+        write!(object, r#" Name="{}""#, escape_attr(&point.name))?;
+    }
+    if !point.description.is_empty() {
+        write!(
+            object,
+            r#" Description="{}""#,
+            escape_attr(&point.description)
+        )?;
+    }
+    writeln!(buf, "      <IObject {object}/>")?;
+    writeln!(buf, "      <IPIDBranchPoint/>")?;
+    if point.to_from_text.is_empty() {
+        writeln!(buf, "      <IOffpageConnector/>")?;
+    } else {
+        writeln!(
+            buf,
+            r#"      <IOffpageConnector ToFromText="{}"/>"#,
+            escape_attr(&point.to_from_text)
+        )?;
+    }
+    for interface in [
+        "IDuctConnection",
+        "IConnection",
+        "IDrawingItem",
+        "IPipingConnection",
+        "ISignalConnection",
+        "IDocumentItem",
+    ] {
+        writeln!(buf, "      <{interface}/>")?;
+    }
+    writeln!(buf, "   </PIDBranchPoint>")
 }
 
 fn write_port(buf: &mut String, port: &super::pid_load::PidPort) -> std::fmt::Result {
@@ -352,6 +441,7 @@ fn drawing_items(drawing: &PidPublishDrawing, published: &BTreeSet<&str>) -> usi
         })
         .count()
         + drawing.branch_points.len()
+        + drawing.opc_points.len()
 }
 
 /// Published values fixed by an `EFAdapter.dll` rule
@@ -522,9 +612,13 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             objects.insert("signal_ports".to_string(), json!(signal));
         }
         let written = connectivity_rels(drawing);
+        let compositions = composition_rels(drawing);
         let mut by_def: BTreeMap<&str, usize> = BTreeMap::new();
         for end in &written {
             *by_def.entry(end.def_uid).or_default() += 1;
+        }
+        for rel in &compositions {
+            *by_def.entry(rel.def_uid).or_default() += 1;
         }
         if let Some(relationships) = report
             .get_mut("relationships")
@@ -553,6 +647,25 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "connectivity_ends": drawing.connectivity_ends.len(),
             "connectivity_rels": written.len(),
             "connectivity_ends_left_out": drawing.connectivity_ends.len() - written.len(),
+            "opc_branch_points": drawing.opc_points.len(),
+            "equipment_compositions": drawing
+                .exp_relations
+                .iter()
+                .filter(|rel| rel.def_uid == "EquipmentComponentComposition")
+                .count(),
+            "equipment_composition_rels": compositions
+                .iter()
+                .filter(|rel| rel.def_uid == "EquipmentComponentComposition")
+                .count(),
+            "item_notes": drawing
+                .exp_relations
+                .iter()
+                .filter(|rel| rel.def_uid == "PBSItemNotes")
+                .count(),
+            "item_note_rels": compositions
+                .iter()
+                .filter(|rel| rel.def_uid == "PBSItemNotes")
+                .count(),
         });
     }
     let mut text = serde_json::to_string_pretty(&report).unwrap_or_default();
@@ -605,6 +718,8 @@ mod tests {
             branch_points: Vec::new(),
             ports: Vec::new(),
             connectivity_ends: Vec::new(),
+            exp_relations: Vec::new(),
+            opc_points: Vec::new(),
             exp: None,
             representations: vec![
                 PidPublishRepresentation {
@@ -865,5 +980,94 @@ mod tests {
         assert_eq!(report["oracle_exp"]["connectivity_ends"], 3);
         assert_eq!(report["oracle_exp"]["connectivity_rels"], 1);
         assert_eq!(report["oracle_exp"]["connectivity_ends_left_out"], 2);
+    }
+
+    #[test]
+    fn a_composition_rel_is_written_only_between_two_published_objects() {
+        use crate::publish::pid_load::{ExpPublish, ExpRelation};
+        let mut drawing = drawing();
+        drawing.items.push(PidPublishItem {
+            uid: "N1".to_string(),
+            model_item_type: "Nozzle".to_string(),
+            class: Some("PIDNozzle"),
+            attributes: Vec::new(),
+        });
+        drawing.items.push(PidPublishItem {
+            uid: "NOTE".to_string(),
+            model_item_type: "ItemNote".to_string(),
+            class: Some("PIDNote"),
+            attributes: Vec::new(),
+        });
+        drawing.exp = Some(ExpPublish {
+            dump_path: "Export.dmp".to_string(),
+            nominal_diameter_unspelled: 0,
+        });
+        drawing.exp_relations = vec![
+            ExpRelation {
+                def_uid: "EquipmentComponentComposition",
+                uid1: "N1".to_string(),
+                uid2: "I1".to_string(),
+            },
+            // Equipment is not a published object: held back.
+            ExpRelation {
+                def_uid: "EquipmentComponentComposition",
+                uid1: "N2".to_string(),
+                uid2: "MISSING".to_string(),
+            },
+            ExpRelation {
+                def_uid: "PBSItemNotes",
+                uid1: "NOTE".to_string(),
+                uid2: "I1".to_string(),
+            },
+        ];
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(xml.contains(
+            "   <Rel>\n      <IObject UID=\"EQC-N1-I1\"/>\n      <IRel UID1=\"N1\" UID2=\"I1\" DefUID=\"EquipmentComponentComposition\"/>\n   </Rel>\n"
+        ));
+        assert!(xml.contains(
+            "   <Rel>\n      <IObject UID=\"ITN-NOTE-I1\"/>\n      <IRel UID1=\"NOTE\" UID2=\"I1\" DefUID=\"PBSItemNotes\"/>\n   </Rel>\n"
+        ));
+        assert!(!xml.contains("MISSING"), "{xml}");
+        assert_eq!(composition_rel_counts(&drawing), (2, 1, 1, 1));
+        let text = write_pid_coverage_json(&drawing, Path::new("a.pid"));
+        let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(report["relationships"]["EquipmentComponentComposition"], 1);
+        assert_eq!(report["relationships"]["PBSItemNotes"], 1);
+        assert_eq!(report["oracle_exp"]["equipment_compositions"], 2);
+        assert_eq!(report["oracle_exp"]["equipment_composition_rels"], 1);
+        assert_eq!(report["oracle_exp"]["item_notes"], 1);
+        assert_eq!(report["oracle_exp"]["item_note_rels"], 1);
+    }
+
+    #[test]
+    fn an_opc_point_is_published_with_its_drawing_item_and_connectivity() {
+        use crate::publish::pid_load::{ConnectivityEnd, PidOpcPoint};
+        let mut drawing = drawing();
+        drawing.items.push(PidPublishItem {
+            uid: "RUN".to_string(),
+            model_item_type: "PipeRun".to_string(),
+            class: Some("PIDPipingConnector"),
+            attributes: Vec::new(),
+        });
+        drawing.opc_points.push(PidOpcPoint {
+            uid: "OPC".to_string(),
+            representation_uid: "R1".to_string(),
+            name: "565".to_string(),
+            description: "去G井场".to_string(),
+            to_from_text: "DWG-1".to_string(),
+        });
+        drawing.connectivity_ends.push(ConnectivityEnd {
+            symbol_uid: "OPC".to_string(),
+            run_uid: "RUN".to_string(),
+            on_start: false,
+            on_end: true,
+            def_uid: "PipingEnd2Conn",
+        });
+        let xml = write_pid_data_xml(&drawing, "P01");
+        assert!(xml.contains(r#"      <IObject UID="OPC" Name="565" Description="去G井场"/>"#));
+        assert!(xml.contains(r#"      <IOffpageConnector ToFromText="DWG-1"/>"#));
+        assert!(xml.contains(r#"      <IRel UID1="R1" UID2="OPC" DefUID="DrawingItems"/>"#));
+        assert!(xml.contains(r#"      <IRel UID1="OPC" UID2="RUN" DefUID="PipingEnd2Conn"/>"#));
+        assert_eq!(connectivity_rel_counts(&drawing), (1, 0));
     }
 }

@@ -15,7 +15,8 @@
 //! ## Submodules
 //!
 //! * [`mdf_load`] — MDF → publish table adapter.
-//! * [`oracle_exp`] — Oracle `exp` dump → piping and signal port rows.
+//! * [`oracle_exp`] — Oracle `exp` dump → port rows, connectivity, nozzle
+//!   compositions and item notes.
 //! * [`sqlite_load`] — in-memory/legacy `SQLite` → object graph DTO.
 //! * [`model`] — object-graph DTO shared by the loader and the
 //!   writer. Includes the [`model::PublishStyle`] selector, which

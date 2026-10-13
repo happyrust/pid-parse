@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### publish 用 `--oracle-exp` 发出 I井场的两个 OPC 分支点（2026-10-13，N8）
+
+`T_REPRESENTATION` 里画在本图、物项在 `T_OPC` 的，发出 `PIDBranchPoint`。UID 是这对 Id 里较小的那个（和连通端同一个）。`Name` 是画出那一侧的 `OPCTAG`，`Description` 是它的 `T_MODELITEM.DESCRIPTION`，`ToFromText` 是它的 `TOFROMTEXT`；画出那一侧空了才用另一侧。表示不在本 `.pid` 里的不发。不给 `--oracle-exp` 时 OPC 仍不分类，输出与原来逐字节相同。
+
+- I井场 2 个，与参考的 UID、名字、说明、`ToFromText`、表示都对得上，多 0 缺 0。跟着写出 2 条 `DrawingItems`（表示 → 分支点）。连通两端都在图里了，736 → 738，留下 0。
+- 对象 3 012 → 3 014，值 3 182 → 3 188（每个分支点 `Name`、`Description`、`ToFromText`），关系 3 997 → 4 001。错类 / 错值 / 多发 0。跟参考还差的是 79 个管线和 106 条 `PipingConnectors`，dump 里没有管线，仍不发。
+- `publish\` 的 I井场三件已重写。另外 4 张图三件未动（11:40:21）。
+- 验证（2026-10-13 实跑）：`pid_publish_xml --oracle-exp --diff-against --plant P01` 退出 0，clean 行 `3014 objects, 3188 values, 4001 rels`，stderr `738 pairs, 738 written, 0 left out` 和 `2 PIDBranchPoint written`。`cargo test --locked -p pid-parse --lib --bins --tests ijingchang` 6 过；OPC 写法单测和 `.pid` 模式钉数测试过。clippy `-D warnings` 两种特性零告警。rustfmt 干净。`cargo rustdoc --lib --locked -p pid-parse -- -W missing-docs` 0。全库 workspace 测试和 wasm32 这轮没跑。
+
+### publish 用 `--oracle-exp` 发出 I井场的管口组成和注释（2026-10-13，N8）
+
+分析页 `docs/analysis/n8-small-class-rows.md`。`load_publish_from_pid` 不变；不给 `--oracle-exp` 时输出与原来逐字节相同。两个 OPC 的 `PIDBranchPoint` 仍不发，所以那 2 条 `DrawingItems` 和 2 条连通仍留下。
+
+- `T_NOZZLE`：`SP_ID` 是管口、`SP_EQUIPMENTID` 是设备，写成 `EquipmentComponentComposition`（`EQC-{管口}-{设备}`，UID1 管口）。全库 377 对。I井场两端都已发出的是 7，与参考错 0、多 0。
+- `T_NOTE`：`SP_ITEMNOTEID` 是注释、`SP_MODELITEMID` 是被注释的物项，写成 `PBSItemNotes`（`ITN-{注释}-{物项}`）。物项自己也是 `T_ITEMNOTE` 的行不发：I井场有 5 条注释→注释，参考里没有对应的 `PBSItemNotes`。去掉这 125 行后全库 114 对。I井场两端都已发出的是 6，与参考错 0、多 0。
+- I井场 exp 模式：对象 3 012、值 3 182 不动，关系 3 984 → 3 997。错类 / 错值 / 多发 0。`.pid` 模式五组钉数不动。`publish\` 的 I井场三件已重写（11:34:40），另外 4 张图三件未动（11:40:21）。
+- 验证（2026-10-13 实跑）：`pid_publish_xml --oracle-exp --diff-against --plant P01` 退出 0，clean 行 `3012 objects, 3182 values, 3997 rels`，stderr `377 nozzle pairs, 7 EquipmentComponentComposition written; 114 note pairs, 6 PBSItemNotes written`，连通仍是 `738 pairs, 736 written, 2 left out`。`cargo test --locked -p pid-parse --lib --bins --tests ijingchang` 5 过；`--lib a_composition_rel_is_written` 过；`--test publish_from_pid the_pid_alone_export_matches` 过。clippy `-D warnings`：`-p pid-parse` 两种特性的 lib / bins / tests 零告警。改动的 `.rs` rustfmt 干净。`cargo rustdoc --lib --locked -p pid-parse -- -W missing-docs` 0。全库 `cargo test --workspace` 和 wasm32 本轮没跑。
+
 ### publish 用 `--oracle-exp` 发出 I井场的六种连通关系（2026-10-13，N7）
 
 分析页 `docs/analysis/n7-connectivity-rows.md`（t-22 的「拼两端」加本次的「定 DefUID」）。探针 `examples/probe_oracle_exp_connectivity.rs` 多打一段 `rule=item_both_sides_is_tap`。`load_publish_from_pid` 不变；不给 `--oracle-exp` 时输出与原来逐字节相同。

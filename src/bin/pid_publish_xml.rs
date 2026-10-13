@@ -31,7 +31,9 @@
 //! Exit codes: 0 = wrote document, 1 = I/O / format error, 2 =
 //! usage error.
 
-use pid_parse::publish::pid_writer::{connectivity_rel_counts, derived_by_native_rule_count};
+use pid_parse::publish::pid_writer::{
+    composition_rel_counts, connectivity_rel_counts, derived_by_native_rule_count,
+};
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
     diff_pid_export, diff_publish_xml, diff_rel_defuids, load_drawing_graph, load_publish_from_pid,
@@ -447,11 +449,33 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             &drawing.drawing_uid,
         )
         .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        drawing.exp_relations = pid_parse::publish::oracle_exp::composition_relations(&dump)
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let mut opc_points =
+            pid_parse::publish::oracle_exp::opc_points_for_drawing(&dump, &drawing.drawing_uid)
+                .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let representations: std::collections::HashSet<&str> = drawing
+            .representations
+            .iter()
+            .map(|representation| representation.uid.as_str())
+            .collect();
+        opc_points.retain(|point| representations.contains(point.representation_uid.as_str()));
+        drawing.opc_points = opc_points;
         let (written, left_out) = connectivity_rel_counts(&drawing);
         eprintln!(
             "oracle-exp connectivity: {} pairs, {written} written as <Rel>, \
              {left_out} left out because an end is not a published object",
             drawing.connectivity_ends.len()
+        );
+        let (nozzle_rows, nozzle_rels, note_rows, note_rels) = composition_rel_counts(&drawing);
+        eprintln!(
+            "oracle-exp compositions: {nozzle_rows} nozzle pairs, {nozzle_rels} \
+             EquipmentComponentComposition written; {note_rows} note pairs, \
+             {note_rels} PBSItemNotes written"
+        );
+        eprintln!(
+            "oracle-exp opc: {} PIDBranchPoint written",
+            drawing.opc_points.len()
         );
     }
     let xml = write_pid_data_xml(&drawing, &options.plant_name);

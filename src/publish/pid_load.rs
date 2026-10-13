@@ -224,6 +224,45 @@ pub struct ConnectivityEnd {
     pub def_uid: &'static str,
 }
 
+/// One nozzle or item-note relationship from an Oracle `exp`.
+///
+/// `EquipmentComponentComposition` is `T_NOZZLE`: `uid1` is the nozzle
+/// (`SP_ID`) and `uid2` is the equipment (`SP_EQUIPMENTID`).
+/// `PBSItemNotes` is `T_NOTE`: `uid1` is the note (`SP_ITEMNOTEID`) and
+/// `uid2` is the model item (`SP_MODELITEMID`). A model item that is
+/// itself an item note is not included. The XML writer emits the `<Rel>`
+/// when both ends are published objects. OPC branch points are not in
+/// this list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpRelation {
+    /// `EquipmentComponentComposition` or `PBSItemNotes`.
+    pub def_uid: &'static str,
+    /// Nozzle or note UID.
+    pub uid1: String,
+    /// Equipment or annotated model item UID.
+    pub uid2: String,
+}
+
+/// One off-page connector published as `PIDBranchPoint`.
+///
+/// The UID is the lesser of `T_OPC.SP_ID` and `SP_PAIREDWITHID`. The
+/// representation is the one drawn on this drawing. `name` is `OPCTAG`,
+/// `description` is `T_MODELITEM.DESCRIPTION`, and `to_from_text` is
+/// `TOFROMTEXT`, each taken from the drawn side of the pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PidOpcPoint {
+    /// Lesser OPC id. This is the reference `PIDBranchPoint` UID.
+    pub uid: String,
+    /// Representation drawn on this drawing.
+    pub representation_uid: String,
+    /// `OPCTAG`. Empty when the row has none.
+    pub name: String,
+    /// `T_MODELITEM.DESCRIPTION`. Empty when the row has none.
+    pub description: String,
+    /// `TOFROMTEXT`. Empty when the row has none.
+    pub to_from_text: String,
+}
+
 /// One piping or signal port attached from an Oracle `exp` dump.
 ///
 /// The `.pid` does not state the point number. [`PidPublishDrawing::ports`]
@@ -291,6 +330,15 @@ pub struct PidPublishDrawing {
     /// [`super::oracle_exp::connectivity_ends_for_drawing`] runs. Written as
     /// `<Rel>` when both ends are published objects.
     pub connectivity_ends: Vec<ConnectivityEnd>,
+    /// Nozzle compositions and item notes from an Oracle `exp`. Empty
+    /// until [`super::oracle_exp::composition_relations`] runs. Written
+    /// as `<Rel>` when both ends are published objects.
+    pub exp_relations: Vec<ExpRelation>,
+    /// Off-page connectors from an Oracle `exp`. Empty until
+    /// [`super::oracle_exp::opc_points_for_drawing`] runs. Each one is a
+    /// `PIDBranchPoint`; its `DrawingItems` row and the connectivity row
+    /// that names it are written with it.
+    pub opc_points: Vec<PidOpcPoint>,
     /// Set when [`super::oracle_exp::attach_oracle_ports`] ran.
     pub exp: Option<ExpPublish>,
     /// Representations, ordered by UID.
@@ -876,6 +924,8 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
         branch_points: branch_points.into_values().collect(),
         ports: Vec::new(),
         connectivity_ends: Vec::new(),
+        exp_relations: Vec::new(),
+        opc_points: Vec::new(),
         exp: None,
         representations: representations.into_values().collect(),
         stats,
