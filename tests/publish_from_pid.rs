@@ -539,6 +539,8 @@ fn diff_against_oracle_exp_exits_zero_for_ijingchang() {
         .arg(reference)
         .arg("--oracle-exp")
         .arg(&dump)
+        .arg("--datamap")
+        .arg(dump.parent().expect("dump dir").join("RefData~4~804.zip"))
         .args(["--plant", "P01"])
         .output()
         .expect("spawn pid_publish_xml --oracle-exp");
@@ -551,6 +553,12 @@ fn diff_against_oracle_exp_exits_zero_for_ijingchang() {
     );
     assert!(
         stderr.contains("is clean in oracle-exp mode"),
+        "{stem} stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("79 PIDPipeline")
+            && stderr.contains("106 PipingConnectors")
+            && stderr.contains("79 FluidSystem"),
         "{stem} stderr:\n{stderr}"
     );
 }
@@ -707,6 +715,7 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
         serde_json::from_str(&std::fs::read_to_string(out.join("_Index.json")).expect("index"))
             .expect("index json");
     assert_eq!(index["export"], "PidOnly");
+    assert_eq!(index["pipeline_uids"], "not synthesized");
     assert_eq!(index["pid_entries"], 1);
     assert_eq!(index["drawing_rows"], 0);
     assert_eq!(index["failed"], 0);
@@ -760,6 +769,7 @@ fn backup_directory_publishes_the_whole_package() {
     assert_eq!(index["item_note_rels"], 114);
     assert_eq!(index["pipelines"], 2_395);
     assert_eq!(index["piping_connectors"], 3_128);
+    assert_eq!(index["pipeline_uids"], "synthesized");
     assert!(
         elapsed.as_secs() < 215,
         "package took {elapsed:?}, the one-drawing loop was 431s"

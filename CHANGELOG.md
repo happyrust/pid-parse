@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### publish `.pid` 的 `_Meta.xml` 补上版本、修订和文件（2026-10-14）
+
+`write_pid_meta_xml` 改走 `write_meta_xml`。`DocumentVersion`、`DocumentRevision`、`File` 和三条 `Rel` 的 UID 用 `derive_meta_uid`（图纸 UID 加角色的 UUID v5），不跟参考里带 `AAAD` 的 UID 对齐。`DocVersionDate` 和 `FilePath` 留空。
+
 ### publish 按 PipeLinePublisher 的口径合成管线（2026-10-14，N9-2）
 
 计划 `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-2。`T_PIPELINE` 仍是空表。对本图已发出的 `PIDPipingConnector`，`TAGSEQUENCENO` 非空才入线。名字是 `{公称直径}-{流体代码}-{顺序号}-{材料等级}[-{保温}]`。公称直径小于 5000 写成毫米，大于等于 5000 写成 32 分之一英寸的带分数。同名合并成一条 `PIDPipeline`。UID 是厂名加名字的 UUID v5。`FluidSystem` 从 `SPPIDDataMap.xml` 映射；不写 `OperFluidCode`。关系是 `PCN-{连接器}-{管线}`。`--diff-against` 按名字配对；参考里空着的 `FluidSystem` 单列，不算错。没有 `DrawingNo` 的空图不挂管线。`.pid` 模式不走这条。规则和数字在 `docs/analysis/n6-pipeline-rows.md`「合成」。

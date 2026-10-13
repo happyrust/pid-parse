@@ -33,7 +33,7 @@ use super::pid_load::{
     ConnectivityEnd, ExpRelation, PidBranchPoint, PidOpcPoint, PidPipeline, PidPublishDrawing,
     PidPublishItem, PidValueSource,
 };
-use super::xml_writer::{defuid_prefix, escape_attr, write_meta_envelope};
+use super::xml_writer::{defuid_prefix, derive_meta_uid, escape_attr, write_meta_xml};
 
 const SOFTWARE_VERSION: &str = "10.00.31.0023";
 const SCHEMA_VERSION: &str = "04.02.17.01";
@@ -48,14 +48,17 @@ pub fn write_pid_data_xml(drawing: &PidPublishDrawing, plant_name: &str) -> Stri
     buf
 }
 
-/// Render the `_Meta.xml` companion. The container states the drawing UID
-/// and name. Version, revision and file objects are not emitted: the `.pid`
-/// does not carry their UIDs, `DocVersionDate` or `FilePath`.
+/// Render the `_Meta.xml` companion.
+///
+/// Version, revision, file and the three rels use [`derive_meta_uid`] from
+/// the drawing UID. `DocVersionDate` and `FilePath` stay empty: the `.pid`
+/// does not state them, and these UIDs are not the ones in a SmartPlant
+/// reference export.
 pub fn write_pid_meta_xml(
     drawing: &PidPublishDrawing,
     plant_name: &str,
 ) -> Result<String, PublishError> {
-    write_meta_envelope(
+    write_meta_xml(
         &PublishDrawing::new(drawing.drawing_uid.clone(), drawing.drawing_name.clone()),
         plant_name,
     )
@@ -914,16 +917,30 @@ mod tests {
     }
 
     #[test]
-    fn a_pid_meta_xml_states_the_drawing_and_does_not_invent_version_objects() {
+    fn a_pid_meta_xml_derives_version_revision_and_file_from_the_drawing_uid() {
         let text = write_pid_meta_xml(&drawing(), "P01").expect("meta");
+        let version = derive_meta_uid("D1", "version");
+        let revision = derive_meta_uid("D1", "revision");
+        let file = derive_meta_uid("D1", "file");
         assert!(text.contains(r#"DocUID="D1""#), "{text}");
         assert!(text.contains(r#"DocName="A &amp; B""#), "{text}");
-        assert!(!text.contains("DocumentVersion"), "{text}");
-        assert!(!text.contains("DocumentRevision"), "{text}");
-        assert!(!text.contains("<File"), "{text}");
-        assert!(!text.contains("DocVersionDate"), "{text}");
-        assert!(!text.contains("FilePath"), "{text}");
-        assert!(!text.contains("<Rel"), "{text}");
+        assert!(
+            text.contains(&format!(r#"UID="{version}" Name="A &amp; B Version""#)),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(r#"UID="{revision}" Name="A &amp; B Revision""#)),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(r#"UID="{file}" Name="A &amp; B.pid""#)),
+            "{text}"
+        );
+        assert!(text.contains(r#"DocVersionDate="""#), "{text}");
+        assert!(text.contains(r#"FilePath="""#), "{text}");
+        assert!(text.contains(r#"DefUID="VersionedDoc""#), "{text}");
+        assert!(text.contains(r#"DefUID="RevisedDocument""#), "{text}");
+        assert!(text.contains(r#"DefUID="FileComposition""#), "{text}");
     }
 
     #[test]

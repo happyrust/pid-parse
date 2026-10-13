@@ -215,6 +215,11 @@ pub fn publish_backup_package(
         "item_note_rels": item_note_rels,
         "pipelines": pipelines,
         "piping_connectors": piping_connectors,
+        "pipeline_uids": if dump_path.is_some() {
+            "synthesized"
+        } else {
+            "not synthesized"
+        },
         "drawings": drawings,
         "problems": problems,
     });
