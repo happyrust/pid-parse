@@ -170,3 +170,18 @@ Q6 补批（2026-10-13，用户对 grok-4.7-68 选 **(a)**）：上一轮「按�
 - 按 `docs/plans/2026-10-13-publish-progress-and-next-steps.md` S0（Q1 (a)，Plannotator 20:36 批）：`src/publish/oracle_exp.rs` 内容不改；`CHANGELOG.md` 补 N9-1 一段，`task_plan.md`「当前阶段」补 N8 与 N9-1 两段；本节记提交。只 `git add` 这四个路径，提交说明 `feat(publish): read the Oracle exp tables once for many drawings`。工作树里别的三摊（`src/backup/folder.rs` 组、pid-plot、探针）一字不碰。
 - 提交前复跑（22:3x，全部退出 0）：`cargo test --locked -p pid-parse --lib publish::oracle_exp` 13 过 / 0 败；`--test publish_from_pid` 6 过 / 0 败；clippy `-D warnings` 两种特性在 `-p pid-parse --lib --bins --tests` 零告警；`rustfmt --check src/publish/oracle_exp.rs` 与 `cargo fmt --all -- --check` 都干净；`cargo rustdoc --lib --locked -p pid-parse -- -W missing-docs` 0 = 基线 0。`publish\` 没动（I井场三件 11:50:22，另外 4 张 11:40:21）。
 - `acquire_file_locks` 回「没有这条会话」，锁没拿到。
+
+### N9-3 落地（2026-10-13，会话 grok-4.7-109）
+
+- 用户点「开工 N9-3」。N9-2 还没做，整包按 N8 的口径发（不合成管线）。`src/backup/folder.rs` 已在树上，本轮只调用 `scan_backup_folder`，不改那组文件。
+- `pid_publish_xml <目录> --out-dir`：`Manifest.txt` 在场即备份包；`Export.dmp` 是 Oracle exp 时 `ExpTables` 读一次；`PlantData` zip 的 `.pid` 用 `load_publish_from_reader` 在内存里装载；图名取 `T_DRAWING.NAME`；没有 `DrawingNo` 的按 `backup_path_key` 对 `T_DRAWING.PATH`，只写 `PIDDrawing`，`uid_from` 为 `T_DRAWING.PATH`。MTF 或 `--diff-against` 退出 2。没有 dump 的目录走 `.pid` 单独发布。单张 `.pid` 调用没改。
+- 交付：`D:\work\cad\pid-test-data\publish\`（53 张三件 + `_Index.json`）。53 / 53，失败 0，空图是 `test/U01/D03.pid` 与 `D04.pid`（图名 `D03` / `D04`，层级 `SQPlant \ test \ U01`）。51 张合计对象 77 690、关系 103 577、管道端口 9 557、信号端口 22 021、连通 19 371、OPC 476、管口关系 372、注释关系 114。`cargo run` 墙钟 53 秒，退出 0。
+- 测试：`publish_from_pid` 8 过（整包一组钉上面的数，并对照 I井场单张三件；无 dump 的 stored zip 放 `test-file/D06.pid`）。`cargo clippy -D warnings` 默认特性 `--lib --bins --tests` 与 `--no-default-features --lib` 零告警。`cargo fmt --all -- --check` 在最后一行模块文档之前干净。wasm32 `--no-default-features --lib` check 过。全库 `--lib` / `--workspace` / `--all-targets` 没跑。没提交。
+- `acquire_file_lock` 回「没有这条会话」，锁没拿到。
+
+### 整包钉数改成挂管线后的实测（2026-10-14，会话 grok-4.7-1）
+
+- N9-2 的合成已经在工作树：`src/publish/pipeline.rs` 的 `attach_pipelines`。目录模式对 `uid_from != T_DRAWING.PATH` 的图调用。D03 / D04 不挂管线。
+- 实跑 `pid_publish_xml D:\work\cad\pid-test-data --plant P01` 退出 0。51 张合计对象 80 085、值 87 419、关系 106 705。按图加总管线 2 395、`PipingConnectors` 3 128，两张空图这两项是 0。比本节 N9-3 的 77 690 / 103 577 多出的对象和关系就是这两项。管道端口 9 557、信号端口 22 021、连通 19 371、OPC 476、管口 372、注释 114 不动。
+- `tests/publish_from_pid.rs` 的整包钉是这四个数。`backup_directory_publishes_the_whole_package` 1 过，50.19 秒，I井场整包与单张对照过。I井场库测仍钉 3 093 / 3 346 / 4 107、按名 79 / 106、`FluidSystem` 多 23，本轮没重跑。
+- 文档：`docs/analysis/n6-pipeline-rows.md`「合成」、`CHANGELOG.md`、`task_plan.md`、本节。交付目录 2026-10-14 01:57–01:58 已按 Q5 写好，本会话核对：`pid-test-data\publish\_Index.json` 对象 80 085、关系 106 705、管线 2 395、`PipingConnectors` 3 128，I井场 3 093 / 3 346 / 4 107、管线 79、连接器 106。验证目录只换了 I井场三件；`_Data.xml` SHA256 `7653DF6B73B533E959970C9C346602F9F73A2B0BFC8039008F06DA2EBD132708`，`_Meta.xml` SHA256 `C1D4465F97EAFA9EC74A9476AAA2E4C3429719AA3E1A7A457BD34BF064E77B7C`，与整包相同。覆盖去掉 `source` 后相同：单张是 `PID自研软件验证\I井场 注采阀组工艺及自控流程图.pid`，整包是 `PlantData~2~711.zip:00/00/I井场 注采阀组工艺及自控流程图.pid`。另外 12 个集注站文件仍早于 2026-10-13。没再跑发布。没提交。`acquire_file_locks` 回「没有这条会话」，锁没拿到。

@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### publish 按 PipeLinePublisher 的口径合成管线（2026-10-14，N9-2）
+
+计划 `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-2。`T_PIPELINE` 仍是空表。对本图已发出的 `PIDPipingConnector`，`TAGSEQUENCENO` 非空才入线。名字是 `{公称直径}-{流体代码}-{顺序号}-{材料等级}[-{保温}]`。公称直径小于 5000 写成毫米，大于等于 5000 写成 32 分之一英寸的带分数。同名合并成一条 `PIDPipeline`。UID 是厂名加名字的 UUID v5。`FluidSystem` 从 `SPPIDDataMap.xml` 映射；不写 `OperFluidCode`。关系是 `PCN-{连接器}-{管线}`。`--diff-against` 按名字配对；参考里空着的 `FluidSystem` 单列，不算错。没有 `DrawingNo` 的空图不挂管线。`.pid` 模式不走这条。规则和数字在 `docs/analysis/n6-pipeline-rows.md`「合成」。
+
+- I井场钉数仍是对象 3 093、值 3 346、关系 4 107，按名 79 / 106，`FluidSystem` 多 23。本轮没重跑 `ijingchang_oracle_exp_matches_the_pinned_reference`。
+- 整包 `D:\work\cad\pid-test-data`：`pid_publish_xml` 退出 0。51 张合计对象 77 690 → 80 085、关系 103 577 → 106 705，另钉管线 2 395、`PipingConnectors` 3 128。值 87 419，测试没钉这一项。53 / 53、失败 0、空图 2，端口 9 557 / 22 021、连通 19 371、OPC 476、管口 372、注释 114 不动。D03 / D04 管线 0。
+- `cargo test --locked -p pid-parse --test publish_from_pid backup_directory_publishes_the_whole_package` 1 过，50.19 秒。同一测试里 I井场整包与单张 `--oracle-exp --datamap` 对照通过（`_Coverage.json` 去掉 `source`）。
+- 下面 N9-3 那一段里的 77 690 / 103 577 是没挂管线时的合计。交付目录 2026-10-14 01:57–01:58 已重写：`D:\work\cad\pid-test-data\publish\`（160 个文件，`_Index.json` 为上面这组数）；`D:\work\cad\PID自研软件验证\publish\` 只换 I井场三件，`_Data.xml` / `_Meta.xml` 与整包 SHA256 相同（`7653DF6B…` / `C1D4465F…`），`_Coverage.json` 只差 `source`。另外 4 张集注站三件仍是 2026-10-12 11:40:21。没提交。
+
+### publish 从备份包目录一次发出全部图纸（2026-10-13，N9-3）
+
+计划 `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-3。`pid_publish_xml <目录> --out-dir DIR`：目录里有 `Manifest.txt` 就是备份包。`Export.dmp` 是 Oracle exp 时整包读一次 `ExpTables`，再逐个 `PlantData` zip 里的 `.pid` 在内存里装载；图名取 `T_DRAWING.NAME`。没有 `DrawingNo` 的图按 zip 路径对上 `T_DRAWING.PATH`，只写一张 `PIDDrawing`。`Export.dmp` 是 SQL Server MTF，或 `--diff-against`，退出 2。一张图失败记进 `_Index.json`，其余照写，最后退出 1。没有 dump 的目录仍按 `.pid` 单独发布。单张 `.pid` 的输出不改。管线合成（N9-2）还没做，所以整包计数是 N8 的口径。
+
+- `D:\work\cad\pid-test-data`：53 / 53 写出，配对 53，失败 0，其中 2 张没有 `DrawingNo`。51 张合计对象 77 690、关系 103 577、管道端口 9 557、信号端口 22 021、连通 19 371、OPC 476、设备↔管口 372、注释 114。I井场三件与单张 `--oracle-exp` 逐字节相同（`_Coverage.json` 去掉 `source`）。
+- 验证见同日 `task_plan.md` 当前阶段与 `docs/analysis/n9-backup-package-publish.md`。
+
 ### publish 从 Oracle exp 一次读表、挂多张图（2026-10-13，N9-1）
 
 计划 `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-1（Q1–Q7 的批复在它的 §3.1）。只改 `src/publish/oracle_exp.rs`。行为不变：不给 `--oracle-exp` 时输出与原来逐字节相同，给了也与 N8（`353186a`）逐字节相同。N9-2 / N9-3 要的表这单只读进来，不用。
