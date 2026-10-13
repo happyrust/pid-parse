@@ -17,6 +17,7 @@
 //! * [`mdf_load`] — MDF → publish table adapter.
 //! * [`oracle_exp`] — Oracle `exp` dump → port rows, connectivity, nozzle
 //!   compositions and item notes.
+//! * [`backup_package`] — one backup directory → every drawing, dump read once.
 //! * [`sqlite_load`] — in-memory/legacy `SQLite` → object graph DTO.
 //! * [`model`] — object-graph DTO shared by the loader and the
 //!   writer. Includes the [`model::PublishStyle`] selector, which
@@ -51,21 +52,23 @@
 //!   once the DWG MDF lands and the end-to-end count gates
 //!   in `tests/publish_dwg_mirror.rs` fire.
 
+pub mod backup_package;
 pub mod diff;
 pub mod mdf_load;
 pub mod model;
 pub mod oracle_exp;
 pub mod pid_load;
 pub mod pid_writer;
+pub mod pipeline;
 pub mod sqlite_load;
 pub mod xml_writer;
 
 pub use diff::{
     coverage_against_reference, diff_pid_export, diff_publish_xml, diff_rel_defuids,
     parse_attrs_per_interface_per_tag, parse_interfaces_per_tag, parse_pid_tag_counts,
-    parse_rel_defuid_counts, parse_rel_details, supported_pid_tags, CoverageRow, PidExportDiff,
-    RelDefUidDiff, RelDefUidDiffReport, RelDetail, SemanticDiffReport, TagCountDiff, TagDiffStatus,
-    WriterCoverage,
+    parse_rel_defuid_counts, parse_rel_details, pid_publish_counts, supported_pid_tags,
+    CoverageRow, PidExportDiff, RelDefUidDiff, RelDefUidDiffReport, RelDetail, SemanticDiffReport,
+    TagCountDiff, TagDiffStatus, WriterCoverage,
 };
 pub use mdf_load::{load_drawing_graph_from_mdf, open_mdf_as_sqlite};
 pub use model::{
@@ -73,8 +76,8 @@ pub use model::{
     PublishRepresentation, PublishStyle,
 };
 pub use pid_load::{
-    load_publish_from_pid, PidLoadError, PidPublishAttribute, PidPublishDrawing, PidPublishItem,
-    PidPublishRepresentation, PidPublishStats, PidValueSource,
+    load_publish_from_pid, load_publish_from_reader, PidLoadError, PidPublishAttribute,
+    PidPublishDrawing, PidPublishItem, PidPublishRepresentation, PidPublishStats, PidValueSource,
 };
 pub use pid_writer::{write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml};
 pub use sqlite_load::{

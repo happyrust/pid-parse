@@ -15,6 +15,12 @@
 //!   report files, material specs, etc.
 //! * `PlantConfig.xml` — drawing style configuration.
 //!
+//! [`scan_backup_folder`] walks that directory once and returns
+//! `Manifest.txt`, an `Export.dmp` sniff (MTF header or Oracle `exp`),
+//! every `RefData` file, and every `PlantData` file. ZIP members
+//! contribute a central-directory index. The scan does not extract an
+//! MDF and does not write a database.
+//!
 //! The [`mtf`] submodule parses the MTF envelope so downstream stages can
 //! extract the raw MDF bytes for relational-database parsing.
 //!
@@ -26,6 +32,8 @@
 //! schema recovery, and object-graph reconstruction.
 
 pub mod boot_page;
+pub mod datamap;
+pub mod folder;
 pub mod manifest;
 pub mod mdf_page;
 pub mod msci;
@@ -36,6 +44,11 @@ pub mod text_scan;
 pub mod zip_index;
 
 pub use boot_page::{parse_boot_page, BootPageError, BootPageInfo};
+pub use datamap::{fluid_system_guid, read_datamap, DataMap, DataMapError};
+pub use folder::{
+    parse_plant_data_filename, scan_backup_folder, BackupFolderScan, ExportDumpFormat,
+    ExportDumpScan, PlantDataFile, RefDataFile, ScanProblem, ZipListing,
+};
 pub use manifest::{
     parse_manifest, parse_manifest_bytes, Manifest, ManifestLine, ManifestTable, FIELD_SEP,
 };

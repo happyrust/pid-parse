@@ -1261,6 +1261,15 @@ pub struct PidExportDiff {
     pub rels_not_in_reference: usize,
     /// One line per finding, stable: objects in UID order, then rels.
     pub findings: Vec<String>,
+    /// `PIDPipeline` objects paired with the reference by `IObject.Name`.
+    pub pipelines_paired_by_name: usize,
+    /// `PipingConnectors` paired by connector UID and pipeline name.
+    pub piping_connectors_paired_by_name: usize,
+    /// `IFluidSystem.FluidSystem` values the reference object does not carry.
+    ///
+    /// These are not findings. The dump is newer than the reference for
+    /// fluid-system code 7.
+    pub fluid_system_reference_empty: usize,
 }
 
 impl PidExportDiff {
@@ -1290,11 +1299,35 @@ impl fmt::Display for PidExportDiff {
             self.rels,
             self.rels_not_in_reference,
         )?;
+        if self.pipelines_paired_by_name > 0
+            || self.piping_connectors_paired_by_name > 0
+            || self.fluid_system_reference_empty > 0
+        {
+            writeln!(
+                f,
+                "按名配对 {} 个 PIDPipeline，{} 条 PipingConnectors；参考为空、dump 有值的 FluidSystem {}",
+                self.pipelines_paired_by_name,
+                self.piping_connectors_paired_by_name,
+                self.fluid_system_reference_empty,
+            )?;
+        }
         for finding in &self.findings {
             writeln!(f, "{finding}")?;
         }
         Ok(())
     }
+}
+
+/// Objects, non-empty attribute values, and `<Rel>` elements in one `.pid` export.
+#[must_use]
+pub fn pid_publish_counts(xml: &str) -> (usize, usize, usize) {
+    let document = read_publish_document(xml);
+    let values = document
+        .objects
+        .values()
+        .map(|(_, values)| values.len())
+        .sum();
+    (document.objects.len(), values, document.rels.len())
 }
 
 /// Score `generated_xml` against `reference_xml` for a `.pid` export.
@@ -1306,11 +1339,32 @@ pub fn diff_pid_export(generated_xml: &str, reference_xml: &str) -> PidExportDif
     let generated = read_publish_document(generated_xml);
     let reference = read_publish_document(reference_xml);
     let mut diff = PidExportDiff::default();
+    let reference_pipelines = pipelines_by_name(&reference);
+    let generated_pipeline_names = pipeline_names(&generated);
+    let reference_pipeline_names = pipeline_names(&reference);
+    let reference_connectors = piping_connector_keys(&reference, &reference_pipeline_names);
     let mut uids: Vec<&String> = generated.objects.keys().collect();
     uids.sort();
     for uid in uids {
         let (class, values) = &generated.objects[uid];
         diff.objects += 1;
+        if class == "PIDPipeline" {
+            let name = values.get("IObject.Name").cloned().unwrap_or_default();
+            let Some((reference_class, reference_values)) = reference_pipelines.get(&name) else {
+                diff.objects_not_in_reference += 1;
+                diff.findings
+                    .push(format!("extra {class} {uid} name {name:?}"));
+                continue;
+            };
+            diff.pipelines_paired_by_name += 1;
+            if class != reference_class.as_str() {
+                diff.objects_of_another_class += 1;
+                diff.findings
+                    .push(format!("class {class} {uid}: reference {reference_class}"));
+            }
+            compare_values(&mut diff, class, uid, values, reference_values, true);
+            continue;
+        }
         let Some((reference_class, reference_values)) = reference.objects.get(uid) else {
             diff.objects_not_in_reference += 1;
             diff.findings.push(format!("extra {class} {uid}"));
@@ -1321,35 +1375,105 @@ pub fn diff_pid_export(generated_xml: &str, reference_xml: &str) -> PidExportDif
             diff.findings
                 .push(format!("class {class} {uid}: reference {reference_class}"));
         }
-        for (key, value) in values {
-            diff.values += 1;
-            match reference_values.get(key) {
-                Some(reference_value) if reference_value == value => {}
-                Some(reference_value) => {
-                    diff.values_different += 1;
-                    diff.findings.push(format!(
-                        "value {class} {uid} {key}: {value:?} reference {reference_value:?}"
-                    ));
-                }
-                None => {
-                    diff.values_not_in_reference += 1;
-                    diff.findings.push(format!(
-                        "value {class} {uid} {key}: {value:?} not in reference"
-                    ));
-                }
-            }
-        }
+        compare_values(&mut diff, class, uid, values, reference_values, false);
     }
     let mut rels: Vec<&(String, String, String, String)> = generated.rels.iter().collect();
     rels.sort();
     for rel in rels {
         diff.rels += 1;
+        if rel.3 == "PipingConnectors" {
+            let name = generated_pipeline_names
+                .get(&rel.2)
+                .cloned()
+                .unwrap_or_default();
+            if reference_connectors.contains(&(rel.1.clone(), name)) {
+                diff.piping_connectors_paired_by_name += 1;
+            } else {
+                diff.rels_not_in_reference += 1;
+                diff.findings.push(format!("rel {rel:?}"));
+            }
+            continue;
+        }
         if !reference.rels.contains(rel) {
             diff.rels_not_in_reference += 1;
             diff.findings.push(format!("rel {rel:?}"));
         }
     }
     diff
+}
+
+fn pipelines_by_name(
+    document: &PublishBlocks,
+) -> HashMap<String, (String, BTreeMap<String, String>)> {
+    let mut by_name = HashMap::new();
+    for (class, values) in document.objects.values() {
+        if class != "PIDPipeline" {
+            continue;
+        }
+        let name = values.get("IObject.Name").cloned().unwrap_or_default();
+        by_name.insert(name, (class.clone(), values.clone()));
+    }
+    by_name
+}
+
+fn pipeline_names(document: &PublishBlocks) -> HashMap<String, String> {
+    document
+        .objects
+        .iter()
+        .filter(|(_, (class, _))| class == "PIDPipeline")
+        .map(|(uid, (_, values))| {
+            (
+                uid.clone(),
+                values.get("IObject.Name").cloned().unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
+fn piping_connector_keys(
+    document: &PublishBlocks,
+    names: &HashMap<String, String>,
+) -> HashSet<(String, String)> {
+    document
+        .rels
+        .iter()
+        .filter(|rel| rel.3 == "PipingConnectors")
+        .filter_map(|rel| {
+            let name = names.get(&rel.2)?.clone();
+            Some((rel.1.clone(), name))
+        })
+        .collect()
+}
+
+fn compare_values(
+    diff: &mut PidExportDiff,
+    class: &str,
+    uid: &str,
+    values: &BTreeMap<String, String>,
+    reference_values: &BTreeMap<String, String>,
+    excuse_empty_fluid: bool,
+) {
+    for (key, value) in values {
+        diff.values += 1;
+        match reference_values.get(key) {
+            Some(reference_value) if reference_value == value => {}
+            Some(reference_value) => {
+                diff.values_different += 1;
+                diff.findings.push(format!(
+                    "value {class} {uid} {key}: {value:?} reference {reference_value:?}"
+                ));
+            }
+            None if excuse_empty_fluid && key == "IFluidSystem.FluidSystem" => {
+                diff.fluid_system_reference_empty += 1;
+            }
+            None => {
+                diff.values_not_in_reference += 1;
+                diff.findings.push(format!(
+                    "value {class} {uid} {key}: {value:?} not in reference"
+                ));
+            }
+        }
+    }
 }
 
 #[derive(Default)]

@@ -30,8 +30,8 @@ use serde_json::json;
 
 use super::model::{PublishDrawing, PublishError};
 use super::pid_load::{
-    ConnectivityEnd, ExpRelation, PidBranchPoint, PidOpcPoint, PidPublishDrawing, PidPublishItem,
-    PidValueSource,
+    ConnectivityEnd, ExpRelation, PidBranchPoint, PidOpcPoint, PidPipeline, PidPublishDrawing,
+    PidPublishItem, PidValueSource,
 };
 use super::xml_writer::{defuid_prefix, escape_attr, write_meta_envelope};
 
@@ -102,6 +102,9 @@ fn write_document(
     for port in &drawing.ports {
         write_port(buf, port)?;
     }
+    for pipeline in &drawing.pipelines {
+        write_pipeline(buf, pipeline)?;
+    }
     let published = published_items(drawing);
     for representation in &drawing.representations {
         writeln!(buf, "   <PIDRepresentation>")?;
@@ -171,7 +174,44 @@ fn write_document(
         // annotated item. Measured on I井场: 7 compositions, 6 item notes.
         write_rel(buf, rel.def_uid, &rel.uid1, &rel.uid2)?;
     }
+    for pipeline in &drawing.pipelines {
+        for connector in &pipeline.connector_uids {
+            write_rel(buf, "PipingConnectors", connector, &pipeline.uid)?;
+        }
+    }
     writeln!(buf, "  </Container>")
+}
+
+fn write_pipeline(buf: &mut String, pipeline: &PidPipeline) -> std::fmt::Result {
+    writeln!(buf, "   <PIDPipeline>")?;
+    writeln!(
+        buf,
+        r#"      <IObject UID="{}" Name="{}"/>"#,
+        escape_attr(&pipeline.uid),
+        escape_attr(&pipeline.name),
+    )?;
+    for interface in [
+        "IPBSItem",
+        "IPlannedFacility",
+        "IPBSItemCollection",
+        "IPipeline",
+        "IPipingConnectorComposition",
+    ] {
+        writeln!(buf, "      <{interface}/>")?;
+    }
+    if let Some(fluid) = &pipeline.fluid_system {
+        writeln!(
+            buf,
+            r#"      <IFluidSystem FluidSystem="{}"/>"#,
+            escape_attr(fluid),
+        )?;
+    } else {
+        writeln!(buf, "      <IFluidSystem/>")?;
+    }
+    for interface in ["INoteCollection", "IExpandableThing", "IPIDTypical"] {
+        writeln!(buf, "      <{interface}/>")?;
+    }
+    writeln!(buf, "   </PIDPipeline>")
 }
 
 /// The connectivity relationships the `_Data.xml` carries: those whose
@@ -588,9 +628,11 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             .get_mut("left_out_by_design")
             .and_then(serde_json::Value::as_array_mut)
         {
-            list[0] = json!(
+            list[0] = json!(if drawing.pipelines_attempted {
+                "ports: emitted from the Oracle exp for parents this .pid already publishes; pipelines: synthesized from T_PIPERUN by the PipeLinePublisher name rule; the UID is a UUID v5 of the plant and the name"
+            } else {
                 "ports: emitted from the Oracle exp for parents this .pid already publishes; pipelines are still not stated"
-            );
+            });
         }
         let piping = drawing
             .ports
@@ -666,6 +708,20 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
                 .iter()
                 .filter(|rel| rel.def_uid == "PBSItemNotes")
                 .count(),
+            "pipelines": drawing.pipelines.len(),
+            "piping_connectors": drawing
+                .pipelines
+                .iter()
+                .map(|pipeline| pipeline.connector_uids.len())
+                .sum::<usize>(),
+            "fluid_system": drawing
+                .pipelines
+                .iter()
+                .filter(|pipeline| pipeline.fluid_system.is_some())
+                .count(),
+            "fluid_code_missing": drawing.pipeline_synthesis.fluid_code_missing,
+            "fluid_system_unmapped": drawing.pipeline_synthesis.fluid_system_unmapped,
+            "without_sequence": drawing.pipeline_synthesis.without_sequence,
         });
     }
     let mut text = serde_json::to_string_pretty(&report).unwrap_or_default();
@@ -721,6 +777,9 @@ mod tests {
             exp_relations: Vec::new(),
             opc_points: Vec::new(),
             exp: None,
+            pipelines: Vec::new(),
+            pipelines_attempted: false,
+            pipeline_synthesis: crate::publish::pid_load::PipelineSynthesis::default(),
             representations: vec![
                 PidPublishRepresentation {
                     uid: "R1".to_string(),

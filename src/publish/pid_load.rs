@@ -33,7 +33,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 use crate::parsers::attribute_rows::{decode_attribute_row, AttributeRow};
@@ -281,6 +281,33 @@ pub struct PidPort {
     pub attributes: Vec<PidPublishAttribute>,
 }
 
+/// One pipeline synthesized from pipe runs that share a name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PidPipeline {
+    /// UUID v5 of the plant and [`Self::name`], 32 uppercase hex digits.
+    pub uid: String,
+    /// `{diameter}-{fluid}-{sequence}-{class}[-{insulation}]`.
+    pub name: String,
+    /// `@{GUID}` from the data map. Absent when the run has no code,
+    /// the map was not given, or the code is not in the map.
+    pub fluid_system: Option<String>,
+    /// Published connector UIDs that carry this name, in drawing order.
+    pub connector_uids: Vec<String>,
+}
+
+/// How pipeline names and fluid systems were spelled.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PipelineSynthesis {
+    /// Published connectors whose `TAGSEQUENCENO` is empty.
+    pub without_sequence: usize,
+    /// Connectors whose fluid code is not in codelist 19.
+    pub fluid_code_missing: usize,
+    /// Pipelines whose fluid code is not in the data map.
+    pub fluid_system_unmapped: usize,
+    /// Published connectors with no `T_PIPERUN` row.
+    pub not_in_piperun: usize,
+}
+
 /// The Oracle `exp` an export was read from.
 ///
 /// Absent on a `.pid`-only drawing, and then the coverage report does
@@ -341,6 +368,13 @@ pub struct PidPublishDrawing {
     pub opc_points: Vec<PidOpcPoint>,
     /// Set when [`super::oracle_exp::attach_oracle_ports`] ran.
     pub exp: Option<ExpPublish>,
+    /// Pipelines synthesized from `T_PIPERUN`. Empty until
+    /// [`super::pipeline::attach_pipelines`] runs.
+    pub pipelines: Vec<PidPipeline>,
+    /// Set when pipeline synthesis ran, including when it wrote nothing.
+    pub pipelines_attempted: bool,
+    /// Counts from the synthesis. Zeros when it did not run.
+    pub pipeline_synthesis: PipelineSynthesis,
     /// Representations, ordered by UID.
     pub representations: Vec<PidPublishRepresentation>,
     /// How much of the file was read.
@@ -390,8 +424,8 @@ struct Records {
 }
 
 impl Records {
-    fn read(path: &Path) -> Result<Self, PidLoadError> {
-        let mut compound = cfb::CompoundFile::open(std::fs::File::open(path)?)?;
+    fn read_from<R: Read + Seek>(reader: R) -> Result<Self, PidLoadError> {
+        let mut compound = cfb::CompoundFile::open(reader)?;
         let mut streams: Vec<PathBuf> = Vec::new();
         let mut sites: HashMap<u32, PathBuf> = HashMap::new();
         for entry in compound.read_root_storage() {
@@ -691,8 +725,32 @@ fn labelled_item<'a>(
 }
 
 /// Read a drawing's publish data from its `.pid`.
+///
+/// The drawing name is the file name without `.pid`.
 pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadError> {
-    let records = Records::read(path)?;
+    let name = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    load_publish_from_reader(std::fs::File::open(path)?, &name)
+}
+
+/// Read a drawing's publish data from a `.pid` compound file.
+///
+/// `drawing_name` is written on `PIDDrawing`. A backup package replaces
+/// it with `T_DRAWING.NAME` when that row exists. `cfb` accepts a
+/// [`std::io::Cursor`] of the bytes taken out of a zip entry.
+pub fn load_publish_from_reader<R: Read + Seek>(
+    reader: R,
+    drawing_name: &str,
+) -> Result<PidPublishDrawing, PidLoadError> {
+    load_from_records(Records::read_from(reader)?, drawing_name)
+}
+
+fn load_from_records(
+    records: Records,
+    drawing_name: &str,
+) -> Result<PidPublishDrawing, PidLoadError> {
     let mut stats = PidPublishStats {
         attribute_records: records.rows.len() + records.undecoded,
         undecoded_records: records.undecoded,
@@ -912,13 +970,9 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
         .collect();
     let process_points = process_points_of(&items);
 
-    let drawing_name = path
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default();
     Ok(PidPublishDrawing {
         drawing_uid,
-        drawing_name,
+        drawing_name: drawing_name.to_string(),
         items,
         process_points,
         branch_points: branch_points.into_values().collect(),
@@ -927,6 +981,9 @@ pub fn load_publish_from_pid(path: &Path) -> Result<PidPublishDrawing, PidLoadEr
         exp_relations: Vec::new(),
         opc_points: Vec::new(),
         exp: None,
+        pipelines: Vec::new(),
+        pipelines_attempted: false,
+        pipeline_synthesis: PipelineSynthesis::default(),
         representations: representations.into_values().collect(),
         stats,
     })

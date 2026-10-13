@@ -194,6 +194,127 @@ impl ExpTables {
         self.drawing.rows.len()
     }
 
+    /// `T_DRAWING` rows, in table order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when `SP_ID`, `NAME`, `PATH`,
+    /// `DRAWINGNUMBER` or `SP_PLANTGROUPID` is missing.
+    pub fn drawings(&self) -> Result<Vec<BackupDrawing>, ExpError> {
+        let id = column_index(&self.drawing, "SP_ID")?;
+        let name = column_index(&self.drawing, "NAME")?;
+        let path = column_index(&self.drawing, "PATH")?;
+        let number = column_index(&self.drawing, "DRAWINGNUMBER")?;
+        let group = column_index(&self.drawing, "SP_PLANTGROUPID")?;
+        let mut drawings = Vec::with_capacity(self.drawing.rows.len());
+        for row in &self.drawing.rows {
+            let id = cell_text(row, id);
+            if id.is_empty() {
+                continue;
+            }
+            let path = cell_text(row, path);
+            let group_id = cell_text(row, group);
+            drawings.push(BackupDrawing {
+                id_key: norm_uid(&id),
+                id,
+                name: cell_text(row, name),
+                path_key: backup_path_key(&path),
+                path,
+                drawing_number: cell_text(row, number),
+                plant_group_id: if group_id.is_empty() {
+                    String::new()
+                } else {
+                    norm_uid(&group_id)
+                },
+            });
+        }
+        Ok(drawings)
+    }
+
+    /// `T_PIPERUN` rows that can become a pipeline name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when a required column is missing or a
+    /// number cell is not an integer.
+    pub fn pipe_runs(&self) -> Result<Vec<PipeRunRow>, ExpError> {
+        let id = column_index(&self.piperun, "SP_ID")?;
+        let class = column_index(&self.piperun, "PIPINGMATERIALSCLASS")?;
+        let sequence = column_index(&self.piperun, "TAGSEQUENCENO")?;
+        let insulation = column_index(&self.piperun, "INSULATIONSPEC")?;
+        column_index(&self.piperun, "NOMINALDIAMETER")?;
+        column_index(&self.piperun, "OPERFLUIDCODE")?;
+        column_index(&self.piperun, "FLUIDSYSTEM")?;
+        let mut runs = Vec::with_capacity(self.piperun.rows.len());
+        for (index, row) in self.piperun.rows.iter().enumerate() {
+            let id_text = cell_text(row, id);
+            if id_text.is_empty() {
+                continue;
+            }
+            runs.push(PipeRunRow {
+                id_key: norm_uid(&id_text),
+                id: id_text,
+                nominal_diameter: optional_int(
+                    "T_PIPERUN",
+                    &self.piperun,
+                    row,
+                    "NOMINALDIAMETER",
+                    index,
+                )?,
+                fluid_code: optional_int("T_PIPERUN", &self.piperun, row, "OPERFLUIDCODE", index)?,
+                materials_class: cell_text(row, class),
+                tag_sequence: cell_text(row, sequence),
+                fluid_system: optional_int("T_PIPERUN", &self.piperun, row, "FLUIDSYSTEM", index)?,
+                insulation_spec: cell_text(row, insulation),
+            });
+        }
+        Ok(runs)
+    }
+
+    /// `CODELIST_SHORT_TEXT` for one list number, keyed by `CODELIST_INDEX`.
+    ///
+    /// An empty short text is omitted. The caller treats a missing index as
+    /// a code that cannot be spelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when the codelist columns are missing or
+    /// a number cell is not an integer.
+    pub fn codelist_short_text(&self, list_number: i64) -> Result<HashMap<i64, String>, ExpError> {
+        let short = column_index(&self.codelists, "CODELIST_SHORT_TEXT")?;
+        column_index(&self.codelists, "CODELIST_NUMBER")?;
+        column_index(&self.codelists, "CODELIST_INDEX")?;
+        let mut texts = HashMap::new();
+        for (row_index, row) in self.codelists.rows.iter().enumerate() {
+            let list = optional_int(
+                "CODELISTS",
+                &self.codelists,
+                row,
+                "CODELIST_NUMBER",
+                row_index,
+            )?;
+            let code = optional_int(
+                "CODELISTS",
+                &self.codelists,
+                row,
+                "CODELIST_INDEX",
+                row_index,
+            )?;
+            let (Some(list), Some(code)) = (list, code) else {
+                continue;
+            };
+            if list != list_number {
+                continue;
+            }
+            let text = cell_text(row, short);
+            if text.is_empty() {
+                continue;
+            }
+            texts.insert(code, text);
+        }
+        Ok(texts)
+    }
+
     fn pin(dump: &[u8]) -> Result<(), ExpError> {
         let applications = read_table(dump, "APPLICATIONS")?;
         if !applications_pinned(&applications) {
@@ -261,6 +382,144 @@ impl ExpTables {
             modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
             ..Self::blank()
         })
+    }
+}
+
+/// One `T_PIPERUN` row the pipeline name is spelled from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipeRunRow {
+    /// `SP_ID` as stored.
+    pub id: String,
+    /// `SP_ID` folded like [`BackupDrawing::id_key`].
+    pub id_key: String,
+    /// `NOMINALDIAMETER`. Empty when null.
+    pub nominal_diameter: Option<i64>,
+    /// `OPERFLUIDCODE`. Empty when null.
+    pub fluid_code: Option<i64>,
+    /// `PIPINGMATERIALSCLASS`.
+    pub materials_class: String,
+    /// `TAGSEQUENCENO`. Empty when the run is not a pipeline.
+    pub tag_sequence: String,
+    /// `FLUIDSYSTEM`. Empty when null.
+    pub fluid_system: Option<i64>,
+    /// `INSULATIONSPEC`.
+    pub insulation_spec: String,
+}
+
+/// One `T_DRAWING` row a backup package hangs a `.pid` on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupDrawing {
+    /// `SP_ID` as stored.
+    pub id: String,
+    /// `SP_ID` with braces, dashes and case folded, for matching `DrawingNo`.
+    pub id_key: String,
+    /// `NAME`.
+    pub name: String,
+    /// `PATH` as stored.
+    pub path: String,
+    /// [`backup_path_key`] of [`Self::path`].
+    pub path_key: String,
+    /// `DRAWINGNUMBER`. Empty when the cell is null.
+    pub drawing_number: String,
+    /// `SP_PLANTGROUPID`, folded like [`Self::id_key`]. Empty when null.
+    pub plant_group_id: String,
+}
+
+/// One `T_PLANTGROUP` row used to spell a drawing's place in the plant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlantGroup {
+    /// `SP_ID`, folded like [`BackupDrawing::id_key`].
+    pub id: String,
+    /// `NAME`.
+    pub name: String,
+    /// Folded parent id. Empty for the plant root, whose `PARENTID` is `-1`.
+    pub parent_id: String,
+}
+
+/// Slash-fold `path` and drop a leading or trailing slash.
+///
+/// `T_DRAWING.PATH` is `\00\00\name.pid`. A zip entry is `00/00/name.pid`.
+/// Both become `00/00/name.pid`.
+#[must_use]
+pub fn backup_path_key(path: &str) -> String {
+    path.replace('\\', "/").trim_matches('/').to_string()
+}
+
+/// Fold a drawing or group id the way [`BackupDrawing::id_key`] does.
+#[must_use]
+pub fn backup_uid_key(text: &str) -> String {
+    norm_uid(text)
+}
+
+/// `T_PLANTGROUP` rows.
+///
+/// A dump with no such insert returns an empty list. Dates and byte
+/// columns are skipped.
+///
+/// # Errors
+///
+/// Returns [`ExpError::Table`] when the insert is present but not the
+/// pinned row shape, or when `SP_ID` / `NAME` / `PARENTID` is missing.
+pub fn read_plant_groups(dump: &[u8]) -> Result<Vec<PlantGroup>, ExpError> {
+    if find_slice(dump, b"INSERT INTO \"T_PLANTGROUP\"").is_none() {
+        return Ok(Vec::new());
+    }
+    let table = read_table_tolerant(dump, "T_PLANTGROUP")?;
+    let id = column_index(&table, "SP_ID")?;
+    let name = column_index(&table, "NAME")?;
+    let parent = column_index(&table, "PARENTID")?;
+    let mut groups = Vec::with_capacity(table.rows.len());
+    for row in &table.rows {
+        let id = cell_text(row, id);
+        if id.is_empty() {
+            continue;
+        }
+        let parent_raw = cell_text(row, parent);
+        let parent_id = if parent_raw.is_empty() || parent_raw == "-1" {
+            String::new()
+        } else {
+            norm_uid(&parent_raw)
+        };
+        groups.push(PlantGroup {
+            id: norm_uid(&id),
+            name: cell_text(row, name),
+            parent_id,
+        });
+    }
+    Ok(groups)
+}
+
+/// `SQPlant \ 00 \ 00`: group names from the plant root down to `id`.
+///
+/// An unknown id is an empty string. A parent cycle stops the walk.
+#[must_use]
+pub fn plant_group_path(groups: &[PlantGroup], id: &str) -> String {
+    if id.is_empty() {
+        return String::new();
+    }
+    let by_id: HashMap<&str, &PlantGroup> = groups
+        .iter()
+        .map(|group| (group.id.as_str(), group))
+        .collect();
+    let mut names = Vec::new();
+    let mut current = norm_uid(id);
+    let mut seen = HashSet::new();
+    while !current.is_empty() && seen.insert(current.clone()) {
+        let Some(group) = by_id.get(current.as_str()) else {
+            break;
+        };
+        names.push(group.name.clone());
+        current = group.parent_id.clone();
+    }
+    names.reverse();
+    names.join(" \\ ")
+}
+
+fn cell_text(row: &[Field], index: usize) -> String {
+    match row.get(index) {
+        Some(Field::Text(text)) => text.clone(),
+        Some(Field::Int(value)) => value.to_string(),
+        Some(Field::Null | Field::Unscaled) | None => String::new(),
     }
 }
 
@@ -1730,6 +1989,13 @@ mod tests {
         let tables = ExpTables::read(&dump).unwrap();
         assert_eq!(tables.codelist_row_count(), 1);
         assert_eq!(tables.drawing_row_count(), 2);
+        let drawings = tables.drawings().unwrap();
+        assert_eq!(drawings.len(), 2);
+        assert_eq!(drawings[0].id, "DRAW1");
+        assert_eq!(drawings[0].name, "one");
+        assert_eq!(drawings[0].path_key, "a.pid");
+        assert_eq!(drawings[0].drawing_number, "D-1");
+        assert_eq!(drawings[0].plant_group_id, norm_uid("G1"));
         let ports = tables.port_tables().unwrap();
         assert_eq!(ports.piping_points.len(), 2);
         assert_eq!(ports.signal_points.len(), 0);
@@ -1748,6 +2014,38 @@ mod tests {
         assert!(tables.composition_relations().unwrap().is_empty());
         assert!(tables.opc_points("DRAW1").unwrap().is_empty());
         assert!(tables.opc_points("DRAW2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn plant_group_path_joins_names_from_the_root() {
+        let dump = table(
+            "T_PLANTGROUP",
+            &[ch("SP_ID"), ch("NAME"), ch("PARENTID"), date("DATECREATED")],
+            &[
+                row(&[
+                    Some(utf16("ROOT")),
+                    Some(utf16("SQPlant")),
+                    Some(utf16("-1")),
+                    None,
+                ]),
+                row(&[
+                    Some(utf16("MID")),
+                    Some(utf16("00")),
+                    Some(utf16("ROOT")),
+                    None,
+                ]),
+                row(&[
+                    Some(utf16("LEAF")),
+                    Some(utf16("00")),
+                    Some(utf16("MID")),
+                    None,
+                ]),
+            ],
+        );
+        let groups = read_plant_groups(&dump).unwrap();
+        assert_eq!(plant_group_path(&groups, "LEAF"), "SQPlant \\ 00 \\ 00");
+        assert_eq!(plant_group_path(&groups, ""), "");
+        assert!(read_plant_groups(b"not a dump").unwrap().is_empty());
     }
 
     #[test]

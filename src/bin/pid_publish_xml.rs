@@ -85,6 +85,9 @@ struct CliOptions {
     /// Oracle conventional `exp` dump. `.pid` input only. Ports whose
     /// parent this file already publishes are emitted from it.
     oracle_exp: Option<PathBuf>,
+    /// `SPPIDDataMap.xml`, or a zip that contains that exact entry.
+    /// With `--oracle-exp`, supplies pipeline `FluidSystem`.
+    datamap: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,11 +104,18 @@ fn print_usage() {
          \x20  pid_publish_xml <mdf> --list-drawings\n\
          \x20  pid_publish_xml <file.pid> [--out FILE | --stdout | --out-dir DIR]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
-         \x20               [--oracle-exp FILE]\n\n\
+         \x20               [--oracle-exp FILE] [--datamap FILE]\n\
+         \x20  pid_publish_xml <backup-dir> --out-dir DIR [--plant NAME]\n\n\
          A .pid input is read on its own, with no plant database: it is one\n\
          drawing, so --drawing / --style / --list-drawings do not apply, and\n\
          only what the file states is written (no derived ports, pipelines or\n\
          default attributes).\n\n\
+         A directory that contains Manifest.txt is a backup package. Every\n\
+         .pid entry in its PlantData zips is published into --out-dir, plus\n\
+         _Index.json. Export.dmp is read once when it is an Oracle exp. A\n\
+         SQL Server MTF dump exits 2 (use pid_backup_extract). --diff-against\n\
+         does not apply. One drawing that fails is recorded; the rest are\n\
+         still written; the process then exits 1.\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
@@ -126,8 +136,13 @@ fn print_usage() {
          \x20                   oracle-exp mode.\n\
          --oracle-exp FILE   .pid input only: read piping and signal ports from\n\
          \x20                   an Oracle exp dump and emit them for parents this\n\
-         \x20                   file already publishes. Without it the output is\n\
-         \x20                   the .pid alone.\n\
+         \x20                   file already publishes. Pipe runs with a tag\n\
+         \x20                   sequence become PIDPipeline objects. Without it\n\
+         \x20                   the output is the .pid alone.\n\
+         --datamap FILE      .pid input with --oracle-exp: SPPIDDataMap.xml or\n\
+         \x20                   a zip that contains that entry. Supplies\n\
+         \x20                   FluidSystem. Without it pipelines have no\n\
+         \x20                   FluidSystem.\n\
          --plant NAME        Plant value for the <Container> root attribute\n\
          \x20                   (default: \"P01\" — override with the real plant).\n\
          --style a01|dwg     Pick the IObject attribute convention used in the\n\
@@ -170,6 +185,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut list_drawings = false;
     let mut verbose = false;
     let mut oracle_exp: Option<PathBuf> = None;
+    let mut datamap: Option<PathBuf> = None;
 
     let mut i = 2;
     while i < args.len() {
@@ -251,6 +267,13 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 oracle_exp = Some(PathBuf::from(value));
                 i += 2;
             }
+            "--datamap" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--datamap requires a path".to_string())?;
+                datamap = Some(PathBuf::from(value));
+                i += 2;
+            }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
@@ -263,8 +286,45 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     };
 
     let pid_input = is_pid_path(&input_path);
+    let package_input = input_path.is_dir();
+    if package_input {
+        if !input_path.join("Manifest.txt").is_file() {
+            return Err(
+                "a directory input is a backup package only when it contains Manifest.txt".into(),
+            );
+        }
+        if oracle_exp.is_some() {
+            return Err(
+                "a backup directory reads Export.dmp itself; --oracle-exp does not apply".into(),
+            );
+        }
+        if datamap.is_some() {
+            return Err(
+                "a backup directory reads RefData~4~804.zip itself; --datamap does not apply"
+                    .into(),
+            );
+        }
+        if list_drawings || drawing_uid.is_some() {
+            return Err(
+                "a backup directory publishes every .pid; --drawing and --list-drawings do not apply"
+                    .into(),
+            );
+        }
+        if diff_against.is_some() {
+            return Err("--diff-against does not apply to a backup directory".into());
+        }
+        if output.is_some() || meta_out_path.is_some() {
+            return Err("a backup directory writes with --out-dir only".into());
+        }
+        if out_dir.is_none() {
+            return Err("a backup directory requires --out-dir DIR".into());
+        }
+    }
     if oracle_exp.is_some() && !pid_input {
         return Err("--oracle-exp applies to a .pid input only".into());
+    }
+    if datamap.is_some() && oracle_exp.is_none() {
+        return Err("--datamap requires --oracle-exp".into());
     }
     if pid_input && (list_drawings || drawing_uid.is_some()) {
         return Err(
@@ -272,7 +332,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         );
     }
     if out_dir.is_some() {
-        if !pid_input {
+        if !pid_input && !package_input {
             return Err("--out-dir applies to a .pid input only".into());
         }
         if output.is_some() || meta_out_path.is_some() {
@@ -305,7 +365,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
             return Err("--list-drawings is mutually exclusive with --meta-out".into());
         }
     } else {
-        if drawing_uid.is_none() && !pid_input {
+        if drawing_uid.is_none() && !pid_input && !package_input {
             return Err("--drawing UID is required (or use --list-drawings)".into());
         }
         if output.is_none() && diff_against.is_none() && out_dir.is_none() {
@@ -333,6 +393,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         list_drawings,
         verbose,
         oracle_exp,
+        datamap,
     })
 }
 
@@ -371,6 +432,9 @@ fn main() {
 ///   from the reference (used as a CI gate). Real I/O / `SQLite`
 ///   errors short-circuit through `Err(String)` instead.
 fn run(options: CliOptions) -> Result<i32, String> {
+    if options.input_path.is_dir() {
+        return run_package(&options);
+    }
     if is_pid_path(&options.input_path) {
         return run_pid(&options);
     }
@@ -433,6 +497,36 @@ fn run(options: CliOptions) -> Result<i32, String> {
     }
 }
 
+/// Backup directory: publish every `.pid` in the `PlantData` zips.
+fn run_package(options: &CliOptions) -> Result<i32, String> {
+    let out_dir = options
+        .out_dir
+        .as_ref()
+        .ok_or_else(|| "a backup directory requires --out-dir DIR".to_string())?;
+    match pid_parse::publish::backup_package::publish_backup_package(
+        &options.input_path,
+        out_dir,
+        &options.plant_name,
+    ) {
+        Ok(report) => {
+            eprintln!(
+                "Published {} drawings from {} ({} failed, {} without a DrawingNo). Wrote {}.",
+                report.pid_entries,
+                options.input_path.display(),
+                report.failed,
+                report.shells,
+                report.index_path.display(),
+            );
+            Ok(i32::from(report.failed > 0))
+        }
+        Err(pid_parse::publish::backup_package::BackupPublishError::Usage(detail)) => {
+            eprintln!("argument error: {detail}");
+            Ok(2)
+        }
+        Err(pid_parse::publish::backup_package::BackupPublishError::Io(detail)) => Err(detail),
+    }
+}
+
 /// `.pid` input: read the drawing from the file alone and write only what
 /// it states.
 fn run_pid(options: &CliOptions) -> Result<i32, String> {
@@ -441,19 +535,21 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
     if let Some(dump_path) = &options.oracle_exp {
         let dump =
             std::fs::read(dump_path).map_err(|e| format!("read {}: {e}", dump_path.display()))?;
-        let tables = pid_parse::publish::oracle_exp::read_port_tables(&dump)
+        let exp_tables = pid_parse::publish::oracle_exp::ExpTables::read(&dump)
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let tables = exp_tables
+            .port_tables()
             .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
         pid_parse::publish::oracle_exp::attach_oracle_ports(&mut drawing, &tables, dump_path);
-        drawing.connectivity_ends = pid_parse::publish::oracle_exp::connectivity_ends_for_drawing(
-            &dump,
-            &drawing.drawing_uid,
-        )
-        .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
-        drawing.exp_relations = pid_parse::publish::oracle_exp::composition_relations(&dump)
+        drawing.connectivity_ends = exp_tables
+            .connectivity_ends(&drawing.drawing_uid)
             .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
-        let mut opc_points =
-            pid_parse::publish::oracle_exp::opc_points_for_drawing(&dump, &drawing.drawing_uid)
-                .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        drawing.exp_relations = exp_tables
+            .composition_relations()
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let mut opc_points = exp_tables
+            .opc_points(&drawing.drawing_uid)
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
         let representations: std::collections::HashSet<&str> = drawing
             .representations
             .iter()
@@ -461,6 +557,37 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
             .collect();
         opc_points.retain(|point| representations.contains(point.representation_uid.as_str()));
         drawing.opc_points = opc_points;
+        let datamap = match &options.datamap {
+            Some(path) => Some(
+                pid_parse::backup::read_datamap(path)
+                    .map_err(|error| format!("read {}: {error}", path.display()))?,
+            ),
+            None => None,
+        };
+        pid_parse::publish::pipeline::attach_pipelines(
+            &mut drawing,
+            &exp_tables,
+            &options.plant_name,
+            datamap.as_ref(),
+        )
+        .map_err(|error| format!("read {}: {error}", dump_path.display()))?;
+        eprintln!(
+            "oracle-exp pipelines: {} PIDPipeline, {} PipingConnectors, {} FluidSystem, \
+             {} fluid codes missing, {} fluid systems unmapped",
+            drawing.pipelines.len(),
+            drawing
+                .pipelines
+                .iter()
+                .map(|pipeline| pipeline.connector_uids.len())
+                .sum::<usize>(),
+            drawing
+                .pipelines
+                .iter()
+                .filter(|pipeline| pipeline.fluid_system.is_some())
+                .count(),
+            drawing.pipeline_synthesis.fluid_code_missing,
+            drawing.pipeline_synthesis.fluid_system_unmapped,
+        );
         let (written, left_out) = connectivity_rel_counts(&drawing);
         eprintln!(
             "oracle-exp connectivity: {} pairs, {written} written as <Rel>, \

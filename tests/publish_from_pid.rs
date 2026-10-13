@@ -404,16 +404,18 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     }
     let mut drawing = load_publish_from_pid(pid).expect("the .pid loads");
     let bytes = std::fs::read(&dump).expect("dump");
-    let tables = pid_parse::publish::oracle_exp::read_port_tables(&bytes).expect("exp rows");
+    let exp_tables = pid_parse::publish::oracle_exp::ExpTables::read(&bytes).expect("exp tables");
+    let tables = exp_tables.port_tables().expect("exp rows");
     pid_parse::publish::oracle_exp::attach_oracle_ports(&mut drawing, &tables, &dump);
-    drawing.connectivity_ends =
-        pid_parse::publish::oracle_exp::connectivity_ends_for_drawing(&bytes, &drawing.drawing_uid)
-            .expect("exp connectivity");
-    drawing.exp_relations =
-        pid_parse::publish::oracle_exp::composition_relations(&bytes).expect("exp compositions");
-    let mut opc_points =
-        pid_parse::publish::oracle_exp::opc_points_for_drawing(&bytes, &drawing.drawing_uid)
-            .expect("exp opc");
+    drawing.connectivity_ends = exp_tables
+        .connectivity_ends(&drawing.drawing_uid)
+        .expect("exp connectivity");
+    drawing.exp_relations = exp_tables
+        .composition_relations()
+        .expect("exp compositions");
+    let mut opc_points = exp_tables
+        .opc_points(&drawing.drawing_uid)
+        .expect("exp opc");
     let representations: HashSet<&str> = drawing
         .representations
         .iter()
@@ -421,23 +423,35 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
         .collect();
     opc_points.retain(|point| representations.contains(point.representation_uid.as_str()));
     drawing.opc_points = opc_points;
-    let generated = read_document(&write_pid_data_xml(&drawing, "P01"));
-    let reference = read_document(&std::fs::read_to_string(reference_xml).expect("reference"));
-    let mut listing = Vec::new();
-    let score = score(&generated, &reference, &mut listing);
-    assert!(
-        listing.is_empty(),
-        "{} findings, first: {:?}",
-        listing.len(),
-        listing.iter().take(8).collect::<Vec<_>>()
-    );
-    // N8: 7 nozzle compositions, 6 item notes, and the 2 OPC branch
-    // points (with their DrawingItems and the 2 connectivity rows).
+    let datamap_path = PathBuf::from(r"D:\work\cad\pid-test-data\RefData~4~804.zip");
+    if !datamap_path.is_file() {
+        eprintln!("skip: SPPID data map zip is missing");
+        return;
+    }
+    let datamap = pid_parse::backup::read_datamap(&datamap_path).expect("datamap");
+    pid_parse::publish::pipeline::attach_pipelines(
+        &mut drawing,
+        &exp_tables,
+        "P01",
+        Some(&datamap),
+    )
+    .expect("pipelines");
+    let generated_xml = write_pid_data_xml(&drawing, "P01");
+    let reference_text = std::fs::read_to_string(reference_xml).expect("reference");
+    let diff = pid_parse::publish::diff_pid_export(&generated_xml, &reference_text);
+    assert!(diff.is_clean(), "{diff}");
     assert_eq!(
-        (score.objects, score.values, score.rels),
-        (3_014, 3_188, 4_001)
+        (diff.objects, diff.values, diff.rels),
+        (3_093, 3_346, 4_107)
     );
+    assert_eq!(diff.pipelines_paired_by_name, 79);
+    assert_eq!(diff.piping_connectors_paired_by_name, 106);
+    assert_eq!(diff.fluid_system_reference_empty, 23);
+    assert_eq!(drawing.pipeline_synthesis.fluid_code_missing, 0);
+    assert_eq!(drawing.pipeline_synthesis.fluid_system_unmapped, 0);
+    let generated = read_document(&generated_xml);
     let rels_of = |def_uid: &str| generated.rels.iter().filter(|rel| rel.3 == def_uid).count();
+    assert_eq!(rels_of("PipingConnectors"), 106);
     assert_eq!(
         [
             rels_of("PipingTapOrFitting"),
@@ -576,4 +590,227 @@ fn out_dir_is_refused_beside_out_and_for_a_database_input() {
     assert!(String::from_utf8_lossy(&exp_on_database.stderr)
         .contains("--oracle-exp applies to a .pid input only"));
     assert!(!out_dir.exists(), "a refused invocation writes nothing");
+}
+
+/// One stored ZIP member. The backup publisher inflates this the same way
+/// it inflates `PlantData~2~711.zip`.
+fn stored_zip(name: &str, payload: &[u8]) -> Vec<u8> {
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for &byte in data {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+            }
+        }
+        !crc
+    }
+    let name = name.as_bytes();
+    let crc = crc32(payload);
+    let size = u32::try_from(payload.len()).expect("member fits in a zip32 size");
+    let name_len = u16::try_from(name.len()).expect("name fits in a zip name length");
+    let mut out = Vec::new();
+    let push16 = |out: &mut Vec<u8>, value: u16| out.extend_from_slice(&value.to_le_bytes());
+    let push32 = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
+    push32(&mut out, 0x0403_4b50);
+    push16(&mut out, 20);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push32(&mut out, crc);
+    push32(&mut out, size);
+    push32(&mut out, size);
+    push16(&mut out, name_len);
+    push16(&mut out, 0);
+    out.extend_from_slice(name);
+    out.extend_from_slice(payload);
+    let cd_at = u32::try_from(out.len()).expect("zip offset");
+    push32(&mut out, 0x0201_4b50);
+    push16(&mut out, 20);
+    push16(&mut out, 20);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push32(&mut out, crc);
+    push32(&mut out, size);
+    push32(&mut out, size);
+    push16(&mut out, name_len);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push32(&mut out, 0);
+    push32(&mut out, 0);
+    out.extend_from_slice(name);
+    let cd_size = u32::try_from(out.len()).expect("zip size") - cd_at;
+    push32(&mut out, 0x0605_4b50);
+    push16(&mut out, 0);
+    push16(&mut out, 0);
+    push16(&mut out, 1);
+    push16(&mut out, 1);
+    push32(&mut out, cd_size);
+    push32(&mut out, cd_at);
+    push16(&mut out, 0);
+    out
+}
+
+#[test]
+fn a_backup_directory_without_a_dump_publishes_the_pid() {
+    let pid = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-file/D06.pid");
+    if !pid.is_file() {
+        eprintln!("skip: test-file/D06.pid is missing");
+        return;
+    }
+    let bytes = std::fs::read(&pid).expect("read D06.pid");
+    let package = unique_out_dir("mini-package");
+    std::fs::create_dir_all(&package).expect("mini package dir");
+    std::fs::write(package.join("Manifest.txt"), "BackupType<<|>>2\n").expect("manifest");
+    std::fs::write(
+        package.join("PlantData~2~1.zip"),
+        stored_zip("D06.pid", &bytes),
+    )
+    .expect("plant zip");
+    let out = unique_out_dir("mini-out");
+    let missing_out = Command::new(CLI)
+        .arg(&package)
+        .output()
+        .expect("spawn directory without --out-dir");
+    assert_eq!(missing_out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&missing_out.stderr).contains("--out-dir"));
+    let refused = Command::new(CLI)
+        .arg(&package)
+        .arg("--diff-against")
+        .arg("ref.xml")
+        .arg("--out-dir")
+        .arg(&out)
+        .output()
+        .expect("spawn directory --diff-against");
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--diff-against"));
+    let output = Command::new(CLI)
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(&out)
+        .args(["--plant", "P01"])
+        .output()
+        .expect("spawn mini backup");
+    assert!(
+        output.status.success(),
+        "exit {:?}\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("_Index.json")).expect("index"))
+            .expect("index json");
+    assert_eq!(index["export"], "PidOnly");
+    assert_eq!(index["pid_entries"], 1);
+    assert_eq!(index["drawing_rows"], 0);
+    assert_eq!(index["failed"], 0);
+    assert_eq!(index["paired"], 0);
+    assert!(out.join("D06_Data.xml").is_file());
+    assert!(out.join("D06_Meta.xml").is_file());
+    assert!(out.join("D06_Coverage.json").is_file());
+}
+
+#[test]
+fn backup_directory_publishes_the_whole_package() {
+    let package = PathBuf::from(r"D:\work\cad\pid-test-data");
+    if !package.join("Manifest.txt").is_file()
+        || !package.join("Export.dmp").is_file()
+        || !package.join("PlantData~2~711.zip").is_file()
+    {
+        eprintln!("skip: D:\\work\\cad\\pid-test-data is not a backup package");
+        return;
+    }
+    let out = unique_out_dir("sqplant");
+    let started = std::time::Instant::now();
+    let output = Command::new(CLI)
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(&out)
+        .args(["--plant", "P01"])
+        .output()
+        .expect("spawn backup directory");
+    let elapsed = started.elapsed();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit {:?} after {elapsed:?}\n{stderr}",
+        output.status.code()
+    );
+    let index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("_Index.json")).expect("index"))
+            .expect("index json");
+    assert_eq!(index["pid_entries"], 53, "{index}");
+    assert_eq!(index["drawing_rows"], 53);
+    assert_eq!(index["paired"], 53);
+    assert_eq!(index["failed"], 0);
+    assert_eq!(index["shells"], 2);
+    assert_eq!(index["objects"], 80_085);
+    assert_eq!(index["relationships"], 106_705);
+    assert_eq!(index["piping_ports"], 9_557);
+    assert_eq!(index["signal_ports"], 22_021);
+    assert_eq!(index["connectivity_rels"], 19_371);
+    assert_eq!(index["opc_branch_points"], 476);
+    assert_eq!(index["equipment_composition_rels"], 372);
+    assert_eq!(index["item_note_rels"], 114);
+    assert_eq!(index["pipelines"], 2_395);
+    assert_eq!(index["piping_connectors"], 3_128);
+    assert!(
+        elapsed.as_secs() < 215,
+        "package took {elapsed:?}, the one-drawing loop was 431s"
+    );
+    let shells = index["drawings"]
+        .as_array()
+        .expect("drawings")
+        .iter()
+        .filter(|drawing| drawing["uid_from"] == "T_DRAWING.PATH")
+        .count();
+    assert_eq!(shells, 2);
+    let Some(drawings) = corpus() else {
+        eprintln!("skip: I井场 single-file comparison, corpus is missing");
+        return;
+    };
+    let Some((stem, pid, _)) = drawings.iter().find(|(stem, ..)| stem.starts_with("I井场"))
+    else {
+        eprintln!("skip: I井场 is not in the corpus");
+        return;
+    };
+    let single = unique_out_dir("ijingchang-single");
+    let single_run = Command::new(CLI)
+        .arg(pid)
+        .arg("--out-dir")
+        .arg(&single)
+        .arg("--oracle-exp")
+        .arg(package.join("Export.dmp"))
+        .arg("--datamap")
+        .arg(package.join("RefData~4~804.zip"))
+        .args(["--plant", "P01"])
+        .output()
+        .expect("spawn single I井场");
+    assert!(
+        single_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&single_run.stderr)
+    );
+    for suffix in ["_Data.xml", "_Meta.xml"] {
+        let packaged = std::fs::read(out.join(format!("{stem}{suffix}"))).expect("package file");
+        let alone = std::fs::read(single.join(format!("{stem}{suffix}"))).expect("single file");
+        assert_eq!(packaged, alone, "{stem}{suffix}");
+    }
+    let mut packaged: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join(format!("{stem}_Coverage.json"))).expect("coverage"),
+    )
+    .expect("coverage json");
+    let mut alone: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(single.join(format!("{stem}_Coverage.json"))).expect("coverage"),
+    )
+    .expect("coverage json");
+    packaged.as_object_mut().expect("object").remove("source");
+    alone.as_object_mut().expect("object").remove("source");
+    assert_eq!(packaged, alone);
 }
