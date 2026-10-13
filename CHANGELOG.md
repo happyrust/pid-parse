@@ -9,7 +9,7 @@
 - I井场钉数仍是对象 3 093、值 3 346、关系 4 107，按名 79 / 106，`FluidSystem` 多 23。本轮没重跑 `ijingchang_oracle_exp_matches_the_pinned_reference`。
 - 整包 `D:\work\cad\pid-test-data`：`pid_publish_xml` 退出 0。51 张合计对象 77 690 → 80 085、关系 103 577 → 106 705，另钉管线 2 395、`PipingConnectors` 3 128。值 87 419，测试没钉这一项。53 / 53、失败 0、空图 2，端口 9 557 / 22 021、连通 19 371、OPC 476、管口 372、注释 114 不动。D03 / D04 管线 0。
 - `cargo test --locked -p pid-parse --test publish_from_pid backup_directory_publishes_the_whole_package` 1 过，50.19 秒。同一测试里 I井场整包与单张 `--oracle-exp --datamap` 对照通过（`_Coverage.json` 去掉 `source`）。
-- 下面 N9-3 那一段里的 77 690 / 103 577 是没挂管线时的合计。交付目录 2026-10-14 01:57–01:58 已重写：`D:\work\cad\pid-test-data\publish\`（160 个文件，`_Index.json` 为上面这组数）；`D:\work\cad\PID自研软件验证\publish\` 只换 I井场三件，`_Data.xml` / `_Meta.xml` 与整包 SHA256 相同（`7653DF6B…` / `C1D4465F…`），`_Coverage.json` 只差 `source`。另外 4 张集注站三件仍是 2026-10-12 11:40:21。合成实现和 `tests/publish_from_pid.rs` 仍在工作树，不在这次提交。
+- 下面 N9-3 那一段里的 77 690 / 103 577 是没挂管线时的合计。交付目录 2026-10-14 01:57–01:58 已重写：`D:\work\cad\pid-test-data\publish\`（160 个文件，`_Index.json` 为上面这组数）；`D:\work\cad\PID自研软件验证\publish\` 只换 I井场三件，`_Data.xml` / `_Meta.xml` 与整包 SHA256 相同（`7653DF6B…` / `C1D4465F…`），`_Coverage.json` 只差 `source`。另外 4 张集注站三件仍是 2026-10-12 11:40:21。合成实现和 `tests/publish_from_pid.rs` 已提交并推送 `7f1d891`。
 
 ### publish 从备份包目录一次发出全部图纸（2026-10-13，N9-3）
 
