@@ -1,6 +1,8 @@
 //! Piping and signal port rows from an Oracle conventional `exp` dump.
 //!
-//! Plan `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-1. The byte
+//! Plan `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-1, and
+//! `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-1
+//! ([`ExpTables`] reads one dump for many drawings). The byte
 //! layout is the one pinned by `examples/probe_oracle_exp_rows.rs` and
 //! `docs/analysis/n5-exp-rows.md`: an ASCII `INSERT INTO` line, a binary
 //! column header, length-prefixed fields, `0xFFFE` for NULL, two zero
@@ -112,6 +114,156 @@ pub struct DrawingPorts {
     pub signal: Vec<SignalPoint>,
 }
 
+/// Tables from one Oracle `exp` dump, read once and shared by every drawing.
+///
+/// [`Self::read`] loads the twelve tables the four publish entries use,
+/// then the first `CODELISTS` insert and `T_DRAWING`. `APPLICATIONS` is
+/// pinned first and is not kept: a dump that fails the pin returns
+/// [`ExpError::FormatUnpinned`] and the other tables are not read.
+///
+/// `CODELISTS` and `T_DRAWING` are stored for later stages. Nothing in
+/// this stage publishes them. The `&[u8]` functions still read only the
+/// tables that entry used before, so one drawing keeps today's call.
+pub struct ExpTables {
+    piping_point: Table,
+    signal_point: Table,
+    connector: Table,
+    representation: Table,
+    piperun: Table,
+    signalrun: Table,
+    opc: Table,
+    nozzle: Table,
+    note: Table,
+    itemnote: Table,
+    modelitem: Table,
+    codelists: Table,
+    drawing: Table,
+}
+
+impl ExpTables {
+    /// Read the dump once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not
+    /// pin the row format, and [`ExpError::Table`] when a stored table is
+    /// not that format. `T_DRAWING` has date columns; those cells are
+    /// skipped. `CODELISTS` is the first insert of that name.
+    pub fn read(dump: &[u8]) -> Result<Self, ExpError> {
+        Self::pin(dump)?;
+        Ok(Self {
+            piping_point: read_table(dump, "T_PIPINGPOINT")?,
+            signal_point: read_table(dump, "T_SIGNALPOINT")?,
+            connector: read_table_tolerant(dump, "T_CONNECTOR")?,
+            representation: read_table_tolerant(dump, "T_REPRESENTATION")?,
+            piperun: read_table(dump, "T_PIPERUN")?,
+            signalrun: read_table(dump, "T_SIGNALRUN")?,
+            opc: read_table_tolerant(dump, "T_OPC")?,
+            nozzle: read_table_tolerant(dump, "T_NOZZLE")?,
+            note: read_table_tolerant(dump, "T_NOTE")?,
+            itemnote: read_table_tolerant(dump, "T_ITEMNOTE")?,
+            modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
+            codelists: read_table(dump, "CODELISTS")?,
+            drawing: read_table_tolerant(dump, "T_DRAWING")?,
+        })
+    }
+
+    /// Projected piping and signal port rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when a port row is not the pinned shape.
+    pub fn port_tables(&self) -> Result<PortTables, ExpError> {
+        Ok(PortTables {
+            piping_row_count: self.piping_point.rows.len(),
+            signal_row_count: self.signal_point.rows.len(),
+            piping_points: project_piping(&self.piping_point)?,
+            signal_points: project_signal(&self.signal_point)?,
+        })
+    }
+
+    /// Rows in the first `CODELISTS` insert.
+    #[must_use]
+    pub fn codelist_row_count(&self) -> usize {
+        self.codelists.rows.len()
+    }
+
+    /// Rows in `T_DRAWING`.
+    #[must_use]
+    pub fn drawing_row_count(&self) -> usize {
+        self.drawing.rows.len()
+    }
+
+    fn pin(dump: &[u8]) -> Result<(), ExpError> {
+        let applications = read_table(dump, "APPLICATIONS")?;
+        if !applications_pinned(&applications) {
+            return Err(ExpError::FormatUnpinned);
+        }
+        Ok(())
+    }
+
+    fn blank() -> Self {
+        Self {
+            piping_point: Table::blank(),
+            signal_point: Table::blank(),
+            connector: Table::blank(),
+            representation: Table::blank(),
+            piperun: Table::blank(),
+            signalrun: Table::blank(),
+            opc: Table::blank(),
+            nozzle: Table::blank(),
+            note: Table::blank(),
+            itemnote: Table::blank(),
+            modelitem: Table::blank(),
+            codelists: Table::blank(),
+            drawing: Table::blank(),
+        }
+    }
+
+    fn load_ports(dump: &[u8]) -> Result<Self, ExpError> {
+        Self::pin(dump)?;
+        Ok(Self {
+            piping_point: read_table(dump, "T_PIPINGPOINT")?,
+            signal_point: read_table(dump, "T_SIGNALPOINT")?,
+            ..Self::blank()
+        })
+    }
+
+    fn load_connectivity(dump: &[u8]) -> Result<Self, ExpError> {
+        Self::pin(dump)?;
+        Ok(Self {
+            connector: read_table_tolerant(dump, "T_CONNECTOR")?,
+            representation: read_table_tolerant(dump, "T_REPRESENTATION")?,
+            piping_point: read_table(dump, "T_PIPINGPOINT")?,
+            signal_point: read_table(dump, "T_SIGNALPOINT")?,
+            piperun: read_table(dump, "T_PIPERUN")?,
+            signalrun: read_table(dump, "T_SIGNALRUN")?,
+            opc: read_table_tolerant(dump, "T_OPC")?,
+            ..Self::blank()
+        })
+    }
+
+    fn load_compositions(dump: &[u8]) -> Result<Self, ExpError> {
+        Self::pin(dump)?;
+        Ok(Self {
+            nozzle: read_table_tolerant(dump, "T_NOZZLE")?,
+            note: read_table_tolerant(dump, "T_NOTE")?,
+            itemnote: read_table_tolerant(dump, "T_ITEMNOTE")?,
+            ..Self::blank()
+        })
+    }
+
+    fn load_opc(dump: &[u8]) -> Result<Self, ExpError> {
+        Self::pin(dump)?;
+        Ok(Self {
+            opc: read_table_tolerant(dump, "T_OPC")?,
+            representation: read_table_tolerant(dump, "T_REPRESENTATION")?,
+            modelitem: read_table_tolerant(dump, "T_MODELITEM")?,
+            ..Self::blank()
+        })
+    }
+}
+
 /// Read `T_PIPINGPOINT` and `T_SIGNALPOINT`.
 ///
 /// `APPLICATIONS` is pinned first. A dump that fails the pin returns
@@ -121,19 +273,10 @@ pub struct DrawingPorts {
 ///
 /// Returns [`ExpError::FormatUnpinned`] when the pin fails, and
 /// [`ExpError::Table`] when a table's bytes are not the pinned format.
+/// Loads `APPLICATIONS` and the two port tables, then
+/// [`ExpTables::port_tables`].
 pub fn read_port_tables(dump: &[u8]) -> Result<PortTables, ExpError> {
-    let applications = read_table(dump, "APPLICATIONS")?;
-    if !applications_pinned(&applications) {
-        return Err(ExpError::FormatUnpinned);
-    }
-    let piping = read_table(dump, "T_PIPINGPOINT")?;
-    let signal = read_table(dump, "T_SIGNALPOINT")?;
-    Ok(PortTables {
-        piping_row_count: piping.rows.len(),
-        signal_row_count: signal.rows.len(),
-        piping_points: project_piping(&piping)?,
-        signal_points: project_signal(&signal)?,
-    })
+    ExpTables::load_ports(dump)?.port_tables()
 }
 
 /// UIDs [`super::pid_load::load_publish_from_pid`] emits as model items.
@@ -325,6 +468,15 @@ enum Field {
 struct Table {
     columns: Vec<Column>,
     rows: Vec<Vec<Field>>,
+}
+
+impl Table {
+    fn blank() -> Self {
+        Self {
+            columns: Vec::new(),
+            rows: Vec::new(),
+        }
+    }
 }
 
 fn applications_pinned(table: &Table) -> bool {
@@ -661,132 +813,141 @@ fn find_slice(hay: &[u8], needle: &[u8]) -> Option<usize> {
 /// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not pin
 /// the row format, and [`ExpError::Table`] when a followed table is not
 /// that format. `T_REPRESENTATION` and `T_OPC` contain a date and a
-/// byte-string column; those cells are skipped.
+/// byte-string column; those cells are skipped. The rows are
+/// [`ExpTables::connectivity_ends`] after this function has loaded the
+/// tables.
 pub fn connectivity_ends_for_drawing(
     dump: &[u8],
     drawing_uid: &str,
 ) -> Result<Vec<ConnectivityEnd>, ExpError> {
-    let applications = read_table(dump, "APPLICATIONS")?;
-    if !applications_pinned(&applications) {
-        return Err(ExpError::FormatUnpinned);
-    }
-    let drawing_uid = norm_uid(drawing_uid);
-    let connector = read_table_tolerant(dump, "T_CONNECTOR")?;
-    let reps = read_table_tolerant(dump, "T_REPRESENTATION")?;
-    let piping = read_table(dump, "T_PIPINGPOINT")?;
-    let signal = read_table(dump, "T_SIGNALPOINT")?;
-    let runs = read_table(dump, "T_PIPERUN")?;
-    let signal_runs = read_table(dump, "T_SIGNALRUN")?;
-    let opc = read_table_tolerant(dump, "T_OPC")?;
+    ExpTables::load_connectivity(dump)?.connectivity_ends(drawing_uid)
+}
 
-    let mut rep_of = HashMap::<String, (String, String)>::new();
-    let rep_id = column_index(&reps, "SP_ID")?;
-    let rep_model = column_index(&reps, "SP_MODELITEMID")?;
-    let rep_drawing = column_index(&reps, "SP_DRAWINGID")?;
-    for row in &reps.rows {
-        let Some(id) = text_of(row, rep_id) else {
-            continue;
-        };
-        rep_of.insert(
-            norm_uid(id),
-            (
-                text_of(row, rep_model).map(norm_uid).unwrap_or_default(),
-                text_of(row, rep_drawing).map(norm_uid).unwrap_or_default(),
-            ),
-        );
-    }
-    let pipe_pts = point_keys(&piping, "SP_PLANTITEMID", "PIPINGPOINTNUMBER")?;
-    let sig_pts = point_keys(&signal, "SP_PLANTITEMID", "SIGNALPOINTNUMBER")?;
-    let run_ids = id_set(&runs, "SP_ID")?;
-    let srun_ids = id_set(&signal_runs, "SP_ID")?;
-    let mut opc_pair = HashMap::<String, Option<String>>::new();
-    let opc_id = column_index(&opc, "SP_ID")?;
-    let opc_paired = column_index(&opc, "SP_PAIREDWITHID")?;
-    for row in &opc.rows {
-        let Some(id) = text_of(row, opc_id) else {
-            continue;
-        };
-        let other = text_of(row, opc_paired)
-            .map(norm_uid)
-            .filter(|text| !text.is_empty());
-        opc_pair.insert(norm_uid(id), other);
-    }
+impl ExpTables {
+    /// Connectivity ends of one drawing, from tables already read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when a followed table is missing a column.
+    pub fn connectivity_ends(&self, drawing_uid: &str) -> Result<Vec<ConnectivityEnd>, ExpError> {
+        let drawing_uid = norm_uid(drawing_uid);
+        let connector = &self.connector;
+        let reps = &self.representation;
+        let piping = &self.piping_point;
+        let signal = &self.signal_point;
+        let runs = &self.piperun;
+        let signal_runs = &self.signalrun;
+        let opc = &self.opc;
 
-    let sp_id = column_index(&connector, "SP_ID")?;
-    let item1 = column_index(&connector, "SP_CONNECTITEM1ID")?;
-    let item2 = column_index(&connector, "SP_CONNECTITEM2ID")?;
-    let start_object = column_index(&connector, "STARTOBJECT")?;
-    let end_object = column_index(&connector, "ENDOBJECT")?;
-    let mut ends: HashMap<(String, String), ConnectivityEnd> = HashMap::new();
-    let index = EndIndex {
-        rep_of: &rep_of,
-        pipe_pts: &pipe_pts,
-        sig_pts: &sig_pts,
-        run_ids: &run_ids,
-        srun_ids: &srun_ids,
-        opc_pair: &opc_pair,
-    };
-    for row in &connector.rows {
-        let Some(connector_id) = text_of(row, sp_id) else {
-            continue;
-        };
-        let Some((model, drawing)) = rep_of.get(&norm_uid(connector_id)) else {
-            continue;
-        };
-        if drawing != &drawing_uid {
-            continue;
-        }
-        let run_uid = if run_ids.contains(model) || srun_ids.contains(model) {
-            model.clone()
-        } else {
-            continue;
-        };
-        let sides = [
-            (true, text_of(row, item1), int_of(row, start_object)),
-            (false, text_of(row, item2), int_of(row, end_object)),
-        ];
-        for (is_start, item, object_index) in sides {
-            let Some(item_id) = item else {
+        let mut rep_of = HashMap::<String, (String, String)>::new();
+        let rep_id = column_index(reps, "SP_ID")?;
+        let rep_model = column_index(reps, "SP_MODELITEMID")?;
+        let rep_drawing = column_index(reps, "SP_DRAWINGID")?;
+        for row in &reps.rows {
+            let Some(id) = text_of(row, rep_id) else {
                 continue;
             };
-            for symbol in symbol_uids(&index, &norm_uid(item_id), object_index) {
-                let entry = ends
-                    .entry((symbol.clone(), run_uid.clone()))
-                    .or_insert_with(|| ConnectivityEnd {
-                        symbol_uid: symbol,
-                        run_uid: run_uid.clone(),
-                        on_start: false,
-                        on_end: false,
-                        def_uid: "",
-                    });
-                if is_start {
-                    entry.on_start = true;
-                } else {
-                    entry.on_end = true;
+            rep_of.insert(
+                norm_uid(id),
+                (
+                    text_of(row, rep_model).map(norm_uid).unwrap_or_default(),
+                    text_of(row, rep_drawing).map(norm_uid).unwrap_or_default(),
+                ),
+            );
+        }
+        let pipe_pts = point_keys(piping, "SP_PLANTITEMID", "PIPINGPOINTNUMBER")?;
+        let sig_pts = point_keys(signal, "SP_PLANTITEMID", "SIGNALPOINTNUMBER")?;
+        let run_ids = id_set(runs, "SP_ID")?;
+        let srun_ids = id_set(signal_runs, "SP_ID")?;
+        let mut opc_pair = HashMap::<String, Option<String>>::new();
+        let opc_id = column_index(opc, "SP_ID")?;
+        let opc_paired = column_index(opc, "SP_PAIREDWITHID")?;
+        for row in &opc.rows {
+            let Some(id) = text_of(row, opc_id) else {
+                continue;
+            };
+            let other = text_of(row, opc_paired)
+                .map(norm_uid)
+                .filter(|text| !text.is_empty());
+            opc_pair.insert(norm_uid(id), other);
+        }
+
+        let sp_id = column_index(connector, "SP_ID")?;
+        let item1 = column_index(connector, "SP_CONNECTITEM1ID")?;
+        let item2 = column_index(connector, "SP_CONNECTITEM2ID")?;
+        let start_object = column_index(connector, "STARTOBJECT")?;
+        let end_object = column_index(connector, "ENDOBJECT")?;
+        let mut ends: HashMap<(String, String), ConnectivityEnd> = HashMap::new();
+        let index = EndIndex {
+            rep_of: &rep_of,
+            pipe_pts: &pipe_pts,
+            sig_pts: &sig_pts,
+            run_ids: &run_ids,
+            srun_ids: &srun_ids,
+            opc_pair: &opc_pair,
+        };
+        for row in &connector.rows {
+            let Some(connector_id) = text_of(row, sp_id) else {
+                continue;
+            };
+            let Some((model, drawing)) = rep_of.get(&norm_uid(connector_id)) else {
+                continue;
+            };
+            if drawing != &drawing_uid {
+                continue;
+            }
+            let run_uid = if run_ids.contains(model) || srun_ids.contains(model) {
+                model.clone()
+            } else {
+                continue;
+            };
+            let sides = [
+                (true, text_of(row, item1), int_of(row, start_object)),
+                (false, text_of(row, item2), int_of(row, end_object)),
+            ];
+            for (is_start, item, object_index) in sides {
+                let Some(item_id) = item else {
+                    continue;
+                };
+                for symbol in symbol_uids(&index, &norm_uid(item_id), object_index) {
+                    let entry = ends
+                        .entry((symbol.clone(), run_uid.clone()))
+                        .or_insert_with(|| ConnectivityEnd {
+                            symbol_uid: symbol,
+                            run_uid: run_uid.clone(),
+                            on_start: false,
+                            on_end: false,
+                            def_uid: "",
+                        });
+                    if is_start {
+                        entry.on_start = true;
+                    } else {
+                        entry.on_end = true;
+                    }
                 }
             }
         }
+        // The sides an item was seen on, per run. A port's item is its
+        // parent; a `.BPT` and an OPC are items of their own.
+        let mut item_sides: HashMap<(String, String), (bool, bool)> = HashMap::new();
+        for ((symbol, run), end) in &ends {
+            let sides = item_sides
+                .entry((item_of_symbol(symbol), run.clone()))
+                .or_default();
+            sides.0 |= end.on_start;
+            sides.1 |= end.on_end;
+        }
+        for ((symbol, run), end) in &mut ends {
+            let (item_start, item_end) = item_sides[&(item_of_symbol(symbol), run.clone())];
+            end.def_uid =
+                connectivity_def_uid(run_ids.contains(run), item_start && item_end, end.on_start);
+        }
+        let mut list: Vec<ConnectivityEnd> = ends.into_values().collect();
+        list.sort_by(|left, right| {
+            (&left.symbol_uid, &left.run_uid).cmp(&(&right.symbol_uid, &right.run_uid))
+        });
+        Ok(list)
     }
-    // The sides an item was seen on, per run. A port's item is its
-    // parent; a `.BPT` and an OPC are items of their own.
-    let mut item_sides: HashMap<(String, String), (bool, bool)> = HashMap::new();
-    for ((symbol, run), end) in &ends {
-        let sides = item_sides
-            .entry((item_of_symbol(symbol), run.clone()))
-            .or_default();
-        sides.0 |= end.on_start;
-        sides.1 |= end.on_end;
-    }
-    for ((symbol, run), end) in &mut ends {
-        let (item_start, item_end) = item_sides[&(item_of_symbol(symbol), run.clone())];
-        end.def_uid =
-            connectivity_def_uid(run_ids.contains(run), item_start && item_end, end.on_start);
-    }
-    let mut list: Vec<ConnectivityEnd> = ends.into_values().collect();
-    list.sort_by(|left, right| {
-        (&left.symbol_uid, &left.run_uid).cmp(&(&right.symbol_uid, &right.run_uid))
-    });
-    Ok(list)
 }
 
 /// Nozzle compositions and item notes in the dump.
@@ -805,57 +966,65 @@ pub fn connectivity_ends_for_drawing(
 /// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not pin
 /// the row format, and [`ExpError::Table`] when a followed table is not
 /// that format. `T_NOTE` has a byte-string and date columns; those cells
-/// are skipped.
+/// are skipped. The rows are [`ExpTables::composition_relations`] after
+/// this function has loaded the tables.
 pub fn composition_relations(dump: &[u8]) -> Result<Vec<ExpRelation>, ExpError> {
-    let applications = read_table(dump, "APPLICATIONS")?;
-    if !applications_pinned(&applications) {
-        return Err(ExpError::FormatUnpinned);
-    }
-    let nozzles = read_table_tolerant(dump, "T_NOZZLE")?;
-    let notes = read_table_tolerant(dump, "T_NOTE")?;
-    let item_notes = read_table_tolerant(dump, "T_ITEMNOTE")?;
-    let item_note_ids = id_set(&item_notes, "SP_ID")?;
+    ExpTables::load_compositions(dump)?.composition_relations()
+}
 
-    let mut rels = Vec::new();
-    let nozzle_id = column_index(&nozzles, "SP_ID")?;
-    let equipment_id = column_index(&nozzles, "SP_EQUIPMENTID")?;
-    for row in &nozzles.rows {
-        let Some(nozzle) = text_of(row, nozzle_id) else {
-            continue;
-        };
-        let Some(equipment) = text_of(row, equipment_id) else {
-            continue;
-        };
-        rels.push(ExpRelation {
-            def_uid: "EquipmentComponentComposition",
-            uid1: norm_uid(nozzle),
-            uid2: norm_uid(equipment),
-        });
-    }
-    let note_id = column_index(&notes, "SP_ITEMNOTEID")?;
-    let model_id = column_index(&notes, "SP_MODELITEMID")?;
-    for row in &notes.rows {
-        let Some(note) = text_of(row, note_id) else {
-            continue;
-        };
-        let Some(model) = text_of(row, model_id) else {
-            continue;
-        };
-        let model = norm_uid(model);
-        if item_note_ids.contains(&model) {
-            continue;
+impl ExpTables {
+    /// Nozzle and note relations from tables already read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when a followed table is missing a column.
+    pub fn composition_relations(&self) -> Result<Vec<ExpRelation>, ExpError> {
+        let nozzles = &self.nozzle;
+        let notes = &self.note;
+        let item_notes = &self.itemnote;
+        let item_note_ids = id_set(item_notes, "SP_ID")?;
+
+        let mut rels = Vec::new();
+        let nozzle_id = column_index(nozzles, "SP_ID")?;
+        let equipment_id = column_index(nozzles, "SP_EQUIPMENTID")?;
+        for row in &nozzles.rows {
+            let Some(nozzle) = text_of(row, nozzle_id) else {
+                continue;
+            };
+            let Some(equipment) = text_of(row, equipment_id) else {
+                continue;
+            };
+            rels.push(ExpRelation {
+                def_uid: "EquipmentComponentComposition",
+                uid1: norm_uid(nozzle),
+                uid2: norm_uid(equipment),
+            });
         }
-        rels.push(ExpRelation {
-            def_uid: "PBSItemNotes",
-            uid1: norm_uid(note),
-            uid2: model,
+        let note_id = column_index(notes, "SP_ITEMNOTEID")?;
+        let model_id = column_index(notes, "SP_MODELITEMID")?;
+        for row in &notes.rows {
+            let Some(note) = text_of(row, note_id) else {
+                continue;
+            };
+            let Some(model) = text_of(row, model_id) else {
+                continue;
+            };
+            let model = norm_uid(model);
+            if item_note_ids.contains(&model) {
+                continue;
+            }
+            rels.push(ExpRelation {
+                def_uid: "PBSItemNotes",
+                uid1: norm_uid(note),
+                uid2: model,
+            });
+        }
+        rels.sort_by(|left, right| {
+            (left.def_uid, &left.uid1, &left.uid2).cmp(&(right.def_uid, &right.uid1, &right.uid2))
         });
+        rels.dedup();
+        Ok(rels)
     }
-    rels.sort_by(|left, right| {
-        (left.def_uid, &left.uid1, &left.uid2).cmp(&(right.def_uid, &right.uid1, &right.uid2))
-    });
-    rels.dedup();
-    Ok(rels)
 }
 
 /// Off-page connectors drawn on `drawing_uid`.
@@ -871,95 +1040,103 @@ pub fn composition_relations(dump: &[u8]) -> Result<Vec<ExpRelation>, ExpError> 
 ///
 /// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not pin
 /// the row format, and [`ExpError::Table`] when a followed table is not
-/// that format. Byte-string and date cells are skipped.
+/// that format. Byte-string and date cells are skipped. The rows are
+/// [`ExpTables::opc_points`] after this function has loaded the tables.
 pub fn opc_points_for_drawing(
     dump: &[u8],
     drawing_uid: &str,
 ) -> Result<Vec<PidOpcPoint>, ExpError> {
-    let applications = read_table(dump, "APPLICATIONS")?;
-    if !applications_pinned(&applications) {
-        return Err(ExpError::FormatUnpinned);
-    }
-    let drawing_uid = norm_uid(drawing_uid);
-    let opc = read_table_tolerant(dump, "T_OPC")?;
-    let reps = read_table_tolerant(dump, "T_REPRESENTATION")?;
-    let models = read_table_tolerant(dump, "T_MODELITEM")?;
+    ExpTables::load_opc(dump)?.opc_points(drawing_uid)
+}
 
-    let opc_id = column_index(&opc, "SP_ID")?;
-    let opc_paired = column_index(&opc, "SP_PAIREDWITHID")?;
-    let opc_tag = column_index(&opc, "OPCTAG")?;
-    let opc_text = column_index(&opc, "TOFROMTEXT")?;
-    let mut rows_of = HashMap::<String, (String, String, String)>::new();
-    for row in &opc.rows {
-        let Some(id) = text_of(row, opc_id) else {
-            continue;
-        };
-        rows_of.insert(
-            norm_uid(id),
-            (
-                text_of(row, opc_paired).map(norm_uid).unwrap_or_default(),
-                text_of(row, opc_tag).unwrap_or("").to_string(),
-                text_of(row, opc_text).unwrap_or("").to_string(),
-            ),
-        );
-    }
-    let model_id = column_index(&models, "SP_ID")?;
-    let model_description = column_index(&models, "DESCRIPTION")?;
-    let mut descriptions = HashMap::<String, String>::new();
-    for row in &models.rows {
-        let Some(id) = text_of(row, model_id) else {
-            continue;
-        };
-        if let Some(description) = text_of(row, model_description) {
-            descriptions.insert(norm_uid(id), description.to_string());
-        }
-    }
+impl ExpTables {
+    /// Off-page connectors of one drawing, from tables already read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpError::Table`] when a followed table is missing a column.
+    pub fn opc_points(&self, drawing_uid: &str) -> Result<Vec<PidOpcPoint>, ExpError> {
+        let drawing_uid = norm_uid(drawing_uid);
+        let opc = &self.opc;
+        let reps = &self.representation;
+        let models = &self.modelitem;
 
-    let rep_id = column_index(&reps, "SP_ID")?;
-    let rep_model = column_index(&reps, "SP_MODELITEMID")?;
-    let rep_drawing = column_index(&reps, "SP_DRAWINGID")?;
-    let mut points = Vec::new();
-    for row in &reps.rows {
-        if text_of(row, rep_drawing).map(norm_uid).as_deref() != Some(drawing_uid.as_str()) {
-            continue;
+        let opc_id = column_index(opc, "SP_ID")?;
+        let opc_paired = column_index(opc, "SP_PAIREDWITHID")?;
+        let opc_tag = column_index(opc, "OPCTAG")?;
+        let opc_text = column_index(opc, "TOFROMTEXT")?;
+        let mut rows_of = HashMap::<String, (String, String, String)>::new();
+        for row in &opc.rows {
+            let Some(id) = text_of(row, opc_id) else {
+                continue;
+            };
+            rows_of.insert(
+                norm_uid(id),
+                (
+                    text_of(row, opc_paired).map(norm_uid).unwrap_or_default(),
+                    text_of(row, opc_tag).unwrap_or("").to_string(),
+                    text_of(row, opc_text).unwrap_or("").to_string(),
+                ),
+            );
         }
-        let Some(model) = text_of(row, rep_model).map(norm_uid) else {
-            continue;
-        };
-        let Some((paired, tag, to_from)) = rows_of.get(&model) else {
-            continue;
-        };
-        let Some(representation) = text_of(row, rep_id) else {
-            continue;
-        };
-        let other = rows_of.get(paired);
-        let name = if !tag.is_empty() {
-            tag.clone()
-        } else {
-            other.map(|(_, tag, _)| tag.clone()).unwrap_or_default()
-        };
-        let to_from_text = if !to_from.is_empty() {
-            to_from.clone()
-        } else {
-            other.map(|(_, _, text)| text.clone()).unwrap_or_default()
-        };
-        let description = descriptions
-            .get(&model)
-            .cloned()
-            .filter(|text| !text.is_empty())
-            .or_else(|| descriptions.get(paired).cloned())
-            .unwrap_or_default();
-        points.push(PidOpcPoint {
-            uid: lesser_id(&model, paired),
-            representation_uid: norm_uid(representation),
-            name,
-            description,
-            to_from_text,
-        });
+        let model_id = column_index(models, "SP_ID")?;
+        let model_description = column_index(models, "DESCRIPTION")?;
+        let mut descriptions = HashMap::<String, String>::new();
+        for row in &models.rows {
+            let Some(id) = text_of(row, model_id) else {
+                continue;
+            };
+            if let Some(description) = text_of(row, model_description) {
+                descriptions.insert(norm_uid(id), description.to_string());
+            }
+        }
+
+        let rep_id = column_index(reps, "SP_ID")?;
+        let rep_model = column_index(reps, "SP_MODELITEMID")?;
+        let rep_drawing = column_index(reps, "SP_DRAWINGID")?;
+        let mut points = Vec::new();
+        for row in &reps.rows {
+            if text_of(row, rep_drawing).map(norm_uid).as_deref() != Some(drawing_uid.as_str()) {
+                continue;
+            }
+            let Some(model) = text_of(row, rep_model).map(norm_uid) else {
+                continue;
+            };
+            let Some((paired, tag, to_from)) = rows_of.get(&model) else {
+                continue;
+            };
+            let Some(representation) = text_of(row, rep_id) else {
+                continue;
+            };
+            let other = rows_of.get(paired);
+            let name = if !tag.is_empty() {
+                tag.clone()
+            } else {
+                other.map(|(_, tag, _)| tag.clone()).unwrap_or_default()
+            };
+            let to_from_text = if !to_from.is_empty() {
+                to_from.clone()
+            } else {
+                other.map(|(_, _, text)| text.clone()).unwrap_or_default()
+            };
+            let description = descriptions
+                .get(&model)
+                .cloned()
+                .filter(|text| !text.is_empty())
+                .or_else(|| descriptions.get(paired).cloned())
+                .unwrap_or_default();
+            points.push(PidOpcPoint {
+                uid: lesser_id(&model, paired),
+                representation_uid: norm_uid(representation),
+                name,
+                description,
+                to_from_text,
+            });
+        }
+        points.sort_by(|left, right| left.uid.cmp(&right.uid));
+        points.dedup_by(|left, right| left.uid == right.uid);
+        Ok(points)
     }
-    points.sort_by(|left, right| left.uid.cmp(&right.uid));
-    points.dedup_by(|left, right| left.uid == right.uid);
-    Ok(points)
 }
 
 /// The item a symbol end belongs to: a port's parent (`PARENT.N` → `PARENT`),
@@ -1382,6 +1559,231 @@ mod tests {
         }
         out.extend(0xFFFFu16.to_le_bytes());
         out
+    }
+
+    fn date(name: &'static str) -> Col {
+        Col { name, kind: 12 }
+    }
+
+    fn one() -> Vec<u8> {
+        vec![0xc1, 0x02]
+    }
+
+    // One ExpTables serves two drawings. The fragment also stores CODELISTS
+    // and T_DRAWING; the drawing table has a date column.
+    #[test]
+    fn one_exp_tables_serves_two_drawings() {
+        let mut dump = table(
+            "APPLICATIONS",
+            &[num("ID"), ch("NAME"), ch("SHORTNAME")],
+            &[row(&[
+                Some(one()),
+                Some(utf16("SmartPlant PID")),
+                Some(utf16("SPPID")),
+            ])],
+        );
+        dump.extend(table(
+            "T_PIPINGPOINT",
+            &[
+                ch("SP_PLANTITEMID"),
+                num("PIPINGPOINTNUMBER"),
+                num("FLOWDIRECTION"),
+                num("NOMINALDIAMETER"),
+            ],
+            &[
+                row(&[Some(utf16("PARENT1")), Some(one()), None, None]),
+                row(&[Some(utf16("PARENT2")), Some(one()), None, None]),
+            ],
+        ));
+        dump.extend(table(
+            "T_SIGNALPOINT",
+            &[ch("SP_PLANTITEMID"), num("SIGNALPOINTNUMBER")],
+            &[],
+        ));
+        dump.extend(table(
+            "T_CONNECTOR",
+            &[
+                ch("SP_ID"),
+                ch("SP_CONNECTITEM1ID"),
+                ch("SP_CONNECTITEM2ID"),
+                num("STARTOBJECT"),
+                num("ENDOBJECT"),
+            ],
+            &[
+                row(&[
+                    Some(utf16("CONN1")),
+                    Some(utf16("ITEMA")),
+                    None,
+                    Some(one()),
+                    None,
+                ]),
+                row(&[
+                    Some(utf16("CONN2")),
+                    Some(utf16("ITEMB")),
+                    None,
+                    Some(one()),
+                    None,
+                ]),
+            ],
+        ));
+        dump.extend(table(
+            "T_REPRESENTATION",
+            &[ch("SP_ID"), ch("SP_MODELITEMID"), ch("SP_DRAWINGID")],
+            &[
+                row(&[
+                    Some(utf16("CONN1")),
+                    Some(utf16("RUN1")),
+                    Some(utf16("DRAW1")),
+                ]),
+                row(&[
+                    Some(utf16("ITEMA")),
+                    Some(utf16("PARENT1")),
+                    Some(utf16("DRAW1")),
+                ]),
+                row(&[
+                    Some(utf16("CONN2")),
+                    Some(utf16("RUN2")),
+                    Some(utf16("DRAW2")),
+                ]),
+                row(&[
+                    Some(utf16("ITEMB")),
+                    Some(utf16("PARENT2")),
+                    Some(utf16("DRAW2")),
+                ]),
+            ],
+        ));
+        dump.extend(table(
+            "T_PIPERUN",
+            &[ch("SP_ID")],
+            &[row(&[Some(utf16("RUN1"))]), row(&[Some(utf16("RUN2"))])],
+        ));
+        dump.extend(table("T_SIGNALRUN", &[ch("SP_ID")], &[]));
+        dump.extend(table(
+            "T_OPC",
+            &[
+                ch("SP_ID"),
+                ch("SP_PAIREDWITHID"),
+                ch("OPCTAG"),
+                ch("TOFROMTEXT"),
+            ],
+            &[],
+        ));
+        dump.extend(table("T_NOZZLE", &[ch("SP_ID"), ch("SP_EQUIPMENTID")], &[]));
+        dump.extend(table(
+            "T_NOTE",
+            &[ch("SP_ITEMNOTEID"), ch("SP_MODELITEMID")],
+            &[],
+        ));
+        dump.extend(table("T_ITEMNOTE", &[ch("SP_ID")], &[]));
+        dump.extend(table("T_MODELITEM", &[ch("SP_ID"), ch("DESCRIPTION")], &[]));
+        dump.extend(table(
+            "CODELISTS",
+            &[
+                num("CODELIST_NUMBER"),
+                num("CODELIST_INDEX"),
+                ch("CODELIST_TEXT"),
+                ch("CODELIST_SHORT_TEXT"),
+                num("CODELIST_CONSTRAINT"),
+                num("CODELIST_SORT_VALUE"),
+                num("CODELIST_ENTRY_DISABLED"),
+            ],
+            &[row(&[
+                Some(one()),
+                Some(one()),
+                Some(utf16("code")),
+                Some(utf16("CI")),
+                None,
+                None,
+                None,
+            ])],
+        ));
+        dump.extend(table(
+            "T_DRAWING",
+            &[
+                ch("SP_ID"),
+                ch("NAME"),
+                ch("PATH"),
+                ch("DRAWINGNUMBER"),
+                ch("SP_PLANTGROUPID"),
+                date("DATECREATED"),
+            ],
+            &[
+                row(&[
+                    Some(utf16("DRAW1")),
+                    Some(utf16("one")),
+                    Some(utf16("\\a.pid")),
+                    Some(utf16("D-1")),
+                    Some(utf16("G1")),
+                    None,
+                ]),
+                row(&[
+                    Some(utf16("DRAW2")),
+                    Some(utf16("two")),
+                    Some(utf16("\\b.pid")),
+                    Some(utf16("D-2")),
+                    Some(utf16("G1")),
+                    None,
+                ]),
+            ],
+        ));
+
+        let tables = ExpTables::read(&dump).unwrap();
+        assert_eq!(tables.codelist_row_count(), 1);
+        assert_eq!(tables.drawing_row_count(), 2);
+        let ports = tables.port_tables().unwrap();
+        assert_eq!(ports.piping_points.len(), 2);
+        assert_eq!(ports.signal_points.len(), 0);
+
+        let first = tables.connectivity_ends("DRAW1").unwrap();
+        let second = tables.connectivity_ends("DRAW2").unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].symbol_uid, "PARENT1.1");
+        assert_eq!(first[0].run_uid, "RUN1");
+        assert_eq!(first[0].def_uid, "PipingEnd1Conn");
+        assert!(first[0].on_start);
+        assert!(!first[0].on_end);
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].symbol_uid, "PARENT2.1");
+        assert_eq!(second[0].run_uid, "RUN2");
+        assert!(tables.composition_relations().unwrap().is_empty());
+        assert!(tables.opc_points("DRAW1").unwrap().is_empty());
+        assert!(tables.opc_points("DRAW2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn exp_tables_refuses_an_unpinned_dump_before_other_tables() {
+        let dump = table(
+            "APPLICATIONS",
+            &[num("ID"), ch("NAME"), ch("SHORTNAME")],
+            &[row(&[
+                Some(vec![0xc1, 0x03]),
+                Some(utf16("SmartPlant PID")),
+                Some(utf16("SPPID")),
+            ])],
+        );
+        let Err(error) = ExpTables::read(&dump) else {
+            panic!("unpinned dump was read");
+        };
+        assert!(matches!(error, ExpError::FormatUnpinned), "{error}");
+        assert!(!error.to_string().contains("T_PIPINGPOINT"));
+    }
+
+    #[test]
+    fn exp_tables_reads_the_backup_dump_once() {
+        let dump_path = std::path::PathBuf::from(r"D:\work\cad\pid-test-data\Export.dmp");
+        if !dump_path.is_file() {
+            eprintln!("skip: oracle exp corpus is missing");
+            return;
+        }
+        let dump = std::fs::read(&dump_path).unwrap();
+        let tables = ExpTables::read(&dump).unwrap();
+        assert_eq!(tables.drawing_row_count(), 53);
+        assert!(tables.codelist_row_count() > 0);
+        let ports = tables.port_tables().unwrap();
+        assert_eq!(ports.piping_row_count, 9_628);
+        assert_eq!(ports.signal_row_count, 22_057);
+        let from_dump = read_port_tables(&dump).unwrap();
+        assert_eq!(ports, from_dump);
     }
 
     #[test]

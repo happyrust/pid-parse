@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### publish 从 Oracle exp 一次读表、挂多张图（2026-10-13，N9-1）
+
+计划 `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-1（Q1–Q7 的批复在它的 §3.1）。只改 `src/publish/oracle_exp.rs`。行为不变：不给 `--oracle-exp` 时输出与原来逐字节相同，给了也与 N8（`353186a`）逐字节相同。N9-2 / N9-3 要的表这单只读进来，不用。
+
+- `ExpTables::read(dump)` 先钉 `APPLICATIONS`（钉不住回 `FormatUnpinned`，后面的表不读），再一次读入四个入口要的 11 张表：`T_PIPINGPOINT` / `T_SIGNALPOINT` / `T_CONNECTOR` / `T_REPRESENTATION` / `T_PIPERUN` / `T_SIGNALRUN` / `T_OPC` / `T_NOZZLE` / `T_NOTE` / `T_ITEMNOTE` / `T_MODELITEM`（N9 计划说的 12 张是连 `APPLICATIONS` 一起数的），外加第一份 `CODELISTS`（N9-2 要）和 `T_DRAWING`（N9-3 要；有日期列，走 `read_table_tolerant`）。四个入口搬到 `ExpTables` 上：`port_tables` / `connectivity_ends(drawing_uid)` / `composition_relations` / `opc_points(drawing_uid)`；另给 `codelist_row_count` / `drawing_row_count`。
+- 原来吃 `dump: &[u8]` 的 `read_port_tables` / `connectivity_ends_for_drawing` / `composition_relations` / `opc_points_for_drawing` 保留为薄封装：各自只读原来那几张表建一份部分 `ExpTables`，再调上面的同名方法，单张模式读的表没有变多。`pid_publish_xml` 单张调用没改。
+- 单测 10 → 13：`exp_tables_reads_the_backup_dump_once`（实包 `Export.dmp`：`T_DRAWING` 53 行，端口 9 628 / 22 057 与 `read_port_tables` 相等）、`one_exp_tables_serves_two_drawings`（手造片段，同一份 `ExpTables` 挂 `DRAW1` / `DRAW2`，连通各 1 条 `PipingEnd1Conn`）、`exp_tables_refuses_an_unpinned_dump_before_other_tables`。既有单测不动。
+- I井场 exp 模式：对象 3 014、值 3 188、关系 4 001 不动，错 0。`--oracle-exp --diff-against --plant P01` 退出 0；写到临时目录的三件与 `publish\` 现有三件 SHA256 相同（N9 §7），`publish\` 没改（I井场三件仍是 11:50:22，另外 4 张图三件仍是 11:40:21）。`.pid` 模式五组钉数不动。
+- 验证（2026-10-13 落地时实跑，N9 §7，全部退出 0）：`cargo test --locked -p pid-parse --lib --bins --tests`（`--lib` 1 203 过 / 0 败，`publish_from_pid` 6 过）；`--no-default-features` 同范围（`--lib` 850 过）；`cargo test --locked --workspace --lib --bins --tests`；clippy `-D warnings` 两种特性在 `-p pid-parse --lib --bins --tests` 零告警；rustfmt 干净；`cargo rustdoc --locked -p pid-parse --lib -- -W missing-docs` 0；wasm32 lib check 过；`--all-targets --no-run` 退出 0，探针不跑。提交前（2026-10-13 22:3x）复跑：`--lib publish::oracle_exp` 13 过 / 0 败、`--test publish_from_pid` 6 过 / 0 败，clippy 两种特性零告警，`cargo fmt --all -- --check` 干净，missing-docs 0 = 基线 0。
+
 ### publish 用 `--oracle-exp` 发出 I井场的两个 OPC 分支点（2026-10-13，N8）
 
 `T_REPRESENTATION` 里画在本图、物项在 `T_OPC` 的，发出 `PIDBranchPoint`。UID 是这对 Id 里较小的那个（和连通端同一个）。`Name` 是画出那一侧的 `OPCTAG`，`Description` 是它的 `T_MODELITEM.DESCRIPTION`，`ToFromText` 是它的 `TOFROMTEXT`；画出那一侧空了才用另一侧。表示不在本 `.pid` 里的不发。不给 `--oracle-exp` 时 OPC 仍不分类，输出与原来逐字节相同。
