@@ -171,7 +171,7 @@ fn attr(start: &quick_xml::events::BytesStart<'_>, key: &[u8]) -> Option<String>
             attribute
                 .unescape_value()
                 .ok()
-                .map(|value| value.into_owned())
+                .map(std::borrow::Cow::into_owned)
         } else {
             None
         }

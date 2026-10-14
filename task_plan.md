@@ -4,6 +4,9 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-14 · 分析页 `docs/analysis/n10-meta-rows.md` N10（`4866b81` + Q5–Q7 批复）**：
+`write_pid_meta_xml` 改调 `write_meta_xml`，用 `derive_meta_uid` 写出 `DocumentVersion`、`DocumentRevision`、`File` 和 3 条关系（`VersionedDoc`、`RevisedDocument`、`FileComposition`），`_Index.json` 增加 `"pipeline_uids": "synthesized" | "not synthesized"`。只读探针 `examples/probe_oracle_exp_drawing_meta.rs` 核对 `Export.dmp`：`T_DRAWING`（53 行）的 `VERSION` / `REVISION` / `LASTPUBLISHTIME` / `SP_LASTEFPUBLISHTIME` 全为 NULL，`DATECREATED` 与 `PATH` 53/53 非空；`T_DRAWINGVERSION`（15 行）全为已删旧图的 `Created for Delete` 快照，现存 53 张命中 0；`T_REVISION` 0 行；5 份参考 `_Meta.xml` 的 30 个 UID、`DocVersionDate`、`FilePath` 在 `Export.dmp` 与 `.pid` 中 0 命中。Q5–Q7 批复保持 `4866b81` 口径（`DocVersionDate=""`、`FilePath=""`）。清掉 `src/publish/pid_writer.rs` 与 `src/backup/datamap.rs` 的 3 条 clippy / rustdoc 告警；clippy 默认特性、`--no-default-features`、`--example probe_oracle_exp_drawing_meta` 零告警，rustfmt 干净，rustdoc missing-docs 0，wasm32 lib check 过，`--lib publish::` 237 过、`--lib backup::` 107 过、`--test publish_from_pid` 8 过。
+
 **2026-10-14 · 计划 `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-2**：
 目录发布对非空图调用 `attach_pipelines`。名字、UUID v5、`FluidSystem` 映射和 `PCN` 关系见 `docs/analysis/n6-pipeline-rows.md`「合成」。I井场仍钉对象 3 093、值 3 346、关系 4 107，按名 79 / 106，`FluidSystem` 多 23（本轮没重跑这条库测）。整包实测：53 / 53、失败 0、空图 2；51 张对象 80 085、值 87 419、关系 106 705、管线 2 395、`PipingConnectors` 3 128。端口 9 557 / 22 021、连通 19 371、OPC 476、管口 372、注释 114 不动。D03 / D04 管线 0。`cargo test --locked -p pid-parse --test publish_from_pid backup_directory_publishes_the_whole_package` 1 过，50.19 秒。交付目录 2026-10-14 01:57–01:58 已按 Q5 写好：`D:\work\cad\pid-test-data\publish\` 的 `_Index.json` 是这组合计；`D:\work\cad\PID自研软件验证\publish\` 的 I井场 `_Data.xml` / `_Meta.xml` 与整包 SHA256 相同，覆盖只差 `source`，另外 4 张仍是 2026-10-12 11:40:21。合成实现和 `tests/publish_from_pid.rs` 已提交并推送 `7f1d891`。
 

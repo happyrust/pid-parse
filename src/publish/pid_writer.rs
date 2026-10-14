@@ -33,7 +33,9 @@ use super::pid_load::{
     ConnectivityEnd, ExpRelation, PidBranchPoint, PidOpcPoint, PidPipeline, PidPublishDrawing,
     PidPublishItem, PidValueSource,
 };
-use super::xml_writer::{defuid_prefix, derive_meta_uid, escape_attr, write_meta_xml};
+#[cfg(test)]
+use super::xml_writer::derive_meta_uid;
+use super::xml_writer::{defuid_prefix, escape_attr, write_meta_xml};
 
 const SOFTWARE_VERSION: &str = "10.00.31.0023";
 const SCHEMA_VERSION: &str = "04.02.17.01";
@@ -48,11 +50,11 @@ pub fn write_pid_data_xml(drawing: &PidPublishDrawing, plant_name: &str) -> Stri
     buf
 }
 
-/// Render the `_Meta.xml` companion.
+/// Render the `_Meta.xml` companion via [`write_meta_xml`].
 ///
-/// Version, revision, file and the three rels use [`derive_meta_uid`] from
+/// Version, revision, file and the three rels use `derive_meta_uid` from
 /// the drawing UID. `DocVersionDate` and `FilePath` stay empty: the `.pid`
-/// does not state them, and these UIDs are not the ones in a SmartPlant
+/// does not state them, and these UIDs are not the ones in a `SmartPlant`
 /// reference export.
 pub fn write_pid_meta_xml(
     drawing: &PidPublishDrawing,
