@@ -311,11 +311,19 @@ fn missing_box(path: &str, insertion_m: [f64; 2]) -> MissingSymbolBox {
 
 /// Symbol-body lettering whose whole run is the template placeholder.
 ///
-/// Whitespace is collapsed first, so ` NULL ` is the same word. A run that
-/// still carries other characters, such as `HH=NULL`, is lettering.
+/// Whitespace is removed first, so ` NULL ` is the same word. A symbol that
+/// stored two adjacent placeholders as `NULLNULL` is the same word twice.
+/// A run that still carries other characters, such as `HH=NULL`, is lettering.
 fn symbol_text_is_null_placeholder(text: &str) -> bool {
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    collapsed == "NULL"
+    let collapsed: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let mut rest = collapsed.as_str();
+    if rest.is_empty() {
+        return false;
+    }
+    while let Some(next) = rest.strip_prefix("NULL") {
+        rest = next;
+    }
+    rest.is_empty()
 }
 
 fn symbol_key(path: &str) -> String {
@@ -683,6 +691,24 @@ mod tests {
             &placement(),
             &SymbolPrimitive::Text {
                 text: " NULL ".to_string(),
+                at: (0.0, 0.0),
+            },
+            None,
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn a_doubled_placeholder_null_is_left_out_of_the_table() {
+        let mut out = Vec::new();
+        push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &placement(),
+            &SymbolPrimitive::Text {
+                text: "NULLNULL".to_string(),
                 at: (0.0, 0.0),
             },
             None,
