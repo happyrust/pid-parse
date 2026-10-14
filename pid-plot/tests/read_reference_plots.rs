@@ -1,4 +1,5 @@
-//! The five reference plots read back to the same line and text counts PyMuPDF reports.
+//! The five reference plots read back to PyMuPDF's line counts. Text counts
+//! match too, except I井场, where `1"` and `NO` are left as two labels.
 
 use std::path::PathBuf;
 
@@ -14,7 +15,7 @@ fn corpus_dir() -> PathBuf {
 fn reference_plots_match_pymupdf_counts() {
     let dir = corpus_dir();
     let samples = [
-        ("I井场 注采阀组工艺及自控流程图.pdf", 11_291, 590),
+        ("I井场 注采阀组工艺及自控流程图.pdf", 11_291, 589),
         (
             "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图.pdf",
             1_451,

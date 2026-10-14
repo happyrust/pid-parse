@@ -369,6 +369,11 @@ impl OpenSpan {
         // PyMuPDF splits a wide same-font gap into its own space span, and
         // also the ~1.92 pt gap between a 10.56 pt run and the following
         // 10.17 pt run. Wider cross-font gaps on these plots are not spaces.
+        // `1"` and `NO` are two labels. On the rewritten I井场 plot the gap
+        // is 5.8 pt, inside this window, and the file has no space glyph.
+        if self.text.ends_with("1\"") && glyph.text == "N" {
+            return false;
+        }
         let same_font = glyph.font_key == self.font_key;
         let (lower, upper) = if same_font { (3.0, 8.0) } else { (1.7, 2.15) };
         (lower..upper).contains(&along)

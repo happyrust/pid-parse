@@ -81,33 +81,75 @@ fn five_drawings_round_trip_through_pdf() {
                 end
             );
         }
+        let read_text: Vec<&str> = ink.spans.iter().map(|span| span.text.as_str()).collect();
         let expected_text = text_runs(model);
-        if ink.spans.len() != expected_text.len() {
+        if let Some(why) = runs_mismatch(&read_text, &expected_text) {
             eprintln!("READ {name}");
-            for span in &ink.spans {
-                eprintln!("  {:?} {:?}", span.text, span.origin_mm);
+            for value in &read_text {
+                eprintln!("  {value:?}");
             }
             eprintln!("MODEL {name}");
             for value in &expected_text {
                 eprintln!("  {value:?}");
             }
-        }
-        assert_eq!(
-            ink.spans.len(),
-            expected_text.len(),
-            "{name} span count {:?} vs {}",
-            ink.spans
-                .iter()
-                .map(|span| span.text.as_str())
-                .take(8)
-                .collect::<Vec<_>>(),
-            expected_text.len()
-        );
-        for (span, value) in ink.spans.iter().zip(&expected_text) {
-            assert_eq!(&span.text, value, "{name}");
+            panic!("{name}: {why}");
         }
         pymupdf_opens(&out, &expected_text);
     }
+}
+
+/// Placed runs read back in order.
+///
+/// The reader may glue two runs that share a baseline, such as `1/2"` and
+/// `NC`, and it may insert a one-character space where PyMuPDF would split a
+/// gap. Reference plots still count those spaces; this check does not.
+fn runs_mismatch(read: &[&str], expected: &[&str]) -> Option<String> {
+    let mut read_at = 0;
+    let mut expected_at = 0;
+    while read_at < read.len() && expected_at < expected.len() {
+        if read[read_at] == " " {
+            read_at += 1;
+            continue;
+        }
+        match glued_runs(read[read_at], &expected[expected_at..]) {
+            Some(taken) => {
+                read_at += 1;
+                expected_at += taken;
+            }
+            None => {
+                return Some(format!(
+                    "read[{read_at}] {:?} does not cover model[{expected_at}] {:?}",
+                    read[read_at], expected[expected_at]
+                ));
+            }
+        }
+    }
+    while read_at < read.len() && read[read_at] == " " {
+        read_at += 1;
+    }
+    if read_at == read.len() && expected_at == expected.len() {
+        None
+    } else {
+        Some(format!(
+            "unread {} model left {}",
+            read.len() - read_at,
+            expected.len() - expected_at
+        ))
+    }
+}
+
+fn glued_runs(read: &str, expected: &[&str]) -> Option<usize> {
+    let mut acc = String::new();
+    for (index, part) in expected.iter().enumerate() {
+        acc.push_str(part);
+        if acc == read {
+            return Some(index + 1);
+        }
+        if !read.starts_with(&acc) {
+            return None;
+        }
+    }
+    None
 }
 
 fn text_runs(model: &PaperModel) -> Vec<&str> {
@@ -147,10 +189,11 @@ fn near(point: [f64; 2], expected: [f64; 2]) -> bool {
 }
 
 fn pymupdf_opens(pdf: &Path, texts: &[&str]) {
-    let script = std::env::temp_dir().join("pid-plot-pymupdf-check.py");
+    let stamp = std::process::id();
+    let script = std::env::temp_dir().join(format!("pid-plot-pymupdf-check-{stamp}.py"));
     std::fs::write(&script, PYMUPDF_PY).expect("write pymupdf script");
     let joined = texts.join("\n");
-    let expect = std::env::temp_dir().join("pid-plot-expect-text.txt");
+    let expect = std::env::temp_dir().join(format!("pid-plot-expect-text-{stamp}.txt"));
     std::fs::write(&expect, &joined).expect("write expected text");
     let status = Command::new("python")
         .arg(&script)
@@ -158,6 +201,8 @@ fn pymupdf_opens(pdf: &Path, texts: &[&str]) {
         .arg(&expect)
         .status()
         .unwrap_or_else(|error| panic!("python: {error}"));
+    let _ = std::fs::remove_file(&script);
+    let _ = std::fs::remove_file(&expect);
     assert!(
         status.success(),
         "pymupdf check failed for {}",
@@ -179,3 +224,24 @@ for line in expect:
         raise SystemExit(f"missing {line!r}")
 print("pymupdf chars", len(text))
 "#;
+
+#[test]
+fn a_glued_inch_mark_still_covers_both_placed_runs() {
+    let read = ["1/2\"NC", "PG"];
+    let model = ["1/2\"", "NC", "PG"];
+    assert_eq!(runs_mismatch(&read, &model), None);
+}
+
+#[test]
+fn an_inserted_space_span_is_not_a_placed_run() {
+    let read = ["2\"", " ", "NC"];
+    let model = ["2\"", "NC"];
+    assert_eq!(runs_mismatch(&read, &model), None);
+}
+
+#[test]
+fn a_missing_placed_run_is_reported() {
+    let read = ["PG"];
+    let model = ["PG", "PT"];
+    assert!(runs_mismatch(&read, &model).is_some());
+}

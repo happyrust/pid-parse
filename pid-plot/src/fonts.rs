@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::model::{PaperModel, PaperShape};
 
@@ -134,16 +135,60 @@ fn fonts_dir() -> PathBuf {
     )
 }
 
+static SUBSET_ID: AtomicU64 = AtomicU64::new(0);
+
+struct SubsetWorkspace {
+    path: PathBuf,
+}
+
+impl SubsetWorkspace {
+    fn new() -> Result<Self, String> {
+        loop {
+            let id = SUBSET_ID.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("pid-plot-subset-{}-{id}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(format!("create subset workspace: {error}")),
+            }
+        }
+    }
+}
+
+impl Drop for SubsetWorkspace {
+    fn drop(&mut self) {
+        // This directory was exclusively created for this invocation.
+        // Cleanup must not replace a subsetting error during unwinding.
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
 fn subset_face(source: &Path, face_index: u32, text: &str, key: &str) -> Result<Vec<u8>, String> {
-    let stamp = std::process::id();
-    let safe: String = key.chars().filter(char::is_ascii_alphanumeric).collect();
-    let dir = std::env::temp_dir();
-    let script = dir.join(format!("pid-plot-subset-face-{stamp}.py"));
-    let text_path = dir.join(format!("pid-plot-chars-{stamp}-{safe}.txt"));
-    let dest = dir.join(format!("pid-plot-face-{stamp}-{safe}.ttf"));
+    subset_face_in(
+        SubsetWorkspace::new()?,
+        source,
+        face_index,
+        text,
+        key,
+        Path::new("python"),
+    )
+}
+
+fn subset_face_in(
+    workspace: SubsetWorkspace,
+    source: &Path,
+    face_index: u32,
+    text: &str,
+    key: &str,
+    python: &Path,
+) -> Result<Vec<u8>, String> {
+    let script = workspace.path.join("subset.py");
+    let text_path = workspace.path.join("chars.txt");
+    let dest = workspace.path.join("face.ttf");
     std::fs::write(&script, SUBSET_PY).map_err(|error| error.to_string())?;
     std::fs::write(&text_path, text).map_err(|error| error.to_string())?;
-    let output = Command::new("python")
+    let output = Command::new(python)
         .arg(&script)
         .arg(source)
         .arg(&dest)
@@ -182,7 +227,85 @@ font.save(dest)
 
 #[cfg(test)]
 mod tests {
-    use super::typeface_key;
+    use super::{SubsetWorkspace, fonts_dir, subset_face_in, typeface_key};
+    use std::path::Path;
+
+    #[test]
+    fn subset_face_cleans_up_when_python_cannot_start() {
+        let workspace = SubsetWorkspace::new().expect("workspace");
+        let dir = workspace.path.clone();
+        let python = dir.join("missing-python.exe");
+        let error = subset_face_in(workspace, Path::new("unused.ttf"), 0, "中", "test", &python)
+            .expect_err("missing interpreter must fail");
+        assert!(error.starts_with("python:"), "{error}");
+        assert!(!dir.exists(), "leftover workspace: {}", dir.display());
+    }
+
+    #[test]
+    fn subset_face_cleans_up_when_text_cannot_be_written() {
+        let workspace = SubsetWorkspace::new().expect("workspace");
+        let dir = workspace.path.clone();
+        std::fs::create_dir(dir.join("chars.txt")).expect("block text write");
+        let result = subset_face_in(
+            workspace,
+            Path::new("unused.ttf"),
+            0,
+            "中",
+            "test",
+            Path::new("python"),
+        );
+        assert!(result.is_err(), "writing text over a directory must fail");
+        assert!(!dir.exists(), "leftover workspace: {}", dir.display());
+    }
+
+    #[test]
+    fn subset_face_cleans_up_when_python_rejects_the_font() {
+        let workspace = SubsetWorkspace::new().expect("workspace");
+        let dir = workspace.path.clone();
+        let source = dir.join("not-a-font.ttf");
+        std::fs::write(&source, b"not a font").expect("bad font");
+        let error = subset_face_in(workspace, &source, 0, "中", "test", Path::new("python"))
+            .expect_err("invalid font must fail");
+        assert!(error.starts_with("subset test failed:"), "{error}");
+        assert!(!dir.exists(), "leftover workspace: {}", dir.display());
+    }
+
+    #[test]
+    fn subset_face_cleans_up_after_concurrent_successes() {
+        let source = fonts_dir().join("simsun.ttc");
+        if !source.is_file() {
+            eprintln!(
+                "skipping subset success test; {} is absent",
+                source.display()
+            );
+            return;
+        }
+        let first = SubsetWorkspace::new().expect("first workspace");
+        let second = SubsetWorkspace::new().expect("second workspace");
+        let first_dir = first.path.clone();
+        let second_dir = second.path.clone();
+        assert_ne!(first_dir, second_dir);
+        let (first_result, second_result) = std::thread::scope(|scope| {
+            let first_job = scope
+                .spawn(|| subset_face_in(first, &source, 0, "中", "test", Path::new("python")));
+            let second_job = scope
+                .spawn(|| subset_face_in(second, &source, 0, "文", "test", Path::new("python")));
+            (
+                first_job.join().expect("first thread"),
+                second_job.join().expect("second thread"),
+            )
+        });
+        let first_bytes = first_result.expect("first subset");
+        let second_bytes = second_result.expect("second subset");
+        assert!(!first_bytes.is_empty());
+        assert!(!second_bytes.is_empty());
+        assert_ne!(
+            first_bytes, second_bytes,
+            "different characters need different subsets"
+        );
+        assert!(!first_dir.exists(), "leftover first workspace");
+        assert!(!second_dir.exists(), "leftover second workspace");
+    }
 
     #[test]
     fn a_stated_arial_narrow_stays_arial_narrow() {
