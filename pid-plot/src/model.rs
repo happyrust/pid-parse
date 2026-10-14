@@ -3,9 +3,11 @@
 //! Coordinates are millimetres, origin at the bottom-left, y up. A symbol
 //! body is placed by scaling, then rotating counter-clockwise, then
 //! translating by the insertion point. A negative scale mirrors. Text keeps
-//! the insertion point as its anchor. A symbol's own lettering that is only
-//! the placeholder `NULL` stays out of the table; text the drawing itself
-//! records is kept. The sheet frame is not part of the table.
+//! the insertion point on the table; a centre or right paragraph moves the
+//! PDF baseline back along the run when the page is written. A symbol's own
+//! lettering that is only the placeholder `NULL`, including a doubled
+//! `NULLNULL`, stays out of the table; text the drawing itself records is
+//! kept. The sheet frame is not part of the table.
 
 use std::path::{Path, PathBuf};
 
@@ -115,7 +117,39 @@ pub enum PaperShape {
         /// record does not carry a font.
         #[serde(skip_serializing_if = "Option::is_none")]
         font: Option<String>,
+        /// Which side of `origin_mm` the paragraph letters from.
+        ///
+        /// The stored point stays the insertion point. Centre and right move
+        /// the PDF baseline back along the run by half the word or the whole
+        /// word. Symbol lettering is [`TextAnchor::Left`]: its record has no
+        /// paragraph.
+        anchor: TextAnchor,
     },
+}
+
+/// Which side of its insertion point a paragraph letters from.
+///
+/// The values follow `TextAlignment`: left, centre, right. The symbol body
+/// has no paragraph, so its lettering stays [`TextAnchor::Left`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAnchor {
+    /// The insertion point is the left end of the baseline.
+    Left,
+    /// The insertion point is the centre of the baseline.
+    Center,
+    /// The insertion point is the right end of the baseline.
+    Right,
+}
+
+impl TextAnchor {
+    fn from_paragraph(alignment: Option<pid_parse::style_link::TextAlignment>) -> Self {
+        match alignment {
+            Some(pid_parse::style_link::TextAlignment::Center) => Self::Center,
+            Some(pid_parse::style_link::TextAlignment::Right) => Self::Right,
+            Some(pid_parse::style_link::TextAlignment::Left) | None => Self::Left,
+        }
+    }
 }
 
 /// Why a drawing could not be laid out.
@@ -157,8 +191,8 @@ pub fn place_metres(
 /// Lay out one `.pid`.
 ///
 /// The symbol library is the first of: `PID_SYMBOL_LIBRARY`, a directory
-/// under `<corpus>/Ref` whose name contains `symbol`, then
-/// `test-file/symbols-full`.
+/// under `<corpus>/Ref` or `<corpus>/../Ref` whose name contains `symbol`,
+/// then `test-file/symbols-full`.
 pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperModelError> {
     let doc = PidParser::new()
         .parse_file(pid)
@@ -273,10 +307,18 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
             return (roots, label);
         }
     }
-    let reference = corpus.join("Ref");
-    if reference.is_dir() {
+    for candidate in [
+        Some(corpus.join("Ref")),
+        corpus.parent().map(|parent| parent.join("Ref")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !candidate.is_dir() {
+            continue;
+        }
         let mut roots = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&reference) {
+        if let Ok(entries) = std::fs::read_dir(&candidate) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
@@ -433,7 +475,10 @@ fn push_entity(
                     height_mm,
                     rotation: *rotation,
                     value: value.clone(),
-                    font: styled.and_then(|style| style.font_name),
+                    font: styled.as_ref().and_then(|style| style.font_name.clone()),
+                    anchor: TextAnchor::from_paragraph(
+                        styled.as_ref().and_then(|style| style.alignment),
+                    ),
                 },
             ));
         }
@@ -519,6 +564,7 @@ fn push_symbol_primitive(
                 rotation: placement.rotation,
                 value: text.clone(),
                 font: None,
+                anchor: TextAnchor::Left,
             }
         }
         SymbolPrimitive::BSpline { .. } => {

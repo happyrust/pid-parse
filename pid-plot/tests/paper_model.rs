@@ -1,5 +1,6 @@
-//! The five drawings lay out, and the missing-symbol counts stay on the
-//! figures measured when the plan was opened.
+//! The five drawings lay out against the SQPlant symbol library
+//! (`RefData~4~681.zip` unpacked to `Ref/Symbols`), and the found/referenced
+//! counts stay pinned, including the one absent pulsation-damper symbol.
 
 use std::path::PathBuf;
 
@@ -15,25 +16,25 @@ fn corpus_dir() -> PathBuf {
 fn five_drawings_match_the_symbol_gap() {
     let dir = corpus_dir();
     let samples = [
-        ("I井场 注采阀组工艺及自控流程图.pid", 39, 59),
+        ("I井场 注采阀组工艺及自控流程图.pid", 58, 59),
         (
             "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图.pid",
-            23,
+            29,
             29,
         ),
         (
             "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pid",
-            23,
+            28,
             28,
         ),
         (
             "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图.pid",
-            26,
+            33,
             33,
         ),
         (
             "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图.pid",
-            29,
+            38,
             38,
         ),
     ];
@@ -44,28 +45,60 @@ fn five_drawings_match_the_symbol_gap() {
     for (name, found, referenced) in samples {
         let model = lay_out_drawing(&dir.join(name), &dir)
             .unwrap_or_else(|error| panic!("{name}: {error}"));
-        assert_eq!(model.symbols_found, found, "{name} found");
+        assert_eq!(
+            model.symbols_found, found,
+            "{name} found; missing: {:?}; library: {:?}",
+            model.missing_symbols, model.library
+        );
         assert_eq!(model.symbols_referenced, referenced, "{name} referenced");
         assert_eq!(
             model.missing_symbols.len(),
             referenced - found,
             "{name} missing"
         );
+        if name == samples[0].0 {
+            assert_eq!(
+                model.missing_symbols,
+                [r"piping\specialty components\misc\pulsation damper.sym"],
+                "{name} known library gap"
+            );
+        }
         assert!(!model.library.is_empty(), "{name} names the library");
         assert!(!model.primitives.is_empty(), "{name} has primitives");
         if let Some([page_w, page_h]) = model.page_mm {
             for primitive in &model.primitives {
-                if let PaperShape::Line { start_mm, end_mm } = &primitive.shape {
-                    let dx = (start_mm[0] - end_mm[0]).abs();
-                    let dy = (start_mm[1] - end_mm[1]).abs();
-                    assert!(
-                        dy >= 1.0 || dx <= page_w * 0.90,
-                        "{name} keeps a sheet-width line"
-                    );
-                    assert!(
-                        dx >= 1.0 || dy <= page_h * 0.90,
-                        "{name} keeps a sheet-height line"
-                    );
+                match &primitive.shape {
+                    PaperShape::Circle {
+                        center_mm,
+                        radius_mm,
+                    } => {
+                        let right_mm = center_mm[0] + radius_mm.abs();
+                        let top_mm = center_mm[1] + radius_mm.abs();
+                        assert!(
+                            right_mm <= page_w + 25.0,
+                            "{name} circle right edge within paper+25mm",
+                        );
+                        assert!(
+                            top_mm <= page_h + 25.0,
+                            "{name} circle top edge within paper+25mm",
+                        );
+                    }
+                    PaperShape::Line { start_mm, end_mm } => {
+                        let dx = (start_mm[0] - end_mm[0]).abs();
+                        let dy = (start_mm[1] - end_mm[1]).abs();
+                        assert!(
+                            dy >= 1.0 || dx <= page_w * 0.90,
+                            "{name} keeps a sheet-width line"
+                        );
+                        assert!(
+                            dx >= 1.0 || dy <= page_h * 0.90,
+                            "{name} keeps a sheet-height line"
+                        );
+                    }
+                    // These guards target circles and sheet-frame lines only.
+                    PaperShape::Arc { .. }
+                    | PaperShape::Polyline { .. }
+                    | PaperShape::Text { .. } => {}
                 }
             }
         }

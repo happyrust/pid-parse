@@ -21,7 +21,7 @@ use pdfcraft_fonts::embedding::{self, embed};
 use pdfcraft_fonts::pdf::Metrics;
 
 use crate::fonts::typeface_key;
-use crate::model::{PaperModel, PaperShape};
+use crate::model::{PaperModel, PaperShape, TextAnchor};
 use crate::read::CHORD_MM;
 
 const PT_PER_MM: f64 = 72.0 / 25.4;
@@ -237,18 +237,22 @@ fn push_layer(
             rotation,
             value,
             font,
+            anchor,
         } = &primitive.shape
         {
             let face = face_for(fonts, font.as_deref(), value)?;
             show_text(
                 ops,
                 &face.metrics,
-                &face.resource,
-                typeface_key(font.as_deref(), value),
-                *origin_mm,
-                *height_mm,
-                *rotation,
-                value,
+                ShownText {
+                    resource: &face.resource,
+                    typeface: typeface_key(font.as_deref(), value),
+                    origin_mm: *origin_mm,
+                    height_mm: *height_mm,
+                    rotation: *rotation,
+                    value,
+                    anchor: *anchor,
+                },
             )?;
         }
     }
@@ -338,32 +342,43 @@ fn face_for<'a>(
         })
 }
 
-fn show_text(
-    ops: &mut Vec<Op>,
-    metrics: &Metrics,
-    resource: &str,
-    typeface: &str,
+struct ShownText<'a> {
+    resource: &'a str,
+    typeface: &'a str,
     origin_mm: [f64; 2],
     height_mm: Option<f64>,
     rotation: f64,
-    value: &str,
+    value: &'a str,
+    anchor: TextAnchor,
+}
+
+fn show_text(
+    ops: &mut Vec<Op>,
+    metrics: &Metrics,
+    text: ShownText<'_>,
 ) -> Result<(), PlotWriteError> {
-    if value.is_empty() || !rotation.is_finite() || !finite(origin_mm) {
+    if text.value.is_empty() || !text.rotation.is_finite() || !finite(text.origin_mm) {
         return Ok(());
     }
-    let height_mm = height_mm.unwrap_or(DEFAULT_TEXT_MM);
+    let height_mm = text.height_mm.unwrap_or(DEFAULT_TEXT_MM);
     if !height_mm.is_finite() || height_mm <= 0.0 {
         return Ok(());
     }
     let bytes = metrics
-        .encode(value)
-        .ok_or_else(|| missing_glyph(metrics, value))?;
-    let (sin, cos) = rotation.sin_cos();
-    let size = plotted_size_pt(typeface, height_mm);
+        .encode(text.value)
+        .ok_or_else(|| missing_glyph(metrics, text.value))?;
+    let size = plotted_size_pt(text.typeface, height_mm);
+    let origin_mm = baseline_origin(
+        text.origin_mm,
+        text.rotation,
+        run_width_mm(metrics, size, &bytes),
+        text.anchor,
+    );
+    let (sin, cos) = text.rotation.sin_cos();
     ops.push(Op::new("BT", Vec::new()));
     ops.push(Op::new(
         "Tf",
-        vec![Object::name(resource), Object::Real(size)],
+        vec![Object::name(text.resource), Object::Real(size)],
     ));
     ops.push(Op::new(
         "Tm",
@@ -382,6 +397,36 @@ fn show_text(
     ));
     ops.push(Op::new("ET", Vec::new()));
     Ok(())
+}
+
+/// Advance of `bytes` at `size_pt`, in paper millimetres.
+fn run_width_mm(metrics: &Metrics, size_pt: f64, bytes: &[u8]) -> f64 {
+    let units: f64 = metrics
+        .codes(bytes)
+        .iter()
+        .map(|(code, _)| metrics.width(*code))
+        .sum();
+    units * size_pt / PT_PER_MM
+}
+
+/// Left end of the baseline. Centre and right step back along the run.
+fn baseline_origin(
+    origin_mm: [f64; 2],
+    rotation: f64,
+    width_mm: f64,
+    anchor: TextAnchor,
+) -> [f64; 2] {
+    let fraction = match anchor {
+        TextAnchor::Left => 0.0,
+        TextAnchor::Center => 0.5,
+        TextAnchor::Right => 1.0,
+    };
+    if fraction == 0.0 || !width_mm.is_finite() || width_mm <= 0.0 {
+        return origin_mm;
+    }
+    let (sin, cos) = rotation.sin_cos();
+    let shift = width_mm * fraction;
+    [origin_mm[0] - cos * shift, origin_mm[1] - sin * shift]
 }
 
 fn missing_glyph(metrics: &Metrics, value: &str) -> PlotWriteError {
@@ -632,7 +677,7 @@ fn hypot(start: [f64; 2], end: [f64; 2]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{plotted_size_pt, write_plot};
-    use crate::model::{PaperModel, PaperPrimitive, PaperShape};
+    use crate::model::{PaperModel, PaperPrimitive, PaperShape, TextAnchor};
     use crate::read::read_plot;
 
     use super::PlotFont;
@@ -683,6 +728,7 @@ mod tests {
                         rotation: 0.0,
                         value: "Ab".into(),
                         font: None,
+                        anchor: TextAnchor::Left,
                     },
                 ),
                 primitive(
@@ -728,6 +774,89 @@ mod tests {
             "{:?}",
             ink.spans
         );
+    }
+
+    #[test]
+    fn centre_and_right_step_back_along_the_baseline() {
+        let horizontal = |anchor| {
+            placed(
+                "WW",
+                [80.0, 20.0 + f64::from(anchor_row(anchor))],
+                0.0,
+                anchor,
+            )
+        };
+        let vertical = |anchor| {
+            placed(
+                "WW",
+                [20.0 + f64::from(anchor_row(anchor)), 80.0],
+                std::f64::consts::FRAC_PI_2,
+                anchor,
+            )
+        };
+        let left_h = horizontal(TextAnchor::Left);
+        let centre_h = horizontal(TextAnchor::Center);
+        let right_h = horizontal(TextAnchor::Right);
+        let left_v = vertical(TextAnchor::Left);
+        let centre_v = vertical(TextAnchor::Center);
+        let along_x = left_h[0] - centre_h[0];
+        let along_y = left_v[1] - centre_v[1];
+        assert!(along_x > 2.0, "centre shift {along_x}");
+        assert!((along_x - along_y).abs() < 0.4, "x {along_x} y {along_y}");
+        assert!((left_h[1] - 20.0).abs() < 0.5, "left y {}", left_h[1]);
+        assert!((centre_h[1] - 44.0).abs() < 0.5, "centre y {}", centre_h[1]);
+        assert!((left_v[0] - 20.0).abs() < 0.5, "left x {}", left_v[0]);
+        assert!((centre_v[0] - 44.0).abs() < 0.5, "centre x {}", centre_v[0]);
+        let right_shift = left_h[0] - right_h[0];
+        assert!(
+            (right_shift - 2.0 * along_x).abs() < 0.5,
+            "right {right_shift} centre {along_x}"
+        );
+    }
+
+    fn anchor_row(anchor: TextAnchor) -> u8 {
+        match anchor {
+            TextAnchor::Left => 0,
+            TextAnchor::Center => 24,
+            TextAnchor::Right => 48,
+        }
+    }
+
+    fn placed(value: &str, origin_mm: [f64; 2], rotation: f64, anchor: TextAnchor) -> [f64; 2] {
+        let model = PaperModel {
+            library: Vec::new(),
+            page_mm: Some([200.0, 140.0]),
+            primitives: vec![primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm,
+                    height_mm: Some(5.0),
+                    rotation,
+                    value: value.into(),
+                    font: None,
+                    anchor,
+                },
+            )],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let span = ink
+            .spans
+            .iter()
+            .find(|span| span.text == value)
+            .unwrap_or_else(|| panic!("{value} missing in {:?}", ink.spans));
+        span.origin_mm
     }
 
     fn near(point: [f64; 2], expected: [f64; 2]) -> bool {
