@@ -70,3 +70,48 @@ fn five_drawings_write_compare_reports() {
         );
     }
 }
+
+#[test]
+fn survey_margin_text_once() {
+    let corpus = corpus_dir();
+    let reference = corpus.join(format!("{}.pdf", DRAWINGS[0]));
+    if !reference.is_file() {
+        eprintln!("skip survey");
+        return;
+    }
+    for name in DRAWINGS {
+        let bytes = std::fs::read(corpus.join(format!("{name}.pdf"))).expect("pdf");
+        let ink = read_plot(&bytes).expect("read");
+        let page = ink.page_mm;
+        eprintln!("PAGE {name} {:.1} x {:.1}", page[0], page[1]);
+        let mut edge: Vec<(&str, [f64; 2])> = Vec::new();
+        for span in &ink.spans {
+            let x = span.origin_mm[0];
+            let y = span.origin_mm[1];
+            let from_edge = x.min(page[0] - x).min(y).min(page[1] - y);
+            if from_edge <= 55.0 {
+                edge.push((span.text.trim(), span.origin_mm));
+            }
+        }
+        edge.sort_by(|a, b| a.1[0].total_cmp(&b.1[0]).then(a.1[1].total_cmp(&b.1[1])));
+        eprintln!("  edge spans {}", edge.len());
+        let mut band: Vec<(&str, [f64; 2])> = Vec::new();
+        for span in &ink.spans {
+            let x = span.origin_mm[0];
+            let y = span.origin_mm[1];
+            if x < 90.0 || y < 120.0 || x > page[0] - 220.0 {
+                band.push((span.text.trim(), span.origin_mm));
+            }
+        }
+        band.sort_by(|a, b| a.1[0].total_cmp(&b.1[0]).then(a.1[1].total_cmp(&b.1[1])));
+        let plot_dir = corpus.join("plot");
+        std::fs::create_dir_all(&plot_dir).expect("mkdir plot");
+        let dump = plot_dir.join(format!("edge-{name}.txt"));
+        let mut lines = Vec::new();
+        for (text, origin) in &band {
+            lines.push(format!("{:.2}\t{:.2}\t{text}", origin[0], origin[1]));
+        }
+        std::fs::write(&dump, lines.join("\n")).expect("dump");
+        eprintln!("  dumped {}", band.len());
+    }
+}

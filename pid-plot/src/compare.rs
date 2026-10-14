@@ -8,14 +8,18 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
+use crate::model::{PaperModel, PaperPrimitive, PaperShape};
 use crate::read::{InkSegment, PlotInk, TextSpan};
 
 const JOIN_GAP_MM: f64 = 3.0;
 const COVER_MM: f64 = 0.5;
 const SAMPLE_MM: f64 = 0.5;
 const TEXT_MM: f64 = 1.0;
+const SOURCE_MM: f64 = 20.0;
+const ATTRIB_MM: f64 = 15.0;
 const LONG_MM: f64 = 8.0;
 const SCALE_LIMIT: f64 = 0.002;
 const SHIFT_LIMIT_MM: f64 = 5.0;
@@ -62,19 +66,64 @@ impl MaskRect {
     }
 }
 
-/// Title-block corner for an A0 or A1 sheet.
+/// Title-block rectangles surveyed from the five reference plots.
 ///
-/// 180 mm by 50 mm at the bottom-right. The template files are not on this
-/// machine, so this is the M4 rectangle, not a surveyed `.igr`.
+/// A0 is the I井场 sheet. A1 is one set shared by the other four. The
+/// rectangles are `assets/template-masks.json`: millimetres, origin at the
+/// bottom-left, y up. A page that matches neither sheet size gets an empty
+/// list. How the clusters were measured is written up in
+/// `docs/analysis/2026-10-12-template-mask-samples.md`.
 #[must_use]
 pub fn template_masks(page_mm: [f64; 2]) -> Vec<MaskRect> {
-    let title_w = 180.0_f64;
-    let title_h = 50.0_f64;
-    vec![MaskRect {
-        label: "title-block".to_string(),
-        min_mm: [(page_mm[0] - title_w).max(0.0), 0.0],
-        max_mm: [page_mm[0], title_h.min(page_mm[1])],
-    }]
+    let Some(sheet) = surveyed_sheet(page_mm) else {
+        return Vec::new();
+    };
+    sheet
+        .masks
+        .iter()
+        .map(|mask| MaskRect {
+            label: mask.note.clone(),
+            min_mm: [mask.x, mask.y],
+            max_mm: [mask.x + mask.w, mask.y + mask.h],
+        })
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
+struct MaskAsset {
+    sheets: HashMap<String, SheetMasks>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SheetMasks {
+    width_mm: f64,
+    height_mm: f64,
+    masks: Vec<JsonMask>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonMask {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    note: String,
+}
+
+fn mask_asset() -> &'static MaskAsset {
+    static ASSET: OnceLock<MaskAsset> = OnceLock::new();
+    ASSET.get_or_init(|| {
+        serde_json::from_str(include_str!("../assets/template-masks.json"))
+            .expect("pid-plot/assets/template-masks.json is valid")
+    })
+}
+
+fn surveyed_sheet(page_mm: [f64; 2]) -> Option<&'static SheetMasks> {
+    const TOLERANCE_MM: f64 = 2.0;
+    mask_asset().sheets.values().find(|sheet| {
+        (sheet.width_mm - page_mm[0]).abs() <= TOLERANCE_MM
+            && (sheet.height_mm - page_mm[1]).abs() <= TOLERANCE_MM
+    })
 }
 
 /// Scale and translation taking reference millimetres into our plot.
@@ -99,6 +148,44 @@ pub struct UnmatchedText {
     pub text: String,
     /// Baseline start, paper millimetres.
     pub origin_mm: [f64; 2],
+    /// Stream the paper-table record came from, when a source matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_path: Option<String>,
+    /// Byte range in that stream, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub byte_range: Option<[usize; 2]>,
+    /// Parser confidence of the paper-table record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
+    /// Symbol file this lettering belongs to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+}
+
+/// Paper-table lettering that can be copied onto an unmatched run.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextSource {
+    /// Characters as the paper table stored them.
+    pub text: String,
+    /// Insertion point, our paper millimetres.
+    pub origin_mm: [f64; 2],
+    /// Stream the record came from.
+    pub stream_path: Option<String>,
+    /// Byte range in that stream.
+    pub byte_range: Option<[usize; 2]>,
+    /// Parser confidence.
+    pub confidence: String,
+    /// Symbol file, when the run came from a symbol body.
+    pub symbol: Option<String>,
+}
+
+/// A length of ink sharing one label.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LengthGroup {
+    /// Symbol file name, a stream path, `图纸线`, or `图框`.
+    pub label: String,
+    /// Millimetres in this group.
+    pub length_mm: f64,
 }
 
 /// The three ratchet numbers, plus the fit and the text that missed.
@@ -130,11 +217,37 @@ pub struct CompareReport {
     pub unmatched_reference_text: Vec<UnmatchedText>,
     /// Our runs that did not match.
     pub unmatched_our_text: Vec<UnmatchedText>,
+    /// Our ink far from the reference and inside a missing-symbol box.
+    ///
+    /// Zero unless [`compare_plots_with_model`] supplied the boxes.
+    pub extra_inside_missing_mm: f64,
+    /// Our ink far from the reference, outside the template and the missing-symbol boxes.
+    pub extra_outside_missing_mm: f64,
+    /// `extra_outside_missing_mm` grouped by the nearest paper-table stroke.
+    pub extra_outside_by_symbol: Vec<LengthGroup>,
+    /// Reference length outside the masks and farther than 0.5 mm from our ink.
+    pub uncovered_reference: Vec<LengthGroup>,
 }
 
 /// Compare `reference` with `ours`. Masks are excluded from the three numbers.
 #[must_use]
 pub fn compare_plots(reference: &PlotInk, ours: &PlotInk, masks: &[MaskRect]) -> CompareReport {
+    compare_plots_with_sources(reference, ours, masks, &[])
+}
+
+/// Compare, and copy paper-table provenance onto unmatched runs of ours.
+///
+/// A source matches when the collapsed text is the same and the insertion
+/// point is within 20 mm of the run, after the fit. Centre and right
+/// paragraphs store the insertion point, while the PDF reader reports the
+/// left end of the baseline, so the window is wider than the 1 mm text match.
+#[must_use]
+pub fn compare_plots_with_sources(
+    reference: &PlotInk,
+    ours: &PlotInk,
+    masks: &[MaskRect],
+    sources: &[TextSource],
+) -> CompareReport {
     let reference_lines = join_centerlines(&reference.segments);
     let our_lines = join_centerlines(&ours.segments);
     let fit = fit_lines(&reference_lines, &our_lines);
@@ -147,7 +260,7 @@ pub fn compare_plots(reference: &PlotInk, ours: &PlotInk, masks: &[MaskRect]) ->
     let (reference_length, covered, masked_reference) =
         cover(&reference_lines, &our_index, masks, true);
     let (_, extra, _) = cover(&our_in_ref, &reference_index, masks, false);
-    let text = match_text(&reference.spans, &ours.spans, &fit, masks);
+    let text = match_text(&reference.spans, &ours.spans, &fit, masks, sources);
     let coverage = if reference_length > 0.0 {
         covered / reference_length
     } else {
@@ -167,7 +280,64 @@ pub fn compare_plots(reference: &PlotInk, ours: &PlotInk, masks: &[MaskRect]) ->
         masked_text: text.masked,
         unmatched_reference_text: text.unmatched_reference,
         unmatched_our_text: text.unmatched_ours,
+        extra_inside_missing_mm: 0.0,
+        extra_outside_missing_mm: 0.0,
+        extra_outside_by_symbol: Vec::new(),
+        uncovered_reference: Vec::new(),
     }
+}
+
+/// Compare one drawing whose paper table can name symbols and streams.
+///
+/// `template` and `missing` are both excluded from the three numbers, the
+/// same way a single mask list is. The extra length is then split on
+/// `missing` alone, and uncovered reference ink is grouped by the nearest
+/// paper-table stroke.
+#[must_use]
+pub fn compare_plots_with_model(
+    reference: &PlotInk,
+    ours: &PlotInk,
+    template: &[MaskRect],
+    missing: &[MaskRect],
+    model: &PaperModel,
+) -> CompareReport {
+    let mut masks = template.to_vec();
+    masks.extend_from_slice(missing);
+    let mut report = compare_plots_with_sources(reference, ours, &masks, &text_sources(model));
+    let grouped = group_lengths(reference, ours, &report.fit, template, missing, model);
+    report.extra_inside_missing_mm = grouped.extra_inside_missing_mm;
+    report.extra_outside_missing_mm = grouped.extra_outside_missing_mm;
+    report.extra_outside_by_symbol = grouped.extra_outside_by_symbol;
+    report.uncovered_reference = grouped.uncovered_reference;
+    report
+}
+
+/// Lettering on `model`, in drawing order, including the fields a report can copy.
+#[must_use]
+pub fn text_sources(model: &PaperModel) -> Vec<TextSource> {
+    model
+        .primitives
+        .iter()
+        .filter_map(|primitive| {
+            let PaperShape::Text {
+                origin_mm, value, ..
+            } = &primitive.shape
+            else {
+                return None;
+            };
+            if value.is_empty() {
+                return None;
+            }
+            Some(TextSource {
+                text: value.clone(),
+                origin_mm: *origin_mm,
+                stream_path: primitive.stream_path.clone(),
+                byte_range: primitive.byte_range,
+                confidence: primitive.confidence.to_string(),
+                symbol: primitive.symbol.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Write the report as pretty JSON.
@@ -518,6 +688,7 @@ fn match_text(
     ours: &[TextSpan],
     fit: &Fit,
     masks: &[MaskRect],
+    sources: &[TextSource],
 ) -> CoverText {
     let mut used = vec![false; ours.len()];
     let mut matched = 0;
@@ -553,9 +724,14 @@ fn match_text(
         }
         our_count += 1;
         if !used[index] {
+            let source = find_source(origin, &span.text, sources, fit);
             unmatched_ours.push(UnmatchedText {
                 text: normalize(&span.text),
                 origin_mm: origin,
+                stream_path: source.and_then(|item| item.stream_path.clone()),
+                byte_range: source.and_then(|item| item.byte_range),
+                confidence: source.map(|item| item.confidence.clone()),
+                symbol: source.and_then(|item| item.symbol.clone()),
             });
         }
     }
@@ -573,7 +749,31 @@ fn unmatched(span: &TextSpan) -> UnmatchedText {
     UnmatchedText {
         text: normalize(&span.text),
         origin_mm: span.origin_mm,
+        stream_path: None,
+        byte_range: None,
+        confidence: None,
+        symbol: None,
     }
+}
+
+fn find_source<'a>(
+    origin: [f64; 2],
+    text: &str,
+    sources: &'a [TextSource],
+    fit: &Fit,
+) -> Option<&'a TextSource> {
+    let wanted = normalize(text);
+    let mut best: Option<(f64, &TextSource)> = None;
+    for source in sources {
+        if normalize(&source.text) != wanted {
+            continue;
+        }
+        let distance = hypot(origin, into_reference(source.origin_mm, fit));
+        if distance <= SOURCE_MM && best.is_none_or(|(best_distance, _)| distance < best_distance) {
+            best = Some((distance, source));
+        }
+    }
+    best.map(|(_, source)| source)
 }
 
 fn normalize(text: &str) -> String {
@@ -789,9 +989,230 @@ fn cell_key(point: [f64; 2], cell: f64) -> (i32, i32) {
     )
 }
 
+struct GroupedLengths {
+    extra_inside_missing_mm: f64,
+    extra_outside_missing_mm: f64,
+    extra_outside_by_symbol: Vec<LengthGroup>,
+    uncovered_reference: Vec<LengthGroup>,
+}
+
+fn group_lengths(
+    reference: &PlotInk,
+    ours: &PlotInk,
+    fit: &Fit,
+    template: &[MaskRect],
+    missing: &[MaskRect],
+    model: &PaperModel,
+) -> GroupedLengths {
+    let reference_lines = join_centerlines(&reference.segments);
+    let our_lines = join_centerlines(&ours.segments)
+        .into_iter()
+        .map(|line| line.mapped(|point| into_reference(point, fit)))
+        .collect::<Vec<_>>();
+    let reference_index = Grid::new(&reference_lines);
+    let our_index = Grid::new(&our_lines);
+    let strokes = model_strokes(model);
+    let stroke_lines: Vec<Line> = strokes.iter().map(|(line, _)| *line).collect();
+    let stroke_index = Grid::new(&stroke_lines);
+    let (extra_inside, extra_outside, mut extra_groups) = split_extra(
+        &our_lines,
+        &reference_index,
+        template,
+        missing,
+        fit,
+        &stroke_index,
+        &strokes,
+    );
+    let mut uncovered = HashMap::<String, f64>::new();
+    for line in &reference_lines {
+        let length = line.length();
+        if length < 1e-6 {
+            continue;
+        }
+        let pieces = ((length / SAMPLE_MM).round() as usize).max(1);
+        let weight = length / pieces as f64;
+        for piece in 0..pieces {
+            let t = (piece as f64 + 0.5) / pieces as f64;
+            let point = [
+                line.a[0] + (line.b[0] - line.a[0]) * t,
+                line.a[1] + (line.b[1] - line.a[1]) * t,
+            ];
+            if template.iter().any(|mask| mask.contains(point))
+                || missing.iter().any(|mask| mask.contains(point))
+            {
+                continue;
+            }
+            let near = our_index.near(point, COVER_MM).into_iter().any(|index| {
+                dist_point_seg(point, our_index.lines[index].a, our_index.lines[index].b)
+                    <= COVER_MM
+            });
+            if near {
+                continue;
+            }
+            let label = stroke_label_at(point, fit, &stroke_index, &strokes, reference.page_mm);
+            *uncovered.entry(label).or_default() += weight;
+        }
+    }
+    extra_groups.sort_by(|left, right| right.length_mm.total_cmp(&left.length_mm));
+    GroupedLengths {
+        extra_inside_missing_mm: extra_inside,
+        extra_outside_missing_mm: extra_outside,
+        extra_outside_by_symbol: extra_groups,
+        uncovered_reference: top_groups(uncovered),
+    }
+}
+
+fn split_extra(
+    our_lines: &[Line],
+    reference_index: &Grid,
+    template: &[MaskRect],
+    missing: &[MaskRect],
+    fit: &Fit,
+    stroke_index: &Grid,
+    strokes: &[(Line, String)],
+) -> (f64, f64, Vec<LengthGroup>) {
+    let mut inside = 0.0;
+    let mut outside = HashMap::<String, f64>::new();
+    for line in our_lines {
+        let length = line.length();
+        if length < 1e-6 {
+            continue;
+        }
+        let pieces = ((length / SAMPLE_MM).round() as usize).max(1);
+        let weight = length / pieces as f64;
+        for piece in 0..pieces {
+            let t = (piece as f64 + 0.5) / pieces as f64;
+            let point = [
+                line.a[0] + (line.b[0] - line.a[0]) * t,
+                line.a[1] + (line.b[1] - line.a[1]) * t,
+            ];
+            if template.iter().any(|mask| mask.contains(point)) {
+                continue;
+            }
+            let near = reference_index
+                .near(point, COVER_MM)
+                .into_iter()
+                .any(|index| {
+                    dist_point_seg(
+                        point,
+                        reference_index.lines[index].a,
+                        reference_index.lines[index].b,
+                    ) <= COVER_MM
+                });
+            if near {
+                continue;
+            }
+            if missing.iter().any(|mask| mask.contains(point)) {
+                inside += weight;
+            } else {
+                let label = stroke_label_at(point, fit, stroke_index, strokes, [0.0, 0.0]);
+                *outside.entry(label).or_default() += weight;
+            }
+        }
+    }
+    let outside_mm = outside.values().sum();
+    (inside, outside_mm, top_groups(outside))
+}
+
+fn top_groups(groups: HashMap<String, f64>) -> Vec<LengthGroup> {
+    let mut groups: Vec<LengthGroup> = groups
+        .into_iter()
+        .filter(|(_, length)| *length >= 1.0)
+        .map(|(label, length_mm)| LengthGroup { label, length_mm })
+        .collect();
+    groups.sort_by(|left, right| right.length_mm.total_cmp(&left.length_mm));
+    groups.truncate(8);
+    groups
+}
+
+fn model_strokes(model: &PaperModel) -> Vec<(Line, String)> {
+    let mut strokes = Vec::new();
+    for primitive in &model.primitives {
+        let label = stroke_name(primitive);
+        match &primitive.shape {
+            PaperShape::Line { start_mm, end_mm } => {
+                strokes.push((
+                    Line {
+                        a: *start_mm,
+                        b: *end_mm,
+                    },
+                    label,
+                ));
+            }
+            PaperShape::Polyline { points_mm, closed } => {
+                let mut points = points_mm.clone();
+                if *closed && points.len() > 2 {
+                    points.push(points[0]);
+                }
+                for pair in points.windows(2) {
+                    strokes.push((
+                        Line {
+                            a: pair[0],
+                            b: pair[1],
+                        },
+                        label.clone(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    strokes
+}
+
+fn stroke_name(primitive: &PaperPrimitive) -> String {
+    if let Some(symbol) = &primitive.symbol {
+        symbol
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or(symbol)
+            .to_string()
+    } else {
+        primitive
+            .stream_path
+            .clone()
+            .unwrap_or_else(|| "图纸线".to_string())
+    }
+}
+
+fn stroke_label_at(
+    point_in_ref: [f64; 2],
+    fit: &Fit,
+    stroke_index: &Grid,
+    strokes: &[(Line, String)],
+    page_mm: [f64; 2],
+) -> String {
+    let point = [
+        fit.scale * point_in_ref[0] + fit.translation_mm[0],
+        fit.scale * point_in_ref[1] + fit.translation_mm[1],
+    ];
+    let mut best: Option<(f64, usize)> = None;
+    for index in stroke_index.near(point, ATTRIB_MM) {
+        let line = strokes[index].0;
+        let distance = dist_point_seg(point, line.a, line.b);
+        if distance <= ATTRIB_MM && best.is_none_or(|(best_distance, _)| distance < best_distance) {
+            best = Some((distance, index));
+        }
+    }
+    if let Some((_, index)) = best {
+        return strokes[index].1.clone();
+    }
+    let on_edge = page_mm[0] > 0.0
+        && page_mm[1] > 0.0
+        && (point_in_ref[0] <= 20.0
+            || point_in_ref[1] <= 20.0
+            || page_mm[0] - point_in_ref[0] <= 20.0
+            || page_mm[1] - point_in_ref[1] <= 20.0);
+    if on_edge {
+        "图框".to_string()
+    } else {
+        "图纸线".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{compare_plots, template_masks};
+    use super::compare_plots;
     use crate::read::{InkSegment, PlotInk, TextSpan};
 
     fn ink(segments: Vec<InkSegment>, spans: Vec<TextSpan>) -> PlotInk {
@@ -859,5 +1280,50 @@ mod tests {
         assert!(!report.fit.within_threshold, "{:?}", report.fit);
         assert!(report.fit.finding.is_some());
         assert!(report.coverage > 0.95, "{}", report.coverage);
+    }
+
+    #[test]
+    fn template_masks_follow_the_surveyed_sheets() {
+        let a0 = super::template_masks([1189.0, 841.0]);
+        assert!(a0.iter().any(|mask| mask.contains([24.21, 625.52])));
+        assert!(a0.iter().any(|mask| mask.contains([24.05, 684.11])));
+        assert!(a0.iter().any(|mask| mask.contains([1063.24, 74.17])));
+        assert!(!a0.iter().any(|mask| mask.contains([95.33, 582.34])));
+        assert!(!a0.iter().any(|mask| mask.contains([1069.00, 165.27])));
+
+        let a1 = super::template_masks([841.0, 594.0]);
+        assert!(a1.iter().any(|mask| mask.contains([24.21, 378.46])));
+        assert!(a1.iter().any(|mask| mask.contains([692.91, 29.46])));
+        assert!(a1.iter().any(|mask| mask.contains([723.73, 37.93])));
+        assert!(!a1.iter().any(|mask| mask.contains([77.22, 532.38])));
+        assert!(!a1.iter().any(|mask| mask.contains([81.96, 408.77])));
+        assert!(!a1.iter().any(|mask| mask.contains([679.70, 110.24])));
+
+        assert!(super::template_masks([200.0, 100.0]).is_empty());
+    }
+
+    #[test]
+    fn a_nearby_source_is_copied_onto_unmatched_text() {
+        let reference = ink(vec![], vec![]);
+        let ours = ink(vec![], vec![word([10.0, 20.0])]);
+        let report = super::compare_plots_with_sources(
+            &reference,
+            &ours,
+            &[],
+            &[super::TextSource {
+                text: "Ab".to_string(),
+                origin_mm: [12.0, 21.0],
+                stream_path: Some("sheet".to_string()),
+                byte_range: Some([4, 9]),
+                confidence: "decoded".to_string(),
+                symbol: Some("valve.sym".to_string()),
+            }],
+        );
+        let run = &report.unmatched_our_text[0];
+        assert_eq!(run.stream_path.as_deref(), Some("sheet"));
+        assert_eq!(run.byte_range, Some([4, 9]));
+        assert_eq!(run.confidence.as_deref(), Some("decoded"));
+        assert_eq!(run.symbol.as_deref(), Some("valve.sym"));
+        assert!(report.extra_outside_by_symbol.is_empty());
     }
 }
