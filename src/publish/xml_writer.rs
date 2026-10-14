@@ -531,15 +531,18 @@ fn write_process_vessel(
     let item_tag = canonical_vessel_item_tag(obj, drawing.style);
     let description = obj.description.as_deref().unwrap_or("");
     // Three-tier fallback for the SmartPlant `EqTypeDescription`
-    // attribute. The codelist lookup is authoritative — it is what
-    // SmartPlant itself uses to render the enum — so it wins when
-    // the metadata catalog ships the mapping. Drawing fixtures
-    // produced without a codelist catalog fall back to parsing the
-    // symbol path (`Horizontal Drum.sym` → `"Horizontal Drum"`),
-    // and finally to the raw `EquipmentType` enum ID so the
-    // attribute is never silently blank.
-    let eq_type_description = resolve_codelist_field(drawing, obj, "EquipmentType")
-        .or_else(|| derive_type_description_from_symbol(drawing, &obj.uid))
+    // attribute (#27):
+    //   1. Symbol-path stem (`Horizontal Drum.sym` → `"Horizontal Drum"`).
+    //      On TEST02 A01 (`T_Equipment.EquipmentType = 241`), `C22`
+    //      maps `241` to `"1 diameter, 1 chamber, elliptical head
+    //      horizontal drum"`, whereas SmartPlant's reference
+    //      `A01_Data.xml` emits the symbol stem `"Horizontal Drum"`.
+    //   2. `CodelistIndex` lookup (`EquipmentType` → `C22` →
+    //      `codelist_text`) when the vessel has no symbol path.
+    //   3. Raw `EquipmentType` enum ID so the attribute is never
+    //      silently blank.
+    let eq_type_description = derive_type_description_from_symbol(drawing, &obj.uid)
+        .or_else(|| resolve_codelist_field(drawing, obj, "EquipmentType"))
         .unwrap_or_else(|| obj.fields.get("EquipmentType").cloned().unwrap_or_default());
     let construction_status = canonical_construction_status(obj, drawing.style);
     let construction_status2 = canonical_construction_status2(obj, drawing.style);
@@ -2916,36 +2919,53 @@ mod tests {
     }
 
     #[test]
-    fn vessel_eq_type_uses_codelist_lookup_when_available() {
-        // When the drawing ships a codelist entry for
-        // EquipmentType = "0", the writer MUST prefer the codelist
-        // text over the symbol-path stem. This mirrors SmartPlant's
-        // own rendering (the enum display text is the source of
-        // truth; the symbol path is a UI convention).
+    fn vessel_eq_type_prefers_symbol_path_over_codelist_to_match_a01() {
+        // On TEST02 A01 (`EquipmentType = 241`), `C22` resolves to
+        // `"1 diameter, 1 chamber, elliptical head horizontal drum"`,
+        // while SmartPlant's reference `A01_Data.xml` emits the
+        // symbol-path stem `"Horizontal Drum"` (#27). When a symbol
+        // path is present on the representation, it takes priority.
         let mut d = example_drawing();
-        // Seed the vessel with an EquipmentType code so the codelist
-        // path has something to resolve.
+        let vessel = d
+            .objects
+            .iter_mut()
+            .find(|o| o.item_type_name == "Vessel")
+            .expect("vessel in fixture");
+        vessel.fields.insert("EquipmentType".into(), "241".into());
+        d.codelist.insert_attribute_mapping("EquipmentType", "22");
+        d.codelist.insert_entry(
+            "22",
+            "241",
+            "1 diameter, 1 chamber, elliptical head horizontal drum",
+        );
+
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IEquipment EqTypeDescription="Horizontal Drum"/>"#),
+            "symbol-path stem must win over C22 codelist text to match A01; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn vessel_eq_type_uses_codelist_lookup_when_no_symbol_path() {
+        // When a vessel has no symbol path on its representation,
+        // the writer falls back to the `CodelistIndex` mapping
+        // (`EquipmentType` → `C22`).
+        let mut d = example_drawing();
+        d.representations.clear();
         let vessel = d
             .objects
             .iter_mut()
             .find(|o| o.item_type_name == "Vessel")
             .expect("vessel in fixture");
         vessel.fields.insert("EquipmentType".into(), "3".into());
-        // Register EquipmentType → codelist 28 → "3" = "Reactor".
-        d.codelist.insert_attribute_mapping("EquipmentType", "28");
-        d.codelist.insert_entry("28", "3", "Reactor");
+        d.codelist.insert_attribute_mapping("EquipmentType", "22");
+        d.codelist.insert_entry("22", "3", "Reactor");
 
         let out = write_data_xml(&d, "TEST02").expect("write");
         assert!(
             out.contains(r#"<IEquipment EqTypeDescription="Reactor"/>"#),
-            "codelist-resolved description should win over the symbol-path stem; out:\n{out}"
-        );
-        // The symbol path stem ("Horizontal Drum") must NOT appear
-        // as the EqType description — it's still in the XML as part
-        // of the rep's FileName chain, but not on <IEquipment>.
-        assert!(
-            !out.contains(r#"EqTypeDescription="Horizontal Drum""#),
-            "codelist lookup should beat symbol-path fallback; out:\n{out}"
+            "codelist-resolved description should be used when no symbol path is present; out:\n{out}"
         );
     }
 

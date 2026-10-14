@@ -4,6 +4,9 @@
 基于当前 `pid-parse` 能力现状，制定下一阶段中文开发方案：优先补齐高价值解析缺口，保持 Probe/Decode 分层、byte-audit 可验证、writer passthrough 安全边界。
 
 ## 当前阶段
+**2026-10-14 · 修复数据库线 `load_codelist_index` 连接与 `EqTypeDescription` 优先级（#27）**：
+`src/publish/sqlite_load.rs` 的 `load_codelist_index` 改为读取 `SELECT attribute_name, attribute_codelisted, attribute_datatype FROM attributes`，仅在 `attribute_codelisted = 'T'` 且 `attribute_datatype` 形如 `'C<数字>'` 时剥掉 `'C'` 注册 `attribute_name → codelist_number`（如 `EquipmentType → 22`、`NozzleType → 35`）。`src/publish/xml_writer.rs` 的 `write_process_vessel` 将 `EqTypeDescription` 定为符号路径词干优先（`derive_type_description_from_symbol` → `resolve_codelist_field` → 原值），保持 `A01_Data.xml` 的 `EqTypeDescription="Horizontal Drum"` 与参考零回归；无符号路径时使用 `C22` 的 `codelist_text`。`--lib publish::` 238 过 / 0 败，5 组数据库发布集成测试 37 过 / 2 忽略，clippy 两种特性零告警，rustfmt 干净，rustdoc missing-docs 0，wasm32 check 过。
+
 **2026-10-14 · 分析页 `docs/analysis/n10-meta-rows.md` N10（`4866b81` + Q5–Q7 批复）**：
 `write_pid_meta_xml` 改调 `write_meta_xml`，用 `derive_meta_uid` 写出 `DocumentVersion`、`DocumentRevision`、`File` 和 3 条关系（`VersionedDoc`、`RevisedDocument`、`FileComposition`），`_Index.json` 增加 `"pipeline_uids": "synthesized" | "not synthesized"`。只读探针 `examples/probe_oracle_exp_drawing_meta.rs` 核对 `Export.dmp`：`T_DRAWING`（53 行）的 `VERSION` / `REVISION` / `LASTPUBLISHTIME` / `SP_LASTEFPUBLISHTIME` 全为 NULL，`DATECREATED` 与 `PATH` 53/53 非空；`T_DRAWINGVERSION`（15 行）全为已删旧图的 `Created for Delete` 快照，现存 53 张命中 0；`T_REVISION` 0 行；5 份参考 `_Meta.xml` 的 30 个 UID、`DocVersionDate`、`FilePath` 在 `Export.dmp` 与 `.pid` 中 0 命中。Q5–Q7 批复保持 `4866b81` 口径（`DocVersionDate=""`、`FilePath=""`）。清掉 `src/publish/pid_writer.rs` 与 `src/backup/datamap.rs` 的 3 条 clippy / rustdoc 告警；clippy 默认特性、`--no-default-features`、`--example probe_oracle_exp_drawing_meta` 零告警，rustfmt 干净，rustdoc missing-docs 0，wasm32 lib check 过，`--lib publish::` 237 过、`--lib backup::` 107 过、`--test publish_from_pid` 8 过。
 

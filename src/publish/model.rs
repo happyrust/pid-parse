@@ -21,11 +21,12 @@ use std::fmt;
 ///
 /// * `codelists(codelist_number, codelist_index, codelist_text, ...)`
 ///   — one row per enum entry.
-/// * `attributes(attribute_name, attribute_codelisted, ...)`
-///   — declares which codelist an attribute pulls from.
+/// * `attributes(attribute_name, attribute_codelisted, attribute_datatype, ...)`
+///   — `attribute_codelisted` is `"T"` / `"F"`, and `attribute_datatype`
+///   carries `"C<n>"` (e.g. `"C22"` → codelist `"22"`).
 ///
-/// Stage-1 A7 surfaces this to the XML writer so `EqTypeDescription`
-/// no longer has to rely solely on symbol-path parsing.
+/// Stage-1 A7 surfaces this to the XML writer so coded attributes
+/// can resolve against the plant catalog.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CodelistIndex {
     /// `(codelist_number, codelist_index) → codelist_text`.
@@ -33,10 +34,9 @@ pub struct CodelistIndex {
     /// stages them as TEXT regardless of the underlying SQL Server
     /// type.
     entries: BTreeMap<(String, String), String>,
-    /// `attribute_name → codelist_number`, sourced from the
-    /// `attributes` metadata table's `attribute_codelisted` column.
-    /// Empty / zero / null values are filtered out at load time —
-    /// they mean "this attribute is not codelisted".
+    /// `attribute_name → codelist_number`, sourced from rows in the
+    /// `attributes` metadata table where `attribute_codelisted = "T"`
+    /// and `attribute_datatype = "C<n>"` (with the leading `"C"` stripped).
     attribute_codelist: BTreeMap<String, String>,
 }
 

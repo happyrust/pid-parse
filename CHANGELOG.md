@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### publish 数据库线 `load_codelist_index` 按 `attribute_datatype = C<n>` 取选择表号（2026-10-14，#27）
+
+`publish::sqlite_load::load_codelist_index` 原先将 `attributes.attribute_codelisted` 当作选择表编号注册到 `CodelistIndex`，真实 SmartPlant 目录表里该列是 `'T'` / `'F'` 布尔标志，选择表编号在 `attribute_datatype` 列写成 `'C<n>'`（如 `EquipmentType → C22`、`NozzleType → C35`）。现改为当 `attribute_codelisted = 'T'` 且 `attribute_datatype` 形如 `'C<数字>'` 时剥掉 `'C'` 注册 `attribute_name → codelist_number`。同时将 `write_process_vessel` 的 `EqTypeDescription` 回退顺序定为符号路径词干优先（`derive_type_description_from_symbol` → `resolve_codelist_field` → 原值），保持 `A01_Data.xml` 的 `EqTypeDescription="Horizontal Drum"` 与参考零回归，无符号路径时才落到 `C22` 的 `codelist_text`。
+
 ### publish `.pid` 的 `_Meta.xml` 补上版本、修订和文件（2026-10-14，N10）
 
 `write_pid_meta_xml` 改走 `write_meta_xml`。`DocumentVersion`、`DocumentRevision`、`File` 和三条 `Rel` 的 UID 用 `derive_meta_uid`（图纸 UID 加角色的 UUID v5），不跟参考里带 `AAAD` 的 UID 对齐。`DocVersionDate` 和 `FilePath` 留空。探针 `examples/probe_oracle_exp_drawing_meta.rs` 与分析页 `docs/analysis/n10-meta-rows.md` 实测确认：`T_DRAWING` 53 行的 `VERSION` / `REVISION` / `LASTPUBLISHTIME` / `SP_LASTEFPUBLISHTIME` 全 NULL，`T_DRAWINGVERSION` 15 行全为已删旧图的 `Created for Delete` 快照（现存 53 张图命中 0），`T_REVISION` 为空表，5 份参考 `_Meta.xml` 的 30 个随机 v4 UID、`DocVersionDate`、`FilePath` 在 `Export.dmp` 与 `.pid` 中全部 0 命中；Q5–Q7 批复保持 `4866b81` 现行口径。顺手清掉 `src/publish/pid_writer.rs` 与 `src/backup/datamap.rs` 的 3 条 clippy / rustdoc 告警。
