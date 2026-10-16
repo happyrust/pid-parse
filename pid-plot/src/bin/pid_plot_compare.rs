@@ -5,17 +5,19 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use pid_plot::compare::{compare_plots, template_masks, write_overlay};
+use pid_plot::compare::{MaskRect, compare_plots_with_model, template_masks, write_overlay};
+use pid_plot::model::lay_out_drawing;
 use pid_plot::read::read_plot;
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
-    let (Some(reference_path), Some(our_path), Some(out_dir)) =
-        (args.next(), args.next(), args.next())
+    let (Some(reference_path), Some(our_path), Some(out_dir), Some(pid_path)) =
+        (args.next(), args.next(), args.next(), args.next())
     else {
-        eprintln!("usage: pid_plot_compare <reference.pdf> <ours.pdf> <out-dir>");
+        eprintln!("usage: pid_plot_compare <reference.pdf> <ours.pdf> <out-dir> <drawing.pid> [corpus]");
         return ExitCode::from(2);
     };
+    let corpus = args.next().map_or_else(default_corpus, PathBuf::from);
     let reference_bytes = match fs::read(&reference_path) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -44,32 +46,24 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let mut masks = template_masks(reference.page_mm);
-    if let Some(mask_json) = args.next() {
-        match fs::read_to_string(&mask_json) {
-            Ok(text) => match serde_json::from_str::<Vec<pid_plot::model::MissingSymbolBox>>(&text)
-            {
-                Ok(boxes) => {
-                    for box_ in boxes {
-                        masks.push(pid_plot::compare::MaskRect {
-                            label: box_.path,
-                            min_mm: box_.min_mm,
-                            max_mm: box_.max_mm,
-                        });
-                    }
-                }
-                Err(error) => {
-                    eprintln!("masks {mask_json}: {error}");
-                    return ExitCode::from(1);
-                }
-            },
-            Err(error) => {
-                eprintln!("read {mask_json}: {error}");
-                return ExitCode::from(1);
-            }
+    let model = match lay_out_drawing(PathBuf::from(&pid_path).as_path(), &corpus) {
+        Ok(model) => model,
+        Err(error) => {
+            eprintln!("{pid_path}: {error}");
+            return ExitCode::from(1);
         }
-    }
-    let report = compare_plots(&reference, &ours, &masks);
+    };
+    let template = template_masks(reference.page_mm);
+    let missing: Vec<MaskRect> = model
+        .missing_boxes
+        .iter()
+        .map(|box_| MaskRect {
+            label: box_.path.clone(),
+            min_mm: box_.min_mm,
+            max_mm: box_.max_mm,
+        })
+        .collect();
+    let report = compare_plots_with_model(&reference, &ours, &template, &missing, &model);
     let stem = PathBuf::from(&our_path)
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
@@ -106,4 +100,11 @@ fn main() -> ExitCode {
         report.fit.finding.unwrap_or_default()
     );
     ExitCode::SUCCESS
+}
+
+fn default_corpus() -> PathBuf {
+    env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
+        || PathBuf::from(r"D:\work\cad\PID自研软件验证"),
+        PathBuf::from,
+    )
 }

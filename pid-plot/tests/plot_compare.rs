@@ -4,7 +4,9 @@
 
 use std::path::PathBuf;
 
-use pid_plot::compare::{compare_plots, template_masks, write_overlay, write_report};
+use pid_plot::compare::{
+    MaskRect, compare_plots_with_model, template_masks, write_overlay, write_report,
+};
 use pid_plot::model::lay_out_drawing;
 use pid_plot::read::read_plot;
 
@@ -15,35 +17,39 @@ struct Baseline {
     min_text_matched: usize,
 }
 
+// Baselines re-locked after styles landed: source line widths/colours/dashes,
+// complex-dash hydraulic ticks, boundary fills and symbol lettering all add
+// ink the plot did not carry before, so `extra_mm` sits higher than the old
+// monochrome-stroke run while coverage improved on every drawing.
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
-        min_coverage: 0.9850,
-        max_extra_mm: 65.0,
+        min_coverage: 0.9930,
+        max_extra_mm: 850.0,
         min_text_matched: 520,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
-        min_coverage: 0.9970,
-        max_extra_mm: 20.0,
+        min_coverage: 0.9980,
+        max_extra_mm: 260.0,
         min_text_matched: 125,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
-        min_coverage: 0.9950,
-        max_extra_mm: 15.0,
+        min_coverage: 0.9960,
+        max_extra_mm: 210.0,
         min_text_matched: 103,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
-        min_coverage: 0.9810,
-        max_extra_mm: 20.0,
+        min_coverage: 0.9850,
+        max_extra_mm: 380.0,
         min_text_matched: 143,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
-        min_coverage: 0.9930,
-        max_extra_mm: 25.0,
+        min_coverage: 0.9950,
+        max_extra_mm: 275.0,
         min_text_matched: 232,
     },
 ];
@@ -73,15 +79,17 @@ fn five_drawings_hold_the_ratchet() {
         let reference = read_plot(&reference_bytes).expect("read reference");
         let ours = read_plot(&our_bytes).expect("read ours");
         let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus).expect("layout");
-        let mut masks = template_masks(reference.page_mm);
-        for box_ in &model.missing_boxes {
-            masks.push(pid_plot::compare::MaskRect {
+        let template = template_masks(reference.page_mm);
+        let missing: Vec<MaskRect> = model
+            .missing_boxes
+            .iter()
+            .map(|box_| MaskRect {
                 label: box_.path.clone(),
                 min_mm: box_.min_mm,
                 max_mm: box_.max_mm,
-            });
-        }
-        let report = compare_plots(&reference, &ours, &masks);
+            })
+            .collect();
+        let report = compare_plots_with_model(&reference, &ours, &template, &missing, &model);
         let json_path = out_dir.join(format!("{name}.json"));
         let png_path = out_dir.join(format!("{name}.png"));
         write_report(&json_path, &report).expect("json");

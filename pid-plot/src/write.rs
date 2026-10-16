@@ -1,16 +1,22 @@
 //! Write a [`PaperModel`](crate::model::PaperModel) to a one-page PDF.
 //!
 //! Decoded and Inferred primitives go on two optional-content groups. ProbeOnly
-//! is left off the page. Strokes are a constant 0.25 mm: the paper table does
-//! not carry line style yet, and phase one does not compare width. Arcs and
-//! circles are flattened at the same 0.05 mm chord the reader uses, then stored
-//! as straight segments, so a read-back can match the table endpoint for endpoint.
+//! is left off the page. Every stroke draws with the pen its resolved line
+//! style states — colour, width and dash — and a filled region paints its ring
+//! with `f`; a stroke whose record resolved nothing falls back to a 0.25 mm
+//! solid black pen. Arcs and circles are flattened at the same 0.05 mm chord
+//! the reader uses, then stored as straight segments, so a read-back can match
+//! the table endpoint for endpoint.
 //!
-//! Each text run is set in the face [`crate::fonts::typeface_key`] names.
-//! A style height that was measured on the reference plots is written at
-//! that plot's `Tf`; every other height stays the style height in points.
-//! Every face must be a static TrueType or OpenType program pdfcraft will
-//! embed: under 16 MiB, not a collection, not a variable font.
+//! Each text run is set in the face [`crate::fonts::typeface_key`] names,
+//! character by character: a run mixes faces where one face cannot encode the
+//! whole string (`120℃` keeps its Latin digits in Arial Narrow and only the
+//! `℃` borrows a CJK face), so an unsupported character never moves the
+//! encodable characters' widths. A style height that was measured on the
+//! reference plots is written at that plot's `Tf`; every other height stays
+//! the style height in points. Every face must be a static TrueType or
+//! OpenType program pdfcraft will embed: under 16 MiB, not a collection, not
+//! a variable font.
 
 use std::f64::consts::TAU;
 
@@ -21,10 +27,11 @@ use pdfcraft_fonts::embedding::{self, embed};
 use pdfcraft_fonts::pdf::Metrics;
 
 use crate::fonts::typeface_key;
-use crate::model::{PaperModel, PaperShape, TextAnchor, TextLine};
+use crate::model::{PaperModel, PaperShape, PaperStroke, TextAnchor, TextLine};
 use crate::read::CHORD_MM;
 
 const PT_PER_MM: f64 = 72.0 / 25.4;
+/// The pen a stroke with no resolved style falls back to.
 const STROKE_MM: f64 = 0.25;
 /// Body size for symbol text whose source record does not carry one.
 pub const DEFAULT_TEXT_MM: f64 = 2.5;
@@ -221,14 +228,8 @@ fn push_layer(
     ops.push(Op::new("J", vec![Object::Int(0)]));
     ops.push(Op::new("j", vec![Object::Int(0)]));
 
-    let mut stroked = false;
     for primitive in &primitives {
-        if paint_shape(ops, &primitive.shape, page) {
-            stroked = true;
-        }
-    }
-    if stroked {
-        ops.push(Op::new("S", Vec::new()));
+        paint_primitive(ops, primitive, page);
     }
     for primitive in &primitives {
         if let PaperShape::Text {
@@ -241,12 +242,10 @@ fn push_layer(
             line,
         } = &primitive.shape
         {
-            let face = face_for(fonts, font.as_deref(), value)?;
             show_text(
                 ops,
-                &face.metrics,
+                fonts,
                 ShownText {
-                    resource: &face.resource,
                     typeface: typeface_key(font.as_deref(), value),
                     origin_mm: *origin_mm,
                     height_mm: *height_mm,
@@ -261,6 +260,72 @@ fn push_layer(
     ops.push(Op::new("Q", Vec::new()));
     ops.push(Op::new("EMC", Vec::new()));
     Ok(())
+}
+
+/// Paint one non-text primitive in its own pen state: `q`, the stroke's
+/// colour/width/dash or the fill's colour, the path, `S` or `f`, `Q`.
+/// The layer's `J`/`j` ride inside every saved state, so a one-stroke
+/// group keeps the layer's cap and join.
+fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, page: [f64; 2]) {
+    if let PaperShape::Fill { chain_mm, rgb } = &primitive.shape {
+        if chain_mm.len() < 3 || !chain_mm.iter().all(|point| finite(*point)) {
+            return;
+        }
+        let [r, g, b] = rgb.unwrap_or([0, 0, 0]);
+        ops.push(Op::new("q", Vec::new()));
+        ops.push(Op::new(
+            "rg",
+            vec![
+                Object::Real(f64::from(r) / 255.0),
+                Object::Real(f64::from(g) / 255.0),
+                Object::Real(f64::from(b) / 255.0),
+            ],
+        ));
+        ops.push(Op::new("m", vec![pt(chain_mm[0][0]), pt(chain_mm[0][1])]));
+        for point in &chain_mm[1..] {
+            ops.push(Op::new("l", vec![pt(point[0]), pt(point[1])]));
+        }
+        ops.push(Op::new("h", Vec::new()));
+        ops.push(Op::new("f", Vec::new()));
+        ops.push(Op::new("Q", Vec::new()));
+        return;
+    }
+    if matches!(primitive.shape, PaperShape::Text { .. }) {
+        return;
+    }
+    let pen = primitive.stroke.clone().unwrap_or(PaperStroke {
+        rgb: [0, 0, 0],
+        width_mm: STROKE_MM,
+        dash_mm: Vec::new(),
+    });
+    if !pen.width_mm.is_finite() || pen.width_mm <= 0.0 {
+        return;
+    }
+    ops.push(Op::new("q", Vec::new()));
+    ops.push(Op::new(
+        "RG",
+        vec![
+            Object::Real(f64::from(pen.rgb[0]) / 255.0),
+            Object::Real(f64::from(pen.rgb[1]) / 255.0),
+            Object::Real(f64::from(pen.rgb[2]) / 255.0),
+        ],
+    ));
+    ops.push(Op::new("w", vec![Object::Real(pen.width_mm * PT_PER_MM)]));
+    if !pen.dash_mm.is_empty() {
+        let dash: Vec<Object> = pen
+            .dash_mm
+            .iter()
+            .map(|segment| Object::Real(segment.abs() * PT_PER_MM))
+            .collect();
+        ops.push(Op::new(
+            "d",
+            vec![Object::Array(dash), Object::Real(0.0)],
+        ));
+    }
+    if paint_shape(ops, &primitive.shape, page) {
+        ops.push(Op::new("S", Vec::new()));
+    }
+    ops.push(Op::new("Q", Vec::new()));
 }
 
 fn paint_shape(ops: &mut Vec<Op>, shape: &PaperShape, page: [f64; 2]) -> bool {
@@ -289,7 +354,7 @@ fn paint_shape(ops: &mut Vec<Op>, shape: &PaperShape, page: [f64; 2]) -> bool {
             center_mm,
             radius_mm,
         } => chain(ops, &arc_points(*center_mm, *radius_mm, 0.0, -TAU), page),
-        PaperShape::Text { .. } => false,
+        PaperShape::Fill { .. } | PaperShape::Text { .. } => false,
     }
 }
 
@@ -314,32 +379,53 @@ fn chain(ops: &mut Vec<Op>, points: &[[f64; 2]], page: [f64; 2]) -> bool {
     any
 }
 
-fn face_for<'a>(
+/// Split `value` into runs that share one face, preferring the face
+/// `typeface_key` names. A character the named face cannot encode moves to
+/// the first face that can — only that character moves, so `120℃` keeps its
+/// digits in the narrow face instead of dragging the whole run to a
+/// fallback whose Latin is wider.
+fn encode_runs<'a>(
     faces: &'a [ReadyFace<'a>],
-    requested: Option<&str>,
-    text: &str,
-) -> Result<&'a ReadyFace<'a>, PlotWriteError> {
-    let key = typeface_key(requested, text);
-    if let Some(face) = faces
-        .iter()
-        .find(|face| face.key == key && face.metrics.encode(text).is_some())
-    {
-        return Ok(face);
-    }
-    faces
-        .iter()
-        .find(|face| face.metrics.encode(text).is_some())
-        .ok_or_else(|| {
+    key: &str,
+    value: &str,
+) -> Result<Vec<(&'a ReadyFace<'a>, Vec<u8>)>, PlotWriteError> {
+    let face_for_char = |ch: char| -> Option<&'a ReadyFace<'a>> {
+        let mut buf = [0u8; 4];
+        let text = ch.encode_utf8(&mut buf);
+        faces
+            .iter()
+            .find(|face| face.key == key && face.metrics.encode(text).is_some())
+            .or_else(|| {
+                faces
+                    .iter()
+                    .find(|face| face.metrics.encode(text).is_some())
+            })
+    };
+    let mut runs: Vec<(&ReadyFace<'_>, String)> = Vec::new();
+    for ch in value.chars() {
+        let Some(face) = face_for_char(ch) else {
             let have: Vec<&str> = faces.iter().map(|face| face.key).collect();
-            PlotWriteError::Font(format!(
-                "no face can draw {text:?} (wanted {key}; embedded {})",
+            return Err(PlotWriteError::Font(format!(
+                "no face can draw {ch:?} in {value:?} (wanted {key}; embedded {})",
                 have.join(", ")
-            ))
+            )));
+        };
+        match runs.last_mut() {
+            Some((last_face, text)) if std::ptr::eq(*last_face, face) => text.push(ch),
+            _ => runs.push((face, ch.to_string())),
+        }
+    }
+    runs.into_iter()
+        .map(|(face, text)| {
+            face.metrics
+                .encode(&text)
+                .map(|bytes| (face, bytes))
+                .ok_or_else(|| missing_glyph(&face.metrics, &text))
         })
+        .collect()
 }
 
 struct ShownText<'a> {
-    resource: &'a str,
     typeface: &'a str,
     origin_mm: [f64; 2],
     height_mm: Option<f64>,
@@ -351,7 +437,7 @@ struct ShownText<'a> {
 
 fn show_text(
     ops: &mut Vec<Op>,
-    metrics: &Metrics,
+    faces: &[ReadyFace<'_>],
     text: ShownText<'_>,
 ) -> Result<(), PlotWriteError> {
     if text.value.is_empty() || !text.rotation.is_finite() || !finite(text.origin_mm) {
@@ -361,24 +447,22 @@ fn show_text(
     if !height_mm.is_finite() || height_mm <= 0.0 {
         return Ok(());
     }
-    let bytes = metrics
-        .encode(text.value)
-        .ok_or_else(|| missing_glyph(metrics, text.value))?;
+    let runs = encode_runs(faces, text.typeface, text.value)?;
     let size = plotted_size_pt(text.typeface, height_mm);
+    let width_mm: f64 = runs
+        .iter()
+        .map(|(face, bytes)| run_width_mm(&face.metrics, size, bytes))
+        .sum();
     let origin_mm = baseline_origin(
         text.origin_mm,
         text.rotation,
-        run_width_mm(metrics, size, &bytes),
+        width_mm,
         height_mm,
         text.anchor,
         text.line,
     );
     let (sin, cos) = text.rotation.sin_cos();
     ops.push(Op::new("BT", Vec::new()));
-    ops.push(Op::new(
-        "Tf",
-        vec![Object::name(text.resource), Object::Real(size)],
-    ));
     ops.push(Op::new(
         "Tm",
         vec![
@@ -390,10 +474,18 @@ fn show_text(
             pt(origin_mm[1]),
         ],
     ));
-    ops.push(Op::new(
-        "Tj",
-        vec![Object::String(PdfString::literal(bytes))],
-    ));
+    // `Tj` advances the text position itself, so consecutive runs set in
+    // different faces continue along the same baseline.
+    for (face, bytes) in &runs {
+        ops.push(Op::new(
+            "Tf",
+            vec![Object::name(&*face.resource), Object::Real(size)],
+        ));
+        ops.push(Op::new(
+            "Tj",
+            vec![Object::String(PdfString::literal(bytes.clone()))],
+        ));
+    }
     ops.push(Op::new("ET", Vec::new()));
     Ok(())
 }
@@ -461,6 +553,25 @@ fn missing_glyph(metrics: &Metrics, value: &str) -> PlotWriteError {
         )
 }
 
+/// A circle's flattened outline — one full clockwise turn, the same way
+/// [`paint_shape`] draws it. Shared with the comparator.
+pub(crate) fn circle_outline(center_mm: [f64; 2], radius_mm: f64) -> Vec<[f64; 2]> {
+    arc_points(center_mm, radius_mm, 0.0, -TAU)
+}
+
+/// The minor-clockwise arc as a flattened vertex chain — shared with the
+/// comparator so `model_strokes` attributes an arc's ink the same way the
+/// writer draws it.
+pub(crate) fn arc_chain(
+    center_mm: [f64; 2],
+    radius_mm: f64,
+    start_angle: f64,
+    end_angle: f64,
+) -> Vec<[f64; 2]> {
+    let (start, sweep) = minor_clockwise_arc(start_angle, end_angle);
+    arc_points(center_mm, radius_mm, start, sweep)
+}
+
 fn arc_points(center: [f64; 2], radius: f64, start: f64, sweep: f64) -> Vec<[f64; 2]> {
     if !center[0].is_finite()
         || !center[1].is_finite()
@@ -500,7 +611,7 @@ fn arc_points(center: [f64; 2], radius: f64, start: f64, sweep: f64) -> Vec<[f64
     points
 }
 
-fn minor_clockwise_arc(start: f64, end: f64) -> (f64, f64) {
+pub(crate) fn minor_clockwise_arc(start: f64, end: f64) -> (f64, f64) {
     let mut s = start;
     let mut e = end;
     let cw = (s - e).rem_euclid(TAU);
@@ -565,6 +676,7 @@ fn extent_points(shape: &PaperShape) -> Vec<[f64; 2]> {
             [center_mm[0] - radius_mm, center_mm[1] - radius_mm],
             [center_mm[0] + radius_mm, center_mm[1] + radius_mm],
         ],
+        PaperShape::Fill { chain_mm, .. } => chain_mm.clone(),
         PaperShape::Text { origin_mm, .. } => vec![*origin_mm],
     }
 }
@@ -624,6 +736,19 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
                     &arc_points(*center_mm, *radius_mm, 0.0, -TAU),
                     page,
                 ),
+                // A fill reads back as its outline, the closing edge
+                // included — the reader's `ClosePath` segment.
+                PaperShape::Fill { chain_mm, .. } => {
+                    push_chain(&mut out, chain_mm, page);
+                    if chain_mm.len() >= 2 {
+                        push_segment(
+                            &mut out,
+                            chain_mm[chain_mm.len() - 1],
+                            chain_mm[0],
+                            page,
+                        );
+                    }
+                }
                 PaperShape::Text { .. } => {}
             }
         }
@@ -715,6 +840,7 @@ mod tests {
             stream_path: None,
             byte_range: None,
             symbol: None,
+            stroke: None,
             shape,
         }
     }

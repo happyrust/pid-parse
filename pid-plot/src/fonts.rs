@@ -1,17 +1,18 @@
-//! Typefaces named by a drawing's style table, taken from this machine's
-//! font folder and subset to the characters the drawing actually letters.
+//! Typefaces named by a drawing's style table, loaded as font files from
+//! caller-chosen directories and subset in Rust to the characters the
+//! drawing actually letters.
 //!
 //! The reference plots use Arial, Arial Narrow, FangSong, SimSun and
-//! NSimSun. Those faces are installed with Windows and declare editable
-//! embedding. SimSun and NSimSun ship in one collection that is larger
-//! than the 16 MiB a PDF font may be, so each used face is subset before
-//! it is embedded. The outlines of the characters that are drawn stay the
-//! face's own.
+//! NSimSun. Their files are document input, not a fixed system folder:
+//! [`font_dirs`] lists `PID_PLOT_FONTS` first, then `<corpus>/fonts`, then
+//! the repository's `test-file/fonts`. Subsetting is `fontcull` (klippa,
+//! the fontations engine) — no Python, no fontTools — so SimSun's 18 MiB
+//! program shrinks under pdfcraft's 16 MiB ceiling the same way the old
+//! `pyftsubset` step made it fit, and a face file that is already small
+//! enough embeds whole.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::model::{PaperModel, PaperShape};
 
@@ -19,16 +20,19 @@ use crate::model::{PaperModel, PaperShape};
 pub struct PreparedFont {
     /// Canonical typeface name, such as `SimSun` or `Arial Narrow`.
     pub key: String,
-    /// Static TrueType bytes, subset to the characters assigned to this face.
+    /// The font file's complete bytes.
     pub bytes: Vec<u8>,
 }
 
-/// Which installed face a run should use.
+/// Which face a run should use.
 ///
-/// A name the style table states and this machine has is used as stated.
-/// `ËÎÌå` is the vendor's damaged spelling of `宋体`, documented on
+/// A name the style table states is used as stated. `ËÎÌå` is the vendor's
+/// damaged spelling of `宋体`, documented on
 /// [`pid_parse::style_link::TEXT_CHAR_FONT_NAME_OFFSET`]. Anything else
-/// with a Han character uses FangSong; Latin-only lettering uses Arial Narrow.
+/// with a Han character uses FangSong; Latin-only lettering uses Arial
+/// Narrow. Individual characters the chosen face cannot encode borrow
+/// another loaded face, one character at a time — see
+/// [`crate::write`].
 #[must_use]
 pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
     if let Some(name) = requested.map(str::trim).filter(|name| !name.is_empty())
@@ -43,14 +47,43 @@ pub fn typeface_key(requested: Option<&str>, text: &str) -> &'static str {
     }
 }
 
-/// Subset the installed faces `models` actually use.
+/// The directories [`prepare_fonts`] looks in, in order.
+///
+/// `PID_PLOT_FONTS` is a `;`-separated list like `PATH`. `<corpus>/fonts`
+/// follows, and the repository's `test-file/fonts` last — the corpus on
+/// this machine keeps its licensed faces there.
+#[must_use]
+pub fn font_dirs(corpus: Option<&Path>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(list) = std::env::var_os("PID_PLOT_FONTS") {
+        dirs.extend(std::env::split_paths(&list));
+    }
+    if let Some(corpus) = corpus {
+        dirs.push(corpus.join("fonts"));
+    }
+    dirs.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-file/fonts"),
+    );
+    dirs
+}
+
+/// Load the faces `models` letter in from `dirs`.
+///
+/// Every face a run names is required; a face file that no directory
+/// carries is an error naming where the search looked. Characters no
+/// loaded face covers pull the CJK fallback faces (`FangSong`, `SimSun`)
+/// in too — the run keeps its named face for everything it can encode and
+/// only the uncovered characters borrow.
 ///
 /// # Errors
 ///
-/// Returns an error when a face file is missing, Python or fontTools cannot
-/// subset it, or the subset file cannot be read back.
-pub fn prepare_local_fonts(models: &[&PaperModel]) -> Result<Vec<PreparedFont>, String> {
-    let mut chars: BTreeMap<&'static str, String> = BTreeMap::new();
+/// Returns an error when a needed face is absent from every directory, or
+/// a file is present but not an embeddable standalone font.
+pub fn prepare_fonts(
+    models: &[&PaperModel],
+    dirs: &[PathBuf],
+) -> Result<Vec<PreparedFont>, String> {
+    let mut wanted: BTreeMap<&'static str, String> = BTreeMap::new();
     for model in models {
         for primitive in &model.primitives {
             let PaperShape::Text { value, font, .. } = &primitive.shape else {
@@ -59,27 +92,182 @@ pub fn prepare_local_fonts(models: &[&PaperModel]) -> Result<Vec<PreparedFont>, 
             if value.is_empty() {
                 continue;
             }
-            let key = typeface_key(font.as_deref(), value);
-            chars.entry(key).or_default().push_str(value);
-            // Arial Narrow has no ℃. The fallback faces must carry the
-            // whole run, so a character the named face lacks can still be drawn.
-            for fallback in ["FangSong", "SimSun"] {
-                if fallback != key {
-                    chars.entry(fallback).or_default().push_str(value);
-                }
-            }
+            wanted
+                .entry(typeface_key(font.as_deref(), value))
+                .or_default()
+                .push_str(value);
         }
     }
-    let mut faces = Vec::new();
-    for (key, text) in chars {
-        let source = installed_face(key)?;
-        let bytes = subset_face(&source.path, source.face_index, &text, key)?;
+    let mut faces: Vec<PreparedFont> = Vec::new();
+    let mut covered = String::new();
+    for (key, text) in &wanted {
+        let bytes = load_face(dirs, key, text)?;
+        for ch in text.chars() {
+            let mut buf = [0u8; 4];
+            if pdfcraft_fonts::embedding::covers(&bytes, ch.encode_utf8(&mut buf)) {
+                covered.push(ch);
+            }
+        }
         faces.push(PreparedFont {
-            key: key.to_string(),
+            key: (*key).to_string(),
             bytes,
         });
     }
+    // A character no named face covers borrows a CJK fallback.
+    let uncovered: BTreeSet<char> = wanted
+        .values()
+        .flat_map(|text| text.chars())
+        .filter(|ch| !covered.contains(*ch) && !ch.is_whitespace())
+        .collect();
+    if !uncovered.is_empty() {
+        let fallback_text: String = uncovered.iter().collect();
+        for fallback in ["FangSong", "SimSun"] {
+            let still: Vec<char> = uncovered
+                .iter()
+                .copied()
+                .filter(|ch| !face_covers(&faces, *ch))
+                .collect();
+            if still.is_empty() {
+                break;
+            }
+            if let Some(bytes) = face_file(dirs, fallback)? {
+                let bytes = subset_or_whole(fallback, &bytes, &fallback_text)?;
+                faces.push(PreparedFont {
+                    key: fallback.to_string(),
+                    bytes,
+                });
+            }
+        }
+        let still: String = uncovered
+            .iter()
+            .copied()
+            .filter(|ch| !face_covers(&faces, *ch))
+            .collect();
+        if !still.is_empty() {
+            return Err(format!(
+                "no loaded face can draw {still:?} (searched {})",
+                searched_dirs(dirs)
+            ));
+        }
+    }
     Ok(faces)
+}
+
+/// Whether any loaded face encodes `ch`.
+fn face_covers(faces: &[PreparedFont], ch: char) -> bool {
+    let mut buf = [0u8; 4];
+    let text = ch.encode_utf8(&mut buf);
+    faces
+        .iter()
+        .any(|face| pdfcraft_fonts::embedding::covers(&face.bytes, text))
+}
+
+/// The face `key`'s file, subset to the run's characters when the source
+/// program is worth shrinking.
+fn load_face(dirs: &[PathBuf], key: &str, text: &str) -> Result<Vec<u8>, String> {
+    let bytes = face_file(dirs, key)?.ok_or_else(|| missing_face(dirs, key))?;
+    subset_or_whole(key, &bytes, text)
+}
+
+/// `fontcull`'s subset of `bytes` down to `text` plus the printable ASCII
+/// baseline; the whole file where subsetting fails or the program already
+/// fits — a file that fits is validated the same way a subset is, so a
+/// bad file never loads silently.
+fn subset_or_whole(key: &str, bytes: &[u8], text: &str) -> Result<Vec<u8>, String> {
+    let chars: HashSet<char> = ('\u{20}'..='\u{7e}').chain(text.chars()).collect();
+    if let Ok(subset) = subset_face(bytes, &chars)
+        && pdfcraft_fonts::embedding::validate(&subset).is_ok()
+    {
+        return Ok(subset);
+    }
+    pdfcraft_fonts::embedding::validate(bytes)
+        .map_err(|error| format!("{key}: {error}"))?;
+    Ok(bytes.to_vec())
+}
+
+/// `fontcull`'s own plan with one fix: the name table stays whole — the
+/// public [`fontcull::subset_font_data`] plans an empty name-ID set,
+/// which drops `name` entirely and leaves the subset unnameable, and a
+/// face pdfcraft cannot name cannot embed.
+fn subset_face(font_data: &[u8], chars: &HashSet<char>) -> Result<Vec<u8>, String> {
+    use fontcull_klippa::{Plan, SubsetFlags, subset_font};
+    use fontcull_read_fonts::collections::IntSet;
+    use fontcull_skrifa::{FontRef, GlyphId, Tag};
+    use fontcull_write_fonts::types::NameId;
+
+    let font = FontRef::new(font_data).map_err(|error| format!("parse: {error:?}"))?;
+    let mut unicodes: IntSet<u32> = IntSet::empty();
+    for ch in chars {
+        unicodes.insert(u32::from(*ch));
+    }
+    let empty_gids: IntSet<GlyphId> = IntSet::empty();
+    let empty_tags: IntSet<Tag> = IntSet::empty();
+    let name_ids: IntSet<NameId> = IntSet::all();
+    let langs: IntSet<u16> = IntSet::all();
+    let layout_scripts: IntSet<Tag> = IntSet::all();
+    let layout_features: IntSet<Tag> =
+        IntSet::from_iter(fontcull_klippa::DEFAULT_LAYOUT_FEATURES.iter().copied());
+    let plan = Plan::new(
+        &empty_gids,
+        &unicodes,
+        &font,
+        SubsetFlags::default(),
+        &empty_tags,
+        &layout_scripts,
+        &layout_features,
+        &name_ids,
+        &langs,
+    );
+    subset_font(&font, &plan).map_err(|error| format!("subset: {error:?}"))
+}
+
+/// The file a face lives in, first hit across `dirs`.
+fn face_file(dirs: &[PathBuf], key: &str) -> Result<Option<Vec<u8>>, String> {
+    for dir in dirs {
+        for name in face_files(key) {
+            let path = dir.join(name);
+            if path.is_file() {
+                return std::fs::read(&path)
+                    .map(Some)
+                    .map_err(|error| format!("read {}: {error}", path.display()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Filenames a face answers to, most common first.
+fn face_files(key: &str) -> Vec<String> {
+    let mut names: Vec<String> = match key {
+        "Arial" => vec!["arial.ttf".into()],
+        "Arial Narrow" => vec!["ARIALN.TTF".into(), "arialn.ttf".into()],
+        "FangSong" => vec!["simfang.ttf".into(), "fangsong.ttf".into()],
+        "SimSun" => vec!["simsun.ttf".into()],
+        "NSimSun" => vec!["nsimsun.ttf".into()],
+        "SimSun-ExtB" => vec!["simsunb.ttf".into()],
+        _ => Vec::new(),
+    };
+    names.push(format!("{key}.ttf"));
+    names.push(format!("{key}.otf"));
+    names.push(format!("{}.ttf", key.replace(' ', "")));
+    names
+}
+
+fn missing_face(dirs: &[PathBuf], key: &str) -> String {
+    format!(
+        "no font file for {key} (searched {}; set PID_PLOT_FONTS or drop {key}.ttf into one)",
+        searched_dirs(dirs)
+    )
+}
+
+fn searched_dirs(dirs: &[PathBuf]) -> String {
+    if dirs.is_empty() {
+        return "no font directories".to_string();
+    }
+    dirs.iter()
+        .map(|dir| dir.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn known_typeface(name: &str) -> Option<&'static str> {
@@ -106,206 +294,9 @@ fn is_cjk(ch: char) -> bool {
     )
 }
 
-struct InstalledFace {
-    path: PathBuf,
-    face_index: u32,
-}
-
-fn installed_face(key: &str) -> Result<InstalledFace, String> {
-    let (file, face_index) = match key {
-        "Arial" => ("arial.ttf", 0),
-        "Arial Narrow" => ("ARIALN.TTF", 0),
-        "FangSong" => ("simfang.ttf", 0),
-        "SimSun" => ("simsun.ttc", 0),
-        "NSimSun" => ("simsun.ttc", 1),
-        "SimSun-ExtB" => ("simsunb.ttf", 0),
-        _ => return Err(format!("no installed face for {key}")),
-    };
-    let path = fonts_dir().join(file);
-    if !path.is_file() {
-        return Err(format!("{} is not installed at {}", key, path.display()));
-    }
-    Ok(InstalledFace { path, face_index })
-}
-
-fn fonts_dir() -> PathBuf {
-    std::env::var_os("WINDIR").map_or_else(
-        || PathBuf::from(r"C:\Windows\Fonts"),
-        |windir| PathBuf::from(windir).join("Fonts"),
-    )
-}
-
-static SUBSET_ID: AtomicU64 = AtomicU64::new(0);
-
-struct SubsetWorkspace {
-    path: PathBuf,
-}
-
-impl SubsetWorkspace {
-    fn new() -> Result<Self, String> {
-        loop {
-            let id = SUBSET_ID.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("pid-plot-subset-{}-{id}", std::process::id()));
-            match std::fs::create_dir(&path) {
-                Ok(()) => return Ok(Self { path }),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(format!("create subset workspace: {error}")),
-            }
-        }
-    }
-}
-
-impl Drop for SubsetWorkspace {
-    fn drop(&mut self) {
-        // This directory was exclusively created for this invocation.
-        // Cleanup must not replace a subsetting error during unwinding.
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-fn subset_face(source: &Path, face_index: u32, text: &str, key: &str) -> Result<Vec<u8>, String> {
-    subset_face_in(
-        SubsetWorkspace::new()?,
-        source,
-        face_index,
-        text,
-        key,
-        Path::new("python"),
-    )
-}
-
-fn subset_face_in(
-    workspace: SubsetWorkspace,
-    source: &Path,
-    face_index: u32,
-    text: &str,
-    key: &str,
-    python: &Path,
-) -> Result<Vec<u8>, String> {
-    let script = workspace.path.join("subset.py");
-    let text_path = workspace.path.join("chars.txt");
-    let dest = workspace.path.join("face.ttf");
-    std::fs::write(&script, SUBSET_PY).map_err(|error| error.to_string())?;
-    std::fs::write(&text_path, text).map_err(|error| error.to_string())?;
-    let output = Command::new(python)
-        .arg(&script)
-        .arg(source)
-        .arg(&dest)
-        .arg(&text_path)
-        .arg(face_index.to_string())
-        .output()
-        .map_err(|error| format!("python: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!("subset {key} failed: {stderr}{stdout}"));
-    }
-    std::fs::read(&dest).map_err(|error| format!("read subset {key}: {error}"))
-}
-
-const SUBSET_PY: &str = r#"
-import sys
-from fontTools.ttLib import TTFont
-from fontTools.subset import Subsetter, Options
-
-source, dest, text_path, face = sys.argv[1:5]
-text = open(text_path, encoding="utf-8").read()
-font = TTFont(source, fontNumber=int(face))
-for tag in ("fvar", "gvar", "avar", "cvar", "HVAR", "VVAR", "MVAR", "STAT"):
-    if tag in font:
-        del font[tag]
-options = Options()
-options.name_IDs = ["*"]
-options.notdef_outline = True
-options.recommended_glyphs = True
-subsetter = Subsetter(options=options)
-subsetter.populate(text=text)
-subsetter.subset(font)
-font.save(dest)
-"#;
-
 #[cfg(test)]
 mod tests {
-    use super::{SubsetWorkspace, fonts_dir, subset_face_in, typeface_key};
-    use std::path::Path;
-
-    #[test]
-    fn subset_face_cleans_up_when_python_cannot_start() {
-        let workspace = SubsetWorkspace::new().expect("workspace");
-        let dir = workspace.path.clone();
-        let python = dir.join("missing-python.exe");
-        let error = subset_face_in(workspace, Path::new("unused.ttf"), 0, "中", "test", &python)
-            .expect_err("missing interpreter must fail");
-        assert!(error.starts_with("python:"), "{error}");
-        assert!(!dir.exists(), "leftover workspace: {}", dir.display());
-    }
-
-    #[test]
-    fn subset_face_cleans_up_when_text_cannot_be_written() {
-        let workspace = SubsetWorkspace::new().expect("workspace");
-        let dir = workspace.path.clone();
-        std::fs::create_dir(dir.join("chars.txt")).expect("block text write");
-        let result = subset_face_in(
-            workspace,
-            Path::new("unused.ttf"),
-            0,
-            "中",
-            "test",
-            Path::new("python"),
-        );
-        assert!(result.is_err(), "writing text over a directory must fail");
-        assert!(!dir.exists(), "leftover workspace: {}", dir.display());
-    }
-
-    #[test]
-    fn subset_face_cleans_up_when_python_rejects_the_font() {
-        let workspace = SubsetWorkspace::new().expect("workspace");
-        let dir = workspace.path.clone();
-        let source = dir.join("not-a-font.ttf");
-        std::fs::write(&source, b"not a font").expect("bad font");
-        let error = subset_face_in(workspace, &source, 0, "中", "test", Path::new("python"))
-            .expect_err("invalid font must fail");
-        assert!(error.starts_with("subset test failed:"), "{error}");
-        assert!(!dir.exists(), "leftover workspace: {}", dir.display());
-    }
-
-    #[test]
-    fn subset_face_cleans_up_after_concurrent_successes() {
-        let source = fonts_dir().join("simsun.ttc");
-        if !source.is_file() {
-            eprintln!(
-                "skipping subset success test; {} is absent",
-                source.display()
-            );
-            return;
-        }
-        let first = SubsetWorkspace::new().expect("first workspace");
-        let second = SubsetWorkspace::new().expect("second workspace");
-        let first_dir = first.path.clone();
-        let second_dir = second.path.clone();
-        assert_ne!(first_dir, second_dir);
-        let (first_result, second_result) = std::thread::scope(|scope| {
-            let first_job = scope
-                .spawn(|| subset_face_in(first, &source, 0, "中", "test", Path::new("python")));
-            let second_job = scope
-                .spawn(|| subset_face_in(second, &source, 0, "文", "test", Path::new("python")));
-            (
-                first_job.join().expect("first thread"),
-                second_job.join().expect("second thread"),
-            )
-        });
-        let first_bytes = first_result.expect("first subset");
-        let second_bytes = second_result.expect("second subset");
-        assert!(!first_bytes.is_empty());
-        assert!(!second_bytes.is_empty());
-        assert_ne!(
-            first_bytes, second_bytes,
-            "different characters need different subsets"
-        );
-        assert!(!first_dir.exists(), "leftover first workspace");
-        assert!(!second_dir.exists(), "leftover second workspace");
-    }
+    use super::typeface_key;
 
     #[test]
     fn a_stated_arial_narrow_stays_arial_narrow() {

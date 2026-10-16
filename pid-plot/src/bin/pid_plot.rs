@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use pid_plot::fonts::prepare_local_fonts;
+use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::lay_out_drawing;
 use pid_plot::write::{PlotFont, write_plot};
 
@@ -13,7 +13,7 @@ fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let Some(pid) = args.next() else {
         eprintln!("usage: pid_plot <drawing.pid> <out.pdf> [corpus]");
-        eprintln!("typefaces come from the Windows font folder");
+        eprintln!("typefaces come from PID_PLOT_FONTS, then <corpus>/fonts");
         return ExitCode::from(2);
     };
     let Some(out) = args.next() else {
@@ -28,7 +28,7 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let mut prepared = match prepare_local_fonts(&[&model]) {
+    let mut prepared = match prepare_fonts(&[&model], &font_dirs(Some(&corpus))) {
         Ok(faces) => faces,
         Err(error) => {
             eprintln!("{pid}: {error}");

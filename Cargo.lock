@@ -64,6 +64,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -403,6 +409,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ddb117e43bbf7dacf0a4190fef4d345b9bad68dfc649cb349e7d17d28428e51"
 dependencies = [
  "clap_builder",
+ "clap_derive",
 ]
 
 [[package]]
@@ -411,8 +418,22 @@ version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "714a53001bf66416adb0e2ef5ac857140e7dc3a0c48fb28b2f10762fc4b5069f"
 dependencies = [
+ "anstream",
  "anstyle",
  "clap_lex",
+ "strsim",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2ce8604710f6733aa641a2b3731eaa1e8b3d9973d5e3565da11800813f997a9"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -694,6 +715,12 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "foldhash"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
+name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
@@ -714,6 +741,63 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c92d9081c7ab3bd83ef1eecdfad090f3d966e3ce74106779664114cfe1a6274"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "fontcull-font-types"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7187211f698d3144c4278d99cede5f6d67814cd676bbf1d2b8607049b3d76b2"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
+name = "fontcull-klippa"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ceb68d1b34e3c675e78f1cabbc49e19c5962d6c6173b7c77d77392431b99840"
+dependencies = [
+ "clap",
+ "fnv",
+ "fontcull-skrifa",
+ "fontcull-write-fonts",
+ "hashbrown 0.15.5",
+ "regex",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "fontcull-read-fonts"
+version = "0.38.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "170928e2d36f9605167b8480acd6e9fc5ef5daaf64fac43d178af9c563adba29"
+dependencies = [
+ "bytemuck",
+ "fontcull-font-types",
+]
+
+[[package]]
+name = "fontcull-skrifa"
+version = "0.39.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c39120d1806ed11baf0559537bd601c6c60d7bf84ddcc385adea8fb8ff62d35"
+dependencies = [
+ "bytemuck",
+ "fontcull-read-fonts",
+]
+
+[[package]]
+name = "fontcull-write-fonts"
+version = "0.44.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47b506b0883cf5f8998391cbffa92024143cedcbd0f344fc3f1507dec12956cf"
+dependencies = [
+ "fontcull-font-types",
+ "fontcull-read-fonts",
+ "indexmap",
+ "kurbo 0.12.0",
+ "log",
 ]
 
 [[package]]
@@ -754,7 +838,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d99fc21d493812643aae86d53b7bbd02f376434a90317e8a790bc209fdd6605e"
 dependencies = [
  "bytemuck",
- "foldhash",
+ "foldhash 0.2.0",
  "hashbrown 0.17.1",
  "log",
  "peniko",
@@ -807,11 +891,22 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
+version = "0.15.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.1.5",
+]
+
+[[package]]
+name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
- "foldhash",
+ "foldhash 0.2.0",
 ]
 
 [[package]]
@@ -820,7 +915,7 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
- "foldhash",
+ "foldhash 0.2.0",
 ]
 
 [[package]]
@@ -839,7 +934,7 @@ dependencies = [
  "bytemuck",
  "hayro-interpret",
  "image",
- "kurbo",
+ "kurbo 0.13.1",
  "log",
  "pic-scale",
  "vello_cpu",
@@ -874,7 +969,7 @@ dependencies = [
  "bitflags",
  "hayro-cmap",
  "hayro-syntax",
- "kurbo",
+ "kurbo 0.13.1",
  "moxcms",
  "phf",
  "rustc-hash",
@@ -922,6 +1017,12 @@ dependencies = [
  "smallvec",
  "zune-jpeg",
 ]
+
+[[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hybrid-array"
@@ -1046,6 +1147,17 @@ dependencies = [
 
 [[package]]
 name = "kurbo"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce9729cc38c18d86123ab736fd2e7151763ba226ac2490ec092d1dd148825e32"
+dependencies = [
+ "arrayvec",
+ "euclid",
+ "smallvec",
+]
+
+[[package]]
+name = "kurbo"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b60dfc32f652b926df6192e55525b16d186c69d47876c3ead4da5cc9f8450e2"
@@ -1108,7 +1220,7 @@ dependencies = [
  "rayon",
  "sha2",
  "stringprep",
- "thiserror",
+ "thiserror 2.0.18",
  "weezl",
 ]
 
@@ -1222,7 +1334,7 @@ source = "git+https://github.com/storytold/pdfcraft?rev=0e55d07b5fcc7d36747c7c56
 dependencies = [
  "pdfcraft-crypt",
  "pdfcraft-filters",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1234,7 +1346,7 @@ dependencies = [
  "md-5",
  "sha2",
  "stringprep",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1243,7 +1355,7 @@ version = "0.6.0"
 source = "git+https://github.com/storytold/pdfcraft?rev=0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e#0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e"
 dependencies = [
  "flate2",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1266,13 +1378,13 @@ dependencies = [
  "getrandom 0.4.3",
  "hayro",
  "hayro-syntax",
- "kurbo",
+ "kurbo 0.13.1",
  "log",
  "lopdf",
  "pdfcraft-cos",
  "pdfcraft-fonts",
  "serde",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1283,7 +1395,7 @@ checksum = "839c8299360d2e998bdb106dc0a6cd71dcc5f4df51df1b620361bf50e283cca6"
 dependencies = [
  "bytemuck",
  "color",
- "kurbo",
+ "kurbo 0.13.1",
  "linebender_resource_handle",
  "smallvec",
 ]
@@ -1358,7 +1470,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "thiserror",
+ "thiserror 2.0.18",
  "uuid",
  "web-time",
  "zip",
@@ -1368,8 +1480,12 @@ dependencies = [
 name = "pid-plot"
 version = "0.1.0"
 dependencies = [
+ "fontcull-klippa",
+ "fontcull-read-fonts",
+ "fontcull-skrifa",
+ "fontcull-write-fonts",
  "hayro",
- "kurbo",
+ "kurbo 0.13.1",
  "pdfcraft-content",
  "pdfcraft-cos",
  "pdfcraft-fonts",
@@ -1716,7 +1832,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8a1f2315036ef6b1fbacd1972e8ee7688030b0a2121edfc2a6550febd41574d"
 dependencies = [
  "hashbrown 0.16.1",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1965,6 +2081,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "strsim"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2016,11 +2138,31 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.18",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2166,7 +2308,7 @@ dependencies = [
  "peniko",
  "png",
  "smallvec",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2183,7 +2325,7 @@ dependencies = [
  "peniko",
  "png",
  "smallvec",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

@@ -11,8 +11,12 @@
 
 use std::path::{Path, PathBuf};
 
-use pid_parse::style_link::TextAlignment;
-use pid_parse::symbol_library::{SymbolLettering, SymbolLibrary, SymbolPrimitive};
+use pid_parse::style_link::{
+    LineStyleIndex, ResolvedLineStyle, TextAlignment, TextStyleIndex,
+};
+use pid_parse::symbol_library::{
+    PrimitiveStyle, SymbolLettering, SymbolLibrary, SymbolPrimitive,
+};
 use pid_parse::{
     PidGeometryConfidence, PidGraphicEntity, PidGraphicKind, PidParser, build_normalized_geometry,
 };
@@ -64,8 +68,26 @@ pub struct PaperPrimitive {
     pub byte_range: Option<[usize; 2]>,
     /// Library path of the symbol this stroke belongs to.
     pub symbol: Option<String>,
+    /// The pen the shape draws with. `None` leaves the writer's default
+    /// pen — a 0.25 mm solid black stroke.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<PaperStroke>,
     /// The shape.
     pub shape: PaperShape,
+}
+
+/// The pen one primitive draws with: colour, width and dash as the
+/// resolved style states them.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaperStroke {
+    /// Stroke colour.
+    pub rgb: [u8; 3],
+    /// Stroke width in millimetres.
+    pub width_mm: f64,
+    /// Dash segment magnitudes in millimetres, alternating pen-down and
+    /// pen-up. Empty draws solid.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dash_mm: Vec<f64>,
 }
 
 /// A shape in paper millimetres.
@@ -96,6 +118,19 @@ pub enum PaperShape {
         center_mm: [f64; 2],
         /// Radius.
         radius_mm: f64,
+    },
+    /// A filled region: the ring's closed chain is painted, not stroked.
+    ///
+    /// A sheet `igBoundary2d` re-lists the lines its members already draw,
+    /// so the region fills rather than outlining a second time; a symbol
+    /// `Boundary` member is the same thing inside a body — the plug
+    /// valve's concentric discs each fill their own ring.
+    Fill {
+        /// Ring vertices in order; the last connects back to the first.
+        chain_mm: Vec<[f64; 2]>,
+        /// Fill colour. `None` draws the layer's default, which these
+        /// monochrome plots show as black.
+        rgb: Option<[u8; 3]>,
     },
     /// Vertex chain.
     Polyline {
@@ -263,6 +298,8 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
             message: error.to_string(),
         })?;
     let styles = pid_parse::style_link::text_styles_for_document(&doc);
+    let line_styles = pid_parse::style_link::line_styles_for_document(&doc);
+    let fill_styles = pid_parse::style_link::fill_styles_for_document(&doc);
     let geometry = build_normalized_geometry(&doc);
     let (roots, library) = symbol_library(corpus);
     let mut symbols = SymbolLibrary::with_roots(roots);
@@ -311,6 +348,7 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                     scale: *scale,
                     symbol: symbol_path.clone(),
                 };
+                let placement_style = entity_style(entity, &line_styles);
                 if let Some(definition) =
                     definition.and_then(|reference| geometry.symbol_definition(reference))
                 {
@@ -320,13 +358,15 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                     {
                         missing.insert(key);
                     }
-                    for (primitive, _style, lettering) in definition.visible_styled() {
+                    for (primitive, body_style, lettering) in definition.visible_styled() {
                         push_symbol_primitive(
                             &mut primitives,
                             entity,
                             &placement,
                             primitive,
+                            body_style,
                             lettering,
+                            placement_style,
                             page_mm,
                         );
                     }
@@ -337,7 +377,9 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                             entity,
                             &placement,
                             &styled.primitive,
+                            styled.style.as_ref(),
                             styled.lettering.as_ref(),
+                            placement_style,
                             page_mm,
                         );
                     }
@@ -346,7 +388,14 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                     missing.insert(key);
                 }
             }
-            _ => push_entity(&mut primitives, entity, page_mm, &styles),
+            _ => push_entity(
+                &mut primitives,
+                entity,
+                page_mm,
+                &styles,
+                &line_styles,
+                &fill_styles,
+            ),
         }
     }
 
@@ -449,11 +498,78 @@ fn symbol_key(path: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// The resolved line style one entity's record asks for.
+fn entity_style<'a>(
+    entity: &PidGraphicEntity,
+    line_styles: &'a LineStyleIndex,
+) -> Option<&'a ResolvedLineStyle> {
+    let stream = entity.source.stream_path.as_ref()?;
+    let oid = entity.graphic_oid?;
+    line_styles.get(&(stream.clone(), oid))
+}
+
+/// The pen a resolved line style draws with.
+fn stroke_of(style: &ResolvedLineStyle) -> PaperStroke {
+    PaperStroke {
+        rgb: style.symbology.rgb(),
+        width_mm: style.symbology.width_mm(),
+        dash_mm: style
+            .dash
+            .as_ref()
+            .map(|dash| {
+                dash.segments_mm()
+                    .iter()
+                    .map(|segment| segment.abs())
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// The pen a body stroke draws with: the placement's style paints the
+/// whole body on `SmartPlant`'s screen, so its colour and width win over
+/// the body's own; the dash falls back to the body's when the placement
+/// draws solid — the same rule OpenCADStudio applies.
+fn body_stroke(
+    body_style: Option<&PrimitiveStyle>,
+    placement_style: Option<&ResolvedLineStyle>,
+) -> Option<PaperStroke> {
+    if body_style.is_none() && placement_style.is_none() {
+        return None;
+    }
+    Some(PaperStroke {
+        rgb: placement_style.map_or_else(
+            || body_style.map_or([0, 0, 0], |style| style.rgb),
+            |style| style.symbology.rgb(),
+        ),
+        width_mm: placement_style.map_or_else(
+            || body_style.map_or(0.25, |style| style.width_mm),
+            |style| style.symbology.width_mm(),
+        ),
+        dash_mm: placement_style
+            .and_then(|style| style.dash.as_ref())
+            .map(|dash| {
+                dash.segments_mm()
+                    .iter()
+                    .map(|segment| segment.abs())
+                    .collect()
+            })
+            .or_else(|| {
+                body_style.map(|style| {
+                    style.dash_mm.iter().map(|segment| segment.abs()).collect()
+                })
+            })
+            .unwrap_or_default(),
+    })
+}
+
 fn push_entity(
     out: &mut Vec<PaperPrimitive>,
     entity: &PidGraphicEntity,
     page_mm: Option<[f64; 2]>,
-    styles: &pid_parse::style_link::TextStyleIndex,
+    styles: &TextStyleIndex,
+    line_styles: &LineStyleIndex,
+    fill_styles: &pid_parse::style_link::FillIndex,
 ) {
     if entity
         .source_layer
@@ -469,28 +585,63 @@ fn push_entity(
         scale: [1.0, 1.0],
         symbol: None,
     };
+    let resolved = entity_style(entity, line_styles);
+    let stroke = resolved.map(stroke_of);
     match &entity.kind {
         PidGraphicKind::Line { start, end } => {
-            let shape = PaperShape::Line {
-                start_mm: place_metres([start.x, start.y], [0.0, 0.0], 0.0, [1.0, 1.0]),
-                end_mm: place_metres([end.x, end.y], [0.0, 0.0], 0.0, [1.0, 1.0]),
-            };
+            let start_mm = place_metres([start.x, start.y], [0.0, 0.0], 0.0, [1.0, 1.0]);
+            let end_mm = place_metres([end.x, end.y], [0.0, 0.0], 0.0, [1.0, 1.0]);
+            let shape = PaperShape::Line { start_mm, end_mm };
             if !sheet_edge(&shape, page_mm) {
-                out.push(primitive(entity, &placement, shape));
+                out.push(primitive(entity, &placement, stroke.clone(), shape));
+                stamp_complex_dash(out, entity, &stroke, resolved, &[start_mm, end_mm]);
             }
         }
         PidGraphicKind::Polyline { points, closed } => {
+            let points_mm: Vec<[f64; 2]> = points
+                .iter()
+                .map(|point| place_metres([point.x, point.y], [0.0, 0.0], 0.0, [1.0, 1.0]))
+                .collect();
+            // An `igBoundary2d` ring re-lists the member lines that are
+            // already stroked on the sheet — it fills the region instead
+            // of drawing the outline twice.
+            if entity
+                .source
+                .record_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with("igboundary2d"))
+            {
+                let rgb = entity
+                    .source
+                    .stream_path
+                    .as_ref()
+                    .and_then(|stream| {
+                        entity
+                            .graphic_oid
+                            .and_then(|oid| fill_styles.get(&(stream.clone(), oid)))
+                    })
+                    .and_then(|fill| fill.rgb());
+                out.push(primitive(
+                    entity,
+                    &placement,
+                    None,
+                    PaperShape::Fill {
+                        chain_mm: points_mm,
+                        rgb,
+                    },
+                ));
+                return;
+            }
             out.push(primitive(
                 entity,
                 &placement,
+                stroke.clone(),
                 PaperShape::Polyline {
-                    points_mm: points
-                        .iter()
-                        .map(|point| place_metres([point.x, point.y], [0.0, 0.0], 0.0, [1.0, 1.0]))
-                        .collect(),
+                    points_mm: points_mm.clone(),
                     closed: *closed,
                 },
             ));
+            stamp_complex_dash(out, entity, &stroke, resolved, &points_mm);
         }
         PidGraphicKind::Arc {
             center,
@@ -501,6 +652,7 @@ fn push_entity(
             out.push(primitive(
                 entity,
                 &placement,
+                stroke,
                 arc_shape(
                     [center.x, center.y],
                     *radius,
@@ -514,11 +666,42 @@ fn push_entity(
             out.push(primitive(
                 entity,
                 &placement,
+                stroke,
                 PaperShape::Circle {
                     center_mm: place_metres([center.x, center.y], [0.0, 0.0], 0.0, [1.0, 1.0]),
                     radius_mm: radius.abs() * MM_PER_METRE,
                 },
             ));
+        }
+        PidGraphicKind::Point { position } => {
+            // A point draws the glyph its style's line terminator names.
+            // The glyph's strokes are the style's own metres, unrotated —
+            // the file states no per-point orientation.
+            if let Some(marker) = resolved.and_then(|style| style.marker.as_ref())
+                && marker.draws()
+            {
+                let at_mm = place_metres([position.x, position.y], [0.0, 0.0], 0.0, [1.0, 1.0]);
+                for mark in marker.strokes() {
+                    if mark.is_degenerate() {
+                        continue;
+                    }
+                    out.push(primitive(
+                        entity,
+                        &placement,
+                        stroke.clone(),
+                        PaperShape::Line {
+                            start_mm: [
+                                at_mm[0] + mark.start.0 * MM_PER_METRE,
+                                at_mm[1] + mark.start.1 * MM_PER_METRE,
+                            ],
+                            end_mm: [
+                                at_mm[0] + mark.end.0 * MM_PER_METRE,
+                                at_mm[1] + mark.end.1 * MM_PER_METRE,
+                            ],
+                        },
+                    ));
+                }
+            }
         }
         PidGraphicKind::Text {
             insertion,
@@ -548,6 +731,7 @@ fn push_entity(
             out.push(primitive(
                 entity,
                 &placement,
+                None,
                 PaperShape::Text {
                     origin_mm: place_metres(
                         [insertion.x, insertion.y],
@@ -568,9 +752,91 @@ fn push_entity(
             ));
         }
         PidGraphicKind::SymbolInstance { .. }
-        | PidGraphicKind::Point { .. }
         | PidGraphicKind::Annotation { .. }
         | PidGraphicKind::Unknown { .. } => {}
+    }
+}
+
+/// Stamp one complex-dash glyph along `path` at the advance the style
+/// names — the W drawing's hydraulic pipes, which print a `└`/`⊢` mark
+/// once per fitted cell, centred in the cell, in the line's local frame
+/// (tangent, left normal).
+fn stamp_complex_dash(
+    out: &mut Vec<PaperPrimitive>,
+    entity: &PidGraphicEntity,
+    stroke: &Option<PaperStroke>,
+    resolved: Option<&ResolvedLineStyle>,
+    path_mm: &[[f64; 2]],
+) {
+    let Some(complex) = resolved.and_then(|style| style.complex_dash.as_ref()) else {
+        return;
+    };
+    let period = complex.period_mm();
+    if period <= 1e-6 || path_mm.len() < 2 {
+        return;
+    }
+    let total: f64 = path_mm
+        .windows(2)
+        .map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]))
+        .sum();
+    if total < period {
+        return;
+    }
+    let cells = (total / period).floor() as usize;
+    let placement = Placement {
+        insertion: [0.0, 0.0],
+        rotation: 0.0,
+        scale: [1.0, 1.0],
+        symbol: None,
+    };
+    for cell in 1..=cells {
+        // The stamp sits at the centre of its fitted cell.
+        let at = ((cell as f64) - 0.5) * (total / cells as f64);
+        let mut walked = 0.0;
+        let mut frame: Option<([f64; 2], [f64; 2])> = None;
+        for pair in path_mm.windows(2) {
+            let length = (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]);
+            if length < 1e-9 {
+                continue;
+            }
+            if walked + length >= at {
+                let t = (at - walked) / length;
+                let point = [
+                    pair[0][0] + (pair[1][0] - pair[0][0]) * t,
+                    pair[0][1] + (pair[1][1] - pair[0][1]) * t,
+                ];
+                let tangent = [
+                    (pair[1][0] - pair[0][0]) / length,
+                    (pair[1][1] - pair[0][1]) / length,
+                ];
+                frame = Some((point, tangent));
+                break;
+            }
+            walked += length;
+        }
+        let Some((point, tangent)) = frame else { continue };
+        let left = [-tangent[1], tangent[0]];
+        for mark in complex.strokes() {
+            if mark.is_degenerate() {
+                continue;
+            }
+            let place = |local: (f64, f64)| {
+                let (lx, ly) = (local.0 * MM_PER_METRE, local.1 * MM_PER_METRE);
+                [
+                    point[0] + lx * tangent[0] + ly * left[0],
+                    point[1] + lx * tangent[1] + ly * left[1],
+                ]
+            };
+            out.push(primitive(
+                entity,
+                &placement,
+                stroke.clone(),
+                PaperShape::Line {
+                    start_mm: place(mark.start),
+                    end_mm: place(mark.end),
+                },
+            ));
+        }
     }
 }
 
@@ -579,7 +845,9 @@ fn push_symbol_primitive(
     entity: &PidGraphicEntity,
     placement: &Placement,
     primitive_shape: &SymbolPrimitive,
+    body_style: Option<&PrimitiveStyle>,
     lettering: Option<&SymbolLettering>,
+    placement_style: Option<&ResolvedLineStyle>,
     page_mm: Option<[f64; 2]>,
 ) {
     let shape = match primitive_shape {
@@ -658,19 +926,117 @@ fn push_symbol_primitive(
                 closed: false,
             }
         }
-        // The paper model strokes outlines only — a boundary's fill is what
-        // the CAD export hatches; here each member draws its outline the way
-        // a sheet-level boundary arrives as a closed polyline.
-        SymbolPrimitive::Boundary { members, .. } => {
+        // A boundary is a filled region over members that are also stroked
+        // on their own — the flange dots and plug-valve discs `SmartPlant`
+        // prints solid. Each circle fills its own ring (concentric members
+        // stay solid, never punched through); line members that chain into
+        // a ring fill the polygon they close, and a chain that does not
+        // close falls back to stroking its members like before.
+        SymbolPrimitive::Boundary { members, fill } => {
+            let rgb = fill.as_ref().and_then(|fill| fill.rgb);
+            let mut ring: Vec<[f64; 2]> = Vec::new();
             for member in members {
-                push_symbol_primitive(out, entity, placement, member, None, page_mm);
+                match member {
+                    SymbolPrimitive::Circle { center, radius } => {
+                        let center_mm = place_metres(
+                            [center.0, center.1],
+                            placement.insertion,
+                            placement.rotation,
+                            placement.scale,
+                        );
+                        let radius_mm =
+                            radius.abs() * placement.scale[0].abs() * MM_PER_METRE;
+                        if radius_mm > 1e-4 {
+                            out.push(primitive(
+                                entity,
+                                placement,
+                                None,
+                                PaperShape::Fill {
+                                    chain_mm: circle_chain(center_mm, radius_mm),
+                                    rgb,
+                                },
+                            ));
+                        }
+                    }
+                    SymbolPrimitive::Line { start, end } => {
+                        let start_mm = place_metres(
+                            [start.0, start.1],
+                            placement.insertion,
+                            placement.rotation,
+                            placement.scale,
+                        );
+                        let end_mm = place_metres(
+                            [end.0, end.1],
+                            placement.insertion,
+                            placement.rotation,
+                            placement.scale,
+                        );
+                        if ring.last().is_none_or(|last| {
+                            (last[0] - start_mm[0]).hypot(last[1] - start_mm[1]) > 1e-3
+                        }) {
+                            ring.push(start_mm);
+                        }
+                        ring.push(end_mm);
+                    }
+                    _ => {}
+                }
+            }
+            let closed = ring.len() >= 3
+                && ring
+                    .first()
+                    .zip(ring.last())
+                    .is_some_and(|(first, last)| {
+                        (first[0] - last[0]).hypot(first[1] - last[1]) <= 1e-3
+                    });
+            if closed {
+                out.push(primitive(
+                    entity,
+                    placement,
+                    None,
+                    PaperShape::Fill {
+                        chain_mm: ring,
+                        rgb,
+                    },
+                ));
+            } else {
+                for pair in ring.windows(2) {
+                    out.push(primitive(
+                        entity,
+                        placement,
+                        body_stroke(body_style, placement_style),
+                        PaperShape::Line {
+                            start_mm: pair[0],
+                            end_mm: pair[1],
+                        },
+                    ));
+                }
             }
             return;
         }
     };
     if !sheet_edge(&shape, page_mm) {
-        out.push(primitive(entity, placement, shape));
+        out.push(primitive(
+            entity,
+            placement,
+            body_stroke(body_style, placement_style),
+            shape,
+        ));
     }
+}
+
+/// A circle as a closed vertex ring, fine enough that the largest chord
+/// error at symbol-body sizes stays under the reader's 0.05 mm flattening.
+fn circle_chain(center_mm: [f64; 2], radius_mm: f64) -> Vec<[f64; 2]> {
+    const SEGMENTS: usize = 48;
+    (0..SEGMENTS)
+        .map(|step| {
+            let angle = std::f64::consts::TAU * step as f64 / SEGMENTS as f64;
+            [
+                center_mm[0] + radius_mm * angle.cos(),
+                center_mm[1] + radius_mm * angle.sin(),
+            ]
+        })
+        .collect()
 }
 
 fn symbol_text_shape(
@@ -795,6 +1161,7 @@ fn sheet_edge(shape: &PaperShape, page_mm: Option<[f64; 2]>) -> bool {
 fn primitive(
     entity: &PidGraphicEntity,
     placement: &Placement,
+    stroke: Option<PaperStroke>,
     shape: PaperShape,
 ) -> PaperPrimitive {
     PaperPrimitive {
@@ -806,6 +1173,7 @@ fn primitive(
             .as_ref()
             .map(|range| [range.start, range.end]),
         symbol: placement.symbol.clone(),
+        stroke,
         shape,
     }
 }
@@ -902,6 +1270,8 @@ mod tests {
             },
             None,
             None,
+            None,
+            None,
         );
         assert!(out.is_empty());
     }
@@ -921,6 +1291,8 @@ mod tests {
             },
             None,
             None,
+            None,
+            None,
         );
         assert!(out.is_empty());
     }
@@ -938,6 +1310,8 @@ mod tests {
                 text: "HH=NULL".to_string(),
                 at: (0.01, 0.0),
             },
+            None,
+            None,
             None,
             None,
         );
@@ -962,6 +1336,8 @@ mod tests {
             }),
             None,
             &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
         );
         assert_eq!(out.len(), 1);
         let PaperShape::Text { value, .. } = &out[0].shape else {
@@ -991,6 +1367,8 @@ mod tests {
             &hidden,
             None,
             &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
         );
         assert!(out.is_empty());
     }
@@ -1018,7 +1396,9 @@ mod tests {
                 text: "ESD".to_string(),
                 at: (0.01, 0.02),
             },
+            None,
             Some(&lettering),
+            None,
             None,
         );
         assert_eq!(out.len(), 1);
@@ -1066,7 +1446,9 @@ mod tests {
                 text: "ESD".to_string(),
                 at: (0.0, 0.0),
             },
+            None,
             Some(&lettering),
+            None,
             None,
         );
         let PaperShape::Text {
@@ -1094,7 +1476,9 @@ mod tests {
                 text: "D".to_string(),
                 at: (0.0, 0.0),
             },
+            None,
             Some(&bottom_lettering),
+            None,
             None,
         );
         let PaperShape::Text { rotation, line, .. } = &out_vert[0].shape else {

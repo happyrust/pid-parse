@@ -1154,6 +1154,53 @@ fn model_strokes(model: &PaperModel) -> Vec<(Line, String)> {
                     ));
                 }
             }
+            PaperShape::Arc {
+                center_mm,
+                radius_mm,
+                start_angle,
+                end_angle,
+            } => {
+                let points = crate::write::arc_chain(*center_mm, *radius_mm, *start_angle, *end_angle);
+                for pair in points.windows(2) {
+                    strokes.push((
+                        Line {
+                            a: pair[0],
+                            b: pair[1],
+                        },
+                        label.clone(),
+                    ));
+                }
+            }
+            PaperShape::Circle {
+                center_mm,
+                radius_mm,
+            } => {
+                let points = crate::write::circle_outline(*center_mm, *radius_mm);
+                for pair in points.windows(2) {
+                    strokes.push((
+                        Line {
+                            a: pair[0],
+                            b: pair[1],
+                        },
+                        label.clone(),
+                    ));
+                }
+            }
+            PaperShape::Fill { chain_mm, .. } => {
+                let mut points = chain_mm.clone();
+                if points.len() > 2 {
+                    points.push(points[0]);
+                }
+                for pair in points.windows(2) {
+                    strokes.push((
+                        Line {
+                            a: pair[0],
+                            b: pair[1],
+                        },
+                        label.clone(),
+                    ));
+                }
+            }
             _ => {}
         }
     }

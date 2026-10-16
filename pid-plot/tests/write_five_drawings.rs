@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use pid_plot::fonts::prepare_local_fonts;
+use pid_plot::fonts::{font_dirs, prepare_fonts};
 use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
 use pid_plot::read::read_plot;
 use pid_plot::write::{DEFAULT_TEXT_MM, PlotFont, stroked_segments, write_plot};
@@ -31,8 +31,9 @@ fn five_drawings_round_trip_through_pdf() {
         eprintln!("skipping rendered plots; {} is absent", first.display());
         return;
     }
-    if !PathBuf::from(r"C:\Windows\Fonts\arial.ttf").is_file() {
-        eprintln!("skipping rendered plots; Windows fonts are absent");
+    let dirs = font_dirs(Some(&corpus));
+    if !dirs.iter().any(|dir| dir.is_dir()) {
+        eprintln!("skipping rendered plots; no font directory is present");
         return;
     }
 
@@ -43,7 +44,7 @@ fn five_drawings_round_trip_through_pdf() {
         models.push((name, model));
     }
     let refs: Vec<&PaperModel> = models.iter().map(|(_, model)| model).collect();
-    let prepared = prepare_local_fonts(&refs).unwrap_or_else(|error| panic!("fonts: {error}"));
+    let prepared = prepare_fonts(&refs, &dirs).unwrap_or_else(|error| panic!("fonts: {error}"));
     let fonts: Vec<PlotFont<'_>> = prepared
         .iter()
         .map(|face| PlotFont {
@@ -116,12 +117,18 @@ fn runs_mismatch(read: &[&str], expected: &[&str]) -> Option<String> {
                 read_at += 1;
                 expected_at += taken;
             }
-            None => {
-                return Some(format!(
-                    "read[{read_at}] {:?} does not cover model[{expected_at}] {:?}",
-                    read[read_at], expected[expected_at]
-                ));
-            }
+            None => match split_run(&read[read_at..], expected[expected_at]) {
+                Some(taken) => {
+                    read_at += taken;
+                    expected_at += 1;
+                }
+                None => {
+                    return Some(format!(
+                        "read[{read_at}] {:?} does not cover model[{expected_at}] {:?}",
+                        read[read_at], expected[expected_at]
+                    ));
+                }
+            },
         }
     }
     while read_at < read.len() && read[read_at] == " " {
@@ -146,6 +153,25 @@ fn glued_runs(read: &str, expected: &[&str]) -> Option<usize> {
             return Some(index + 1);
         }
         if !read.starts_with(&acc) {
+            return None;
+        }
+    }
+    None
+}
+
+/// One model run read back as several spans.
+///
+/// A run that mixes faces — `L=35℃` keeps its Latin in the narrow face and
+/// borrows a CJK face for `℃` — is one string in the table and two spans
+/// in the read-back, one per font, so the mirror of [`glued_runs`] applies.
+fn split_run(read: &[&str], expected: &str) -> Option<usize> {
+    let mut acc = String::new();
+    for (index, part) in read.iter().enumerate() {
+        acc.push_str(part);
+        if acc == expected {
+            return Some(index + 1);
+        }
+        if !expected.starts_with(&acc) {
             return None;
         }
     }

@@ -97,6 +97,7 @@ fn five_drawings_match_the_symbol_gap() {
                     }
                     // These guards target circles and sheet-frame lines only.
                     PaperShape::Arc { .. }
+                    | PaperShape::Fill { .. }
                     | PaperShape::Polyline { .. }
                     | PaperShape::Text { .. } => {}
                 }
