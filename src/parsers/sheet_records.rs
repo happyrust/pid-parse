@@ -2476,7 +2476,14 @@ const IGTEXTBOX_MAX_TEXT_LENGTH: u16 = 1024;
 /// length past the end of the real label puts these two reads on bytes that
 /// are not the direction, and they miss unit length by orders of magnitude.
 /// Measured in `docs/analysis/2026-08-13-igtextbox-rotation-is-a-direction-pair.md`.
-const IGTEXTBOX_DIRECTION_UNIT_TOLERANCE: f64 = 1e-6;
+pub(crate) const IGTEXTBOX_DIRECTION_UNIT_TOLERANCE: f64 = 1e-6;
+
+/// The band a non-unit direction pair's magnitude must land in to read as a
+/// letter height rather than as a mis-stated length: half a millimetre to a
+/// quarter metre of lettering. Every height-scaled direction seen is
+/// 0.003–0.0045 m; the edges only have to exclude what an f64 misread
+/// produces.
+pub(crate) const IGTEXTBOX_LETTER_HEIGHT_M: std::ops::RangeInclusive<f64> = 0.0005..=0.25;
 
 /// PSM type code that identifies a standard Intergraph Sigma
 /// `igSymbol2d` record on disk (IGDS class tag `0xCE = 206`).
@@ -2486,8 +2493,13 @@ const IGTEXTBOX_DIRECTION_UNIT_TOLERANCE: f64 = 1e-6;
 pub const PSM_TYPE_CODE_IGSYMBOL2D: u16 = 0x00CE;
 
 /// Minimum byte length of one PSM `igSymbol2d` payload. Real
-/// fixtures show 113-byte (most common) and 121-byte variants.
-pub const IGSYMBOL2D_MIN_PAYLOAD_LEN: usize = 113;
+/// fixtures show 113-byte (most common) and 121-byte variants, and the
+/// real-drawing corpus carries a 111-byte variant -- identical layout
+/// (matrix tag at +35, identity transform, tail definition pair), two
+/// bytes short somewhere in the optional tail fields
+/// (`examples/probe_real5_jsymbol_refusals.rs`). The tail pair reads from
+/// the payload's end, so the shorter tail loses nothing the decoder needs.
+pub const IGSYMBOL2D_MIN_PAYLOAD_LEN: usize = 111;
 
 /// Maximum byte length we'll accept on a decoded `igSymbol2d`.
 const IGSYMBOL2D_MAX_PAYLOAD_LEN: usize = 200;
@@ -3152,8 +3164,12 @@ impl SheetIgLineString2dDecoded {
 /// 5. `vertex_count` in `[2, IGLINESTRING2D_MAX_VERTEX_COUNT]`;
 /// 6. `form <= 6`;
 /// 7. `scope <= 4` or `scope == 6`;
-/// 8. All vertex coordinates finite and in domain `[-1e9, 1e9]`;
-/// 9. Not all vertices identical (non-degenerate polyline).
+/// 8. All vertex coordinates finite and in domain `[-1e9, 1e9]`.
+///
+/// A record whose vertices all coincide is still decoded — real drawings
+/// carry them as anchors a symbol or label sits on, and the native output
+/// strokes nothing for a zero-length run. Emitting the point, not the
+/// polyline, is the emitter's call (`IgLineString2dEmitter`).
 ///
 /// Thin wrapper over [`IgLineString2dDecoder`]'s shared
 /// [`PsmRecordDecoder::scan`].
@@ -3259,29 +3275,6 @@ fn decode_iglinestring_payload(
 
     // Parse vertices.
     let mut vertices = Vec::with_capacity(computed_vc as usize);
-    let mut all_same = true;
-    let first_coord = (
-        f64::from_le_bytes([
-            payload[24],
-            payload[25],
-            payload[26],
-            payload[27],
-            payload[28],
-            payload[29],
-            payload[30],
-            payload[31],
-        ]),
-        f64::from_le_bytes([
-            payload[32],
-            payload[33],
-            payload[34],
-            payload[35],
-            payload[36],
-            payload[37],
-            payload[38],
-            payload[39],
-        ]),
-    );
     for i in 0..computed_vc as usize {
         let pos = 24 + i * 16;
         let chunk = payload.get(pos..pos + 16)?;
@@ -3297,15 +3290,13 @@ fn decode_iglinestring_payload(
         if x.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT || y.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT {
             return None;
         }
-        if i > 0 && ((x - first_coord.0).abs() > 1e-12 || (y - first_coord.1).abs() > 1e-12) {
-            all_same = false;
-        }
         vertices.push((x, y));
     }
-    // Reject degenerate (all-vertex-identical) polyline.
-    if all_same {
-        return None;
-    }
+    // An all-vertices-identical record is still decoded: the reference
+    // corpus carries 36 of them, `vc=2` anchors a symbol or label sits on
+    // (`examples/probe_real5_linestring_refusals.rs`). It decodes so the
+    // record stops counting against coverage; the emitter is what decides
+    // it has no stroke to draw.
 
     Some(SheetIgLineString2dDecoded {
         byte_range: offset..payload_end,
@@ -3578,6 +3569,27 @@ pub struct SheetIgTextBoxDecoded {
     /// letters horizontally, up the side of a vertical pipe run, or upside
     /// down. Renderers want degrees: `rotation_rad.to_degrees()`.
     pub rotation_rad: f64,
+    /// The letter height the record states, in sheet units — `0.0` where the
+    /// direction pair is the normalized unit vector every drawing sheet
+    /// writes. The linked border templates scale their direction pair by the
+    /// letter height instead, so it lands here: the size their static title
+    /// text letters at when no style join answers.
+    pub letter_height_m: f64,
+    /// The record's own text-box anchor: the last byte of the 4-byte trailer
+    /// that closes the 36-byte placement tail (payload `+35` of the tail).
+    ///
+    /// `(code >> 4) % 3` names the horizontal hot point the insertion sits
+    /// at — `0` left, `1` centre, `2` right — and `(code & 0x0F) % 3` the
+    /// vertical one — `0` bottom, `1` top, `2` middle. So `0x01` = top-left,
+    /// `0x05` = middle-left, `0x15` = middle-centre, `0x10` = bottom-centre.
+    /// It is the per-record justification and it overrides whatever the
+    /// paragraph style declares: `L=0.8MPa ` and `1/2"` share a `Center`
+    /// paragraph but letter left-anchored and centred respectively. The
+    /// `+3`-shifted high nibbles (`0x38`/`0x48`/`0x58`) mark labels attached
+    /// to a parent symbol; they read through the same `%3` classes.
+    /// Evidence: ~1,500 corpus records' insertion points against the
+    /// reference PDFs' glyph boxes.
+    pub anchor_code: u8,
     /// The record's formatting runs, in stored order — see [`IgTextBoxRun`].
     /// Empty for shape 1, which is the shape a record without runs takes.
     pub runs: Vec<IgTextBoxRun>,
@@ -3659,7 +3671,7 @@ impl PsmRecordDecoder for IgTextBoxDecoder {
     }
 
     fn min_record_len(&self) -> usize {
-        PSM_ENVELOPE_LEN + IGTEXTBOX_PAYLOAD_OVERHEAD
+        PSM_ENVELOPE_LEN + IGTEXTBOX_MIN_PAYLOAD_LEN
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgTextBoxDecoded> {
@@ -3843,12 +3855,29 @@ fn decode_igtextbox_payload(
     // length checkable: read the pair off the wrong offset -- which is what a
     // length that over-runs the label produces -- and it misses unit length by
     // orders of magnitude rather than by float noise.
+    //
+    // Two populations letter legitimately. Sheets on the drawing corpus
+    // normalize the pair to the unit vector `(cos, sin)`. The linked border
+    // templates (`*.igr` the drawing's `igSmartFrame2d` names) do not: they
+    // store the direction scaled to the letter's height, so `hypot` lands on
+    // the text height in metres -- 3.0 to 4.5 mm across `CPE-SQ-A0/A1`,
+    // `0.003` up the left-margin column where a unit `sin` would sit. A
+    // mis-stated length still misses both populations by orders of magnitude:
+    // UTF-16 halves read as `f64` are denormal or astronomical, never
+    // millimetres.
     let (cos, sin) = (trailing[2], trailing[3]);
-    if (cos.hypot(sin) - 1.0).abs() > IGTEXTBOX_DIRECTION_UNIT_TOLERANCE {
+    let direction = cos.hypot(sin);
+    let letter_height_m = if (direction - 1.0).abs() <= IGTEXTBOX_DIRECTION_UNIT_TOLERANCE {
+        0.0
+    } else if (IGTEXTBOX_LETTER_HEIGHT_M).contains(&direction) {
+        direction
+    } else {
         return None;
-    }
+    };
     let rotation_rad = sin.atan2(cos);
     let runs = igtextbox_runs(payload, text_sub_type, inline_text_length);
+    // The 4-byte trailer closes the tail; its last byte is the anchor.
+    let anchor_code = payload[tail_start + IGTEXTBOX_TAIL_LEN - 1];
 
     Some(SheetIgTextBoxDecoded {
         byte_range: offset..payload_end,
@@ -3867,6 +3896,8 @@ fn decode_igtextbox_payload(
         trailing_double_2: trailing[1],
         trailing_double_3: trailing[2],
         rotation_rad,
+        letter_height_m,
+        anchor_code,
         runs,
     })
 }
@@ -3906,9 +3937,18 @@ fn decode_igtextbox_payload(
 ///   +24..31 f64   transform[3]  ⎭ are 0 or ±1, `det` is ±1.
 ///   +32..39 f64   insertion.x   ⎫ translation, in sheet units (0..1)
 ///   +40..47 f64   insertion.y   ⎭
-///   +48..55 f64   uniform scale; 1.0 in 108 of 109 fixture records
+///   +48..55 f64   uniform scale — the parametric body's resize factor
 ///   ...     variable tail (symbol library ref + class ID + flags)
 /// ```
+///
+/// The scale double reads as `1.0` on nearly every placement, but
+/// parametric bodies carry the factor `SmartPlant` resized them by:
+/// `I井场 注采阀组` alone files 16 placements at `0.37`–`5.63` (a metering
+/// pump at `0.3705`, a wellhead Christmas tree at `1.1818`, skid-mounted
+/// equipment at `5.6252`). The reference plots draw those bodies at the
+/// factored size — the scale multiplies the 2×2 matrix about the
+/// insertion point — so a reader that takes only the matrix draws a
+/// parametric symbol at its template size, visibly off from the plot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetIgSymbol2dDecoded {
     /// Byte range covering the full PSM record.
@@ -3967,6 +4007,14 @@ pub struct SheetIgSymbol2dDecoded {
     /// Insertion point in sheet units, the translation column of the same
     /// matrix.
     pub insertion: (f64, f64),
+    /// Uniform factor the placement resizes its parametric body by — the
+    /// f64 that follows the insertion pair. `1.0` on nearly every record;
+    /// parametric symbols carry their own (0.37–5.63 on the corpus). The
+    /// factor multiplies the placement matrix about the insertion point:
+    /// `page = insertion + scale · matrix · body`. Non-finite or
+    /// non-positive reads fall back to `1.0` rather than costing the
+    /// placement.
+    pub uniform_scale: f64,
     /// Persist id, **inside the definition cache storage**, of the `JSheet`
     /// that holds this placement's symbol body: the payload's second-to-last
     /// `u32`. The cache is the `LdcSite` storage [`Self::definition_site_ref`]
@@ -4108,7 +4156,19 @@ fn decode_igsymbol_payload(
         return None;
     }
 
-    // The tail after the six doubles: an `f64 1.0`, a flag word, then
+    // The seventh double is the uniform scale the parametric body is
+    // resized by. A non-positive or non-finite read would break the
+    // placement matrix rather than size the body, so it falls back to
+    // `1.0` -- drawn at template size, still better than dropped.
+    let uniform_scale = payload
+        .get(matrix_at + 48..matrix_at + 56)
+        .and_then(|chunk| <[u8; 8]>::try_from(chunk).ok())
+        .map(f64::from_le_bytes)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(1.0);
+
+    // The tail after the six doubles: the `f64` uniform scale, a flag
+    // word, then
     // `u32 has_membassy`, `u32 0`, an optional `(membassy oid, 0)` pair when
     // that flag is set, and finally the two words that name the body --
     // `(definition JSheet oid, LdcSite id)`. Reading them from the end is
@@ -4138,6 +4198,7 @@ fn decode_igsymbol_payload(
         style_ref,
         transform: [doubles[0], doubles[1], doubles[2], doubles[3]],
         insertion: (doubles[4], doubles[5]),
+        uniform_scale,
         definition_sheet_ref,
         definition_site_ref,
     })
@@ -5114,6 +5175,32 @@ pub const IGBOUNDARY2D_FIXED_PAYLOAD_LEN: usize = 49;
 /// 8-byte trailer member reference.
 pub const IGBOUNDARY2D_PER_SEGMENT_LEN: usize = 41;
 
+/// Member tag of a point-run `igBoundary2d` member in the
+/// linked-template (`0x0000` sub-type) layout: `tag + u32 count +
+/// 2-byte tail + count × 16-byte (x, y)` pairs. The run re-lists a
+/// closed outline, so consecutive pairs contribute segments.
+pub const IGBOUNDARY2D_POINTRUN_TAG: u8 = 0x68;
+
+/// Member tag of an arc `igBoundary2d` member in the linked-template
+/// (`0x0000` sub-type) layout: `tag + 7×f64` carrying
+/// `(start_angle, end_angle, centre_x, centre_y, radius, 0, 1)` plus a
+/// trailing flag byte that carries the sweep sign on the corpus (0 =
+/// clockwise, 1 = counter-clockwise). 58 bytes in total.
+pub const IGBOUNDARY2D_ARC_TAG: u8 = 0x74;
+
+/// Fixed trailer length of the linked-template (`0x0000` sub-type)
+/// `igBoundary2d` variant: two identical 8-byte words followed by
+/// `u32 1` and a `u8` flag — 21 bytes.
+pub const IGBOUNDARY2D_TEMPLATE_TRAILER_LEN: usize = 21;
+
+/// Upper bound accepted for one `0x68` point run's vertex count.
+pub const IGBOUNDARY2D_MAX_POINTRUN_COUNT: u32 = 4096;
+
+/// Radians swept per emitted chord when an `0x74` arc member is
+/// flattened into boundary segments (≈14°; ~0.01mm sag at the logo's
+/// 3mm radii).
+const IGBOUNDARY2D_ARC_CHORD_STEP: f64 = 0.25;
+
 /// One `(start, end)` segment decoded from an `igBoundary2d`
 /// segment group (`0x67 tag + 4×f64`).
 #[derive(Debug, Clone, PartialEq)]
@@ -5183,7 +5270,8 @@ pub struct SheetIgBoundary2dDecoded {
     /// `== <n>` rule here admits one layer and refuses the rest. See
     /// `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md`.
     pub sheet_layer_ref: u32,
-    /// Sub-type word at payload offset 12. Always `0x0010`.
+    /// Sub-type word at payload offset 12: `0x0010` on drawing-side
+    /// records, `0x0000` on linked-template (`.igr`) records.
     pub sub_type_word: u16,
     /// Index-like word at payload offset 14 (21 / 24 in fixtures,
     /// constant per fixture family like the other IGDS decoders).
@@ -5282,7 +5370,12 @@ impl PsmRecordDecoder for IgBoundary2dDecoder {
     }
 
     fn min_record_len(&self) -> usize {
-        PSM_ENVELOPE_LEN + IGBOUNDARY2D_FIXED_PAYLOAD_LEN + IGBOUNDARY2D_PER_SEGMENT_LEN
+        // Smallest accepted record is a linked-template variant with a
+        // single 33-byte line member: 6-byte envelope + 28-byte prefix
+        // + member + 21-byte trailer = 88 bytes. The strict variant's
+        // own minimum (envelope + 49 + 41 = 96) stays above that, so
+        // the scan bound follows the smaller grammar.
+        PSM_ENVELOPE_LEN + 28 + 33 + IGBOUNDARY2D_TEMPLATE_TRAILER_LEN
     }
 
     fn decode_at(&self, data: &[u8], offset: usize) -> Option<SheetIgBoundary2dDecoded> {
@@ -5339,6 +5432,17 @@ fn decode_igboundary_payload(
     let parent_ref = read_u32(4)?;
     let sheet_layer_ref = read_u32(8)?;
     let sub_type_word = u16::from_le_bytes([*payload.get(12)?, *payload.get(13)?]);
+    if sub_type_word == 0x0000 {
+        return decode_igboundary_template_payload(
+            data,
+            offset,
+            header,
+            payload_end,
+            oid,
+            parent_ref,
+            sheet_layer_ref,
+        );
+    }
     if sub_type_word != 0x0010 {
         return None;
     }
@@ -5439,6 +5543,354 @@ fn decode_igboundary_payload(
         trailer_flag,
         member_refs,
     })
+}
+
+/// Family-specific payload validation for the linked-template
+/// `igBoundary2d` variant (sub-type word `0x0000` rather than the
+/// drawing-side `0x0010`). Linked `.igr` border templates letter their
+/// logo and rounded corners with this member vocabulary:
+///
+/// * `0x67` line — `tag + 4×f64` (start, end), 33 bytes;
+/// * `0x68` point run — `tag + u32 count + 2-byte tail +
+///   count × 16-byte (x, y)`, closed onto its first point;
+/// * `0x74` arc — `tag + 7×f64`
+///   `(start_angle, end_angle, centre_x, centre_y, radius, 0, 1)` plus a
+///   flag byte carrying the sweep sign; flattened to chords of at most
+///   [`IGBOUNDARY2D_ARC_CHORD_STEP`] radians.
+///
+/// Members chain end-to-start and the record ends with a fixed
+/// 21-byte trailer (two identical 8-byte words, `u32 1`, `u8` flag)
+/// instead of the strict grammar's anchor + member references. The
+/// segment list flattens every member to chords so the shared emitter
+/// sees the same closed ring either way; `member_refs` is empty and
+/// `anchor` borrows the first vertex for lack of a trailer anchor.
+fn decode_igboundary_template_payload(
+    data: &[u8],
+    offset: usize,
+    header: &PsmHeader,
+    payload_end: usize,
+    oid: u32,
+    parent_ref: u32,
+    sheet_layer_ref: u32,
+) -> Option<SheetIgBoundary2dDecoded> {
+    let payload = data.get(header.body_start..payload_end)?;
+
+    let read_u32 = |pos: usize| -> Option<u32> {
+        payload
+            .get(pos..pos + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let read_f64 = |pos: usize| -> Option<f64> {
+        payload
+            .get(pos..pos + 8)
+            .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+    };
+    let check = |v: f64| -> Option<f64> {
+        (v.is_finite() && v.abs() <= GLINE2D_COORDINATE_DOMAIN_LIMIT).then_some(v)
+    };
+
+    let index = read_u32(14)?;
+    if read_u32(18)? != 1 {
+        return None;
+    }
+    let member_count = read_u32(22)?;
+    if !(1..=IGBOUNDARY2D_MAX_SEGMENT_COUNT).contains(&member_count) {
+        return None;
+    }
+    let sub_header_tail = [*payload.get(26)?, *payload.get(27)?];
+    let members_end = payload
+        .len()
+        .checked_sub(IGBOUNDARY2D_TEMPLATE_TRAILER_LEN)?;
+    if members_end < 28 {
+        return None;
+    }
+
+    let mut segments = Vec::new();
+    let mut pos = 28usize;
+    let mut all_same = true;
+    let mut first_vertex: Option<(f64, f64)> = None;
+    let mut push_segment = |segments: &mut Vec<SheetIgBoundary2dSegment>,
+                            tag_offset: usize,
+                            start: (f64, f64),
+                            end: (f64, f64)| {
+        let reference = *first_vertex.get_or_insert(start);
+        for vertex in [start, end] {
+            if vertex != reference {
+                all_same = false;
+            }
+        }
+        segments.push(SheetIgBoundary2dSegment {
+            tag_offset,
+            start,
+            end,
+        });
+    };
+
+    for _ in 0..member_count {
+        if pos >= members_end {
+            return None;
+        }
+        match *payload.get(pos)? {
+            IGBOUNDARY2D_SEGMENT_TAG => {
+                let sx = check(read_f64(pos + 1)?)?;
+                let sy = check(read_f64(pos + 9)?)?;
+                let ex = check(read_f64(pos + 17)?)?;
+                let ey = check(read_f64(pos + 25)?)?;
+                push_segment(&mut segments, pos, (sx, sy), (ex, ey));
+                pos += 33;
+            }
+            IGBOUNDARY2D_POINTRUN_TAG => {
+                let count = read_u32(pos + 1)?;
+                if !(2..=IGBOUNDARY2D_MAX_POINTRUN_COUNT).contains(&count) {
+                    return None;
+                }
+                let count = count as usize;
+                let run_end = pos.checked_add(7)?.checked_add(count.checked_mul(16)?)?;
+                if run_end > members_end {
+                    return None;
+                }
+                let mut prev = (check(read_f64(pos + 7)?)?, check(read_f64(pos + 15)?)?);
+                for i in 1..count {
+                    let next = (
+                        check(read_f64(pos + 7 + i * 16)?)?,
+                        check(read_f64(pos + 15 + i * 16)?)?,
+                    );
+                    push_segment(&mut segments, pos, prev, next);
+                    prev = next;
+                }
+                pos = run_end;
+            }
+            IGBOUNDARY2D_ARC_TAG => {
+                let member_end = pos.checked_add(58)?;
+                if member_end > members_end {
+                    return None;
+                }
+                let start_ang = check(read_f64(pos + 1)?)?;
+                let end_ang = check(read_f64(pos + 9)?)?;
+                let cx = check(read_f64(pos + 17)?)?;
+                let cy = check(read_f64(pos + 25)?)?;
+                let radius = check(read_f64(pos + 33)?)?;
+                if !radius.is_finite()
+                    || radius <= 0.0
+                    || !start_ang.is_finite()
+                    || !end_ang.is_finite()
+                {
+                    return None;
+                }
+                let sweep = end_ang - start_ang;
+                let chords = ((sweep.abs() / IGBOUNDARY2D_ARC_CHORD_STEP).ceil() as usize).max(1);
+                let mut prev = (cx + radius * start_ang.cos(), cy + radius * start_ang.sin());
+                for i in 1..=chords {
+                    let angle = start_ang + sweep * (i as f64 / chords as f64);
+                    let next = (cx + radius * angle.cos(), cy + radius * angle.sin());
+                    push_segment(&mut segments, pos, prev, next);
+                    prev = next;
+                }
+                pos = member_end;
+            }
+            _ => return None,
+        }
+    }
+    if pos != members_end || segments.is_empty() || all_same {
+        return None;
+    }
+    // The 21-byte trailer carries two identical 8-byte words followed
+    // by `u32 1` and a flag byte on every corpus record; the marker is
+    // the only part worth holding a rule to.
+    if read_u32(members_end + 16)? != 1 {
+        return None;
+    }
+    let anchor = segments.first().map_or((0.0, 0.0), |s| s.start);
+    let trailer_flag = *payload.last()?;
+
+    Some(SheetIgBoundary2dDecoded {
+        byte_range: offset..payload_end,
+        type_code: header.type_code,
+        type_flags: header.type_flags,
+        bytes_to_follow: header.bytes_to_follow,
+        oid,
+        parent_ref,
+        sheet_layer_ref,
+        sub_type_word: 0x0000,
+        index,
+        segment_count: member_count,
+        sub_header_tail,
+        segments,
+        anchor,
+        trailer_flag,
+        member_refs: Vec::new(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// PSM `igBoundary2d` (type `0x0013`), symbol-cache variant — loose member
+// read for `.sym` libraries and the drawing's `JSite` definition cache.
+//
+// The strict decoder above answers the drawing-side question (`0x0010`
+// sub-type, `0x67` line members re-listing `igLine2d` strokes). The same
+// family inside a `.sym` or a `JSite` storage carries a different member
+// vocabulary: `Wellhead Christmas Tree 02.sym` files 22 records whose
+// sub-type word is `0x0000` and whose segment groups open with `0x73`
+// followed by `(centre_x, centre_y, radius, unused)` — the flange-dot
+// circles `SmartPlant`'s plot fills solid. Each carries a fill-family
+// style index, which is what marks them as fills rather than outlines.
+//
+// This read shares the 18-byte prefix, the `u32 == 1` marker at `+18`
+// and the segment count at `+22` with the strict one, maps each segment
+// group by its tag byte, and leaves the trailer unread — the strict
+// grammar's `0x67`-only rule rejects every corpus member here, and its
+// exact `49 + 41n` length arithmetic does not hold for this variant.
+
+/// Segment tag of a circular `igBoundary2d` member (`.sym`/cache
+/// layout): the group's four words are `centre_x, centre_y, radius,
+/// unused`.
+pub const IGSYMBOUNDARY_CIRCLE_TAG: u8 = 0x73;
+
+/// One member shape of an `igBoundary2d` record, keyed by the segment
+/// group's tag byte rather than resolved through the member-reference
+/// trailer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IgBoundaryMember {
+    /// Segment tag [`IGBOUNDARY2D_SEGMENT_TAG`] (`0x67`): the group's
+    /// words are `(start_x, start_y, end_x, end_y)` — the layout
+    /// drawing-side records carry.
+    Line {
+        /// Member start.
+        start: (f64, f64),
+        /// Member end.
+        end: (f64, f64),
+    },
+    /// Segment tag [`IGSYMBOUNDARY_CIRCLE_TAG`] (`0x73`): the group's
+    /// words are `(centre_x, centre_y, radius, unused)` — the layout
+    /// `.sym` libraries and `JSite` caches carry.
+    Circle {
+        /// Member centre.
+        center: (f64, f64),
+        /// Member radius.
+        radius: f64,
+    },
+}
+
+/// One `igBoundary2d` record read the loose symbol-cache way: prefix,
+/// sub-header marker and segment groups are shared with
+/// [`SheetIgBoundary2dDecoded`]; the sub-type word, tag vocabulary and
+/// trailer are not held to its rules.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodedIgSymBoundaryRecord {
+    /// Object identifier from payload offset 0.
+    pub oid: u32,
+    /// Oid of the `JSheetLayer` this boundary sits on (payload offset
+    /// 8) — the same slot every other graphic family carries it in.
+    pub sheet_layer_ref: u32,
+    /// Style index at payload offset 14 — names a fill-family style
+    /// where the record fills, resolvable through
+    /// [`crate::style_link::DocumentStyleTable::resolve_fill`].
+    pub index: u32,
+    /// The members the region is filled over, in record order.
+    pub members: Vec<IgBoundaryMember>,
+}
+
+/// Decode the payload of one `igBoundary2d` record the symbol-cache
+/// way. `None` when the prefix, marker, count or geometry reads fail.
+/// Groups whose tag names no known member shape are dropped; a record
+/// left with no member is not a fill anyone can draw.
+pub fn decode_igsym_boundary_payload(payload: &[u8]) -> Option<DecodedIgSymBoundaryRecord> {
+    let read_u32 = |pos: usize| -> Option<u32> {
+        payload
+            .get(pos..pos + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let read_f64 = |pos: usize| -> Option<f64> {
+        payload
+            .get(pos..pos + 8)
+            .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+    };
+    let oid = read_u32(0)?;
+    let sheet_layer_ref = read_u32(8)?;
+    let index = read_u32(14)?;
+    // Two member layouts share this record type. The single-word-at-a-time
+    // layout every corpus record used until the plug valves surfaced: count
+    // at +22, members contiguous at 33 bytes each. The separator-joined
+    // layout those carry instead: count at +18 (+22 stays 1), and each
+    // 35-byte member block (`04 01` prefix + tag + four f64 words) joined
+    // to the next by 13 bytes of an `f64` and `01 01 00 00 00` — a 48-byte
+    // stride, re-checked against the `04 01` prefix so the count cannot
+    // invent members. A `+18 != 1` guard drops the plug valves' outer
+    // discs, the fills their PDFs draw.
+    let (count, stride, gated) = if read_u32(18)? > 1 {
+        (read_u32(18)? as usize, 48usize, true)
+    } else {
+        (read_u32(22)? as usize, 33usize, false)
+    };
+    if !(1..=IGBOUNDARY2D_MAX_SEGMENT_COUNT as usize).contains(&count) {
+        return None;
+    }
+    if payload.len()
+        < 26usize
+            .checked_add(stride.checked_mul(count.checked_sub(1)?)?)?
+            .checked_add(35)?
+    {
+        return None;
+    }
+    let mut members = Vec::with_capacity(count);
+    for i in 0..count {
+        let at = 28 + i * stride;
+        // Separator-joined member blocks open with their own `04 01`
+        // prefix two bytes ahead of the tag; a record that loses it is not
+        // this layout.
+        if gated && payload.get(at - 2..at) != Some(&[0x04, 0x01][..]) {
+            return None;
+        }
+        let v = [
+            read_f64(at + 1)?,
+            read_f64(at + 9)?,
+            read_f64(at + 17)?,
+            read_f64(at + 25)?,
+        ];
+        if v.iter()
+            .any(|v| !v.is_finite() || v.abs() > GLINE2D_COORDINATE_DOMAIN_LIMIT)
+        {
+            return None;
+        }
+        let member = match payload[at] {
+            IGBOUNDARY2D_SEGMENT_TAG => IgBoundaryMember::Line {
+                start: (v[0], v[1]),
+                end: (v[2], v[3]),
+            },
+            IGSYMBOUNDARY_CIRCLE_TAG => {
+                if v[2] <= 0.0 {
+                    return None;
+                }
+                IgBoundaryMember::Circle {
+                    center: (v[0], v[1]),
+                    radius: v[2],
+                }
+            }
+            _ => continue,
+        };
+        members.push(member);
+    }
+    (!members.is_empty()).then_some(DecodedIgSymBoundaryRecord {
+        oid,
+        sheet_layer_ref,
+        index,
+        members,
+    })
+}
+
+/// Try to decode a single `igBoundary2d` record starting at `offset`,
+/// the symbol-cache way. `None` when the envelope or
+/// [`decode_igsym_boundary_payload`] fails.
+pub fn decode_igsym_boundary_at(data: &[u8], offset: usize) -> Option<DecodedIgSymBoundaryRecord> {
+    let header = parse_live_psm_header(data, offset)?;
+    if header.type_code != PSM_TYPE_CODE_IGBOUNDARY2D {
+        return None;
+    }
+    let end = header
+        .body_start
+        .checked_add(header.bytes_to_follow as usize)?;
+    let payload = data.get(header.body_start..end)?;
+    decode_igsym_boundary_payload(payload)
 }
 
 // ---------------------------------------------------------------------------
@@ -6742,23 +7194,26 @@ mod symbol_information_family_tests {
 // ---------------------------------------------------------------------------
 //
 // Two record families the vendor's own graphic predicate says draw, which
-// the corpus keeps only inside nested `JSite<N>/PSMcluster0` storages and
-// never in a top-level `Sheet*` stream: `igCircle2d` (`0x0059`, 12 records
-// across the four fixtures) and `igArc2d` (`0x0061`, 12). Their layouts are
-// native-reader grade twice over: Phase 36's byte statistics on the corpus
-// and the `imagdex.dex` `IJPersist::DoIO` workers decompiled in
+// the corpus long kept only inside nested `JSite<N>/PSMcluster0` storages:
+// `igCircle2d` (`0x0059`, 12 records across the first four fixtures) and
+// `igArc2d` (`0x0061`, 12). Their layouts are native-reader grade twice
+// over: Phase 36's byte statistics on the corpus and the `imagdex.dex`
+// `IJPersist::DoIO` workers decompiled in
 // `docs/analysis/2026-08-31-imagdex-geometry-doio-ida.md` agree byte for
 // byte -- the 18-byte sub-header `igLine2d` opens with, then the doubles,
 // then one flag byte.
 //
-// They are decoded so the records stop being invisible, and **held back
-// from the drawing**: the storage they sit in has no proven transform to
-// the page (`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`), and
-// a circle drawn in the wrong coordinate space is worse than a circle named
-// as missing. They are deliberately not registered in
-// `model::sheet_families`, which describes what a `Sheet*` stream can hold;
-// the surface is `JSite::nested_geometry`, and `build_normalized_geometry`
-// names the held-back counts in its warnings.
+// The nested-site copies stay **held back from the drawing**: that storage
+// has no proven transform to the page
+// (`docs/analysis/2026-08-31-jsite-geometry-coverage-gap.md`), and a circle
+// drawn in the wrong coordinate space is worse than a circle named as
+// missing. Their surface is `JSite::nested_geometry`.
+//
+// Top-level `Sheet*` copies are different: a sheet stream's transform is
+// proven, so once W's `Sheet6` carried 17 `igCircle2d` records (the
+// instrument balloons and sensing-bulb dots, verified against the
+// reference plot) the family gained a `model::sheet_families` row and an
+// `IgCircle2dEmitter` — the same record, read the same way, now draws.
 
 /// PSM type code for `igCircle2d` (`JCircle2d`, `imagdex.dex`; IGDS class
 /// tag `0x59 = 89`).
@@ -6835,13 +7290,18 @@ pub struct SheetIgArc2dDecoded {
     /// Radius, same units (payload `+34`).
     pub radius: f64,
     /// Absolute start angle, radians counter-clockwise from +X (payload
-    /// `+42`); the arc leaves it **clockwise** towards `end_angle`.
+    /// `+42`). Sheet-stream arcs sweep **directly** towards `end_angle`
+    /// (the `CPE` logo letterforms in the linked border templates are
+    /// ~20-130° arcs; read as the clockwise convention the symbol-body
+    /// `SymbolPrimitive::Arc` follows, they become 230-340° rings the
+    /// reference plots do not have). The clockwise convention was
+    /// adjudicated only for cached symbol bodies — a different binary
+    /// format, not this PSM record.
     pub start_angle: f64,
     /// Absolute end angle, radians counter-clockwise from +X (payload `+50`).
     pub end_angle: f64,
     /// The trailing byte (payload `+58`); meaning unknown, carried for
-    /// audit. Not the sweep direction: the corpus has it `0` and `1` on
-    /// arcs that both run clockwise.
+    /// audit.
     pub flag: u8,
 }
 
@@ -9737,7 +10197,11 @@ mod tests {
     }
 
     #[test]
-    fn iglinestring2d_rejects_degenerate_all_same_vertices() {
+    fn iglinestring2d_decodes_all_same_vertices_as_an_anchor() {
+        // Real drawings carry vc=2 records whose vertices coincide -- a
+        // position an annotation or symbol anchors to, not a stroke
+        // (probe_real5_linestring_refusals). They decode; the emitter, not
+        // the decoder, decides there is nothing to stroke.
         let record = build_synthetic_iglinestring2d_record(
             1,
             1,
@@ -9748,7 +10212,9 @@ mod tests {
             1,
             &[(0.5, 0.5), (0.5, 0.5)],
         );
-        assert!(decode_iglinestrings(&record).is_empty());
+        let decoded = decode_iglinestrings(&record);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].total_length(), 0.0);
     }
 
     #[test]
@@ -10277,9 +10743,13 @@ mod tests {
         transform: [f64; 4],
         insertion: (f64, f64),
     ) -> Vec<u8> {
-        let mut out = Vec::with_capacity(6 + IGSYMBOL2D_MIN_PAYLOAD_LEN);
+        // The canonical 113-byte payload shape, written literally so the
+        // corpus-derived `IGSYMBOL2D_MIN_PAYLOAD_LEN` floor can move without
+        // silently resizing every fixture record these tests build.
+        const CANONICAL_PAYLOAD_LEN: usize = 113;
+        let mut out = Vec::with_capacity(6 + CANONICAL_PAYLOAD_LEN);
         out.extend_from_slice(&PSM_TYPE_CODE_IGSYMBOL2D.to_le_bytes());
-        out.extend_from_slice(&(IGSYMBOL2D_MIN_PAYLOAD_LEN as u32).to_le_bytes());
+        out.extend_from_slice(&(CANONICAL_PAYLOAD_LEN as u32).to_le_bytes());
         out.extend_from_slice(&oid.to_le_bytes()); // 0..4
         out.extend_from_slice(&parent_ref.to_le_bytes()); // 4..8
         out.extend_from_slice(&8u32.to_le_bytes()); // 8..12 remaining_header

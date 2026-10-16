@@ -115,6 +115,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         placeholders += 1;
                     }
                 }
+                SymbolPrimitive::Boundary { members, .. } => {
+                    polylines += members
+                        .iter()
+                        .filter(|m| !matches!(m, SymbolPrimitive::Circle { .. }))
+                        .count();
+                    circles += members
+                        .iter()
+                        .filter(|m| matches!(m, SymbolPrimitive::Circle { .. }))
+                        .count();
+                }
             }
         }
         for (code, count) in &body.skipped_records {

@@ -27,7 +27,7 @@
 //! }
 //! ```
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -35,7 +35,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::PidParser;
 use crate::error::PidError;
-use crate::style_link::DocumentStyleTable;
+use crate::parsers::sheet_records::{
+    IGTEXTBOX_DIRECTION_UNIT_TOLERANCE, IGTEXTBOX_LETTER_HEIGHT_M,
+};
+use crate::style_link::{DocumentStyleTable, TextAlignment};
 
 /// `u32` LE signature shared by every cluster-family stream, including a
 /// symbol's `Sheet*` streams.
@@ -67,6 +70,7 @@ const TYPE_ARC: u16 = 0x0061;
 const TYPE_POLYLINE: u16 = 0x0084;
 const TYPE_TEXT: u16 = 0x004D;
 const TYPE_BSPLINE: u16 = 0x005D;
+const TYPE_BOUNDARY: u16 = 0x0013;
 
 /// Bytes of geometry and style following a text record's characters. The
 /// first two `f64`s of it are the insertion point, and the run's constant
@@ -182,8 +186,10 @@ pub enum SymbolPrimitive {
     /// rather than text anyone means to read. It is decoded as it appears;
     /// deciding whether to draw it belongs to whoever is drawing.
     ///
-    /// Carries no height or font: the record does not hold one, and the
-    /// style table it points at is unread.
+    /// The record's own placement tail states a direction and an anchor, and
+    /// its `+14` style index resolves to a height, a colour and a typeface —
+    /// all of it on [`StyledPrimitive::lettering`], since it is symbology
+    /// rather than shape.
     Text {
         /// Text content, decoded from UTF-16LE.
         text: String,
@@ -202,6 +208,27 @@ pub enum SymbolPrimitive {
         /// The knot vector; its length minus the pole count minus one is the
         /// degree.
         knots: Vec<f64>,
+    },
+    /// A filled region (PSM `0x0013` `igBoundary2d`) — the flange dots of
+    /// `Wellhead Christmas Tree 02.sym`, which `SmartPlant`'s plot fills
+    /// solid where a reader that only stroked the member circles draws a
+    /// hairline ring. The record's members re-list shapes that are also
+    /// stroked on their own, so the area is what draws, not the outline:
+    /// a consumer fills each member rather than stroking it.
+    ///
+    /// The record's style index names a fill-family style, which rides
+    /// along resolved (the same slot a stroke's line style would carry,
+    /// but a boundary's index resolves nothing through
+    /// `resolve_line_style`).
+    Boundary {
+        /// The member shapes the region fills over — circles on the
+        /// corpus (`0x73` groups), straight segments where a boundary
+        /// lists lines (`0x67` groups). Only `Circle` and `Line` members
+        /// ever appear here.
+        members: Vec<SymbolPrimitive>,
+        /// What the record's style index resolves to through the
+        /// symbol's own table — `None` where it names no fill style.
+        fill: Option<PrimitiveFill>,
     },
 }
 
@@ -276,6 +303,32 @@ impl PrimitiveStyle {
     }
 }
 
+/// The fill a boundary record draws with, as the symbol's own style
+/// table states it — the same vocabulary
+/// [`crate::style_link::ResolvedFill`] answers in, slimmed to what a
+/// renderer needs.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PrimitiveFill {
+    /// The stated fill colour, `None` where the style names a pattern
+    /// fill or states no colour — draw it in the layer's colour then,
+    /// the same rule the drawing-side fills follow.
+    pub rgb: Option<[u8; 3]>,
+    /// The PSM type code of the style reached — `0x002A` solid or
+    /// `0x002B` hatch.
+    pub type_code: u16,
+}
+
+impl PrimitiveFill {
+    /// The fill a resolved fill style states, in this vocabulary.
+    #[must_use]
+    pub fn from_resolved(resolved: &crate::style_link::ResolvedFill) -> Self {
+        Self {
+            rgb: resolved.rgb(),
+            type_code: resolved.type_code,
+        }
+    }
+}
+
 /// One drawable primitive together with the symbology its own `.sym` states
 /// for it.
 ///
@@ -288,6 +341,108 @@ pub struct StyledPrimitive {
     pub primitive: SymbolPrimitive,
     /// What to draw it with.
     pub style: Option<PrimitiveStyle>,
+    /// The lettering a [`SymbolPrimitive::Text`] draws with — `Some` for
+    /// every decoded text record, since the record's own tail always reads
+    /// its anchor and direction even where the style index resolves
+    /// nothing — and `None` for every other shape.
+    #[serde(default)]
+    pub lettering: Option<SymbolLettering>,
+    /// The `JSheetLayer` oid the record's sub-header names — the same
+    /// `sheet_layer_ref` slot the drawing-side families carry. `0` when the
+    /// record names no layer; the name it resolves to rides along in
+    /// [`Self::sheet_layer_name`].
+    #[serde(default)]
+    pub sheet_layer_ref: u32,
+    /// The name [`Self::sheet_layer_ref`] resolves to through the symbol's
+    /// own `JSheetLayer` table, `None` where the ref is `0`, names no layer
+    /// in the table, or the symbol carries no table to ask.
+    #[serde(default)]
+    pub sheet_layer_name: Option<String>,
+    /// The layer's number — the bit index the sheet's `Top ViewFilterSet`
+    /// answers at — resolved through the same table as
+    /// [`Self::sheet_layer_name`]. `u32::MAX` where no layer resolves.
+    #[serde(default = "unresolved_layer_number")]
+    pub sheet_layer_number: u32,
+    /// The `JSheet` oid of the sheet stream the record was read from — the
+    /// `N` in its `SheetN` stream name. A `.sym` often keeps the body twice:
+    /// the sheet `SmartPlant` draws (the one its `Top ViewFilterSet` files
+    /// the supplementary layers off on) and an alternate view of it that
+    /// shows everything. `0` where the stream's name was not `SheetN`.
+    #[serde(default)]
+    pub sheet_ref: u32,
+}
+
+/// The lettering a `.sym` text record draws with: what the record's own
+/// placement tail states — the `(cos, sin)` direction as rotation and, where
+/// the pair is height-scaled, a letter height; the trailer's anchor byte —
+/// joined with what the record's `+14` style index resolves to through the
+/// symbol's `StyleCluster`.
+///
+/// The tail is the same 36-byte layout the drawing-side `igTextBox` reads
+/// ([`crate::parsers::sheet_records::SheetIgTextBoxDecoded`]): insertion,
+/// direction pair, 4-byte trailer. The style hop is the same one too — the
+/// index names a `JStyleTextPara`, which names the `JStyleTextChar` the
+/// metrics come off — resolved eagerly here because the table a `.sym` reads
+/// is its own and [`read_symbol_geometry`] is the last place it is in scope.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SymbolLettering {
+    /// The record's own anchor: the last byte of the trailer that closes
+    /// the placement tail — the same scheme the sheet `igTextBox` carries:
+    /// `(code >> 4) % 3` horizontal (`0` left, `1` centre, `2` right),
+    /// `(code & 0x0F) % 3` vertical (`0` bottom, `1` top, `2` middle). It
+    /// overrides `alignment` the same way it does on a drawing sheet.
+    pub anchor_code: u8,
+    /// Text rotation in radians, from the tail's `(cos, sin)` pair.
+    pub rotation_rad: f64,
+    /// The letter height the direction pair is scaled to, `0.0` where the
+    /// pair is the normalized unit vector — the same reading the sheet
+    /// decoder makes. A `.sym` that scales its direction states its letter
+    /// height here; one that keeps it unit asks the style's `height_m`.
+    pub letter_height_m: f64,
+    /// Character height in metres the record's style index resolves to,
+    /// `None` where the index names no character style or there is no table
+    /// to ask — `letter_height_m` or a consumer's own fallback answers then.
+    pub height_m: Option<f64>,
+    /// Character colour as `[r, g, b]` when the resolved style states one.
+    pub rgb: Option<[u8; 3]>,
+    /// The paragraph's stated horizontal justification — the default
+    /// `anchor_code` overrides.
+    pub alignment: Option<TextAlignment>,
+    /// Line spacing as a multiple of the character height, for a label
+    /// with a line break.
+    pub line_spacing: Option<f64>,
+    /// Typeface the character style names, verbatim.
+    pub font_name: Option<String>,
+}
+
+impl SymbolLettering {
+    /// The lettering a cached body's decoded `igTextBox` draws with — the
+    /// record's own reads (its anchor byte, its direction pair as rotation
+    /// and any stated height) joined with what its `index` resolves to
+    /// through the body's own style table.
+    ///
+    /// This is the model-record counterpart of the byte read `lettering_of`
+    /// makes for a `.sym`: the same fields, off the same `JStyleTextPara` →
+    /// `JStyleTextChar` hop, only the table differs — the drawing's
+    /// definition cache keeps its own `StyleCluster` per `JSite` storage.
+    pub(crate) fn from_decoded(
+        record: &crate::DecodedIgTextBoxRecord,
+        table: Option<&DocumentStyleTable>,
+    ) -> Self {
+        let resolved = table.and_then(|table| table.resolve_text_height(record.index));
+        Self {
+            anchor_code: record.anchor_code,
+            rotation_rad: record.rotation_rad,
+            letter_height_m: record.letter_height_m,
+            height_m: resolved.as_ref().map(|style| style.height_m),
+            rgb: resolved
+                .as_ref()
+                .and_then(crate::style_link::ResolvedTextHeight::rgb),
+            alignment: resolved.as_ref().and_then(|style| style.alignment),
+            line_spacing: resolved.as_ref().and_then(|style| style.line_spacing),
+            font_name: resolved.and_then(|style| style.font_name),
+        }
+    }
 }
 
 /// A symbol's drawable body, as read from one `.sym` file.
@@ -299,6 +454,120 @@ pub struct SymbolGeometry {
     /// PSM type code. Reported rather than dropped silently so a symbol that
     /// comes out looking too sparse can be told apart from one that is.
     pub skipped_records: BTreeMap<u16, usize>,
+    /// The `JSheetLayer` objects the symbol's own `PSMcluster0` declares —
+    /// the table [`StyledPrimitive::sheet_layer_name`] resolves against.
+    #[serde(default)]
+    pub sheet_layers: Vec<SymbolSheetLayer>,
+    /// Each sheet's `Top ViewFilterSet` display state — one entry per
+    /// decoded set, what [`Self::displayed_primitives`] classifies the
+    /// file's sheets by.
+    #[serde(default)]
+    pub sheet_views: Vec<SymbolSheetView>,
+}
+
+/// One `JSheetLayer` of a `.sym` file: the oid a primitive's
+/// [`StyledPrimitive::sheet_layer_ref`] names, the number its sheet's view
+/// filter set indexes it at, and the layer's authored name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolSheetLayer {
+    /// Storage-local persistent object id the shape records name.
+    pub oid: u32,
+    /// The layer's number: which bit of the `0x0057` view filter bitmap
+    /// states its display.
+    #[serde(default)]
+    pub layer_number: u32,
+    /// The layer's authored name, verbatim.
+    pub name: String,
+}
+
+/// The display state one of a `.sym`'s sheets gives its layers: what the
+/// sheet's `0x0057 Top ViewFilterSet` states, distilled to what
+/// [`SymbolGeometry::displayed_primitives`] reads.
+///
+/// A `.sym` keeps a view set per sheet, and across the corpus they come in
+/// two shapes: the sheet the drawing caches (and `SmartPlant` draws) files
+/// the supplementary layers — `Label`, `HiddenObjects`, `Heat Trace`,
+/// `Jacket`, `Construction`, `Dimension` — off and `Default` on, while the
+/// alternate view a body also carries (the insulated/heat-traced
+/// representation, or a label's editing view) files every layer on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolSheetView {
+    /// The `JSheet` oid the set governs — the `N` in the `SheetN` stream
+    /// name of the primitives it filters.
+    pub sheet_ref: u32,
+    /// The set's display bitmap, verbatim: bit `n` set means the layer
+    /// numbered `n` is shown on this sheet.
+    pub display: Vec<u8>,
+    /// The `(number, name)` entries the set lists — what classifies the
+    /// sheet as the body's normal view versus an everything-on alternate.
+    pub layers: Vec<(u16, String)>,
+}
+
+impl SymbolSheetView {
+    /// Whether this sheet's set files any supplementary layer on — the mark
+    /// of the alternate representation the corpus's embedded bodies never
+    /// take. A set that only ever shows `Default`-family layers is the
+    /// normal view; one that explicitly displays a `Label` or `Heat Trace`
+    /// layer is the alternate.
+    fn shows_supplementary(&self) -> bool {
+        self.layers
+            .iter()
+            .any(|(number, name)| hidden_symbol_layer(name) && bit_is_set(&self.display, *number))
+    }
+
+    /// Whether the set displays layer number `n`; `None` past the bitmap.
+    fn is_displayed(&self, layer_number: u32) -> Option<bool> {
+        u16::try_from(layer_number)
+            .ok()
+            .map(|number| bit_is_set(&self.display, number))
+    }
+}
+
+/// Bit `n` of a little-endian bitmap, `false` where the map does not reach.
+fn bit_is_set(bitmap: &[u8], n: u16) -> bool {
+    bitmap
+        .get(usize::from(n / 8))
+        .is_some_and(|byte| byte & (1 << (n % 8)) != 0)
+}
+
+/// The serde default for [`StyledPrimitive::sheet_layer_number`]: a layer
+/// number no `u16` bitmap bit can name, so a body read back from before
+/// the field existed filters by layer name as before.
+fn unresolved_layer_number() -> u32 {
+    u32::MAX
+}
+
+/// The `.sym` layer names `SmartPlant` keeps off the sheet, compared
+/// whitespace- and case-insensitively (`Hidden Objects` and `HiddenObjects`
+/// are the same layer; `Deminsion` is the corpus's own spelling).
+///
+/// These are authored conventions, not file flags: the drawing-side
+/// definition caches settle the same names to `displayed: false` — the
+/// corpus marks every `Heat Trace`, `HiddenObjects`, `Jacket`, `Label`,
+/// `Construction`, and `Dimension`/`Deminsion` layer off and every `Default`
+/// layer on — and the reference plots draw none of the hidden family. The
+/// `Label` layer carrying a symbol's catalogue text (`PG`, `MT`) is hidden
+/// the same way the cached copies hide it: the sheet, not the body, letters
+/// the instrument tag.
+const HIDDEN_SYMBOL_LAYER_NAMES: &[&str] = &[
+    "heattrace",
+    "hiddenobjects",
+    "jacket",
+    "label",
+    "construction",
+    "dimension",
+    "deminsion",
+];
+
+/// Whether `name` belongs to the layer family a `.sym` keeps for itself
+/// rather than the sheet.
+fn hidden_symbol_layer(name: &str) -> bool {
+    let normalized: String = name
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect();
+    HIDDEN_SYMBOL_LAYER_NAMES.contains(&normalized.as_str())
 }
 
 impl SymbolGeometry {
@@ -358,9 +627,120 @@ impl SymbolGeometry {
                 // reaches needs a height and a font, and the record carries
                 // neither.
                 SymbolPrimitive::Text { at, .. } => add(at.0, at.1),
+                // The members' own extents — a boundary fills exactly what
+                // its members outline.
+                SymbolPrimitive::Boundary { members, .. } => {
+                    for member in members {
+                        match member {
+                            SymbolPrimitive::Line { start, end } => {
+                                add(start.0, start.1);
+                                add(end.0, end.1);
+                            }
+                            SymbolPrimitive::Circle { center, radius } => {
+                                add(center.0 - radius, center.1 - radius);
+                                add(center.0 + radius, center.1 + radius);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
         acc
+    }
+
+    /// The strokes `SmartPlant` puts on the sheet for this body: the
+    /// primitives of the sheet the file presents as the body's normal
+    /// view, on the layers that view displays.
+    ///
+    /// Two selections stack. The first picks **which sheets** draw: a
+    /// `.sym` commonly keeps the same body twice — the sheet whose
+    /// `0x0057 Top ViewFilterSet` files the supplementary layers off (the
+    /// normal view the drawing's embedded caches mirror bit for bit) and
+    /// an alternate view whose set files every layer on (the
+    /// insulated/heat-traced representation). Where view sets decode, the
+    /// normal sheets are the ones that do not show a supplementary layer;
+    /// where they do not, `Sheet6` — the body sheet on all but a few dozen
+    /// of the library's files — wins alone, then sheets with no view
+    /// state, then everything.
+    ///
+    /// The second picks **which layers** of a selected sheet draw: the
+    /// sheet's own view set answers at the layer's number where the bitmap
+    /// reaches it; where a layer has no number, or the set no bit, or the
+    /// sheet no set at all, the drawing-side convention answers — the
+    /// embedded caches file `Label`, `HiddenObjects`, `Heat Trace`,
+    /// `Jacket`, `Construction`, and `Dimension`/`Deminsion` off and
+    /// `Default`, `ConnectPoints`, and `Invisible` on.
+    ///
+    /// A body the filter would empty is returned whole instead: a symbol
+    /// authored entirely on an unconventional name keeps its strokes
+    /// rather than vanishing into a marker dot.
+    #[must_use]
+    pub fn displayed_primitives(&self) -> Vec<&StyledPrimitive> {
+        let view_of = |sheet_ref: u32| {
+            self.sheet_views
+                .iter()
+                .find(|view| view.sheet_ref == sheet_ref)
+        };
+        let sheet_of = |styled: &StyledPrimitive| styled.sheet_ref;
+        let sheets_present: BTreeSet<u32> = self
+            .primitives
+            .iter()
+            .map(sheet_of)
+            .chain(self.sheet_views.iter().map(|view| view.sheet_ref))
+            .collect();
+        let normal: BTreeSet<u32> = sheets_present
+            .iter()
+            .copied()
+            .filter(|sheet| view_of(*sheet).is_some_and(|view| !view.shows_supplementary()))
+            .collect();
+        let alternate: BTreeSet<u32> = sheets_present
+            .iter()
+            .copied()
+            .filter(|sheet| view_of(*sheet).is_some_and(SymbolSheetView::shows_supplementary))
+            .collect();
+        let unknown: BTreeSet<u32> = sheets_present
+            .iter()
+            .copied()
+            .filter(|sheet| view_of(*sheet).is_none())
+            .collect();
+        let selected: BTreeSet<u32> = if !normal.is_empty() {
+            normal
+        } else if sheets_present.contains(&6) {
+            [6].into_iter().collect()
+        } else if !unknown.is_empty() {
+            unknown
+        } else if alternate != sheets_present {
+            sheets_present.difference(&alternate).copied().collect()
+        } else {
+            sheets_present
+        };
+
+        let shown = |styled: &&StyledPrimitive| {
+            if !selected.contains(&styled.sheet_ref) {
+                return false;
+            }
+            if styled.sheet_layer_ref == 0 {
+                return true;
+            }
+            if let Some(answer) = view_of(styled.sheet_ref)
+                .and_then(|view| view.is_displayed(styled.sheet_layer_number))
+            {
+                if !answer {
+                    return false;
+                }
+            }
+            styled
+                .sheet_layer_name
+                .as_deref()
+                .is_none_or(|name| !hidden_symbol_layer(name))
+        };
+        let visible: Vec<&StyledPrimitive> = self.primitives.iter().filter(|s| shown(s)).collect();
+        if visible.is_empty() {
+            self.primitives.iter().collect()
+        } else {
+            visible
+        }
     }
 }
 
@@ -513,8 +893,63 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
             })
         }
         TYPE_TEXT => decode_text(payload),
+        TYPE_BOUNDARY => {
+            use crate::parsers::sheet_records::{decode_igsym_boundary_payload, IgBoundaryMember};
+            let boundary = decode_igsym_boundary_payload(payload)?;
+            let members = boundary
+                .members
+                .iter()
+                .map(|member| match member {
+                    IgBoundaryMember::Line { start, end } => SymbolPrimitive::Line {
+                        start: *start,
+                        end: *end,
+                    },
+                    IgBoundaryMember::Circle { center, radius } => SymbolPrimitive::Circle {
+                        center: *center,
+                        radius: *radius,
+                    },
+                })
+                .collect();
+            Some(SymbolPrimitive::Boundary {
+                members,
+                fill: None,
+            })
+        }
         _ => None,
     }
+}
+
+/// The fill a boundary record's own style index names, if the symbol's
+/// style table defines one — the same hop [`style_of`] makes for a line
+/// style, through [`crate::style_link::DocumentStyleTable::resolve_fill`]
+/// instead.
+fn fill_of(payload: &[u8], styles: Option<&DocumentStyleTable>) -> Option<PrimitiveFill> {
+    let table = styles?;
+    let index = u32_le(payload, STYLE_INDEX_OFFSET)?;
+    table
+        .resolve_fill(index)
+        .as_ref()
+        .map(PrimitiveFill::from_resolved)
+}
+
+/// Dedup key for one boundary member: its shape quantised to nanometres
+/// plus the fill colour the record states, so overlapping records that name
+/// the same region in the same colour draw it once.
+pub(crate) fn boundary_member_key(member: &SymbolPrimitive, fill: Option<PrimitiveFill>) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    let coords: &[f64] = match member {
+        SymbolPrimitive::Line { start, end } => &[start.0, start.1, end.0, end.1],
+        SymbolPrimitive::Circle { center, radius } => &[center.0, center.1, *radius],
+        _ => &[],
+    };
+    for v in coords {
+        ((v * 1e9).round() as i64).hash(&mut hasher);
+    }
+    std::mem::discriminant(member).hash(&mut hasher);
+    fill.and_then(|fill| fill.rgb).hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Walk one symbol `Sheet*` stream's record chain into `out`.
@@ -523,12 +958,27 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
 /// that stops early or overruns means the bytes are not the layout this
 /// reader knows, and half a symbol drawn from a misread chain is worse than
 /// no symbol at all.
-fn read_sheet_chain(bytes: &[u8], styles: Option<&DocumentStyleTable>, out: &mut SymbolGeometry) {
+fn read_sheet_chain(
+    bytes: &[u8],
+    sheet_ref: u32,
+    styles: Option<&DocumentStyleTable>,
+    layers: Option<&[SymbolSheetLayer]>,
+    out: &mut SymbolGeometry,
+) {
     if u32_le(bytes, 0) != Some(CLUSTER_MAGIC) {
         return;
     }
+    let layer = |reference: u32| {
+        layers.and_then(|layers| layers.iter().find(|layer| layer.oid == reference))
+    };
     let mut primitives = Vec::new();
     let mut skipped: BTreeMap<u16, usize> = BTreeMap::new();
+    // Boundary records can overlap: the plug-valve bodies store two records
+    // covering the same disc, and either one fills it identically. A member
+    // shape another boundary already claimed is dropped so the disc draws
+    // once, the way the plots draw it.
+    let mut seen_boundary_members: std::collections::HashSet<u64> =
+        std::collections::HashSet::new();
     let mut at = CHAIN_START;
     while at + PSM_ENVELOPE_LEN <= bytes.len() {
         let (Some(raw_type), Some(length)) = (u16_le(bytes, at), u32_le(bytes, at + 2)) else {
@@ -547,10 +997,42 @@ fn read_sheet_chain(bytes: &[u8], styles: Option<&DocumentStyleTable>, out: &mut
         let type_code = raw_type & 0x0FFF;
         let payload = &bytes[body..end];
         match decode_primitive(type_code, payload) {
-            Some(primitive) => primitives.push(StyledPrimitive {
-                primitive,
-                style: style_of(payload, styles),
-            }),
+            Some(mut primitive) => {
+                // A boundary's style index names a fill, not a line —
+                // resolve it through the same slot and keep it on the
+                // primitive itself, since `StyledPrimitive::style` is the
+                // line symbology slot.
+                if let SymbolPrimitive::Boundary { fill, .. } = &mut primitive {
+                    *fill = fill_of(payload, styles);
+                }
+                if let SymbolPrimitive::Boundary { members, fill } = &mut primitive {
+                    members.retain(|member| {
+                        seen_boundary_members.insert(boundary_member_key(member, *fill))
+                    });
+                    if members.is_empty() {
+                        at = end;
+                        continue;
+                    }
+                }
+                let lettering = lettering_of(&primitive, payload, styles);
+                // The sub-header slot every shape family carries its
+                // `JSheetLayer` oid in — the same `payload[8..12]` read the
+                // drawing-side decoders make.
+                let sheet_layer_ref = u32_le(payload, 8).unwrap_or(0);
+                let found = (sheet_layer_ref != 0)
+                    .then(|| layer(sheet_layer_ref))
+                    .flatten();
+                primitives.push(StyledPrimitive {
+                    primitive,
+                    style: style_of(payload, styles),
+                    lettering,
+                    sheet_layer_ref,
+                    sheet_layer_name: found.map(|layer| layer.name.clone()),
+                    sheet_layer_number: found
+                        .map_or_else(unresolved_layer_number, |layer| layer.layer_number),
+                    sheet_ref,
+                });
+            }
             None => *skipped.entry(type_code).or_default() += 1,
         }
         at = end;
@@ -577,6 +1059,56 @@ fn style_of(payload: &[u8], styles: Option<&DocumentStyleTable>) -> Option<Primi
     Some(PrimitiveStyle::from_resolved(&resolved))
 }
 
+/// The lettering a text record draws with: what its placement tail states
+/// joined with what its style index resolves to.
+///
+/// `Some` for every [`SymbolPrimitive::Text`] — the tail is the record's own
+/// bytes and always reads, even with no table to ask — and `None` for every
+/// other shape. The tail ends the payload exactly (the character count's
+/// arithmetic proves it), so the same reads the sheet decoder makes apply:
+/// direction pair at `+16..32`, anchor at the last byte. The style index
+/// sits at [`STYLE_INDEX_OFFSET`], the same slot a stroke's does — only the
+/// record it names differs (a `JStyleTextPara`, not a line style).
+fn lettering_of(
+    primitive: &SymbolPrimitive,
+    payload: &[u8],
+    styles: Option<&DocumentStyleTable>,
+) -> Option<SymbolLettering> {
+    if !matches!(primitive, SymbolPrimitive::Text { .. }) {
+        return None;
+    }
+    let resolved = u32_le(payload, STYLE_INDEX_OFFSET)
+        .and_then(|index| styles.and_then(|table| table.resolve_text_height(index)));
+    let tail = payload.len().saturating_sub(TEXT_TRAILING_LEN);
+    let cos = f64_le(payload, tail + 16).unwrap_or(1.0);
+    let sin = f64_le(payload, tail + 24).unwrap_or(0.0);
+    // The same magnitude rule the sheet decoder applies: a unit pair is a
+    // direction only and states no height; a height-scaled one does.
+    // Anything else is a field this reader does not understand, and `0.0`
+    // — "no height stated here" — is the honest answer rather than a
+    // letter size read off bytes that are not one.
+    let direction = cos.hypot(sin);
+    let letter_height_m = if (direction - 1.0).abs() <= IGTEXTBOX_DIRECTION_UNIT_TOLERANCE {
+        0.0
+    } else if IGTEXTBOX_LETTER_HEIGHT_M.contains(&direction) {
+        direction
+    } else {
+        0.0
+    };
+    Some(SymbolLettering {
+        anchor_code: payload.last().copied().unwrap_or_default(),
+        rotation_rad: sin.atan2(cos),
+        letter_height_m,
+        height_m: resolved.as_ref().map(|style| style.height_m),
+        rgb: resolved
+            .as_ref()
+            .and_then(crate::style_link::ResolvedTextHeight::rgb),
+        alignment: resolved.as_ref().and_then(|style| style.alignment),
+        line_spacing: resolved.as_ref().and_then(|style| style.line_spacing),
+        font_name: resolved.and_then(|style| style.font_name),
+    })
+}
+
 /// The storage a stream lives in, which is what a `Sheet*` and the
 /// `StyleCluster` that styles it have in common.
 fn parent_storage(stream_path: &str) -> &str {
@@ -597,28 +1129,70 @@ pub fn read_symbol_geometry(path: &Path) -> Result<SymbolGeometry, PidError> {
     // `style_link` applies to a drawing: a sheet is resolved against its own
     // document's table and never against another's.
     let mut tables: HashMap<&str, DocumentStyleTable> = HashMap::new();
+    let mut layer_tables: HashMap<&str, Vec<SymbolSheetLayer>> = HashMap::new();
     for (stream_path, raw) in &package.streams {
-        if stream_path.rsplit('/').next() == Some("StyleCluster") {
-            tables.insert(
-                parent_storage(stream_path),
-                DocumentStyleTable::from_stylecluster_bytes(&raw.data),
-            );
+        match stream_path.rsplit('/').next() {
+            Some("StyleCluster") => {
+                tables.insert(
+                    parent_storage(stream_path),
+                    DocumentStyleTable::from_stylecluster_bytes(&raw.data),
+                );
+            }
+            Some("PSMcluster0") => {
+                let layers: Vec<SymbolSheetLayer> =
+                    crate::parsers::sheet_layers::decode_sheet_layers(&raw.data)
+                        .into_iter()
+                        .map(|layer| SymbolSheetLayer {
+                            oid: layer.oid,
+                            layer_number: layer.layer_number,
+                            name: layer.name,
+                        })
+                        .collect();
+                layer_tables.insert(parent_storage(stream_path), layers);
+            }
+            _ => {}
         }
     }
 
-    let mut geometry = SymbolGeometry::default();
+    let mut geometry = SymbolGeometry {
+        sheet_layers: layer_tables.values().flatten().cloned().collect(),
+        ..SymbolGeometry::default()
+    };
     for (stream_path, raw) in &package.streams {
-        let is_sheet = stream_path
-            .rsplit('/')
-            .next()
-            .is_some_and(|name| name.starts_with("Sheet"));
+        if stream_path.rsplit('/').next() == Some("PSMcluster0") {
+            for set in crate::parsers::view_filter_sets::decode_view_filter_sets(&raw.data) {
+                geometry.sheet_views.push(SymbolSheetView {
+                    sheet_ref: set.sheet_ref,
+                    display: set.display,
+                    layers: set
+                        .layers
+                        .iter()
+                        .map(|entry| (entry.layer_number, entry.name.clone()))
+                        .collect(),
+                });
+            }
+        }
+        let name = stream_path.rsplit('/').next().unwrap_or("");
+        let is_sheet = name.starts_with("Sheet");
         if !is_sheet || raw.data.len() <= CHAIN_START {
             continue;
         }
+        // The stream name carries the JSheet oid (`Sheet68` is sheet 68) —
+        // the same id a `0x0057` view filter set's `sheet_ref` names. A
+        // name that does not parse reads as sheet 0, an id no corpus set
+        // governs, so its records filter as a sheet with no view state.
+        let sheet_ref = name
+            .strip_prefix("Sheet")
+            .and_then(|number| number.parse::<u32>().ok())
+            .unwrap_or(0);
         let mut sheet = SymbolGeometry::default();
         read_sheet_chain(
             &raw.data,
+            sheet_ref,
             tables.get(parent_storage(stream_path)),
+            layer_tables
+                .get(parent_storage(stream_path))
+                .map(Vec::as_slice),
             &mut sheet,
         );
 
@@ -931,6 +1505,76 @@ mod tests {
         assert_eq!(body.primitives.len(), 7, "and the other four draw solid");
     }
 
+    /// A `.sym`'s own lettering: the same two hops the drawing side resolves
+    /// — record `+14` to `JStyleTextPara`, on to `JStyleTextChar` — plus the
+    /// tail's own rotation and anchor. `Title Block Label.sym` letters its
+    /// `NULL` placeholders in 宋体 3.0/3.5 mm and Arial 4.0 mm; every record
+    /// keeps the unit direction (rotation `0`, no self-stated height) and
+    /// one anchors centre-top (`0x15`) where the rest anchor left-top.
+    #[test]
+    fn a_symbols_lettering_comes_off_its_own_style_table() {
+        let path = symbols_root()
+            .with_file_name("symbols-full")
+            .join(r"Design/Title Block Label.sym");
+        if !path.is_file() {
+            return;
+        }
+        let body =
+            read_symbol_geometry(&path).expect("Title Block Label.sym is a readable compound file");
+        let lettered: Vec<&SymbolLettering> = body
+            .primitives
+            .iter()
+            .filter(|styled| matches!(styled.primitive, SymbolPrimitive::Text { .. }))
+            .map(|styled| {
+                styled
+                    .lettering
+                    .as_ref()
+                    .expect("every text record carries lettering")
+            })
+            .collect();
+        assert!(!lettered.is_empty(), "the label letters placeholders");
+        let styles: Vec<(u64, Option<&str>)> = lettered
+            .iter()
+            .map(|l| {
+                (
+                    l.height_m.map_or(0, |m| (m * 1e6).round() as u64),
+                    l.font_name.as_deref(),
+                )
+            })
+            .collect();
+        assert!(
+            styles.contains(&(3000, Some("宋体"))),
+            "a 宋体 3 mm lettering: {styles:?}"
+        );
+        assert!(
+            styles.contains(&(3500, Some("宋体"))),
+            "a 宋体 3.5 mm lettering: {styles:?}"
+        );
+        assert!(
+            styles.contains(&(4000, Some("Arial"))),
+            "an Arial 4 mm lettering: {styles:?}"
+        );
+        for lettering in &lettered {
+            assert_eq!(lettering.rotation_rad, 0.0, "unit direction: {lettering:?}");
+            assert_eq!(
+                lettering.letter_height_m, 0.0,
+                "unit direction: {lettering:?}"
+            );
+            assert!(
+                lettering.rgb.is_some(),
+                "the char style's colour: {lettering:?}"
+            );
+        }
+        assert!(
+            lettered.iter().any(|l| l.anchor_code == 0x01),
+            "a left-top anchored record: {lettered:?}"
+        );
+        assert!(
+            lettered.iter().any(|l| l.anchor_code == 0x15),
+            "a centre-top anchored record: {lettered:?}"
+        );
+    }
+
     /// An override in a `.sym`'s own table has its say over the base it
     /// names (`style_link`, plan 2026-10-10). `arrester breather valve(RD).sym`
     /// reaches `Dashed` for seven lines and its B-spline lip through an
@@ -995,6 +1639,126 @@ mod tests {
         assert!(max_x <= 0.02 && max_y <= 0.02, "bounds {max_x} {max_y}");
         assert!(max_x - min_x > 0.001, "width {}", max_x - min_x);
         assert!(max_y - min_y > 0.001, "height {}", max_y - min_y);
+    }
+
+    #[test]
+    fn a_symbols_hidden_layers_stay_off_the_sheet() {
+        // The pressure gauge files two circles: its face on `Default`, and
+        // a heat-trace halo on the layer of the same name. The plot only
+        // ever draws the face — the halo is how the drawing-side cache of
+        // this same body files its `displayed: false` layer.
+        let Some(path) = fixture(
+            r"Instrumentation/Off-Line/Without Implied Components/Pressure/PG-Pressure Gauge.sym",
+        ) else {
+            return;
+        };
+        let body = read_symbol_geometry(&path).expect("gauge .sym is a readable compound file");
+        // The file keeps a layer table per storage; merged they repeat the
+        // canonical family. A primitive's layer name resolves through its
+        // own storage's table, so the `Heat Trace` halo and `Label` text
+        // name themselves even where their oids repeat across storages.
+        let table_names: Vec<&str> = body
+            .sheet_layers
+            .iter()
+            .map(|layer| layer.name.as_str())
+            .collect();
+        assert!(table_names.contains(&"Default"), "{table_names:?}");
+        assert!(table_names.contains(&"Heat Trace"), "{table_names:?}");
+
+        // Face and halo on `Default`/`Heat Trace`; the catalogue text —
+        // `PG` and its `NULL` placeholders — sits on the `Label` layer the
+        // file files them under, which the drawing-side caches file as
+        // `Label` hidden the same way.
+        let layers: Vec<Option<&str>> = body
+            .primitives
+            .iter()
+            .map(|styled| styled.sheet_layer_name.as_deref())
+            .collect();
+        assert!(layers.contains(&Some("Heat Trace")), "{layers:?}");
+        assert!(layers.contains(&Some("Default")), "{layers:?}");
+
+        let displayed = body.displayed_primitives();
+        assert!(
+            displayed
+                .iter()
+                .all(|styled| styled.sheet_layer_name.as_deref() == Some("Default")),
+            "only the `Default` strokes draw: {displayed:?}"
+        );
+        assert!(
+            displayed
+                .iter()
+                .all(|styled| !matches!(styled.primitive, SymbolPrimitive::Text { .. })),
+            "the `PG` label letters on the sheet, not in the body: {displayed:?}"
+        );
+        // The second sheet is the alternate view: the file's own view
+        // states decode only for sheet 6, so `Sheet68`'s catalogue `PG`
+        // and its duplicate face stay off with it.
+        assert!(
+            displayed.iter().all(|styled| styled.sheet_ref == 6),
+            "only the normal-view sheet draws: {displayed:?}"
+        );
+        assert_eq!(
+            body.sheet_views
+                .iter()
+                .map(|view| view.sheet_ref)
+                .collect::<Vec<_>>(),
+            [6],
+            "the file's decodable view state names its normal sheet"
+        );
+    }
+
+    #[test]
+    fn a_body_authored_entirely_on_hidden_names_still_draws() {
+        // The filter decides which layers of a body draw, never whether the
+        // body draws: a symbol that files everything under `HiddenObjects`
+        // keeps its strokes rather than leaving a bare marker where a part
+        // was meant to be.
+        let styled = |name: &str, primitive| StyledPrimitive {
+            primitive,
+            style: None,
+            lettering: None,
+            sheet_layer_ref: 1,
+            sheet_layer_name: Some(name.to_owned()),
+            sheet_layer_number: 1,
+            sheet_ref: 6,
+        };
+        let body = SymbolGeometry {
+            primitives: vec![styled(
+                "HiddenObjects",
+                SymbolPrimitive::Line {
+                    start: (0.0, 0.0),
+                    end: (1.0, 1.0),
+                },
+            )],
+            skipped_records: BTreeMap::new(),
+            sheet_layers: vec![SymbolSheetLayer {
+                oid: 1,
+                layer_number: 1,
+                name: "HiddenObjects".to_owned(),
+            }],
+            sheet_views: Vec::new(),
+        };
+        assert_eq!(body.displayed_primitives().len(), 1);
+    }
+
+    #[test]
+    fn hidden_layer_names_match_the_drawing_side_spellings() {
+        for name in [
+            "Heat Trace",
+            "HiddenObjects",
+            "Hidden Objects",
+            "Jacket",
+            "Label",
+            "Construction",
+            "Dimension",
+            "Deminsion",
+            "heat trace",
+        ] {
+            assert!(hidden_symbol_layer(name), "{name}");
+        }
+        for name in ["Default", "Invisible", "ConnectPoints", ""] {
+            assert!(!hidden_symbol_layer(name), "{name}");
+        }
     }
 
     #[test]
@@ -1095,6 +1859,56 @@ mod tests {
         );
     }
 
+    /// A text record's own tail: direction pair and trailer, laid out the
+    /// way the library writes them after the insertion point.
+    fn text_payload_with_tail(
+        count_at: usize,
+        text: &str,
+        at: (f64, f64),
+        direction: (f64, f64),
+        anchor: u8,
+    ) -> Vec<u8> {
+        let mut payload = text_payload(count_at, text, at);
+        let tail = payload.len() - TEXT_TRAILING_LEN;
+        payload[tail + 16..tail + 24].copy_from_slice(&direction.0.to_le_bytes());
+        payload[tail + 24..tail + 32].copy_from_slice(&direction.1.to_le_bytes());
+        *payload.last_mut().expect("tail") = anchor;
+        payload
+    }
+
+    #[test]
+    fn text_lettering_reads_the_tail_and_survives_a_missing_table() {
+        // `text_payload` zero-fills the tail; the direction is patched to
+        // a height-scaled pair and the trailer's last byte to the anchor.
+        let payload = text_payload_with_tail(30, "P", (0.0, 0.0), (0.003_175, 0.0), 0x01);
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, None).expect("text letters");
+        // No table to ask, so the style fields stay unanswered — but the
+        // tail is the record's own and reads anyway.
+        assert_eq!(lettering.anchor_code, 0x01);
+        assert_eq!(lettering.rotation_rad, 0.0);
+        assert!((lettering.letter_height_m - 0.003_175).abs() < 1e-12);
+        assert_eq!(lettering.height_m, None);
+        assert_eq!(lettering.font_name, None);
+
+        let straight = SymbolPrimitive::Line {
+            start: (0.0, 0.0),
+            end: (1.0, 0.0),
+        };
+        assert_eq!(lettering_of(&straight, &payload, None), None);
+    }
+
+    #[test]
+    fn text_lettering_reads_a_rotated_unit_direction() {
+        // Up the page: the unit pair (0, 1) states rotation and no height.
+        let payload = text_payload_with_tail(30, "I", (0.0, 0.0), (0.0, 1.0), 0x15);
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, None).expect("text letters");
+        assert_eq!(lettering.rotation_rad.to_degrees(), 90.0);
+        assert_eq!(lettering.letter_height_m, 0.0);
+        assert_eq!(lettering.anchor_code, 0x15);
+    }
+
     #[test]
     fn text_record_is_skipped_when_the_count_does_not_account_for_the_payload() {
         // Neither offset adds up once the payload grows by a byte, and a
@@ -1149,6 +1963,11 @@ mod tests {
         let unstyled = |primitive| StyledPrimitive {
             primitive,
             style: None,
+            lettering: None,
+            sheet_layer_ref: 0,
+            sheet_layer_name: None,
+            sheet_layer_number: unresolved_layer_number(),
+            sheet_ref: 6,
         };
         let body = SymbolGeometry {
             primitives: vec![
@@ -1162,6 +1981,8 @@ mod tests {
                 }),
             ],
             skipped_records: BTreeMap::new(),
+            sheet_layers: Vec::new(),
+            sheet_views: Vec::new(),
         };
         assert_eq!(body.bounds(), Some((-0.2, 0.0, 0.1, 0.3)));
     }

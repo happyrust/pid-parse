@@ -15,7 +15,7 @@
 //! * a change that resolves the same records to *different* symbology —
 //!   caught by the corpus palette, which is asserted whole.
 //!
-//! The palette is also the readable part: twelve entries over 669 records,
+//! The palette is also the readable part: twelve entries over 650 records,
 //! ISO 128 widths apart from the 0.100 mm point ticks. If a future change
 //! makes this list longer or stranger, the framing moved. Retiring the
 //! `igLine2d` `aux_hi` rule added four records and no new entry; adding the
@@ -167,24 +167,28 @@ const EXPECTED: [Expected; 4] = [
     // retired the `aux_hi == 12` rule (46) until the type word's 0x8000 bit
     // was honoured: all four carry it, so the native reader never reads
     // them and neither does any family decoder (`parse_live_psm_header`).
+    // 28 linestrings until the degenerate `vc == 2`, all-identical-vertex
+    // records decoded: four of them are placement anchors authored `Normal`,
+    // which now reach their style directly.
     Expected {
         fixture: "test-file/DWG-0202GP06-01.pid",
         lines: 42,
         points: 31,
-        linestrings: 28,
+        linestrings: 32,
         symbols: 23,
-        direct: 96,
+        direct: 100,
         via_override: 28,
     },
     // 58 placements until the same bit: 27 of them are earlier copies of 13
     // live placements (same oid, insertion and body), retired by the file.
+    // 49 linestrings until the degenerate-anchor decode, which adds eight.
     Expected {
         fixture: "test-file/工艺管道及仪表流程-1.pid",
         lines: 218,
         points: 36,
-        linestrings: 49,
+        linestrings: 57,
         symbols: 31,
-        direct: 328,
+        direct: 336,
         via_override: 6,
     },
 ];
@@ -207,8 +211,9 @@ const EXPECTED_PALETTE: [(&str, usize); 12] = [
     ("0.180mm #008000", 13),
     // 226 / 22 until the 31 records carrying the type word's 0x8000 bit
     // stopped being decoded (30 of them black, one maroon); 196 until
-    // overrides stated their widths and colours.
-    ("0.350mm #000000", 148),
+    // overrides stated their widths and colours; 148 until the twelve
+    // degenerate igLineString2d placement anchors decoded, all `Normal`.
+    ("0.350mm #000000", 160),
     ("0.350mm #008000", 2),
     ("0.350mm #800000", 22),
     ("0.350mm #808000", 32),
@@ -367,7 +372,9 @@ fn every_drawable_record_reaches_a_line_width_and_colour() {
     // 669 until the 31 records carrying the type word's 0x8000 bit stopped
     // being decoded (27 gongyi placements, DWG-0202's four `/Sheet6615`
     // lines): the native reader seeks past them before reading an oid.
-    assert_eq!(corpus_records, 638, "records reaching a line style");
+    // 638 until the twelve degenerate igLineString2d placement anchors
+    // decoded (four on DWG-0202, eight on gongyi), all `Normal`.
+    assert_eq!(corpus_records, 650, "records reaching a line style");
     let expected_palette: BTreeMap<String, usize> = EXPECTED_PALETTE
         .iter()
         .map(|(key, count)| ((*key).to_string(), *count))
@@ -887,8 +894,9 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
     if joined > 0 {
         // 669 until the 31 records carrying the type word's 0x8000 bit (27
         // gongyi placements, DWG-0202's four `/Sheet6615` lines) stopped
-        // being decoded, as the native reader never decodes them.
-        assert_eq!(joined, 638, "entities joined to a line style");
+        // being decoded, as the native reader never decodes them. 638 until
+        // the twelve degenerate igLineString2d placement anchors decoded.
+        assert_eq!(joined, 650, "entities joined to a line style");
     }
 }
 
@@ -1223,7 +1231,7 @@ fn the_file_level_name_index_answers_the_join_a_renderer_makes() {
 const EXPECTED_CROSSINGS: [&str; 5] = [
     "0.130mm #000000 <- Dashed x14, Normal x29",
     "0.180mm #008000 <- Connect To Process x4, Electric x3, Off-Line Instrument x6",
-    "0.350mm #000000 <- As Drawn x17, Dashed x3, Normal x128",
+    "0.350mm #000000 <- As Drawn x17, Dashed x3, Normal x140",
     "0.350mm #800000 <- As Drawn x1, Equipment - New x3, Nozzle - New x18",
     "0.350mm #808000 <- Piping Component - New x7, Piping OPC x15, Secondary Piping - New x10",
 ];
@@ -1234,7 +1242,7 @@ const EXPECTED_CROSSINGS: [&str; 5] = [
 const EXPECTED_SPANS: [&str; 3] = [
     "As Drawn -> 0.350mm #000000 x17, 0.350mm #800000 x1, 0.500mm #0000FF x11",
     "Dashed -> 0.130mm #000000 x14, 0.180mm #000000 x5, 0.350mm #000000 x3",
-    "Normal -> 0.130mm #000000 x29, 0.350mm #000000 x128",
+    "Normal -> 0.130mm #000000 x29, 0.350mm #000000 x140",
 ];
 
 /// The authored name is a classification the symbology cannot express.

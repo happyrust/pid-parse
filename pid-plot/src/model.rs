@@ -124,6 +124,15 @@ pub enum PaperShape {
         /// word. Symbol lettering is [`TextAnchor::Left`]: its record has no
         /// paragraph.
         anchor: TextAnchor,
+        /// Which line of `origin_mm` the paragraph letters from.
+        ///
+        /// The stored point stays the insertion point. Middle and top move
+        /// the PDF baseline down across the run by half the body size or the
+        /// whole body size, the same way the horizontal half moves it back
+        /// along the run. Symbol lettering is [`TextLine::Middle`]: its record
+        /// carries no body box, and the reference puts the templates' own
+        /// lettering on the middle line.
+        line: TextLine,
     },
 }
 
@@ -143,11 +152,46 @@ pub enum TextAnchor {
 }
 
 impl TextAnchor {
-    fn from_paragraph(alignment: Option<pid_parse::style_link::TextAlignment>) -> Self {
-        match alignment {
-            Some(pid_parse::style_link::TextAlignment::Center) => Self::Center,
-            Some(pid_parse::style_link::TextAlignment::Right) => Self::Right,
-            Some(pid_parse::style_link::TextAlignment::Left) | None => Self::Left,
+    /// The horizontal hot point an `igTextBox` anchor code states:
+    /// `(code >> 4) % 3` — `0` left, `1` centre, `2` right; the `+3`-shifted
+    /// nibbles mark symbol-attached labels and fold into the same classes.
+    fn from_anchor_code(code: u8) -> Self {
+        match (code >> 4) % 3 {
+            0 => Self::Left,
+            1 => Self::Center,
+            _ => Self::Right,
+        }
+    }
+}
+
+/// Which line of its insertion point a paragraph letters from.
+///
+/// The vertical half of the same anchor code. Where [`TextAnchor`] says which
+/// point of the run the insertion sits at across the page, this says which
+/// line of the body box it sits on: measured against the reference plots, the
+/// labels the drawing letters sit 0.0 mm, 1.25 mm or 2.50 mm below the point
+/// for a 2.5 mm body, one mode per class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextLine {
+    /// The insertion point is on the baseline: the label letters at the point.
+    Bottom,
+    /// The insertion point is the middle of the body: the baseline runs half a
+    /// body size below the point.
+    Middle,
+    /// The insertion point is the top of the body: the baseline runs a whole
+    /// body size below the point.
+    Top,
+}
+
+impl TextLine {
+    /// The vertical hot point an `igTextBox` anchor code states:
+    /// `(code & 0x0F) % 3` — `0` bottom, `1` top, `2` middle.
+    fn from_anchor_code(code: u8) -> Self {
+        match (code & 0x0F) % 3 {
+            0 => Self::Bottom,
+            1 => Self::Top,
+            _ => Self::Middle,
         }
     }
 }
@@ -443,6 +487,7 @@ fn push_entity(
             value,
             height,
             rotation,
+            anchor_code,
         } => {
             let styled = entity.source.stream_path.as_ref().and_then(|stream| {
                 entity.graphic_oid.and_then(|oid| {
@@ -476,9 +521,11 @@ fn push_entity(
                     rotation: *rotation,
                     value: value.clone(),
                     font: styled.as_ref().and_then(|style| style.font_name.clone()),
-                    anchor: TextAnchor::from_paragraph(
-                        styled.as_ref().and_then(|style| style.alignment),
-                    ),
+                    // The record's own anchor code overrides the paragraph
+                    // style's declared alignment: `(code >> 4) % 3` is the
+                    // horizontal hot point the insertion sits at.
+                    anchor: TextAnchor::from_anchor_code(*anchor_code),
+                    line: TextLine::from_anchor_code(*anchor_code),
                 },
             ));
         }
@@ -565,6 +612,7 @@ fn push_symbol_primitive(
                 value: text.clone(),
                 font: None,
                 anchor: TextAnchor::Left,
+                line: TextLine::Middle,
             }
         }
         SymbolPrimitive::BSpline { .. } => {
@@ -794,6 +842,7 @@ mod tests {
                 value: "NULL".to_string(),
                 height: 0.0025,
                 rotation: 0.0,
+                anchor_code: 0,
             }),
             None,
             &pid_parse::style_link::TextStyleIndex::new(),

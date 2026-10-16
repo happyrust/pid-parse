@@ -80,6 +80,23 @@ pub struct SheetGeometry {
     /// (Phase 14 Slice N).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub decoded_igsymbols: Vec<DecodedIgSymbol2dRecord>,
+    /// PSM-decoded `igArc2d` records (PSM type `0x0061`, IGDS class
+    /// tag `0x61`) — Intergraph Sigma's standard 2D arc primitive,
+    /// emitted by [`crate::parsers::sheet_records::decode_igarcs`].
+    /// No drawing sheet of the corpus carries one; the linked border
+    /// templates letter their logo and rounded corners with them.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igarcs: Vec<DecodedIgArc2dRecord>,
+    /// PSM-decoded `igCircle2d` records (PSM type `0x0059`, IGDS class
+    /// tag `0x59`) — Intergraph Sigma's standard 2D circle primitive,
+    /// emitted by [`crate::parsers::sheet_records::decode_igcircles`].
+    /// Promoted from decode-only to emitting once a real sheet carried
+    /// them: W's `Sheet6` draws its instrument balloons and sensing-bulb
+    /// centre dots with 17 of them at layer-resolved coordinates. The
+    /// DTO is the same one `JSiteNestedGeometry` uses for cached-body
+    /// circles — the record layout is identical in both storages.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub decoded_igcircles: Vec<super::DecodedIgCircle2dRecord>,
     /// Fully-typed PSM `igBoundary2d` records (PSM type
     /// `0x0013`, IGDS class tag `0x13`) emitted by
     /// [`crate::parsers::sheet_records::decode_igboundaries`]
@@ -687,6 +704,68 @@ impl From<crate::parsers::sheet_records::SheetIgPoint2dDecoded> for DecodedIgPoi
 }
 
 /// Stable model-shaped DTO mirroring
+/// [`crate::parsers::sheet_records::SheetIgArc2dDecoded`] — PSM type
+/// `0x0061` Intergraph Sigma standard 2D arc.
+///
+/// The record's parser DTO does not carry `type_code`/`bytes_to_follow`
+/// fields (the envelope is not fielded on that family), so neither does
+/// this one.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgArc2dRecord {
+    /// Inclusive byte-range start.
+    pub byte_start: usize,
+    /// Exclusive byte-range end.
+    pub byte_end: usize,
+    /// Top 2 bits of the PSM type word.
+    pub type_flags: u16,
+    /// Object identifier.
+    pub oid: u32,
+    /// Parent reference.
+    pub parent_ref: u32,
+    /// Oid of the `JSheetLayer` this arc sits on.
+    pub sheet_layer_ref: u32,
+    /// Sub-type discriminator.
+    pub sub_type_word: u16,
+    /// Index / style reference, the slot `igLine2d` carries its style
+    /// link in.
+    pub index: u32,
+    /// Centre `x`, sheet units.
+    pub center_x: f64,
+    /// Centre `y`, sheet units.
+    pub center_y: f64,
+    /// Radius, sheet units.
+    pub radius: f64,
+    /// Absolute start angle, radians counter-clockwise from +X; the arc
+    /// leaves it **clockwise** towards `end_angle`.
+    pub start_angle: f64,
+    /// Absolute end angle, radians counter-clockwise from +X.
+    pub end_angle: f64,
+    /// Trailing flag byte, verbatim.
+    pub flag: u8,
+}
+
+impl From<crate::parsers::sheet_records::SheetIgArc2dDecoded> for DecodedIgArc2dRecord {
+    fn from(d: crate::parsers::sheet_records::SheetIgArc2dDecoded) -> Self {
+        Self {
+            byte_start: d.byte_range.start,
+            byte_end: d.byte_range.end,
+            type_flags: d.type_flags,
+            oid: d.oid,
+            parent_ref: d.parent_ref,
+            sheet_layer_ref: d.sheet_layer_ref,
+            sub_type_word: d.sub_type_word,
+            index: d.index,
+            center_x: d.center.0,
+            center_y: d.center.1,
+            radius: d.radius,
+            start_angle: d.start_angle,
+            end_angle: d.end_angle,
+            flag: d.flag,
+        }
+    }
+}
+
+/// Stable model-shaped DTO mirroring
 /// [`crate::parsers::sheet_records::SheetIgTextBoxDecoded`] —
 /// PSM type `0x004D` Intergraph Sigma standard text annotation.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -728,6 +807,18 @@ pub struct DecodedIgTextBoxRecord {
     /// follows the insertion point. `0`, `π/2` and `π` across the corpus.
     #[serde(default)]
     pub rotation_rad: f64,
+    /// The letter height the record states, in sheet units — `0.0` where the
+    /// direction pair is the normalized unit vector drawing sheets write;
+    /// the height itself where a border template scales its direction by it.
+    #[serde(default)]
+    pub letter_height_m: f64,
+    /// The record's own text-box anchor: the last byte of the 4-byte trailer
+    /// that closes the placement tail. `(code >> 4) % 3` names the
+    /// horizontal hot point — `0` left, `1` centre, `2` right — and
+    /// `(code & 0x0F) % 3` the vertical one — `0` bottom, `1` top,
+    /// `2` middle. It overrides the paragraph style's declared alignment.
+    #[serde(default)]
+    pub anchor_code: u8,
     /// The record's formatting runs, in stored order. Empty for shape 1.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub runs: Vec<DecodedTextRun>,
@@ -779,9 +870,24 @@ impl From<crate::parsers::sheet_records::SheetIgTextBoxDecoded> for DecodedIgTex
             trailing_double_2: d.trailing_double_2,
             trailing_double_3: d.trailing_double_3,
             rotation_rad: d.rotation_rad,
+            letter_height_m: d.letter_height_m,
+            anchor_code: d.anchor_code,
             runs: d.runs.into_iter().map(DecodedTextRun::from).collect(),
         }
     }
+}
+
+/// Serde default for [`DecodedIgSymbol2dRecord::uniform_scale`]: a record
+/// read before the field existed — or one whose scale word is absent —
+/// drew its body unresized.
+fn default_uniform_scale() -> f64 {
+    1.0
+}
+
+/// Skip predicate paired with [`default_uniform_scale`]: unit scale is the
+/// overwhelming case, so only resized placements earn a field on disk.
+fn is_default_uniform_scale(scale: &f64) -> bool {
+    *scale == 1.0
 }
 
 /// Stable model-shaped DTO mirroring
@@ -835,6 +941,15 @@ pub struct DecodedIgSymbol2dRecord {
     pub insertion_x: f64,
     /// Insertion point `y`.
     pub insertion_y: f64,
+    /// Uniform factor the placement resizes its parametric body by — the
+    /// f64 after the insertion pair. `1.0` on nearly every record;
+    /// parametric symbols carry their own (0.37–5.63 on the corpus). It
+    /// multiplies the placement matrix about the insertion point.
+    #[serde(
+        default = "default_uniform_scale",
+        skip_serializing_if = "is_default_uniform_scale"
+    )]
+    pub uniform_scale: f64,
     /// Oid, inside the definition cache storage, of the `JSheet` holding
     /// this placement's symbol body (the payload's second-to-last `u32`).
     #[serde(default)]
@@ -865,6 +980,7 @@ impl From<crate::parsers::sheet_records::SheetIgSymbol2dDecoded> for DecodedIgSy
             transform_11: d.transform[3],
             insertion_x: d.insertion.0,
             insertion_y: d.insertion.1,
+            uniform_scale: d.uniform_scale,
             definition_sheet_ref: d.definition_sheet_ref,
             definition_site_ref: d.definition_site_ref,
         }

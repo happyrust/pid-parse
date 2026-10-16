@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### `backup` feature 按输入族拆为 `backup-exp` / `backup-mdf`，`T_DRAWING` 投影扩出图纸元数据（2026-10-16，#39 / #40）
+
+为 OpenCADStudio 备份数据包浏览（pid-cad#5，计划 `OpenCADStudio/docs/plans/2026-10-16-pid-backup-package.md`）拆依赖边界：纯 Oracle `exp` 目录路径的下游（OCS 桌面端）不再需要链接 GPL-3.0 的 vendored `oxidized-mdf` 和 bundled sqlite3。
+
+- `backup` 保持默认伞：`backup = ["backup-exp", "backup-mdf"]`，存量消费者行为不变。
+- `backup-exp`（`dep:zip`）：`backup` 模块的目录扫描 / manifest / MTF 嗅探 / zip 索引 / refdata / datamap / text_scan，加 `publish` 的 `oracle_exp`、`pid_load`、`pipeline`、`backup_package`、`diff`、`model`、`xml_writer`、`pid_writer`。纯 Rust。
+- `backup-mdf`（蕴含 `backup-exp`，外加 `dep:rusqlite` / `dep:oxidized-mdf` / `dep:sha2` / `dep:log` / `dep:env_logger`）：`backup` 模块里的 SQL Server 内部件（`boot_page` / `mdf_page` / `msci` / `syscatalog`）、`publish::{mdf_load, sqlite_load}`、`PublishError` 的两个 `From` impl、`export_bundle`（仍要求伞 `backup`）与 `pid_publish_xml` / `pid_backup_extract` / `pid_backup_probe` / `pid_msda_probe` 等二进制。MTF/MDF 探针二进制改签 `backup-mdf`；`pid_inspect` / `pid_publish_xml` 仍要伞。测试 `backup_folder_real_dir` / `backup_manifest_real_file` / `backup_refdata_real_dir` / `backup_zip_index_real_files` 改签 `backup-exp`，其余因 `tests/common` 无条件引 `load_drawing_graph_from_mdf` 或驱动 MDF 二进制而留在伞上。
+- `BackupDrawing` 扩出 15 个展示字段：`description` / `title` / `revision` / `version` / `document_type` / `document_category` / `item_status` / `template` / `design_phase` / `project_number` / `date_created` / `drawing_date` / `date_of_drawing` / `last_publish_time` / `last_archive_time`。连接面（`id` / `name` / `path` / `drawing_number` / `plant_group_id`）照旧必填；新列缺失或 NULL 投影为空 / `None`，不报错。
+- `Field` 新增 `Date`：`read_field_tolerant` 把 Oracle 7 字节 `DATE`（type 12）解码为 `YYYY/MM/DD HH:MM:SS`（`decode_oracle_date`，非 7 字节或越界回 `Unscaled`）；strict `read_field` 对 Date 仍报错（严格表的列不含日期）。
+- 新增 `read_backup_drawings(dump)`：只读 `T_DRAWING`（pin `APPLICATIONS` + `read_table_tolerant`），供"列图纸索引"的调用方使用。真实 `Export.dmp` 的 `T_PIPERUN` row 0 有非整数 NUMBER 单元格，走严格 `read_table` 的 `ExpTables::read` 会整读失败——OCS 的包索引原来因此静默降级成纯 zip 枚举。图纸投影抽成 `project_drawings`，`ExpTables::drawings` 与之共用。发布路径不受影响。
+- 验证：`cargo check --lib/--all-targets --no-default-features --features backup-exp` 退出 0，`cargo tree` 该特性下无 rusqlite / oxidized-mdf / sha2 / env_logger；默认伞 `cargo check --lib` 退出 0；`cargo test --no-default-features --features backup-exp` 的 4 个改签测试在真实夹具上全过（folder/manifest/refdata/zip_index）；`cargo test --lib publish::oracle_exp` 17 过 0 败（含新 `drawings_surface_optional_metadata_and_dates`、`oracle_date_decoding_rejects_noncanonical_cells`，及既有 `ijingchang_*` 真实 dump 用例）；OCS 侧 `io::plant_package` 夹具测试（`DWG-0202GP06-01_p`）经 `read_backup_drawings` 出 `OracleExp` 索引。本树另有他人未提交改动，`cargo clippy -D warnings` / rustdoc 全量门禁被 `src/parsers/cluster_header.rs:334`（doc backtick）与 `sheet_layers` / `view_filter_sets`（private intra-doc link）挡住，均为既有 WIP，本次改动自身零告警、rustfmt 干净。
+
 ### publish 数据库线 `load_codelist_index` 按 `attribute_datatype = C<n>` 取选择表号（2026-10-14，#27）
 
 `publish::sqlite_load::load_codelist_index` 原先将 `attributes.attribute_codelisted` 当作选择表编号注册到 `CodelistIndex`，真实 SmartPlant 目录表里该列是 `'T'` / `'F'` 布尔标志，选择表编号在 `attribute_datatype` 列写成 `'C<n>'`（如 `EquipmentType → C22`、`NozzleType → C35`）。现改为当 `attribute_codelisted = 'T'` 且 `attribute_datatype` 形如 `'C<数字>'` 时剥掉 `'C'` 注册 `attribute_name → codelist_number`。同时将 `write_process_vessel` 的 `EqTypeDescription` 回退顺序定为符号路径词干优先（`derive_type_description_from_symbol` → `resolve_codelist_field` → 原值），保持 `A01_Data.xml` 的 `EqTypeDescription="Horizontal Drum"` 与参考零回归，无符号路径时才落到 `C22` 的 `codelist_text`。

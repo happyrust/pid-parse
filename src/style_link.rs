@@ -134,6 +134,8 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::PidError;
 use crate::model::{PidDocument, SheetGeometry};
 use crate::parsers::sheet_records::{
@@ -163,8 +165,8 @@ pub const PSM_TYPE_CODE_JSTYLE_SIMPLE_LINE: u16 = 0x002E;
 /// a permissive table would let it shadow a real style. `0x0029`
 /// `JStyleMultiplexer` is listed for completeness though it has zero hits
 /// across the corpus.
-const STYLE_FAMILY_TYPE_CODES: [u16; 10] = [
-    0x0029, 0x002A, 0x002B, 0x002C, 0x002D, 0x002E, 0x002F, 0x0030, 0x0032, 0x0033,
+const STYLE_FAMILY_TYPE_CODES: [u16; 11] = [
+    0x0029, 0x002A, 0x002B, 0x002C, 0x002D, 0x002E, 0x002F, 0x0030, 0x0032, 0x0033, 0x0034,
 ];
 
 /// Offset of a style record's own identity within its payload.
@@ -298,6 +300,33 @@ pub const PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL: u16 = 0x0032;
 /// an end terminator. Every corpus record populates only the second, at
 /// [`LINE_TERMINATOR_POINT_SYMBOL_REFERENCE_OFFSET`].
 pub const PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR: u16 = 0x0033;
+
+/// PSM type code of the component record a complex `JStyleSimpleDashType`
+/// names to describe the symbol embedded in its pattern.
+///
+/// The family is not named anywhere this crate has read: it is absent from
+/// the librarian's own index and from `style.dll`'s interface strings as
+/// they are recorded so far, so `JSL Complex Dash Component` is a coined
+/// name, not the vendor's. What the corpus states is the shape: one instance
+/// (W drawing, style id 26), a 234-byte payload naming a `JStyleTextPara`
+/// at `+32` and a `JStylePointSymbol` at [`COMPLEX_DASH_COMPONENT_SYMBOL_REFERENCE_OFFSET`],
+/// reached from the dash's trailing word — see
+/// [`read_complex_dash_pattern`].
+pub const PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT: u16 = 0x0034;
+
+/// Offset at which a complex-dash component names the `JStylePointSymbol`
+/// whose glyph the line stamps. Level: corpus — the one instance's word
+/// lands on a locally defined point symbol.
+pub const COMPLEX_DASH_COMPONENT_SYMBOL_REFERENCE_OFFSET: usize = 74;
+
+/// The `f64` a complex `JStyleSimpleDashType` writes in the segment slot
+/// the embedded symbol occupies: the most negative finite value, the
+/// format's usual "unset" extreme.
+pub const DASH_SYMBOL_SLOT_SENTINEL: f64 = f64::MIN;
+
+/// Bytes a complex `JStyleSimpleDashType` carries past its segment list:
+/// the `u32` naming its [`PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT`].
+const DASH_COMPONENT_REFERENCE_LEN: usize = 4;
 
 /// PSM type code of `Group implementation` (`imagdex.dex`, CLSID
 /// `{DA02A6D0-C991-11CD-B02F-08003601BE3A}`), the container a
@@ -768,6 +797,45 @@ impl DashPattern {
     }
 }
 
+/// The complex form of a `JStyleSimpleDashType`: a segment list carrying a
+/// [`DASH_SYMBOL_SLOT_SENTINEL`] where an embedded symbol stamps, plus a
+/// trailing word naming the [`PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT`]
+/// record that describes the symbol.
+///
+/// The analogue of a drafting "complex linetype" — a run of dash elements
+/// with a shape embedded. The one corpus instance is the W drawing's
+/// `Hydraulic Line` dash (`[-7.62 mm, sentinel]` then component 26), whose
+/// line draws solid with the symbol stamped once per cell; see
+/// [`DocumentStyleTable::complex_dash_named`] for the resolved glyph.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComplexDashPattern {
+    /// The declared segments in order, metres. The symbol slot reads
+    /// [`DASH_SYMBOL_SLOT_SENTINEL`]; every other value is finite.
+    segments_m: Vec<f64>,
+    /// Style id of the `0x0034` component record naming the symbol.
+    pub component_reference: u32,
+}
+
+impl ComplexDashPattern {
+    /// The declared segments in order, exactly as stored — including the
+    /// sentinel marking where the symbol stamps.
+    #[must_use]
+    pub fn segments_m(&self) -> &[f64] {
+        &self.segments_m
+    }
+
+    /// The advance between symbol stamps in metres: the magnitudes of the
+    /// segments that are not the symbol slot.
+    #[must_use]
+    pub fn period_m(&self) -> f64 {
+        self.segments_m
+            .iter()
+            .filter(|value| **value != DASH_SYMBOL_SLOT_SENTINEL)
+            .map(|value| value.abs())
+            .sum()
+    }
+}
+
 /// One stroke of a point symbol's glyph, in metres, exactly as the group's
 /// `igLine2d` member states it.
 ///
@@ -907,6 +975,57 @@ impl PointMarker {
     }
 }
 
+/// The embedded-symbol pattern a complex `JStyleSimpleDashType` resolves
+/// to: the glyph to stamp and the advance between stamps.
+///
+/// Reached by the chain
+///
+/// ```text
+/// JStyleSimpleLine         +54 -> JStyleSimpleDashType      (style id)
+/// JStyleSimpleDashType     +66+ -> 0x0034 component         (style id)
+/// 0x0034 component         +74 -> JStylePointSymbol         (style id)
+/// JStylePointSymbol        +26 -> Group                     (oid)
+/// Group                    +28  -> igLine2d members         (oids)
+/// ```
+///
+/// Where in the run the glyph lands is the consumer's layout question —
+/// measured on the W drawing's `Hydraulic` pipes, the mark stamps once per
+/// fitted cell of [`Self::period_m`] advance, centred in the cell, in the
+/// line's local frame (tangent/left-normal). The glyph itself is the file's:
+/// the same `igLine2d` group members a [`PointMarker`] reads.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ComplexDash {
+    /// Style id of the `0x0034` component record that named the symbol.
+    pub component_id: u32,
+    /// Style id of the `JStylePointSymbol` reached.
+    pub point_symbol_id: u32,
+    /// Advance between stamps in metres — the magnitudes of the finite
+    /// segments the dash declared.
+    pub period_m: f64,
+    strokes: [MarkerStroke; MAX_GROUP_MEMBERS],
+    len: u8,
+}
+
+impl ComplexDash {
+    /// The glyph's strokes, in the order the group lists them.
+    #[must_use]
+    pub fn strokes(&self) -> &[MarkerStroke] {
+        &self.strokes[..usize::from(self.len)]
+    }
+
+    /// The advance between stamps in millimetres.
+    #[must_use]
+    pub fn period_mm(&self) -> f64 {
+        self.period_m * 1000.0
+    }
+
+    /// Whether the glyph has anything to draw — see [`PointMarker::draws`].
+    #[must_use]
+    pub fn draws(&self) -> bool {
+        self.strokes().iter().any(|s| !s.is_degenerate())
+    }
+}
+
 /// Which route a geometry record took to its `JStyleSimpleLine`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StyleHop {
@@ -947,6 +1066,11 @@ pub struct ResolvedLineStyle {
     /// `None` means the style names no terminator. That is **not** the same
     /// as naming one whose glyph is blank; see [`PointMarker::draws`].
     pub marker: Option<PointMarker>,
+    /// The embedded-symbol pattern the line stamps along itself, when its
+    /// dash type is the complex form — see [`ComplexDash`]. Shares
+    /// [`Self::dash`]'s precedence: an override's stated dash reference wins,
+    /// and a dash record is one form or the other, never both.
+    pub complex_dash: Option<ComplexDash>,
     /// Whether an override was traversed on the way.
     pub hop: StyleHop,
 }
@@ -1030,6 +1154,11 @@ pub struct StyleRecord {
     /// The dash pattern, when this is a `JStyleSimpleDashType` whose own
     /// length agrees with its segment count.
     pub dash: Option<DashPattern>,
+    /// The complex dash pattern, when this is a `JStyleSimpleDashType`
+    /// carrying the component reference past its segments — see
+    /// [`ComplexDashPattern`]. A record is one form or the other, never
+    /// both: the shapes close on different lengths.
+    pub complex_dash: Option<ComplexDashPattern>,
     /// Fill colour as a raw Win32 `COLORREF`, when this is a
     /// `JStyleSimpleFill` that states one rather than the unset sentinel.
     pub fill_colour: Option<u32>,
@@ -1127,7 +1256,7 @@ impl ResolvedFill {
 /// `igHorizontalTextRight = 2`. The enum continues with three `Shape` variants
 /// (3, 4, 5) that this corpus never uses, so they are refused rather than
 /// guessed at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum TextAlignment {
     /// `igHorizontalTextLeft`: the insertion point is the left edge.
     Left,
@@ -1341,7 +1470,15 @@ impl DocumentStyleTable {
                         PSM_TYPE_CODE_JSTYLE_LINE_TERMINATOR,
                         payload,
                         LINE_TERMINATOR_POINT_SYMBOL_REFERENCE_OFFSET,
-                    ),
+                    )
+                    .or_else(|| {
+                        read_reference_of(
+                            type_code,
+                            PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT,
+                            payload,
+                            COMPLEX_DASH_COMPONENT_SYMBOL_REFERENCE_OFFSET,
+                        )
+                    }),
                     group_reference: read_reference_of(
                         type_code,
                         PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL,
@@ -1349,6 +1486,7 @@ impl DocumentStyleTable {
                         POINT_SYMBOL_GROUP_REFERENCE_OFFSET,
                     ),
                     dash: read_dash_pattern(type_code, payload),
+                    complex_dash: read_complex_dash_pattern(type_code, payload),
                     fill_colour: read_fill_colour(type_code, payload),
                     text_colour: read_text_colour(type_code, payload),
                     font_name: read_font_name(type_code, payload),
@@ -1521,16 +1659,20 @@ impl DocumentStyleTable {
                     symbology.colour = colour;
                 }
             }
-            let dash = if mask & OVERRIDE_STATES_DASH != 0 {
-                self.dash_named(record.override_dash_reference)
+            let (dash, complex_dash) = if mask & OVERRIDE_STATES_DASH != 0 {
+                (
+                    self.dash_named(record.override_dash_reference),
+                    self.complex_dash_named(record.override_dash_reference),
+                )
             } else {
-                self.dash_of(target)
+                (self.dash_of(target), self.complex_dash_of(target))
             };
             return Some(ResolvedLineStyle {
                 style_id: target.style_id,
                 symbology,
                 dash,
                 marker: self.marker_of(target),
+                complex_dash,
                 hop: StyleHop::ViaOverride {
                     override_id: record.style_id,
                 },
@@ -1541,6 +1683,7 @@ impl DocumentStyleTable {
             symbology: record.symbology?,
             dash: self.dash_of(record),
             marker: self.marker_of(record),
+            complex_dash: self.complex_dash_of(record),
             hop: StyleHop::Direct,
         })
     }
@@ -1570,6 +1713,28 @@ impl DocumentStyleTable {
         if symbol.type_code != PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL {
             return None;
         }
+        let (strokes, len) = self.symbol_strokes(symbol)?;
+        Some(PointMarker {
+            point_symbol_id: symbol.style_id,
+            line_terminator_id: terminator.style_id,
+            status: symbol
+                .name
+                .as_deref()
+                .and_then(MarkerStatus::from_style_name),
+            strokes,
+            len,
+        })
+    }
+
+    /// The glyph a `JStylePointSymbol` draws — the last hop of both chains
+    /// that reach one (the terminator's and the complex-dash component's).
+    ///
+    /// A member this reader cannot read is not silently dropped: the glyph
+    /// would then be a different shape than the file states.
+    fn symbol_strokes(
+        &self,
+        symbol: &StyleRecord,
+    ) -> Option<([MarkerStroke; MAX_GROUP_MEMBERS], u8)> {
         let members = self.groups.get(&symbol.group_reference?)?;
         let mut strokes = [MarkerStroke {
             start: (0.0, 0.0),
@@ -1577,19 +1742,39 @@ impl DocumentStyleTable {
         }; MAX_GROUP_MEMBERS];
         let mut len = 0_u8;
         for member in members {
-            // A member this reader cannot read is not silently dropped: the
-            // glyph would then be a different shape than the file states.
             let stroke = *self.strokes.get(&member.oid)?;
             *strokes.get_mut(usize::from(len))? = stroke;
             len += 1;
         }
-        (len > 0).then_some(PointMarker {
+        (len > 0).then_some((strokes, len))
+    }
+
+    /// The complex dash a `JStyleSimpleLine` names, if it names one that
+    /// this document actually defines — see [`ComplexDash`].
+    fn complex_dash_of(&self, line: &StyleRecord) -> Option<ComplexDash> {
+        self.complex_dash_named(line.dash_reference)
+    }
+
+    /// The complex dash a reference names, if it names a
+    /// `JStyleSimpleDashType` of the complex form whose component chain
+    /// resolves. The same reading for a line's own slot and an override's:
+    /// no reference, a dangling one, or one landing on another family all
+    /// yield `None`.
+    fn complex_dash_named(&self, reference: Option<u32>) -> Option<ComplexDash> {
+        let complex = self.get(reference?)?.complex_dash.as_ref()?;
+        let component = self.get(complex.component_reference)?;
+        if component.type_code != PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT {
+            return None;
+        }
+        let symbol = self.get(component.point_symbol_reference?)?;
+        if symbol.type_code != PSM_TYPE_CODE_JSTYLE_POINT_SYMBOL {
+            return None;
+        }
+        let (strokes, len) = self.symbol_strokes(symbol)?;
+        Some(ComplexDash {
+            component_id: component.style_id,
             point_symbol_id: symbol.style_id,
-            line_terminator_id: terminator.style_id,
-            status: symbol
-                .name
-                .as_deref()
-                .and_then(MarkerStatus::from_style_name),
+            period_m: complex.period_m(),
             strokes,
             len,
         })
@@ -1787,6 +1972,53 @@ fn read_dash_pattern(type_code: u16, payload: &[u8]) -> Option<DashPattern> {
     Some(DashPattern {
         segments,
         len: u8::try_from(count).ok()?,
+    })
+}
+
+/// The complex form of `JStyleSimpleDashType` — the same count-and-segments
+/// layout plus exactly one trailing word, the reference naming the
+/// [`PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT`] record that describes the
+/// symbol embedded in the pattern.
+///
+/// The closure test is the plain form's plus four: `50 + 8N + 4` bytes
+/// exactly, at least one segment slot holding [`DASH_SYMBOL_SLOT_SENTINEL`],
+/// and a nonzero word after them. The corpus's one instance is the W
+/// drawing's `Hydraulic Line` (style 27): two segments `[-7.62 mm, sentinel]`
+/// and component 26, which lands the chain on the `Hydraulic` point symbol's
+/// glyph. A record that grows the tail without the sentinel is refused the
+/// same way a misframed count is refused in the plain form — the symbol is
+/// what makes this the complex form.
+fn read_complex_dash_pattern(type_code: u16, payload: &[u8]) -> Option<ComplexDashPattern> {
+    if type_code != PSM_TYPE_CODE_JSTYLE_SIMPLE_DASH_TYPE {
+        return None;
+    }
+    let count = usize::from(u16_at(payload, DASH_SEGMENT_COUNT_OFFSET)?);
+    if count == 0 || count > MAX_DASH_SEGMENTS {
+        return None;
+    }
+    let first = DASH_SEGMENT_COUNT_OFFSET + 2;
+    if payload.len() != first + 8 * count + DASH_COMPONENT_REFERENCE_LEN {
+        return None;
+    }
+    let mut segments_m = Vec::with_capacity(count);
+    let mut symbol_slots = 0_usize;
+    for i in 0..count {
+        let value = f64_at(payload, first + 8 * i)?;
+        if !value.is_finite() {
+            return None;
+        }
+        if value == DASH_SYMBOL_SLOT_SENTINEL {
+            symbol_slots += 1;
+        }
+        segments_m.push(value);
+    }
+    if symbol_slots == 0 {
+        return None;
+    }
+    let component_reference = u32_at(payload, first + 8 * count).filter(|id| *id != 0)?;
+    Some(ComplexDashPattern {
+        segments_m,
+        component_reference,
     })
 }
 
@@ -2736,6 +2968,24 @@ mod tests {
         (PSM_TYPE_CODE_JSTYLE_SIMPLE_DASH_TYPE, payload)
     }
 
+    /// The complex form: the same segment list, one slot holding the symbol
+    /// sentinel, then the word naming the component record.
+    fn complex_dash_type(style_id: u32, segments: &[f64], component_id: u32) -> (u16, Vec<u8>) {
+        let (type_code, mut payload) = dash_type(style_id, segments);
+        payload.extend_from_slice(&component_id.to_le_bytes());
+        (type_code, payload)
+    }
+
+    /// The `0x0034` component record a complex dash names: a 234-byte
+    /// payload whose `+74` word names the `JStylePointSymbol` to stamp.
+    fn complex_dash_component(style_id: u32, point_symbol_id: u32) -> (u16, Vec<u8>) {
+        let mut payload = vec![0u8; 234];
+        payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
+        let at = COMPLEX_DASH_COMPONENT_SYMBOL_REFERENCE_OFFSET;
+        payload[at..at + 4].copy_from_slice(&point_symbol_id.to_le_bytes());
+        (PSM_TYPE_CODE_JSTYLE_COMPLEX_DASH_COMPONENT, payload)
+    }
+
     fn override_record(style_id: u32, references: u32) -> (u16, Vec<u8>) {
         let mut payload = vec![0u8; 90];
         payload[STYLE_ID_OFFSET..STYLE_ID_OFFSET + 4].copy_from_slice(&style_id.to_le_bytes());
@@ -3183,6 +3433,126 @@ mod tests {
             .resolve_line_style(30)
             .expect("defined")
             .dash
+            .is_none());
+    }
+
+    /// The W drawing's `Hydraulic` chain, stand-for-stand: a line style
+    /// naming a dash of the complex form resolves to the symbol its
+    /// component names — and stays solid, since a complex record is not a
+    /// plain segment pattern.
+    #[test]
+    fn a_complex_dash_resolves_to_the_symbol_its_component_names() {
+        let data = stream(&[
+            complex_dash_type(27, &[-0.007_62, f64::MIN], 26),
+            complex_dash_component(26, 25),
+            point_symbol(25, 0x201D),
+            group(0x201D, &[0x1100, 0x1101]),
+            marker_line(0x1100, (-0.001_27, 0.001_27), (-0.001_27, -0.001_27)),
+            marker_line(0x1101, (-0.001_27, -0.001_27), (0.001_27, -0.001_27)),
+            simple_line_dashed(28, 27),
+        ]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        let resolved = table.resolve_line_style(28).expect("id 28 is defined");
+        assert!(
+            resolved.dash.is_none(),
+            "a complex record is not a plain dash"
+        );
+        let dash = resolved
+            .complex_dash
+            .expect("the component chain resolves to a glyph");
+        assert_eq!(dash.component_id, 26);
+        assert_eq!(dash.point_symbol_id, 25);
+        assert!(
+            (dash.period_m - 0.007_62).abs() < 1e-12,
+            "the symbol slot contributes no advance: {}",
+            dash.period_m
+        );
+        assert_eq!(dash.strokes().len(), 2);
+        let stem = dash.strokes()[0];
+        assert!((stem.start.0 + 0.001_27).abs() < 1e-12);
+        assert!((stem.end.0 + 0.001_27).abs() < 1e-12);
+        assert!(dash.draws());
+    }
+
+    /// Every break in the component chain — dangling component reference,
+    /// a component that is not `0x0034`, a symbol reference to another
+    /// family — yields no complex dash, the same "absent reads as solid"
+    /// rule the plain dash follows.
+    #[test]
+    fn a_complex_dash_chain_broken_anywhere_stamps_nothing() {
+        for records in [
+            // The component id dangles.
+            vec![
+                complex_dash_type(27, &[-0.007_62, f64::MIN], 404),
+                simple_line_dashed(28, 27),
+            ],
+            // The component id lands on a different family.
+            vec![
+                complex_dash_type(27, &[-0.007_62, f64::MIN], 26),
+                point_symbol(26, 0x201D),
+                simple_line_dashed(28, 27),
+            ],
+            // The component names no point symbol.
+            vec![
+                complex_dash_type(27, &[-0.007_62, f64::MIN], 26),
+                complex_dash_component(26, 0),
+                simple_line_dashed(28, 27),
+            ],
+            // The component's symbol id lands on a different family.
+            vec![
+                complex_dash_type(27, &[-0.007_62, f64::MIN], 26),
+                complex_dash_component(26, 25),
+                dash_type(25, &[-0.0035, -0.001_75]),
+                simple_line_dashed(28, 27),
+            ],
+        ] {
+            let data = stream(&records);
+            let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+            assert!(
+                table
+                    .resolve_line_style(28)
+                    .expect("defined")
+                    .complex_dash
+                    .is_none(),
+                "chain {records:?} should not resolve"
+            );
+        }
+    }
+
+    /// The complex form is refused on the same falsifiable grounds the
+    /// plain form is: a wrong length, no sentinel slot, or a zero component
+    /// word all mean "not this shape".
+    #[test]
+    fn a_misframed_complex_dash_is_refused() {
+        // No sentinel: the tail alone does not make the complex form.
+        let (type_code, payload) = complex_dash_type(27, &[-0.007_62, -0.001], 26);
+        let data = stream(&[(type_code, payload), simple_line_dashed(28, 27)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(table
+            .resolve_line_style(28)
+            .expect("defined")
+            .complex_dash
+            .is_none());
+
+        // A tail of zero references nothing.
+        let (type_code, payload) = complex_dash_type(27, &[-0.007_62, f64::MIN], 0);
+        let data = stream(&[(type_code, payload), simple_line_dashed(28, 27)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(table
+            .resolve_line_style(28)
+            .expect("defined")
+            .complex_dash
+            .is_none());
+
+        // The tail has to be exactly one word.
+        let (type_code, mut payload) = complex_dash_type(27, &[-0.007_62, f64::MIN], 26);
+        payload.push(0);
+        let data = stream(&[(type_code, payload), simple_line_dashed(28, 27)]);
+        let table = DocumentStyleTable::from_stylecluster_bytes(&data);
+        assert!(table
+            .resolve_line_style(28)
+            .expect("defined")
+            .complex_dash
             .is_none());
     }
 

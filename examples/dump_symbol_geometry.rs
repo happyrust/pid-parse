@@ -99,6 +99,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // the label cannot be read as another column.
                 println!("text,{},{},0,0,{text:?}{style}", at.0, at.1);
             }
+            SymbolPrimitive::Boundary { members, fill } => {
+                let fill = fill
+                    .map(|f| format!("fill#{:02X}", f.type_code))
+                    .unwrap_or_default();
+                for member in members {
+                    match member {
+                        SymbolPrimitive::Circle { center, radius } => {
+                            println!("fillcircle,{},{},{radius}{fill}", center.0, center.1);
+                        }
+                        SymbolPrimitive::Line { start, end } => {
+                            println!("fillseg,{},{},{},{}{fill}", start.0, start.1, end.0, end.1);
+                        }
+                        other => println!("fillmember,{other:?}{fill}"),
+                    }
+                }
+            }
         }
     }
     eprintln!(

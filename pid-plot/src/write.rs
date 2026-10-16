@@ -21,7 +21,7 @@ use pdfcraft_fonts::embedding::{self, embed};
 use pdfcraft_fonts::pdf::Metrics;
 
 use crate::fonts::typeface_key;
-use crate::model::{PaperModel, PaperShape, TextAnchor};
+use crate::model::{PaperModel, PaperShape, TextAnchor, TextLine};
 use crate::read::CHORD_MM;
 
 const PT_PER_MM: f64 = 72.0 / 25.4;
@@ -238,6 +238,7 @@ fn push_layer(
             value,
             font,
             anchor,
+            line,
         } = &primitive.shape
         {
             let face = face_for(fonts, font.as_deref(), value)?;
@@ -252,6 +253,7 @@ fn push_layer(
                     rotation: *rotation,
                     value,
                     anchor: *anchor,
+                    line: *line,
                 },
             )?;
         }
@@ -350,6 +352,7 @@ struct ShownText<'a> {
     rotation: f64,
     value: &'a str,
     anchor: TextAnchor,
+    line: TextLine,
 }
 
 fn show_text(
@@ -372,7 +375,9 @@ fn show_text(
         text.origin_mm,
         text.rotation,
         run_width_mm(metrics, size, &bytes),
+        height_mm,
         text.anchor,
+        text.line,
     );
     let (sin, cos) = text.rotation.sin_cos();
     ops.push(Op::new("BT", Vec::new()));
@@ -409,24 +414,47 @@ fn run_width_mm(metrics: &Metrics, size_pt: f64, bytes: &[u8]) -> f64 {
     units * size_pt / PT_PER_MM
 }
 
-/// Left end of the baseline. Centre and right step back along the run.
+/// Left end of the baseline, from the insertion point.
+///
+/// Centre and right step back **along** the run by half the word or the whole
+/// word; middle and top step **down across** it by half the body size or the
+/// whole body size. The insertion point itself never moves.
 fn baseline_origin(
     origin_mm: [f64; 2],
     rotation: f64,
     width_mm: f64,
+    height_mm: f64,
     anchor: TextAnchor,
+    line: TextLine,
 ) -> [f64; 2] {
-    let fraction = match anchor {
+    let along = match anchor {
         TextAnchor::Left => 0.0,
         TextAnchor::Center => 0.5,
         TextAnchor::Right => 1.0,
     };
-    if fraction == 0.0 || !width_mm.is_finite() || width_mm <= 0.0 {
+    let down = match line {
+        TextLine::Bottom => 0.0,
+        TextLine::Middle => 0.5,
+        TextLine::Top => 1.0,
+    };
+    let back = if width_mm.is_finite() && width_mm > 0.0 {
+        width_mm * along
+    } else {
+        0.0
+    };
+    let below = if height_mm.is_finite() && height_mm > 0.0 {
+        height_mm * down
+    } else {
+        0.0
+    };
+    if back == 0.0 && below == 0.0 {
         return origin_mm;
     }
     let (sin, cos) = rotation.sin_cos();
-    let shift = width_mm * fraction;
-    [origin_mm[0] - cos * shift, origin_mm[1] - sin * shift]
+    [
+        origin_mm[0] - cos * back + sin * below,
+        origin_mm[1] - sin * back - cos * below,
+    ]
 }
 
 fn missing_glyph(metrics: &Metrics, value: &str) -> PlotWriteError {
@@ -677,7 +705,7 @@ fn hypot(start: [f64; 2], end: [f64; 2]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{plotted_size_pt, write_plot};
-    use crate::model::{PaperModel, PaperPrimitive, PaperShape, TextAnchor};
+    use crate::model::{PaperModel, PaperPrimitive, PaperShape, TextAnchor, TextLine};
     use crate::read::read_plot;
 
     use super::PlotFont;
@@ -729,6 +757,7 @@ mod tests {
                         value: "Ab".into(),
                         font: None,
                         anchor: TextAnchor::Left,
+                        line: TextLine::Bottom,
                     },
                 ),
                 primitive(
@@ -784,6 +813,7 @@ mod tests {
                 [80.0, 20.0 + f64::from(anchor_row(anchor))],
                 0.0,
                 anchor,
+                TextLine::Bottom,
             )
         };
         let vertical = |anchor| {
@@ -792,12 +822,15 @@ mod tests {
                 [20.0 + f64::from(anchor_row(anchor)), 80.0],
                 std::f64::consts::FRAC_PI_2,
                 anchor,
+                TextLine::Bottom,
             )
         };
         let left_h = horizontal(TextAnchor::Left);
         let centre_h = horizontal(TextAnchor::Center);
         let right_h = horizontal(TextAnchor::Right);
         let left_v = vertical(TextAnchor::Left);
+        // A bottom anchor is the only one the horizontal cases use, so the
+        // rows below measure the along-the-run step alone.
         let centre_v = vertical(TextAnchor::Center);
         let along_x = left_h[0] - centre_h[0];
         let along_y = left_v[1] - centre_v[1];
@@ -814,6 +847,46 @@ mod tests {
         );
     }
 
+    /// The vertical half of the anchor: the label letters below the point.
+    ///
+    /// The reference plots put the baseline 0.00 mm / 1.25 mm / 2.50 mm below
+    /// a 2.5 mm body's insertion point, one mode per class, so the step is
+    /// measured against the body size and not against the pen.
+    #[test]
+    fn middle_and_top_step_down_across_the_baseline() {
+        let bottom = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Bottom);
+        let middle = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Middle);
+        let top = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Top);
+        assert!((bottom[1] - 20.0).abs() < 0.05, "bottom {}", bottom[1]);
+        assert!((middle[1] - 17.5).abs() < 0.05, "middle {}", middle[1]);
+        assert!((top[1] - 15.0).abs() < 0.05, "top {}", top[1]);
+        for (name, point) in [("bottom", bottom), ("middle", middle), ("top", top)] {
+            assert!((point[0] - bottom[0]).abs() < 0.05, "{name} moved along x");
+        }
+        // Rotated a quarter turn the run climbs +Y, so the step lands on +X.
+        // `placed` states a 5 mm body, so the middle step is 2.5 mm.
+        let turned = std::f64::consts::FRAC_PI_2;
+        let upright = placed(
+            "WW",
+            [20.0, 80.0],
+            turned,
+            TextAnchor::Left,
+            TextLine::Bottom,
+        );
+        let dropped = placed(
+            "WW",
+            [20.0, 80.0],
+            turned,
+            TextAnchor::Left,
+            TextLine::Middle,
+        );
+        assert!(
+            (dropped[0] - (upright[0] + 2.5)).abs() < 0.1,
+            "turned {dropped:?}"
+        );
+        assert!((dropped[1] - upright[1]).abs() < 0.1, "turned {dropped:?}");
+    }
+
     fn anchor_row(anchor: TextAnchor) -> u8 {
         match anchor {
             TextAnchor::Left => 0,
@@ -822,7 +895,13 @@ mod tests {
         }
     }
 
-    fn placed(value: &str, origin_mm: [f64; 2], rotation: f64, anchor: TextAnchor) -> [f64; 2] {
+    fn placed(
+        value: &str,
+        origin_mm: [f64; 2],
+        rotation: f64,
+        anchor: TextAnchor,
+        line: TextLine,
+    ) -> [f64; 2] {
         let model = PaperModel {
             library: Vec::new(),
             page_mm: Some([200.0, 140.0]),
@@ -835,6 +914,7 @@ mod tests {
                     value: value.into(),
                     font: None,
                     anchor,
+                    line,
                 },
             )],
             missing_symbols: Vec::new(),

@@ -886,6 +886,73 @@ impl From<crate::parsers::sheet_records::PsmStandardRelationDecoded>
     }
 }
 
+/// One member shape of a definition-cache `igBoundary2d` record — the
+/// model twin of [`crate::parsers::sheet_records::IgBoundaryMember`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub enum IgSymBoundaryMember {
+    /// Segment tag `0x67`: a straight member `(start, end)`.
+    Line {
+        /// Member start.
+        start: (f64, f64),
+        /// Member end.
+        end: (f64, f64),
+    },
+    /// Segment tag `0x73`: a circular member `(centre, radius)` — the
+    /// flange-dot discs `SmartPlant` fills solid.
+    Circle {
+        /// Member centre.
+        center: (f64, f64),
+        /// Member radius.
+        radius: f64,
+    },
+}
+
+/// One `igBoundary2d` (PSM `0x0013`) inside a definition-cache storage:
+/// a region the body fills over members that are also strokes of it —
+/// the flange dots `SmartPlant`'s plot prints solid where stroking the
+/// member circles alone draws a hairline ring. Read by
+/// [`crate::parsers::sheet_records::decode_igsym_boundary_at`]; the
+/// record's `index` names a fill-family style in the storage's own
+/// `StyleCluster`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DecodedIgSymBoundaryRecord {
+    /// Persist id of the boundary record.
+    pub oid: u32,
+    /// Oid of the `JSheetLayer` the boundary sits on — the membership
+    /// slot every other nested family uses.
+    pub sheet_layer_ref: u32,
+    /// Style reference at payload `+14`: a fill-family style id in the
+    /// storage's own `StyleCluster`, resolved through
+    /// [`crate::style_link::DocumentStyleTable::resolve_fill`].
+    pub index: u32,
+    /// The member shapes the region fills over, in record order.
+    pub members: Vec<IgSymBoundaryMember>,
+}
+
+impl From<crate::parsers::sheet_records::DecodedIgSymBoundaryRecord>
+    for DecodedIgSymBoundaryRecord
+{
+    fn from(record: crate::parsers::sheet_records::DecodedIgSymBoundaryRecord) -> Self {
+        Self {
+            oid: record.oid,
+            sheet_layer_ref: record.sheet_layer_ref,
+            index: record.index,
+            members: record
+                .members
+                .into_iter()
+                .map(|member| match member {
+                    crate::parsers::sheet_records::IgBoundaryMember::Line { start, end } => {
+                        IgSymBoundaryMember::Line { start, end }
+                    }
+                    crate::parsers::sheet_records::IgBoundaryMember::Circle { center, radius } => {
+                        IgSymBoundaryMember::Circle { center, radius }
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
 /// The geometry one nested `LdcSite` storage holds in its `PSMcluster0`: the
 /// drawing's embedded copies of the symbol bodies it places.
 ///
@@ -937,6 +1004,12 @@ pub struct JSiteNestedGeometry {
     /// `2026-09-30-a-cached-body-draws-its-elliptical-arcs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub elliptical_arcs: Vec<DecodedIgEllipticalArc2dRecord>,
+    /// `0x0013` `igBoundary2d` records, in on-disk order: the regions a
+    /// cached body fills over members that are also strokes of it — the
+    /// flange dots `SmartPlant` prints solid. See
+    /// [`DecodedIgSymBoundaryRecord`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boundaries: Vec<DecodedIgSymBoundaryRecord>,
     /// `0x0115` `igDimension` / `JDim` records, in on-disk order: the
     /// driving dimensions of the parametric bodies. Audit only — every
     /// corpus record sits on a `Dimension` layer the file has switched off,
@@ -2745,6 +2818,8 @@ pub enum SheetRecordKind {
     PrimitivePolyline,
     /// Primitive circle record.
     PrimitiveCircle,
+    /// Primitive arc record (`igArc2d`, PSM `0x0061`).
+    PrimitiveArc,
     /// Symbol instance placement record.
     SymbolPlacement,
     /// Text placement/style record.
@@ -2833,6 +2908,15 @@ fn default_sheet_record_schema_entries() -> Vec<SheetRecordSchemaEntry> {
             "Decoded Sheet circle primitive with center and positive radius.",
             &["center", "radius"],
             &[SheetDecodedGeometryKind::Circle],
+            false,
+        ),
+        sheet_record_schema_entry(
+            "primitive_arc",
+            SheetRecordKind::PrimitiveArc,
+            SheetRecordSchemaStatus::Typed,
+            "Decoded Sheet arc primitive with center, radius, and absolute start/end angles; the arc sweeps clockwise start to end.",
+            &["center", "radius", "start_angle", "end_angle"],
+            &[SheetDecodedGeometryKind::Arc],
             false,
         ),
         sheet_record_schema_entry(

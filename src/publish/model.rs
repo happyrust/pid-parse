@@ -133,12 +133,14 @@ impl fmt::Display for PublishError {
 
 impl std::error::Error for PublishError {}
 
+#[cfg(feature = "backup-mdf")]
 impl From<rusqlite::Error> for PublishError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Sqlite(err.to_string())
     }
 }
 
+#[cfg(feature = "backup-mdf")]
 impl From<oxidized_mdf::error::Error> for PublishError {
     fn from(err: oxidized_mdf::error::Error) -> Self {
         Self::Mdf(err.to_string())

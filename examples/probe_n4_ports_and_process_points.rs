@@ -962,15 +962,12 @@ fn report_index_join(scan: &Scan, drawing: &PidPublishDrawing, reference: &Refer
     if !paths.is_empty() {
         println!("  connect streams {paths}");
     }
-    let mut shown = 0usize;
     for row in scan
         .points
         .iter()
         .filter(|row| row.class == "_ConnectPoint")
+        .take(4)
     {
-        if shown == 4 {
-            break;
-        }
         let mut chain = Vec::new();
         let mut at = row.described;
         for _ in 0..6 {
@@ -993,7 +990,6 @@ fn report_index_join(scan: &Scan, drawing: &PidPublishDrawing, reference: &Refer
             .map(|geom| geom.index.to_string())
             .unwrap_or_else(|| "-".to_string());
         println!("    chain index={index} {}", chain.join(" -> "));
-        shown += 1;
     }
 
     let mut built: HashSet<String> = HashSet::new();

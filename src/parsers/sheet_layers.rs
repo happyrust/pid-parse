@@ -117,6 +117,34 @@ pub fn decode_sheet_layer_managers(data: &[u8]) -> Vec<SheetLayerManagerDecoded>
         .collect()
 }
 
+/// Resync-scan variant of [`decode_sheet_layers`] for storages whose
+/// `PSMcluster0` is not a contiguous chain — the document storage's, on the
+/// real-drawing corpus, interleaves its records with padding the strict
+/// walker cannot cross. Each candidate still has to pass
+/// [`decode_layer_payload`]'s exact-tail layout check.
+pub fn decode_sheet_layers_scattered(data: &[u8]) -> Vec<SheetLayerDecoded> {
+    crate::parsers::cluster_header::resync_cluster_body_records(data)
+        .into_iter()
+        .filter(|record| record.type_code == PSM_TYPE_CODE_JSHEET_LAYER)
+        .filter_map(|record| decode_layer_payload(&record.raw_payload, record.byte_range))
+        .collect()
+}
+
+/// Resync-scan variant of [`decode_sheet_layer_managers`] under the same
+/// rules as [`decode_sheet_layers_scattered`].
+pub fn decode_sheet_layer_managers_scattered(data: &[u8]) -> Vec<SheetLayerManagerDecoded> {
+    crate::parsers::cluster_header::resync_cluster_body_records(data)
+        .into_iter()
+        .filter(|record| record.type_code == PSM_TYPE_CODE_JSHEET_LAYER_MANAGER)
+        .filter_map(|record| {
+            Some(SheetLayerManagerDecoded {
+                byte_range: record.byte_range,
+                oid: u32_at(&record.raw_payload, 0)?,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

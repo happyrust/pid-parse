@@ -196,39 +196,17 @@ impl ExpTables {
 
     /// `T_DRAWING` rows, in table order.
     ///
+    /// The join columns (`SP_ID`, `NAME`, `PATH`, `DRAWINGNUMBER`,
+    /// `SP_PLANTGROUPID`) are required; every other projected column is
+    /// optional — a dump that lacks it gets empty strings / `None`s,
+    /// and a NULL cell reads the same way.
+    ///
     /// # Errors
     ///
     /// Returns [`ExpError::Table`] when `SP_ID`, `NAME`, `PATH`,
     /// `DRAWINGNUMBER` or `SP_PLANTGROUPID` is missing.
     pub fn drawings(&self) -> Result<Vec<BackupDrawing>, ExpError> {
-        let id = column_index(&self.drawing, "SP_ID")?;
-        let name = column_index(&self.drawing, "NAME")?;
-        let path = column_index(&self.drawing, "PATH")?;
-        let number = column_index(&self.drawing, "DRAWINGNUMBER")?;
-        let group = column_index(&self.drawing, "SP_PLANTGROUPID")?;
-        let mut drawings = Vec::with_capacity(self.drawing.rows.len());
-        for row in &self.drawing.rows {
-            let id = cell_text(row, id);
-            if id.is_empty() {
-                continue;
-            }
-            let path = cell_text(row, path);
-            let group_id = cell_text(row, group);
-            drawings.push(BackupDrawing {
-                id_key: norm_uid(&id),
-                id,
-                name: cell_text(row, name),
-                path_key: backup_path_key(&path),
-                path,
-                drawing_number: cell_text(row, number),
-                plant_group_id: if group_id.is_empty() {
-                    String::new()
-                } else {
-                    norm_uid(&group_id)
-                },
-            });
-        }
-        Ok(drawings)
+        project_drawings(&self.drawing)
     }
 
     /// `T_PIPERUN` rows that can become a pipeline name.
@@ -407,6 +385,12 @@ pub struct PipeRunRow {
 }
 
 /// One `T_DRAWING` row a backup package hangs a `.pid` on.
+///
+/// `id` / `id_key` / `name` / `path` / `path_key` / `drawing_number` /
+/// `plant_group_id` are the join surface and stay required — a dump
+/// missing those columns fails [`ExpTables::drawings`]. Everything
+/// else is display metadata: a column absent from the dump (or a NULL
+/// cell) projects as an empty string / `None` instead of an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackupDrawing {
     /// `SP_ID` as stored.
@@ -423,6 +407,41 @@ pub struct BackupDrawing {
     pub drawing_number: String,
     /// `SP_PLANTGROUPID`, folded like [`Self::id_key`]. Empty when null.
     pub plant_group_id: String,
+    /// `DESCRIPTION`. Empty when null or the column is absent.
+    pub description: String,
+    /// `TITLE`. Empty when null or the column is absent.
+    pub title: String,
+    /// `REVISION`. Empty when null or the column is absent.
+    pub revision: String,
+    /// `VERSION`. Empty when null or the column is absent.
+    pub version: String,
+    /// `DOCUMENTTYPE` as stored. `None` when null or the column is absent.
+    pub document_type: Option<i64>,
+    /// `DOCUMENTCATEGORY` as stored. `None` when null or the column is absent.
+    pub document_category: Option<i64>,
+    /// `ITEMSTATUS` as stored. `None` when null or the column is absent.
+    pub item_status: Option<i64>,
+    /// `TEMPLATE`. Empty when null or the column is absent.
+    pub template: String,
+    /// `DESIGNPHASE`. Empty when null or the column is absent.
+    pub design_phase: String,
+    /// `PROJECTNUMBER`. Empty when null or the column is absent.
+    pub project_number: String,
+    /// `DATECREATED` decoded to `YYYY/MM/DD HH:MM:SS`. Empty when null
+    /// or the column is absent.
+    pub date_created: String,
+    /// `DRAWINGDATE` decoded to `YYYY/MM/DD HH:MM:SS`. Empty when null
+    /// or the column is absent.
+    pub drawing_date: String,
+    /// `DATEOFDRAWING` — the free-text spelling `SmartPlant` keeps next
+    /// to `DRAWINGDATE`. Empty when null or the column is absent.
+    pub date_of_drawing: String,
+    /// `LASTPUBLISHTIME` decoded to `YYYY/MM/DD HH:MM:SS`. Empty when
+    /// null or the column is absent.
+    pub last_publish_time: String,
+    /// `LASTARCHIVETIME` decoded to `YYYY/MM/DD HH:MM:SS`. Empty when
+    /// null or the column is absent.
+    pub last_archive_time: String,
 }
 
 /// One `T_PLANTGROUP` row used to spell a drawing's place in the plant.
@@ -515,9 +534,88 @@ pub fn plant_group_path(groups: &[PlantGroup], id: &str) -> String {
     names.join(" \\ ")
 }
 
+/// `T_DRAWING` rows for a backup-package drawing index.
+///
+/// Only `T_DRAWING` is read — callers listing a package's drawings do not
+/// need the port/run tables [`ExpTables::read`] requires, and real dumps
+/// have carried cells those strict reads reject. `APPLICATIONS` still
+/// pins the row format, so a non-exp input is refused.
+///
+/// # Errors
+///
+/// Returns [`ExpError::FormatUnpinned`] when `APPLICATIONS` does not pin
+/// the row format, and [`ExpError::Table`] when `T_DRAWING` is missing or
+/// lacks `SP_ID` / `NAME` / `PATH` / `DRAWINGNUMBER` / `SP_PLANTGROUPID`.
+pub fn read_backup_drawings(dump: &[u8]) -> Result<Vec<BackupDrawing>, ExpError> {
+    ExpTables::pin(dump)?;
+    let drawing = read_table_tolerant(dump, "T_DRAWING")?;
+    project_drawings(&drawing)
+}
+
+fn project_drawings(drawing: &Table) -> Result<Vec<BackupDrawing>, ExpError> {
+    let id = column_index(drawing, "SP_ID")?;
+    let name = column_index(drawing, "NAME")?;
+    let path = column_index(drawing, "PATH")?;
+    let number = column_index(drawing, "DRAWINGNUMBER")?;
+    let group = column_index(drawing, "SP_PLANTGROUPID")?;
+    let description = optional_column_index(drawing, "DESCRIPTION");
+    let title = optional_column_index(drawing, "TITLE");
+    let revision = optional_column_index(drawing, "REVISION");
+    let version = optional_column_index(drawing, "VERSION");
+    let document_type = optional_column_index(drawing, "DOCUMENTTYPE");
+    let document_category = optional_column_index(drawing, "DOCUMENTCATEGORY");
+    let item_status = optional_column_index(drawing, "ITEMSTATUS");
+    let template = optional_column_index(drawing, "TEMPLATE");
+    let design_phase = optional_column_index(drawing, "DESIGNPHASE");
+    let project_number = optional_column_index(drawing, "PROJECTNUMBER");
+    let date_created = optional_column_index(drawing, "DATECREATED");
+    let drawing_date = optional_column_index(drawing, "DRAWINGDATE");
+    let date_of_drawing = optional_column_index(drawing, "DATEOFDRAWING");
+    let last_publish_time = optional_column_index(drawing, "LASTPUBLISHTIME");
+    let last_archive_time = optional_column_index(drawing, "LASTARCHIVETIME");
+    let mut drawings = Vec::with_capacity(drawing.rows.len());
+    for row in &drawing.rows {
+        let id = cell_text(row, id);
+        if id.is_empty() {
+            continue;
+        }
+        let path = cell_text(row, path);
+        let group_id = cell_text(row, group);
+        drawings.push(BackupDrawing {
+            id_key: norm_uid(&id),
+            id,
+            name: cell_text(row, name),
+            path_key: backup_path_key(&path),
+            path,
+            drawing_number: cell_text(row, number),
+            plant_group_id: if group_id.is_empty() {
+                String::new()
+            } else {
+                norm_uid(&group_id)
+            },
+            description: optional_cell_text(row, description),
+            title: optional_cell_text(row, title),
+            revision: optional_cell_text(row, revision),
+            version: optional_cell_text(row, version),
+            document_type: optional_cell_int(row, document_type),
+            document_category: optional_cell_int(row, document_category),
+            item_status: optional_cell_int(row, item_status),
+            template: optional_cell_text(row, template),
+            design_phase: optional_cell_text(row, design_phase),
+            project_number: optional_cell_text(row, project_number),
+            date_created: optional_cell_text(row, date_created),
+            drawing_date: optional_cell_text(row, drawing_date),
+            date_of_drawing: optional_cell_text(row, date_of_drawing),
+            last_publish_time: optional_cell_text(row, last_publish_time),
+            last_archive_time: optional_cell_text(row, last_archive_time),
+        });
+    }
+    Ok(drawings)
+}
+
 fn cell_text(row: &[Field], index: usize) -> String {
     match row.get(index) {
-        Some(Field::Text(text)) => text.clone(),
+        Some(Field::Text(text) | Field::Date(text)) => text.clone(),
         Some(Field::Int(value)) => value.to_string(),
         Some(Field::Null | Field::Unscaled) | None => String::new(),
     }
@@ -720,7 +818,9 @@ enum Field {
     Null,
     Int(i64),
     Text(String),
-    /// A `NUMBER` that is not an integer, or a skipped date / byte string.
+    /// An Oracle `DATE` cell decoded to `YYYY/MM/DD HH:MM:SS`.
+    Date(String),
+    /// A `NUMBER` that is not an integer, or a skipped byte string.
     Unscaled,
 }
 
@@ -827,13 +927,13 @@ fn table_error(name: &str, detail: String) -> ExpError {
 fn int_at(row: &[Field], columns: &[Column], name: &str) -> Option<i64> {
     match field_at(row, columns, name)? {
         Field::Int(value) => Some(*value),
-        Field::Null | Field::Text(_) | Field::Unscaled => None,
+        Field::Null | Field::Text(_) | Field::Date(_) | Field::Unscaled => None,
     }
 }
 
 fn text_at(row: &[Field], columns: &[Column], name: &str) -> Option<String> {
     match field_at(row, columns, name)? {
-        Field::Text(text) => Some(text.clone()),
+        Field::Text(text) | Field::Date(text) => Some(text.clone()),
         Field::Null => Some(String::new()),
         Field::Int(value) => Some(value.to_string()),
         Field::Unscaled => None,
@@ -1500,6 +1600,27 @@ fn column_index(table: &Table, name: &str) -> Result<usize, ExpError> {
         .ok_or_else(|| table_error("exp", format!("column {name} is missing")))
 }
 
+/// `None` when `name` is not a column of `table` — the marker for
+/// optional projections that must not fail `ExpTables::drawings`.
+fn optional_column_index(table: &Table, name: &str) -> Option<usize> {
+    table.columns.iter().position(|column| column.name == name)
+}
+
+/// [`cell_text`] for an [`optional_column_index`]. Absent columns read
+/// as empty.
+fn optional_cell_text(row: &[Field], index: Option<usize>) -> String {
+    index.map_or_else(String::new, |index| cell_text(row, index))
+}
+
+/// Integer cell for an [`optional_column_index`]. `None` when the
+/// column is absent, the cell is NULL, or the cell is not an integer.
+fn optional_cell_int(row: &[Field], index: Option<usize>) -> Option<i64> {
+    match index.and_then(|index| row.get(index)) {
+        Some(Field::Int(value)) => Some(*value),
+        _ => None,
+    }
+}
+
 fn text_of(row: &[Field], index: usize) -> Option<&str> {
     match row.get(index) {
         Some(Field::Text(text)) if !text.is_empty() => Some(text),
@@ -1656,9 +1777,36 @@ fn read_field_tolerant(dump: &[u8], pos: usize, column: &Column) -> Result<(Fiel
             Some(value) => Field::Int(value),
             None => Field::Unscaled,
         },
-        Kind::Bytes | Kind::Date => Field::Unscaled,
+        Kind::Date => decode_oracle_date(raw).map_or(Field::Unscaled, Field::Date),
+        Kind::Bytes => Field::Unscaled,
     };
     Ok((field, next))
+}
+
+/// Decode an Oracle 7-byte `DATE` cell into `YYYY/MM/DD HH:MM:SS`.
+///
+/// Bytes 0–1 hold the century and year offset by 100 each, bytes 2–3
+/// are 1-based month and day, and bytes 4–6 are hour, minute and
+/// second offset by 1. Any other shape is `None` — the caller stores
+/// the cell as [`Field::Unscaled`] rather than a misleading date.
+fn decode_oracle_date(raw: &[u8]) -> Option<String> {
+    let &[century, year, month, day, hour, minute, second] = raw else {
+        return None;
+    };
+    if !(100..=199).contains(&century)
+        || !(100..=199).contains(&year)
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+    {
+        return None;
+    }
+    let year = (u32::from(century) - 100) * 100 + (u32::from(year) - 100);
+    Some(format!(
+        "{year:04}/{month:02}/{day:02} {:02}:{:02}:{:02}",
+        hour.saturating_sub(1),
+        minute.saturating_sub(1),
+        second.saturating_sub(1),
+    ))
 }
 
 #[cfg(test)]
@@ -2014,6 +2162,72 @@ mod tests {
         assert!(tables.composition_relations().unwrap().is_empty());
         assert!(tables.opc_points("DRAW1").unwrap().is_empty());
         assert!(tables.opc_points("DRAW2").unwrap().is_empty());
+    }
+
+    // The drawing-metadata projection: optional columns surface when
+    // present, read empty when absent, and a 7-byte DATE cell decodes.
+    #[test]
+    fn drawings_surface_optional_metadata_and_dates() {
+        let dump = table(
+            "T_DRAWING",
+            &[
+                ch("SP_ID"),
+                ch("NAME"),
+                ch("PATH"),
+                ch("DRAWINGNUMBER"),
+                ch("SP_PLANTGROUPID"),
+                ch("DESCRIPTION"),
+                ch("TITLE"),
+                num("DOCUMENTTYPE"),
+                date("DATECREATED"),
+                ch("TEMPLATE"),
+            ],
+            &[row(&[
+                Some(utf16("DRAW1")),
+                Some(utf16("one")),
+                Some(utf16("\\a.pid")),
+                Some(utf16("D-1")),
+                Some(utf16("G1")),
+                Some(utf16("desc-one")),
+                Some(utf16("title-one")),
+                Some(vec![0xc1, 0x05]),
+                Some(vec![120, 124, 6, 15, 11, 31, 46]),
+                Some(utf16("A1.pidtpl")),
+            ])],
+        );
+        let mut tables = ExpTables::blank();
+        tables.drawing = read_table_tolerant(&dump, "T_DRAWING").unwrap();
+        let drawings = tables.drawings().unwrap();
+        assert_eq!(drawings.len(), 1);
+        let drawing = &drawings[0];
+        assert_eq!(drawing.name, "one");
+        assert_eq!(drawing.description, "desc-one");
+        assert_eq!(drawing.title, "title-one");
+        assert_eq!(drawing.document_type, Some(4));
+        assert_eq!(drawing.date_created, "2024/06/15 10:30:45");
+        assert_eq!(drawing.template, "A1.pidtpl");
+        assert_eq!(drawing.version, "");
+        assert_eq!(drawing.revision, "");
+        assert_eq!(drawing.item_status, None);
+        assert_eq!(drawing.document_category, None);
+        assert_eq!(drawing.design_phase, "");
+        assert_eq!(drawing.drawing_date, "");
+        assert_eq!(drawing.last_publish_time, "");
+    }
+
+    #[test]
+    fn oracle_date_decoding_rejects_noncanonical_cells() {
+        assert_eq!(
+            decode_oracle_date(&[120, 124, 6, 15, 11, 31, 46]).as_deref(),
+            Some("2024/06/15 10:30:45")
+        );
+        assert_eq!(
+            decode_oracle_date(&[120, 124, 1, 1, 1, 1, 1]).as_deref(),
+            Some("2024/01/01 00:00:00")
+        );
+        assert_eq!(decode_oracle_date(&[1, 2, 3]), None);
+        assert_eq!(decode_oracle_date(&[120, 124, 13, 1, 1, 1, 1]), None);
+        assert_eq!(decode_oracle_date(&[99, 124, 6, 15, 1, 1, 1]), None);
     }
 
     #[test]
@@ -2572,6 +2786,112 @@ mod tests {
             }
         }
         (piping, signal)
+    }
+
+    #[test]
+    fn equipment_and_instrument_rows_are_read_from_the_dump_only() {
+        let path = std::path::Path::new(r"D:\work\cad\pid-test-data\Export.dmp");
+        let publish = std::path::Path::new(
+            r"D:\work\cad\PID自研软件验证\publish\I井场 注采阀组工艺及自控流程图_Data.xml",
+        );
+        if !path.is_file() || !publish.is_file() {
+            eprintln!("skip: oracle exp dump or I井场 publish xml is missing");
+            return;
+        }
+        let dump = std::fs::read(path).expect("dump");
+        let published = std::fs::read_to_string(publish).expect("ijingchang xml");
+        let model = read_table_tolerant(&dump, "T_MODELITEM").expect("model items");
+        let model_ids: std::collections::HashSet<String> = model
+            .rows
+            .iter()
+            .filter_map(|row| text_at(row, &model.columns, "SP_ID"))
+            .filter(|id| !id.is_empty())
+            .collect();
+        let equipment = read_table_tolerant(&dump, "T_EQUIPMENT").expect("equipment");
+        let instrument = read_table_tolerant(&dump, "T_INSTRUMENT").expect("instrument");
+        assert_eq!((equipment.rows.len(), equipment.columns.len()), (402, 63));
+        assert_eq!(
+            (instrument.rows.len(), instrument.columns.len()),
+            (3718, 126)
+        );
+        assert_eq!(
+            nonempty_columns(&equipment),
+            [
+                "CLASS",
+                "DESIGNTEMP",
+                "EQUIPMENTLOAD",
+                "EQUIPMENTSUBCLASS",
+                "EQUIPMENTTYPE",
+                "INSULPURPOSE",
+                "OPERTEMP",
+                "SP_ID",
+                "TAGPREFIX",
+                "TAGSEQUENCENO",
+                "TRIMSPEC",
+            ]
+        );
+        assert_eq!(
+            nonempty_columns(&instrument),
+            [
+                "ALARMHIGH",
+                "ALARMHIGHHIGH",
+                "ALARMLOW",
+                "ALARMLOWLOW",
+                "INSTRFLUIDCODE",
+                "INSTRFLUIDSYSTEM",
+                "INSTRUMENTCLASS",
+                "INSTRUMENTTYPE",
+                "INSULATIONSPEC",
+                "ISINLINE",
+                "LOCATION",
+                "MEASUREDVARIABLECODE",
+                "SP_ID",
+                "SP_PIPERUNID",
+                "SP_SIGNALRUNID",
+                "TAGSEQUENCENO",
+            ]
+        );
+        assert_eq!(ids_in(&equipment, &model_ids, &published), (402, 402, 18));
+        assert_eq!(
+            ids_in(&instrument, &model_ids, &published),
+            (3718, 3718, 150)
+        );
+    }
+
+    fn nonempty_columns(table: &Table) -> Vec<&str> {
+        let mut names: Vec<&str> = table
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                table
+                    .rows
+                    .iter()
+                    .any(|row| !matches!(row.get(*index), Some(Field::Null) | None))
+            })
+            .map(|(_, column)| column.name.as_str())
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    fn ids_in(
+        table: &Table,
+        model_ids: &std::collections::HashSet<String>,
+        published: &str,
+    ) -> (usize, usize, usize) {
+        let ids: Vec<String> = table
+            .rows
+            .iter()
+            .filter_map(|row| text_at(row, &table.columns, "SP_ID"))
+            .filter(|id| !id.is_empty())
+            .collect();
+        let in_model = ids.iter().filter(|id| model_ids.contains(*id)).count();
+        let in_drawing = ids
+            .iter()
+            .filter(|id| published.contains(&format!("UID=\"{id}\"")))
+            .count();
+        (ids.len(), in_model, in_drawing)
     }
 
     fn take_uid(start: &quick_xml::events::BytesStart<'_>, uid: &mut String) {

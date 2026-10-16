@@ -5277,14 +5277,34 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
     fn tally<'a>(primitives: impl Iterator<Item = &'a SymbolPrimitive>) -> Tally {
         let mut tally = [0usize; 6];
         for primitive in primitives {
-            tally[match primitive {
-                SymbolPrimitive::Line { .. } => 0,
-                SymbolPrimitive::Arc { .. } => 1,
-                SymbolPrimitive::Circle { .. } => 2,
-                SymbolPrimitive::Polyline { .. } => 3,
-                SymbolPrimitive::Text { .. } => 4,
-                SymbolPrimitive::BSpline { .. } => 5,
-            }] += 1;
+            match primitive {
+                // A fill boundary's members are the shapes it paints; count
+                // each member under its own kind.
+                SymbolPrimitive::Boundary { members, .. } => {
+                    for member in members {
+                        tally[match member {
+                            SymbolPrimitive::Line { .. } => 0,
+                            SymbolPrimitive::Arc { .. } => 1,
+                            SymbolPrimitive::Circle { .. } => 2,
+                            SymbolPrimitive::Polyline { .. } => 3,
+                            SymbolPrimitive::Text { .. } => 4,
+                            SymbolPrimitive::BSpline { .. } => 5,
+                            SymbolPrimitive::Boundary { .. } => continue,
+                        }] += 1;
+                    }
+                }
+                _ => {
+                    tally[match primitive {
+                        SymbolPrimitive::Line { .. } => 0,
+                        SymbolPrimitive::Arc { .. } => 1,
+                        SymbolPrimitive::Circle { .. } => 2,
+                        SymbolPrimitive::Polyline { .. } => 3,
+                        SymbolPrimitive::Text { .. } => 4,
+                        SymbolPrimitive::BSpline { .. } => 5,
+                        SymbolPrimitive::Boundary { .. } => unreachable!(),
+                    }] += 1;
+                }
+            }
         }
         tally
     }
@@ -5312,7 +5332,9 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
             placed_bodies: 17,
             placed_bodies_with_hidden_strokes: 15,
             hidden_layers: &["Construction", "Heat Trace", "Jacket", "Label"],
-            strokes_over_placements: (112, 81),
+            // (112, 81) until a placed body's filled circle decoded as a
+            // one-member `Boundary` on `Default`.
+            strokes_over_placements: (113, 82),
             visible: &[
                 // The Parametric Manifold instance: its outline, without
                 // the four construction lines the body is built on.
@@ -5642,7 +5664,9 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
     const EXPECTED: &[Expected] = &[
         Expected {
             fixture: "DWG-0201GP06-01.pid",
-            visible_over_placements: 81,
+            // 81 until a placed body's filled circle decoded as a
+            // one-member `Boundary` on `Default`.
+            visible_over_placements: 82,
             // 0 until overrides stated their dash: `/JSite396` override 9
             // names the storage's `Dash` type over solid `Normal`.
             dashed_over_placements: 1,
@@ -5779,7 +5803,12 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
             );
             if placed.contains(&reference) {
                 for (primitive, style) in &strokes {
-                    if !matches!(primitive, SymbolPrimitive::Text { .. }) {
+                    // Text names a paragraph style; a boundary names a fill
+                    // style, carried on the primitive's own `fill` field.
+                    if !matches!(
+                        primitive,
+                        SymbolPrimitive::Text { .. } | SymbolPrimitive::Boundary { .. }
+                    ) {
                         assert!(
                             style.is_some(),
                             "{fixture} {reference:?}: a displayed stroke whose style id reaches \

@@ -54,12 +54,14 @@
 
 pub mod backup_package;
 pub mod diff;
+#[cfg(feature = "backup-mdf")]
 pub mod mdf_load;
 pub mod model;
 pub mod oracle_exp;
 pub mod pid_load;
 pub mod pid_writer;
 pub mod pipeline;
+#[cfg(feature = "backup-mdf")]
 pub mod sqlite_load;
 pub mod xml_writer;
 
@@ -70,6 +72,7 @@ pub use diff::{
     CoverageRow, PidExportDiff, RelDefUidDiff, RelDefUidDiffReport, RelDetail, SemanticDiffReport,
     TagCountDiff, TagDiffStatus, WriterCoverage,
 };
+#[cfg(feature = "backup-mdf")]
 pub use mdf_load::{load_drawing_graph_from_mdf, open_mdf_as_sqlite};
 pub use model::{
     CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
@@ -80,6 +83,7 @@ pub use pid_load::{
     PidPublishDrawing, PidPublishItem, PidPublishRepresentation, PidPublishStats, PidValueSource,
 };
 pub use pid_writer::{write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml};
+#[cfg(feature = "backup-mdf")]
 pub use sqlite_load::{
     attach_pipe_endpoint_connections, load_codelist_index, load_drawing, load_drawing_graph,
     load_objects_by_uids, load_piping_points_for_objects, load_relationships, load_representations,

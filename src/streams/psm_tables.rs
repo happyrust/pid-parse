@@ -17,13 +17,17 @@ use crate::model::{
     EmbeddedSymbolDefinition, LayerDisplayOverride, PidDocument, SheetLayer, ViewFilterSet,
     ViewFilterSetLayer,
 };
-use crate::parsers::cluster_header::decode_psm_cluster0_body_records;
+use crate::parsers::cluster_header::{
+    decode_psm_cluster0_body_records, resync_cluster_body_records,
+};
 use crate::parsers::psm_tables;
 use crate::parsers::sheet_layers::{
-    decode_sheet_layer_managers, decode_sheet_layers, PSM_TYPE_CODE_JSHEET_LAYER,
-    PSM_TYPE_CODE_JSHEET_LAYER_MANAGER,
+    decode_sheet_layer_managers, decode_sheet_layer_managers_scattered, decode_sheet_layers,
+    decode_sheet_layers_scattered, PSM_TYPE_CODE_JSHEET_LAYER, PSM_TYPE_CODE_JSHEET_LAYER_MANAGER,
 };
-use crate::parsers::view_filter_sets::{decode_view_filter_sets, ViewFilterSetDecoded};
+use crate::parsers::view_filter_sets::{
+    decode_view_filter_sets, decode_view_filter_sets_scattered, ViewFilterSetDecoded,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
@@ -202,16 +206,46 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
         }
         let storage = storage_path(&path);
         let by_oid = families.entry(storage.clone()).or_default();
-        for manager in decode_sheet_layer_managers(&data) {
+        // The document storage's `PSMcluster0` is not the contiguous chain a
+        // JSite cache's is: its records sit behind NUL padding the strict
+        // walker's full-coverage gate cannot cross, so it reports zero
+        // layers even though the registry inside decodes cleanly. Fall back
+        // to the resync scans only when the strict decode found nothing —
+        // every candidate still has to pass its family's exact-tail payload
+        // decoder.
+        let managers = {
+            let strict = decode_sheet_layer_managers(&data);
+            if strict.is_empty() {
+                decode_sheet_layer_managers_scattered(&data)
+            } else {
+                strict
+            }
+        };
+        for manager in &managers {
             by_oid.insert(manager.oid, PSM_TYPE_CODE_JSHEET_LAYER_MANAGER);
         }
-        let layers = decode_sheet_layers(&data);
+        let layers = {
+            let strict = decode_sheet_layers(&data);
+            if strict.is_empty() {
+                decode_sheet_layers_scattered(&data)
+            } else {
+                strict
+            }
+        };
         for layer in &layers {
             by_oid.insert(layer.oid, PSM_TYPE_CODE_JSHEET_LAYER);
         }
         // The sheets are only identities here: what a set belongs to and
         // what a manager registers.
-        for record in decode_psm_cluster0_body_records(&data) {
+        let body_records = {
+            let strict = decode_psm_cluster0_body_records(&data);
+            if strict.is_empty() {
+                resync_cluster_body_records(&data)
+            } else {
+                strict
+            }
+        };
+        for record in &body_records {
             if record.type_code == PSM_TYPE_CODE_JSHEET {
                 if let Some(oid) = record.raw_payload.get(0..4) {
                     by_oid.insert(
@@ -225,11 +259,16 @@ fn parse_sheet_layers<R: Read + std::io::Seek>(
             .entry(storage.clone())
             .or_default()
             .extend(layers.into_iter().map(|layer| (path.clone(), layer)));
-        sets_by_storage.entry(storage).or_default().extend(
-            decode_view_filter_sets(&data)
-                .into_iter()
-                .map(|set| (path.clone(), set)),
-        );
+        let sets = decode_view_filter_sets(&data);
+        let sets = if sets.is_empty() {
+            decode_view_filter_sets_scattered(&data)
+        } else {
+            sets
+        };
+        sets_by_storage
+            .entry(storage)
+            .or_default()
+            .extend(sets.into_iter().map(|set| (path.clone(), set)));
     }
 
     // Tag 183, "this manager registers me", read off the space map twice

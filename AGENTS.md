@@ -66,11 +66,14 @@ ratchets stream count, PSM tables, DA records, object graph (10 objects
 + 10 unresolved relationships), Sheet6 geometry, and normalized totals.
 Soft-skips when `test-file/D06.pid` is absent.
 
-## SmartPlant Sheet PSM decoders — 8 typed + 2 audit-only families
+## SmartPlant Sheet PSM decoders — registry-driven families
 
-`src/parsers/sheet_records.rs` ships typed PSM-record decoders for **8
-SmartPlant `Sheet*` stream record families** (plus audit-only
-`0x00FA DependencyObject` and `0x0010` sub-record collections):
+`src/parsers/sheet_records.rs` ships typed PSM-record decoders for the
+SmartPlant `Sheet*` stream record families; the authoritative list is
+the `SHEET_RECORD_FAMILIES` registry in `src/model/sheet_families.rs`
+(17 rows today: the eight below plus `igArc2d`, `igCircle2d`,
+`igRectangle2d`, `igBspCurve2d`, `igDimension2d`, `SmartFrame`,
+attribute fragments, and the audit-only `0x00FA`/`0x0010` rows).
 
 | Slice | PSM Type | Decoder | DTO | Sigma Class |
 |---|---|---|---|---|
@@ -81,6 +84,8 @@ SmartPlant `Sheet*` stream record families** (plus audit-only
 | L | `0x005E` | `decode_igpoints` | `SheetIgPoint2dDecoded` | `igPoint2d` (IGDS standard) |
 | M | `0x004D` | `decode_igtextboxes` | `SheetIgTextBoxDecoded` | `igTextBox` (IGDS, UTF-16LE) |
 | N | `0x00CE` | `decode_igsymbols` | `SheetIgSymbol2dDecoded` | `igSymbol2d` (IGDS, SmartPlant symbols) |
+| — | `0x0061` | `decode_igarcs` | `DecodedIgArc2dRecord` | `igArc2d` (IGDS standard; emits `Arc`) |
+| — | `0x0059` | `decode_igcircles` | `DecodedIgCircle2dRecord` | `igCircle2d` (IGDS standard; emits `Circle`) |
 | 34-D | `0x0013` | `decode_igboundaries` | `SheetIgBoundary2dDecoded` | `igBoundary2d` (IGDS standard; fully-typed **audit-only** association, no geometry emission) |
 
 Cross-fixture decoded geometry spans the GLine2d / igLine2d /
@@ -92,13 +97,14 @@ All decoders are panic-safe (validated via
 
 Decoded records flow through `streams/cluster.rs` →
 `model::SheetGeometry::decoded_{primitive_lines, jstyle_overrides,
-iglines, iglinestrings, igpoints, igtextboxes, igsymbols,
-igboundaries}` → `geometry::build_normalized_geometry` to emit
-`PidGraphicEntity { confidence: Decoded, kind: Line | Arc | Polyline
-| Point | Text | SymbolInstance, source: PidGraphicProvenance {
-stream_path, byte_range, record_kind, graphic_oid, note } }`. The
-`note` carries the byte-level evidence chain. (`decoded_igboundaries`
-stops at the `SheetGeometry` layer — see the `0x0013` caveat below.)
+iglines, iglinestrings, igpoints, igtextboxes, igsymbols, igarcs,
+igcircles, igboundaries, …}` → `geometry::build_normalized_geometry`
+to emit `PidGraphicEntity { confidence: Decoded, kind: Line | Arc |
+Circle | Polyline | Point | Text | SymbolInstance, source:
+PidGraphicProvenance { stream_path, byte_range, record_kind,
+graphic_oid, note } }`. The `note` carries the byte-level evidence
+chain. (`decoded_igboundaries` stops at the `SheetGeometry` layer —
+see the `0x0013` caveat below.)
 
 **Key insight (Slice J discovery)**: Intergraph Sigma uses its IGDS
 class tags directly as PSM type codes for standard primitives.
@@ -130,16 +136,22 @@ decompilation.
   the identity
   (`docs/analysis/2026-08-04-psm-type-code-registry.md`). It stays
   audit-only either way.
-- Standard IGDS `igCircle2d` (0x0059), `igRectangle2d` (0x0020) and
-  `igArc2d` (0x0061) have zero hits **in the top-level `Sheet*`
-  streams**, which is all the decoders scan — but they do exist in
-  the corpus: 12 circles, 12 arcs, 3 rectangles and one `0x005D`
-  BspCurve live in the `PSMcluster0` streams of nested `JSite`
-  storages, each sitting on a sheet layer. Nine `0x0013
-  igBoundary2d` records live there too and are additionally refused
-  by the `aux_hi == 12` gate. `igEllipticalArc2d` (0x007E) really is
-  absent. See
-  `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` §7.
+- Standard IGDS primitives are no longer sheet-absent: `igCircle2d`
+  (`0x0059`) has since been promoted to a full Sheet family after W's
+  `Sheet6` yielded 17 top-level records — the instrument balloons
+  (r = 6.35 mm) and sensing-bulb centre dots (r = 1.4 mm) — and
+  `igArc2d` (`0x0061`) is emitted because the linked `.igr` border
+  templates draw logo glyphs and rounded corners with it. Sheet arcs
+  normalize to the minor sweep (≤ π; a direct `start → end` reading
+  that exceeds π swaps endpoints) — the same rule verified against the
+  cached-body CW convention and the `.igr` logo arcs. `igRectangle2d`
+  (`0x0020`) and `igBspCurve2d` (`0x005D`) also have Sheet family rows.
+  In the test-file corpus the remaining members (12 circles, 12 arcs,
+  3 rectangles, one BspCurve) still live in the `PSMcluster0` streams
+  of nested `JSite` storages, each sitting on a sheet layer; those are
+  symbol-body geometry and stay held back from page emission until a
+  transform is proven. `igEllipticalArc2d` (0x007E) really is absent.
+  See `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` §7.
 - Payload `+8` (`aux_hi`, the high half of the PSM envelope's `aux`)
   is **the oid of the sheet layer the object sits on** — never a
   framing constant. Grouping a storage's objects by it reproduces

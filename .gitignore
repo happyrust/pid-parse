@@ -44,3 +44,5 @@ test-file/symbols-full/
 # extracted .pid is what the corpus uses. Keeps stray/empty re-extraction
 # zips from showing up as untracked noise.
 test-file/*.zip
+
+.freebuff/

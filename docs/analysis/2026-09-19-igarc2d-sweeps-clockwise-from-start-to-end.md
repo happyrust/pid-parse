@@ -40,6 +40,30 @@ Cap / Cap2 的半圆（弦在 x = 0.0019）与 DCS 盒的两个半圆（0° → 
   （镜像放置同样对调），见该仓 `docs/plans/2026-09-19-draw-the-cached-body-first-and-the-library-only-when-the-drawing-carries-none.md`。
 - 图纸自己的 `igArc2d`（`PidGraphicKind::Arc`）语料为零，按同一条记录、同一种读法处理，未经实测。
 
+## 更正（2026-10 后续实测）：图纸流 `igArc2d` 不是顺时针
+
+上述「顺时针」结论只裁决了 **JSite 缓存符号本体** 里的弧（`SymbolPrimitive::Arc`，另一种二进制
+布局，不是 PSM `0x0061`）。当时图纸自己的 PSM `igArc2d` 语料为零，结论按"同一条记录、同一种
+读法"外推——2026-10 链接边框模板 `CPE-SQ-A0/A1.igr` 的 `/Sheet6` 首次带来 18 条图纸 `igArc2d`
+（CPE logo 的字母弧），实测为**直接 s→e 扫掠**：记录 `s=5.83, e=6.24` 的弧参考图只画 24° 短弧，
+按顺时针读即成 337° 整环（我方导出的 logo 上确有不该有的"眼圈"环，改直读后与参考图一致）。
+同一条字母曲线在 `igBoundary2d` 成员（`0x74`）与 `igArc2d` 中各存一份、角度值相同——边界环的
+成员链要求短弧，间接印证图纸记录也是短弧读法。`shape_primitive` 的本体弧交换逻辑维持不变
+（本体顺时针有构造线实证），图纸 `PidGraphicKind::Arc` 消费端按直读处理。
+
+## 追加（2026-10-16）：minor-sweep 归一化与 π 边界上的 ulp 陷阱
+
+实测补齐统一规则：消费端把弧**归一化到 ≤ π 的 minor 弧**（CCW 扫掠超过 π 就交换两端），恰为 π
+时保持本体顺时针约定。四个实测点全兼容：W 的 CV 阀膜片 `1.1659 → 1.4273`（直读 345°，参考图是
+15° 小弧）、Manifold 半圆端帽（= π，保 CW 得左半圆）、.igr logo 弧（0.41 rad 直读）、W 的
+`4.1457 → 1.5708`（直读 212°，参考图 ~148°）。
+
+**π 边界必须带 epsilon**：`Parametric V Drum` 缓存体的端帽弧读 `π → 0`，而文件的 π 是
+`3.141592653589794`——比 `f64::consts::PI` 大一个 ulp。裸 `sweep > PI` 把这个恰半圆判成
+「超 π」翻转成补弧（A/B 两图的容器左封头曾因此朝内凹）。消费端已改
+`sweep > PI + 1e-9`（`OpenCADStudio/src/io/pid/{symbols.rs,build.rs}`），A/B/LT 三图封头与
+参考一致。
+
 ## 复现
 
 `tests/parse_real_files.rs::a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle`：

@@ -146,6 +146,22 @@ fn visible_box(body: &PidSymbolDefinition) -> Option<(f64, f64, f64, f64)> {
                 }
             }
             SymbolPrimitive::Text { at, .. } => add(at.0, at.1),
+            SymbolPrimitive::Boundary { members, .. } => {
+                for member in members {
+                    match member {
+                        SymbolPrimitive::Circle { center, radius }
+                        | SymbolPrimitive::Arc { center, radius, .. } => {
+                            add(center.0 - radius, center.1 - radius);
+                            add(center.0 + radius, center.1 + radius);
+                        }
+                        SymbolPrimitive::Line { start, end } => {
+                            add(start.0, start.1);
+                            add(end.0, end.1);
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
     }
     b

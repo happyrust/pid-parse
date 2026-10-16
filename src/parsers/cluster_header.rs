@@ -329,6 +329,27 @@ pub fn decode_psm_cluster0_body_records(data: &[u8]) -> Vec<ClusterBodyRecordDec
         .unwrap_or_default()
 }
 
+/// Resync-scan a `/PSMcluster0` stream for every individually-valid record.
+///
+/// The document storage's `PSMcluster0` is not the contiguous chain the `JSite`
+/// caches are: its records sit behind NUL padding and unclaimed regions the
+/// strict walker stops at, so the full-coverage gate returns nothing even
+/// though the layer registry inside it decodes cleanly. This scan asks
+/// [`decode_cluster_body_record_at`] at every offset instead; callers are
+/// expected to validate each returned record's payload against the layout of
+/// the family they want (the layer, manager and view-filter-set payload
+/// decoders are all exact-tail strict), which keeps a false-positive envelope
+/// from becoming a record.
+pub fn resync_cluster_body_records(data: &[u8]) -> Vec<ClusterBodyRecordDecoded> {
+    let mut out = Vec::new();
+    for offset in 0..data.len().saturating_sub(6) {
+        if let Some(record) = decode_cluster_body_record_at(data, offset) {
+            out.push(record);
+        }
+    }
+    out
+}
+
 /// Shared core for the post-table walk: compute the prologue range and
 /// run the full-coverage gate described on
 /// [`decode_psm_cluster0_body_records`].

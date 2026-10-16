@@ -706,7 +706,7 @@ fn read_field(dump: &[u8], pos: usize, column: &Column) -> Result<(Field, usize)
     let next = pos + len;
     let field = match column.kind {
         Kind::Char => {
-            if len % 2 != 0 {
+            if !len.is_multiple_of(2) {
                 return Err(format!("odd UTF-16 length {len}"));
             }
             Field::Text(decode_utf16_be(raw))
@@ -721,8 +721,10 @@ fn read_field(dump: &[u8], pos: usize, column: &Column) -> Result<(Field, usize)
 
 fn decode_utf16_be(raw: &[u8]) -> String {
     let units = raw
-        .chunks_exact(2)
-        .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_be_bytes(*pair))
         .collect::<Vec<_>>();
     String::from_utf16_lossy(&units)
 }

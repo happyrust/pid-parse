@@ -2740,7 +2740,8 @@
       },
       "value": "TK 264",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 72
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2807,7 +2808,8 @@
       },
       "value": "  BV01",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2874,7 +2876,8 @@
       },
       "value": "PT",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2941,7 +2944,8 @@
       },
       "value": "  ",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",

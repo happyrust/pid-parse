@@ -77,7 +77,7 @@ fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
     use crate::parsers::sheet_records::{
         decode_igarc_at, decode_igbspcurve_at, decode_igcircle_at, decode_igdimension_at,
         decode_igellipticalarc_at, decode_igline_at, decode_iglinestring_at, decode_igrectangle_at,
-        decode_igtextbox_at, jsheet_oids, sheet_record_starts,
+        decode_igsym_boundary_at, decode_igtextbox_at, jsheet_oids, sheet_record_starts,
     };
     let mut out = JSiteNestedGeometry {
         sheets: jsheet_oids(data),
@@ -102,6 +102,8 @@ fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
             out.bsplines.push(curve.into());
         } else if let Some(dimension) = decode_igdimension_at(data, at) {
             out.dimensions.push(dimension.into());
+        } else if let Some(boundary) = decode_igsym_boundary_at(data, at) {
+            out.boundaries.push(boundary.into());
         }
     }
     out
@@ -110,8 +112,9 @@ fn decode_nested_geometry(data: &[u8]) -> JSiteNestedGeometry {
 /// Resolve the style id of every drawable stroke in `nested` against the
 /// storage's own style table, keeping the ids that reach a line style.
 /// Lettering is left out: its id names a paragraph style, which is not a
-/// line style, and no cached text of the corpus is on a displayed layer
-/// (plan 2026-09-20, P-E6).
+/// line style. The lettering itself is joined where the bodies are built —
+/// `PidSymbolDefinition::primitive_letterings` resolves each text record's
+/// index through this same table.
 fn resolve_stroke_styles(
     nested: &JSiteNestedGeometry,
     table: &DocumentStyleTable,

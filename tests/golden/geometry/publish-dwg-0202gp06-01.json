@@ -4584,8 +4584,8 @@
       "symbol_path": "\\\\WIN-SPID\\qsmcqtaz13\\Plant\\Ref\\Symbols\\Equipment\\Vessels\\Tanks\\Wastewater Pit.sym",
       "rotation": 0.0,
       "scale": [
-        1.0,
-        1.0
+        0.7799399847800209,
+        0.7799399847800209
       ],
       "definition": {
         "site": 793,
@@ -5175,7 +5175,8 @@
       },
       "value": "量液孔",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 56
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5242,7 +5243,8 @@
       },
       "value": "A3-FA060201",
       "height": 0.0,
-      "rotation": 7.245086611154727e-13
+      "rotation": 7.245086611154727e-13,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5309,7 +5311,8 @@
       },
       "value": "i=0.3 %",
       "height": 0.0,
-      "rotation": 4.2744356662827717e-13
+      "rotation": 4.2744356662827717e-13,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5376,7 +5379,8 @@
       },
       "value": "DN80",
       "height": 0.0,
-      "rotation": 7.245086611154727e-13
+      "rotation": 7.245086611154727e-13,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5443,7 +5447,8 @@
       },
       "value": "272",
       "height": 0.0,
-      "rotation": 1.5707963267953102
+      "rotation": 1.5707963267953102,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5510,7 +5515,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 1.5707963267953102
+      "rotation": 1.5707963267953102,
+      "anchor_code": 5
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5577,7 +5583,8 @@
       },
       "value": "ODOIL020150 MM1.6AR12WE",
       "height": 0.0,
-      "rotation": 1.5707963267949008
+      "rotation": 1.5707963267949008,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5644,7 +5651,8 @@
       },
       "value": "DWG-0202GP06-02",
       "height": 0.0,
-      "rotation": 3.141592653589793
+      "rotation": 3.141592653589793,
+      "anchor_code": 38
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5711,7 +5719,8 @@
       },
       "value": "ODOIL040150 MM1.6AR12WE",
       "height": 0.0,
-      "rotation": 1.5707963267948937
+      "rotation": 1.5707963267948937,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5778,7 +5787,8 @@
       },
       "value": "说 明",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5845,7 +5855,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 1.5707963267953102
+      "rotation": 1.5707963267953102,
+      "anchor_code": 72
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5912,7 +5923,8 @@
       },
       "value": "ODOIL030150 MM1.6AR12WE",
       "height": 0.0,
-      "rotation": 1.5707963267948974
+      "rotation": 1.5707963267948974,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5979,7 +5991,8 @@
       },
       "value": "OD-50-03-0201-1.6AR12-WE50",
       "height": 0.0,
-      "rotation": 1.5707963267949008
+      "rotation": 1.5707963267949008,
+      "anchor_code": 66
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6046,7 +6059,8 @@
       },
       "value": "OD-50-03-0401-1.6AR12-WE50",
       "height": 0.0,
-      "rotation": 1.5707963267948937
+      "rotation": 1.5707963267948937,
+      "anchor_code": 66
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6113,7 +6127,8 @@
       },
       "value": "1",
       "height": 0.0,
-      "rotation": 1.5707963267953102
+      "rotation": 1.5707963267953102,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6180,7 +6195,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 1.5707963267953102
+      "rotation": 1.5707963267953102,
+      "anchor_code": 72
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6247,7 +6263,8 @@
       },
       "value": "ODOIL010150 MM1.6AR12WE",
       "height": 0.0,
-      "rotation": 1.570796326794893
+      "rotation": 1.570796326794893,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6314,7 +6331,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 1.5707963267953458
+      "rotation": 1.5707963267953458,
+      "anchor_code": 5
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6381,7 +6399,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 1.5707963267953458
+      "rotation": 1.5707963267953458,
+      "anchor_code": 72
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6448,7 +6467,8 @@
       },
       "value": "285",
       "height": 0.0,
-      "rotation": 1.5707963267953458
+      "rotation": 1.5707963267953458,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6515,7 +6535,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 1.5707963267953102
+      "rotation": 1.5707963267953102,
+      "anchor_code": 5
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6582,7 +6603,8 @@
       },
       "value": "RD060201",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 56
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6649,7 +6671,8 @@
       },
       "value": "h≥5m",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 56
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6716,7 +6739,8 @@
       },
       "value": "OD-50-03-0101-1.6AR12-WE50",
       "height": 0.0,
-      "rotation": 1.570796326794893
+      "rotation": 1.570796326794893,
+      "anchor_code": 66
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6783,7 +6807,8 @@
       },
       "value": "270",
       "height": 0.0,
-      "rotation": 1.5707963267953102
+      "rotation": 1.5707963267953102,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6850,7 +6875,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 1.5707963267953102
+      "rotation": 1.5707963267953102,
+      "anchor_code": 72
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6917,7 +6943,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 1.5707963267953102
+      "rotation": 1.5707963267953102,
+      "anchor_code": 5
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6984,7 +7011,8 @@
       },
       "value": "OD-50-03-0301-1.6AR12-WE50",
       "height": 0.0,
-      "rotation": 1.5707963267949332
+      "rotation": 1.5707963267949332,
+      "anchor_code": 64
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7051,7 +7079,8 @@
       },
       "value": "H=1600mm ",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7118,7 +7147,8 @@
       },
       "value": "LIA",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7185,7 +7215,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7252,7 +7283,8 @@
       },
       "value": " 060201",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7319,7 +7351,8 @@
       },
       "value": "L=300mm ",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7386,7 +7419,8 @@
       },
       "value": " 060201",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7453,7 +7487,8 @@
       },
       "value": "LIT",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7520,7 +7555,8 @@
       },
       "value": "27.0 m^3  3.0 m*3.0 m*3.0 m",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7587,7 +7623,8 @@
       },
       "value": "设备规格",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7654,7 +7691,8 @@
       },
       "value": "新建",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7721,7 +7759,8 @@
       },
       "value": " 备注",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7788,7 +7827,8 @@
       },
       "value": "设备名称",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7855,7 +7895,8 @@
       },
       "value": "污水池",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7922,7 +7963,8 @@
       },
       "value": "设备位号",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -7989,7 +8031,8 @@
       },
       "value": "1、污油池上放空管线高度应大于5m。\r2、阻火器电伴热带从根部缠至地面以上2m。",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 49
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8056,7 +8099,8 @@
       },
       "value": "LFL-80-06-0201-1.6AR12-WE50",
       "height": 0.0,
-      "rotation": 1.5707963267949385
+      "rotation": 1.5707963267949385,
+      "anchor_code": 66
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8123,7 +8167,8 @@
       },
       "value": "集输工艺",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 56
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8190,7 +8235,8 @@
       },
       "value": "DD24024-DWG-0202GP06-02-0",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8257,7 +8303,8 @@
       },
       "value": "沁水煤层气田安泽区块安13井区开发",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8324,7 +8371,8 @@
       },
       "value": "~",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8391,7 +8439,8 @@
       },
       "value": "施工图",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8458,7 +8507,8 @@
       },
       "value": "DD24024",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8525,7 +8575,8 @@
       },
       "value": " ",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8592,7 +8643,8 @@
       },
       "value": "0",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8659,7 +8711,8 @@
       },
       "value": "2025.06.25",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8726,7 +8779,8 @@
       },
       "value": "安3集气站\r排污单元\r污油池\r管道及仪表流程图",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8793,7 +8847,8 @@
       },
       "value": "DWG-0202GP06-02",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 21
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8860,7 +8915,8 @@
       },
       "value": "OD-100-06-0101-1.6AR12-WE50",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 66
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -11117,6 +11173,134 @@
   },
   {
     "id": "/Sheet6:iglinestring2d:3",
+    "graphic_oid": 520,
+    "source_layer": {
+      "oid": 17,
+      "name": "HiddenObjects",
+      "storage_path": "/",
+      "displayed": false
+    },
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.17094728452507313,
+        "y": 0.22017723297313083
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5937458383472489,
+            "y": 0.4196291691964342
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 2577,
+        "end": 2639
+      },
+      "record_id": "iglinestring2d:3",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igLineString2d record (type 0x0084) whose 2 vertices all coincide -- a placement anchor, no stroke; oid=520 form=1 scope=3"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:iglinestring2d:4",
+    "graphic_oid": 539,
+    "source_layer": {
+      "oid": 17,
+      "name": "HiddenObjects",
+      "storage_path": "/",
+      "displayed": false
+    },
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.15651370252785263,
+        "y": 0.22017723297313083
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5937458383472489,
+            "y": 0.4196291691964342
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 3113,
+        "end": 3175
+      },
+      "record_id": "iglinestring2d:4",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igLineString2d record (type 0x0084) whose 2 vertices all coincide -- a placement anchor, no stroke; oid=539 form=1 scope=3"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:iglinestring2d:5",
     "graphic_oid": 556,
     "source_layer": {
       "oid": 8,
@@ -11180,14 +11364,14 @@
         "start": 3873,
         "end": 3935
       },
-      "record_id": "iglinestring2d:3",
+      "record_id": "iglinestring2d:5",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=556 parent_ref=564 sub_type=0x0010 index=29 form=1 scope=2 vc=2 total_length=0.0471; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:4",
+    "id": "/Sheet6:iglinestring2d:6",
     "graphic_oid": 561,
     "source_layer": {
       "oid": 8,
@@ -11251,14 +11435,14 @@
         "start": 4159,
         "end": 4221
       },
-      "record_id": "iglinestring2d:4",
+      "record_id": "iglinestring2d:6",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=561 parent_ref=562 sub_type=0x0010 index=18 form=1 scope=2 vc=2 total_length=0.0144; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:5",
+    "id": "/Sheet6:iglinestring2d:7",
     "graphic_oid": 580,
     "source_layer": {
       "oid": 8,
@@ -11322,14 +11506,14 @@
         "start": 4923,
         "end": 4985
       },
-      "record_id": "iglinestring2d:5",
+      "record_id": "iglinestring2d:7",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=580 parent_ref=569 sub_type=0x0010 index=29 form=1 scope=2 vc=2 total_length=0.0475; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:6",
+    "id": "/Sheet6:iglinestring2d:8",
     "graphic_oid": 808,
     "source_layer": {
       "oid": 17,
@@ -11393,14 +11577,14 @@
         "start": 5224,
         "end": 5286
       },
-      "record_id": "iglinestring2d:6",
+      "record_id": "iglinestring2d:8",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=808 parent_ref=4756 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0096; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:7",
+    "id": "/Sheet6:iglinestring2d:9",
     "graphic_oid": 999,
     "source_layer": {
       "oid": 12,
@@ -11464,14 +11648,14 @@
         "start": 5936,
         "end": 5998
       },
-      "record_id": "iglinestring2d:7",
+      "record_id": "iglinestring2d:9",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=999 parent_ref=1217 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0031; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:8",
+    "id": "/Sheet6:iglinestring2d:10",
     "graphic_oid": 1103,
     "source_layer": {
       "oid": 12,
@@ -11535,14 +11719,14 @@
         "start": 6686,
         "end": 6748
       },
-      "record_id": "iglinestring2d:8",
+      "record_id": "iglinestring2d:10",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=1103 parent_ref=1117 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0035; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:9",
+    "id": "/Sheet6:iglinestring2d:11",
     "graphic_oid": 1316,
     "source_layer": {
       "oid": 8,
@@ -11606,14 +11790,14 @@
         "start": 7491,
         "end": 7553
       },
-      "record_id": "iglinestring2d:9",
+      "record_id": "iglinestring2d:11",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=1316 parent_ref=1317 sub_type=0x0010 index=18 form=1 scope=2 vc=2 total_length=0.0144; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:10",
+    "id": "/Sheet6:iglinestring2d:12",
     "graphic_oid": 1441,
     "source_layer": {
       "oid": 12,
@@ -11677,14 +11861,14 @@
         "start": 8253,
         "end": 8315
       },
-      "record_id": "iglinestring2d:10",
+      "record_id": "iglinestring2d:12",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=1441 parent_ref=1463 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0036; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:11",
+    "id": "/Sheet6:iglinestring2d:13",
     "graphic_oid": 1838,
     "source_layer": {
       "oid": 17,
@@ -11748,14 +11932,14 @@
         "start": 9596,
         "end": 9658
       },
-      "record_id": "iglinestring2d:11",
+      "record_id": "iglinestring2d:13",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=1838 parent_ref=5203 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0049; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:12",
+    "id": "/Sheet6:iglinestring2d:14",
     "graphic_oid": 1891,
     "source_layer": {
       "oid": 17,
@@ -11819,14 +12003,14 @@
         "start": 9768,
         "end": 9830
       },
-      "record_id": "iglinestring2d:12",
+      "record_id": "iglinestring2d:14",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=1891 parent_ref=1890 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0110; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:13",
+    "id": "/Sheet6:iglinestring2d:15",
     "graphic_oid": 2060,
     "source_layer": {
       "oid": 8,
@@ -11890,14 +12074,14 @@
         "start": 10408,
         "end": 10470
       },
-      "record_id": "iglinestring2d:13",
+      "record_id": "iglinestring2d:15",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=2060 parent_ref=2071 sub_type=0x0010 index=18 form=1 scope=2 vc=2 total_length=0.0128; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:14",
+    "id": "/Sheet6:iglinestring2d:16",
     "graphic_oid": 2066,
     "source_layer": {
       "oid": 8,
@@ -11961,14 +12145,14 @@
         "start": 10920,
         "end": 10982
       },
-      "record_id": "iglinestring2d:14",
+      "record_id": "iglinestring2d:16",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=2066 parent_ref=2065 sub_type=0x0010 index=18 form=1 scope=2 vc=2 total_length=0.0077; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:15",
+    "id": "/Sheet6:iglinestring2d:17",
     "graphic_oid": 2067,
     "source_layer": {
       "oid": 8,
@@ -12032,14 +12216,14 @@
         "start": 10982,
         "end": 11044
       },
-      "record_id": "iglinestring2d:15",
+      "record_id": "iglinestring2d:17",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=2067 parent_ref=2064 sub_type=0x0010 index=29 form=1 scope=2 vc=2 total_length=0.0460; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:16",
+    "id": "/Sheet6:iglinestring2d:18",
     "graphic_oid": 2093,
     "source_layer": {
       "oid": 12,
@@ -12103,14 +12287,14 @@
         "start": 11876,
         "end": 11938
       },
-      "record_id": "iglinestring2d:16",
+      "record_id": "iglinestring2d:18",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=2093 parent_ref=2078 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0037; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:17",
+    "id": "/Sheet6:iglinestring2d:19",
     "graphic_oid": 2230,
     "source_layer": {
       "oid": 17,
@@ -12174,14 +12358,14 @@
         "start": 12588,
         "end": 12650
       },
-      "record_id": "iglinestring2d:17",
+      "record_id": "iglinestring2d:19",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=2230 parent_ref=5058 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.2711; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:18",
+    "id": "/Sheet6:iglinestring2d:20",
     "graphic_oid": 3134,
     "source_layer": {
       "oid": 17,
@@ -12245,14 +12429,14 @@
         "start": 14744,
         "end": 14806
       },
-      "record_id": "iglinestring2d:18",
+      "record_id": "iglinestring2d:20",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=3134 parent_ref=3129 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0035; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:19",
+    "id": "/Sheet6:iglinestring2d:21",
     "graphic_oid": 3476,
     "source_layer": {
       "oid": 17,
@@ -12316,14 +12500,14 @@
         "start": 15857,
         "end": 15919
       },
-      "record_id": "iglinestring2d:19",
+      "record_id": "iglinestring2d:21",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=3476 parent_ref=2295 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0012; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:20",
+    "id": "/Sheet6:iglinestring2d:22",
     "graphic_oid": 3527,
     "source_layer": {
       "oid": 17,
@@ -12387,14 +12571,14 @@
         "start": 15979,
         "end": 16041
       },
-      "record_id": "iglinestring2d:20",
+      "record_id": "iglinestring2d:22",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=3527 parent_ref=3831 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0004; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:21",
+    "id": "/Sheet6:iglinestring2d:23",
     "graphic_oid": 4101,
     "source_layer": {
       "oid": 8,
@@ -12466,14 +12650,14 @@
         "start": 16980,
         "end": 17074
       },
-      "record_id": "iglinestring2d:21",
+      "record_id": "iglinestring2d:23",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=4101 parent_ref=3155 sub_type=0x0010 index=18 form=1 scope=1 vc=4 total_length=0.0287; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:22",
+    "id": "/Sheet6:iglinestring2d:24",
     "graphic_oid": 4193,
     "source_layer": {
       "oid": 17,
@@ -12537,14 +12721,142 @@
         "start": 17204,
         "end": 17266
       },
-      "record_id": "iglinestring2d:22",
+      "record_id": "iglinestring2d:24",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=4193 parent_ref=4195 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0040; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:23",
+    "id": "/Sheet6:iglinestring2d:25",
+    "graphic_oid": 4433,
+    "source_layer": {
+      "oid": 17,
+      "name": "HiddenObjects",
+      "storage_path": "/",
+      "displayed": false
+    },
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.129298649599462,
+        "y": 0.22017723297313083
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5937458383472489,
+            "y": 0.4196291691964342
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 17767,
+        "end": 17829
+      },
+      "record_id": "iglinestring2d:25",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igLineString2d record (type 0x0084) whose 2 vertices all coincide -- a placement anchor, no stroke; oid=4433 form=1 scope=3"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:iglinestring2d:26",
+    "graphic_oid": 4446,
+    "source_layer": {
+      "oid": 17,
+      "name": "HiddenObjects",
+      "storage_path": "/",
+      "displayed": false
+    },
+    "kind": {
+      "kind": "point",
+      "position": {
+        "x": 0.1421059498591697,
+        "y": 0.22017723297313083
+      }
+    },
+    "coordinate_context": {
+      "coordinate_space": "source_sheet",
+      "units": {
+        "state": "known",
+        "unit": "m"
+      },
+      "page_transform": {
+        "state": "available",
+        "origin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "page_bounds": {
+          "min": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "max": {
+            "x": 0.5937458383472489,
+            "y": 0.4196291691964342
+          }
+        },
+        "matrix": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "source": {
+      "stream_path": "/Sheet6",
+      "byte_range": {
+        "start": 18359,
+        "end": 18421
+      },
+      "record_id": "iglinestring2d:26",
+      "record_kind": "primitive_polyline",
+      "note": "PSM igLineString2d record (type 0x0084) whose 2 vertices all coincide -- a placement anchor, no stroke; oid=4446 form=1 scope=3"
+    },
+    "confidence": "probe_only"
+  },
+  {
+    "id": "/Sheet6:iglinestring2d:27",
     "graphic_oid": 4478,
     "source_layer": {
       "oid": 8,
@@ -12608,14 +12920,14 @@
         "start": 18783,
         "end": 18845
       },
-      "record_id": "iglinestring2d:23",
+      "record_id": "iglinestring2d:27",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=4478 parent_ref=2941 sub_type=0x0010 index=66 form=1 scope=2 vc=2 total_length=0.0076; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:24",
+    "id": "/Sheet6:iglinestring2d:28",
     "graphic_oid": 4950,
     "source_layer": {
       "oid": 17,
@@ -12679,14 +12991,14 @@
         "start": 19319,
         "end": 19381
       },
-      "record_id": "iglinestring2d:24",
+      "record_id": "iglinestring2d:28",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=4950 parent_ref=3369 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0016; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:25",
+    "id": "/Sheet6:iglinestring2d:29",
     "graphic_oid": 5474,
     "source_layer": {
       "oid": 8,
@@ -12754,14 +13066,14 @@
         "start": 21187,
         "end": 21265
       },
-      "record_id": "iglinestring2d:25",
+      "record_id": "iglinestring2d:29",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=5474 parent_ref=5576 sub_type=0x0010 index=18 form=1 scope=1 vc=3 total_length=0.0844; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:26",
+    "id": "/Sheet6:iglinestring2d:30",
     "graphic_oid": 6574,
     "source_layer": {
       "oid": 17,
@@ -12825,14 +13137,14 @@
         "start": 23264,
         "end": 23326
       },
-      "record_id": "iglinestring2d:26",
+      "record_id": "iglinestring2d:30",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=6574 parent_ref=4744 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0028; byte layout from fixture dump"
     },
     "confidence": "decoded"
   },
   {
-    "id": "/Sheet6:iglinestring2d:27",
+    "id": "/Sheet6:iglinestring2d:31",
     "graphic_oid": 7349,
     "source_layer": {
       "oid": 17,
@@ -12896,7 +13208,7 @@
         "start": 23549,
         "end": 23611
       },
-      "record_id": "iglinestring2d:27",
+      "record_id": "iglinestring2d:31",
       "record_kind": "primitive_polyline",
       "note": "PSM igLineString2d record (Intergraph Sigma standard polyline, type 0x0084, IGDS class tag 0x84); oid=7349 parent_ref=5154 sub_type=0x0010 index=1 form=1 scope=2 vc=2 total_length=0.0021; byte layout from fixture dump"
     },
