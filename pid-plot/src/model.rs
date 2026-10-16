@@ -11,7 +11,8 @@
 
 use std::path::{Path, PathBuf};
 
-use pid_parse::symbol_library::{SymbolLibrary, SymbolPrimitive};
+use pid_parse::style_link::TextAlignment;
+use pid_parse::symbol_library::{SymbolLettering, SymbolLibrary, SymbolPrimitive};
 use pid_parse::{
     PidGeometryConfidence, PidGraphicEntity, PidGraphicKind, PidParser, build_normalized_geometry,
 };
@@ -162,6 +163,15 @@ impl TextAnchor {
             _ => Self::Right,
         }
     }
+
+    /// Flip left and right when a mirrored placement absorbs a horizontal flip.
+    fn flip_horizontal(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Center => Self::Center,
+            Self::Right => Self::Left,
+        }
+    }
 }
 
 /// Which line of its insertion point a paragraph letters from.
@@ -192,6 +202,15 @@ impl TextLine {
             0 => Self::Bottom,
             1 => Self::Top,
             _ => Self::Middle,
+        }
+    }
+
+    /// Flip top and bottom when a mirrored placement absorbs a vertical flip.
+    fn flip_vertical(self) -> Self {
+        match self {
+            Self::Bottom => Self::Top,
+            Self::Middle => Self::Middle,
+            Self::Top => Self::Bottom,
         }
     }
 }
@@ -257,6 +276,14 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
     let mut missing_boxes = Vec::new();
 
     for entity in &geometry.entities {
+        if entity
+            .source_layer
+            .as_ref()
+            .and_then(|layer| layer.displayed)
+            == Some(false)
+        {
+            continue;
+        }
         match &entity.kind {
             PidGraphicKind::SymbolInstance {
                 insertion,
@@ -284,30 +311,33 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                     scale: *scale,
                     symbol: symbol_path.clone(),
                 };
-                if let Some(body) = body {
-                    for styled in &body.primitives {
-                        push_symbol_primitive(
-                            &mut primitives,
-                            entity,
-                            &placement,
-                            &styled.primitive,
-                            page_mm,
-                        );
-                    }
-                } else if let Some(definition) =
+                if let Some(definition) =
                     definition.and_then(|reference| geometry.symbol_definition(reference))
                 {
                     if symbol_path.is_some()
+                        && body.is_none()
                         && let Some(key) = key.clone()
                     {
                         missing.insert(key);
                     }
-                    for primitive in definition.visible_primitives() {
+                    for (primitive, _style, lettering) in definition.visible_styled() {
                         push_symbol_primitive(
                             &mut primitives,
                             entity,
                             &placement,
                             primitive,
+                            lettering,
+                            page_mm,
+                        );
+                    }
+                } else if let Some(body) = body {
+                    for styled in body.displayed_primitives() {
+                        push_symbol_primitive(
+                            &mut primitives,
+                            entity,
+                            &placement,
+                            &styled.primitive,
+                            styled.lettering.as_ref(),
                             page_mm,
                         );
                     }
@@ -425,6 +455,14 @@ fn push_entity(
     page_mm: Option<[f64; 2]>,
     styles: &pid_parse::style_link::TextStyleIndex,
 ) {
+    if entity
+        .source_layer
+        .as_ref()
+        .and_then(|layer| layer.displayed)
+        == Some(false)
+    {
+        return;
+    }
     let placement = Placement {
         insertion: [0.0, 0.0],
         rotation: 0.0,
@@ -541,6 +579,7 @@ fn push_symbol_primitive(
     entity: &PidGraphicEntity,
     placement: &Placement,
     primitive_shape: &SymbolPrimitive,
+    lettering: Option<&SymbolLettering>,
     page_mm: Option<[f64; 2]>,
 ) {
     let shape = match primitive_shape {
@@ -600,20 +639,7 @@ fn push_symbol_primitive(
             if symbol_text_is_null_placeholder(text) {
                 return;
             }
-            PaperShape::Text {
-                origin_mm: place_metres(
-                    [at.0, at.1],
-                    placement.insertion,
-                    placement.rotation,
-                    placement.scale,
-                ),
-                height_mm: None,
-                rotation: placement.rotation,
-                value: text.clone(),
-                font: None,
-                anchor: TextAnchor::Left,
-                line: TextLine::Middle,
-            }
+            symbol_text_shape(text, *at, placement, lettering)
         }
         SymbolPrimitive::BSpline { .. } => {
             let points = primitive_shape.bspline_points(8);
@@ -637,13 +663,81 @@ fn push_symbol_primitive(
         // a sheet-level boundary arrives as a closed polyline.
         SymbolPrimitive::Boundary { members, .. } => {
             for member in members {
-                push_symbol_primitive(out, entity, placement, member, page_mm);
+                push_symbol_primitive(out, entity, placement, member, None, page_mm);
             }
             return;
         }
     };
     if !sheet_edge(&shape, page_mm) {
         out.push(primitive(entity, placement, shape));
+    }
+}
+
+fn symbol_text_shape(
+    text: &str,
+    at: (f64, f64),
+    placement: &Placement,
+    lettering: Option<&SymbolLettering>,
+) -> PaperShape {
+    let scale = placement.scale[0].abs();
+    let height_mm = lettering.and_then(|lettering| {
+        if lettering.letter_height_m.abs() > 1e-9 {
+            Some(lettering.letter_height_m.abs() * scale * MM_PER_METRE)
+        } else {
+            lettering
+                .height_m
+                .filter(|height| *height > 0.0)
+                .map(|height| height * scale * MM_PER_METRE)
+        }
+    });
+    let mut anchor = lettering.map_or(TextAnchor::Left, |lettering| {
+        if lettering.anchor_code != 0 {
+            TextAnchor::from_anchor_code(lettering.anchor_code)
+        } else {
+            match lettering.alignment {
+                Some(TextAlignment::Center) => TextAnchor::Center,
+                Some(TextAlignment::Right) => TextAnchor::Right,
+                Some(TextAlignment::Left) | None => TextAnchor::Left,
+            }
+        }
+    });
+    let mut line = lettering.map_or(TextLine::Middle, |lettering| {
+        if lettering.anchor_code != 0 {
+            TextLine::from_anchor_code(lettering.anchor_code)
+        } else {
+            TextLine::Middle
+        }
+    });
+    let local_rotation = lettering.map_or(0.0, |lettering| lettering.rotation_rad);
+    let mirrored = placement.scale[0] * placement.scale[1] < 0.0;
+    let rotation = if mirrored {
+        let raw = placement.rotation - local_rotation;
+        let emit = (raw + std::f64::consts::FRAC_PI_2).rem_euclid(std::f64::consts::PI)
+            - std::f64::consts::FRAC_PI_2;
+        let delta = emit - placement.rotation;
+        if delta.cos() < -0.5 {
+            anchor = anchor.flip_horizontal();
+        }
+        if delta.cos() > 0.5 {
+            line = line.flip_vertical();
+        }
+        emit
+    } else {
+        placement.rotation + local_rotation
+    };
+    PaperShape::Text {
+        origin_mm: place_metres(
+            [at.0, at.1],
+            placement.insertion,
+            placement.rotation,
+            placement.scale,
+        ),
+        height_mm,
+        rotation,
+        value: text.to_string(),
+        font: lettering.and_then(|lettering| lettering.font_name.clone()),
+        anchor,
+        line,
     }
 }
 
@@ -654,11 +748,17 @@ fn arc_shape(
     end_angle: f64,
     placement: &Placement,
 ) -> PaperShape {
-    let mirrored = placement.scale[0] * placement.scale[1] < 0.0;
-    let mut start = world_angle(start_angle, placement.rotation, placement.scale);
-    let mut end = world_angle(end_angle, placement.rotation, placement.scale);
-    if mirrored {
+    let mut start = start_angle;
+    let mut end = end_angle;
+    let ccw = (start - end).rem_euclid(std::f64::consts::TAU);
+    if ccw > std::f64::consts::PI + 1e-9 {
         std::mem::swap(&mut start, &mut end);
+    }
+    let mirrored = placement.scale[0] * placement.scale[1] < 0.0;
+    let mut world_start = world_angle(start, placement.rotation, placement.scale);
+    let mut world_end = world_angle(end, placement.rotation, placement.scale);
+    if mirrored {
+        std::mem::swap(&mut world_start, &mut world_end);
     }
     PaperShape::Arc {
         center_mm: place_metres(
@@ -668,8 +768,8 @@ fn arc_shape(
             placement.scale,
         ),
         radius_mm: radius.abs() * placement.scale[0].abs() * MM_PER_METRE,
-        start_angle: start,
-        end_angle: end,
+        start_angle: world_start,
+        end_angle: world_end,
     }
 }
 
@@ -720,13 +820,17 @@ fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use pid_parse::symbol_library::SymbolPrimitive;
+    use pid_parse::style_link::TextAlignment;
+    use pid_parse::symbol_library::{SymbolLettering, SymbolPrimitive};
     use pid_parse::{
         PidCoordinateContext, PidGeometryConfidence, PidGraphicEntity, PidGraphicKind,
-        PidGraphicProvenance, PidPoint,
+        PidGraphicProvenance, PidPoint, PidSourceLayer,
     };
 
-    use super::{PaperShape, Placement, place_metres, push_entity, push_symbol_primitive};
+    use super::{
+        PaperShape, Placement, TextAnchor, TextLine, arc_shape, place_metres, push_entity,
+        push_symbol_primitive,
+    };
 
     fn entity(kind: PidGraphicKind) -> PidGraphicEntity {
         PidGraphicEntity {
@@ -797,6 +901,7 @@ mod tests {
                 at: (0.0, 0.0),
             },
             None,
+            None,
         );
         assert!(out.is_empty());
     }
@@ -815,6 +920,7 @@ mod tests {
                 at: (0.0, 0.0),
             },
             None,
+            None,
         );
         assert!(out.is_empty());
     }
@@ -832,6 +938,7 @@ mod tests {
                 text: "HH=NULL".to_string(),
                 at: (0.01, 0.0),
             },
+            None,
             None,
         );
         assert_eq!(out.len(), 1);
@@ -861,5 +968,165 @@ mod tests {
             panic!("{:?}", out[0].shape);
         };
         assert_eq!(value, "NULL");
+    }
+
+    #[test]
+    fn hidden_drawing_layer_entities_are_left_out_of_the_table() {
+        let mut out = Vec::new();
+        let mut hidden = entity(PidGraphicKind::Text {
+            insertion: PidPoint { x: 0.1, y: 0.2 },
+            value: "PGGAS100 << P40".to_string(),
+            height: 0.0025,
+            rotation: 0.0,
+            anchor_code: 0,
+        });
+        hidden.source_layer = Some(PidSourceLayer {
+            oid: 100,
+            name: Some("Label".to_string()),
+            storage_path: "/".to_string(),
+            displayed: Some(false),
+        });
+        push_entity(
+            &mut out,
+            &hidden,
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn symbol_lettering_supplies_height_font_rotation_and_anchor() {
+        let mut out = Vec::new();
+        let lettering = SymbolLettering {
+            anchor_code: 0x10,
+            rotation_rad: 0.25,
+            letter_height_m: 0.0,
+            height_m: Some(0.003),
+            rgb: None,
+            alignment: Some(TextAlignment::Right),
+            line_spacing: None,
+            font_name: Some("Arial Narrow".to_string()),
+        };
+        push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &placement(),
+            &SymbolPrimitive::Text {
+                text: "ESD".to_string(),
+                at: (0.01, 0.02),
+            },
+            Some(&lettering),
+            None,
+        );
+        assert_eq!(out.len(), 1);
+        let PaperShape::Text {
+            height_mm,
+            rotation,
+            font,
+            anchor,
+            line,
+            ..
+        } = &out[0].shape
+        else {
+            panic!("{:?}", out[0].shape);
+        };
+        assert_eq!(*height_mm, Some(3.0));
+        assert!((*rotation - 0.25).abs() < 1e-9);
+        assert_eq!(font.as_deref(), Some("Arial Narrow"));
+        assert_eq!(*anchor, TextAnchor::Center);
+        assert_eq!(*line, TextLine::Bottom);
+    }
+
+    #[test]
+    fn mirrored_placement_lettering_stays_readable() {
+        let lettering = SymbolLettering {
+            anchor_code: 0x00,
+            rotation_rad: 0.0,
+            letter_height_m: 0.0025,
+            height_m: None,
+            rgb: None,
+            alignment: Some(TextAlignment::Left),
+            line_spacing: None,
+            font_name: None,
+        };
+        let mut out = Vec::new();
+        let mut mirrored_pi = placement();
+        mirrored_pi.rotation = std::f64::consts::PI;
+        mirrored_pi.scale = [1.0, -1.0];
+        push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &mirrored_pi,
+            &SymbolPrimitive::Text {
+                text: "ESD".to_string(),
+                at: (0.0, 0.0),
+            },
+            Some(&lettering),
+            None,
+        );
+        let PaperShape::Text {
+            rotation, anchor, ..
+        } = &out[0].shape
+        else {
+            panic!("{:?}", out[0].shape);
+        };
+        assert!(rotation.abs() < 1e-9, "rotation {rotation}");
+        assert_eq!(*anchor, TextAnchor::Right);
+
+        let mut out_vert = Vec::new();
+        let mut mirrored_neg_half = placement();
+        mirrored_neg_half.rotation = -std::f64::consts::FRAC_PI_2;
+        mirrored_neg_half.scale = [1.0, -1.0];
+        let mut bottom_lettering = lettering.clone();
+        bottom_lettering.anchor_code = 0x10;
+        push_symbol_primitive(
+            &mut out_vert,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &mirrored_neg_half,
+            &SymbolPrimitive::Text {
+                text: "D".to_string(),
+                at: (0.0, 0.0),
+            },
+            Some(&bottom_lettering),
+            None,
+        );
+        let PaperShape::Text { rotation, line, .. } = &out_vert[0].shape else {
+            panic!("{:?}", out_vert[0].shape);
+        };
+        assert!((*rotation + std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+        assert_eq!(*line, TextLine::Top);
+    }
+
+    #[test]
+    fn arc_shape_normalizes_to_the_minor_clockwise_sweep_with_pi_ulp_tolerance() {
+        let PaperShape::Arc {
+            start_angle,
+            end_angle,
+            ..
+        } = arc_shape([0.0, 0.0], 0.01, 1.1659, 1.4273, &placement())
+        else {
+            panic!("expected arc");
+        };
+        assert!((start_angle - 1.4273).abs() < 1e-6);
+        assert!((end_angle - 1.1659).abs() < 1e-6);
+
+        let pi_plus_ulp = 3.141_592_653_589_794;
+        let PaperShape::Arc {
+            start_angle: s_pi,
+            end_angle: e_pi,
+            ..
+        } = arc_shape([0.0, 0.0], 0.01, pi_plus_ulp, 0.0, &placement())
+        else {
+            panic!("expected arc");
+        };
+        assert!((s_pi.abs() - std::f64::consts::PI).abs() < 1e-6);
+        assert!(e_pi.abs() < 1e-6);
     }
 }

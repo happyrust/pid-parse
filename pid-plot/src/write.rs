@@ -281,16 +281,10 @@ fn paint_shape(ops: &mut Vec<Op>, shape: &PaperShape, page: [f64; 2]) -> bool {
             radius_mm,
             start_angle,
             end_angle,
-        } => chain(
-            ops,
-            &arc_points(
-                *center_mm,
-                *radius_mm,
-                *start_angle,
-                clockwise_sweep(*start_angle, *end_angle),
-            ),
-            page,
-        ),
+        } => {
+            let (start, sweep) = minor_clockwise_arc(*start_angle, *end_angle);
+            chain(ops, &arc_points(*center_mm, *radius_mm, start, sweep), page)
+        }
         PaperShape::Circle {
             center_mm,
             radius_mm,
@@ -506,9 +500,16 @@ fn arc_points(center: [f64; 2], radius: f64, start: f64, sweep: f64) -> Vec<[f64
     points
 }
 
-fn clockwise_sweep(start: f64, end: f64) -> f64 {
-    let ccw = (end - start).rem_euclid(TAU);
-    if ccw < 1e-12 { 0.0 } else { ccw - TAU }
+fn minor_clockwise_arc(start: f64, end: f64) -> (f64, f64) {
+    let mut s = start;
+    let mut e = end;
+    let cw = (s - e).rem_euclid(TAU);
+    if cw > std::f64::consts::PI + 1e-9 {
+        std::mem::swap(&mut s, &mut e);
+    }
+    let ccw = (e - s).rem_euclid(TAU);
+    let sweep = if ccw < 1e-12 { 0.0 } else { ccw - TAU };
+    (s, sweep)
 }
 
 fn resolved_page(model: &PaperModel) -> Result<[f64; 2], PlotWriteError> {
@@ -607,16 +608,14 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
                     radius_mm,
                     start_angle,
                     end_angle,
-                } => push_chain(
-                    &mut out,
-                    &arc_points(
-                        *center_mm,
-                        *radius_mm,
-                        *start_angle,
-                        clockwise_sweep(*start_angle, *end_angle),
-                    ),
-                    page,
-                ),
+                } => {
+                    let (start, sweep) = minor_clockwise_arc(*start_angle, *end_angle);
+                    push_chain(
+                        &mut out,
+                        &arc_points(*center_mm, *radius_mm, start, sweep),
+                        page,
+                    );
+                }
                 PaperShape::Circle {
                     center_mm,
                     radius_mm,
@@ -941,5 +940,18 @@ mod tests {
 
     fn near(point: [f64; 2], expected: [f64; 2]) -> bool {
         (point[0] - expected[0]).abs() < 0.05 && (point[1] - expected[1]).abs() < 0.05
+    }
+
+    #[test]
+    fn minor_clockwise_arc_flips_a_major_sweep_and_keeps_a_pi_ulp_semicircle() {
+        use super::minor_clockwise_arc;
+        let (s, sweep) = minor_clockwise_arc(1.1659, 1.4273);
+        assert!((s - 1.4273).abs() < 1e-6);
+        assert!((sweep + (1.4273 - 1.1659)).abs() < 1e-6);
+
+        let pi_plus_ulp = 3.141_592_653_589_794;
+        let (s_pi, sweep_pi) = minor_clockwise_arc(pi_plus_ulp, 0.0);
+        assert!((s_pi - pi_plus_ulp).abs() < 1e-12);
+        assert!((sweep_pi + std::f64::consts::PI).abs() < 1e-9);
     }
 }
