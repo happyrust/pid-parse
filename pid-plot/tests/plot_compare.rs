@@ -18,33 +18,33 @@ struct Baseline {
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
-        min_coverage: 0.8560,
-        max_extra_mm: 10_855.0,
-        min_text_matched: 3,
+        min_coverage: 0.9430,
+        max_extra_mm: 9_900.0,
+        min_text_matched: 520,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
-        min_coverage: 0.9390,
-        max_extra_mm: 2_455.0,
-        min_text_matched: 2,
+        min_coverage: 0.9430,
+        max_extra_mm: 2_470.0,
+        min_text_matched: 119,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
-        min_coverage: 0.9280,
-        max_extra_mm: 2_420.0,
-        min_text_matched: 1,
+        min_coverage: 0.9320,
+        max_extra_mm: 2_460.0,
+        min_text_matched: 98,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
-        min_coverage: 0.9170,
-        max_extra_mm: 2_655.0,
-        min_text_matched: 4,
+        min_coverage: 0.9250,
+        max_extra_mm: 2_690.0,
+        min_text_matched: 133,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
-        min_coverage: 0.9350,
-        max_extra_mm: 3_245.0,
-        min_text_matched: 2,
+        min_coverage: 0.9610,
+        max_extra_mm: 3_260.0,
+        min_text_matched: 222,
     },
 ];
 

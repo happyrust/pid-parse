@@ -632,6 +632,15 @@ fn push_symbol_primitive(
                 closed: false,
             }
         }
+        // The paper model strokes outlines only — a boundary's fill is what
+        // the CAD export hatches; here each member draws its outline the way
+        // a sheet-level boundary arrives as a closed polyline.
+        SymbolPrimitive::Boundary { members, .. } => {
+            for member in members {
+                push_symbol_primitive(out, entity, placement, member, page_mm);
+            }
+            return;
+        }
     };
     if !sheet_edge(&shape, page_mm) {
         out.push(primitive(entity, placement, shape));
