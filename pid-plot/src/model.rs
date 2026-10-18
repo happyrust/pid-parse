@@ -11,12 +11,8 @@
 
 use std::path::{Path, PathBuf};
 
-use pid_parse::style_link::{
-    LineStyleIndex, ResolvedLineStyle, TextAlignment, TextStyleIndex,
-};
-use pid_parse::symbol_library::{
-    PrimitiveStyle, SymbolLettering, SymbolLibrary, SymbolPrimitive,
-};
+use pid_parse::style_link::{LineStyleIndex, ResolvedLineStyle, TextAlignment, TextStyleIndex};
+use pid_parse::symbol_library::{PrimitiveStyle, SymbolLettering, SymbolLibrary, SymbolPrimitive};
 use pid_parse::{
     PidGeometryConfidence, PidGraphicEntity, PidGraphicKind, PidParser, build_normalized_geometry,
 };
@@ -286,6 +282,18 @@ pub fn place_metres(
     ]
 }
 
+///Whether `entity` sits on a layer `SmartPlant` leaves off a printed page:
+/// a layer the view filter set hides (`displayed == Some(false)`), or the
+/// authored `ConsistencyChecks` review overlay — whose `igPoint2d` records
+/// resolve to `lsWarning` / `lsOk` markers shown on screen and omitted from
+/// every reference plot.
+fn suppressed_from_plot(entity: &PidGraphicEntity) -> bool {
+    let Some(layer) = entity.source_layer.as_ref() else {
+        return false;
+    };
+    layer.displayed == Some(false) || layer.name.as_deref() == Some("ConsistencyChecks")
+}
+
 /// Lay out one `.pid`.
 ///
 /// The symbol library is the first of: `PID_SYMBOL_LIBRARY`, a directory
@@ -311,14 +319,10 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
     let mut found = std::collections::BTreeSet::new();
     let mut missing = std::collections::BTreeSet::new();
     let mut missing_boxes = Vec::new();
+    let mut seen_sheet_fills = std::collections::HashSet::new();
 
     for entity in &geometry.entities {
-        if entity
-            .source_layer
-            .as_ref()
-            .and_then(|layer| layer.displayed)
-            == Some(false)
-        {
+        if suppressed_from_plot(entity) {
             continue;
         }
         match &entity.kind {
@@ -363,9 +367,11 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                             &mut primitives,
                             entity,
                             &placement,
-                            primitive,
-                            body_style,
-                            lettering,
+                            SymbolItem {
+                                shape: primitive,
+                                style: body_style,
+                                lettering,
+                            },
                             placement_style,
                             page_mm,
                         );
@@ -376,9 +382,11 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                             &mut primitives,
                             entity,
                             &placement,
-                            &styled.primitive,
-                            styled.style.as_ref(),
-                            styled.lettering.as_ref(),
+                            SymbolItem {
+                                shape: &styled.primitive,
+                                style: styled.style.as_ref(),
+                                lettering: styled.lettering.as_ref(),
+                            },
                             placement_style,
                             page_mm,
                         );
@@ -395,6 +403,7 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
                 &styles,
                 &line_styles,
                 &fill_styles,
+                &mut seen_sheet_fills,
             ),
         }
     }
@@ -555,12 +564,26 @@ fn body_stroke(
                     .collect()
             })
             .or_else(|| {
-                body_style.map(|style| {
-                    style.dash_mm.iter().map(|segment| segment.abs()).collect()
-                })
+                body_style.map(|style| style.dash_mm.iter().map(|segment| segment.abs()).collect())
             })
             .unwrap_or_default(),
     })
+}
+
+/// Dedup key for one sheet boundary fill: its ring vertices quantised to
+/// micrometres plus the fill colour, so duplicate `igBoundary2d` records on
+/// `/Sheet6` (e.g. A's stop-valve checkerboard oid 3033↔3066, 3044↔3056)
+/// emit once.
+fn sheet_fill_key(chain_mm: &[[f64; 2]], rgb: Option<[u8; 3]>) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    for point in chain_mm {
+        ((point[0] * 1e6).round() as i64).hash(&mut hasher);
+        ((point[1] * 1e6).round() as i64).hash(&mut hasher);
+    }
+    rgb.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn push_entity(
@@ -570,13 +593,9 @@ fn push_entity(
     styles: &TextStyleIndex,
     line_styles: &LineStyleIndex,
     fill_styles: &pid_parse::style_link::FillIndex,
+    seen_sheet_fills: &mut std::collections::HashSet<u64>,
 ) {
-    if entity
-        .source_layer
-        .as_ref()
-        .and_then(|layer| layer.displayed)
-        == Some(false)
-    {
+    if suppressed_from_plot(entity) {
         return;
     }
     let placement = Placement {
@@ -621,15 +640,17 @@ fn push_entity(
                             .and_then(|oid| fill_styles.get(&(stream.clone(), oid)))
                     })
                     .and_then(|fill| fill.rgb());
-                out.push(primitive(
-                    entity,
-                    &placement,
-                    None,
-                    PaperShape::Fill {
-                        chain_mm: points_mm,
-                        rgb,
-                    },
-                ));
+                if seen_sheet_fills.insert(sheet_fill_key(&points_mm, rgb)) {
+                    out.push(primitive(
+                        entity,
+                        &placement,
+                        None,
+                        PaperShape::Fill {
+                            chain_mm: points_mm,
+                            rgb,
+                        },
+                    ));
+                }
                 return;
             }
             out.push(primitive(
@@ -759,8 +780,9 @@ fn push_entity(
 
 /// Stamp one complex-dash glyph along `path` at the advance the style
 /// names — the W drawing's hydraulic pipes, which print a `└`/`⊢` mark
-/// once per fitted cell, centred in the cell, in the line's local frame
-/// (tangent, left normal).
+/// once per fitted cell (`round(len / period)`), centred in the cell or at
+/// the segment end for a stub (`cells <= 1`), in an undirected frame so a
+/// reversed pipe run keeps the same tick orientation as a forward run.
 fn stamp_complex_dash(
     out: &mut Vec<PaperPrimitive>,
     entity: &PidGraphicEntity,
@@ -771,85 +793,91 @@ fn stamp_complex_dash(
     let Some(complex) = resolved.and_then(|style| style.complex_dash.as_ref()) else {
         return;
     };
+    if !complex.draws() {
+        return;
+    }
     let period = complex.period_mm();
     if period <= 1e-6 || path_mm.len() < 2 {
         return;
     }
-    let total: f64 = path_mm
-        .windows(2)
-        .map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]))
-        .sum();
-    if total < period {
-        return;
-    }
-    let cells = (total / period).floor() as usize;
     let placement = Placement {
         insertion: [0.0, 0.0],
         rotation: 0.0,
         scale: [1.0, 1.0],
         symbol: None,
     };
-    for cell in 1..=cells {
-        // The stamp sits at the centre of its fitted cell.
-        let at = ((cell as f64) - 0.5) * (total / cells as f64);
-        let mut walked = 0.0;
-        let mut frame: Option<([f64; 2], [f64; 2])> = None;
-        for pair in path_mm.windows(2) {
-            let length = (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]);
-            if length < 1e-9 {
-                continue;
-            }
-            if walked + length >= at {
-                let t = (at - walked) / length;
-                let point = [
-                    pair[0][0] + (pair[1][0] - pair[0][0]) * t,
-                    pair[0][1] + (pair[1][1] - pair[0][1]) * t,
-                ];
-                let tangent = [
-                    (pair[1][0] - pair[0][0]) / length,
-                    (pair[1][1] - pair[0][1]) / length,
-                ];
-                frame = Some((point, tangent));
-                break;
-            }
-            walked += length;
+    for pair in path_mm.windows(2) {
+        let dx = pair[1][0] - pair[0][0];
+        let dy = pair[1][1] - pair[0][1];
+        let length = dx.hypot(dy);
+        if length < 1e-6 {
+            continue;
         }
-        let Some((point, tangent)) = frame else { continue };
-        let left = [-tangent[1], tangent[0]];
-        for mark in complex.strokes() {
-            if mark.is_degenerate() {
-                continue;
+        let dir_tangent = [dx / length, dy / length];
+        // Normalize the glyph's frame to the undirected segment angle in
+        // (-π/2, π/2]: a run authored right-to-left (149.8 → 117.1) prints
+        // its ticks with the same orientation as a left-to-right run.
+        let frame_tangent = if dx < -1e-9 || (dx.abs() <= 1e-9 && dy < 0.0) {
+            [-dir_tangent[0], -dir_tangent[1]]
+        } else {
+            dir_tangent
+        };
+        let left = [-frame_tangent[1], frame_tangent[0]];
+        let cells = (length / period).round() as usize;
+        let positions: Vec<f64> = if cells <= 1 {
+            vec![length]
+        } else {
+            let step = length / cells as f64;
+            (0..cells).map(|cell| (cell as f64 + 0.5) * step).collect()
+        };
+        for at in positions {
+            let point = [
+                pair[0][0] + dir_tangent[0] * at,
+                pair[0][1] + dir_tangent[1] * at,
+            ];
+            for mark in complex.strokes() {
+                if mark.is_degenerate() {
+                    continue;
+                }
+                let place = |local: (f64, f64)| {
+                    let (lx, ly) = (local.0 * MM_PER_METRE, local.1 * MM_PER_METRE);
+                    [
+                        point[0] + lx * frame_tangent[0] + ly * left[0],
+                        point[1] + lx * frame_tangent[1] + ly * left[1],
+                    ]
+                };
+                out.push(primitive(
+                    entity,
+                    &placement,
+                    stroke.clone(),
+                    PaperShape::Line {
+                        start_mm: place(mark.start),
+                        end_mm: place(mark.end),
+                    },
+                ));
             }
-            let place = |local: (f64, f64)| {
-                let (lx, ly) = (local.0 * MM_PER_METRE, local.1 * MM_PER_METRE);
-                [
-                    point[0] + lx * tangent[0] + ly * left[0],
-                    point[1] + lx * tangent[1] + ly * left[1],
-                ]
-            };
-            out.push(primitive(
-                entity,
-                &placement,
-                stroke.clone(),
-                PaperShape::Line {
-                    start_mm: place(mark.start),
-                    end_mm: place(mark.end),
-                },
-            ));
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct SymbolItem<'a> {
+    shape: &'a SymbolPrimitive,
+    style: Option<&'a PrimitiveStyle>,
+    lettering: Option<&'a SymbolLettering>,
 }
 
 fn push_symbol_primitive(
     out: &mut Vec<PaperPrimitive>,
     entity: &PidGraphicEntity,
     placement: &Placement,
-    primitive_shape: &SymbolPrimitive,
-    body_style: Option<&PrimitiveStyle>,
-    lettering: Option<&SymbolLettering>,
+    item: SymbolItem<'_>,
     placement_style: Option<&ResolvedLineStyle>,
     page_mm: Option<[f64; 2]>,
 ) {
+    let primitive_shape = item.shape;
+    let body_style = item.style;
+    let lettering = item.lettering;
     let shape = match primitive_shape {
         SymbolPrimitive::Line { start, end } => PaperShape::Line {
             start_mm: place_metres(
@@ -865,15 +893,9 @@ fn push_symbol_primitive(
                 placement.scale,
             ),
         },
-        SymbolPrimitive::Circle { center, radius } => PaperShape::Circle {
-            center_mm: place_metres(
-                [center.0, center.1],
-                placement.insertion,
-                placement.rotation,
-                placement.scale,
-            ),
-            radius_mm: radius.abs() * placement.scale[0].abs() * MM_PER_METRE,
-        },
+        SymbolPrimitive::Circle { center, radius } => {
+            circle_shape([center.0, center.1], *radius, placement)
+        }
         SymbolPrimitive::Arc {
             center,
             radius,
@@ -938,21 +960,20 @@ fn push_symbol_primitive(
             for member in members {
                 match member {
                     SymbolPrimitive::Circle { center, radius } => {
-                        let center_mm = place_metres(
-                            [center.0, center.1],
-                            placement.insertion,
-                            placement.rotation,
-                            placement.scale,
-                        );
-                        let radius_mm =
-                            radius.abs() * placement.scale[0].abs() * MM_PER_METRE;
+                        let radius_mm = radius.abs()
+                            * placement.scale[0].abs().max(placement.scale[1].abs())
+                            * MM_PER_METRE;
                         if radius_mm > 1e-4 {
                             out.push(primitive(
                                 entity,
                                 placement,
                                 None,
                                 PaperShape::Fill {
-                                    chain_mm: circle_chain(center_mm, radius_mm),
+                                    chain_mm: circle_chain(
+                                        [center.0, center.1],
+                                        *radius,
+                                        placement,
+                                    ),
                                     rgb,
                                 },
                             ));
@@ -982,12 +1003,9 @@ fn push_symbol_primitive(
                 }
             }
             let closed = ring.len() >= 3
-                && ring
-                    .first()
-                    .zip(ring.last())
-                    .is_some_and(|(first, last)| {
-                        (first[0] - last[0]).hypot(first[1] - last[1]) <= 1e-3
-                    });
+                && ring.first().zip(ring.last()).is_some_and(|(first, last)| {
+                    (first[0] - last[0]).hypot(first[1] - last[1]) <= 1e-3
+                });
             if closed {
                 out.push(primitive(
                     entity,
@@ -1024,19 +1042,42 @@ fn push_symbol_primitive(
     }
 }
 
-/// A circle as a closed vertex ring, fine enough that the largest chord
-/// error at symbol-body sizes stays under the reader's 0.05 mm flattening.
-fn circle_chain(center_mm: [f64; 2], radius_mm: f64) -> Vec<[f64; 2]> {
+/// A circle as a closed vertex ring in paper millimetres, placed through
+/// [`place_metres`] so non-uniform scales deform the ring into an ellipse.
+fn circle_chain(center: [f64; 2], radius: f64, placement: &Placement) -> Vec<[f64; 2]> {
     const SEGMENTS: usize = 48;
+    let r = radius.abs();
     (0..SEGMENTS)
         .map(|step| {
             let angle = std::f64::consts::TAU * step as f64 / SEGMENTS as f64;
-            [
-                center_mm[0] + radius_mm * angle.cos(),
-                center_mm[1] + radius_mm * angle.sin(),
-            ]
+            place_metres(
+                [center[0] + r * angle.cos(), center[1] + r * angle.sin()],
+                placement.insertion,
+                placement.rotation,
+                placement.scale,
+            )
         })
         .collect()
+}
+
+fn circle_shape(center: [f64; 2], radius: f64, placement: &Placement) -> PaperShape {
+    let sx = placement.scale[0].abs();
+    let sy = placement.scale[1].abs();
+    if (sx - sy).abs() > 1e-6 {
+        return PaperShape::Polyline {
+            points_mm: circle_chain(center, radius, placement),
+            closed: true,
+        };
+    }
+    PaperShape::Circle {
+        center_mm: place_metres(
+            center,
+            placement.insertion,
+            placement.rotation,
+            placement.scale,
+        ),
+        radius_mm: radius.abs() * sx * MM_PER_METRE,
+    }
 }
 
 fn symbol_text_shape(
@@ -1120,6 +1161,28 @@ fn arc_shape(
     if ccw > std::f64::consts::PI + 1e-9 {
         std::mem::swap(&mut start, &mut end);
     }
+    let sx = placement.scale[0].abs();
+    let sy = placement.scale[1].abs();
+    if (sx - sy).abs() > 1e-6 {
+        let sweep = (start - end).rem_euclid(std::f64::consts::TAU);
+        let r = radius.abs();
+        let steps = ((sweep * r * sx.max(sy) * MM_PER_METRE / 0.15).ceil() as usize).clamp(8, 64);
+        let points_mm = (0..=steps)
+            .map(|step| {
+                let angle = start - sweep * (step as f64 / steps as f64);
+                place_metres(
+                    [center[0] + r * angle.cos(), center[1] + r * angle.sin()],
+                    placement.insertion,
+                    placement.rotation,
+                    placement.scale,
+                )
+            })
+            .collect();
+        return PaperShape::Polyline {
+            points_mm,
+            closed: false,
+        };
+    }
     let mirrored = placement.scale[0] * placement.scale[1] < 0.0;
     let mut world_start = world_angle(start, placement.rotation, placement.scale);
     let mut world_end = world_angle(end, placement.rotation, placement.scale);
@@ -1133,7 +1196,7 @@ fn arc_shape(
             placement.rotation,
             placement.scale,
         ),
-        radius_mm: radius.abs() * placement.scale[0].abs() * MM_PER_METRE,
+        radius_mm: radius.abs() * sx * MM_PER_METRE,
         start_angle: world_start,
         end_angle: world_end,
     }
@@ -1196,9 +1259,28 @@ mod tests {
     };
 
     use super::{
-        PaperShape, Placement, TextAnchor, TextLine, arc_shape, place_metres, push_entity,
-        push_symbol_primitive,
+        PaperShape, Placement, SymbolItem, TextAnchor, TextLine, arc_shape, place_metres,
+        push_entity, push_symbol_primitive,
     };
+
+    fn plain_item(shape: &SymbolPrimitive) -> SymbolItem<'_> {
+        SymbolItem {
+            shape,
+            style: None,
+            lettering: None,
+        }
+    }
+
+    fn lettered_item<'a>(
+        shape: &'a SymbolPrimitive,
+        lettering: &'a SymbolLettering,
+    ) -> SymbolItem<'a> {
+        SymbolItem {
+            shape,
+            style: None,
+            lettering: Some(lettering),
+        }
+    }
 
     fn entity(kind: PidGraphicKind) -> PidGraphicEntity {
         PidGraphicEntity {
@@ -1258,18 +1340,17 @@ mod tests {
     #[test]
     fn a_symbol_placeholder_null_is_left_out_of_the_table() {
         let mut out = Vec::new();
+        let shape = SymbolPrimitive::Text {
+            text: " NULL ".to_string(),
+            at: (0.0, 0.0),
+        };
         push_symbol_primitive(
             &mut out,
             &entity(PidGraphicKind::Point {
                 position: PidPoint { x: 0.0, y: 0.0 },
             }),
             &placement(),
-            &SymbolPrimitive::Text {
-                text: " NULL ".to_string(),
-                at: (0.0, 0.0),
-            },
-            None,
-            None,
+            plain_item(&shape),
             None,
             None,
         );
@@ -1279,18 +1360,17 @@ mod tests {
     #[test]
     fn a_doubled_placeholder_null_is_left_out_of_the_table() {
         let mut out = Vec::new();
+        let shape = SymbolPrimitive::Text {
+            text: "NULLNULL".to_string(),
+            at: (0.0, 0.0),
+        };
         push_symbol_primitive(
             &mut out,
             &entity(PidGraphicKind::Point {
                 position: PidPoint { x: 0.0, y: 0.0 },
             }),
             &placement(),
-            &SymbolPrimitive::Text {
-                text: "NULLNULL".to_string(),
-                at: (0.0, 0.0),
-            },
-            None,
-            None,
+            plain_item(&shape),
             None,
             None,
         );
@@ -1300,18 +1380,17 @@ mod tests {
     #[test]
     fn a_symbol_label_that_mentions_null_stays_in_the_table() {
         let mut out = Vec::new();
+        let shape = SymbolPrimitive::Text {
+            text: "HH=NULL".to_string(),
+            at: (0.01, 0.0),
+        };
         push_symbol_primitive(
             &mut out,
             &entity(PidGraphicKind::Point {
                 position: PidPoint { x: 0.0, y: 0.0 },
             }),
             &placement(),
-            &SymbolPrimitive::Text {
-                text: "HH=NULL".to_string(),
-                at: (0.01, 0.0),
-            },
-            None,
-            None,
+            plain_item(&shape),
             None,
             None,
         );
@@ -1338,6 +1417,7 @@ mod tests {
             &pid_parse::style_link::TextStyleIndex::new(),
             &pid_parse::style_link::LineStyleIndex::new(),
             &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
         );
         assert_eq!(out.len(), 1);
         let PaperShape::Text { value, .. } = &out[0].shape else {
@@ -1369,6 +1449,7 @@ mod tests {
             &pid_parse::style_link::TextStyleIndex::new(),
             &pid_parse::style_link::LineStyleIndex::new(),
             &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
         );
         assert!(out.is_empty());
     }
@@ -1386,18 +1467,17 @@ mod tests {
             line_spacing: None,
             font_name: Some("Arial Narrow".to_string()),
         };
+        let shape = SymbolPrimitive::Text {
+            text: "ESD".to_string(),
+            at: (0.01, 0.02),
+        };
         push_symbol_primitive(
             &mut out,
             &entity(PidGraphicKind::Point {
                 position: PidPoint { x: 0.0, y: 0.0 },
             }),
             &placement(),
-            &SymbolPrimitive::Text {
-                text: "ESD".to_string(),
-                at: (0.01, 0.02),
-            },
-            None,
-            Some(&lettering),
+            lettered_item(&shape, &lettering),
             None,
             None,
         );
@@ -1436,18 +1516,17 @@ mod tests {
         let mut mirrored_pi = placement();
         mirrored_pi.rotation = std::f64::consts::PI;
         mirrored_pi.scale = [1.0, -1.0];
+        let esd = SymbolPrimitive::Text {
+            text: "ESD".to_string(),
+            at: (0.0, 0.0),
+        };
         push_symbol_primitive(
             &mut out,
             &entity(PidGraphicKind::Point {
                 position: PidPoint { x: 0.0, y: 0.0 },
             }),
             &mirrored_pi,
-            &SymbolPrimitive::Text {
-                text: "ESD".to_string(),
-                at: (0.0, 0.0),
-            },
-            None,
-            Some(&lettering),
+            lettered_item(&esd, &lettering),
             None,
             None,
         );
@@ -1466,18 +1545,17 @@ mod tests {
         mirrored_neg_half.scale = [1.0, -1.0];
         let mut bottom_lettering = lettering.clone();
         bottom_lettering.anchor_code = 0x10;
+        let d_shape = SymbolPrimitive::Text {
+            text: "D".to_string(),
+            at: (0.0, 0.0),
+        };
         push_symbol_primitive(
             &mut out_vert,
             &entity(PidGraphicKind::Point {
                 position: PidPoint { x: 0.0, y: 0.0 },
             }),
             &mirrored_neg_half,
-            &SymbolPrimitive::Text {
-                text: "D".to_string(),
-                at: (0.0, 0.0),
-            },
-            None,
-            Some(&bottom_lettering),
+            lettered_item(&d_shape, &bottom_lettering),
             None,
             None,
         );
@@ -1512,5 +1590,118 @@ mod tests {
         };
         assert!((s_pi.abs() - std::f64::consts::PI).abs() < 1e-6);
         assert!(e_pi.abs() < 1e-6);
+    }
+
+    #[test]
+    fn non_uniform_scaled_arc_and_circle_tessellate_into_polylines() {
+        let mut stretched = placement();
+        stretched.scale = [1.0, 2.0];
+        let PaperShape::Polyline {
+            points_mm: arc_pts,
+            closed: arc_closed,
+        } = arc_shape(
+            [0.0, 0.0],
+            0.01,
+            std::f64::consts::FRAC_PI_2,
+            0.0,
+            &stretched,
+        )
+        else {
+            panic!("expected polyline for non-uniform arc");
+        };
+        assert!(!arc_closed);
+        assert!(arc_pts.len() >= 9);
+        assert!(arc_pts[0][0].abs() < 1e-6 && (arc_pts[0][1] - 20.0).abs() < 1e-6);
+        let last = *arc_pts.last().unwrap();
+        assert!((last[0] - 10.0).abs() < 1e-6 && last[1].abs() < 1e-6);
+
+        let mut out = Vec::new();
+        let circle = SymbolPrimitive::Circle {
+            center: (0.0, 0.0),
+            radius: 0.01,
+        };
+        push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &stretched,
+            plain_item(&circle),
+            None,
+            None,
+        );
+        let PaperShape::Polyline {
+            points_mm: circle_pts,
+            closed: circle_closed,
+        } = &out[0].shape
+        else {
+            panic!("expected polyline for non-uniform circle");
+        };
+        assert!(*circle_closed);
+        assert_eq!(circle_pts.len(), 48);
+    }
+
+    #[test]
+    fn consistency_checks_layer_entities_are_suppressed_from_plot() {
+        let mut out = Vec::new();
+        let mut review_mark = entity(PidGraphicKind::Line {
+            start: PidPoint { x: 0.1, y: 0.1 },
+            end: PidPoint { x: 0.103, y: 0.106 },
+        });
+        review_mark.source_layer = Some(PidSourceLayer {
+            oid: 18,
+            name: Some("ConsistencyChecks".to_string()),
+            storage_path: "/".to_string(),
+            displayed: Some(true),
+        });
+        push_entity(
+            &mut out,
+            &review_mark,
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn duplicate_sheet_boundary_fills_emit_once() {
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let make = |oid: u32| {
+            let mut e = entity(PidGraphicKind::Polyline {
+                points: vec![
+                    PidPoint { x: 0.1, y: 0.1 },
+                    PidPoint { x: 0.11, y: 0.1 },
+                    PidPoint { x: 0.105, y: 0.11 },
+                ],
+                closed: true,
+            });
+            e.graphic_oid = Some(oid);
+            e.source.record_id = Some("igboundary2d:0".to_string());
+            e
+        };
+        push_entity(
+            &mut out,
+            &make(3033),
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut seen,
+        );
+        push_entity(
+            &mut out,
+            &make(3066),
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut seen,
+        );
+        assert_eq!(out.len(), 1);
+        assert!(matches!(out[0].shape, PaperShape::Fill { .. }));
     }
 }

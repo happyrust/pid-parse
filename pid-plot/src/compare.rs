@@ -1160,7 +1160,8 @@ fn model_strokes(model: &PaperModel) -> Vec<(Line, String)> {
                 start_angle,
                 end_angle,
             } => {
-                let points = crate::write::arc_chain(*center_mm, *radius_mm, *start_angle, *end_angle);
+                let points =
+                    crate::write::arc_chain(*center_mm, *radius_mm, *start_angle, *end_angle);
                 for pair in points.windows(2) {
                     strokes.push((
                         Line {

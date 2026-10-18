@@ -61,9 +61,7 @@ pub fn font_dirs(corpus: Option<&Path>) -> Vec<PathBuf> {
     if let Some(corpus) = corpus {
         dirs.push(corpus.join("fonts"));
     }
-    dirs.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-file/fonts"),
-    );
+    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-file/fonts"));
     dirs
 }
 
@@ -180,8 +178,7 @@ fn subset_or_whole(key: &str, bytes: &[u8], text: &str) -> Result<Vec<u8>, Strin
     {
         return Ok(subset);
     }
-    pdfcraft_fonts::embedding::validate(bytes)
-        .map_err(|error| format!("{key}: {error}"))?;
+    pdfcraft_fonts::embedding::validate(bytes).map_err(|error| format!("{key}: {error}"))?;
     Ok(bytes.to_vec())
 }
 

@@ -17,40 +17,39 @@ struct Baseline {
     min_text_matched: usize,
 }
 
-// Baselines re-locked after styles landed: source line widths/colours/dashes,
-// complex-dash hydraulic ticks, boundary fills and symbol lettering all add
-// ink the plot did not carry before, so `extra_mm` sits higher than the old
-// monochrome-stroke run while coverage improved on every drawing.
+// Baselines re-locked after styles, complex-dash hydraulic ticks, boundary
+// fills, symbol lettering, non-uniform arc/circle scaling and ConsistencyChecks
+// review-layer suppression landed.
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
-        min_coverage: 0.9930,
-        max_extra_mm: 850.0,
+        min_coverage: 0.9980,
+        max_extra_mm: 65.0,
         min_text_matched: 520,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
-        min_coverage: 0.9980,
-        max_extra_mm: 260.0,
+        min_coverage: 0.9990,
+        max_extra_mm: 20.0,
         min_text_matched: 125,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
-        min_coverage: 0.9960,
-        max_extra_mm: 210.0,
+        min_coverage: 0.9970,
+        max_extra_mm: 15.0,
         min_text_matched: 103,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
-        min_coverage: 0.9850,
-        max_extra_mm: 380.0,
-        min_text_matched: 143,
+        min_coverage: 0.9975,
+        max_extra_mm: 35.0,
+        min_text_matched: 145,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
-        min_coverage: 0.9950,
-        max_extra_mm: 275.0,
-        min_text_matched: 232,
+        min_coverage: 0.9980,
+        max_extra_mm: 50.0,
+        min_text_matched: 234,
     },
 ];
 

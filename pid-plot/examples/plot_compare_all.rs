@@ -2,7 +2,9 @@
 //! without asserting — for re-measuring baselines after an export change.
 use std::path::PathBuf;
 
-use pid_plot::compare::{compare_plots, template_masks, write_overlay, write_report};
+use pid_plot::compare::{
+    MaskRect, compare_plots_with_model, template_masks, write_overlay, write_report,
+};
 use pid_plot::model::lay_out_drawing;
 use pid_plot::read::read_plot;
 
@@ -29,15 +31,17 @@ fn main() {
             read_plot(&std::fs::read(corpus.join(format!("plot/{name}.pdf"))).expect("ours"))
                 .expect("read ours");
         let model = lay_out_drawing(&corpus.join(format!("{name}.pid")), &corpus).expect("layout");
-        let mut masks = template_masks(reference.page_mm);
-        for box_ in &model.missing_boxes {
-            masks.push(pid_plot::compare::MaskRect {
+        let template = template_masks(reference.page_mm);
+        let missing: Vec<MaskRect> = model
+            .missing_boxes
+            .iter()
+            .map(|box_| MaskRect {
                 label: box_.path.clone(),
                 min_mm: box_.min_mm,
                 max_mm: box_.max_mm,
-            });
-        }
-        let report = compare_plots(&reference, &ours, &masks);
+            })
+            .collect();
+        let report = compare_plots_with_model(&reference, &ours, &template, &missing, &model);
         write_report(&out_dir.join(format!("{name}.json")), &report).expect("json");
         write_overlay(
             &out_dir.join(format!("{name}.png")),

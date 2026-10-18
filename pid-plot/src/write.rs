@@ -28,7 +28,7 @@ use pdfcraft_fonts::pdf::Metrics;
 
 use crate::fonts::typeface_key;
 use crate::model::{PaperModel, PaperShape, PaperStroke, TextAnchor, TextLine};
-use crate::read::CHORD_MM;
+use crate::read::{CHORD_MM, DashWalk, sheet_edge_mm};
 
 const PT_PER_MM: f64 = 72.0 / 25.4;
 /// The pen a stroke with no resolved style falls back to.
@@ -317,10 +317,7 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
             .iter()
             .map(|segment| Object::Real(segment.abs() * PT_PER_MM))
             .collect();
-        ops.push(Op::new(
-            "d",
-            vec![Object::Array(dash), Object::Real(0.0)],
-        ));
+        ops.push(Op::new("d", vec![Object::Array(dash), Object::Real(0.0)]));
     }
     if paint_shape(ops, &primitive.shape, page) {
         ops.push(Op::new("S", Vec::new()));
@@ -329,17 +326,27 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
 }
 
 fn paint_shape(ops: &mut Vec<Op>, shape: &PaperShape, page: [f64; 2]) -> bool {
+    let mut any = false;
+    for run in stroke_runs(&shape_chain(shape), page) {
+        ops.push(Op::new("m", vec![pt(run[0][0]), pt(run[0][1])]));
+        for point in &run[1..] {
+            ops.push(Op::new("l", vec![pt(point[0]), pt(point[1])]));
+        }
+        any = true;
+    }
+    any
+}
+
+/// The point chain one shape strokes, its closing edge included.
+fn shape_chain(shape: &PaperShape) -> Vec<[f64; 2]> {
     match shape {
-        PaperShape::Line { start_mm, end_mm } => segment(ops, *start_mm, *end_mm, page),
+        PaperShape::Line { start_mm, end_mm } => vec![*start_mm, *end_mm],
         PaperShape::Polyline { points_mm, closed } => {
-            let mut any = false;
-            for pair in points_mm.windows(2) {
-                any |= segment(ops, pair[0], pair[1], page);
+            let mut points = points_mm.clone();
+            if *closed && points.len() >= 2 {
+                points.push(points[0]);
             }
-            if *closed && points_mm.len() >= 2 {
-                any |= segment(ops, points_mm[points_mm.len() - 1], points_mm[0], page);
-            }
-            any
+            points
         }
         PaperShape::Arc {
             center_mm,
@@ -348,35 +355,47 @@ fn paint_shape(ops: &mut Vec<Op>, shape: &PaperShape, page: [f64; 2]) -> bool {
             end_angle,
         } => {
             let (start, sweep) = minor_clockwise_arc(*start_angle, *end_angle);
-            chain(ops, &arc_points(*center_mm, *radius_mm, start, sweep), page)
+            arc_points(*center_mm, *radius_mm, start, sweep)
         }
         PaperShape::Circle {
             center_mm,
             radius_mm,
-        } => chain(ops, &arc_points(*center_mm, *radius_mm, 0.0, -TAU), page),
-        PaperShape::Fill { .. } | PaperShape::Text { .. } => false,
+        } => arc_points(*center_mm, *radius_mm, 0.0, -TAU),
+        PaperShape::Fill { .. } | PaperShape::Text { .. } => Vec::new(),
     }
 }
 
-fn segment(ops: &mut Vec<Op>, start: [f64; 2], end: [f64; 2], page: [f64; 2]) -> bool {
-    if !finite(start)
-        || !finite(end)
-        || hypot(start, end) < 1e-4
-        || reader_sheet_edge(start, end, page)
-    {
-        return false;
-    }
-    ops.push(Op::new("m", vec![pt(start[0]), pt(start[1])]));
-    ops.push(Op::new("l", vec![pt(end[0]), pt(end[1])]));
-    true
-}
-
-fn chain(ops: &mut Vec<Op>, points: &[[f64; 2]], page: [f64; 2]) -> bool {
-    let mut any = false;
+/// The parts of `points` that print, split where a dropped piece breaks the
+/// chain.
+///
+/// One run becomes one subpath, so a dash pattern flows along a whole polyline
+/// instead of restarting at every vertex.
+fn stroke_runs(points: &[[f64; 2]], page: [f64; 2]) -> Vec<Vec<[f64; 2]>> {
+    let mut runs = Vec::new();
+    let mut run: Vec<[f64; 2]> = Vec::new();
     for pair in points.windows(2) {
-        any |= segment(ops, pair[0], pair[1], page);
+        let (start, end) = (pair[0], pair[1]);
+        let prints = finite(start)
+            && finite(end)
+            && hypot(start, end) >= 1e-4
+            && !sheet_edge_mm(start, end, page);
+        if !prints {
+            if run.len() >= 2 {
+                runs.push(std::mem::take(&mut run));
+            } else {
+                run.clear();
+            }
+            continue;
+        }
+        if run.is_empty() {
+            run.push(start);
+        }
+        run.push(end);
     }
-    any
+    if run.len() >= 2 {
+        runs.push(run);
+    }
+    runs
 }
 
 /// Split `value` into runs that share one face, preferring the face
@@ -479,7 +498,7 @@ fn show_text(
     for (face, bytes) in &runs {
         ops.push(Op::new(
             "Tf",
-            vec![Object::name(&*face.resource), Object::Real(size)],
+            vec![Object::name(&face.resource), Object::Real(size)],
         ));
         ops.push(Op::new(
             "Tj",
@@ -683,15 +702,14 @@ fn extent_points(shape: &PaperShape) -> Vec<[f64; 2]> {
 
 /// The reader's sheet-frame rule, in millimetres. A line this drops is not ink.
 fn reader_sheet_edge(start: [f64; 2], end: [f64; 2], page: [f64; 2]) -> bool {
-    let dx = (start[0] - end[0]).abs();
-    let dy = (start[1] - end[1]).abs();
-    let short = 0.8 * 25.4 / 72.0;
-    (dy < short && dx > page[0] * 0.90) || (dx < short && dy > page[1] * 0.90)
+    sheet_edge_mm(start, end, page)
 }
 
 /// Straight segments `write_plot` strokes, Decoded then Inferred. ProbeOnly is omitted.
 ///
-/// Arc and circle chords use the same 0.05 mm tolerance as the reader.
+/// Arc and circle chords use the same 0.05 mm tolerance as the reader, and a
+/// dashed pen contributes only the pieces its pattern inks — the same walk the
+/// reader takes, so a read-back matches this list endpoint for endpoint.
 #[must_use]
 pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
     let Ok(page) = resolved_page(model) else {
@@ -703,53 +721,28 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
             if primitive.confidence != confidence {
                 continue;
             }
-            match &primitive.shape {
-                PaperShape::Line { start_mm, end_mm } => {
-                    push_segment(&mut out, *start_mm, *end_mm, page);
+            // A fill reads back as its outline, the closing edge included —
+            // the reader's `ClosePath` segment.
+            if let PaperShape::Fill { chain_mm, .. } = &primitive.shape {
+                push_chain(&mut out, chain_mm, page);
+                if chain_mm.len() >= 2 {
+                    push_segment(&mut out, chain_mm[chain_mm.len() - 1], chain_mm[0], page);
                 }
-                PaperShape::Polyline { points_mm, closed } => {
-                    for pair in points_mm.windows(2) {
-                        push_segment(&mut out, pair[0], pair[1], page);
-                    }
-                    if *closed && points_mm.len() >= 2 {
-                        push_segment(&mut out, points_mm[points_mm.len() - 1], points_mm[0], page);
-                    }
-                }
-                PaperShape::Arc {
-                    center_mm,
-                    radius_mm,
-                    start_angle,
-                    end_angle,
-                } => {
-                    let (start, sweep) = minor_clockwise_arc(*start_angle, *end_angle);
-                    push_chain(
-                        &mut out,
-                        &arc_points(*center_mm, *radius_mm, start, sweep),
-                        page,
-                    );
-                }
-                PaperShape::Circle {
-                    center_mm,
-                    radius_mm,
-                } => push_chain(
-                    &mut out,
-                    &arc_points(*center_mm, *radius_mm, 0.0, -TAU),
-                    page,
-                ),
-                // A fill reads back as its outline, the closing edge
-                // included — the reader's `ClosePath` segment.
-                PaperShape::Fill { chain_mm, .. } => {
-                    push_chain(&mut out, chain_mm, page);
-                    if chain_mm.len() >= 2 {
-                        push_segment(
-                            &mut out,
-                            chain_mm[chain_mm.len() - 1],
-                            chain_mm[0],
-                            page,
-                        );
+                continue;
+            }
+            let dash: Vec<f64> = primitive
+                .stroke
+                .as_ref()
+                .map(|pen| pen.dash_mm.clone())
+                .unwrap_or_default();
+            let mut walk = DashWalk::new(&dash, 0.0);
+            for run in stroke_runs(&shape_chain(&primitive.shape), page) {
+                walk.restart();
+                for pair in run.windows(2) {
+                    for (start, end) in walk.split(pair[0], pair[1]) {
+                        out.push((start, end));
                     }
                 }
-                PaperShape::Text { .. } => {}
             }
         }
     }

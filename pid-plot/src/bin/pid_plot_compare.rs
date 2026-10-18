@@ -14,7 +14,9 @@ fn main() -> ExitCode {
     let (Some(reference_path), Some(our_path), Some(out_dir), Some(pid_path)) =
         (args.next(), args.next(), args.next(), args.next())
     else {
-        eprintln!("usage: pid_plot_compare <reference.pdf> <ours.pdf> <out-dir> <drawing.pid> [corpus]");
+        eprintln!(
+            "usage: pid_plot_compare <reference.pdf> <ours.pdf> <out-dir> <drawing.pid> [corpus]"
+        );
         return ExitCode::from(2);
     };
     let corpus = args.next().map_or_else(default_corpus, PathBuf::from);
