@@ -212,6 +212,10 @@ impl TextAnchor {
 /// line of the body box it sits on: measured against the reference plots, the
 /// labels the drawing letters sit 0.0 mm, 1.25 mm or 2.50 mm below the point
 /// for a 2.5 mm body, one mode per class.
+///
+/// The nibble's two halves name different things, which is only visible once
+/// a class with a nibble of `2` is measured on its own: see
+/// [`TextLine::from_anchor_code`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TextLine {
@@ -226,11 +230,54 @@ pub enum TextLine {
 }
 
 impl TextLine {
-    /// The vertical hot point an `igTextBox` anchor code states:
-    /// `(code & 0x0F) % 3` — `0` bottom, `1` top, `2` middle.
+    /// The vertical hot point an `igTextBox` anchor code states.
+    ///
+    /// The corpus carries five low nibbles, and each one's mode against the
+    /// reference plots is unambiguous (`examples/probe_text_anchor_modes.rs`,
+    /// five drawings, offset over letter height):
+    ///
+    /// | nibble | mode | n |
+    /// |---:|---:|---:|
+    /// | 0 | 0.0 body — the point is the baseline | 12 |
+    /// | 1 | 1.0 body — the body's top | 154 |
+    /// | 2 | 1.0 body — the body's top | 18 |
+    /// | 5 | 0.5 body — the body's middle | 942 |
+    /// | 8 | 0.5 body — the body's middle | 161 |
+    ///
+    /// So the two halves of the nibble are separate flags, not one index: the
+    /// high half (`4`/`8`) asks for the body's middle and overrides, otherwise
+    /// the low half names the point itself (`0`) or the body's top (`1`–`3`).
+    /// Reading the nibble as an index — `% 3` — puts every `2` at the middle
+    /// instead of the top, half a body too high: that is the 18 records whose
+    /// labels lettered 1.2 mm above the reference
+    /// (`docs/analysis/2026-10-19-a-pair-of-flags-not-an-index.md`).
     fn from_anchor_code(code: u8) -> Self {
-        match (code & 0x0F) % 3 {
+        match code & 0x0F {
             0 => Self::Bottom,
+            1..=3 => Self::Top,
+            _ => Self::Middle,
+        }
+    }
+
+    /// The same field on a symbol body's own lettering record.
+    ///
+    /// A `.sym` body states its labels' anchor in the same nibble but not with
+    /// the same reading. Measured against the reference plots
+    /// (`pid-plot/examples/probe_symbol_label_offsets.rs`), the two low nibbles
+    /// the corpus's symbol bodies carry both letter from the middle: `0x10` —
+    /// the `M` inside the valve bodies — read as a baseline lands 1.06 mm
+    /// above the reference, and as the middle line within 0.3 mm, exactly as
+    /// `0x12` does. The low nibble `1` classes (the converters' and
+    /// flowmeter's `M`) letter from the body's top. So the middle is the
+    /// symbol side's default and only the top class stands out; the sheet's
+    /// flag pair ([`TextLine::from_anchor_code`]) does not apply here.
+    ///
+    /// Reading the nibble as an index — `0 => bottom` — is what put the eleven
+    /// valve and motor labels about a millimetre high until this reading
+    /// landed; see
+    /// `docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`.
+    fn from_symbol_anchor_code(code: u8) -> Self {
+        match (code & 0x0F) % 3 {
             1 => Self::Top,
             _ => Self::Middle,
         }
@@ -730,6 +777,7 @@ fn push_entity(
             height,
             rotation,
             anchor_code,
+            text_box_width,
         } => {
             let styled = entity.source.stream_path.as_ref().and_then(|stream| {
                 entity.graphic_oid.and_then(|oid| {
@@ -749,17 +797,42 @@ fn push_entity(
             } else {
                 Some(0.0)
             };
+            // A boxed record letters from its box's left edge: the anchor
+            // code says where inside that box the insertion sits — left,
+            // middle or right — and the run starts at the box's left edge
+            // whichever it names. The title-block fields are the measured
+            // case: their insertion is the box's middle and the reference
+            // plots start every one of them half a box width further left.
+            // The vertical stays on the record's anchor code against the
+            // *letter* height, which is where the reference puts a boxed
+            // label's line. See
+            // `docs/analysis/2026-10-19-igtextbox-box-is-where-the-text-starts.md`.
+            let (origin_m, anchor) = match text_box_width.filter(|width| *width > 0.0) {
+                Some(width) => {
+                    let across = match TextAnchor::from_anchor_code(*anchor_code) {
+                        TextAnchor::Left => 0.0,
+                        TextAnchor::Center => width / 2.0,
+                        TextAnchor::Right => width,
+                    };
+                    (
+                        [
+                            insertion.x - rotation.cos() * across,
+                            insertion.y - rotation.sin() * across,
+                        ],
+                        TextAnchor::Left,
+                    )
+                }
+                None => (
+                    [insertion.x, insertion.y],
+                    TextAnchor::from_anchor_code(*anchor_code),
+                ),
+            };
             out.push(primitive(
                 entity,
                 &placement,
                 None,
                 PaperShape::Text {
-                    origin_mm: place_metres(
-                        [insertion.x, insertion.y],
-                        [0.0, 0.0],
-                        0.0,
-                        [1.0, 1.0],
-                    ),
+                    origin_mm: place_metres(origin_m, [0.0, 0.0], 0.0, [1.0, 1.0]),
                     height_mm,
                     rotation: *rotation,
                     value: value.clone(),
@@ -767,7 +840,7 @@ fn push_entity(
                     // The record's own anchor code overrides the paragraph
                     // style's declared alignment: `(code >> 4) % 3` is the
                     // horizontal hot point the insertion sits at.
-                    anchor: TextAnchor::from_anchor_code(*anchor_code),
+                    anchor,
                     line: TextLine::from_anchor_code(*anchor_code),
                 },
             ));
@@ -1110,7 +1183,7 @@ fn symbol_text_shape(
     });
     let mut line = lettering.map_or(TextLine::Middle, |lettering| {
         if lettering.anchor_code != 0 {
-            TextLine::from_anchor_code(lettering.anchor_code)
+            TextLine::from_symbol_anchor_code(lettering.anchor_code)
         } else {
             TextLine::Middle
         }
@@ -1304,6 +1377,166 @@ mod tests {
         }
     }
 
+    /// A boxed record letters from its box's left edge, not from the
+    /// insertion point the anchor code measures inside it.
+    ///
+    /// The title-block fields are the records this is about: 58 of them
+    /// across the five drawings carry a 45.307 mm box and state a centred
+    /// anchor, and the reference plots start every one of them half a box
+    /// width to the left of the insertion point, which is where a centred
+    /// placement puts it. The vertical half is untouched: the reference keeps
+    /// the record's own anchor line against the letter height, so only the
+    /// horizontal run moves.
+    #[test]
+    fn a_boxed_record_letters_from_the_box_left_edge() {
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &entity(PidGraphicKind::Text {
+                insertion: PidPoint { x: 0.1, y: 0.2 },
+                value: "DWG-0100集05-42".to_string(),
+                height: 0.0025,
+                rotation: 0.0,
+                // Centre, middle — the code every one of those records states.
+                anchor_code: 0x48,
+                text_box_width: Some(0.045_307),
+            }),
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        let PaperShape::Text {
+            origin_mm,
+            anchor,
+            line,
+            ..
+        } = &out[0].shape
+        else {
+            panic!("{:?}", out[0].shape);
+        };
+        assert_eq!(*anchor, TextAnchor::Left);
+        assert_eq!(*line, TextLine::Middle);
+        assert!(
+            (origin_mm[0] - (100.0 - 0.045_307 / 2.0 * 1000.0)).abs() < 1e-6,
+            "box left edge, got {origin_mm:?}"
+        );
+        assert!((origin_mm[1] - 200.0).abs() < 1e-6);
+    }
+
+    /// A left-anchored boxed record already sits on its box's left edge, so
+    /// the box moves it nowhere — the anchor code, not the box alone, is what
+    /// says where the run starts.
+    #[test]
+    fn a_left_anchored_boxed_record_does_not_move() {
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &entity(PidGraphicKind::Text {
+                insertion: PidPoint { x: 0.1, y: 0.2 },
+                value: "M".to_string(),
+                height: 0.0025,
+                rotation: 0.0,
+                // Left, middle: the insertion is the box's left edge.
+                anchor_code: 0x08,
+                text_box_width: Some(0.045_307),
+            }),
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        let PaperShape::Text {
+            origin_mm, anchor, ..
+        } = &out[0].shape
+        else {
+            panic!("{:?}", out[0].shape);
+        };
+        assert_eq!(*anchor, TextAnchor::Left);
+        assert!((origin_mm[0] - 100.0).abs() < 1e-6, "got {origin_mm:?}");
+    }
+
+    /// The same record without a box keeps its anchor code's own placement.
+    #[test]
+    fn an_unboxed_record_keeps_its_anchor_code() {
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &entity(PidGraphicKind::Text {
+                insertion: PidPoint { x: 0.1, y: 0.2 },
+                value: "TAG".to_string(),
+                height: 0.0025,
+                rotation: 0.0,
+                anchor_code: 0x48,
+                text_box_width: None,
+            }),
+            None,
+            &pid_parse::style_link::TextStyleIndex::new(),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        let PaperShape::Text {
+            origin_mm, anchor, ..
+        } = &out[0].shape
+        else {
+            panic!("{:?}", out[0].shape);
+        };
+        assert_eq!(*anchor, TextAnchor::Center);
+        assert!((origin_mm[0] - 100.0).abs() < 1e-6);
+    }
+
+    /// The five low nibbles the corpus carries, against the line each one's
+    /// labels actually letter on in the reference plots. `2` is a top, not a
+    /// middle: the nibble's halves are two flags, and an index reading puts
+    /// those labels half a body too high.
+    #[test]
+    fn the_vertical_nibble_is_a_pair_of_flags_not_an_index() {
+        let lines: Vec<TextLine> = [0x00_u8, 0x01, 0x02, 0x05, 0x08]
+            .into_iter()
+            .map(TextLine::from_anchor_code)
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                TextLine::Bottom,
+                TextLine::Top,
+                TextLine::Top,
+                TextLine::Middle,
+                TextLine::Middle,
+            ]
+        );
+        // The horizontal half is unchanged, and the two halves do not
+        // interact: `0x48` is still centre/middle.
+        assert_eq!(TextAnchor::from_anchor_code(0x48), TextAnchor::Center);
+        assert_eq!(TextLine::from_anchor_code(0x48), TextLine::Middle);
+        assert_eq!(TextAnchor::from_anchor_code(0x12), TextAnchor::Center);
+        assert_eq!(TextLine::from_anchor_code(0x12), TextLine::Top);
+    }
+
+    /// A symbol body's own labels keep the other reading: `0x10` is the
+    /// middle line, not the baseline — the ten `M` labels inside the corpus's
+    /// valves were the only class the sheet's flag pair got wrong.
+    #[test]
+    fn a_symbol_label_nibble_hangs_from_the_middle() {
+        let lines: Vec<TextLine> = [0x10_u8, 0x11, 0x12, 0x15, 0x18]
+            .into_iter()
+            .map(TextLine::from_symbol_anchor_code)
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                TextLine::Middle,
+                TextLine::Top,
+                TextLine::Middle,
+                TextLine::Middle,
+                TextLine::Middle,
+            ]
+        );
+    }
+
     #[test]
     fn placement_adds_the_insertion_in_millimetres() {
         let paper = place_metres([0.01, 0.02], [1.0, 2.0], 0.0, [1.0, 1.0]);
@@ -1412,6 +1645,7 @@ mod tests {
                 height: 0.0025,
                 rotation: 0.0,
                 anchor_code: 0,
+                text_box_width: None,
             }),
             None,
             &pid_parse::style_link::TextStyleIndex::new(),
@@ -1435,6 +1669,7 @@ mod tests {
             height: 0.0025,
             rotation: 0.0,
             anchor_code: 0,
+            text_box_width: None,
         });
         hidden.source_layer = Some(PidSourceLayer {
             oid: 100,
@@ -1497,7 +1732,8 @@ mod tests {
         assert!((*rotation - 0.25).abs() < 1e-9);
         assert_eq!(font.as_deref(), Some("Arial Narrow"));
         assert_eq!(*anchor, TextAnchor::Center);
-        assert_eq!(*line, TextLine::Bottom);
+        // `0x10` is the middle line on a symbol body, not the baseline.
+        assert_eq!(*line, TextLine::Middle);
     }
 
     #[test]
@@ -1543,8 +1779,11 @@ mod tests {
         let mut mirrored_neg_half = placement();
         mirrored_neg_half.rotation = -std::f64::consts::FRAC_PI_2;
         mirrored_neg_half.scale = [1.0, -1.0];
-        let mut bottom_lettering = lettering.clone();
-        bottom_lettering.anchor_code = 0x10;
+        // A symbol body states no baseline class, so the flip is exercised
+        // from the top: `0x11` letters from the body's top and a vertical
+        // mirror puts it on the baseline.
+        let mut top_lettering = lettering.clone();
+        top_lettering.anchor_code = 0x11;
         let d_shape = SymbolPrimitive::Text {
             text: "D".to_string(),
             at: (0.0, 0.0),
@@ -1555,7 +1794,7 @@ mod tests {
                 position: PidPoint { x: 0.0, y: 0.0 },
             }),
             &mirrored_neg_half,
-            lettered_item(&d_shape, &bottom_lettering),
+            lettered_item(&d_shape, &top_lettering),
             None,
             None,
         );
@@ -1563,7 +1802,7 @@ mod tests {
             panic!("{:?}", out_vert[0].shape);
         };
         assert!((*rotation + std::f64::consts::FRAC_PI_2).abs() < 1e-9);
-        assert_eq!(*line, TextLine::Top);
+        assert_eq!(*line, TextLine::Bottom);
     }
 
     #[test]

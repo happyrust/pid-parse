@@ -6407,7 +6407,8 @@
       "value": " ",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 72
+      "anchor_code": 72,
+      "text_box_width": 0.04064
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6475,7 +6476,8 @@
       "value": "323",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 72
+      "anchor_code": 72,
+      "text_box_width": 0.005079999999999994
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6543,7 +6545,8 @@
       "value": "仪 表 风 自 仪 表 风 总 管",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 72
+      "anchor_code": 72,
+      "text_box_width": 0.04446000315198445
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6611,7 +6614,8 @@
       "value": " ",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 72
+      "anchor_code": 72,
+      "text_box_width": 0.04439914234832058
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",

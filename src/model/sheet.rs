@@ -819,6 +819,17 @@ pub struct DecodedIgTextBoxRecord {
     /// `2` middle. It overrides the paragraph style's declared alignment.
     #[serde(default)]
     pub anchor_code: u8,
+    /// Width of the text box a kind-2 tail carries, in sheet units — `0.0`
+    /// when the tail states none.
+    ///
+    /// The reference plots letter a boxed record from that box's left edge,
+    /// whichever hot point `anchor_code` measures the insertion against; see
+    /// [`crate::parsers::sheet_records::SheetIgTextBoxDecoded::text_box_width_m`].
+    #[serde(default)]
+    pub text_box_width_m: f64,
+    /// Height of the same box, in sheet units — `0.0` when there is none.
+    #[serde(default)]
+    pub text_box_height_m: f64,
     /// The record's formatting runs, in stored order. Empty for shape 1.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub runs: Vec<DecodedTextRun>,
@@ -872,6 +883,8 @@ impl From<crate::parsers::sheet_records::SheetIgTextBoxDecoded> for DecodedIgTex
             rotation_rad: d.rotation_rad,
             letter_height_m: d.letter_height_m,
             anchor_code: d.anchor_code,
+            text_box_width_m: d.text_box_width_m,
+            text_box_height_m: d.text_box_height_m,
             runs: d.runs.into_iter().map(DecodedTextRun::from).collect(),
         }
     }

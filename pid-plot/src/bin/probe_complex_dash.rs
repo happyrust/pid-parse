@@ -14,7 +14,11 @@ fn main() -> ExitCode {
         eprintln!("usage: probe_complex_dash <drawing.pid> [x_min x_max y_min y_max mm]");
         return ExitCode::from(2);
     };
-    let win: Vec<f64> = args.by_ref().take(4).filter_map(|a| a.parse().ok()).collect();
+    let win: Vec<f64> = args
+        .by_ref()
+        .take(4)
+        .filter_map(|a| a.parse().ok())
+        .collect();
     let doc = match PidParser::new().parse_file(PathBuf::from(&path).as_path()) {
         Ok(doc) => doc,
         Err(error) => {
@@ -28,7 +32,9 @@ fn main() -> ExitCode {
         let Some(stream) = entity.source.stream_path.as_ref() else {
             continue;
         };
-        let Some(oid) = entity.graphic_oid else { continue };
+        let Some(oid) = entity.graphic_oid else {
+            continue;
+        };
         let Some(style) = styles.get(&(stream.clone(), oid)) else {
             continue;
         };
@@ -37,7 +43,10 @@ fn main() -> ExitCode {
         };
         let pts: Vec<[f64; 2]> = match &entity.kind {
             PidGraphicKind::Line { start, end } => {
-                vec![[start.x * 1000.0, start.y * 1000.0], [end.x * 1000.0, end.y * 1000.0]]
+                vec![
+                    [start.x * 1000.0, start.y * 1000.0],
+                    [end.x * 1000.0, end.y * 1000.0],
+                ]
             }
             PidGraphicKind::Polyline { points, .. } => points
                 .iter()
@@ -47,7 +56,10 @@ fn main() -> ExitCode {
         };
         if win.len() == 4 {
             let (x0, x1, y0, y1) = (win[0], win[1], win[2], win[3]);
-            if !pts.iter().any(|p| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1) {
+            if !pts
+                .iter()
+                .any(|p| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1)
+            {
                 continue;
             }
         }

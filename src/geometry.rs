@@ -674,6 +674,15 @@ pub enum PidGraphicKind {
         /// not carry one.
         #[serde(default)]
         anchor_code: u8,
+        /// Width of the text box the record carries, in source drawing units
+        /// — `None` where it carries none.
+        ///
+        /// A boxed record letters from the box's left edge: `anchor_code`
+        /// still says where inside that box the insertion sits, but the run
+        /// starts at the box's left edge either way. Absent on every record
+        /// whose tail omits the box.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        text_box_width: Option<f64>,
     },
     /// Instance of a reusable `SmartPlant` symbol.
     SymbolInstance {
@@ -2463,6 +2472,8 @@ impl GeometryEmitter for IgTextBoxEmitter {
                     height: record.letter_height_m,
                     rotation: record.rotation_rad,
                     anchor_code: record.anchor_code,
+                    text_box_width: (record.text_box_width_m > 0.0)
+                        .then_some(record.text_box_width_m),
                 },
                 coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
@@ -4237,6 +4248,7 @@ mod tests {
                     height: 2.5,
                     rotation: 0.0,
                     anchor_code: 0,
+                    text_box_width: None,
                 },
                 SheetRecordKind::TextPlacementStyle,
             ),

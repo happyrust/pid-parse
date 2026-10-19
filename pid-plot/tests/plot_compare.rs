@@ -19,37 +19,46 @@ struct Baseline {
 
 // Baselines re-locked after styles, complex-dash hydraulic ticks, boundary
 // fills, symbol lettering, non-uniform arc/circle scaling and ConsistencyChecks
-// review-layer suppression landed.
+// review-layer suppression landed, and again after the kind-2 `igTextBox`
+// text box started lettering the title-block fields from the box's left edge
+// (58 records, 55 of which pair up now — see
+// `docs/analysis/2026-10-19-igtextbox-box-is-where-the-text-starts.md`), and
+// again after the vertical anchor nibble stopped being read as an index: the
+// 18 records whose nibble is 2 letter from the body's top, not its middle
+// (`docs/analysis/2026-10-19-a-pair-of-flags-not-an-index.md`), and once more
+// after a symbol body's own labels stopped reading `0x10` as the baseline —
+// the ten valve `M` labels letter from the body's middle
+// (`docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`).
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
         min_coverage: 0.9980,
         max_extra_mm: 65.0,
-        min_text_matched: 520,
+        min_text_matched: 537,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
         min_coverage: 0.9990,
         max_extra_mm: 20.0,
-        min_text_matched: 125,
+        min_text_matched: 144,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
         min_coverage: 0.9970,
         max_extra_mm: 15.0,
-        min_text_matched: 103,
+        min_text_matched: 119,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
         min_coverage: 0.9975,
         max_extra_mm: 35.0,
-        min_text_matched: 145,
+        min_text_matched: 167,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
         min_coverage: 0.9980,
         max_extra_mm: 50.0,
-        min_text_matched: 234,
+        min_text_matched: 250,
     },
 ];
 

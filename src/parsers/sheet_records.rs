@@ -2450,6 +2450,23 @@ const IGTEXTBOX_BODY_START: usize = 22;
 /// insertion point, the text direction, and a 4-byte trailer.
 const IGTEXTBOX_TAIL_LEN: usize = 36;
 
+/// Payload offset of the tail-kind selector: `1` for the placement tail
+/// alone, `2` for the tail that then carries a text box.
+const IGTEXTBOX_TAIL_KIND_AT: usize = 20;
+
+/// The tail-kind selector whose tail carries the text box.
+const IGTEXTBOX_TAIL_KIND_BOX: u16 = 2;
+
+/// Bytes a kind-2 tail occupies before the optional fields its own flag
+/// word gates — the placement tail plus the box and three counters.
+const IGTEXTBOX_TAIL_KIND2_LEN: usize = 68;
+
+/// Offset of the text box's width inside a kind-2 tail, in sheet units.
+const IGTEXTBOX_BOX_WIDTH_AT: usize = 40;
+
+/// Offset of the text box's height inside a kind-2 tail, in sheet units.
+const IGTEXTBOX_BOX_HEIGHT_AT: usize = 48;
+
 /// Smallest `igTextBox` payload over every sub-type: sub-type 1 carrying no
 /// text, which is 22 header + 2 body + 36 tail.
 ///
@@ -3575,6 +3592,25 @@ pub struct SheetIgTextBoxDecoded {
     /// letter height instead, so it lands here: the size their static title
     /// text letters at when no style join answers.
     pub letter_height_m: f64,
+    /// Width of the text box the record carries, in sheet units — `0.0` for
+    /// a record whose tail states no box (kind 1), which is every record
+    /// that is not a title-block field.
+    ///
+    /// The box sits inside the kind-2 tail at tail `+40`, past the 36 bytes
+    /// the kind-1 tail stops at and the flag word at `+36`. The reference
+    /// plots letter a boxed record from the box's left edge, wherever inside
+    /// the box `anchor_code` puts the insertion point — measured on 58
+    /// title-block records across the five drawing fixtures, whose centred
+    /// anchor lands them half a box width left of the stored insertion, to
+    /// within 0.05 mm. See
+    /// `docs/analysis/2026-10-19-igtextbox-box-is-where-the-text-starts.md`.
+    pub text_box_width_m: f64,
+    /// Height of the same box, in sheet units — `0.0` when there is none.
+    ///
+    /// Unused by the plot writer: the reference letters a boxed record on the
+    /// letter height's own anchor line, not on this box's, so the vertical
+    /// half stays with [`SheetIgTextBoxDecoded::anchor_code`].
+    pub text_box_height_m: f64,
     /// The record's own text-box anchor: the last byte of the 4-byte trailer
     /// that closes the 36-byte placement tail (payload `+35` of the tail).
     ///
@@ -3878,6 +3914,7 @@ fn decode_igtextbox_payload(
     let runs = igtextbox_runs(payload, text_sub_type, inline_text_length);
     // The 4-byte trailer closes the tail; its last byte is the anchor.
     let anchor_code = payload[tail_start + IGTEXTBOX_TAIL_LEN - 1];
+    let (text_box_width_m, text_box_height_m) = igtextbox_box(payload, tail_start);
 
     Some(SheetIgTextBoxDecoded {
         byte_range: offset..payload_end,
@@ -3897,9 +3934,50 @@ fn decode_igtextbox_payload(
         trailing_double_3: trailing[2],
         rotation_rad,
         letter_height_m,
+        text_box_width_m,
+        text_box_height_m,
         anchor_code,
         runs,
     })
+}
+
+/// The text box a kind-2 `igTextBox` tail carries, as `(width, height)` in
+/// sheet units — `(0.0, 0.0)` for any other tail, or for a field that is not
+/// a size at all.
+///
+/// The box is what the reference plots letter against: the record's insertion
+/// point is the box's centre and the string prints from its left edge. Only a
+/// usable size is reported — a non-finite, negative or absurd pair reads as
+/// "no box", which leaves the record placed by its insertion point as before.
+fn igtextbox_box(payload: &[u8], tail_start: usize) -> (f64, f64) {
+    if payload.get(IGTEXTBOX_TAIL_KIND_AT..IGTEXTBOX_TAIL_KIND_AT + 2)
+        != Some(&IGTEXTBOX_TAIL_KIND_BOX.to_le_bytes())
+    {
+        return (0.0, 0.0);
+    }
+    let end = tail_start.saturating_add(IGTEXTBOX_TAIL_KIND2_LEN);
+    if end > payload.len() {
+        return (0.0, 0.0);
+    }
+    let read = |at: usize| -> Option<f64> {
+        let bytes = payload.get(at..at + 8)?;
+        Some(f64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]))
+    };
+    let usable =
+        |value: f64| value.is_finite() && value > 0.0 && value <= GLINE2D_COORDINATE_DOMAIN_LIMIT;
+    let (Some(width), Some(height)) = (
+        read(tail_start + IGTEXTBOX_BOX_WIDTH_AT),
+        read(tail_start + IGTEXTBOX_BOX_HEIGHT_AT),
+    ) else {
+        return (0.0, 0.0);
+    };
+    if usable(width) && usable(height) {
+        (width, height)
+    } else {
+        (0.0, 0.0)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -10396,6 +10474,93 @@ mod tests {
         assert!((t.trailing_double_1 - 0.5).abs() < 1e-9);
         assert!((t.trailing_double_2 - 0.5).abs() < 1e-9);
         assert!((t.trailing_double_3 - 1.0).abs() < 1e-9);
+    }
+
+    /// Where a sub-type 2 record's placement tail starts, record-relative:
+    /// the 6-byte envelope, the 22-byte header and the 10 + 2·n body.
+    fn textbox_tail(record_len: usize, text_len_chars: usize) -> usize {
+        let _ = record_len;
+        6 + IGTEXTBOX_BODY_START + 10 + 2 * text_len_chars
+    }
+
+    /// Mark the record's tail as `kind` and, for the kind that carries a text
+    /// box, grow the record to the 68 bytes that tail occupies.
+    fn set_tail_kind(record: &mut Vec<u8>, kind: u16) {
+        let at = 6 + IGTEXTBOX_TAIL_KIND_AT;
+        record[at..at + 2].copy_from_slice(&kind.to_le_bytes());
+        if kind == IGTEXTBOX_TAIL_KIND_BOX {
+            let btf = u32::from_le_bytes([record[2], record[3], record[4], record[5]]);
+            let grown = btf + (IGTEXTBOX_TAIL_KIND2_LEN - IGTEXTBOX_TAIL_LEN) as u32;
+            record[2..6].copy_from_slice(&grown.to_le_bytes());
+            record.extend(std::iter::repeat_n(
+                0u8,
+                IGTEXTBOX_TAIL_KIND2_LEN - IGTEXTBOX_TAIL_LEN,
+            ));
+        }
+    }
+
+    /// Write the text box into a record whose tail is already kind 2.
+    fn set_text_box(record: &mut [u8], text_len_chars: usize, width: f64, height: f64) {
+        let tail = textbox_tail(record.len(), text_len_chars);
+        let mut at = tail + IGTEXTBOX_BOX_WIDTH_AT;
+        record[at..at + 8].copy_from_slice(&width.to_le_bytes());
+        at = tail + IGTEXTBOX_BOX_HEIGHT_AT;
+        record[at..at + 8].copy_from_slice(&height.to_le_bytes());
+    }
+
+    /// A title-block `igTextBox` states the box it letters inside.
+    ///
+    /// The kind-2 tail's bytes past the placement block were the corpus's
+    /// oldest open question on this family ("32 or 40 bytes, undecoded").
+    /// Two of them are the text box, and the reference plots letter a boxed
+    /// record from the box's left edge rather than from its insertion point,
+    /// which is what
+    /// `docs/analysis/2026-10-19-igtextbox-box-is-where-the-text-starts.md`
+    /// measures.
+    #[test]
+    fn igtextbox_decodes_the_text_box_a_kind_2_tail_carries() {
+        let mut record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+        set_tail_kind(&mut record, IGTEXTBOX_TAIL_KIND_BOX);
+        set_text_box(&mut record, 8, 0.045_307, 0.003_689);
+
+        let decoded = decode_igtextboxes(&record);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].text, "PUMP-101");
+        assert!((decoded[0].text_box_width_m - 0.045_307).abs() < 1e-9);
+        assert!((decoded[0].text_box_height_m - 0.003_689).abs() < 1e-9);
+    }
+
+    /// A kind-1 tail states no box, and neither does a kind-2 one whose box
+    /// reads as something that is not a size.
+    #[test]
+    fn igtextbox_reports_no_box_when_the_tail_states_none() {
+        let plain = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+        let decoded = decode_igtextboxes(&plain);
+        assert_eq!(decoded[0].text_box_width_m, 0.0);
+        assert_eq!(decoded[0].text_box_height_m, 0.0);
+
+        for (width, height) in [
+            (0.0, 0.003_689),
+            (-0.045, 0.003_689),
+            (f64::NAN, 0.003_689),
+            (0.045_307, f64::INFINITY),
+        ] {
+            let mut record = build_synthetic_igtextbox_record("PUMP-101", 100, 50);
+            set_tail_kind(&mut record, IGTEXTBOX_TAIL_KIND_BOX);
+            set_text_box(&mut record, 8, width, height);
+
+            let decoded = decode_igtextboxes(&record);
+            assert_eq!(
+                decoded.len(),
+                1,
+                "({width}, {height}) is a field, not a reason to refuse the label"
+            );
+            assert_eq!(
+                (decoded[0].text_box_width_m, decoded[0].text_box_height_m),
+                (0.0, 0.0),
+                "({width}, {height}) is not a box"
+            );
+        }
     }
 
     /// Rewrite the direction pair that follows the insertion point.

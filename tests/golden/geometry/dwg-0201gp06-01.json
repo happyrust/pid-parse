@@ -8280,7 +8280,8 @@
       "value": "MPag",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 1
+      "anchor_code": 1,
+      "text_box_width": 0.012654300091599957
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8416,7 +8417,8 @@
       "value": " ",
       "height": 0.0,
       "rotation": 1.5707963267953131,
-      "anchor_code": 72
+      "anchor_code": 72,
+      "text_box_width": 0.04200941153582287
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8620,7 +8622,8 @@
       "value": "℃",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 1
+      "anchor_code": 1,
+      "text_box_width": 0.005183689194149355
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -10048,7 +10051,8 @@
       "value": "m",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 1
+      "anchor_code": 1,
+      "text_box_width": 0.006350000000000008
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -10388,7 +10392,8 @@
       "value": "-/mm",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 1
+      "anchor_code": 1,
+      "text_box_width": 0.012654300091599957
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -10660,7 +10665,8 @@
       "value": "MPag",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 1
+      "anchor_code": 1,
+      "text_box_width": 0.012654300091599957
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -10796,7 +10802,8 @@
       "value": "m",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 1
+      "anchor_code": 1,
+      "text_box_width": 0.006350000000000008
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -10864,7 +10871,8 @@
       "value": "℃",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 1
+      "anchor_code": 1,
+      "text_box_width": 0.005183689194149355
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",

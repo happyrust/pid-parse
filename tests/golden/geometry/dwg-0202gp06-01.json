@@ -5856,7 +5856,8 @@
       "value": " ",
       "height": 0.0,
       "rotation": 1.5707963267953102,
-      "anchor_code": 72
+      "anchor_code": 72,
+      "text_box_width": 0.04200000000000002
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6196,7 +6197,8 @@
       "value": " ",
       "height": 0.0,
       "rotation": 1.5707963267953102,
-      "anchor_code": 72
+      "anchor_code": 72,
+      "text_box_width": 0.04200000000000002
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6400,7 +6402,8 @@
       "value": " ",
       "height": 0.0,
       "rotation": 1.5707963267953458,
-      "anchor_code": 72
+      "anchor_code": 72,
+      "text_box_width": 0.04200000000000002
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6876,7 +6879,8 @@
       "value": " ",
       "height": 0.0,
       "rotation": 1.5707963267953102,
-      "anchor_code": 72
+      "anchor_code": 72,
+      "text_box_width": 0.04200000000000002
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8032,7 +8036,8 @@
       "value": "1、污油池上放空管线高度应大于5m。\r2、阻火器电伴热带从根部缠至地面以上2m。",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 49
+      "anchor_code": 49,
+      "text_box_width": 0.09060365853658536
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -8780,7 +8785,8 @@
       "value": "安3集气站\r排污单元\r污油池\r管道及仪表流程图",
       "height": 0.0,
       "rotation": 0.0,
-      "anchor_code": 21
+      "anchor_code": 21,
+      "text_box_width": 0.02914422310756972
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",

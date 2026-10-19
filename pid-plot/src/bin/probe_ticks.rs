@@ -12,7 +12,11 @@ fn main() -> ExitCode {
         eprintln!("usage: probe_ticks <drawing.pid> x_min x_max y_min y_max");
         return ExitCode::from(2);
     };
-    let win: Vec<f64> = args.by_ref().take(4).filter_map(|a| a.parse().ok()).collect();
+    let win: Vec<f64> = args
+        .by_ref()
+        .take(4)
+        .filter_map(|a| a.parse().ok())
+        .collect();
     if win.len() != 4 {
         eprintln!("need 4 window numbers (model mm)");
         return ExitCode::from(2);

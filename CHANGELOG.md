@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### pid-plot 文字落点：带框记录从框左沿起排，竖直锚点的低半字节按两个标志位读（2026-10-19）
+
+五张对比图的「文字对上」从 1190 / 1252 抬到 1217 / 1252，未对上的我方 run 从 56 条降到 29 条；覆盖率、多画毫米和 fit 一个数没动。
+
+- 带框的 kind-2 `igTextBox`（标题栏那批，58 条，共用一个 45.307 × 3.689 mm 的框）现在从框的**左沿**起排：锚点码仍说插入点在框内哪一处，字符串却总从左沿开始，水平位移是 `框宽 × {左 0 / 中 ½ / 右 1}`。55 条因此对上，另外 3 条落在框右沿的记录留在分析页里。竖直不动 —— 带框记录仍按字形高度取锚点线。
+- 竖直锚点码的低半字节**不是一个 0–2 的索引**：`1` 与 `2` 都是字框顶（参考基线在插入点下方 1.0 个字高），`5` 与 `8` 都是字框中线（0.5 个字高），`0` 是基线。原先的 `(code & 0x0F) % 3` 把 `2` 当成中线，18 条位号因此高了半个字高，一直落在 1 mm 匹配窗之外。改为「高两位置位即中线，否则低两位有值即顶部」。符号库自带标签（`SymbolLettering`）用的是另一套读法，见下一条。
+- 符号体自带的标签（`.sym` 里的 `igTextBox`）用另一套读法：没有「基线」这一类，`0x10` 与 `0x12` 都挂在中线上，只有低半字节为 `1` 的顶类例外。索引读法把 `0x10` 当成基线，11 条阀门/电机标签（I 的 9 个 `M`，L 与 H 各 1 个 `S`）整条高了约半个字高。改后这 11 条对上 9 条，剩下两条在旋转的节流阀体里。
+- 证据：`pid-plot/examples/probe_text_anchor_modes.rs` 按半字节报「参考基线 − 插入点 / 字高」的分布；`pid-plot/examples/probe_symbol_label_offsets.rs` 按 `.sym` 文件报符号标签的基线差。分析见 `docs/analysis/2026-10-19-igtextbox-box-is-where-the-text-starts.md`、`docs/analysis/2026-10-19-a-pair-of-flags-not-an-index.md` 与 `docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`；`pid-plot/tests/plot_compare.rs` 门限 525/141/116/159/249 → 537/144/119/167/250。
+
 ### `backup` feature 按输入族拆为 `backup-exp` / `backup-mdf`，`T_DRAWING` 投影扩出图纸元数据（2026-10-16，#39 / #40）
 
 为 OpenCADStudio 备份数据包浏览（pid-cad#5，计划 `OpenCADStudio/docs/plans/2026-10-16-pid-backup-package.md`）拆依赖边界：纯 Oracle `exp` 目录路径的下游（OCS 桌面端）不再需要链接 GPL-3.0 的 vendored `oxidized-mdf` 和 bundled sqlite3。
