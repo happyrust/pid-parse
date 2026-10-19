@@ -248,9 +248,7 @@ fn ordered_publishable_representations(drawing: &PublishDrawing) -> Vec<&Publish
 /// A01 ordering rank for an item type, read from the catalog row
 /// (unlisted types rank 9, same as the old `_` arm).
 fn a01_object_rank(item_type_name: &str) -> u8 {
-    super::catalog::catalog_row(item_type_name)
-        .map(|row| row.a01_rank)
-        .unwrap_or(9)
+    super::catalog::catalog_row(item_type_name).map_or(9, |row| row.a01_rank)
 }
 
 /// Resolve a business-field value (e.g. `EquipmentType = "0"`) to
