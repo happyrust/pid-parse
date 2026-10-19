@@ -114,6 +114,8 @@ pub enum PublishError {
     Sqlite(String),
     /// MDF parser failure from the Rust MDF reader.
     Mdf(String),
+    /// File-system failure while materializing an extracted MDF.
+    Io(String),
     /// No drawing row matched the requested UID.
     DrawingNotFound {
         /// Drawing UID requested by the caller.
@@ -126,6 +128,7 @@ impl fmt::Display for PublishError {
         match self {
             Self::Sqlite(msg) => write!(f, "SQLite: {msg}"),
             Self::Mdf(msg) => write!(f, "MDF: {msg}"),
+            Self::Io(msg) => write!(f, "I/O: {msg}"),
             Self::DrawingNotFound { uid } => write!(f, "drawing UID `{uid}` not found"),
         }
     }

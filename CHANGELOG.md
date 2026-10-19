@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### publish 目录入口接上 SQL Server MTF 包：`Export.dmp`（MTF）→ MSDA → 临时 MDF → `T_Drawing` 逐图发布（2026-10-19，N12）
+
+`pid_publish_xml <备份目录> --out-dir DIR` 对 `Manifest.txt` 目录里 MTF 形态的 `Export.dmp` 不再退出 2：与 Oracle `exp` 分支同一套目录遍历和 `_Index.json` 口径，`PlantData` zip 只列目录不解压，`T_Drawing` 每行经 `sqlite_load::load_drawing_graph` + `write_{data,meta}_xml` 写 `<NAME>_Data.xml` / `_Meta.xml`。无 `backup-mdf` 的构建保持原退出 2 语义。
+
+- MTF → MDF 链路：`backup::mtf::msda_stream_body` 从 MTF 流里取出 `SqlData`（MSDA）体；`backup::mdf_page::detect_backup_stream_header_len`（原 `pid_backup_extract` 私有实现上提为库函数，按 16 字节栅格找两个连续合法 MDF 页头，已知 SQL Server 2008 R2 样本回落 `0x3F0`）剥掉备份流头；`mdf_load::open_mtf_dump_as_sqlite` 把 MDF 镜像落到临时文件（`oxidized-mdf` 只接受路径）后一次登台，用完即删。`PublishError` 新增 `Io` 变体承接临时文件写删失败。
+- `_Index.json` 与 `exp` 分支同构并新增：`export = "SqlServerMtf"`、`unmatched_pid_entries`（PlantData 里没有 `T_Drawing` 行的 `.pid` 条目，TEST02_p 的 11 个 `Template Files/*.pid` 模板全落这里）、`pipeline_uids = "database"`（MTF 数据自带管线，不做合成）。`BackupPublishReport` 增 `written` 字段，CLI 摘要改报真实写出数；逐图失败不拖垮整包，记入 `drawings[].error` 与 `problems`。
+- TEST02_p 实测：`drawing_rows 1`（`A01`，`D9635C3C…`）发布，对象 12 / 值 29 / 关系 15 / `PIDPipeline` 1 / `PipingConnectors` 1；包路径产物与 `pid_publish_xml Export.mdf --drawing` 直发逐字节相同。
+- 测试：`tests/publish_from_pid.rs::sql_server_mtf_directory_publishes_t_drawing_rows` 用 `test-file/backup-test/TEST02_p` 夹具（缺失则 soft-skip）断言 index 形状与三件齐全。
+- 验证：`cargo test --test publish_from_pid` 9/9（含 53 张 Oracle 整包回归）、`backup_mtf` 8/8、`publish_mdf_load` 3/3、`publish_xml_cli` 20/20；`cargo test --lib` 1223/1223、`--no-default-features --lib` 861/861；`cargo check` 在 `backup-mdf` 与 `backup-exp` 两种特性组合下均过；`cargo clippy --lib -D warnings` 零告警、`cargo fmt --check` 干净。
+
 ### pid-plot 文字落点：带框记录从框左沿起排，竖直锚点的低半字节按两个标志位读（2026-10-19）
 
 五张对比图的「文字对上」从 1190 / 1252 抬到 1217 / 1252，未对上的我方 run 从 56 条降到 29 条；覆盖率、多画毫米和 fit 一个数没动。

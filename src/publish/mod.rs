@@ -73,7 +73,10 @@ pub use diff::{
     TagCountDiff, TagDiffStatus, WriterCoverage,
 };
 #[cfg(feature = "backup-mdf")]
-pub use mdf_load::{load_drawing_graph_from_mdf, open_mdf_as_sqlite};
+pub use mdf_load::{
+    load_drawing_graph_from_mdf, mdf_bytes_from_mtf_dump, open_mdf_as_sqlite,
+    open_mtf_dump_as_sqlite,
+};
 pub use model::{
     CodelistIndex, PublishDrawing, PublishError, PublishObject, PublishRelationship,
     PublishRepresentation, PublishStyle,

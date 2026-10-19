@@ -344,6 +344,33 @@ pub fn detect_non_mtf_dump_format(data: &[u8]) -> Option<String> {
     None
 }
 
+/// Body bytes of the first [`MtfStreamKind::SqlData`] (`MSDA`)
+/// stream inside `dump` — the raw SQL Server backup stream.
+///
+/// The walk is the same one `pid_backup_extract` performs: iterate
+/// descriptor blocks with [`MtfBlockCursor`], then the streams each
+/// block carries via [`MtfStreamCursor`], and take the first `MSDA`
+/// hit. The returned slice still carries the backup-stream leading
+/// header; stripping it to reach the MDF image is `mdf_page`'s
+/// `detect_backup_stream_header_len` job on the `backup-mdf` side.
+///
+/// Returns `None` when `dump` contains no `MSDA` stream.
+#[must_use]
+pub fn msda_stream_body(dump: &[u8]) -> Option<&[u8]> {
+    for block in MtfBlockCursor::new(dump) {
+        let offset_to_first_event =
+            u16::from_le_bytes([block.raw_common_header[8], block.raw_common_header[9]]) as usize;
+        let start = block.offset + offset_to_first_event;
+        let end = block.offset + block.size;
+        for stream in MtfStreamCursor::new(dump, start, end) {
+            if stream.kind == MtfStreamKind::SqlData {
+                return Some(&dump[stream.body_offset..stream.body_end]);
+            }
+        }
+    }
+    None
+}
+
 /// Locate the next 512-byte-aligned offset at-or-after `start` whose
 /// first four bytes form a known MTF tag. Shared by both the
 /// block-size detector and the full cursor so both agree on what

@@ -1,11 +1,16 @@
 //! Publish every `.pid` in a `SmartPlant` backup directory.
 //!
-//! Plan `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-3.
-//! A directory that contains `Manifest.txt` is one package. `Export.dmp`,
-//! when it is an Oracle `exp`, is read once ([`super::oracle_exp::ExpTables`]).
-//! Each `PlantData` zip's `.pid` entries are inflated in memory and published
-//! with [`super::pid_load::load_publish_from_reader`]. A SQL Server MTF dump
-//! is refused. A package with no dump still publishes the drawings from the
+//! Plan `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-3
+//! and N12. A directory that contains `Manifest.txt` is one package.
+//! `Export.dmp`, when it is an Oracle `exp`, is read once
+//! ([`super::oracle_exp::ExpTables`]). Each `PlantData` zip's `.pid`
+//! entries are inflated in memory and published with
+//! [`super::pid_load::load_publish_from_reader`]. A SQL Server MTF dump
+//! instead goes through the MDF path: the `MSDA` stream is stripped to
+//! the plain MDF image, staged once via `mdf_load`, and every
+//! `T_Drawing` row publishes through the proven `sqlite_load` loader —
+//! that branch needs the `backup-mdf` feature and is refused without
+//! it. A package with no dump still publishes the drawings from the
 //! `.pid` files alone.
 //!
 //! One drawing that fails is recorded and the rest are still written. The
@@ -25,7 +30,7 @@ use super::oracle_exp::{
 };
 use super::pid_load::{load_publish_from_reader, PidLoadError, PidPublishDrawing, PidPublishStats};
 use super::pid_writer::{write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml};
-use crate::backup::{scan_backup_folder, ExportDumpFormat, PlantDataFile};
+use crate::backup::{scan_backup_folder, BackupFolderScan, ExportDumpFormat, PlantDataFile};
 
 /// Why a backup directory was not published.
 #[derive(Debug)]
@@ -49,6 +54,9 @@ impl std::fmt::Display for BackupPublishError {
 pub struct BackupPublishReport {
     /// Drawings that were not written.
     pub failed: usize,
+    /// Drawings successfully written (all three output files for
+    /// `.pid`-mode, `_Data.xml` + `_Meta.xml` for MTF-mode).
+    pub written: usize,
     /// `_Index.json`.
     pub index_path: PathBuf,
     /// `.pid` entries seen in `PlantData` zips.
@@ -62,11 +70,12 @@ pub struct BackupPublishReport {
 ///
 /// # Errors
 ///
-/// Returns [`BackupPublishError::Usage`] when `Export.dmp` is not an Oracle
-/// `exp` (a SQL Server tape, or an unrecognised header). Returns
-/// [`BackupPublishError::Io`] when the directory, the dump, or a `PlantData`
-/// zip cannot be opened. A single drawing's failure is counted on the
-/// report and does not return an error.
+/// Returns [`BackupPublishError::Usage`] when `Export.dmp` has an
+/// unrecognised header — or is a SQL Server MTF tape while this build
+/// lacks the `backup-mdf` feature. Returns [`BackupPublishError::Io`]
+/// when the directory, the dump, or a `PlantData` zip cannot be opened.
+/// A single drawing's failure is counted on the report and does not
+/// return an error.
 pub fn publish_backup_package(
     package_dir: &Path,
     out_dir: &Path,
@@ -96,9 +105,7 @@ pub fn publish_backup_package(
         Some(export) => match &export.format {
             ExportDumpFormat::OracleExp { .. } => Some(export.path.clone()),
             ExportDumpFormat::SqlServerMtf(_) => {
-                return Err(BackupPublishError::Usage(
-                    "Export.dmp is a SQL Server MTF stream; use pid_backup_extract".into(),
-                ));
+                return publish_mtf_package(package_dir, &export.path, out_dir, plant_name, &scan);
             }
             ExportDumpFormat::Unrecognized { detail } => {
                 return Err(BackupPublishError::Usage(format!(
@@ -127,6 +134,7 @@ pub fn publish_backup_package(
     })?;
 
     let mut failed = 0usize;
+    let mut written = 0usize;
     let mut shells = 0usize;
     let mut pid_entries = 0usize;
     let mut paired = 0usize;
@@ -160,6 +168,7 @@ pub fn publish_backup_package(
             loaded.as_ref(),
             &mut PublishTally {
                 failed: &mut failed,
+                written: &mut written,
                 shells: &mut shells,
                 pid_entries: &mut pid_entries,
                 paired: &mut paired,
@@ -231,6 +240,7 @@ pub fn publish_backup_package(
     })?;
     Ok(BackupPublishReport {
         failed,
+        written,
         index_path,
         pid_entries,
         shells,
@@ -278,6 +288,7 @@ fn load_dump(path: &Path) -> Result<LoadedDump, BackupPublishError> {
 
 struct PublishTally<'a> {
     failed: &'a mut usize,
+    written: &'a mut usize,
     shells: &'a mut usize,
     pid_entries: &'a mut usize,
     paired: &'a mut usize,
@@ -483,6 +494,7 @@ fn publish_one(
             .push(failed_drawing(&plant.file_name, zip_entry, &error));
         return;
     }
+    *tally.written += 1;
     let (object_count, value_count, rel_count) = pid_publish_counts(&xml);
     if uid_from == "T_DRAWING.SP_ID" || uid_from == "T_DRAWING.PATH" {
         *tally.paired += 1;
@@ -661,6 +673,344 @@ pub fn decode_zip_entry_name(raw: &[u8]) -> String {
     } else {
         decoded.into_owned()
     }
+}
+
+/// One `T_Drawing` row of a staged SQL Server backup — every column
+/// is TEXT because `mdf_load` stages it that way.
+#[cfg(feature = "backup-mdf")]
+struct MtfDrawingRow {
+    uid: String,
+    name: String,
+    path: String,
+    drawing_number: String,
+}
+
+/// SQL Server MTF branch of [`publish_backup_package`].
+///
+/// `Export.dmp` is an MTF tape stream: its `MSDA` body minus the
+/// backup-stream prefix is the plant's MDF. The image is staged once
+/// through [`super::mdf_load::open_mtf_dump_as_sqlite`], `T_Drawing`
+/// rows enumerate the drawings, and each is loaded with the proven
+/// `sqlite_load` path and written as `<Name>_Data.xml` +
+/// `<Name>_Meta.xml`. `PlantData` zips are listed but never inflated:
+/// `_Index.json` keeps the same shape as the Oracle `exp` branch, the
+/// `T_Drawing.Path` → zip-entry map pairs each drawing with its `.pid`
+/// entry, and entries with no model row surface under
+/// `unmatched_pid_entries`.
+#[cfg(feature = "backup-mdf")]
+fn publish_mtf_package(
+    package_dir: &Path,
+    dump_path: &Path,
+    out_dir: &Path,
+    plant_name: &str,
+    scan: &BackupFolderScan,
+) -> Result<BackupPublishReport, BackupPublishError> {
+    let dump = fs::read(dump_path).map_err(|error| {
+        BackupPublishError::Io(format!("read {}: {error}", dump_path.display()))
+    })?;
+    let conn = super::mdf_load::open_mtf_dump_as_sqlite(&dump).map_err(|error| {
+        BackupPublishError::Io(format!("stage {}: {error}", dump_path.display()))
+    })?;
+    fs::create_dir_all(out_dir).map_err(|error| {
+        BackupPublishError::Io(format!("create {}: {error}", out_dir.display()))
+    })?;
+    let rows = mtf_drawing_rows(&conn).map_err(|error| {
+        BackupPublishError::Io(format!(
+            "read T_Drawing of {}: {error}",
+            dump_path.display()
+        ))
+    })?;
+
+    let mut failed = 0usize;
+    let mut problems: Vec<String> = scan
+        .problems
+        .iter()
+        .map(|problem| format!("{}: {}", problem.path.display(), problem.detail))
+        .collect();
+
+    // List the PlantData zips (never inflated): `pid_entries` keeps the
+    // index shape identical to the Oracle `exp` branch and `T_Drawing.Path`
+    // pairs each drawing with the `.pid` entry that carries the same
+    // graphic data.
+    let mut pid_entries = 0usize;
+    let mut zip_pid: HashMap<String, (String, String)> = HashMap::new();
+    for plant in &scan.plant_data {
+        if !matches!(plant.format, crate::backup::RefDataFormat::Zip) {
+            continue;
+        }
+        let file = match fs::File::open(&plant.full_path) {
+            Ok(file) => file,
+            Err(error) => {
+                problems.push(format!("open {}: {error}", plant.full_path.display()));
+                failed += 1;
+                continue;
+            }
+        };
+        let mut archive = match zip::ZipArchive::new(file) {
+            Ok(archive) => archive,
+            Err(error) => {
+                problems.push(format!("open {}: {error}", plant.full_path.display()));
+                failed += 1;
+                continue;
+            }
+        };
+        for index in 0..archive.len() {
+            let entry = match archive.by_index(index) {
+                Ok(entry) => entry,
+                Err(error) => {
+                    problems.push(format!("{} entry {index}: {error}", plant.file_name));
+                    failed += 1;
+                    continue;
+                }
+            };
+            if entry.is_dir() {
+                continue;
+            }
+            let name = decode_zip_entry_name(entry.name_raw());
+            if !name.to_ascii_lowercase().ends_with(".pid") {
+                continue;
+            }
+            pid_entries += 1;
+            zip_pid
+                .entry(backup_path_key(&name))
+                .or_insert((plant.file_name.clone(), name));
+        }
+    }
+
+    let mut written = 0usize;
+    let mut paired = 0usize;
+    let mut objects = 0usize;
+    let mut values = 0usize;
+    let mut relationships = 0usize;
+    let mut pipelines = 0usize;
+    let mut piping_connectors = 0usize;
+    let mut written_names = HashSet::new();
+    let mut paired_keys = HashSet::new();
+    let mut drawings: Vec<Value> = Vec::new();
+
+    for row in &rows {
+        let path_key = backup_path_key(&row.path);
+        let (zip_file, zip_entry) = zip_pid
+            .get(&path_key)
+            .map(|(file, entry)| (file.clone(), entry.clone()))
+            .unwrap_or_default();
+        let (graph_name, xml, meta) = match mtf_render_drawing(&conn, &row.uid, plant_name) {
+            Ok(parts) => parts,
+            Err(detail) => {
+                problems.push(format!("{} {}: {detail}", row.name, row.uid));
+                failed += 1;
+                drawings.push(mtf_drawing_entry(
+                    row,
+                    &row.name,
+                    &zip_file,
+                    &zip_entry,
+                    (0, 0, 0),
+                    vec![detail],
+                ));
+                continue;
+            }
+        };
+        let name = if !graph_name.is_empty() {
+            graph_name
+        } else if !row.name.is_empty() {
+            row.name.clone()
+        } else {
+            row.uid.clone()
+        };
+        if !written_names.insert(name.clone()) {
+            let detail = format!("output name {name} is already used");
+            problems.push(format!("{} {}: {detail}", row.name, row.uid));
+            failed += 1;
+            drawings.push(mtf_drawing_entry(
+                row,
+                &name,
+                &zip_file,
+                &zip_entry,
+                (0, 0, 0),
+                vec![detail],
+            ));
+            continue;
+        }
+        if let Err(detail) = write_file(&out_dir.join(format!("{name}_Data.xml")), &xml)
+            .and_then(|()| write_file(&out_dir.join(format!("{name}_Meta.xml")), &meta))
+        {
+            problems.push(format!("{name}: {detail}"));
+            failed += 1;
+            drawings.push(mtf_drawing_entry(
+                row,
+                &name,
+                &zip_file,
+                &zip_entry,
+                (0, 0, 0),
+                vec![detail],
+            ));
+            continue;
+        }
+        written += 1;
+        let counts = pid_publish_counts(&xml);
+        objects += counts.0;
+        values += counts.1;
+        relationships += counts.2;
+        pipelines += xml.matches("<PIDPipeline>").count();
+        piping_connectors += xml.matches("<PIDPipingConnector>").count();
+        if zip_pid.contains_key(&path_key) {
+            paired += 1;
+            paired_keys.insert(path_key);
+        }
+        drawings.push(mtf_drawing_entry(
+            row,
+            &name,
+            &zip_file,
+            &zip_entry,
+            counts,
+            Vec::new(),
+        ));
+    }
+
+    // `.pid` entries that never paired to a `T_Drawing` row: files the
+    // package shipped that this backup's model store does not hold.
+    let mut unmatched: Vec<String> = zip_pid
+        .iter()
+        .filter(|(key, _)| !paired_keys.contains(*key))
+        .map(|(_, (file, entry))| format!("{file}:{entry}"))
+        .collect();
+    unmatched.sort();
+
+    let index = json!({
+        "package": package_dir.display().to_string(),
+        "export": "SqlServerMtf",
+        "pid_entries": pid_entries,
+        "drawing_rows": rows.len(),
+        "paired": paired,
+        "failed": failed,
+        "shells": 0,
+        "objects": objects,
+        "values": values,
+        "relationships": relationships,
+        "piping_ports": 0,
+        "signal_ports": 0,
+        "connectivity_rels": 0,
+        "opc_branch_points": 0,
+        "equipment_composition_rels": 0,
+        "item_note_rels": 0,
+        "pipelines": pipelines,
+        "piping_connectors": piping_connectors,
+        "pipeline_uids": "database",
+        "unmatched_pid_entries": unmatched,
+        "drawings": drawings,
+        "problems": problems,
+    });
+    let index_path = out_dir.join("_Index.json");
+    let mut text = serde_json::to_string_pretty(&index).unwrap_or_else(|_| "{}".to_string());
+    text.push('\n');
+    fs::write(&index_path, text).map_err(|error| {
+        BackupPublishError::Io(format!("write {}: {error}", index_path.display()))
+    })?;
+    Ok(BackupPublishReport {
+        failed,
+        written,
+        index_path,
+        pid_entries,
+        shells: 0,
+    })
+}
+
+/// Without `backup-mdf` the MTF branch cannot stage the embedded MDF,
+/// so a SQL Server directory input keeps reporting the usage error.
+#[cfg(not(feature = "backup-mdf"))]
+fn publish_mtf_package(
+    _package_dir: &Path,
+    _dump_path: &Path,
+    _out_dir: &Path,
+    _plant_name: &str,
+    _scan: &BackupFolderScan,
+) -> Result<BackupPublishReport, BackupPublishError> {
+    Err(BackupPublishError::Usage(
+        "Export.dmp is a SQL Server MTF stream; use pid_backup_extract".into(),
+    ))
+}
+
+/// Enumerate `T_Drawing` rows of a staged SQL Server backup in storage
+/// order. `DrawingNumber` is not present in every `SmartPlant` schema
+/// version, so the select list is built from `PRAGMA table_info`.
+#[cfg(feature = "backup-mdf")]
+fn mtf_drawing_rows(
+    conn: &rusqlite::Connection,
+) -> Result<Vec<MtfDrawingRow>, super::model::PublishError> {
+    let mut has_drawing_number = false;
+    {
+        let mut pragma = conn.prepare("PRAGMA table_info(\"T_Drawing\")")?;
+        let mut cols = pragma.query([])?;
+        while let Some(col) = cols.next()? {
+            let name: String = col.get(1)?;
+            if name.eq_ignore_ascii_case("DrawingNumber") {
+                has_drawing_number = true;
+            }
+        }
+    }
+    let sql = if has_drawing_number {
+        "SELECT SP_ID, Name, Path, DrawingNumber FROM T_Drawing"
+    } else {
+        "SELECT SP_ID, Name, Path, NULL FROM T_Drawing"
+    };
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(MtfDrawingRow {
+            uid: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+            name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            path: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            drawing_number: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+        });
+    }
+    out.retain(|row| !row.uid.is_empty());
+    Ok(out)
+}
+
+/// One `T_Drawing` row → rendered `_Data.xml` + `_Meta.xml` strings,
+/// plus the drawing's `T_Drawing.Name` as loaded.
+#[cfg(feature = "backup-mdf")]
+fn mtf_render_drawing(
+    conn: &rusqlite::Connection,
+    uid: &str,
+    plant_name: &str,
+) -> Result<(String, String, String), String> {
+    let graph =
+        super::sqlite_load::load_drawing_graph(conn, uid).map_err(|error| error.to_string())?;
+    let xml =
+        super::xml_writer::write_data_xml(&graph, plant_name).map_err(|error| error.to_string())?;
+    let meta =
+        super::xml_writer::write_meta_xml(&graph, plant_name).map_err(|error| error.to_string())?;
+    Ok((graph.drawing_name, xml, meta))
+}
+
+/// `_Index.json` `drawings[]` entry for the SQL Server MTF branch —
+/// same keys as the Oracle `exp` entry; `oracle_exp` stays null.
+#[cfg(feature = "backup-mdf")]
+fn mtf_drawing_entry(
+    row: &MtfDrawingRow,
+    name: &str,
+    zip_file: &str,
+    zip_entry: &str,
+    counts: (usize, usize, usize),
+    problems: Vec<String>,
+) -> Value {
+    json!({
+        "doc_uid": row.uid,
+        "name": name,
+        "zip_file": zip_file,
+        "zip_entry": zip_entry,
+        "drawing_number": row.drawing_number,
+        "path": row.path,
+        "plant_group": "",
+        "uid_from": "T_Drawing.SP_ID",
+        "objects": counts.0,
+        "values": counts.1,
+        "relationships": counts.2,
+        "oracle_exp": Value::Null,
+        "problems": problems,
+    })
 }
 
 #[cfg(test)]

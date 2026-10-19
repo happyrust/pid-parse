@@ -200,3 +200,11 @@ S3 只读探针 `examples/probe_oracle_exp_drawing_meta.rs` 查明：`T_DRAWING`
   - `cargo rustdoc --locked -p pid-parse --lib -- -W missing-docs`：0 告警
   - `cargo check --locked -p pid-parse --lib --no-default-features --target wasm32-unknown-unknown`：通过
   - `cargo test --locked -p pid-parse --lib publish::`：237 passed / 0 failed；`cargo test --locked -p pid-parse --lib backup::`：107 passed / 0 failed
+
+### N12 SQL Server MTF 整包入口落地（2026-10-19）
+
+- `pid_publish_xml <备份目录> --out-dir` 对 `Manifest.txt` 目录里 MTF 形态的 `Export.dmp` 不再退出 2，与 Oracle `exp` 分支同一套目录遍历与 `_Index.json` 口径。链路：`backup::mtf::msda_stream_body` 取 MSDA 体 → `backup::mdf_page::detect_backup_stream_header_len`（原 `pid_backup_extract` 私有实现上提为库函数）剥备份流头 → `mdf_load::open_mtf_dump_as_sqlite` 落临时 MDF（`oxidized-mdf` 只接受路径）登台 → `T_Drawing` 逐行 `sqlite_load::load_drawing_graph` + `write_{data,meta}_xml` 写 `<NAME>_Data.xml` / `_Meta.xml`。`PlantData` zip 只列目录不解压；逐图失败不拖垮整包。`PublishError` 新增 `Io` 变体。
+- `_Index.json`：`export = "SqlServerMtf"`、`pipeline_uids = "database"`（MTF 数据自带管线，不合成）、新增 `unmatched_pid_entries`（无 `T_Drawing` 行的 `.pid` 条目）；`BackupPublishReport` 增 `written`，CLI 摘要改报真实写出数。无 `backup-mdf` 的构建保持原退出 2 语义。
+- TEST02_p 实测：`drawing_rows 1`（`A01`，UID `D9635C3C898840D1990B7E8BEE1D55DA`，`PATH \01\01\A01.pid`）发出，对象 12 / 值 29 / 关系 15 / `PIDPipeline` 1 / `PipingConnectors` 1；包路径产物与 `pid_publish_xml Export.mdf --drawing` 直发逐字节相同。12 个 `.pid` 条目里 11 个是 `Template Files/*.pid` 模板，全部进 `unmatched_pid_entries`。
+- 测试：`tests/publish_from_pid.rs::sql_server_mtf_directory_publishes_t_drawing_rows`（夹具缺失 soft-skip）。验证：`publish_from_pid` 9/9、`backup_mtf` 8/8、`publish_mdf_load` 3/3、`publish_xml_cli` 20/20、`--lib` 1223/1223、`--no-default-features --lib` 861/861；`backup-mdf` 与 `backup-exp` 两种特性 check 均过；`clippy --lib -D warnings` 零告警、rustfmt 干净。
+- 范围外保持原样：N11（符号库 / 模板 / `PlantConfig.xml` 内容解析）登记未做；集注站 4 张参考对照仍等那套库的备份。

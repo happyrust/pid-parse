@@ -824,3 +824,55 @@ fn backup_directory_publishes_the_whole_package() {
     alone.as_object_mut().expect("object").remove("source");
     assert_eq!(packaged, alone);
 }
+
+/// N12 — a `Manifest.txt` directory whose `Export.dmp` is a SQL Server
+/// MTF stream: the `MSDA` body is stripped to the MDF image, staged once,
+/// and every `T_Drawing` row publishes through the database path into the
+/// same `_Index.json` shape. `PlantData` zips are only listed, so the
+/// index still reports `.pid` entries and pairs drawings by
+/// `T_Drawing.Path`. Soft-skips without the TEST02_p fixture.
+#[test]
+fn sql_server_mtf_directory_publishes_t_drawing_rows() {
+    let package = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-file/backup-test/TEST02_p");
+    if !package.join("Manifest.txt").is_file() || !package.join("Export.dmp").is_file() {
+        eprintln!("skip: test-file/backup-test/TEST02_p is not a backup package");
+        return;
+    }
+    let out = unique_out_dir("test02-mtf");
+    let output = Command::new(CLI)
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(&out)
+        .args(["--plant", "TEST02"])
+        .output()
+        .expect("spawn MTF backup directory");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit {:?}\n{stderr}",
+        output.status.code()
+    );
+    let index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("_Index.json")).expect("index"))
+            .expect("index json");
+    assert_eq!(index["export"], "SqlServerMtf", "{index}");
+    assert_eq!(index["failed"], 0, "{index}");
+    assert_eq!(index["drawing_rows"], 1, "{index}");
+    assert_eq!(index["paired"], 1, "{index}");
+    assert_eq!(index["pipeline_uids"], "database", "{index}");
+    assert!(index["objects"].as_u64().expect("objects") > 0, "{index}");
+    // Every `.pid` the package shipped pairs by T_Drawing.Path or lands
+    // in `unmatched_pid_entries` — none is dropped silently.
+    let pid_entries = index["pid_entries"].as_u64().expect("pid_entries");
+    let unmatched = index["unmatched_pid_entries"]
+        .as_array()
+        .expect("unmatched_pid_entries");
+    assert_eq!(unmatched.len() as u64 + 1, pid_entries, "{index}");
+    let drawing = &index["drawings"].as_array().expect("drawings")[0];
+    assert_eq!(drawing["uid_from"], "T_Drawing.SP_ID", "{drawing}");
+    let name = drawing["name"].as_str().expect("drawing name");
+    let data = std::fs::read_to_string(out.join(format!("{name}_Data.xml"))).expect("data xml");
+    assert!(data.contains("<PIDDrawing"), "{name}_Data.xml");
+    assert!(out.join(format!("{name}_Meta.xml")).is_file());
+    let _ = std::fs::remove_dir_all(&out);
+}

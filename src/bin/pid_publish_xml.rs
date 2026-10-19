@@ -113,8 +113,10 @@ fn print_usage() {
          A directory that contains Manifest.txt is a backup package. Every\n\
          .pid entry in its PlantData zips is published into --out-dir, plus\n\
          _Index.json. Export.dmp is read once when it is an Oracle exp. A\n\
-         SQL Server MTF dump exits 2 (use pid_backup_extract). --diff-against\n\
-         does not apply. One drawing that fails is recorded; the rest are\n\
+         SQL Server MTF dump is stripped to its MDF and every T_Drawing\n\
+         row publishes through the database path (backup-mdf feature;\n\
+         without it the input still exits 2). --diff-against does not\n\
+         apply. One drawing that fails is recorded; the rest are\n\
          still written; the process then exits 1.\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
@@ -511,7 +513,7 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
         Ok(report) => {
             eprintln!(
                 "Published {} drawings from {} ({} failed, {} without a DrawingNo). Wrote {}.",
-                report.pid_entries,
+                report.written,
                 options.input_path.display(),
                 report.failed,
                 report.shells,
