@@ -248,34 +248,20 @@ fn is_tag_name_byte(b: u8) -> bool {
 /// `reference_xml`. Both inputs are full `_Data.xml` document
 /// strings; the function is pure (no I/O) so it is cheap to call
 /// from tests, CI gates, and the CLI alike.
-/// PID tag varieties the writer is known to emit today. Sorted
-/// for determinism. The list is the executable counterpart of the
-/// `subtables_for_item_type` dispatch matrix in `xml_writer.rs`
-/// plus the four virtual nodes (`PIDDrawing` / `PIDRepresentation` /
-/// derived `PIDPipingPort` / `PIDProcessPoint`) that any non-trivial
-/// drawing emits.
+/// PID tag varieties the writer is known to emit today. Derived from
+/// the publish item catalog (A4): the union of every row's `db_tags`
+/// — dedicated writer tags plus the virtual-node tags declared on
+/// the special `"$drawing"` / `"$derived"` rows — sorted and
+/// deduplicated. The catalog consistency test pins the derived set
+/// against the historical hand list.
 ///
 /// Used by [`coverage_against_reference`] to classify a reference
 /// `SmartPlant` `_Data.xml` into "tags we already know how to emit"
 /// vs "tags that form the next-phase backlog".
 pub fn supported_pid_tags() -> &'static [&'static str] {
-    &[
-        "PIDBranchPoint",
-        "PIDControlSystemFunction",
-        "PIDDrawing",
-        "PIDNote",
-        "PIDNozzle",
-        "PIDPipeline",
-        "PIDPipingBranchPoint",
-        "PIDPipingComponent",
-        "PIDPipingConnector",
-        "PIDPipingPort",
-        "PIDProcessPoint",
-        "PIDProcessVessel",
-        "PIDRepresentation",
-        "PIDSignalConnector",
-        "PIDSignalPort",
-    ]
+    static TAGS: std::sync::LazyLock<Vec<&'static str>> =
+        std::sync::LazyLock::new(super::catalog::supported_db_tags);
+    TAGS.as_slice()
 }
 
 /// One row of the [`WriterCoverage`] report. `count` is the

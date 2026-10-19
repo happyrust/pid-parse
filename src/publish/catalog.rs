@@ -518,11 +518,32 @@ mod tests {
 
     #[test]
     fn derived_db_tags_match_supported_pid_tags() {
+        // A4: `diff::supported_pid_tags` now derives from
+        // `supported_db_tags`, so comparing against it would be
+        // tautological. Pin the historical tag list literally —
+        // any coverage-visible change must be a deliberate,
+        // ratcheted catalog edit (ADR-0002).
         let derived = supported_db_tags();
-        let hand_listed: Vec<&'static str> = crate::publish::diff::supported_pid_tags().to_vec();
+        let hand_listed: Vec<&'static str> = vec![
+            "PIDBranchPoint",
+            "PIDControlSystemFunction",
+            "PIDDrawing",
+            "PIDNote",
+            "PIDNozzle",
+            "PIDPipeline",
+            "PIDPipingBranchPoint",
+            "PIDPipingComponent",
+            "PIDPipingConnector",
+            "PIDPipingPort",
+            "PIDProcessPoint",
+            "PIDProcessVessel",
+            "PIDRepresentation",
+            "PIDSignalConnector",
+            "PIDSignalPort",
+        ];
         assert_eq!(
             derived, hand_listed,
-            "catalog-derived DB tag set diverged from supported_pid_tags"
+            "catalog-derived DB tag set diverged from the pinned list"
         );
     }
 
