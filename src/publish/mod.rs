@@ -53,6 +53,9 @@
 //!   in `tests/publish_dwg_mirror.rs` fire.
 
 pub mod backup_package;
+// A1 (wayfinder M4): the catalog is seeded but has no consumers yet —
+// `sqlite_load`, `xml_writer` and `diff` still consult their own tables.
+mod catalog;
 pub mod diff;
 #[cfg(feature = "backup-mdf")]
 pub mod mdf_load;

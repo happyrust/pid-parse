@@ -76,7 +76,7 @@ const META_DEFAULT_DOC_VERSION: &str = "1";
 /// `InstrFunction` objects (16 ports total = the A15 backlog
 /// count). Future fixtures that exhibit a different cardinality
 /// will let this constant become a per-object derivation rule.
-const INSTR_DERIVED_SIGNAL_PORT_COUNT: u8 = 8;
+pub(super) const INSTR_DERIVED_SIGNAL_PORT_COUNT: u8 = 8;
 
 /// Emit a full `_Data.xml` document for the given drawing into a
 /// string buffer. `plant_name` is a user-supplied value (e.g. the
@@ -523,7 +523,7 @@ fn derived_pipe_connector_uid(pipe_uid: &str) -> String {
 /// from `T_ProcessEquipment`'s `EqType` columns) is deferred to
 /// A25b — until then, callers synthesising `PublishObjects`
 /// manually can set the field directly.
-fn write_process_vessel(
+pub(super) fn write_process_vessel(
     buf: &mut String,
     obj: &PublishObject,
     drawing: &PublishDrawing,
@@ -713,7 +713,7 @@ fn write_process_vessel(
 ///   absent, diverging from the A01 bare shape.
 /// * `IPipingSpecifiedItem` — same conditional path for
 ///   `PipingMaterialsClass` (bare in A01; populated in DWG).
-fn write_nozzle(
+pub(super) fn write_nozzle(
     buf: &mut String,
     obj: &PublishObject,
     drawing: &PublishDrawing,
@@ -1047,7 +1047,7 @@ fn write_process_vessel_iobject(
 /// that loaded a DWG-flavor `SQLite` mirror), the `IObject` drops
 /// the `ItemTag` attribute — matching the DWG reference's
 /// `<IObject UID="..." Name="..."/>` two-attribute shape.
-fn write_pipeline(
+pub(super) fn write_pipeline(
     buf: &mut String,
     obj: &PublishObject,
     style: PublishStyle,
@@ -1151,7 +1151,7 @@ fn write_pipeline(
 /// A01 byte-shape identical to the pre-A20 empty case while
 /// unlocking the DWG-specific populated shape when the columns
 /// arrive from `T_PipeRun` / `T_Connector`.
-fn write_piping_connector(
+pub(super) fn write_piping_connector(
     buf: &mut String,
     obj: &PublishObject,
     style: PublishStyle,
@@ -1352,7 +1352,7 @@ fn write_piping_connector(
 /// deterministic connector UID the `<PIDPipingConnector>`
 /// block carries, with the `SmartPlant` suffixes `.1`, `.2`,
 /// `.PPT`.
-fn write_derived_connector_endpoints(
+pub(super) fn write_derived_connector_endpoints(
     buf: &mut String,
     obj: &PublishObject,
 ) -> Result<(), PublishError> {
@@ -1435,7 +1435,7 @@ fn write_derived_connector_endpoints(
 ///   reference; Vessel/Nozzle's typical attribute is omitted here).
 ///
 /// Counts of zero render nothing but stay well-formed.
-fn write_derived_instr_signal_ports(
+pub(super) fn write_derived_instr_signal_ports(
     buf: &mut String,
     obj: &PublishObject,
     count: u8,
@@ -1461,7 +1461,7 @@ fn write_derived_instr_signal_ports(
     Ok(())
 }
 
-fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
     let nominal_diameter = obj
         .fields
         .get("NominalDiameter")
@@ -1504,7 +1504,7 @@ fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), Publis
 /// `NoteText` field win over `Description`. When neither is
 /// present the attribute renders empty rather than fabricating a
 /// placeholder.
-fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
     let note_text = obj
         .fields
         .get("NoteText")
@@ -1565,7 +1565,7 @@ fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishE
 /// missing the writer falls back to the bare `MeasuredVariable`
 /// (or the bare sequence) so the human-readable label is still
 /// non-empty whenever any signal is available.
-fn write_control_system_function(
+pub(super) fn write_control_system_function(
     buf: &mut String,
     obj: &PublishObject,
 ) -> Result<(), PublishError> {
@@ -1718,7 +1718,10 @@ fn write_control_system_function(
 /// * `IsTypical` on `IPIDTypical` — the `T_ModelItem.SP_IsTypical`
 ///   standard boolean, rendered through [`map_bool`]; defaults to
 ///   `"False"`.
-fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_piping_component(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
     let construction_status = obj
         .fields
         .get("ConstructionStatus")
@@ -1882,7 +1885,10 @@ fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), P
 /// `T_Relationship` and flow through the generic relationship
 /// emitter in `write_relationships`. A17/A18 stay focused on the
 /// per-object tag shape.
-fn write_signal_connector(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_signal_connector(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
     let flow_direction = obj.fields.get("FlowDirection").cloned().unwrap_or_default();
     writeln!(buf, "   <PIDSignalConnector>").map_err(fmt_err)?;
     writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid)).map_err(fmt_err)?;
@@ -1924,7 +1930,10 @@ fn write_signal_connector(buf: &mut String, obj: &PublishObject) -> Result<(), P
 /// emits whatever `obj.uid` the loader supplies, leaving the
 /// suffix convention to the loader side. All interfaces are bare
 /// (no attributes) so the function needs nothing beyond the UID.
-fn write_piping_branch_point(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_piping_branch_point(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
     writeln!(buf, "   <PIDPipingBranchPoint>").map_err(fmt_err)?;
     writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid),).map_err(fmt_err)?;
     writeln!(buf, "      <IConnection/>").map_err(fmt_err)?;
@@ -1955,7 +1964,10 @@ fn write_piping_branch_point(buf: &mut String, obj: &PublishObject) -> Result<()
 /// number. All interfaces below `IObject` are bare. `Name` is
 /// sourced from `obj.fields["Name"]` falling back to
 /// `obj.description` — the loader must populate one of them.
-fn write_pid_branch_point(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_pid_branch_point(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
     let name = non_empty_field(obj, "Name")
         .or(obj.description.as_deref())
         .unwrap_or("");
@@ -1981,7 +1993,7 @@ fn write_pid_branch_point(buf: &mut String, obj: &PublishObject) -> Result<(), P
     writeln!(buf, "   </PIDBranchPoint>").map_err(fmt_err)
 }
 
-fn write_generic_object(
+pub(super) fn write_generic_object(
     buf: &mut String,
     obj: &PublishObject,
     item_type_name: &str,
