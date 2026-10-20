@@ -1,9 +1,14 @@
-//! End-to-end tests for the `pid_inspect` binary (Phase 10a subset).
+//! End-to-end tests for the `pid_inspect` command surface.
 //!
-//! We only cover the Phase 10a-introduced `--coverage` flag here. The rest
-//! of the binary has historically been tested by pushing real fixtures
-//! through `parse_real_files` and eyeballing; a future phase may expand
-//! this file to full CLI parity.
+//! Since B3 (issue #26) the binary is a thin adapter over
+//! [`pid_parse::inspect::commands::InspectCommand`], so the bulk of the
+//! suite drives the library directly: build a [`PidPackage`] fixture,
+//! `run` the command, assert on [`InspectOutput::render_text`] /
+//! [`InspectOutput::json_body`] / [`InspectOutput::exit_code`]. Two
+//! spawn tests remain to prove the argument-parser → command → print
+//! wiring still works end to end.
+use pid_parse::inspect::commands::{ExportBundleOptions, InspectCommand, InspectOutput};
+use pid_parse::PidParser;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
@@ -45,6 +50,18 @@ fn unique_tmp_dir(label: &str) -> PathBuf {
         nanos
     ));
     p
+}
+
+/// Parse a fixture `.pid` for commands that take an in-memory package.
+fn parse_pkg(path: &std::path::Path) -> pid_parse::PidPackage {
+    PidParser::new()
+        .parse_package(path)
+        .expect("parse fixture package")
+}
+
+/// Run a command that must succeed, returning its text rendering.
+fn run_ok(cmd: &InspectCommand, pkg: Option<&pid_parse::PidPackage>) -> InspectOutput {
+    cmd.run(pkg).expect("inspect command should succeed")
 }
 
 /// Produce a single legal 48-byte `DocVersion3` record so the parser's
@@ -139,6 +156,18 @@ fn build_controlled_diff_fixture(path: &std::path::Path, sheet_payload: &[u8]) {
     cfb.flush().unwrap();
 }
 
+fn write_byte_audit_baseline(
+    fixture: &std::path::Path,
+    baseline_path: &std::path::Path,
+    mutate: impl FnOnce(&mut pid_parse::byte_audit::ByteAuditReport),
+) {
+    let pkg = parse_pkg(fixture);
+    let mut report = pid_parse::byte_audit_report(&pkg);
+    mutate(&mut report);
+    let json = serde_json::to_string_pretty(&report).expect("serialize baseline");
+    std::fs::write(baseline_path, json).expect("write baseline");
+}
+
 #[test]
 fn controlled_diff_dir_reports_stream_level_evidence() {
     let root = unique_tmp_dir("controlled-diff");
@@ -157,17 +186,9 @@ fn controlled_diff_dir_reports_stream_level_evidence() {
     )
     .expect("metadata");
 
-    let output = Command::new(binary_path())
-        .arg("--controlled-diff-dir")
-        .arg(&root)
-        .output()
-        .expect("spawn pid_inspect --controlled-diff-dir");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
+    let out = run_ok(&InspectCommand::ControlledDiffDir { dir: root }, None);
+    assert_eq!(out.exit_code(), 0);
+    let stdout = out.render_text();
     assert!(
         stdout.contains("case=one-line operation=place_line"),
         "stdout should include case summary, got:\n{stdout}"
@@ -200,20 +221,13 @@ fn controlled_diff_dir_json_reports_stream_level_evidence() {
     )
     .expect("metadata");
 
-    let output = Command::new(binary_path())
-        .arg("--controlled-diff-dir")
-        .arg(&root)
-        .arg("--json")
-        .output()
-        .expect("spawn pid_inspect --controlled-diff-dir --json");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
+    let out = run_ok(&InspectCommand::ControlledDiffDir { dir: root }, None);
+    let body = out
+        .json_body()
+        .expect("json_body")
+        .expect("controlled diff always has a JSON body");
     let json: serde_json::Value =
-        serde_json::from_str(&stdout).unwrap_or_else(|err| panic!("invalid JSON {err}: {stdout}"));
+        serde_json::from_str(&body).unwrap_or_else(|err| panic!("invalid JSON {err}: {body}"));
     assert_eq!(json["promoted_geometry"], false);
     assert_eq!(json["cases"][0]["case"], "one-circle");
     assert_eq!(json["cases"][0]["operation"], "place_circle");
@@ -225,25 +239,18 @@ fn controlled_diff_dir_json_reports_stream_level_evidence() {
 fn controlled_diff_dir_json_empty_directory_reports_no_cases() {
     let root = unique_tmp_dir("controlled-diff-empty");
 
-    let output = Command::new(binary_path())
-        .arg("--controlled-diff-dir")
-        .arg(&root)
-        .arg("--json")
-        .output()
-        .expect("spawn pid_inspect --controlled-diff-dir --json empty");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
+    let out = run_ok(&InspectCommand::ControlledDiffDir { dir: root }, None);
+    let body = out
+        .json_body()
+        .expect("json_body")
+        .expect("empty dir still emits the evidence report JSON");
     let json: serde_json::Value =
-        serde_json::from_str(&stdout).unwrap_or_else(|err| panic!("invalid JSON {err}: {stdout}"));
+        serde_json::from_str(&body).unwrap_or_else(|err| panic!("invalid JSON {err}: {body}"));
     assert_eq!(json["promoted_geometry"], false);
     assert_eq!(
         json["cases"].as_array().map(Vec::len),
         Some(0),
-        "empty controlled diff dir should emit empty cases, got:\n{stdout}"
+        "empty controlled diff dir should emit empty cases, got:\n{body}"
     );
 }
 
@@ -295,20 +302,13 @@ fn controlled_diff_protocol_synthetic_two_case_walkthrough() {
     )
     .expect("circle-default metadata");
 
-    let output = Command::new(binary_path())
-        .arg("--controlled-diff-dir")
-        .arg(&root)
-        .arg("--json")
-        .output()
-        .expect("spawn pid_inspect --controlled-diff-dir --json");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
+    let out = run_ok(&InspectCommand::ControlledDiffDir { dir: root }, None);
+    let body = out
+        .json_body()
+        .expect("json_body")
+        .expect("controlled diff always has a JSON body");
     let json: serde_json::Value =
-        serde_json::from_str(&stdout).unwrap_or_else(|err| panic!("invalid JSON {err}: {stdout}"));
+        serde_json::from_str(&body).unwrap_or_else(|err| panic!("invalid JSON {err}: {body}"));
 
     assert_eq!(
         json["promoted_geometry"], false,
@@ -321,7 +321,7 @@ fn controlled_diff_protocol_synthetic_two_case_walkthrough() {
     assert_eq!(
         cases.len(),
         2,
-        "expected 2 cases (line + circle), got\n{stdout}"
+        "expected 2 cases (line + circle), got\n{body}"
     );
 
     // Cases come back in case-name lex order: circle-default first, then line-01.
@@ -336,7 +336,7 @@ fn controlled_diff_protocol_synthetic_two_case_walkthrough() {
     // SmartPlant intent against parsed bytes downstream.
     assert_eq!(
         cases[0]["expected"]["tool"], "MiscAnnotations.Circle",
-        "expected payload must round-trip verbatim, got\n{stdout}"
+        "expected payload must round-trip verbatim, got\n{body}"
     );
     assert_eq!(cases[0]["notes"], "protocol synthetic");
 
@@ -368,39 +368,34 @@ fn controlled_diff_dir_rejects_metadata_case_mismatch() {
     )
     .expect("metadata");
 
-    let output = Command::new(binary_path())
-        .arg("--controlled-diff-dir")
-        .arg(&root)
-        .output()
-        .expect("spawn pid_inspect --controlled-diff-dir bad metadata");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(2), "stderr:\n{stderr}");
-    assert!(
-        stderr.contains("case field"),
-        "stderr should explain metadata case mismatch, got:\n{stderr}"
-    );
+    match (InspectCommand::ControlledDiffDir { dir: root }).run(None) {
+        Err(e) => {
+            assert_eq!(e.exit_code, 2, "stderr: {}", e.message);
+            assert!(
+                e.message.contains("case field"),
+                "stderr should explain metadata case mismatch, got:\n{}",
+                e.message
+            );
+        }
+        Ok(_) => panic!("metadata case mismatch must fail with exit 2"),
+    }
 }
 
 #[test]
 fn geometry_json_flag_emits_normalized_probe_entities() {
     let fixture = unique_tmp("geometry-json");
     build_sheet_probe_fixture(&fixture);
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--geometry-json")
-        .output()
-        .expect("spawn pid_inspect --geometry-json");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
-        output.status.code()
-    );
-
+    let out = InspectCommand::Geometry
+        .run(Some(&pkg))
+        .expect("geometry run");
+    let body = out
+        .json_body()
+        .expect("json_body")
+        .expect("geometry always has a JSON body");
     let parsed: serde_json::Value =
-        serde_json::from_str(&stdout).expect("--geometry-json must emit valid JSON");
+        serde_json::from_str(&body).expect("--geometry-json must emit valid JSON");
     let entities = parsed["entities"]
         .as_array()
         .expect("entities should be an array");
@@ -414,11 +409,12 @@ fn geometry_json_flag_emits_normalized_probe_entities() {
                 && entity["id"]
                     .as_str()
                     .is_some_and(|id| id.contains("/Sheet6:"))),
-        "expected Sheet6 probe evidence with explicit coordinate context in normalized geometry JSON; stdout:\n{stdout}"
+        "expected Sheet6 probe evidence with explicit coordinate context in normalized geometry JSON; json:\n{body}"
     );
+    let text = out.render_text();
     assert!(
-        !stdout.contains("--- Summary ---"),
-        "--geometry-json should not emit the legacy text report; stdout:\n{stdout}"
+        !text.contains("--- Summary ---"),
+        "--geometry-json should not emit the legacy text report; text:\n{text}"
     );
 
     let _ = std::fs::remove_file(&fixture);
@@ -430,19 +426,15 @@ fn export_bundle_flag_writes_minimal_bundle_and_raw_bytes_only_when_requested() 
     let default_out = unique_tmp_dir("export-bundle-default");
     let raw_out = unique_tmp_dir("export-bundle-raw");
     build_mixed_coverage_fixture(&fixture);
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--export-bundle")
-        .arg(&default_out)
-        .output()
-        .expect("spawn pid_inspect --export-bundle");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
+    InspectCommand::ExportBundle(ExportBundleOptions {
+        output_dir: default_out.clone(),
+        ..ExportBundleOptions::default()
+    })
+    .run(Some(&pkg))
+    .expect("default export bundle run");
+
     assert!(default_out.join("manifest.json").is_file());
     assert!(default_out.join("raw/streams.json").is_file());
     assert!(default_out.join("decoded/document.json").is_file());
@@ -457,19 +449,14 @@ fn export_bundle_flag_writes_minimal_bundle_and_raw_bytes_only_when_requested() 
     assert_eq!(manifest["features"]["raw_stream_bytes"], false);
     assert_eq!(manifest["counts"]["streams"], 4);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--export-bundle")
-        .arg(&raw_out)
-        .arg("--export-bundle-raw-streams")
-        .output()
-        .expect("spawn pid_inspect --export-bundle --export-bundle-raw-streams");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
+    InspectCommand::ExportBundle(ExportBundleOptions {
+        output_dir: raw_out.clone(),
+        include_raw_streams: true,
+        ..ExportBundleOptions::default()
+    })
+    .run(Some(&pkg))
+    .expect("raw-streams export bundle run");
+
     let streams: serde_json::Value =
         serde_json::from_slice(&std::fs::read(raw_out.join("raw/streams.json")).unwrap())
             .expect("streams JSON");
@@ -494,28 +481,6 @@ fn export_bundle_flag_writes_minimal_bundle_and_raw_bytes_only_when_requested() 
 }
 
 #[test]
-fn export_bundle_publish_requires_drawing_uid() {
-    let output = Command::new(binary_path())
-        .arg("missing.pid")
-        .arg("--export-bundle")
-        .arg(unique_tmp_dir("export-bundle-missing-drawing"))
-        .arg("--export-bundle-publish")
-        .arg(LEGACY_SQLITE_PATH)
-        .output()
-        .expect("spawn pid_inspect --export-bundle-publish without drawing");
-    assert_eq!(
-        output.status.code(),
-        Some(2),
-        "missing publish drawing should be argument error"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("--export-bundle-publish requires --publish-drawing"),
-        "stderr should explain missing drawing UID, got:\n{stderr}"
-    );
-}
-
-#[test]
 fn export_bundle_publish_flags_write_xml_and_success_status() {
     if !std::path::Path::new(LEGACY_SQLITE_PATH).exists() {
         eprintln!("skipping: fixture {LEGACY_SQLITE_PATH} not found");
@@ -524,27 +489,19 @@ fn export_bundle_publish_flags_write_xml_and_success_status() {
     let fixture = unique_tmp("export-bundle-publish");
     let out_dir = unique_tmp_dir("export-bundle-publish");
     build_mixed_coverage_fixture(&fixture);
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--export-bundle")
-        .arg(&out_dir)
-        .arg("--export-bundle-publish")
-        .arg(LEGACY_SQLITE_PATH)
-        .arg("--publish-drawing")
-        .arg(A01_DRAWING_UID)
-        .arg("--publish-plant")
-        .arg("TEST02")
-        .arg("--publish-style")
-        .arg("a01")
-        .output()
-        .expect("spawn pid_inspect export-bundle publish");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
+    InspectCommand::ExportBundle(ExportBundleOptions {
+        output_dir: out_dir.clone(),
+        publish_input: Some(PathBuf::from(LEGACY_SQLITE_PATH)),
+        publish_drawing: Some(A01_DRAWING_UID.to_string()),
+        publish_plant: Some("TEST02".to_string()),
+        publish_style: Some("a01".to_string()),
+        ..ExportBundleOptions::default()
+    })
+    .run(Some(&pkg))
+    .expect("export-bundle publish run");
+
     assert!(out_dir.join("publish/data.xml").is_file());
     assert!(out_dir.join("publish/meta.xml").is_file());
 
@@ -579,27 +536,18 @@ fn export_bundle_publish_diff_against_writes_diff_artifact() {
     let fixture = unique_tmp("export-bundle-publish-diff");
     let out_dir = unique_tmp_dir("export-bundle-publish-diff");
     build_mixed_coverage_fixture(&fixture);
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--export-bundle")
-        .arg(&out_dir)
-        .arg("--export-bundle-publish")
-        .arg(A01_MDF_PATH)
-        .arg("--publish-drawing")
-        .arg(A01_DRAWING_UID)
-        .arg("--publish-plant")
-        .arg("TEST02")
-        .arg("--publish-diff-against")
-        .arg(A01_REFERENCE_DATA_XML)
-        .output()
-        .expect("spawn pid_inspect export-bundle publish diff");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "stdout:\n{stdout}\nstderr:\n{stderr}"
-    );
+    InspectCommand::ExportBundle(ExportBundleOptions {
+        output_dir: out_dir.clone(),
+        publish_input: Some(PathBuf::from(A01_MDF_PATH)),
+        publish_drawing: Some(A01_DRAWING_UID.to_string()),
+        publish_plant: Some("TEST02".to_string()),
+        publish_diff_against: Some(PathBuf::from(A01_REFERENCE_DATA_XML)),
+        ..ExportBundleOptions::default()
+    })
+    .run(Some(&pkg))
+    .expect("export-bundle publish diff run");
 
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(out_dir.join("manifest.json")).unwrap())
@@ -625,39 +573,14 @@ fn export_bundle_publish_diff_against_writes_diff_artifact() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-fn write_byte_audit_baseline(
-    fixture: &std::path::Path,
-    baseline_path: &std::path::Path,
-    mutate: impl FnOnce(&mut pid_parse::byte_audit::ByteAuditReport),
-) {
-    let parser = pid_parse::PidParser::new();
-    let pkg = parser
-        .parse_package(fixture)
-        .expect("parse fixture package");
-    let mut report = pid_parse::byte_audit_report(&pkg);
-    mutate(&mut report);
-    let json = serde_json::to_string_pretty(&report).expect("serialize baseline");
-    std::fs::write(baseline_path, json).expect("write baseline");
-}
-
 #[test]
 fn coverage_flag_prints_section_and_all_four_buckets() {
     let fixture = unique_tmp("coverage-cli");
     build_mixed_coverage_fixture(&fixture);
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--coverage")
-        .output()
-        .expect("spawn pid_inspect --coverage");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
-        output.status.code()
-    );
+    let out = run_ok(&InspectCommand::Coverage, Some(&pkg));
+    let stdout = out.render_text();
 
     assert!(
         stdout.contains("--- Coverage ---"),
@@ -699,7 +622,7 @@ fn coverage_flag_downgrades_docversion3_when_record_is_illegal() {
     // unparseable bytes must be classified as `[ID]` and the note
     // must point at the missing model field. This mirrors the
     // `coverage_downgrades_docversion3_when_parser_did_not_populate`
-    // lib-unit test at the CLI boundary so we catch any regression
+    // lib-unit test at the command boundary so we catch any regression
     // between the classifier and the report renderer.
     let fixture = unique_tmp("coverage-downgrade");
     let file = std::fs::File::create(&fixture).expect("create");
@@ -710,14 +633,9 @@ fn coverage_flag_downgrades_docversion3_when_record_is_illegal() {
     s.write_all(&[0x01u8, 0x02, 0x03, 0x04]).unwrap();
     drop(s);
     cfb.flush().unwrap();
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--coverage")
-        .output()
-        .expect("spawn pid_inspect --coverage");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "stdout:\n{stdout}");
+    let stdout = run_ok(&InspectCommand::Coverage, Some(&pkg)).render_text();
     assert!(
         stdout.contains("[ID]   DocVersion3"),
         "expected DocVersion3 downgraded to [ID]; stdout:\n{stdout}"
@@ -738,29 +656,20 @@ fn coverage_flag_downgrades_docversion3_when_record_is_illegal() {
 fn coverage_json_flag_emits_parseable_coverage_report() {
     // Phase 10e: `--coverage --json` must emit a machine-parseable
     // JSON representation of `CoverageReport` — distinct from plain
-    // `--json` (which dumps the entire PidDocument). This test
-    // spawns the binary, parses stdout with `serde_json`, and asserts
-    // the expected shape + values.
+    // `--json` (which dumps the entire PidDocument). The library call
+    // returns the payload; `json_body` gives the same string the CLI
+    // printed.
     let fixture = unique_tmp("coverage-json");
     build_mixed_coverage_fixture(&fixture);
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--coverage")
-        .arg("--json")
-        .output()
-        .expect("spawn pid_inspect --coverage --json");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
-        output.status.code()
-    );
-
-    // The JSON must have the top-level shape `{"entries": [...]}`.
+    let out = run_ok(&InspectCommand::Coverage, Some(&pkg));
+    let body = out
+        .json_body()
+        .expect("json_body")
+        .expect("coverage always has a JSON body");
     let parsed: serde_json::Value =
-        serde_json::from_str(&stdout).expect("stdout must be valid JSON");
+        serde_json::from_str(&body).expect("json body must be valid JSON");
     let entries = parsed
         .get("entries")
         .and_then(|v| v.as_array())
@@ -811,20 +720,9 @@ fn coverage_json_flag_emits_parseable_coverage_report() {
 fn byte_audit_flag_prints_text_report() {
     let fixture = unique_tmp("byte-audit-cli");
     build_mixed_coverage_fixture(&fixture);
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--byte-audit")
-        .output()
-        .expect("spawn pid_inspect --byte-audit");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
-        output.status.code()
-    );
-
+    let stdout = run_ok(&InspectCommand::ByteAudit { baseline: None }, Some(&pkg)).render_text();
     assert!(
         stdout.contains("--- Byte Audit ---"),
         "byte-audit section heading missing; stdout:\n{stdout}"
@@ -853,23 +751,15 @@ fn byte_audit_flag_prints_text_report() {
 fn byte_audit_json_flag_emits_parseable_report() {
     let fixture = unique_tmp("byte-audit-json");
     build_mixed_coverage_fixture(&fixture);
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--byte-audit")
-        .arg("--json")
-        .output()
-        .expect("spawn pid_inspect --byte-audit --json");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
-        output.status.code()
-    );
-
+    let out = run_ok(&InspectCommand::ByteAudit { baseline: None }, Some(&pkg));
+    let body = out
+        .json_body()
+        .expect("json_body")
+        .expect("byte audit always has a JSON body");
     let parsed: serde_json::Value =
-        serde_json::from_str(&stdout).expect("stdout must be valid JSON");
+        serde_json::from_str(&body).expect("json body must be valid JSON");
     assert!(
         parsed.get("per_stream").is_some(),
         "byte-audit JSON should include per_stream; json: {parsed}"
@@ -902,22 +792,16 @@ fn byte_audit_baseline_flag_reports_clean_comparison() {
     let baseline = unique_tmp("byte-audit-baseline-clean-json");
     build_mixed_coverage_fixture(&fixture);
     write_byte_audit_baseline(&fixture, &baseline, |_| {});
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--byte-audit")
-        .arg("--byte-audit-baseline")
-        .arg(&baseline)
-        .output()
-        .expect("spawn pid_inspect --byte-audit --byte-audit-baseline");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(
-        output.status.success(),
-        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
-        output.status.code()
+    let out = run_ok(
+        &InspectCommand::ByteAudit {
+            baseline: Some(baseline.clone()),
+        },
+        Some(&pkg),
     );
+    assert_eq!(out.exit_code(), 0);
+    let stdout = out.render_text();
     assert!(
         stdout.contains("--- Byte Audit Baseline Comparison ---"),
         "comparison heading missing; stdout:\n{stdout}"
@@ -939,22 +823,20 @@ fn byte_audit_baseline_flag_fails_on_regression() {
     write_byte_audit_baseline(&fixture, &baseline, |report| {
         report.overall_coverage_ratio = 1.0;
     });
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--byte-audit")
-        .arg("--byte-audit-baseline")
-        .arg(&baseline)
-        .output()
-        .expect("spawn pid_inspect --byte-audit --byte-audit-baseline");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert_eq!(
-        output.status.code(),
-        Some(3),
-        "baseline regression should exit 3; stderr: {stderr}; stdout: {stdout}",
+    let out = run_ok(
+        &InspectCommand::ByteAudit {
+            baseline: Some(baseline.clone()),
+        },
+        Some(&pkg),
     );
+    assert_eq!(
+        out.exit_code(),
+        3,
+        "baseline regression should map to exit 3"
+    );
+    let stdout = out.render_text();
     assert!(
         stdout.contains("Regressions: 1"),
         "regression count missing; stdout:\n{stdout}"
@@ -972,21 +854,15 @@ fn byte_audit_baseline_flag_fails_on_regression() {
 fn probe_sheet_chunks_prints_report_level_evidence() {
     let fixture = unique_tmp("sheet-chunks-evidence");
     build_sheet_probe_fixture(&fixture);
+    let pkg = parse_pkg(&fixture);
 
-    let output = Command::new(binary_path())
-        .arg(&fixture)
-        .arg("--probe-sheet-chunks")
-        .arg("Sheet6")
-        .output()
-        .expect("spawn pid_inspect --probe-sheet-chunks");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "exit code {:?}; stderr: {stderr}; stdout: {stdout}",
-        output.status.code()
-    );
-
+    let stdout = run_ok(
+        &InspectCommand::ProbeSheetChunks {
+            target: Some("Sheet6".to_string()),
+        },
+        Some(&pkg),
+    )
+    .render_text();
     assert!(
         stdout.contains("record types: 0x00CE=1"),
         "record type summary missing; stdout:\n{stdout}"
@@ -1003,12 +879,16 @@ fn probe_sheet_chunks_prints_report_level_evidence() {
     let _ = std::fs::remove_file(&fixture);
 }
 
+// ---------------------------------------------------------------------------
+// CLI smoke tests — the only tests still spawning the binary. They cover
+// the wiring the in-library calls can't: argv → `InspectCommand` →
+// stdout/stderr, including flag-combination validation.
+// ---------------------------------------------------------------------------
+
 #[test]
-fn no_flags_still_produces_full_report_including_coverage_section() {
-    // Regression guard: Phase 10a embeds the coverage section into
-    // `generate_report`, so running `pid_inspect fixture.pid` (no
-    // action flags) must show both the classic sections AND the new
-    // coverage section.
+fn cli_smoke_no_flags_still_produces_full_report_including_coverage_section() {
+    // Regression guard: a bare `pid_inspect fixture.pid` must show both
+    // the classic report sections AND the embedded coverage section.
     let fixture = unique_tmp("coverage-noflag");
     build_mixed_coverage_fixture(&fixture);
 
@@ -1033,4 +913,29 @@ fn no_flags_still_produces_full_report_including_coverage_section() {
     );
 
     let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn cli_smoke_export_bundle_publish_requires_drawing_uid() {
+    // Flag-combination validation lives in the adapter (the binary
+    // exits 2 before any command runs) — this is the one behaviour
+    // class an in-library call cannot observe.
+    let output = Command::new(binary_path())
+        .arg("missing.pid")
+        .arg("--export-bundle")
+        .arg(unique_tmp_dir("export-bundle-missing-drawing"))
+        .arg("--export-bundle-publish")
+        .arg(LEGACY_SQLITE_PATH)
+        .output()
+        .expect("spawn pid_inspect --export-bundle-publish without drawing");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing publish drawing should be argument error"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--export-bundle-publish requires --publish-drawing"),
+        "stderr should explain missing drawing UID, got:\n{stderr}"
+    );
 }
