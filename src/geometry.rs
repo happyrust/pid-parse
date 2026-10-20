@@ -1654,17 +1654,24 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
             // consumers), and none is needed: an elliptical arc is a conic,
             // which a rational quadratic B-spline draws exactly. A record
             // that sweeps nothing is left out.
+            //
+            // `flag` picks the half: `0` traverses the parameters clockwise,
+            // `1` counter-clockwise. Both readings are measured — see
+            // `bspline::elliptical_arc_directed`. Without it the diaphragm
+            // actuator's dome came out as the mirror of the one the reference
+            // plot draws, on all five corpus drawings.
             for arc in nested
                 .elliptical_arcs
                 .iter()
                 .filter(|a| on_body(a.sheet_layer_ref))
             {
-                if let Some((poles, weights, knots)) = crate::bspline::elliptical_arc(
+                if let Some((poles, weights, knots)) = crate::bspline::elliptical_arc_directed(
                     (arc.center_x, arc.center_y),
                     (arc.major_x, arc.major_y),
                     arc.ratio,
                     arc.sweep_start,
                     arc.sweep_end,
+                    arc.flag == 0,
                 ) {
                     push(
                         SymbolPrimitive::BSpline {

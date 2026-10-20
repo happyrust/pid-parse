@@ -48,10 +48,25 @@ pub const DEFAULT_TEXT_MM: f64 = 2.5;
 ///
 /// The reference plotter runs a monochrome pen table (the equivalent of
 /// AutoCAD's monochrome CTB): all five reference PDFs carry 0/0/0 for every
-/// stroke colour, every fill colour and every glyph, and nothing else. The
-/// sheet's own colours — the olive and green this crate's model resolves off
-/// the styles — are screen colours, and the comparison is against the plot.
+/// stroke colour, every fill colour and every glyph. The sheet's own colours —
+/// the olive and green this crate's model resolves off the styles — are screen
+/// colours, and the comparison is against the plot.
 const PLOT_INK: [u8; 3] = [0, 0, 0];
+
+/// What a pen declaring `rgb` inks on paper.
+///
+/// Black for every colour except white: a white pen is the plot's wipe — the
+/// reference pages carry two to sixteen of them, thin and a millimetre long,
+/// where something has to un-ink a filled region (a valve's seal dot, a
+/// dimension's gap). Painting those black would put ink on the page where the
+/// reference has none, so the wipe survives the monochrome table.
+fn plot_ink(rgb: [u8; 3]) -> [u8; 3] {
+    if rgb == [255, 255, 255] {
+        [255, 255, 255]
+    } else {
+        PLOT_INK
+    }
+}
 
 /// The three pens the reference plotter used, in paper millimetres.
 const PEN_THIN_MM: f64 = 0.169;
@@ -313,17 +328,18 @@ fn push_layer(
 /// The layer's `J`/`j` ride inside every saved state, so a one-stroke
 /// group keeps the layer's cap and join.
 fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, page: [f64; 2]) {
-    if let PaperShape::Fill { chain_mm, .. } = &primitive.shape {
+    if let PaperShape::Fill { chain_mm, rgb } = &primitive.shape {
         if chain_mm.len() < 3 || !chain_mm.iter().all(|point| finite(*point)) {
             return;
         }
+        let ink = plot_ink(rgb.unwrap_or(PLOT_INK));
         ops.push(Op::new("q", Vec::new()));
         ops.push(Op::new(
             "rg",
             vec![
-                Object::Real(f64::from(PLOT_INK[0]) / 255.0),
-                Object::Real(f64::from(PLOT_INK[1]) / 255.0),
-                Object::Real(f64::from(PLOT_INK[2]) / 255.0),
+                Object::Real(f64::from(ink[0]) / 255.0),
+                Object::Real(f64::from(ink[1]) / 255.0),
+                Object::Real(f64::from(ink[2]) / 255.0),
             ],
         ));
         ops.push(Op::new("m", vec![pt(chain_mm[0][0]), pt(chain_mm[0][1])]));
@@ -346,13 +362,14 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
     if !pen.width_mm.is_finite() || pen.width_mm <= 0.0 {
         return;
     }
+    let ink = plot_ink(pen.rgb);
     ops.push(Op::new("q", Vec::new()));
     ops.push(Op::new(
         "RG",
         vec![
-            Object::Real(f64::from(PLOT_INK[0]) / 255.0),
-            Object::Real(f64::from(PLOT_INK[1]) / 255.0),
-            Object::Real(f64::from(PLOT_INK[2]) / 255.0),
+            Object::Real(f64::from(ink[0]) / 255.0),
+            Object::Real(f64::from(ink[1]) / 255.0),
+            Object::Real(f64::from(ink[2]) / 255.0),
         ],
     ));
     ops.push(Op::new(
@@ -958,6 +975,20 @@ mod tests {
         assert!((points(PEN_THIN_MM) - 0.48).abs() < 0.005);
         assert!((points(PEN_MID_MM) - 0.96).abs() < 0.005);
         assert!((points(PEN_THICK_MM) - 1.92).abs() < 0.005);
+    }
+
+    #[test]
+    fn a_white_pen_is_the_plots_wipe_and_survives_the_monochrome_table() {
+        use super::plot_ink;
+        // The reference pages carry two to sixteen thin white strokes, each
+        // about a millimetre long: the plot's wipe. A white pen has to reach
+        // the page white even though every other colour is black.
+        assert_eq!(plot_ink([255, 255, 255]), [255, 255, 255]);
+        for colour in [[128, 128, 0], [0, 128, 0], [128, 0, 0], [0, 0, 255]] {
+            assert_eq!(plot_ink(colour), [0, 0, 0], "{colour:?}");
+        }
+        // Nearly white is not white: the wipe is the one exact value.
+        assert_eq!(plot_ink([254, 255, 255]), [0, 0, 0]);
     }
 
     #[test]

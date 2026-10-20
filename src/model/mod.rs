@@ -1213,6 +1213,18 @@ pub struct DecodedIgEllipticalArc2dRecord {
     pub major_y: f64,
     /// Minor / major semi-axis ratio, in `(0, 1]`.
     pub ratio: f64,
+    /// The record's trailing byte, `payload +74`: the traversal direction of
+    /// the sweep, `0` clockwise ([`crate::bspline::elliptical_arc`]'s
+    /// reading) and `1` counter-clockwise.
+    ///
+    /// Read as a direction rather than carried verbatim for the first time
+    /// here, on two measured readings: A01's four vessel heads all say `0`
+    /// and the clockwise sweep puts them on their outward side, while the
+    /// diaphragm actuator's dome says `1` and only the counter-clockwise
+    /// sweep puts its apex under the chord at the one point the reference
+    /// plot draws it. See [`crate::bspline::elliptical_arc_directed`].
+    #[serde(default)]
+    pub flag: u8,
 }
 
 impl From<crate::parsers::sheet_records::SheetIgEllipticalArc2dDecoded>
@@ -1233,6 +1245,7 @@ impl From<crate::parsers::sheet_records::SheetIgEllipticalArc2dDecoded>
             major_x: record.major_axis.0,
             major_y: record.major_axis.1,
             ratio: record.ratio,
+            flag: record.flag,
         }
     }
 }

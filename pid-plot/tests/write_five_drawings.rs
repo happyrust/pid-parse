@@ -258,15 +258,17 @@ for line in expect:
         raise SystemExit(f"missing {line!r}")
 
 # The plot's ink: all five reference pages carry black for every stroke, fill
-# and glyph, and three widths only (0.48 / 0.96 / 1.92 pt).
+# and glyph -- plus the odd white wipe -- and three widths only (0.48 / 0.96 /
+# 1.92 pt).
 widths = collections.Counter()
+PENS = {(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)}
 for drawing in doc[0].get_drawings():
     colour = drawing.get("color")
-    if colour is not None and any(round(c, 3) != 0.0 for c in colour):
-        raise SystemExit(f"non-black stroke {colour}")
+    if colour is not None and tuple(round(c, 3) for c in colour) not in PENS:
+        raise SystemExit(f"off-palette stroke {colour}")
     fill = drawing.get("fill")
-    if fill is not None and any(round(c, 3) != 0.0 for c in fill):
-        raise SystemExit(f"non-black fill {fill}")
+    if fill is not None and tuple(round(c, 3) for c in fill) not in PENS:
+        raise SystemExit(f"off-palette fill {fill}")
     if colour is not None:
         widths[round(drawing.get("width") or 0.0, 2)] += 1
 for key in doc[0].get_text("dict")["blocks"]:
