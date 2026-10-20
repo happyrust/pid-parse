@@ -1043,11 +1043,18 @@ fn run_chain(spans: &[TextSpan], start: usize, taken: &[bool]) -> Vec<usize> {
 /// What the first `cuts` runs of `chain` spell, both fused and with one
 /// space where they meet. A run split at a kerning pair fuses; a run split
 /// at a word break does not, and the reference may spell either way.
+///
+/// Each member is trimmed first. A reference field pads its run — the L
+/// drawing's two `0103501A` tags are read back as `␣0103501A` — and that pad
+/// is not part of the label any more than ours is: left in, it fuses into an
+/// interior space and the fused spelling misses by exactly the pad. That
+/// cost the L drawing both tags for two rounds, on a pair the drawing places
+/// where the reference does.
 fn joined_text(spans: &[TextSpan], chain: &[usize], cuts: usize) -> Vec<String> {
     let mut fused = String::new();
     let mut spaced = String::new();
     for (position, index) in chain.iter().take(cuts).enumerate() {
-        let text = spans[*index].text.as_str();
+        let text = spans[*index].text.trim();
         if position > 0 {
             spaced.push(' ');
         }
@@ -1718,6 +1725,29 @@ mod tests {
             ],
         );
         let ours = ink(vec![], vec![run("2\"NC", [100.0, 50.0], 4.8)]);
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.text_reference, 2);
+        assert_eq!(report.text_ours, 1);
+        assert_eq!(report.text_matched, 2);
+        assert!(report.unmatched_reference_text.is_empty());
+        assert!(report.unmatched_our_text.is_empty());
+    }
+
+    #[test]
+    fn a_padded_pair_fuses_without_its_pads() {
+        // The L drawing's two `0103501A` tags sit 13.2 mm apart on one
+        // baseline. The reference reads them back as two runs, each with the
+        // field's leading pad; our reader glues them into one run with no
+        // pad at all. The pad is not part of either label, so the fused
+        // spelling has to be tried without it.
+        let reference = ink(
+            vec![],
+            vec![
+                run(" 0103501A", [100.0, 50.0], 13.2),
+                run(" 0103501A", [113.2, 50.0], 13.2),
+            ],
+        );
+        let ours = ink(vec![], vec![run("0103501A0103501A", [100.1, 50.0], 26.4)]);
         let report = compare_plots(&reference, &ours, &[]);
         assert_eq!(report.text_reference, 2);
         assert_eq!(report.text_ours, 1);

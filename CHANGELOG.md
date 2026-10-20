@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### pid-plot 带框字段挂在框的对齐侧，标题栏三条 `DWG-…集…` 归位（2026-10-20）
+
+文字对上从 **1229 / 1236** 升到 **1234 / 1236**：一级闪蒸分离器 A 149 → **151 / 151**，低温分离器 A 165 → **167 / 167**。五张图的覆盖率与多画不变（0.9973–0.9992 ／ 8.6–55.7 mm）。
+
+- **带框记录按段落对齐挂边**：原来的规则是「带框的一律从框左边缘起画」，那让 55 条标题栏字段对上，但把另外 3 条右对齐的顶到了框左，整体偏左 17.6 mm。现在由插入点加锚点码还原框的左/中/右边缘，再由段落样式的水平对齐决定挂哪条边（`Left`/`Center`/`Right` → 左边缘/中线/右边缘），没写对齐时退回左边缘。58 条带框记录里恰有 3 条写 `Right`，正是三条残差；读数：参考的 `DWG-0000集05-07` 起点加推进 27.771 mm 落在框右边缘内 0.05 mm。新增单测 `a_right_aligned_boxed_record_ends_on_the_box_right_edge`；原 `a_boxed_record_letters_from_the_box_left_edge` 不变，它走的是「样式没写对齐」那条。
+- **不按参考的字号改符号体标签**（试过又撤回）：参考把正文的 7.2 pt 字高按 8.25 pt 排，本机给 `Arial` 找的替代字面比参考宽 14.6%，照 8.25 pt 画反而让 `symbol/Middle` 整类偏 0.075 个字高（门限 0.05）。`plotted_size_pt` 的注释记下了这条，仍按 7.2 pt 排，印刷长度与参考一致。
+- **拼接稿子先去掉两端的填充再来拼**：低温分离器 A 的两条 `0103501A` 相隔 13.22 mm、九字在本机字体下字宽 13.41 mm，相叠后被读取器并成一条 18 字符的 span；参考图是两个 run，各自带着字段的前导空格（`␣0103501A`）。`joined_text` 原来直接拼原串，那个内嵌空格让“拼紧”候选也对不上，两条残差挂了两轮。现在每段先 `trim()` 再拼；`a_padded_pair_fuses_without_its_pads` 固定这条。低温分离器 A 因此 165 → **167 / 167**。
+- 剩余两条参考文字都在 I 井场：两台电机的 `M` 我方 2.04 mm、参考 12.9 pt（4.55 mm），文件里没有字段解释这个倍数。
+- 探针：新增 `pid-plot/examples/probe_boxed_text_alignment`（每条带框记录的值、插入点、锚点码、框宽、解析到的对齐与字体）与 `examples/probe_sheet_texts_near`（纸面某点附近的图纸文字记录）。
+- 门限：`pid-plot/tests/plot_compare.rs` 543/149/123/165/249 → 544/151/123/167/249；五张图里四张把它数到的每一条参考文字都对上，只剩 I 井场那两条。
+- 分析：`docs/analysis/2026-10-20-a-field-hangs-from-its-box-edge.md`；`2026-10-19-title-block-cells-choose-the-side.md` 顶上补了「结论被更早一层取代」的注。
+- 验证：`cargo test -p pid-plot` 全绿（lib 51 项 + 六个集成测试，`write_five_drawings` 重出五张图后 `plot_compare` 在新门限下通过）。
+
 ### 恢复 `clippy --workspace --all-targets -D warnings` 这条门禁（2026-10-20）
 
 AGENTS.md 的 pre-commit 门禁从「能过」退回「必红」已经有一段时间：14 个根 crate 探针 example 累积了 19 条告警，`--all-targets` 一律停在这批文件上。本轮只清这些欠账，`src/` 一行未动。

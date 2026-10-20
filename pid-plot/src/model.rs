@@ -830,16 +830,21 @@ fn push_entity(
             } else {
                 Some(0.0)
             };
-            // A boxed record letters from its box's left edge: the anchor
-            // code says where inside that box the insertion sits — left,
-            // middle or right — and the run starts at the box's left edge
-            // whichever it names. The title-block fields are the measured
-            // case: their insertion is the box's middle and the reference
-            // plots start every one of them half a box width further left.
-            // The vertical stays on the record's anchor code against the
+            // A boxed record's run is laid out in its box: the anchor code
+            // says where inside that box the insertion sits — left, middle
+            // or right — which recovers the box, and the paragraph's
+            // alignment then says which edge of it the run hangs from. The
+            // title-block fields are the measured case: their insertion is
+            // the box's middle, and the reference plots start a left-aligned
+            // field half a box width further left (every one of them in the
+            // corpus but three) while a right-aligned field ends on the
+            // box's right edge — `DWG-0000集05-07` on the I drawing and
+            // `DWG-0100集05-42` twice on A, whose runs end 0.05 mm inside
+            // it. The vertical stays on the record's anchor code against the
             // *letter* height, which is where the reference puts a boxed
             // label's line. See
-            // `docs/analysis/2026-10-19-igtextbox-box-is-where-the-text-starts.md`.
+            // `docs/analysis/2026-10-19-igtextbox-box-is-where-the-text-starts.md`
+            // and `docs/analysis/2026-10-20-a-field-hangs-from-its-box-edge.md`.
             let (origin_m, anchor) = match text_box_width.filter(|width| *width > 0.0) {
                 Some(width) => {
                     let across = match TextAnchor::from_anchor_code(*anchor_code) {
@@ -847,12 +852,18 @@ fn push_entity(
                         TextAnchor::Center => width / 2.0,
                         TextAnchor::Right => width,
                     };
+                    let (anchor, hang) = match styled.as_ref().and_then(|style| style.alignment) {
+                        Some(TextAlignment::Center) => (TextAnchor::Center, width / 2.0),
+                        Some(TextAlignment::Right) => (TextAnchor::Right, width),
+                        Some(TextAlignment::Left) | None => (TextAnchor::Left, 0.0),
+                    };
+                    let along = across - hang;
                     (
                         [
-                            insertion.x - rotation.cos() * across,
-                            insertion.y - rotation.sin() * across,
+                            insertion.x - rotation.cos() * along,
+                            insertion.y - rotation.sin() * along,
                         ],
-                        TextAnchor::Left,
+                        anchor,
                     )
                 }
                 None => (
@@ -870,8 +881,9 @@ fn push_entity(
                     rotation: *rotation,
                     value: value.clone(),
                     font: styled.as_ref().and_then(|style| style.font_name.clone()),
-                    // The record's own anchor code overrides the paragraph
-                    // style's declared alignment: `(code >> 4) % 3` is the
+                    // A boxed record hangs from the box edge its paragraph's
+                    // alignment names (above). An unboxed one keeps the
+                    // record's own anchor code: `(code >> 4) % 3` is the
                     // horizontal hot point the insertion sits at.
                     anchor,
                     line: TextLine::from_anchor_code(*anchor_code),
@@ -1456,6 +1468,69 @@ mod tests {
             "box left edge, got {origin_mm:?}"
         );
         assert!((origin_mm[1] - 200.0).abs() < 1e-6);
+    }
+
+    /// A boxed field whose paragraph states right alignment ends on the
+    /// box's right edge, not its left one.
+    ///
+    /// The three records this is about are the title block's drawing-number
+    /// fields on the I and A drawings (`DWG-0000集05-07` once, `DWG-0100集05-42`
+    /// twice): each states a centred anchor in a 45.307 mm box, and the
+    /// reference plots end their runs 0.05 mm inside the box's right edge.
+    /// Reading every boxed record as left-aligned put them 17.6 mm left.
+    #[test]
+    fn a_right_aligned_boxed_record_ends_on_the_box_right_edge() {
+        use pid_parse::style_link::{ResolvedTextHeight, ResolvedTextStyle, TextRunStatus};
+
+        let mut styles = pid_parse::style_link::TextStyleIndex::new();
+        styles.insert(
+            ("/Sheet6".to_string(), 7),
+            ResolvedTextStyle {
+                paragraph: Some(ResolvedTextHeight {
+                    style_id: 3,
+                    height_m: 0.0037,
+                    colour: None,
+                    alignment: Some(TextAlignment::Right),
+                    line_spacing: None,
+                    font_name: Some("仿宋".to_string()),
+                }),
+                run: None,
+                runs: TextRunStatus::NoRuns,
+                alignment: Some(TextAlignment::Right),
+                line_spacing: None,
+            },
+        );
+        let mut record = entity(PidGraphicKind::Text {
+            insertion: PidPoint { x: 0.1, y: 0.2 },
+            value: "DWG-0000集05-07".to_string(),
+            height: 0.0037,
+            rotation: 0.0,
+            anchor_code: 0x48,
+            text_box_width: Some(0.045_307),
+        });
+        record.graphic_oid = Some(7);
+        record.source.stream_path = Some("/Sheet6".to_string());
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &record,
+            None,
+            &styles,
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        let PaperShape::Text {
+            origin_mm, anchor, ..
+        } = &out[0].shape
+        else {
+            panic!("{:?}", out[0].shape);
+        };
+        assert_eq!(*anchor, TextAnchor::Right);
+        assert!(
+            (origin_mm[0] - (100.0 + 0.045_307 / 2.0 * 1000.0)).abs() < 1e-6,
+            "box right edge, got {origin_mm:?}"
+        );
     }
 
     /// A left-anchored boxed record already sits on its box's left edge, so

@@ -806,6 +806,16 @@ fn plotted_size_pt(typeface: &str, height_mm: f64) -> f64 {
 }
 
 /// Reference `Tf` for a typeface and a style height in hundredths of a point.
+///
+/// A symbol body's own label is the one place this table deliberately does
+/// *not* follow the reference. Those labels are 7.2 pt style heights, and
+/// the plots write them at 8.25 pt — 14.6% larger. But the face this crate
+/// can actually load for `Arial` inks 14.6% wider per character than the
+/// plots' does, so at 8.25 pt our runs come out 0.11 body heights wider than
+/// the reference's and the whole `symbol/Middle` class drifts 0.075 along
+/// (measured on the I drawing: the ratchet's along gate is 0.05). At the
+/// 7.2 pt style height the printed extent matches and the class holds at
+/// 0.035, which is why no row is measured in here for it.
 fn measured_tf(typeface: &str, hundredths: i64) -> Option<f64> {
     const PAIRS: &[(&str, i64, f64)] = &[
         ("Arial Narrow", 700, 10.17),

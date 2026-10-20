@@ -72,30 +72,42 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 //
 // The latest move is a padded label no longer measuring its pad at all — a
 // leading space pushed every centred run half a space left
-// (`docs/analysis/2026-10-20-a-pad-is-not-part-of-the-label.md`). It also
-// cost the L drawing two labels without losing any ink: that drawing's two
-// `0103501A` tags sit 13.22 mm apart while the same nine characters ink
+// (`docs/analysis/2026-10-20-a-pad-is-not-part-of-the-label.md`). That move
+// also cost the L drawing two labels without losing any ink: that drawing's
+// two `0103501A` tags sit 13.22 mm apart while the same nine characters ink
 // 13.32 mm, so the runs touch and this crate's reader glues them into one
-// 18-character span. PyMuPDF splits at every text object and so keeps the
-// reference's pair apart; ours has no text-object signal to split on. Both
-// tags are drawn where the reference puts them, so the baseline records the
-// reader's blind spot rather than a placement loss.
+// 18-character span, which the reference keeps as two. Both tags were drawn
+// where the reference puts them, so the join is where the two sides are now
+// paired — a fused spelling is tried with each member's pad trimmed, since a
+// pad is not part of the label (`docs/analysis/2026-10-20-a-field-hangs-from-
+// its-box-edge.md`). L counts every reference label it preserves.
 //
-// Five reference runs are left in the I drawing: two electric-motor `M`s whose
-// height no field explains, and three title-block `DWG-…集…` strings drawn
-// 17.6 mm left of the reference.
+// FOUR of the five drawings now pair every label they count; only I keeps
+// two, the electric-motor `M`s above.
+//
+// Two reference runs are left in the I drawing, both electric-motor `M`s whose
+// drawn size no field explains: our body letters them at 2.04 mm from a 2.54 mm
+// style height scaled by the placement's 0.804, the reference writes 12.9 pt
+// (4.55 mm). Every other body label's own style height plots within 0.05 mm of
+// the reference and is drawn as the style states.
+//
+// The three title-block `DWG-…集…` strings that sat 17.6 mm left of the
+// reference are placed now: a boxed record hangs from the box edge its
+// paragraph's alignment names, so a right-aligned field ends on the box's right
+// edge (`docs/analysis/2026-10-20-a-field-hangs-from-its-box-edge.md`). A is at
+// every label it counts.
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
         min_coverage: 0.9980,
         max_extra_mm: 65.0,
-        min_text_matched: 543,
+        min_text_matched: 544,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
         min_coverage: 0.9990,
         max_extra_mm: 20.0,
-        min_text_matched: 149,
+        min_text_matched: 151,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
@@ -107,7 +119,7 @@ const BASELINES: [Baseline; 5] = [
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
         min_coverage: 0.9975,
         max_extra_mm: 35.0,
-        min_text_matched: 165,
+        min_text_matched: 167,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
