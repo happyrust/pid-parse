@@ -8,6 +8,14 @@
 //! the reader uses, then stored as straight segments, so a read-back can match
 //! the table endpoint for endpoint.
 //!
+//! Colour and width do not follow the record's pen literally. All five
+//! reference plots draw every stroke and fill in black and use three widths
+//! only, so the page is plotted through the vendor's monochrome pen table:
+//! [`PLOT_INK`] is every path's ink, and [`pen_width_mm`] snaps a declared
+//! width onto the thin / mid / thick pens. See
+//! `docs/analysis/2026-10-17-monochrome-plot-three-pen-table.md` and
+//! `docs/analysis/2026-10-20-the-page-is-plotted-through-one-black-pen.md`.
+//!
 //! Each text run is set in the face [`crate::fonts::typeface_key`] names,
 //! character by character: a run mixes faces where one face cannot encode the
 //! whole string (`120℃` keeps its Latin digits in Arial Narrow and only the
@@ -35,6 +43,44 @@ const PT_PER_MM: f64 = 72.0 / 25.4;
 const STROKE_MM: f64 = 0.25;
 /// Body size for symbol text whose source record does not carry one.
 pub const DEFAULT_TEXT_MM: f64 = 2.5;
+
+/// The ink every stroke and fill of a plot is drawn in.
+///
+/// The reference plotter runs a monochrome pen table (the equivalent of
+/// AutoCAD's monochrome CTB): all five reference PDFs carry 0/0/0 for every
+/// stroke colour, every fill colour and every glyph, and nothing else. The
+/// sheet's own colours — the olive and green this crate's model resolves off
+/// the styles — are screen colours, and the comparison is against the plot.
+const PLOT_INK: [u8; 3] = [0, 0, 0];
+
+/// The three pens the reference plotter used, in paper millimetres.
+const PEN_THIN_MM: f64 = 0.169;
+const PEN_MID_MM: f64 = 0.339;
+const PEN_THICK_MM: f64 = 0.678;
+
+/// Snap a declared stroke width onto the plot's three pens.
+///
+/// A `.pid` declares its widths on the ISO 128 ladder — 0.13 / 0.18 / 0.35 /
+/// 0.70 mm on the I drawing — and plotting those literally gives four widths
+/// where every reference page has three. The boundaries are the measured
+/// anchors: the title block's 0.25 mm rules print thin, a 0.50 mm symbol
+/// stroke prints mid, and a 0.70 mm process main prints thick.
+///
+/// A width that is not finite or not positive falls back to the mid pen, which
+/// is what an unresolved style draws with.
+#[must_use]
+pub fn pen_width_mm(declared_mm: f64) -> f64 {
+    if !declared_mm.is_finite() || declared_mm <= 0.0 {
+        return PEN_MID_MM;
+    }
+    if declared_mm <= 0.30 {
+        PEN_THIN_MM
+    } else if declared_mm <= 0.55 {
+        PEN_MID_MM
+    } else {
+        PEN_THICK_MM
+    }
+}
 
 /// One face [`write_plot`] may select for a text run.
 pub struct PlotFont<'a> {
@@ -267,18 +313,17 @@ fn push_layer(
 /// The layer's `J`/`j` ride inside every saved state, so a one-stroke
 /// group keeps the layer's cap and join.
 fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, page: [f64; 2]) {
-    if let PaperShape::Fill { chain_mm, rgb } = &primitive.shape {
+    if let PaperShape::Fill { chain_mm, .. } = &primitive.shape {
         if chain_mm.len() < 3 || !chain_mm.iter().all(|point| finite(*point)) {
             return;
         }
-        let [r, g, b] = rgb.unwrap_or([0, 0, 0]);
         ops.push(Op::new("q", Vec::new()));
         ops.push(Op::new(
             "rg",
             vec![
-                Object::Real(f64::from(r) / 255.0),
-                Object::Real(f64::from(g) / 255.0),
-                Object::Real(f64::from(b) / 255.0),
+                Object::Real(f64::from(PLOT_INK[0]) / 255.0),
+                Object::Real(f64::from(PLOT_INK[1]) / 255.0),
+                Object::Real(f64::from(PLOT_INK[2]) / 255.0),
             ],
         ));
         ops.push(Op::new("m", vec![pt(chain_mm[0][0]), pt(chain_mm[0][1])]));
@@ -305,12 +350,15 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
     ops.push(Op::new(
         "RG",
         vec![
-            Object::Real(f64::from(pen.rgb[0]) / 255.0),
-            Object::Real(f64::from(pen.rgb[1]) / 255.0),
-            Object::Real(f64::from(pen.rgb[2]) / 255.0),
+            Object::Real(f64::from(PLOT_INK[0]) / 255.0),
+            Object::Real(f64::from(PLOT_INK[1]) / 255.0),
+            Object::Real(f64::from(PLOT_INK[2]) / 255.0),
         ],
     ));
-    ops.push(Op::new("w", vec![Object::Real(pen.width_mm * PT_PER_MM)]));
+    ops.push(Op::new(
+        "w",
+        vec![Object::Real(pen_width_mm(pen.width_mm) * PT_PER_MM)],
+    ));
     if !pen.dash_mm.is_empty() {
         let dash: Vec<Object> = pen
             .dash_mm
@@ -885,6 +933,87 @@ mod tests {
         assert_eq!(plotted_size_pt("SimSun", 3.0), 12.48);
         let plain = 5.0 * 72.0 / 25.4;
         assert!((plotted_size_pt("Arial Narrow", 5.0) - plain).abs() < 1e-9);
+    }
+
+    #[test]
+    fn declared_widths_snap_onto_the_three_plot_pens() {
+        use super::{PEN_MID_MM, PEN_THICK_MM, PEN_THIN_MM, pen_width_mm};
+        // The I drawing's own ladder: 0.13 / 0.18 / 0.35 / 0.70 mm.
+        for thin in [0.13, 0.18, 0.25, 0.30] {
+            assert_eq!(pen_width_mm(thin), PEN_THIN_MM, "{thin} mm");
+        }
+        for mid in [0.35, 0.50, 0.55] {
+            assert_eq!(pen_width_mm(mid), PEN_MID_MM, "{mid} mm");
+        }
+        for thick in [0.70, 1.0, 2.0] {
+            assert_eq!(pen_width_mm(thick), PEN_THICK_MM, "{thick} mm");
+        }
+        // A width that is not a width draws the fallback pen.
+        for nonsense in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(pen_width_mm(nonsense), PEN_MID_MM, "{nonsense}");
+        }
+        // 0.169 / 0.339 / 0.678 mm are 0.48 / 0.96 / 1.92 pt, the only three
+        // widths the reference pages carry.
+        let points = |mm: f64| mm * 72.0 / 25.4;
+        assert!((points(PEN_THIN_MM) - 0.48).abs() < 0.005);
+        assert!((points(PEN_MID_MM) - 0.96).abs() < 0.005);
+        assert!((points(PEN_THICK_MM) - 1.92).abs() < 0.005);
+    }
+
+    #[test]
+    fn the_page_is_plotted_in_the_three_pens() {
+        // A sheet declares its widths on the ISO 128 ladder; the page carries
+        // the plot's three pens instead. 0.13 mm thin, 0.70 mm thick.
+        let mut thin = primitive(
+            "decoded",
+            PaperShape::Line {
+                start_mm: [10.0, 20.0],
+                end_mm: [80.0, 20.0],
+            },
+        );
+        thin.stroke = Some(super::PaperStroke {
+            rgb: [128, 128, 0],
+            width_mm: 0.13,
+            dash_mm: Vec::new(),
+        });
+        let mut thick = primitive(
+            "decoded",
+            PaperShape::Line {
+                start_mm: [10.0, 40.0],
+                end_mm: [80.0, 40.0],
+            },
+        );
+        thick.stroke = Some(super::PaperStroke {
+            rgb: [0, 128, 0],
+            width_mm: 0.70,
+            dash_mm: Vec::new(),
+        });
+        let model = PaperModel {
+            library: Vec::new(),
+            page_mm: Some([200.0, 100.0]),
+            primitives: vec![thin, thick],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let mut widths: Vec<f64> = ink
+            .segments
+            .iter()
+            .map(|segment| (segment.width_mm * 100.0).round() / 100.0)
+            .collect();
+        widths.sort_by(f64::total_cmp);
+        widths.dedup();
+        assert_eq!(widths, vec![0.17, 0.68], "the pens are not snapped");
     }
 
     #[test]

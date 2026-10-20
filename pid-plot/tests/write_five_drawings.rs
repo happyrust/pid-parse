@@ -244,6 +244,7 @@ fn pymupdf_opens(pdf: &Path, texts: &[&str]) {
 }
 
 const PYMUPDF_PY: &str = r#"
+import collections
 import sys
 import pymupdf
 
@@ -255,7 +256,28 @@ expect = open(expect_path, encoding="utf-8").read().splitlines()
 for line in expect:
     if line and line not in text:
         raise SystemExit(f"missing {line!r}")
-print("pymupdf chars", len(text))
+
+# The plot's ink: all five reference pages carry black for every stroke, fill
+# and glyph, and three widths only (0.48 / 0.96 / 1.92 pt).
+widths = collections.Counter()
+for drawing in doc[0].get_drawings():
+    colour = drawing.get("color")
+    if colour is not None and any(round(c, 3) != 0.0 for c in colour):
+        raise SystemExit(f"non-black stroke {colour}")
+    fill = drawing.get("fill")
+    if fill is not None and any(round(c, 3) != 0.0 for c in fill):
+        raise SystemExit(f"non-black fill {fill}")
+    if colour is not None:
+        widths[round(drawing.get("width") or 0.0, 2)] += 1
+for key in doc[0].get_text("dict")["blocks"]:
+    for line in key.get("lines", []):
+        for span in line["spans"]:
+            if span["color"] != 0:
+                raise SystemExit(f"non-black text {hex(span['color'])}")
+stray = sorted(width for width in widths if width and width not in (0.48, 0.96, 1.92))
+if stray:
+    raise SystemExit(f"stray pen widths {stray}")
+print("pymupdf chars", len(text), "pens", sorted(widths))
 "#;
 
 #[test]
