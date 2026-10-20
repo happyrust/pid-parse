@@ -7,7 +7,10 @@
 //! path the shape came from) to the reference plot's spans by text and
 //! nearest position, then reports the error of our baseline against the
 //! reference's: `our origin − line × our height` versus the span's own
-//! baseline, in millimetres and as a fraction of the reference body size.
+//! baseline, measured **in the span's own writing frame** — `along` the
+//! writing direction and `down` the text's descent — so a rotated label's
+//! error is not mistaken for a paper-axis shift. `down` is also given as a
+//! fraction of the reference body size, which is the vertical-anchor reading.
 //!
 //! ```text
 //! cargo run -p pid-plot --example probe_symbol_label_offsets -- \
@@ -27,10 +30,11 @@ use pid_plot::read::read_plot;
 struct Row {
     text: String,
     rotation_rad: f64,
+    ref_deg: f64,
     our_height: f64,
     ref_height: f64,
-    dx: f64,
-    dy: f64,
+    along: f64,
+    down: f64,
     ratio: f64,
 }
 
@@ -106,10 +110,27 @@ fn main() -> ExitCode {
         };
         used[index] = true;
         let our_height = height_mm.unwrap_or(0.0);
-        let our_baseline = origin_mm[1] - our_height * down(*line);
-        let dy = our_baseline - span.origin_mm[1];
+        // Our writing frame: `down` is the right-hand normal pointing at
+        // descenders (paper y up), so the line position moves the insertion
+        // point to the baseline the writer will use.
+        let (sin, cos) = rotation.sin_cos();
+        let down_dir = [sin, -cos];
+        let our_baseline = [
+            origin_mm[0] + down_dir[0] * our_height * down(*line),
+            origin_mm[1] + down_dir[1] * our_height * down(*line),
+        ];
+        let delta = [
+            our_baseline[0] - span.origin_mm[0],
+            our_baseline[1] - span.origin_mm[1],
+        ];
+        // Project onto the *reference* span's frame, which is the frame the
+        // mismatch is judged in: `along` follows its glyphs, `down` is its
+        // right-hand normal (`(d.y, -d.x)` with paper y up).
+        let ref_dir = span.direction;
+        let along = delta[0] * ref_dir[0] + delta[1] * ref_dir[1];
+        let down = delta[0] * ref_dir[1] - delta[1] * ref_dir[0];
         let ratio = if span.height_mm > 0.2 {
-            dy / span.height_mm
+            down / span.height_mm
         } else {
             f64::NAN
         };
@@ -127,31 +148,33 @@ fn main() -> ExitCode {
             .push(Row {
                 text: value.clone(),
                 rotation_rad: *rotation,
+                ref_deg: span.direction[1].atan2(span.direction[0]).to_degrees(),
                 our_height,
                 ref_height: span.height_mm,
-                dx: origin_mm[0] - span.origin_mm[0],
-                dy,
+                along,
+                down,
                 ratio,
             });
     }
     println!("no reference span: {unmatched}");
     if env::var_os("DETAIL").is_some() {
-        println!("symbol\ttext\tanchor\tline\trot_deg\tour_h\tref_h\tdx_mm\tdy_mm");
+        println!("symbol\ttext\tanchor\tline\trot_deg\tref_deg\tour_h\tref_h\talong_mm\tdown_mm");
         for ((symbol, anchor, line), rows) in &classes {
             for row in rows {
                 println!(
-                    "{symbol}\t{}\t{anchor}\t{line}\t{:.1}\t{:.2}\t{:.2}\t{:+.2}\t{:+.2}",
+                    "{symbol}\t{}\t{anchor}\t{line}\t{:.1}\t{:.1}\t{:.2}\t{:.2}\t{:+.2}\t{:+.2}",
                     row.text,
                     row.rotation_rad.to_degrees(),
+                    row.ref_deg,
                     row.our_height,
                     row.ref_height,
-                    row.dx,
-                    row.dy
+                    row.along,
+                    row.down
                 );
             }
         }
     }
-    println!("symbol\tanchor\tline\tn\tdx_mm\tdy_mm\tdy/ref_height");
+    println!("symbol\tanchor\tline\tn\talong_mm\tdown_mm\tdown/ref_height");
     for ((symbol, anchor, line), rows) in classes {
         let n = rows.len();
         let mean = |pick: fn(&Row) -> f64| rows.iter().map(pick).sum::<f64>() / n as f64;
@@ -159,8 +182,8 @@ fn main() -> ExitCode {
         ratios.sort_by(f64::total_cmp);
         println!(
             "{symbol}\t{anchor}\t{line}\t{n}\t{:+.2}\t{:+.2}\t{}",
-            mean(|row| row.dx),
-            mean(|row| row.dy),
+            mean(|row| row.along),
+            mean(|row| row.down),
             ratios
                 .iter()
                 .map(|ratio| format!("{ratio:+.2}"))

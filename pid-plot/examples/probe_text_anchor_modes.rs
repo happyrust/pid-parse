@@ -3,9 +3,10 @@
 //! Joins the parsed geometry's text records to the reference plot's spans by
 //! text and position, then reports `(reference baseline − insertion point) /
 //! letter height` for each vertical anchor nibble. A class whose ratio is 0 is
-//! lettered at the point, 0.5 is lettered from the body's middle and 1 from its
-//! top — the mode per class is the placement rule, and the ratio `pid-plot`
-//! does not apply is a misread nibble.
+//! lettered at the point, 0.5 is lettered from the body's middle, 1 from its
+//! top and 1.32 from the font's ascender line — the mode per class is the
+//! placement rule, and the ratio `pid-plot` does not apply is a misread
+//! nibble. Set `DETAIL=1` for one row per record.
 
 use std::collections::BTreeMap;
 use std::env;
@@ -42,6 +43,7 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let detail = env::var("DETAIL").is_ok_and(|value| value != "0");
     let styles = pid_parse::style_link::text_styles_for_document(&doc);
     let geometry = build_normalized_geometry(&doc);
     let mut used = vec![false; ink.spans.len()];
@@ -94,6 +96,19 @@ fn main() -> ExitCode {
         // Reader origins are paper millimetres with y up; the insertion point
         // is too, so a baseline below it is a positive offset.
         let offset = y_mm - span.origin_mm[1];
+        if detail {
+            println!(
+                "v{:<2} ratio {:.2} offset {:>5.2} height {:>4.2} ref {:>4.2} at [{:.1},{:.1}] {:?}",
+                anchor_code & 0x0F,
+                offset / height,
+                offset,
+                height,
+                span.height_mm,
+                x_mm,
+                y_mm,
+                value.trim()
+            );
+        }
         classes
             .entry(anchor_code & 0x0F)
             .or_default()
