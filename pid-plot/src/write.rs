@@ -466,7 +466,19 @@ fn show_text(
     if !height_mm.is_finite() || height_mm <= 0.0 {
         return Ok(());
     }
-    let runs = encode_runs(faces, text.typeface, text.value)?;
+    // A drawing file pads label fields with spaces, on either side
+    // (`L=200mm `, ` 1001102A`). They ink nothing, so the reference plot has
+    // no run for them at all: it measures and letters the visible glyphs.
+    // Keeping the padding costs nothing on the page but pushes a centred or
+    // right-anchored run half a space off — the I drawing's 105
+    // leading-space labels sat 0.4 mm left of the reference for exactly that
+    // reason, and trimming only the tail left them there. So the padding is
+    // dropped before the run is measured or drawn.
+    let inked = text.value.trim();
+    if inked.is_empty() {
+        return Ok(());
+    }
+    let runs = encode_runs(faces, text.typeface, inked)?;
     let size = plotted_size_pt(text.typeface, height_mm);
     let width_mm: f64 = runs
         .iter()
@@ -519,11 +531,22 @@ fn run_width_mm(metrics: &Metrics, size_pt: f64, bytes: &[u8]) -> f64 {
     units * size_pt / PT_PER_MM
 }
 
+/// How far below a sheet `igTextBox`'s top the baseline runs, in body sizes.
+///
+/// The stored body size is the cap height, and the reference top is the
+/// font's ascender line: Arial's ascent is 0.905 em against a 0.688 em cap,
+/// so 0.905 / 0.688 = 1.32. The I drawing's 58 top-anchored labels measure
+/// 1.25–1.38 bodies (`examples/probe_text_anchor_modes.rs`); at 2.47 mm a
+/// body of one would leave them 0.79 mm high, which is what the `L=200mm`
+/// labels were sending into the residual list.
+const ASCENDER_HEIGHTS: f64 = 1.32;
+
 /// Left end of the baseline, from the insertion point.
 ///
 /// Centre and right step back **along** the run by half the word or the whole
-/// word; middle and top step **down across** it by half the body size or the
-/// whole body size. The insertion point itself never moves.
+/// word; middle, top and the ascender line step **down across** it by half the
+/// body size, one body size or 1.32 body sizes. The insertion point itself
+/// never moves.
 fn baseline_origin(
     origin_mm: [f64; 2],
     rotation: f64,
@@ -541,6 +564,7 @@ fn baseline_origin(
         TextLine::Bottom => 0.0,
         TextLine::Middle => 0.5,
         TextLine::Top => 1.0,
+        TextLine::Ascender => ASCENDER_HEIGHTS,
     };
     let back = if width_mm.is_finite() && width_mm > 0.0 {
         width_mm * along
@@ -967,18 +991,36 @@ mod tests {
 
     /// The vertical half of the anchor: the label letters below the point.
     ///
-    /// The reference plots put the baseline 0.00 mm / 1.25 mm / 2.50 mm below
+    /// The reference plots put the baseline 0.00 mm / 1.25 mm / 3.26 mm below
     /// a 2.5 mm body's insertion point, one mode per class, so the step is
-    /// measured against the body size and not against the pen.
+    /// measured against the body size and not against the pen. A sheet top
+    /// stops on the ascender line, a third of a body below a symbol's top.
     #[test]
     fn middle_and_top_step_down_across_the_baseline() {
         let bottom = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Bottom);
         let middle = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Middle);
         let top = placed("WW", [80.0, 20.0], 0.0, TextAnchor::Left, TextLine::Top);
+        let ascender = placed(
+            "WW",
+            [80.0, 20.0],
+            0.0,
+            TextAnchor::Left,
+            TextLine::Ascender,
+        );
         assert!((bottom[1] - 20.0).abs() < 0.05, "bottom {}", bottom[1]);
         assert!((middle[1] - 17.5).abs() < 0.05, "middle {}", middle[1]);
         assert!((top[1] - 15.0).abs() < 0.05, "top {}", top[1]);
-        for (name, point) in [("bottom", bottom), ("middle", middle), ("top", top)] {
+        assert!(
+            (ascender[1] - (20.0 - 5.0 * 1.32)).abs() < 0.05,
+            "ascender {}",
+            ascender[1]
+        );
+        for (name, point) in [
+            ("bottom", bottom),
+            ("middle", middle),
+            ("top", top),
+            ("ascender", ascender),
+        ] {
             assert!((point[0] - bottom[0]).abs() < 0.05, "{name} moved along x");
         }
         // Rotated a quarter turn the run climbs +Y, so the step lands on +X.
@@ -1003,6 +1045,66 @@ mod tests {
             "turned {dropped:?}"
         );
         assert!((dropped[1] - upright[1]).abs() < 0.1, "turned {dropped:?}");
+    }
+
+    /// A padded label anchors on its visible glyphs alone, on either side.
+    ///
+    /// The drawing files pad their fields with spaces — `H=11.8MPa ` with a
+    /// trailing one, ` 1001102A` with a leading one. A pad inks nothing, so
+    /// measuring it in steps a centred run half a space back and a
+    /// right-aligned run a whole one. Trimming only the tail left the I
+    /// drawing's 105 leading-space labels 0.4 mm left of the reference; the
+    /// comparison's width column now reports what a run-width difference can
+    /// explain and what only a placement rule can.
+    #[test]
+    fn padding_at_either_end_is_dropped_before_the_anchor_is_measured() {
+        for anchor in [TextAnchor::Center, TextAnchor::Right] {
+            let padded = placed(" WW ", [80.0, 20.0], 0.0, anchor, TextLine::Bottom);
+            let tight = placed("WW", [80.0, 20.0], 0.0, anchor, TextLine::Bottom);
+            assert!(
+                (padded[0] - tight[0]).abs() < 0.05,
+                "{anchor:?}: padded {padded:?} tight {tight:?}"
+            );
+        }
+    }
+
+    /// A run that is only spaces inks nothing, so it is not written at all.
+    #[test]
+    fn a_run_of_spaces_writes_no_text() {
+        let model = PaperModel {
+            library: Vec::new(),
+            page_mm: Some([200.0, 100.0]),
+            primitives: vec![primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [12.0, 40.0],
+                    height_mm: Some(5.0),
+                    rotation: 0.0,
+                    value: "   ".into(),
+                    font: None,
+                    anchor: TextAnchor::Center,
+                    line: TextLine::Middle,
+                },
+            )],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        assert!(
+            ink.spans.iter().all(|span| span.text.trim().is_empty()),
+            "{:?}",
+            ink.spans
+        );
     }
 
     fn anchor_row(anchor: TextAnchor) -> u8 {
@@ -1052,8 +1154,8 @@ mod tests {
         let span = ink
             .spans
             .iter()
-            .find(|span| span.text == value)
-            .unwrap_or_else(|| panic!("{value} missing in {:?}", ink.spans));
+            .find(|span| span.text == value.trim())
+            .unwrap_or_else(|| panic!("{value:?} missing in {:?}", ink.spans));
         span.origin_mm
     }
 

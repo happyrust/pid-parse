@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### pid-plot 文字落点：两端填充空格不再计宽，类别报告把「宽度差」与「锚点差」分开（2026-10-20）
+
+I 图 `Center/Middle` 的类别平均位移从 **−0.053 个字高**收到 **−0.026**（0.13 mm → 0.07 mm），其余四张图同在 −0.03…−0.04。原因不是居中规则：546 条配对里有 141 条带着图纸存下的填充空白（105 条前导、36 条尾随），上一轮只 `trim_end()`，前导空格仍被算进半宽，把整条 run 往左顶 0.41 mm。
+
+- `show_text` 改为两端 `trim()` 后再测宽、再画；trim 后为空的 run 一个字形都不写（`a_run_of_spaces_writes_no_text`）。图纸字段的填充本来就无墨，参考图排的也是可见字。
+- `TextOffsetClass` 新增 `mean_advance_heights`（我方推进 − 参考推进，按参考字高归一），两个对比入口都打印成 `width`：居中 run 的 `along` 里有一半就是这个宽度差，两个数并列才不会再被读成「规则错」。新增单测 `a_wider_run_reports_its_width_beside_its_shift`（+1 mm 推进 → `width +0.4`、`along −0.2`）。
+- 辅助探针 `pid-plot/examples/probe_center_anchor_width.rs`：按对比器的方式配对，输出每类 `along` 与「半个推进差」的对照，用来判断偏差是宽度还是锚点。
+- 门限收紧：`along` 单独一档 **0.05** 个字高（`down` 仍 0.10，`symbol/Middle` 实测 0.094）。收紧之前 I 图 `Center/Middle` 的 −0.053 会直接失败 —— 这条门限现在挡住的就是这一族错误。
+- 代价一条：L 图两条 `0103501A` 之间只隔 13.22 mm，去填充后每条占 13.32 mm，两条相接；本 crate 的读取器按距离合并，读成一条 18 字符 span，两条参考标签都配不上。参考图自己重叠 0.43 mm 仍分开，因为 PyMuPDF 按文本对象切分。基线因此记 165/167（其余四张不变：543/149/123/249），两条标签的实际落点与参考一致。
+- 剩余：`width` 仍 +0.03…+0.07 个字高（同字高下我方字面宽 1–2%，数字比字母明显 —— `NC` 只差 0.04%），实际锚点误差比这个小一个量级。下一轮要去比对参考图实际嵌入字体的每字推进。
+- 验证：`cargo test -p pid-plot` 全绿（lib 50 项 + 五个集成测试；重出五张图后 `plot_compare` 在新门限下通过）；`cargo clippy -p pid-plot --all-targets -- -D warnings` 零告警；`cargo fmt --all -- --check` 干净。
+- 分析：`docs/analysis/2026-10-20-a-pad-is-not-part-of-the-label.md`。
+
+### pid-plot 对比器跨 run 配对，图纸顶部锚点改挂 ascender 线（2026-10-19）
+
+五张对比图的「文字对上」从 1213 / 1238 抬到 **1231 / 1236**，三张图（B、低温 A、换热器 CD）各自 100%。参考残差只剩 5 条：两条电机 `M`、三条标题栏 `DWG-…集…`。
+
+- **切分标签配回来**：`TextSpan` 新增 `advance_mm`（沿书写方向的宽度）；`match_text` 在逐条配对之后加一遍「一条 ↔ 接续的若干条」，两个方向都试，拼接生成「紧贴」与「一个空格」两种候选，仍以字符串全等为准。接续判据方向点积 ≥ 0.99、横向 ≤ 0.35 字高、沿行间距**取绝对值** ≤ 0.6 字高（B 图的 `2-1/2"` + `LO` 重叠 1.43 mm = 0.40 字高，单侧下限会把它拒掉），最多 4 条。计数单位不变：`matched + 未对上 = text_reference`，而 `matched` 可以大于 `text_ours`（A 图 149 / 148，那一条正是参考拆开、我方合成）。新增三条单测（正反两个方向 + 拼错不许配）。
+- **图纸顶部锚点挂在 ascender 线上**：`probe_text_anchor_modes` 在 I 图重测，低半字节 `1` 的 58 条标签是 1.25–1.38 个字高而不是 1.0 —— 参考的「顶」是字体 ascender 线（Arial ascent 0.905 em / 字冠 0.688 em = 1.32），图纸记录里的 2.5 mm 是字冠高度。`TextLine` 因此新增 `Ascender`（1.32 字高），`0`→基线、`1`/`3`→ascender、`2`→字框顶（1.0，I 图的 `B5`/`E5`/`F9` 四条实测 2.5 mm）、`5`/`8`→中线。符号体标签仍走另一套读法，行为不变。这 58 条标签此前一直高 0.79 mm，只是被 1 mm 匹配窗盖住。
+- **带尾部空格的标签右对齐到最后一个有墨的字**：定宽字段写出的 `L=200mm ` 在右对齐时把空格也算进推进宽度，整条被顶回 0.69 mm；`show_text` 现在只用 `trim_end()` 后的宽度算锚点位移，字形照旧全画。`H=1200mm` 的 1.06 mm 差收到 0.4 mm 下。
+- 证据探针：`probe_text_anchor_modes` 增加 `DETAIL=1` 逐条输出；`read_reference_plot` 增加 `--json`（整页 `PlotInk`，含 origin / height / advance / direction）；新增只读探针 `probe_title_block_letters`（按前缀列记录，`--tail` 打 68 字节尾部与五个 dword）。
+- 标题栏剩下三条 `DWG-…集…` 的归属坐实了一半：右对齐与左对齐的两条记录**逐字节相同**（插入点、方向除外，锚点码都是 `0x48`，盒子都是 45.307 × 3.689，三个计数器都是 15/14/14），差别在他们各自的单元格 —— 参考从「盒子落在单元格内边距上的那一侧」起排，单元格的边框又画在同一个 `.pid` 里。实现需要模型里新增单元格一层，会对已对上的 55 条造成风险，本轮只做测量与记录，见 `docs/analysis/2026-10-19-title-block-cells-choose-the-side.md`。
+- 新增「按类别平均位移」报告：每配上一对就把「我方起点 − 参考起点」投到参考 run 自己的书写坐标系并除以字高，按字号规则（`Center/Middle`、`Left/Ascender`、`symbol/Middle` …）汇总成 `CompareReport::text_offsets`，两个对比入口都会打印。`plot_compare` 对样本 ≥ 10 条的类别断言 `|along| / |down| ≤ 0.10` 个字高；把常数临时收紧到 0.02 能复现失败（`Center/Middle along -0.053 over 437 labels`），说明门限不是空的。它第一次量出的东西是：居中标签整类左偏 0.053 个字高（≈0.14 mm），也就是「按推进宽度居中 vs 按墨迹居中」的旧账；`Left/Ascender` 则在 0.03 以内，证明上一轮的 ascender 修正确实站到了位。见 `docs/analysis/2026-10-19-mean-offset-per-lettering-class.md`。
+- 门限：`pid-plot/tests/plot_compare.rs` 537/143/119/165/249 → 543/149/123/167/249。
+- 分析：`docs/analysis/2026-10-19-split-labels-pair-across-runs.md`、`docs/analysis/2026-10-19-top-anchored-labels-sit-on-the-ascender-line.md`。
+- 验证：`cargo test -p pid-plot` 全绿（lib 46 项 + 五个集成测试，`write_five_drawings` 重出五张图后 `plot_compare` 在新门限下通过）；`cargo clippy -p pid-plot --all-targets -- -D warnings` 零告警；`cargo fmt --all -- --check` 干净。
+
+### pid-plot 对比器：纯空白 run 不再算标签，符号标签探针改为旋转感知（2026-10-19）
+
+I 图的参考文字残差从 15 条降到 9 条，其中 6 条原本是 `text` 为空串的纯空格 run；`matched` 合计从 1217 变成 1213，是四对「空串配空串」的幽灵匹配不再计数。两组数字与旧口径**不同量**，不能直接比：`matched` 掉了 4 条，参考总数掉了 10 条。
+
+- `pid-plot/src/compare.rs::match_text` 在参考侧与我方都先规范化，规范化后为空就直接跳过：不计入 `text_reference` / `text_ours`、不计入 `text_matched`、不进入未配对表。这与 `text_sources` 早已采用的「空值返回 `None`」一致。新增单测 `a_whitespace_only_run_is_not_a_label`。
+- 新口径五张图：537/546、143/151、119/123、165/169、249/249（换热器 CD 100%）。`pid-plot/tests/plot_compare.rs` 的 `min_text_matched` 重锁为 537/143/119/165/249，注释写明这是口径变化而不是回退。
+- `probe_symbol_label_offsets` 改为把基线差投影到参考 span 自己的书写坐标系（`along` 沿行向、`down` 沿降部方向），旋转标签也能量。重测结论：上一轮归为「旋转节流阀里没对上的两条 `M`」是误判 —— −90° 的 `M` 与 `S` 的 `down / 参考字高` 是 +0.07 和 +0.09…+0.11，与正立阀门的 +0.05…+0.10 同档，旧的 −2.12 mm / −4.02 mm 是纸面轴上的分解。真正的两条残差 `M` 在 `Electric Motor Type 1.sym`：我方 2.04 mm（`.sym` 样式 2.54 × 图纸放置缩放 0.804），参考 4.55 mm，是尺寸问题、与锚点无关，成因尚未坐实。
+- 证据探针新增两个只读入口：`pid-plot/examples/probe_lettering_heights.rs`（图纸 `igTextBox` 与 `.sym` 文字记录的尾部位高、样式位高、锚点并列）、`pid-plot/examples/probe_text_primitives.rs`（按文字与位置列出 `PaperShape::Text` 的值、字高、锚点与来源）。分析见 `docs/analysis/2026-10-19-blank-runs-are-not-labels.md`，旋转重测补进 `docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`。
+- 验证：`cargo test -p pid-plot` 全绿（lib 42 项，含新增单测；`plot_compare` 在新门限下通过），`cargo clippy -p pid-plot --all-targets -- -D warnings` 零告警，`cargo fmt --all -- --check` 干净。
+
 ### publish 目录入口接上 SQL Server MTF 包：`Export.dmp`（MTF）→ MSDA → 临时 MDF → `T_Drawing` 逐图发布（2026-10-19，N12）
 
 `pid_publish_xml <备份目录> --out-dir DIR` 对 `Manifest.txt` 目录里 MTF 形态的 `Export.dmp` 不再退出 2：与 Oracle `exp` 分支同一套目录遍历和 `_Index.json` 口径，`PlantData` zip 只列目录不解压，`T_Drawing` 每行经 `sqlite_load::load_drawing_graph` + `write_{data,meta}_xml` 写 `<NAME>_Data.xml` / `_Meta.xml`。无 `backup-mdf` 的构建保持原退出 2 语义。
@@ -18,7 +55,7 @@
 
 - 带框的 kind-2 `igTextBox`（标题栏那批，58 条，共用一个 45.307 × 3.689 mm 的框）现在从框的**左沿**起排：锚点码仍说插入点在框内哪一处，字符串却总从左沿开始，水平位移是 `框宽 × {左 0 / 中 ½ / 右 1}`。55 条因此对上，另外 3 条落在框右沿的记录留在分析页里。竖直不动 —— 带框记录仍按字形高度取锚点线。
 - 竖直锚点码的低半字节**不是一个 0–2 的索引**：`1` 与 `2` 都是字框顶（参考基线在插入点下方 1.0 个字高），`5` 与 `8` 都是字框中线（0.5 个字高），`0` 是基线。原先的 `(code & 0x0F) % 3` 把 `2` 当成中线，18 条位号因此高了半个字高，一直落在 1 mm 匹配窗之外。改为「高两位置位即中线，否则低两位有值即顶部」。符号库自带标签（`SymbolLettering`）用的是另一套读法，见下一条。
-- 符号体自带的标签（`.sym` 里的 `igTextBox`）用另一套读法：没有「基线」这一类，`0x10` 与 `0x12` 都挂在中线上，只有低半字节为 `1` 的顶类例外。索引读法把 `0x10` 当成基线，11 条阀门/电机标签（I 的 9 个 `M`，L 与 H 各 1 个 `S`）整条高了约半个字高。改后这 11 条对上 9 条，剩下两条在旋转的节流阀体里。
+- 符号体自带的标签（`.sym` 里的 `igTextBox`）用另一套读法：没有「基线」这一类，`0x10` 与 `0x12` 都挂在中线上，只有低半字节为 `1` 的顶类例外。索引读法把 `0x10` 当成基线，11 条阀门/电机标签（I 的 9 个 `M`，L 与 H 各 1 个 `S`）整条高了约半个字高。改后这 11 条对上 9 条；剩下两条当时记为「旋转的节流阀体」，后来重测证明是误判 —— 它们其实是电机符号里的 `M`，问题在字高不在锚点（见本条上方 2026-10-19 的对比器条目）。
 - 证据：`pid-plot/examples/probe_text_anchor_modes.rs` 按半字节报「参考基线 − 插入点 / 字高」的分布；`pid-plot/examples/probe_symbol_label_offsets.rs` 按 `.sym` 文件报符号标签的基线差。分析见 `docs/analysis/2026-10-19-igtextbox-box-is-where-the-text-starts.md`、`docs/analysis/2026-10-19-a-pair-of-flags-not-an-index.md` 与 `docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`；`pid-plot/tests/plot_compare.rs` 门限 525/141/116/159/249 → 537/144/119/167/250。
 
 ### `backup` feature 按输入族拆为 `backup-exp` / `backup-mdf`，`T_DRAWING` 投影扩出图纸元数据（2026-10-16，#39 / #40）

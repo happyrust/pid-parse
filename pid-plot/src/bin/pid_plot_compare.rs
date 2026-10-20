@@ -101,6 +101,17 @@ fn main() -> ExitCode {
         report.fit.within_threshold,
         report.fit.finding.unwrap_or_default()
     );
+    for class in &report.text_offsets {
+        println!(
+            "  {:<20} n {:>4}  along {:+.3}  down {:+.3}  width {:+.3}  max {:.2} mm",
+            class.class,
+            class.count,
+            class.mean_along_heights,
+            class.mean_down_heights,
+            class.mean_advance_heights,
+            class.max_shift_mm
+        );
+    }
     ExitCode::SUCCESS
 }
 

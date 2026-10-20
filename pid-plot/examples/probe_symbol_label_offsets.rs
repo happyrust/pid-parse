@@ -39,6 +39,7 @@ fn down(line: TextLine) -> f64 {
         TextLine::Bottom => 0.0,
         TextLine::Middle => 0.5,
         TextLine::Top => 1.0,
+        TextLine::Ascender => 1.32,
     }
 }
 

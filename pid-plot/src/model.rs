@@ -158,12 +158,13 @@ pub enum PaperShape {
         anchor: TextAnchor,
         /// Which line of `origin_mm` the paragraph letters from.
         ///
-        /// The stored point stays the insertion point. Middle and top move
-        /// the PDF baseline down across the run by half the body size or the
-        /// whole body size, the same way the horizontal half moves it back
-        /// along the run. Symbol lettering is [`TextLine::Middle`]: its record
-        /// carries no body box, and the reference puts the templates' own
-        /// lettering on the middle line.
+        /// The stored point stays the insertion point. The middle moves the
+        /// PDF baseline down across the run by half the body size, the top by
+        /// one body size, and the ascender line by 1.32 body sizes, the same
+        /// way the horizontal half moves it back along the run. Symbol
+        /// lettering is [`TextLine::Middle`]: its record carries no body box,
+        /// and the reference puts the templates' own lettering on the middle
+        /// line.
         line: TextLine,
     },
 }
@@ -210,7 +211,7 @@ impl TextAnchor {
 /// The vertical half of the same anchor code. Where [`TextAnchor`] says which
 /// point of the run the insertion sits at across the page, this says which
 /// line of the body box it sits on: measured against the reference plots, the
-/// labels the drawing letters sit 0.0 mm, 1.25 mm or 2.50 mm below the point
+/// labels the drawing letters sit 0.0 mm, 1.25 mm or 3.26 mm below the point
 /// for a 2.5 mm body, one mode per class.
 ///
 /// The nibble's two halves name different things, which is only visible once
@@ -224,9 +225,22 @@ pub enum TextLine {
     /// The insertion point is the middle of the body: the baseline runs half a
     /// body size below the point.
     Middle,
-    /// The insertion point is the top of the body: the baseline runs a whole
+    /// The insertion point is the top of the body box: the baseline runs one
     /// body size below the point.
+    ///
+    /// This is the step a symbol body's own `1` label still takes, and the
+    /// sheet's `2` label: both measure one body, where the sheet's `1`
+    /// measures a third more.
     Top,
+    /// The insertion point is the font's ascender line: the baseline runs 1.32
+    /// body sizes below the point.
+    ///
+    /// A sheet `igTextBox` top does not stop at the cap line. Its labels sit
+    /// a third of a body below a one-body step, which is Arial's ascent
+    /// (0.905 em) measured against the body size the style table stores as the
+    /// cap height (0.688 em): 0.905 / 0.688 = 1.32. See
+    /// [`TextLine::from_anchor_code`].
+    Ascender,
 }
 
 impl TextLine {
@@ -234,27 +248,41 @@ impl TextLine {
     ///
     /// The corpus carries five low nibbles, and each one's mode against the
     /// reference plots is unambiguous (`examples/probe_text_anchor_modes.rs`,
-    /// five drawings, offset over letter height):
+    /// offset over letter height; the I drawing alone is quoted here, the
+    /// five-drawing run gives the same modes):
     ///
-    /// | nibble | mode | n |
+    /// | nibble | mode | n on I |
     /// |---:|---:|---:|
-    /// | 0 | 0.0 body — the point is the baseline | 12 |
-    /// | 1 | 1.0 body — the body's top | 154 |
-    /// | 2 | 1.0 body — the body's top | 18 |
-    /// | 5 | 0.5 body — the body's middle | 942 |
-    /// | 8 | 0.5 body — the body's middle | 161 |
+    /// | 0 | 0.00 body — the point is the baseline | 3 |
+    /// | 1 | 1.25–1.38 body — the ascender line | 58 |
+    /// | 2 | 0.99–1.02 body — the body's top | 4 |
+    /// | 5 | 0.47–0.50 body — the body's middle | 400 |
+    /// | 8 | 0.49–0.69 body — the body's middle | 52 |
     ///
     /// So the two halves of the nibble are separate flags, not one index: the
-    /// high half (`4`/`8`) asks for the body's middle and overrides, otherwise
-    /// the low half names the point itself (`0`) or the body's top (`1`–`3`).
+    /// high half (`4`/`8`) asks for the body's middle and overrides; otherwise
+    /// the low half names the line, and it names **three** lines, not one —
+    /// `0` the baseline, `1` the ascender, `2` the body's top. The four `2`
+    /// records on the I drawing are the spec-break fragments `B5` / `E5` /
+    /// `F9`, which the reference puts 2.5 mm below the point against a 2.47 mm
+    /// body, where the 58 `1` records sit 3.26 mm down.
+    ///
     /// Reading the nibble as an index — `% 3` — puts every `2` at the middle
-    /// instead of the top, half a body too high: that is the 18 records whose
-    /// labels lettered 1.2 mm above the reference
+    /// instead of the top, half a body too high: that is the 18 records
+    /// whose labels lettered 1.2 mm above the reference
     /// (`docs/analysis/2026-10-19-a-pair-of-flags-not-an-index.md`).
+    ///
+    /// The top step used to be read as one whole body — nibble `1` lettered
+    /// 1.0 body below the point. Every one of those labels then sat about
+    /// 0.8 mm high: 0.32 body of ascender it never stepped down. The I
+    /// drawing's 58 nibble-`1` labels measure 1.25–1.38 bodies, and 0.32 of a
+    /// 2.47 mm body is the 0.79 mm the `L=200mm` labels were off by
+    /// (`docs/analysis/2026-10-19-top-anchored-labels-sit-on-the-ascender-line.md`).
     fn from_anchor_code(code: u8) -> Self {
         match code & 0x0F {
             0 => Self::Bottom,
-            1..=3 => Self::Top,
+            1 | 3 => Self::Ascender,
+            2 => Self::Top,
             _ => Self::Middle,
         }
     }
@@ -284,11 +312,16 @@ impl TextLine {
     }
 
     /// Flip top and bottom when a mirrored placement absorbs a vertical flip.
+    ///
+    /// Only symbol lettering reaches this: a mirrored placement flips a
+    /// `.sym` body's own label, never a sheet paragraph. An ascender-anchored
+    /// line is kept total anyway and folds to the baseline.
     fn flip_vertical(self) -> Self {
         match self {
             Self::Bottom => Self::Top,
             Self::Middle => Self::Middle,
             Self::Top => Self::Bottom,
+            Self::Ascender => Self::Bottom,
         }
     }
 }
@@ -1502,7 +1535,7 @@ mod tests {
             lines,
             vec![
                 TextLine::Bottom,
-                TextLine::Top,
+                TextLine::Ascender,
                 TextLine::Top,
                 TextLine::Middle,
                 TextLine::Middle,
@@ -1513,7 +1546,10 @@ mod tests {
         assert_eq!(TextAnchor::from_anchor_code(0x48), TextAnchor::Center);
         assert_eq!(TextLine::from_anchor_code(0x48), TextLine::Middle);
         assert_eq!(TextAnchor::from_anchor_code(0x12), TextAnchor::Center);
+        // `2` is the body's top, one body down; only `1` climbs to the
+        // ascender line a third of a body higher.
         assert_eq!(TextLine::from_anchor_code(0x12), TextLine::Top);
+        assert_eq!(TextLine::from_anchor_code(0x11), TextLine::Ascender);
     }
 
     /// A symbol body's own labels keep the other reading: `0x10` is the

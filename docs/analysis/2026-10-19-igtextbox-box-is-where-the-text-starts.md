@@ -121,6 +121,15 @@ of a field we have. Both rows stay mismatched either way, which is why the rule
 above is stated for the box's left edge and this is recorded rather than
 guessed at.
 
+**Follow-up, same day** (`2026-10-19-title-block-cells-choose-the-side.md`):
+"does not carry" is now proved rather than assumed — the 68-byte kind-2 tails
+of a left-aligned and a right-aligned record are byte-identical apart from the
+insertion and direction doubles, anchors and flag words included. The cells
+were measured instead: the reference letters from whichever box edge lands on
+the cell's ~1.2 mm inner margin, and the cell borders are drawn in the same
+`.pid`. Implementing it needs a cell layer the model does not have yet, so the
+code still letters from the box's left edge.
+
 ## What changed
 
 - **Parser** — `SheetIgTextBoxDecoded::text_box_width_m` / `text_box_height_m`,

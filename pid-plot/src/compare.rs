@@ -11,7 +11,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
-use crate::model::{PaperModel, PaperPrimitive, PaperShape};
+use crate::model::{PaperModel, PaperPrimitive, PaperShape, TextAnchor, TextLine};
 use crate::read::{InkSegment, PlotInk, TextSpan};
 
 const JOIN_GAP_MM: f64 = 3.0;
@@ -23,6 +23,23 @@ const ATTRIB_MM: f64 = 15.0;
 const LONG_MM: f64 = 8.0;
 const SCALE_LIMIT: f64 = 0.002;
 const SHIFT_LIMIT_MM: f64 = 5.0;
+
+/// How far apart two runs of one label may be, in body heights.
+///
+/// A PDF splits a label into runs at a font change and at some kerning
+/// pairs, so one side of a comparison can spell `2"NC` as one run and the
+/// other as `2"` + `NC`. The margin is measured from the end of the first
+/// run's advance to the origin of the next and is symmetric, because a
+/// split run can also overlap the previous one: `2-1/2"` + `LO` on the B
+/// drawing starts 1.43 mm early against a 3.59 mm body, 0.40 heights. The
+/// bound is deliberately loose: a joined candidate still has to spell the
+/// other side's text exactly, so a wrong merge costs a match but never
+/// invents one.
+const RUN_GAP_HEIGHTS: f64 = 0.6;
+/// How far a run of one label may sit off the writing line, in heights.
+const RUN_ACROSS_HEIGHTS: f64 = 0.35;
+/// Most runs one printed label has been seen split into.
+const RUNS_PER_LABEL: usize = 4;
 
 /// Why a comparison could not be written out.
 #[derive(Debug)]
@@ -177,6 +194,44 @@ pub struct TextSource {
     pub confidence: String,
     /// Symbol file, when the run came from a symbol body.
     pub symbol: Option<String>,
+    /// Which side of its insertion point the label letters from.
+    pub anchor: TextAnchor,
+    /// Which line of its insertion point the label letters from.
+    pub line: TextLine,
+}
+
+/// How far our runs sit from the reference's, per lettering class.
+///
+/// A class whose mean is not zero is a systematic placement error that the
+/// 1 mm pairing window hides: the I drawing's top-anchored labels sat 0.32
+/// body heights high for two rounds, and every one of them still paired,
+/// because 0.79 mm is inside the window. This report makes that number
+/// visible while it is still small.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TextOffsetClass {
+    /// The lettering rule the run obeyed: `Left/Middle`,
+    /// `symbol/Ascender`, or `unknown` when no paper-table source was within
+    /// reach of the run.
+    pub class: String,
+    /// Labels paired in this class.
+    pub count: usize,
+    /// Mean shift along the reference run's writing direction, in body
+    /// heights. Positive overshoots the run to the right.
+    pub mean_along_heights: f64,
+    /// Mean shift toward the reference run's descenders, in body heights.
+    /// Positive is a line too low.
+    pub mean_down_heights: f64,
+    /// Mean difference in run width, in body heights: ours minus the
+    /// reference's. Positive means our face sets the same label wider.
+    ///
+    /// A centred anchor steps back by half its own width and a right anchor
+    /// by all of it, so a run set wider than the reference's starts further
+    /// left with the rule itself obeyed — half of this figure lands in
+    /// [`Self::mean_along_heights`] for those two classes. Left-anchored runs
+    /// step back by nothing and are unaffected.
+    pub mean_advance_heights: f64,
+    /// Largest shift in the class, millimetres.
+    pub max_shift_mm: f64,
 }
 
 /// A length of ink sharing one label.
@@ -203,11 +258,14 @@ pub struct CompareReport {
     pub coverage: f64,
     /// Our centerline length outside the masks and farther than 0.5 mm from the reference.
     pub extra_length_mm: f64,
-    /// Reference text runs outside the masks.
+    /// Reference text runs outside the masks, blanks excluded.
+    ///
+    /// A run that normalizes to nothing — glyphs of spaces, which both plots
+    /// carry — names no label, so it is counted on neither side.
     pub text_reference: usize,
-    /// Our text runs outside the masks.
+    /// Our text runs outside the masks, blanks excluded.
     pub text_ours: usize,
-    /// Runs that matched.
+    /// Runs that matched. Two blank runs never pair: blanks are not counted.
     pub text_matched: usize,
     /// Reference length inside a mask.
     pub masked_reference_length_mm: f64,
@@ -217,6 +275,13 @@ pub struct CompareReport {
     pub unmatched_reference_text: Vec<UnmatchedText>,
     /// Our runs that did not match.
     pub unmatched_our_text: Vec<UnmatchedText>,
+    /// Where the paired runs sit, per lettering class.
+    ///
+    /// Empty when no run paired. A class's mean is the systematic part of
+    /// the placement error; the residuals above are only the part that fell
+    /// outside the pairing window.
+    #[serde(default)]
+    pub text_offsets: Vec<TextOffsetClass>,
     /// Our ink far from the reference and inside a missing-symbol box.
     ///
     /// Zero unless [`compare_plots_with_model`] supplied the boxes.
@@ -280,6 +345,7 @@ pub fn compare_plots_with_sources(
         masked_text: text.masked,
         unmatched_reference_text: text.unmatched_reference,
         unmatched_our_text: text.unmatched_ours,
+        text_offsets: text.offsets,
         extra_inside_missing_mm: 0.0,
         extra_outside_missing_mm: 0.0,
         extra_outside_by_symbol: Vec::new(),
@@ -320,7 +386,11 @@ pub fn text_sources(model: &PaperModel) -> Vec<TextSource> {
         .iter()
         .filter_map(|primitive| {
             let PaperShape::Text {
-                origin_mm, value, ..
+                origin_mm,
+                value,
+                anchor,
+                line,
+                ..
             } = &primitive.shape
             else {
                 return None;
@@ -335,6 +405,8 @@ pub fn text_sources(model: &PaperModel) -> Vec<TextSource> {
                 byte_range: primitive.byte_range,
                 confidence: primitive.confidence.to_string(),
                 symbol: primitive.symbol.clone(),
+                anchor: *anchor,
+                line: *line,
             })
         })
         .collect()
@@ -681,8 +753,86 @@ struct CoverText {
     masked: usize,
     unmatched_reference: Vec<UnmatchedText>,
     unmatched_ours: Vec<UnmatchedText>,
+    offsets: Vec<TextOffsetClass>,
 }
 
+/// Running mean of the paired runs' shifts, one bucket per class.
+#[derive(Default)]
+struct OffsetBucket {
+    count: usize,
+    along: f64,
+    down: f64,
+    advance: f64,
+    max_mm: f64,
+}
+
+/// Where one pair put our run, relative to the reference's.
+///
+/// The shift is projected onto the reference run's own writing frame — along
+/// the glyphs and toward the descenders — so a rotated label reads the same
+/// way as an upright one, and divided by the reference body size, because a
+/// 0.3 mm miss on a 2.5 mm label and on a 5 mm label are not the same error.
+///
+/// The run's own advance is recorded beside it: a centred run steps back by
+/// half *its* width, so a run set wider than the reference's starts to the
+/// left of it by half that difference with no placement rule wrong at all.
+/// Without the two numbers side by side the I drawing's leading-space padding
+/// read as a 0.05-body centring error for two rounds.
+fn record_offset(
+    buckets: &mut HashMap<String, OffsetBucket>,
+    reference: &TextSpan,
+    ours: &TextSpan,
+    fit: &Fit,
+    sources: &[TextSource],
+) {
+    let height = reference.height_mm;
+    if !height.is_finite() || height <= 0.1 {
+        return;
+    }
+    let ours_in_ref = into_reference(ours.origin_mm, fit);
+    let delta = [
+        ours_in_ref[0] - reference.origin_mm[0],
+        ours_in_ref[1] - reference.origin_mm[1],
+    ];
+    let direction = reference.direction;
+    let along = delta[0] * direction[0] + delta[1] * direction[1];
+    let down = delta[0] * direction[1] - delta[1] * direction[0];
+    let class = offset_class(ours_in_ref, &ours.text, sources, fit);
+    let bucket = buckets.entry(class).or_default();
+    bucket.count += 1;
+    bucket.along += along / height;
+    bucket.down += down / height;
+    bucket.advance += (ours.advance_mm - reference.advance_mm) / height;
+    bucket.max_mm = bucket.max_mm.max(along.hypot(down));
+}
+
+/// Which lettering rule produced our run, as a stable label.
+fn offset_class(origin: [f64; 2], text: &str, sources: &[TextSource], fit: &Fit) -> String {
+    let Some(source) = find_source(origin, text, sources, fit) else {
+        return "unknown".to_string();
+    };
+    match source.symbol {
+        Some(_) => format!("symbol/{:?}", source.line),
+        None => format!("{:?}/{:?}", source.anchor, source.line),
+    }
+}
+
+/// Pair reference text runs with ours, and report what did not pair.
+///
+/// A run that normalizes to nothing — the glyphs of a run that is only
+/// spaces, which both plots carry — is not a label and is left out of the
+/// tally on either side. Counting those as misses made the I drawing report
+/// six reference runs it had no hope of pairing: the residual list is the
+/// hunting ground for real placement errors, and blanks crowd it out.
+///
+/// A label can be split into runs differently on the two sides: the I
+/// drawing's `2"NC` is one run in the reference and `2"` + `NC` here, and
+/// one instance goes the other way. After runs that spell the same text
+/// pair up, a leftover reference run is tried against our runs that
+/// continue it, and a leftover reference run starts a chain of its own that
+/// might spell one of our runs. Both passes keep the existing unit: a
+/// reference run is counted once, whether it paired alone or as part of a
+/// joined label.
 fn match_text(
     reference: &[TextSpan],
     ours: &[TextSpan],
@@ -690,59 +840,264 @@ fn match_text(
     masks: &[MaskRect],
     sources: &[TextSource],
 ) -> CoverText {
-    let mut used = vec![false; ours.len()];
-    let mut matched = 0;
+    // Tally both sides first. Counting and masking do not depend on the
+    // pairing, and the second pass below needs to know which runs are in
+    // play before it looks for a joined label.
+    let mut tallied: Vec<usize> = Vec::new();
+    // `hit` doubles as the taken set for chains, so a blank or masked run
+    // — never a label — cannot end up inside a joined one.
+    let mut hit = vec![false; reference.len()];
     let mut masked = 0;
-    let mut unmatched_reference = Vec::new();
-    let mut reference_count = 0;
-    for span in reference {
-        if masks.iter().any(|mask| mask.contains(span.origin_mm)) {
-            masked += 1;
+    for (index, span) in reference.iter().enumerate() {
+        if normalize(&span.text).is_empty() {
+            hit[index] = true;
             continue;
         }
-        reference_count += 1;
-        let wanted = normalize(&span.text);
-        let found = ours.iter().enumerate().find(|(index, other)| {
-            !used[*index]
-                && normalize(&other.text) == wanted
-                && hypot(span.origin_mm, into_reference(other.origin_mm, fit)) <= TEXT_MM
-        });
-        if let Some((index, _)) = found {
-            used[index] = true;
-            matched += 1;
-        } else {
-            unmatched_reference.push(unmatched(span));
+        if masks.iter().any(|mask| mask.contains(span.origin_mm)) {
+            masked += 1;
+            hit[index] = true;
+            continue;
         }
+        tallied.push(index);
     }
-    let mut unmatched_ours = Vec::new();
+    let mut blocked = vec![false; ours.len()];
     let mut our_count = 0;
     for (index, span) in ours.iter().enumerate() {
-        let origin = into_reference(span.origin_mm, fit);
-        if masks.iter().any(|mask| mask.contains(origin)) {
+        if normalize(&span.text).is_empty() {
+            continue;
+        }
+        if masks
+            .iter()
+            .any(|mask| mask.contains(into_reference(span.origin_mm, fit)))
+        {
             masked += 1;
+            blocked[index] = true;
             continue;
         }
         our_count += 1;
-        if !used[index] {
-            let source = find_source(origin, &span.text, sources, fit);
-            unmatched_ours.push(UnmatchedText {
-                text: normalize(&span.text),
-                origin_mm: origin,
-                stream_path: source.and_then(|item| item.stream_path.clone()),
-                byte_range: source.and_then(|item| item.byte_range),
-                confidence: source.map(|item| item.confidence.clone()),
-                symbol: source.and_then(|item| item.symbol.clone()),
-            });
+    }
+    // First pass: a run that spells the same text as the reference's run.
+    let mut used = vec![false; ours.len()];
+    let mut matched = 0;
+    let mut buckets: HashMap<String, OffsetBucket> = HashMap::new();
+    for index in tallied.iter().copied() {
+        let wanted = normalize(&reference[index].text);
+        let found = ours.iter().enumerate().find(|(slot, other)| {
+            !used[*slot]
+                && !blocked[*slot]
+                && normalize(&other.text) == wanted
+                && hypot(
+                    reference[index].origin_mm,
+                    into_reference(other.origin_mm, fit),
+                ) <= TEXT_MM
+        });
+        if let Some((slot, _)) = found {
+            used[slot] = true;
+            hit[index] = true;
+            matched += 1;
+            record_offset(&mut buckets, &reference[index], &ours[slot], fit, sources);
         }
     }
+    // Second pass: a label one side split into runs and the other did not.
+    for index in tallied.iter().copied() {
+        if hit[index] {
+            continue;
+        }
+        let origin = reference[index].origin_mm;
+        let wanted = normalize(&reference[index].text);
+        if let Some(taken) = join_ours(&wanted, ours, &used, &blocked, origin, fit) {
+            record_offset(
+                &mut buckets,
+                &reference[index],
+                &ours[taken[0]],
+                fit,
+                sources,
+            );
+            for slot in taken {
+                used[slot] = true;
+            }
+            hit[index] = true;
+            matched += 1;
+            continue;
+        }
+        let chain = run_chain(reference, index, &hit);
+        for cuts in 2..=chain.len() {
+            let texts = joined_text(reference, &chain, cuts);
+            let found = ours.iter().enumerate().find(|(slot, other)| {
+                !used[*slot]
+                    && !blocked[*slot]
+                    && texts.iter().any(|text| *text == normalize(&other.text))
+                    && hypot(origin, into_reference(other.origin_mm, fit)) <= TEXT_MM
+            });
+            let Some((slot, _)) = found else {
+                continue;
+            };
+            record_offset(&mut buckets, &reference[index], &ours[slot], fit, sources);
+            used[slot] = true;
+            for member in chain.iter().take(cuts) {
+                hit[*member] = true;
+            }
+            matched += cuts;
+            break;
+        }
+    }
+    let mut unmatched_reference = Vec::new();
+    for index in tallied.iter().copied() {
+        if !hit[index] {
+            unmatched_reference.push(unmatched(&reference[index]));
+        }
+    }
+    let mut unmatched_ours = Vec::new();
+    for (index, span) in ours.iter().enumerate() {
+        if blocked[index] || used[index] || normalize(&span.text).is_empty() {
+            continue;
+        }
+        let origin = into_reference(span.origin_mm, fit);
+        let source = find_source(origin, &span.text, sources, fit);
+        unmatched_ours.push(UnmatchedText {
+            text: normalize(&span.text),
+            origin_mm: origin,
+            stream_path: source.and_then(|item| item.stream_path.clone()),
+            byte_range: source.and_then(|item| item.byte_range),
+            confidence: source.map(|item| item.confidence.clone()),
+            symbol: source.and_then(|item| item.symbol.clone()),
+        });
+    }
+    let mut offsets: Vec<TextOffsetClass> = buckets
+        .into_iter()
+        .map(|(class, bucket)| TextOffsetClass {
+            class,
+            count: bucket.count,
+            mean_along_heights: bucket.along / bucket.count as f64,
+            mean_down_heights: bucket.down / bucket.count as f64,
+            mean_advance_heights: bucket.advance / bucket.count as f64,
+            max_shift_mm: bucket.max_mm,
+        })
+        .collect();
+    offsets.sort_by(|left, right| left.class.cmp(&right.class));
     CoverText {
-        reference: reference_count,
+        reference: tallied.len(),
         ours: our_count,
         matched,
         masked,
         unmatched_reference,
         unmatched_ours,
+        offsets,
     }
+}
+
+/// Where a run's ink ends, along its writing direction.
+fn end_of(span: &TextSpan) -> [f64; 2] {
+    [
+        span.origin_mm[0] + span.direction[0] * span.advance_mm,
+        span.origin_mm[1] + span.direction[1] * span.advance_mm,
+    ]
+}
+
+/// The runs that continue `start` on the same writing line, `start`
+/// included, ordered by reading order.
+///
+/// A blank run is stepped over rather than joined: it inks nothing, so it
+/// spells nothing. Runs already `taken` are never pulled in.
+fn run_chain(spans: &[TextSpan], start: usize, taken: &[bool]) -> Vec<usize> {
+    let first = &spans[start];
+    let mut chain = vec![start];
+    let mut cursor = end_of(first);
+    while chain.len() < RUNS_PER_LABEL {
+        let mut best: Option<(f64, usize)> = None;
+        for (index, span) in spans.iter().enumerate() {
+            if index == start || taken[index] || chain.contains(&index) {
+                continue;
+            }
+            if normalize(&span.text).is_empty() {
+                continue;
+            }
+            let dot =
+                first.direction[0] * span.direction[0] + first.direction[1] * span.direction[1];
+            if dot < 0.99 {
+                continue;
+            }
+            let delta = [span.origin_mm[0] - cursor[0], span.origin_mm[1] - cursor[1]];
+            let along = delta[0] * first.direction[0] + delta[1] * first.direction[1];
+            let across = delta[1] * first.direction[0] - delta[0] * first.direction[1];
+            let height = first.height_mm.max(span.height_mm).max(0.5);
+            if across.abs() > RUN_ACROSS_HEIGHTS * height {
+                continue;
+            }
+            if along.abs() > RUN_GAP_HEIGHTS * height {
+                continue;
+            }
+            if best.is_none_or(|(best_gap, _)| along.abs() < best_gap) {
+                best = Some((along.abs(), index));
+            }
+        }
+        let Some((_, index)) = best else {
+            break;
+        };
+        chain.push(index);
+        cursor = end_of(&spans[index]);
+    }
+    chain
+}
+
+/// What the first `cuts` runs of `chain` spell, both fused and with one
+/// space where they meet. A run split at a kerning pair fuses; a run split
+/// at a word break does not, and the reference may spell either way.
+fn joined_text(spans: &[TextSpan], chain: &[usize], cuts: usize) -> Vec<String> {
+    let mut fused = String::new();
+    let mut spaced = String::new();
+    for (position, index) in chain.iter().take(cuts).enumerate() {
+        let text = spans[*index].text.as_str();
+        if position > 0 {
+            spaced.push(' ');
+        }
+        fused.push_str(text);
+        spaced.push_str(text);
+    }
+    let fused = normalize(&fused);
+    let spaced = normalize(&spaced);
+    if fused == spaced {
+        vec![fused]
+    } else {
+        vec![fused, spaced]
+    }
+}
+
+/// Pair one reference run with our run that starts at the same place plus
+/// the runs continuing it. Returns the slots to mark used.
+fn join_ours(
+    wanted: &str,
+    ours: &[TextSpan],
+    used: &[bool],
+    blocked: &[bool],
+    origin: [f64; 2],
+    fit: &Fit,
+) -> Option<Vec<usize>> {
+    // A masked run is not a label either, so a chain must walk around it the
+    // same way it walks around one already paired.
+    let taken: Vec<bool> = used
+        .iter()
+        .zip(blocked)
+        .map(|(used, blocked)| *used || *blocked)
+        .collect();
+    for (start, span) in ours.iter().enumerate() {
+        if taken[start] || normalize(&span.text).is_empty() {
+            continue;
+        }
+        if hypot(origin, into_reference(span.origin_mm, fit)) > TEXT_MM {
+            continue;
+        }
+        let chain = run_chain(ours, start, &taken);
+        for cuts in 2..=chain.len() {
+            if joined_text(ours, &chain, cuts)
+                .iter()
+                .any(|text| text == wanted)
+            {
+                return Some(chain[..cuts].to_vec());
+            }
+        }
+    }
+    None
 }
 
 fn unmatched(span: &TextSpan) -> UnmatchedText {
@@ -1284,6 +1639,17 @@ mod tests {
             text: "Ab".into(),
             origin_mm: origin,
             height_mm: 4.0,
+            advance_mm: 6.0,
+            direction: [1.0, 0.0],
+        }
+    }
+
+    fn run(text: &str, origin: [f64; 2], advance_mm: f64) -> TextSpan {
+        TextSpan {
+            text: text.into(),
+            origin_mm: origin,
+            height_mm: 2.5,
+            advance_mm,
             direction: [1.0, 0.0],
         }
     }
@@ -1299,6 +1665,154 @@ mod tests {
         assert!(report.extra_length_mm < 0.2, "{}", report.extra_length_mm);
         assert_eq!(report.text_matched, 1);
         assert!(report.fit.within_threshold, "{:?}", report.fit);
+    }
+
+    #[test]
+    fn a_whitespace_only_run_is_not_a_label() {
+        // Both plots carry a run that is only spaces. It has no text to pair,
+        // so it must not enter either side's tally or the residual list.
+        let blank = TextSpan {
+            text: "  ".into(),
+            origin_mm: [150.0, 80.0],
+            height_mm: 4.0,
+            advance_mm: 0.0,
+            direction: [1.0, 0.0],
+        };
+        let reference = ink(vec![], vec![blank.clone(), word([5.0, 20.0])]);
+        let ours = ink(vec![], vec![blank, word([5.0, 20.0])]);
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.text_reference, 1);
+        assert_eq!(report.text_ours, 1);
+        assert_eq!(report.text_matched, 1);
+        assert!(report.unmatched_reference_text.is_empty());
+        assert!(report.unmatched_our_text.is_empty());
+    }
+
+    #[test]
+    fn a_label_split_into_runs_pairs_with_its_whole_run() {
+        // The reference printed `2"NC` as one run and we drew it as two.
+        let reference = ink(vec![], vec![run("2\"NC", [100.0, 50.0], 4.8)]);
+        let ours = ink(
+            vec![],
+            vec![
+                run("2\"", [100.0, 50.0], 2.2),
+                run("NC", [102.6, 50.0], 2.6),
+            ],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.text_reference, 1);
+        assert_eq!(report.text_ours, 2);
+        assert_eq!(report.text_matched, 1);
+        assert!(report.unmatched_reference_text.is_empty());
+        assert!(report.unmatched_our_text.is_empty());
+    }
+
+    #[test]
+    fn a_label_fused_into_one_run_pairs_with_the_split_reference() {
+        // The same drawing elsewhere: the reference split `2"NC`, we fused it.
+        let reference = ink(
+            vec![],
+            vec![
+                run("2\"", [100.0, 50.0], 2.2),
+                run("NC", [102.6, 50.0], 2.6),
+            ],
+        );
+        let ours = ink(vec![], vec![run("2\"NC", [100.0, 50.0], 4.8)]);
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.text_reference, 2);
+        assert_eq!(report.text_ours, 1);
+        assert_eq!(report.text_matched, 2);
+        assert!(report.unmatched_reference_text.is_empty());
+        assert!(report.unmatched_our_text.is_empty());
+    }
+
+    #[test]
+    fn a_joined_label_still_has_to_spell_the_other_side() {
+        // Two of our runs sit where the label should be, but they spell
+        // something else; joining must not turn the near miss into a match.
+        let reference = ink(vec![], vec![run("2\"NC", [100.0, 50.0], 4.8)]);
+        let ours = ink(
+            vec![],
+            vec![
+                run("2\"", [100.0, 50.0], 2.2),
+                run("NQ", [102.6, 50.0], 2.6),
+            ],
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.text_matched, 0);
+        assert_eq!(report.unmatched_reference_text.len(), 1);
+        assert_eq!(report.unmatched_our_text.len(), 2);
+    }
+
+    #[test]
+    fn a_paired_run_reports_its_offset_in_body_heights() {
+        // Ours sits half a millimetre below the reference's baseline on a
+        // 2.5 mm body, which is a fifth of a body — inside the 1 mm pairing
+        // window, and exactly the kind of systematic miss the report exists
+        // to show while it is still too small to be a residual.
+        let reference = ink(vec![], vec![run("Ab", [100.0, 50.0], 6.0)]);
+        let ours = ink(vec![], vec![run("Ab", [100.0, 49.5], 6.0)]);
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.text_matched, 1);
+        let class = report.text_offsets.first().expect("one class");
+        assert_eq!(class.class, "unknown");
+        assert_eq!(class.count, 1);
+        assert!(
+            (class.mean_down_heights - 0.2).abs() < 1e-9,
+            "down {}",
+            class.mean_down_heights
+        );
+        assert!(class.mean_along_heights.abs() < 1e-9);
+        assert!(class.mean_advance_heights.abs() < 1e-9);
+        assert!((class.max_shift_mm - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_wider_run_reports_its_width_beside_its_shift() {
+        // A centred run that steps back by half its own width starts further
+        // left when that width is larger, with no placement rule wrong. The
+        // class reports both numbers so this cannot be read as a centring
+        // error: 1 mm wider on a 2.5 mm body is 0.4 of a body, half of which
+        // is the 0.5 mm shift.
+        let reference = ink(vec![], vec![run("Ab", [100.0, 50.0], 6.0)]);
+        let ours = ink(vec![], vec![run("Ab", [99.5, 50.0], 7.0)]);
+        let report = compare_plots(&reference, &ours, &[]);
+        assert_eq!(report.text_matched, 1);
+        let class = report.text_offsets.first().expect("one class");
+        assert!(
+            (class.mean_advance_heights - 0.4).abs() < 1e-9,
+            "width {}",
+            class.mean_advance_heights
+        );
+        assert!(
+            (class.mean_along_heights + 0.2).abs() < 1e-9,
+            "along {}",
+            class.mean_along_heights
+        );
+    }
+
+    #[test]
+    fn a_paired_run_is_classed_by_its_lettering_rule() {
+        let reference = ink(vec![], vec![run("Ab", [100.0, 50.0], 6.0)]);
+        let ours = ink(vec![], vec![run("Ab", [100.0, 50.0], 6.0)]);
+        let report = super::compare_plots_with_sources(
+            &reference,
+            &ours,
+            &[],
+            &[super::TextSource {
+                text: "Ab".to_string(),
+                origin_mm: [100.0, 50.0],
+                stream_path: None,
+                byte_range: None,
+                confidence: "decoded".to_string(),
+                symbol: None,
+                anchor: super::TextAnchor::Right,
+                line: super::TextLine::Ascender,
+            }],
+        );
+        assert_eq!(report.text_offsets.len(), 1);
+        assert_eq!(report.text_offsets[0].class, "Right/Ascender");
+        assert_eq!(report.text_offsets[0].count, 1);
     }
 
     #[test]
@@ -1365,6 +1879,8 @@ mod tests {
                 byte_range: Some([4, 9]),
                 confidence: "decoded".to_string(),
                 symbol: Some("valve.sym".to_string()),
+                anchor: super::TextAnchor::Left,
+                line: super::TextLine::Middle,
             }],
         );
         let run = &report.unmatched_our_text[0];

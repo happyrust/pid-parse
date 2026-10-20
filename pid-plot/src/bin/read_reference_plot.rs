@@ -1,4 +1,8 @@
 //! Print ink-segment and text-span counts for one rendered plot.
+//!
+//! `--spans` lists the run texts, `--json` prints the whole read-back as one
+//! JSON object (page size, segments, spans with origin, height, advance and
+//! writing direction).
 
 use std::env;
 use std::process::ExitCode;
@@ -20,10 +24,23 @@ fn main() -> ExitCode {
     };
     match read_plot(&bytes) {
         Ok(ink) => {
-            if args.next().as_deref() == Some("--spans") {
-                for span in &ink.spans {
-                    println!("{}", span.text.replace('\n', "\\n"));
+            match args.next().as_deref() {
+                Some("--spans") => {
+                    for span in &ink.spans {
+                        println!("{}", span.text.replace('\n', "\\n"));
+                    }
                 }
+                Some("--json") => {
+                    match ink.to_json() {
+                        Ok(json) => println!("{json}"),
+                        Err(error) => {
+                            eprintln!("json: {error}");
+                            return ExitCode::from(1);
+                        }
+                    }
+                    return ExitCode::SUCCESS;
+                }
+                _ => {}
             }
             println!(
                 "page_mm {:.2} {:.2} segments {} spans {}",

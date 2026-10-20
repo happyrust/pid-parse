@@ -43,6 +43,13 @@ pub struct TextSpan {
     pub origin_mm: [f64; 2],
     /// Body size in millimetres.
     pub height_mm: f64,
+    /// Width along the writing direction, millimetres.
+    ///
+    /// The distance from the first glyph's origin to the last glyph's
+    /// advance, so `origin + direction * advance` is where the next run of
+    /// the same label would start. A run that only spells a space inks
+    /// nothing and has width 0.
+    pub advance_mm: f64,
     /// Unit writing direction in paper space (y up).
     pub direction: [f64; 2],
 }
@@ -528,6 +535,7 @@ impl OpenSpan {
             text: " ".to_string(),
             origin_mm: view_pt_to_paper_mm(self.end_pt.x, self.end_pt.y, page_height_pt),
             height_mm: self.height_pt * MM_PER_PT,
+            advance_mm: 0.0,
             direction,
         }
     }
@@ -552,6 +560,7 @@ impl OpenSpan {
             text: self.text,
             origin_mm: view_pt_to_paper_mm(self.origin_pt.x, self.origin_pt.y, page_height_pt),
             height_mm: self.height_pt * MM_PER_PT,
+            advance_mm: (self.end_pt - self.origin_pt).hypot() * MM_PER_PT,
             direction,
         }
     }
