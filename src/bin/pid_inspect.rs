@@ -1,3 +1,4 @@
+use pid_parse::inspect::commands::InspectCommand;
 use pid_parse::inspect::controlled_diff::{
     build_evidence_report, ControlledDiffCaseReport, ControlledDiffEvidenceReport,
     ControlledDiffMetadata, ControlledDiffStreamReport,
@@ -158,8 +159,7 @@ fn main() {
     let doc = &pkg.parsed;
 
     if geometry_json {
-        let geometry = pid_parse::build_normalized_geometry(doc);
-        match serde_json::to_string_pretty(&geometry) {
+        match run_inspect(&pkg, InspectCommand::Geometry).to_json_pretty() {
             Ok(json) => println!("{json}"),
             Err(e) => {
                 eprintln!("Geometry JSON serialization error: {e}");
@@ -170,8 +170,10 @@ fn main() {
     }
 
     if geometry_summary {
-        let geometry = pid_parse::build_normalized_geometry(doc);
-        print_geometry_summary(&geometry);
+        print!(
+            "{}",
+            run_inspect(&pkg, InspectCommand::Geometry).render_text()
+        );
         return;
     }
 
@@ -181,7 +183,7 @@ fn main() {
             // CoverageReport as JSON, not the entire PidDocument.
             // Lets CI / automation consume coverage metrics without
             // paying to serialize (or skip past) every decoded field.
-            match pid_parse::inspect::coverage::coverage_report(doc).to_json_pretty() {
+            match run_inspect(&pkg, InspectCommand::Coverage).to_json_pretty() {
                 Ok(json) => println!("{json}"),
                 Err(e) => {
                     eprintln!("Coverage JSON serialization error: {e}");
@@ -270,7 +272,10 @@ fn main() {
     }
 
     if coverage_flag {
-        print_coverage(doc);
+        print!(
+            "{}",
+            run_inspect(&pkg, InspectCommand::Coverage).render_text()
+        );
     }
 
     if byte_audit {
@@ -299,8 +304,25 @@ fn main() {
         && !coverage_flag
         && !byte_audit
     {
-        let report = pid_parse::inspect::report::generate_package_report(&pkg);
-        print!("{report}");
+        print!(
+            "{}",
+            run_inspect(&pkg, InspectCommand::Report).render_text()
+        );
+    }
+}
+
+/// B1 thin-adapter seam: run a library inspect command against the
+/// parsed package, exiting with the familiar error print on failure.
+fn run_inspect(
+    pkg: &pid_parse::PidPackage,
+    cmd: InspectCommand,
+) -> pid_parse::inspect::commands::InspectOutput {
+    match cmd.run(pkg) {
+        Ok(out) => out,
+        Err(e) => {
+            eprintln!("Inspect error: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -405,40 +427,6 @@ fn byte_audit_improvement_kind_label(
 /// Phase 10a (v0.6.0): print a standalone coverage inventory for `--coverage`
 /// invocations. Mirrors the section embedded in `generate_report` but lets
 /// CI / scripts grab it without paying for the rest of the report.
-fn print_coverage(doc: &pid_parse::PidDocument) {
-    let report = pid_parse::inspect::coverage::coverage_report(doc);
-    if report.entries.is_empty() {
-        println!("--- Coverage ---");
-        println!("(no top-level entries found; document may be empty)");
-        return;
-    }
-    let [full, partial, ident, unk] = report.status_counts();
-    println!("--- Coverage ---");
-    println!("  Fully decoded:     {full}");
-    println!("  Partially decoded: {partial}");
-    println!("  Identified only:   {ident}");
-    println!("  Unknown:           {unk}");
-    for entry in &report.entries {
-        let tag = match entry.status {
-            pid_parse::model::ParseCoverageStatus::FullyDecoded => "[FULL]",
-            pid_parse::model::ParseCoverageStatus::PartiallyDecoded => "[PART]",
-            pid_parse::model::ParseCoverageStatus::IdentifiedOnly => "[ID]  ",
-            pid_parse::model::ParseCoverageStatus::Unknown => "[UNK] ",
-        };
-        let field = entry
-            .document_field
-            .as_deref()
-            .map(|f| format!(" -> {f}"))
-            .unwrap_or_default();
-        let note = entry
-            .note
-            .as_deref()
-            .map(|n| format!("  ({n})"))
-            .unwrap_or_default();
-        println!("  {tag} {}{}{}", entry.name, field, note);
-    }
-}
-
 fn parse_probe_sheet_chunks(args: &[String]) -> (bool, Option<String>) {
     let Some(idx) = args.iter().position(|a| a == "--probe-sheet-chunks") else {
         return (false, None);
@@ -811,120 +799,6 @@ fn print_sheet_chunk_reports(reports: &[pid_parse::parsers::sheet_probe::SheetPr
             }
         }
         println!();
-    }
-}
-
-/// Human-friendly geometry summary for the `--geometry-summary` flag.
-/// Counts entities by kind × confidence and prints sample decoded text /
-/// symbol names to give a quick at-a-glance view of current geometry evidence.
-fn print_geometry_summary(geometry: &pid_parse::NormalizedPidGeometry) {
-    use pid_parse::{PidGeometryConfidence, PidGraphicKind};
-
-    let mut decoded_lines = 0usize;
-    let mut decoded_polylines = 0usize;
-    let mut decoded_points = 0usize;
-    let mut decoded_texts = 0usize;
-    let mut decoded_symbols = 0usize;
-    let mut inferred_lines = 0usize;
-    let mut inferred_points = 0usize;
-    let mut inferred_annotations = 0usize;
-    let mut probe_only_unknown = 0usize;
-    let mut other = 0usize;
-
-    let mut sample_decoded_texts: Vec<String> = Vec::new();
-    let mut sample_decoded_symbol_oids: Vec<u32> = Vec::new();
-
-    for entity in &geometry.entities {
-        match (&entity.confidence, &entity.kind) {
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Line { .. }) => {
-                decoded_lines += 1;
-            }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Polyline { .. }) => {
-                decoded_polylines += 1;
-            }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Point { .. }) => {
-                decoded_points += 1;
-            }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::Text { value, .. }) => {
-                decoded_texts += 1;
-                if sample_decoded_texts.len() < 8 {
-                    sample_decoded_texts.push(value.clone());
-                }
-            }
-            (PidGeometryConfidence::Decoded, PidGraphicKind::SymbolInstance { .. }) => {
-                decoded_symbols += 1;
-                if let Some(oid) = entity.graphic_oid {
-                    if sample_decoded_symbol_oids.len() < 5 {
-                        sample_decoded_symbol_oids.push(oid);
-                    }
-                }
-            }
-            (PidGeometryConfidence::Inferred, PidGraphicKind::Line { .. }) => {
-                inferred_lines += 1;
-            }
-            (PidGeometryConfidence::Inferred, PidGraphicKind::Point { .. }) => {
-                inferred_points += 1;
-            }
-            (PidGeometryConfidence::Inferred, PidGraphicKind::Annotation { .. }) => {
-                inferred_annotations += 1;
-            }
-            (PidGeometryConfidence::ProbeOnly, PidGraphicKind::Unknown { .. }) => {
-                probe_only_unknown += 1;
-            }
-            _ => {
-                other += 1;
-            }
-        }
-    }
-
-    let total = geometry.entities.len();
-    println!("=== Sheet stream geometry summary ===");
-    println!("Total entities: {total}");
-    println!();
-    println!("Decoded (PSM record geometry):");
-    println!("  Lines (GLine2d / igLine2d):              {decoded_lines}");
-    println!("  Polylines (igLineString2d):               {decoded_polylines}");
-    println!("  Points (igPoint2d):                       {decoded_points}");
-    println!("  Texts (igTextBox, UTF-16LE):              {decoded_texts}");
-    println!("  SymbolInstances (igSymbol2d):             {decoded_symbols}");
-    println!(
-        "  Total decoded:                            {}",
-        decoded_lines + decoded_polylines + decoded_points + decoded_texts + decoded_symbols
-    );
-    println!();
-    println!("Inferred (probe-derived):");
-    println!("  Points (coordinate hints):                {inferred_points}");
-    println!("  Lines (endpoint pairs):                   {inferred_lines}");
-    println!("  Annotations (JStyleOverride, PSM 0x0030): {inferred_annotations}");
-    println!(
-        "  Total inferred:                           {}",
-        inferred_points + inferred_lines + inferred_annotations
-    );
-    println!();
-    println!("ProbeOnly (raw evidence, undecoded):");
-    println!("  Unknown:                                  {probe_only_unknown}");
-    if other > 0 {
-        println!();
-        println!("Other:                                    {other}");
-    }
-
-    if !sample_decoded_texts.is_empty() {
-        println!();
-        println!("Sample decoded texts:");
-        for t in &sample_decoded_texts {
-            println!("  {t:?}");
-        }
-    }
-    if !sample_decoded_symbol_oids.is_empty() {
-        println!();
-        println!(
-            "Sample decoded symbol oids: {}",
-            sample_decoded_symbol_oids
-                .iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
     }
 }
 
