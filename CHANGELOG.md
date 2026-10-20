@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### 恢复 `clippy --workspace --all-targets -D warnings` 这条门禁（2026-10-20）
+
+AGENTS.md 的 pre-commit 门禁从「能过」退回「必红」已经有一段时间：14 个根 crate 探针 example 累积了 19 条告警，`--all-targets` 一律停在这批文件上。本轮只清这些欠账，`src/` 一行未动。
+
+- 三个 example 的 `.streams.iter().filter_map(|(s, _)| …)` 换成 `.keys().filter_map(|s| …)`（`probe_sym_info_cluster` / `probe_sym_no_sheet6` / `probe_sym_vfset_census`），迭代顺序与输出逐字不变。
+- 四处穷尽的 `SymbolPrimitive` / `PidGraphicKind` match 删掉不可达的 `_` 分支（`probe_scaled_placement` / `probe_scaled_defs` / `probe_instance_deltas` / `probe_logo`）；`probe_pump_body`、`probe_junction_symbols` 删掉未用的 `SymbolPrimitive as SP` 导入，`probe_librarian_34` 删掉未用的 `std::io::Read` 与两个从未调用的取字助手。
+- `probe_white_styles` 的兜底分支 `c => other += 1` 改成 `_ => other += 1`（计数口径不变），`probe_hydraulic_lines` 的根样式表存在性检查改绑 `_table`，`probe_sine_hunt` 的 `dref.clone()` 改成 `*dref`（`PidSymbolDefinitionRef` 是 `Copy`），`probe_pid_ole` 去掉比较两侧多余的引用并按 lint 建议把 `chunks_exact(2)` 换成 `as_chunks::<2>()`（截断行为相同）。
+- 验证：`cargo clippy --locked --workspace --all-targets -- -D warnings` 退出 0（改前 `--keep-going` 一次性报出 14 个 target / 19 条错误）；`cargo build --locked --workspace --all-targets` 退出 0；`cargo fmt --all -- --check` 干净；`probe_sym_no_sheet6`、`probe_sym_vfset_census` 在 `test-file/symbols` 上实跑，输出与改前一致（3 个 .sym、`sheet_ref` 6 ×3 / 63 ×1）。
+
 ### pid-plot 文字落点：两端填充空格不再计宽，类别报告把「宽度差」与「锚点差」分开（2026-10-20）
 
 I 图 `Center/Middle` 的类别平均位移从 **−0.053 个字高**收到 **−0.026**（0.13 mm → 0.07 mm），其余四张图同在 −0.03…−0.04。原因不是居中规则：546 条配对里有 141 条带着图纸存下的填充空白（105 条前导、36 条尾随），上一轮只 `trim_end()`，前导空格仍被算进半宽，把整条 run 往左顶 0.41 mm。

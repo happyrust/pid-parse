@@ -39,7 +39,6 @@ fn prim_bounds(p: &SP, acc: &mut (f64, f64, f64, f64)) {
                 prim_bounds(m, acc);
             }
         }
-        _ => {}
     }
 }
 

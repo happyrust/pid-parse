@@ -50,7 +50,7 @@ fn main() {
                         .map(|l| (l.oid, l.name.clone(), l.displayed))
                 );
                 if let Some(dref) = definition {
-                    if let Some(def) = g.symbol_definition(dref.clone()) {
+                    if let Some(def) = g.symbol_definition(*dref) {
                         for (i, p) in def.primitives.iter().enumerate() {
                             println!("   body[{i}] {p:?}");
                         }

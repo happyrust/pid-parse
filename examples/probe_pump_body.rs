@@ -1,7 +1,6 @@
 //! Dump the Metering Pump cached-body primitives (from W.pid) and where
 //! they land on the page under both scale hypotheses.
 
-use pid_parse::symbol_library::SymbolPrimitive as SP;
 use pid_parse::PidParser;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,17 +1,6 @@
 //! Print the librarian entry bound to the 0x0034 record's oid, plus the
 //! librarian entry for its neighbouring styles for context.
 
-use std::io::Read;
-
-fn u32_at(b: &[u8], o: usize) -> Option<u32> {
-    let s: [u8; 4] = b.get(o..o + 4)?.try_into().ok()?;
-    Some(u32::from_le_bytes(s))
-}
-fn u16_at(b: &[u8], o: usize) -> Option<u16> {
-    let s: [u8; 2] = b.get(o..o + 2)?.try_into().ok()?;
-    Some(u16::from_le_bytes(s))
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = r"D:\work\cad\PID自研软件验证\I井场 注采阀组工艺及自控流程图.pid";
     let doc = pid_parse::PidParser::new().parse_file(path)?;

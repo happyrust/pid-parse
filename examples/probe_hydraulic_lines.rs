@@ -6,7 +6,7 @@ use pid_parse::PidParser;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = r"D:\work\cad\PID自研软件验证\I井场 注采阀组工艺及自控流程图.pid";
     let doc = PidParser::new().parse_file(path)?;
-    let table = doc.style_tables.get("/").ok_or("no root style table")?;
+    let _table = doc.style_tables.get("/").ok_or("no root style table")?;
     for sheet in &doc.sheet_streams {
         if sheet.path != "/Sheet6" {
             continue;

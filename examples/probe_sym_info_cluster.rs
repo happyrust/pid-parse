@@ -29,8 +29,8 @@ fn main() {
             .expect("compound file");
         let sheets: Vec<&str> = package
             .streams
-            .iter()
-            .filter_map(|(s, _)| s.rsplit('/').next())
+            .keys()
+            .filter_map(|s| s.rsplit('/').next())
             .filter(|n| n.starts_with("Sheet"))
             .collect();
         println!(

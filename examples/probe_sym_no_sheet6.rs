@@ -26,8 +26,8 @@ fn main() {
             };
             let sheets: Vec<String> = package
                 .streams
-                .iter()
-                .filter_map(|(s, _)| s.rsplit('/').next())
+                .keys()
+                .filter_map(|s| s.rsplit('/').next())
                 .filter(|n| n.starts_with("Sheet"))
                 .map(str::to_owned)
                 .collect();

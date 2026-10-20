@@ -1,7 +1,6 @@
 //! Symbol instances near the panel's pipe junctions (117,133)/(117,145)/(117,155)
 //! and their body primitives — the arrow+leader marks come from a body.
 
-use pid_parse::symbol_library::SymbolPrimitive as SP;
 use pid_parse::{PidGraphicKind, PidParser};
 
 const JUNCTIONS: [(f64, f64); 4] = [

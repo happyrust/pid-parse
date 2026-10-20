@@ -62,12 +62,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             PidGraphicKind::Polyline { .. } => "pline",
             PidGraphicKind::Circle { .. } => "circle",
             PidGraphicKind::Point { .. } => "point",
-            PidGraphicKind::Text { value, .. } => "text",
-            PidGraphicKind::SymbolInstance { symbol_path, .. } => "symbol",
+            PidGraphicKind::Text { .. } => "text",
+            PidGraphicKind::SymbolInstance { .. } => "symbol",
             PidGraphicKind::Annotation { .. } => "annot",
             PidGraphicKind::Arc { .. } => "arc",
             PidGraphicKind::Unknown { .. } => "unknown",
-            _ => "?",
         };
         if hits < 40 {
             let extra = match &e.kind {

@@ -39,7 +39,6 @@ fn prim_extent(p: &SymbolPrimitive, acc: &mut (f64, f64, f64, f64)) {
                 prim_extent(m, acc);
             }
         }
-        _ => {}
     }
 }
 

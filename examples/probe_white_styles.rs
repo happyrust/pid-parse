@@ -62,7 +62,7 @@ fn main() {
                             }
                         }
                         0x000000 => black += 1,
-                        c => other += 1,
+                        _ => other += 1,
                     },
                     None => unres += 1,
                 }
