@@ -54,6 +54,57 @@ fn control_texts(model: &PaperModel) -> Vec<String> {
         .collect()
 }
 
+/// Bounding box of every point a primitive defines, in paper millimetres.
+fn ink_extent(model: &PaperModel) -> Option<([f64; 2], [f64; 2])> {
+    let mut min = [f64::MAX; 2];
+    let mut max = [f64::MIN; 2];
+    let mut seen = false;
+    let mut grow = |point: [f64; 2]| {
+        for axis in 0..2 {
+            if point[axis].is_finite() {
+                min[axis] = min[axis].min(point[axis]);
+                max[axis] = max[axis].max(point[axis]);
+                seen = true;
+            }
+        }
+    };
+    for primitive in &model.primitives {
+        match &primitive.shape {
+            PaperShape::Line { start_mm, end_mm } => {
+                grow(*start_mm);
+                grow(*end_mm);
+            }
+            PaperShape::Arc {
+                center_mm,
+                radius_mm,
+                ..
+            } => {
+                grow([center_mm[0] - radius_mm, center_mm[1] - radius_mm]);
+                grow([center_mm[0] + radius_mm, center_mm[1] + radius_mm]);
+            }
+            PaperShape::Circle {
+                center_mm,
+                radius_mm,
+            } => {
+                grow([center_mm[0] - radius_mm, center_mm[1] - radius_mm]);
+                grow([center_mm[0] + radius_mm, center_mm[1] + radius_mm]);
+            }
+            PaperShape::Polyline { points_mm, .. } => {
+                for point in points_mm {
+                    grow(*point);
+                }
+            }
+            PaperShape::Fill { chain_mm, .. } => {
+                for point in chain_mm {
+                    grow(*point);
+                }
+            }
+            PaperShape::Text { origin_mm, .. } => grow(*origin_mm),
+        }
+    }
+    seen.then_some((min, max))
+}
+
 fn main() {
     let paths: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
     if paths.is_empty() {
@@ -155,6 +206,12 @@ fn main() {
     for (name, model, ..) in &rows {
         for missing in &model.missing_symbols {
             println!("     {name}: no library file for {missing}");
+        }
+        if let (Some(page), Some((min, max))) = (model.page_mm, ink_extent(model)) {
+            let outside = min[0] < 0.0 || min[1] < 0.0 || max[0] > page[0] || max[1] > page[1];
+            if outside {
+                println!("     {name}: ink {min:?}..{max:?} runs past the {page:?} page");
+            }
         }
     }
     println!("\n{} drawings, {} failed", paths.len(), failed);
