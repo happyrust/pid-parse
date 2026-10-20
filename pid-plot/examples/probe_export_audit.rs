@@ -1,0 +1,164 @@
+//! Export every `.pid` given and report what each one laid out and wrote, so a
+//! drawing that cannot be plotted is named rather than silently skipped.
+//!
+//! ```text
+//! cargo run -p pid-plot --example probe_export_audit -- <a.pid> [b.pid ...]
+//! ```
+//!
+//! Per drawing: page size, primitive census, lettering that carries control
+//! characters (a multi-line label the writer never splits), missing symbols,
+//! then the PDF actually written and read back. Exit code 1 when any drawing
+//! fails at any stage.
+//!
+//! Read-only: the PDF is kept in memory.
+
+use std::path::PathBuf;
+
+use pid_plot::fonts::{font_dirs, prepare_fonts};
+use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
+use pid_plot::read::read_plot;
+use pid_plot::write::{PlotFont, write_plot};
+
+fn corpus_dir() -> PathBuf {
+    std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
+        || PathBuf::from(r"D:\work\cad\PID自研软件验证"),
+        PathBuf::from,
+    )
+}
+
+fn census(model: &PaperModel) -> (usize, usize, usize, usize, usize, usize) {
+    let mut counts = (0, 0, 0, 0, 0, 0);
+    for primitive in &model.primitives {
+        match &primitive.shape {
+            PaperShape::Line { .. } => counts.0 += 1,
+            PaperShape::Arc { .. } => counts.1 += 1,
+            PaperShape::Circle { .. } => counts.2 += 1,
+            PaperShape::Polyline { .. } => counts.3 += 1,
+            PaperShape::Fill { .. } => counts.4 += 1,
+            PaperShape::Text { .. } => counts.5 += 1,
+        }
+    }
+    counts
+}
+
+fn control_texts(model: &PaperModel) -> Vec<String> {
+    model
+        .primitives
+        .iter()
+        .filter_map(|primitive| match &primitive.shape {
+            PaperShape::Text { value, .. } if value.chars().any(char::is_control) => {
+                Some(value.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn main() {
+    let paths: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
+    if paths.is_empty() {
+        eprintln!("usage: probe_export_audit <a.pid> [b.pid ...]");
+        std::process::exit(2);
+    }
+    let corpus = corpus_dir();
+    let dirs = font_dirs(Some(&corpus));
+    let mut failed = 0usize;
+    let mut rows = Vec::new();
+    for path in &paths {
+        let name = path.file_stem().map_or_else(
+            || path.display().to_string(),
+            |stem| stem.to_string_lossy().into_owned(),
+        );
+        let model = match lay_out_drawing(path, &corpus) {
+            Ok(model) => model,
+            Err(error) => {
+                println!("FAIL {name}: layout: {error}");
+                failed += 1;
+                continue;
+            }
+        };
+        let (lines, arcs, circles, polys, fills, texts) = census(&model);
+        let inferred = model
+            .primitives
+            .iter()
+            .filter(|primitive| primitive.confidence == "inferred")
+            .count();
+        let controls = control_texts(&model);
+        let prepared = match prepare_fonts(&[&model], &dirs) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                println!("FAIL {name}: fonts: {error}");
+                failed += 1;
+                continue;
+            }
+        };
+        let fonts: Vec<PlotFont<'_>> = prepared
+            .iter()
+            .map(|face| PlotFont {
+                key: &face.key,
+                bytes: &face.bytes,
+            })
+            .collect();
+        let pdf = match write_plot(&model, &fonts) {
+            Ok(pdf) => pdf,
+            Err(error) => {
+                println!(
+                    "FAIL {name}: write: {error} ({} lettering runs carry a control character)",
+                    controls.len()
+                );
+                failed += 1;
+                continue;
+            }
+        };
+        let ink = match read_plot(&pdf) {
+            Ok(ink) => ink,
+            Err(error) => {
+                println!("FAIL {name}: read back: {error}");
+                failed += 1;
+                continue;
+            }
+        };
+        rows.push((
+            name,
+            model,
+            (lines, arcs, circles, polys, fills, texts),
+            controls.len(),
+            inferred,
+            ink.segments.len(),
+            ink.spans.len(),
+            pdf.len(),
+        ));
+    }
+    for (name, model, counts, controls, inferred, segments, spans, bytes) in &rows {
+        let page = model.page_mm.map_or("none".to_string(), |page| {
+            format!("{:.2}x{:.2}", page[0], page[1])
+        });
+        println!(
+            "PASS {name}: {page} mm  line {} arc {} circle {} poly {} fill {} text {}  \
+             controls {controls} off-sheet {} endpoint-pairs {} inferred {inferred}  \
+             read {segments} segments  {spans} spans  {bytes} bytes  \
+             symbols {}/{} missing {} boxes {}",
+            counts.0,
+            counts.1,
+            counts.2,
+            counts.3,
+            counts.4,
+            counts.5,
+            model.off_sheet_primitives,
+            model.skipped_endpoint_pairs,
+            model.symbols_found,
+            model.symbols_referenced,
+            model.missing_symbols.len(),
+            model.missing_boxes.len()
+        );
+    }
+    for (name, model, ..) in &rows {
+        for missing in &model.missing_symbols {
+            println!("     {name}: no library file for {missing}");
+        }
+    }
+    println!("\n{} drawings, {} failed", paths.len(), failed);
+    if failed > 0 {
+        std::process::exit(1);
+    }
+}

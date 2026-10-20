@@ -14,11 +14,21 @@ use std::path::{Path, PathBuf};
 use pid_parse::style_link::{LineStyleIndex, ResolvedLineStyle, TextAlignment, TextStyleIndex};
 use pid_parse::symbol_library::{PrimitiveStyle, SymbolLettering, SymbolLibrary, SymbolPrimitive};
 use pid_parse::{
-    PidGeometryConfidence, PidGraphicEntity, PidGraphicKind, PidParser, build_normalized_geometry,
+    PidGeometryConfidence, PidGraphicEntity, PidGraphicKind, PidParser, SheetRecordKind,
+    build_normalized_geometry,
 };
 use serde::{Deserialize, Serialize};
 
 const MM_PER_METRE: f64 = 1000.0;
+
+/// Line pitch of a label whose paragraph states no usable multiple.
+///
+/// `JStyleTextPara +66` carries the multiple, and `pid_parse::style_link`
+/// hands it over only inside `0.25..=4.0` — the stored `0.0` reads as
+/// undeclared. A consumer then has nothing better to assume than single
+/// spacing; the one option ruled out is stacking the lines on top of each
+/// other.
+const SINGLE_LINE_SPACING: f64 = 1.0;
 
 /// One placed drawing, ready to draw or to dump as JSON.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -30,6 +40,21 @@ pub struct PaperModel {
     /// Primitives in drawing order. Expanded symbol strokes follow the
     /// placement they came from.
     pub primitives: Vec<PaperPrimitive>,
+    /// Strokes left out because they lie a page diagonal or more away from
+    /// the sheet.
+    ///
+    /// An inferred record can promote a pair of doubles that are not
+    /// coordinates; printing those would draw a diagonal across the page that
+    /// no plot has. The parser keeps them as audit evidence, the page does
+    /// not print them, and this count is how many were refused.
+    pub off_sheet_primitives: usize,
+    /// Entities left out because their only geometry is an `EndpointPair`
+    /// promotion — a guess that the pair of numbers a record names are the
+    /// endpoints of a line.
+    ///
+    /// The parser keeps those as inferred lines because they are the evidence
+    /// for how the record reads at all; a page draws what the drawing states.
+    pub skipped_endpoint_pairs: usize,
     /// Symbol files the drawing names and the library does not have.
     pub missing_symbols: Vec<String>,
     /// 30 mm squares around symbols that were not drawn at all.
@@ -362,6 +387,51 @@ pub fn place_metres(
     ]
 }
 
+/// Split one label's text into its printed lines.
+///
+/// `igTextBox` ends a line with a bare `U+000D` — the corpus has 4 of them and
+/// no `U+000A` at all (`docs/analysis/2026-08-22-four-labels-have-a-second-
+/// line.md`). The other break code points are accepted too, since a decoder
+/// that reads a different vendor's file does not get to choose which one it
+/// meets, and `\r\n` counts as one break rather than two.
+///
+/// Any remaining control character is dropped: no typeface has a glyph for
+/// one, and the writer refuses a run it cannot encode, so a stray `\u{0}`
+/// would take the whole page down rather than ink nothing. A label that is
+/// empty still yields one line, so the primitive count of a blank record does
+/// not change.
+fn label_lines(value: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                lines.push(std::mem::take(&mut current));
+            }
+            '\n' | '\u{0B}' | '\u{0C}' | '\u{85}' | '\u{2028}' | '\u{2029}' => {
+                lines.push(std::mem::take(&mut current));
+            }
+            // A tab is the one control character with a visible meaning: it
+            // separates words, so it becomes the space it stands for rather
+            // than vanishing and gluing two words together.
+            '\t' => current.push(' '),
+            _ if ch.is_control() => {}
+            _ => current.push(ch),
+        }
+    }
+    lines.push(current);
+    // A trailing break names a line with nothing on it; it inks nothing and
+    // would only add a run the writer then drops.
+    while lines.len() > 1 && lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    lines
+}
+
 ///Whether `entity` sits on a layer `SmartPlant` leaves off a printed page:
 /// a layer the view filter set hides (`displayed == Some(false)`), or the
 /// authored `ConsistencyChecks` review overlay — whose `igPoint2d` records
@@ -401,8 +471,23 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
     let mut missing_boxes = Vec::new();
     let mut seen_sheet_fills = std::collections::HashSet::new();
 
+    let mut skipped_endpoint_pairs = 0usize;
     for entity in &geometry.entities {
         if suppressed_from_plot(entity) {
+            continue;
+        }
+        // An `EndpointPair` record says two objects are connected; promoting
+        // the two positions it names into a *line* is a guess about which
+        // numbers in the payload are coordinates. On `DWG-0201GP06-01` that
+        // guess draws strokes that cross the tank and run off the sheet, and
+        // it is the only drawing in the tree with any: the five corpus
+        // drawings, `D06`, `工艺管道及仪表流程-1`, `A01` and the B fixture all
+        // produce zero inferred primitives, so nothing measured moves. The
+        // parser keeps those entities on purpose (they are the evidence for
+        // the endpoint-pair reading, pinned by `tests/parse_real_files.rs`);
+        // the page does not print a guess.
+        if entity.source.record_kind == Some(SheetRecordKind::EndpointPair) {
+            skipped_endpoint_pairs += 1;
             continue;
         }
         match &entity.kind {
@@ -488,15 +573,96 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
         }
     }
 
+    // A stroke that cannot reach the sheet is not paper ink. The inferred
+    // `EndpointPair` lines are where this bites: DWG-0202 promotes three of
+    // them from pairs the record never meant as coordinates, and their
+    // endpoints land 143 and 337 *kilometres* out, which the writer then clips
+    // into a diagonal across the page that no plot has. The parse side keeps
+    // them on purpose (they are audit evidence for the endpoint-pair reading,
+    // pinned by `tests/parse_real_files.rs`); the page refuses them.
+    let mut off_sheet = 0usize;
+    if let Some(page) = page_mm {
+        primitives.retain(|primitive| {
+            let printable = !beyond_the_sheet(&primitive.shape, page);
+            if !printable {
+                off_sheet += 1;
+            }
+            printable
+        });
+    }
+
     Ok(PaperModel {
         library,
         page_mm,
         primitives,
+        off_sheet_primitives: off_sheet,
+        skipped_endpoint_pairs,
         missing_symbols: missing.into_iter().collect(),
         missing_boxes,
         symbols_found: found.len(),
         symbols_referenced: referenced.len(),
     })
+}
+
+/// How many page diagonals a stroke's own extent may span.
+///
+/// A leader or a label may start off the sheet and run onto it, and the writer
+/// clips what hangs over the way a printer does; a stroke longer than its
+/// sheet can hold is not content at all.
+const SHEET_REACH: f64 = 4.0;
+
+/// Whether both coordinates are finite numbers.
+fn finite(point: [f64; 2]) -> bool {
+    point[0].is_finite() && point[1].is_finite()
+}
+
+/// Whether `shape` spans more than its sheet could hold.
+///
+/// The inferred `EndpointPair` lines are where this bites: DWG-0202 promotes
+/// three of them from pairs the record never meant as coordinates, and one runs
+/// from 143 km out to the origin — every point finite, nothing to clamp, and
+/// the writer clips it into a diagonal across the page that no plot has. Length
+/// is the tell, not position: a real line is at most a few page widths.
+fn beyond_the_sheet(shape: &PaperShape, page: [f64; 2]) -> bool {
+    let points: Vec<[f64; 2]> = match shape {
+        PaperShape::Line { start_mm, end_mm } => vec![*start_mm, *end_mm],
+        PaperShape::Arc {
+            center_mm,
+            radius_mm,
+            ..
+        }
+        | PaperShape::Circle {
+            center_mm,
+            radius_mm,
+        } => {
+            let (centre, radius) = (*center_mm, *radius_mm);
+            vec![
+                [centre[0] - radius, centre[1] - radius],
+                [centre[0] + radius, centre[1] + radius],
+            ]
+        }
+        PaperShape::Polyline { points_mm, .. } => points_mm.clone(),
+        PaperShape::Fill { chain_mm, .. } => chain_mm.clone(),
+        PaperShape::Text { origin_mm, .. } => return !finite(*origin_mm),
+    };
+    if points.iter().any(|point| !finite(*point)) {
+        return true;
+    }
+    if points.is_empty() {
+        return false;
+    }
+    let (mut min, mut max) = (points[0], points[0]);
+    for point in &points[1..] {
+        min = [min[0].min(point[0]), min[1].min(point[1])];
+        max = [max[0].max(point[0]), max[1].max(point[1])];
+    }
+    let span = (max[0] - min[0]).hypot(max[1] - min[1]);
+    if span > page[0].hypot(page[1]) * SHEET_REACH {
+        return true;
+    }
+    // A short stroke that sits entirely off the sheet inks nothing either.
+    let touches = max[0] >= 0.0 && min[0] <= page[0] && max[1] >= 0.0 && min[1] <= page[1];
+    !touches
 }
 
 struct Placement {
@@ -506,6 +672,22 @@ struct Placement {
     symbol: Option<String>,
 }
 
+/// The symbol-library roots searched, in order.
+///
+/// `PID_SYMBOL_LIBRARY` replaces the search outright. Otherwise the corpus's
+/// own `Ref` directory comes first, then the library bundled with this
+/// repository (`test-file/symbols-full`), and every root is kept — the corpus
+/// on this machine carries 644 `.sym` files and the bundled one 618, and
+/// neither is a superset: the shipped `Ref` has `I-P Converter.sym` that the
+/// bundle lacks, while the bundle has `Gauge Hatch.sym`, ` Line2.sym`,
+/// `Cap2.sym` and `ElecTraceLine.sym` that the shipped `Ref` lacks. Stopping
+/// at the first directory that exists dropped every one of those on the
+/// drawings that needed them, which is why `DWG-0201GP06-01` reported three
+/// missing symbols and never drew them.
+///
+/// A path found in an earlier root still wins, so a project's own library
+/// keeps deciding what its drawings look like; the later roots only answer
+/// for names the earlier ones do not carry.
 fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
     if let Some(list) = std::env::var_os("PID_SYMBOL_LIBRARY") {
         let roots: Vec<PathBuf> = std::env::split_paths(&list)
@@ -519,6 +701,7 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
             return (roots, label);
         }
     }
+    let mut roots: Vec<PathBuf> = Vec::new();
     for candidate in [
         Some(corpus.join("Ref")),
         corpus.parent().map(|parent| parent.join("Ref")),
@@ -526,31 +709,43 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
     .into_iter()
     .flatten()
     {
-        if !candidate.is_dir() {
+        let Ok(entries) = std::fs::read_dir(&candidate) else {
             continue;
-        }
-        let mut roots = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&candidate) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-                if path.is_dir() && name.contains("symbol") {
-                    roots.push(path);
-                }
+        };
+        let mut found: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|entry| {
+                entry.path().is_dir()
+                    && entry
+                        .file_name()
+                        .to_string_lossy()
+                        .to_ascii_lowercase()
+                        .contains("symbol")
+            })
+            .map(|entry| entry.path())
+            .collect();
+        found.sort();
+        for root in found {
+            if !roots.iter().any(|seen| seen == &root) {
+                roots.push(root);
             }
-        }
-        if !roots.is_empty() {
-            roots.sort();
-            let label = roots
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect();
-            return (roots, label);
         }
     }
     let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-file/symbols-full");
-    let label = vec![bundled.display().to_string()];
-    (vec![bundled], label)
+    if bundled.is_dir() && !roots.iter().any(|seen| seen == &bundled) {
+        roots.push(bundled.clone());
+    }
+    if roots.is_empty() {
+        // Nothing on disk to search: the bundled path is still the name to
+        // report, and the reader will refuse every symbol by name.
+        let label = vec![bundled.display().to_string()];
+        return (roots, label);
+    }
+    let label = roots
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+    (roots, label)
 }
 
 fn missing_box(path: &str, insertion_m: [f64; 2]) -> MissingSymbolBox {
@@ -871,24 +1066,62 @@ fn push_entity(
                     TextAnchor::from_anchor_code(*anchor_code),
                 ),
             };
-            out.push(primitive(
-                entity,
-                &placement,
-                None,
-                PaperShape::Text {
-                    origin_mm: place_metres(origin_m, [0.0, 0.0], 0.0, [1.0, 1.0]),
-                    height_mm,
-                    rotation: *rotation,
-                    value: value.clone(),
-                    font: styled.as_ref().and_then(|style| style.font_name.clone()),
-                    // A boxed record hangs from the box edge its paragraph's
-                    // alignment names (above). An unboxed one keeps the
-                    // record's own anchor code: `(code >> 4) % 3` is the
-                    // horizontal hot point the insertion sits at.
-                    anchor,
-                    line: TextLine::from_anchor_code(*anchor_code),
-                },
-            ));
+            // One `igTextBox` can letter several lines: the text carries a
+            // `U+000D` where the line ends, and the paragraph's `+66` says how
+            // far apart the lines sit as a multiple of the character height.
+            // Every one of the corpus's multi-line labels states `1.5`, every
+            // single-line one `1.0` (`docs/analysis/2026-08-22-four-labels-
+            // have-a-second-line.md`), so the same shape a sibling project
+            // imports is used here: one text per line, each shifted along the
+            // baseline normal by `height × spacing`.
+            //
+            // The shift is along the normal, not straight down: labels run at
+            // 0°, 90° and 180° on this corpus and a vertical label stacked
+            // downward would print over itself. Leaving the lines unstacked
+            // is the one answer that is certainly wrong, so a paragraph that
+            // states no usable spacing stacks at single spacing.
+            let spacing = styled
+                .as_ref()
+                .and_then(|style| style.line_spacing)
+                .unwrap_or(SINGLE_LINE_SPACING);
+            let pitch_mm = height_mm
+                .filter(|millimetres| *millimetres > 0.0 && millimetres.is_finite())
+                .map_or(0.0, |millimetres| millimetres * spacing);
+            // The writer drops a run with no usable height anyway, so a label
+            // whose height is unknown stacks at zero and still reads one line
+            // per value.
+            // `origin_m` and the insertion point it came from are metres, so
+            // the pitch goes back through the same unit as the height.
+            let normal = [rotation.sin(), -rotation.cos()];
+            for (index, line) in label_lines(value).into_iter().enumerate() {
+                let shift_m = pitch_mm * index as f64 / MM_PER_METRE;
+                out.push(primitive(
+                    entity,
+                    &placement,
+                    None,
+                    PaperShape::Text {
+                        origin_mm: place_metres(
+                            [
+                                origin_m[0] + normal[0] * shift_m,
+                                origin_m[1] + normal[1] * shift_m,
+                            ],
+                            [0.0, 0.0],
+                            0.0,
+                            [1.0, 1.0],
+                        ),
+                        height_mm,
+                        rotation: *rotation,
+                        value: line,
+                        font: styled.as_ref().and_then(|style| style.font_name.clone()),
+                        // A boxed record hangs from the box edge its
+                        // paragraph's alignment names (above). An unboxed one
+                        // keeps the record's own anchor code: `(code >> 4) % 3`
+                        // is the horizontal hot point the insertion sits at.
+                        anchor,
+                        line: TextLine::from_anchor_code(*anchor_code),
+                    },
+                ));
+            }
         }
         PidGraphicKind::SymbolInstance { .. }
         | PidGraphicKind::Annotation { .. }
@@ -1369,6 +1602,7 @@ fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use super::label_lines;
     use pid_parse::style_link::TextAlignment;
     use pid_parse::symbol_library::{SymbolLettering, SymbolPrimitive};
     use pid_parse::{
@@ -1468,6 +1702,207 @@ mod tests {
             "box left edge, got {origin_mm:?}"
         );
         assert!((origin_mm[1] - 200.0).abs() < 1e-6);
+    }
+
+    fn text_style(line_spacing: Option<f64>) -> pid_parse::style_link::TextStyleIndex {
+        use pid_parse::style_link::{ResolvedTextHeight, ResolvedTextStyle, TextRunStatus};
+
+        let mut styles = pid_parse::style_link::TextStyleIndex::new();
+        styles.insert(
+            ("/Sheet6".to_string(), 11),
+            ResolvedTextStyle {
+                paragraph: Some(ResolvedTextHeight {
+                    style_id: 3,
+                    height_m: 0.0035,
+                    colour: None,
+                    alignment: None,
+                    line_spacing,
+                    font_name: Some("仿宋".to_string()),
+                }),
+                run: None,
+                runs: TextRunStatus::NoRuns,
+                alignment: None,
+                line_spacing,
+            },
+        );
+        styles
+    }
+
+    fn note(rotation: f64, value: &str) -> PidGraphicEntity {
+        let mut record = entity(PidGraphicKind::Text {
+            insertion: PidPoint { x: 0.1, y: 0.2 },
+            value: value.to_string(),
+            height: 0.0035,
+            rotation,
+            anchor_code: 0x00,
+            text_box_width: None,
+        });
+        record.graphic_oid = Some(11);
+        record.source.stream_path = Some("/Sheet6".to_string());
+        record
+    }
+
+    /// A label that states two lines prints two runs, the second one a full
+    /// line pitch below the first.
+    ///
+    /// The 2-line note on `DWG-0202GP06-01` is the case: its text carries a
+    /// `U+000D` and its paragraph states `1.5`, so the second line sits
+    /// `1.5 × 3.5 mm = 5.25 mm` under the first one's baseline. Before this the
+    /// whole value went to the writer as one run, and the writer refused the
+    /// page because no face has a glyph for `\r`.
+    #[test]
+    fn a_two_line_label_stacks_at_the_stated_spacing() {
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &note(
+                0.0,
+                "1、上放空管线高度应大于5m。\r2、电伴热带缠至地面以上2m。",
+            ),
+            None,
+            &text_style(Some(1.5)),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        assert_eq!(out.len(), 2, "one run per line");
+        let (first, second) = match (&out[0].shape, &out[1].shape) {
+            (PaperShape::Text { origin_mm: a, .. }, PaperShape::Text { origin_mm: b, .. }) => {
+                (*a, *b)
+            }
+            other => panic!("{other:?}"),
+        };
+        assert!((first[0] - second[0]).abs() < 1e-9, "same column");
+        assert!(
+            (first[1] - second[1] - 3.5 * 1.5).abs() < 1e-6,
+            "a line pitch of height × 1.5, got {} mm",
+            first[1] - second[1]
+        );
+    }
+
+    /// A vertical label stacks along its baseline normal, not straight down:
+    /// text turned 90° would otherwise print over itself.
+    #[test]
+    fn a_vertical_label_stacks_along_its_baseline_normal() {
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &note(std::f64::consts::FRAC_PI_2, "安3集气站\r排污单元"),
+            None,
+            &text_style(Some(1.5)),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        assert_eq!(out.len(), 2);
+        let (first, second) = match (&out[0].shape, &out[1].shape) {
+            (PaperShape::Text { origin_mm: a, .. }, PaperShape::Text { origin_mm: b, .. }) => {
+                (*a, *b)
+            }
+            other => panic!("{other:?}"),
+        };
+        assert!(
+            (second[0] - first[0] - 3.5 * 1.5).abs() < 1e-6,
+            "the next line of vertical text sits on +x, got {second:?} against {first:?}"
+        );
+        assert!((second[1] - first[1]).abs() < 1e-9, "same column");
+    }
+
+    /// A paragraph that states no usable spacing stacks at single spacing —
+    /// stacking on one baseline is the only answer that is certainly wrong.
+    #[test]
+    fn a_paragraph_without_spacing_stacks_at_single_spacing() {
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &note(0.0, "第一行\r第二行"),
+            None,
+            &text_style(None),
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        assert_eq!(out.len(), 2);
+        let (first, second) = match (&out[0].shape, &out[1].shape) {
+            (PaperShape::Text { origin_mm: a, .. }, PaperShape::Text { origin_mm: b, .. }) => {
+                (*a, *b)
+            }
+            other => panic!("{other:?}"),
+        };
+        assert!((first[1] - second[1] - 3.5).abs() < 1e-6);
+    }
+
+    /// A stroke whose every point is more than a page diagonal off the sheet
+    /// is refused; one that merely starts off the sheet and runs onto it is
+    /// kept, because the writer clips the overhang the way a printer does.
+    ///
+    /// DWG-0202's three `EndpointPair` promotions are the case: 143 and 337 km
+    /// away, and the writer clipped them into a diagonal across the page that
+    /// no plot has.
+    #[test]
+    fn a_stroke_that_cannot_reach_the_sheet_is_refused() {
+        use super::beyond_the_sheet;
+
+        let page = [841.0, 594.0];
+        // One end at the origin, the other 143 km out: finite, and the writer
+        // would clip it into a diagonal right across the page.
+        let far = PaperShape::Line {
+            start_mm: [143_616_000.0, 143_872_000.0],
+            end_mm: [0.0, 0.0],
+        };
+        assert!(beyond_the_sheet(&far, page));
+
+        // A leader that starts off the sheet and runs onto it prints, and the
+        // writer clips the overhang the way a printer does.
+        let overhang = PaperShape::Line {
+            start_mm: [-40.0, 300.0],
+            end_mm: [200.0, 300.0],
+        };
+        assert!(!beyond_the_sheet(&overhang, page));
+
+        // A label just past the right edge is content, not noise.
+        let off_page = PaperShape::Text {
+            origin_mm: [841.0 + 40.0, 30.0],
+            height_mm: Some(3.0),
+            rotation: 0.0,
+            value: "M".to_string(),
+            font: None,
+            anchor: TextAnchor::Left,
+            line: TextLine::Middle,
+        };
+        assert!(!beyond_the_sheet(&off_page, page));
+
+        // A short stroke parked entirely off the sheet inks nothing.
+        let parked = PaperShape::Line {
+            start_mm: [143_616_000.0, 143_872_000.0],
+            end_mm: [143_616_001.0, 143_872_001.0],
+        };
+        assert!(beyond_the_sheet(&parked, page));
+
+        // A non-finite coordinate is never ink.
+        let broken = PaperShape::Line {
+            start_mm: [f64::NAN, 0.0],
+            end_mm: [10.0, 10.0],
+        };
+        assert!(beyond_the_sheet(&broken, page));
+    }
+
+    /// Every break spelling splits, `\r\n` counts once, a trailing break adds
+    /// no empty line, and a control character no face can encode never reaches
+    /// the writer.
+    #[test]
+    fn a_label_splits_on_every_line_break_and_drops_other_controls() {
+        assert_eq!(label_lines("a\rb"), ["a", "b"]);
+        assert_eq!(label_lines("a\r\nb"), ["a", "b"]);
+        assert_eq!(label_lines("a\nb"), ["a", "b"]);
+        assert_eq!(
+            label_lines("a\u{0B}b\u{0C}c\u{2028}d\u{2029}e"),
+            ["a", "b", "c", "d", "e"]
+        );
+        assert_eq!(label_lines("a\r"), ["a"]);
+        assert_eq!(label_lines("a\u{0}b\tc"), ["ab c"]);
+        assert_eq!(label_lines("\u{0}"), [""]);
+        assert_eq!(label_lines(""), [""]);
     }
 
     /// A boxed field whose paragraph states right alignment ends on the

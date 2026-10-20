@@ -1022,6 +1022,8 @@ mod tests {
         let model = PaperModel {
             library: Vec::new(),
             page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
             primitives: vec![thin, thick],
             missing_symbols: Vec::new(),
             missing_boxes: Vec::new(),
@@ -1052,6 +1054,8 @@ mod tests {
         let model = PaperModel {
             library: Vec::new(),
             page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
             primitives: vec![
                 primitive(
                     "decoded",
@@ -1244,6 +1248,8 @@ mod tests {
         let model = PaperModel {
             library: Vec::new(),
             page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
                 PaperShape::Text {
@@ -1295,6 +1301,8 @@ mod tests {
         let model = PaperModel {
             library: Vec::new(),
             page_mm: Some([200.0, 140.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
             primitives: vec![primitive(
                 "decoded",
                 PaperShape::Text {
