@@ -1,7 +1,12 @@
 # pid-parse Agent Guide
 
 Layered parser for SmartPlant / Smart P&ID `.pid` files with a
-publish XML pipeline (`Export.mdf → oxidized-mdf → drawing graph → _Data.xml / _Meta.xml`).
+publish XML pipeline producing `<DrawingName>_Data.xml` / `_Meta.xml`
+from four inputs: a `.pid` alone, `.pid` + Oracle `exp` dump
+(± `SPPIDDataMap.xml`), a whole backup-package directory
+(`PlantData` zips + `Export.dmp`, either Oracle `exp` or SQL Server
+MTF staged to a temp `.mdf`), or a single `Export.mdf` /
+legacy `Export_v2.sqlite`.
 
 ## Agent skills
 
@@ -22,10 +27,13 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | Layer | Path | Role |
 |---|---|---|
 | Vendored MDF parser | `vendor/oxidized-mdf/` | Reads SQL Server MDF files, GPL-3.0 |
-| Publish adapter | `src/publish/mdf_load.rs` | MDF → in-memory SQLite staging |
-| Publish loader | `src/publish/sqlite_load.rs` | SQLite → `PublishDrawing` DTO |
-| XML writer | `src/publish/xml_writer.rs` | DTO → `_Data.xml` / `_Meta.xml` |
-| CLI entry | `src/bin/pid_publish_xml.rs` | End-to-end CLI |
+| Publish `.pid` line | `src/publish/{pid_load,pid_writer}.rs` | `.pid` → `PidPublishDrawing` → `_Data.xml` / `_Meta.xml` |
+| Publish exp enrichment | `src/publish/{oracle_exp,pipeline}.rs` | `ExpTables` (one read) → ports / connectivity / compositions / notes / OPC; `T_PIPERUN` → synthesized `PIDPipeline` + `PipingConnectors` |
+| Publish package mode | `src/publish/backup_package.rs` | Backup dir → one `ExpTables` + `SPPIDDataMap.xml` → every `.pid` → 三件 + `_Index.json`; MTF dumps stage to a temp `.mdf` |
+| Publish DB line | `src/publish/{mdf_load,sqlite_load}.rs` | MDF → in-memory SQLite staging → `PublishDrawing` DTO |
+| Publish shared | `src/publish/{model,xml_writer,catalog,diff}.rs` | DTO + `PublishStyle`; `_Data.xml`/`_Meta.xml` writers; `PublishItemCatalog` — one row per item type feeding both lines (sqlite_load chains, xml_writer dispatch + a01 rank, diff tag set); `--diff-against` parity |
+| Inspect orchestration | `src/inspect/commands.rs` | `InspectCommand::run(&PidPackage) -> InspectOutput`; `src/bin/pid_inspect.rs` is arg-parse + print only |
+| CLI entry | `src/bin/pid_publish_xml.rs` | `<file.pid|backup dir> --out-dir DIR [--oracle-exp|--datamap|--plant|--diff-against]` / `<mdf> --drawing UID` |
 
 ## Vendored `oxidized-mdf` (key constraints)
 
@@ -43,9 +51,12 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 |---|---|---|
 | `vendor/oxidized-mdf` unit tests | Parser internals | Inline byte vectors |
 | `tests/publish_mdf_load.rs` | MDF → SQLite staging | `test-file/…/Export.mdf` |
+| `tests/publish_sqlite_load.rs` | SQLite → DTO business fields | TEST02_p fixture |
 | `tests/publish_xml_cli.rs` | End-to-end CLI | `test-file/…/Export.mdf` |
 | `tests/publish_meta_parity.rs` | Meta XML shape + DWG compare | A01 ref + optional DWG fixture |
 | `tests/publish_a01_raw_residual.rs` | Residual value scanning | `test-file/…/Export.mdf` |
+| `tests/publish_from_pid.rs` | `.pid` / `--oracle-exp` / whole-package publish pins | `D:\work\cad\PID自研软件验证` + `D:\work\cad\pid-test-data` (soft-skips absent) |
+| `tests/publish_{attribute,interface,rel,dwg_generated}_parity.rs` / `publish_writer_coverage.rs` / `publish_backlog_inventory.rs` / `publish_dwg_mirror.rs` | DB-line parity + writer coverage + backlog inventory | A01 ref + optional DWG fixture |
 | `tests/parse_real_files.rs::primitive_line_decoder_emits_decoded_lines_with_provenance` | Phase 14 GLine2d cross-fixture | `test-file/*.pid` |
 | `tests/parse_real_files.rs::jstyle_override_decoder_emits_audit_records_with_provenance` | Phase 16 JStyleOverride (PSM 0x0030) cross-fixture | `test-file/*.pid` |
 | `tests/parse_real_files.rs::iglines_decoder_emits_decoded_iglines_with_provenance` | Phase 14 Slice J igLine2d (PSM 0x0018) | `test-file/*.pid` |
@@ -56,6 +67,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
 | `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports a PDF, reads back, and names any symbol no library carries | every `test-file/**/*.pid` |
+| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, known library gaps only | `<corpus>/backup-plant-data/**/*.pid` (soft-skips when absent) |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
 
