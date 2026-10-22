@@ -2452,14 +2452,17 @@ pub(crate) const IGTEXTBOX_TAIL_LEN: usize = 36;
 
 /// Payload offset of the tail-kind selector: `1` for the placement tail
 /// alone, `2` for the tail that then carries a text box.
-const IGTEXTBOX_TAIL_KIND_AT: usize = 20;
+pub(crate) const IGTEXTBOX_TAIL_KIND_AT: usize = 20;
+
+/// The tail-kind selector of the placement tail alone.
+pub(crate) const IGTEXTBOX_TAIL_KIND_PLACEMENT: u16 = 1;
 
 /// The tail-kind selector whose tail carries the text box.
-const IGTEXTBOX_TAIL_KIND_BOX: u16 = 2;
+pub(crate) const IGTEXTBOX_TAIL_KIND_BOX: u16 = 2;
 
 /// Bytes a kind-2 tail occupies before the optional fields its own flag
 /// word gates — the placement tail plus the box and three counters.
-const IGTEXTBOX_TAIL_KIND2_LEN: usize = 68;
+pub(crate) const IGTEXTBOX_TAIL_KIND2_LEN: usize = 68;
 
 /// Offset of the text box's width inside a kind-2 tail, in sheet units.
 const IGTEXTBOX_BOX_WIDTH_AT: usize = 40;
@@ -2501,6 +2504,26 @@ pub(crate) const IGTEXTBOX_DIRECTION_UNIT_TOLERANCE: f64 = 1e-6;
 /// 0.003–0.0045 m; the edges only have to exclude what an f64 misread
 /// produces.
 pub(crate) const IGTEXTBOX_LETTER_HEIGHT_M: std::ops::RangeInclusive<f64> = 0.0005..=0.25;
+
+/// The letter height a text direction pair states, or `None` when the pair is
+/// not a direction at all: `Some(0.0)` for the unit vector every drawing sheet
+/// writes, `Some(h)` for a pair scaled to a letter height in
+/// `IGTEXTBOX_LETTER_HEIGHT_M`.
+///
+/// The `None` is what refuses a text length that over-reads: it moves the
+/// tail, and the two `f64`s read where the pair should be are then denormal,
+/// astronomical or zero. Both `igTextBox` readers apply it, this module's and
+/// `symbol_library::decode_text`.
+pub(crate) fn igtextbox_letter_height(cos: f64, sin: f64) -> Option<f64> {
+    let direction = cos.hypot(sin);
+    if (direction - 1.0).abs() <= IGTEXTBOX_DIRECTION_UNIT_TOLERANCE {
+        Some(0.0)
+    } else if IGTEXTBOX_LETTER_HEIGHT_M.contains(&direction) {
+        Some(direction)
+    } else {
+        None
+    }
+}
 
 /// PSM type code that identifies a standard Intergraph Sigma
 /// `igSymbol2d` record on disk (IGDS class tag `0xCE = 206`).
@@ -3912,14 +3935,7 @@ fn decode_igtextbox_payload(
     // UTF-16 halves read as `f64` are denormal or astronomical, never
     // millimetres.
     let (cos, sin) = (trailing[2], trailing[3]);
-    let direction = cos.hypot(sin);
-    let letter_height_m = if (direction - 1.0).abs() <= IGTEXTBOX_DIRECTION_UNIT_TOLERANCE {
-        0.0
-    } else if (IGTEXTBOX_LETTER_HEIGHT_M).contains(&direction) {
-        direction
-    } else {
-        return None;
-    };
+    let letter_height_m = igtextbox_letter_height(cos, sin)?;
     let rotation_rad = sin.atan2(cos);
     let runs = igtextbox_runs(payload, text_sub_type, inline_text_length);
     // The 4-byte trailer closes the tail; its last byte is the anchor.
