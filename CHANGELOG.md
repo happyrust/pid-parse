@@ -10,9 +10,10 @@
 - **只切真的不一样的地方**：相邻 run 解出同一字号、同一字体时合回一段 —— 样式变化与记录自己重复一遍在纸上不可区分，也不给比较器的文字配对多塞 run（`spans_that_change_nothing_are_written_as_one_run`）。
 - **续行不自己算偏移**：`Tj` 本身推进文本位置，推进量按当前字号的字形宽度算，第二段正好接在第一段末尾（`a_span_at_its_own_size_continues_where_the_previous_one_ended`）。
 - **非 BMP 守卫**：run 长度数 UTF-16 单位、span 偏移数 `char`，含星形面字符的标签会把第二段切在半个字符上；`guarded_spans` 在这种情况下不给分区，`.sym` 与图纸缓存本体两条来源共用同一个守卫。
+- **图纸侧的 `igTextBox` 也接了同一份分区**：`push_entity` 的文字分支从 `ResolvedTextStyle::spans` 带上分区，`label_line_ranges` 给每行记下它在记录里的起始字符（`\r\n` 算一个断行、但两个字符都跳过），`line_spans` 把跨行的 run 按行切开并重定偏移；丢掉控制字符的行不再与记录对齐，整行不给分区。run 里的字体名（`宋体`）先过 `typeface_key` 再与 writer 嵌入的脸（`SimSun`）比，否则同一张脸两种写法会把标签切开 —— I井场 的 `SP:` 因此多花 2 字节，修好后逐位回到基线。
 - **库侧读数**（新探针 `probe_symbol_text_spans`，1262 个 `.sym` / 2404 条文字）：带分区 **165** 条，其中纯 `NULL` 占位 **129** 条；落墨的 36 条里，分段后仍同字号同字体 **33**、另一字体 **2**、另一字号兼另一字体 **1**。真会因此改变字样的是 3 条（`Pig Launcher & Receiver Description.sym` 两条、`Wastewater Pit.sym` 一条）。
-- **出图读数**：`probe_export_audit` 多一列 `partitions N (M letter differently)`，58 张图纸（5 张语料 + 53 张整厂备份）逐张 **partitions 0** —— 今天没有任何标签走分段路径。五张参考图重导的 PDF 字节数与改前逐位相同（671405 / 449953 / 444540 / 524411 / 553973），`plot_text_sources`（546/546、151/151、123/123、167/167、249/249）、`export_every_fixture`、`export_plant_backup`（53 张）全过。
-- **测试**：`pid-plot` writer 新增三条（切段按时续行、只换字体的 span 也单独切段、同字号同字体不切）；`symbol_library` 新增三条（分区按 `char` 偏移累积、单 run 无分区、非 BMP 撤分区）。
+- **出图读数**：`probe_export_audit` 多一列 `partitions N (M letter differently)`，58 张图纸（5 张语料 + 53 张整厂备份）逐张：符号侧 **partitions 0**（那 3 条所在的符号不在这 58 张图上），图纸侧 **35 条**带分区（32 张各 1 条、一张 3 条），全部 **0 letter differently** —— 这些 run 与标签自己那一条同字号同字体，所以纸上一个字节也没变。五张参考图重导的 PDF 字节数与改前逐位相同（671405 / 449953 / 444540 / 524411 / 553973），`plot_text_sources`（546/546、151/151、123/123、167/167、249/249）、`plot_compare`、`export_every_fixture`、`export_plant_backup`（53 张）全过。
+- **测试**：`pid-plot` writer 新增三条（切段按时续行、只换字体的 span 也单独切段、同字号同字体不切）、model 新增三条（每行记下起始字符号、跨行 run 按行切、图纸标签把分区带到纸上）；`symbol_library` 新增三条（分区按 `char` 偏移累积、单 run 无分区、非 BMP 撤分区）。
 - 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §九。
 
 ### 库侧符号文字改读 run：1350 条标签的字高不再取段落默认（2026-10-23）

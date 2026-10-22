@@ -406,7 +406,29 @@ Wastewater Pit.sym                        "NULL  NULL*NULL*NULL"  "*" 一个字�
 
 `Endbreak.sym` 那条也变样式，但它的字是纯 `NULL`，落不到纸上。
 
-### 出图读数：58 张图纸上一次也没走
+### 图纸侧的 `igTextBox` 也接了分区（2026-10-23，同日）
+
+符号标签之外，图纸自己记录的 `igTextBox` 也带同一份分区（`resolve_text_style` 的两侧本来就是
+同一个函数）。这一路比符号多三件事：
+
+- **逐行切**：一条记录可能用 `U+000D` 分几行，模型一行一个 `PaperShape::Text`，所以分区的
+  **字符偏移要落到行上**。`label_line_ranges` 现在把每行的起始字符号一起返回（`\r\n` 算一个
+  断行、但两个字符都要跨过），`line_spans` 把跨行的 run 按行切开、偏移重定到该行首字符；
+  丢掉控制字符的行不再与记录的偏移对齐，**整行不给分区**而不是硬套。
+- **字体名要先过 `typeface_key`**：run 里写的是 `宋体`、`Arial Narrow`，而 writer 的
+  `text.typeface` 是它真正嵌入的那张脸（`宋体 → SimSun`）。两边直接比字符串会「同名不同写」
+  而把标签切开：I井场 的 `SP:`（`0..2` 与 `2..3` 两条 run，字高字体都一样）因此多花 **2 字节**。
+  分区里的字体现在统一走 `typeface_key` 再比，合回一段，字节逐位回到基线。
+- **非 BMP**：同一条 `sheet_text_spans` 守卫 —— 字符数与 UTF-16 单位数不等就不给分区。
+
+读数（同一次 58 张图：`probe_export_audit`）：**35 条**图纸标签带分区（32 张图各 1 条，
+一张 3 条），全部 **0 letter differently** —— 这些 run 解出的字号与字体与标签自己那一条相同，
+所以一张纸、一个字节都没变。五张参考图仍是
+671405 / 449953 / 444540 / 524411 / 553973，`plot_text_sources` 与 `plot_compare` 全过。
+这与符号侧是同一个结论：分区今天在语料里是备而未用，但两侧现在都走到了 writer 的切段逻辑，
+一旦哪条记录真的换样式，就会逐段排上去。
+
+### 出图读数：58 张图纸上一次也没走（符号侧）
 
 `pid-plot/examples/probe_export_audit` 新增 `partitions N (M letter differently)` 一列，
 对 5 张语料图 + 53 张整厂备份逐张跑：**partitions 0**。也就是今天没有任何一条标签走分段

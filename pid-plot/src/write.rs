@@ -576,15 +576,21 @@ fn text_segments<'a>(text: &ShownText<'a>, inked: &str, height_mm: f64) -> Vec<T
     for span in text.spans {
         let start = usize::from(span.start);
         let stop = start.saturating_add(usize::from(span.len)).min(chars.len());
-        let size_pt = plotted_size_pt(
-            span.font.as_deref().unwrap_or(text.typeface),
-            span.height_mm.unwrap_or(height_mm),
-        );
+        // A run names its face the way the file spelled it — `宋体`, `Arial
+        // Narrow` — while `text.typeface` is the face *this writer embeds*
+        // (`typeface_key`). Resolving here is what lets a run that names the
+        // label's own face merge back into it instead of splitting the label
+        // over a spelling the two sides never shared.
+        let typeface = match span.font.as_deref() {
+            Some(named) => typeface_key(Some(named), text.value),
+            None => text.typeface,
+        };
+        let size_pt = plotted_size_pt(typeface, span.height_mm.unwrap_or(height_mm));
         for index in start..stop {
             if index < lead || index >= end {
                 continue;
             }
-            per_char[index - lead] = (span.font.as_deref().unwrap_or(text.typeface), size_pt);
+            per_char[index - lead] = (typeface, size_pt);
         }
     }
     let mut segments: Vec<TextSegment<'a>> = Vec::new();
@@ -1494,12 +1500,9 @@ mod tests {
             .collect();
         assert_eq!(
             shape,
-            vec![
-                ("NULL", "Arial"),
-                ("*", "\u{5b8b}\u{4f53}"),
-                ("NUL", "Arial")
-            ],
-            "the partition is cut where size or face changes"
+            vec![("NULL", "Arial"), ("*", "SimSun"), ("NUL", "Arial")],
+            "the partition is cut where size or face changes, and each run's \
+             face resolves to the one this writer embeds"
         );
         assert!(
             segments[1].size_pt > segments[0].size_pt,

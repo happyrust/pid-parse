@@ -11,7 +11,9 @@
 
 use std::path::{Path, PathBuf};
 
-use pid_parse::style_link::{LineStyleIndex, ResolvedLineStyle, TextAlignment, TextStyleIndex};
+use pid_parse::style_link::{
+    LineStyleIndex, ResolvedLineStyle, ResolvedTextStyle, TextAlignment, TextStyleIndex,
+};
 use pid_parse::symbol_library::{PrimitiveStyle, SymbolLettering, SymbolLibrary, SymbolPrimitive};
 use pid_parse::{
     PidGeometryConfidence, PidGraphicEntity, PidGraphicKind, PidParser, SheetRecordKind,
@@ -430,39 +432,142 @@ pub fn place_metres(
 /// would take the whole page down rather than ink nothing. A label that is
 /// empty still yields one line, so the primitive count of a blank record does
 /// not change.
-fn label_lines(value: &str) -> Vec<String> {
-    let mut lines = Vec::new();
+/// One line of a label, and where it came from in the record's text.
+///
+/// `text` holds the record's characters `start .. start + (text chars)` when
+/// `exact` — which is what a formatting run's character offsets need to land
+/// on the line they belong to. A dropped control character (no typeface has a
+/// glyph for one) breaks that correspondence, so such a line says so instead
+/// of pretending its offsets still line up.
+struct LabelLine {
+    text: String,
+    start: usize,
+    exact: bool,
+}
+
+/// Split a label into the lines it letters, each with its own place in the
+/// record's text.
+fn label_line_ranges(value: &str) -> Vec<LabelLine> {
+    let mut lines: Vec<LabelLine> = Vec::new();
     let mut current = String::new();
-    let mut chars = value.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
+    let mut start = 0usize;
+    let mut dropped = false;
+    let mut chars = value.chars().enumerate().peekable();
+    while let Some((index, ch)) = chars.next() {
+        let mut consumed_next = false;
+        let ends = match ch {
             '\r' => {
-                if chars.peek() == Some(&'\n') {
+                if chars.peek().is_some_and(|(_, next)| *next == '\n') {
                     chars.next();
+                    consumed_next = true;
                 }
-                lines.push(std::mem::take(&mut current));
+                true
             }
-            '\n' | '\u{0B}' | '\u{0C}' | '\u{85}' | '\u{2028}' | '\u{2029}' => {
-                lines.push(std::mem::take(&mut current));
-            }
+            '\n' | '\u{0B}' | '\u{0C}' | '\u{85}' | '\u{2028}' | '\u{2029}' => true,
             // A tab is the one control character with a visible meaning: it
             // separates words, so it becomes the space it stands for rather
             // than vanishing and gluing two words together.
-            '\t' => current.push(' '),
-            _ if ch.is_control() => {}
-            _ => current.push(ch),
+            '\t' => {
+                current.push(' ');
+                false
+            }
+            _ if ch.is_control() => {
+                dropped = true;
+                false
+            }
+            _ => {
+                current.push(ch);
+                false
+            }
+        };
+        if ends {
+            lines.push(LabelLine {
+                text: std::mem::take(&mut current),
+                start,
+                exact: !dropped,
+            });
+            // The break itself is not part of either line, so the next one
+            // starts after it — `\r\n` counts as one break, but both its
+            // characters have to be stepped over.
+            start = index + 1 + usize::from(consumed_next);
+            dropped = false;
         }
     }
-    lines.push(current);
+    lines.push(LabelLine {
+        text: current,
+        start,
+        exact: !dropped,
+    });
     // A trailing break names a line with nothing on it; it inks nothing and
     // would only add a run the writer then drops.
-    while lines.len() > 1 && lines.last().is_some_and(String::is_empty) {
+    while lines.len() > 1 && lines.last().is_some_and(|line| line.text.is_empty()) {
         lines.pop();
     }
     lines
 }
+/// A sheet record's run partition, in the record's own character offsets.
+///
+/// `None` where the record resolves no style at all, and empty for the labels
+/// that letter in one style — a single run only restates what the shape's own
+/// `height_mm` and `font` already say. A label holding a non-BMP character
+/// keeps its partition off: a run length counts UTF-16 units while a span
+/// offset counts `char`s, so the second run would land mid-glyph. The library
+/// applies the same rule at `symbol_library::guarded_spans`.
+fn sheet_text_spans(style: Option<&ResolvedTextStyle>, value: &str) -> Vec<PaperTextSpan> {
+    let Some(style) = style else {
+        return Vec::new();
+    };
+    if value.chars().count() != value.encode_utf16().count() {
+        return Vec::new();
+    }
+    style
+        .spans
+        .iter()
+        .map(|span| PaperTextSpan {
+            start: span.start,
+            len: span.len,
+            height_mm: Some(span.style.height_mm()),
+            font: span.style.font_name.clone(),
+        })
+        .collect()
+}
 
-///Whether `entity` sits on a layer `SmartPlant` leaves off a printed page:
+/// The part of a record's partition that letters one of its lines, re-based to
+/// that line's own first character.
+///
+/// A line the writer split off keeps its characters verbatim, so a span that
+/// covers characters on both sides of a break becomes one span per line. A
+/// line that had a control character dropped no longer lines up with the
+/// record's offsets and gets none.
+fn line_spans(partition: &[PaperTextSpan], line: &LabelLine) -> Vec<PaperTextSpan> {
+    if partition.is_empty() || !line.exact {
+        return Vec::new();
+    }
+    let length = line.text.chars().count();
+    let mut out = Vec::new();
+    for span in partition {
+        let start = usize::from(span.start);
+        let end = start.saturating_add(usize::from(span.len));
+        let from = start.max(line.start);
+        let to = end.min(line.start.saturating_add(length));
+        if to <= from {
+            continue;
+        }
+        let (Ok(start), Ok(len)) = (u16::try_from(from - line.start), u16::try_from(to - from))
+        else {
+            return Vec::new();
+        };
+        out.push(PaperTextSpan {
+            start,
+            len,
+            height_mm: span.height_mm,
+            font: span.font.clone(),
+        });
+    }
+    out
+}
+
+/// Whether `entity` sits on a layer `SmartPlant` leaves off a printed page:
 /// a layer the view filter set hides (`displayed == Some(false)`), or the
 /// authored `ConsistencyChecks` review overlay — whose `igPoint2d` records
 /// resolve to `lsWarning` / `lsOk` markers shown on screen and omitted from
@@ -1037,13 +1142,16 @@ fn push_entity(
             anchor_code,
             text_box_width,
         } => {
-            let styled = entity.source.stream_path.as_ref().and_then(|stream| {
-                entity.graphic_oid.and_then(|oid| {
-                    styles
-                        .get(&(stream.clone(), oid))
-                        .and_then(|style| style.effective())
-                })
+            let resolved = entity.source.stream_path.as_ref().and_then(|stream| {
+                entity
+                    .graphic_oid
+                    .and_then(|oid| styles.get(&(stream.clone(), oid)))
             });
+            let styled = resolved.and_then(|style| style.effective());
+            // The record's run partition, in the record's own character
+            // offsets — the same one a symbol label draws span by span, read
+            // off the same `resolve_text_style` the symbol library calls.
+            let partitions = sheet_text_spans(resolved, value);
             let height_mm = if height.abs() > 1e-9 {
                 Some(height.abs() * MM_PER_METRE)
             } else if let Some(millimetres) = styled
@@ -1123,7 +1231,7 @@ fn push_entity(
             // `origin_m` and the insertion point it came from are metres, so
             // the pitch goes back through the same unit as the height.
             let normal = [rotation.sin(), -rotation.cos()];
-            for (index, line) in label_lines(value).into_iter().enumerate() {
+            for (index, line) in label_line_ranges(value).into_iter().enumerate() {
                 let shift_m = pitch_mm * index as f64 / MM_PER_METRE;
                 out.push(primitive(
                     entity,
@@ -1141,7 +1249,8 @@ fn push_entity(
                         ),
                         height_mm,
                         rotation: *rotation,
-                        value: line,
+                        spans: line_spans(&partitions, &line),
+                        value: line.text,
                         font: styled.as_ref().and_then(|style| style.font_name.clone()),
                         // A boxed record hangs from the box edge its
                         // paragraph's alignment names (above). An unboxed one
@@ -1149,11 +1258,6 @@ fn push_entity(
                         // is the horizontal hot point the insertion sits at.
                         anchor,
                         line: TextLine::from_anchor_code(*anchor_code),
-                        // A sheet `igTextBox`'s runs are the same partition,
-                        // but this path draws one line per value with the
-                        // style resolved for the whole record; the sheet side
-                        // has not opted into spans yet.
-                        spans: Vec::new(),
                     },
                 ));
             }
@@ -1652,7 +1756,7 @@ fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::label_lines;
+    use super::{label_line_ranges, line_spans, sheet_text_spans};
     use pid_parse::style_link::TextAlignment;
     use pid_parse::symbol_library::{SymbolLettering, SymbolPrimitive};
     use pid_parse::{
@@ -1661,8 +1765,8 @@ mod tests {
     };
 
     use super::{
-        PaperShape, Placement, SymbolItem, TextAnchor, TextLine, arc_shape, place_metres,
-        push_entity, push_symbol_primitive,
+        PaperShape, PaperTextSpan, Placement, SymbolItem, TextAnchor, TextLine, arc_shape,
+        place_metres, push_entity, push_symbol_primitive,
     };
 
     fn plain_item(shape: &SymbolPrimitive) -> SymbolItem<'_> {
@@ -1752,6 +1856,96 @@ mod tests {
             "box left edge, got {origin_mm:?}"
         );
         assert!((origin_mm[1] - 200.0).abs() < 1e-6);
+    }
+
+    /// A sheet label's run partition reaches the paper, cut against the lines
+    /// it letters: the record here is `AB` in one style and `CDE` in another
+    /// across a break, so the first line carries the first run and the second
+    /// is re-based to its own first character.
+    #[test]
+    fn a_sheet_label_carries_its_run_partition_onto_the_paper() {
+        use pid_parse::style_link::{
+            ResolvedTextHeight, ResolvedTextStyle, TextRunStatus, TextStyleSpan,
+        };
+
+        let char_style = |id: u32, height_m: f64, font: &str| ResolvedTextHeight {
+            style_id: id,
+            height_m,
+            colour: None,
+            alignment: None,
+            line_spacing: None,
+            font_name: Some(font.to_string()),
+        };
+        let mut styles = pid_parse::style_link::TextStyleIndex::new();
+        styles.insert(
+            ("/Sheet6".to_string(), 11),
+            ResolvedTextStyle {
+                paragraph: Some(char_style(3, 0.0035, "仿宋")),
+                run: Some(char_style(9, 0.0035, "仿宋")),
+                runs: TextRunStatus::Uniform,
+                alignment: None,
+                line_spacing: Some(1.5),
+                spans: vec![
+                    TextStyleSpan {
+                        start: 0,
+                        len: 2,
+                        style: char_style(9, 0.0035, "仿宋"),
+                    },
+                    // The break itself letters nothing, so it covers no glyph
+                    // on either line.
+                    TextStyleSpan {
+                        start: 2,
+                        len: 2,
+                        style: char_style(10, 0.007, "宋体"),
+                    },
+                    TextStyleSpan {
+                        start: 4,
+                        len: 1,
+                        style: char_style(9, 0.0035, "仿宋"),
+                    },
+                    TextStyleSpan {
+                        start: 5,
+                        len: 2,
+                        style: char_style(10, 0.007, "宋体"),
+                    },
+                ],
+            },
+        );
+        let mut out = Vec::new();
+        push_entity(
+            &mut out,
+            &note(0.0, "AB\r\nCDE"),
+            None,
+            &styles,
+            &pid_parse::style_link::LineStyleIndex::new(),
+            &pid_parse::style_link::FillIndex::new(),
+            &mut std::collections::HashSet::new(),
+        );
+        assert_eq!(out.len(), 2, "one text per line: {out:?}");
+        type DrawnSpan = (u16, u16, Option<f64>, Option<String>);
+        let spans: Vec<Vec<DrawnSpan>> = out
+            .iter()
+            .filter_map(|primitive| match &primitive.shape {
+                PaperShape::Text { spans, .. } if !spans.is_empty() => Some(
+                    spans
+                        .iter()
+                        .map(|span| (span.start, span.len, span.height_mm, span.font.clone()))
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                vec![(0, 2, Some(3.5), Some("仿宋".to_string()))],
+                vec![
+                    (0, 1, Some(3.5), Some("仿宋".to_string())),
+                    (1, 2, Some(7.0), Some("宋体".to_string())),
+                ],
+            ],
+            "each line keeps the runs that land on it, in its own offsets"
+        );
     }
 
     fn text_style(line_spacing: Option<f64>) -> pid_parse::style_link::TextStyleIndex {
@@ -1944,17 +2138,86 @@ mod tests {
     /// the writer.
     #[test]
     fn a_label_splits_on_every_line_break_and_drops_other_controls() {
-        assert_eq!(label_lines("a\rb"), ["a", "b"]);
-        assert_eq!(label_lines("a\r\nb"), ["a", "b"]);
-        assert_eq!(label_lines("a\nb"), ["a", "b"]);
+        let lines = |value: &str| -> Vec<String> {
+            label_line_ranges(value)
+                .into_iter()
+                .map(|line| line.text)
+                .collect()
+        };
+        assert_eq!(lines("a\rb"), ["a", "b"]);
+        assert_eq!(lines("a\r\nb"), ["a", "b"]);
+        assert_eq!(lines("a\nb"), ["a", "b"]);
         assert_eq!(
-            label_lines("a\u{0B}b\u{0C}c\u{2028}d\u{2029}e"),
+            lines("a\u{0B}b\u{0C}c\u{2028}d\u{2029}e"),
             ["a", "b", "c", "d", "e"]
         );
-        assert_eq!(label_lines("a\r"), ["a"]);
-        assert_eq!(label_lines("a\u{0}b\tc"), ["ab c"]);
-        assert_eq!(label_lines("\u{0}"), [""]);
-        assert_eq!(label_lines(""), [""]);
+        assert_eq!(lines("a\r"), ["a"]);
+        assert_eq!(lines("a\u{0}b\tc"), ["ab c"]);
+        assert_eq!(lines("\u{0}"), [""]);
+        assert_eq!(lines(""), [""]);
+    }
+
+    /// Each line knows where it came from, so a record's run offsets can be
+    /// cut per line — and a line that lost a control character says its
+    /// offsets no longer line up.
+    #[test]
+    fn a_line_states_where_in_the_record_it_starts() {
+        let runs = label_line_ranges("ab\r\ncdef");
+        assert_eq!(
+            runs.iter()
+                .map(|line| (line.text.as_str(), line.start, line.exact))
+                .collect::<Vec<_>>(),
+            vec![("ab", 0, true), ("cdef", 4, true)],
+            "the `\\r\\n` pair is stepped over, not counted as a character"
+        );
+        let dropped = label_line_ranges("a\u{0}b");
+        assert_eq!(dropped[0].text, "ab");
+        assert!(
+            !dropped[0].exact,
+            "the dropped character breaks the offsets"
+        );
+    }
+
+    /// A record's runs are cut against the lines they land on: the first run
+    /// here ends on the break (so the second line does not inherit it), and the
+    /// second is re-based to that line's own first character.
+    #[test]
+    fn a_run_is_cut_against_the_line_it_lands_on() {
+        let partition = vec![
+            // `ab\r\n` in one style — the break belongs to neither line.
+            PaperTextSpan {
+                start: 0,
+                len: 4,
+                height_mm: Some(2.0),
+                font: None,
+            },
+            // `cdef` in another.
+            PaperTextSpan {
+                start: 4,
+                len: 4,
+                height_mm: Some(4.0),
+                font: None,
+            },
+        ];
+        let lines = label_line_ranges("ab\r\ncdef");
+        let first: Vec<(u16, u16)> = line_spans(&partition, &lines[0])
+            .iter()
+            .map(|span| (span.start, span.len))
+            .collect();
+        let second: Vec<(u16, u16)> = line_spans(&partition, &lines[1])
+            .iter()
+            .map(|span| (span.start, span.len))
+            .collect();
+        assert_eq!(
+            first,
+            vec![(0, 2)],
+            "the break itself letters nothing: the first line keeps two characters"
+        );
+        assert_eq!(second, vec![(0, 4)], "the second re-bases to its origin");
+        assert!(
+            sheet_text_spans(None, "ab").is_empty(),
+            "no resolved style, no partition"
+        );
     }
 
     /// A boxed field whose paragraph states right alignment ends on the
