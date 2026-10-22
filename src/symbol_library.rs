@@ -36,7 +36,8 @@ use serde::{Deserialize, Serialize};
 use crate::api::PidParser;
 use crate::error::PidError;
 use crate::parsers::sheet_records::{
-    IGTEXTBOX_DIRECTION_UNIT_TOLERANCE, IGTEXTBOX_LETTER_HEIGHT_M,
+    igtextbox_body_shape, IGTEXTBOX_BODY_START, IGTEXTBOX_DIRECTION_UNIT_TOLERANCE,
+    IGTEXTBOX_LETTER_HEIGHT_M, IGTEXTBOX_TAIL_LEN,
 };
 use crate::style_link::{DocumentStyleTable, TextAlignment};
 
@@ -72,23 +73,18 @@ const TYPE_TEXT: u16 = 0x004D;
 const TYPE_BSPLINE: u16 = 0x005D;
 const TYPE_BOUNDARY: u16 = 0x0013;
 
-/// Bytes of geometry and style following a text record's characters. The
-/// first two `f64`s of it are the insertion point, and the run's constant
-/// width is what makes the character count identifiable — see
-/// [`TEXT_COUNT_OFFSETS`].
-const TEXT_TRAILING_LEN: usize = 36;
+/// Bytes of placement and style following a text record's body: the
+/// insertion point (two `f64`s), the text direction pair, and a 4-byte
+/// trailer.
+const TEXT_TRAILING_LEN: usize = IGTEXTBOX_TAIL_LEN;
 
-/// Payload offsets at which a text record can put its `u16` character count,
-/// most common first.
+/// Payload offset of a text record's shape discriminator.
 ///
-/// The drawing-side decoder reads the count at `+30`, and 908 of the
-/// library's 1490 text records agree. The rest carry a wider sub-header and
-/// put it at `+22`. The two are told apart by the payload size rather than
-/// by a flag: with the trailing run fixed at [`TEXT_TRAILING_LEN`], a count
-/// is only believed when `payload_len` comes out exactly right, and across
-/// the corpus no record is explained by both offsets — 248 fit `+22` alone,
-/// none fit both, and every string either recovers is readable text.
-const TEXT_COUNT_OFFSETS: [usize; 2] = [30, 22];
+/// `igTextBox` (PSM `0x004D`) comes in three shapes and each puts its
+/// character count and text at its own offset, so the discriminator is what
+/// says where to look. Reading a fixed offset — this reader once tried `+30`
+/// and `+22` — describes shapes 1 and 2 only, and misses shape 3 entirely.
+const TEXT_SHAPE_AT: usize = 18;
 
 /// Longest run of characters a symbol label can plausibly hold. The corpus
 /// tops out at 117 (an embedded XML field reference); this only has to
@@ -835,43 +831,59 @@ fn coordinate(bytes: &[u8], at: usize) -> Option<f64> {
 
 /// Read a text record's characters and insertion point.
 ///
-/// The character count sits at one of [`TEXT_COUNT_OFFSETS`], and which one
-/// is settled by arithmetic rather than by a flag: the count is believed
-/// only when the characters it claims, plus the fixed
-/// [`TEXT_TRAILING_LEN`]-byte trailing run, account for the payload exactly.
-/// A wrong offset almost never adds up, and across the reference library no
-/// record adds up at both.
+/// Which shape the record is — and therefore where its count, its text and its
+/// tail sit — is settled by the discriminator at [`TEXT_SHAPE_AT`] through
+/// [`igtextbox_body_shape`], the table the drawing side uses: a `.sym` stores
+/// `0x004D` payloads with the identical layout (22-byte header, body, 36-byte
+/// tail), so both readers ask the same table. The earlier rule — try `+30` and
+/// `+22`, believe whichever leaves exactly 36 bytes behind the characters —
+/// described the two shapes whose count happens to live at those offsets and
+/// refused shape 3 wholesale.
 fn decode_text(payload: &[u8]) -> Option<SymbolPrimitive> {
-    let (text_end, text) = TEXT_COUNT_OFFSETS
-        .iter()
-        .find_map(|&count_at| read_text_run(payload, count_at))?;
-    let at = (
-        coordinate(payload, text_end)?,
-        coordinate(payload, text_end + 8)?,
-    );
-    Some(SymbolPrimitive::Text { text, at })
-}
-
-/// The run introduced by the `u16` at `count_at`, if it accounts for the
-/// payload exactly and decodes to readable text.
-fn read_text_run(payload: &[u8], count_at: usize) -> Option<(usize, String)> {
-    let count = u16_le(payload, count_at)? as usize;
-    if count == 0 || count > TEXT_MAX_CHARS {
-        return None;
-    }
-    let start = count_at + 2;
-    let end = start.checked_add(count * 2)?;
-    if payload.len() != end.checked_add(TEXT_TRAILING_LEN)? {
-        return None;
-    }
+    let (count, text_start, tail_start) = text_layout(payload)?;
     let mut chars = Vec::with_capacity(count);
     for index in 0..count {
-        chars.push(u16_le(payload, start + index * 2)?);
+        chars.push(u16_le(payload, text_start + index * 2)?);
     }
     let text = String::from_utf16(&chars).ok()?;
     // An unpaired surrogate is caught above; a NUL means the run is not
     // really characters, whatever the arithmetic says.
-    (!text.contains('\0')).then_some((end, text))
+    if text.contains('\0') {
+        return None;
+    }
+    // The insertion point opens the tail. On shapes 1 and 2 that is the end
+    // of the text; on shape 3 the `A + B` formatting runs come first, which is
+    // why reading `text_end` there lands on denormal noise.
+    let at = (
+        coordinate(payload, tail_start)?,
+        coordinate(payload, tail_start + 8)?,
+    );
+    Some(SymbolPrimitive::Text { text, at })
+}
+
+/// Where a text record's characters and tail sit: `(count, text_start,
+/// tail_start)`, all payload-relative.
+///
+/// The text has to lie inside the shape's body, and the payload has to have
+/// room for the whole tail. Room, not an exact fit: records carry 32–56 bytes
+/// of optional fields after the tail, and demanding that the tail end the
+/// payload refused 404 of the library's read-clean labels.
+fn text_layout(payload: &[u8]) -> Option<(usize, usize, usize)> {
+    let shape = u16_le(payload, TEXT_SHAPE_AT)?;
+    let (count, text_start, body_len) = igtextbox_body_shape(payload, shape)?;
+    let count = usize::from(count);
+    if count == 0 || count > TEXT_MAX_CHARS {
+        return None;
+    }
+    let text_end = text_start.checked_add(count.checked_mul(2)?)?;
+    let tail_start = IGTEXTBOX_BODY_START.checked_add(body_len)?;
+    if text_end > tail_start {
+        return None;
+    }
+    if tail_start.checked_add(TEXT_TRAILING_LEN)? > payload.len() {
+        return None;
+    }
+    Some((count, text_start, tail_start))
 }
 
 /// Turn one record payload into a primitive, or `None` when the record
@@ -1126,11 +1138,12 @@ fn style_of(payload: &[u8], styles: Option<&DocumentStyleTable>) -> Option<Primi
 ///
 /// `Some` for every [`SymbolPrimitive::Text`] — the tail is the record's own
 /// bytes and always reads, even with no table to ask — and `None` for every
-/// other shape. The tail ends the payload exactly (the character count's
-/// arithmetic proves it), so the same reads the sheet decoder makes apply:
-/// direction pair at `+16..32`, anchor at the last byte. The style index
-/// sits at [`STYLE_INDEX_OFFSET`], the same slot a stroke's does — only the
-/// record it names differs (a `JStyleTextPara`, not a line style).
+/// other shape. The tail starts where the shape's body ends ("[`text_layout`]"),
+/// not necessarily at `payload_len - 36`, so the same reads the sheet decoder
+/// makes apply: direction pair at `+16..32` of the tail, anchor at its last
+/// byte. The style index sits at [`STYLE_INDEX_OFFSET`], the same slot a
+/// stroke's does — only the record it names differs (a `JStyleTextPara`, not
+/// a line style).
 fn lettering_of(
     primitive: &SymbolPrimitive,
     payload: &[u8],
@@ -1141,7 +1154,7 @@ fn lettering_of(
     }
     let resolved = u32_le(payload, STYLE_INDEX_OFFSET)
         .and_then(|index| styles.and_then(|table| table.resolve_text_height(index)));
-    let tail = payload.len().saturating_sub(TEXT_TRAILING_LEN);
+    let tail = text_layout(payload)?.2;
     let cos = f64_le(payload, tail + 16).unwrap_or(1.0);
     let sin = f64_le(payload, tail + 24).unwrap_or(0.0);
     // The same magnitude rule the sheet decoder applies: a unit pair is a
@@ -1158,7 +1171,10 @@ fn lettering_of(
         0.0
     };
     Some(SymbolLettering {
-        anchor_code: payload.last().copied().unwrap_or_default(),
+        anchor_code: payload
+            .get(tail + TEXT_TRAILING_LEN - 1)
+            .copied()
+            .unwrap_or_default(),
         rotation_rad: sin.atan2(cos),
         letter_height_m,
         height_m: resolved.as_ref().map(|style| style.height_m),
@@ -2106,15 +2122,50 @@ mod tests {
         std::fs::remove_dir_all(&broken).ok();
     }
 
-    /// A text record laid out the way the library writes them: `count_at`
-    /// bytes of header, the `u16` count, the characters, then the fixed
-    /// trailing run whose first two `f64`s are the insertion point.
-    fn text_payload(count_at: usize, text: &str, at: (f64, f64)) -> Vec<u8> {
+    /// A text record laid out the way the library writes one: the shape
+    /// discriminator at `+18`, the shape's own count and text fields, then the
+    /// fixed 36-byte tail whose first two `f64`s are the insertion point.
+    fn text_payload(shape: u16, text: &str, at: (f64, f64)) -> Vec<u8> {
+        text_payload_with_counters(shape, 3, 2, text, at)
+    }
+
+    /// The same, with shape 3's two counters — the `A + B` formatting runs
+    /// that follow its text and push the tail past the end of the characters.
+    fn text_payload_with_counters(
+        shape: u16,
+        a: u16,
+        b: u16,
+        text: &str,
+        at: (f64, f64),
+    ) -> Vec<u8> {
         let chars: Vec<u16> = text.encode_utf16().collect();
-        let mut payload = vec![0u8; count_at];
-        payload.extend_from_slice(&u16::try_from(chars.len()).unwrap().to_le_bytes());
+        let count = u16::try_from(chars.len()).expect("a short label");
+        let mut payload = vec![0u8; IGTEXTBOX_BODY_START];
+        payload[TEXT_SHAPE_AT..TEXT_SHAPE_AT + 2].copy_from_slice(&shape.to_le_bytes());
+        match shape {
+            1 => payload.extend_from_slice(&count.to_le_bytes()),
+            2 => {
+                // The count appears twice: packed with a `0x10000` marker and
+                // again, plain, four bytes later.
+                let packed = u32::from(count) | 0x1_0000;
+                payload.extend_from_slice(&packed.to_le_bytes());
+                payload.extend_from_slice(&[0u8; 4]);
+                payload.extend_from_slice(&count.to_le_bytes());
+            }
+            3 => {
+                payload.extend_from_slice(&a.to_le_bytes());
+                payload.extend_from_slice(&b.to_le_bytes());
+                payload.extend_from_slice(&count.to_le_bytes());
+            }
+            other => panic!("no text shape {other}"),
+        }
         for c in &chars {
             payload.extend_from_slice(&c.to_le_bytes());
+        }
+        if shape == 3 {
+            // The runs: 8 bytes each, part of the body, ahead of the tail.
+            let counters = 8 * usize::from(a + b);
+            payload.resize(payload.len() + counters, 0);
         }
         payload.extend_from_slice(&at.0.to_le_bytes());
         payload.extend_from_slice(&at.1.to_le_bytes());
@@ -2122,9 +2173,28 @@ mod tests {
         payload
     }
 
+    /// A text record's own tail — direction pair and trailer — plus `extra`
+    /// optional bytes after it, which real records carry 32–56 of.
+    fn text_payload_with_tail(
+        shape: u16,
+        text: &str,
+        at: (f64, f64),
+        direction: (f64, f64),
+        anchor: u8,
+        extra: usize,
+    ) -> Vec<u8> {
+        let mut payload = text_payload(shape, text, at);
+        let tail = payload.len() - TEXT_TRAILING_LEN;
+        payload[tail + 16..tail + 24].copy_from_slice(&direction.0.to_le_bytes());
+        payload[tail + 24..tail + 32].copy_from_slice(&direction.1.to_le_bytes());
+        payload[tail + TEXT_TRAILING_LEN - 1] = anchor;
+        payload.resize(payload.len() + extra, 0);
+        payload
+    }
+
     #[test]
-    fn text_record_decodes_at_the_drawing_side_offset() {
-        let payload = text_payload(30, "HH=NULL ", (0.012, -0.034));
+    fn text_record_decodes_shape_two_the_common_one() {
+        let payload = text_payload(2, "HH=NULL ", (0.012, -0.034));
         assert_eq!(
             decode_primitive(TYPE_TEXT, &payload),
             Some(SymbolPrimitive::Text {
@@ -2135,10 +2205,8 @@ mod tests {
     }
 
     #[test]
-    fn text_record_decodes_past_a_wider_sub_header() {
-        // 248 of the library's records put the count at +22 instead of +30;
-        // the payload size is what tells the two apart.
-        let payload = text_payload(22, "设备位号", (0.05, 0.06));
+    fn text_record_decodes_shape_one() {
+        let payload = text_payload(1, "设备位号", (0.05, 0.06));
         assert_eq!(
             decode_primitive(TYPE_TEXT, &payload),
             Some(SymbolPrimitive::Text {
@@ -2148,28 +2216,43 @@ mod tests {
         );
     }
 
-    /// A text record's own tail: direction pair and trailer, laid out the
-    /// way the library writes them after the insertion point.
-    fn text_payload_with_tail(
-        count_at: usize,
-        text: &str,
-        at: (f64, f64),
-        direction: (f64, f64),
-        anchor: u8,
-    ) -> Vec<u8> {
-        let mut payload = text_payload(count_at, text, at);
-        let tail = payload.len() - TEXT_TRAILING_LEN;
-        payload[tail + 16..tail + 24].copy_from_slice(&direction.0.to_le_bytes());
-        payload[tail + 24..tail + 32].copy_from_slice(&direction.1.to_le_bytes());
-        *payload.last_mut().expect("tail") = anchor;
-        payload
+    #[test]
+    fn text_record_decodes_shape_three_past_its_counters() {
+        // 202 of the library's records are shape 3: the count sits at `+26`,
+        // the text at `+28`, and the insertion point past the `A + B` run
+        // entries. The old offset guess never read one of them.
+        let payload = text_payload_with_counters(3, 3, 2, "CSC NULL", (0.10795, 0.1397));
+        assert_eq!(
+            decode_primitive(TYPE_TEXT, &payload),
+            Some(SymbolPrimitive::Text {
+                text: "CSC NULL".to_owned(),
+                at: (0.10795, 0.1397),
+            })
+        );
+        // The bytes at the end of the text are the counters, not the point.
+        let (_, text_start, tail_start) = text_layout(&payload).expect("layout");
+        assert_ne!(text_start + 2 * "CSC NULL".len(), tail_start);
+    }
+
+    #[test]
+    fn text_record_reads_with_optional_fields_after_the_tail() {
+        // 404 records carry 32–56 bytes after their 36-byte tail. Demanding
+        // that the tail end the payload refused every one of them.
+        let payload = text_payload_with_tail(2, "TBD", (0.108, 0.1396), (1.0, 0.0), 0x01, 32);
+        assert_eq!(
+            decode_primitive(TYPE_TEXT, &payload),
+            Some(SymbolPrimitive::Text {
+                text: "TBD".to_owned(),
+                at: (0.108, 0.1396),
+            })
+        );
     }
 
     #[test]
     fn text_lettering_reads_the_tail_and_survives_a_missing_table() {
         // `text_payload` zero-fills the tail; the direction is patched to
         // a height-scaled pair and the trailer's last byte to the anchor.
-        let payload = text_payload_with_tail(30, "P", (0.0, 0.0), (0.003_175, 0.0), 0x01);
+        let payload = text_payload_with_tail(2, "P", (0.0, 0.0), (0.003_175, 0.0), 0x01, 0);
         let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
         let lettering = lettering_of(&primitive, &payload, None).expect("text letters");
         // No table to ask, so the style fields stay unanswered — but the
@@ -2190,7 +2273,7 @@ mod tests {
     #[test]
     fn text_lettering_reads_a_rotated_unit_direction() {
         // Up the page: the unit pair (0, 1) states rotation and no height.
-        let payload = text_payload_with_tail(30, "I", (0.0, 0.0), (0.0, 1.0), 0x15);
+        let payload = text_payload_with_tail(2, "I", (0.0, 0.0), (0.0, 1.0), 0x15, 0);
         let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
         let lettering = lettering_of(&primitive, &payload, None).expect("text letters");
         assert_eq!(lettering.rotation_rad.to_degrees(), 90.0);
@@ -2199,18 +2282,42 @@ mod tests {
     }
 
     #[test]
-    fn text_record_is_skipped_when_the_count_does_not_account_for_the_payload() {
-        // Neither offset adds up once the payload grows by a byte, and a
-        // count that only nearly fits is exactly the reading that would put
-        // reinterpreted binary on the sheet.
-        let mut payload = text_payload(30, "XXX", (0.0, 0.0));
-        payload.push(0);
+    fn text_lettering_reads_the_tail_with_fields_after_it() {
+        // Direction and anchor belong to the tail, not to the payload's last
+        // 36 bytes — a shape-3 record with optional fields after the tail.
+        let payload = text_payload_with_tail(3, "I", (0.0, 0.0), (0.0, 1.0), 0x15, 40);
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, None).expect("text letters");
+        assert_eq!(lettering.rotation_rad.to_degrees(), 90.0);
+        assert_eq!(lettering.anchor_code, 0x15);
+    }
+
+    #[test]
+    fn text_record_is_skipped_when_the_count_reaches_past_the_body() {
+        // A count bigger than the body it belongs to would run the characters
+        // over the tail: that is a misread, not a label.
+        let mut payload = text_payload(1, "XXX", (0.0, 0.0));
+        payload[22..24].copy_from_slice(&9u16.to_le_bytes());
+        assert_eq!(decode_primitive(TYPE_TEXT, &payload), None);
+    }
+
+    #[test]
+    fn text_record_is_skipped_when_the_shape_is_unknown() {
+        let mut payload = text_payload(2, "XXX", (0.0, 0.0));
+        payload[TEXT_SHAPE_AT..TEXT_SHAPE_AT + 2].copy_from_slice(&7u16.to_le_bytes());
+        assert_eq!(decode_primitive(TYPE_TEXT, &payload), None);
+    }
+
+    #[test]
+    fn text_record_with_no_characters_is_skipped() {
+        // A record stating an empty label draws nothing; the corpus has two.
+        let payload = text_payload(1, "", (0.0, 0.0));
         assert_eq!(decode_primitive(TYPE_TEXT, &payload), None);
     }
 
     #[test]
     fn text_record_with_an_absurd_insertion_point_is_skipped() {
-        let payload = text_payload(30, "XXX", (1.0e9, 0.0));
+        let payload = text_payload(1, "XXX", (1.0e9, 0.0));
         assert_eq!(decode_primitive(TYPE_TEXT, &payload), None);
     }
 

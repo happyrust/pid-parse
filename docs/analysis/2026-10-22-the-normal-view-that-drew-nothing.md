@@ -229,6 +229,11 @@ let selected = if !drawing.is_empty() { drawing } else if let Some(sheet) = fatt
 的一个小缺口，不是删除。4 条边界/多段线情形（`MOV-GLV-…02.sym`、`Self-Operated Safety
 Block Valve.sym`）是边界成员被孪生表先认领后整条被丢，同样是被去重，不是被删。
 
+**同日收尾**：那 14 条不是「小缺口」，是 `igTextBox` 的第三种形状，叠上一条过严的尾巴
+算術（`2026-08-13-igtextbox-has-three-shapes.md` 的公式没落到库侧）。`decode_text` 改成按
+形状表读之后，14 条清零、114 条真重复降到 **33** —— 本节全部读数随之从 203 降到 **108**
+（详见 `2026-10-22-the-symbol-library-never-got-the-third-text-shape.md`）。
+
 **结论**：「正常视图空转」在字节层面就是空——没有墓碑字段可读，也没有任何删除留下的
 悬挂引用。那条线索到此为止，`displayed_primitives` 里「空转不选」的门槛仍然是正确的
 修法：它不依赖这张表空的原因，只要求它画得出东西。
@@ -239,8 +244,8 @@ Block Valve.sym`）是边界成员被孪生表先认领后整条被丢，同样�
   符号没有参考图可对，它们的修后行为只由「空转不选」这条原则保证，不由出图验证。
 - 剩下 11 处的正确答案在图内缓存里（`PidSymbolDefinition` 只记图形自己的
   `JSheet` oid，不记它抄自库的哪张表），库里没有第二条线索引到它。
-- 14 条读不出来的 `0x004D`（上节）如果哪天真要修，得先弄清它们用的是第三种头宽度；
-  它们全在隐藏名层上，纸面不受影响。
+- 那 14 条 `0x004D` 已修（第三节末注）：形状 3 + 尾块「留得下」判据，14 条全部读出；
+  只剩 2 条自称空文本的记录仍拒。
 
 工具：`examples/probe_normal_view_too_wide`（放置打分、库普查、逐符号位/层明细）；
 `examples/probe_empty_sheet_view_sets`（203 条空表逐条的流/链/簇头/JSheet 读数，

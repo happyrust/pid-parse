@@ -2444,11 +2444,11 @@ pub const PSM_TYPE_CODE_IGTEXTBOX: u16 = 0x004D;
 pub const IGTEXTBOX_PAYLOAD_OVERHEAD: usize = 68;
 
 /// Payload offset where an `igTextBox` body begins, after the shared header.
-const IGTEXTBOX_BODY_START: usize = 22;
+pub(crate) const IGTEXTBOX_BODY_START: usize = 22;
 
 /// Bytes of placement/style that follow every `igTextBox` body: the
 /// insertion point, the text direction, and a 4-byte trailer.
-const IGTEXTBOX_TAIL_LEN: usize = 36;
+pub(crate) const IGTEXTBOX_TAIL_LEN: usize = 36;
 
 /// Payload offset of the tail-kind selector: `1` for the placement tail
 /// alone, `2` for the tail that then carries a text box.
@@ -3750,7 +3750,15 @@ impl PsmRecordDecoder for IgTextBoxDecoder {
 ///
 /// `None` for an unknown discriminator or a payload too short for the fields
 /// the shape names.
-fn igtextbox_body_shape(payload: &[u8], text_sub_type: u16) -> Option<(u16, usize, usize)> {
+///
+/// Shared with the symbol library (`symbol_library::decode_text`): a `.sym`
+/// body stores `0x004D` records with this same payload layout, so both readers
+/// ask this one table rather than keeping two rules — the library's separate
+/// count-offset guess could not express shape 3 at all.
+pub(crate) fn igtextbox_body_shape(
+    payload: &[u8],
+    text_sub_type: u16,
+) -> Option<(u16, usize, usize)> {
     let u16_at = |at: usize| -> Option<u16> {
         payload
             .get(at..at + 2)
@@ -3775,8 +3783,10 @@ fn igtextbox_body_shape(payload: &[u8], text_sub_type: u16) -> Option<(u16, usiz
             Some((count, 32, 10 + 2 * count as usize))
         }
         3 => {
-            // Two counts of doubles trail the text; they are part of the body,
-            // so the placement tail starts past them.
+            // `A` selector-1 then `B` selector-2 formatting runs trail the
+            // text, each an 8-byte `(len, selector, style_id)` entry that
+            // [`igtextbox_runs`] walks. They are part of the body, so the
+            // placement tail starts past them.
             let a = u16_at(22)? as usize;
             let b = u16_at(24)? as usize;
             let count = u16_at(26)?;
