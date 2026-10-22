@@ -23,6 +23,12 @@
 //! The rule that shipped before the fix is kept as the "before" column
 //! ([`retired_fit`]): it is what makes the 606-record gap measurable.
 //!
+//! It also reads the tail of every record a shape reads: whether its direction
+//! pair is a direction by the drawing side's rule (the unit vector, or a pair
+//! scaled to a letter height), the check the shipped reader refuses on, and
+//! the tail-kind word at `+20` against how many bytes follow the 36-byte tail,
+//! with the flag word and text box of every kind-2 tail.
+//!
 //! ```text
 //! cargo run --example probe_sym_text_shape_gap -- [--root DIR]... [--all]
 //! ```
@@ -49,6 +55,15 @@ const TAIL_LEN: usize = 36;
 const LIBRARY_COUNT_OFFSETS: [usize; 2] = [30, 22];
 /// `igTextBox`'s own shape discriminator.
 const TEXT_SHAPE_AT: usize = 18;
+/// Payload offset of the tail-kind word: `1` for the placement tail alone,
+/// `2` for the tail that then carries a text box.
+const TAIL_KIND_AT: usize = 20;
+/// Bytes a kind-2 tail occupies before the fields its flag word gates.
+const KIND2_TAIL_LEN: usize = 68;
+/// How far a unit direction pair may stray from length 1.
+const DIRECTION_UNIT_TOLERANCE: f64 = 1e-6;
+/// The lengths a pair scaled to a letter height takes, in metres.
+const LETTER_HEIGHT_M: std::ops::RangeInclusive<f64> = 0.0005..=0.25;
 
 fn corpus_dir() -> PathBuf {
     std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
@@ -233,6 +248,19 @@ struct Tally {
     /// whole text yield is refused — the bodies that letter nothing today.
     files_with_refusals: usize,
     text_invisible: Vec<String>,
+    /// Every record a shape reads, by how its direction pair classifies.
+    direction: BTreeMap<&'static str, usize>,
+    /// Records whose pair is neither a unit vector nor a letter height.
+    off_direction: Vec<String>,
+    /// Every record a shape reads, by the tail-kind word and the bytes after
+    /// the 36-byte tail.
+    tail_kind: BTreeMap<(u16, usize), usize>,
+    /// Kind-2 tails: the flag word at tail `+36` against the bytes past the
+    /// 68-byte kind-2 tail.
+    kind2_flags: BTreeMap<(u32, usize), usize>,
+    /// Kind-2 tails whose box (tail `+40` / `+48`) reads as a size, and not.
+    kind2_box_usable: usize,
+    kind2_box_unusable: usize,
 }
 
 fn main() {
@@ -318,6 +346,7 @@ fn main() {
                         refused_in_file += 1;
                     }
                     examine(&mut tally, &name, stream_name, payload, show_all);
+                    examine_tail(&mut tally, &name, stream_name, payload);
                 }
                 at = end;
             }
@@ -450,6 +479,55 @@ fn examine(tally: &mut Tally, name: &str, stream: &str, payload: &[u8], show_all
     }
 }
 
+/// A text box side a kind-2 tail can hold: finite, positive, sheet-sized.
+fn usable_size(payload: &[u8], at: usize) -> bool {
+    f64_le(payload, at).is_some_and(|value| value.is_finite() && value > 0.0 && value <= 1.0e9)
+}
+
+/// The tail of a record a shape reads: its direction pair under the drawing
+/// side's rule, and its tail kind against what follows the 36-byte tail.
+fn examine_tail(tally: &mut Tally, name: &str, stream: &str, payload: &[u8]) {
+    let Some((shape, count, _, body_len)) = drawn_shape(payload) else {
+        return;
+    };
+    let tail_start = BODY_START + body_len;
+    if count == 0 || tail_start + TAIL_LEN > payload.len() {
+        return;
+    }
+    let extra = payload.len() - (tail_start + TAIL_LEN);
+    let kind = u16_le(payload, TAIL_KIND_AT).unwrap_or(u16::MAX);
+    *tally.tail_kind.entry((kind, extra)).or_default() += 1;
+
+    let cos = f64_le(payload, tail_start + 16).unwrap_or(f64::NAN);
+    let sin = f64_le(payload, tail_start + 24).unwrap_or(f64::NAN);
+    let length = cos.hypot(sin);
+    let class = if (length - 1.0).abs() <= DIRECTION_UNIT_TOLERANCE {
+        "unit"
+    } else if LETTER_HEIGHT_M.contains(&length) {
+        "letter height"
+    } else {
+        "neither"
+    };
+    *tally.direction.entry(class).or_default() += 1;
+    if class == "neither" {
+        tally.off_direction.push(format!(
+            "{name} [{stream}] shape {shape} count {count} pair ({cos:e}, {sin:e}) +{extra} B"
+        ));
+    }
+
+    let kind2_extra = KIND2_TAIL_LEN - TAIL_LEN;
+    if kind == 2 && extra >= kind2_extra {
+        let flags = u32_le(payload, tail_start + TAIL_LEN).unwrap_or(u32::MAX);
+        let past_box = extra - kind2_extra;
+        *tally.kind2_flags.entry((flags, past_box)).or_default() += 1;
+        if usable_size(payload, tail_start + 40) && usable_size(payload, tail_start + 48) {
+            tally.kind2_box_usable += 1;
+        } else {
+            tally.kind2_box_unusable += 1;
+        }
+    }
+}
+
 fn report(tally: &Tally, show_all: bool) {
     println!("\n== 0x004D records on the library's Sheet* streams ==");
     println!("  total {}", tally.records);
@@ -559,6 +637,27 @@ fn report(tally: &Tally, show_all: bool) {
     for (runs, count) in &tally.gap_runs {
         println!("  {runs} run(s) x{count}");
     }
+
+    println!("\n== the tail of every record a shape reads ==");
+    println!("  direction pair under the drawing side's rule:");
+    for (class, count) in &tally.direction {
+        println!("    {class:<13} x{count}");
+    }
+    for line in tally.off_direction.iter().take(40) {
+        println!("    {line}");
+    }
+    println!("  tail kind at +20 x bytes after the 36-byte tail:");
+    for ((kind, extra), count) in &tally.tail_kind {
+        println!("    kind {kind:>5} +{extra:>3} B x{count}");
+    }
+    println!("  kind 2: flag word at tail +36 x bytes past the 68-byte tail:");
+    for ((flags, past), count) in &tally.kind2_flags {
+        println!("    flags {flags:#010x} +{past:>3} B x{count}");
+    }
+    println!(
+        "  kind 2: box usable {}  not usable {}",
+        tally.kind2_box_usable, tally.kind2_box_unusable
+    );
 
     println!(
         "\n== records the library's arithmetic does not explain{} ==",
