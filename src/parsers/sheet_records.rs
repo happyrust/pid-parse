@@ -3638,14 +3638,16 @@ pub struct SheetIgTextBoxDecoded {
     /// that closes the 36-byte placement tail (payload `+35` of the tail).
     ///
     /// `(code >> 4) % 3` names the horizontal hot point the insertion sits
-    /// at — `0` left, `1` centre, `2` right — and `(code & 0x0F) % 3` the
-    /// vertical one — `0` bottom, `1` top, `2` middle. So `0x01` = top-left,
-    /// `0x05` = middle-left, `0x15` = middle-centre, `0x10` = bottom-centre.
+    /// at — `0` left, `1` centre, `2` right; the `+3`-shifted high nibbles
+    /// (`0x38`/`0x48`/`0x58`) mark labels attached to a parent symbol and
+    /// read through the same classes. The low nibble is a pair of flags, not
+    /// an index: `0` is the baseline, `1` and `3` the ascender line, `2` the
+    /// body's top, and any value with `0x4` or `0x8` set the middle — see
+    /// `docs/analysis/2026-10-19-a-pair-of-flags-not-an-index.md` and
+    /// `docs/analysis/2026-10-19-top-anchored-labels-sit-on-the-ascender-line.md`.
     /// It is the per-record justification and it overrides whatever the
     /// paragraph style declares: `L=0.8MPa ` and `1/2"` share a `Center`
-    /// paragraph but letter left-anchored and centred respectively. The
-    /// `+3`-shifted high nibbles (`0x38`/`0x48`/`0x58`) mark labels attached
-    /// to a parent symbol; they read through the same `%3` classes.
+    /// paragraph but letter left-anchored and centred respectively.
     /// Evidence: ~1,500 corpus records' insertion points against the
     /// reference PDFs' glyph boxes.
     pub anchor_code: u8,
@@ -3686,16 +3688,19 @@ pub struct IgTextBoxRun {
 /// Validation — every rule is about the record's own shape; none
 /// assumes a payload size measured off one batch of fixtures:
 /// 1. `type_code == 0x004D`;
-/// 2. `bytes_to_follow >= 68` (the floor: head + tail around an empty
-///    text) and the payload fits in the stream;
-/// 3. the inline `text_length` at payload offset 30 is `<= 1024`
-///    (reject obvious noise) and the payload has room for that text
-///    plus the 36-byte trailing block;
-/// 4. the 4 doubles after the text are finite + in domain;
-/// 5. the last two of them are a unit vector — the text direction. This
-///    is also what checks rule 3's stated length: a length that over-runs
-///    the label puts this read on the wrong bytes, and they are not a
-///    direction.
+/// 2. `bytes_to_follow >= 60` (the floor: shape 1's header, count and
+///    tail around an empty text) and the payload fits in the stream;
+/// 3. the shape discriminator at payload `+18` is one of the three
+///    `igtextbox_body_shape` knows, which says where the text length sits
+///    (`+22`, `+30` or `+26`) and how long the body runs; the length is
+///    `<= 1024` (reject obvious noise) and the payload has room for the
+///    body plus the 36-byte placement tail;
+/// 4. the 4 doubles opening the tail — the insertion point, then the
+///    direction pair — are finite + in domain;
+/// 5. the direction pair is a direction: the unit vector, or a pair scaled
+///    to a letter height (`igtextbox_letter_height`). This is also what
+///    checks rule 3's stated length: a length that over-runs the label puts
+///    this read on the wrong bytes, and they are not a direction.
 ///
 /// Retired in 2026-08-12: rule 3 used to *derive* the length from
 /// `bytes_to_follow` assuming a fixed 68-byte overhead and demand the

@@ -384,10 +384,12 @@ pub struct StyledPrimitive {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SymbolLettering {
     /// The record's own anchor: the last byte of the trailer that closes
-    /// the placement tail — the same scheme the sheet `igTextBox` carries:
-    /// `(code >> 4) % 3` horizontal (`0` left, `1` centre, `2` right),
-    /// `(code & 0x0F) % 3` vertical (`0` bottom, `1` top, `2` middle). It
-    /// overrides `alignment` the same way it does on a drawing sheet.
+    /// the placement tail. The high nibble reads as on a drawing sheet,
+    /// `(code >> 4) % 3` horizontal (`0` left, `1` centre, `2` right), and
+    /// overrides `alignment` the same way. The low nibble does not: a
+    /// symbol's own label hangs from the middle unless `(code & 0x0F) % 3`
+    /// is `1`, the top. See
+    /// `docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`.
     pub anchor_code: u8,
     /// Text rotation in radians, from the tail's `(cos, sin)` pair.
     pub rotation_rad: f64,
@@ -580,6 +582,12 @@ impl SymbolGeometry {
     /// Axis-aligned bounds of the body as `(min_x, min_y, max_x, max_y)`,
     /// or `None` when there is nothing to draw.
     ///
+    /// Every primitive counts, hidden layers included, and with them the
+    /// label templates a `.sym` parks well away from its body: across the
+    /// library 85 bodies reach more than twice as far as what
+    /// [`Self::displayed_primitives`] draws, 49 of them through lettering
+    /// alone. Bound the displayed primitives for the extent that prints.
+    ///
     /// Arcs contribute their endpoints and centre rather than a swept
     /// extent, which can under-report a bulge; that is enough for the
     /// placement-level framing this feeds and avoids a quadrant walk.
@@ -667,9 +675,9 @@ impl SymbolGeometry {
     /// insulated/heat-traced representation). Where view sets decode, the
     /// normal sheets are the ones that do not show a supplementary layer
     /// **and keep at least one stroke** once their own set has had its say;
-    /// where no sheet qualifies, the fattest sheet wins, then `Sheet6` — the
-    /// body sheet on all but a few dozen of the library's files — then
-    /// sheets with no view state, then everything.
+    /// where no sheet qualifies, the sheet that keeps the most wins, ties to
+    /// the lower number; where no sheet keeps anything, the body comes back
+    /// whole.
     ///
     /// The second picks **which layers** of a selected sheet draw: the
     /// sheet's own view set answers at the layer's number where the bitmap
@@ -681,10 +689,12 @@ impl SymbolGeometry {
     ///
     /// A clean set is not proof the body is on its sheet: it survives as the
     /// canonical `Default`-only map on `Sheet6` of symbols whose body was
-    /// copied or revised onto a second sheet, which then carries either no
-    /// view set or the everything-on map. Half the corpus's clean sets hide
-    /// every stroke they govern (431 of 868), so the pick requires a stroke.
-    /// See `docs/analysis/2026-10-22-the-normal-view-that-drew-nothing.md`.
+    /// revised onto a second sheet, which then carries either no view set or
+    /// the everything-on map. A body merely copied stays with the clean sheet
+    /// ([`read_symbol_geometry`] keeps a shared stroke there), yet 206 of the
+    /// corpus's 868 clean sets still hide every stroke they govern, so the
+    /// pick requires a stroke. See
+    /// `docs/analysis/2026-10-22-the-normal-view-that-drew-nothing.md`.
     ///
     /// Where **no** sheet has a drawing normal view, the body is the sheet
     /// that keeps the most strokes once its own set has had its say, not
@@ -722,16 +732,6 @@ impl SymbolGeometry {
             .iter()
             .copied()
             .filter(|sheet| view_of(*sheet).is_some_and(|view| !view.shows_supplementary()))
-            .collect();
-        let alternate: BTreeSet<u32> = sheets_present
-            .iter()
-            .copied()
-            .filter(|sheet| view_of(*sheet).is_some_and(SymbolSheetView::shows_supplementary))
-            .collect();
-        let unknown: BTreeSet<u32> = sheets_present
-            .iter()
-            .copied()
-            .filter(|sheet| view_of(*sheet).is_none())
             .collect();
         let layer_shown = |styled: &&StyledPrimitive| {
             if styled.sheet_layer_ref == 0 {
@@ -771,8 +771,8 @@ impl SymbolGeometry {
         };
 
         // A clean set is only a claim that the body is on its sheet: across
-        // the corpus 431 of the 868 symbols that have one draw nothing once
-        // that set has had its say, and 163 govern a sheet holding no
+        // the corpus 206 of the 868 symbols that have one draw nothing once
+        // that set has had its say, and 61 govern a sheet holding no
         // primitives at all. Keeping such a pick would either empty the body
         // (and hand it to the whole-body fallback, which pulls the other
         // sheet's strokes in) or ship a one-line stub of a body filed
@@ -791,14 +791,10 @@ impl SymbolGeometry {
             drawing
         } else if let Some(sheet) = fattest {
             [sheet].into_iter().collect()
-        } else if sheets_present.contains(&6) {
-            [6].into_iter().collect()
-        } else if !unknown.is_empty() {
-            unknown
-        } else if alternate != sheets_present {
-            sheets_present.difference(&alternate).copied().collect()
         } else {
-            sheets_present
+            // `fattest` is `None` only where no sheet shows a primitive, so
+            // no pick could show one either.
+            return self.primitives.iter().collect();
         };
 
         let shown =
@@ -1886,6 +1882,42 @@ mod tests {
         assert_eq!(body.displayed_primitives().len(), 1);
     }
 
+    #[test]
+    fn a_body_no_sheet_shows_comes_back_whole_across_its_sheets() {
+        // Hidden lettering on a clean sheet, a hidden stroke on a sheet with
+        // no view set, another under an all-on set: nothing shows anywhere,
+        // so no pick shows anything and the body comes back whole.
+        let styled = |sheet_ref: u32, primitive| StyledPrimitive {
+            primitive,
+            style: None,
+            lettering: None,
+            sheet_layer_ref: 1,
+            sheet_layer_name: Some("Label".to_owned()),
+            sheet_layer_number: 1,
+            sheet_ref,
+        };
+        let line = |x: f64| SymbolPrimitive::Line {
+            start: (x, 0.0),
+            end: (x, 1.0),
+        };
+        let view = |sheet_ref: u32, display: u8| SymbolSheetView {
+            sheet_ref,
+            display: vec![display],
+            layers: vec![(1, "Label".to_owned())],
+        };
+        let body = SymbolGeometry {
+            primitives: vec![
+                styled(6, line(0.0)),
+                styled(7, line(1.0)),
+                styled(8, line(2.0)),
+            ],
+            skipped_records: BTreeMap::new(),
+            sheet_layers: Vec::new(),
+            sheet_views: vec![view(6, 0b01), view(8, 0b11)],
+        };
+        assert_eq!(body.displayed_primitives().len(), 3);
+    }
+
     /// A body kept only on an all-on sheet has no *normal* view: the sheet
     /// whose set files every layer on reads as the alternate. `Sheet6` is
     /// then a stub, and picking it drew one stroke of a tree.
@@ -2280,7 +2312,10 @@ mod tests {
         );
         // The bytes at the end of the text are the counters, not the point.
         let (_, text_start, tail_start) = text_layout(&payload).expect("layout");
-        assert_ne!(text_start + 2 * "CSC NULL".len(), tail_start);
+        assert_ne!(
+            text_start + 2 * "CSC NULL".encode_utf16().count(),
+            tail_start
+        );
     }
 
     #[test]
