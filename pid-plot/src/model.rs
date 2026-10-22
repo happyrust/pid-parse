@@ -2496,6 +2496,117 @@ mod tests {
         assert_eq!(value, "HH=NULL");
     }
 
+    /// The bundled library holds one label that really mixes styles, and it
+    /// reaches the page in pieces: `Wastewater Pit.sym`'s description letters
+    /// `NULL  NULL*NULL*NULL` with a 3.175 mm 宋体 `*` inside a 2.822 mm Arial
+    /// line. This is the end-to-end proof that the partition is not merely
+    /// carried in the model — the PDF is cut into three runs, the middle one
+    /// larger, each starting where the previous ended.
+    #[test]
+    fn a_library_label_that_mixes_sizes_is_lettered_in_three_runs() {
+        use super::PaperModel;
+        use crate::read::read_plot;
+        use crate::write::{PlotFont, write_plot};
+
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+            "../test-file/symbols-full/Equipment/Labels - Equipment/\
+             Descriptions new/Wastewater Pit.sym",
+        );
+        if !path.is_file() {
+            eprintln!("skipping: {} is not in this checkout", path.display());
+            return;
+        }
+        let geometry =
+            pid_parse::symbol_library::read_symbol_geometry(&path).expect("the symbol reads");
+        let styled = geometry
+            .primitives
+            .iter()
+            .find(|styled| {
+                matches!(
+                    &styled.primitive,
+                    SymbolPrimitive::Text { text, .. } if text == "NULL  NULL*NULL*NULL"
+                )
+            })
+            .expect("the mixed label");
+        let mut out = Vec::new();
+        push_symbol_primitive(
+            &mut out,
+            &entity(PidGraphicKind::Point {
+                position: PidPoint { x: 0.0, y: 0.0 },
+            }),
+            &placement(),
+            SymbolItem {
+                shape: &styled.primitive,
+                style: styled.style.as_ref(),
+                lettering: styled.lettering.as_ref(),
+            },
+            None,
+            None,
+        );
+        assert_eq!(out.len(), 1, "one label in the table: {out:?}");
+        let PaperShape::Text { value, spans, .. } = &out[0].shape else {
+            panic!("{:?}", out[0].shape);
+        };
+        assert_eq!(value, "NULL  NULL*NULL*NULL");
+        let sizes: Vec<f64> = spans
+            .iter()
+            .map(|span| span.height_mm.unwrap_or_default())
+            .collect();
+        assert_eq!(sizes.len(), 3, "three runs: {spans:?}");
+        assert!(
+            (sizes[0] - 2.822).abs() < 0.001
+                && (sizes[1] - 3.175).abs() < 0.001
+                && (sizes[2] - 2.822).abs() < 0.001,
+            "the middle run is the larger one: {sizes:?}"
+        );
+
+        let model = PaperModel {
+            library: Vec::new(),
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: out,
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let text: String = ink.spans.iter().map(|span| span.text.as_str()).collect();
+        assert_eq!(
+            text, "NULL  NULL*NULL*NULL",
+            "every character still reaches the page: {:?}",
+            ink.spans
+        );
+        assert_eq!(
+            ink.spans.len(),
+            3,
+            "three runs on the page: {:?}",
+            ink.spans
+        );
+        let heights: Vec<f64> = ink.spans.iter().map(|span| span.height_mm).collect();
+        assert!(
+            heights[1] > heights[0] + 0.2 && heights[1] > heights[2] + 0.2,
+            "the middle run letters larger: {heights:?}"
+        );
+        for pair in ink.spans.windows(2) {
+            let expected = pair[0].origin_mm[0] + pair[0].advance_mm;
+            assert!(
+                (pair[1].origin_mm[0] - expected).abs() < 0.1,
+                "each run starts where the one before it ended: {:?}",
+                ink.spans
+            );
+        }
+    }
+
     #[test]
     fn drawing_text_that_says_null_is_still_drawn() {
         let mut out = Vec::new();

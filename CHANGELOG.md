@@ -13,7 +13,9 @@
 - **图纸侧的 `igTextBox` 也接了同一份分区**：`push_entity` 的文字分支从 `ResolvedTextStyle::spans` 带上分区，`label_line_ranges` 给每行记下它在记录里的起始字符（`\r\n` 算一个断行、但两个字符都跳过），`line_spans` 把跨行的 run 按行切开并重定偏移；丢掉控制字符的行不再与记录对齐，整行不给分区。run 里的字体名（`宋体`）先过 `typeface_key` 再与 writer 嵌入的脸（`SimSun`）比，否则同一张脸两种写法会把标签切开 —— I井场 的 `SP:` 因此多花 2 字节，修好后逐位回到基线。
 - **库侧读数**（新探针 `probe_symbol_text_spans`，1262 个 `.sym` / 2404 条文字）：带分区 **165** 条，其中纯 `NULL` 占位 **129** 条；落墨的 36 条里，分段后仍同字号同字体 **33**、另一字体 **2**、另一字号兼另一字体 **1**。真会因此改变字样的是 3 条（`Pig Launcher & Receiver Description.sym` 两条、`Wastewater Pit.sym` 一条）。
 - **出图读数**：`probe_export_audit` 多一列 `partitions N (M letter differently)`，58 张图纸（5 张语料 + 53 张整厂备份）逐张：符号侧 **partitions 0**（那 3 条所在的符号不在这 58 张图上），图纸侧 **35 条**带分区（32 张各 1 条、一张 3 条），全部 **0 letter differently** —— 这些 run 与标签自己那一条同字号同字体，所以纸上一个字节也没变。五张参考图重导的 PDF 字节数与改前逐位相同（671405 / 449953 / 444540 / 524411 / 553973），`plot_text_sources`（546/546、151/151、123/123、167/167、249/249）、`plot_compare`、`export_every_fixture`、`export_plant_backup`（53 张）全过。
-- **测试**：`pid-plot` writer 新增三条（切段按时续行、只换字体的 span 也单独切段、同字号同字体不切）、model 新增三条（每行记下起始字符号、跨行 run 按行切、图纸标签把分区带到纸上）；`symbol_library` 新增三条（分区按 `char` 偏移累积、单 run 无分区、非 BMP 撤分区）。
+- **换脸真上纸**：`prepare_fonts` 原本只按标签压平后的 `font` 装载，span 指名的另一张脸会静默退回主字体。现在它把 spans 的字体也收集进来，但按**可选**处理：文件在就装，不在或读不出就跳过（那一段用兵底脸，与读分区之前一致）；标签自己的字体仍必需、仍报错。两条单测用临时目录把 `INTER_REGULAR` 冒充成 `arial.ttf` / `simsun.ttf`，不依赖本机许可字体；把收集循环置空后第一条立刻失败。58 张图重导零字节变化（现有分区标签的 span 字体与标签同名）。
+- **端到端证明**：仓库自带的 `test-file/symbols-full/.../Descriptions new/Wastewater Pit.sym` 里有一条真混排标签（`NULL  NULL*NULL*NULL`，中间 `*` 是 3.175 mm 宋体，其余 2.822 mm Arial）。单测 `a_library_label_that_mixes_sizes_is_lettered_in_three_runs` 从 `.sym` 读到 PDF 再读回来：模型 3 段、读回 3 段且中间那段更高、文字一字不缺、每段接在上一段末尾；把 `text_segments` 改成永远 `plain()` 后同一条测试读回 1 段并失败，说明它真能拦住分区被丢掉的回归。
+- **测试**：`pid-plot` writer 新增三条（切段按时续行、只换字体的 span 也单独切段、同字号同字体不切）、model 新增四条（每行记下起始字符号、跨行 run 按行切、图纸标签把分区带到纸上、`Wastewater Pit.sym` 的端到端三段）；`symbol_library` 新增三条（分区按 `char` 偏移累积、单 run 无分区、非 BMP 撤分区）。
 - 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §九。
 
 ### 库侧符号文字改读 run：1350 条标签的字高不再取段落默认（2026-10-23）

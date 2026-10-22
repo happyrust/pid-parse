@@ -437,6 +437,50 @@ Wastewater Pit.sym                        "NULL  NULL*NULL*NULL"  "*" 一个字�
 `plot_text_sources`（546/546、151/151、123/123、167/167、249/249）、
 `export_every_fixture`、`export_plant_backup`（53 张）全过。
 
+### 端到端证明：`Wastewater Pit.sym` 真的切成三段
+
+「备而未用」需要一个反证：只要分区进得去，纸上就应该看得见。仓库自带的
+`test-file/symbols-full/Equipment/Labels - Equipment/Descriptions new/Wastewater Pit.sym`
+里就有一条真的混排标签 —— `NULL  NULL*NULL*NULL`，run 是 `10x#37 2.8222 mm Arial |
+1x#41 3.1750 mm 宋体 | 9x#37 2.8222 mm Arial`，中间那个 `*` 比正文大一号还换了脸。
+
+单测 `a_library_label_that_mixes_sizes_is_lettered_in_three_runs`（`pid-plot/src/model.rs`）
+把这条 `.sym` 读成图元、放在纸上、写 PDF、再读回来，四件事全部钉死：
+
+| 断言 | 读数 |
+|---|---|
+| 模型上的分区 | 3 段，2.822 / 3.175 / 2.822 mm |
+| 读回来的文字 | `NULL  NULL*NULL*NULL`，一字不缺 |
+| 读回来的段数 | 3 段（读回器按字高 0.05 pt 容差分段，0.35 mm 的差远远超过它） |
+| 中间那段 | 比前后都高 ≥ 0.2 mm |
+| 续行 | 每段起点 = 上一段 `origin + advance`（< 0.1 mm） |
+
+这不是同义反复：把 `text_segments` 改成永远 `plain()`（即假装没有分区）再跑，同一条
+测试读回 **1 段**、`left: 1 right: 3` 并失败；恢复后过。所以它真能拦住「分区被丢掉」
+这类回归，而不是跟着实现一起消失的断言。
+
+### 换脸要真上纸：`prepare_fonts` 也得看 spans
+
+分段切对地方还不够。`prepare_fonts` 原本只按每条 `PaperShape::Text` 的 `font`（即压平后
+那一个样式）装载字体，于是 `Wastewater Pit.sym` 的 `*` 虽然按 3.175 mm 排，字体却会退回
+标签自己的 Arial —— 换脸在最后一步静默消失。
+
+现在它把 spans 里指名的字体也收集进来，但**按可选处理**：文件在就装（正常参与 `Tf`），
+不在或读不出就跳过，那一段就用编码器的兵底脸 —— 这正是读分区之前页面上的样子，而“必须
+存在”会让一台没有某个字体的机器整个导出报错，代价不对等。标签自己那一个字体仍必需，
+原有的报错规则不变。
+
+两条单测（`pid-plot/src/fonts.rs`，用临时目录把 `INTER_REGULAR` 冒充成 `arial.ttf` 与
+`simsun.ttf`，不依赖本机许可字体）：
+
+- `a_span_naming_another_face_loads_it`：span 写 `宋体` → 装载列表是 `["Arial", "SimSun"]`；
+- `a_span_face_this_machine_lacks_degrades_instead_of_refusing`：只有 `arial.ttf` 时
+  照常成功，列表只有 `["Arial"]`。
+
+把这段收集循环临时置空，第一条单测立刻失败，所以它守的是真行为。出图侧：58 张图重导
+**零字节变化**（五张参考图仍是 671405 / 449953 / 444540 / 524411 / 553973）—— 因为现有
+带分区的标签，其 span 字体本来就与标签自己那一个同名，不会多装一张脸。
+
 ### 为什么明知 0 也接
 
 - 这是「一条文字只有一个样式槽」的最后一层：分区一旦有标签用得上，writer 就会切段，
@@ -451,6 +495,7 @@ Wastewater Pit.sym                        "NULL  NULL*NULL*NULL"  "*" 一个字�
 ```powershell
 cargo run --example probe_symbol_text_spans                    # 库侧分区普查
 cargo run -p pid-plot --example probe_export_audit -- <a.pid>  # 逐张 partitions / 字节数
-cargo test -p pid-plot --lib write::tests                      # 切段与续行两条单测
+cargo test -p pid-plot --lib write::tests                      # 切段与续行单测
+cargo test -p pid-plot --lib model::tests::a_library_label_that_mixes_sizes_is_lettered_in_three_runs
 cargo test --lib symbol_library::tests                         # 分区与退回规则
 ```

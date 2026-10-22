@@ -67,11 +67,14 @@ pub fn font_dirs(corpus: Option<&Path>) -> Vec<PathBuf> {
 
 /// Load the faces `models` letter in from `dirs`.
 ///
-/// Every face a run names is required; a face file that no directory
-/// carries is an error naming where the search looked. Characters no
-/// loaded face covers pull the CJK fallback faces (`FangSong`, `SimSun`)
-/// in too — the run keeps its named face for everything it can encode and
-/// only the uncovered characters borrow.
+/// The face a label's own style names is required; a face file that no
+/// directory carries is an error naming where the search looked. A face a
+/// formatting **run** names is optional — the label draws in its own face
+/// where the run's face is absent, the way it did before the partition was
+/// read — since one missing typeface must not refuse a whole export.
+/// Characters no loaded face covers pull the CJK fallback faces (`FangSong`,
+/// `SimSun`) in too — the run keeps its named face for everything it can
+/// encode and only the uncovered characters borrow.
 ///
 /// # Errors
 ///
@@ -106,6 +109,49 @@ pub fn prepare_fonts(
                 covered.push(ch);
             }
         }
+        faces.push(PreparedFont {
+            key: (*key).to_string(),
+            bytes,
+        });
+    }
+    // A run inside a label may name a face the label's own style does not —
+    // `Wastewater Pit.sym` letters one `*` in 宋体 inside an Arial line, and a
+    // sheet label may mix them the same way. Those faces are **optional**: a
+    // machine without the file draws that stretch in the face the encoder
+    // falls back to, which is what the page did before partitions were read,
+    // while demanding it would refuse a whole export over one missing
+    // typeface. A file that is present but unusable is skipped for the same
+    // reason.
+    let mut run_faces: BTreeMap<&'static str, String> = BTreeMap::new();
+    for model in models {
+        for primitive in &model.primitives {
+            let PaperShape::Text { value, spans, .. } = &primitive.shape else {
+                continue;
+            };
+            if value.is_empty() {
+                continue;
+            }
+            for span in spans.iter() {
+                let Some(named) = span.font.as_deref() else {
+                    continue;
+                };
+                run_faces
+                    .entry(typeface_key(Some(named), value))
+                    .or_default()
+                    .push_str(value);
+            }
+        }
+    }
+    for (key, text) in &run_faces {
+        if faces.iter().any(|face| face.key == *key) {
+            continue;
+        }
+        let Some(bytes) = face_file(dirs, key)? else {
+            continue;
+        };
+        let Ok(bytes) = subset_or_whole(key, &bytes, text) else {
+            continue;
+        };
         faces.push(PreparedFont {
             key: (*key).to_string(),
             bytes,
@@ -301,7 +347,10 @@ fn is_cjk(ch: char) -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{font_dirs, subset_or_whole, typeface_key};
+    use super::{font_dirs, prepare_fonts, subset_or_whole, typeface_key};
+    use crate::model::{
+        PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, TextAnchor, TextLine,
+    };
 
     /// SimSun ships a 5.5 MiB `EBDT` bitmap strike and an 11.7 MiB `glyf`
     /// table. `fontcull` subsets the outlines but passes the bitmap tables
@@ -340,6 +389,97 @@ mod tests {
             "subset is {} bytes of {} — the bitmap tables came back",
             subset.len(),
             bytes.len()
+        );
+    }
+
+    /// A label whose run names its own face needs nothing extra; one whose run
+    /// names another face asks for it, and gets it when the file is there.
+    fn labelled(spans: Vec<PaperTextSpan>) -> PaperModel {
+        PaperModel {
+            library: Vec::new(),
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![PaperPrimitive {
+                confidence: "decoded",
+                shape: PaperShape::Text {
+                    origin_mm: [20.0, 40.0],
+                    height_mm: Some(2.5),
+                    rotation: 0.0,
+                    value: "AB".into(),
+                    font: Some("Arial".into()),
+                    anchor: TextAnchor::Left,
+                    line: TextLine::Bottom,
+                    spans,
+                },
+                stream_path: None,
+                byte_range: None,
+                symbol: None,
+                stroke: None,
+            }],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        }
+    }
+
+    /// A scratch directory holding one face under the name the loader looks
+    /// for, so these two tests need no licensed fonts on the machine.
+    fn scratch_dir(name: &str, faces: &[(&str, &[u8])]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pid-plot-fonts-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        for (file, bytes) in faces {
+            std::fs::write(dir.join(file), bytes).expect("scratch face");
+        }
+        dir
+    }
+
+    /// `Wastewater Pit.sym` letters one `*` in 宋体 inside an Arial label: the
+    /// span names a face the label's own style does not, so the writer has to
+    /// load it — otherwise the stretch is drawn in Arial and the face change
+    /// silently vanishes.
+    #[test]
+    fn a_span_naming_another_face_loads_it() {
+        let dir = scratch_dir(
+            "span-face",
+            &[
+                ("arial.ttf", pdfcraft_fonts::INTER_REGULAR),
+                ("simsun.ttf", pdfcraft_fonts::INTER_REGULAR),
+            ],
+        );
+        let model = labelled(vec![PaperTextSpan {
+            start: 0,
+            len: 1,
+            height_mm: Some(2.5),
+            font: Some("宋体".into()),
+        }]);
+        let faces = prepare_fonts(&[&model], &[dir]).expect("both faces load");
+        let keys: Vec<&str> = faces.iter().map(|face| face.key.as_str()).collect();
+        assert_eq!(keys, vec!["Arial", "SimSun"], "the run's face came along");
+    }
+
+    /// The same label on a machine without that file still plots: the run
+    /// falls back to the label's face instead of refusing the export.
+    #[test]
+    fn a_span_face_this_machine_lacks_degrades_instead_of_refusing() {
+        let dir = scratch_dir(
+            "span-face-absent",
+            &[("arial.ttf", pdfcraft_fonts::INTER_REGULAR)],
+        );
+        let model = labelled(vec![PaperTextSpan {
+            start: 0,
+            len: 1,
+            height_mm: Some(2.5),
+            font: Some("宋体".into()),
+        }]);
+        let faces = prepare_fonts(&[&model], &[dir]).expect("the label's own face is enough");
+        let keys: Vec<&str> = faces.iter().map(|face| face.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec!["Arial"],
+            "the missing run face is skipped, not fatal"
         );
     }
 
