@@ -246,11 +246,12 @@ cargo run -p pid-plot --example probe_library_vs_cached_bodies -- <图或目录>
 `displayed_primitives()` 只剩一条曲线。覆盖率 0.9989 说明厂商打印的正是缓存那份，
 所以「图内本体优先」这次是证据支持的选择，不是随便定的。
 
-**但库侧留了一个隐患**：`displayed_primitives()` 的图层滤镜在这 1828 个本体上滤掉
-**5356 / 15316 条笔画（35 %）**，其中 **411 个本体被滤掉一半以上**
+**库侧那个隐患当天就查清了**：`displayed_primitives()` 在这 1828 个本体上滤掉
+**5356 / 15316 条笔画（35 %）**，其中 **411 个本体丢掉一半以上**
 （`Wellhead Christmas Tree 02.sym` 84 → 1、`Check Valve Type 2.sym` 16 → 1、
-`Horizontal Drum.sym` 5 → 1、`Concentric Reducer.sym` 5 → 1）。今天没有任何一张图依赖库
-本体（`library_only_placements = 0`），所以一条笔画也没画错；哪天遇到不带缓存本体的 `.pid`，
-这些符号会被画成几乎空白。**没有改**：要动这个滤镜，得先拿更多符号的厂商出图确认是视图集的
-位读反了，还是这些 `.sym` 的图层表本来就把本体标成不显示；仅凭「缓存里更多」就去改，等于拿
-411 个本体去赌。今天的结论只是把它记下来、并证明目前不发生。
+`Horizontal Drum.sym` 5 → 1、`Concentric Reducer.sym` 5 → 1）。原因不是图层读错，而是
+「没有正常视图」时兜底选了 `Sheet6`：那份 `.sym` 只有一个视图集、管的却是 `Sheet374`（位图全开，
+被认成备用视图），而 `Sheet6` 只是 1 条 B 样条的存根。已改（只改这一支：`normal` 为空时取
+按自己视图集算笔画最多的表），一致率 58.5 % → 70.1 %。今天没有任何一张图依赖库本体
+（`library_only_placements = 0`），所以**页面一个像素没动**；改的是「库当后备时会画成什么样」。
+根因、打分与改后的数见 `docs/analysis/2026-10-22-the-sheet-pick-that-shrank-a-symbol.md`。

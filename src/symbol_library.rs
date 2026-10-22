@@ -672,6 +672,20 @@ impl SymbolGeometry {
     /// `Jacket`, `Construction`, and `Dimension`/`Deminsion` off and
     /// `Default`, `ConnectPoints`, and `Invisible` on.
     ///
+    /// Where **no** sheet has a normal view, the body is the sheet that keeps
+    /// the most strokes once its own set has had its say, not `Sheet6`. A
+    /// `.sym` can keep its body only once — on a sheet whose view set files
+    /// every layer on, which this classification reads as the alternate — and
+    /// its `Sheet6` can then be a one-stroke stub: `Wellhead Christmas Tree
+    /// 02.sym` files 83 strokes on `Sheet374` and one B-spline on `Sheet6`,
+    /// and choosing `Sheet6` drew a single curve where the drawing's own
+    /// cached body (45 lines, 23 circles, 11 fills) is what the vendor
+    /// printed. Across 1262 library symbols, 530 bodies lose strokes to the
+    /// sheet pick; the drawings' cached bodies match the fattest sheet on all
+    /// 372 places that have no normal view, and the previous `Sheet6` rule on
+    /// 36 % of them (`docs/analysis/2026-10-22-the-sheet-pick-that-shrank-
+    /// a-symbol.md`).
+    ///
     /// A body the filter would empty is returned whole instead: a symbol
     /// authored entirely on an unconventional name keeps its strokes
     /// rather than vanishing into a marker dot.
@@ -704,22 +718,7 @@ impl SymbolGeometry {
             .copied()
             .filter(|sheet| view_of(*sheet).is_none())
             .collect();
-        let selected: BTreeSet<u32> = if !normal.is_empty() {
-            normal
-        } else if sheets_present.contains(&6) {
-            [6].into_iter().collect()
-        } else if !unknown.is_empty() {
-            unknown
-        } else if alternate != sheets_present {
-            sheets_present.difference(&alternate).copied().collect()
-        } else {
-            sheets_present
-        };
-
-        let shown = |styled: &&StyledPrimitive| {
-            if !selected.contains(&styled.sheet_ref) {
-                return false;
-            }
+        let layer_shown = |styled: &&StyledPrimitive| {
             if styled.sheet_layer_ref == 0 {
                 return true;
             }
@@ -735,6 +734,43 @@ impl SymbolGeometry {
                 .as_deref()
                 .is_none_or(|name| !hidden_symbol_layer(name))
         };
+
+        // With no normal view the body is the sheet that keeps the most
+        // strokes, not `Sheet6`: a body kept once on an all-on sheet leaves
+        // `Sheet6` as a stub. Ties keep the lower sheet number.
+        let fattest = {
+            let mut best: Option<(u32, usize)> = None;
+            for sheet in &sheets_present {
+                let strokes = self
+                    .primitives
+                    .iter()
+                    .filter(|styled| styled.sheet_ref == *sheet)
+                    .filter(|styled| layer_shown(styled))
+                    .count();
+                if best.is_none_or(|(_, most)| strokes > most) {
+                    best = Some((*sheet, strokes));
+                }
+            }
+            best.filter(|(_, strokes)| *strokes > 0)
+                .map(|(sheet, _)| sheet)
+        };
+
+        let selected: BTreeSet<u32> = if !normal.is_empty() {
+            normal
+        } else if let Some(sheet) = fattest {
+            [sheet].into_iter().collect()
+        } else if sheets_present.contains(&6) {
+            [6].into_iter().collect()
+        } else if !unknown.is_empty() {
+            unknown
+        } else if alternate != sheets_present {
+            sheets_present.difference(&alternate).copied().collect()
+        } else {
+            sheets_present
+        };
+
+        let shown =
+            |styled: &&StyledPrimitive| selected.contains(&styled.sheet_ref) && layer_shown(styled);
         let visible: Vec<&StyledPrimitive> = self.primitives.iter().filter(|s| shown(s)).collect();
         if visible.is_empty() {
             self.primitives.iter().collect()
@@ -1767,6 +1803,81 @@ mod tests {
             sheet_views: Vec::new(),
         };
         assert_eq!(body.displayed_primitives().len(), 1);
+    }
+
+    /// A body kept only on an all-on sheet has no *normal* view: the sheet
+    /// whose set files every layer on reads as the alternate. `Sheet6` is
+    /// then a stub, and picking it drew one stroke of a tree.
+    #[test]
+    fn a_sole_all_on_view_does_not_shrink_a_body_to_its_sheet6_stub() {
+        let styled = |sheet: u32, x: f64| StyledPrimitive {
+            primitive: SymbolPrimitive::Line {
+                start: (x, 0.0),
+                end: (x, 1.0),
+            },
+            style: None,
+            lettering: None,
+            sheet_layer_ref: 1,
+            sheet_layer_name: Some("Default".to_owned()),
+            sheet_layer_number: 0,
+            sheet_ref: sheet,
+        };
+        let body = SymbolGeometry {
+            primitives: vec![styled(6, 0.0), styled(374, 1.0), styled(374, 2.0)],
+            skipped_records: BTreeMap::new(),
+            sheet_layers: vec![SymbolSheetLayer {
+                oid: 1,
+                layer_number: 0,
+                name: "Default".to_owned(),
+            }],
+            sheet_views: vec![SymbolSheetView {
+                sheet_ref: 374,
+                display: vec![0xFF, 0xFF],
+                layers: vec![
+                    (0, "Default".to_owned()),
+                    (1, "Label".to_owned()),
+                    (2, "Heat Trace".to_owned()),
+                ],
+            }],
+        };
+        let displayed = body.displayed_primitives();
+        assert_eq!(
+            displayed.len(),
+            2,
+            "the governed sheet's strokes draw, not Sheet6's single stub: {displayed:?}"
+        );
+        assert!(
+            displayed.iter().all(|styled| styled.sheet_ref == 374),
+            "{displayed:?}"
+        );
+    }
+
+    #[test]
+    fn a_wellhead_tree_keeps_its_body_off_the_single_stroke_stub() {
+        // The planted file keeps one B-spline on `Sheet6` and the tree — 48
+        // lines, 23 circles, a B-spline, 11 fills — on `Sheet374`, whose only
+        // view set files every layer on. The drawings' own cached bodies and
+        // the vendor's reference plot both draw the tree.
+        // The reference share is a local corpus, not a repository fixture, so
+        // the test soft-skips where it is absent (CI).
+        let corpus = std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
+            || PathBuf::from(r"D:\work\cad\PID自研软件验证"),
+            PathBuf::from,
+        );
+        let path =
+            corpus.join(r"Ref/Symbols/Equipment/Other Equipment/Wellhead Christmas Tree 02.sym");
+        if !path.is_file() {
+            eprintln!("skipping the wellhead body; {} is absent", path.display());
+            return;
+        }
+        let body = read_symbol_geometry(&path).expect("wellhead .sym is a readable compound file");
+        let displayed = body.displayed_primitives();
+        assert!(
+            displayed.len() >= 40,
+            "the tree keeps its body: {} strokes of {}",
+            displayed.len(),
+            body.primitives.len()
+        );
     }
 
     #[test]
