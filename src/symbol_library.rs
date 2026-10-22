@@ -659,10 +659,11 @@ impl SymbolGeometry {
     /// normal view the drawing's embedded caches mirror bit for bit) and
     /// an alternate view whose set files every layer on (the
     /// insulated/heat-traced representation). Where view sets decode, the
-    /// normal sheets are the ones that do not show a supplementary layer;
-    /// where they do not, `Sheet6` — the body sheet on all but a few dozen
-    /// of the library's files — wins alone, then sheets with no view
-    /// state, then everything.
+    /// normal sheets are the ones that do not show a supplementary layer
+    /// **and keep at least one stroke** once their own set has had its say;
+    /// where no sheet qualifies, the fattest sheet wins, then `Sheet6` — the
+    /// body sheet on all but a few dozen of the library's files — then
+    /// sheets with no view state, then everything.
     ///
     /// The second picks **which layers** of a selected sheet draw: the
     /// sheet's own view set answers at the layer's number where the bitmap
@@ -672,8 +673,16 @@ impl SymbolGeometry {
     /// `Jacket`, `Construction`, and `Dimension`/`Deminsion` off and
     /// `Default`, `ConnectPoints`, and `Invisible` on.
     ///
-    /// Where **no** sheet has a normal view, the body is the sheet that keeps
-    /// the most strokes once its own set has had its say, not `Sheet6`. A
+    /// A clean set is not proof the body is on its sheet: it survives as the
+    /// canonical `Default`-only map on `Sheet6` of symbols whose body was
+    /// copied or revised onto a second sheet, which then carries either no
+    /// view set or the everything-on map. Half the corpus's clean sets hide
+    /// every stroke they govern (431 of 868), so the pick requires a stroke.
+    /// See `docs/analysis/2026-10-22-the-normal-view-that-drew-nothing.md`.
+    ///
+    /// Where **no** sheet has a drawing normal view, the body is the sheet
+    /// that keeps the most strokes once its own set has had its say, not
+    /// `Sheet6`. A
     /// `.sym` can keep its body only once — on a sheet whose view set files
     /// every layer on, which this classification reads as the alternate — and
     /// its `Sheet6` can then be a one-stroke stub: `Wellhead Christmas Tree
@@ -755,8 +764,25 @@ impl SymbolGeometry {
                 .map(|(sheet, _)| sheet)
         };
 
-        let selected: BTreeSet<u32> = if !normal.is_empty() {
-            normal
+        // A clean set is only a claim that the body is on its sheet: across
+        // the corpus 431 of the 868 symbols that have one draw nothing once
+        // that set has had its say, and 163 govern a sheet holding no
+        // primitives at all. Keeping such a pick would either empty the body
+        // (and hand it to the whole-body fallback, which pulls the other
+        // sheet's strokes in) or ship a one-line stub of a body filed
+        // elsewhere, so a normal sheet that draws nothing is not a pick.
+        let drawing: BTreeSet<u32> = normal
+            .iter()
+            .copied()
+            .filter(|sheet| {
+                self.primitives
+                    .iter()
+                    .any(|styled| styled.sheet_ref == *sheet && layer_shown(&styled))
+            })
+            .collect();
+
+        let selected: BTreeSet<u32> = if !drawing.is_empty() {
+            drawing
         } else if let Some(sheet) = fattest {
             [sheet].into_iter().collect()
         } else if sheets_present.contains(&6) {
@@ -1877,6 +1903,96 @@ mod tests {
             "the tree keeps its body: {} strokes of {}",
             displayed.len(),
             body.primitives.len()
+        );
+    }
+
+    /// A clean view set that hides every stroke its own sheet holds is not a
+    /// pick. `Insulation Joint.sym` files the canonical `Default`-only map on
+    /// `Sheet6` beside one `Heat Trace` stroke that map turns off, and the
+    /// body — 16 lines on `Default` — on a `Sheet182` with no view set at
+    /// all; taking `Sheet6` emptied the pick and the whole-body fallback then
+    /// drew the hidden stroke too (17).
+    #[test]
+    fn a_clean_view_set_that_draws_nothing_does_not_win() {
+        let line = |start: f64| SymbolPrimitive::Line {
+            start: (start, 0.0),
+            end: (start, 1.0),
+        };
+        let styled_on = |sheet: u32, number: u32, name: &str, primitive| StyledPrimitive {
+            primitive,
+            style: None,
+            lettering: None,
+            sheet_layer_ref: number + 1,
+            sheet_layer_name: Some(name.to_owned()),
+            sheet_layer_number: number,
+            sheet_ref: sheet,
+        };
+        let body = SymbolGeometry {
+            primitives: vec![
+                styled_on(6, 1, "Heat Trace", line(0.0)),
+                styled_on(182, 0, "Default", line(1.0)),
+                styled_on(182, 0, "Default", line(2.0)),
+                styled_on(182, 0, "Default", line(3.0)),
+            ],
+            skipped_records: BTreeMap::new(),
+            sheet_layers: Vec::new(),
+            sheet_views: vec![SymbolSheetView {
+                sheet_ref: 6,
+                display: vec![0b0000_0001],
+                layers: vec![(0, "Default".to_owned()), (1, "Heat Trace".to_owned())],
+            }],
+        };
+        let drawn = body.displayed_primitives();
+        assert_eq!(drawn.len(), 3, "the body, not the hidden stub: {drawn:?}");
+        assert!(
+            drawn.iter().all(|styled| styled.sheet_ref == 182),
+            "every stroke comes off the body sheet: {drawn:?}"
+        );
+    }
+
+    /// The check is only that the clean sheet draws something: a thin normal
+    /// view still beats a fatter sheet, because the fatter one is how the
+    /// alternate (insulated/heat-traced) representation is filed.
+    #[test]
+    fn a_drawing_clean_view_set_still_beats_a_fatter_sheet() {
+        let line = |start: f64| SymbolPrimitive::Line {
+            start: (start, 0.0),
+            end: (start, 1.0),
+        };
+        let styled_on = |sheet: u32, primitive| StyledPrimitive {
+            primitive,
+            style: None,
+            lettering: None,
+            sheet_layer_ref: 1,
+            sheet_layer_name: Some("Default".to_owned()),
+            sheet_layer_number: 0,
+            sheet_ref: sheet,
+        };
+        let mut primitives: Vec<StyledPrimitive> =
+            (0..4).map(|i| styled_on(6, line(f64::from(i)))).collect();
+        primitives.extend((0..6).map(|i| styled_on(39, line(f64::from(i)))));
+        let body = SymbolGeometry {
+            primitives,
+            skipped_records: BTreeMap::new(),
+            sheet_layers: Vec::new(),
+            sheet_views: vec![
+                SymbolSheetView {
+                    sheet_ref: 6,
+                    display: vec![0b0000_0001],
+                    layers: vec![(0, "Default".to_owned()), (1, "Label".to_owned())],
+                },
+                SymbolSheetView {
+                    sheet_ref: 39,
+                    display: vec![0b0000_0011],
+                    layers: vec![(0, "Default".to_owned()), (1, "Label".to_owned())],
+                },
+            ],
+        };
+        let drawn = body.displayed_primitives();
+        assert_eq!(drawn.len(), 4, "the normal view's own strokes: {drawn:?}");
+        assert!(
+            drawn.iter().all(|styled| styled.sheet_ref == 6),
+            "not the all-on sheet: {drawn:?}"
         );
     }
 
