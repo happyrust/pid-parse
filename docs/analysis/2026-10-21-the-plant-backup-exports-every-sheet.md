@@ -136,9 +136,11 @@ piping\specialty components\strainers\ filter type 2.sym  21 处
 空格**去掉（`symbol_candidates`；只有确实需要去空格时才有第二个候选，含内部空格的名字不受
 影响）。43 + 21 处符号因此画上纸，五张参考图读数逐位不变（它们的修订版里没有这两处引用）。
 
-剩下 18 处是数据里真的没有：
+剩下 18 处是**符号库里没有、但画面上并不缺**：`.pid` 自带符号本体的缓存（
+`NormalizedPidGeometry::symbol_definitions`，`lay_out_drawing` 优先用它），这 18 处都靠图内本体画了出来。53 张逐张查
+`PaperModel::missing_boxes`（既无库本体、也无内嵌本体、只好画占位框的集合）：**全部 0**。
 
-| 缺的符号（图纸里存的写法） | 处数 | 同一路径上库里有什么 |
+| 库里没有的符号（图纸里存的写法） | 处数 | 同一路径上库里有什么 |
 |---|---:|---|
 | `Piping\Specialty Components\Misc\Pulsation Damper.sym` | 13 | 什么都没有 |
 | `Equipment\Other Equipment\Wellhead Christmas Tree.sym` | 4 | 只有 `Wellhead Christmas Tree 01.sym` / `02.sym` / `Wellhead Control Panel.sym` |
@@ -156,10 +158,12 @@ piping\specialty components\strainers\ filter type 2.sym  21 处
 35 行、裸名 `…\Wellhead Christmas Tree.sym` 13 行、`Clone of TT-Temperature Transmitter(1).sym`
 2 行），但那是放置行/引用，不是几何：包里确实没随发这三个 `.sym`。图纸里每条放置会出现 4 次
 路径字符串（符号定义 + 放置各一对），所以 52 次 = 13 张图各 1 处、16 次 = 4 张图各 1 处、
-`D07.pid` 1 处，正好是画面上缺的那 18 处。
+`D07.pid` 1 处，正好是库里缺的那 18 处——不是画面上缺的。
 
 `pid-plot/tests/export_plant_backup.rs` 把这三条钉成白名单（比对用小写规范化后的路径）：再多
-缺一个就红。**没有**按 01/02 或去掉 `(1)` 去顶替：那是猜测，不是证据，宁可缺符号也不画错符号。
+缺一个就红；同时钉住 `missing_boxes` 为空——哪天某个放置既取不到库本体、连图内本体也没了，
+门禁会立刻红。**没有**按 01/02 或去掉 `(1)` 去顶替库：那是猜测，不是证据；这两处图上本来
+就画着图纸自己存的本体，不需要猜。
 
 ## 四、五张参考图：一个数都没动
 
@@ -190,11 +194,16 @@ piping\specialty components\strainers\ filter type 2.sym  21 处
 - `pid-plot/examples/probe_font_subset`（新增）：把 parse / plan / subset / validate 每步的
   大小与错误打出来，是这次定位 `EBDT` 的探针。
 - `pid-plot/examples/probe_export_audit` 全量跑：`53 drawings, 0 failed`。
+- `pid-plot/examples/probe_cached_bodies_fill_library_gaps`（新增）：逐图打 `primitives` /
+  `library_gaps` / `undrawn`，回答「库里没有的那个符号到底画上了没有」。53 张实测：
+  `primitives=96490 library_gaps=18 undrawn=0`。
 
 ## 六、仍未闭合
 
-- **18 处符号缺失**：三条文件名在整个数据包里不存在（见上表），要么拿到那份项目库，要么就是
-  图纸本身引用了一个未随包发布的符号。
+- **18 处符号不在库里**（画面上不缺，见上表）：三条文件名在整个数据包里不存在，要么拿到那份
+  项目库，要么就是图纸引用了一个未随包发布的符号。真正的风险不是缺符号，而是**库本体与图内
+  缓存体不一致时无从察觉**：今天优先用图内本体，如果装上那份项目库、两边画得不一样，只有
+  一拼才知道。
 - **自定义页幅**：9 张声明 594.33 × 420.57、1 张 1189.31 × 841.31 等，是图纸自己的数，我们
   照原样出页；但没有这些图的参考出图，无法确认厂商出图时是否也印这个尺寸（还是归到 A2/A0）。
 - **参考出图只有 5 张**：其余 48 张只有结构与审计（页幅、图元普查、符号覆盖、读回段数），

@@ -12,8 +12,10 @@
 //! - no stroke is refused for not fitting the sheet (`off_sheet_primitives`);
 //! - no label reaches the writer with a line break in it — the writer has no
 //!   face for `U+000D`, and one such label took the whole page down;
-//! - every symbol the drawing places is either drawn or named in the known
-//!   library gaps below, and no gap grows;
+//! - no placement falls back to a placeholder box: a symbol the `.sym`
+//!   libraries lack is still drawn from the body the `.pid` carries itself
+//!   (`missing_boxes` is empty on all 53 — the 18 library gaps are drawn);
+//! - every library gap is one of the known ones below, and no gap grows;
 //! - the written page reads back with its declared size, and weighs what a
 //!   subset-embedded page weighs — after the `EBDT` fix each page is
 //!   175–846 KiB (an empty sheet is 722 B); before it, 6.6–7.1 MiB.
@@ -155,6 +157,13 @@ fn every_backup_drawing_exports_a_readable_page() {
                 "{name}: a symbol no library carries entered the set: {missing}"
             );
         }
+        assert!(
+            model.missing_boxes.is_empty(),
+            "{name}: {} placement(s) had neither a library body nor a body of the \
+             drawing's own and drew a placeholder: {:?}",
+            model.missing_boxes.len(),
+            model.missing_boxes
+        );
 
         let pdf = write_plot(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
         assert!(
