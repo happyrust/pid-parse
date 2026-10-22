@@ -10,7 +10,7 @@
 - **字体只嵌子集**：`klippa` 把 `EBDT` / `EBLC` / `EBSC`（SimSun 合计 6.2 MB 的单色点阵）整段透传，于是 3 个字的子集也有 6.36 MB、每页 6.8 MB。`fonts::subset_face` 把这三张表放进 `drop_tables`（PDF 画轮廓，不画点阵 strike）：SimSun 18,314,228 → **150,632** 字节，NSimSun → **153,376**，FangSong → **73,652**，都通过 `validate` 且覆盖全部请求字符。新增探针 `pid-plot/examples/probe_font_subset` 与子集上限单测。
 - **符号路径容忍前导空格**：图纸里存的是 `\Symbols\Piping\Piping OPC's\ Off-Unit SQ.sym`（43 处）和 `\Symbols\…\Strainers\ Filter Type 2.sym`（21 处），厂商 `RefData~4~681.zip` 里这两个条目也带空格，解压到磁盘时被吃掉。`symbol_library::read_from_roots` 先照存法找，再把每段前导空格去掉重试（`symbol_candidates`）。
 - **门禁**：新增 `pid-plot/tests/export_plant_backup` —— 53 张逐个布局/写/读回，断言页幅、`off_sheet_primitives == 0`、无断行标签、缺失符号 ⊆ 三条白名单、每页 < 2 MiB；目录按 `PID_TEST_DATA_DIR` → 语料旁 → 两个 `pid-test-data` 依次找，找不到就软跳过（实测 70.7 s，`53 backup drawings exported, 4 faces embedded`）。`probe_export_audit` 全量跑：`53 drawings, 0 failed`。
-- 仍未闭合：18 处符号在整个数据包里不存在（`Pulsation Damper.sym` 13、裸名 `Wellhead Christmas Tree.sym` 4、`clone of tt-temperature transmitter(1).sym` 1）；9 张自定义页幅（594.33 × 420.57 等）照图纸原样出页；其余 48 张没有参考出图，只有结构与审计。
+- 仍未闭合：18 处符号在整个数据包里不存在（`Pulsation Damper.sym` 13、裸名 `Wellhead Christmas Tree.sym` 4、`Clone of TT-Temperature Transmitter(1).sym` 1；8 个 zip / 861 条目含包内嵌包、扩展名为空的 `RefData~4~703`，加上磁盘 `Ref`、`symbols-full` 均 0 命中，`Export.dmp` 里只有引用）；9 张自定义页幅（594.33 × 420.57 等）照图纸原样出页；其余 48 张没有参考出图，只有结构与审计。
 - 分析：`docs/analysis/2026-10-21-the-plant-backup-exports-every-sheet.md`。
 
 ### 七个 `.pid` 全部出成 PDF：多行标签拆行、符号库联合搜索、推断几何不上纸（2026-10-21）

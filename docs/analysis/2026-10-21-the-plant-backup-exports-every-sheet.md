@@ -138,13 +138,28 @@ piping\specialty components\strainers\ filter type 2.sym  21 处
 
 剩下 18 处是数据里真的没有：
 
-| 缺的符号 | 处数 | 现状 |
+| 缺的符号（图纸里存的写法） | 处数 | 同一路径上库里有什么 |
 |---|---:|---|
-| `piping\specialty components\misc\pulsation damper.sym` | 13 | 语料 `Ref`、`symbols-full`、`RefData~4~*` 全部 0 命中 |
-| `equipment\other equipment\wellhead christmas tree.sym` | 4 | 库里只有 `… Tree 01 / 02.sym`，没有这个基名 |
-| `instrumentation\…\clone of tt-temperature transmitter(1).sym` | 1 | 0 命中 |
+| `Piping\Specialty Components\Misc\Pulsation Damper.sym` | 13 | 什么都没有 |
+| `Equipment\Other Equipment\Wellhead Christmas Tree.sym` | 4 | 只有 `Wellhead Christmas Tree 01.sym` / `02.sym` / `Wellhead Control Panel.sym` |
+| `Instrumentation\Off-Line\Without Implied Components\Temperature\Clone of TT-Temperature Transmitter(1).sym` | 1 | 只有 `TT-Temperature Transmitter.sym` / `TT-Surface Temperature Transmitter.sym` |
 
-`pid-plot/tests/export_plant_backup.rs` 把这三条钉成白名单：再多缺一个就红。
+「什么都没有」是穷举过的（2026-10-22）：把 `pid-test-data` 整个目录按名字扫一遍（含解出来的
+`Ref/Symbols`、`验收数据/Ref`、`backup-plant-data`），再把每个以 `PK` 开头的文件当 zip 递归
+打开（7 个 `.zip` 加上没有扩展名、实际是 zip 的 `RefData~4~703`，共 **861 条**条目，含包内嵌
+包），三条路径 **0 命中**；同名前缀只在 `RefData~4~681.zip` 里命中上面那 5 个近似文件。顺带
+确认了另外三个 `RefData~4~*` 不是符号库：`~680` 是 332 KB 的规则表 CSV，`~683` 是一张
+`Sheet6`/`PSMcluster` 齐全的图纸模板（CFB），`~709` 是 XML。仓库的 `test-file/symbols-full`
+与语料 `D:\work\cad\PID自研软件验证\Ref` 同样 0 命中。
+
+`Export.dmp` 里能搜到这三条路径本身——说明**数据库知道它们被引用**（`…\Pulsation Damper.sym`
+35 行、裸名 `…\Wellhead Christmas Tree.sym` 13 行、`Clone of TT-Temperature Transmitter(1).sym`
+2 行），但那是放置行/引用，不是几何：包里确实没随发这三个 `.sym`。图纸里每条放置会出现 4 次
+路径字符串（符号定义 + 放置各一对），所以 52 次 = 13 张图各 1 处、16 次 = 4 张图各 1 处、
+`D07.pid` 1 处，正好是画面上缺的那 18 处。
+
+`pid-plot/tests/export_plant_backup.rs` 把这三条钉成白名单（比对用小写规范化后的路径）：再多
+缺一个就红。**没有**按 01/02 或去掉 `(1)` 去顶替：那是猜测，不是证据，宁可缺符号也不画错符号。
 
 ## 四、五张参考图：一个数都没动
 
