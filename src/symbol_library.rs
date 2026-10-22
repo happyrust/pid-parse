@@ -556,6 +556,15 @@ const HIDDEN_SYMBOL_LAYER_NAMES: &[&str] = &[
     "deminsion",
 ];
 
+/// Whether `sheet_ref`'s own view set files the supplementary layers off —
+/// the sheet `displayed_primitives` takes for the body's normal view.
+fn is_normal_sheet(views: &[SymbolSheetView], sheet_ref: u32) -> bool {
+    views
+        .iter()
+        .find(|view| view.sheet_ref == sheet_ref)
+        .is_some_and(|view| !view.shows_supplementary())
+}
+
 /// Whether `name` belongs to the layer family a `.sym` keeps for itself
 /// rather than the sheet.
 fn hidden_symbol_layer(name: &str) -> bool {
@@ -1266,6 +1275,10 @@ pub fn read_symbol_geometry(path: &Path) -> Result<SymbolGeometry, PidError> {
                 });
             }
         }
+    }
+
+    let mut sheets: Vec<(&str, u32, &[u8])> = Vec::new();
+    for (stream_path, raw) in &package.streams {
         let name = stream_path.rsplit('/').next().unwrap_or("");
         let is_sheet = name.starts_with("Sheet");
         if !is_sheet || raw.data.len() <= CHAIN_START {
@@ -1279,9 +1292,19 @@ pub fn read_symbol_geometry(path: &Path) -> Result<SymbolGeometry, PidError> {
             .strip_prefix("Sheet")
             .and_then(|number| number.parse::<u32>().ok())
             .unwrap_or(0);
+        sheets.push((stream_path.as_str(), sheet_ref, raw.data.as_slice()));
+    }
+    // The sheets the symbol presents as its normal view are read first, so a
+    // stroke two sheets share survives on the normal one. In stream order a
+    // twin can sort ahead (`Sheet46` before `Sheet6`) and take the whole body,
+    // leaving the normal sheet its lettering alone — which is then all
+    // `displayed_primitives` draws.
+    sheets.sort_by_key(|&(_, sheet_ref, _)| !is_normal_sheet(&geometry.sheet_views, sheet_ref));
+
+    for (stream_path, sheet_ref, data) in sheets {
         let mut sheet = SymbolGeometry::default();
         read_sheet_chain(
-            &raw.data,
+            data,
             sheet_ref,
             tables.get(parent_storage(stream_path)),
             layer_tables
