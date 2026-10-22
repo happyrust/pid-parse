@@ -157,11 +157,9 @@ run 说的字高与段落默认不同**，830 条字体不同、279 条颜色不
 
 ## 五、仍然不知道的
 
-- **库侧的 run 从来没被读过**：`SymbolPrimitive::Text` 只带一个位置和一段字，
-  `lettering_of` 走 `+14` 的段落跳；1350 条记录的字高、830 条字体、279 条颜色因此
-  停在「段落默认」。要补得先定一件事：一条文字只有一个样式槽，而 run 可以有 `A` 段
-  （`Filter Description.sym` 是 `9x1#23 1x1#25 4x1#23` 三段不同样式）——取覆盖字符
-  最多的那条是绘图侧已经选定的做法；
+- **库侧的 run 已经接线（§八），分区也带到了纸上（§九）**：`Filter Description.sym`
+  的 `9x1#23 1x1#25 4x1#23` 现在逐段画，但整份语料里真正因此改变字样的标签只有 3 条，
+  且都不在现有 58 张图纸上；压平后的单一样式槽仍是一般情况；
 - 41 条 selector-1 的样式 id 在符号自己的 `StyleCluster` 里找不到（散布在少数几个
   符号上），这些 run 现在只能忽略；
 - 36 字节尾块之后那 32 / 40 / 48 / 56 字节可选字段是谁写的、什么时候写 —— 现在
@@ -255,3 +253,182 @@ M2 的两种候选都不对：现行选表让电磁阀只画一个 `S`，「只�
 的放置打分在同一批输入（53 张备份 + 5 张参考图 + 7 个 fixture）上是 shipped
 1554 / 1662 → 1612 / 1629，分母变了：「哪张表能复现缓存」取决于笔画归哪张表，归属一变，可
 判的放置也跟着变，所以这里以上表 1828 对的口径为准。
+
+## 八、run 接线：库侧文字按覆盖字符最多的 run 取样式（2026-10-23）
+
+§三 量到的那个洞（1350 条记录的字高停在段落默认）这一轮补上了，用的是绘图侧已经定谳的
+规则，而不是另立一条。
+
+### 一条规则，两处共用
+
+`style_link::resolve_text_style` 原本只吃一条 `DecodedIgTextBoxRecord`，而它真正读的只有
+三样东西：`+14` 的索引、字符数、runs。把入参收成这三样以后，库侧（手里只有 payload 字节）
+和绘图侧（手里是解码记录）调的是同一个函数，包括三处取舍：
+
+- 字高／颜色／字体取**覆盖字符最多的那条 selector-1 run**，并列取标签起始那条；
+- 对齐与行距取段落 —— 它们是段落属性，`resolve_run_style` 那条路上恒为 `None`；
+- 无 run（形状 1）、run 解析不出（21 条 id 在符号自己的 `StyleCluster` 里没有）、或
+  selector-1 长度和不等于字符数时，退回段落默认 —— 那正是厂商模型里
+  `TextStyle.CharStyle` 该生效的地方。
+
+库侧也不再自己走一遍 run：`symbol_library::text_runs` 调
+`parsers::sheet_records::igtextbox_runs`（提为 `pub(crate)`）。形状 2 的那条在 `+22`
+（`count | 0x10000` 就是它的 `(长度, 选择子) `）、形状 3 的那 `A + B` 条在文本之后，都由
+同一个读者给出。§二 那个「同一个格式、两个读者」的病根在 run 这一层没有再犯一次。
+
+`SymbolLettering` 多一个字段 `run_style_id`：**这次是哪个字符样式赢的**，`None` 表示
+段落默认在答。图内缓存本体的 `SymbolLettering::from_decoded` 走同一条规则 —— 它读的正是
+「同一份二进制、另一个表」，两条路径各读一份的话，§二 的病史会原地复发。
+
+### 读数：1262 个 `.sym`、2866 条 `0x004D`
+
+| 量 | 结果 |
+|---|---|
+| 由 run 上字的记录 | **2227 / 2866**（形状 1 的 566 条无 run，另有 73 条 run 不可用） |
+| 与段落路线比：字高变 | **1350**（59.6 %） |
+| 字体变 | **828** |
+| 颜色变 | **279** |
+| 字高落在整半磅网格上 | 段落 **1220 / 2266** → 画出来 **1504 / 2266** |
+
+最后一行的方向与 `2026-08-22-run-beats-paragraph-default.md` §二 的结论一致：run 侧带的是
+文本编辑器里设的字号（整半磅），段落侧是圆整的公制标称值。按字高桶看（同一批 2266 条，段落 → 画出来）：
+
+```text
+2.469 mm ( 7 pt)      0 -> 906      4.410 mm (12.5 pt)  14 -> 55
+3.175 mm (9 pt 标称) 1220 -> 441     2.822 mm ( 8 pt)   0 -> 13
+2.540 mm             223 -> 200      3.528 mm (10 pt)   0 -> 10
+2.032 mm              72 -> 45       2.117 mm ( 6 pt)   0 -> 27
+                                      1.058 mm ( 3 pt)   0 -> 8
+                                      1.411 mm ( 4 pt)   0 -> 12
+```
+
+「从哪个桶来」只能看着这两列推：`2.469 mm` 是新出现的落点，`3.175 mm` / `2.500 mm`
+两个标称桶各让出一大块，与 `2026-08-22-run-beats-paragraph-default.md` §二的配对表
+（36 × `3.175→2.469`、20 × `2.500→2.469`）同族。完整两行直方图在
+`probe_sym_text_runs` 的 `paragraph:` / `drawn:` 里，一次跑就能重算。
+
+### 出图读数
+
+五张参考图用新读数重导后再比：
+
+| 图 | 文字匹配（改前 → 改后） | 覆盖率 | 多画 |
+|---|---|---|---|
+| I井场 注采阀组 | 544/546 → **546/546** | 0.9989 | 42 mm |
+| 集注站 …分离器A | 151/151 → 151/151 | 0.9998 | 8 mm |
+| 集注站 …分离器B | 123/123 → 123/123 | 0.9979 | 2 mm |
+| 集注站 …低温分离器A | 167/167 → 167/167 | 0.9986 | 23 mm |
+| 集注站 …换热器CD | 249/249 → 249/249 | 0.9993 | 25 mm |
+
+I井场 差的那两条**都是符号标签**，改后归零：`sourced 2/2` 变成 `0/0`。这也让
+`plot_text_sources` 里那条「未匹配的字必须有出处」在**一条都没剩下**时成了 `0 of 0` 的
+假失败，改为只在有未匹配时断言，并补一条「文字匹配率不低于 99 %」，免得空集把回归藏住。
+
+### 例子：`Title Block Label.sym`
+
+12 条标签里有 6 条带 run。三条能看出差别：
+
+```text
++14 = 73 -> SimSun-ExtB 3.500 mm      run #71 -> SimSun-ExtB 3.528 mm (10 pt)
++14 = 44 -> Arial Narrow 2.500 mm     run #70 -> Arial Narrow 2.469 mm ( 7 pt)
++14 = 77 -> Arial       4.000 mm      run #82 -> 宋体         4.000 mm
+```
+
+字高与字体都是 run 说的那样，而段落那一跳读到的是样式表上的默认值 —— 与绘图侧那 155 条
+的对照表是同一回事。单测 `a_symbols_lettering_comes_off_its_own_style_table` 的钉值已按
+这三个数改写。
+
+### 仍然不行的
+
+- 一条文字只有一个样式槽：`Filter Description.sym` 的 `9x1#23 1x1#25 4x1#23` 压平后，
+  那一个字符的样式差就看不出来了（`run_style_id` 记下赢家，但没有多槽渲染）；
+- 21 条 selector-1 的 id 在符号自己的 `StyleCluster` 里找不到：这些 run 被忽略，退回段落；
+- 73 条记录没有可用的 run（形状 1 的 566 条 + 其余），仍按段落默认排字。
+
+复现：
+
+```powershell
+cargo run --example probe_sym_text_runs                       # 全库两棵根
+cargo run --example probe_sym_text_runs -- --dump --root "test-file/symbols-full/Design"
+cargo test -p pid-plot --test plot_text_sources               # 出图读数（需语料）
+```
+
+## 九、多 run 分区：一条标签逐段上纸（2026-10-23）
+
+§五第一条那个洞（「一条文字只有一个样式槽」）这一轮补到了最后一段：分段不再只记在数据里，
+而是**逐段画到纸上**。
+
+### 数据链
+
+| 层 | 承载 | 位置 |
+|---|---|---|
+| 库 | `SymbolLettering::spans`（`start` / `len` / `style_id` / 字高 / 字体 / 颜色） | `src/symbol_library.rs` |
+| 绘图侧共用 | `ResolvedTextStyle::spans`（按 `char` 偏移的分区） | `src/style_link.rs::resolve_text_style` |
+| 布局 | `PaperTextSpan`，字高已折成纸张毫米（`height_m * scale * MM_PER_METRE`） | `pid-plot/src/model.rs` |
+| 写 PDF | `text_segments` 按 `(字号, 字体)` 切段，每段自己的 `Tf` + `Tj` | `pid-plot/src/write.rs::show_text` |
+
+两条来源（`.sym` 自己的 payload、图纸里缓存的符号本体）在库侧就汇到同一个
+`guarded_spans`，所以「同一个格式两个读者」的老病不会再从分区这一层长出来。
+
+### 两条规则
+
+- **切在字号或字体变化处**：只换字体（`Wastewater Pit.sym` 的 `*`）也切，虽然那一段的字高
+  与正文相同 —— 切点是 `(字号, 字体)` 两样中的任意一样
+  （`a_span_in_another_face_is_cut_at_the_same_size`）；
+- **只切真的不一样的地方**：相邻 run 解出同一字号、同一字体时合回一段
+  （`spans_that_change_nothing_are_written_as_one_run`）。这既让「样式变了」和「记录
+  自己重复了一遍」在纸上不可区分——它们本来就该不可区分——也不给比较器的文字配对多塞几条 run。
+- **续行不用自己算偏移**：`Tj` 本身推进文本位置，推进量按**当前字号的字形宽度**算，
+  所以第二段正好接在第一段末尾（`a_span_at_its_own_size_continues_where_the_previous_one_ended`：
+  首字符画成两倍 body，`second.origin - (first.origin + first.advance) < 0.05 mm`）。
+- **非 BMP 时整段撤回**：run 长度数的是 UTF-16 单位，span 偏移数的是 `char`，一条含星形面
+  字符的标签会把第二段切在半个字符上。`guarded_spans` 在这种情况下不给分区
+  （`a_label_with_a_non_bmp_character_keeps_its_spans_off`），标签照旧按压平后的单一样式排字。
+
+### 读数：分区到底改变了什么
+
+`probe_symbol_text_spans`（两棵库根、1262 个 `.sym`、2404 条文字）：
+
+| 量 | 结果 |
+|---|---:|
+| 带分区的标签 | **165** |
+| 其中纯 `NULL` 占位（绘图侧从不落墨） | 129 |
+| 落墨的 36 条：分段后仍同字号同字体（合回一段） | 33 |
+| 另一字体 | 2 |
+| 另一字号兼另一字体 | 1 |
+
+真会因此改变字样的 3 条，全在三份符号里：
+
+```text
+Pig Launcher & Receiver Description.sym   "DNNULL X DNNULL"    中间 2 个字符 宋体（其余 Arial Narrow 2.469 mm）
+Pig Launcher & Receiver Description.sym   "DNNULL X DNNULL"    同一符号的另一张 sheet，同上
+Wastewater Pit.sym                        "NULL  NULL*NULL*NULL"  "*" 一个字符 3.175 mm 宋体（其余 Arial 2.822 mm）
+```
+
+`Endbreak.sym` 那条也变样式，但它的字是纯 `NULL`，落不到纸上。
+
+### 出图读数：58 张图纸上一次也没走
+
+`pid-plot/examples/probe_export_audit` 新增 `partitions N (M letter differently)` 一列，
+对 5 张语料图 + 53 张整厂备份逐张跑：**partitions 0**。也就是今天没有任何一条标签走分段
+路径 —— 上面 3 条所在的符号不在这些图上，占位标签在这一步之前早就被丢弃了。五张参考图
+重导后的 PDF 字节数与改前逐位相同（671405 / 449953 / 444540 / 524411 / 553973），
+`plot_text_sources`（546/546、151/151、123/123、167/167、249/249）、
+`export_every_fixture`、`export_plant_backup`（53 张）全过。
+
+### 为什么明知 0 也接
+
+- 这是「一条文字只有一个样式槽」的最后一层：分区一旦有标签用得上，writer 就会切段，
+  不需要再改模型、再改一遍走向；
+- 0 是**图纸**上的 0，不是**库**里的 0：分区在库里有 165 条，其中 3 条真的改字样，
+  只是它们所在的符号还没被这 58 张图放下；
+- 分段对单一样式的标签是恒等变换（切点为空 → 一段），所以「0」与「回归」在这条路上
+  不是同一件事：字节数逐位相同正是这一点的证据。
+
+复现：
+
+```powershell
+cargo run --example probe_symbol_text_spans                    # 库侧分区普查
+cargo run -p pid-plot --example probe_export_audit -- <a.pid>  # 逐张 partitions / 字节数
+cargo test -p pid-plot --lib write::tests                      # 切段与续行两条单测
+cargo test --lib symbol_library::tests                         # 分区与退回规则
+```

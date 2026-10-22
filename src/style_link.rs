@@ -2636,6 +2636,31 @@ pub struct ResolvedTextStyle {
     pub alignment: Option<TextAlignment>,
     /// The paragraph's line spacing, read the same way.
     pub line_spacing: Option<f64>,
+    /// The run partition, when it is worth drawing separately: `(first
+    /// character, length, lettering)` per selector-1 run, in stored order,
+    /// accumulated to char offsets.
+    ///
+    /// Empty when there is nothing to segment — no run, a single run covering
+    /// the whole label (shape 2), a run list that does not resolve, or one
+    /// whose lengths do not add up to the character count. A non-empty list
+    /// is the evidence [`Self::run`] flattens: the label really is lettered
+    /// in more than one style, and a renderer that can advance glyph by glyph
+    /// should draw each span in its own.
+    pub spans: Vec<TextStyleSpan>,
+}
+
+/// One run of a text record that a renderer draws separately: `len`
+/// characters from `start`, in the lettering `style` names.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextStyleSpan {
+    /// First character the run covers, counted in `char`s of the record's
+    /// text — not bytes, and not UTF-16 units.
+    pub start: u16,
+    /// Characters the run covers.
+    pub len: u16,
+    /// The run's own lettering. Alignment and line spacing are `None` here:
+    /// the paragraph is the only place those are stated.
+    pub style: ResolvedTextHeight,
 }
 
 impl ResolvedTextStyle {
@@ -2669,25 +2694,29 @@ fn lettering_of(style: &ResolvedTextHeight) -> (u64, Option<u32>, Option<&str>) 
     )
 }
 
-/// Resolve one text record against its document's style table, both routes.
+/// Resolve one text record against its document's style table, both routes,
+/// off the three fields the decision needs: the record's `+14` style index,
+/// its character count, and its runs.
 ///
 /// `None` when neither route resolves — the record has no lettering this
 /// crate can state, and a caller keeps its default.
-fn resolve_text_style(
+pub(crate) fn resolve_text_style(
     table: &DocumentStyleTable,
-    record: &crate::model::DecodedIgTextBoxRecord,
+    index: u32,
+    text_length: u16,
+    runs: &[crate::model::DecodedTextRun],
 ) -> Option<ResolvedTextStyle> {
-    let paragraph = table.resolve_text_height(record.index);
-    let (alignment, line_spacing) = table.paragraph_layout(record.index);
-    let selector_one: Vec<_> = record.runs.iter().filter(|run| run.selector == 1).collect();
-
+    let paragraph = table.resolve_text_height(index);
+    let (alignment, line_spacing) = table.paragraph_layout(index);
+    let selector_one: Vec<_> = runs.iter().filter(|run| run.selector == 1).collect();
+    let mut spans: Vec<TextStyleSpan> = Vec::new();
     let (run, runs) = if selector_one.is_empty() {
         (None, TextRunStatus::NoRuns)
     } else if selector_one
         .iter()
         .map(|run| usize::from(run.len))
         .sum::<usize>()
-        != usize::from(record.text_length)
+        != usize::from(text_length)
     {
         (None, TextRunStatus::LengthMismatch)
     } else {
@@ -2737,6 +2766,24 @@ fn resolve_text_style(
                 } else {
                     TextRunStatus::Uniform
                 };
+                // A label in one style needs no partition: a single span only
+                // restates `run`. More than one run that resolves and covers
+                // the text is the case a renderer draws span by span.
+                if resolved.len() > 1 {
+                    let mut start = 0u16;
+                    for (chars, style) in &resolved {
+                        let Ok(len) = u16::try_from(*chars) else {
+                            spans.clear();
+                            break;
+                        };
+                        spans.push(TextStyleSpan {
+                            start,
+                            len,
+                            style: style.clone(),
+                        });
+                        start = start.saturating_add(len);
+                    }
+                }
                 (widest, status)
             }
         }
@@ -2751,6 +2798,7 @@ fn resolve_text_style(
         runs,
         alignment,
         line_spacing,
+        spans,
     })
 }
 
@@ -2766,7 +2814,9 @@ pub fn text_styles_for_document(doc: &PidDocument) -> TextStyleIndex {
     let mut out = TextStyleIndex::new();
     for_each_document(doc, &mut |stream, sheet, table| {
         for record in &sheet.decoded_igtextboxes {
-            if let Some(resolved) = resolve_text_style(table, record) {
+            if let Some(resolved) =
+                resolve_text_style(table, record.index, record.text_length, &record.runs)
+            {
                 out.insert((stream.to_string(), record.oid), resolved);
             }
         }

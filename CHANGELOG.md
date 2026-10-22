@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### 多 run 标签逐段上纸：库侧分区 → 布局 → writer 切段（2026-10-23）
+
+一条 `.sym` 标签可以逐段换样式（`Filter Description.sym` 是 `9x1#23 1x1#25 4x1#23`，`Wastewater Pit.sym` 把一个 `*` 排成 3.175 mm 宋体），而 `PaperShape::Text` 一直只带一个字号与一个字体，所以上一轮接 run 接线时压平成「覆盖字符最多的那条」。这一轮把**分区本身**带到了纸上。
+
+- **数据链**：`SymbolLettering::spans`（库）与 `ResolvedTextStyle::spans`（绘图侧共用规则）→ `PaperTextSpan`（布局，字高已乘 `scale` 折成纸张毫米）→ `write::text_segments` 按 `(字号, 字体)` 切段，每段自己的 `Tf` + `Tj`。
+- **只切真的不一样的地方**：相邻 run 解出同一字号、同一字体时合回一段 —— 样式变化与记录自己重复一遍在纸上不可区分，也不给比较器的文字配对多塞 run（`spans_that_change_nothing_are_written_as_one_run`）。
+- **续行不自己算偏移**：`Tj` 本身推进文本位置，推进量按当前字号的字形宽度算，第二段正好接在第一段末尾（`a_span_at_its_own_size_continues_where_the_previous_one_ended`）。
+- **非 BMP 守卫**：run 长度数 UTF-16 单位、span 偏移数 `char`，含星形面字符的标签会把第二段切在半个字符上；`guarded_spans` 在这种情况下不给分区，`.sym` 与图纸缓存本体两条来源共用同一个守卫。
+- **库侧读数**（新探针 `probe_symbol_text_spans`，1262 个 `.sym` / 2404 条文字）：带分区 **165** 条，其中纯 `NULL` 占位 **129** 条；落墨的 36 条里，分段后仍同字号同字体 **33**、另一字体 **2**、另一字号兼另一字体 **1**。真会因此改变字样的是 3 条（`Pig Launcher & Receiver Description.sym` 两条、`Wastewater Pit.sym` 一条）。
+- **出图读数**：`probe_export_audit` 多一列 `partitions N (M letter differently)`，58 张图纸（5 张语料 + 53 张整厂备份）逐张 **partitions 0** —— 今天没有任何标签走分段路径。五张参考图重导的 PDF 字节数与改前逐位相同（671405 / 449953 / 444540 / 524411 / 553973），`plot_text_sources`（546/546、151/151、123/123、167/167、249/249）、`export_every_fixture`、`export_plant_backup`（53 张）全过。
+- **测试**：`pid-plot` writer 新增三条（切段按时续行、只换字体的 span 也单独切段、同字号同字体不切）；`symbol_library` 新增三条（分区按 `char` 偏移累积、单 run 无分区、非 BMP 撤分区）。
+- 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §九。
+
+### 库侧符号文字改读 run：1350 条标签的字高不再取段落默认（2026-10-23）
+
+`symbol_library::lettering_of` 一直只走记录 `+14` 的段落两跳（`JStyleTextPara` → `JStyleTextChar`），而 `igTextBox` 的格式化 run 才是逐字符生效的那份（`2026-08-22-run-beats-paragraph-default.md` 的定谳：run 覆盖全文，段落样式是默认值）。库侧 `Sheet*` 流上 2866 条 `0x004D` 里有 **1350 条（59.6 %）**的 run 字高与段落默认不同、828 条字体、279 条颜色 —— 这些标签一直按样式表上的标称毫米排版。
+
+- **一条规则，两处共用**：`style_link::resolve_text_style` 的入参从「一条 `DecodedIgTextBoxRecord`」收成它真正读的三个字段（`+14` 索引、字符数、runs），绘图侧与库侧从此调同一个函数：字高／颜色／字体取**覆盖字符最多的那条 run**（并列取标签起始那条），对齐与行距仍取段落；无 run、run 解析不出、或 selector-1 长度和不等于字符数时退回段落默认。
+- **库侧不再自己走一遍 run**：`symbol_library::text_runs` 调 `parsers::sheet_records::igtextbox_runs`（提为 `pub(crate)`），形状 2 的 `+22` 那条与形状 3 文本后的 `A + B` 条由同一个读者给出 —— 上一轮「同一个格式、两个读者」正是形状 3 被漏掉的原因。
+- **`SymbolLettering` 多一个 `run_style_id`**：记录这次是哪个字符样式赢的，`None` 表示段落默认在答。图内缓存本体（`SymbolLettering::from_decoded`）走同一条规则，两条路径不再各读一份。
+- **读数**（1262 个 `.sym` / 2866 条 `0x004D`，探针 `probe_sym_text_runs`）：由 run 上字的记录 **2227 / 2866**；与段落路线比，字高变 **1350**、字体 **828**、颜色 **279**；字高落在整半磅网格上的比例 **1220/2266 → 1504/2266**（run 侧带的是排版点值，段落侧是标称毫米）。按字高桶看：`2.469 mm`（7 pt）由 **0 → 906 条**，`3.175 mm` 标称桶 **1220 → 441**、`2.500 mm` **537 → 301**；新出现的还有 `4.410 mm`（12.5 pt）**14 → 55**、`2.117 mm`（6 pt）0 → 27、`2.822 mm`（8 pt）0 → 13、`1.411 mm`（4 pt）0 → 12、`3.528 mm`（10 pt）0 → 10、`1.058 mm`（3 pt）0 → 8。
+- **出图读数**（五张参考图重导后跑 `plot_text_sources`）：文字匹配 `546/546`（改前 `544/546`，差的两条都是符号标签）、`151/151`、`123/123`、`167/167`、`249/249`；覆盖率与多画长度逐位未动（0.9989 / 0.9998 / 0.9979 / 0.9986 / 0.9993）。`export_every_fixture`、`export_plant_backup`（53 张）、`plot_compare` 全过。
+- **测试**：`symbol_library` 新增四条（最宽 run 赢、run 解析不出退回段落、长度和不符退回段落、形状 2 的单条 run）；`a_symbols_lettering_comes_off_its_own_style_table` 的钉值改成 run 读数（`Title Block Label.sym` 出现 10 pt 3.528 mm、7 pt 2.469 mm 与 run 指定的宋体）。`plot_text_sources` 的「未匹配的字必须有出处」在**一条都没剩下**时是 `0 of 0`，改成只在有未匹配时断言，并补一条「匹配率不低于 99 %」。
+- 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §八；探针 `examples/probe_sym_text_runs`（新增 `--dump` 逐条对照段落与 run）。
+
 ### 库侧文字审查收口：方向对把关计数、尾型校验长度、选表与回归（2026-10-22）
 
 `b45f937` 之后的审查（计划 `docs/plans/2026-10-22-library-text-review-follow-ups.md`，Plannotator 批准）发现：下一节「仍拒」里的「计数跑出 body」永不触发（三种形状的 body 都由计数算出）；尾巴放宽成「留得下」以后，库侧没有了绘图侧那道防计数多读的方向对检查；文字还会参与选表和 `bounds()`。先量，再收紧。

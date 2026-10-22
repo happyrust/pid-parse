@@ -3832,7 +3832,16 @@ pub(crate) fn igtextbox_body_shape(
 /// Every entry lies inside the body length [`igtextbox_body_shape`] measured,
 /// so on a record that decoded this cannot come up short; an entry that
 /// would is left out rather than refusing a record the other rules accepted.
-fn igtextbox_runs(payload: &[u8], text_sub_type: u16, text_length: u16) -> Vec<IgTextBoxRun> {
+///
+/// Shared with the symbol library (`symbol_library::text_runs`): a `.sym`
+/// stores the same payload, so the library asks this reader rather than
+/// walking the entries a second time — the two-readers split that let the
+/// library miss shape 3's runs in the first place.
+pub(crate) fn igtextbox_runs(
+    payload: &[u8],
+    text_sub_type: u16,
+    text_length: u16,
+) -> Vec<IgTextBoxRun> {
     let entry = |at: usize| -> Option<IgTextBoxRun> {
         let b = payload.get(at..at + 8)?;
         Some(IgTextBoxRun {

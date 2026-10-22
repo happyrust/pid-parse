@@ -35,6 +35,7 @@ use pdfcraft_fonts::embedding::{self, embed};
 use pdfcraft_fonts::pdf::Metrics;
 
 use crate::fonts::typeface_key;
+use crate::model::PaperTextSpan;
 use crate::model::{PaperModel, PaperShape, PaperStroke, TextAnchor, TextLine};
 use crate::read::{CHORD_MM, DashWalk, sheet_edge_mm};
 
@@ -312,6 +313,7 @@ fn push_layer(
             font,
             anchor,
             line,
+            spans,
         } = &primitive.shape
         {
             show_text(
@@ -325,6 +327,7 @@ fn push_layer(
                     value,
                     anchor: *anchor,
                     line: *line,
+                    spans,
                 },
             )?;
         }
@@ -528,6 +531,80 @@ struct ShownText<'a> {
     value: &'a str,
     anchor: TextAnchor,
     line: TextLine,
+    spans: &'a [PaperTextSpan],
+}
+
+/// One stretch of a label that letters at its own size in its own face.
+struct TextSegment<'a> {
+    text: String,
+    typeface: &'a str,
+    size_pt: f64,
+}
+
+/// Split a label into the stretches it letters differently.
+///
+/// A label with no run partition is one stretch, exactly what this writer
+/// drew before spans existed. One that carries a partition is cut where the
+/// size or the face changes — **and nowhere else**: two neighbouring runs that
+/// resolve to the same size and face stay one run on the page, which keeps a
+/// style change indistinguishable from the record's own repetition from
+/// adding runs to the PDF (and to the comparison's text pairing).
+///
+/// The leading and trailing padding `show_text` trims is skipped first, so a
+/// span's character offsets — which count from the record's own first
+/// character — land on the right glyphs.
+fn text_segments<'a>(text: &ShownText<'a>, inked: &str, height_mm: f64) -> Vec<TextSegment<'a>> {
+    let base_size = plotted_size_pt(text.typeface, height_mm);
+    let plain = || {
+        vec![TextSegment {
+            text: inked.to_string(),
+            typeface: text.typeface,
+            size_pt: base_size,
+        }]
+    };
+    if text.spans.is_empty() {
+        return plain();
+    }
+    let chars: Vec<char> = text.value.chars().collect();
+    let lead = chars.iter().take_while(|c| c.is_whitespace()).count();
+    let inked_len = inked.chars().count();
+    let end = lead.saturating_add(inked_len).min(chars.len());
+    if end <= lead {
+        return plain();
+    }
+    let mut per_char: Vec<(&'a str, f64)> = vec![(text.typeface, base_size); end - lead];
+    for span in text.spans {
+        let start = usize::from(span.start);
+        let stop = start.saturating_add(usize::from(span.len)).min(chars.len());
+        let size_pt = plotted_size_pt(
+            span.font.as_deref().unwrap_or(text.typeface),
+            span.height_mm.unwrap_or(height_mm),
+        );
+        for index in start..stop {
+            if index < lead || index >= end {
+                continue;
+            }
+            per_char[index - lead] = (span.font.as_deref().unwrap_or(text.typeface), size_pt);
+        }
+    }
+    let mut segments: Vec<TextSegment<'a>> = Vec::new();
+    for (offset, (typeface, size_pt)) in per_char.iter().enumerate() {
+        let ch = inked.chars().nth(offset).unwrap_or_default();
+        match segments.last_mut() {
+            Some(last) if last.typeface == *typeface && last.size_pt == *size_pt => {
+                last.text.push(ch);
+            }
+            _ => segments.push(TextSegment {
+                text: ch.to_string(),
+                typeface,
+                size_pt: *size_pt,
+            }),
+        }
+    }
+    if segments.iter().all(|segment| segment.text.is_empty()) {
+        return plain();
+    }
+    segments
 }
 
 fn show_text(
@@ -554,12 +631,17 @@ fn show_text(
     if inked.is_empty() {
         return Ok(());
     }
-    let runs = encode_runs(faces, text.typeface, inked)?;
-    let size = plotted_size_pt(text.typeface, height_mm);
-    let width_mm: f64 = runs
-        .iter()
-        .map(|(face, bytes)| run_width_mm(&face.metrics, size, bytes))
-        .sum();
+    // A label that letters in more than one style is cut into the stretches
+    // that share a size and a face; a plain label is one stretch.
+    let segments = text_segments(&text, inked, height_mm);
+    let mut emitted: Vec<(f64, &ReadyFace<'_>, Vec<u8>)> = Vec::new();
+    let mut width_mm = 0.0;
+    for segment in &segments {
+        for (face, bytes) in encode_runs(faces, segment.typeface, &segment.text)? {
+            width_mm += run_width_mm(&face.metrics, segment.size_pt, &bytes);
+            emitted.push((segment.size_pt, face, bytes));
+        }
+    }
     let origin_mm = baseline_origin(
         text.origin_mm,
         text.rotation,
@@ -581,12 +663,13 @@ fn show_text(
             pt(origin_mm[1]),
         ],
     ));
-    // `Tj` advances the text position itself, so consecutive runs set in
-    // different faces continue along the same baseline.
-    for (face, bytes) in &runs {
+    // `Tj` advances the text position itself, so consecutive runs continue
+    // along the same baseline — across a change of face, and across a change
+    // of size, since the advance is the glyph width at the size in force.
+    for (size, face, bytes) in &emitted {
         ops.push(Op::new(
             "Tf",
-            vec![Object::name(&face.resource), Object::Real(size)],
+            vec![Object::name(&face.resource), Object::Real(*size)],
         ));
         ops.push(Op::new(
             "Tj",
@@ -931,8 +1014,10 @@ fn hypot(start: [f64; 2], end: [f64; 2]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{plotted_size_pt, write_plot};
-    use crate::model::{PaperModel, PaperPrimitive, PaperShape, TextAnchor, TextLine};
+    use super::{ShownText, plotted_size_pt, text_segments, write_plot};
+    use crate::model::{
+        PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, TextAnchor, TextLine,
+    };
     use crate::read::read_plot;
 
     use super::PlotFont;
@@ -1102,6 +1187,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Left,
                     line: TextLine::Bottom,
+                    spans: Vec::new(),
                 },
             )],
             missing_symbols: Vec::new(),
@@ -1137,6 +1223,7 @@ mod tests {
                         font: None,
                         anchor: TextAnchor::Left,
                         line: TextLine::Bottom,
+                        spans: Vec::new(),
                     },
                 ),
                 primitive(
@@ -1305,6 +1392,177 @@ mod tests {
         }
     }
 
+    /// A symbol label that letters one character at another size is cut where
+    /// the size changes, and the pieces continue along one baseline: `Tj`
+    /// advances by the glyph width at the size in force, so the second piece
+    /// starts exactly where the first ended rather than at the label's origin.
+    #[test]
+    fn a_span_at_its_own_size_continues_where_the_previous_one_ended() {
+        let model = PaperModel {
+            library: Vec::new(),
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [20.0, 40.0],
+                    height_mm: Some(5.0),
+                    rotation: 0.0,
+                    value: "AB".into(),
+                    font: None,
+                    anchor: TextAnchor::Left,
+                    line: TextLine::Bottom,
+                    spans: vec![PaperTextSpan {
+                        start: 0,
+                        len: 1,
+                        height_mm: Some(10.0),
+                        font: None,
+                    }],
+                },
+            )],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        assert_eq!(ink.spans.len(), 2, "one span per size: {:?}", ink.spans);
+        let (first, second) = (&ink.spans[0], &ink.spans[1]);
+        assert_eq!(first.text, "A");
+        assert_eq!(second.text, "B");
+        assert!(
+            (first.height_mm - second.height_mm * 2.0).abs() < 0.05,
+            "the first character is drawn twice the body: {:?}",
+            ink.spans
+        );
+        let expected = first.origin_mm[0] + first.advance_mm;
+        assert!(
+            (second.origin_mm[0] - expected).abs() < 0.05,
+            "the second span starts where the first ended: {:?}",
+            ink.spans
+        );
+    }
+
+    /// A run that only changes the **face** is cut too, at the same size:
+    /// `Wastewater Pit.sym` letters one `*` in SimSun inside an Arial label, and
+    /// the writer has to ask for that face on that stretch alone.
+    #[test]
+    fn a_span_in_another_face_is_cut_at_the_same_size() {
+        let spans = [
+            PaperTextSpan {
+                start: 0,
+                len: 4,
+                height_mm: Some(2.822),
+                font: Some("Arial".into()),
+            },
+            PaperTextSpan {
+                start: 4,
+                len: 1,
+                height_mm: Some(3.175),
+                font: Some("\u{5b8b}\u{4f53}".into()),
+            },
+            PaperTextSpan {
+                start: 5,
+                len: 3,
+                height_mm: Some(2.822),
+                font: Some("Arial".into()),
+            },
+        ];
+        let text = ShownText {
+            typeface: "Arial",
+            origin_mm: [20.0, 40.0],
+            height_mm: Some(2.822),
+            rotation: 0.0,
+            value: "NULL*NUL",
+            anchor: TextAnchor::Left,
+            line: TextLine::Bottom,
+            spans: &spans,
+        };
+        let segments = text_segments(&text, "NULL*NUL", 2.822);
+        let shape: Vec<(&str, &str)> = segments
+            .iter()
+            .map(|segment| (segment.text.as_str(), segment.typeface))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("NULL", "Arial"),
+                ("*", "\u{5b8b}\u{4f53}"),
+                ("NUL", "Arial")
+            ],
+            "the partition is cut where size or face changes"
+        );
+        assert!(
+            segments[1].size_pt > segments[0].size_pt,
+            "the middle stretch letters larger: {} vs {}",
+            segments[1].size_pt,
+            segments[0].size_pt
+        );
+    }
+
+    /// Two neighbouring runs that resolve to the same size and face are one
+    /// run on the page: a partition that changes nothing must not split the
+    /// label (and hand the comparison two runs where the record states one).
+    #[test]
+    fn spans_that_change_nothing_are_written_as_one_run() {
+        let model = PaperModel {
+            library: Vec::new(),
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [20.0, 40.0],
+                    height_mm: Some(5.0),
+                    rotation: 0.0,
+                    value: "AB".into(),
+                    font: None,
+                    anchor: TextAnchor::Left,
+                    line: TextLine::Bottom,
+                    spans: vec![
+                        PaperTextSpan {
+                            start: 0,
+                            len: 1,
+                            height_mm: Some(5.0),
+                            font: None,
+                        },
+                        PaperTextSpan {
+                            start: 1,
+                            len: 1,
+                            height_mm: Some(5.0),
+                            font: None,
+                        },
+                    ],
+                },
+            )],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        assert_eq!(ink.spans.len(), 1, "one run on the page: {:?}", ink.spans);
+        assert_eq!(ink.spans[0].text, "AB");
+    }
+
     /// A run that is only spaces inks nothing, so it is not written at all.
     #[test]
     fn a_run_of_spaces_writes_no_text() {
@@ -1323,6 +1581,7 @@ mod tests {
                     font: None,
                     anchor: TextAnchor::Center,
                     line: TextLine::Middle,
+                    spans: Vec::new(),
                 },
             )],
             missing_symbols: Vec::new(),
@@ -1376,6 +1635,7 @@ mod tests {
                     font: None,
                     anchor,
                     line,
+                    spans: Vec::new(),
                 },
             )],
             missing_symbols: Vec::new(),

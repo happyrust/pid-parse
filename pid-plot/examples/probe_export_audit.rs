@@ -41,6 +41,50 @@ fn census(model: &PaperModel) -> (usize, usize, usize, usize, usize, usize) {
     counts
 }
 
+/// Labels whose record states a run partition, and how many of those really
+/// letter in more than one size or face.
+///
+/// The partition is the record's own `igTextBox` runs (`SymbolLettering::spans`),
+/// carried onto the page as `PaperShape::Text::spans`. A label counts as
+/// **lettering differently** when one of those runs states a size or a face the
+/// shape's own single style does not — the case the writer cuts the label for;
+/// runs that agree with it (per-character style ids that resolve to the same
+/// size and face, which is most of the library's partitions) are drawn as one
+/// run and change nothing.
+fn partitioned_texts(model: &PaperModel) -> (usize, usize) {
+    let mut partitioned = 0usize;
+    let mut differing = 0usize;
+    for primitive in &model.primitives {
+        let PaperShape::Text {
+            height_mm,
+            font,
+            spans,
+            ..
+        } = &primitive.shape
+        else {
+            continue;
+        };
+        if spans.is_empty() {
+            continue;
+        }
+        partitioned += 1;
+        let own_height = height_mm.unwrap_or_default();
+        let own_font = font.as_deref().unwrap_or_default().to_lowercase();
+        let changes = spans.iter().any(|span| {
+            let height_differs = span
+                .height_mm
+                .is_some_and(|height| (height - own_height).abs() > 0.01);
+            let font_differs = span
+                .font
+                .as_deref()
+                .is_some_and(|face| face.to_lowercase() != own_font);
+            height_differs || font_differs
+        });
+        differing += usize::from(changes);
+    }
+    (partitioned, differing)
+}
+
 fn control_texts(model: &PaperModel) -> Vec<String> {
     model
         .primitives
@@ -135,6 +179,7 @@ fn main() {
             .filter(|primitive| primitive.confidence == "inferred")
             .count();
         let controls = control_texts(&model);
+        let (partitioned, differing) = partitioned_texts(&model);
         let prepared = match prepare_fonts(&[&model], &dirs) {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -174,19 +219,32 @@ fn main() {
             model,
             (lines, arcs, circles, polys, fills, texts),
             controls.len(),
+            (partitioned, differing),
             inferred,
             ink.segments.len(),
             ink.spans.len(),
             pdf.len(),
         ));
     }
-    for (name, model, counts, controls, inferred, segments, spans, bytes) in &rows {
+    for (
+        name,
+        model,
+        counts,
+        controls,
+        (partitioned, differing),
+        inferred,
+        segments,
+        spans,
+        bytes,
+    ) in &rows
+    {
         let page = model.page_mm.map_or("none".to_string(), |page| {
             format!("{:.2}x{:.2}", page[0], page[1])
         });
         println!(
             "PASS {name}: {page} mm  line {} arc {} circle {} poly {} fill {} text {}  \
              controls {controls} off-sheet {} endpoint-pairs {} inferred {inferred}  \
+             partitions {partitioned} ({differing} letter differently)  \
              read {segments} segments  {spans} spans  {bytes} bytes  \
              symbols {}/{} missing {} boxes {}",
             counts.0,

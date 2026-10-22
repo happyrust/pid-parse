@@ -191,7 +191,37 @@ pub enum PaperShape {
         /// and the reference puts the templates' own lettering on the middle
         /// line.
         line: TextLine,
+        /// The label's own run partition, when it letters its characters in
+        /// more than one style. Empty for every sheet label and for a symbol
+        /// label in one style; `height_mm` and `font` are the single style a
+        /// plain run draws.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        spans: Vec<PaperTextSpan>,
     },
+}
+
+/// One run of a label that letters its characters in its own style: `len`
+/// characters from `start` (counted in `char`s), in `height_mm` and set in
+/// `font`.
+///
+/// A `.sym` label may mix styles — the pipeline tags alternate two faces for
+/// their separators, `Wastewater Pit.sym` letters one character a size larger
+/// — and a `PaperShape::Text` carries only one body size under one typeface.
+/// Carrying the partition lets the writer advance span by span, which it can
+/// do because it measures each run's glyphs anyway.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaperTextSpan {
+    /// First character the run covers, in `char`s of the label's text.
+    pub start: u16,
+    /// Characters the run covers.
+    pub len: u16,
+    /// Body size the run letters at, in paper millimetres; `None` takes the
+    /// shape's own `height_mm`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_mm: Option<f64>,
+    /// Typeface the run is set in; `None` takes the shape's own `font`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
 }
 
 /// Which side of its insertion point a paragraph letters from.
@@ -1119,6 +1149,11 @@ fn push_entity(
                         // is the horizontal hot point the insertion sits at.
                         anchor,
                         line: TextLine::from_anchor_code(*anchor_code),
+                        // A sheet `igTextBox`'s runs are the same partition,
+                        // but this path draws one line per value with the
+                        // style resolved for the whole record; the sheet side
+                        // has not opted into spans yet.
+                        spans: Vec::new(),
                     },
                 ));
             }
@@ -1496,6 +1531,21 @@ fn symbol_text_shape(
         font: lettering.and_then(|lettering| lettering.font_name.clone()),
         anchor,
         line,
+        spans: lettering.map_or_else(Vec::new, |lettering| {
+            lettering
+                .spans
+                .iter()
+                .map(|span| PaperTextSpan {
+                    start: span.start,
+                    len: span.len,
+                    height_mm: span
+                        .height_m
+                        .filter(|height| *height > 0.0)
+                        .map(|height| height * scale * MM_PER_METRE),
+                    font: span.font_name.clone(),
+                })
+                .collect()
+        }),
     }
 }
 
@@ -1723,6 +1773,7 @@ mod tests {
                 runs: TextRunStatus::NoRuns,
                 alignment: None,
                 line_spacing,
+                spans: Vec::new(),
             },
         );
         styles
@@ -1869,6 +1920,7 @@ mod tests {
             font: None,
             anchor: TextAnchor::Left,
             line: TextLine::Middle,
+            spans: Vec::new(),
         };
         assert!(!beyond_the_sheet(&off_page, page));
 
@@ -1933,6 +1985,7 @@ mod tests {
                 runs: TextRunStatus::NoRuns,
                 alignment: Some(TextAlignment::Right),
                 line_spacing: None,
+                spans: Vec::new(),
             },
         );
         let mut record = entity(PidGraphicKind::Text {
@@ -2247,6 +2300,8 @@ mod tests {
             alignment: Some(TextAlignment::Right),
             line_spacing: None,
             font_name: Some("Arial Narrow".to_string()),
+            run_style_id: None,
+            spans: Vec::new(),
         };
         let shape = SymbolPrimitive::Text {
             text: "ESD".to_string(),
@@ -2293,6 +2348,8 @@ mod tests {
             alignment: Some(TextAlignment::Left),
             line_spacing: None,
             font_name: None,
+            run_style_id: None,
+            spans: Vec::new(),
         };
         let mut out = Vec::new();
         let mut mirrored_pi = placement();

@@ -73,10 +73,23 @@ fn five_drawings_keep_text_sources() {
             report.fit.within_threshold,
         ));
         if name.starts_with("I井场") {
+            // The sourced rule has nothing to say about a drawing whose every
+            // run matched: `0 of 0` is not a failing share. Guarded rather
+            // than dropped so a run that does come loose still has to name its
+            // source — and paired with a floor on the match itself, so the
+            // vacuous case cannot hide a drawing that stopped matching.
+            if !report.unmatched_our_text.is_empty() {
+                assert!(
+                    sourced * 2 > report.unmatched_our_text.len(),
+                    "sourced {sourced} of {}",
+                    report.unmatched_our_text.len()
+                );
+            }
             assert!(
-                sourced * 2 > report.unmatched_our_text.len(),
-                "sourced {sourced} of {}",
-                report.unmatched_our_text.len()
+                report.text_matched * 100 >= report.text_reference * 99,
+                "text {}/{} matched",
+                report.text_matched,
+                report.text_reference
             );
             assert!(!report.uncovered_reference.is_empty(), "uncovered groups");
             let leaked = report.unmatched_reference_text.iter().any(|run| {

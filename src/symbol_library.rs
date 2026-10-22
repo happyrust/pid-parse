@@ -36,11 +36,12 @@ use serde::{Deserialize, Serialize};
 use crate::api::PidParser;
 use crate::error::PidError;
 use crate::parsers::sheet_records::{
-    igtextbox_body_shape, igtextbox_letter_height, IGTEXTBOX_BODY_START, IGTEXTBOX_TAIL_KIND2_LEN,
-    IGTEXTBOX_TAIL_KIND_AT, IGTEXTBOX_TAIL_KIND_BOX, IGTEXTBOX_TAIL_KIND_PLACEMENT,
-    IGTEXTBOX_TAIL_LEN,
+    igtextbox_body_shape, igtextbox_letter_height, igtextbox_runs, IGTEXTBOX_BODY_START,
+    IGTEXTBOX_TAIL_KIND2_LEN, IGTEXTBOX_TAIL_KIND_AT, IGTEXTBOX_TAIL_KIND_BOX,
+    IGTEXTBOX_TAIL_KIND_PLACEMENT, IGTEXTBOX_TAIL_LEN,
 };
-use crate::style_link::{DocumentStyleTable, TextAlignment};
+use crate::style_link::{DocumentStyleTable, ResolvedTextStyle, TextAlignment};
+use crate::DecodedTextRun;
 
 /// `u32` LE signature shared by every cluster-family stream, including a
 /// symbol's `Sheet*` streams.
@@ -412,6 +413,56 @@ pub struct SymbolLettering {
     pub line_spacing: Option<f64>,
     /// Typeface the character style names, verbatim.
     pub font_name: Option<String>,
+    /// The character style the record's **widest formatting run** names, when
+    /// one won — `None` where the record stores no run (shape 1) or its runs
+    /// do not resolve, and the paragraph default at
+    /// [`STYLE_INDEX_OFFSET`] alone answers.
+    ///
+    /// Height, colour and typeface come off this style; `alignment` and
+    /// `line_spacing` stay on the paragraph, which is the only place they are
+    /// stated. That is the same split the drawing side draws
+    /// (`style_link::ResolvedTextStyle::effective`), and the reason a label is
+    /// now lettered at the size its runs say rather than the paragraph's
+    /// default. See `docs/analysis/2026-08-22-run-beats-paragraph-default.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_style_id: Option<u32>,
+    /// The label's run partition, when it is lettered in more than one style:
+    /// one entry per selector-1 run, in stored order, with its character
+    /// range. Empty when there is nothing to segment — a record with no run
+    /// (shape 1), one run covering the whole label (shape 2), a run list that
+    /// does not resolve, or a label with a non-BMP character (whose UTF-16
+    /// run lengths would no longer be character offsets).
+    ///
+    /// [`Self::height_m`], [`Self::font_name`] and [`Self::rgb`] stay the one
+    /// style a single-run renderer draws; a renderer that can advance span by
+    /// span draws these instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spans: Vec<SymbolLetteringSpan>,
+}
+
+/// One run of a symbol label that is lettered in its own style: `len`
+/// characters from `start`, counted in the record's own characters.
+///
+/// A `.sym` label may mix styles — `Filter Description.sym` letters
+/// `9x1#23 1x1#25 4x1#23`, the pipeline tags alternate two faces for their
+/// separators — and a single style slot cannot say so. Across the library 165
+/// of 2866 records carry more than one run, of which 2 change height and 4
+/// change typeface; the rest differ only inside a run that resolves to one
+/// height and face.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SymbolLetteringSpan {
+    /// First character the run covers, in `char`s of the label's text.
+    pub start: u16,
+    /// Characters the run covers.
+    pub len: u16,
+    /// The `JStyleTextChar` the run names.
+    pub style_id: u32,
+    /// Character height in metres the run's style states.
+    pub height_m: Option<f64>,
+    /// Typeface the run's style names, verbatim.
+    pub font_name: Option<String>,
+    /// Character colour as `[r, g, b]` when the run's style states one.
+    pub rgb: Option<[u8; 3]>,
 }
 
 impl SymbolLettering {
@@ -428,20 +479,69 @@ impl SymbolLettering {
         record: &crate::DecodedIgTextBoxRecord,
         table: Option<&DocumentStyleTable>,
     ) -> Self {
-        let resolved = table.and_then(|table| table.resolve_text_height(record.index));
+        let resolved = table.and_then(|table| {
+            crate::style_link::resolve_text_style(
+                table,
+                record.index,
+                record.text_length,
+                &record.runs,
+            )
+        });
+        let effective = resolved.as_ref().and_then(ResolvedTextStyle::effective);
         Self {
             anchor_code: record.anchor_code,
             rotation_rad: record.rotation_rad,
             letter_height_m: record.letter_height_m,
-            height_m: resolved.as_ref().map(|style| style.height_m),
-            rgb: resolved
+            height_m: effective.as_ref().map(|style| style.height_m),
+            rgb: effective
                 .as_ref()
                 .and_then(crate::style_link::ResolvedTextHeight::rgb),
-            alignment: resolved.as_ref().and_then(|style| style.alignment),
-            line_spacing: resolved.as_ref().and_then(|style| style.line_spacing),
-            font_name: resolved.and_then(|style| style.font_name),
+            alignment: effective.as_ref().and_then(|style| style.alignment),
+            line_spacing: effective.as_ref().and_then(|style| style.line_spacing),
+            font_name: effective.and_then(|style| style.font_name),
+            run_style_id: resolved
+                .as_ref()
+                .and_then(|style| style.run.as_ref())
+                .map(|run| run.style_id),
+            spans: guarded_spans(&record.text, resolved.as_ref()),
         }
     }
+}
+
+/// The run partition of one label, refused where its character offsets do not
+/// survive the trip: a non-BMP character is one `char` and two UTF-16 units,
+/// so a run length counted in units would land mid-character. The corpus has
+/// none; refusing the partition rather than shifting it is the honest read for
+/// a label that had one.
+///
+/// Both routes — a `.sym`'s own payload and a drawing's cached body — go
+/// through here, so neither reader can hand a renderer offsets the other one
+/// would already have refused.
+fn guarded_spans(text: &str, resolved: Option<&ResolvedTextStyle>) -> Vec<SymbolLetteringSpan> {
+    if text.chars().count() != text.encode_utf16().count() {
+        return Vec::new();
+    }
+    spans_of(resolved)
+}
+
+/// The run partition a resolved label carries, mapped to the library's own
+/// span DTO. Empty where the label is lettered in one style.
+fn spans_of(resolved: Option<&ResolvedTextStyle>) -> Vec<SymbolLetteringSpan> {
+    let Some(resolved) = resolved else {
+        return Vec::new();
+    };
+    resolved
+        .spans
+        .iter()
+        .map(|span| SymbolLetteringSpan {
+            start: span.start,
+            len: span.len,
+            style_id: span.style.style_id,
+            height_m: Some(span.style.height_m),
+            font_name: span.style.font_name.clone(),
+            rgb: span.style.rgb(),
+        })
+        .collect()
 }
 
 /// A symbol's drawable body, as read from one `.sym` file.
@@ -1165,16 +1265,20 @@ fn style_of(payload: &[u8], styles: Option<&DocumentStyleTable>) -> Option<Primi
 }
 
 /// The lettering a text record draws with: what its placement tail states
-/// joined with what its style index resolves to.
+/// joined with what its **runs** say, and its paragraph index only where it
+/// says nothing.
 ///
 /// `Some` for every [`SymbolPrimitive::Text`] `decode_text` read from the same
 /// payload — the tail is the record's own bytes and reads even with no table
 /// to ask — and `None` for every other shape. The tail starts where the
 /// shape's body ends (`text_layout`), not necessarily at `payload_len - 36`,
 /// so the same reads the sheet decoder makes apply: direction pair at
-/// `+16..32` of the tail, anchor at its last byte. The style index sits at
-/// [`STYLE_INDEX_OFFSET`], the same slot a stroke's does — only the record it
-/// names differs (a `JStyleTextPara`, not a line style).
+/// `+16..32` of the tail, anchor at its last byte.
+///
+/// The style is [`text_style`]'s: a run's character style where the record has
+/// a run that resolves, the paragraph default at [`STYLE_INDEX_OFFSET`]
+/// otherwise — the rule the drawing side applies, not the paragraph-only hop
+/// this reader used to make.
 fn lettering_of(
     primitive: &SymbolPrimitive,
     payload: &[u8],
@@ -1183,14 +1287,14 @@ fn lettering_of(
     if !matches!(primitive, SymbolPrimitive::Text { .. }) {
         return None;
     }
-    let resolved = u32_le(payload, STYLE_INDEX_OFFSET)
-        .and_then(|index| styles.and_then(|table| table.resolve_text_height(index)));
-    let tail = text_layout(payload)?.2;
+    let (count, _, tail) = text_layout(payload)?;
     let cos = f64_le(payload, tail + 16)?;
     let sin = f64_le(payload, tail + 24)?;
     // A unit pair is a direction only and states no height; a height-scaled
     // one states it. `decode_text` admits no other pair.
     let letter_height_m = igtextbox_letter_height(cos, sin)?;
+    let resolved = text_style(payload, count, styles);
+    let effective = resolved.as_ref().and_then(ResolvedTextStyle::effective);
     Some(SymbolLettering {
         anchor_code: payload
             .get(tail + TEXT_TRAILING_LEN - 1)
@@ -1198,14 +1302,68 @@ fn lettering_of(
             .unwrap_or_default(),
         rotation_rad: sin.atan2(cos),
         letter_height_m,
-        height_m: resolved.as_ref().map(|style| style.height_m),
-        rgb: resolved
+        height_m: effective.as_ref().map(|style| style.height_m),
+        rgb: effective
             .as_ref()
             .and_then(crate::style_link::ResolvedTextHeight::rgb),
-        alignment: resolved.as_ref().and_then(|style| style.alignment),
-        line_spacing: resolved.as_ref().and_then(|style| style.line_spacing),
-        font_name: resolved.and_then(|style| style.font_name),
+        alignment: effective.as_ref().and_then(|style| style.alignment),
+        line_spacing: effective.as_ref().and_then(|style| style.line_spacing),
+        font_name: effective.and_then(|style| style.font_name),
+        run_style_id: resolved
+            .as_ref()
+            .and_then(|style| style.run.as_ref())
+            .map(|run| run.style_id),
+        spans: text_spans(primitive, resolved.as_ref()),
     })
+}
+
+/// [`guarded_spans`] for a primitive: only a text record has characters to
+/// measure, and every other shape carries no partition.
+fn text_spans(
+    primitive: &SymbolPrimitive,
+    resolved: Option<&ResolvedTextStyle>,
+) -> Vec<SymbolLetteringSpan> {
+    let SymbolPrimitive::Text { text, .. } = primitive else {
+        return Vec::new();
+    };
+    guarded_spans(text, resolved)
+}
+
+/// A text record's lettering from both places it states it: its paragraph
+/// index at [`STYLE_INDEX_OFFSET`], and the formatting runs its shape stores.
+///
+/// One rule, shared with the drawing side
+/// (`style_link::resolve_text_style`): the run covering the most characters
+/// wins for height, colour and typeface, while `alignment` and `line_spacing`
+/// come off the paragraph, which is the only place they are stated. The
+/// library used to skip the runs entirely, which lettered 1350 of 2266 labels
+/// at the paragraph's default size instead of the size their runs state.
+///
+/// `None` with no table to ask: a `.sym` knows its own states and nothing
+/// else.
+fn text_style(
+    payload: &[u8],
+    count: usize,
+    styles: Option<&DocumentStyleTable>,
+) -> Option<ResolvedTextStyle> {
+    let table = styles?;
+    let index = u32_le(payload, STYLE_INDEX_OFFSET)?;
+    let count = u16::try_from(count).ok()?;
+    crate::style_link::resolve_text_style(table, index, count, &text_runs(payload, count))
+}
+
+/// The formatting runs a text record stores, read by the drawing side's own
+/// walker rather than a second one: `igtextbox_runs` knows the shape-2 entry
+/// ahead of the count and the shape-3 entries after the text, and asking it
+/// here is what keeps the two readers from drifting apart again.
+fn text_runs(payload: &[u8], count: u16) -> Vec<DecodedTextRun> {
+    let Some(shape) = u16_le(payload, TEXT_SHAPE_AT) else {
+        return Vec::new();
+    };
+    igtextbox_runs(payload, shape, count)
+        .into_iter()
+        .map(DecodedTextRun::from)
+        .collect()
 }
 
 /// The storage a stream lives in, which is what a `Sheet*` and the
@@ -1646,12 +1804,18 @@ mod tests {
         assert_eq!(body.primitives.len(), 7, "and the other four draw solid");
     }
 
-    /// A `.sym`'s own lettering: the same two hops the drawing side resolves
-    /// — record `+14` to `JStyleTextPara`, on to `JStyleTextChar` — plus the
-    /// tail's own rotation and anchor. `Title Block Label.sym` letters its
-    /// `NULL` placeholders in 宋体 3.0/3.5 mm and Arial 4.0 mm; every record
-    /// keeps the unit direction (rotation `0`, no self-stated height) and
-    /// one anchors centre-top (`0x15`) where the rest anchor left-top.
+    /// A `.sym`'s own lettering: the record's tail, plus its **runs** — the
+    /// same rule the drawing side applies — with the paragraph index only as
+    /// the default a run overrides. `Title Block Label.sym` letters its `NULL`
+    /// placeholders in 宋体 3.0/3.5/4.0 mm and Arial Narrow 2.4694 mm (7 pt),
+    /// every record keeping the unit direction (rotation `0`, no self-stated
+    /// height) and one anchoring centre-top (`0x15`) where the rest anchor
+    /// left-top.
+    ///
+    /// Two of those numbers are only reachable through the runs: the paragraph
+    /// at `+14` says 3.5 mm and 2.5 mm where the run says 3.5278 mm (10 pt) and
+    /// 2.4694 mm (7 pt), and one record's paragraph names Arial while its run
+    /// names 宋体. See `docs/analysis/2026-08-22-run-beats-paragraph-default.md`.
     #[test]
     fn a_symbols_lettering_comes_off_its_own_style_table() {
         let path = symbols_root()
@@ -1692,8 +1856,16 @@ mod tests {
             "a 宋体 3.5 mm lettering: {styles:?}"
         );
         assert!(
-            styles.contains(&(4000, Some("Arial"))),
-            "an Arial 4 mm lettering: {styles:?}"
+            styles.contains(&(3528, Some("SimSun-ExtB"))),
+            "the run's 10 pt rather than the paragraph's 3.5 mm: {styles:?}"
+        );
+        assert!(
+            styles.contains(&(2469, Some("Arial Narrow"))),
+            "the run's 7 pt rather than the paragraph's 2.5 mm: {styles:?}"
+        );
+        assert!(
+            styles.contains(&(4000, Some("宋体"))),
+            "the run's typeface rather than the paragraph's Arial: {styles:?}"
         );
         for lettering in &lettered {
             assert_eq!(lettering.rotation_rad, 0.0, "unit direction: {lettering:?}");
@@ -2363,6 +2535,184 @@ mod tests {
         assert_eq!(lettering.rotation_rad.to_degrees(), 90.0);
         assert_eq!(lettering.letter_height_m, 0.0);
         assert_eq!(lettering.anchor_code, 0x15);
+    }
+
+    /// A `StyleCluster` holding just what a text lettering reads: one
+    /// `JStyleTextChar` per `(id, height)`, plus a `JStyleTextPara` naming one
+    /// where the record asks for the paragraph route.
+    fn style_cluster(chars: &[(u32, f64)], para: Option<(u32, u32)>) -> DocumentStyleTable {
+        let mut records: Vec<(u16, Vec<u8>)> = chars
+            .iter()
+            .map(|(id, height)| {
+                let mut payload = vec![0u8; 94];
+                payload[crate::style_link::STYLE_ID_OFFSET..crate::style_link::STYLE_ID_OFFSET + 4]
+                    .copy_from_slice(&id.to_le_bytes());
+                payload[crate::style_link::TEXT_CHAR_HEIGHT_OFFSET
+                    ..crate::style_link::TEXT_CHAR_HEIGHT_OFFSET + 8]
+                    .copy_from_slice(&height.to_le_bytes());
+                (crate::style_link::PSM_TYPE_CODE_JSTYLE_TEXT_CHAR, payload)
+            })
+            .collect();
+        if let Some((id, names)) = para {
+            let mut payload = vec![0u8; 90];
+            payload[crate::style_link::STYLE_ID_OFFSET..crate::style_link::STYLE_ID_OFFSET + 4]
+                .copy_from_slice(&id.to_le_bytes());
+            payload[crate::style_link::TEXT_PARA_CHAR_REFERENCE_OFFSET
+                ..crate::style_link::TEXT_PARA_CHAR_REFERENCE_OFFSET + 4]
+                .copy_from_slice(&names.to_le_bytes());
+            records.push((crate::style_link::PSM_TYPE_CODE_JSTYLE_TEXT_PARA, payload));
+        }
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&CLUSTER_MAGIC.to_le_bytes());
+        bytes.extend_from_slice(&(records.len() as u32).to_le_bytes());
+        for (type_code, payload) in &records {
+            bytes.extend_from_slice(&type_code.to_le_bytes());
+            bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(payload);
+        }
+        DocumentStyleTable::from_stylecluster_bytes(&bytes)
+    }
+
+    /// Overwrite one run of a shape-3 payload built by
+    /// [`text_payload_with_counters`].
+    fn write_run(payload: &mut [u8], count: usize, index: usize, len: u16, selector: u16, id: u32) {
+        let at = 28 + 2 * count + 8 * index;
+        payload[at..at + 2].copy_from_slice(&len.to_le_bytes());
+        payload[at + 2..at + 4].copy_from_slice(&selector.to_le_bytes());
+        payload[at + 4..at + 8].copy_from_slice(&id.to_le_bytes());
+    }
+
+    #[test]
+    fn text_lettering_takes_its_size_off_the_widest_run() {
+        // "ABC DEFG": three characters in `JStyleTextChar` 10 (2.5 mm), five
+        // in 11 (5.0 mm), while the paragraph `+14` names 12 (3.175 mm) — the
+        // library's old paragraph-only hop read the 3.175 mm default and the
+        // label came out at the wrong size. The run covering the most
+        // characters is the one to draw.
+        let mut payload = text_payload_with_counters(3, 2, 0, "ABC DEFG", (0.1, 0.14));
+        let (count, _, _) = text_layout(&payload).expect("layout");
+        payload[STYLE_INDEX_OFFSET..STYLE_INDEX_OFFSET + 4].copy_from_slice(&9u32.to_le_bytes());
+        write_run(&mut payload, count, 0, 3, 1, 10);
+        write_run(&mut payload, count, 1, 5, 1, 11);
+        let table = style_cluster(&[(10, 0.0025), (11, 0.005), (12, 0.003_175)], Some((9, 12)));
+
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, Some(&table)).expect("text letters");
+        assert_eq!(lettering.run_style_id, Some(11), "the longer run wins");
+        assert!((lettering.height_m.expect("a height") - 0.005).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_multi_run_label_exposes_the_spans_it_letters_in() {
+        // "ABC DEFG" in 2.5 mm then 5 mm: the widest run is what a one-style
+        // renderer draws, and the partition is what a span-by-span one draws.
+        let mut payload = text_payload_with_counters(3, 2, 0, "ABC DEFG", (0.1, 0.14));
+        let (count, _, _) = text_layout(&payload).expect("layout");
+        payload[STYLE_INDEX_OFFSET..STYLE_INDEX_OFFSET + 4].copy_from_slice(&9u32.to_le_bytes());
+        write_run(&mut payload, count, 0, 3, 1, 10);
+        write_run(&mut payload, count, 1, 5, 1, 11);
+        let table = style_cluster(&[(10, 0.0025), (11, 0.005), (12, 0.003_175)], Some((9, 12)));
+
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, Some(&table)).expect("text letters");
+        let spans: Vec<(u16, u16, u32, Option<f64>)> = lettering
+            .spans
+            .iter()
+            .map(|span| (span.start, span.len, span.style_id, span.height_m))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![(0, 3, 10, Some(0.0025)), (3, 5, 11, Some(0.005))]
+        );
+        // The flattened fields are still the widest run's, so a consumer that
+        // cannot advance span by span draws what it always drew.
+        assert_eq!(lettering.run_style_id, Some(11));
+        assert!((lettering.height_m.expect("a height") - 0.005).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_label_in_one_style_has_no_spans() {
+        // Shape 2 stores one run covering the whole label: nothing to split.
+        let mut payload = text_payload_with_counters(2, 0, 0, "ABC", (0.1, 0.14));
+        payload[26..30].copy_from_slice(&11u32.to_le_bytes());
+        payload[STYLE_INDEX_OFFSET..STYLE_INDEX_OFFSET + 4].copy_from_slice(&9u32.to_le_bytes());
+        let table = style_cluster(&[(11, 0.005), (12, 0.003_175)], Some((9, 12)));
+
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, Some(&table)).expect("text letters");
+        assert_eq!(lettering.run_style_id, Some(11));
+        assert!(lettering.spans.is_empty(), "{lettering:?}");
+    }
+
+    #[test]
+    fn a_label_with_a_non_bmp_character_keeps_its_spans_off() {
+        // A run length counts UTF-16 units while a span offset counts chars, so
+        // an astral character would land the second span mid-glyph. The corpus
+        // has none; a label that had one draws in one style rather than wrong.
+        let mut payload = text_payload_with_counters(3, 2, 0, "A😀B", (0.1, 0.14));
+        let (count, _, _) = text_layout(&payload).expect("layout");
+        payload[STYLE_INDEX_OFFSET..STYLE_INDEX_OFFSET + 4].copy_from_slice(&9u32.to_le_bytes());
+        // The label is four UTF-16 units: `A`, the surrogate pair, `B`.
+        write_run(&mut payload, count, 0, 1, 1, 10);
+        write_run(&mut payload, count, 1, 3, 1, 11);
+        let table = style_cluster(&[(10, 0.0025), (11, 0.005), (12, 0.003_175)], Some((9, 12)));
+
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, Some(&table)).expect("text letters");
+        assert!(lettering.spans.is_empty(), "{lettering:?}");
+        assert_eq!(
+            lettering.run_style_id,
+            Some(11),
+            "the flattening still happens"
+        );
+    }
+
+    #[test]
+    fn text_lettering_keeps_the_paragraph_where_its_runs_resolve_to_nothing() {
+        // A run naming a style this document does not define is not followed:
+        // the paragraph route still answers, as it did before runs were read.
+        let mut payload = text_payload_with_counters(3, 1, 0, "ABC", (0.1, 0.14));
+        let (count, _, _) = text_layout(&payload).expect("layout");
+        payload[STYLE_INDEX_OFFSET..STYLE_INDEX_OFFSET + 4].copy_from_slice(&9u32.to_le_bytes());
+        write_run(&mut payload, count, 0, 3, 1, 404);
+        let table = style_cluster(&[(12, 0.003_175)], Some((9, 12)));
+
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, Some(&table)).expect("text letters");
+        assert_eq!(lettering.run_style_id, None);
+        assert!((lettering.height_m.expect("a height") - 0.003_175).abs() < 1e-12);
+    }
+
+    #[test]
+    fn text_lettering_ignores_runs_that_do_not_cover_the_text() {
+        // The native sizer refuses a record whose selector-1 lengths do not sum
+        // to its count, so a partial list is not a list that covers anything:
+        // falling back to the paragraph is the honest read.
+        let mut payload = text_payload_with_counters(3, 1, 0, "ABCDEFG", (0.1, 0.14));
+        let (count, _, _) = text_layout(&payload).expect("layout");
+        payload[STYLE_INDEX_OFFSET..STYLE_INDEX_OFFSET + 4].copy_from_slice(&9u32.to_le_bytes());
+        write_run(&mut payload, count, 0, 3, 1, 11);
+        let table = style_cluster(&[(11, 0.005), (12, 0.003_175)], Some((9, 12)));
+
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, Some(&table)).expect("text letters");
+        assert_eq!(lettering.run_style_id, None);
+        assert!((lettering.height_m.expect("a height") - 0.003_175).abs() < 1e-12);
+    }
+
+    #[test]
+    fn text_lettering_follows_a_shape_two_record_single_run() {
+        // Shape 2 stores its one run ahead of the count, in the dword the shape
+        // check already reads: its style id sits at `+26`.
+        let mut payload = text_payload_with_counters(2, 0, 0, "ABC", (0.1, 0.14));
+        payload[26..30].copy_from_slice(&11u32.to_le_bytes());
+        payload[STYLE_INDEX_OFFSET..STYLE_INDEX_OFFSET + 4].copy_from_slice(&9u32.to_le_bytes());
+        let table = style_cluster(&[(11, 0.005), (12, 0.003_175)], Some((9, 12)));
+
+        let primitive = decode_primitive(TYPE_TEXT, &payload).expect("decodes");
+        let lettering = lettering_of(&primitive, &payload, Some(&table)).expect("text letters");
+        assert_eq!(lettering.run_style_id, Some(11));
+        assert!((lettering.height_m.expect("a height") - 0.005).abs() < 1e-12);
     }
 
     #[test]

@@ -18,11 +18,12 @@
 //!
 //! Read-only.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use pid_parse::style_link::{
-    DocumentStyleTable, PSM_TYPE_CODE_JSTYLE_TEXT_CHAR, PSM_TYPE_CODE_JSTYLE_TEXT_PARA,
+    DocumentStyleTable, ResolvedTextHeight, PSM_TYPE_CODE_JSTYLE_TEXT_CHAR,
+    PSM_TYPE_CODE_JSTYLE_TEXT_PARA,
 };
 use pid_parse::PidParser;
 
@@ -180,6 +181,8 @@ struct Tally {
     no_table_records: usize,
     /// Selector-2 runs that name a different paragraph than the record's `+14`.
     sel2_elsewhere: Vec<String>,
+    /// Print every record of the files given, not just the tally.
+    dump: bool,
     /// What the library draws with (the `+14` paragraph hop) against what the
     /// record's runs state.
     compared: usize,
@@ -188,12 +191,35 @@ struct Tally {
     font_drift: usize,
     colour_drift: usize,
     sel2_height_drift: usize,
+    /// Records the library now draws from a run, and how many of those differ
+    /// from the paragraph-only read it made before.
+    drawn_from_run: usize,
+    drawn_compared: usize,
+    drawn_height_differs: usize,
+    drawn_font_differs: usize,
+    drawn_colour_differs: usize,
+    /// Height histograms in micrometres: the paragraph route, and what the
+    /// library draws.
+    para_heights: BTreeMap<u64, usize>,
+    drawn_heights: BTreeMap<u64, usize>,
+    /// Heights that land on an exact half-point, the text editor's own grid.
+    para_half_point: usize,
+    drawn_half_point: usize,
+    /// Records whose selector-1 runs disagree within themselves: how many
+    /// differ in height, typeface, colour, and how many at all.
+    spans_multiple: usize,
+    span_height_conflict: usize,
+    span_font_conflict: usize,
+    span_colour_conflict: usize,
+    /// One sample per conflicting record, bounded.
+    span_samples: Vec<String>,
     samples: Vec<String>,
 }
 
 fn main() {
     let mut roots: Vec<PathBuf> = Vec::new();
     let mut sample_count = 12usize;
+    let mut dump = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -202,6 +228,7 @@ fn main() {
                     roots.push(PathBuf::from(dir));
                 }
             }
+            "--dump" => dump = true,
             "--samples" => {
                 sample_count = args.next().and_then(|n| n.parse().ok()).unwrap_or(12);
             }
@@ -224,7 +251,10 @@ fn main() {
     syms.dedup();
     println!("{} .sym files under {} root(s)", syms.len(), roots.len());
 
-    let mut tally = Tally::default();
+    let mut tally = Tally {
+        dump,
+        ..Tally::default()
+    };
     for sym in &syms {
         let Ok(pkg) = PidParser::new().parse_package(sym) else {
             continue;
@@ -273,6 +303,14 @@ fn main() {
                 };
                 if end > bytes.len() {
                     break;
+                }
+                if dump {
+                    let shape = bytes
+                        .get(body + SHAPE_AT..body + SHAPE_AT + 2)
+                        .map_or(-1, |b| i32::from(u16::from_le_bytes([b[0], b[1]])));
+                    println!(
+                        "  REC {name} {path} +{at} type=0x{raw_type:04X} len={btf} shape={shape}"
+                    );
                 }
                 if raw_type & 0x0FFF == TYPE_TEXTBOX {
                     let payload = &bytes[body..end];
@@ -361,6 +399,41 @@ fn examine(
             *tally.sel1_resolution.entry(kind).or_default() += 1;
         }
         let paragraph = u32_le(payload, PARAGRAPH_ID_AT);
+        if tally.dump {
+            let paragraph_style =
+                table.and_then(|table| paragraph.and_then(|id| table.resolve_text_height(id)));
+            let runs_shown: Vec<String> = runs
+                .iter()
+                .map(|run| {
+                    let resolved = table.and_then(|table| table.resolve_run_style(run.style_id));
+                    format!(
+                        "{}x{}#{} -> {} {} mm",
+                        run.len,
+                        run.selector,
+                        run.style_id,
+                        resolved
+                            .as_ref()
+                            .and_then(|style| style.font_name.clone())
+                            .unwrap_or_else(|| "-".to_owned()),
+                        resolved
+                            .as_ref()
+                            .map_or(f64::NAN, |style| style.height_m * 1e3)
+                    )
+                })
+                .collect();
+            println!(
+                "{name} [{stream}] shape={shape} count={count} +14={:?} -> {} {} mm | runs: {}",
+                paragraph,
+                paragraph_style
+                    .as_ref()
+                    .and_then(|style| style.font_name.clone())
+                    .unwrap_or_else(|| "-".to_owned()),
+                paragraph_style
+                    .as_ref()
+                    .map_or(f64::NAN, |style| style.height_m * 1e3),
+                runs_shown.join("  ")
+            );
+        }
         for run in runs.iter().filter(|run| run.selector == 2) {
             tally.sel2_seen += 1;
             if Some(run.style_id) == paragraph {
@@ -401,40 +474,123 @@ fn examine(
             *tally.sel2_resolution.entry(kind).or_default() += 1;
         }
 
-        // What the library draws with today is the `+14` paragraph hop; the
-        // runs are what the vendor says the characters actually use.
+        // What the library draws with **now** — the widest selector-1 run,
+        // the paragraph only where there is no run to follow — against the
+        // paragraph-only route it read before.
         if let Some(table) = table {
-            let base =
-                u32_le(payload, PARAGRAPH_ID_AT).and_then(|id| table.resolve_text_height(id));
-            match base {
-                None => tally.base_missing += 1,
-                Some(base) => {
-                    tally.compared += 1;
-                    let mut drift = (false, false, false);
-                    for run in runs.iter().filter(|run| run.selector == 1) {
-                        let Some(resolved) = table.resolve_run_style(run.style_id) else {
-                            continue;
-                        };
-                        if (resolved.height_m - base.height_m).abs() > 1e-9 {
-                            drift.0 = true;
-                        }
-                        if resolved.font_name != base.font_name {
-                            drift.1 = true;
-                        }
-                        if resolved.colour != base.colour {
-                            drift.2 = true;
-                        }
+            let paragraph = u32_le(payload, PARAGRAPH_ID_AT);
+            let base = paragraph.and_then(|id| table.resolve_text_height(id));
+            let widest = widest_run_style(table, &runs, count);
+            let drawn = widest.clone().or_else(|| base.clone());
+            if widest.is_some() {
+                tally.drawn_from_run += 1;
+            }
+            if let Some(base) = &base {
+                if let Some(drawn) = &drawn {
+                    tally.drawn_compared += 1;
+                    if (drawn.height_m - base.height_m).abs() > 1e-9 {
+                        tally.drawn_height_differs += 1;
                     }
-                    tally.height_drift += usize::from(drift.0);
-                    tally.font_drift += usize::from(drift.1);
-                    tally.colour_drift += usize::from(drift.2);
-                    for run in runs.iter().filter(|run| run.selector == 2) {
-                        let Some(other) = table.resolve_text_height(run.style_id) else {
-                            continue;
-                        };
-                        if (other.height_m - base.height_m).abs() > 1e-9 {
-                            tally.sel2_height_drift += 1;
-                        }
+                    if drawn.font_name != base.font_name {
+                        tally.drawn_font_differs += 1;
+                    }
+                    if drawn.colour != base.colour {
+                        tally.drawn_colour_differs += 1;
+                    }
+                }
+            }
+            let bucket = |style: &ResolvedTextHeight| (style.height_m * 1e6).round() as u64;
+            let half_point = |style: &ResolvedTextHeight| {
+                let points = style.height_m * 1e3 * 72.0 / 25.4;
+                ((points * 2.0) - (points * 2.0).round()).abs() < 1e-3
+            };
+            if let Some(base) = &base {
+                *tally.para_heights.entry(bucket(base)).or_default() += 1;
+                tally.para_half_point += usize::from(half_point(base));
+            }
+            if let Some(drawn) = &drawn {
+                *tally.drawn_heights.entry(bucket(drawn)).or_default() += 1;
+                tally.drawn_half_point += usize::from(half_point(drawn));
+            }
+            // Would drawing each run on its own change anything on paper?
+            // Ink is monochrome here, so a colour-only split does not show.
+            let selector_one: Vec<(u16, ResolvedTextHeight)> = runs
+                .iter()
+                .filter(|run| run.selector == 1)
+                .filter_map(|run| {
+                    table
+                        .resolve_run_style(run.style_id)
+                        .map(|style| (run.len, style))
+                })
+                .collect();
+            if selector_one.len() > 1 {
+                tally.spans_multiple += 1;
+                let heights: BTreeSet<u64> = selector_one
+                    .iter()
+                    .map(|(_, style)| style.height_m.to_bits())
+                    .collect();
+                let fonts: BTreeSet<Option<&str>> = selector_one
+                    .iter()
+                    .map(|(_, style)| style.font_name.as_deref())
+                    .collect();
+                let colours: BTreeSet<Option<u32>> =
+                    selector_one.iter().map(|(_, style)| style.colour).collect();
+                if heights.len() > 1 {
+                    tally.span_height_conflict += 1;
+                }
+                if fonts.len() > 1 {
+                    tally.span_font_conflict += 1;
+                }
+                if colours.len() > 1 {
+                    tally.span_colour_conflict += 1;
+                }
+                if (heights.len() > 1 || fonts.len() > 1) && tally.span_samples.len() < 15 {
+                    let shown: Vec<String> = selector_one
+                        .iter()
+                        .map(|(len, style)| {
+                            format!(
+                                "{len}x {} {:.3}mm",
+                                style.font_name.clone().unwrap_or_else(|| "-".to_owned()),
+                                style.height_m * 1e3
+                            )
+                        })
+                        .collect();
+                    tally
+                        .span_samples
+                        .push(format!("{name} [{stream}] {}", shown.join(" | ")));
+                }
+            }
+
+            // Any run disagreeing with the paragraph at all, which is what the
+            // drawing side counted before it wired the runs.
+            if let Some(base) = &base {
+                tally.compared += 1;
+                let mut drift = (false, false, false);
+                for run in runs.iter().filter(|run| run.selector == 1) {
+                    let Some(resolved) = table.resolve_run_style(run.style_id) else {
+                        continue;
+                    };
+                    if (resolved.height_m - base.height_m).abs() > 1e-9 {
+                        drift.0 = true;
+                    }
+                    if resolved.font_name != base.font_name {
+                        drift.1 = true;
+                    }
+                    if resolved.colour != base.colour {
+                        drift.2 = true;
+                    }
+                }
+                tally.height_drift += usize::from(drift.0);
+                tally.font_drift += usize::from(drift.1);
+                tally.colour_drift += usize::from(drift.2);
+            }
+            if let Some(base) = &base {
+                for run in runs.iter().filter(|run| run.selector == 2) {
+                    let Some(other) = table.resolve_text_height(run.style_id) else {
+                        continue;
+                    };
+                    if (other.height_m - base.height_m).abs() > 1e-9 {
+                        tally.sel2_height_drift += 1;
                     }
                 }
             }
@@ -451,6 +607,55 @@ fn examine(
             rendered.join(" ")
         ));
     }
+}
+
+/// The lettering the library draws a record with now: the selector-1 run
+/// covering the most characters, ties to the one the label starts in, and only
+/// where every run resolves and the lengths add up to the character count —
+/// the same three conditions `style_link::resolve_text_style` applies.
+fn widest_run_style(
+    table: &DocumentStyleTable,
+    runs: &[Run],
+    count: u16,
+) -> Option<ResolvedTextHeight> {
+    let selector_one: Vec<&Run> = runs.iter().filter(|run| run.selector == 1).collect();
+    if selector_one.is_empty()
+        || selector_one
+            .iter()
+            .map(|run| usize::from(run.len))
+            .sum::<usize>()
+            != usize::from(count)
+    {
+        return None;
+    }
+    let resolved: Vec<(usize, ResolvedTextHeight)> = selector_one
+        .iter()
+        .map(|run| {
+            table
+                .resolve_run_style(run.style_id)
+                .map(|style| (usize::from(run.len), style))
+        })
+        .collect::<Option<_>>()?;
+    let mut coverage: Vec<(usize, ResolvedTextHeight)> = Vec::new();
+    for (chars, style) in resolved {
+        match coverage
+            .iter_mut()
+            .find(|(_, seen)| seen.style_id == style.style_id)
+        {
+            Some((total, _)) => *total += chars,
+            None => coverage.push((chars, style)),
+        }
+    }
+    coverage
+        .into_iter()
+        .fold(
+            None::<(usize, ResolvedTextHeight)>,
+            |best, entry| match best {
+                Some(best) if best.0 >= entry.0 => Some(best),
+                _ => Some(entry),
+            },
+        )
+        .map(|(_, style)| style)
 }
 
 fn report(tally: &Tally) {
@@ -510,6 +715,50 @@ fn report(tally: &Tally) {
         "  selector-2 paragraph resolves to a different height: {}",
         tally.sel2_height_drift
     );
+
+    println!(
+        "
+== what the library draws now: widest run, paragraph as the default =="
+    );
+    println!(
+        "  records lettered by a run {} of {}; compared with the paragraph route {}",
+        tally.drawn_from_run, tally.records, tally.drawn_compared
+    );
+    println!(
+        "  drawn height differs {}  font {}  colour {}",
+        tally.drawn_height_differs, tally.drawn_font_differs, tally.drawn_colour_differs
+    );
+    println!(
+        "  heights on an exact half-point: drawn {}/{}  paragraph {}/{}",
+        tally.drawn_half_point,
+        tally.drawn_heights.values().sum::<usize>(),
+        tally.para_half_point,
+        tally.para_heights.values().sum::<usize>()
+    );
+    for (label, histogram) in [
+        ("paragraph", &tally.para_heights),
+        ("drawn", &tally.drawn_heights),
+    ] {
+        let mut entries: Vec<(u64, usize)> = histogram.iter().map(|(k, v)| (*k, *v)).collect();
+        entries.sort_by_key(|(micrometres, _)| *micrometres);
+        let shown: Vec<String> = entries
+            .iter()
+            .map(|(micrometres, count)| format!("{:.3}mm x{count}", *micrometres as f64 / 1e3))
+            .collect();
+        println!("  {label}: {}", shown.join("  "));
+    }
+
+    println!("\n== would drawing each selector-1 run as its own span change the page? ==");
+    println!(
+        "  records with more than one selector-1 run {}: height differs {}  typeface {}  colour {}",
+        tally.spans_multiple,
+        tally.span_height_conflict,
+        tally.span_font_conflict,
+        tally.span_colour_conflict
+    );
+    for line in &tally.span_samples {
+        println!("  {line}");
+    }
 
     println!("\n== selector-2 runs that name a different paragraph than +14 ==");
     for line in &tally.sel2_elsewhere {
