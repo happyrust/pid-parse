@@ -133,7 +133,10 @@ impl std::error::Error for PlotWriteError {}
 
 /// Write `model` to PDF bytes, setting each run in the matching face.
 pub fn write_plot(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Result<Vec<u8>, PlotWriteError> {
-    if fonts.is_empty() {
+    // A drawing can hold no lettering at all: `D03` in the plant backup is a
+    // template with zero primitives, so `prepare_fonts` loads nothing. The
+    // page still writes; only a run that needs a face without one is fatal.
+    if fonts.is_empty() && has_inked_text(model) {
         return Err(PlotWriteError::Font("no font was provided".into()));
     }
     let [page_w, page_h] = resolved_page(model)?;
@@ -235,6 +238,14 @@ fn add_ocg(doc: &mut Document, name: &str) -> pdfcraft_cos::ObjRef {
     ocg.set(b"Type".to_vec(), Object::name("OCG"));
     ocg.set(b"Name".to_vec(), Object::String(PdfString::text(name)));
     doc.add(Object::Dict(ocg))
+}
+
+/// Whether any run on the page needs a typeface: the same test
+/// [`crate::fonts::prepare_fonts`] loads faces for.
+fn has_inked_text(model: &PaperModel) -> bool {
+    model.primitives.iter().any(
+        |primitive| matches!(&primitive.shape, PaperShape::Text { value, .. } if !value.is_empty()),
+    )
 }
 
 fn pages_ref(doc: &Document) -> Result<pdfcraft_cos::ObjRef, PlotWriteError> {
@@ -1047,6 +1058,58 @@ mod tests {
         widths.sort_by(f64::total_cmp);
         widths.dedup();
         assert_eq!(widths, vec![0.17, 0.68], "the pens are not snapped");
+    }
+
+    /// `D03` in the plant backup is a drawing with a declared sheet and no
+    /// content at all: `prepare_fonts` loads no face for it, and the page used
+    /// to be refused with `no font was provided`.
+    #[test]
+    fn a_drawing_with_no_ink_at_all_still_writes_its_declared_sheet() {
+        let model = PaperModel {
+            library: Vec::new(),
+            page_mm: Some([594.33, 420.57]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: Vec::new(),
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(&model, &[]).expect("an empty page still writes");
+        let ink = read_plot(&pdf).expect("read");
+        assert!((ink.page_mm[0] - 594.33).abs() < 0.05, "{ink:?}");
+        assert!((ink.page_mm[1] - 420.57).abs() < 0.05, "{ink:?}");
+        assert!(ink.segments.is_empty() && ink.spans.is_empty(), "{ink:?}");
+    }
+
+    /// Lettering with no loaded face is still a failure: a page that silently
+    /// dropped its labels would look like a blank success.
+    #[test]
+    fn lettering_without_a_face_is_refused() {
+        let model = PaperModel {
+            library: Vec::new(),
+            page_mm: Some([200.0, 100.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [12.0, 40.0],
+                    height_mm: Some(5.0),
+                    rotation: 0.0,
+                    value: "Ab".into(),
+                    font: None,
+                    anchor: TextAnchor::Left,
+                    line: TextLine::Bottom,
+                },
+            )],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        assert!(write_plot(&model, &[]).is_err());
     }
 
     #[test]

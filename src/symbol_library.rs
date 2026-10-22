@@ -1329,23 +1329,51 @@ impl SymbolLibrary {
     /// A root can hold a symbol as a text-only or connect-point body with
     /// nothing to draw while another root has the drawn version, so an empty
     /// body is kept only as a fallback rather than ending the search.
+    ///
+    /// A stored path can carry a leading space on a component that the
+    /// exported share does not have on disk: the plant backup's `集注站`
+    /// drawings name `\Symbols\Piping\Piping OPC's\ Off-Unit SQ.sym` while
+    /// the library file is `Off-Unit SQ.sym` (43 placements across 43
+    /// drawings, plus 21 for `Filter Type 2.sym`). The stored spelling is
+    /// tried first, then the same path with each component's leading spaces
+    /// trimmed.
     fn read_from_roots(&self, symbol_path: &str) -> Option<SymbolGeometry> {
         let relative = library_relative_path(symbol_path)?.replace('\\', "/");
         let mut empty = None;
-        for root in &self.roots {
-            let path = root.join(&relative);
-            if !path.is_file() {
-                continue;
+        for candidate in symbol_candidates(&relative) {
+            for root in &self.roots {
+                let path = root.join(&candidate);
+                if !path.is_file() {
+                    continue;
+                }
+                let Ok(body) = read_symbol_geometry(&path) else {
+                    continue;
+                };
+                if !body.primitives.is_empty() {
+                    return Some(body);
+                }
+                empty.get_or_insert(body);
             }
-            let Ok(body) = read_symbol_geometry(&path) else {
-                continue;
-            };
-            if !body.primitives.is_empty() {
-                return Some(body);
-            }
-            empty.get_or_insert(body);
         }
         empty
+    }
+}
+
+/// The library-relative spellings a stored symbol path may have on disk.
+///
+/// `SmartPlant` writes the path it was authored with; a share copied to
+/// another machine can hold the same file without the stray leading space on
+/// a component. One candidate when nothing needed trimming.
+fn symbol_candidates(relative: &str) -> Vec<String> {
+    let trimmed = relative
+        .split('/')
+        .map(str::trim_start)
+        .collect::<Vec<_>>()
+        .join("/");
+    if trimmed == relative {
+        vec![relative.to_string()]
+    } else {
+        vec![relative.to_string(), trimmed]
     }
 }
 
@@ -1795,6 +1823,40 @@ mod tests {
             .map(|body| body.primitives.len());
         assert_eq!(hit, Some(1), "the second root holds the symbol");
         std::fs::remove_dir_all(&absent).ok();
+    }
+
+    /// A stored path can carry a leading space the share does not have.
+    ///
+    /// The plant backup's `集注站` drawings name
+    /// `\Symbols\Piping\Piping OPC's\ Off-Unit SQ.sym`; the file beside them
+    /// is `Off-Unit SQ.sym`. 64 placements across that set (43 `Off-Unit SQ`,
+    /// 21 `Filter Type 2`) used to resolve to nothing and drew no symbol at
+    /// all before the trimmed spelling was tried.
+    #[test]
+    fn a_component_leading_space_still_finds_the_file_on_disk() {
+        if !symbols_root().is_dir() {
+            return;
+        }
+        let mut library = SymbolLibrary::new(symbols_root());
+        let stored = r"\\WIN-SPID\p\Ref\Symbols\Design\Annotation\Graphics\ Circle.sym";
+        let hit = library.resolve(stored).map(|body| body.primitives.len());
+        assert_eq!(hit, Some(1), "the stray space is the share's, not ours");
+        assert!(library.missing().is_empty());
+    }
+
+    #[test]
+    fn symbol_candidates_trim_only_a_component_leading_space() {
+        assert_eq!(
+            symbol_candidates("Piping/Piping OPC's/ Off-Unit SQ.sym"),
+            vec![
+                "Piping/Piping OPC's/ Off-Unit SQ.sym".to_string(),
+                "Piping/Piping OPC's/Off-Unit SQ.sym".to_string(),
+            ]
+        );
+        assert_eq!(
+            symbol_candidates("Piping/Off-Unit SQ.sym"),
+            vec!["Piping/Off-Unit SQ.sym".to_string()]
+        );
     }
 
     #[test]

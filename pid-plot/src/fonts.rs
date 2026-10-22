@@ -198,7 +198,13 @@ fn subset_face(font_data: &[u8], chars: &HashSet<char>) -> Result<Vec<u8>, Strin
         unicodes.insert(u32::from(*ch));
     }
     let empty_gids: IntSet<GlyphId> = IntSet::empty();
-    let empty_tags: IntSet<Tag> = IntSet::empty();
+    // `klippa` passes the monochrome bitmap tables through whole: SimSun's
+    // `EBDT` + `EBLC` are 6.2 MiB of the face, so a three-character subset
+    // still weighed 6.4 MiB and every plotted page was ~6.8 MiB. A PDF draws
+    // the outline, never the bitmap strike, so the tables go.
+    let bitmap_tables: IntSet<Tag> = [Tag::new(b"EBDT"), Tag::new(b"EBLC"), Tag::new(b"EBSC")]
+        .into_iter()
+        .collect();
     let name_ids: IntSet<NameId> = IntSet::all();
     let langs: IntSet<u16> = IntSet::all();
     let layout_scripts: IntSet<Tag> = IntSet::all();
@@ -209,7 +215,7 @@ fn subset_face(font_data: &[u8], chars: &HashSet<char>) -> Result<Vec<u8>, Strin
         &unicodes,
         &font,
         SubsetFlags::default(),
-        &empty_tags,
+        &bitmap_tables,
         &layout_scripts,
         &layout_features,
         &name_ids,
@@ -293,7 +299,49 @@ fn is_cjk(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::typeface_key;
+    use std::path::PathBuf;
+
+    use super::{font_dirs, subset_or_whole, typeface_key};
+
+    /// SimSun ships a 5.5 MiB `EBDT` bitmap strike and an 11.7 MiB `glyf`
+    /// table. `fontcull` subsets the outlines but passes the bitmap tables
+    /// through whole, so a three-character subset used to weigh 6.36 MiB and
+    /// every plotted page ~6.8 MiB — thirty times the reference plot. A PDF
+    /// strokes outlines, never bitmap strikes, so those tables are dropped.
+    #[test]
+    fn a_cjk_face_is_subset_to_the_drawing_not_embedded_whole() {
+        let corpus = std::env::var_os("PID_PARSE_SELF_CHECK_DIR").map_or_else(
+            || PathBuf::from(r"D:\work\cad\PID自研软件验证"),
+            PathBuf::from,
+        );
+        let Some(dir) = font_dirs(Some(&corpus))
+            .into_iter()
+            .find(|dir| dir.join("simsun.ttf").is_file())
+        else {
+            eprintln!("skipping the subset ceiling; no simsun.ttf in the font directories");
+            return;
+        };
+        let bytes = std::fs::read(dir.join("simsun.ttf")).expect("read simsun.ttf");
+        let text = "PT 1001101A 阀泵换热器 低温分离";
+        let subset = subset_or_whole("SimSun", &bytes, text).expect("subset SimSun");
+        assert!(
+            pdfcraft_fonts::embedding::validate(&subset).is_ok(),
+            "the subset has to stay embeddable"
+        );
+        for ch in text.chars() {
+            let mut buf = [0u8; 4];
+            assert!(
+                pdfcraft_fonts::embedding::covers(&subset, ch.encode_utf8(&mut buf)),
+                "the subset must still draw {ch:?}"
+            );
+        }
+        assert!(
+            subset.len() < 2 * 1024 * 1024,
+            "subset is {} bytes of {} — the bitmap tables came back",
+            subset.len(),
+            bytes.len()
+        );
+    }
 
     #[test]
     fn a_stated_arial_narrow_stays_arial_narrow() {

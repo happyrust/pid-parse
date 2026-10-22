@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### 备份里的 53 张图全部出 PDF：字体只嵌子集，符号路径容忍前导空格（2026-10-21）
+
+把 `D:\work\plant-code\cad\pid-test-data` 的 `PlantData~2~711.zip`（一个装置 53 张图，文件名 GBK）拆出来逐张导出：**53/53 出页**，每页 **175–846 KB**（改前每页 6.6–7.1 MB，合计 366 MB → 25.7 MB），缺符号 **82 处 → 18 处**。五张参考图读数逐位未动（覆盖率 0.9989 / 0.9998 / 0.9979 / 0.9986 / 0.9993、多画 41.8 / 7.6 / 1.5 / 22.9 / 24.6 mm、文字 544/546 + 151/151 + 123/123 + 167/167 + 249/249）。
+
+- **空图不再被字体闸门挡住**：`D03` 有页幅（594.33 × 420.57）却 0 个图元（发 XML 那边也是 0 个对象），`prepare_fonts` 因此一个面都不载，`write_plot` 把空字体表当错误。现在只有「确实有字而没有面」才拒绝（`has_inked_text`），`D03` 出 722 字节的空白页；有字无面仍是硬错。
+- **字体只嵌子集**：`klippa` 把 `EBDT` / `EBLC` / `EBSC`（SimSun 合计 6.2 MB 的单色点阵）整段透传，于是 3 个字的子集也有 6.36 MB、每页 6.8 MB。`fonts::subset_face` 把这三张表放进 `drop_tables`（PDF 画轮廓，不画点阵 strike）：SimSun 18,314,228 → **150,632** 字节，NSimSun → **153,376**，FangSong → **73,652**，都通过 `validate` 且覆盖全部请求字符。新增探针 `pid-plot/examples/probe_font_subset` 与子集上限单测。
+- **符号路径容忍前导空格**：图纸里存的是 `\Symbols\Piping\Piping OPC's\ Off-Unit SQ.sym`（43 处）和 `\Symbols\…\Strainers\ Filter Type 2.sym`（21 处），厂商 `RefData~4~681.zip` 里这两个条目也带空格，解压到磁盘时被吃掉。`symbol_library::read_from_roots` 先照存法找，再把每段前导空格去掉重试（`symbol_candidates`）。
+- **门禁**：新增 `pid-plot/tests/export_plant_backup` —— 53 张逐个布局/写/读回，断言页幅、`off_sheet_primitives == 0`、无断行标签、缺失符号 ⊆ 三条白名单、每页 < 2 MiB；目录按 `PID_TEST_DATA_DIR` → 语料旁 → 两个 `pid-test-data` 依次找，找不到就软跳过（实测 70.7 s，`53 backup drawings exported, 4 faces embedded`）。`probe_export_audit` 全量跑：`53 drawings, 0 failed`。
+- 仍未闭合：18 处符号在整个数据包里不存在（`Pulsation Damper.sym` 13、裸名 `Wellhead Christmas Tree.sym` 4、`clone of tt-temperature transmitter(1).sym` 1）；9 张自定义页幅（594.33 × 420.57 等）照图纸原样出页；其余 48 张没有参考出图，只有结构与审计。
+- 分析：`docs/analysis/2026-10-21-the-plant-backup-exports-every-sheet.md`。
+
 ### 七个 `.pid` 全部出成 PDF：多行标签拆行、符号库联合搜索、推断几何不上纸（2026-10-21）
 
 仓库里 7 个 `.pid` 现在都能导出并读回，而且出来的是这张图；改前 `DWG-0202GP06-01` 的两份**整页写不出**，`DWG-0201GP06-01` 还丢 3 个符号、并把 35 条推断出来的线画上纸（一条横穿整页的对角线）。五张语料图的读数一条未动（覆盖率 0.9989 / 0.9998 / 0.9979 / 0.9986 / 0.9993、多画 41.8 / 7.6 / 1.5 / 22.9 / 24.6 mm、文字 544/546 + 151/151 + 123/123 + 167/167 + 249/249）—— 它们没有多行标签，也没有推断图元。

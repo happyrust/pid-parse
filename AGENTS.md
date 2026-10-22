@@ -67,7 +67,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
 | `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports a PDF, reads back, and names any symbol no library carries | every `test-file/**/*.pid` |
-| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, known library gaps only | `<corpus>/backup-plant-data/**/*.pid` (soft-skips when absent) |
+| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, known library gaps only | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
 
