@@ -1,5 +1,17 @@
 # publish 文件生成 · 进度盘点与下一步开发计划（2026-10-13）
 
+> **状态：本篇 §1 / §2 是 2026-10-13 的快照，已被后续落地取代（2026-10-21 复核）。** §6 执行记录保留原始时间线。
+>
+> 已落地：N9-1 `b51f18d`；N9-2 管线合成 + N9-3 整包目录 `7f1d891`；N10 `_Meta.xml` 派生对象 `4866b81`；N12 `SQL Server` MTF 整包入口 `3722c2f`；A1–A4 把 `PublishItemCatalog` 接进 `sqlite_load` / `xml_writer` / `diff`（`60f1b25` / `7c79749` / `4735be9` / `6881c18`，收尾 `595ce19`）。全部在 `codex/phase32c-bundle-closeout` 上，`main` 未合。
+>
+> 交付目录 `D:\work\cad\pid-test-data\publish\`：160 个文件（53 张 × 三件 + `_Index.json`），`_Index.json` 记 53 / 53 写出、失败 0、空图 2、对象 **80 085**、值 **87 419**、关系 **106 705**、管线 **2 395**（`synthesized`）、`PipingConnectors` **3 128**。
+>
+> 2026-10-21 复跑门禁：`publish_from_pid` 9 / 9（整套 60.7 s，整包 53 张那条占绝大部分）、`publish_xml_cli` 20 / 20、`publish_mdf_load` 3 / 3、`publish_meta_parity` 6 / 6，退出码均 0。
+>
+> 仍登记未做：N11（符号库 / 模板 / `PlantConfig.xml` 内容解析）、集注站 4 张的参考对照（等那套库的备份）、DWG 侧 `Export.mdf` 夹具缺失导致的 soft-skip。
+>
+> 2026-10-22 目录收口：`pid_load` 里的 `CLASS_OF_ITEM_TYPE` / `UNCLASSED_ITEM_TYPES` 两张手写表删除，`.pid` 线的分类改由 `PublishItemCatalog` 的 `pid_class` 决定；`diff::supported_pid_tags` 改成数据库线与 `.pid` 线标签集的并集，`.pid` 独有的 6 个类（`PIDInstrument` / `PIDInlineInstrument` / `PIDProcessEquipment` / `PIDMechanicalEquipment` / `PIDHeatTransferEquipment` / `PIDSignalBranchPoint`）不再被 `coverage_against_reference` 报成 backlog。整包 53 张重跑比对：106 个 `_Data.xml` / `_Meta.xml` 字节全同，53 份 `_Coverage.json` 除记录下的输入路径分隔符外全同。
+
 > 承接 `docs/plans/2026-10-10-publish-from-the-pid-alone.md`（P0–P5）、`docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md`（N0–N4）、`docs/plans/2026-10-12-n5-ports-from-oracle-exp.md`（N5）、`docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md`（N9，Q1–Q7 已批，N9-1 已写在工作树）。
 > 用户 10-13 19:0x「分析现在 publish 文件生成的进度。使用 plannotator 生成开发计划」。本文件只盘点和开单，**没改任何代码，没提交**。
 > 基线：pid-parse `353186a`（`codex/phase32c-bundle-closeout`，与 `origin` 同步，无 ahead / behind）。工作树上别的会话的未提交文件（§1.4）一字不碰。

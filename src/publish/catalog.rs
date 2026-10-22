@@ -3,24 +3,27 @@
 //! seed row-set reconciled in #16 /
 //! `docs/analysis/2026-10-19-three-publish-tables-seed-catalog.md`).
 //!
-//! Today the same facts live hand-synced in
-//! [`super::sqlite_load`] (`subtables_for_item_type`),
-//! [`super::xml_writer`] (`write_business_objects` dispatch +
-//! `a01_object_rank`), [`super::diff`] (`supported_pid_tags`), and the
-//! `.pid` line (`pid_load::CLASS_OF_ITEM_TYPE` / `branch_point_class`).
-//! The catalog models **both** publish lines in one row per item type;
-//! those tables become consumers of it, one at a time (A2–A4).
+//! The catalog models **both** publish lines in one row per item type.
+//! The database line reads it as of A2–A4: `super::sqlite_load` resolves
+//! its subtable chains through [`catalog_row`], `super::xml_writer`
+//! dispatches `write_business_objects` through [`PublishItemRow::db_writer`]
+//! and reads [`PublishItemRow::a01_rank`] (A1 seeded the table in
+//! `60f1b25`, A2 `7c79749`, A3 `4735be9`, A4 `6881c18`).
+//!
+//! Both lines also share one tag inventory: `super::diff::supported_pid_tags`
+//! is the union of [`supported_db_tags`] and [`supported_pid_line_tags`],
+//! so a reference carrying a class only the `.pid` line emits is not
+//! reported as writer backlog. `super::pid_load` classes an item through
+//! [`PublishItemRow::pid_class`] — the hand-written
+//! `CLASS_OF_ITEM_TYPE` table it used to keep is gone. The one rule still
+//! decided outside the catalog is which of a pipe run's `pid_tags`
+//! becomes its `.BPT` branch point (`pid_load::branch_point_class`).
 //!
 //! Special rows: `"*"` is the generic-object fallback arm (owns
 //! `PIDItem`, excluded from the supported-tag derivation), `"$document"`
 //! owns the document-level tags (`PIDDrawing` / `PIDRepresentation`),
 //! and `"$derived"` owns `.pid`-line tags emitted by enrichment rather
 //! than by an item row (exp ports, synthesized `PIDPipeline`).
-
-// Consumers land in A2–A4 (`sqlite_load`, `xml_writer`, `diff`); until
-// then the table and its accessors are read only by the consistency
-// tests, so dead-code warnings are expected and suppressed.
-#![allow(dead_code)]
 
 use super::model::{PublishDrawing, PublishError, PublishObject};
 use super::xml_writer;
@@ -88,10 +91,12 @@ pub(crate) struct PublishItemRow {
     /// `true` while the row's DB subtable chain is provisional — the
     /// Stage-4 branch-point rows wait on a DWG-mirror fixture to
     /// confirm their table layout.
+    #[allow(dead_code)] // bookkeeping only: no arm branches on it yet.
     pub provisional: bool,
     /// `true` when the row is registered for forward compatibility
     /// only (`PipingPoint` — the loader stopped injecting standalone
     /// rows in A13). Kept in the table so the fact is queryable.
+    #[allow(dead_code)] // bookkeeping only: no arm branches on it yet.
     pub dead: bool,
 }
 
@@ -419,6 +424,7 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
 ];
 
 /// The whole catalog, as a slice.
+#[allow(dead_code)] // No caller yet: the queryable form of the table above.
 pub(crate) fn publish_item_catalog() -> &'static [PublishItemRow] {
     PUBLISH_ITEM_CATALOG
 }
@@ -431,10 +437,10 @@ pub(crate) fn catalog_row(item_type_name: &str) -> Option<&'static PublishItemRo
         .find(|row| row.item_type == item_type_name || row.aliases.contains(&item_type_name))
 }
 
-/// The catalog-derived counterpart of `diff::supported_pid_tags`: the
-/// union of `db_tags` over every row except the `"*"` fallback, sorted
-/// and deduplicated. A2–A4 rewire `supported_pid_tags()` to this; the
-/// consistency test pins equality with today's hand-listed set.
+/// The catalog-derived source of `diff::supported_pid_tags`: the union of
+/// `db_tags` over every row except the `"*"` fallback, sorted and
+/// deduplicated. A4 (`6881c18`) made `diff` read this; the consistency
+/// test pins equality with the hand-listed set it replaced.
 pub(crate) fn supported_db_tags() -> Vec<&'static str> {
     let mut tags: Vec<&'static str> = PUBLISH_ITEM_CATALOG
         .iter()
@@ -446,11 +452,14 @@ pub(crate) fn supported_db_tags() -> Vec<&'static str> {
     tags
 }
 
-/// The `.pid`-line counterpart: union of `pid_tags` over every row,
-/// sorted and deduplicated. Not wired to a consumer yet — the `.pid`
-/// coverage report keeps its own bookkeeping until then.
-#[cfg(test)]
-fn supported_pid_line_tags() -> Vec<&'static str> {
+/// The `.pid`-line counterpart of [`supported_db_tags`]: the union of
+/// `pid_tags` over every row, sorted and deduplicated.
+/// `super::diff::supported_pid_tags` merges it with the DB set, so a
+/// reference carrying a class only this line emits (`PIDInstrument`,
+/// `PIDInlineInstrument`, the three equipment classes `EquipmentOther` /
+/// `Exchanger` / `Mechanical` split into, `PIDSignalBranchPoint`) is
+/// classified as covered rather than as backlog.
+pub(crate) fn supported_pid_line_tags() -> Vec<&'static str> {
     let mut tags: Vec<&'static str> = PUBLISH_ITEM_CATALOG
         .iter()
         .flat_map(|row| row.pid_tags.iter().copied())
@@ -544,6 +553,40 @@ mod tests {
         assert_eq!(
             derived, hand_listed,
             "catalog-derived DB tag set diverged from the pinned list"
+        );
+    }
+
+    #[test]
+    fn derived_pid_line_tags_match_the_pinned_list() {
+        // Same ratchet as the DB list above: what the `.pid` line can
+        // emit may only change through a deliberate catalog edit.
+        let derived = supported_pid_line_tags();
+        let hand_listed: Vec<&'static str> = vec![
+            "PIDBranchPoint",
+            "PIDControlSystemFunction",
+            "PIDDrawing",
+            "PIDHeatTransferEquipment",
+            "PIDInlineInstrument",
+            "PIDInstrument",
+            "PIDMechanicalEquipment",
+            "PIDNote",
+            "PIDNozzle",
+            "PIDPipeline",
+            "PIDPipingBranchPoint",
+            "PIDPipingComponent",
+            "PIDPipingConnector",
+            "PIDPipingPort",
+            "PIDProcessEquipment",
+            "PIDProcessPoint",
+            "PIDProcessVessel",
+            "PIDRepresentation",
+            "PIDSignalBranchPoint",
+            "PIDSignalConnector",
+            "PIDSignalPort",
+        ];
+        assert_eq!(
+            derived, hand_listed,
+            "catalog-derived `.pid` tag set diverged from the pinned list"
         );
     }
 

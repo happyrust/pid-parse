@@ -244,23 +244,29 @@ fn is_tag_name_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-/// Compute the [`SemanticDiffReport`] between `generated_xml` and
-/// `reference_xml`. Both inputs are full `_Data.xml` document
-/// strings; the function is pure (no I/O) so it is cheap to call
-/// from tests, CI gates, and the CLI alike.
-/// PID tag varieties the writer is known to emit today. Derived from
-/// the publish item catalog (A4): the union of every row's `db_tags`
-/// — dedicated writer tags plus the virtual-node tags declared on
-/// the special `"$drawing"` / `"$derived"` rows — sorted and
-/// deduplicated. The catalog consistency test pins the derived set
-/// against the historical hand list.
+/// PID tag varieties either writer line is known to emit today.
+/// Derived from the publish item catalog: the union of every row's
+/// `db_tags` (dedicated DB writer tags plus the special `"$document"`
+/// / `"$derived"` rows) and every row's `pid_tags` (the `.pid`
+/// line's classes, including the six the database line never
+/// produces), sorted and deduplicated. `catalog`'s consistency tests
+/// pin both lists against their historical hand lists.
 ///
 /// Used by [`coverage_against_reference`] to classify a reference
 /// `SmartPlant` `_Data.xml` into "tags we already know how to emit"
-/// vs "tags that form the next-phase backlog".
+/// vs "tags that form the next-phase backlog". Taking both lines
+/// matters: a `.pid`-line export carries `PIDInstrument` /
+/// `PIDInlineInstrument` / `PIDProcessEquipment` /
+/// `PIDMechanicalEquipment` / `PIDHeatTransferEquipment` /
+/// `PIDSignalBranchPoint`, which the DB-only set used to call backlog.
 pub fn supported_pid_tags() -> &'static [&'static str] {
-    static TAGS: std::sync::LazyLock<Vec<&'static str>> =
-        std::sync::LazyLock::new(super::catalog::supported_db_tags);
+    static TAGS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+        let mut tags = super::catalog::supported_db_tags();
+        tags.extend(super::catalog::supported_pid_line_tags());
+        tags.sort_unstable();
+        tags.dedup();
+        tags
+    });
     TAGS.as_slice()
 }
 
@@ -1779,6 +1785,33 @@ mod tests {
             assert!(
                 tags.contains(&must_have),
                 "supported set missing {must_have}; got {tags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn supported_pid_tags_covers_what_the_pid_line_emits_too() {
+        // A `.pid`-line reference carries classes the database line
+        // never writes. Judging it against `db_tags` alone called our
+        // own output backlog; the union fixes that.
+        for tag in [
+            "PIDInstrument",
+            "PIDInlineInstrument",
+            "PIDProcessEquipment",
+            "PIDMechanicalEquipment",
+            "PIDHeatTransferEquipment",
+            "PIDSignalBranchPoint",
+        ] {
+            assert!(
+                supported_pid_tags().contains(&tag),
+                "{tag} is emitted by pid_writer but missing from the supported set"
+            );
+            let xml = format!("<{tag}></{tag}>");
+            let cov = coverage_against_reference(&xml);
+            assert!(
+                cov.is_complete(),
+                "{tag} must classify as covered; backlog={:?}",
+                cov.unsupported_in_reference
             );
         }
     }

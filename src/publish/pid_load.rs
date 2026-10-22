@@ -36,6 +36,7 @@ use std::fmt;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
+use super::catalog::{catalog_row, PidClassRule, PublishItemRow};
 use crate::parsers::attribute_rows::{decode_attribute_row, AttributeRow};
 use crate::parsers::jproperties::parse_jproperties;
 use crate::parsers::sheet_records::{
@@ -57,25 +58,21 @@ const DEPENDENCY_GRAPHIC_OFFSET: usize = 16;
 /// Payload offset of the attribute row at a `DependencyObject`'s other end.
 const DEPENDENCY_ROW_OFFSET: usize = 22;
 
-/// `ModelItemType` -> published class, one to one over the corpus's 6 131
+/// The catalog row that decides whether the `.pid` line publishes a
+/// `ModelItemType` at all: one with a class rule, or one carrying
+/// `.pid`-line tags without a rule (`OPC`, whose `PIDBranchPoint` arrives
+/// with the exp dump). The mapping is one to one over the corpus's 6 131
 /// published objects; `Instrument` is split by [`instrument_class`].
-const CLASS_OF_ITEM_TYPE: [(&str, &str); 11] = [
-    ("Vessel", "PIDProcessVessel"),
-    ("EquipmentOther", "PIDProcessEquipment"),
-    ("Mechanical", "PIDMechanicalEquipment"),
-    ("Exchanger", "PIDHeatTransferEquipment"),
-    ("Nozzle", "PIDNozzle"),
-    ("PipingComp", "PIDPipingComponent"),
-    ("PipeRun", "PIDPipingConnector"),
-    ("SignalRun", "PIDSignalConnector"),
-    ("ItemNote", "PIDNote"),
-    ("OPC", "PIDBranchPoint"),
-    ("Instrument", ""),
-];
-/// Item types left without a class: the `ModelID` on an off-page
-/// connector's row is not always the item `SmartPlant` publishes for it (23
-/// of the 53 the corpus's files name are not in the reference).
-const UNCLASSED_ITEM_TYPES: [&str; 1] = ["OPC"];
+///
+/// Every other registered type (`BranchPoint`, `PipingBranchPoint`,
+/// `PipingPoint`) is exp-only, so a `.pid` naming it is skipped, and the
+/// `"*"` / `"$"` bookkeeping rows are never item types.
+fn publish_row(model_item_type: &str) -> Option<&'static PublishItemRow> {
+    catalog_row(model_item_type)
+        .filter(|row| !row.item_type.starts_with(['*', '$']))
+        .filter(|row| row.pid_class.is_some() || !row.pid_tags.is_empty())
+}
+
 const INSTRUMENT_CLASSES: [&str; 3] = [
     "PIDInstrument",
     "PIDControlSystemFunction",
@@ -778,10 +775,7 @@ fn load_from_records(
             continue;
         };
         let item_type = row.text("ModelItemType").unwrap_or_default();
-        if !CLASS_OF_ITEM_TYPE
-            .iter()
-            .any(|(kind, _)| *kind == item_type)
-        {
+        if publish_row(item_type).is_none() {
             continue;
         }
         graphic_items.insert(row.described, model.to_string());
@@ -838,12 +832,15 @@ fn load_from_records(
 
     let mut classes: BTreeMap<&str, Option<&'static str>> = BTreeMap::new();
     for (uid, item_type) in &item_types {
-        let class = match CLASS_OF_ITEM_TYPE
-            .iter()
-            .find(|(kind, _)| *kind == item_type.as_str())
-        {
-            _ if UNCLASSED_ITEM_TYPES.contains(&item_type.as_str()) => None,
-            Some((_, "")) => {
+        // The class rule is the catalog row's, not a table here: `Fixed`
+        // is the tag verbatim, `InstrumentByEvidence` runs the two
+        // evidence paths below, and a row without a rule stays unclassed
+        // — the `ModelID` on an off-page connector's row is not always
+        // the item `SmartPlant` publishes for it (23 of the 53 the
+        // corpus's files name are not in the reference).
+        let class = match publish_row(item_type).and_then(|row| row.pid_class) {
+            Some(PidClassRule::Fixed(class)) => Some(class),
+            Some(PidClassRule::InstrumentByEvidence) => {
                 let graphics = item_graphics.get(uid).into_iter().flatten();
                 let by_symbol_attr = graphics
                     .clone()
@@ -859,7 +856,6 @@ fn load_from_records(
                     by_library
                 })
             }
-            Some((_, class)) => Some(*class),
             None => None,
         };
         classes.insert(uid.as_str(), class);
