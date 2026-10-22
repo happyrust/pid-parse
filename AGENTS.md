@@ -31,7 +31,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | Publish exp enrichment | `src/publish/{oracle_exp,pipeline}.rs` | `ExpTables` (one read) → ports / connectivity / compositions / notes / OPC; `T_PIPERUN` → synthesized `PIDPipeline` + `PipingConnectors` |
 | Publish package mode | `src/publish/backup_package.rs` | Backup dir → one `ExpTables` + `SPPIDDataMap.xml` → every `.pid` → 三件 + `_Index.json`; MTF dumps stage to a temp `.mdf` |
 | Publish DB line | `src/publish/{mdf_load,sqlite_load}.rs` | MDF → in-memory SQLite staging → `PublishDrawing` DTO |
-| Publish shared | `src/publish/{model,xml_writer,catalog,diff}.rs` | DTO + `PublishStyle`; `_Data.xml`/`_Meta.xml` writers; `PublishItemCatalog` — one row per item type feeding both lines (sqlite_load chains, xml_writer dispatch + a01 rank, pid_load class rule, diff tag inventory = DB ∪ `.pid`); `--diff-against` parity |
+| Publish shared | `src/publish/{model,xml_writer,catalog,diff}.rs` | DTO + `PublishStyle`; `_Data.xml`/`_Meta.xml` writers; `PublishItemCatalog` — one row per item type feeding both lines (sqlite_load chains, xml_writer dispatch + a01 rank, pid_load class rule, diff tag inventory = DB ∪ `.pid`, `_Coverage.json` derived-class rows from the tag roles); `--diff-against` parity |
 | Inspect orchestration | `src/inspect/commands.rs` | `InspectCommand::run(&PidPackage) -> InspectOutput`; `src/bin/pid_inspect.rs` is arg-parse + print only |
 | CLI entry | `src/bin/pid_publish_xml.rs` | `<file.pid|backup dir> --out-dir DIR [--oracle-exp|--datamap|--plant|--diff-against]` / `<mdf> --drawing UID` |
 

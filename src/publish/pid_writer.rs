@@ -28,6 +28,7 @@ use std::path::Path;
 
 use serde_json::json;
 
+use super::catalog::{self, PidTagRole};
 use super::model::{PublishDrawing, PublishError};
 use super::pid_load::{
     ConnectivityEnd, ExpRelation, PidBranchPoint, PidOpcPoint, PidPipeline, PidPublishDrawing,
@@ -542,38 +543,50 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             .filter(|attribute| matches!(attribute.source, PidValueSource::NameRule(_)))
             .count();
     }
-    if !drawing.process_points.is_empty() {
-        classes.insert("PIDProcessPoint", (drawing.process_points.len(), 0, 0));
-    }
-    for class in ["PIDPipingBranchPoint", "PIDSignalBranchPoint"] {
-        let count = drawing
-            .branch_points
-            .iter()
-            .filter(|point| point.class == class)
-            .count();
-        if count > 0 {
-            classes.insert(class, (count, 0, 0));
-        }
-    }
-    for class in ["PIDPipingPort", "PIDSignalPort"] {
-        let matched: Vec<_> = drawing
-            .ports
-            .iter()
-            .filter(|port| port.class == class)
-            .collect();
-        if matched.is_empty() {
-            continue;
-        }
-        let with_name = matched
-            .iter()
-            .filter(|port| {
-                port.attributes
+    // The classes below are not named here: the catalog says which tags a
+    // published collection is tallied under, and its role says which
+    // collection that is (see `PidTagRole`).
+    for &(class, role) in catalog::pid_line_tag_roles() {
+        match role {
+            PidTagRole::ProcessPoint => {
+                if !drawing.process_points.is_empty() {
+                    classes.insert(class, (drawing.process_points.len(), 0, 0));
+                }
+            }
+            PidTagRole::BranchPoint => {
+                let count = drawing
+                    .branch_points
                     .iter()
-                    .any(|attribute| attribute.interface == "IObject" && attribute.name == "Name")
-            })
-            .count();
-        let values = matched.iter().map(|port| port.attributes.len()).sum();
-        classes.insert(class, (matched.len(), with_name, values));
+                    .filter(|point| point.class == class)
+                    .count();
+                if count > 0 {
+                    classes.insert(class, (count, 0, 0));
+                }
+            }
+            PidTagRole::Port => {
+                let matched: Vec<_> = drawing
+                    .ports
+                    .iter()
+                    .filter(|port| port.class == class)
+                    .collect();
+                if matched.is_empty() {
+                    continue;
+                }
+                let with_name = matched
+                    .iter()
+                    .filter(|port| {
+                        port.attributes.iter().any(|attribute| {
+                            attribute.interface == "IObject" && attribute.name == "Name"
+                        })
+                    })
+                    .count();
+                let values = matched.iter().map(|port| port.attributes.len()).sum();
+                classes.insert(class, (matched.len(), with_name, values));
+            }
+            // Tallied elsewhere: item rows, the drawing itself, or the
+            // exp enrichment.
+            PidTagRole::Class | PidTagRole::Document | PidTagRole::Enrichment => {}
+        }
     }
     let left_out: Vec<serde_json::Value> = drawing
         .items
@@ -1008,6 +1021,63 @@ mod tests {
         assert_eq!(report["classes"]["PIDPipingBranchPoint"]["objects"], 1);
         assert_eq!(report["classes"]["PIDSignalBranchPoint"]["objects"], 1);
         assert_eq!(report["attribute_values"]["derived_by_native_rule"], 2);
+    }
+
+    #[test]
+    fn the_report_tallies_exactly_the_tags_the_catalog_gives_a_tally_role() {
+        // The derived `classes` rows come from the catalog's `PidTagRole`
+        // now, not from names here. Pin the resulting key set so a catalog
+        // role change has to show up as a deliberate report change.
+        use crate::publish::pid_load::PidPort;
+        let mut drawing = drawing();
+        drawing.items.clear();
+        drawing.representations.clear();
+        drawing.process_points.push(PidProcessPoint {
+            uid: "RUN.PPT".to_string(),
+            connector_uid: "RUN".to_string(),
+            source: PidValueSource::DerivedByNativeRule {
+                analysis_page: "docs/analysis/n2a-port-relation-filter.md",
+                address: "0x5F5CFD40",
+            },
+        });
+        for (uid, class) in [
+            ("REP.BPT", "PIDPipingBranchPoint"),
+            ("SIG.BPT", "PIDSignalBranchPoint"),
+        ] {
+            drawing.branch_points.push(PidBranchPoint {
+                uid: uid.to_string(),
+                representation_uid: uid.trim_end_matches(".BPT").to_string(),
+                class,
+                source: PidValueSource::DerivedByNativeRule {
+                    analysis_page: "docs/analysis/n2a-port-relation-filter.md",
+                    address: "0x5F5CFC10",
+                },
+            });
+        }
+        for (uid, class) in [("P1", "PIDPipingPort"), ("S1", "PIDSignalPort")] {
+            drawing.ports.push(PidPort {
+                uid: uid.to_string(),
+                parent_uid: "RUN".to_string(),
+                class,
+                attributes: Vec::new(),
+            });
+        }
+        let text = write_pid_coverage_json(&drawing, Path::new("a.pid"));
+        let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        let classes = report["classes"].as_object().expect("classes object");
+        let mut keys: Vec<&str> = classes.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "PIDPipingBranchPoint",
+                "PIDPipingPort",
+                "PIDProcessPoint",
+                "PIDSignalBranchPoint",
+                "PIDSignalPort",
+            ],
+            "derived `classes` rows drifted: {text}"
+        );
     }
 
     #[test]

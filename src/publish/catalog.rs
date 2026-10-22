@@ -54,6 +54,31 @@ pub(crate) enum PidClassRule {
     InstrumentByEvidence,
 }
 
+/// Where a `.pid`-line tag's objects come from, on the row that owns it.
+///
+/// `super::pid_writer`'s `_Coverage.json` tallies the tags whose count
+/// comes from a drawing collection rather than from an item row; a role
+/// names that collection, so the report never spells a tag its own
+/// catalog does not declare. `Class` / `Document` / `Enrichment` tags are
+/// tallied elsewhere (item rows, the drawing itself, the exp enrichment)
+/// and are listed here only to keep the inventory complete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PidTagRole {
+    /// The item's own published class (`pid_class` for a `Fixed` row).
+    Class,
+    /// One `.PPT` process point per published pipe run.
+    ProcessPoint,
+    /// A `.BPT` branch point off the item's representations.
+    BranchPoint,
+    /// A port row the exp dump supplies for a parent this line publishes.
+    Port,
+    /// Document level: the drawing and its representations.
+    Document,
+    /// Enrichment the file cannot state (a synthesized `PIDPipeline`, the
+    /// exp-side `PIDBranchPoint` an `OPC` turns into).
+    Enrichment,
+}
+
 /// One catalog row: every fact the crate knows about a publish item
 /// type, for whichever line(s) produce it. `db_*` fields describe the
 /// SQLite/MDF line; `pid_*` fields describe the `.pid` line. A `None`
@@ -83,8 +108,9 @@ pub(crate) struct PublishItemRow {
     pub pid_class: Option<PidClassRule>,
     /// Every tag the `.pid` line emits for this item type, including
     /// directly-derived children (`.PPT` process points, `.BPT`
-    /// branch points off the item's representations).
-    pub pid_tags: &'static [&'static str],
+    /// branch points off the item's representations), each with the
+    /// [`PidTagRole`] naming where its objects come from.
+    pub pid_tags: &'static [(&'static str, PidTagRole)],
     /// `PublishStyle::A01` ordering rank (`Vessel` 0 / `Nozzle` 1 /
     /// `PipeRun` 2 / everything else 9).
     pub a01_rank: u8,
@@ -195,7 +221,7 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_writer: Some(xml_writer::write_process_vessel),
         db_tags: &["PIDProcessVessel"],
         pid_class: Some(PidClassRule::Fixed("PIDProcessVessel")),
-        pid_tags: &["PIDProcessVessel"],
+        pid_tags: &[("PIDProcessVessel", PidTagRole::Class)],
         a01_rank: 0,
         provisional: false,
         dead: false,
@@ -207,7 +233,7 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_writer: Some(xml_writer::write_nozzle),
         db_tags: &["PIDNozzle"],
         pid_class: Some(PidClassRule::Fixed("PIDNozzle")),
-        pid_tags: &["PIDNozzle"],
+        pid_tags: &[("PIDNozzle", PidTagRole::Class)],
         a01_rank: 1,
         provisional: false,
         dead: false,
@@ -225,9 +251,9 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         ],
         pid_class: Some(PidClassRule::Fixed("PIDPipingConnector")),
         pid_tags: &[
-            "PIDPipingConnector",
-            "PIDProcessPoint",
-            "PIDPipingBranchPoint",
+            ("PIDPipingConnector", PidTagRole::Class),
+            ("PIDProcessPoint", PidTagRole::ProcessPoint),
+            ("PIDPipingBranchPoint", PidTagRole::BranchPoint),
         ],
         a01_rank: 2,
         provisional: false,
@@ -255,9 +281,9 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_tags: &["PIDControlSystemFunction", "PIDSignalPort"],
         pid_class: Some(PidClassRule::InstrumentByEvidence),
         pid_tags: &[
-            "PIDInstrument",
-            "PIDControlSystemFunction",
-            "PIDInlineInstrument",
+            ("PIDInstrument", PidTagRole::Class),
+            ("PIDControlSystemFunction", PidTagRole::Class),
+            ("PIDInlineInstrument", PidTagRole::Class),
         ],
         a01_rank: 9,
         provisional: false,
@@ -271,7 +297,7 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_tags: &["PIDNote"],
         // The `.pid` ModelItemType is `ItemNote` — alias lookup.
         pid_class: Some(PidClassRule::Fixed("PIDNote")),
-        pid_tags: &["PIDNote"],
+        pid_tags: &[("PIDNote", PidTagRole::Class)],
         a01_rank: 9,
         provisional: false,
         dead: false,
@@ -283,7 +309,7 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_writer: Some(run_piping_comp),
         db_tags: &["PIDPipingComponent"],
         pid_class: Some(PidClassRule::Fixed("PIDPipingComponent")),
-        pid_tags: &["PIDPipingComponent"],
+        pid_tags: &[("PIDPipingComponent", PidTagRole::Class)],
         a01_rank: 9,
         provisional: false,
         dead: false,
@@ -295,7 +321,10 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_writer: Some(run_signal_run),
         db_tags: &["PIDSignalConnector"],
         pid_class: Some(PidClassRule::Fixed("PIDSignalConnector")),
-        pid_tags: &["PIDSignalConnector", "PIDSignalBranchPoint"],
+        pid_tags: &[
+            ("PIDSignalConnector", PidTagRole::Class),
+            ("PIDSignalBranchPoint", PidTagRole::BranchPoint),
+        ],
         a01_rank: 9,
         provisional: false,
         dead: false,
@@ -308,7 +337,7 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_writer: None,
         db_tags: &[],
         pid_class: Some(PidClassRule::Fixed("PIDHeatTransferEquipment")),
-        pid_tags: &["PIDHeatTransferEquipment"],
+        pid_tags: &[("PIDHeatTransferEquipment", PidTagRole::Class)],
         a01_rank: 9,
         provisional: false,
         dead: false,
@@ -320,7 +349,7 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_writer: None,
         db_tags: &[],
         pid_class: Some(PidClassRule::Fixed("PIDMechanicalEquipment")),
-        pid_tags: &["PIDMechanicalEquipment"],
+        pid_tags: &[("PIDMechanicalEquipment", PidTagRole::Class)],
         a01_rank: 9,
         provisional: false,
         dead: false,
@@ -359,7 +388,7 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_writer: None,
         db_tags: &[],
         pid_class: Some(PidClassRule::Fixed("PIDProcessEquipment")),
-        pid_tags: &["PIDProcessEquipment"],
+        pid_tags: &[("PIDProcessEquipment", PidTagRole::Class)],
         a01_rank: 9,
         provisional: false,
         dead: false,
@@ -375,7 +404,7 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         // exp enrichment (`oracle_exp` opc_points), so the tag is
         // attributed here.
         pid_class: None,
-        pid_tags: &["PIDBranchPoint"],
+        pid_tags: &[("PIDBranchPoint", PidTagRole::Enrichment)],
         a01_rank: 9,
         provisional: false,
         dead: false,
@@ -402,7 +431,10 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         db_writer: None,
         db_tags: &["PIDDrawing", "PIDRepresentation"],
         pid_class: None,
-        pid_tags: &["PIDDrawing", "PIDRepresentation"],
+        pid_tags: &[
+            ("PIDDrawing", PidTagRole::Document),
+            ("PIDRepresentation", PidTagRole::Document),
+        ],
         a01_rank: 9,
         provisional: false,
         dead: false,
@@ -416,7 +448,11 @@ pub(crate) static PUBLISH_ITEM_CATALOG: &[PublishItemRow] = &[
         pid_class: None,
         // `.pid` line: exp port enrichments and the T_PIPERUN-synthesized
         // pipeline are not attributable to one item row.
-        pid_tags: &["PIDPipeline", "PIDPipingPort", "PIDSignalPort"],
+        pid_tags: &[
+            ("PIDPipeline", PidTagRole::Enrichment),
+            ("PIDPipingPort", PidTagRole::Port),
+            ("PIDSignalPort", PidTagRole::Port),
+        ],
         a01_rank: 9,
         provisional: false,
         dead: false,
@@ -460,13 +496,30 @@ pub(crate) fn supported_db_tags() -> Vec<&'static str> {
 /// `Exchanger` / `Mechanical` split into, `PIDSignalBranchPoint`) is
 /// classified as covered rather than as backlog.
 pub(crate) fn supported_pid_line_tags() -> Vec<&'static str> {
-    let mut tags: Vec<&'static str> = PUBLISH_ITEM_CATALOG
-        .iter()
-        .flat_map(|row| row.pid_tags.iter().copied())
-        .collect();
+    let mut tags: Vec<&'static str> = pid_line_tag_roles().iter().map(|(tag, _)| *tag).collect();
     tags.sort_unstable();
     tags.dedup();
     tags
+}
+
+/// Every `.pid`-line tag with the [`PidTagRole`] its row gives it, one
+/// entry per tag (first registration wins) and sorted by tag. This is the
+/// inventory `super::pid_writer` tallies: matching on the role is how the
+/// `_Coverage.json` report decides which drawing collection a class's
+/// count comes from, instead of naming the tags itself.
+pub(crate) fn pid_line_tag_roles() -> &'static [(&'static str, PidTagRole)] {
+    static ROLES: std::sync::LazyLock<Vec<(&'static str, PidTagRole)>> =
+        std::sync::LazyLock::new(|| {
+            let mut tags: Vec<(&'static str, PidTagRole)> = Vec::new();
+            for (tag, role) in PUBLISH_ITEM_CATALOG.iter().flat_map(|row| row.pid_tags) {
+                if !tags.iter().any(|(seen, _)| seen == tag) {
+                    tags.push((*tag, *role));
+                }
+            }
+            tags.sort_unstable_by_key(|(tag, _)| *tag);
+            tags
+        });
+    ROLES.as_slice()
 }
 
 #[cfg(test)]
@@ -517,7 +570,9 @@ mod tests {
             }
             if let Some(PidClassRule::Fixed(tag)) = row.pid_class {
                 assert!(
-                    row.pid_tags.contains(&tag),
+                    row.pid_tags
+                        .iter()
+                        .any(|(declared, role)| *declared == tag && *role == PidTagRole::Class),
                     "row `{}` pid_class `{tag}` absent from its pid_tags",
                     row.item_type
                 );
@@ -587,6 +642,33 @@ mod tests {
         assert_eq!(
             derived, hand_listed,
             "catalog-derived `.pid` tag set diverged from the pinned list"
+        );
+    }
+
+    #[test]
+    fn the_coverage_tally_is_the_five_derived_tags() {
+        // `_Coverage.json` inserts one `classes` row per role below;
+        // pinning the list keeps the report's derived section a catalog
+        // decision rather than a writer one.
+        let tally: Vec<&'static str> = pid_line_tag_roles()
+            .iter()
+            .filter(|(_, role)| {
+                matches!(
+                    role,
+                    PidTagRole::ProcessPoint | PidTagRole::BranchPoint | PidTagRole::Port
+                )
+            })
+            .map(|(tag, _)| *tag)
+            .collect();
+        assert_eq!(
+            tally,
+            vec![
+                "PIDPipingBranchPoint",
+                "PIDPipingPort",
+                "PIDProcessPoint",
+                "PIDSignalBranchPoint",
+                "PIDSignalPort",
+            ]
         );
     }
 

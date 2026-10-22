@@ -10,7 +10,7 @@
 >
 > 仍登记未做：N11（符号库 / 模板 / `PlantConfig.xml` 内容解析）、集注站 4 张的参考对照（等那套库的备份）、DWG 侧 `Export.mdf` 夹具缺失导致的 soft-skip。
 >
-> 2026-10-22 目录收口：`pid_load` 里的 `CLASS_OF_ITEM_TYPE` / `UNCLASSED_ITEM_TYPES` 两张手写表删除，`.pid` 线的分类改由 `PublishItemCatalog` 的 `pid_class` 决定；`diff::supported_pid_tags` 改成数据库线与 `.pid` 线标签集的并集，`.pid` 独有的 6 个类（`PIDInstrument` / `PIDInlineInstrument` / `PIDProcessEquipment` / `PIDMechanicalEquipment` / `PIDHeatTransferEquipment` / `PIDSignalBranchPoint`）不再被 `coverage_against_reference` 报成 backlog。整包 53 张重跑比对：106 个 `_Data.xml` / `_Meta.xml` 字节全同，53 份 `_Coverage.json` 除记录下的输入路径分隔符外全同。
+> 2026-10-22 目录收口：`pid_load` 里的 `CLASS_OF_ITEM_TYPE` / `UNCLASSED_ITEM_TYPES` 两张手写表删除，`.pid` 线的分类改由 `PublishItemCatalog` 的 `pid_class` 决定；`diff::supported_pid_tags` 改成数据库线与 `.pid` 线标签集的并集，`.pid` 独有的 6 个类（`PIDInstrument` / `PIDInlineInstrument` / `PIDProcessEquipment` / `PIDMechanicalEquipment` / `PIDHeatTransferEquipment` / `PIDSignalBranchPoint`）不再被 `coverage_against_reference` 报成 backlog。整包 53 张重跑比对：106 个 `_Data.xml` / `_Meta.xml` 字节全同，53 份 `_Coverage.json` 除记录下的输入路径分隔符外全同。紧接着 `_Coverage.json` 的派生子项（`PIDProcessPoint` / 两个 branch point / 两个 port）也不再在 `pid_writer` 里硬写：目录的每行 `.pid` 标签带上 `PidTagRole`，报表按角色决定去哪张集合取数；重发后 53 张的 160 个文件与改动前逐字节相同。
 
 > 承接 `docs/plans/2026-10-10-publish-from-the-pid-alone.md`（P0–P5）、`docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md`（N0–N4）、`docs/plans/2026-10-12-n5-ports-from-oracle-exp.md`（N5）、`docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md`（N9，Q1–Q7 已批，N9-1 已写在工作树）。
 > 用户 10-13 19:0x「分析现在 publish 文件生成的进度。使用 plannotator 生成开发计划」。本文件只盘点和开单，**没改任何代码，没提交**。
