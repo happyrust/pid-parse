@@ -244,6 +244,9 @@ fn library_census(roots: &[PathBuf]) {
         collect_syms(root, &mut files);
     }
     let mut with_views = 0usize;
+    let mut with_alternate = 0usize;
+    let mut alternate_with_ink = 0usize;
+    let mut alternate_with_geometry = 0usize;
     let mut with_clean = 0usize;
     let mut clean_on_empty_sheet = 0usize;
     let mut clean_draws_nothing = 0usize;
@@ -263,6 +266,25 @@ fn library_census(roots: &[PathBuf]) {
             continue;
         }
         with_clean += 1;
+        for sheet in sheets_with_strokes(&body) {
+            if let Some(view) = view_of(&body, sheet) {
+                if supplementary(view) {
+                    with_alternate += 1;
+                    if body.primitives.iter().any(|s| {
+                        s.sheet_ref == sheet && s.sheet_layer_name.as_deref().is_some_and(hidden)
+                    }) {
+                        alternate_with_ink += 1;
+                    }
+                    if body.primitives.iter().any(|s| {
+                        s.sheet_ref == sheet
+                            && s.sheet_layer_name.as_deref().is_some_and(hidden)
+                            && !matches!(s.primitive, SymbolPrimitive::Text { .. })
+                    }) {
+                        alternate_with_geometry += 1;
+                    }
+                }
+            }
+        }
         let holding = sheets_with_strokes(&body);
         if normal.iter().all(|sheet| !holding.contains(sheet)) {
             clean_on_empty_sheet += 1;
@@ -279,6 +301,9 @@ fn library_census(roots: &[PathBuf]) {
     }
     println!("\n{read} library symbols read, {with_views} carry a view set");
     println!("  {with_clean} have a clean (non-supplementary) set");
+    println!(
+        "  {with_alternate} alternate (all-on) sheets hold strokes, {alternate_with_ink} of them keep any on a hidden-named layer ({alternate_with_geometry} keep geometry there)"
+    );
     println!("  {clean_on_empty_sheet} of those govern a sheet with no primitives");
     println!("  {clean_draws_nothing} draw nothing once their own set has had its say");
     println!("  {clean_thinner_than_fattest} are thinner than the fattest sheet");
@@ -374,10 +399,20 @@ fn normal_governed(body: &SymbolGeometry) -> BTreeSet<u32> {
         .collect()
 }
 
+/// A sheet's body geometry, lettering excluded: the catalogue `NULL`/`PG`
+/// runs a `.sym` keeps on its `Label` layer are not strokes of the body, and
+/// a label's editing view is fat with them.
+fn geometry_strokes(body: &SymbolGeometry, sheet: u32) -> usize {
+    sheet_strokes(body, sheet)
+        .into_iter()
+        .filter(|styled| !matches!(styled.primitive, SymbolPrimitive::Text { .. }))
+        .count()
+}
+
 fn fattest(body: &SymbolGeometry) -> Option<(u32, usize)> {
     let mut best: Option<(u32, usize)> = None;
     for sheet in sheets_with_strokes(body) {
-        let strokes = sheet_strokes(body, sheet).len();
+        let strokes = geometry_strokes(body, sheet);
         if best.is_none_or(|(_, most)| strokes > most) {
             best = Some((sheet, strokes));
         }
@@ -401,6 +436,156 @@ fn picked_census(body: &SymbolGeometry, pick: &BTreeSet<u32>) -> Census {
         return census(body.primitives.iter().map(|styled| &styled.primitive));
     }
     census(chosen)
+}
+
+/// A sheet's drawn extent, as a width and height in millimetres.
+fn sheet_extent(body: &SymbolGeometry, sheet: u32) -> Option<(f64, f64)> {
+    let mut min = (f64::INFINITY, f64::INFINITY);
+    let mut max = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    let mut add = |x: f64, y: f64| {
+        min.0 = min.0.min(x);
+        min.1 = min.1.min(y);
+        max.0 = max.0.max(x);
+        max.1 = max.1.max(y);
+    };
+    for styled in sheet_strokes(body, sheet) {
+        match &styled.primitive {
+            SymbolPrimitive::Line { start, end } => {
+                add(start.0, start.1);
+                add(end.0, end.1);
+            }
+            SymbolPrimitive::Circle { center, radius } => {
+                add(center.0 - radius, center.1 - radius);
+                add(center.0 + radius, center.1 + radius);
+            }
+            SymbolPrimitive::Arc { center, radius, .. } => {
+                add(center.0 - radius, center.1 - radius);
+                add(center.0 + radius, center.1 + radius);
+            }
+            SymbolPrimitive::Polyline { vertices, .. } => {
+                for (x, y) in vertices {
+                    add(*x, *y);
+                }
+            }
+            SymbolPrimitive::BSpline { poles, .. } => {
+                for (x, y) in poles {
+                    add(*x, *y);
+                }
+            }
+            SymbolPrimitive::Boundary { members, .. } => {
+                for member in members {
+                    match member {
+                        SymbolPrimitive::Circle { center, radius } => {
+                            add(center.0 - radius, center.1 - radius);
+                            add(center.0 + radius, center.1 + radius);
+                        }
+                        SymbolPrimitive::Line { start, end } => {
+                            add(start.0, start.1);
+                            add(end.0, end.1);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            SymbolPrimitive::Text { .. } => {}
+        }
+    }
+    (min.0.is_finite() && max.0.is_finite()).then_some((max.0 - min.0, max.1 - min.1))
+}
+
+/// One stroke's shape, rounded to a micrometre, so two sheets that hold the
+/// same drawing compare equal and a copy that added or moved a stroke does
+/// not. Text is left out: the two sheets of a body differ in catalogue
+/// lettering that the hidden-name rule drops anyway.
+fn stroke_key(primitive: &SymbolPrimitive) -> Option<String> {
+    let at = |v: f64| (v * 1e6).round() as i64;
+    Some(match primitive {
+        SymbolPrimitive::Line { start, end } => {
+            let a = (at(start.0), at(start.1));
+            let b = (at(end.0), at(end.1));
+            let (a, b) = if a <= b { (a, b) } else { (b, a) };
+            format!("L {} {} {} {}", a.0, a.1, b.0, b.1)
+        }
+        SymbolPrimitive::Circle { center, radius } => {
+            format!("C {} {} {}", at(center.0), at(center.1), at(*radius))
+        }
+        SymbolPrimitive::Arc {
+            center,
+            radius,
+            start_angle,
+            end_angle,
+        } => format!(
+            "A {} {} {} {} {}",
+            at(center.0),
+            at(center.1),
+            at(*radius),
+            at(*start_angle),
+            at(*end_angle)
+        ),
+        SymbolPrimitive::Polyline {
+            vertices,
+            is_closed,
+        } => format!(
+            "P{}{}",
+            if *is_closed { "c" } else { "o" },
+            vertices
+                .iter()
+                .map(|(x, y)| format!("{},{};", at(*x), at(*y)))
+                .collect::<String>()
+        ),
+        SymbolPrimitive::BSpline {
+            poles,
+            weights,
+            knots,
+        } => format!(
+            "B{}|{}",
+            poles
+                .iter()
+                .map(|(x, y)| format!("{},{};", at(*x), at(*y)))
+                .collect::<String>(),
+            knots
+                .iter()
+                .map(|k| at(*k).to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+                + &weights
+                    .iter()
+                    .map(|w| at(*w).to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+        ),
+        SymbolPrimitive::Boundary { members, .. } => format!(
+            "F{}",
+            members
+                .iter()
+                .filter_map(stroke_key)
+                .collect::<Vec<_>>()
+                .join("|")
+        ),
+        SymbolPrimitive::Text { .. } => return None,
+    })
+}
+
+/// The drawn strokes of a sheet as a multiset of shapes.
+fn sheet_shapes(body: &SymbolGeometry, sheet: u32) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    for styled in sheet_strokes(body, sheet) {
+        if let Some(key) = stroke_key(&styled.primitive) {
+            *out.entry(key).or_default() += 1;
+        }
+    }
+    out
+}
+
+/// Whether `fat` draws everything `thin` draws and more: two sheets holding
+/// the same shapes are two views of one body, while a sheet that holds every
+/// shape the other holds plus a few more is that body's later revision.
+fn strictly_contains(fat: &BTreeMap<String, usize>, thin: &BTreeMap<String, usize>) -> bool {
+    if fat == thin {
+        return false;
+    }
+    thin.iter()
+        .all(|(key, count)| fat.get(key).is_some_and(|have| have >= count))
 }
 
 fn displayed_listed(view: &SymbolSheetView) -> Vec<String> {
@@ -453,6 +638,7 @@ fn main() -> ExitCode {
     let mut drawings: Vec<PathBuf> = Vec::new();
     let mut corpus = corpus_dir();
     let mut verbose = 0usize;
+    let mut fat_table = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--corpus" {
@@ -464,6 +650,8 @@ fn main() -> ExitCode {
         } else if arg == "--library-census" {
             library_census(&library_roots(&corpus));
             return ExitCode::SUCCESS;
+        } else if arg == "--fat-table" {
+            fat_table = true;
         } else if arg == "--detail" {
             let needle = args.next().unwrap_or_default();
             detail(&corpus, &needle);
@@ -496,6 +684,11 @@ fn main() -> ExitCode {
     let mut normal_on_empty_sheet = 0usize;
     let mut hollow_normal = 0usize;
     let mut multi_normal = 0usize;
+    let mut fat_kinds: BTreeMap<(&'static str, bool), usize> = BTreeMap::new();
+    let mut fat_rows: Vec<String> = Vec::new();
+    let mut flips_better = 0usize;
+    let mut flips_worse = 0usize;
+    let mut flip_cases: Vec<String> = Vec::new();
     let mut candidates: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut loser_classes: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut loser_winners: BTreeMap<&'static str, usize> = BTreeMap::new();
@@ -561,7 +754,46 @@ fn main() -> ExitCode {
             };
             let fat_pick = BTreeSet::from([fat]);
             let normal_strokes: usize = normal.iter().map(|s| sheet_strokes(body, *s).len()).sum();
+            let normal_geometry: usize = normal.iter().map(|s| geometry_strokes(body, *s)).sum();
+            // A view set that turns a hidden-named layer on is only an
+            // alternate if that layer carries something: an all-on map over
+            // empty layers draws exactly what a clean map would.
+            let ink_on_hidden = |sheet: u32| {
+                body.primitives
+                    .iter()
+                    .filter(|styled| styled.sheet_ref == sheet)
+                    .filter(|styled| styled.sheet_layer_name.as_deref().is_some_and(hidden))
+                    .count()
+            };
+            let clean_or_vacuous: BTreeSet<u32> = sheets_with_strokes(body)
+                .into_iter()
+                .filter(|sheet| match view_of(body, *sheet) {
+                    Some(view) if supplementary(view) => ink_on_hidden(*sheet) == 0,
+                    Some(_) => true,
+                    None => false,
+                })
+                .collect();
+            let vacuous_pick: BTreeSet<u32> = {
+                let mut best: Option<(u32, usize)> = None;
+                for sheet in &clean_or_vacuous {
+                    let geometry = geometry_strokes(body, *sheet);
+                    if best.is_none_or(|(_, most)| geometry > most) {
+                        best = Some((*sheet, geometry));
+                    }
+                }
+                match best {
+                    Some((sheet, geometry)) if geometry > 0 => BTreeSet::from([sheet]),
+                    _ => normal_pick.clone(),
+                }
+            };
             let has_normal = !normal.is_empty();
+            let more_geometry_pick: BTreeSet<u32> = if !has_normal {
+                normal_pick.clone()
+            } else if normal_geometry == 0 || fat_strokes > normal_geometry {
+                BTreeSet::from([fat])
+            } else {
+                normal.clone()
+            };
             if has_normal {
                 with_normal += 1;
                 if normal.len() > 1 {
@@ -592,6 +824,35 @@ fn main() -> ExitCode {
                 } else {
                     normal_pick.clone()
                 };
+            let mut normal_shapes: BTreeMap<String, usize> = BTreeMap::new();
+            for sheet in &normal {
+                for (key, count) in sheet_shapes(body, *sheet) {
+                    *normal_shapes.entry(key).or_default() += count;
+                }
+            }
+            let fat_shapes = sheet_shapes(body, fat);
+            let contains = strictly_contains(&fat_shapes, &normal_shapes);
+            let same_body_pick: BTreeSet<u32> = if !has_normal {
+                normal_pick.clone()
+            } else if normal_strokes == 0 || fat_shapes != normal_shapes {
+                BTreeSet::from([fat])
+            } else {
+                normal.clone()
+            };
+            let containment_pick: BTreeSet<u32> = if !has_normal {
+                normal_pick.clone()
+            } else if normal_strokes == 0 || contains {
+                BTreeSet::from([fat])
+            } else {
+                normal.clone()
+            };
+            let hollow_pick: BTreeSet<u32> = if has_normal && normal_strokes > 0 {
+                normal.clone()
+            } else if has_normal {
+                BTreeSet::from([fat])
+            } else {
+                normal_pick.clone()
+            };
             let thinner_falls_through: BTreeSet<u32> =
                 if has_normal && normal_strokes >= fat_strokes {
                     normal.clone()
@@ -622,12 +883,96 @@ fn main() -> ExitCode {
                     "thinner normal falls through to fattest",
                     picked_census(body, &thinner_falls_through) == cache,
                 ),
+                (
+                    "hollow, then a strict superset wins",
+                    picked_census(body, &containment_pick) == cache,
+                ),
+                (
+                    "normal unless a sheet draws more geometry",
+                    picked_census(body, &more_geometry_pick) == cache,
+                ),
+                (
+                    "a vacuous all-on set is a clean candidate",
+                    picked_census(body, &vacuous_pick) == cache,
+                ),
+                (
+                    "hollow, then a different body takes the fuller sheet",
+                    picked_census(body, &same_body_pick) == cache,
+                ),
             ] {
                 if hit {
                     *candidates.entry(label).or_default() += 1;
                 } else {
                     candidates.entry(label).or_default();
                 }
+            }
+
+            let hollow_ok = picked_census(body, &hollow_pick) == cache;
+            if has_normal && fat_strokes > normal_strokes {
+                let hidden_ink = body
+                    .primitives
+                    .iter()
+                    .filter(|styled| styled.sheet_ref == fat)
+                    .filter(|styled| styled.sheet_layer_name.as_deref().is_some_and(hidden))
+                    .count();
+                let kind = match view_of(body, fat) {
+                    None => "no set",
+                    Some(view) if !supplementary(view) => "a clean set",
+                    Some(_) if hidden_ink > 0 => "all-on, hidden layers carry ink",
+                    Some(_) => "all-on, hidden layers empty",
+                };
+                let entry = fat_kinds.entry((kind, hollow_ok)).or_insert(0);
+                *entry += 1;
+                if fat_table {
+                    let normal_sheet = normal.iter().next().copied().unwrap_or(fat);
+                    let normal_extent = sheet_extent(body, normal_sheet);
+                    let fat_extent = sheet_extent(body, fat);
+                    let ratio = match (normal_extent, fat_extent) {
+                        (Some((nw, nh)), Some((fw, fh))) if nw > 0.0 && nh > 0.0 => {
+                            format!(
+                                "{:.2}x{:.2}",
+                                (fw / nw).max(fh / nh),
+                                (fw / nw).min(fh / nh)
+                            )
+                        }
+                        _ => "-".to_owned(),
+                    };
+                    fat_rows.push(format!(
+                        "{:5} normal Sheet{normal_sheet}({normal_strokes}, {} geom) fat Sheet{fat}({fat_strokes}, {} geom) extent {:.1}x{:.1} vs {:.1}x{:.1} ratio {ratio}  {}",
+                        if hollow_ok { "right" } else { "WRONG" },
+                        normal_geometry,
+                        geometry_strokes(body, fat),
+                        normal_extent.map(|e| e.0 * 1000.0).unwrap_or(-1.0),
+                        normal_extent.map(|e| e.1 * 1000.0).unwrap_or(-1.0),
+                        fat_extent.map(|e| e.0 * 1000.0).unwrap_or(-1.0),
+                        fat_extent.map(|e| e.1 * 1000.0).unwrap_or(-1.0),
+                        symbol_path.rsplit('\\').next().unwrap_or(symbol_path),
+                    ));
+                }
+            }
+            let containment_ok = picked_census(body, &containment_pick) == cache;
+            if hollow_pick != containment_pick && hollow_ok != containment_ok {
+                if containment_ok {
+                    flips_better += 1;
+                } else {
+                    flips_worse += 1;
+                }
+                flip_cases.push(format!(
+                    "{} {}\n   cache    {}\n   normal   {}\n   fattest  {}\n   {}",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    symbol_path,
+                    describe(&cache),
+                    describe(&sheet_census(
+                        body,
+                        normal.iter().next().copied().unwrap_or(fat)
+                    )),
+                    describe(&sheet_census(body, fat)),
+                    if containment_ok {
+                        "containment is right"
+                    } else {
+                        "containment is WRONG"
+                    },
+                ));
             }
 
             // Only the placements whose two picks disagree say anything about
@@ -688,6 +1033,24 @@ fn main() -> ExitCode {
     println!("  and who the winner is:");
     for (kind, count) in &loser_winners {
         println!("  {count:5} {kind}");
+    }
+    println!("\nwhen a fatter sheet exists, what is it? (hollow pick right / wrong)");
+    for ((kind, right), count) in &fat_kinds {
+        println!(
+            "  {count:5}  {kind}  ({})",
+            if *right { "pick right" } else { "pick wrong" }
+        );
+    }
+    if fat_table {
+        println!("\nevery placement with a fatter sheet:");
+        for row in &fat_rows {
+            println!("  {row}");
+        }
+    }
+    println!("\nthe strict-superset test on top of the hollow rule:");
+    println!("  {flips_better} placements it fixes, {flips_worse} it breaks");
+    for case in &flip_cases {
+        println!("  {case}");
     }
     if !cases.is_empty() {
         println!("\nexamples:");
