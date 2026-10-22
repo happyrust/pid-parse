@@ -14,7 +14,7 @@
 > 库侧 2866 条 `0x004D` 里由 run 上字 2227 条，与段落路线比字高变 **1350**、字体 828、
 > 颜色 279 —— 与本文 §4 的 155 条同族，只是样本大一个数量级。2026-10-23 又接了下游：
 > 分区本身（`SymbolLettering::spans`）也画到纸上，详见
-> `2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §八、§九。
+> `2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §九、§十。
 
 ## TL;DR
 

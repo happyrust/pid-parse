@@ -16,7 +16,7 @@
 - **换脸真上纸**：`prepare_fonts` 原本只按标签压平后的 `font` 装载，span 指名的另一张脸会静默退回主字体。现在它把 spans 的字体也收集进来，但按**可选**处理：文件在就装，不在或读不出就跳过（那一段用兵底脸，与读分区之前一致）；标签自己的字体仍必需、仍报错。两条单测用临时目录把 `INTER_REGULAR` 冒充成 `arial.ttf` / `simsun.ttf`，不依赖本机许可字体；把收集循环置空后第一条立刻失败。58 张图重导零字节变化（现有分区标签的 span 字体与标签同名）。
 - **端到端证明**：仓库自带的 `test-file/symbols-full/.../Descriptions new/Wastewater Pit.sym` 里有一条真混排标签（`NULL  NULL*NULL*NULL`，中间 `*` 是 3.175 mm 宋体，其余 2.822 mm Arial）。单测 `a_library_label_that_mixes_sizes_is_lettered_in_three_runs` 从 `.sym` 读到 PDF 再读回来：模型 3 段、读回 3 段且中间那段更高、文字一字不缺、每段接在上一段末尾；把 `text_segments` 改成永远 `plain()` 后同一条测试读回 1 段并失败，说明它真能拦住分区被丢掉的回归。
 - **测试**：`pid-plot` writer 新增三条（切段按时续行、只换字体的 span 也单独切段、同字号同字体不切）、model 新增四条（每行记下起始字符号、跨行 run 按行切、图纸标签把分区带到纸上、`Wastewater Pit.sym` 的端到端三段）；`symbol_library` 新增三条（分区按 `char` 偏移累积、单 run 无分区、非 BMP 撤分区）。
-- 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §九。
+- 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §十。
 
 ### 库侧符号文字改读 run：1350 条标签的字高不再取段落默认（2026-10-23）
 
@@ -28,7 +28,7 @@
 - **读数**（1262 个 `.sym` / 2866 条 `0x004D`，探针 `probe_sym_text_runs`）：由 run 上字的记录 **2227 / 2866**；与段落路线比，字高变 **1350**、字体 **828**、颜色 **279**；字高落在整半磅网格上的比例 **1220/2266 → 1504/2266**（run 侧带的是排版点值，段落侧是标称毫米）。按字高桶看：`2.469 mm`（7 pt）由 **0 → 906 条**，`3.175 mm` 标称桶 **1220 → 441**、`2.500 mm` **537 → 301**；新出现的还有 `4.410 mm`（12.5 pt）**14 → 55**、`2.117 mm`（6 pt）0 → 27、`2.822 mm`（8 pt）0 → 13、`1.411 mm`（4 pt）0 → 12、`3.528 mm`（10 pt）0 → 10、`1.058 mm`（3 pt）0 → 8。
 - **出图读数**（五张参考图重导后跑 `plot_text_sources`）：文字匹配 `546/546`（改前 `544/546`，差的两条都是符号标签）、`151/151`、`123/123`、`167/167`、`249/249`；覆盖率与多画长度逐位未动（0.9989 / 0.9998 / 0.9979 / 0.9986 / 0.9993）。`export_every_fixture`、`export_plant_backup`（53 张）、`plot_compare` 全过。
 - **测试**：`symbol_library` 新增四条（最宽 run 赢、run 解析不出退回段落、长度和不符退回段落、形状 2 的单条 run）；`a_symbols_lettering_comes_off_its_own_style_table` 的钉值改成 run 读数（`Title Block Label.sym` 出现 10 pt 3.528 mm、7 pt 2.469 mm 与 run 指定的宋体）。`plot_text_sources` 的「未匹配的字必须有出处」在**一条都没剩下**时是 `0 of 0`，改成只在有未匹配时断言，并补一条「匹配率不低于 99 %」。
-- 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §八；探针 `examples/probe_sym_text_runs`（新增 `--dump` 逐条对照段落与 run）。
+- 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §九；探针 `examples/probe_sym_text_runs`（新增 `--dump` 逐条对照段落与 run）。
 
 ### 库侧文字审查收口：方向对把关计数、尾型校验长度、选表与回归（2026-10-22）
 
