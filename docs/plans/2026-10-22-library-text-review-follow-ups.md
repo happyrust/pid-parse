@@ -3,6 +3,7 @@
 > 用户 2026-10-22：「审核最近的代码修改」→「使用 plannatator 制定下一步的计划」。
 > 开单只写本文件，不改代码，不提交。
 > **2026-10-22 Plannotator 批准**（`{"decision":"approved"}`，无批注），D1–D6 按推荐项。批准之后才按 §4 落地。
+> **2026-10-22 全部落地**：S0 `b45f937`、计划 `ac0dea7`、S1 `56e831f`、S5 `ac8ac9d`、S2 `13a787c`、S3 `585e5b5`、S4 `d5a1bee`。D4 按数据选 (c)：M2 量出「只数几何」(b) 会丢坡度标签的 `SLOPE`。M3 没做：另一会话正在同一工作区接 run（D6 的落地），不重复量。那些 run 改动未提交，本单各笔只收本单的改动：在从 HEAD 拷出的副本上改、按 blob 暂存，并在干净 worktree 里单独跑过门。
 > 审查对象：工作区里未提交的「库侧按 `igTextBox` 三种形状读文字」（`src/symbol_library.rs`、`src/parsers/sheet_records.rs`、`examples/probe_sym_text_runs.rs`、`examples/probe_sym_text_shape_gap.rs`、`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md`、`docs/analysis/2026-08-13-igtextbox-has-three-shapes.md`、`docs/analysis/2026-10-22-the-normal-view-that-drew-nothing.md`、CHANGELOG），以及同日已提交、与它互相影响的选表逻辑（`81c5fa5`、`2e61816` 的 `displayed_primitives`）。基线 `72610a5`。
 > 审查时本机命令执行是关的，没有 `git diff`，是对照当前代码和 CHANGELOG / 分析页的描述审的。批准后用 `git status` / `git diff` 核对过：工作区改动正是上面这些路径（分支 `codex/phase32c-bundle-closeout`，领先 origin 16 笔），`src/` 的 diff 与审查结论一致；这次删掉的旧单测 `text_record_is_skipped_when_the_count_does_not_account_for_the_payload`（payload 多一个字节就拒）正是 R2 说的那道检查。
 > 本单的编译、测试、探针都由用户在本机跑，读数贴回后写进分析页。
@@ -57,6 +58,8 @@
 
 ### S1 测量（不改 `src/`）
 
+**已落地** `56e831f`（M1、M2；读数见分析页 §六）。M3 未做，见开头。
+
 - **M1**（扩 `examples/probe_sym_text_shape_gap`）：按绘图侧规则数方向对不合格的条数；按 `+20`（尾型）× 尾后字节数分组；kind-2 记录的标志字（尾 `+36`）与尾后多出字节的对应；文本框宽高是否可用。
 - **M2**（新探针 `examples/probe_sym_pick_with_and_without_text`）：两个库根的每个 `.sym`，比较现行 `displayed_primitives` 选中的表，与把 Text 从 `drawing` / `fattest` 计数里拿掉后选中的表；列出不同的符号、两种选法的表号、决定性那张表上的文字及所在层。顺带：`bounds()` 全部图元与只算显示图元相比、包围盒放大超过 2 倍的符号数；重量 R7 的 431 / 868 / 163。
 - **M3**（扩 `examples/probe_sym_text_runs` 或新探针）：缓存体（`test-file` 下 7 个 `.pid` 与 53 张备份）里每条符号文字，段落默认与 run 在字高 / 字体 / 颜色上的分歧条数；五张参考图上会因 run 变字号的条数；顺带看 `Electric Motor Type 1.sym` 那条 `M` 有没有 run、run 指的字高是多少。
@@ -64,6 +67,8 @@
 读数追加到 `docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` 新一节「§六 审查之后的三项测量」；CHANGELOG 和 `task_plan.md` 各记一笔。
 
 ### S2 解码收紧（R1、R2、R10、R11 的一半；D2、D3）
+
+**已落地** `13a787c`（D2 (a)、D3 (a)；标志字到字节数的对应只记录、不硬校验，位 26 / 28 没见过；分析页 §七）。
 
 - 删 `text_end > tail_start`。`sheet_records` 新增 `pub(crate)` 的方向对判据，`decode_igtextbox_payload` 改用它（行为不变），库侧 `decode_text` 用它拒收、`lettering_of` 用它取字高；`lettering_of` 里「都不像就当 0.0」那一支随之去掉。
 - D3 (a) 时按尾型做精确长度校验。
@@ -73,9 +78,13 @@
 
 ### S3 选表规则（R3；D4）
 
+**已落地** `585e5b5`：M2 有差异，而 (b) 会丢坡度标签的 `SLOPE`，按 (c) 改去重顺序；四个电磁阀画出本体，53 张备份 1828 对一致 1411 → 1439，没有一张图变差（分析页 §八）。单测放在新的 `tests/symbol_library_sheet_pick.rs`。
+
 M2 没有差异：加单测锁住现状，写明「干净表上只有显示层的标签、本体在孪生表上」时选哪张。有差异：按用户在 (b) / (c) 里的选择改，加同一条单测；重跑 M2 和两个选表探针，读数写进分析页。
 
 ### S4 文档与清理（R4–R9；D5）
+
+**已落地** `d5a1bee`（D5 (a)；R8 按 S3 的结果收，选表仍把文字算进去，那四支确实是死代码）。
 
 - `decode_igtextboxes` 的校验规则按现行代码重写。
 - 两处 `anchor_code` 文档按 10-19 的结论改写（`docs/analysis/2026-10-19-a-pair-of-flags-not-an-index.md`、`docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`），不再写 `% 3`。
@@ -85,6 +94,8 @@ M2 没有差异：加单测锁住现状，写明「干净表上只有显示层�
 - `bounds()` 按 D5。
 
 ### S5 真实文件回归（R11 的另一半）
+
+**已落地** `ac8ac9d`（`tests/symbol_library_text.rs`；棘轮按「不超过 2」钉）。
 
 在 `symbol_library` 单测里加软跳过的 `test-file/symbols-full` 用例：`Fail Action.sym` → `CSC NULL` @ `(0.10795, 0.1397)`（形状 3）；`Nozzle Rating.sym` → `TBD`（形状 2、尾后 48 字节）；`Nozzle NPD.sym` → `1"`（形状 3）。再加一条全库棘轮：`test-file/symbols-full` 上 `0x004D` 被跳过的条数钉成实测值（预计不超过 2）。
 
@@ -107,3 +118,5 @@ M2 没有差异：加单测锁住现状，写明「干净表上只有显示层�
 - 2026-10-22：审查后开单，D1–D6 待 Plannotator 审。
 - 2026-10-22：Plannotator 批准（`plannotator annotate docs/plans/2026-10-22-library-text-review-follow-ups.md --gate --json` → `{"decision":"approved"}`，无批注），D1–D6 按推荐项。
 - 2026-10-22：用户「直接开工修复」→ S0 落地 `b45f937`；S1 的 M1 / M2、S2、S5 先写好（M1 扩 `probe_sym_text_shape_gap`，M2 新探针 `probe_sym_pick_with_and_without_text`，S5 放在新的集成测试 `tests/symbol_library_text.rs`，与 S2 分文件），门由用户跑过再分三笔提交；M3 下一批。
+- 2026-10-22：用户「继续执行全部的计划。不要停下来。最后验证完之后再汇报」，门改由本会话跑。M1 方向对不合格 0、尾型划分干净，D2 (a) / D3 (a) 落地；M2 有差异、(b) 会丢 `SLOPE`，D4 选 (c)。另一会话在同一工作区接 run，改动与本单同文件，本单逐笔从 HEAD 副本暂存。
+- 2026-10-23：收尾验证在 `d5a1bee` 的干净 worktree 上跑（另一会话的未提交改动不在内；`test-file/symbols-full` 用 junction 接进来，独立 target 目录）。`cargo clippy --locked --workspace --all-targets -- -D warnings` 零告警；`cargo test --locked --workspace --lib --bins --tests` 1699 过 / 0 败 / 3 忽略。其中 `pid-plot` 的 `plot_text_sources` 第一次读到语料 `plot/` 下另一会话 01:42 用 run 字样重出的 PDF，I井场文字全部对上，`sourced 0 of 0` 断言空转失败（另一会话工作区里已经改了这个测试）；换到隔离的语料副本、用本单的代码重出五张图后，`write_five_drawings` 4 / 4、`plot_compare` 1 / 1、`plot_text_sources` 1 / 1。`cargo test -p pid-parse --no-default-features --lib` 888 过；wasm32 lib check 过；`cargo fmt -p pid-parse -p pid-plot -- --check` 干净；`cargo doc` 只有树上原有的 4 条 private intra-doc link。

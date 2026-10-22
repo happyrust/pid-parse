@@ -5,6 +5,8 @@
 
 ## 当前阶段
 
+**2026-10-22 · 计划 `docs/plans/2026-10-22-library-text-review-follow-ups.md`（库侧文字三种形状的审查收口，Plannotator 批准）**：S0 `b45f937` 原样提交三种形状的读法；S1 `56e831f` 两个探针量出方向对 2864 条无一不合格、尾型把尾后字节分得干净（kind 1 尾后 0 字节 2321 条，kind 2 是 32 字节文本框尾再加 0–24 字节 543 条）、全库选表复现 `displayed_primitives` 1262 / 1262；S2 `13a787c` 库侧 `decode_text` 加方向对检查（与绘图侧共用 `igtextbox_letter_height`）、按尾型校验尾后字节、删掉永不触发的 `text_end > tail_start`；S5 `ac8ac9d` 真实文件回归；S3 `585e5b5` 跨表去重时共享笔画留在视图集干净的表上，四个电磁阀从只画一个 `S` 变成画出本体，53 张备份 1828 对本体一致 1411 → 1439；S4 `d5a1bee` 文档与清理（`decode_igtextboxes` 校验规则、两处 `anchor_code`、`displayed_primitives` 的普查数与死分支、`bounds()` 说明）。收尾验证见计划「门禁记录」。run（D6）由另一会话在工作区里做，未提交，本单没碰。
+
 **2026-10-20 · `PublishItemCatalog` 一面表收口（A1–A4，wayfinder M4）**：`src/publish/catalog.rs` 建起「一行一个物类型、同时描述数据库线与 `.pid` 线」的 `const` 表（`fn` 指针 + 别名表，沿用 `SheetRecordFamily` 的做法），四单分别接上消费者：A1 `60f1b25` 播种（#15 / #16 定形，落 `docs/analysis/2026-10-19-three-publish-tables-seed-catalog.md`）；A2 `7c79749` 让 `sqlite_load` 按 `catalog_row` 解子表链；A3 `4735be9` 让 `xml_writer` 的 `write_business_objects` 走 `db_writer`、`a01_object_rank` 读 `a01_rank`；A4 `6881c18` 让 `diff::supported_pid_tags` 由 `supported_db_tags()` 派生（与手写清单逐项相同），`595ce19` 清掉 A4 引入的 `map_unwrap_or`。`.pid` 线仍用自己那套 `CLASS_OF_ITEM_TYPE` / `branch_point_class`，`pid_class` / `pid_tags` 两列留待后续接。2026-10-21 复核：`publish_from_pid` 9 / 9（整套 60.7 s，整包 53 张那条占绝大部分）、`publish_xml_cli` 20 / 20、`publish_mdf_load` 3 / 3、`publish_meta_parity` 6 / 6 全过，退出码均 0；交付目录 `_Index.json` 仍为 80 085 / 87 419 / 106 705 / 2 395 / 3 128。下一项仍是 N11（符号库 / 模板 / `PlantConfig.xml` 内容解析）。
 
 **2026-10-19 · publish 目录入口接上 SQL Server MTF 包（N12）**：
