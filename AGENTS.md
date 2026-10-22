@@ -254,6 +254,15 @@ cargo test --test publish_xml_cli -- --nocapture   # CLI integration
 cd vendor/oxidized-mdf && cargo test --lib         # vendored unit tests (31 tests)
 ```
 
+Give every extra checkout of this repo (a `git worktree`, a scratch
+copy) its own `CARGO_TARGET_DIR`. Cargo keys a workspace member by its
+path relative to the workspace root, so checkouts sharing a target
+directory share build fingerprints: a build in one checkout made after
+the other's last source edit looks up to date to the other, whose tests
+then run the first checkout's code without recompiling. If that has
+already happened, update the modification time of `src/lib.rs` in the
+checkout under test to force a rebuild.
+
 ## Pre-commit gates (CI mirrors these)
 
 Run **all five** before `git push`. CI (`.github/workflows/ci.yml`)
