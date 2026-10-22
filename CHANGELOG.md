@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### publish 两条线共用一份项目录：分类、标签集与覆盖报表计数都从 `PublishItemCatalog` 读（2026-10-22，A1–A4 收口）
+
+`src/publish/catalog.rs` 的十七行表把两条发布线需要的同一批事实收在一处，每行一个 `ItemTypeName`（含 `Instrument` ↔ `InstrFunction`、`Note` ↔ `ItemNote` 这类别名），记 DB 子表链、DB 写手、DB 标签、`.pid` 分类规则、`.pid` 标签及其角色、A01 序，以及 `provisional` / `dead` 两个登记位。A1 `60f1b25` 落表；A2 `7c79749` 把 `sqlite_load` 的子表链从 `subtables_for_item_type` 改查 `catalog_row`；A3 `4735be9` 让 `xml_writer` 的分派与 A01 排序走 `db_writer` / `a01_rank`；A4 `6881c18` 把 `diff::supported_pid_tags` 接到 `supported_db_tags`。本轮把 `.pid` 侧补齐，两条线这才真正同源。
+
+- **`.pid` 的分类不再有第二张表**：`pid_load` 的 `CLASS_OF_ITEM_TYPE`（11 行）与 `UNCLASSED_ITEM_TYPES` 删除，改查 `catalog_row(...).pid_class` —— `Fixed` 取 tag 原文，`InstrumentByEvidence` 保持「先 `SymbolAttr`、再 `Instrumentation\<family>` 目录」的顺序，没有分类规则的行（`OPC`，它的 `PIDBranchPoint` 由 exp 带出）保持不定类。旧表里 `OPC → PIDBranchPoint` 那条一直被 `UNCLASSED_ITEM_TYPES` 盖住，从未生效。
+- **一处口径错被修掉**：`diff::supported_pid_tags` 原先只有 `db_tags`（15 个），`coverage_against_reference` 因此把只有 `.pid` 线会写的 6 个类 —— `PIDInstrument` / `PIDInlineInstrument` / `PIDProcessEquipment` / `PIDMechanicalEquipment` / `PIDHeatTransferEquipment` / `PIDSignalBranchPoint` —— 判成「待补」。现在是两条线标签的并集（`.pid` 的 21 个已包含 DB 那 15 个），`supported_pid_line_tags()` 也从 `#[cfg(test)]` 提为生产代码；目录里已没有生产侧读者为零的列。
+- **`_Coverage.json` 的派生子项按角色计数**：`.pid` 标签从纯字符串变成「标签 + `PidTagRole`」（`Class` / `ProcessPoint` / `BranchPoint` / `Port` / `Document` / `Enrichment`），`pid_line_tag_roles()` 去重、排序并只算一次。`write_pid_coverage_json` 不再自己写着 `PIDProcessPoint` / 两个 branch point / 两个 port，而是按角色决定去哪张集合取数。`OPC` 的 `PIDBranchPoint` 记 `Enrichment`：它由 dump 提供，branch point 的计数只来自 `drawing.branch_points`。
+- **钉数**：DB 标签集（15）与 `.pid` 标签集（21）各有字面量对照测试，改目录必须是一次显式提交；`the_coverage_tally_is_the_five_derived_tags` 固定带计数角色的五个 tag；`the_report_tallies_exactly_the_tags_the_catalog_gives_a_tally_role` 固定一份带齐五类集合的图纸产出的 `classes` 键集合；`writer_rows_declare_their_tags` 还要求 `Fixed` 行的 `pid_class` 以 `Class` 角色出现在自己的 `pid_tags` 里。
+- **输出未变**：整包重发 `D:\work\cad\pid-test-data` 后逐文件比 SHA-256，160 个文件（53 `_Data.xml` / 53 `_Meta.xml` / 53 `_Coverage.json` / `_Index.json`）全部与改动前相同；对象 80 085、值 87 419、关系 106 705 一个数没动。
+- **验证**：`cargo test -p pid-parse --lib publish::` 251 过 / 0 败；`publish_from_pid` 9/9（含 53 张整包）、`publish_xml_cli` 20/20、`publish_meta_parity` 6/6、`publish_mdf_load` 3/3、`publish_writer_coverage` 2/2、`publish_backlog_inventory` 4/4；`cargo clippy -p pid-parse --lib --all-targets -- -D warnings` 退出 0；missing-docs 0 = 基线 0；`cargo rustdoc` 仍是既有的 4 条 private intra-doc link 错误，本次未新增。改动四个文件的 `rustfmt --check` 干净；全仓 `cargo fmt --all -- --check` 当前被另一会话新增的未跟踪探针 `pid-plot/examples/probe_library_vs_cached_bodies.rs` 挡住，与本改动无关。
+- 提交：`60f1b25` / `7c79749` / `4735be9` / `6881c18`（A1–A4）、`595ce19`（A3 的 clippy 收尾）、`da150a0`（两条线共用分类与标签集）、`7e31074`（报表按角色计数）。均未推。
+
 ### 备份里的 53 张图全部出 PDF：字体只嵌子集，符号路径容忍前导空格（2026-10-21）
 
 把 `D:\work\plant-code\cad\pid-test-data` 的 `PlantData~2~711.zip`（一个装置 53 张图，文件名 GBK）拆出来逐张导出：**53/53 出页**，每页 **175–846 KB**（改前每页 6.6–7.1 MB，合计 366 MB → 25.7 MB），符号库里缺的 **82 处 → 18 处**（且这 18 处都靠图纸自带的内嵌本体画了出来，占位框 0）。五张参考图读数逐位未动（覆盖率 0.9989 / 0.9998 / 0.9979 / 0.9986 / 0.9993、多画 41.8 / 7.6 / 1.5 / 22.9 / 24.6 mm、文字 544/546 + 151/151 + 123/123 + 167/167 + 249/249）。
