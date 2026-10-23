@@ -25,5 +25,19 @@ fn main() {
                 .map(|g| g.decoded_igsmartframes.len())
                 .sum::<usize>()
         );
+        for stream in &doc.sheet_streams {
+            let Some(geometry) = stream.geometry.as_ref() else {
+                continue;
+            };
+            for frame in &geometry.decoded_igsmartframes {
+                println!(
+                    "    frame state={:?} extent={:.2}x{:.2} mm oid={}",
+                    frame.state,
+                    frame.extent_width_m * 1000.0,
+                    frame.extent_height_m * 1000.0,
+                    frame.oid
+                );
+            }
+        }
     }
 }

@@ -7,7 +7,13 @@
 //! PDF baseline back along the run when the page is written. A symbol's own
 //! lettering that is only the placeholder `NULL`, including a doubled
 //! `NULLNULL`, stays out of the table; text the drawing itself records is
-//! kept. The sheet frame is not part of the table.
+//! kept.
+//!
+//! The sheet's furniture — its double frame, title block and sign-off column —
+//! is not in the drawing: the drawing links an OLE frame to an `.igr` template
+//! file that carries it. That template is laid out first, so the drawing's own
+//! records ink over it, and the page reports which file it came from in
+//! [`PaperModel::template`].
 
 use std::path::{Path, PathBuf};
 
@@ -16,8 +22,8 @@ use pid_parse::style_link::{
 };
 use pid_parse::symbol_library::{PrimitiveStyle, SymbolLettering, SymbolLibrary, SymbolPrimitive};
 use pid_parse::{
-    PidGeometryConfidence, PidGraphicEntity, PidGraphicKind, PidParser, SheetRecordKind,
-    build_normalized_geometry,
+    NormalizedPidGeometry, PidDocument, PidGeometryConfidence, PidGraphicEntity, PidGraphicKind,
+    PidParser, SheetRecordKind, build_normalized_geometry,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +45,15 @@ pub struct PaperModel {
     pub library: Vec<String>,
     /// Page width and height in millimetres, when the drawing states them.
     pub page_mm: Option<[f64; 2]>,
+    /// The `.igr` border template drawn under the content, when the sheet has
+    /// one.
+    ///
+    /// A P&ID's border is a linked OLE object, so the frame, title block and
+    /// sign-off column are not in the `.pid` at all — they live in the template
+    /// file the frame record points at. This is the file whose furniture the
+    /// page carries; see [`border_template_files`] for how it is found.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub template: Option<BorderTemplate>,
     /// Primitives in drawing order. Expanded symbol strokes follow the
     /// placement they came from.
     pub primitives: Vec<PaperPrimitive>,
@@ -69,6 +84,20 @@ pub struct PaperModel {
     pub symbols_referenced: usize,
 }
 
+/// One `.igr` border template, as drawn.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BorderTemplate {
+    /// Template file the furniture came from, as found on disk.
+    pub path: String,
+    /// The template's own ink extent, paper millimetres.
+    ///
+    /// It equals the sheet, because the template's outer frame runs along the
+    /// page edge; that equality is also how the file was picked.
+    pub extent_mm: [f64; 2],
+    /// How many primitives the template contributed, labels included.
+    pub primitives: usize,
+}
+
 /// A 30 mm square around a symbol the library did not draw.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MissingSymbolBox {
@@ -97,6 +126,15 @@ pub struct PaperPrimitive {
     pub stroke: Option<PaperStroke>,
     /// The shape.
     pub shape: PaperShape,
+    /// Whether this stroke is sheet furniture from the border template.
+    ///
+    /// The writer drops a stroke that runs along a page edge, because on a
+    /// drawing that stroke is the print driver's frame rather than content.
+    /// A template's outer frame *is* such a stroke, and it is the furniture
+    /// being drawn, so furniture is exempt. Reading the page back still drops
+    /// it (`read::sheet_edge_mm`), which keeps the comparison symmetric.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub furniture: bool,
 }
 
 /// The pen one primitive draws with: colour, width and dash as the
@@ -579,11 +617,17 @@ fn suppressed_from_plot(entity: &PidGraphicEntity) -> bool {
     layer.displayed == Some(false) || layer.name.as_deref() == Some("ConsistencyChecks")
 }
 
-/// Lay out one `.pid`.
+/// Lay out one `.pid`, furniture first.
 ///
 /// The symbol library is the first of: `PID_SYMBOL_LIBRARY`, a directory
 /// under `<corpus>/Ref` or `<corpus>/../Ref` whose name contains `symbol`,
 /// then `test-file/symbols-full`.
+///
+/// The sheet's border template comes from `<corpus>/Ref/Template Files` and
+/// `<corpus>/Ref` (or the corpus's parent): the `.igr` whose own extent is the
+/// sheet, which is how a linked OLE frame record is resolved to a file
+/// ([`load_border_template`]). Its furniture goes onto the page before the
+/// drawing's own records, so content inks over the frame rather than under it.
 pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperModelError> {
     let doc = PidParser::new()
         .parse_file(pid)
@@ -605,6 +649,43 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
     let mut missing = std::collections::BTreeSet::new();
     let mut missing_boxes = Vec::new();
     let mut seen_sheet_fills = std::collections::HashSet::new();
+
+    // The sheet's furniture is not in the `.pid`: the border is a linked OLE
+    // object whose content is the `.igr` template. It is parsed as the drawing
+    // it is, with its own styles, and laid out at 1:1 because a template is
+    // authored in page millimetres from the page's own origin — the corpus A1
+    // template runs `(0, 0)` to `(841, 594)`, exactly the sheet B states.
+    let mut template: Option<BorderTemplate> = None;
+    if let Some(page) = page_mm
+        && let Some(furniture) = load_border_template(corpus, page)
+    {
+        let template_styles = pid_parse::style_link::text_styles_for_document(&furniture.doc);
+        let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
+        let template_fills = pid_parse::style_link::fill_styles_for_document(&furniture.doc);
+        let before = primitives.len();
+        for entity in &furniture.geometry.entities {
+            push_furniture_entity(
+                &mut primitives,
+                entity,
+                Some(page),
+                &template_styles,
+                &template_lines,
+                &template_fills,
+                &mut seen_sheet_fills,
+            );
+        }
+        // Everything the template contributed is furniture, and only that:
+        // the flag exempts it from the writer's page-edge rule, which would
+        // otherwise drop the frame this draw-in exists to put on the page.
+        for primitive in &mut primitives[before..] {
+            primitive.furniture = true;
+        }
+        template = Some(BorderTemplate {
+            path: furniture.path.display().to_string(),
+            extent_mm: furniture.extent_mm,
+            primitives: primitives.len() - before,
+        });
+    }
 
     let mut skipped_endpoint_pairs = 0usize;
     for entity in &geometry.entities {
@@ -729,6 +810,7 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
     Ok(PaperModel {
         library,
         page_mm,
+        template,
         primitives,
         off_sheet_primitives: off_sheet,
         skipped_endpoint_pairs,
@@ -883,6 +965,167 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
     (roots, label)
 }
 
+/// How far a template's own ink may sit from the sheet it borders, in
+/// millimetres.
+///
+/// A sheet states its size in metres and carries float noise (`841.00005`),
+/// while the template's outer frame runs along exactly the same edge. Two
+/// millimetres is far outside that noise and 348 mm inside the gap between one
+/// ISO size and the next, so a near miss can only mean the same sheet.
+const TEMPLATE_EXTENT_TOLERANCE_MM: f64 = 2.0;
+
+/// Directories that can hold `.igr` border templates, in search order.
+///
+/// A project keeps them in `<corpus>/Ref/Template Files` — both the five-drawing
+/// corpus and `test-file/Ref` do — so that directory is the first place to look.
+/// `Ref` itself and the corpus's parent follow, which is how a fixture reaches
+/// the same shared `Ref` the symbol library already searches.
+fn border_template_dirs(corpus: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for candidate in [
+        Some(corpus.join("Ref").join("Template Files")),
+        Some(corpus.join("Ref")),
+        corpus
+            .parent()
+            .map(|parent| parent.join("Ref").join("Template Files")),
+        corpus.parent().map(|parent| parent.join("Ref")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if candidate.is_dir() && !dirs.iter().any(|seen| seen == &candidate) {
+            dirs.push(candidate);
+        }
+    }
+    dirs
+}
+
+/// Every `.igr` file under the corpus's template directories, path-sorted.
+fn border_template_files(corpus: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = Vec::new();
+    for dir in border_template_dirs(corpus) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut found: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("igr"))
+            })
+            .collect();
+        found.sort();
+        for path in found {
+            if !files.iter().any(|seen| seen == &path) {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
+
+/// The extent of a document's stroked geometry, paper millimetres.
+///
+/// Only the shapes a border is drawn with count: a template's frame is its own
+/// outermost ink, and a label that hangs a millimetre past it must not move the
+/// sheet it is being matched against.
+fn ink_extent_mm(geometry: &NormalizedPidGeometry) -> Option<[f64; 2]> {
+    let mut min = [f64::MAX; 2];
+    let mut max = [f64::MIN; 2];
+    let mut seen = false;
+    let mut take = |point: [f64; 2]| {
+        if point[0].is_finite() && point[1].is_finite() {
+            min[0] = min[0].min(point[0]);
+            min[1] = min[1].min(point[1]);
+            max[0] = max[0].max(point[0]);
+            max[1] = max[1].max(point[1]);
+            seen = true;
+        }
+    };
+    for entity in &geometry.entities {
+        match &entity.kind {
+            PidGraphicKind::Line { start, end } => {
+                take([start.x, start.y]);
+                take([end.x, end.y]);
+            }
+            PidGraphicKind::Polyline { points, .. } => {
+                for point in points {
+                    take([point.x, point.y]);
+                }
+            }
+            PidGraphicKind::Arc { center, radius, .. }
+            | PidGraphicKind::Circle { center, radius } => {
+                take([center.x - radius, center.y - radius]);
+                take([center.x + radius, center.y + radius]);
+            }
+            PidGraphicKind::Point { .. }
+            | PidGraphicKind::Text { .. }
+            | PidGraphicKind::SymbolInstance { .. }
+            | PidGraphicKind::Annotation { .. }
+            | PidGraphicKind::Unknown { .. } => {}
+        }
+    }
+    seen.then_some([
+        (max[0] - min[0]) * MM_PER_METRE,
+        (max[1] - min[1]) * MM_PER_METRE,
+    ])
+}
+
+/// One parsed `.igr` template.
+struct BorderTemplateDocument {
+    path: PathBuf,
+    extent_mm: [f64; 2],
+    doc: PidDocument,
+    geometry: NormalizedPidGeometry,
+}
+
+/// The template authored for `page_mm`, if the corpus ships one.
+///
+/// The link record only says the frame is an external OLE document; it does not
+/// surface the stored short path (`CPE-SQ~3.IGR`), which no filesystem resolves.
+/// So the file is picked by the one thing both sides state independently: the
+/// extent. Every `.igr` under the corpus's template directories is parsed, its
+/// stroked extent is measured, and the template whose extent is the sheet is the
+/// one the sheet was drawn on. A page with no such file gets no furniture rather
+/// than a scaled-up guess from another size.
+fn load_border_template(corpus: &Path, page_mm: [f64; 2]) -> Option<BorderTemplateDocument> {
+    let mut best: Option<(f64, BorderTemplateDocument)> = None;
+    for path in border_template_files(corpus) {
+        let Ok(doc) = PidParser::new().parse_file(&path) else {
+            continue;
+        };
+        let geometry = build_normalized_geometry(&doc);
+        let Some(extent_mm) = ink_extent_mm(&geometry) else {
+            continue;
+        };
+        let error = (extent_mm[0] - page_mm[0])
+            .abs()
+            .max((extent_mm[1] - page_mm[1]).abs());
+        if error > TEMPLATE_EXTENT_TOLERANCE_MM {
+            continue;
+        }
+        if best
+            .as_ref()
+            .is_some_and(|(best_error, _)| *best_error <= error)
+        {
+            continue;
+        }
+        best = Some((
+            error,
+            BorderTemplateDocument {
+                path,
+                extent_mm,
+                doc,
+                geometry,
+            },
+        ));
+    }
+    best.map(|(_, template)| template)
+}
+
 fn missing_box(path: &str, insertion_m: [f64; 2]) -> MissingSymbolBox {
     let origin = [insertion_m[0] * MM_PER_METRE, insertion_m[1] * MM_PER_METRE];
     const HALF_MM: f64 = 15.0;
@@ -980,6 +1223,46 @@ fn body_stroke(
     })
 }
 
+/// A four-corner axis-aligned ring, stored in the order a written page reads
+/// it back.
+///
+/// A rectangle is the same ring from any of its corners, and the writer hands
+/// one to the PDF as `m`/`l`/`h`, which the reader recognizes as a `Rect` and
+/// gives back from its own corner (`+x` first, then `+y`). Storing the ring in
+/// that order is the only thing this changes — the region is identical — and
+/// it is what lets `write_five_drawings` compare a page endpoint for endpoint
+/// instead of set by set. A chain that is not a four-corner axis-aligned box
+/// is returned untouched.
+fn canonical_rect_chain(chain_mm: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
+    const EPSILON: f64 = 1e-6;
+    if chain_mm.len() != 4 || !chain_mm.iter().all(|point| finite(*point)) {
+        return chain_mm;
+    }
+    let closed = |first: [f64; 2], second: [f64; 2]| {
+        (first[0] - second[0]).abs() <= EPSILON || (first[1] - second[1]).abs() <= EPSILON
+    };
+    for index in 0..4 {
+        let next = (index + 1) % 4;
+        if !closed(chain_mm[index], chain_mm[next]) {
+            return chain_mm;
+        }
+    }
+    let (mut min_x, mut max_x) = (f64::INFINITY, f64::NEG_INFINITY);
+    let (mut min_y, mut max_y) = (f64::INFINITY, f64::NEG_INFINITY);
+    for point in &chain_mm {
+        min_x = min_x.min(point[0]);
+        max_x = max_x.max(point[0]);
+        min_y = min_y.min(point[1]);
+        max_y = max_y.max(point[1]);
+    }
+    vec![
+        [min_x, min_y],
+        [max_x, min_y],
+        [max_x, max_y],
+        [min_x, max_y],
+    ]
+}
+
 /// Dedup key for one sheet boundary fill: its ring vertices quantised to
 /// micrometres plus the fill colour, so duplicate `igBoundary2d` records on
 /// `/Sheet6` (e.g. A's stop-valve checkerboard oid 3033↔3066, 3044↔3056)
@@ -996,6 +1279,7 @@ fn sheet_fill_key(chain_mm: &[[f64; 2]], rgb: Option<[u8; 3]>) -> u64 {
     hasher.finish()
 }
 
+/// Push one record of the drawing itself.
 fn push_entity(
     out: &mut Vec<PaperPrimitive>,
     entity: &PidGraphicEntity,
@@ -1004,6 +1288,60 @@ fn push_entity(
     line_styles: &LineStyleIndex,
     fill_styles: &pid_parse::style_link::FillIndex,
     seen_sheet_fills: &mut std::collections::HashSet<u64>,
+) {
+    push_entity_with(
+        out,
+        entity,
+        page_mm,
+        styles,
+        line_styles,
+        fill_styles,
+        seen_sheet_fills,
+        false,
+    );
+}
+
+/// Push one record of the sheet's border template.
+///
+/// The one rule that changes is `sheet_edge`: a stroke that runs along the page
+/// edge is dropped from a drawing because it is the print driver's frame rather
+/// than content, while in a template that stroke *is* the frame. Reading the
+/// written page back still drops both frames (`read::sheet_edge_mm`), so a
+/// page with furniture compares against a reference plot that has it exactly as
+/// one without does against a reference that has none.
+fn push_furniture_entity(
+    out: &mut Vec<PaperPrimitive>,
+    entity: &PidGraphicEntity,
+    page_mm: Option<[f64; 2]>,
+    styles: &TextStyleIndex,
+    line_styles: &LineStyleIndex,
+    fill_styles: &pid_parse::style_link::FillIndex,
+    seen_sheet_fills: &mut std::collections::HashSet<u64>,
+) {
+    push_entity_with(
+        out,
+        entity,
+        page_mm,
+        styles,
+        line_styles,
+        fill_styles,
+        seen_sheet_fills,
+        true,
+    );
+}
+
+/// The shared body of [`push_entity`] and [`push_furniture_entity`], with
+/// `keep_sheet_edge` saying whether a page-edge stroke is content.
+#[allow(clippy::too_many_arguments)]
+fn push_entity_with(
+    out: &mut Vec<PaperPrimitive>,
+    entity: &PidGraphicEntity,
+    page_mm: Option<[f64; 2]>,
+    styles: &TextStyleIndex,
+    line_styles: &LineStyleIndex,
+    fill_styles: &pid_parse::style_link::FillIndex,
+    seen_sheet_fills: &mut std::collections::HashSet<u64>,
+    keep_sheet_edge: bool,
 ) {
     if suppressed_from_plot(entity) {
         return;
@@ -1021,7 +1359,7 @@ fn push_entity(
             let start_mm = place_metres([start.x, start.y], [0.0, 0.0], 0.0, [1.0, 1.0]);
             let end_mm = place_metres([end.x, end.y], [0.0, 0.0], 0.0, [1.0, 1.0]);
             let shape = PaperShape::Line { start_mm, end_mm };
-            if !sheet_edge(&shape, page_mm) {
+            if keep_sheet_edge || !sheet_edge(&shape, page_mm) {
                 out.push(primitive(entity, &placement, stroke.clone(), shape));
                 stamp_complex_dash(out, entity, &stroke, resolved, &[start_mm, end_mm]);
             }
@@ -1050,15 +1388,13 @@ fn push_entity(
                             .and_then(|oid| fill_styles.get(&(stream.clone(), oid)))
                     })
                     .and_then(|fill| fill.rgb());
-                if seen_sheet_fills.insert(sheet_fill_key(&points_mm, rgb)) {
+                let chain_mm = canonical_rect_chain(points_mm);
+                if seen_sheet_fills.insert(sheet_fill_key(&chain_mm, rgb)) {
                     out.push(primitive(
                         entity,
                         &placement,
                         None,
-                        PaperShape::Fill {
-                            chain_mm: points_mm,
-                            rgb,
-                        },
+                        PaperShape::Fill { chain_mm, rgb },
                     ));
                 }
                 return;
@@ -1743,7 +2079,12 @@ fn primitive(
         symbol: placement.symbol.clone(),
         stroke,
         shape,
+        furniture: false,
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
@@ -1766,7 +2107,7 @@ mod tests {
 
     use super::{
         PaperShape, PaperTextSpan, Placement, SymbolItem, TextAnchor, TextLine, arc_shape,
-        place_metres, push_entity, push_symbol_primitive,
+        canonical_rect_chain, place_metres, push_entity, push_symbol_primitive,
     };
 
     fn plain_item(shape: &SymbolPrimitive) -> SymbolItem<'_> {
@@ -1775,6 +2116,26 @@ mod tests {
             style: None,
             lettering: None,
         }
+    }
+
+    #[test]
+    fn a_rectangle_ring_is_stored_from_the_corner_the_reader_returns() {
+        // The ring is the same rectangle from any corner; storing it from the
+        // low corner in the order a written page reads back keeps the round
+        // trip endpoint for endpoint (`write_five_drawings`).
+        let ring = vec![[4.0, 2.0], [4.0, 6.0], [1.0, 6.0], [1.0, 2.0]];
+        assert_eq!(
+            canonical_rect_chain(ring),
+            vec![[1.0, 2.0], [4.0, 2.0], [4.0, 6.0], [1.0, 6.0]]
+        );
+    }
+
+    #[test]
+    fn a_chain_that_is_not_a_rectangle_is_left_alone() {
+        let triangle = vec![[0.0, 0.0], [4.0, 0.0], [0.0, 6.0]];
+        assert_eq!(canonical_rect_chain(triangle.clone()), triangle);
+        let slanted = vec![[0.0, 0.0], [4.0, 1.0], [5.0, 6.0], [1.0, 5.0]];
+        assert_eq!(canonical_rect_chain(slanted.clone()), slanted);
     }
 
     fn lettered_item<'a>(
@@ -2562,6 +2923,7 @@ mod tests {
 
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,

@@ -329,6 +329,7 @@ fn push_layer(
                     line: *line,
                     spans,
                 },
+                page,
             )?;
         }
     }
@@ -390,23 +391,43 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
         "w",
         vec![Object::Real(pen_width_mm(pen.width_mm) * PT_PER_MM)],
     ));
-    if !pen.dash_mm.is_empty() {
-        let dash: Vec<Object> = pen
-            .dash_mm
-            .iter()
-            .map(|segment| Object::Real(segment.abs() * PT_PER_MM))
-            .collect();
+    if let Some(dash) = dash_array(&pen) {
         ops.push(Op::new("d", vec![Object::Array(dash), Object::Real(0.0)]));
     }
-    if paint_shape(ops, &primitive.shape, page) {
+    if paint_shape(ops, &primitive.shape, page, primitive.furniture) {
         ops.push(Op::new("S", Vec::new()));
     }
     ops.push(Op::new("Q", Vec::new()));
 }
 
-fn paint_shape(ops: &mut Vec<Op>, shape: &PaperShape, page: [f64; 2]) -> bool {
+/// The dash state a pen asks for, or `None` when its pattern inks no dash.
+///
+/// A PDF dash array's numbers have to be non-negative and **not all zero**.
+/// The model keeps a pattern exactly as the record states it, and the D04
+/// fixture's own style declares one zero-length segment — a walk over that
+/// pattern is solid (`DashWalk` treats a zero period as no dash at all), so
+/// the page has to draw it that way too instead of writing the invalid
+/// `[0] 0 d` state a stricter viewer than MuPDF may refuse.
+fn dash_array(pen: &PaperStroke) -> Option<Vec<Object>> {
+    let steps: Vec<f64> = pen
+        .dash_mm
+        .iter()
+        .map(|segment| segment.abs() * PT_PER_MM)
+        .collect();
+    if steps.iter().any(|step| !step.is_finite()) || steps.iter().all(|step| *step <= 0.0) {
+        return None;
+    }
+    Some(steps.into_iter().map(Object::Real).collect())
+}
+
+fn paint_shape(
+    ops: &mut Vec<Op>,
+    shape: &PaperShape,
+    page: [f64; 2],
+    keep_sheet_edge: bool,
+) -> bool {
     let mut any = false;
-    for run in stroke_runs(&shape_chain(shape), page) {
+    for run in stroke_runs(&shape_chain(shape), page, keep_sheet_edge) {
         ops.push(Op::new("m", vec![pt(run[0][0]), pt(run[0][1])]));
         for point in &run[1..] {
             ops.push(Op::new("l", vec![pt(point[0]), pt(point[1])]));
@@ -449,7 +470,7 @@ fn shape_chain(shape: &PaperShape) -> Vec<[f64; 2]> {
 ///
 /// One run becomes one subpath, so a dash pattern flows along a whole polyline
 /// instead of restarting at every vertex.
-fn stroke_runs(points: &[[f64; 2]], page: [f64; 2]) -> Vec<Vec<[f64; 2]>> {
+fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Vec<Vec<[f64; 2]>> {
     let mut runs = Vec::new();
     let mut run: Vec<[f64; 2]> = Vec::new();
     for pair in points.windows(2) {
@@ -457,7 +478,7 @@ fn stroke_runs(points: &[[f64; 2]], page: [f64; 2]) -> Vec<Vec<[f64; 2]>> {
         let prints = finite(start)
             && finite(end)
             && hypot(start, end) >= 1e-4
-            && !sheet_edge_mm(start, end, page);
+            && (keep_sheet_edge || !sheet_edge_mm(start, end, page));
         if !prints {
             if run.len() >= 2 {
                 runs.push(std::mem::take(&mut run));
@@ -613,10 +634,45 @@ fn text_segments<'a>(text: &ShownText<'a>, inked: &str, height_mm: f64) -> Vec<T
     segments
 }
 
+/// How far a run may advance from `start` along `direction` before it leaves
+/// the page, in millimetres.
+///
+/// `0` when the start is already outside the sheet, and `f64::INFINITY` only
+/// for a zero direction.
+fn page_reach_mm(start: [f64; 2], direction: [f64; 2], page: [f64; 2]) -> f64 {
+    let mut reach = f64::INFINITY;
+    for axis in 0..2 {
+        let step = direction[axis];
+        if step.abs() < 1e-9 {
+            continue;
+        }
+        let left = if step > 0.0 {
+            page[axis] - start[axis]
+        } else {
+            start[axis]
+        };
+        reach = reach.min(left / step.abs());
+    }
+    if reach.is_finite() {
+        reach.max(0.0)
+    } else {
+        reach
+    }
+}
+
+/// The smallest a run is squeezed to before it is left to the page clip.
+///
+/// A label the sheet cannot hold is condensed along its own direction until it
+/// fits, which is what keeps every glyph on the page; a run that would have to
+/// be squashed to half its width is not a label any more, so it keeps its size
+/// and loses its tail the way it always did.
+const MIN_CONDENSE: f64 = 0.5;
+
 fn show_text(
     ops: &mut Vec<Op>,
     faces: &[ReadyFace<'_>],
     text: ShownText<'_>,
+    page: [f64; 2],
 ) -> Result<(), PlotWriteError> {
     if text.value.is_empty() || !text.rotation.is_finite() || !finite(text.origin_mm) {
         return Ok(());
@@ -648,21 +704,44 @@ fn show_text(
             emitted.push((segment.size_pt, face, bytes));
         }
     }
+    let (sin, cos) = text.rotation.sin_cos();
+    // A run the page cannot hold loses its tail to the page box: the I
+    // drawing's title-block company name is 21 full-width glyphs at the height
+    // its `.igr` template states, and the face this writer embeds advances
+    // them 13 % wider than the face the reference plot used, so the last two
+    // characters fell past the sheet edge and MuPDF extracted 19 of them. The
+    // template states the label and the page states its edge; condensing the
+    // run along its own direction keeps every glyph on the sheet without
+    // inventing a smaller size for the letters.
+    let mut condense = 1.0;
+    if width_mm > 0.0 && width_mm.is_finite() {
+        let start = baseline_origin(
+            text.origin_mm,
+            text.rotation,
+            width_mm,
+            height_mm,
+            text.anchor,
+            text.line,
+        );
+        let reach = page_reach_mm(start, [cos, sin], page);
+        if reach > 0.0 && width_mm > reach {
+            condense = (reach / width_mm).clamp(MIN_CONDENSE, 1.0);
+        }
+    }
     let origin_mm = baseline_origin(
         text.origin_mm,
         text.rotation,
-        width_mm,
+        width_mm * condense,
         height_mm,
         text.anchor,
         text.line,
     );
-    let (sin, cos) = text.rotation.sin_cos();
     ops.push(Op::new("BT", Vec::new()));
     ops.push(Op::new(
         "Tm",
         vec![
-            Object::Real(cos),
-            Object::Real(sin),
+            Object::Real(cos * condense),
+            Object::Real(sin * condense),
             Object::Real(-sin),
             Object::Real(cos),
             pt(origin_mm[0]),
@@ -925,7 +1004,7 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
                 .map(|pen| pen.dash_mm.clone())
                 .unwrap_or_default();
             let mut walk = DashWalk::new(&dash, 0.0);
-            for run in stroke_runs(&shape_chain(&primitive.shape), page) {
+            for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
                 walk.restart();
                 for pair in run.windows(2) {
                     for (start, end) in walk.split(pair[0], pair[1]) {
@@ -1036,6 +1115,7 @@ mod tests {
             symbol: None,
             stroke: None,
             shape,
+            furniture: false,
         }
     }
 
@@ -1123,6 +1203,7 @@ mod tests {
         });
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1151,6 +1232,49 @@ mod tests {
         assert_eq!(widths, vec![0.17, 0.68], "the pens are not snapped");
     }
 
+    /// A style can state a dash whose only segment is zero — the plant
+    /// backup's `D04` does. A PDF dash array may not be all zero, and a
+    /// zero-period pattern inks solid, so the page has to carry no dash state
+    /// at all: `[0] 0 d` is invalid PDF that a stricter viewer than MuPDF may
+    /// refuse to draw.
+    #[test]
+    fn a_zero_length_dash_pattern_is_written_solid() {
+        let page = |dash_mm: Vec<f64>| {
+            let mut line = primitive(
+                "decoded",
+                PaperShape::Line {
+                    start_mm: [10.0, 20.0],
+                    end_mm: [80.0, 20.0],
+                },
+            );
+            line.stroke = Some(super::PaperStroke {
+                rgb: [0, 0, 0],
+                width_mm: 0.35,
+                dash_mm,
+            });
+            PaperModel {
+                library: Vec::new(),
+                template: None,
+                page_mm: Some([200.0, 100.0]),
+                off_sheet_primitives: 0,
+                skipped_endpoint_pairs: 0,
+                primitives: vec![line],
+                missing_symbols: Vec::new(),
+                missing_boxes: Vec::new(),
+                symbols_found: 0,
+                symbols_referenced: 0,
+            }
+        };
+        let solid = write_plot(&page(Vec::new()), &[]).expect("solid");
+        let zero = write_plot(&page(vec![0.0]), &[]).expect("zero-period dash");
+        assert_eq!(
+            zero, solid,
+            "a zero-period dash has to draw the solid pen's page"
+        );
+        let dashed = write_plot(&page(vec![3.5, 1.75]), &[]).expect("dashed");
+        assert_ne!(dashed, solid, "a real dash still reaches the page");
+    }
+
     /// `D03` in the plant backup is a drawing with a declared sheet and no
     /// content at all: `prepare_fonts` loads no face for it, and the page used
     /// to be refused with `no font was provided`.
@@ -1158,6 +1282,7 @@ mod tests {
     fn a_drawing_with_no_ink_at_all_still_writes_its_declared_sheet() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([594.33, 420.57]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1180,6 +1305,7 @@ mod tests {
     fn lettering_without_a_face_is_refused() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1208,6 +1334,7 @@ mod tests {
     fn a_line_and_a_word_read_back_on_their_layers() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1398,6 +1525,79 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_page_reach_follows_the_run_direction() {
+        let page = [100.0, 50.0];
+        assert!((super::page_reach_mm([20.0, 10.0], [1.0, 0.0], page) - 80.0).abs() < 1e-9);
+        assert!((super::page_reach_mm([20.0, 10.0], [-1.0, 0.0], page) - 20.0).abs() < 1e-9);
+        assert!((super::page_reach_mm([20.0, 10.0], [0.0, 1.0], page) - 40.0).abs() < 1e-9);
+        // A run that starts off the sheet has nowhere to go.
+        assert_eq!(super::page_reach_mm([120.0, 10.0], [1.0, 0.0], page), 0.0);
+    }
+
+    /// A run the sheet cannot hold is condensed along its own direction rather
+    /// than running off the page.
+    ///
+    /// The I drawing's title-block company name is 21 full-width glyphs at the
+    /// height its `.igr` template states, and the face this writer embeds
+    /// advances them 13 % wider than the reference plot's face did: the last
+    /// two characters fell past the sheet edge and MuPDF extracted 19 of them.
+    #[test]
+    fn a_run_wider_than_the_page_is_condensed_until_it_fits() {
+        let page = [100.0, 40.0];
+        let value = "A".repeat(60);
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some(page),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [10.0, 10.0],
+                    height_mm: Some(4.0),
+                    rotation: 0.0,
+                    value: value.clone(),
+                    font: None,
+                    anchor: TextAnchor::Left,
+                    line: TextLine::Bottom,
+                    spans: Vec::new(),
+                },
+            )],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let read: String = ink.spans.iter().map(|span| span.text.as_str()).collect();
+        assert_eq!(read, value, "every glyph stayed on the page");
+        let end = ink
+            .spans
+            .iter()
+            .map(|span| span.origin_mm[0] + span.advance_mm)
+            .fold(f64::MIN, f64::max);
+        assert!(
+            end <= page[0] + 0.05,
+            "the run ends {end:.2} mm along a {} mm page",
+            page[0]
+        );
+        assert!(
+            ink.spans[0].height_mm > 3.9,
+            "condensing is horizontal; the body stays {}",
+            ink.spans[0].height_mm
+        );
+    }
+
     /// A symbol label that letters one character at another size is cut where
     /// the size changes, and the pieces continue along one baseline: `Tj`
     /// advances by the glyph width at the size in force, so the second piece
@@ -1406,6 +1606,7 @@ mod tests {
     fn a_span_at_its_own_size_continues_where_the_previous_one_ended() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1519,6 +1720,7 @@ mod tests {
     fn spans_that_change_nothing_are_written_as_one_run() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1571,6 +1773,7 @@ mod tests {
     fn a_run_of_spaces_writes_no_text() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1625,6 +1828,7 @@ mod tests {
     ) -> [f64; 2] {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 140.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
