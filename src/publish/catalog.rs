@@ -522,6 +522,180 @@ pub(crate) fn pid_line_tag_roles() -> &'static [(&'static str, PidTagRole)] {
     ROLES.as_slice()
 }
 
+/// The tag's `.pid`-line objects come from the exp dump (`Port`) or from
+/// enrichment the file cannot state (`Enrichment`), and no row gives the tag a
+/// role the file states. Returns the owning row's `item_type` and the role.
+///
+/// `None` for a tag the catalog gives a file-stateable role
+/// (`Class` / `ProcessPoint` / `BranchPoint` / `Document`), for a tag no row
+/// declares, and for a tag no row gives a `pid_tags` entry at all.
+pub(crate) fn pid_file_cannot_state(tag: &str) -> Option<(&'static str, PidTagRole)> {
+    let mut found = None;
+    for row in PUBLISH_ITEM_CATALOG {
+        for (declared, role) in row.pid_tags {
+            if *declared != tag {
+                continue;
+            }
+            match role {
+                PidTagRole::Port | PidTagRole::Enrichment => {
+                    found = found.or(Some((row.item_type, *role)));
+                }
+                _ => return None,
+            }
+        }
+    }
+    found
+}
+
+/// One class of attributes the vendor reference carries and this line cannot
+/// state, with the reason it is not published.
+///
+/// The membership is **measured**, not guessed: it is the union of the
+/// reference-only `(interface, attribute)` keys of the five corpus vendor
+/// references (`A` / `B` / `CD` / `lowA` / `I井场`) plus the A01 test-file
+/// reference — the G2 census `contract-work/g2-evidence/devin/ref-only-inventory.log`.
+/// The rule that admits a member: the plant database is the attribute's only
+/// source — the `.pid` file's own attribute map (`super::pid_load`) and the exp
+/// tables (`super::oracle_exp`) state it for no object of that interface. The
+/// ghost-probe tests in `diff.rs` keep the list honest: an attribute this line
+/// never publishes and this table does not name stays a finding.
+pub(crate) struct ExcludedAttributeClass {
+    /// Short name of the class, printed in the accounting.
+    pub class: &'static str,
+    /// Why the plant database, and not this line, supplies it.
+    pub reason: &'static str,
+    /// The `(interface, attributes)` pairs this class covers, measured.
+    pub members: &'static [(&'static str, &'static [&'static str])],
+}
+
+/// The attribute classes the plant database supplies and the `.pid` publish
+/// line therefore never states: the measured union behind
+/// [`ExcludedAttributeClass`]. `IObject.Name` and `IObject.UID` are never
+/// members — this line states both, so they stay in the diff.
+pub(crate) static EXCLUDED_ATTRIBUTE_CLASSES: &[ExcludedAttributeClass] = &[
+    ExcludedAttributeClass {
+        class: "plant breakdown structure",
+        reason: "PBS item columns the plant breakdown structure supplies: the .pid file \
+                 states the item's tag and geometry, never its breakdown-structure status.",
+        members: &[("IPBSItem", &["ConstructionStatus", "ConstructionStatus2"])],
+    },
+    ExcludedAttributeClass {
+        class: "piping specification",
+        reason: "piping specification columns the piping spec database supplies: a .pid file \
+                 states the run and the component's tag, not the resolved spec row.",
+        members: &[
+            ("IInsulatedItem", &["InsulSpec"]),
+            ("IPipeCrossSectionItem", &["NominalDiameter"]),
+            (
+                "IPipingComponent",
+                &[
+                    "CommoditySpecialtyType",
+                    "PipModelCode",
+                    "PipingComponentType1",
+                    "PipingComponentType2",
+                    "PipingComponentType3",
+                ],
+            ),
+            ("IPipingConnector", &["PipingConnectorType"]),
+            ("IPipingSpecifiedItem", &["PipingMaterialsClass"]),
+            ("ISpecifiedMatlItem", &["LongMaterialDescription3"]),
+        ],
+    },
+    ExcludedAttributeClass {
+        class: "instrument index",
+        reason: "instrument index columns the instrumentation database supplies: a .pid file \
+                 states the symbol and its loop, not the index row.",
+        members: &[
+            (
+                "IInstrument",
+                &["InstrumentType", "InstrumentType3", "ProcFunc"],
+            ),
+            ("IInstrumentOcc", &["InstrumentLocation"]),
+            (
+                "INamedInstrument",
+                &["InstrTagSequenceNo", "MeasuredVariable"],
+            ),
+        ],
+    },
+    ExcludedAttributeClass {
+        class: "equipment register",
+        reason: "equipment register columns the equipment database supplies: a .pid file \
+                 states the symbol, not the register row.",
+        members: &[
+            (
+                "IEquipment",
+                &[
+                    "EqType0",
+                    "EqType1",
+                    "EqType2",
+                    "EqType3",
+                    "EqType4",
+                    "EqType5",
+                    "EqTypeDescription",
+                    "EquipmentTrimSpec",
+                ],
+            ),
+            (
+                "IEquipmentComponent",
+                &[
+                    "ProcEqpCompTypeDescription",
+                    "ProcessEqCompType1",
+                    "ProcessEqCompType2",
+                ],
+            ),
+            ("INamedEquipment", &["EquipPrefix"]),
+        ],
+    },
+    ExcludedAttributeClass {
+        class: "connector and port model",
+        reason: "connector and port model columns the plant database supplies: a .pid file \
+                 states the run's ends, not the resolved connector row.",
+        members: &[
+            (
+                "IConnector",
+                &["FlowDirection", "RepresentationsAreAllZeroLength"],
+            ),
+            ("IInlineComponent", &["IsFlowDirectional"]),
+            ("INamedPipingConnector", &["PipingConnectorSeqNo"]),
+            ("IPressureReliefItem", &["ReliefPressure"]),
+        ],
+    },
+    ExcludedAttributeClass {
+        class: "document metadata",
+        reason: "document metadata columns the document register supplies: this line states \
+                 the drawing's name and uid, not the register's category/subtype/title.",
+        members: &[("IDocument", &["DocCategory", "DocTitle", "DocType"])],
+    },
+    ExcludedAttributeClass {
+        class: "typical and status flags",
+        reason: "the typical flag the plant database supplies: a .pid file states the \
+                 typical's geometry, not the register flag.",
+        members: &[("IPIDTypical", &["IsTypical"])],
+    },
+    ExcludedAttributeClass {
+        class: "item identity columns",
+        reason: "the item's own identity columns the plant database supplies: a differing \
+                 IObject.Name or IObject.UID stays in the diff.",
+        members: &[("IObject", &["Description", "ItemTag"])],
+    },
+];
+
+/// The exclusion class covering `interface`.`attribute`, if any.
+///
+/// `None` when no [`EXCLUDED_ATTRIBUTE_CLASSES`] member names the pair —
+/// such a key stays a finding.
+pub(crate) fn excluded_attribute(
+    interface: &str,
+    attribute: &str,
+) -> Option<&'static ExcludedAttributeClass> {
+    EXCLUDED_ATTRIBUTE_CLASSES.iter().find(|class| {
+        class
+            .members
+            .iter()
+            .any(|(iface, attributes)| *iface == interface && attributes.contains(&attribute))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

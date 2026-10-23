@@ -133,9 +133,14 @@ fn print_usage() {
          \x20                   and Rel-DefUID count report and exits 1 when any\n\
          \x20                   variety differs. A .pid input scores emitted objects,\n\
          \x20                   values and Rels: one the reference does not carry\n\
-         \x20                   exits 1. Classes this mode does not publish are not\n\
-         \x20                   MISSING. With --oracle-exp the clean line says\n\
-         \x20                   oracle-exp mode.\n\
+         \x20                   exits 1. Reference-only content the exclusion\n\
+         \x20                   list does not cover exits 1 too. Excused by\n\
+         \x20                   design and printed with their reason: classes\n\
+         \x20                   the .pid file cannot state (Port / Enrichment),\n\
+         \x20                   relation classes this run states nowhere, the\n\
+         \x20                   plant database's attribute classes, and the\n\
+         \x20                   tag-named duplicate elements. With --oracle-exp\n\
+         \x20                   the clean line says oracle-exp mode.\n\
          --oracle-exp FILE   .pid input only: read piping and signal ports from\n\
          \x20                   an Oracle exp dump and emit them for parents this\n\
          \x20                   file already publishes. Pipe runs with a tag\n\
@@ -680,11 +685,15 @@ fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Print the `.pid` export's object / value / rel score. Absence of a class
-/// this mode does not publish is not a finding; an emitted object, value or
-/// rel the reference does not carry exits 1. A document that is not
-/// well-formed XML is not scored: the refusal goes to stdout and stderr and
-/// exits 1.
+/// Print the `.pid` export's object / value / rel score. An emitted object,
+/// value or rel the reference does not carry exits 1, and so does
+/// reference-only content the explicit exclusion list does not cover:
+/// classes the `.pid` file cannot state, relation classes this run states
+/// nowhere, the plant database's attribute classes and the tag-named
+/// duplicate elements are excused by design. When the pair is not clean a
+/// `reference-only:` accounting line and one `excused` line per excused
+/// class follow the findings. A document that is not well-formed XML is
+/// not scored: the refusal goes to stdout and stderr and exits 1.
 fn report_pid_diff(ref_path: &Path, xml: &str, oracle_exp: bool) -> Result<i32, String> {
     let reference = std::fs::read_to_string(ref_path)
         .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
@@ -712,16 +721,19 @@ fn report_pid_diff(ref_path: &Path, xml: &str, oracle_exp: bool) -> Result<i32, 
     } else {
         eprintln!(
             "Semantic diff against {} surfaced findings in .pid mode:\n  \
-             objects extra={} wrong_class={}\n  \
-             values different={} not_in_reference={}\n  \
-             rels not_in_reference={}\n\
+             objects extra={} wrong_class={} missing={}\n  \
+             values different={} not_in_reference={} missing={}\n  \
+             rels not_in_reference={} missing={}\n\
              exit 1.",
             ref_path.display(),
             diff.objects_not_in_reference,
             diff.objects_of_another_class,
+            diff.objects_not_in_generated,
             diff.values_different,
             diff.values_not_in_reference,
+            diff.values_not_in_generated,
             diff.rels_not_in_reference,
+            diff.rels_not_in_generated,
         );
         Ok(1)
     }

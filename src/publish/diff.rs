@@ -1263,16 +1263,38 @@ pub struct PidExportDiff {
     /// These are not findings. The dump is newer than the reference for
     /// fluid-system code 7.
     pub fluid_system_reference_empty: usize,
+    /// Reference-only objects that are findings (in the reference, not in the generated).
+    pub objects_not_in_generated: usize,
+    /// Reference-only objects the exclusion list covers, with a printed reason.
+    pub objects_excused_by_design: usize,
+    /// Reference-only `PIDPipeline` objects whose `IObject.Name` a generated one already carries.
+    pub objects_paired_by_name: usize,
+    /// Reference-only attribute values that are findings, on objects both documents carry.
+    pub values_not_in_generated: usize,
+    /// Reference-only attribute values the exclusion list covers.
+    pub values_excused_by_design: usize,
+    /// Reference-only rels that are findings.
+    pub rels_not_in_generated: usize,
+    /// Reference-only rels the exclusion list covers.
+    pub rels_excused_by_design: usize,
+    /// Reference-only `PipingConnectors` rels the by-name pairing already accounts for.
+    pub rels_paired_by_name: usize,
+    /// One rendered line per excused class, `excused <kind> <subject> <count> — <reason>`.
+    pub exclusions: Vec<String>,
 }
 
 impl PidExportDiff {
-    /// No emitted object, value or rel disagrees with the reference.
+    /// No emitted object, value or rel disagrees with the reference, and no
+    /// reference-only object, value or rel lacks a finding or an excuse.
     pub fn is_clean(&self) -> bool {
         self.objects_not_in_reference
             + self.objects_of_another_class
             + self.values_different
             + self.values_not_in_reference
             + self.rels_not_in_reference
+            + self.objects_not_in_generated
+            + self.values_not_in_generated
+            + self.rels_not_in_generated
             == 0
     }
 }
@@ -1306,6 +1328,31 @@ impl fmt::Display for PidExportDiff {
         }
         for finding in &self.findings {
             writeln!(f, "{finding}")?;
+        }
+        if !self.is_clean() {
+            let objects = self.objects_not_in_generated
+                + self.objects_excused_by_design
+                + self.objects_paired_by_name;
+            let values = self.values_not_in_generated + self.values_excused_by_design;
+            let rels =
+                self.rels_not_in_generated + self.rels_excused_by_design + self.rels_paired_by_name;
+            writeln!(
+                f,
+                "reference-only: objects {objects} (missing {}, excused {}, paired by name {}), \
+                 values {values} (missing {}, excused {}), \
+                 rels {rels} (missing {}, excused {}, paired by name {})",
+                self.objects_not_in_generated,
+                self.objects_excused_by_design,
+                self.objects_paired_by_name,
+                self.values_not_in_generated,
+                self.values_excused_by_design,
+                self.rels_not_in_generated,
+                self.rels_excused_by_design,
+                self.rels_paired_by_name,
+            )?;
+            for exclusion in &self.exclusions {
+                writeln!(f, "{exclusion}")?;
+            }
         }
         Ok(())
     }
@@ -1446,6 +1493,7 @@ pub fn diff_pid_export(
             diff.findings.push(format!("rel {rel:?}"));
         }
     }
+    exclusions::account_reference_side(&generated, &reference, &mut diff);
     Ok(diff)
 }
 
@@ -1636,6 +1684,13 @@ fn finish_publish_block(
         document.objects.insert(uid, (tag, values));
     }
 }
+
+#[path = "diff_exclusions.rs"]
+mod exclusions;
+
+#[cfg(test)]
+#[path = "diff_exclusions_tests.rs"]
+mod exclusion_tests;
 
 #[cfg(test)]
 mod tests {

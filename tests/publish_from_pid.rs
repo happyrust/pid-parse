@@ -445,6 +445,19 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
         (diff.objects, diff.values, diff.rels),
         (3_093, 3_346, 4_107)
     );
+    // G2 (census `contract-work/g2-evidence/devin/ref-only-inventory.log`):
+    // nothing the reference carries is missing from the generated side; the
+    // 79 name-paired pipelines, the plant-database attribute classes and the
+    // vendor's composed `IObject.Name` values are excused by design and
+    // accounted in `diff.exclusions`.
+    assert_eq!(diff.objects_not_in_generated, 0);
+    assert_eq!(diff.values_not_in_generated, 0);
+    assert_eq!(diff.rels_not_in_generated, 0);
+    assert_eq!(diff.objects_excused_by_design, 0);
+    assert_eq!(diff.objects_paired_by_name, 79);
+    assert_eq!(diff.values_excused_by_design, 3_379);
+    assert_eq!(diff.rels_excused_by_design, 0);
+    assert_eq!(diff.rels_paired_by_name, 106);
     assert_eq!(diff.pipelines_paired_by_name, 79);
     assert_eq!(diff.piping_connectors_paired_by_name, 106);
     assert_eq!(diff.fluid_system_reference_empty, 23);
