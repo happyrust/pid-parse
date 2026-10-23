@@ -707,16 +707,6 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
         .expect("spawn directory without --out-dir");
     assert_eq!(missing_out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&missing_out.stderr).contains("--out-dir"));
-    let refused = Command::new(CLI)
-        .arg(&package)
-        .arg("--diff-against")
-        .arg("ref.xml")
-        .arg("--out-dir")
-        .arg(&out)
-        .output()
-        .expect("spawn directory --diff-against");
-    assert_eq!(refused.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("--diff-against"));
     let output = Command::new(CLI)
         .arg(&package)
         .arg("--out-dir")
@@ -742,6 +732,68 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
     assert!(out.join("D06_Data.xml").is_file());
     assert!(out.join("D06_Meta.xml").is_file());
     assert!(out.join("D06_Coverage.json").is_file());
+
+    // G4: the package gate takes a reference DIRECTORY of <Name>_Data.xml
+    // files, scores every written drawing and exits non-zero when one is
+    // not clean.
+    let gate_out = unique_out_dir("mini-gate");
+    let gated = Command::new(CLI)
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(&gate_out)
+        .arg("--diff-against")
+        .arg(&out)
+        .args(["--plant", "P01"])
+        .output()
+        .expect("spawn gated mini backup");
+    let stdout = String::from_utf8_lossy(&gated.stdout);
+    assert_eq!(gated.status.code(), Some(0), "{stdout}");
+    let row = &index["drawings"][0];
+    assert!(
+        stdout.contains(&format!(
+            "D06: clean (objects {}, values {}, rels {})",
+            row["objects"], row["values"], row["relationships"]
+        )),
+        "{stdout}"
+    );
+
+    // A reference directory without the drawing's file is reported as
+    // unpaired, never as clean.
+    let empty = unique_out_dir("mini-gate-empty");
+    std::fs::create_dir_all(&empty).expect("empty reference dir");
+    let unpaired = Command::new(CLI)
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(unique_out_dir("mini-gate-unpaired"))
+        .arg("--diff-against")
+        .arg(&empty)
+        .args(["--plant", "P01"])
+        .output()
+        .expect("spawn unpaired mini backup");
+    let stdout = String::from_utf8_lossy(&unpaired.stdout);
+    assert_eq!(unpaired.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("D06: unpaired"), "{stdout}");
+    assert!(stdout.contains("no reference"), "{stdout}");
+
+    // One drifting drawing makes the gate exit 1 and names the drawing.
+    let drift = unique_out_dir("mini-gate-drift");
+    std::fs::create_dir_all(&drift).expect("drift reference dir");
+    let reference = std::fs::read_to_string(out.join("D06_Data.xml")).expect("D06 data xml");
+    let mutated = reference.replacen("<IObject UID=\"", "<IObject UID=\"ZZZ", 1);
+    assert_ne!(mutated, reference);
+    std::fs::write(drift.join("D06_Data.xml"), mutated).expect("drifted reference");
+    let dirty = Command::new(CLI)
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(unique_out_dir("mini-gate-dirty"))
+        .arg("--diff-against")
+        .arg(&drift)
+        .args(["--plant", "P01"])
+        .output()
+        .expect("spawn dirty mini backup");
+    let stdout = String::from_utf8_lossy(&dirty.stdout);
+    assert_eq!(dirty.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("D06: dirty"), "{stdout}");
 }
 
 #[test]
@@ -893,5 +945,36 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
     let data = std::fs::read_to_string(out.join(format!("{name}_Data.xml"))).expect("data xml");
     assert!(data.contains("<PIDDrawing"), "{name}_Data.xml");
     assert!(out.join(format!("{name}_Meta.xml")).is_file());
+
+    let gate_out = unique_out_dir("test02-mtf-gate");
+    let gated = Command::new(CLI)
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(&gate_out)
+        .arg("--diff-against")
+        .arg(&out)
+        .args(["--plant", "TEST02"])
+        .output()
+        .expect("spawn gated MTF backup directory");
+    let stdout = String::from_utf8_lossy(&gated.stdout);
+    // G4: the same gate scores the SQL Server branch too. Note the DB line
+    // writes `PipingConnectors` rels with the pipeline in UID1 and the
+    // connector in UID2 — the opposite of the Oracle exp line, and the same
+    // as the vendor DB-line reference in test-file/export-test/publish-data —
+    // while `diff_pid_export` pairs that rel by looking the pipeline up in
+    // UID2. A byte-identical reference therefore still reports a finding
+    // here. Assert what the gate guarantees: a verdict for every written
+    // drawing, the flag accepted, and the exit code agreeing with the verdict.
+    let verdict = stdout
+        .lines()
+        .find(|line| line.starts_with(&format!("{name}: ")))
+        .unwrap_or_else(|| panic!("no gate verdict for {name}:\n{stdout}"));
+    if verdict.contains(": clean") {
+        assert_eq!(gated.status.code(), Some(0), "{stdout}");
+    } else {
+        assert!(verdict.contains(": dirty"), "{verdict}");
+        assert_eq!(gated.status.code(), Some(1), "{stdout}");
+    }
+
     let _ = std::fs::remove_dir_all(&out);
 }

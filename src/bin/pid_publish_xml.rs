@@ -115,9 +115,11 @@ fn print_usage() {
          _Index.json. Export.dmp is read once when it is an Oracle exp. A\n\
          SQL Server MTF dump is stripped to its MDF and every T_Drawing\n\
          row publishes through the database path (backup-mdf feature;\n\
-         without it the input still exits 2). --diff-against does not\n\
-         apply. One drawing that fails is recorded; the rest are\n\
-         still written; the process then exits 1.\n\n\
+         without it the input still exits 2). --diff-against DIR compares\n\
+         every written drawing against <DIR>/<Name>_Data.xml and prints one\n\
+         clean / dirty / unpaired verdict per drawing; a drawing that is\n\
+         dirty or has no reference there exits 1. One drawing that fails\n\
+         is recorded; the rest are still written; the process then exits 1.\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
@@ -128,8 +130,10 @@ fn print_usage() {
          \x20                   <DocName>_Coverage.json into DIR (created if\n\
          \x20                   needed). Mutually exclusive with --out / --stdout\n\
          \x20                   / --meta-out.\n\
-         --diff-against FILE compare the generated _Data.xml against a reference\n\
-         \x20                   SmartPlant export. A database input prints the tag\n\
+         --diff-against PATH compare the generated _Data.xml against a reference\n\
+         \x20                   SmartPlant export, or, for a backup directory, a\n\
+         \x20                   DIRECTORY of <Name>_Data.xml files: every drawing\n\
+         \x20                   is scored and reported. A database input prints the tag\n\
          \x20                   and Rel-DefUID count report and exits 1 when any\n\
          \x20                   variety differs. A .pid input scores emitted objects,\n\
          \x20                   values and Rels: one the reference does not carry\n\
@@ -317,9 +321,10 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     .into(),
             );
         }
-        if diff_against.is_some() {
-            return Err("--diff-against does not apply to a backup directory".into());
-        }
+        // G4: --diff-against applies to a backup directory too. The
+        // reference is a directory of <Name>_Data.xml files; the package
+        // gate scores every written drawing against it and reports one
+        // clean / dirty / unpaired verdict per drawing.
         if output.is_some() || meta_out_path.is_some() {
             return Err("a backup directory writes with --out-dir only".into());
         }
@@ -514,8 +519,44 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
         &options.input_path,
         out_dir,
         &options.plant_name,
+        options.diff_against.as_deref(),
     ) {
         Ok(report) => {
+            let exit = i32::from(
+                report.failed > 0
+                    || report
+                        .gate
+                        .as_ref()
+                        .is_some_and(|gate| gate.not_clean() > 0),
+            );
+            if let Some(gate) = &report.gate {
+                for line in &gate.lines {
+                    println!("{line}");
+                }
+                let reference = options
+                    .diff_against
+                    .as_deref()
+                    .unwrap_or_else(|| Path::new("."));
+                if gate.clean + gate.dirty == 0 {
+                    eprintln!(
+                        "Package gate against {}: none of the {} written drawings has a \
+                         reference there; nothing was compared; exit 1.",
+                        reference.display(),
+                        gate.unpaired,
+                    );
+                } else {
+                    eprintln!(
+                        "Package gate against {}: {} drawings, {} clean, {} with findings, \
+                         {} without a reference; exit {}.",
+                        reference.display(),
+                        gate.clean + gate.dirty + gate.unpaired,
+                        gate.clean,
+                        gate.dirty,
+                        gate.unpaired,
+                        exit,
+                    );
+                }
+            }
             eprintln!(
                 "Published {} drawings from {} ({} failed, {} without a DrawingNo). Wrote {}.",
                 report.written,
@@ -524,7 +565,7 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
                 report.shells,
                 report.index_path.display(),
             );
-            Ok(i32::from(report.failed > 0))
+            Ok(exit)
         }
         Err(pid_parse::publish::backup_package::BackupPublishError::Usage(detail)) => {
             eprintln!("argument error: {detail}");

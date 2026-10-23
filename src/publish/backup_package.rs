@@ -64,6 +64,30 @@ pub struct BackupPublishReport {
     /// Drawings whose uid came from `T_DRAWING.PATH` because the `.pid`
     /// has no `DrawingNo`.
     pub shells: usize,
+    /// 门禁的逐图结论；没给参考目录时为 `None`。
+    pub gate: Option<PackageGateReport>,
+}
+
+/// 一次整包发布里 `--diff-against` 的逐图结论。
+///
+/// 参考按图名索引：`<参考目录>/<图名>_Data.xml`。
+#[derive(Debug, Default)]
+pub struct PackageGateReport {
+    /// 逐图结论行，按写出顺序；dirty 的图，其 finding 行紧随其后。
+    pub lines: Vec<String>,
+    /// 参考与之一致的图数。
+    pub clean: usize,
+    /// 参考不一致的图数。
+    pub dirty: usize,
+    /// 参考目录里没有 `<图名>_Data.xml` 的图数。
+    pub unpaired: usize,
+}
+
+impl PackageGateReport {
+    /// 门禁没能判 clean 的图数：dirty 加 unpaired。
+    pub fn not_clean(&self) -> usize {
+        self.dirty + self.unpaired
+    }
 }
 
 /// Publish `package_dir` into `out_dir`.
@@ -76,10 +100,13 @@ pub struct BackupPublishReport {
 /// when the directory, the dump, or a `PlantData` zip cannot be opened.
 /// A single drawing's failure is counted on the report and does not
 /// return an error.
+///
+/// `reference_dir` 给定时，每个写出的图都会与 `<reference_dir>/<图名>_Data.xml` 打分。
 pub fn publish_backup_package(
     package_dir: &Path,
     out_dir: &Path,
     plant_name: &str,
+    reference_dir: Option<&Path>,
 ) -> Result<BackupPublishReport, BackupPublishError> {
     if !package_dir.join("Manifest.txt").is_file() {
         return Err(BackupPublishError::Usage(
@@ -105,7 +132,14 @@ pub fn publish_backup_package(
         Some(export) => match &export.format {
             ExportDumpFormat::OracleExp { .. } => Some(export.path.clone()),
             ExportDumpFormat::SqlServerMtf(_) => {
-                return publish_mtf_package(package_dir, &export.path, out_dir, plant_name, &scan);
+                return publish_mtf_package(
+                    package_dir,
+                    &export.path,
+                    out_dir,
+                    plant_name,
+                    &scan,
+                    reference_dir,
+                );
             }
             ExportDumpFormat::Unrecognized { detail } => {
                 return Err(BackupPublishError::Usage(format!(
@@ -156,6 +190,7 @@ pub fn publish_backup_package(
         .iter()
         .map(|problem| format!("{}: {}", problem.path.display(), problem.detail))
         .collect();
+    let mut gate = reference_dir.map(PackageGate::new);
 
     for plant in &scan.plant_data {
         if !matches!(plant.format, crate::backup::RefDataFormat::Zip) {
@@ -186,6 +221,7 @@ pub fn publish_backup_package(
                 written_names: &mut written_names,
                 drawings: &mut drawings,
                 problems: &mut problems,
+                gate: gate.as_mut(),
             },
         ) {
             Ok(()) => {}
@@ -196,6 +232,7 @@ pub fn publish_backup_package(
         }
     }
 
+    let gate = gate.map(|gate| gate.report);
     let export_kind = if dump_path.is_some() {
         "OracleExp"
     } else {
@@ -244,6 +281,7 @@ pub fn publish_backup_package(
         index_path,
         pid_entries,
         shells,
+        gate,
     })
 }
 
@@ -306,6 +344,7 @@ struct PublishTally<'a> {
     written_names: &'a mut HashSet<String>,
     drawings: &'a mut Vec<Value>,
     problems: &'a mut Vec<String>,
+    gate: Option<&'a mut PackageGate>,
 }
 
 fn publish_zip(
@@ -509,6 +548,9 @@ fn publish_one(
         return;
     }
     *tally.written += 1;
+    if let Some(gate) = tally.gate.as_deref_mut() {
+        gate.score(&drawing.drawing_name, &xml);
+    }
     if uid_from == "T_DRAWING.SP_ID" || uid_from == "T_DRAWING.PATH" {
         *tally.paired += 1;
     }
@@ -554,6 +596,75 @@ fn publish_one(
         "oracle_exp": oracle,
         "problems": [],
     }));
+}
+
+/// 把一次整包发布写出的每张图与一个 `<图名>_Data.xml` 参考目录打分。
+struct PackageGate {
+    reference_dir: PathBuf,
+    report: PackageGateReport,
+}
+
+impl PackageGate {
+    fn new(reference_dir: &Path) -> Self {
+        Self {
+            reference_dir: reference_dir.to_path_buf(),
+            report: PackageGateReport::default(),
+        }
+    }
+
+    /// 给一张刚写出的图打分；结论行进 `report`。
+    ///
+    /// 参考文件不存在时记 unpaired（**不是** clean、也不是跳过）。
+    fn score(&mut self, name: &str, xml: &str) {
+        let reference_path = self.reference_dir.join(format!("{name}_Data.xml"));
+        if !reference_path.is_file() {
+            self.report.unpaired += 1;
+            self.report.lines.push(format!(
+                "{name}: unpaired — no reference file {}; the drawing was not compared",
+                reference_path.display()
+            ));
+            return;
+        }
+        let reference = match fs::read_to_string(&reference_path) {
+            Ok(reference) => reference,
+            Err(error) => {
+                self.report.unpaired += 1;
+                self.report.lines.push(format!(
+                    "{name}: unpaired — reference {} could not be read: {error}",
+                    reference_path.display()
+                ));
+                return;
+            }
+        };
+        match super::diff::diff_pid_export(xml, &reference) {
+            Ok(diff) if diff.is_clean() => {
+                self.report.clean += 1;
+                self.report.lines.push(format!(
+                    "{name}: clean (objects {}, values {}, rels {})",
+                    diff.objects, diff.values, diff.rels
+                ));
+            }
+            Ok(diff) => {
+                self.report.dirty += 1;
+                self.report.lines.push(format!(
+                    "{name}: dirty (objects {}, values {}, rels {}, findings {})",
+                    diff.objects,
+                    diff.values,
+                    diff.rels,
+                    diff.findings.len()
+                ));
+                for finding in &diff.findings {
+                    self.report.lines.push(format!("  {name}: {finding}"));
+                }
+            }
+            Err(malformed) => {
+                self.report.dirty += 1;
+                self.report
+                    .lines
+                    .push(format!("{name}: dirty — {malformed}"));
+            }
+        }
+    }
 }
 
 fn row_by_id<'a>(loaded: &'a LoadedDump, drawing_uid: &str) -> Option<&'a BackupDrawing> {
@@ -717,6 +828,7 @@ fn publish_mtf_package(
     out_dir: &Path,
     plant_name: &str,
     scan: &BackupFolderScan,
+    reference_dir: Option<&Path>,
 ) -> Result<BackupPublishReport, BackupPublishError> {
     let dump = fs::read(dump_path).map_err(|error| {
         BackupPublishError::Io(format!("read {}: {error}", dump_path.display()))
@@ -800,6 +912,7 @@ fn publish_mtf_package(
     let mut written_names = HashSet::new();
     let mut paired_keys = HashSet::new();
     let mut drawings: Vec<Value> = Vec::new();
+    let mut gate = reference_dir.map(PackageGate::new);
 
     for row in &rows {
         let path_key = backup_path_key(&row.path);
@@ -877,6 +990,9 @@ fn publish_mtf_package(
             continue;
         }
         written += 1;
+        if let Some(gate) = gate.as_mut() {
+            gate.score(&name, &xml);
+        }
         objects += counts.0;
         values += counts.1;
         relationships += counts.2;
@@ -941,6 +1057,7 @@ fn publish_mtf_package(
         index_path,
         pid_entries,
         shells: 0,
+        gate: gate.map(|gate| gate.report),
     })
 }
 
@@ -953,6 +1070,7 @@ fn publish_mtf_package(
     _out_dir: &Path,
     _plant_name: &str,
     _scan: &BackupFolderScan,
+    _reference_dir: Option<&Path>,
 ) -> Result<BackupPublishReport, BackupPublishError> {
     Err(BackupPublishError::Usage(
         "Export.dmp is a SQL Server MTF stream; use pid_backup_extract".into(),
