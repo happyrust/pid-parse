@@ -957,24 +957,28 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
         .output()
         .expect("spawn gated MTF backup directory");
     let stdout = String::from_utf8_lossy(&gated.stdout);
-    // G4: the same gate scores the SQL Server branch too. Note the DB line
-    // writes `PipingConnectors` rels with the pipeline in UID1 and the
-    // connector in UID2 — the opposite of the Oracle exp line, and the same
-    // as the vendor DB-line reference in test-file/export-test/publish-data —
-    // while `diff_pid_export` pairs that rel by looking the pipeline up in
-    // UID2. A byte-identical reference therefore still reports a finding
-    // here. Assert what the gate guarantees: a verdict for every written
-    // drawing, the flag accepted, and the exit code agreeing with the verdict.
-    let verdict = stdout
-        .lines()
-        .find(|line| line.starts_with(&format!("{name}: ")))
-        .unwrap_or_else(|| panic!("no gate verdict for {name}:\n{stdout}"));
-    if verdict.contains(": clean") {
-        assert_eq!(gated.status.code(), Some(0), "{stdout}");
-    } else {
-        assert!(verdict.contains(": dirty"), "{verdict}");
-        assert_eq!(gated.status.code(), Some(1), "{stdout}");
-    }
+    // G6: the gate resolves a `PipingConnectors` rel's pipeline end in either
+    // orientation — the DB line writes `UID1` = pipeline / `UID2` = connector,
+    // the Oracle exp line the opposite — so a byte-identical reference is
+    // clean. Assert the real criterion: the gated run reproduces the data xml
+    // byte for byte, exits 0, prints the exact clean verdict, and prints no
+    // `  {name}: …` finding line.
+    let first = std::fs::read(out.join(format!("{name}_Data.xml"))).expect("first data xml");
+    let second = std::fs::read(gate_out.join(format!("{name}_Data.xml"))).expect("gated data xml");
+    assert_eq!(
+        first, second,
+        "{name}_Data.xml differs between the two runs"
+    );
+    let verdict = format!("{name}: clean (objects 12, values 29, rels 15)");
+    assert!(
+        stdout.lines().any(|line| line == verdict),
+        "no `{verdict}` verdict:\n{stdout}"
+    );
+    assert_eq!(gated.status.code(), Some(0), "{stdout}");
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("  ")),
+        "a clean gate prints no finding line:\n{stdout}"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }

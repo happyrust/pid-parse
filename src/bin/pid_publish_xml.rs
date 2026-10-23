@@ -540,9 +540,10 @@ fn run_package(options: &CliOptions) -> Result<i32, String> {
                 if gate.clean + gate.dirty == 0 {
                     eprintln!(
                         "Package gate against {}: none of the {} written drawings has a \
-                         reference there; nothing was compared; exit 1.",
+                         reference there; nothing was compared; exit {}.",
                         reference.display(),
                         gate.unpaired,
+                        exit,
                     );
                 } else {
                     eprintln!(

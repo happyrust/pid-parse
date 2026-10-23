@@ -29,7 +29,8 @@ use std::collections::{BTreeMap, HashSet};
 use crate::publish::catalog::{self, PidTagRole};
 
 use super::{
-    pipeline_names, pipelines_by_name, piping_connector_keys, PidExportDiff, PublishBlocks,
+    pipeline_names, pipelines_by_name, piping_connector_key, piping_connector_keys, PidExportDiff,
+    PublishBlocks,
 };
 
 /// Reference-side pass over `reference`: count every object, attribute value
@@ -120,13 +121,11 @@ pub(super) fn account_reference_side(
         }
         let (rel_uid, uid1, uid2, def_uid) = rel;
         if def_uid == "PipingConnectors" {
-            let name = reference_pipeline_names
-                .get(uid2)
-                .cloned()
-                .unwrap_or_default();
-            if generated_connectors.contains(&(uid1.clone(), name)) {
-                diff.rels_paired_by_name += 1;
-                continue;
+            if let Some(key) = piping_connector_key(rel, &reference_pipeline_names) {
+                if generated_connectors.contains(&key) {
+                    diff.rels_paired_by_name += 1;
+                    continue;
+                }
             }
         }
         let same_wiring = generated.rels.iter().any(|other| {

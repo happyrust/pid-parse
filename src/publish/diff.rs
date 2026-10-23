@@ -1508,11 +1508,9 @@ pub fn diff_pid_export(
     for rel in rels {
         diff.rels += 1;
         if rel.3 == "PipingConnectors" {
-            let name = generated_pipeline_names
-                .get(&rel.2)
-                .cloned()
-                .unwrap_or_default();
-            if reference_connectors.contains(&(rel.1.clone(), name)) {
+            if piping_connector_key(rel, &generated_pipeline_names)
+                .is_some_and(|key| reference_connectors.contains(&key))
+            {
                 diff.piping_connectors_paired_by_name += 1;
             } else {
                 diff.rels_not_in_reference += 1;
@@ -1565,11 +1563,26 @@ fn piping_connector_keys(
         .rels
         .iter()
         .filter(|rel| rel.3 == "PipingConnectors")
-        .filter_map(|rel| {
-            let name = names.get(&rel.2)?.clone();
-            Some((rel.1.clone(), name))
-        })
+        .filter_map(|rel| piping_connector_key(rel, names))
         .collect()
+}
+
+/// The `(connector UID, pipeline name)` key a `PipingConnectors` rel states.
+///
+/// The Oracle `exp` line writes `UID1` = connector and `UID2` = pipeline; the
+/// SQL Server / database line writes the opposite orientation (`UID1` =
+/// pipeline, `UID2` = connector, block UID `PCN-<pipeline>`). The registered
+/// orientation is tried first and the other side second, so both lines key
+/// the same pair; a rel whose ends are neither pipeline UIDs has no key.
+fn piping_connector_key(
+    rel: &(String, String, String, String),
+    names: &HashMap<String, String>,
+) -> Option<(String, String)> {
+    if let Some(name) = names.get(&rel.2) {
+        return Some((rel.1.clone(), name.clone()));
+    }
+    let name = names.get(&rel.1)?;
+    Some((rel.2.clone(), name.clone()))
 }
 
 fn compare_values(
@@ -1877,6 +1890,78 @@ mod tests {
         assert!(diff.is_clean(), "{diff}");
         assert_eq!((diff.objects, diff.values, diff.rels), (1, 1, 1));
         assert_eq!(pid_publish_counts(WELL_FORMED_EXPORT), Ok((1, 1, 1)));
+    }
+
+    // The database orientation writes `PipingConnectors` with `UID1` =
+    // pipeline, `UID2` = connector and block UID `PCN-<pipeline>` — the
+    // opposite of the Oracle `exp` line.
+    const DB_ORIENTED_CONNECTOR_PAIR: &str = r#"<Container>
+            <PIDPipeline><IObject UID="P" Name="L-1"/></PIDPipeline>
+            <PIDPipingConnector><IObject UID="C"/></PIDPipingConnector>
+            <Rel><IObject UID="PCN-P"/><IRel UID1="P" UID2="C" DefUID="PipingConnectors"/></Rel>
+        </Container>"#;
+
+    #[test]
+    fn a_byte_identical_database_oriented_pair_is_clean() {
+        let diff = diff_pid_export(DB_ORIENTED_CONNECTOR_PAIR, DB_ORIENTED_CONNECTOR_PAIR)
+            .expect("well-formed");
+        assert!(diff.is_clean(), "{diff}");
+        assert_eq!(diff.piping_connectors_paired_by_name, 1);
+        assert_eq!(diff.rels_not_in_reference, 0);
+        assert!(diff.findings.is_empty(), "{diff}");
+    }
+
+    #[test]
+    fn a_database_oriented_rel_the_reference_does_not_state_is_a_finding() {
+        let reference = r#"<Container>
+            <PIDPipeline><IObject UID="P" Name="L-1"/></PIDPipeline>
+            <PIDPipingConnector><IObject UID="C"/></PIDPipingConnector>
+        </Container>"#;
+        let diff = diff_pid_export(DB_ORIENTED_CONNECTOR_PAIR, reference).expect("well-formed");
+        assert!(!diff.is_clean(), "{diff}");
+        assert_eq!(diff.rels_not_in_reference, 1);
+        assert_eq!(diff.findings.len(), 1);
+        assert!(
+            diff.findings[0].contains("PCN-P") && diff.findings[0].contains("PipingConnectors"),
+            "{diff}"
+        );
+    }
+
+    #[test]
+    fn a_piping_connectors_rel_with_no_pipeline_end_is_a_finding() {
+        let generated = r#"<Container>
+            <PIDPipeline><IObject UID="P" Name="L-1"/></PIDPipeline>
+            <Rel><IObject UID="PCN-X"/><IRel UID1="X" UID2="Y" DefUID="PipingConnectors"/></Rel>
+        </Container>"#;
+        let reference = r#"<Container>
+            <PIDPipeline><IObject UID="P" Name="L-1"/></PIDPipeline>
+        </Container>"#;
+        let diff = diff_pid_export(generated, reference).expect("well-formed");
+        assert!(!diff.is_clean(), "{diff}");
+        assert_eq!(diff.rels_not_in_reference, 1);
+        assert!(diff.findings[0].contains("PipingConnectors"), "{diff}");
+    }
+
+    #[test]
+    fn an_exp_oriented_rel_still_pairs_by_pipeline_name() {
+        // The exp line's `UID1` = connector / `UID2` = pipeline, and the
+        // synthesized pipeline UIDs differ from the reference's — the rel
+        // still pairs by connector UID and pipeline name.
+        let generated = r#"<Container>
+            <PIDPipeline><IObject UID="G" Name="L-1"/></PIDPipeline>
+            <PIDPipingConnector><IObject UID="C"/></PIDPipingConnector>
+            <Rel><IObject UID="PCN-C-G"/><IRel UID1="C" UID2="G" DefUID="PipingConnectors"/></Rel>
+        </Container>"#;
+        let reference = r#"<Container>
+            <PIDPipeline><IObject UID="R" Name="L-1"/></PIDPipeline>
+            <PIDPipingConnector><IObject UID="C"/></PIDPipingConnector>
+            <Rel><IObject UID="PCN-C-R"/><IRel UID1="C" UID2="R" DefUID="PipingConnectors"/></Rel>
+        </Container>"#;
+        let diff = diff_pid_export(generated, reference).expect("well-formed");
+        assert!(diff.is_clean(), "{diff}");
+        assert_eq!(diff.piping_connectors_paired_by_name, 1);
+        assert_eq!(diff.rels_paired_by_name, 1);
+        assert_eq!(diff.objects_paired_by_name, 1);
     }
 
     #[test]
