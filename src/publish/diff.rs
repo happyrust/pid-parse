@@ -1226,6 +1226,16 @@ pub fn diff_rel_defuids(generated_xml: &str, reference_xml: &str) -> RelDefUidDi
     }
 }
 
+/// Registered upper bound on [`PidExportDiff::fluid_system_reference_empty`].
+///
+/// The I井场 reference's `PIDPipeline` objects carry 79 `<IFluidSystem>`
+/// elements — 56 declaring `FluidSystem` and 23 not — while the whole-package
+/// `Export.dmp` has a value for all 79: the dump is newer than the reference
+/// for fluid-system code 7, so those values are a registered exception, not a
+/// relaxation of the gate. A run whose excused count exceeds this bound is not
+/// clean.
+pub const FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE: usize = 23;
+
 /// How a `.pid`-mode export compares with a `SmartPlant` `_Data.xml`.
 ///
 /// An emitted object must exist under the same UID and class, every value
@@ -1260,8 +1270,8 @@ pub struct PidExportDiff {
     pub piping_connectors_paired_by_name: usize,
     /// `IFluidSystem.FluidSystem` values the reference object does not carry.
     ///
-    /// These are not findings. The dump is newer than the reference for
-    /// fluid-system code 7.
+    /// Not findings up to [`FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE`]: the dump
+    /// is newer than the reference for fluid-system code 7.
     pub fluid_system_reference_empty: usize,
     /// Reference-only objects that are findings (in the reference, not in the generated).
     pub objects_not_in_generated: usize,
@@ -1284,8 +1294,9 @@ pub struct PidExportDiff {
 }
 
 impl PidExportDiff {
-    /// No emitted object, value or rel disagrees with the reference, and no
-    /// reference-only object, value or rel lacks a finding or an excuse.
+    /// No emitted object, value or rel disagrees with the reference, no
+    /// reference-only object, value or rel lacks a finding or an excuse, and
+    /// the excused `FluidSystem` count is within its registered allowance.
     pub fn is_clean(&self) -> bool {
         self.objects_not_in_reference
             + self.objects_of_another_class
@@ -1296,6 +1307,15 @@ impl PidExportDiff {
             + self.values_not_in_generated
             + self.rels_not_in_generated
             == 0
+            && !self.fluid_system_allowance_exceeded()
+    }
+
+    /// The excused `FluidSystem` count is over its registered allowance.
+    ///
+    /// [`FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE`] is the bound; one value over
+    /// it is not an exception and makes the run not clean.
+    pub fn fluid_system_allowance_exceeded(&self) -> bool {
+        self.fluid_system_reference_empty > FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE
     }
 }
 
@@ -1320,10 +1340,22 @@ impl fmt::Display for PidExportDiff {
         {
             writeln!(
                 f,
-                "按名配对 {} 个 PIDPipeline，{} 条 PipingConnectors；参考为空、dump 有值的 FluidSystem {}",
+                "按名配对 {} 个 PIDPipeline，{} 条 PipingConnectors；参考为空、dump 有值的 FluidSystem {}（登记上界 {}）",
                 self.pipelines_paired_by_name,
                 self.piping_connectors_paired_by_name,
                 self.fluid_system_reference_empty,
+                FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE,
+            )?;
+        }
+        if self.fluid_system_allowance_exceeded() {
+            writeln!(
+                f,
+                "excused FluidSystem {} exceeds the registered allowance {} — the dump is newer \
+                 than the reference for fluid-system code 7 by at most {} values; beyond that the \
+                 run is not clean",
+                self.fluid_system_reference_empty,
+                FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE,
+                FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE,
             )?;
         }
         for finding in &self.findings {
@@ -1726,6 +1758,76 @@ mod tests {
         </Container>"#;
         let added = diff_pid_export(extra, reference).expect("well-formed");
         assert_eq!(added.objects_not_in_reference, 1);
+    }
+
+    /// `count` `PIDPipeline` pairs: the generated side declares `FluidSystem`,
+    /// the reference side leaves the element empty, so every pair is excused.
+    fn fluid_system_pair(count: usize) -> (String, String) {
+        let mut generated = String::from("<Container>");
+        let mut reference = String::from("<Container>");
+        for i in 0..count {
+            generated.push_str(&format!(
+                r#"<PIDPipeline><IObject UID="u{i}" Name="L-{i}"/><IFluidSystem FluidSystem="@{{fs-{i}}}"/></PIDPipeline>"#
+            ));
+            reference.push_str(&format!(
+                r#"<PIDPipeline><IObject UID="u{i}" Name="L-{i}"/><IFluidSystem/></PIDPipeline>"#
+            ));
+        }
+        generated.push_str("</Container>");
+        reference.push_str("</Container>");
+        (generated, reference)
+    }
+
+    #[test]
+    fn fluid_system_excuses_at_the_registered_allowance_stay_clean() {
+        let (generated, reference) = fluid_system_pair(FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE);
+        let diff = diff_pid_export(&generated, &reference).expect("well-formed");
+        assert_eq!(
+            diff.fluid_system_reference_empty, FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE,
+            "every pair is excused"
+        );
+        assert!(
+            !diff.fluid_system_allowance_exceeded(),
+            "at the bound, not over it"
+        );
+        assert_eq!(
+            diff.values_not_in_reference, 0,
+            "excused values are not findings"
+        );
+        assert!(
+            diff.is_clean(),
+            "the allowance is registered, not a relaxation: {diff}"
+        );
+        let rendered = diff.to_string();
+        assert!(
+            !rendered.contains("exceeds the registered allowance"),
+            "no over-bound line at the bound: {rendered}"
+        );
+    }
+
+    #[test]
+    fn fluid_system_excuses_over_the_registered_allowance_are_not_clean() {
+        let (generated, reference) = fluid_system_pair(FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE + 1);
+        let diff = diff_pid_export(&generated, &reference).expect("well-formed");
+        assert_eq!(
+            diff.fluid_system_reference_empty,
+            FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE + 1
+        );
+        assert!(diff.fluid_system_allowance_exceeded(), "one over the bound");
+        assert_eq!(
+            diff.values_not_in_reference, 0,
+            "still not a finding, just over the bound"
+        );
+        assert!(!diff.is_clean(), "over the bound the run is not clean");
+        let rendered = diff.to_string();
+        assert!(
+            rendered.contains("24"),
+            "the rendered diff names the count: {rendered}"
+        );
+        assert!(
+            rendered.contains("exceeds the registered allowance 23"),
+            "the rendered diff names the bound: {rendered}"
+        );
     }
 
     const WELL_FORMED_EXPORT: &str = r#"<Container>
