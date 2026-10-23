@@ -66,6 +66,7 @@ fn not_finite(shape: &PaperShape) -> bool {
             radius_mm,
             start_angle,
             end_angle,
+            ..
         } => {
             !finite_point(center_mm)
                 || !radius_mm.is_finite()
@@ -222,7 +223,7 @@ fn shape_points(shape: &PaperShape) -> Vec<[f64; 2]> {
 }
 
 fn audit(name: String, model: &PaperModel) -> Report {
-    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut seen: HashMap<String, (usize, Option<[usize; 2]>)> = HashMap::new();
     let mut duplicate_samples = Vec::new();
     let mut duplicates = 0usize;
     let mut degenerate_count = 0usize;
@@ -245,9 +246,11 @@ fn audit(name: String, model: &PaperModel) -> Report {
     let mut outside = Vec::new();
     for primitive in &model.primitives {
         let key = shape_key(primitive);
-        let count = seen.entry(key).or_default();
+        let (count, first_range) = seen.entry(key).or_insert((0, None));
         *count += 1;
-        if *count > 1 {
+        if *count == 1 {
+            *first_range = primitive.byte_range;
+        } else {
             duplicates += 1;
             if primitive
                 .stroke
@@ -258,7 +261,7 @@ fn audit(name: String, model: &PaperModel) -> Report {
             }
             if duplicate_samples.len() < 4 {
                 duplicate_samples.push(format!(
-                    "{} ({}x{})",
+                    "{} ({}x{}) {} {:?} furniture={} (first copy {}\u{2060}{:?})",
                     kind_name(&primitive.shape),
                     primitive.symbol.as_deref().unwrap_or("-"),
                     primitive
@@ -268,7 +271,12 @@ fn audit(name: String, model: &PaperModel) -> Report {
                             .rsplit('/')
                             .next()
                             .unwrap_or(path)
-                            .to_string())
+                            .to_string()),
+                    primitive.confidence,
+                    primitive.byte_range,
+                    primitive.furniture,
+                    primitive.stream_path.as_deref().unwrap_or("-"),
+                    first_range
                 ));
             }
         }

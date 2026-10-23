@@ -67,9 +67,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 radius,
                 start_angle,
                 end_angle,
+                clockwise,
             } => {
                 println!(
-                    "arc,{},{},{radius},{start_angle},{end_angle}{style}",
+                    "arc,{},{},{radius},{start_angle},{end_angle},{clockwise}{style}",
                     center.0, center.1
                 );
             }

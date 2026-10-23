@@ -454,8 +454,9 @@ fn shape_chain(shape: &PaperShape) -> Vec<[f64; 2]> {
             radius_mm,
             start_angle,
             end_angle,
+            clockwise,
         } => {
-            let (start, sweep) = minor_clockwise_arc(*start_angle, *end_angle);
+            let (start, sweep) = directed_arc(*start_angle, *end_angle, *clockwise);
             arc_points(*center_mm, *radius_mm, start, sweep)
         }
         PaperShape::Circle {
@@ -899,8 +900,9 @@ pub(crate) fn arc_chain(
     radius_mm: f64,
     start_angle: f64,
     end_angle: f64,
+    clockwise: bool,
 ) -> Vec<[f64; 2]> {
-    let (start, sweep) = minor_clockwise_arc(start_angle, end_angle);
+    let (start, sweep) = directed_arc(start_angle, end_angle, clockwise);
     arc_points(center_mm, radius_mm, start, sweep)
 }
 
@@ -943,16 +945,24 @@ fn arc_points(center: [f64; 2], radius: f64, start: f64, sweep: f64) -> Vec<[f64
     points
 }
 
-pub(crate) fn minor_clockwise_arc(start: f64, end: f64) -> (f64, f64) {
-    let mut s = start;
-    let mut e = end;
-    let cw = (s - e).rem_euclid(TAU);
-    if cw > std::f64::consts::PI + 1e-9 {
-        std::mem::swap(&mut s, &mut e);
+/// The sweep one arc states: `(start, sweep)` with `sweep` signed the way
+/// [`kurbo::Arc`] wants it -- negative clockwise.
+///
+/// `clockwise` is the source record's own trailing byte. The two readings are
+/// complements that reach the same end angle; an arc the record means the long
+/// way round must not be folded back to the short one, which is what a
+/// minor-sweep normalisation did before the byte was read.
+pub(crate) fn directed_arc(start: f64, end: f64, clockwise: bool) -> (f64, f64) {
+    let sweep = if clockwise {
+        -(start - end).rem_euclid(TAU)
+    } else {
+        (end - start).rem_euclid(TAU)
+    };
+    if sweep.abs() < 1e-12 {
+        (start, 0.0)
+    } else {
+        (start, sweep)
     }
-    let ccw = (e - s).rem_euclid(TAU);
-    let sweep = if ccw < 1e-12 { 0.0 } else { ccw - TAU };
-    (s, sweep)
 }
 
 fn resolved_page(model: &PaperModel) -> Result<[f64; 2], PlotWriteError> {
@@ -1985,14 +1995,39 @@ mod tests {
     }
 
     #[test]
-    fn minor_clockwise_arc_flips_a_major_sweep_and_keeps_a_pi_ulp_semicircle() {
-        use super::minor_clockwise_arc;
-        let (s, sweep) = minor_clockwise_arc(1.1659, 1.4273);
-        assert!((s - 1.4273).abs() < 1e-6);
-        assert!((sweep + (1.4273 - 1.1659)).abs() < 1e-6);
+    fn directed_arc_takes_the_side_the_record_names() {
+        use super::{TAU, directed_arc};
+        // Counter-clockwise is the short way here: 0.2614 rad, leaves the
+        // start unchanged.
+        let (s, sweep) = directed_arc(1.1659, 1.4273, false);
+        assert!((s - 1.1659).abs() < 1e-12);
+        assert!((sweep - (1.4273 - 1.1659)).abs() < 1e-6);
+        // Clockwise is the rest of the circle, not a folded-back complement.
+        let (s_cw, sweep_cw) = directed_arc(1.1659, 1.4273, true);
+        assert!((s_cw - 1.1659).abs() < 1e-12);
+        assert!((sweep_cw + TAU - (1.4273 - 1.1659)).abs() < 1e-6);
 
+        // Both readings of a semicircle end on the same two ends and differ
+        // only in which half is drawn -- the ultrasonic wave's two records.
+        let (_, cw_half) = directed_arc(
+            std::f64::consts::FRAC_PI_2,
+            3.0 * std::f64::consts::FRAC_PI_2,
+            true,
+        );
+        let (_, ccw_half) = directed_arc(
+            std::f64::consts::FRAC_PI_2,
+            3.0 * std::f64::consts::FRAC_PI_2,
+            false,
+        );
+        assert!((cw_half + std::f64::consts::PI).abs() < 1e-9);
+        assert!((ccw_half - std::f64::consts::PI).abs() < 1e-9);
+
+        // A zero sweep is still no ink, and a pi-ulp semicircle is not a full
+        // turn.
+        assert_eq!(directed_arc(1.0, 1.0, true).1, 0.0);
+        assert_eq!(directed_arc(1.0, 1.0, false).1, 0.0);
         let pi_plus_ulp = 3.141_592_653_589_794;
-        let (s_pi, sweep_pi) = minor_clockwise_arc(pi_plus_ulp, 0.0);
+        let (s_pi, sweep_pi) = directed_arc(pi_plus_ulp, 0.0, true);
         assert!((s_pi - pi_plus_ulp).abs() < 1e-12);
         assert!((sweep_pi + std::f64::consts::PI).abs() < 1e-9);
     }

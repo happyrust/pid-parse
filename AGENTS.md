@@ -155,10 +155,15 @@ decompilation.
   `Sheet6` yielded 17 top-level records — the instrument balloons
   (r = 6.35 mm) and sensing-bulb centre dots (r = 1.4 mm) — and
   `igArc2d` (`0x0061`) is emitted because the linked `.igr` border
-  templates draw logo glyphs and rounded corners with it. Sheet arcs
-  normalize to the minor sweep (≤ π; a direct `start → end` reading
-  that exceeds π swaps endpoints) — the same rule verified against the
-  cached-body CW convention and the `.igr` logo arcs. `igRectangle2d`
+  templates draw logo glyphs and rounded corners with it. An arc's
+  trailing byte (`payload +58`) is its direction — `0` clockwise,
+  `1` counter-clockwise — the same byte `igEllipticalArc2d` carries;
+  it is threaded through as `clockwise` and **never** folded to the
+  minor sweep (the fold was the old guess and it mis-drew
+  `FT-Ultrasonic`'s wave, `Local Vent`'s canopy and the `Remarks`
+  cloud). See
+  `docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`.
+  `igRectangle2d`
   (`0x0020`) and `igBspCurve2d` (`0x005D`) also have Sheet family rows.
   In the test-file corpus the remaining members (12 circles, 12 arcs,
   3 rectangles, one BspCurve) still live in the `PSMcluster0` streams

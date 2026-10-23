@@ -7348,9 +7348,10 @@ pub const IGCIRCLE2D_PAYLOAD_LEN: usize = 43;
 /// Payload of one `igArc2d`: the 18-byte sub-header, then `center.x`,
 /// `center.y`, `radius`, `start_angle`, `end_angle` (5×f64) and one flag
 /// byte. The angles are absolute start / end angles, not a sweep
-/// (`docs/analysis/2026-07-27-ugeom2d1-curve-readers-ida.md`), and the arc
-/// runs **clockwise** from the first to the second
-/// (`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`).
+/// (`docs/analysis/2026-07-27-ugeom2d1-curve-readers-ida.md`); the flag
+/// byte says which of the two arcs between them the record means -- `0`
+/// runs clockwise from the start angle, `1` counter-clockwise
+/// (`docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`).
 pub const IGARC2D_PAYLOAD_LEN: usize = 59;
 
 /// Offset of the first geometry double in either payload -- the end of the
@@ -7408,18 +7409,18 @@ pub struct SheetIgArc2dDecoded {
     /// Radius, same units (payload `+34`).
     pub radius: f64,
     /// Absolute start angle, radians counter-clockwise from +X (payload
-    /// `+42`). Sheet-stream arcs sweep **directly** towards `end_angle`
-    /// (the `CPE` logo letterforms in the linked border templates are
-    /// ~20-130° arcs; read as the clockwise convention the symbol-body
-    /// `SymbolPrimitive::Arc` follows, they become 230-340° rings the
-    /// reference plots do not have). The clockwise convention was
-    /// adjudicated only for cached symbol bodies — a different binary
-    /// format, not this PSM record.
+    /// `+42`). The arc leaves it in the direction [`Self::flag`] names.
     pub start_angle: f64,
     /// Absolute end angle, radians counter-clockwise from +X (payload `+50`).
     pub end_angle: f64,
-    /// The trailing byte (payload `+58`); meaning unknown, carried for
-    /// audit.
+    /// The trailing byte (payload `+58`): the arc's traversal direction,
+    /// `0` clockwise and `1` counter-clockwise -- the same byte, read the
+    /// same way, as `igEllipticalArc2d`'s
+    /// (`docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`).
+    /// Measured on the two records of `FT-Ultrasonic Flowmeter.sym` whose
+    /// own angles are identical (`90° -> 270°`) and which differ only here:
+    /// the wave's two halves bulge opposite ways, and the reference plot
+    /// draws the S only when each record is read in its own direction.
     pub flag: u8,
 }
 

@@ -162,7 +162,12 @@ pub enum PaperShape {
         /// End.
         end_mm: [f64; 2],
     },
-    /// Circular arc, swept clockwise from `start_angle` to `end_angle`.
+    /// Circular arc, from `start_angle` to `end_angle` in the direction
+    /// `clockwise` states.
+    ///
+    /// A source record states two endpoints-angles and a direction; the two
+    /// readings are complements, so the direction decides whether the arc
+    /// takes the short way or the rest of the circle.
     Arc {
         /// Centre.
         center_mm: [f64; 2],
@@ -172,6 +177,9 @@ pub enum PaperShape {
         start_angle: f64,
         /// End angle in radians, counter-clockwise from +X.
         end_angle: f64,
+        /// `true` when the arc runs clockwise on the page from
+        /// `start_angle` to `end_angle`; `false` for counter-clockwise.
+        clockwise: bool,
     },
     /// Full circle.
     Circle {
@@ -1415,6 +1423,7 @@ fn push_entity_with(
             radius,
             start_angle,
             end_angle,
+            clockwise,
         } => {
             out.push(primitive(
                 entity,
@@ -1425,6 +1434,7 @@ fn push_entity_with(
                     *radius,
                     *start_angle,
                     *end_angle,
+                    *clockwise,
                     &placement,
                 ),
             ));
@@ -1727,11 +1737,13 @@ fn push_symbol_primitive(
             radius,
             start_angle,
             end_angle,
+            clockwise,
         } => arc_shape(
             [center.0, center.1],
             *radius,
             *start_angle,
             *end_angle,
+            *clockwise,
             placement,
         ),
         SymbolPrimitive::Polyline {
@@ -1989,28 +2001,40 @@ fn symbol_text_shape(
     }
 }
 
+/// Map one arc into paper space.
+///
+/// `clockwise` is the body's own direction, the record's trailing byte. The
+/// body's two angles and that direction name one of the two arcs between
+/// them; the placement moves the pair and, when it mirrors, reverses the
+/// direction with it -- a clockwise body arc is counter-clockwise on the
+/// page when the placement flips an axis.
 fn arc_shape(
     center: [f64; 2],
     radius: f64,
     start_angle: f64,
     end_angle: f64,
+    clockwise: bool,
     placement: &Placement,
 ) -> PaperShape {
-    let mut start = start_angle;
-    let mut end = end_angle;
-    let ccw = (start - end).rem_euclid(std::f64::consts::TAU);
-    if ccw > std::f64::consts::PI + 1e-9 {
-        std::mem::swap(&mut start, &mut end);
-    }
+    let sweep = |clockwise: bool| {
+        if clockwise {
+            -(start_angle - end_angle).rem_euclid(std::f64::consts::TAU)
+        } else {
+            (end_angle - start_angle).rem_euclid(std::f64::consts::TAU)
+        }
+    };
     let sx = placement.scale[0].abs();
     let sy = placement.scale[1].abs();
     if (sx - sy).abs() > 1e-6 {
-        let sweep = (start - end).rem_euclid(std::f64::consts::TAU);
+        // A non-uniform scale turns the circle into an ellipse, which no
+        // arc record can state: sample the sweep the record asked for.
+        let sweep = sweep(clockwise);
         let r = radius.abs();
-        let steps = ((sweep * r * sx.max(sy) * MM_PER_METRE / 0.15).ceil() as usize).clamp(8, 64);
+        let steps =
+            ((sweep.abs() * r * sx.max(sy) * MM_PER_METRE / 0.15).ceil() as usize).clamp(8, 64);
         let points_mm = (0..=steps)
             .map(|step| {
-                let angle = start - sweep * (step as f64 / steps as f64);
+                let angle = start_angle + sweep * (step as f64 / steps as f64);
                 place_metres(
                     [center[0] + r * angle.cos(), center[1] + r * angle.sin()],
                     placement.insertion,
@@ -2025,11 +2049,6 @@ fn arc_shape(
         };
     }
     let mirrored = placement.scale[0] * placement.scale[1] < 0.0;
-    let mut world_start = world_angle(start, placement.rotation, placement.scale);
-    let mut world_end = world_angle(end, placement.rotation, placement.scale);
-    if mirrored {
-        std::mem::swap(&mut world_start, &mut world_end);
-    }
     PaperShape::Arc {
         center_mm: place_metres(
             center,
@@ -2038,8 +2057,9 @@ fn arc_shape(
             placement.scale,
         ),
         radius_mm: radius.abs() * sx * MM_PER_METRE,
-        start_angle: world_start,
-        end_angle: world_end,
+        start_angle: world_angle(start_angle, placement.rotation, placement.scale),
+        end_angle: world_angle(end_angle, placement.rotation, placement.scale),
+        clockwise: clockwise != mirrored,
     }
 }
 
@@ -3145,30 +3165,52 @@ mod tests {
     }
 
     #[test]
-    fn arc_shape_normalizes_to_the_minor_clockwise_sweep_with_pi_ulp_tolerance() {
+    fn arc_shape_keeps_the_endpoints_and_the_records_direction() {
+        // A pair one way round is the record's own start/end; the direction
+        // decides which of the two arcs between them is drawn, and the angles
+        // are never swapped to fold it back to the short side.
         let PaperShape::Arc {
             start_angle,
             end_angle,
+            clockwise,
             ..
-        } = arc_shape([0.0, 0.0], 0.01, 1.1659, 1.4273, &placement())
+        } = arc_shape([0.0, 0.0], 0.01, 1.1659, 1.4273, false, &placement())
         else {
             panic!("expected arc");
         };
-        assert!((start_angle - 1.4273).abs() < 1e-6);
-        assert!((end_angle - 1.1659).abs() < 1e-6);
+        assert!((start_angle - 1.1659).abs() < 1e-6);
+        assert!((end_angle - 1.4273).abs() < 1e-6);
+        assert!(!clockwise);
 
-        let pi_plus_ulp = 3.141_592_653_589_794;
-        let PaperShape::Arc {
-            start_angle: s_pi,
-            end_angle: e_pi,
-            ..
-        } = arc_shape([0.0, 0.0], 0.01, pi_plus_ulp, 0.0, &placement())
+        // A semicircle has no "short side": the two records of the
+        // ultrasonic wave carry the same pair and opposite bytes, and the two
+        // arcs they draw are the two halves.
+        for flag_zero in [true, false] {
+            let PaperShape::Arc { clockwise, .. } = arc_shape(
+                [0.0, 0.0],
+                0.01,
+                PI / 2.0,
+                3.0 * PI / 2.0,
+                flag_zero,
+                &placement(),
+            ) else {
+                panic!("expected arc");
+            };
+            assert_eq!(clockwise, flag_zero);
+        }
+
+        // A mirrored placement reverses the direction with the geometry.
+        let mut mirrored = placement();
+        mirrored.scale = [-1.0, 1.0];
+        let PaperShape::Arc { clockwise, .. } =
+            arc_shape([0.0, 0.0], 0.01, 1.1659, 1.4273, true, &mirrored)
         else {
             panic!("expected arc");
         };
-        assert!((s_pi.abs() - std::f64::consts::PI).abs() < 1e-6);
-        assert!(e_pi.abs() < 1e-6);
+        assert!(!clockwise);
     }
+
+    const PI: f64 = std::f64::consts::PI;
 
     #[test]
     fn non_uniform_scaled_arc_and_circle_tessellate_into_polylines() {
@@ -3182,6 +3224,7 @@ mod tests {
             0.01,
             std::f64::consts::FRAC_PI_2,
             0.0,
+            true,
             &stretched,
         )
         else {

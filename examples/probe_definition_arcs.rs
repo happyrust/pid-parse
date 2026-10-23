@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 radius,
                 start_angle,
                 end_angle,
+                ..
             } = primitive
             else {
                 continue;

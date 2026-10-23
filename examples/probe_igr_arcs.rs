@@ -12,6 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             radius,
             start_angle,
             end_angle,
+            clockwise,
         } = &e.kind
         else {
             continue;
@@ -20,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         println!(
-            "  c=({:.4},{:.4}) r={:.4} ang=({:.4}..{:.4}) oid={:?} rec={:?}",
+            "  c=({:.4},{:.4}) r={:.4} ang=({:.4}..{:.4}) {clockwise} oid={:?} rec={:?}",
             center.x * 1000.0,
             center.y * 1000.0,
             radius * 1000.0,

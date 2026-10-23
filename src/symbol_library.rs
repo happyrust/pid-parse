@@ -141,31 +141,32 @@ pub enum SymbolPrimitive {
         /// Radius; always positive across the library.
         radius: f64,
     },
-    /// Circular arc (PSM `0x0061`), swept **clockwise** from
-    /// [`Self::Arc::start_angle`] to [`Self::Arc::end_angle`].
+    /// Circular arc (PSM `0x0061`), from [`Self::Arc::start_angle`] to
+    /// [`Self::Arc::end_angle`] in the direction
+    /// [`Self::Arc::clockwise`] states.
     ///
     /// Both angles are absolute, not a start plus a sweep: the two arcs of
     /// `ElecTraceLine` run `2.944 -> 0.197` and `6.086 -> 3.339` radians,
     /// which are different numbers but the same sweep at the same radius,
-    /// as a repeating wave symbol requires. The direction is the file's:
-    /// `Parametric Manifold.sym`'s end caps run `270° -> 90°` on the left
-    /// and `90° -> 270°` on the right, which bulge out of the shell only
-    /// clockwise, and the `Remarks` cloud's arcs likewise -- read
-    /// counter-clockwise every one is its own complement, folded back
-    /// inside the body. A consumer that draws arcs counter-clockwise (DXF)
-    /// swaps the two. Measured in
-    /// `docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`.
+    /// as a repeating wave symbol requires. Which of the two arcs between
+    /// them the record means is its own trailing byte: `FT-Ultrasonic
+    /// Flowmeter.sym` carries two records with the *same* `90° -> 270°`
+    /// pair and opposite bytes, because the wave's two halves bulge opposite
+    /// ways. See
+    /// `docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`.
     Arc {
         /// Arc centre.
         center: (f64, f64),
         /// Radius; always positive across the library.
         radius: f64,
-        /// Start angle in radians, counter-clockwise from +X; the arc
-        /// leaves it clockwise.
+        /// Start angle in radians, counter-clockwise from +X.
         start_angle: f64,
-        /// End angle in radians, counter-clockwise from +X; the arc
-        /// arrives at it clockwise.
+        /// End angle in radians, counter-clockwise from +X.
         end_angle: f64,
+        /// `true` when the arc runs clockwise from the start angle to the
+        /// end angle; the record's trailing byte is `0` for clockwise and
+        /// `1` for counter-clockwise.
+        clockwise: bool,
     },
     /// Connected vertex run (PSM `0x0084` `igLineString2d`).
     Polyline {
@@ -716,6 +717,7 @@ impl SymbolGeometry {
                     radius,
                     start_angle,
                     end_angle,
+                    ..
                 } => {
                     add(center.0, center.1);
                     for angle in [*start_angle, *end_angle] {
@@ -1052,11 +1054,15 @@ fn decode_primitive(type_code: u16, payload: &[u8]) -> Option<SymbolPrimitive> {
             if radius <= 0.0 || !start_angle.is_finite() || !end_angle.is_finite() {
                 return None;
             }
+            // The trailing byte names the direction, `0` clockwise: the two
+            // `90° -> 270°` records of the ultrasonic wave differ only here.
+            let clockwise = *payload.get(ARC_PAYLOAD_LEN - 1)? == 0;
             Some(SymbolPrimitive::Arc {
                 center,
                 radius,
                 start_angle,
                 end_angle,
+                clockwise,
             })
         }
         TYPE_BSPLINE => {
@@ -1722,6 +1728,56 @@ mod tests {
         assert!((radius - 0.003_810).abs() < 1e-9, "radius {radius}");
         assert!((center.0 - 0.101_600).abs() < 1e-9, "centre x {}", center.0);
         assert!((center.1 - 0.127_000).abs() < 1e-9, "centre y {}", center.1);
+    }
+
+    /// An arc's trailing byte is the direction it runs, and the reader hands
+    /// it over.
+    ///
+    /// `FT-Ultrasonic Flowmeter.sym` states two arcs with the *same* angle
+    /// pair, `90° -> 270°`, at mirrored centres and opposite directions: the
+    /// wave's two halves bulge opposite ways, so the arcs are the two halves
+    /// of their shared vertical diameter. Read without the byte both halves
+    /// draw on the same side and the wave becomes a pair of C's.
+    #[test]
+    fn an_arc_carries_the_direction_its_trailing_byte_states() {
+        let path = symbols_root()
+            .with_file_name("symbols-full")
+            .join(r"Instrumentation/In-Line/Flow/FT-Ultrasonic Flowmeter.sym");
+        if !path.is_file() {
+            return;
+        }
+        let body = read_symbol_geometry(&path).expect("a readable compound file");
+        let halves: Vec<(&(f64, f64), bool)> = body
+            .primitives
+            .iter()
+            .filter_map(|styled| match &styled.primitive {
+                SymbolPrimitive::Arc {
+                    center,
+                    start_angle,
+                    end_angle,
+                    clockwise,
+                    ..
+                } if (start_angle.to_degrees() - 90.0).abs() < 1e-9
+                    && (end_angle.to_degrees() - 270.0).abs() < 1e-9 =>
+                {
+                    Some((center, *clockwise))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(!halves.is_empty(), "the wave's arcs: {body:?}");
+        for (center, clockwise) in &halves {
+            let mirror = halves
+                .iter()
+                .find(|(other, _)| {
+                    (other.0 + center.0).abs() < 1e-9 && (other.1 + center.1).abs() < 1e-9
+                })
+                .unwrap_or_else(|| panic!("no mirrored half for {center:?} in {halves:?}"));
+            assert_ne!(
+                *clockwise, mirror.1,
+                "the mirrored halves run opposite ways: {halves:?}"
+            );
+        }
     }
 
     /// A symbol states its own colour and width, and the reader hands them

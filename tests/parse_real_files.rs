@@ -6101,6 +6101,7 @@ fn a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle() {
                     radius,
                     start_angle,
                     end_angle,
+                    ..
                 } = primitive
                 else {
                     continue;
@@ -6188,6 +6189,7 @@ fn a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle() {
                 radius,
                 start_angle,
                 end_angle,
+                ..
             } = &styled.primitive
             else {
                 continue;

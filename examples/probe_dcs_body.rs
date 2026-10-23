@@ -38,8 +38,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "  [{i:2}] C {lname:12} ({:.4},{:.4}) r={:.4} sty={sty:?}",
                     center.0, center.1, radius
                 ),
-                SP::Arc { center, radius, start_angle, end_angle } => eprintln!(
-                    "  [{i:2}] A {lname:12} ({:.4},{:.4}) r={:.4} a={start_angle:.0}..{end_angle:.0} sty={sty:?}",
+                SP::Arc { center, radius, start_angle, end_angle, clockwise } => eprintln!(
+                    "  [{i:2}] A {lname:12} ({:.4},{:.4}) r={:.4} a={start_angle:.0}..{end_angle:.0} cw={clockwise} sty={sty:?}",
                     center.0, center.1, radius
                 ),
                 SP::Polyline { vertices, is_closed } => {

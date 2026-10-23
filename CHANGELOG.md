@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### `igArc2d` 的尾字节就是方向位，五条画反的弧归位（2026-10-23）
+
+上一轮复核把最后那处可见差归成「方向在记录里读不出来」。这一轮用两件符号的字节把它读出来了：
+`0x0061` payload `+58` 与 `igEllipticalArc2d` 同义 —— `0` 顺时针、`1` 逆时针。
+
+- **同一对角度、相反的字节**：`FT-Ultrasonic Flowmeter.sym` 的 oid 27/28 都是 `90° → 270°`、
+  圆心镜像，尾字节一个 0 一个 1。按字节读是交叉 S 形声路（超声流量计的报号图形），一律取短弧
+  就画成同侧的「))」。缓存本体（`DWG-0201` @571103/@571168）逐项相同。
+- **补弧 > 180° 的那一条**：`Local Vent` 顶盖 `88.18° → 273.44°`，顺时针 174.74°、逆时针
+  185.26°，尾字节 1；参考图的墨在逆时针那一侧（另一侧多覆盖 0.72）。差 5.26°，短弧兜底自己
+  选不对。
+- **反证掉「字节 = 长弧标记」**：模板 `CPE-SQ-A0/A1.igr` 有 39 条字节 1、顺时针 250–330° 的弧，
+  参考只画短弧且覆盖率 0.999+；所以 1 不是「长」，是逆时针。
+- **云线自证**：`Remarks.sym` 四条弧首尾相接（端点误差 ≤ 0.008 mm），按字节闭合成
+  390.0 mm²、22 × 23 mm 的注释云；旧的一律短弧把 `217`（顺时针 333.16°）折成 26.84° 小钩，
+  整条轮廓缩成 11.6 mm²。
+- **实现**：`SymbolPrimitive::Arc` / `PidGraphicKind::Arc` / `PaperShape::Arc` 都带
+  `clockwise`，其值来自尾字节；`write::directed_arc` 按方向给出 `−(start−end) mod 2π` 或
+  `+(end−start) mod 2π`，**不再折叠到 minor 弧**；`model::arc_shape` 只做放置变换（镜像把方向
+  取反，非等比缩放按方向采样成折线）。嵌套 `DecodedIgArc2dRecord` 补 `flag`（`serde(default)`）。
+- **读数**：`I井场` 覆盖率 0.9993 → **0.9999**、多画 41.8 → **25.5 mm**，文字仍 546/546；
+  `probe_arc_sweep_side` 五张 289 条弧**零条**落在参考没画的一侧（改前 5 条）。其余四张读数不变。
+- **门禁**：几何金标无变化（金标语料没有图纸流 `igArc2d`）；`pid-plot` 78 项单测、五图比对、
+  所有 fixture 导出、整厂 53 张备份、`pid-parse` 46 个测试目标全绿；新增单测
+  `an_arc_carries_the_direction_its_trailing_byte_states`、`directed_arc_takes_the_side_the_record_names`、
+  `arc_shape_keeps_the_endpoints_and_the_records_direction`。
+- 分析：`docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`；
+  `2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md` 的「尾字节不是方向位」已就地更正。
+
 ### 家具字号对上参考：字高本来就一致，差的是横向步进 0.78 em（2026-10-23）
 
 上一轮把一处没做的事记成「参考按记录字高 × 1.29 排家具、writer 按 × 1.47，字号大 12 %」。

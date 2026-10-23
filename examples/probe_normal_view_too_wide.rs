@@ -514,6 +514,7 @@ fn stroke_key(primitive: &SymbolPrimitive) -> Option<String> {
             radius,
             start_angle,
             end_angle,
+            ..
         } => format!(
             "A {} {} {} {} {}",
             at(center.0),
