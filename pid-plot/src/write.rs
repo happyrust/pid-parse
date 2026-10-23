@@ -328,6 +328,7 @@ fn push_layer(
                     anchor: *anchor,
                     line: *line,
                     spans,
+                    furniture: primitive.furniture,
                 },
                 page,
             )?;
@@ -553,6 +554,9 @@ struct ShownText<'a> {
     anchor: TextAnchor,
     line: TextLine,
     spans: &'a [PaperTextSpan],
+    /// Whether this run is the sheet's furniture — the lettering a linked
+    /// `.igr` border template carries, rather than the drawing's own.
+    furniture: bool,
 }
 
 /// One stretch of a label that letters at its own size in its own face.
@@ -668,6 +672,36 @@ fn page_reach_mm(start: [f64; 2], direction: [f64; 2], page: [f64; 2]) -> f64 {
 /// and loses its tail the way it always did.
 const MIN_CONDENSE: f64 = 0.5;
 
+/// Advance a border template's lettering is drawn at, as a fraction of the em
+/// its run is set in.
+///
+/// A sheet's linked `.igr` border letters its labels in the full em the
+/// drawing uses (宋体 at 1000 units per glyph), but the reference plot draws
+/// them one 0.78 em apart: measured on the two corpus sheets that carry
+/// furniture, every template label's per-character advance lands in
+/// 0.765..0.791 of its em — `审  定` 0.785, `设计证书号` 0.791, `A111001641`
+/// 0.784, `CPENC-DD11008` 0.774, `中国石油…华北分公司` 0.775, `华北油田苏桥储气库群`
+/// 0.765, `1 版` 0.770, `会 签 专 业` 0.770 — and every label of a given
+/// letter height shares it, on both sheets, while the drawing's own labels are
+/// drawn at 1.0.
+///
+/// **This is not a font size.** The two sides' glyph *heights* already agree
+/// exactly (4.74 / 5.08 / 5.93 / 6.60 mm for the template's 3.2 / 3.5 / 4.0 /
+/// 4.5 mm styles on both sheets); what differs is only the horizontal advance.
+/// A PDF library that reports one `size` per run multiplies the two scales
+/// together and lands 1.29 against this crate's 1.47, which is where the
+/// "furniture lettering is 12 % larger" reading came from — the run is
+/// condensed, not shrunk. Nothing in the `.igr` states the ratio: its
+/// `igTextBox` records carry no box width (all 34 are `0.0`), the
+/// `JStyleTextChar` payload is accounted for byte for byte (height at `+42`,
+/// colour at `+34`, name from `+68`), and `JStyleTextPara`'s other spacing
+/// doubles are `0.0`. So it stays a measured constant, like
+/// [`plotted_size_pt`]'s table.
+///
+/// See
+/// `docs/analysis/2026-10-23-the-furniture-text-height-already-matched.md`.
+const PLATE_TEXT_ADVANCE: f64 = 0.78;
+
 fn show_text(
     ops: &mut Vec<Op>,
     faces: &[ReadyFace<'_>],
@@ -705,33 +739,44 @@ fn show_text(
         }
     }
     let (sin, cos) = text.rotation.sin_cos();
-    // A run the page cannot hold loses its tail to the page box: the I
-    // drawing's title-block company name is 21 full-width glyphs at the height
-    // its `.igr` template states, and the face this writer embeds advances
-    // them 13 % wider than the face the reference plot used, so the last two
-    // characters fell past the sheet edge and MuPDF extracted 19 of them. The
-    // template states the label and the page states its edge; condensing the
-    // run along its own direction keeps every glyph on the sheet without
-    // inventing a smaller size for the letters.
+    // The reference plot letters a border template's text one glyph narrower
+    // than the em it sets it in, and letters the sheet's own text at the full
+    // em. Height is *not* touched by this: the two sides' glyph boxes are the
+    // same 4.74 / 5.08 / 5.93 / 6.60 mm for the 3.2 / 3.5 / 4.0 / 4.5 mm
+    // template styles on both sheets. See [`PLATE_TEXT_ADVANCE`].
+    let plate = if text.furniture {
+        PLATE_TEXT_ADVANCE
+    } else {
+        1.0
+    };
+    let laid_out_mm = width_mm * plate;
+    // A run the page still cannot hold loses its tail to the page box, so it
+    // is condensed along its own direction until it fits: the template states
+    // the label and the page states its edge, and keeping every glyph on the
+    // sheet beats inventing a smaller size for the letters. Furniture reaches
+    // this rule only if it overflows even at [`PLATE_TEXT_ADVANCE`] — the I
+    // drawing's 21-glyph company name did, back when it was drawn at the full
+    // em and lost its last two characters to the sheet edge.
     let mut condense = 1.0;
-    if width_mm > 0.0 && width_mm.is_finite() {
+    if laid_out_mm > 0.0 && laid_out_mm.is_finite() {
         let start = baseline_origin(
             text.origin_mm,
             text.rotation,
-            width_mm,
+            laid_out_mm,
             height_mm,
             text.anchor,
             text.line,
         );
         let reach = page_reach_mm(start, [cos, sin], page);
-        if reach > 0.0 && width_mm > reach {
-            condense = (reach / width_mm).clamp(MIN_CONDENSE, 1.0);
+        if reach > 0.0 && laid_out_mm > reach {
+            condense = (reach / laid_out_mm).clamp(MIN_CONDENSE, 1.0);
         }
     }
+    let scale = plate * condense;
     let origin_mm = baseline_origin(
         text.origin_mm,
         text.rotation,
-        width_mm * condense,
+        width_mm * scale,
         height_mm,
         text.anchor,
         text.line,
@@ -740,8 +785,8 @@ fn show_text(
     ops.push(Op::new(
         "Tm",
         vec![
-            Object::Real(cos * condense),
-            Object::Real(sin * condense),
+            Object::Real(cos * scale),
+            Object::Real(sin * scale),
             Object::Real(-sin),
             Object::Real(cos),
             pt(origin_mm[0]),
@@ -1598,6 +1643,73 @@ mod tests {
         );
     }
 
+    /// A template's lettering is drawn one narrower glyph than the sheet's
+    /// own, at the same height.
+    ///
+    /// The reference plots the two the same way: its `.igr` labels advance
+    /// 0.78 of their em while the drawing's labels advance the full em, and
+    /// neither moves the body size. The two runs here are the same character
+    /// at the same height, so only the horizontal scale can separate them.
+    #[test]
+    fn furniture_lettering_is_condensed_horizontally_and_keeps_its_height() {
+        let value = "ABCD";
+        let shape = |y: f64| PaperShape::Text {
+            origin_mm: [20.0, y],
+            height_mm: Some(3.0),
+            rotation: 0.0,
+            value: value.to_string(),
+            font: None,
+            anchor: TextAnchor::Left,
+            line: TextLine::Bottom,
+            spans: Vec::new(),
+        };
+        let mut model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([841.0, 594.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![
+                primitive("decoded", shape(40.0)),
+                primitive("decoded", shape(50.0)),
+            ],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        model.primitives[1].furniture = true;
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        assert_eq!(ink.spans.len(), 2, "two labels, two runs: {:?}", ink.spans);
+        let at = |y: f64| {
+            ink.spans
+                .iter()
+                .find(|span| (span.origin_mm[1] - y).abs() < 0.01)
+                .unwrap_or_else(|| panic!("no run at y = {y}: {:?}", ink.spans))
+        };
+        let sheet = at(40.0);
+        let plate = at(50.0);
+        let ratio = plate.advance_mm / sheet.advance_mm;
+        assert!(
+            (ratio - 0.78).abs() < 0.01,
+            "furniture letters at {ratio:.3} of the sheet's advance"
+        );
+        assert!(
+            (plate.height_mm - sheet.height_mm).abs() < 0.01,
+            "the body size is not what is condensed: {} vs {}",
+            plate.height_mm,
+            sheet.height_mm
+        );
+    }
+
     /// A symbol label that letters one character at another size is cut where
     /// the size changes, and the pieces continue along one baseline: `Tj`
     /// advances by the glyph width at the size in force, so the second piece
@@ -1693,6 +1805,7 @@ mod tests {
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
             spans: &spans,
+            furniture: false,
         };
         let segments = text_segments(&text, "NULL*NUL", 2.822);
         let shape: Vec<(&str, &str)> = segments

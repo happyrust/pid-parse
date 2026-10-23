@@ -107,6 +107,8 @@ fn main() {
                     insertion,
                     height,
                     value,
+                    anchor_code,
+                    text_box_width,
                     ..
                 } => {
                     let at = [insertion.x * 1000.0, insertion.y * 1000.0];
@@ -127,6 +129,7 @@ fn main() {
                             .as_ref()
                             .and_then(|style| style.effective())
                             .and_then(|height| height.font_name.clone()),
+                        (*anchor_code, text_box_width.map(|width| width * 1000.0)),
                     ));
                     "Text"
                 }
@@ -150,10 +153,10 @@ fn main() {
             );
         }
         println!("  texts {}", texts.len());
-        for (at, height, resolved, value, font) in texts.iter().take(40) {
+        for (at, height, resolved, value, font, box_) in texts.iter().take(60) {
             println!(
-                "    ({:8.2},{:8.2}) h {:?} resolved {:?} {:?} {:?}",
-                at[0], at[1], height, resolved, value, font
+                "    ({:8.2},{:8.2}) h {:?} resolved {:?} {:?} {:?} anchor/box {:?}",
+                at[0], at[1], height, resolved, value, font, box_
             );
         }
     }

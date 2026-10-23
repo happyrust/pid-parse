@@ -92,15 +92,15 @@
 参考把它排到 1184.8 mm（页宽 1189），我们排到 1202 mm —— **最后两个字被纸边裁掉**，
 MuPDF 只抽出 19 个字。
 
-原因是两处与这轮无关的既有差异叠在一起：writer 嵌入的脸 CJK 步进是 1.000 em，参考那份字体
-的步进是 **0.885 em**（`勘察证书号`：参考 4.015 mm/字 @ 4.535 mm 字号，我方 5.080/5.080）；
-再叠上第四节末尾那条「模板文字比参考大 12 %」。真按记录的字高与嵌入脸的步进排，这一行就是
-比纸宽 13 mm。
+那时以为有两处与这轮无关的差异叠在一起：writer 嵌入的脸 CJK 步进是 1.000 em，而「参考比我们
+窄 13 %」。**后半句在本轮之后被改写了** —— 参考压的不是字体步进而是 `Tm` 的横向缩放
+（0.78 em，见第七节与 `2026-10-23-the-furniture-text-height-already-matched.md`），所以公司名
+在补上这条规则后自己就落在页内，0.906 那次压排只是当时的临时措施。
 
-所以 writer 加了一条与字号无关的规则：**沿自身方向放不下的 run 压到刚好放进纸里**
+writer 仍然留着一条与字号无关的规则：**沿自身方向放不下的 run 压到刚好放进纸里**
 （`show_text` 的 `page_reach_mm` + `Tm` 第一列缩放；最多压到一半，再窄就仍旧交给纸边裁，
-不把一条标签压成另一件东西）。公司名现在压到 0.906、末端正好 1189.00 mm，21 个字全部上纸；
-字号（`Tf`）不动，所以字高与其它家具有一样。单测 `a_run_wider_than_the_page_is_condensed_until_it_fits`
+不把一条标签压成另一件东西）。它是兜底，不再负责公司名：现在 21 个字按 0.78 排成 108.17 mm，
+终点 823.58，页宽 841，没有触发。单测 `a_run_wider_than_the_page_is_condensed_until_it_fits`
 从模型写到 PDF 再读回来钉住「一个字不缺、末端不出页、字高不变」。
 
 ## 六、比较器读数
@@ -125,22 +125,32 @@ MuPDF 只抽出 19 个字。
 `export_plant_backup`（53 张整厂备份）、`paper_model`、`plot_text_sources`、
 `read_reference_plots`、新增的 `border_template` 全过。
 
-## 七、还没做的两处（量到，不动）
+## 七、家具字号：量错了，随后补上（2026-10-23 第二轮）
 
-- **家具字号比参考大 12 %**。参考把模板标签画成「记录字高 × 1.29」，writer 按
-  `plotted_size_pt` 画成「× 1.47」—— 两种模板、两张幅面、34 条标签逐一如此
-  （3.0→3.86 vs 4.40、3.2→4.20 vs 4.74、3.5→4.54 vs 5.08、4.0→5.11 vs 5.93、4.5→5.79 vs 6.60）。
-  图纸自己的标签两边逐位相同（`DD11008-` 都是 3.73 mm），所以这是**参考出图器对 OLE 图框
-  文字的单独缩放**，不是我们读错字高。没有机制证据（`.igr` 里没有「文字比例」字段），
-  不按 0.877 硬凑 —— 与那两条方向不明的弧同一处理。
-- **CJK 步进 0.885 em**。参考那份字体的汉字步进是 0.885 em，本机许可的 `SimSun` 是 1.000 em，
-  所以每一条中文标签都比参考宽 13 %；这轮只让「放不下」的那一条压进纸里，没有全局改步进
-  （那会动到 546 条已配对的标签与所有居中／右对齐的起点）。
+上一稿这里写着「参考按记录字高 × 1.29 排、writer 按 × 1.47，家具字号大 12 %」。**那是读错量**：
+1.29 与 1.47 不是字号，是 PDF 阅读器把一行字的横向与纵向两个缩放合成一个 `size` 报出来的数。
+逐个字形量完两张参考图之后：
+
+- **字高本来就逐条相同** —— 同一批标签的墨迹高度在参考与我方都是 4.74 / 5.08 / 5.93 / 6.60 /
+  4.40 mm（3.2 / 3.5 / 4.0 / 4.5 / 3.0 mm 字高），`plotted_size_pt` 那张表对家具同样成立。
+- **差的是横向步进**：参考把模板文字按 0.78 em 排（十二条标签 0.765–0.791，均值 0.779，
+  1/0.779 = 1.284 就是上一稿那个 1.29），图纸自己的标签仍按 1.000 排。
+- 这个比例不是 `.igr` 的字段：34 条 `igTextBox` 都没有格子宽（全 `0.0`），`JStyleTextChar`
+  82 字节用尽，`JStyleTextPara` 其余五个 double 全 `0.0`。所以它按**出图器规则**处理，
+  常量 `PLATE_TEXT_ADVANCE = 0.78` 写在 `write.rs`。
+
+改后家具字宽与参考差 ≤ 0.3 mm（两条长标签 ≤ 0.9 mm），居中／右对齐的起点也随之对上
+（`审  定` 692.95 vs 692.91）。详见
+`docs/analysis/2026-10-23-the-furniture-text-height-already-matched.md`。
+
+还没对齐的一处：图纸自己的中英混排标题（`集注站 … 一级闪蒸分离器B工艺及自控流程图`）
+比参考宽 1.7 mm（0.983），来自那份字体对空格与半角的步进，不属于家具这条规则。
 
 ## 复现
 
 ```text
-cargo run --example probe_igr_template -- "test-file/Ref/Template Files"
+cargo run --example probe_igr_template      -- "test-file/Ref/Template Files"
+cargo run --example probe_template_text_fields -- "test-file/Ref/Template Files/CPE-SQ-A1.igr"
 cargo run --example probe_page_dims   -- "<drawing.pid>"        # 帧态与页幅
 cargo run -p pid-plot --bin pid_plot  -- "<drawing.pid>" out.pdf
 cargo test -p pid-plot --test border_template -- --nocapture

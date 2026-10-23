@@ -147,10 +147,18 @@ fn the_a1_sheet_draws_the_frame_title_block_and_sign_off_column() {
         );
     }
 
-    // Every furniture label reaches the page. The writer condenses a run the
-    // sheet cannot hold (the company name is 21 full-width glyphs), so this
-    // also pins that the condense keeps all of it rather than losing the tail
-    // to the page box.
+    // Every furniture label reaches the page, and letters at the width the
+    // reference plot gives it.
+    //
+    // A template's text is drawn one 0.78 em glyph at a time, the sheet's own
+    // text at the full em — so the furniture is neither wider nor narrower
+    // than the reference. The figures below are measured off
+    // `集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图.pdf`'s spans; the
+    // two long ones carry the measured spread of the ratio (0.765–0.791) and
+    // so get the looser gate. Body height is the other half of the rule and is
+    // pinned separately: the reference letters these same labels at
+    // 4.74 / 5.08 / 5.93 / 6.60 mm, which is the size the style states times
+    // this writer's own `Tf` mapping.
     let dirs = font_dirs(Some(&corpus));
     if !dirs.iter().any(|dir| dir.is_dir()) {
         eprintln!("skipping the page render; no font directory is present");
@@ -174,6 +182,39 @@ fn the_a1_sheet_draws_the_frame_title_block_and_sign_off_column() {
         assert!(
             ink.spans.iter().any(|span| span.text.trim() == expected),
             "{A1_DRAWING}: {expected:?} did not reach the page"
+        );
+    }
+    for (label, width_mm, tolerance_mm, height_mm) in [
+        ("\u{5ba1}  \u{5b9a}", 11.17, 0.3, 4.74),
+        ("\u{8bbe}\u{8ba1}\u{8bc1}\u{4e66}\u{53f7}", 20.08, 0.5, 5.08),
+        ("1 \u{7248}", 6.78, 0.2, 4.40),
+        (
+            "\u{534e}\u{5317}\u{6cb9}\u{7530}\u{82cf}\u{6865}\u{50a8}\u{6c14}\u{5e93}\u{7fa4}",
+            45.33,
+            1.0,
+            5.93,
+        ),
+        (
+            "\u{4e2d}\u{56fd}\u{77f3}\u{6cb9}\u{96c6}\u{56e2}\u{5de5}\u{7a0b}\u{8bbe}\u{8ba1}\u{6709}\u{9650}\u{8d23}\u{4efb}\u{516c}\u{53f8}\u{534e}\u{5317}\u{5206}\u{516c}\u{53f8}",
+            107.46,
+            1.5,
+            6.60,
+        ),
+    ] {
+        let span = ink
+            .spans
+            .iter()
+            .find(|span| span.text.trim() == label)
+            .unwrap_or_else(|| panic!("{A1_DRAWING}: {label:?} did not reach the page"));
+        assert!(
+            (span.advance_mm - width_mm).abs() <= tolerance_mm,
+            "{label:?} letters {:.2} mm wide; the reference has {width_mm:.2}",
+            span.advance_mm
+        );
+        assert!(
+            (span.height_mm - height_mm).abs() <= 0.05,
+            "{label:?} letters {:.2} mm high; the reference has {height_mm:.2}",
+            span.height_mm
         );
     }
 }
