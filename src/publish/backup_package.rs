@@ -484,6 +484,20 @@ fn publish_one(
     };
     let source = PathBuf::from(format!("{}:{zip_entry}", plant.file_name));
     let report = write_pid_coverage_json(&drawing, &source);
+    let (object_count, value_count, rel_count) = match pid_publish_counts(&xml) {
+        Ok(counts) => counts,
+        Err(error) => {
+            let detail = error.to_string();
+            tally
+                .problems
+                .push(format!("{} {zip_entry}: {detail}", plant.file_name));
+            *tally.failed += 1;
+            tally
+                .drawings
+                .push(failed_drawing(&plant.file_name, zip_entry, &detail));
+            return;
+        }
+    };
     if let Err(error) = write_three(&data_path, &xml, &meta, &report, &drawing.drawing_name) {
         tally
             .problems
@@ -495,7 +509,6 @@ fn publish_one(
         return;
     }
     *tally.written += 1;
-    let (object_count, value_count, rel_count) = pid_publish_counts(&xml);
     if uid_from == "T_DRAWING.SP_ID" || uid_from == "T_DRAWING.PATH" {
         *tally.paired += 1;
     }
@@ -831,6 +844,23 @@ fn publish_mtf_package(
             ));
             continue;
         }
+        let counts = match pid_publish_counts(&xml) {
+            Ok(counts) => counts,
+            Err(error) => {
+                let detail = error.to_string();
+                problems.push(format!("{name}: {detail}"));
+                failed += 1;
+                drawings.push(mtf_drawing_entry(
+                    row,
+                    &name,
+                    &zip_file,
+                    &zip_entry,
+                    (0, 0, 0),
+                    vec![detail],
+                ));
+                continue;
+            }
+        };
         if let Err(detail) = write_file(&out_dir.join(format!("{name}_Data.xml")), &xml)
             .and_then(|()| write_file(&out_dir.join(format!("{name}_Meta.xml")), &meta))
         {
@@ -847,7 +877,6 @@ fn publish_mtf_package(
             continue;
         }
         written += 1;
-        let counts = pid_publish_counts(&xml);
         objects += counts.0;
         values += counts.1;
         relationships += counts.2;

@@ -682,11 +682,22 @@ fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
 
 /// Print the `.pid` export's object / value / rel score. Absence of a class
 /// this mode does not publish is not a finding; an emitted object, value or
-/// rel the reference does not carry exits 1.
+/// rel the reference does not carry exits 1. A document that is not
+/// well-formed XML is not scored: the refusal goes to stdout and stderr and
+/// exits 1.
 fn report_pid_diff(ref_path: &Path, xml: &str, oracle_exp: bool) -> Result<i32, String> {
     let reference = std::fs::read_to_string(ref_path)
         .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
-    let diff = diff_pid_export(xml, &reference);
+    let diff = match diff_pid_export(xml, &reference) {
+        Ok(diff) => diff,
+        Err(malformed) => {
+            let path = ref_path.display();
+            let refusal = format!("Semantic diff against {path} refused: {malformed}; exit 1.");
+            println!("{refusal}");
+            eprintln!("{refusal}");
+            return Ok(1);
+        }
+    };
     print!("{diff}");
     if diff.is_clean() {
         let mode = if oracle_exp { "oracle-exp" } else { ".pid" };

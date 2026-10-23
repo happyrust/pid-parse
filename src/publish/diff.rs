@@ -25,6 +25,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
+use quick_xml::errors::IllFormedError;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
@@ -1310,16 +1311,62 @@ impl fmt::Display for PidExportDiff {
     }
 }
 
+/// Which of the two documents a `.pid` export diff reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishDocumentSide {
+    /// The `_Data.xml` this crate rendered.
+    Generated,
+    /// The `SmartPlant` `_Data.xml` it is scored against.
+    Reference,
+}
+
+/// A document [`diff_pid_export`] or [`pid_publish_counts`] refuses because it
+/// is not well-formed XML.
+///
+/// The read stops at the first parse error, and at the end of input while an
+/// element is still open, so a document cut short is refused rather than
+/// scored as the part that survived.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MalformedPublishDocument {
+    /// The document that failed to read.
+    pub side: PublishDocumentSide,
+    /// Byte offset of the failure: where the offending markup starts, or the
+    /// end of input when an element was left open.
+    pub position: u64,
+    /// The XML parser's description of the failure.
+    pub message: String,
+}
+
+impl fmt::Display for MalformedPublishDocument {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let side = match self.side {
+            PublishDocumentSide::Generated => "generated",
+            PublishDocumentSide::Reference => "reference",
+        };
+        let position = self.position;
+        let message = &self.message;
+        write!(
+            f,
+            "the {side} document is not well-formed XML (byte {position}): {message}"
+        )
+    }
+}
+
+impl std::error::Error for MalformedPublishDocument {}
+
 /// Objects, non-empty attribute values, and `<Rel>` elements in one `.pid` export.
-#[must_use]
-pub fn pid_publish_counts(xml: &str) -> (usize, usize, usize) {
-    let document = read_publish_document(xml);
+///
+/// # Errors
+///
+/// Returns [`MalformedPublishDocument`] when `xml` is not well-formed XML.
+pub fn pid_publish_counts(xml: &str) -> Result<(usize, usize, usize), MalformedPublishDocument> {
+    let document = read_publish_document(xml, PublishDocumentSide::Generated)?;
     let values = document
         .objects
         .values()
         .map(|(_, values)| values.len())
         .sum();
-    (document.objects.len(), values, document.rels.len())
+    Ok((document.objects.len(), values, document.rels.len()))
 }
 
 /// Score `generated_xml` against `reference_xml` for a `.pid` export.
@@ -1327,9 +1374,17 @@ pub fn pid_publish_counts(xml: &str) -> (usize, usize, usize) {
 /// This is the gate [`PidExportDiff`] documents. The tag-count report from
 /// [`diff_publish_xml`] stays the database input's report: there, a class
 /// the reference has and we do not emit really is missing.
-pub fn diff_pid_export(generated_xml: &str, reference_xml: &str) -> PidExportDiff {
-    let generated = read_publish_document(generated_xml);
-    let reference = read_publish_document(reference_xml);
+///
+/// # Errors
+///
+/// Returns [`MalformedPublishDocument`] when either document is not
+/// well-formed XML; nothing is scored then.
+pub fn diff_pid_export(
+    generated_xml: &str,
+    reference_xml: &str,
+) -> Result<PidExportDiff, MalformedPublishDocument> {
+    let generated = read_publish_document(generated_xml, PublishDocumentSide::Generated)?;
+    let reference = read_publish_document(reference_xml, PublishDocumentSide::Reference)?;
     let mut diff = PidExportDiff::default();
     let reference_pipelines = pipelines_by_name(&reference);
     let generated_pipeline_names = pipeline_names(&generated);
@@ -1391,7 +1446,7 @@ pub fn diff_pid_export(generated_xml: &str, reference_xml: &str) -> PidExportDif
             diff.findings.push(format!("rel {rel:?}"));
         }
     }
-    diff
+    Ok(diff)
 }
 
 fn pipelines_by_name(
@@ -1477,41 +1532,63 @@ struct PublishBlocks {
 type InterfacePairs = Vec<(String, String)>;
 type InterfaceBlock = (String, Vec<(String, InterfacePairs)>);
 
-fn read_publish_document(xml: &str) -> PublishBlocks {
+fn read_publish_document(
+    xml: &str,
+    side: PublishDocumentSide,
+) -> Result<PublishBlocks, MalformedPublishDocument> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut document = PublishBlocks::default();
-    let mut depth = 0usize;
+    let mut open_tags: Vec<String> = Vec::new();
     let mut block: Option<InterfaceBlock> = None;
     loop {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
-                if depth == 1 {
-                    let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
-                    block = Some((tag, Vec::new()));
-                } else if depth == 2 {
+                let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                if open_tags.len() == 1 {
+                    block = Some((tag.clone(), Vec::new()));
+                } else if open_tags.len() == 2 {
                     push_interface(&start, &mut block);
                 }
-                depth += 1;
+                open_tags.push(tag);
             }
             Ok(Event::Empty(start)) => {
-                if depth == 2 {
+                if open_tags.len() == 2 {
                     push_interface(&start, &mut block);
                 }
             }
             Ok(Event::End(_)) => {
-                depth = depth.saturating_sub(1);
-                if depth == 1 {
+                open_tags.pop();
+                if open_tags.len() == 1 {
                     if let Some((tag, interfaces)) = block.take() {
                         finish_publish_block(&mut document, tag, interfaces);
                     }
                 }
             }
-            Ok(Event::Eof) | Err(_) => break,
+            Ok(Event::Eof) => {
+                // quick-xml reaches the end of input without checking that every start
+                // tag was closed, so a document cut between tags ends here.
+                if let Some(tag) = open_tags.pop() {
+                    let error = quick_xml::Error::IllFormed(IllFormedError::MissingEndTag(tag));
+                    return Err(MalformedPublishDocument {
+                        side,
+                        position: reader.buffer_position(),
+                        message: error.to_string(),
+                    });
+                }
+                break;
+            }
+            Err(error) => {
+                return Err(MalformedPublishDocument {
+                    side,
+                    position: reader.error_position(),
+                    message: error.to_string(),
+                });
+            }
             _ => {}
         }
     }
-    document
+    Ok(document)
 }
 
 fn push_interface(start: &BytesStart<'_>, block: &mut Option<InterfaceBlock>) {
@@ -1575,7 +1652,7 @@ mod tests {
             <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
             <Rel><IObject UID="R"/><IRel UID1="A" UID2="D" DefUID="DrawingItems"/></Rel>
         </Container>"#;
-        let clean = diff_pid_export(generated, reference);
+        let clean = diff_pid_export(generated, reference).expect("well-formed");
         assert!(clean.is_clean(), "{clean}");
         assert_eq!(clean.objects, 1);
         assert_eq!(clean.rels, 1);
@@ -1584,7 +1661,7 @@ mod tests {
         let wrong = r#"<Container>
             <PIDInstrument><IObject UID="A" Name="PT-2"/></PIDInstrument>
         </Container>"#;
-        let dirty = diff_pid_export(wrong, reference);
+        let dirty = diff_pid_export(wrong, reference).expect("well-formed");
         assert!(!dirty.is_clean());
         assert_eq!(dirty.values_different, 1);
         assert!(dirty.findings[0].contains("PT-2"));
@@ -1592,8 +1669,57 @@ mod tests {
         let extra = r#"<Container>
             <PIDNote><IObject UID="N" Name="note"/></PIDNote>
         </Container>"#;
-        let added = diff_pid_export(extra, reference);
+        let added = diff_pid_export(extra, reference).expect("well-formed");
         assert_eq!(added.objects_not_in_reference, 1);
+    }
+
+    const WELL_FORMED_EXPORT: &str = r#"<Container>
+            <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+            <Rel><IObject UID="R"/><IRel UID1="A" UID2="D" DefUID="DrawingItems"/></Rel>
+        </Container>"#;
+
+    #[test]
+    fn a_mismatched_end_tag_makes_the_reference_malformed() {
+        let reference = r#"<Container><PIDInstrument><IObject UID="A"/></PIDNote></Container>"#;
+        let error = diff_pid_export(WELL_FORMED_EXPORT, reference).expect_err("a syntax error");
+        assert_eq!(error.side, PublishDocumentSide::Reference);
+        assert!(error.message.contains("</PIDNote>"), "{error}");
+        assert!(error.to_string().contains("not well-formed XML"), "{error}");
+    }
+
+    #[test]
+    fn a_document_cut_inside_a_tag_is_malformed() {
+        let cut = r#"<Container><PIDInstrument><IObject UID="A" Name="PT"#;
+        let error = pid_publish_counts(cut).expect_err("a tag cut mid-attribute");
+        assert_eq!(error.side, PublishDocumentSide::Generated);
+        assert_eq!(error.position, cut.rfind('<').expect("a tag") as u64);
+        assert!(error.to_string().contains("not well-formed XML"), "{error}");
+    }
+
+    #[test]
+    fn a_document_cut_between_tags_is_malformed() {
+        let cut = r#"<Container><PIDInstrument><IObject UID="A"/></PIDInstrument>"#;
+        let error = pid_publish_counts(cut).expect_err("a root element never closed");
+        assert_eq!(error.side, PublishDocumentSide::Generated);
+        assert_eq!(error.position, cut.len() as u64);
+        assert!(error.message.contains("</Container>"), "{error}");
+        assert!(error.to_string().contains("not well-formed XML"), "{error}");
+    }
+
+    #[test]
+    fn a_truncated_generated_document_is_refused_not_scored() {
+        let cut = &WELL_FORMED_EXPORT[..WELL_FORMED_EXPORT.len() / 2];
+        let error = diff_pid_export(cut, WELL_FORMED_EXPORT).expect_err("half a document");
+        assert_eq!(error.side, PublishDocumentSide::Generated);
+        assert!(error.to_string().contains("not well-formed XML"), "{error}");
+    }
+
+    #[test]
+    fn a_well_formed_pair_still_scores_clean() {
+        let diff = diff_pid_export(WELL_FORMED_EXPORT, WELL_FORMED_EXPORT).expect("well-formed");
+        assert!(diff.is_clean(), "{diff}");
+        assert_eq!((diff.objects, diff.values, diff.rels), (1, 1, 1));
+        assert_eq!(pid_publish_counts(WELL_FORMED_EXPORT), Ok((1, 1, 1)));
     }
 
     #[test]

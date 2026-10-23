@@ -438,7 +438,8 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     .expect("pipelines");
     let generated_xml = write_pid_data_xml(&drawing, "P01");
     let reference_text = std::fs::read_to_string(reference_xml).expect("reference");
-    let diff = pid_parse::publish::diff_pid_export(&generated_xml, &reference_text);
+    let diff = pid_parse::publish::diff_pid_export(&generated_xml, &reference_text)
+        .expect("both documents are well-formed");
     assert!(diff.is_clean(), "{diff}");
     assert_eq!(
         (diff.objects, diff.values, diff.rels),
