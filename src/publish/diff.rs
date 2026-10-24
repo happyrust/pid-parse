@@ -1449,6 +1449,23 @@ pub fn pid_publish_counts(xml: &str) -> Result<(usize, usize, usize), MalformedP
     Ok((document.objects.len(), values, document.rels.len()))
 }
 
+/// Read `xml` with the reader [`diff_pid_export`] uses and report where it is
+/// not well-formed XML.
+///
+/// [`diff_publish_xml`] and [`diff_rel_defuids`] count tags by scanning bytes,
+/// so a document cut short scores as the part that survived; check both
+/// documents with this first.
+///
+/// # Errors
+///
+/// Returns [`MalformedPublishDocument`] when `xml` is not well-formed XML.
+pub fn check_publish_document(
+    xml: &str,
+    side: PublishDocumentSide,
+) -> Result<(), MalformedPublishDocument> {
+    read_publish_document(xml, side).map(|_| ())
+}
+
 /// Score `generated_xml` against `reference_xml` for a `.pid` export.
 ///
 /// This is the gate [`PidExportDiff`] documents. The tag-count report from
@@ -2474,6 +2491,19 @@ mod tests {
         let error = diff_meta_xml(generated, reference, "", "").expect_err("duplicate");
         assert_eq!(error.side, PublishDocumentSide::Reference);
         assert!(error.to_string().contains("not well-formed XML"), "{error}");
+    }
+
+    #[test]
+    fn check_publish_document_refuses_what_the_tag_counts_would_score() {
+        let cut = &WELL_FORMED_EXPORT[..WELL_FORMED_EXPORT.len() / 2];
+        assert_eq!(
+            check_publish_document(WELL_FORMED_EXPORT, PublishDocumentSide::Generated),
+            Ok(())
+        );
+        let error = check_publish_document(cut, PublishDocumentSide::Reference).expect_err("cut");
+        assert_eq!(error.side, PublishDocumentSide::Reference);
+        // The byte scanners still count the tags that survived the cut.
+        assert!(!parse_pid_tag_counts(cut).is_empty());
     }
 
     // The database orientation writes `PipingConnectors` with `UID1` =

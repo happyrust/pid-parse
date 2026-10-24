@@ -37,9 +37,10 @@ use pid_parse::publish::pid_writer::{
 };
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    diff_pid_export, diff_publish_xml, diff_rel_defuids, load_drawing_graph, load_publish_from_pid,
-    open_mdf_as_sqlite, write_data_xml, write_meta_xml, write_pid_coverage_json,
-    write_pid_data_xml, write_pid_meta_xml, PublishError, PublishStyle,
+    check_publish_document, diff_pid_export, diff_publish_xml, diff_rel_defuids,
+    load_drawing_graph, load_publish_from_pid, open_mdf_as_sqlite, write_data_xml, write_meta_xml,
+    write_pid_coverage_json, write_pid_data_xml, write_pid_meta_xml, MalformedPublishDocument,
+    PublishDocumentSide, PublishError, PublishStyle,
 };
 use std::path::{Path, PathBuf};
 
@@ -752,6 +753,18 @@ fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Print the refusal of a document that is not well-formed XML on stdout and
+/// stderr, so a reader of either stream sees it; the exit code is 1.
+fn refuse(gate: &str, path: &Path, malformed: &MalformedPublishDocument) -> i32 {
+    let refusal = format!(
+        "{gate} against {} refused: {malformed}; exit 1.",
+        path.display()
+    );
+    println!("{refusal}");
+    eprintln!("{refusal}");
+    1
+}
+
 /// Print the `.pid` export's object / value / rel score. An emitted object,
 /// value or rel the reference does not carry exits 1, and so does
 /// reference-only content the explicit exclusion list does not cover:
@@ -772,13 +785,7 @@ fn report_pid_diff(
         .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
     let diff = match diff_pid_export(xml, &reference) {
         Ok(diff) => diff,
-        Err(malformed) => {
-            let path = ref_path.display();
-            let refusal = format!("Semantic diff against {path} refused: {malformed}; exit 1.");
-            println!("{refusal}");
-            eprintln!("{refusal}");
-            return Ok(1);
-        }
+        Err(malformed) => return Ok(refuse("Semantic diff", ref_path, &malformed)),
     };
     print!("{diff}");
     let mode = if oracle_exp { "oracle-exp" } else { ".pid" };
@@ -852,13 +859,7 @@ fn report_meta_diff(reference: &Path, data_xml: &str, meta_xml: &str) -> Result<
         .map_err(|e| format!("read reference {}: {e}", reference.display()))?;
     let diff = match diff_meta_xml(meta_xml, &reference_meta, data_xml, &reference_data) {
         Ok(diff) => diff,
-        Err(malformed) => {
-            let path = meta_path.display();
-            let refusal = format!("Meta diff against {path} refused: {malformed}; exit 1.");
-            println!("{refusal}");
-            eprintln!("{refusal}");
-            return Ok(1);
-        }
+        Err(malformed) => return Ok(refuse("Meta diff", &meta_path, &malformed)),
     };
     print!("{diff}");
     if diff.is_clean() {
@@ -882,12 +883,25 @@ fn report_meta_diff(reference: &Path, data_xml: &str, meta_xml: &str) -> Result<
 }
 
 /// Print the semantic diff of `xml` against the reference at `ref_path`;
-/// the exit code is 1 when it surfaces findings.
+/// the exit code is 1 when it surfaces findings. A document that is not
+/// well-formed XML is not scored: the refusal goes to stdout and stderr and
+/// exits 1.
 fn report_diff(ref_path: &Path, xml: &str) -> Result<i32, String> {
     let mut exit_code = 0;
     {
         let reference = std::fs::read_to_string(ref_path)
             .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
+        // The tag counts scan bytes, so a document cut short would score as
+        // the part that survived: refuse one that is not well-formed first.
+        let sides = [
+            (xml, PublishDocumentSide::Generated),
+            (reference.as_str(), PublishDocumentSide::Reference),
+        ];
+        for (document, side) in sides {
+            if let Err(malformed) = check_publish_document(document, side) {
+                return Ok(refuse("Semantic diff", ref_path, &malformed));
+            }
+        }
         let tag_report = diff_publish_xml(xml, &reference);
         // Surface the report on stdout so it can be redirected to
         // a file or compared in tests; the "Loaded drawing..." line

@@ -472,6 +472,58 @@ fn cli_diff_against_self_generated_is_clean_and_exits_zero() {
 }
 
 #[test]
+fn cli_diff_against_a_truncated_reference_is_refused_and_exits_one() {
+    // The tag counts scan bytes: a reference that lost its closing tag counts
+    // exactly like the run's own output, so it must be refused as not
+    // well-formed XML rather than scored clean.
+    if !fixture_available() {
+        return;
+    }
+    let dir = unique_tmp_dir("truncated-diff");
+    let data_path = dir.join("A01_Data.xml");
+    let gen = Command::new(binary_path())
+        .args([
+            A01_MDF_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--out",
+            data_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --out (gen)");
+    assert!(gen.status.success(), "initial generation must succeed");
+    let full = std::fs::read_to_string(&data_path).expect("generated data xml");
+    let cut = &full[..full.rfind("</Container>").expect("closing tag")];
+    let reference = dir.join("A01_Data_cut.xml");
+    std::fs::write(&reference, cut).expect("write the cut reference");
+
+    let diff = Command::new(binary_path())
+        .args([
+            A01_MDF_PATH,
+            "--drawing",
+            A01_DRAWING_UID,
+            "--plant",
+            "TEST02",
+            "--diff-against",
+            reference.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn pid_publish_xml --diff-against a cut reference");
+    assert_eq!(diff.status.code(), Some(1), "{diff:?}");
+    let stdout = String::from_utf8_lossy(&diff.stdout);
+    let stderr = String::from_utf8_lossy(&diff.stderr);
+    for stream in [&stdout, &stderr] {
+        assert!(stream.contains("not well-formed XML"), "{stream}");
+        assert!(stream.contains("A01_Data_cut.xml"), "{stream}");
+        assert!(!stream.contains("is clean"), "{stream}");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_help_documents_style_flag_and_choices() {
     // A29b advertises `--style a01|dwg`; --help is the only
     // discoverability surface for the flag, so a regression
