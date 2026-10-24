@@ -1409,8 +1409,9 @@ pub enum PublishDocumentSide {
 pub struct MalformedPublishDocument {
     /// The document that failed to read.
     pub side: PublishDocumentSide,
-    /// Byte offset of the failure: where the offending markup starts, or the
-    /// end of input when an element was left open.
+    /// Byte offset of the failure: where the offending markup starts, the end
+    /// of a tag whose attribute is malformed, or the end of input when an
+    /// element was left open.
     pub position: u64,
     /// The XML parser's description of the failure.
     pub message: String,
@@ -1638,16 +1639,19 @@ fn read_publish_document(
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                let pairs = checked_attributes(&start, side, reader.buffer_position())?;
                 if open_tags.len() == 1 {
                     block = Some((tag.clone(), Vec::new()));
                 } else if open_tags.len() == 2 {
-                    push_interface(&start, &mut block);
+                    push_interface(tag.clone(), pairs, &mut block);
                 }
                 open_tags.push(tag);
             }
             Ok(Event::Empty(start)) => {
+                let pairs = checked_attributes(&start, side, reader.buffer_position())?;
                 if open_tags.len() == 2 {
-                    push_interface(&start, &mut block);
+                    let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                    push_interface(tag, pairs, &mut block);
                 }
             }
             Ok(Event::End(_)) => {
@@ -1684,24 +1688,34 @@ fn read_publish_document(
     Ok(document)
 }
 
-fn push_interface(start: &BytesStart<'_>, block: &mut Option<InterfaceBlock>) {
+/// The attributes of one element's opening tag as (name, unescaped value)
+/// pairs in document order. A malformed attribute or an unknown entity refuses
+/// the document at `at` instead of dropping the value.
+fn checked_attributes(
+    start: &BytesStart<'_>,
+    side: PublishDocumentSide,
+    at: u64,
+) -> Result<InterfacePairs, MalformedPublishDocument> {
+    let refuse = |error: quick_xml::Error| MalformedPublishDocument {
+        side,
+        position: at,
+        message: error.to_string(),
+    };
+    start
+        .attributes()
+        .map(|attribute| {
+            let attribute = attribute.map_err(|error| refuse(error.into()))?;
+            let key = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
+            let value = attribute.unescape_value().map_err(refuse)?.into_owned();
+            Ok((key, value))
+        })
+        .collect()
+}
+
+fn push_interface(interface: String, pairs: InterfacePairs, block: &mut Option<InterfaceBlock>) {
     let Some((_, interfaces)) = block.as_mut() else {
         return;
     };
-    let interface = String::from_utf8_lossy(start.name().as_ref()).into_owned();
-    let pairs = start
-        .attributes()
-        .flatten()
-        .map(|attribute| {
-            (
-                String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
-                attribute
-                    .unescape_value()
-                    .map(std::borrow::Cow::into_owned)
-                    .unwrap_or_default(),
-            )
-        })
-        .collect();
     interfaces.push((interface, pairs));
 }
 
@@ -1918,30 +1932,33 @@ fn read_meta_document(
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                let attributes = meta_attributes(&start, side, reader.buffer_position())?;
                 match open_tags.len() {
-                    0 => document.container = meta_attributes(&start),
+                    0 => document.container = attributes,
                     1 => {
                         block = Some(MetaBlock {
                             name: tag.clone(),
                             ..MetaBlock::default()
                         });
                     }
-                    2 => push_meta_interface(&start, &mut block),
+                    2 => push_meta_interface(tag.clone(), attributes, &mut block),
                     _ => {}
                 }
                 open_tags.push(tag);
             }
             Ok(Event::Empty(start)) => {
+                let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                let attributes = meta_attributes(&start, side, reader.buffer_position())?;
                 match open_tags.len() {
                     // A self-closing root still carries the container
                     // attributes; a self-closing top-level block still
                     // counts for the block order.
-                    0 => document.container = meta_attributes(&start),
+                    0 => document.container = attributes,
                     1 => document.blocks.push(MetaBlock {
-                        name: String::from_utf8_lossy(start.name().as_ref()).into_owned(),
+                        name: tag,
                         ..MetaBlock::default()
                     }),
-                    2 => push_meta_interface(&start, &mut block),
+                    2 => push_meta_interface(tag, attributes, &mut block),
                     _ => {}
                 }
             }
@@ -1979,30 +1996,26 @@ fn read_meta_document(
     Ok(document)
 }
 
-/// The attribute name -> value map of one element's opening tag.
-fn meta_attributes(start: &BytesStart<'_>) -> BTreeMap<String, String> {
-    start
-        .attributes()
-        .flatten()
-        .map(|attribute| {
-            (
-                String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
-                attribute
-                    .unescape_value()
-                    .map(std::borrow::Cow::into_owned)
-                    .unwrap_or_default(),
-            )
-        })
-        .collect()
+/// The attribute name -> value map of one element's opening tag; a malformed
+/// attribute or an unknown entity refuses the document at `at`.
+fn meta_attributes(
+    start: &BytesStart<'_>,
+    side: PublishDocumentSide,
+    at: u64,
+) -> Result<BTreeMap<String, String>, MalformedPublishDocument> {
+    checked_attributes(start, side, at).map(|pairs| pairs.into_iter().collect())
 }
 
 /// Record one interface element's attributes on the block being read.
-fn push_meta_interface(start: &BytesStart<'_>, block: &mut Option<MetaBlock>) {
+fn push_meta_interface(
+    interface: String,
+    attributes: BTreeMap<String, String>,
+    block: &mut Option<MetaBlock>,
+) {
     let Some(block) = block.as_mut() else {
         return;
     };
-    let interface = String::from_utf8_lossy(start.name().as_ref()).into_owned();
-    block.interfaces.insert(interface, meta_attributes(start));
+    block.interfaces.insert(interface, attributes);
 }
 
 /// Pull the `IObject.UID` / `IRel.*` fields out of a finished block's
@@ -2080,7 +2093,12 @@ fn publish_container_doc_uid(xml: &str) -> Option<String> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(start)) | Ok(Event::Empty(start)) => {
-                return meta_attributes(&start).get("DocUID").cloned();
+                return start
+                    .try_get_attribute("DocUID")
+                    .ok()
+                    .flatten()
+                    .and_then(|attribute| attribute.unescape_value().ok())
+                    .map(std::borrow::Cow::into_owned);
             }
             Ok(Event::Eof) | Err(_) => return None,
             _ => {}
@@ -2426,6 +2444,36 @@ mod tests {
         assert!(diff.is_clean(), "{diff}");
         assert_eq!((diff.objects, diff.values, diff.rels), (1, 1, 1));
         assert_eq!(pid_publish_counts(WELL_FORMED_EXPORT), Ok((1, 1, 1)));
+    }
+
+    #[test]
+    fn a_duplicated_attribute_makes_the_reference_malformed() {
+        let reference = r#"<Container>
+            <PIDInstrument><IObject UID="A" Name="PT-1" Name="PT-2"/></PIDInstrument>
+        </Container>"#;
+        let error = diff_pid_export(WELL_FORMED_EXPORT, reference).expect_err("duplicate");
+        assert_eq!(error.side, PublishDocumentSide::Reference);
+        assert!(error.message.contains("attribute"), "{error}");
+        assert!(error.to_string().contains("not well-formed XML"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_entity_in_a_generated_value_is_malformed() {
+        let generated = r#"<Container>
+            <PIDInstrument><IObject UID="A" Name="PT&bogus;1"/></PIDInstrument>
+        </Container>"#;
+        let error = pid_publish_counts(generated).expect_err("unknown entity");
+        assert_eq!(error.side, PublishDocumentSide::Generated);
+        assert!(error.to_string().contains("not well-formed XML"), "{error}");
+    }
+
+    #[test]
+    fn a_duplicated_attribute_makes_a_meta_document_malformed() {
+        let generated = r#"<Container DocUID="D"></Container>"#;
+        let reference = r#"<Container DocUID="D" DocUID="D"></Container>"#;
+        let error = diff_meta_xml(generated, reference, "", "").expect_err("duplicate");
+        assert_eq!(error.side, PublishDocumentSide::Reference);
+        assert!(error.to_string().contains("not well-formed XML"), "{error}");
     }
 
     // The database orientation writes `PipingConnectors` with `UID1` =
