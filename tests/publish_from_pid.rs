@@ -687,6 +687,42 @@ fn out_dir_is_refused_beside_out_and_for_a_database_input() {
     assert!(!out_dir.exists(), "a refused invocation writes nothing");
 }
 
+/// `_Index.json` 的顶层键集合 —— 两个整包分支必须一致。
+const INDEX_KEYS: [&str; 24] = [
+    "package",
+    "export",
+    "pid_entries",
+    "drawing_rows",
+    "paired",
+    "failed",
+    "shells",
+    "objects",
+    "values",
+    "relationships",
+    "excluded_from_totals",
+    "piping_ports",
+    "signal_ports",
+    "connectivity_rels",
+    "opc_branch_points",
+    "equipment_composition_rels",
+    "item_note_rels",
+    "pipelines",
+    "piping_connectors",
+    "pipeline_uids",
+    "template_pid_entries",
+    "unmatched_pid_entries",
+    "drawings",
+    "problems",
+];
+
+fn assert_index_shape(index: &serde_json::Value) {
+    let object = index.as_object().expect("index object");
+    assert_eq!(object.len(), INDEX_KEYS.len(), "{index}");
+    for key in INDEX_KEYS {
+        assert!(object.contains_key(key), "{key} is missing from {index}");
+    }
+}
+
 /// One stored ZIP member. The backup publisher inflates this the same way
 /// it inflates `PlantData~2~711.zip`.
 fn stored_zip(name: &str, payload: &[u8]) -> Vec<u8> {
@@ -768,6 +804,14 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
         stored_zip("D06.pid", &bytes),
     )
     .expect("plant zip");
+    std::fs::write(
+        package.join("PlantData~2~2.zip"),
+        stored_zip(
+            "ZGSY P&ID Reference Data/Template Files/A2-W-New.pid",
+            b"a template, not a drawing",
+        ),
+    )
+    .expect("template zip");
     let out = unique_out_dir("mini-out");
     let missing_out = Command::new(CLI)
         .arg(&package)
@@ -793,10 +837,27 @@ fn a_backup_directory_without_a_dump_publishes_the_pid() {
             .expect("index json");
     assert_eq!(index["export"], "PidOnly");
     assert_eq!(index["pipeline_uids"], "not synthesized");
-    assert_eq!(index["pid_entries"], 1);
+    assert_eq!(index["pid_entries"], 2, "{index}");
     assert_eq!(index["drawing_rows"], 0);
     assert_eq!(index["failed"], 0);
     assert_eq!(index["paired"], 0);
+    assert_eq!(index["template_pid_entries"], 1, "{index}");
+    assert_eq!(
+        index["unmatched_pid_entries"]
+            .as_array()
+            .expect("unmatched_pid_entries")
+            .len(),
+        1,
+        "{index}"
+    );
+    assert_eq!(
+        index["unmatched_pid_entries"][0], "PlantData~2~1.zip:D06.pid",
+        "{index}"
+    );
+    assert!(
+        !out.join("A2-W-New_Data.xml").exists(),
+        "a template is not published as a drawing"
+    );
     assert!(out.join("D06_Data.xml").is_file());
     assert!(out.join("D06_Meta.xml").is_file());
     assert!(out.join("D06_Coverage.json").is_file());
@@ -896,6 +957,15 @@ fn backup_directory_publishes_the_whole_package() {
     assert_eq!(index["pid_entries"], 53, "{index}");
     assert_eq!(index["drawing_rows"], 53);
     assert_eq!(index["paired"], 53);
+    assert_index_shape(&index);
+    assert_eq!(index["template_pid_entries"], 0, "{index}");
+    assert!(
+        index["unmatched_pid_entries"]
+            .as_array()
+            .expect("unmatched_pid_entries")
+            .is_empty(),
+        "{index}"
+    );
     assert_eq!(index["failed"], 0);
     assert_eq!(index["shells"], 2);
     assert_eq!(index["objects"], 80_085);
@@ -1109,21 +1179,56 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
     assert_eq!(index["failed"], 0, "{index}");
     assert_eq!(index["drawing_rows"], 1, "{index}");
     assert_eq!(index["paired"], 1, "{index}");
+    assert_index_shape(&index);
     assert_eq!(index["pipeline_uids"], "database", "{index}");
     assert!(index["objects"].as_u64().expect("objects") > 0, "{index}");
-    // Every `.pid` the package shipped pairs by T_Drawing.Path or lands
-    // in `unmatched_pid_entries` — none is dropped silently.
+    // Every `.pid` the package shipped is accounted exactly once: paired by
+    // `T_Drawing.Path`, classified as a template under `Template Files/`, or
+    // listed in `unmatched_pid_entries` — none is dropped silently.
     let pid_entries = index["pid_entries"].as_u64().expect("pid_entries");
+    let templates = index["template_pid_entries"]
+        .as_u64()
+        .expect("template_pid_entries");
     let unmatched = index["unmatched_pid_entries"]
         .as_array()
         .expect("unmatched_pid_entries");
-    assert_eq!(unmatched.len() as u64 + 1, pid_entries, "{index}");
+    assert_eq!(pid_entries, 12, "{index}");
+    assert_eq!(templates, 11, "{index}");
+    assert!(unmatched.is_empty(), "{index}");
+    assert_eq!(
+        index["paired"].as_u64().expect("paired") + templates + unmatched.len() as u64,
+        pid_entries,
+        "{index}"
+    );
     let drawing = &index["drawings"].as_array().expect("drawings")[0];
     assert_eq!(drawing["uid_from"], "T_Drawing.SP_ID", "{drawing}");
     let name = drawing["name"].as_str().expect("drawing name");
     let data = std::fs::read_to_string(out.join(format!("{name}_Data.xml"))).expect("data xml");
     assert!(data.contains("<PIDDrawing"), "{name}_Data.xml");
     assert!(out.join(format!("{name}_Meta.xml")).is_file());
+
+    // The row carries the model store's own template / path, and the file set
+    // it declares is on disk.
+    assert_eq!(drawing["template"], "A2-W-New.pid", "{drawing}");
+    assert_eq!(drawing["path"], "\\01\\01\\A01.pid", "{drawing}");
+    let files = drawing["files"].as_array().expect("files");
+    assert_eq!(files.len(), 3, "{drawing}");
+    for file in files {
+        let file = file.as_str().expect("file name");
+        assert!(out.join(file).is_file(), "{file} is not on disk");
+    }
+    let coverage: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join(format!("{name}_Coverage.json"))).expect("coverage json"),
+    )
+    .expect("coverage json");
+    assert_eq!(coverage["template"], "A2-W-New.pid", "{coverage}");
+    assert_eq!(coverage["path"], "\\01\\01\\A01.pid", "{coverage}");
+
+    // The reference `_Meta.xml` has no template slot and neither may ours:
+    // `<File>` stays `<IObject Name="<drawing>.pid"/>` + `<IFile FilePath=""/>`.
+    let meta = std::fs::read_to_string(out.join(format!("{name}_Meta.xml"))).expect("meta xml");
+    assert!(!meta.contains("Template"), "{meta}");
+    assert!(meta.contains(r#"IFile FilePath="""#), "{meta}");
 
     let gate_out = unique_out_dir("test02-mtf-gate");
     let gated = Command::new(CLI)

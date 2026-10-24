@@ -770,6 +770,45 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
     text
 }
 
+/// Render the coverage report that goes beside a database-line export —
+/// the SQL Server MTF package branch. It names the drawing, the
+/// `T_Drawing.Template` and `T_Drawing.Path` the row loaded (`null` when
+/// the row states neither), the three files this run wrote beside it, and
+/// the same object / value / relationship triple the sibling `_Index.json`
+/// row carries: top-level blocks that are not `<Rel>`, non-empty attribute
+/// values, and `<Rel>` blocks.
+///
+/// A `.pid`-only export goes through [`write_pid_coverage_json`] instead:
+/// a `.pid` file states neither a template nor an archive path, so that
+/// report omits both rather than inventing them.
+pub fn write_database_coverage_json(
+    drawing: &PublishDrawing,
+    source: &Path,
+    counts: (usize, usize, usize),
+) -> String {
+    let (objects, values, relationships) = counts;
+    let name = drawing.drawing_name.as_str();
+    let report = json!({
+        "source": source.display().to_string(),
+        "drawing": { "uid": drawing.drawing_uid, "name": name },
+        "template": drawing.template,
+        "path": drawing.path,
+        "files": {
+            "data": format!("{name}_Data.xml"),
+            "meta": format!("{name}_Meta.xml"),
+            "coverage": format!("{name}_Coverage.json"),
+        },
+        "document_counts": {
+            "objects": objects,
+            "values": values,
+            "relationships": relationships,
+        },
+    });
+    let mut text = serde_json::to_string_pretty(&report).unwrap_or_default();
+    text.push('\n');
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -927,6 +966,39 @@ mod tests {
             Some(LEFT_OUT_BY_DESIGN.len())
         );
         assert!(text.ends_with("}\n"));
+    }
+
+    #[test]
+    fn the_database_coverage_report_carries_the_template_and_path() {
+        let mut drawing = PublishDrawing::new("UID-A01", "A01");
+        drawing.template = Some("A2-W-New.pid".to_string());
+        drawing.path = Some(r"\01\01\A01.pid".to_string());
+        let text = write_database_coverage_json(
+            &drawing,
+            Path::new("PlantData~2~711.zip:01/01/A01.pid"),
+            (12, 29, 15),
+        );
+        let report: serde_json::Value = serde_json::from_str(&text).expect("report json");
+        assert_eq!(report["drawing"]["uid"], "UID-A01");
+        assert_eq!(report["template"], "A2-W-New.pid");
+        assert_eq!(report["path"], r"\01\01\A01.pid");
+        assert_eq!(report["files"]["data"], "A01_Data.xml");
+        assert_eq!(report["files"]["meta"], "A01_Meta.xml");
+        assert_eq!(report["files"]["coverage"], "A01_Coverage.json");
+        assert_eq!(report["document_counts"]["objects"], 12);
+        assert_eq!(report["document_counts"]["values"], 29);
+        assert_eq!(report["document_counts"]["relationships"], 15);
+
+        // A row that states neither is reported as null, never invented.
+        let bare = PublishDrawing::new("UID-B", "B");
+        let report: serde_json::Value = serde_json::from_str(&write_database_coverage_json(
+            &bare,
+            Path::new("Export.dmp"),
+            (0, 0, 0),
+        ))
+        .expect("report json");
+        assert!(report["template"].is_null());
+        assert!(report["path"].is_null());
     }
 
     #[test]

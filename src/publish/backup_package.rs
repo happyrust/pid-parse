@@ -14,7 +14,10 @@
 //! `.pid` files alone.
 //!
 //! One drawing that fails is recorded and the rest are still written. The
-//! index is `_Index.json` in the output directory.
+//! index is `_Index.json` in the output directory; every `.pid` entry is
+//! accounted in it exactly once — paired to a model row, classified as a
+//! template under a `Template Files` folder, or listed under
+//! `unmatched_pid_entries`.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -54,8 +57,8 @@ impl std::fmt::Display for BackupPublishError {
 pub struct BackupPublishReport {
     /// Drawings that were not written.
     pub failed: usize,
-    /// Drawings successfully written (all three output files for
-    /// `.pid`-mode, `_Data.xml` + `_Meta.xml` for MTF-mode).
+    /// Drawings successfully written (all three output files —
+    /// `_Data.xml`, `_Meta.xml`, `_Coverage.json` — in both modes).
     pub written: usize,
     /// `_Index.json`.
     pub index_path: PathBuf,
@@ -183,6 +186,9 @@ pub fn publish_backup_package(
     let mut item_note_rels = 0usize;
     let mut pipelines = 0usize;
     let mut piping_connectors = 0usize;
+    let mut template_pid_entries = 0usize;
+    let mut entry_names: Vec<String> = Vec::new();
+    let mut paired_entries: HashSet<String> = HashSet::new();
     let mut written_names = HashSet::new();
     let mut drawings = Vec::new();
     let mut problems: Vec<String> = scan
@@ -218,6 +224,9 @@ pub fn publish_backup_package(
                 item_note_rels: &mut item_note_rels,
                 pipelines: &mut pipelines,
                 piping_connectors: &mut piping_connectors,
+                template_pid_entries: &mut template_pid_entries,
+                entry_names: &mut entry_names,
+                paired_entries: &mut paired_entries,
                 written_names: &mut written_names,
                 drawings: &mut drawings,
                 problems: &mut problems,
@@ -243,6 +252,18 @@ pub fn publish_backup_package(
         None => 0,
     };
     let excluded_from_totals = excluded_from_totals(&drawings);
+    // Every `.pid` entry is counted exactly once — paired to a model row
+    // (`paired`), classified as a template (`template_pid_entries`), or
+    // listed here: the package shipped the `.pid`, but the dump's
+    // `T_DRAWING` does not hold it. With no dump at all every entry lands
+    // in `unmatched_pid_entries`; that is the intended, machine-checkable
+    // accounting for a `.pid`-only package.
+    let mut unmatched_pid_entries: Vec<String> = entry_names
+        .iter()
+        .filter(|entry| !paired_entries.contains(*entry))
+        .cloned()
+        .collect();
+    unmatched_pid_entries.sort();
     let index = json!({
         "package": package_dir.display().to_string(),
         "export": export_kind,
@@ -268,6 +289,8 @@ pub fn publish_backup_package(
         } else {
             "not synthesized"
         },
+        "template_pid_entries": template_pid_entries,
+        "unmatched_pid_entries": unmatched_pid_entries,
         "drawings": drawings,
         "problems": problems,
     });
@@ -343,6 +366,9 @@ struct PublishTally<'a> {
     item_note_rels: &'a mut usize,
     pipelines: &'a mut usize,
     piping_connectors: &'a mut usize,
+    template_pid_entries: &'a mut usize,
+    entry_names: &'a mut Vec<String>,
+    paired_entries: &'a mut HashSet<String>,
     written_names: &'a mut HashSet<String>,
     drawings: &'a mut Vec<Value>,
     problems: &'a mut Vec<String>,
@@ -380,6 +406,16 @@ fn publish_zip(
             continue;
         }
         *tally.pid_entries += 1;
+        if is_template_pid_entry(&zip_entry) {
+            // A template ships in the reference-data tree: it is not a
+            // drawing, so it is neither published nor reported as a `.pid`
+            // the model store lost.
+            *tally.template_pid_entries += 1;
+            continue;
+        }
+        tally
+            .entry_names
+            .push(entry_key(&plant.file_name, &zip_entry));
         let mut bytes = Vec::new();
         if let Err(error) = entry.read_to_end(&mut bytes) {
             tally
@@ -555,6 +591,9 @@ fn publish_one(
     }
     if uid_from == "T_DRAWING.SP_ID" || uid_from == "T_DRAWING.PATH" {
         *tally.paired += 1;
+        tally
+            .paired_entries
+            .insert(entry_key(&plant.file_name, zip_entry));
     }
     if uid_from == "T_DRAWING.PATH" {
         *tally.shells += 1;
@@ -590,11 +629,17 @@ fn publish_one(
         "zip_entry": zip_entry,
         "drawing_number": row.map(|row| row.drawing_number.clone()).unwrap_or_default(),
         "path": row.map(|row| row.path.clone()).unwrap_or_default(),
+        "template": row.map(|row| row.template.clone()).unwrap_or_default(),
         "plant_group": plant_group,
         "uid_from": uid_from,
         "objects": object_count,
         "values": value_count,
         "relationships": rel_count,
+        "files": [
+            format!("{}_Data.xml", drawing.drawing_name),
+            format!("{}_Meta.xml", drawing.drawing_name),
+            format!("{}_Coverage.json", drawing.drawing_name),
+        ],
         "oracle_exp": oracle,
         "problems": [],
     }));
@@ -748,11 +793,13 @@ fn failed_drawing(zip_file: &str, zip_entry: &str, detail: &str) -> Value {
         "zip_entry": zip_entry,
         "drawing_number": "",
         "path": "",
+        "template": "",
         "plant_group": "",
         "uid_from": "",
         "objects": 0,
         "values": 0,
         "relationships": 0,
+        "files": [],
         "oracle_exp": Value::Null,
         "problems": [detail],
     })
@@ -833,6 +880,18 @@ fn entry_stem(entry: &str) -> String {
         .to_string()
 }
 
+/// `Template Files/` 下的 `.pid` 是整包随附的绘图模板，不是本包的图纸。
+fn is_template_pid_entry(entry: &str) -> bool {
+    entry
+        .split(['/', '\\'])
+        .any(|part| part.eq_ignore_ascii_case("Template Files"))
+}
+
+/// `_Index.json` 用来指名一个 `.pid` 条目的 `<zip>:<entry>` 键。
+fn entry_key(zip_file: &str, entry: &str) -> String {
+    format!("{zip_file}:{entry}")
+}
+
 /// Zip entry name from the raw central-directory bytes.
 ///
 /// ASCII and valid UTF-8 stay as they are. Anything else is GBK. A GBK
@@ -867,11 +926,12 @@ struct MtfDrawingRow {
 /// through [`super::mdf_load::open_mtf_dump_as_sqlite`], `T_Drawing`
 /// rows enumerate the drawings, and each is loaded with the proven
 /// `sqlite_load` path and written as `<Name>_Data.xml` +
-/// `<Name>_Meta.xml`. `PlantData` zips are listed but never inflated:
-/// `_Index.json` keeps the same shape as the Oracle `exp` branch, the
-/// `T_Drawing.Path` → zip-entry map pairs each drawing with its `.pid`
-/// entry, and entries with no model row surface under
-/// `unmatched_pid_entries`.
+/// `<Name>_Meta.xml` + `<Name>_Coverage.json`. `PlantData` zips are
+/// listed but never inflated: `_Index.json` keeps the same shape as the
+/// Oracle `exp` branch, the `T_Drawing.Path` → zip-entry map pairs each
+/// drawing with its `.pid` entry, `.pid` entries under `Template Files`
+/// are tallied under `template_pid_entries`, and entries with no model
+/// row surface under `unmatched_pid_entries`.
 #[cfg(feature = "backup-mdf")]
 fn publish_mtf_package(
     package_dir: &Path,
@@ -909,6 +969,7 @@ fn publish_mtf_package(
     // pairs each drawing with the `.pid` entry that carries the same
     // graphic data.
     let mut pid_entries = 0usize;
+    let mut template_pid_entries = 0usize;
     let mut zip_pid: HashMap<String, (String, String)> = HashMap::new();
     for plant in &scan.plant_data {
         if !matches!(plant.format, crate::backup::RefDataFormat::Zip) {
@@ -947,6 +1008,10 @@ fn publish_mtf_package(
                 continue;
             }
             pid_entries += 1;
+            if is_template_pid_entry(&name) {
+                template_pid_entries += 1;
+                continue;
+            }
             zip_pid
                 .entry(backup_path_key(&name))
                 .or_insert((plant.file_name.clone(), name));
@@ -971,7 +1036,7 @@ fn publish_mtf_package(
             .get(&path_key)
             .map(|(file, entry)| (file.clone(), entry.clone()))
             .unwrap_or_default();
-        let (graph_name, xml, meta) = match mtf_render_drawing(&conn, &row.uid, plant_name) {
+        let (graph, graph_name, xml, meta) = match mtf_render_drawing(&conn, &row.uid, plant_name) {
             Ok(parts) => parts,
             Err(detail) => {
                 problems.push(format!("{} {}: {detail}", row.name, row.uid));
@@ -979,9 +1044,10 @@ fn publish_mtf_package(
                 drawings.push(mtf_drawing_entry(
                     row,
                     &row.name,
-                    &zip_file,
-                    &zip_entry,
+                    (&zip_file, &zip_entry),
                     (0, 0, 0),
+                    String::new(),
+                    Vec::new(),
                     vec![detail],
                 ));
                 continue;
@@ -1001,9 +1067,10 @@ fn publish_mtf_package(
             drawings.push(mtf_drawing_entry(
                 row,
                 &name,
-                &zip_file,
-                &zip_entry,
+                (&zip_file, &zip_entry),
                 (0, 0, 0),
+                graph.template.clone().unwrap_or_default(),
+                Vec::new(),
                 vec![detail],
             ));
             continue;
@@ -1017,25 +1084,30 @@ fn publish_mtf_package(
                 drawings.push(mtf_drawing_entry(
                     row,
                     &name,
-                    &zip_file,
-                    &zip_entry,
+                    (&zip_file, &zip_entry),
                     (0, 0, 0),
+                    graph.template.clone().unwrap_or_default(),
+                    Vec::new(),
                     vec![detail],
                 ));
                 continue;
             }
         };
+        let source = PathBuf::from(format!("{zip_file}:{zip_entry}"));
+        let report = super::pid_writer::write_database_coverage_json(&graph, &source, counts);
         if let Err(detail) = write_file(&out_dir.join(format!("{name}_Data.xml")), &xml)
             .and_then(|()| write_file(&out_dir.join(format!("{name}_Meta.xml")), &meta))
+            .and_then(|()| write_file(&out_dir.join(format!("{name}_Coverage.json")), &report))
         {
             problems.push(format!("{name}: {detail}"));
             failed += 1;
             drawings.push(mtf_drawing_entry(
                 row,
                 &name,
-                &zip_file,
-                &zip_entry,
+                (&zip_file, &zip_entry),
                 (0, 0, 0),
+                graph.template.clone().unwrap_or_default(),
+                Vec::new(),
                 vec![detail],
             ));
             continue;
@@ -1056,9 +1128,14 @@ fn publish_mtf_package(
         drawings.push(mtf_drawing_entry(
             row,
             &name,
-            &zip_file,
-            &zip_entry,
+            (&zip_file, &zip_entry),
             counts,
+            graph.template.clone().unwrap_or_default(),
+            vec![
+                format!("{name}_Data.xml"),
+                format!("{name}_Meta.xml"),
+                format!("{name}_Coverage.json"),
+            ],
             Vec::new(),
         ));
     }
@@ -1094,6 +1171,7 @@ fn publish_mtf_package(
         "pipelines": pipelines,
         "piping_connectors": piping_connectors,
         "pipeline_uids": "database",
+        "template_pid_entries": template_pid_entries,
         "unmatched_pid_entries": unmatched,
         "drawings": drawings,
         "problems": problems,
@@ -1168,46 +1246,53 @@ fn mtf_drawing_rows(
     Ok(out)
 }
 
-/// One `T_Drawing` row → rendered `_Data.xml` + `_Meta.xml` strings,
-/// plus the drawing's `T_Drawing.Name` as loaded.
+/// One `T_Drawing` row → the loaded graph, the drawing's `T_Drawing.Name`
+/// as loaded, and the rendered `_Data.xml` + `_Meta.xml` strings.
 #[cfg(feature = "backup-mdf")]
 fn mtf_render_drawing(
     conn: &rusqlite::Connection,
     uid: &str,
     plant_name: &str,
-) -> Result<(String, String, String), String> {
+) -> Result<(super::model::PublishDrawing, String, String, String), String> {
     let graph =
         super::sqlite_load::load_drawing_graph(conn, uid).map_err(|error| error.to_string())?;
+    let name = graph.drawing_name.clone();
     let xml =
         super::xml_writer::write_data_xml(&graph, plant_name).map_err(|error| error.to_string())?;
     let meta =
         super::xml_writer::write_meta_xml(&graph, plant_name).map_err(|error| error.to_string())?;
-    Ok((graph.drawing_name, xml, meta))
+    Ok((graph, name, xml, meta))
 }
 
 /// `_Index.json` `drawings[]` entry for the SQL Server MTF branch —
 /// same keys as the Oracle `exp` entry; `oracle_exp` stays null.
+/// `source` is the `<PlantData zip>` / `<zip entry>` pair the drawing came
+/// from; `files` is the file set this run wrote beside it, empty when the
+/// drawing failed.
 #[cfg(feature = "backup-mdf")]
 fn mtf_drawing_entry(
     row: &MtfDrawingRow,
     name: &str,
-    zip_file: &str,
-    zip_entry: &str,
+    source: (&str, &str),
     counts: (usize, usize, usize),
+    template: String,
+    files: Vec<String>,
     problems: Vec<String>,
 ) -> Value {
     json!({
         "doc_uid": row.uid,
         "name": name,
-        "zip_file": zip_file,
-        "zip_entry": zip_entry,
+        "zip_file": source.0,
+        "zip_entry": source.1,
         "drawing_number": row.drawing_number,
         "path": row.path,
+        "template": template,
         "plant_group": "",
         "uid_from": "T_Drawing.SP_ID",
         "objects": counts.0,
         "values": counts.1,
         "relationships": counts.2,
+        "files": files,
         "oracle_exp": Value::Null,
         "problems": problems,
     })
