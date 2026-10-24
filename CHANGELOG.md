@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### 六个 CLI 的 `--help` 改走 stdout，用法错误仍留 stderr（2026-10-24）
+
+`--help` 是调用方要的输出，六个 binary 却一律用 `eprintln!` 当成旁白打出去：
+`pid_publish_xml --help > help.out` 得到 0 字节的文件，`--help | less` 什么都看不到。
+
+- **改法**：`print_usage` 从写死 stderr 的常量改成接收目标 writer。`--help` / `-h` 传 stdout，
+  参数错误传 stderr、紧跟那条诊断；用法正文一个字没改，退出码一个没动（help 全 0，
+  缺参数仍是 2 / 1）。
+- **两个 binary 顺手拆支**：`pid_backup_probe` / `pid_writer_validate` 原先把「无参数」和
+  `--help` 挤在同一个条件里、用 `i32::from(args.len() < 2)` 定退出码 —— 两项都拿同一个值，
+  现在写成两支：help 走 0，缺输入走各自原来的非零值。
+- **`pid_inspect` 原本没有 `--help` 分支**：flag 被当成文件路径送进解析器，报 `Parse error` 退 1。
+  现在在任何文件打开之前应答，复用文件里现成的 `USAGE`。
+- **测试**：四条 `--help` 断言从 stderr 改读 stdout，并补 `stderr.is_empty()` 钉住「只写一处」；
+  缺输入的用例补上镜像断言（正文在 stderr、stdout 干净）；新增 `tests/cli_help_streams.rs`
+  一次覆盖六个 binary，不需要任何 fixture。
+- **实测**：六个 binary 的 `--help` 全是 exit 0 / stdout 有正文 / stderr 0 字节。提交 `23fa36a`。
+
 ### `igArc2d` 的尾字节就是方向位，五条画反的弧归位（2026-10-23）
 
 上一轮复核把最后那处可见差归成「方向在记录里读不出来」。这一轮用两件符号的字节把它读出来了：
