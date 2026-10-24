@@ -182,7 +182,7 @@
 - **钉数**：DB 标签集（15）与 `.pid` 标签集（21）各有字面量对照测试，改目录必须是一次显式提交；`the_coverage_tally_is_the_five_derived_tags` 固定带计数角色的五个 tag；`the_report_tallies_exactly_the_tags_the_catalog_gives_a_tally_role` 固定一份带齐五类集合的图纸产出的 `classes` 键集合；`writer_rows_declare_their_tags` 还要求 `Fixed` 行的 `pid_class` 以 `Class` 角色出现在自己的 `pid_tags` 里。
 - **输出未变**：整包重发 `D:\work\cad\pid-test-data` 后逐文件比 SHA-256，160 个文件（53 `_Data.xml` / 53 `_Meta.xml` / 53 `_Coverage.json` / `_Index.json`）全部与改动前相同；对象 80 085、值 87 419、关系 106 705 一个数没动。
 - **验证**：`cargo test -p pid-parse --lib publish::` 251 过 / 0 败；`publish_from_pid` 9/9（含 53 张整包）、`publish_xml_cli` 20/20、`publish_meta_parity` 6/6、`publish_mdf_load` 3/3、`publish_writer_coverage` 2/2、`publish_backlog_inventory` 4/4；`cargo clippy -p pid-parse --lib --all-targets -- -D warnings` 退出 0；missing-docs 0 = 基线 0；`cargo rustdoc` 仍是既有的 4 条 private intra-doc link 错误，本次未新增。改动四个文件的 `rustfmt --check` 干净；全仓 `cargo fmt --all -- --check` 当前被另一会话新增的未跟踪探针 `pid-plot/examples/probe_library_vs_cached_bodies.rs` 挡住，与本改动无关。
-- 提交：`60f1b25` / `7c79749` / `4735be9` / `6881c18`（A1–A4）、`595ce19`（A3 的 clippy 收尾）、`da150a0`（两条线共用分类与标签集）、`7e31074`（报表按角色计数）。均未推。
+- 提交：`60f1b25` / `7c79749` / `4735be9` / `6881c18`（A1–A4）、`595ce19`（A3 的 clippy 收尾）、`da150a0`（两条线共用分类与标签集）、`7e31074`（报表按角色计数）、`6df3a03`（本条记录）。均已推到 `origin/codex/phase32c-bundle-closeout`。
 
 ### 备份里的 53 张图全部出 PDF：字体只嵌子集，符号路径容忍前导空格（2026-10-21）
 
