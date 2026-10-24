@@ -843,16 +843,18 @@ fn meta_reference_sibling(reference: &Path) -> Option<PathBuf> {
 /// the `--diff-against` reference.
 ///
 /// Returns 0 when the reference has no sibling meta document (there is
-/// nothing to score), 1 when the pair drifted or the reference meta is not
-/// well-formed XML, and 0 when every compared field matches. The report goes
-/// to stdout and the verdict to stderr, as the `_Data.xml` gate does.
+/// nothing to score, and stderr says the meta diff did not run), 1 when the
+/// pair drifted or the reference meta is not well-formed XML, and 0 when
+/// every compared field matches. The report goes to stdout and the verdict to
+/// stderr, as the `_Data.xml` gate does.
 fn report_meta_diff(reference: &Path, data_xml: &str, meta_xml: &str) -> Result<i32, String> {
-    let Some(meta_path) = meta_reference_sibling(reference) else {
+    let Some(meta_path) = meta_reference_sibling(reference).filter(|path| path.is_file()) else {
+        eprintln!(
+            "Meta diff not run: no sibling <Name>_Meta.xml beside {}.",
+            reference.display()
+        );
         return Ok(0);
     };
-    if !meta_path.is_file() {
-        return Ok(0);
-    }
     let reference_meta = std::fs::read_to_string(&meta_path)
         .map_err(|e| format!("read reference meta {}: {e}", meta_path.display()))?;
     let reference_data = std::fs::read_to_string(reference)

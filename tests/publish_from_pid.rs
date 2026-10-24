@@ -1262,3 +1262,26 @@ fn meta_gate_does_not_run_without_a_generated_meta_document() {
         "no meta was generated, so no meta verdict may print:\n{combined}"
     );
 }
+
+#[test]
+fn meta_gate_says_it_did_not_run_when_the_reference_has_no_sibling_meta() {
+    if !a01_fixture("A01.pid").is_file() {
+        eprintln!("skip: {A01_DIR} fixture is missing");
+        return;
+    }
+    // Only the `_Data.xml` is staged: the run writes a meta document, but
+    // there is no `<Name>_Meta.xml` beside the reference to score it against.
+    let reference = unique_out_dir("meta-gate-no-sibling");
+    std::fs::create_dir_all(&reference).expect("reference dir");
+    let data = reference.join("A01_Data.xml");
+    std::fs::copy(a01_fixture("A01_Data.xml"), &data).expect("copy data xml");
+    let out_dir = unique_out_dir("meta-gate-no-sibling-out");
+    let (_, combined) = run_meta_gate(&data, &out_dir);
+    assert!(
+        combined.contains("Meta diff not run: no sibling <Name>_Meta.xml beside"),
+        "{combined}"
+    );
+    assert!(!combined.contains("Meta diff against"), "{combined}");
+    let _ = std::fs::remove_dir_all(&reference);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
