@@ -1730,6 +1730,542 @@ fn finish_publish_block(
     }
 }
 
+/// The `<Container>` attributes a `_Meta.xml` states, in document order.
+///
+/// Every one of them is compared value for value: `CompSchema`, `Scope`,
+/// `SoftwareVersion`, `IsValidated`, `SchemaVersion`, `Plant`, `Project`,
+/// `DocUID`, `DocName`, `Version`, `ToolID`, `ToolSignature`, `SDECIMAL`.
+pub const META_CONTAINER_ATTRIBUTES: [&str; 13] = [
+    "CompSchema",
+    "Scope",
+    "SoftwareVersion",
+    "IsValidated",
+    "SchemaVersion",
+    "Plant",
+    "Project",
+    "DocUID",
+    "DocName",
+    "Version",
+    "ToolID",
+    "ToolSignature",
+    "SDECIMAL",
+];
+
+/// The top-level block order a `_Meta.xml` states.
+pub const META_BLOCK_ORDER: [&str; 6] = [
+    "DocumentVersion",
+    "Rel",
+    "DocumentRevision",
+    "Rel",
+    "File",
+    "Rel",
+];
+
+/// The three `<Rel>` `DefUID`s a `_Meta.xml` states, in order.
+pub const META_REL_DEF_UIDS: [&str; 3] = ["VersionedDoc", "RevisedDocument", "FileComposition"];
+
+/// The `<Rel>` wiring each role states, as `(DefUID, UID1 role, UID2 role)`.
+///
+/// Measured on every reference fixture: `VersionedDoc` wires the drawing to
+/// its `DocumentVersion`, `RevisedDocument` wires the `DocumentRevision` back
+/// to the drawing, and `FileComposition` wires the `File` to the
+/// `DocumentVersion`. The role of an end is the block whose `IObject/@UID`
+/// the end names; the drawing's role is `<Container DocUID>`.
+pub const META_REL_WIRING: [(&str, &str, &str); 3] = [
+    ("VersionedDoc", "drawing", "DocumentVersion"),
+    ("RevisedDocument", "DocumentRevision", "drawing"),
+    ("FileComposition", "File", "DocumentVersion"),
+];
+
+/// The `_Meta.xml` differences that are registered expectations, not findings:
+/// `IDocumentVersion.DocVersionDate` (the `.pid` states no publish date),
+/// `IFile.FilePath` (the reference stamps the publishing machine's share) and
+/// the six derived UUID v5 ids (version / revision / file and the three rels).
+pub const META_ACCEPTED_DIFFERENCES: [&str; 3] = [
+    "IDocumentVersion.DocVersionDate — the .pid states no publish date",
+    "IFile.FilePath — the reference stamps the publishing machine's share path",
+    "the six derived UUID v5 ids (version, revision, file, and the three rels)",
+];
+
+/// The block interface values [`diff_meta_xml`] compares, as
+/// `(block, interface, attribute)`. `DocVersionDate`, `FilePath` and every
+/// derived id stay out of this list by registration.
+const META_COMPARED_VALUES: [(&str, &str, &str); 7] = [
+    ("DocumentVersion", "IObject", "Name"),
+    ("DocumentVersion", "IDocumentVersion", "DocRevision"),
+    ("DocumentVersion", "IDocumentVersion", "DocVersion"),
+    ("DocumentRevision", "IObject", "Name"),
+    (
+        "DocumentRevision",
+        "IDocumentRevision",
+        "MajorRev_ForRevise",
+    ),
+    (
+        "DocumentRevision",
+        "IDocumentRevision",
+        "MinorRev_ForRevise",
+    ),
+    ("File", "IObject", "Name"),
+];
+
+/// How a generated `_Meta.xml` compares with a `SmartPlant` reference.
+///
+/// The compared surfaces are the 13 `<Container>` attributes, the top-level
+/// block order, the three `<Rel>` `DefUID`s and their role wiring, the
+/// document-versioning interface values the reference states, and each meta
+/// document's `<Container DocUID>` against its sibling `_Data.xml`.
+/// `DocVersionDate`, `FilePath` and the derived ids are registered
+/// differences and never findings.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MetaDiff {
+    /// `<Container>` attributes compared pairwise.
+    pub container_attributes: usize,
+    /// Top-level blocks the generated document states.
+    pub blocks: usize,
+    /// `<Rel>` blocks the generated document states.
+    pub rels: usize,
+    /// One line per finding, stable: container, then block order, then the
+    /// block interfaces, then the rels, then the sibling `_Data.xml` check.
+    pub findings: Vec<String>,
+}
+
+impl MetaDiff {
+    /// Every compared field agrees; no registered difference was reported.
+    pub fn is_clean(&self) -> bool {
+        self.findings.is_empty()
+    }
+}
+
+impl fmt::Display for MetaDiff {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "meta diff: container attributes {} ({} compared), blocks {} in order, \
+             rels {} ({})",
+            self.container_attributes,
+            META_CONTAINER_ATTRIBUTES.len(),
+            self.blocks,
+            self.rels,
+            META_REL_DEF_UIDS.join(", "),
+        )?;
+        writeln!(
+            f,
+            "meta compared: <Container> attributes {}, block order {}, Rel DefUIDs {}, \
+             rel role wiring {}, sibling _Data.xml DocUID",
+            META_CONTAINER_ATTRIBUTES.join(", "),
+            META_BLOCK_ORDER.join(", "),
+            META_REL_DEF_UIDS.join(", "),
+            META_REL_WIRING
+                .iter()
+                .map(|(def, uid1, uid2)| format!("{def} {uid1}->{uid2}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )?;
+        writeln!(
+            f,
+            "meta accepted differences (registered): {}",
+            META_ACCEPTED_DIFFERENCES.join("; "),
+        )?;
+        for finding in &self.findings {
+            writeln!(f, "{finding}")?;
+        }
+        Ok(())
+    }
+}
+
+/// One `_Meta.xml` top-level block — `DocumentVersion`, `Rel`,
+/// `DocumentRevision` or `File` — with every interface element it carries.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct MetaBlock {
+    /// The element name.
+    name: String,
+    /// The block's own `IObject/@UID` — a `<Rel>` carries one too, where it
+    /// is the rel's own id.
+    object_uid: String,
+    /// `IRel/@DefUID`; empty on a non-rel block.
+    def_uid: String,
+    /// `IRel/@UID1`, the relationship's source end.
+    uid1: String,
+    /// `IRel/@UID2`, the relationship's target end.
+    uid2: String,
+    /// Interface name -> attribute name -> value.
+    interfaces: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+/// A parsed `_Meta.xml`: the root `<Container>` attributes plus the
+/// top-level blocks in document order.
+#[derive(Debug, Clone, Default)]
+struct MetaDocument {
+    /// The root `<Container>` element's attributes.
+    container: BTreeMap<String, String>,
+    /// Top-level child blocks, in document order.
+    blocks: Vec<MetaBlock>,
+}
+
+/// Read a `_Meta.xml` into a [`MetaDocument`], using the same quick-xml
+/// discipline as [`read_publish_document`]: the read stops at the first
+/// parse error, and at the end of input while an element is still open.
+fn read_meta_document(
+    xml: &str,
+    side: PublishDocumentSide,
+) -> Result<MetaDocument, MalformedPublishDocument> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut document = MetaDocument::default();
+    let mut open_tags: Vec<String> = Vec::new();
+    let mut block: Option<MetaBlock> = None;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(start)) => {
+                let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                match open_tags.len() {
+                    0 => document.container = meta_attributes(&start),
+                    1 => {
+                        block = Some(MetaBlock {
+                            name: tag.clone(),
+                            ..MetaBlock::default()
+                        });
+                    }
+                    2 => push_meta_interface(&start, &mut block),
+                    _ => {}
+                }
+                open_tags.push(tag);
+            }
+            Ok(Event::Empty(start)) => {
+                match open_tags.len() {
+                    // A self-closing root still carries the container
+                    // attributes; a self-closing top-level block still
+                    // counts for the block order.
+                    0 => document.container = meta_attributes(&start),
+                    1 => document.blocks.push(MetaBlock {
+                        name: String::from_utf8_lossy(start.name().as_ref()).into_owned(),
+                        ..MetaBlock::default()
+                    }),
+                    2 => push_meta_interface(&start, &mut block),
+                    _ => {}
+                }
+            }
+            Ok(Event::End(_)) => {
+                open_tags.pop();
+                if open_tags.len() == 1 {
+                    if let Some(mut done) = block.take() {
+                        finish_meta_block(&mut done);
+                        document.blocks.push(done);
+                    }
+                }
+            }
+            Ok(Event::Eof) => {
+                // Same unclosed-element check as read_publish_document.
+                if let Some(tag) = open_tags.pop() {
+                    let error = quick_xml::Error::IllFormed(IllFormedError::MissingEndTag(tag));
+                    return Err(MalformedPublishDocument {
+                        side,
+                        position: reader.buffer_position(),
+                        message: error.to_string(),
+                    });
+                }
+                break;
+            }
+            Err(error) => {
+                return Err(MalformedPublishDocument {
+                    side,
+                    position: reader.error_position(),
+                    message: error.to_string(),
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(document)
+}
+
+/// The attribute name -> value map of one element's opening tag.
+fn meta_attributes(start: &BytesStart<'_>) -> BTreeMap<String, String> {
+    start
+        .attributes()
+        .flatten()
+        .map(|attribute| {
+            (
+                String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
+                attribute
+                    .unescape_value()
+                    .map(std::borrow::Cow::into_owned)
+                    .unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
+/// Record one interface element's attributes on the block being read.
+fn push_meta_interface(start: &BytesStart<'_>, block: &mut Option<MetaBlock>) {
+    let Some(block) = block.as_mut() else {
+        return;
+    };
+    let interface = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+    block.interfaces.insert(interface, meta_attributes(start));
+}
+
+/// Pull the `IObject.UID` / `IRel.*` fields out of a finished block's
+/// interface map; anything absent surfaces as an empty string.
+fn finish_meta_block(block: &mut MetaBlock) {
+    let get = |interface: &str, attribute: &str| {
+        block
+            .interfaces
+            .get(interface)
+            .and_then(|pairs| pairs.get(attribute))
+            .cloned()
+            .unwrap_or_default()
+    };
+    block.object_uid = get("IObject", "UID");
+    block.def_uid = get("IRel", "DefUID");
+    block.uid1 = get("IRel", "UID1");
+    block.uid2 = get("IRel", "UID2");
+}
+
+/// One attribute of one interface on one block, `None` when either level
+/// is absent.
+fn meta_interface_value<'a>(
+    block: &'a MetaBlock,
+    interface: &str,
+    attribute: &str,
+) -> Option<&'a String> {
+    block.interfaces.get(interface)?.get(attribute)
+}
+
+/// Resolve one rel end (`UID1` / `UID2`) to its role inside `document`:
+/// `drawing` for the `<Container DocUID>`, the block name for a block's
+/// `IObject/@UID`, and the literal UID when it resolves to nothing so the
+/// finding still shows it.
+fn meta_end_role(document: &MetaDocument, uid: &str) -> String {
+    if !uid.is_empty() && uid == document.container.get("DocUID").map_or("", String::as_str) {
+        return "drawing".to_string();
+    }
+    for block in &document.blocks {
+        if block.name != "Rel" && !block.object_uid.is_empty() && block.object_uid == uid {
+            return block.name.clone();
+        }
+    }
+    uid.to_string()
+}
+
+/// Check every `Rel` block of one side against [`META_REL_WIRING`]; a
+/// registered `DefUID` whose resolved `(role1, role2)` differs is a
+/// finding. A `DefUID` occurring more than once is checked per occurrence.
+fn check_meta_wiring(document: &MetaDocument, diff: &mut MetaDiff) {
+    for block in document.blocks.iter().filter(|block| block.name == "Rel") {
+        let Some((_, want1, want2)) = META_REL_WIRING
+            .iter()
+            .find(|(def, _, _)| *def == block.def_uid)
+        else {
+            continue;
+        };
+        let role1 = meta_end_role(document, &block.uid1);
+        let role2 = meta_end_role(document, &block.uid2);
+        if role1 != *want1 || role2 != *want2 {
+            diff.findings.push(format!(
+                "rel {} {} -> {}: {role1} -> {role2} is not the registered {want1} -> {want2}",
+                block.def_uid, block.uid1, block.uid2,
+            ));
+        }
+    }
+}
+
+/// The `<Container DocUID>` a publish document states, or `None` when the
+/// root element is absent, unreadable or carries no such attribute. A
+/// malformed document surfaces `None` too — the `_Data.xml` gate already
+/// refuses ill-formed input before this reader runs.
+fn publish_container_doc_uid(xml: &str) -> Option<String> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(start)) | Ok(Event::Empty(start)) => {
+                return meta_attributes(&start).get("DocUID").cloned();
+            }
+            Ok(Event::Eof) | Err(_) => return None,
+            _ => {}
+        }
+    }
+}
+
+/// The `<Rel>` `DefUID` sequence one side states, in document order.
+fn meta_rel_def_uids(document: &MetaDocument) -> String {
+    document
+        .blocks
+        .iter()
+        .filter(|block| block.name == "Rel")
+        .map(|block| block.def_uid.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Score a generated `_Meta.xml` against a `SmartPlant` reference `_Meta.xml`.
+///
+/// `generated_data` / `reference_data` are the sibling `_Data.xml` documents:
+/// a meta document's `<Container DocUID>` must be the `DocUID` its sibling
+/// states, or the pair is a mis-paired reference.
+///
+/// # Errors
+///
+/// Returns [`MalformedPublishDocument`] when either meta document is not
+/// well-formed XML; nothing is scored then.
+pub fn diff_meta_xml(
+    generated_meta: &str,
+    reference_meta: &str,
+    generated_data: &str,
+    reference_data: &str,
+) -> Result<MetaDiff, MalformedPublishDocument> {
+    let generated = read_meta_document(generated_meta, PublishDocumentSide::Generated)?;
+    let reference = read_meta_document(reference_meta, PublishDocumentSide::Reference)?;
+    let mut diff = MetaDiff {
+        container_attributes: META_CONTAINER_ATTRIBUTES.len(),
+        blocks: generated.blocks.len(),
+        rels: generated
+            .blocks
+            .iter()
+            .filter(|block| block.name == "Rel")
+            .count(),
+        ..MetaDiff::default()
+    };
+    let doc_uid = generated
+        .container
+        .get("DocUID")
+        .cloned()
+        .unwrap_or_default();
+
+    // 1. `<Container>` attributes — the union of both sides, value by value.
+    let attributes: std::collections::BTreeSet<&str> = generated
+        .container
+        .keys()
+        .map(String::as_str)
+        .chain(reference.container.keys().map(String::as_str))
+        .collect();
+    for attribute in attributes {
+        match (
+            generated.container.get(attribute),
+            reference.container.get(attribute),
+        ) {
+            (Some(ours), Some(theirs)) if ours == theirs => {}
+            (Some(ours), Some(theirs)) => diff.findings.push(format!(
+                "value Container {doc_uid} Container.{attribute}: {ours:?} reference {theirs:?}"
+            )),
+            (Some(ours), None) => diff.findings.push(format!(
+                "value Container {doc_uid} Container.{attribute}: {ours:?} not in reference"
+            )),
+            (None, Some(theirs)) => diff.findings.push(format!(
+                "value Container {doc_uid} Container.{attribute}: absent reference {theirs:?}"
+            )),
+            (None, None) => {}
+        }
+    }
+
+    // 2. Top-level block order, compared as the joined name sequence.
+    let ours_order = generated
+        .blocks
+        .iter()
+        .map(|block| block.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let theirs_order = reference
+        .blocks
+        .iter()
+        .map(|block| block.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if ours_order != theirs_order {
+        diff.findings.push(format!(
+            "value Container {doc_uid} Container.block-order: {ours_order} reference \
+             {theirs_order}"
+        ));
+    }
+
+    // 3. Block interface values, paired by index; a name mismatch was
+    // already named by the order check.
+    for (ours, theirs) in generated.blocks.iter().zip(reference.blocks.iter()) {
+        if ours.name != theirs.name {
+            continue;
+        }
+        for (block, interface, attribute) in META_COMPARED_VALUES {
+            if block != ours.name {
+                continue;
+            }
+            let name = ours.name.as_str();
+            match (
+                meta_interface_value(ours, interface, attribute),
+                meta_interface_value(theirs, interface, attribute),
+            ) {
+                (Some(ours), Some(theirs)) if ours == theirs => {}
+                (Some(ours), Some(theirs)) => diff.findings.push(format!(
+                    "value Container {doc_uid} Container.{name}.{interface}.{attribute}: \
+                     {ours:?} reference {theirs:?}"
+                )),
+                (Some(ours), None) => diff.findings.push(format!(
+                    "value Container {doc_uid} Container.{name}.{interface}.{attribute}: \
+                     {ours:?} not in reference"
+                )),
+                (None, Some(theirs)) => diff.findings.push(format!(
+                    "value Container {doc_uid} Container.{name}.{interface}.{attribute}: \
+                     absent reference {theirs:?}"
+                )),
+                (None, None) => {}
+            }
+        }
+    }
+
+    // 4. The `Rel` `DefUID` sequence.
+    let ours_def_uids = meta_rel_def_uids(&generated);
+    let theirs_def_uids = meta_rel_def_uids(&reference);
+    if ours_def_uids != theirs_def_uids {
+        diff.findings.push(format!(
+            "value Container {doc_uid} Container.rel-DefUIDs: {ours_def_uids} reference \
+             {theirs_def_uids}"
+        ));
+    }
+
+    // 5. A registered role missing from the generated side, or an extra
+    // one the reference never states.
+    for role in META_REL_DEF_UIDS {
+        let ours = generated
+            .blocks
+            .iter()
+            .filter(|block| block.name == "Rel" && block.def_uid == role)
+            .count();
+        let theirs = reference
+            .blocks
+            .iter()
+            .filter(|block| block.name == "Rel" && block.def_uid == role)
+            .count();
+        if ours == 0 && theirs > 0 {
+            diff.findings
+                .push(format!("missing rel {role} (Container {doc_uid})"));
+        } else if ours > 0 && theirs == 0 {
+            diff.findings
+                .push(format!("extra rel {role} (Container {doc_uid})"));
+        }
+    }
+
+    // 6. Role wiring — each side must satisfy META_REL_WIRING on its own.
+    check_meta_wiring(&generated, &mut diff);
+    check_meta_wiring(&reference, &mut diff);
+
+    // 7. Each meta's `DocUID` against its sibling `_Data.xml`'s.
+    for (meta, data, side) in [
+        (&generated, generated_data, "generated"),
+        (&reference, reference_data, "reference"),
+    ] {
+        let meta_uid = meta.container.get("DocUID").cloned().unwrap_or_default();
+        let data_uid = publish_container_doc_uid(data).unwrap_or_default();
+        if meta_uid != data_uid {
+            diff.findings.push(format!(
+                "value Container {data_uid} Container.DocUID: {meta_uid:?} reference sibling \
+                 _Data.xml {data_uid:?} ({side})"
+            ));
+        }
+    }
+
+    Ok(diff)
+}
+
 #[path = "diff_exclusions.rs"]
 mod exclusions;
 
@@ -2940,5 +3476,213 @@ mod tests {
         );
         assert!(s.contains("MATCH"));
         assert!(s.contains("DrawingItems"));
+    }
+
+    // -----------------------------------------------------------------
+    // G5 — the `_Meta.xml` companion gate
+    // -----------------------------------------------------------------
+
+    /// One `_Meta.xml`'s six top-level blocks, built from a per-side `seed`
+    /// so a generated/reference pair differs only in the derived ids.
+    fn meta_blocks(seed: &str, doc_uid: &str, version_date: &str, file_path: &str) -> [String; 6] {
+        let version_uid = format!("{seed}VERSION");
+        let revision_uid = format!("{seed}REVISION");
+        let file_uid = format!("{seed}FILE");
+        [
+            format!(
+                "<DocumentVersion><IObject UID=\"{version_uid}\" Name=\"A01 Version\"/>\
+                 <IDocumentVersion DocRevision=\"0\" DocVersionDate=\"{version_date}\" \
+                 DocVersion=\"1\"/><IFileComposition/></DocumentVersion>"
+            ),
+            format!(
+                "<Rel><IObject UID=\"{seed}REL1\"/>\
+                 <IRel UID1=\"{doc_uid}\" UID2=\"{version_uid}\" DefUID=\"VersionedDoc\"/></Rel>"
+            ),
+            format!(
+                "<DocumentRevision><IObject UID=\"{revision_uid}\" Name=\"A01 Revision\"/>\
+                 <IDocumentRevision MajorRev_ForRevise=\"0\" MinorRev_ForRevise=\"\"/>\
+                 </DocumentRevision>"
+            ),
+            format!(
+                "<Rel><IObject UID=\"{seed}REL2\"/>\
+                 <IRel UID1=\"{revision_uid}\" UID2=\"{doc_uid}\" DefUID=\"RevisedDocument\"/></Rel>"
+            ),
+            format!(
+                "<File><IObject UID=\"{file_uid}\" Name=\"A01.pid\" Description=\"\"/>\
+                 <IFile FilePath=\"{file_path}\"/></File>"
+            ),
+            format!(
+                "<Rel><IObject UID=\"{seed}REL3\"/>\
+                 <IRel UID1=\"{file_uid}\" UID2=\"{version_uid}\" DefUID=\"FileComposition\"/></Rel>"
+            ),
+        ]
+    }
+
+    /// Assemble a whole `_Meta.xml` from the 13-attribute `<Container>`
+    /// shape and the six blocks in `order`.
+    fn meta_document(
+        seed: &str,
+        doc_uid: &str,
+        version_date: &str,
+        file_path: &str,
+        order: &[usize],
+    ) -> String {
+        let blocks = meta_blocks(seed, doc_uid, version_date, file_path);
+        let mut xml = format!(
+            "<Container CompSchema=\"DocVersioningComponent\" Scope=\"Data\" \
+             SoftwareVersion=\"10.00.31.0023\" IsValidated=\"False\" \
+             SchemaVersion=\"04.02.17.01\" Plant=\"P01\" Project=\"\" DocUID=\"{doc_uid}\" \
+             DocName=\"A01\" Version=\"\" ToolID=\"SMARTPLANTPID\" ToolSignature=\"AAAD\" \
+             SDECIMAL=\".\">"
+        );
+        for &index in order {
+            xml.push_str(&blocks[index]);
+        }
+        xml.push_str("</Container>");
+        xml
+    }
+
+    /// The sibling `_Data.xml` a meta document pairs with: the gate reads
+    /// only the root `DocUID`.
+    fn data_document(doc_uid: &str) -> String {
+        format!(
+            "<Container DocUID=\"{doc_uid}\" DocName=\"A01\">\
+             <PIDDrawing><IObject UID=\"{doc_uid}\" Name=\"A01\"/></PIDDrawing></Container>"
+        )
+    }
+
+    const CANONICAL_ORDER: [usize; 6] = [0, 1, 2, 3, 4, 5];
+
+    #[test]
+    fn meta_container_attribute_list_is_the_thirteen_the_writer_states() {
+        let drawing = crate::publish::PublishDrawing::new("UID-A01", "A01");
+        let xml =
+            crate::publish::xml_writer::write_meta_xml(&drawing, "P01").expect("meta renders");
+        let document = read_meta_document(&xml, PublishDocumentSide::Generated)
+            .expect("the writer's meta is well-formed");
+        let names: Vec<&str> = document.container.keys().map(String::as_str).collect();
+        let mut expected: Vec<&str> = META_CONTAINER_ATTRIBUTES.to_vec();
+        expected.sort_unstable();
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn meta_diff_is_clean_for_a_pair_that_only_differs_in_the_registered_fields() {
+        let generated = meta_document("G", "UID-DOC", "", "", &CANONICAL_ORDER);
+        let reference = meta_document(
+            "R",
+            "UID-DOC",
+            "2026/04/20",
+            r"\\share\publish\A01.pid",
+            &CANONICAL_ORDER,
+        );
+        let data = data_document("UID-DOC");
+        let diff = diff_meta_xml(&generated, &reference, &data, &data).expect("well-formed");
+        assert!(diff.is_clean(), "{diff}");
+        assert_eq!(diff.container_attributes, 13);
+        assert_eq!(diff.blocks, 6);
+        assert_eq!(diff.rels, 3);
+        assert!(diff.findings.is_empty(), "{diff}");
+    }
+
+    #[test]
+    fn meta_diff_names_a_drifted_container_attribute() {
+        let generated = meta_document("G", "UID-DOC", "", "", &CANONICAL_ORDER);
+        let reference = meta_document("R", "UID-DOC", "", "", &CANONICAL_ORDER).replacen(
+            "ToolSignature=\"AAAD\"",
+            "ToolSignature=\"BBBB\"",
+            1,
+        );
+        let data = data_document("UID-DOC");
+        let diff = diff_meta_xml(&generated, &reference, &data, &data).expect("well-formed");
+        assert_eq!(diff.findings.len(), 1, "{diff}");
+        let finding = &diff.findings[0];
+        for needle in ["ToolSignature", "AAAD", "BBBB"] {
+            assert!(finding.contains(needle), "{finding}");
+        }
+    }
+
+    #[test]
+    fn meta_diff_names_a_drifted_block_order() {
+        let generated = meta_document("G", "UID-DOC", "", "", &CANONICAL_ORDER);
+        let reference = meta_document("R", "UID-DOC", "", "", &[2, 1, 0, 3, 4, 5]);
+        let data = data_document("UID-DOC");
+        let diff = diff_meta_xml(&generated, &reference, &data, &data).expect("well-formed");
+        let finding = diff
+            .findings
+            .iter()
+            .find(|f| f.contains("block-order"))
+            .expect("a block-order finding");
+        for needle in ["DocumentVersion", "DocumentRevision"] {
+            assert!(finding.contains(needle), "{finding}");
+        }
+    }
+
+    #[test]
+    fn meta_diff_names_a_drifted_def_uid() {
+        let generated = meta_document("G", "UID-DOC", "", "", &CANONICAL_ORDER);
+        let reference = meta_document("R", "UID-DOC", "", "", &CANONICAL_ORDER).replacen(
+            "DefUID=\"RevisedDocument\"",
+            "DefUID=\"VersionedDoc\"",
+            1,
+        );
+        let data = data_document("UID-DOC");
+        let diff = diff_meta_xml(&generated, &reference, &data, &data).expect("well-formed");
+        let finding = diff
+            .findings
+            .iter()
+            .find(|f| f.contains("rel-DefUIDs"))
+            .expect("a rel-DefUIDs finding");
+        for needle in ["VersionedDoc", "RevisedDocument"] {
+            assert!(finding.contains(needle), "{finding}");
+        }
+    }
+
+    #[test]
+    fn meta_diff_names_a_broken_rel_wiring() {
+        let generated = meta_document("G", "UID-DOC", "", "", &CANONICAL_ORDER);
+        // FileComposition's ends swapped: version -> file instead of
+        // file -> version.
+        let reference = meta_document("R", "UID-DOC", "", "", &CANONICAL_ORDER).replacen(
+            "UID1=\"RFILE\" UID2=\"RVERSION\"",
+            "UID1=\"RVERSION\" UID2=\"RFILE\"",
+            1,
+        );
+        let data = data_document("UID-DOC");
+        let diff = diff_meta_xml(&generated, &reference, &data, &data).expect("well-formed");
+        let finding = diff
+            .findings
+            .iter()
+            .find(|f| f.contains("is not the registered"))
+            .expect("a wiring finding");
+        assert!(finding.contains("FileComposition"), "{finding}");
+    }
+
+    #[test]
+    fn meta_diff_names_a_meta_doc_uid_the_sibling_data_does_not_state() {
+        let generated = meta_document("G", "UID-DOC", "", "", &CANONICAL_ORDER).replacen(
+            "DocUID=\"UID-DOC\"",
+            "DocUID=\"DRIFTED\"",
+            1,
+        );
+        let reference = meta_document("R", "UID-DOC", "", "", &CANONICAL_ORDER);
+        let data = data_document("UID-DOC");
+        let diff = diff_meta_xml(&generated, &reference, &data, &data).expect("well-formed");
+        let finding = diff
+            .findings
+            .iter()
+            .find(|f| f.contains("sibling _Data.xml") && f.contains("DocUID"))
+            .expect("a sibling DocUID finding");
+        assert!(finding.contains("DRIFTED"), "{finding}");
+    }
+
+    #[test]
+    fn meta_diff_refuses_a_meta_document_that_is_not_well_formed() {
+        let meta = meta_document("G", "UID-DOC", "", "", &CANONICAL_ORDER);
+        let cut = &meta[..meta.len() / 2];
+        let data = data_document("UID-DOC");
+        let error = diff_meta_xml(cut, &meta, &data, &data).expect_err("half a document");
+        assert_eq!(error.side, PublishDocumentSide::Generated);
+        assert!(error.to_string().contains("not well-formed"), "{error}");
     }
 }

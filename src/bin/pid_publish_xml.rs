@@ -31,6 +31,7 @@
 //! Exit codes: 0 = wrote document, 1 = I/O / format error, 2 =
 //! usage error.
 
+use pid_parse::publish::diff::diff_meta_xml;
 use pid_parse::publish::pid_writer::{
     composition_rel_counts, connectivity_rel_counts, derived_by_native_rule_count,
 };
@@ -145,6 +146,16 @@ fn print_usage() {
          \x20                   plant database's attribute classes, and the\n\
          \x20                   tag-named duplicate elements. With --oracle-exp\n\
          \x20                   the clean line says oracle-exp mode.\n\
+         \x20                   With a .pid input, a _Meta.xml this run writes
+         \x20                   (--out-dir or --meta-out) is scored too: the
+         \x20                   <Name>_Meta.xml beside the reference
+         \x20                   <Name>_Data.xml is compared on the 13
+         \x20                   <Container> attributes, the top-level block
+         \x20                   order, the three Rel DefUIDs and their role
+         \x20                   wiring, and the sibling _Data.xml DocUID.
+         \x20                   DocVersionDate, FilePath and the six derived
+         \x20                   UUID v5 ids are registered accepted
+         \x20                   differences. Drift exits 1.\n\
          --oracle-exp FILE   .pid input only: read piping and signal ports from\n\
          \x20                   an Oracle exp dump and emit them for parents this\n\
          \x20                   file already publishes. Pipe runs with a tag\n\
@@ -706,7 +717,20 @@ fn run_pid(options: &CliOptions) -> Result<i32, String> {
         }
     }
     match &options.diff_against {
-        Some(ref_path) => report_pid_diff(ref_path, &xml, options.oracle_exp.is_some()),
+        Some(ref_path) => {
+            // G5 — the `_Meta.xml` companion gate. A meta document this run
+            // generates (`--out-dir` / `--meta-out`) is scored against the
+            // reference's own sibling meta; a run that generates none has
+            // nothing to score.
+            let meta_exit = if options.meta_output.is_some() || options.out_dir.is_some() {
+                let meta_xml = write_pid_meta_xml(&drawing, &options.plant_name)
+                    .map_err(|e| format!("render meta XML: {e}"))?;
+                report_meta_diff(ref_path, &xml, &meta_xml)?
+            } else {
+                0
+            };
+            report_pid_diff(ref_path, &xml, options.oracle_exp.is_some(), meta_exit != 0)
+        }
         None => Ok(0),
     }
 }
@@ -736,7 +760,12 @@ fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
 /// `reference-only:` accounting line and one `excused` line per excused
 /// class follow the findings. A document that is not well-formed XML is
 /// not scored: the refusal goes to stdout and stderr and exits 1.
-fn report_pid_diff(ref_path: &Path, xml: &str, oracle_exp: bool) -> Result<i32, String> {
+fn report_pid_diff(
+    ref_path: &Path,
+    xml: &str,
+    oracle_exp: bool,
+    meta_dirty: bool,
+) -> Result<i32, String> {
     let reference = std::fs::read_to_string(ref_path)
         .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
     let diff = match diff_pid_export(xml, &reference) {
@@ -750,8 +779,8 @@ fn report_pid_diff(ref_path: &Path, xml: &str, oracle_exp: bool) -> Result<i32, 
         }
     };
     print!("{diff}");
-    if diff.is_clean() {
-        let mode = if oracle_exp { "oracle-exp" } else { ".pid" };
+    let mode = if oracle_exp { "oracle-exp" } else { ".pid" };
+    if diff.is_clean() && !meta_dirty {
         eprintln!(
             "Semantic diff against {} is clean in {mode} mode ({} objects, {} values, {} rels).",
             ref_path.display(),
@@ -760,6 +789,18 @@ fn report_pid_diff(ref_path: &Path, xml: &str, oracle_exp: bool) -> Result<i32, 
             diff.rels,
         );
         Ok(0)
+    } else if diff.is_clean() {
+        // The `_Meta.xml` gate is the only thing that found something: the run
+        // is not clean, so no line may say it is.
+        eprintln!(
+            "Semantic diff against {} has no _Data.xml finding in {mode} mode ({} objects, \
+             {} values, {} rels), but the _Meta.xml comparison did; exit 1.",
+            ref_path.display(),
+            diff.objects,
+            diff.values,
+            diff.rels,
+        );
+        Ok(1)
     } else {
         eprintln!(
             "Semantic diff against {} surfaced findings in .pid mode:\n  \
@@ -776,6 +817,63 @@ fn report_pid_diff(ref_path: &Path, xml: &str, oracle_exp: bool) -> Result<i32, 
             diff.values_not_in_generated,
             diff.rels_not_in_reference,
             diff.rels_not_in_generated,
+        );
+        Ok(1)
+    }
+}
+
+/// G5 — the `<Name>_Meta.xml` that belongs beside a `<Name>_Data.xml`
+/// reference. `None` when the reference is not named that way.
+fn meta_reference_sibling(reference: &Path) -> Option<PathBuf> {
+    let name = reference.file_name()?.to_str()?;
+    let stem = name.strip_suffix("_Data.xml")?;
+    Some(reference.with_file_name(format!("{stem}_Meta.xml")))
+}
+
+/// G5 — score the generated `_Meta.xml` against the `<Name>_Meta.xml` beside
+/// the `--diff-against` reference.
+///
+/// Returns 0 when the reference has no sibling meta document (there is
+/// nothing to score), 1 when the pair drifted or the reference meta is not
+/// well-formed XML, and 0 when every compared field matches. The report goes
+/// to stdout and the verdict to stderr, as the `_Data.xml` gate does.
+fn report_meta_diff(reference: &Path, data_xml: &str, meta_xml: &str) -> Result<i32, String> {
+    let Some(meta_path) = meta_reference_sibling(reference) else {
+        return Ok(0);
+    };
+    if !meta_path.is_file() {
+        return Ok(0);
+    }
+    let reference_meta = std::fs::read_to_string(&meta_path)
+        .map_err(|e| format!("read reference meta {}: {e}", meta_path.display()))?;
+    let reference_data = std::fs::read_to_string(reference)
+        .map_err(|e| format!("read reference {}: {e}", reference.display()))?;
+    let diff = match diff_meta_xml(meta_xml, &reference_meta, data_xml, &reference_data) {
+        Ok(diff) => diff,
+        Err(malformed) => {
+            let path = meta_path.display();
+            let refusal = format!("Meta diff against {path} refused: {malformed}; exit 1.");
+            println!("{refusal}");
+            eprintln!("{refusal}");
+            return Ok(1);
+        }
+    };
+    print!("{diff}");
+    if diff.is_clean() {
+        eprintln!(
+            "Meta diff against {} matched ({} container attributes, {} blocks, {} rels); \
+             accepted by registration: DocVersionDate, FilePath, the six derived UUID v5 ids.",
+            meta_path.display(),
+            diff.container_attributes,
+            diff.blocks,
+            diff.rels,
+        );
+        Ok(0)
+    } else {
+        eprintln!(
+            "Meta diff against {} surfaced {} finding(s); exit 1.",
+            meta_path.display(),
+            diff.findings.len(),
         );
         Ok(1)
     }

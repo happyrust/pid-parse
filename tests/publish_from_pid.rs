@@ -982,3 +982,205 @@ fn sql_server_mtf_directory_publishes_t_drawing_rows() {
 
     let _ = std::fs::remove_dir_all(&out);
 }
+
+// ---------------------------------------------------------------------
+// G5 — the `_Meta.xml` companion gate. The in-repo A01 fixture ships the
+// reference pair `<A01>_Data.xml` / `<A01>_Meta.xml`; a run that writes a
+// meta document (`--out-dir`) scores it against that sibling.
+// ---------------------------------------------------------------------
+
+const A01_DIR: &str = "test-file/export-test/publish-data/A01";
+
+fn a01_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(A01_DIR)
+        .join(name)
+}
+
+/// Stage `<dir>/A01_Data.xml` (the byte-exact fixture) plus `meta_xml` as
+/// `<dir>/A01_Meta.xml`; returns the data path for `--diff-against`.
+fn stage_a01_reference(dir: &Path, meta_xml: &str) -> PathBuf {
+    std::fs::create_dir_all(dir).expect("reference dir");
+    std::fs::copy(a01_fixture("A01_Data.xml"), dir.join("A01_Data.xml")).expect("copy data xml");
+    std::fs::write(dir.join("A01_Meta.xml"), meta_xml).expect("write reference meta");
+    dir.join("A01_Data.xml")
+}
+
+/// `A01.pid --out-dir <out> --plant TEST02 --diff-against <data xml>`,
+/// returning `(status code, stdout + stderr)`.
+fn run_meta_gate(reference_data: &Path, out_dir: &Path) -> (Option<i32>, String) {
+    let output = Command::new(CLI)
+        .arg(a01_fixture("A01.pid"))
+        .arg("--out-dir")
+        .arg(out_dir)
+        .args(["--plant", "TEST02"])
+        .arg("--diff-against")
+        .arg(reference_data)
+        .output()
+        .expect("spawn pid_publish_xml meta gate");
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (output.status.code(), combined)
+}
+
+#[test]
+fn meta_gate_matches_the_a01_reference_when_a_meta_document_is_written() {
+    if !a01_fixture("A01.pid").is_file() || !a01_fixture("A01_Meta.xml").is_file() {
+        eprintln!("skip: {A01_DIR} fixture is missing");
+        return;
+    }
+    let out_dir = unique_out_dir("meta-gate");
+    let output = Command::new(CLI)
+        .arg(a01_fixture("A01.pid"))
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .args(["--plant", "TEST02"])
+        .arg("--diff-against")
+        .arg(a01_fixture("A01_Data.xml"))
+        .output()
+        .expect("spawn pid_publish_xml meta gate");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("meta compared:"), "stdout:\n{stdout}");
+    assert!(
+        stdout.contains("meta accepted differences"),
+        "stdout:\n{stdout}"
+    );
+    assert!(stderr.contains("Meta diff against"), "stderr:\n{stderr}");
+    assert!(stderr.contains("matched"), "stderr:\n{stderr}");
+    assert!(!stdout.contains("value Container"), "stdout:\n{stdout}");
+    // The _Data.xml side still has its registered findings, so exit 1.
+    assert_eq!(output.status.code(), Some(1), "{stdout}\n{stderr}");
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn meta_gate_names_a_drifted_container_attribute() {
+    if !a01_fixture("A01.pid").is_file() || !a01_fixture("A01_Meta.xml").is_file() {
+        eprintln!("skip: {A01_DIR} fixture is missing");
+        return;
+    }
+    let reference = unique_out_dir("meta-gate-attr");
+    let meta = std::fs::read_to_string(a01_fixture("A01_Meta.xml")).expect("reference meta");
+    let drifted = meta.replacen("ToolSignature=\"AAAD\"", "ToolSignature=\"BBBB\"", 1);
+    assert_ne!(drifted, meta);
+    let data = stage_a01_reference(&reference, &drifted);
+    let out_dir = unique_out_dir("meta-gate-attr-out");
+    let (code, combined) = run_meta_gate(&data, &out_dir);
+    assert_eq!(code, Some(1), "{combined}");
+    for needle in ["ToolSignature", "AAAD", "BBBB"] {
+        assert!(combined.contains(needle), "{needle} missing:\n{combined}");
+    }
+    let _ = std::fs::remove_dir_all(&reference);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn meta_gate_names_a_drifted_block_order() {
+    if !a01_fixture("A01.pid").is_file() || !a01_fixture("A01_Meta.xml").is_file() {
+        eprintln!("skip: {A01_DIR} fixture is missing");
+        return;
+    }
+    let meta = std::fs::read_to_string(a01_fixture("A01_Meta.xml")).expect("reference meta");
+    let dv_open = meta
+        .find("<DocumentVersion>")
+        .expect("DocumentVersion opens");
+    let dv_close = meta
+        .find("</DocumentVersion>")
+        .expect("DocumentVersion closes")
+        + "</DocumentVersion>".len();
+    let dr_open = meta
+        .find("<DocumentRevision>")
+        .expect("DocumentRevision opens");
+    let dr_close = meta
+        .find("</DocumentRevision>")
+        .expect("DocumentRevision closes")
+        + "</DocumentRevision>".len();
+    assert!(dv_open < dv_close && dv_close < dr_open && dr_open < dr_close);
+    let drifted = format!(
+        "{}{}{}{}{}",
+        &meta[..dv_open],
+        &meta[dr_open..dr_close],
+        &meta[dv_close..dr_open],
+        &meta[dv_open..dv_close],
+        &meta[dr_close..],
+    );
+    let reference = unique_out_dir("meta-gate-order");
+    let data = stage_a01_reference(&reference, &drifted);
+    let out_dir = unique_out_dir("meta-gate-order-out");
+    let (code, combined) = run_meta_gate(&data, &out_dir);
+    assert_eq!(code, Some(1), "{combined}");
+    for needle in ["block-order", "DocumentVersion", "DocumentRevision"] {
+        assert!(combined.contains(needle), "{needle} missing:\n{combined}");
+    }
+    let _ = std::fs::remove_dir_all(&reference);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn meta_gate_names_a_drifted_def_uid_and_wiring() {
+    if !a01_fixture("A01.pid").is_file() || !a01_fixture("A01_Meta.xml").is_file() {
+        eprintln!("skip: {A01_DIR} fixture is missing");
+        return;
+    }
+    let meta = std::fs::read_to_string(a01_fixture("A01_Meta.xml")).expect("reference meta");
+
+    // (a) RevisedDocument relabelled as VersionedDoc.
+    let drifted = meta.replacen("DefUID=\"RevisedDocument\"", "DefUID=\"VersionedDoc\"", 1);
+    assert_ne!(drifted, meta);
+    let reference = unique_out_dir("meta-gate-defuid");
+    let data = stage_a01_reference(&reference, &drifted);
+    let out_dir = unique_out_dir("meta-gate-defuid-out");
+    let (code, combined) = run_meta_gate(&data, &out_dir);
+    assert_eq!(code, Some(1), "{combined}");
+    for needle in ["VersionedDoc", "RevisedDocument"] {
+        assert!(combined.contains(needle), "{needle} missing:\n{combined}");
+    }
+    let _ = std::fs::remove_dir_all(&reference);
+    let _ = std::fs::remove_dir_all(&out_dir);
+
+    // (b) FileComposition's UID1 / UID2 ends swapped.
+    let drifted = meta.replacen(
+        "UID1=\"AAADC317979198A43C0DECACEB99146F\" UID2=\"3937034585A866941E0CDBAEF2065D34\"",
+        "UID1=\"3937034585A866941E0CDBAEF2065D34\" UID2=\"AAADC317979198A43C0DECACEB99146F\"",
+        1,
+    );
+    assert_ne!(drifted, meta);
+    let reference = unique_out_dir("meta-gate-wiring");
+    let data = stage_a01_reference(&reference, &drifted);
+    let out_dir = unique_out_dir("meta-gate-wiring-out");
+    let (code, combined) = run_meta_gate(&data, &out_dir);
+    assert_eq!(code, Some(1), "{combined}");
+    for needle in ["FileComposition", "is not the registered"] {
+        assert!(combined.contains(needle), "{needle} missing:\n{combined}");
+    }
+    let _ = std::fs::remove_dir_all(&reference);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[test]
+fn meta_gate_does_not_run_without_a_generated_meta_document() {
+    if !a01_fixture("A01.pid").is_file() {
+        eprintln!("skip: {A01_DIR} fixture is missing");
+        return;
+    }
+    let output = Command::new(CLI)
+        .arg(a01_fixture("A01.pid"))
+        .args(["--plant", "TEST02"])
+        .arg("--diff-against")
+        .arg(a01_fixture("A01_Data.xml"))
+        .output()
+        .expect("spawn pid_publish_xml without a meta write");
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("Meta diff against"),
+        "no meta was generated, so no meta verdict may print:\n{combined}"
+    );
+}
