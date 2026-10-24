@@ -242,6 +242,7 @@ pub fn publish_backup_package(
         Some(loaded) => loaded.drawings.len(),
         None => 0,
     };
+    let excluded_from_totals = excluded_from_totals(&drawings);
     let index = json!({
         "package": package_dir.display().to_string(),
         "export": export_kind,
@@ -253,6 +254,7 @@ pub fn publish_backup_package(
         "objects": objects,
         "values": values,
         "relationships": relationships,
+        "excluded_from_totals": excluded_from_totals,
         "piping_ports": piping_ports,
         "signal_ports": signal_ports,
         "connectivity_rels": connectivity_rels,
@@ -774,6 +776,55 @@ fn json_usize(value: &Value, key: &str) -> usize {
         .unwrap_or(0)
 }
 
+/// `_Index.json` `excluded_from_totals` declaration: which `drawings[]`
+/// rows the top-level `objects` / `values` / `relationships` aggregates
+/// do not count, and how much each of them holds — so
+/// `aggregate + excluded == Σ drawings[]` stays machine-checkable.
+///
+/// The rule selects only `uid_from == "T_DRAWING.PATH"` rows — shell
+/// drawings whose `.pid` carried no `P&IDAttributes` row, so the
+/// published `_Data.xml` holds just the `PIDDrawing` container. A
+/// `failed_drawing` row (`uid_from == ""`, every count 0) adds 0 to the
+/// aggregates and to Σ `drawings[]` alike, so it is never a silent
+/// exclusion channel.
+fn excluded_from_totals(drawings: &[Value]) -> Value {
+    let rows: Vec<Value> = drawings
+        .iter()
+        .filter(|row| row["uid_from"] == "T_DRAWING.PATH")
+        .map(|row| {
+            json!({
+                "name": row["name"].clone(),
+                "uid_from": row["uid_from"].clone(),
+                "zip_file": row["zip_file"].clone(),
+                "zip_entry": row["zip_entry"].clone(),
+                "objects": row["objects"].clone(),
+                "values": row["values"].clone(),
+                "relationships": row["relationships"].clone(),
+            })
+        })
+        .collect();
+    let objects = rows
+        .iter()
+        .map(|row| json_usize(row, "objects"))
+        .sum::<usize>();
+    let values = rows
+        .iter()
+        .map(|row| json_usize(row, "values"))
+        .sum::<usize>();
+    let relationships = rows
+        .iter()
+        .map(|row| json_usize(row, "relationships"))
+        .sum::<usize>();
+    json!({
+        "rule": "uid_from == \"T_DRAWING.PATH\"",
+        "reason": "these drawings carry no P&IDAttributes row, so the publish wrote only the PIDDrawing container shell; their counts stay out of the top-level aggregates",
+        "drawings": rows,
+        "objects": objects,
+        "values": values,
+        "relationships": relationships,
+    })
+}
+
 fn entry_stem(entry: &str) -> String {
     let name = entry.rsplit(['/', '\\']).next().unwrap_or(entry);
     name.strip_suffix(".pid")
@@ -1021,6 +1072,7 @@ fn publish_mtf_package(
         .collect();
     unmatched.sort();
 
+    let excluded_from_totals = excluded_from_totals(&drawings);
     let index = json!({
         "package": package_dir.display().to_string(),
         "export": "SqlServerMtf",
@@ -1032,6 +1084,7 @@ fn publish_mtf_package(
         "objects": objects,
         "values": values,
         "relationships": relationships,
+        "excluded_from_totals": excluded_from_totals,
         "piping_ports": 0,
         "signal_ports": 0,
         "connectivity_rels": 0,
@@ -1170,5 +1223,53 @@ mod tests {
         assert!(!errors);
         assert_eq!(decode_zip_entry_name(&encoded), "00/00/井场.pid");
         assert_eq!(decode_zip_entry_name(b"D06.pid"), "D06.pid");
+    }
+
+    #[test]
+    fn excluded_from_totals_names_only_the_shell_rows() {
+        let drawings = vec![
+            json!({
+                "doc_uid": "d03-uid",
+                "name": "D03",
+                "zip_file": "PlantData~2~711.zip",
+                "zip_entry": "test/U01/D03.pid",
+                "drawing_number": "D03",
+                "path": "test/U01/D03.pid",
+                "plant_group": "",
+                "uid_from": "T_DRAWING.PATH",
+                "objects": 1,
+                "values": 1,
+                "relationships": 0,
+                "oracle_exp": Value::Null,
+                "problems": [],
+            }),
+            json!({
+                "doc_uid": "d06-uid",
+                "name": "D06",
+                "zip_file": "PlantData~2~1.zip",
+                "zip_entry": "D06.pid",
+                "drawing_number": "",
+                "path": "",
+                "plant_group": "",
+                "uid_from": "DrawingNo",
+                "objects": 42,
+                "values": 57,
+                "relationships": 13,
+                "oracle_exp": Value::Null,
+                "problems": [],
+            }),
+            failed_drawing("PlantData~2~1.zip", "E01.pid", "read: boom"),
+        ];
+        let declaration = excluded_from_totals(&drawings);
+        assert_eq!(declaration["rule"], "uid_from == \"T_DRAWING.PATH\"");
+        let named = declaration["drawings"]
+            .as_array()
+            .expect("excluded drawings");
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0]["name"], "D03");
+        assert_eq!(named[0]["zip_entry"], "test/U01/D03.pid");
+        assert_eq!(declaration["objects"], 1);
+        assert_eq!(declaration["values"], 1);
+        assert_eq!(declaration["relationships"], 0);
     }
 }

@@ -839,7 +839,48 @@ fn backup_directory_publishes_the_whole_package() {
     assert_eq!(index["failed"], 0);
     assert_eq!(index["shells"], 2);
     assert_eq!(index["objects"], 80_085);
+    assert_eq!(index["values"], 87_419);
     assert_eq!(index["relationships"], 106_705);
+    // The index declares which drawings the top-level objects / values /
+    // relationships aggregates exclude, so for each of those fields
+    // aggregate + excluded == Σ drawings[] — and the declaration names
+    // exactly the uid_from == "T_DRAWING.PATH" rows.
+    let drawing_rows = index["drawings"].as_array().expect("drawings");
+    let sigma = |field: &str| -> u64 {
+        drawing_rows
+            .iter()
+            .map(|row| row[field].as_u64().expect(field))
+            .sum()
+    };
+    let excluded = &index["excluded_from_totals"];
+    assert_eq!(excluded["rule"], "uid_from == \"T_DRAWING.PATH\"");
+    let excluded_rows = excluded["drawings"].as_array().expect("excluded drawings");
+    let mut excluded_names: Vec<&str> = excluded_rows
+        .iter()
+        .map(|row| row["name"].as_str().expect("name"))
+        .collect();
+    excluded_names.sort_unstable();
+    assert_eq!(excluded_names, ["D03", "D04"]);
+    let mut shell_names: Vec<&str> = drawing_rows
+        .iter()
+        .filter(|row| row["uid_from"] == "T_DRAWING.PATH")
+        .map(|row| row["name"].as_str().expect("name"))
+        .collect();
+    shell_names.sort_unstable();
+    assert_eq!(excluded_names, shell_names);
+    for field in ["objects", "values", "relationships"] {
+        let excluded_total = excluded[field].as_u64().expect(field);
+        let declared: u64 = excluded_rows
+            .iter()
+            .map(|row| row[field].as_u64().expect(field))
+            .sum();
+        assert_eq!(excluded_total, declared, "{field}: declaration sum");
+        assert_eq!(
+            index[field].as_u64().expect(field) + excluded_total,
+            sigma(field),
+            "{field}: aggregate + excluded != Σ drawings[]"
+        );
+    }
     assert_eq!(index["piping_ports"], 9_557);
     assert_eq!(index["signal_ports"], 22_021);
     assert_eq!(index["connectivity_rels"], 19_371);
