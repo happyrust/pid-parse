@@ -142,7 +142,8 @@ fn print_usage() {
          \x20                   list does not cover exits 1 too. Excused by\n\
          \x20                   design and printed with their reason: classes\n\
          \x20                   the .pid file cannot state (Port / Enrichment),\n\
-         \x20                   relation classes this run states nowhere, the\n\
+         \x20                   relation classes this line never writes (and the\n\
+         \x20                   dump's, when the run has no exp content), the\n\
          \x20                   plant database's attribute classes, and the\n\
          \x20                   tag-named duplicate elements. With --oracle-exp\n\
          \x20                   the clean line says oracle-exp mode.\n\
@@ -754,9 +755,10 @@ fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
 /// Print the `.pid` export's object / value / rel score. An emitted object,
 /// value or rel the reference does not carry exits 1, and so does
 /// reference-only content the explicit exclusion list does not cover:
-/// classes the `.pid` file cannot state, relation classes this run states
-/// nowhere, the plant database's attribute classes and the tag-named
-/// duplicate elements are excused by design. When the pair is not clean a
+/// classes the `.pid` file cannot state, relation classes this line never
+/// writes (and the dump's, when the run has no exp content), the plant
+/// database's attribute classes and the tag-named duplicate elements are
+/// excused by design. When the pair is not clean a
 /// `reference-only:` accounting line and one `excused` line per excused
 /// class follow the findings. A document that is not well-formed XML is
 /// not scored: the refusal goes to stdout and stderr and exits 1.

@@ -3,35 +3,68 @@
 //! `diff_pid_export` walks the generated document; this module walks the
 //! reference back the other way. Every object, attribute value or rel the
 //! reference carries and the generated document does not is a `missing`
-//! finding unless one of four exclusion sources covers it:
+//! finding unless one of five exclusion sources covers it:
 //!
 //! 1. item classes the `.pid` file cannot state — derived from
 //!    `PublishItemCatalog` via `catalog::pid_file_cannot_state`, and only
 //!    when this run published no object of that class;
 //! 2. the `(interface, attribute)` pairs of
 //!    `catalog::EXCLUDED_ATTRIBUTE_CLASSES` the plant database supplies;
-//! 3. relation classes this run states nowhere — the same wiring under
-//!    another `<Rel>` UID, no generated rel of that `DefUID` at all, or an
-//!    end the generated document does not publish;
+//! 3. relations this run states nowhere — the same wiring under another
+//!    `<Rel>` UID, an end the generated document does not publish (a
+//!    `PIDPipeline` that pairs by name counts as published), or no generated
+//!    rel of that `DefUID` at all. That last excuse never covers a class the
+//!    `.pid` alone yields (`FILE_RELATIONS`), and covers a class only the exp
+//!    dump supplies (`DUMP_RELATIONS`) only while the run carries none of the
+//!    dump's content, so a run that lost a whole class it writes is a finding;
 //! 4. the vendor's tag-named duplicate element — a child element named
 //!    after the block's own `IObject.Name` restating `UID` / `Name` /
 //!    `Description` with the block's own values;
 //! 5. the vendor's composed object name — a reference-only `IObject.Name`
-//!    on an object this run publishes but does not name is the vendor's
-//!    own composition, not content this run lost.
+//!    on an object this run publishes but does not name, when this line
+//!    never names that class or names other objects of it in this run. A
+//!    class this line names that comes out with no name at all is a finding.
 //!
 //! Excused content is counted and rendered as one `excused …` line per
 //! exclusion class that fired; a `PIDPipeline` object or `PipingConnectors`
 //! rel the by-name pairing already accounts for is counted, not excused.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::publish::catalog::{self, PidTagRole};
+use crate::publish::pid_load;
 
 use super::{
     pipeline_names, pipelines_by_name, piping_connector_key, piping_connector_keys, PidExportDiff,
     PublishBlocks,
 };
+
+/// Relation classes the `.pid` alone yields (`pid_writer::write_document`):
+/// the drawing's representations, their items and the process points. A run
+/// that states none of them has lost them.
+const FILE_RELATIONS: [&str; 3] = [
+    "DwgRepresentationComposition",
+    "DrawingItems",
+    "ProcessPointCollection",
+];
+
+/// Relation classes only the exp dump supplies: the port compositions, the
+/// six connectivity definitions (`oracle_exp::connectivity_def_uid`), the
+/// nozzle compositions and item notes, and the synthesized pipelines'
+/// connectors.
+const DUMP_RELATIONS: [&str; 11] = [
+    "PipingPortComposition",
+    "SignalPortComposition",
+    "PipingTapOrFitting",
+    "SignalTapOrFitting",
+    "PipingEnd1Conn",
+    "PipingEnd2Conn",
+    "SignalEnd1Conn",
+    "SignalEnd2Conn",
+    "EquipmentComponentComposition",
+    "PBSItemNotes",
+    "PipingConnectors",
+];
 
 /// Reference-side pass over `reference`: count every object, attribute value
 /// and rel the generated document does not carry, push a `missing …` finding
@@ -56,6 +89,23 @@ pub(super) fn account_reference_side(
         .values()
         .map(|(class, _)| class.as_str())
         .collect();
+    let named_classes: HashSet<&str> = generated
+        .objects
+        .values()
+        .filter(|(_, values)| values.contains_key("IObject.Name"))
+        .map(|(class, _)| class.as_str())
+        .collect();
+    // Content only an exp run writes: a port, an OPC branch point or a
+    // synthesized pipeline, or a relation the dump supplies.
+    let dump_objects = generated
+        .objects
+        .values()
+        .any(|(class, _)| catalog::pid_file_cannot_state(class).is_some());
+    let dump_rels = generated
+        .rels
+        .iter()
+        .any(|rel| DUMP_RELATIONS.contains(&rel.3.as_str()));
+    let dump_content = dump_objects || dump_rels;
 
     let mut missing_objects = Vec::new();
     let mut missing_rels = Vec::new();
@@ -131,13 +181,18 @@ pub(super) fn account_reference_side(
         let same_wiring = generated.rels.iter().any(|other| {
             other.0 != *rel_uid && other.1 == *uid1 && other.2 == *uid2 && other.3 == *def_uid
         });
+        let absence = if generated.rels.iter().all(|other| other.3 != *def_uid) {
+            absence_reason(def_uid, dump_content)
+        } else {
+            None
+        };
         let reason = if same_wiring {
             "the same relation is stated under another Rel UID".to_string()
-        } else if generated.rels.iter().all(|other| other.3 != *def_uid) {
-            format!("this run states no {def_uid} relation")
+        } else if let Some(reason) = absence {
+            reason
         } else if let Some(end) = [uid1, uid2].iter().find(|end| {
             reference.objects.contains_key(end.as_str())
-                && !generated.objects.contains_key(end.as_str())
+                && !publishes(generated, &generated_pipelines, reference, end.as_str())
         }) {
             format!("its end {end} is not published by this run")
         } else {
@@ -174,15 +229,14 @@ pub(super) fn account_reference_side(
             if generated_values.contains_key(key) {
                 continue;
             }
-            if key == "IObject.Name" {
+            if key == "IObject.Name" && vendor_composes_name(class, &named_classes) {
                 // Exclusion source 5 — the vendor's composed object name:
                 // this run publishes the object's UID but states no
-                // `IObject.Name` for it, so the reference's name is the
-                // vendor's composition, not content this run lost. Measured
-                // on this document: the class's emitted rows never carry
-                // `IObject.Name` for `PIDPipingConnector` (0 of 169) and
-                // `PIDPipingComponent` (0 of 134); for `PIDInlineInstrument`
-                // only the inline-component rows (valves) carry one, the
+                // `IObject.Name` for it. Measured on this document: the
+                // class's emitted rows never carry `IObject.Name` for
+                // `PIDPipingConnector` (0 of 169) and `PIDPipingComponent`
+                // (0 of 134); for `PIDInlineInstrument` only the
+                // inline-component rows (valves) carry one, the
                 // inline-instrument rows do not. The differing direction is
                 // untouched — `compare_values` still reports a stated
                 // `IObject.Name` that disagrees with the reference's.
@@ -267,4 +321,58 @@ fn tag_value_matches(
         _ => return false,
     };
     values.get(key).map(String::as_str) == Some(value)
+}
+
+/// Why a run that states no `def_uid` relation at all is excused for it, or
+/// `None` when that absence is a loss: a class the `.pid` alone yields, or a
+/// class only the exp dump supplies while the run carries the dump's content.
+fn absence_reason(def_uid: &str, dump_content: bool) -> Option<String> {
+    if FILE_RELATIONS.contains(&def_uid) {
+        None
+    } else if DUMP_RELATIONS.contains(&def_uid) {
+        if dump_content {
+            None
+        } else {
+            Some(format!(
+                "only the exp dump states {def_uid}; this run has none of its content"
+            ))
+        }
+    } else {
+        Some(format!("this line writes no {def_uid} relation"))
+    }
+}
+
+/// Whether the generated document publishes the reference object `end`: it
+/// carries the UID, or `end` is a `PIDPipeline` that pairs with a generated
+/// one by `IObject.Name` (a synthesized pipeline carries its own UID).
+fn publishes(
+    generated: &PublishBlocks,
+    generated_pipelines: &HashMap<String, (String, BTreeMap<String, String>)>,
+    reference: &PublishBlocks,
+    end: &str,
+) -> bool {
+    if generated.objects.contains_key(end) {
+        return true;
+    }
+    let Some((class, values)) = reference.objects.get(end) else {
+        return false;
+    };
+    class == "PIDPipeline"
+        && values
+            .get("IObject.Name")
+            .is_some_and(|name| generated_pipelines.contains_key(name))
+}
+
+/// Whether a reference-only `IObject.Name` on an object this run publishes
+/// unnamed is the vendor's own composition: this line never names `class`
+/// (it names only the classes `pid_load::composes_name` covers and the ports
+/// the exp dump numbers), or it names other objects of `class` in this run,
+/// so this row lacked a part of the rule.
+fn vendor_composes_name(class: &str, named_classes: &HashSet<&str>) -> bool {
+    let line_names = pid_load::composes_name(class)
+        || matches!(
+            catalog::pid_file_cannot_state(class),
+            Some((_, PidTagRole::Port))
+        );
+    !line_names || named_classes.contains(class)
 }

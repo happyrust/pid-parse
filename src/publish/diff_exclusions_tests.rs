@@ -213,7 +213,7 @@ fn a_reference_only_rel_the_run_states_nowhere_is_excused() {
     assert_eq!(diff.rels_not_in_generated, 1);
     let text = diff.exclusions.join("\n");
     assert!(
-        text.contains("excused rel PipingEnd1Conn 1 — this run states no PipingEnd1Conn relation"),
+        text.contains("excused rel PipingEnd1Conn 1 — only the exp dump states PipingEnd1Conn;"),
         "{text}"
     );
     assert!(
@@ -468,5 +468,151 @@ fn a_reference_pipeline_at_a_generated_uid_is_not_double_counted() {
     assert_eq!(diff.objects_not_in_generated, 0);
     assert_eq!(diff.objects_excused_by_design, 0);
     assert_eq!(diff.objects_paired_by_name, 0);
+    assert_eq!(diff.values_excused_by_design, 1);
+}
+
+#[test]
+fn a_file_relation_class_the_run_lost_entirely_is_a_finding() {
+    // Both ends are published and the run states no `ProcessPointCollection`
+    // at all: the `.pid` alone yields that class, so its absence is a loss.
+    let generated = r#"<Container>
+        <PIDProcessPoint><IObject UID="P"/></PIDProcessPoint>
+        <PIDPipingConnector><IObject UID="C"/></PIDPipingConnector>
+    </Container>"#;
+    let reference = r#"<Container>
+        <PIDProcessPoint><IObject UID="P"/></PIDProcessPoint>
+        <PIDPipingConnector><IObject UID="C"/></PIDPipingConnector>
+        <Rel><IObject UID="R1"/><IRel UID1="P" UID2="C" DefUID="ProcessPointCollection"/></Rel>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(!diff.is_clean(), "{diff}");
+    assert_eq!(diff.rels_not_in_generated, 1);
+    assert_eq!(diff.rels_excused_by_design, 0);
+}
+
+#[test]
+fn a_dump_relation_class_is_excused_only_while_the_run_has_no_dump_content() {
+    let reference = r#"<Container>
+        <PIDPipingPort><IObject UID="A.1" Name="1"/></PIDPipingPort>
+        <PIDPipingConnector><IObject UID="RUN"/></PIDPipingConnector>
+        <Rel><IObject UID="R1"/><IRel UID1="A.1" UID2="RUN" DefUID="PipingEnd1Conn"/></Rel>
+    </Container>"#;
+    // A numbered port is content only an exp run writes, so a run that has
+    // one and states no `PipingEnd1Conn` between two published ends lost it.
+    let exp_run = r#"<Container>
+        <PIDPipingPort><IObject UID="A.1" Name="1"/></PIDPipingPort>
+        <PIDPipingConnector><IObject UID="RUN"/></PIDPipingConnector>
+    </Container>"#;
+    let lost = diff_pid_export(exp_run, reference).expect("well-formed");
+    assert!(!lost.is_clean(), "{lost}");
+    assert_eq!(lost.rels_not_in_generated, 1);
+    assert_eq!(lost.rels_excused_by_design, 0);
+
+    // A `.pid`-only run carries none of the dump's content: the port is an
+    // excused object and the relation an excused class.
+    let pid_only = r#"<Container>
+        <PIDPipingConnector><IObject UID="RUN"/></PIDPipingConnector>
+    </Container>"#;
+    let excused = diff_pid_export(pid_only, reference).expect("well-formed");
+    assert!(excused.is_clean(), "{excused}");
+    assert_eq!(excused.objects_excused_by_design, 1);
+    assert_eq!(excused.rels_excused_by_design, 1);
+    let text = excused.exclusions.join("\n");
+    assert!(
+        text.contains("excused rel PipingEnd1Conn 1 — only the exp dump states PipingEnd1Conn;"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_relation_class_this_line_never_writes_is_excused() {
+    let generated = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+        <PIDNozzle><IObject UID="B" Name="N-1"/></PIDNozzle>
+    </Container>"#;
+    let reference = r#"<Container>
+        <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+        <PIDNozzle><IObject UID="B" Name="N-1"/></PIDNozzle>
+        <Rel><IObject UID="R1"/><IRel UID1="A" UID2="B" DefUID="ItemGroup"/></Rel>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(diff.is_clean(), "{diff}");
+    assert_eq!(diff.rels_excused_by_design, 1);
+    let text = diff.exclusions.join("\n");
+    assert!(
+        text.contains("excused rel ItemGroup 1 — this line writes no ItemGroup relation"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_connector_rel_lost_beside_a_name_paired_pipeline_is_a_finding() {
+    // The synthesized pipeline pairs with the reference's by name although
+    // its UID differs, so the rel's pipeline end is published and a lost
+    // connector rel is a finding rather than an unpublished end.
+    let generated = r#"<Container>
+        <PIDPipeline><IObject UID="G" Name="L-1"/></PIDPipeline>
+        <PIDPipingConnector><IObject UID="C"/></PIDPipingConnector>
+        <PIDPipingConnector><IObject UID="D"/></PIDPipingConnector>
+        <Rel><IObject UID="PCN-C-G"/><IRel UID1="C" UID2="G" DefUID="PipingConnectors"/></Rel>
+    </Container>"#;
+    let reference = r#"<Container>
+        <PIDPipeline><IObject UID="R" Name="L-1"/></PIDPipeline>
+        <PIDPipingConnector><IObject UID="C"/></PIDPipingConnector>
+        <PIDPipingConnector><IObject UID="D"/></PIDPipingConnector>
+        <Rel><IObject UID="PCN-C-R"/><IRel UID1="C" UID2="R" DefUID="PipingConnectors"/></Rel>
+        <Rel><IObject UID="PCN-D-R"/><IRel UID1="D" UID2="R" DefUID="PipingConnectors"/></Rel>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(!diff.is_clean(), "{diff}");
+    assert_eq!(diff.rels_paired_by_name, 1);
+    assert_eq!(diff.rels_not_in_generated, 1);
+    assert_eq!(diff.rels_excused_by_design, 0);
+}
+
+#[test]
+fn a_class_this_line_names_that_lost_every_name_is_a_finding() {
+    // `PIDInstrument` takes its name from the instrument rule; a run that
+    // names none of its instruments lost the rule, so the reference's name
+    // is a missing value rather than the vendor's composition.
+    let generated = r#"<Container>
+        <PIDInstrument><IObject UID="I"/></PIDInstrument>
+    </Container>"#;
+    let reference = r#"<Container>
+        <PIDInstrument><IObject UID="I" Name="PT-1"/></PIDInstrument>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(!diff.is_clean(), "{diff}");
+    assert_eq!(diff.values_not_in_generated, 1);
+    assert_eq!(diff.values_excused_by_design, 0);
+
+    // The exp dump numbers every port it writes, so an unnamed port is a loss
+    // too.
+    let unnamed_port = r#"<Container>
+        <PIDPipingPort><IObject UID="N.1"/></PIDPipingPort>
+    </Container>"#;
+    let numbered_port = r#"<Container>
+        <PIDPipingPort><IObject UID="N.1" Name="1"/></PIDPipingPort>
+    </Container>"#;
+    let lost = diff_pid_export(unnamed_port, numbered_port).expect("well-formed");
+    assert!(!lost.is_clean(), "{lost}");
+    assert_eq!(lost.values_not_in_generated, 1);
+}
+
+#[test]
+fn an_unnamed_row_of_a_class_this_run_names_elsewhere_is_excused() {
+    // The inline-component row carries a name and the inline-instrument row
+    // lacks a part of the rule: the class's naming works, so the reference's
+    // name on the unnamed row is the vendor's composition.
+    let generated = r#"<Container>
+        <PIDInlineInstrument><IObject UID="V" Name="BV-1"/></PIDInlineInstrument>
+        <PIDInlineInstrument><IObject UID="F"/></PIDInlineInstrument>
+    </Container>"#;
+    let reference = r#"<Container>
+        <PIDInlineInstrument><IObject UID="V" Name="BV-1"/></PIDInlineInstrument>
+        <PIDInlineInstrument><IObject UID="F" Name="FT-753"/></PIDInlineInstrument>
+    </Container>"#;
+    let diff = diff_pid_export(generated, reference).expect("well-formed");
+    assert!(diff.is_clean(), "{diff}");
     assert_eq!(diff.values_excused_by_design, 1);
 }

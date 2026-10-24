@@ -1048,6 +1048,13 @@ fn composed_name(class: &str, attributes: &[PidPublishAttribute]) -> Option<PidP
     })
 }
 
+/// The classes `composed_name` names: the instrument and the equipment
+/// classes. It names an object of one only when the object carries both parts
+/// of the class's rule.
+pub(crate) fn composes_name(class: &str) -> bool {
+    INSTRUMENT_CLASSES.contains(&class) || EQUIPMENT_CLASSES.contains(&class)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
