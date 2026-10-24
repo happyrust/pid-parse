@@ -1,0 +1,338 @@
+{
+  "schema": "pid-parse.publish-diff-accepted/1",
+  "what_this_is": "The accepted `pid_publish_xml --diff-against` differences, recorded one item at a time. This file is data, not a suppression list: the gate keeps exiting 1 on the figures below. It exists so a reviewer, or a test, can classify every line a run prints as registered, disappeared, or unregistered without reading any prose. Nothing here widens a gate: an unregistered difference still exits 1, and a registered difference that stops being printed is itself a finding.",
+  "states": {
+    "registered": "The baseline lists this exact line for this figure, and the run printed it.",
+    "disappeared": "The baseline lists this exact line, and the run did not print it. A disappeared line is a finding: the figure changed under the baseline.",
+    "unregistered": "The run printed a line this baseline does not list. Always a finding. There is no count-based allowance: a figure whose category total merely matches is not thereby accepted."
+  },
+  "how_to_verify": {
+    "1": "Run the command recorded in the figure entry and read stdout.",
+    "2": "Split stdout into difference lines by the prefixes in difference_line_kinds. Lines that start with `meta `, `reference-only:`, `excused `, or the localized pairing note are accounting, not differences.",
+    "3": "For each printed line, look for a byte-identical `line` under the figure. Found -> registered. Not found -> unregistered.",
+    "4": "For each `line` under the figure, check it was printed. Not printed -> disappeared.",
+    "5": "The figure passes only when the unregistered set and the disappeared set are both empty."
+  },
+  "difference_line_kinds": {
+    "class": "class <CLASS> <UID>: reference <CLASS>",
+    "extra": "extra <CLASS> <UID>",
+    "value_different": "value <CLASS> <UID> <INTERFACE>.<ATTRIBUTE>: \"<OURS>\" reference \"<REFERENCE>\"",
+    "value_not_in_reference": "value <CLASS> <UID> <INTERFACE>.<ATTRIBUTE>: \"<OURS>\" not in reference",
+    "rel_not_in_reference": "rel (\"<RELUID>\", \"<UID1>\", \"<UID2>\", \"<DEFUID>\")",
+    "missing_object": "missing <CLASS> <UID>",
+    "missing_rel": "missing rel (\"<RELUID>\", \"<UID1>\", \"<UID2>\", \"<DEFUID>\")"
+  },
+  "not_enumerated_here": [
+    "Attribute classes the gate excuses wholesale live in src/publish/diff_exclusions.rs (EXCLUDED_ATTRIBUTE_CLASSES) and are printed as `excused ...` lines. This baseline does not restate them.",
+    "The whole-package FluidSystem allowance lives in src/publish/diff.rs as FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE. whole_package.registered_exceptions points at it rather than restating a second bound.",
+    "`reference-only:` and `excused ...` lines are accounting, not differences, and are not listed here."
+  ],
+  "figures": {
+    "A01": {
+      "what": "The single-`.pid` publish of test-file/export-test/publish-data/A01/A01.pid against the reference A01_Data.xml. Exits 1 by design: the 25 items below are accepted and recorded, not suppressed.",
+      "command": "pid_publish_xml.exe test-file/export-test/publish-data/A01/A01.pid --diff-against test-file/export-test/publish-data/A01/A01_Data.xml --plant TEST02",
+      "exit_code": 1,
+      "summary": "pid export diff: objects 8 (extra 1, wrong class 1), values 10 (different 3, not in reference 6), rels 7 (not in reference 7)",
+      "differences": {
+        "class": {
+          "count": 1,
+          "items": [
+            {
+              "line": "class PIDPipingConnector 185EF98B03E844158E3BD8E82806E6CF: reference PIDPipeline",
+              "class_name": "PIDPipingConnector",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF",
+              "reference_class": "PIDPipeline"
+            }
+          ]
+        },
+        "extra": {
+          "count": 1,
+          "items": [
+            {
+              "line": "extra PIDProcessPoint 185EF98B03E844158E3BD8E82806E6CF.PPT",
+              "class_name": "PIDProcessPoint",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF.PPT"
+            }
+          ]
+        },
+        "value_different": {
+          "count": 3,
+          "items": [
+            {
+              "line": "value PIDRepresentation 4B38DB541B1342F99A39838AC9871E3C IDrawingRepresentation.GraphicOID: \"417\" reference \"24615\"",
+              "class_name": "PIDRepresentation",
+              "uid": "4B38DB541B1342F99A39838AC9871E3C",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "417",
+              "reference": "24615"
+            },
+            {
+              "line": "value PIDRepresentation C33E5BD9B9CC4287B244A925A7A1F29B IDrawingRepresentation.GraphicOID: \"51\" reference \"24606\"",
+              "class_name": "PIDRepresentation",
+              "uid": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "51",
+              "reference": "24606"
+            },
+            {
+              "line": "value PIDRepresentation CA8A0A9DD1784E3BB6913445CE3F6375 IDrawingRepresentation.GraphicOID: \"184\" reference \"24601\"",
+              "class_name": "PIDRepresentation",
+              "uid": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "interface_attribute": "IDrawingRepresentation.GraphicOID",
+              "ours": "184",
+              "reference": "24601"
+            }
+          ]
+        },
+        "value_not_in_reference": {
+          "count": 6,
+          "items": [
+            {
+              "line": "value PIDPipingConnector 185EF98B03E844158E3BD8E82806E6CF INamedPipingConnector.PipingConnectorSeqNo: \"0102102\" not in reference",
+              "class_name": "PIDPipingConnector",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF",
+              "interface_attribute": "INamedPipingConnector.PipingConnectorSeqNo",
+              "ours": "0102102"
+            },
+            {
+              "line": "value PIDPipingConnector 185EF98B03E844158E3BD8E82806E6CF IPipeCrossSectionItem.NominalDiameter: \"250 mm\" not in reference",
+              "class_name": "PIDPipingConnector",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF",
+              "interface_attribute": "IPipeCrossSectionItem.NominalDiameter",
+              "ours": "250 mm"
+            },
+            {
+              "line": "value PIDPipingConnector 185EF98B03E844158E3BD8E82806E6CF IPipingSpecifiedItem.PipingMaterialsClass: \"B5\" not in reference",
+              "class_name": "PIDPipingConnector",
+              "uid": "185EF98B03E844158E3BD8E82806E6CF",
+              "interface_attribute": "IPipingSpecifiedItem.PipingMaterialsClass",
+              "ours": "B5"
+            },
+            {
+              "line": "value PIDProcessVessel C57494A1B154442C9DF0F4BA713E88EC INamedEquipment.EquipPrefix: \"V\" not in reference",
+              "class_name": "PIDProcessVessel",
+              "uid": "C57494A1B154442C9DF0F4BA713E88EC",
+              "interface_attribute": "INamedEquipment.EquipPrefix",
+              "ours": "V"
+            },
+            {
+              "line": "value PIDProcessVessel C57494A1B154442C9DF0F4BA713E88EC INamedEquipment.EquipSeqNo: \"010121A\" not in reference",
+              "class_name": "PIDProcessVessel",
+              "uid": "C57494A1B154442C9DF0F4BA713E88EC",
+              "interface_attribute": "INamedEquipment.EquipSeqNo",
+              "ours": "010121A"
+            },
+            {
+              "line": "value PIDProcessVessel C57494A1B154442C9DF0F4BA713E88EC IObject.Name: \"V-010121A\" not in reference",
+              "class_name": "PIDProcessVessel",
+              "uid": "C57494A1B154442C9DF0F4BA713E88EC",
+              "interface_attribute": "IObject.Name",
+              "ours": "V-010121A"
+            }
+          ]
+        },
+        "rel_not_in_reference": {
+          "count": 7,
+          "items": [
+            {
+              "line": "rel (\"DRC-D9635C3C898840D1990B7E8BEE1D55DA-4B38DB541B1342F99A39838AC9871E3C\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"4B38DB541B1342F99A39838AC9871E3C\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-D9635C3C898840D1990B7E8BEE1D55DA-4B38DB541B1342F99A39838AC9871E3C",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "4B38DB541B1342F99A39838AC9871E3C",
+              "def_uid": "DwgRepresentationComposition"
+            },
+            {
+              "line": "rel (\"DRC-D9635C3C898840D1990B7E8BEE1D55DA-C33E5BD9B9CC4287B244A925A7A1F29B\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"C33E5BD9B9CC4287B244A925A7A1F29B\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-D9635C3C898840D1990B7E8BEE1D55DA-C33E5BD9B9CC4287B244A925A7A1F29B",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "def_uid": "DwgRepresentationComposition"
+            },
+            {
+              "line": "rel (\"DRC-D9635C3C898840D1990B7E8BEE1D55DA-CA8A0A9DD1784E3BB6913445CE3F6375\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"CA8A0A9DD1784E3BB6913445CE3F6375\", \"DwgRepresentationComposition\")",
+              "rel_uid": "DRC-D9635C3C898840D1990B7E8BEE1D55DA-CA8A0A9DD1784E3BB6913445CE3F6375",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "def_uid": "DwgRepresentationComposition"
+            },
+            {
+              "line": "rel (\"DRI-4B38DB541B1342F99A39838AC9871E3C-185EF98B03E844158E3BD8E82806E6CF\", \"4B38DB541B1342F99A39838AC9871E3C\", \"185EF98B03E844158E3BD8E82806E6CF\", \"DrawingItems\")",
+              "rel_uid": "DRI-4B38DB541B1342F99A39838AC9871E3C-185EF98B03E844158E3BD8E82806E6CF",
+              "uid1": "4B38DB541B1342F99A39838AC9871E3C",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF",
+              "def_uid": "DrawingItems"
+            },
+            {
+              "line": "rel (\"DRI-C33E5BD9B9CC4287B244A925A7A1F29B-7465E81219DB49B492BDF60A055AA391\", \"C33E5BD9B9CC4287B244A925A7A1F29B\", \"7465E81219DB49B492BDF60A055AA391\", \"DrawingItems\")",
+              "rel_uid": "DRI-C33E5BD9B9CC4287B244A925A7A1F29B-7465E81219DB49B492BDF60A055AA391",
+              "uid1": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "uid2": "7465E81219DB49B492BDF60A055AA391",
+              "def_uid": "DrawingItems"
+            },
+            {
+              "line": "rel (\"DRI-CA8A0A9DD1784E3BB6913445CE3F6375-C57494A1B154442C9DF0F4BA713E88EC\", \"CA8A0A9DD1784E3BB6913445CE3F6375\", \"C57494A1B154442C9DF0F4BA713E88EC\", \"DrawingItems\")",
+              "rel_uid": "DRI-CA8A0A9DD1784E3BB6913445CE3F6375-C57494A1B154442C9DF0F4BA713E88EC",
+              "uid1": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "uid2": "C57494A1B154442C9DF0F4BA713E88EC",
+              "def_uid": "DrawingItems"
+            },
+            {
+              "line": "rel (\"PRP-185EF98B03E844158E3BD8E82806E6CF.PPT-185EF98B03E844158E3BD8E82806E6CF\", \"185EF98B03E844158E3BD8E82806E6CF.PPT\", \"185EF98B03E844158E3BD8E82806E6CF\", \"ProcessPointCollection\")",
+              "rel_uid": "PRP-185EF98B03E844158E3BD8E82806E6CF.PPT-185EF98B03E844158E3BD8E82806E6CF",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF.PPT",
+              "uid2": "185EF98B03E844158E3BD8E82806E6CF",
+              "def_uid": "ProcessPointCollection"
+            }
+          ]
+        }
+      },
+      "reference_only_differences": {
+        "missing_object": {
+          "count": 3,
+          "items": [
+            {
+              "line": "missing PIDPipingConnector 8B6386EF73A497F1A03D67B6A046D596",
+              "class_name": "PIDPipingConnector",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596"
+            },
+            {
+              "line": "missing PIDProcessPoint 8B6386EF73A497F1A03D67B6A046D596.PPT",
+              "class_name": "PIDProcessPoint",
+              "uid": "8B6386EF73A497F1A03D67B6A046D596.PPT"
+            },
+            {
+              "line": "missing PIDRepresentation AC9DFB6629974E428402C938E60F4B9C",
+              "class_name": "PIDRepresentation",
+              "uid": "AC9DFB6629974E428402C938E60F4B9C"
+            }
+          ]
+        },
+        "missing_rel": {
+          "count": 6,
+          "items": [
+            {
+              "line": "missing rel (\"084A25D3F26C843E2DBB5263CD1CD089\", \"185EF98B03E844158E3BD8E82806E6CF\", \"4B38DB541B1342F99A39838AC9871E3C\", \"DwgRepresentationComposition\")",
+              "rel_uid": "084A25D3F26C843E2DBB5263CD1CD089",
+              "uid1": "185EF98B03E844158E3BD8E82806E6CF",
+              "uid2": "4B38DB541B1342F99A39838AC9871E3C",
+              "def_uid": "DwgRepresentationComposition"
+            },
+            {
+              "line": "missing rel (\"79D298D9F0566C9B821CD40CF45E3E87\", \"7465E81219DB49B492BDF60A055AA391\", \"C33E5BD9B9CC4287B244A925A7A1F29B\", \"DwgRepresentationComposition\")",
+              "rel_uid": "79D298D9F0566C9B821CD40CF45E3E87",
+              "uid1": "7465E81219DB49B492BDF60A055AA391",
+              "uid2": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "def_uid": "DwgRepresentationComposition"
+            },
+            {
+              "line": "missing rel (\"873DED96E73B857949465B86C62D52EC\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"C33E5BD9B9CC4287B244A925A7A1F29B\", \"DrawingItems\")",
+              "rel_uid": "873DED96E73B857949465B86C62D52EC",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "C33E5BD9B9CC4287B244A925A7A1F29B",
+              "def_uid": "DrawingItems"
+            },
+            {
+              "line": "missing rel (\"A9E4DD0B8263B9E8EADDEBA3CDB17989\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"4B38DB541B1342F99A39838AC9871E3C\", \"DrawingItems\")",
+              "rel_uid": "A9E4DD0B8263B9E8EADDEBA3CDB17989",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "4B38DB541B1342F99A39838AC9871E3C",
+              "def_uid": "DrawingItems"
+            },
+            {
+              "line": "missing rel (\"D0D931AB54E9C42F72F44E4C45AE6049\", \"D9635C3C898840D1990B7E8BEE1D55DA\", \"CA8A0A9DD1784E3BB6913445CE3F6375\", \"DrawingItems\")",
+              "rel_uid": "D0D931AB54E9C42F72F44E4C45AE6049",
+              "uid1": "D9635C3C898840D1990B7E8BEE1D55DA",
+              "uid2": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "def_uid": "DrawingItems"
+            },
+            {
+              "line": "missing rel (\"FFCDFD56E3442FF59711462285322EA1\", \"C57494A1B154442C9DF0F4BA713E88EC\", \"CA8A0A9DD1784E3BB6913445CE3F6375\", \"DwgRepresentationComposition\")",
+              "rel_uid": "FFCDFD56E3442FF59711462285322EA1",
+              "uid1": "C57494A1B154442C9DF0F4BA713E88EC",
+              "uid2": "CA8A0A9DD1784E3BB6913445CE3F6375",
+              "def_uid": "DwgRepresentationComposition"
+            }
+          ]
+        }
+      },
+      "category_counts": {
+        "class": 1,
+        "extra": 1,
+        "value_different": 3,
+        "value_not_in_reference": 6,
+        "rel_not_in_reference": 7,
+        "missing_object": 3,
+        "missing_rel": 6
+      },
+      "notes": [
+        "The interface is IDrawingRepresentation.GraphicOID on <PIDRepresentation>, not IDrawingPresentation.",
+        "Do not pass --out-dir when reproducing this figure: that adds three `meta ...` lines to stdout. They are not differences, and the command above omits it.",
+        "This figure exits 1 on purpose. The baseline records the differences; it does not make them go away."
+      ]
+    },
+    "I井场": {
+      "what": "The single-`.pid` publish of the I井场 drawing against the vendor reference. Path-sensitive: the drawing name is derived from the file name, so the one registered item appears only when the 8.3 short alias reaches the process.",
+      "path_sensitive": true,
+      "why": "IB031 appears nowhere in the 3,997,696 bytes of the fixture; the drawing name is derived from the path. Pass the long Chinese name and the run is clean. Pass the 8.3 alias IB031~1.PID and the registered IObject.Name difference appears. Both are legitimate observations of the same product, so the assertion is a disjunction and this entry is listed either way.",
+      "differences": {
+        "value_different": {
+          "count": 1,
+          "items": [
+            {
+              "line": "value PIDDrawing 5633AF4121EE4F4D9FE78E90722CC050 IObject.Name: \"IB031~1\" reference \"I井场 注采阀组工艺及自控流程图\"",
+              "class_name": "PIDDrawing",
+              "uid": "5633AF4121EE4F4D9FE78E90722CC050",
+              "interface_attribute": "IObject.Name",
+              "ours": "IB031~1",
+              "reference": "I井场 注采阀组工艺及自控流程图"
+            }
+          ]
+        }
+      },
+      "category_counts": {
+        "value_different": 1
+      },
+      "modes": {
+        "pid-alone": {
+          "command": "pid_publish_xml.exe \"D:\\work\\cad\\PID自研软件验证\\I井场 注采阀组工艺及自控流程图.pid\" --diff-against \"D:\\work\\cad\\PID自研软件验证\\I井场 注采阀组工艺及自控流程图_Data.xml\" --plant P01",
+          "clean_exit_code": 0,
+          "clean_summary": "pid export diff: objects 1735 (extra 0, wrong class 0), values 1530 (different 0, not in reference 0), rels 1971 (not in reference 0)",
+          "alias_exit_code": 1,
+          "alias_summary": "pid export diff: objects 1735 (extra 0, wrong class 0), values 1530 (different 1, not in reference 0), rels 1971 (not in reference 0)"
+        },
+        "oracle-exp": {
+          "command": "pid_publish_xml.exe \"D:\\work\\cad\\PID自研软件验证\\I井场 注采阀组工艺及自控流程图.pid\" --diff-against \"D:\\work\\cad\\PID自研软件验证\\I井场 注采阀组工艺及自控流程图_Data.xml\" --plant P01 --oracle-exp D:\\work\\cad\\pid-test-data\\Export.dmp --datamap D:\\work\\cad\\pid-test-data\\RefData~4~804.zip",
+          "clean_exit_code": 0,
+          "clean_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 3346 (different 0, not in reference 0), rels 4107 (not in reference 0)",
+          "alias_exit_code": 1,
+          "alias_summary": "pid export diff: objects 3093 (extra 0, wrong class 0), values 3346 (different 1, not in reference 0), rels 4107 (not in reference 0)",
+          "informational_line": "按名配对 79 个 PIDPipeline，106 条 PipingConnectors；参考为空、dump 有值的 FluidSystem 23（登记上界 23）"
+        }
+      },
+      "allowed_outcomes": [
+        "Exit 0 with no difference line at all: the long name reached the process.",
+        "Exit 1 with exactly one difference line, byte-identical to the single registered item above: the 8.3 alias reached the process."
+      ],
+      "forbidden_outcomes": [
+        "Exit 1 with a difference line other than the registered one.",
+        "Exit 0 while a difference line was printed.",
+        "A clean branch that printed anything matching difference_line_kinds.",
+        "An alias branch whose differing value is anything but IObject.Name."
+      ]
+    }
+  },
+  "whole_package": {
+    "what": "The whole-backup-package publish (D:\\work\\cad\\pid-test-data). FluidSystem is empty in the reference and carries values in the dump, so the run emits 23 extra values. Extra values are not an error and are bounded by a named constant, not absorbed here.",
+    "registered_exceptions": [
+      {
+        "id": "fluid_system_reference_empty",
+        "figure": "whole package (D:\\work\\cad\\pid-test-data)",
+        "kind": "values_not_in_reference",
+        "class_name": "FluidSystem",
+        "observed": 23,
+        "bound_source": "src/publish/diff.rs :: FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE",
+        "note": "The bound is not restated here. The gate compares the observed count against the constant and reports `fluid_system_allowance_exceeded` when it grows. The informational pairing line names the same 23 and is accounting, not a difference."
+      }
+    ]
+  }
+}

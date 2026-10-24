@@ -195,6 +195,10 @@ name = "publish_backlog_inventory"
 required-features = ["backup"]
 
 [[test]]
+name = "publish_diff_accepted_baseline"
+required-features = ["backup"]
+
+[[test]]
 name = "publish_dwg_generated_parity"
 required-features = ["backup"]
 
