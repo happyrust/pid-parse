@@ -50,8 +50,12 @@ struct CliOptions {
     emit_mdf: bool,
 }
 
-fn print_usage() {
-    eprintln!(
+/// Print the usage body to `out`. `--help` passes stdout — the stream
+/// the caller asked for — and an argument error passes stderr, next to
+/// the diagnostic that explains the failure.
+fn print_usage<W: std::io::Write>(mut out: W) {
+    let _ = writeln!(
+        out,
         "Usage: pid_backup_extract <Export.dmp> --out <dir> [--dry-run] [--as-mdf]\n\n\
          Extracts the SQL Server MSDA + MSCI streams from a SmartPlant\n\
          Export.dmp into individual files for offline analysis.\n\n\
@@ -105,14 +109,14 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        print_usage();
+        print_usage(std::io::stdout());
         std::process::exit(0);
     }
     let options = match parse_args(&args) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("argument error: {e}");
-            print_usage();
+            print_usage(std::io::stderr());
             std::process::exit(2);
         }
     };
