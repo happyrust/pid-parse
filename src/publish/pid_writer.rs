@@ -507,6 +507,19 @@ pub fn derived_by_native_rule_count(drawing: &PidPublishDrawing) -> usize {
     attributes + drawing.process_points.len() + drawing.branch_points.len()
 }
 
+/// The top-level blocks `write_document` emits for a `Document` /
+/// `Enrichment` tag: the drawing itself, its representations, the
+/// exp-synthesized pipelines and the OPC branch points.
+fn document_block_count(drawing: &PidPublishDrawing, class: &str) -> usize {
+    match class {
+        "PIDDrawing" => 1,
+        "PIDRepresentation" => drawing.representations.len(),
+        "PIDPipeline" => drawing.pipelines.len(),
+        "PIDBranchPoint" => drawing.opc_points.len(),
+        _ => 0,
+    }
+}
+
 /// What a `.pid`-only export never carries, for the reader of the report.
 const LEFT_OUT_BY_DESIGN: [&str; 5] = [
     "ports: a .pid does not state the point number, so they are not emitted; pipelines are not stated either",
@@ -583,9 +596,17 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
                 let values = matched.iter().map(|port| port.attributes.len()).sum();
                 classes.insert(class, (matched.len(), with_name, values));
             }
-            // Tallied elsewhere: item rows, the drawing itself, or the
-            // exp enrichment.
-            PidTagRole::Class | PidTagRole::Document | PidTagRole::Enrichment => {}
+            // Item rows are tallied above; the document and enrichment
+            // tags count the sibling document's own top-level blocks
+            // (the drawing itself, the representations, the synthesized
+            // pipelines, the OPC branch points).
+            PidTagRole::Class => {}
+            PidTagRole::Document | PidTagRole::Enrichment => {
+                let count = document_block_count(drawing, class);
+                if count > 0 {
+                    classes.insert(class, (count, 0, 0));
+                }
+            }
         }
     }
     let left_out: Vec<serde_json::Value> = drawing
@@ -594,6 +615,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
         .filter(|item| item.class.is_none())
         .map(|item| json!({ "uid": item.uid, "model_item_type": item.model_item_type }))
         .collect();
+    let classes_total: usize = classes.values().map(|cell| cell.0).sum();
     let classes: serde_json::Map<String, serde_json::Value> = classes
         .into_iter()
         .map(|(class, (objects, with_name, values))| {
@@ -610,7 +632,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "data": format!("{}_Data.xml", drawing.drawing_name),
             "meta": format!("{}_Meta.xml", drawing.drawing_name),
         },
-        "objects": {
+        "classified_items": {
             "items_named_by_the_file": drawing.items.len(),
             "items_published": published.len(),
             "items_left_out_without_a_class": left_out.len(),
@@ -638,6 +660,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "undecoded": stats.undecoded_records,
         },
         "classes": classes,
+        "classes_total": classes_total,
         "left_out": left_out,
         "left_out_by_design": LEFT_OUT_BY_DESIGN,
     });
@@ -665,7 +688,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             .filter(|attribute| matches!(attribute.source, PidValueSource::BackupRow { .. }))
             .count();
         if let Some(objects) = report
-            .get_mut("objects")
+            .get_mut("classified_items")
             .and_then(|value| value.as_object_mut())
         {
             objects.insert("piping_ports".to_string(), json!(piping));
@@ -708,7 +731,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
             "connectivity_rels": written.len(),
             "connectivity_ends_left_out": drawing.connectivity_ends.len() - written.len(),
             "opc_branch_points": drawing.opc_points.len(),
-            "equipment_compositions": drawing
+            "dump_equipment_compositions": drawing
                 .exp_relations
                 .iter()
                 .filter(|rel| rel.def_uid == "EquipmentComponentComposition")
@@ -717,7 +740,7 @@ pub fn write_pid_coverage_json(drawing: &PidPublishDrawing, source: &Path) -> St
                 .iter()
                 .filter(|rel| rel.def_uid == "EquipmentComponentComposition")
                 .count(),
-            "item_notes": drawing
+            "dump_item_notes": drawing
                 .exp_relations
                 .iter()
                 .filter(|rel| rel.def_uid == "PBSItemNotes")
@@ -869,14 +892,17 @@ mod tests {
         assert_eq!(report["source"], r"D:\plant\A & B.pid");
         assert_eq!(report["drawing"]["uid"], "D1");
         assert_eq!(report["files"]["data"], "A & B_Data.xml");
-        assert_eq!(report["objects"]["items_named_by_the_file"], 2);
-        assert_eq!(report["objects"]["items_published"], 1);
-        assert_eq!(report["objects"]["items_left_out_without_a_class"], 1);
+        assert_eq!(report["classified_items"]["items_named_by_the_file"], 2);
+        assert_eq!(report["classified_items"]["items_published"], 1);
         assert_eq!(
-            report["objects"]["instruments_classed_by_symbol_library"],
+            report["classified_items"]["items_left_out_without_a_class"],
             1
         );
-        assert_eq!(report["objects"]["representations"], 3);
+        assert_eq!(
+            report["classified_items"]["instruments_classed_by_symbol_library"],
+            1
+        );
+        assert_eq!(report["classified_items"]["representations"], 3);
         assert_eq!(report["relationships"]["DwgRepresentationComposition"], 3);
         assert_eq!(report["relationships"]["DrawingItems"], 1);
         assert_eq!(report["attribute_values"]["published_from_labels"], 2);
@@ -978,7 +1004,7 @@ mod tests {
         ));
         let text = write_pid_coverage_json(&drawing, Path::new("a.pid"));
         let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
-        assert_eq!(report["objects"]["process_points"], 1);
+        assert_eq!(report["classified_items"]["process_points"], 1);
         assert_eq!(report["relationships"]["ProcessPointCollection"], 1);
         assert_eq!(report["classes"]["PIDProcessPoint"]["objects"], 1);
         assert_eq!(report["attribute_values"]["derived_by_native_rule"], 1);
@@ -1017,7 +1043,7 @@ mod tests {
         ));
         let text = write_pid_coverage_json(&drawing, Path::new("a.pid"));
         let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
-        assert_eq!(report["objects"]["branch_points"], 2);
+        assert_eq!(report["classified_items"]["branch_points"], 2);
         assert_eq!(report["classes"]["PIDPipingBranchPoint"]["objects"], 1);
         assert_eq!(report["classes"]["PIDSignalBranchPoint"]["objects"], 1);
         assert_eq!(report["attribute_values"]["derived_by_native_rule"], 2);
@@ -1070,6 +1096,7 @@ mod tests {
         assert_eq!(
             keys,
             [
+                "PIDDrawing",
                 "PIDPipingBranchPoint",
                 "PIDPipingPort",
                 "PIDProcessPoint",
@@ -1181,9 +1208,9 @@ mod tests {
         let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(report["relationships"]["EquipmentComponentComposition"], 1);
         assert_eq!(report["relationships"]["PBSItemNotes"], 1);
-        assert_eq!(report["oracle_exp"]["equipment_compositions"], 2);
+        assert_eq!(report["oracle_exp"]["dump_equipment_compositions"], 2);
         assert_eq!(report["oracle_exp"]["equipment_composition_rels"], 1);
-        assert_eq!(report["oracle_exp"]["item_notes"], 1);
+        assert_eq!(report["oracle_exp"]["dump_item_notes"], 1);
         assert_eq!(report["oracle_exp"]["item_note_rels"], 1);
     }
 
@@ -1217,5 +1244,51 @@ mod tests {
         assert!(xml.contains(r#"      <IRel UID1="R1" UID2="OPC" DefUID="DrawingItems"/>"#));
         assert!(xml.contains(r#"      <IRel UID1="OPC" UID2="RUN" DefUID="PipingEnd2Conn"/>"#));
         assert_eq!(connectivity_rel_counts(&drawing), (1, 0));
+    }
+
+    #[test]
+    fn classes_is_a_census_of_the_sibling_documents_top_level_blocks() {
+        let mut drawing = drawing();
+        drawing.pipelines.push(PidPipeline {
+            uid: "PL1".to_string(),
+            name: "80-AB-001".to_string(),
+            fluid_system: Some("@{GUID}".to_string()),
+            connector_uids: vec!["RUN".to_string()],
+        });
+        drawing.opc_points.push(PidOpcPoint {
+            uid: "OPC".to_string(),
+            representation_uid: "R1".to_string(),
+            name: "565".to_string(),
+            description: String::new(),
+            to_from_text: String::new(),
+        });
+        let text = write_pid_coverage_json(&drawing, Path::new("a.pid"));
+        let report: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        let classes = report["classes"].as_object().expect("classes object");
+        assert_eq!(classes["PIDInstrument"]["objects"], 1);
+        for (class, objects) in [
+            ("PIDDrawing", 1),
+            ("PIDRepresentation", 3),
+            ("PIDPipeline", 1),
+            ("PIDBranchPoint", 1),
+        ] {
+            assert_eq!(classes[class]["objects"], objects, "{class}");
+            assert_eq!(classes[class]["with_name"], 0, "{class}");
+            assert_eq!(classes[class]["attribute_values"], 0, "{class}");
+        }
+        let census: usize = classes
+            .values()
+            .map(|row| row["objects"].as_u64().expect("objects") as usize)
+            .sum();
+        let blocks = write_pid_data_xml(&drawing, "P01")
+            .lines()
+            .filter(|line| {
+                line.starts_with("   <")
+                    && !line.starts_with("   </")
+                    && !line.starts_with("   <Rel>")
+            })
+            .count();
+        assert_eq!(report["classes_total"], census);
+        assert_eq!(census, blocks);
     }
 }

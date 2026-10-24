@@ -350,7 +350,7 @@ fn the_cli_delivers_a_drawings_three_files_into_out_dir() {
     assert_eq!(report["drawing"]["uid"], drawing.drawing_uid.as_str());
     assert_eq!(report["drawing"]["name"], stem.as_str());
     assert_eq!(
-        report["objects"]["representations"],
+        report["classified_items"]["representations"],
         drawing.representations.len()
     );
     assert_eq!(report["files"]["data"], format!("{stem}_Data.xml"));
@@ -523,10 +523,18 @@ fn ijingchang_oracle_exp_matches_the_pinned_reference() {
     assert_eq!(report["oracle_exp"]["connectivity_rels"], 738);
     assert_eq!(report["oracle_exp"]["connectivity_ends_left_out"], 0);
     assert_eq!(report["oracle_exp"]["opc_branch_points"], 2);
-    assert_eq!(report["oracle_exp"]["equipment_compositions"], 377);
+    assert_eq!(report["oracle_exp"]["dump_equipment_compositions"], 377);
     assert_eq!(report["oracle_exp"]["equipment_composition_rels"], 7);
-    assert_eq!(report["oracle_exp"]["item_notes"], 114);
+    assert_eq!(report["oracle_exp"]["dump_item_notes"], 114);
     assert_eq!(report["oracle_exp"]["item_note_rels"], 6);
+    assert_eq!(report["classified_items"]["items_published"], 556);
+    assert_eq!(report["classes_total"], 3_093);
+    let classes = report["classes"].as_object().expect("classes object");
+    assert_eq!(classes.len(), 20);
+    assert_eq!(classes["PIDDrawing"]["objects"], 1);
+    assert_eq!(classes["PIDRepresentation"]["objects"], 902);
+    assert_eq!(classes["PIDPipeline"]["objects"], 79);
+    assert_eq!(classes["PIDBranchPoint"]["objects"], 2);
     assert_eq!(report["relationships"]["EquipmentComponentComposition"], 7);
     assert_eq!(report["relationships"]["PBSItemNotes"], 6);
     assert_eq!(report["relationships"]["PipingTapOrFitting"], 369);
@@ -852,6 +860,76 @@ fn backup_directory_publishes_the_whole_package() {
         .filter(|drawing| drawing["uid_from"] == "T_DRAWING.PATH")
         .count();
     assert_eq!(shells, 2);
+
+    // D1b: `classes` is a full census of the sibling `_Data.xml`'s
+    // top-level blocks — every tag the document carries is a `classes`
+    // key with that tag's block count, and the sum closes on
+    // `classes_total` and the drawing's `_Index.json` `objects`.
+    // `dump_equipment_compositions` / `dump_item_notes` are dump-scope
+    // constants (377 / 114 on every exp drawing); the `*_rels` pair is
+    // per drawing.
+    let mut dump_compositions = HashSet::new();
+    let mut dump_notes = HashSet::new();
+    let mut composition_rels = HashSet::new();
+    let mut note_rels = HashSet::new();
+    let mut exp_drawings = 0usize;
+    for row in index["drawings"].as_array().expect("drawings") {
+        let name = row["name"].as_str().expect("drawing name");
+        let report: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out.join(format!("{name}_Coverage.json")))
+                .expect("coverage json"),
+        )
+        .expect("coverage json");
+        let document = read_document(
+            &std::fs::read_to_string(out.join(format!("{name}_Data.xml"))).expect("data xml"),
+        );
+        let mut tags: BTreeMap<String, usize> = BTreeMap::new();
+        for (class, _) in document.objects.values() {
+            *tags.entry(class.clone()).or_default() += 1;
+        }
+        let classes = report["classes"].as_object().expect("classes");
+        for (tag, blocks) in &tags {
+            assert!(
+                classes.contains_key(tag.as_str()),
+                "{name}: `{tag}` blocks are in the data xml but not in `classes`"
+            );
+            assert_eq!(classes[tag.as_str()]["objects"], *blocks, "{name}: {tag}");
+        }
+        let census: usize = classes
+            .values()
+            .map(|cell| cell["objects"].as_u64().expect("objects") as usize)
+            .sum();
+        assert_eq!(
+            census,
+            tags.values().sum::<usize>(),
+            "{name}: `classes` holds a tag the data xml does not carry"
+        );
+        assert_eq!(report["classes_total"], census, "{name}: classes_total");
+        assert_eq!(row["objects"], census, "{name}: index objects");
+        if let Some(oracle) = report.get("oracle_exp") {
+            exp_drawings += 1;
+            dump_compositions.insert(
+                oracle["dump_equipment_compositions"]
+                    .as_u64()
+                    .expect("dump"),
+            );
+            dump_notes.insert(oracle["dump_item_notes"].as_u64().expect("dump"));
+            composition_rels.insert(oracle["equipment_composition_rels"].as_u64().expect("rels"));
+            note_rels.insert(oracle["item_note_rels"].as_u64().expect("rels"));
+        }
+    }
+    assert_eq!(exp_drawings, 51);
+    assert_eq!(dump_compositions, HashSet::from([377]));
+    assert_eq!(dump_notes, HashSet::from([114]));
+    assert!(
+        composition_rels.len() > 1,
+        "per-drawing counts did not vary: {composition_rels:?}"
+    );
+    assert!(
+        note_rels.len() > 1,
+        "per-drawing counts did not vary: {note_rels:?}"
+    );
+
     let Some(drawings) = corpus() else {
         eprintln!("skip: I井场 single-file comparison, corpus is missing");
         return;
