@@ -590,6 +590,66 @@ fn diff_against_oracle_exp_exits_zero_for_ijingchang() {
     );
 }
 
+/// I1 — `--style` is a database-input flag: on a `.pid` input and on a
+/// backup directory it is a usage error that names the flag, instead of
+/// being accepted and ignored (the run used to exit 0 and write output
+/// byte-identical to a run without the flag).
+#[test]
+fn style_is_refused_on_a_pid_input_and_on_a_backup_directory() {
+    for value in ["dwg", "a01"] {
+        let out_dir = unique_out_dir("style-refused");
+        let output = Command::new(CLI)
+            .arg("test-file/D06.pid")
+            .arg("--out-dir")
+            .arg(&out_dir)
+            .args(["--style", value])
+            .output()
+            .expect("spawn pid_publish_xml <file.pid> --style");
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "--style {value} on a .pid input must be a usage error"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("--style"),
+            "--style {value} refusal must name the flag:\n{stderr}"
+        );
+        assert!(
+            !out_dir.exists(),
+            "a refused .pid run writes nothing ({value})"
+        );
+    }
+
+    let package = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-file/backup-test/TEST02_p");
+    if !package.join("Manifest.txt").is_file() {
+        eprintln!("skip: test-file/backup-test/TEST02_p is not a backup package");
+        return;
+    }
+    let out_dir = unique_out_dir("style-refused-package");
+    let output = Command::new(CLI)
+        .arg(&package)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .args(["--style", "dwg"])
+        .output()
+        .expect("spawn pid_publish_xml <backup-dir> --style");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "--style on a backup directory must be a usage error"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--style"),
+        "the package refusal must name the flag:\n{stderr}"
+    );
+    assert!(
+        !out_dir.join("_Index.json").exists(),
+        "a refused package run writes no _Index.json"
+    );
+}
+
 #[test]
 fn out_dir_is_refused_beside_out_and_for_a_database_input() {
     let out_dir = unique_out_dir("refused");

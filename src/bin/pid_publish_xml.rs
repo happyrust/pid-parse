@@ -114,7 +114,9 @@ fn print_usage() {
          default attributes).\n\n\
          A directory that contains Manifest.txt is a backup package. Every\n\
          .pid entry in its PlantData zips is published into --out-dir, plus\n\
-         _Index.json. Export.dmp is read once when it is an Oracle exp. A\n\
+         _Index.json. It publishes every drawing, so --drawing /\n\
+         --list-drawings / --style / --oracle-exp / --datamap do not apply.\n\
+         Export.dmp is read once when it is an Oracle exp. A\n\
          SQL Server MTF dump is stripped to its MDF and every T_Drawing\n\
          row publishes through the database path (backup-mdf feature;\n\
          without it the input still exits 2). --diff-against DIR compares\n\
@@ -175,6 +177,8 @@ fn print_usage() {
          \x20                   matching the A01 SmartPlant export shape; `dwg`\n\
          \x20                   drops ItemTag in favor of Name (or omits it on\n\
          \x20                   PIDProcessVessel) to match the DWG export shape.\n\
+         \x20                   Database input only: a .pid input and a backup\n\
+         \x20                   directory reject it instead of ignoring it.\n\
          --list-drawings     Print every T_Drawing row in the input table set\n\
          \x20                   (SP_ID, Name, DocumentCategory, DocumentType,\n\
          \x20                   Path) and exit 0. Mutually exclusive with the\n\
@@ -322,6 +326,12 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 "a backup directory reads Export.dmp itself; --oracle-exp does not apply".into(),
             );
         }
+        // I1: the package line publishes every drawing itself and reads no
+        // per-drawing style switch, so `--style` used to be accepted and then
+        // ignored. Refuse it like the sibling flags above.
+        if style.is_some() {
+            return Err("a backup directory publishes every .pid; --style does not apply".into());
+        }
         if datamap.is_some() {
             return Err(
                 "a backup directory reads RefData~4~804.zip itself; --datamap does not apply"
@@ -355,6 +365,11 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         return Err(
             "a .pid input is one drawing: --list-drawings and --drawing do not apply".into(),
         );
+    }
+    // I1: the `.pid` line writes what the file states, with no style switch,
+    // so an explicit `--style` used to be accepted and then ignored.
+    if pid_input && style.is_some() {
+        return Err("a .pid input is one drawing: --style does not apply".into());
     }
     if out_dir.is_some() {
         if !pid_input && !package_input {

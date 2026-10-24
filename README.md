@@ -36,7 +36,7 @@
 - **Layout-first 可读整图模型**（v0.4.1）：`PidDocument.layout` 输出 `items / segments / texts / unplaced / warnings`，供 H7CAD 等下游优先生成可读整图而不是语义网格图
 - **pid-only 符号证据下沉**（v0.4.1 patch）：从 `cross_reference.symbol_usage` / `jsites` 提取代表性 `.sym` 路径，补到对象级 `PidLayoutItem.symbol_path`
 - **Backup 解析（offline pipeline）**：MTF 备份头剥离（`backup::mtf`）+ MSCI / MDF 元数据探针 + `pid_backup_extract` CLI，把 SmartPlant 备份还原成可被 Rust MDF loader 读取的 `.mdf`
-- **Publish Data XML writer**（Stage-1，A12 → A39）：通过本地克隆的 `vendor/oxidized-mdf` 直接读取 MDF 内的 `T_Drawing` / `T_ModelItem` / `T_Representation` / `T_Relationship` 等表，发出 SmartPlant 兼容的 `_Data.xml` + `_Meta.xml`。15 类 PID tag 已支持（PIDBranchPoint / PIDControlSystemFunction / PIDDrawing / PIDNote / PIDNozzle / PIDPipeline / PIDPipingBranchPoint / PIDPipingComponent / PIDPipingPort / PIDProcessPoint / PIDProcessVessel / PIDRepresentation / PIDSignalConnector / PIDSignalPort）；A01 reference 上共享 tag 的接口集 / 属性集继续由 A23 / A27 守门，DWG reference 的 writer coverage 已达 `108/108`
+- **Publish Data XML writer**（Stage-1，A12 → A39）：通过本地克隆的 `vendor/oxidized-mdf` 直接读取 MDF 内的 `T_Drawing` / `T_ModelItem` / `T_Representation` / `T_Relationship` 等表，发出 SmartPlant 兼容的 `_Data.xml` + `_Meta.xml`。21 类 PID tag 已支持（`.pid` 线的 registry-driven 集合，权威清单在 `src/publish/catalog.rs` 的 `PublishItemCatalog`：PIDBranchPoint / PIDControlSystemFunction / PIDDrawing / PIDHeatTransferEquipment / PIDInlineInstrument / PIDInstrument / PIDMechanicalEquipment / PIDNote / PIDNozzle / PIDPipeline / PIDPipingBranchPoint / PIDPipingComponent / PIDPipingConnector / PIDPipingPort / PIDProcessEquipment / PIDProcessPoint / PIDProcessVessel / PIDRepresentation / PIDSignalBranchPoint / PIDSignalConnector / PIDSignalPort）；A01 reference 上共享 tag 的接口集 / 属性集继续由 A23 / A27 守门，DWG reference 的 writer coverage 已达 `108/108`
 - **Publish fidelity 守门**：tag-count diff（A12）+ writer coverage 分类（A15）+ 接口级 parity（A23 / A24）+ 属性级 parity（A27 / A27b）+ backlog tag inventory snapshot（A28）+ A01/DWG style 切换（A29 / A29b）+ A01 raw residual 完整 MDF 证据探针（A39）。任何 future SmartPlant 端漂移会以 `(tag, interface, attr)` 三元组或 raw synthetic slot 证据门失败定位
 - **PIDProcessVessel tank 变体**（A25）：通过 `obj.fields["IsLowPressureTank"]` 路由，DWG-style "Open top tank" 17 接口形态与 A01-style "Horizontal Drum" 15 接口形态共用一套 writer
 - **Probe / Decode 分层**：启发式标记与确定性解码明确分离
@@ -126,10 +126,27 @@ cargo run --bin pid_publish_xml -- Export.mdf \
     --drawing D9635C3C898840D1990B7E8BEE1D55DA \
     --plant TEST02 --diff-against reference/A01_Data.xml
 
-# 7. 备份包目录（目录里有 Manifest.txt）。Oracle exp 的 Export.dmp 读一次，
-#    PlantData zip 里每张 .pid 写出三件，另写 _Index.json。MTF 的 Export.dmp 退出 2。
+# 7. 单张 .pid + Oracle exp 增强：--oracle-exp 读 piping / signal 端口，
+#    --datamap 补 FluidSystem，--out-dir 写出三件（见下方「三条输入线」）。
+cargo run --bin pid_publish_xml -- drawing.pid \
+    --oracle-exp Export.dmp --datamap SPPIDDataMap.xml --out-dir out
+
+# 8. 备份包目录（目录里有 Manifest.txt）。Oracle exp 的 Export.dmp 读一次，
+#    PlantData zip 里每张 .pid 写出三件，包级另写 _Index.json。
 cargo run --bin pid_publish_xml -- <backup-dir> --out-dir <dir> --plant P01
 ```
+
+### publish 的三条输入线与四个产出文件名
+
+| 输入 | 命令 | 逐图产出 | 包级产出 |
+|---|---|---|---|
+| 单张 `.pid` | `pid_publish_xml <file.pid> --out-dir DIR` | `<图名>_Data.xml` + `<图名>_Meta.xml` + `<图名>_Coverage.json` | — |
+| `.pid` + Oracle exp | `pid_publish_xml <file.pid> --oracle-exp <dump> [--datamap <SPPIDDataMap.xml 或含该条目的 zip>] --out-dir DIR` | 同上三件 | — |
+| 备份包目录 | `pid_publish_xml <backup-dir> --out-dir DIR` | Oracle exp：三件；SQL Server MTF：`<图名>_Data.xml` + `<图名>_Meta.xml` 两件 | `_Index.json` |
+
+- **四个产出文件名**：`_Data.xml`（对象 / 值 / 关系）、`_Meta.xml`（容器与版本元数据）、`_Coverage.json`（逐图覆盖报表）、`_Index.json`（包级索引）。`.pid` 输入与 Oracle exp 备份包的每张图交付就是三件（`_Data.xml` + `_Meta.xml` + `_Coverage.json`）。
+- **SQL Server MTF 的 `Export.dmp`**：默认特性（`backup` ⊃ `backup-mdf`）下先把 MTF 头剥出 MDF，再按数据库线把每条 `T_Drawing` 行发布出来（退出 0）。
+- **`--style a01|dwg` 只对数据库输入**（`Export.mdf` / legacy `Export_v2.sqlite`）有效：`.pid` 输入与备份包目录都会拒绝它（退出 2 并点名 `--style`），不再静默忽略。
 
 当前公开的 publish 正确性基线只承诺 `Export.mdf` 主链。
 历史 `Export_v2.sqlite` mirror 仍可作为 legacy 兼容输入喂给
@@ -337,7 +354,7 @@ backlog (DWG only)  | A28       | A28       | A28       | + 3 grd|   --
 CLI surface         |  --       |  --       |  --       |  --    | A29b (--style)
 ```
 
-15 类 PID tag 已实现 writer arm；DWG reference 已达到 `108/108` writer coverage，
+21 类 PID tag 已实现 writer arm（`.pid` 线的 registry-driven 集合，见 `src/publish/catalog.rs`）；DWG reference 已达到 `108/108` writer coverage，
 `PIDBranchPoint × 5` 与 `PIDPipingBranchPoint × 4` 已从 backlog snapshot 毕业到
 supported set。PIDProcessVessel 已支持 A01 "Horizontal Drum"（15 接口）和
 DWG "Open top tank"（17 接口）两种 variant；当前剩余缺口集中在 mirror-gated
