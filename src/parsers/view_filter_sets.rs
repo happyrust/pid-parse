@@ -257,6 +257,18 @@ pub fn decode_view_filter_sets(data: &[u8]) -> Vec<ViewFilterSetDecoded> {
         .collect()
 }
 
+/// Resync-scan variant of [`decode_view_filter_sets`] for storages whose
+/// `PSMcluster0` is not a contiguous chain — the document storage's records
+/// sit behind padding the strict walker cannot cross. [`decode_payload`] is
+/// exact-tail strict, so a false-positive envelope cannot survive it.
+pub fn decode_view_filter_sets_scattered(data: &[u8]) -> Vec<ViewFilterSetDecoded> {
+    crate::parsers::cluster_header::resync_cluster_body_records(data)
+        .into_iter()
+        .filter(|record| record.type_code == PSM_TYPE_CODE_VIEW_FILTER_SET)
+        .filter_map(|record| decode_payload(&record.raw_payload, record.byte_range))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

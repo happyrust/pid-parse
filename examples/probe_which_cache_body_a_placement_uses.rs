@@ -240,6 +240,7 @@ fn main() {
                             radius,
                             start_angle,
                             end_angle,
+                            ..
                         } => Some(Curve::Arc(*center, *radius, *start_angle, *end_angle)),
                         _ => None,
                     })

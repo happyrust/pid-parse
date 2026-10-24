@@ -85,6 +85,60 @@ pub fn load_drawing_graph_from_mdf(
     sqlite_load::load_drawing_graph(&conn, drawing_uid)
 }
 
+/// Strip the MTF envelope and the SQL Server backup-stream prefix
+/// off an `Export.dmp`, returning the embedded MDF image bytes.
+///
+/// The `MSDA` stream body located by
+/// [`crate::backup::mtf::msda_stream_body`] still carries a leading
+/// backup-stream header;
+/// [`crate::backup::mdf_page::detect_backup_stream_header_len`]
+/// finds where the first MDF page starts (with a `0x3F0` fallback).
+///
+/// # Errors
+///
+/// Returns [`PublishError::Mdf`] when the dump has no `MSDA` stream
+/// or the detected header offset already runs past the body end.
+pub fn mdf_bytes_from_mtf_dump(dump: &[u8]) -> Result<Vec<u8>, PublishError> {
+    let body = crate::backup::mtf::msda_stream_body(dump).ok_or_else(|| {
+        PublishError::Mdf("no MSDA (SQL data) stream in the MTF dump".to_string())
+    })?;
+    let offset = crate::backup::mdf_page::detect_backup_stream_header_len(body);
+    if offset >= body.len() {
+        return Err(PublishError::Mdf(format!(
+            "MSDA stream is shorter than its detected {offset}-byte header ({} bytes)",
+            body.len()
+        )));
+    }
+    Ok(body[offset..].to_vec())
+}
+
+/// Stage an MTF-wrapped SQL Server `Export.dmp` into the same
+/// in-memory `SQLite` staging database [`open_mdf_as_sqlite`]
+/// produces for a plain `.mdf` file.
+///
+/// `oxidized-mdf` reads from a path, so the extracted MDF image is
+/// materialized to a temp file first and removed again once staging
+/// completes (the returned connection no longer touches it).
+///
+/// # Errors
+///
+/// Returns [`PublishError::Mdf`] when the dump yields no MDF image,
+/// [`PublishError::Io`] when the temp file cannot be written, and
+/// whatever [`open_mdf_as_sqlite`] reports while staging.
+pub fn open_mtf_dump_as_sqlite(dump: &[u8]) -> Result<Connection, PublishError> {
+    let mdf = mdf_bytes_from_mtf_dump(dump)?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let temp =
+        std::env::temp_dir().join(format!("pid-parse-mtf-{}-{nanos}.mdf", std::process::id()));
+    std::fs::write(&temp, &mdf)
+        .map_err(|error| PublishError::Io(format!("write {}: {error}", temp.display())))?;
+    let result = open_mdf_as_sqlite(&temp);
+    let _ = std::fs::remove_file(&temp);
+    result
+}
+
 fn stage_table(
     db: &mut MdfDatabase,
     conn: &Connection,

@@ -6,11 +6,13 @@ Single-context repo.
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root — the evidence-based analysis glossary (Evidence-Complete Read Parsing, Decoded Data, Typed Audit Data, Probe Evidence, Identified-Only Data, Unknown Data, Raw Preservation, Versioned Reference Corpus, Coverage Gap, Controlled Fixture).
+- **`CONTEXT.md`** at the repo root — the evidence-based analysis glossary (Evidence-Complete Read Parsing, Decoded Data, Typed Audit Data, Probe Evidence, Identified-Only Data, Unknown Data, Raw Preservation, Versioned Reference Corpus, Coverage Gap, Controlled Fixture, Reference Plot, Rendered Plot, Plot Comparison).
 - **`docs/adr/`** — read ADRs that touch the area you're about to work in:
   - ADR-0001 — full parsing = evidence-complete read-only (no semantic write-back).
   - ADR-0002 — completeness measured against a versioned reference corpus; ratchet changes must be explicit.
   - ADR-0003 — Phase 35 mainline: P0 worktree closeout, then curve-family decoders behind semantic gates.
+  - ADR-0004 — the Rendered Plot is drawn by pid-parse from its own parse, not plotted through OpenCADStudio.
+  - ADR-0005 — plots are written and read with pdfcraft (pinned git dependency), only inside the `pid-plot` crate.
 
 If any file doesn't exist, proceed silently.
 

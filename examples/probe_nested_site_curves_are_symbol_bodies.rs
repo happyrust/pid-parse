@@ -151,6 +151,7 @@ fn body_curves(primitives: &[SymbolPrimitive]) -> Vec<Curve> {
                 radius,
                 start_angle,
                 end_angle,
+                ..
             } => Some(Curve::Arc {
                 center: *center,
                 radius: *radius,

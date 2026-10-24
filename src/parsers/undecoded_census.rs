@@ -61,9 +61,9 @@ pub const NATIVE_GRAPHIC_TYPE_CODES: [u16; 20] = [
 /// rules — a different diagnostic than the one this census reports.
 /// `model::sheet_families` asserts this list stays in sync with the family
 /// registry.
-pub const DECODED_TYPE_CODES: [u16; 14] = [
+pub const DECODED_TYPE_CODES: [u16; 16] = [
     0x3FE6, 0x0018, 0x0084, 0x005E, 0x004D, 0x00CE, 0x0013, 0x003D, 0x00FA, 0x0030, 0x0010, 0x0020,
-    0x005D, 0x0115,
+    0x005D, 0x0115, 0x0061, 0x0059,
 ];
 
 /// True when `SmartPlant`'s native graphic predicate accepts `type_code`,

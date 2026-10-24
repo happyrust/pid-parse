@@ -76,7 +76,7 @@ const META_DEFAULT_DOC_VERSION: &str = "1";
 /// `InstrFunction` objects (16 ports total = the A15 backlog
 /// count). Future fixtures that exhibit a different cardinality
 /// will let this constant become a per-object derivation rule.
-const INSTR_DERIVED_SIGNAL_PORT_COUNT: u8 = 8;
+pub(super) const INSTR_DERIVED_SIGNAL_PORT_COUNT: u8 = 8;
 
 /// Emit a full `_Data.xml` document for the given drawing into a
 /// string buffer. `plant_name` is a user-supplied value (e.g. the
@@ -154,77 +154,19 @@ pub fn write_meta_xml(drawing: &PublishDrawing, plant_name: &str) -> Result<Stri
 }
 
 /// Emit every `PublishObject` as the corresponding `SmartPlant` XML
-/// tag (`<PIDProcessVessel>` / `<PIDNozzle>` / ...). Stage-1
-/// handles the four item types the TEST02 A01 fixture exercises
-/// (Vessel, Nozzle, `PipeRun`, `PipingPoint`); A11 extends the
-/// dispatcher to Note / `ItemNote` (→ `<PIDNote>`) and Instrument /
-/// `InstrFunction` (→ `<PIDControlSystemFunction>`), modeled on the
-/// DWG-0202GP06-01 reference fixture. Unknown types still fall
-/// through with a generic `<PIDItem>` wrapper so the writer stays
-/// total.
+/// tag (`<PIDProcessVessel>` / `<PIDNozzle>` / ...). Dispatch resolves
+/// through the publish item catalog (A3): a row's `db_writer` runs for
+/// its `item_type` and `aliases`; rows without a DB writer
+/// (`Exchanger` / `Mechanical`, TODO A12+) and unlisted types fall
+/// through to the `"*"` row's generic `<PIDItem>` wrapper so the
+/// writer stays total.
 fn write_business_objects(buf: &mut String, drawing: &PublishDrawing) -> Result<(), PublishError> {
     for obj in ordered_business_objects(drawing) {
-        match obj.item_type_name.as_str() {
-            "Vessel" => write_process_vessel(buf, obj, drawing)?,
-            "Nozzle" => write_nozzle(buf, obj, drawing)?,
-            // PipeRun maps to the logical pipeline + its physical
-            // connector + the connector's two derived piping ports
-            // and one derived process point. SmartPlant's exporter
-            // emits all five tags from a single PipeRun row in this
-            // exact order; we mirror that to stay compatible with
-            // the SemanticDiffReport contract.
-            "PipeRun" => {
-                write_pipeline(buf, obj, drawing.style)?;
-                write_piping_connector(buf, obj, drawing.style)?;
-                write_derived_connector_endpoints(buf, obj)?;
-            }
-            // PipingPoint as a top-level object is now treated as a
-            // generic placeholder. T_PipingPoint rows never reach
-            // here (the loader stopped injecting them in A13); this
-            // arm exists for forward-compat in case a future fixture
-            // surfaces a true standalone PIDPipingPort.
-            "PipingPoint" => write_piping_port(buf, obj)?,
-            // A11: Note / ItemNote → `<PIDNote>`. The reference
-            // DWG fixture ships 11 of these — annotation labels
-            // hung on the drawing canvas.
-            "Note" | "ItemNote" => write_item_note(buf, obj)?,
-            // A11+A16: Instrument / InstrFunction →
-            // `<PIDControlSystemFunction>` plus the eight derived
-            // `<PIDSignalPort>` children SmartPlant always
-            // synthesizes (UIDs `<instr>.{1..8}`). The DWG fixture
-            // ships 2 InstrFunction rows × 8 derived ports = 16
-            // PIDSignalPort entries, matching the A15 backlog
-            // count exactly.
-            "Instrument" | "InstrFunction" => {
-                write_control_system_function(buf, obj)?;
-                write_derived_instr_signal_ports(buf, obj, INSTR_DERIVED_SIGNAL_PORT_COUNT)?;
-            }
-            // A17: PipingComp → `<PIDPipingComponent>`. SQLite
-            // loader already stitches T_PlantItem + T_InlineComp +
-            // T_PipingComp fields onto the `PublishObject`; the
-            // writer renders the 19-interface shape observed in
-            // DWG-0202GP06-01_Data.xml (Cap / Conduit gate valve
-            // samples). Closes PIDPipingComponent × 2 in the A15
-            // backlog.
-            "PipingComp" => write_piping_component(buf, obj)?,
-            // A18: SignalRun → `<PIDSignalConnector>`. The
-            // signal-side counterpart of PipeRun → PIDPipingConnector.
-            // The DWG-0202GP06-01 fixture ships 1 SignalRun row
-            // whose XML shape is deliberately minimal (8
-            // interfaces, no IPBSItem business envelope) because
-            // SmartPlant treats signal connectors as pure wiring
-            // overlays rather than piped facilities.
-            "SignalRun" => write_signal_connector(buf, obj)?,
-            "PipingBranchPoint" => write_piping_branch_point(buf, obj)?,
-            "BranchPoint" => write_pid_branch_point(buf, obj)?,
-            // TODO(A12+): Exchanger / Mechanical have business
-            // subtables registered in `subtables_for_item_type` but
-            // no dedicated SmartPlant tag observed in the TEST02 +
-            // DWG-0202GP06-01 reference fixtures. They fall through
-            // to the generic placeholder until a fixture surfaces
-            // their canonical XML shape.
-            other => write_generic_object(buf, obj, other)?,
-        }
+        let writer = super::catalog::catalog_row(obj.item_type_name.as_str())
+            .and_then(|row| row.db_writer)
+            .or_else(|| super::catalog::catalog_row("*").and_then(|row| row.db_writer))
+            .expect("catalog \"*\" row always carries the generic writer");
+        writer(buf, obj, drawing)?;
     }
     Ok(())
 }
@@ -303,13 +245,10 @@ fn ordered_publishable_representations(drawing: &PublishDrawing) -> Vec<&Publish
     reps
 }
 
+/// A01 ordering rank for an item type, read from the catalog row
+/// (unlisted types rank 9, same as the old `_` arm).
 fn a01_object_rank(item_type_name: &str) -> u8 {
-    match item_type_name {
-        "Vessel" => 0,
-        "Nozzle" => 1,
-        "PipeRun" => 2,
-        _ => 9,
-    }
+    super::catalog::catalog_row(item_type_name).map_or(9, |row| row.a01_rank)
 }
 
 /// Resolve a business-field value (e.g. `EquipmentType = "0"`) to
@@ -523,7 +462,7 @@ fn derived_pipe_connector_uid(pipe_uid: &str) -> String {
 /// from `T_ProcessEquipment`'s `EqType` columns) is deferred to
 /// A25b — until then, callers synthesising `PublishObjects`
 /// manually can set the field directly.
-fn write_process_vessel(
+pub(super) fn write_process_vessel(
     buf: &mut String,
     obj: &PublishObject,
     drawing: &PublishDrawing,
@@ -531,15 +470,18 @@ fn write_process_vessel(
     let item_tag = canonical_vessel_item_tag(obj, drawing.style);
     let description = obj.description.as_deref().unwrap_or("");
     // Three-tier fallback for the SmartPlant `EqTypeDescription`
-    // attribute. The codelist lookup is authoritative — it is what
-    // SmartPlant itself uses to render the enum — so it wins when
-    // the metadata catalog ships the mapping. Drawing fixtures
-    // produced without a codelist catalog fall back to parsing the
-    // symbol path (`Horizontal Drum.sym` → `"Horizontal Drum"`),
-    // and finally to the raw `EquipmentType` enum ID so the
-    // attribute is never silently blank.
-    let eq_type_description = resolve_codelist_field(drawing, obj, "EquipmentType")
-        .or_else(|| derive_type_description_from_symbol(drawing, &obj.uid))
+    // attribute (#27):
+    //   1. Symbol-path stem (`Horizontal Drum.sym` → `"Horizontal Drum"`).
+    //      On TEST02 A01 (`T_Equipment.EquipmentType = 241`), `C22`
+    //      maps `241` to `"1 diameter, 1 chamber, elliptical head
+    //      horizontal drum"`, whereas SmartPlant's reference
+    //      `A01_Data.xml` emits the symbol stem `"Horizontal Drum"`.
+    //   2. `CodelistIndex` lookup (`EquipmentType` → `C22` →
+    //      `codelist_text`) when the vessel has no symbol path.
+    //   3. Raw `EquipmentType` enum ID so the attribute is never
+    //      silently blank.
+    let eq_type_description = derive_type_description_from_symbol(drawing, &obj.uid)
+        .or_else(|| resolve_codelist_field(drawing, obj, "EquipmentType"))
         .unwrap_or_else(|| obj.fields.get("EquipmentType").cloned().unwrap_or_default());
     let construction_status = canonical_construction_status(obj, drawing.style);
     let construction_status2 = canonical_construction_status2(obj, drawing.style);
@@ -710,7 +652,7 @@ fn write_process_vessel(
 ///   absent, diverging from the A01 bare shape.
 /// * `IPipingSpecifiedItem` — same conditional path for
 ///   `PipingMaterialsClass` (bare in A01; populated in DWG).
-fn write_nozzle(
+pub(super) fn write_nozzle(
     buf: &mut String,
     obj: &PublishObject,
     drawing: &PublishDrawing,
@@ -1044,7 +986,7 @@ fn write_process_vessel_iobject(
 /// that loaded a DWG-flavor `SQLite` mirror), the `IObject` drops
 /// the `ItemTag` attribute — matching the DWG reference's
 /// `<IObject UID="..." Name="..."/>` two-attribute shape.
-fn write_pipeline(
+pub(super) fn write_pipeline(
     buf: &mut String,
     obj: &PublishObject,
     style: PublishStyle,
@@ -1148,7 +1090,7 @@ fn write_pipeline(
 /// A01 byte-shape identical to the pre-A20 empty case while
 /// unlocking the DWG-specific populated shape when the columns
 /// arrive from `T_PipeRun` / `T_Connector`.
-fn write_piping_connector(
+pub(super) fn write_piping_connector(
     buf: &mut String,
     obj: &PublishObject,
     style: PublishStyle,
@@ -1349,7 +1291,7 @@ fn write_piping_connector(
 /// deterministic connector UID the `<PIDPipingConnector>`
 /// block carries, with the `SmartPlant` suffixes `.1`, `.2`,
 /// `.PPT`.
-fn write_derived_connector_endpoints(
+pub(super) fn write_derived_connector_endpoints(
     buf: &mut String,
     obj: &PublishObject,
 ) -> Result<(), PublishError> {
@@ -1432,7 +1374,7 @@ fn write_derived_connector_endpoints(
 ///   reference; Vessel/Nozzle's typical attribute is omitted here).
 ///
 /// Counts of zero render nothing but stay well-formed.
-fn write_derived_instr_signal_ports(
+pub(super) fn write_derived_instr_signal_ports(
     buf: &mut String,
     obj: &PublishObject,
     count: u8,
@@ -1458,7 +1400,7 @@ fn write_derived_instr_signal_ports(
     Ok(())
 }
 
-fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
     let nominal_diameter = obj
         .fields
         .get("NominalDiameter")
@@ -1501,7 +1443,7 @@ fn write_piping_port(buf: &mut String, obj: &PublishObject) -> Result<(), Publis
 /// `NoteText` field win over `Description`. When neither is
 /// present the attribute renders empty rather than fabricating a
 /// placeholder.
-fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
     let note_text = obj
         .fields
         .get("NoteText")
@@ -1562,7 +1504,7 @@ fn write_item_note(buf: &mut String, obj: &PublishObject) -> Result<(), PublishE
 /// missing the writer falls back to the bare `MeasuredVariable`
 /// (or the bare sequence) so the human-readable label is still
 /// non-empty whenever any signal is available.
-fn write_control_system_function(
+pub(super) fn write_control_system_function(
     buf: &mut String,
     obj: &PublishObject,
 ) -> Result<(), PublishError> {
@@ -1715,7 +1657,10 @@ fn write_control_system_function(
 /// * `IsTypical` on `IPIDTypical` — the `T_ModelItem.SP_IsTypical`
 ///   standard boolean, rendered through [`map_bool`]; defaults to
 ///   `"False"`.
-fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_piping_component(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
     let construction_status = obj
         .fields
         .get("ConstructionStatus")
@@ -1879,7 +1824,10 @@ fn write_piping_component(buf: &mut String, obj: &PublishObject) -> Result<(), P
 /// `T_Relationship` and flow through the generic relationship
 /// emitter in `write_relationships`. A17/A18 stay focused on the
 /// per-object tag shape.
-fn write_signal_connector(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_signal_connector(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
     let flow_direction = obj.fields.get("FlowDirection").cloned().unwrap_or_default();
     writeln!(buf, "   <PIDSignalConnector>").map_err(fmt_err)?;
     writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid)).map_err(fmt_err)?;
@@ -1921,7 +1869,10 @@ fn write_signal_connector(buf: &mut String, obj: &PublishObject) -> Result<(), P
 /// emits whatever `obj.uid` the loader supplies, leaving the
 /// suffix convention to the loader side. All interfaces are bare
 /// (no attributes) so the function needs nothing beyond the UID.
-fn write_piping_branch_point(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_piping_branch_point(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
     writeln!(buf, "   <PIDPipingBranchPoint>").map_err(fmt_err)?;
     writeln!(buf, r#"      <IObject UID="{}"/>"#, escape_attr(&obj.uid),).map_err(fmt_err)?;
     writeln!(buf, "      <IConnection/>").map_err(fmt_err)?;
@@ -1952,7 +1903,10 @@ fn write_piping_branch_point(buf: &mut String, obj: &PublishObject) -> Result<()
 /// number. All interfaces below `IObject` are bare. `Name` is
 /// sourced from `obj.fields["Name"]` falling back to
 /// `obj.description` — the loader must populate one of them.
-fn write_pid_branch_point(buf: &mut String, obj: &PublishObject) -> Result<(), PublishError> {
+pub(super) fn write_pid_branch_point(
+    buf: &mut String,
+    obj: &PublishObject,
+) -> Result<(), PublishError> {
     let name = non_empty_field(obj, "Name")
         .or(obj.description.as_deref())
         .unwrap_or("");
@@ -1978,7 +1932,7 @@ fn write_pid_branch_point(buf: &mut String, obj: &PublishObject) -> Result<(), P
     writeln!(buf, "   </PIDBranchPoint>").map_err(fmt_err)
 }
 
-fn write_generic_object(
+pub(super) fn write_generic_object(
     buf: &mut String,
     obj: &PublishObject,
     item_type_name: &str,
@@ -2609,8 +2563,8 @@ fn classify_relationship(rel: &PublishRelationship, type_by_uid: &HashMap<&str, 
 /// Prefix used when composing the `<Rel><IObject UID="...">`
 /// value from UID1 / UID2. Matches the SPPID reference convention:
 /// `DRC-` / `DRI-` / `EQC-` / `PCN-` / `PE1-` / `PE2-` /
-/// `PPC-` / `PTF-` / `SPC-` / `PRP-`.
-fn defuid_prefix(def_uid: &str) -> &'static str {
+/// `PPC-` / `PTF-` / `SPC-` / `PRP-` / `SE1-` / `SE2-` / `STF-` / `ITN-`.
+pub(crate) fn defuid_prefix(def_uid: &str) -> &'static str {
     match def_uid {
         "DwgRepresentationComposition" => "DRC",
         "DrawingItems" => "DRI",
@@ -2622,6 +2576,12 @@ fn defuid_prefix(def_uid: &str) -> &'static str {
         "PipingTapOrFitting" => "PTF",
         "SignalPortComposition" => "SPC",
         "ProcessPointCollection" => "PRP",
+        // `FillUpRelDefArray` (`docs/analysis/n2a-port-relation-filter.md`,
+        // question 2): the signal counterparts and item notes.
+        "SignalEnd1Conn" => "SE1",
+        "SignalEnd2Conn" => "SE2",
+        "SignalTapOrFitting" => "STF",
+        "PBSItemNotes" => "ITN",
         _ => "REL",
     }
 }
@@ -2630,7 +2590,7 @@ fn defuid_prefix(def_uid: &str) -> &'static str {
 /// delimiters so we only need to escape the five canonical
 /// entities plus CR/LF (which SPPID stores verbatim as
 /// `&#13;&#10;` inside attribute values).
-fn escape_attr(s: &str) -> String {
+pub(crate) fn escape_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -2910,36 +2870,53 @@ mod tests {
     }
 
     #[test]
-    fn vessel_eq_type_uses_codelist_lookup_when_available() {
-        // When the drawing ships a codelist entry for
-        // EquipmentType = "0", the writer MUST prefer the codelist
-        // text over the symbol-path stem. This mirrors SmartPlant's
-        // own rendering (the enum display text is the source of
-        // truth; the symbol path is a UI convention).
+    fn vessel_eq_type_prefers_symbol_path_over_codelist_to_match_a01() {
+        // On TEST02 A01 (`EquipmentType = 241`), `C22` resolves to
+        // `"1 diameter, 1 chamber, elliptical head horizontal drum"`,
+        // while SmartPlant's reference `A01_Data.xml` emits the
+        // symbol-path stem `"Horizontal Drum"` (#27). When a symbol
+        // path is present on the representation, it takes priority.
         let mut d = example_drawing();
-        // Seed the vessel with an EquipmentType code so the codelist
-        // path has something to resolve.
+        let vessel = d
+            .objects
+            .iter_mut()
+            .find(|o| o.item_type_name == "Vessel")
+            .expect("vessel in fixture");
+        vessel.fields.insert("EquipmentType".into(), "241".into());
+        d.codelist.insert_attribute_mapping("EquipmentType", "22");
+        d.codelist.insert_entry(
+            "22",
+            "241",
+            "1 diameter, 1 chamber, elliptical head horizontal drum",
+        );
+
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(r#"<IEquipment EqTypeDescription="Horizontal Drum"/>"#),
+            "symbol-path stem must win over C22 codelist text to match A01; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn vessel_eq_type_uses_codelist_lookup_when_no_symbol_path() {
+        // When a vessel has no symbol path on its representation,
+        // the writer falls back to the `CodelistIndex` mapping
+        // (`EquipmentType` → `C22`).
+        let mut d = example_drawing();
+        d.representations.clear();
         let vessel = d
             .objects
             .iter_mut()
             .find(|o| o.item_type_name == "Vessel")
             .expect("vessel in fixture");
         vessel.fields.insert("EquipmentType".into(), "3".into());
-        // Register EquipmentType → codelist 28 → "3" = "Reactor".
-        d.codelist.insert_attribute_mapping("EquipmentType", "28");
-        d.codelist.insert_entry("28", "3", "Reactor");
+        d.codelist.insert_attribute_mapping("EquipmentType", "22");
+        d.codelist.insert_entry("22", "3", "Reactor");
 
         let out = write_data_xml(&d, "TEST02").expect("write");
         assert!(
             out.contains(r#"<IEquipment EqTypeDescription="Reactor"/>"#),
-            "codelist-resolved description should win over the symbol-path stem; out:\n{out}"
-        );
-        // The symbol path stem ("Horizontal Drum") must NOT appear
-        // as the EqType description — it's still in the XML as part
-        // of the rep's FileName chain, but not on <IEquipment>.
-        assert!(
-            !out.contains(r#"EqTypeDescription="Horizontal Drum""#),
-            "codelist lookup should beat symbol-path fallback; out:\n{out}"
+            "codelist-resolved description should be used when no symbol path is present; out:\n{out}"
         );
     }
 

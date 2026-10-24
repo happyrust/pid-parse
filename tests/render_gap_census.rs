@@ -34,19 +34,22 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     // that one is 36 + 8 x 22 -- so the bound became "room for k members" and
     // it decodes. No text is refused anywhere in the corpus either: reading
     // the native `igTextBox` sub-type layout decoded all 260 records of that
-    // family, so every remaining refusal below is a zero-length polyline. See
+    // family. The last graphic refusals anywhere — coincident-vertex
+    // linestrings — decoded on 2026-10-15: they are placement anchors the
+    // native output also strokes nothing for. See
     // `docs/analysis/2026-09-24-the-last-five-refusals.md`.
     ("DWG-0201GP06-01.pid", 0, 0),
-    // 4 refused linestrings on /Sheet6: two coincident vertices at scope 3,
-    // all on the switched-off HiddenObjects layer -- the gongyi drawing's
-    // population C again, a correct refusal (same analysis). /Sheet6615's
-    // rectangle was the one dropped record until `igRectangle2d` got its
-    // decoder (2026-09-07); it decodes now, and emits nothing, being the
-    // parent of the four edge lines that already do.
-    ("DWG-0202GP06-01.pid", 4, 0),
-    // 8 refused linestrings — population C (degenerate two-vertex), judged
-    // a correct refusal.
-    ("工艺管道及仪表流程-1.pid", 8, 0),
+    // Clean since 2026-10-15: the 4 linestrings that sat here are `vc=2`
+    // records whose vertices coincide — a placement anchor, not a stroke.
+    // They decode now (the emitter drops them to probe-only points, matching
+    // the native output which strokes nothing there). /Sheet6615's rectangle
+    // was the one dropped record until `igRectangle2d` got its decoder
+    // (2026-09-07); it decodes too, and emits nothing, being the parent of
+    // the four edge lines that already do.
+    ("DWG-0202GP06-01.pid", 0, 0),
+    // The same population: 8 coincident-vertex linestrings, anchors not
+    // strokes, decoded alongside DWG-0202's.
+    ("工艺管道及仪表流程-1.pid", 0, 0),
     // The one clean sheet in the corpus.
     ("D06.pid", 0, 0),
     // Clean since the sub-type layout landed: the 18 text records that used
@@ -309,10 +312,10 @@ fn every_refused_graphic_record_is_named_in_a_warning() {
         }
     }
 
-    assert!(
-        checked > 0,
-        "no refused records were checked; the corpus should still contain them"
-    );
+    // The corpus's graphic refusals went to zero when the coincident-vertex
+    // linestrings decoded (2026-10-15); `checked` may legitimately be 0 now.
+    // The loop above is what matters whenever refusals do occur.
+    let _ = checked;
 }
 
 #[test]
@@ -346,7 +349,6 @@ fn a_refusal_and_a_missing_decoder_do_not_read_alike() {
         .filter(|warning| warning.contains("have no decoder"))
         .collect();
 
-    assert!(!refusals.is_empty(), "the refused lines and text are named");
     assert!(
         missing.is_empty() && geometry.dropped_graphic_records.is_empty(),
         "every graphic record of DWG-0202 has a decoder now; the /Sheet6615 rectangle was the \

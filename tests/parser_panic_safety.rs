@@ -23,6 +23,7 @@
 use std::collections::HashSet;
 
 use pid_parse::parsers::app_object::parse_app_object;
+use pid_parse::parsers::attribute_rows::decode_attribute_row;
 use pid_parse::parsers::cluster_header::{
     decode_cluster_body_record_at, decode_cluster_body_records, decode_psm_cluster0_body_records,
     decode_style_cluster_body_records, decode_unclustered_da_body_records, parse_header,
@@ -230,6 +231,7 @@ fn exercise_all_parsers(input: &[u8]) {
     let _ = decode_psm_cluster0_body_records(input);
     let _ = decode_style_cluster_body_records(input);
     let _ = decode_unclustered_da_body_records(input);
+    let _ = decode_attribute_row(input);
     // The layer subsystem's readers walk the same chain: a set's bitmaps and
     // layer table are length-prefixed by the file, so every count must be
     // bounds-checked against adversarial lengths.

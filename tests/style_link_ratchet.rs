@@ -15,7 +15,7 @@
 //! * a change that resolves the same records to *different* symbology —
 //!   caught by the corpus palette, which is asserted whole.
 //!
-//! The palette is also the readable part: twelve entries over 669 records,
+//! The palette is also the readable part: twelve entries over 650 records,
 //! ISO 128 widths apart from the 0.100 mm point ticks. If a future change
 //! makes this list longer or stranger, the framing moved. Retiring the
 //! `igLine2d` `aux_hi` rule added four records and no new entry; adding the
@@ -34,9 +34,103 @@ use pid_parse::parsers::sheet_records::{
     decode_iglines, decode_iglinestrings, decode_igpoints, decode_igsymbols,
 };
 use pid_parse::style_link::{
-    style_libraries_for_file, style_names_for_file, stylecluster_path_for_sheet,
-    DocumentStyleTable, StyleHop,
+    line_styles_for_file, storage_of_sheet, style_libraries_for_file, style_names_for_file,
+    stylecluster_path_for_sheet, DocumentStyleTable, StyleHop,
 };
+
+/// An override's own fields win over its base's (plan 2026-10-10).
+///
+/// `DWG-0201`'s equipment table is drawn with fourteen `igLine2d` whose
+/// style id names an override — 86 for eleven rules, 101 for three — onto
+/// style 85 `Dashed`, `0.35 mm` black with a 3.5 / 1.75 mm dash. Each
+/// override states a width and no dash (`+30` = `0x82`), and SmartPlant's
+/// screen shows the rules as thin solid lines: 0.13 mm the eleven, 0.18 mm
+/// the three. The one line of the drawing SmartPlant *does* dash — the
+/// LIA-LIT signal — names its style outright, and still dashes here.
+///
+/// Pinned by oid so that a regression in the override branch shows up as
+/// "these fourteen lines are dashed again" rather than as a palette count
+/// drifting.
+#[test]
+fn dwg0201s_table_rules_draw_thin_and_solid_through_their_overrides() {
+    let path = Path::new("test-file/DWG-0201GP06-01.pid");
+    if !path.exists() {
+        eprintln!("skip: {} absent", path.display());
+        return;
+    }
+    let styles = line_styles_for_file(path).expect("the index builds");
+    let root: BTreeMap<u32, _> = styles
+        .iter()
+        .filter(|((stream, _), _)| storage_of_sheet(stream) == "/")
+        .map(|((_, oid), resolved)| (*oid, *resolved))
+        .collect();
+
+    const THIN: [u32; 11] = [
+        177, 526, 582, 1109, 1193, 1209, 1229, 1230, 1232, 1242, 1246,
+    ];
+    const THINNER_THAN_THE_BASE_BUT_WIDER: [u32; 3] = [525, 528, 1387];
+    for (oids, override_id, width_mm) in [
+        (&THIN[..], 86, 0.13),
+        (&THINNER_THAN_THE_BASE_BUT_WIDER[..], 101, 0.18),
+    ] {
+        for oid in oids {
+            let resolved = root
+                .get(oid)
+                .unwrap_or_else(|| panic!("table rule {oid} resolves to a line style"));
+            assert_eq!(
+                resolved.hop,
+                StyleHop::ViaOverride { override_id },
+                "rule {oid} reaches its style through override {override_id}"
+            );
+            assert_eq!(
+                resolved.style_id, 85,
+                "rule {oid}'s base is style 85 `Dashed`"
+            );
+            assert!(
+                (resolved.symbology.width_mm() - width_mm).abs() < 1e-9,
+                "rule {oid} draws at the override's {width_mm} mm, got {}",
+                resolved.symbology.width_mm()
+            );
+            assert_eq!(
+                resolved.symbology.rgb(),
+                [0, 0, 0],
+                "rule {oid} stays black"
+            );
+            assert_eq!(
+                resolved.dash, None,
+                "rule {oid}: the override states no dash, so the base's is switched off"
+            );
+        }
+    }
+
+    let dashed: Vec<(u32, StyleHop, Vec<i64>)> = root
+        .iter()
+        .filter_map(|(oid, resolved)| {
+            resolved.dash.map(|dash| {
+                (
+                    *oid,
+                    resolved.hop,
+                    dash.segments_mm()
+                        .iter()
+                        .map(|mm| (mm.abs() * 1000.0).round() as i64)
+                        .collect(),
+                )
+            })
+        })
+        .collect();
+    assert_eq!(
+        dashed.len(),
+        1,
+        "one record of the drawing's own sheet draws dashed once the rules are solid: {dashed:?}"
+    );
+    let (_, hop, pattern) = &dashed[0];
+    assert_eq!(
+        *hop,
+        StyleHop::Direct,
+        "the signal line names its style outright"
+    );
+    assert_eq!(pattern, &vec![1905, 1270], "and dashes 1.905 / 1.27 mm");
+}
 
 /// What one fixture is expected to resolve.
 struct Expected {
@@ -73,43 +167,57 @@ const EXPECTED: [Expected; 4] = [
     // retired the `aux_hi == 12` rule (46) until the type word's 0x8000 bit
     // was honoured: all four carry it, so the native reader never reads
     // them and neither does any family decoder (`parse_live_psm_header`).
+    // 28 linestrings until the degenerate `vc == 2`, all-identical-vertex
+    // records decoded: four of them are placement anchors authored `Normal`,
+    // which now reach their style directly.
     Expected {
         fixture: "test-file/DWG-0202GP06-01.pid",
         lines: 42,
         points: 31,
-        linestrings: 28,
+        linestrings: 32,
         symbols: 23,
-        direct: 96,
+        direct: 100,
         via_override: 28,
     },
     // 58 placements until the same bit: 27 of them are earlier copies of 13
     // live placements (same oid, insertion and body), retired by the file.
+    // 49 linestrings until the degenerate-anchor decode, which adds eight.
     Expected {
         fixture: "test-file/工艺管道及仪表流程-1.pid",
         lines: 218,
         points: 36,
-        linestrings: 49,
+        linestrings: 57,
         symbols: 31,
-        direct: 328,
+        direct: 336,
         via_override: 6,
     },
 ];
 
 /// The whole corpus palette, as `("<width>mm #RRGGBB", record count)`.
+///
+/// Until plan 2026-10-10 an override contributed only its base style's
+/// width and colour; now the fields its mask states replace them, which
+/// moves 52 of the 638 records: 49 thin to 0.13 / 0.18 mm (DWG-0201's 14
+/// table rules and 7 `Normal` lines, DWG-0202's 8 rules and 16 `Normal`
+/// lines, 工艺's 6), the six `#FE0060` slope marks turn black, and
+/// DWG-0202's one `As Drawn` placement becomes `0.350mm #800000`.
 const EXPECTED_PALETTE: [(&str, usize); 12] = [
     ("0.100mm #000000", 107),
     ("0.100mm #0000FF", 18),
     ("0.100mm #008000", 10),
-    ("0.130mm #000000", 182),
+    // 182 before overrides stated their widths.
+    ("0.130mm #000000", 231),
+    ("0.180mm #000000", 5),
     ("0.180mm #008000", 13),
     // 226 / 22 until the 31 records carrying the type word's 0x8000 bit
-    // stopped being decoded (30 of them black, one maroon).
-    ("0.350mm #000000", 196),
+    // stopped being decoded (30 of them black, one maroon); 196 until
+    // overrides stated their widths and colours; 148 until the twelve
+    // degenerate igLineString2d placement anchors decoded, all `Normal`.
+    ("0.350mm #000000", 160),
     ("0.350mm #008000", 2),
-    ("0.350mm #800000", 21),
+    ("0.350mm #800000", 22),
     ("0.350mm #808000", 32),
-    ("0.350mm #FE0060", 6),
-    ("0.500mm #0000FF", 12),
+    ("0.500mm #0000FF", 11),
     ("0.700mm #808000", 39),
 ];
 
@@ -264,7 +372,9 @@ fn every_drawable_record_reaches_a_line_width_and_colour() {
     // 669 until the 31 records carrying the type word's 0x8000 bit stopped
     // being decoded (27 gongyi placements, DWG-0202's four `/Sheet6615`
     // lines): the native reader seeks past them before reading an oid.
-    assert_eq!(corpus_records, 638, "records reaching a line style");
+    // 638 until the twelve degenerate igLineString2d placement anchors
+    // decoded (four on DWG-0202, eight on gongyi), all `Normal`.
+    assert_eq!(corpus_records, 650, "records reaching a line style");
     let expected_palette: BTreeMap<String, usize> = EXPECTED_PALETTE
         .iter()
         .map(|(key, count)| ((*key).to_string(), *count))
@@ -784,8 +894,9 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
     if joined > 0 {
         // 669 until the 31 records carrying the type word's 0x8000 bit (27
         // gongyi placements, DWG-0202's four `/Sheet6615` lines) stopped
-        // being decoded, as the native reader never decodes them.
-        assert_eq!(joined, 638, "entities joined to a line style");
+        // being decoded, as the native reader never decodes them. 638 until
+        // the twelve degenerate igLineString2d placement anchors decoded.
+        assert_eq!(joined, 650, "entities joined to a line style");
     }
 }
 
@@ -1110,15 +1221,29 @@ fn the_file_level_name_index_answers_the_join_a_renderer_makes() {
 /// the gongyi drawing named `As Drawn` (26) and `Normal` (1), the four
 /// retired `/Sheet6615` lines on DWG-0202 `Normal` (3) and `Equipment - New`
 /// (1). The native reader never reads them; neither does this crate now.
-const EXPECTED_CROSSINGS: [&str; 4] = [
+///
+/// `0.350mm #000000` carried `Dashed` x22 and `Normal` x157 until an
+/// override's own fields were applied (plan 2026-10-10): the name is the
+/// base style's, the width is what the override states over it, so 14
+/// `Dashed` and 29 `Normal` records now sit at 0.13 mm, 5 `Dashed` at
+/// 0.18 mm, and DWG-0202's one `As Drawn` placement repainted `#800000`
+/// joins the equipment entry.
+const EXPECTED_CROSSINGS: [&str; 5] = [
+    "0.130mm #000000 <- Dashed x14, Normal x29",
     "0.180mm #008000 <- Connect To Process x4, Electric x3, Off-Line Instrument x6",
-    "0.350mm #000000 <- As Drawn x17, Dashed x22, Normal x157",
-    "0.350mm #800000 <- Equipment - New x3, Nozzle - New x18",
+    "0.350mm #000000 <- As Drawn x17, Dashed x3, Normal x140",
+    "0.350mm #800000 <- As Drawn x1, Equipment - New x3, Nozzle - New x18",
     "0.350mm #808000 <- Piping Component - New x7, Piping OPC x15, Secondary Piping - New x10",
 ];
 
-/// The one name that spans more than one palette entry, whole.
-const EXPECTED_SPANS: [&str; 1] = ["As Drawn -> 0.350mm #000000 x17, 0.500mm #0000FF x12"];
+/// The names that span more than one palette entry, whole. `As Drawn` was
+/// the only one until overrides had their say; `Dashed` and `Normal` now
+/// span too, for the reason above.
+const EXPECTED_SPANS: [&str; 3] = [
+    "As Drawn -> 0.350mm #000000 x17, 0.350mm #800000 x1, 0.500mm #0000FF x11",
+    "Dashed -> 0.130mm #000000 x14, 0.180mm #000000 x5, 0.350mm #000000 x3",
+    "Normal -> 0.130mm #000000 x29, 0.350mm #000000 x140",
+];
 
 /// The authored name is a classification the symbology cannot express.
 ///

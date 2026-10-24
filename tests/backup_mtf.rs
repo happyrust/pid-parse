@@ -7,11 +7,14 @@
 //! `writer_real_files.rs`.
 
 use pid_parse::backup::mtf::{
-    detect_logical_block_size, MtfBlockCursor, MtfBlockType, MtfHeader, COMMON_BLOCK_HEADER_LEN,
+    detect_logical_block_size, detect_non_mtf_dump_format, MtfBlockCursor, MtfBlockType, MtfError,
+    MtfHeader, COMMON_BLOCK_HEADER_LEN,
 };
 use std::path::Path;
+use std::process::Command;
 
 const EXPORT_DMP: &str = "test-file/backup-test/TEST02_p/Export.dmp";
+const ORACLE_EXPORT_DMP: &str = "test-file/backup-test/DWG-0202GP06-01_p/Export.dmp";
 
 /// Read the first `bytes` bytes of a fixture, or return `None` when the
 /// fixture is missing so tests can skip cleanly on CI.
@@ -164,4 +167,47 @@ fn real_export_dmp_cursor_yields_expected_prefix() {
             size
         );
     }
+}
+
+#[test]
+fn real_oracle_export_dmp_is_named_instead_of_probed_as_mtf() {
+    let Some(head) = read_head(ORACLE_EXPORT_DMP, COMMON_BLOCK_HEADER_LEN) else {
+        return;
+    };
+
+    assert!(matches!(
+        MtfHeader::probe(&head),
+        Err(MtfError::NotATapeStart { .. })
+    ));
+    let diag = detect_non_mtf_dump_format(&head).expect("an Oracle exp dump must be named");
+    assert!(diag.contains("EXPORT:V12.01.00"), "{diag}");
+}
+
+#[test]
+fn probe_and_extract_refuse_an_oracle_dump_with_the_same_message() {
+    if !Path::new(ORACLE_EXPORT_DMP).exists() {
+        eprintln!("skipping: fixture {ORACLE_EXPORT_DMP} not found");
+        return;
+    }
+
+    let probe = Command::new(env!("CARGO_BIN_EXE_pid_backup_probe"))
+        .arg(ORACLE_EXPORT_DMP)
+        .output()
+        .expect("run pid_backup_probe");
+    let extract = Command::new(env!("CARGO_BIN_EXE_pid_backup_extract"))
+        .arg(ORACLE_EXPORT_DMP)
+        .arg("--out")
+        .arg(std::env::temp_dir())
+        .arg("--dry-run")
+        .output()
+        .expect("run pid_backup_extract");
+
+    assert_eq!(probe.status.code(), Some(1));
+    assert_eq!(extract.status.code(), Some(1));
+    let probe_stderr = String::from_utf8_lossy(&probe.stderr);
+    assert!(
+        probe_stderr.contains("Oracle Database `exp` dump (EXPORT:V12.01.00)"),
+        "{probe_stderr}"
+    );
+    assert_eq!(probe_stderr, String::from_utf8_lossy(&extract.stderr));
 }

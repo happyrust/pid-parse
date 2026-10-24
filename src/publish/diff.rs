@@ -22,8 +22,11 @@
 //! dependency surface zero-cost (no quick-xml needed) and makes the
 //! comparison robust to the formatting drift between exporters.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::Reader;
 
 /// Per-tag comparison row. `generated` and `reference` are the
 /// raw open-tag counts; `status` classifies the relationship so
@@ -241,38 +244,30 @@ fn is_tag_name_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-/// Compute the [`SemanticDiffReport`] between `generated_xml` and
-/// `reference_xml`. Both inputs are full `_Data.xml` document
-/// strings; the function is pure (no I/O) so it is cheap to call
-/// from tests, CI gates, and the CLI alike.
-/// PID tag varieties the writer is known to emit today. Sorted
-/// for determinism. The list is the executable counterpart of the
-/// `subtables_for_item_type` dispatch matrix in `xml_writer.rs`
-/// plus the four virtual nodes (`PIDDrawing` / `PIDRepresentation` /
-/// derived `PIDPipingPort` / `PIDProcessPoint`) that any non-trivial
-/// drawing emits.
+/// PID tag varieties either writer line is known to emit today.
+/// Derived from the publish item catalog: the union of every row's
+/// `db_tags` (dedicated DB writer tags plus the special `"$document"`
+/// / `"$derived"` rows) and every row's `pid_tags` (the `.pid`
+/// line's classes, including the six the database line never
+/// produces), sorted and deduplicated. `catalog`'s consistency tests
+/// pin both lists against their historical hand lists.
 ///
 /// Used by [`coverage_against_reference`] to classify a reference
 /// `SmartPlant` `_Data.xml` into "tags we already know how to emit"
-/// vs "tags that form the next-phase backlog".
+/// vs "tags that form the next-phase backlog". Taking both lines
+/// matters: a `.pid`-line export carries `PIDInstrument` /
+/// `PIDInlineInstrument` / `PIDProcessEquipment` /
+/// `PIDMechanicalEquipment` / `PIDHeatTransferEquipment` /
+/// `PIDSignalBranchPoint`, which the DB-only set used to call backlog.
 pub fn supported_pid_tags() -> &'static [&'static str] {
-    &[
-        "PIDBranchPoint",
-        "PIDControlSystemFunction",
-        "PIDDrawing",
-        "PIDNote",
-        "PIDNozzle",
-        "PIDPipeline",
-        "PIDPipingBranchPoint",
-        "PIDPipingComponent",
-        "PIDPipingConnector",
-        "PIDPipingPort",
-        "PIDProcessPoint",
-        "PIDProcessVessel",
-        "PIDRepresentation",
-        "PIDSignalConnector",
-        "PIDSignalPort",
-    ]
+    static TAGS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+        let mut tags = super::catalog::supported_db_tags();
+        tags.extend(super::catalog::supported_pid_line_tags());
+        tags.sort_unstable();
+        tags.dedup();
+        tags
+    });
+    TAGS.as_slice()
 }
 
 /// One row of the [`WriterCoverage`] report. `count` is the
@@ -1230,9 +1225,376 @@ pub fn diff_rel_defuids(generated_xml: &str, reference_xml: &str) -> RelDefUidDi
     }
 }
 
+/// How a `.pid`-mode export compares with a `SmartPlant` `_Data.xml`.
+///
+/// An emitted object must exist under the same UID and class, every value
+/// it carries must equal the reference's, and every emitted `<Rel>` must
+/// exist with the same UID, ends and `DefUID`. Anything the reference has
+/// and this mode does not emit — whole classes included — is not a finding:
+/// the file does not state those objects, so they are not `MISSING` and
+/// they do not fail [`PidExportDiff::is_clean`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PidExportDiff {
+    /// Objects the export emitted.
+    pub objects: usize,
+    /// Emitted objects whose UID is not in the reference.
+    pub objects_not_in_reference: usize,
+    /// Emitted objects present in the reference under another class.
+    pub objects_of_another_class: usize,
+    /// Attribute values the export emitted.
+    pub values: usize,
+    /// Emitted values the reference carries under a different writing.
+    pub values_different: usize,
+    /// Emitted values the reference's object does not carry.
+    pub values_not_in_reference: usize,
+    /// `<Rel>` elements the export emitted.
+    pub rels: usize,
+    /// Emitted rels the reference does not carry with the same ends.
+    pub rels_not_in_reference: usize,
+    /// One line per finding, stable: objects in UID order, then rels.
+    pub findings: Vec<String>,
+    /// `PIDPipeline` objects paired with the reference by `IObject.Name`.
+    pub pipelines_paired_by_name: usize,
+    /// `PipingConnectors` paired by connector UID and pipeline name.
+    pub piping_connectors_paired_by_name: usize,
+    /// `IFluidSystem.FluidSystem` values the reference object does not carry.
+    ///
+    /// These are not findings. The dump is newer than the reference for
+    /// fluid-system code 7.
+    pub fluid_system_reference_empty: usize,
+}
+
+impl PidExportDiff {
+    /// No emitted object, value or rel disagrees with the reference.
+    pub fn is_clean(&self) -> bool {
+        self.objects_not_in_reference
+            + self.objects_of_another_class
+            + self.values_different
+            + self.values_not_in_reference
+            + self.rels_not_in_reference
+            == 0
+    }
+}
+
+impl fmt::Display for PidExportDiff {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "pid export diff: objects {} (extra {}, wrong class {}), values {} \
+             (different {}, not in reference {}), rels {} (not in reference {})",
+            self.objects,
+            self.objects_not_in_reference,
+            self.objects_of_another_class,
+            self.values,
+            self.values_different,
+            self.values_not_in_reference,
+            self.rels,
+            self.rels_not_in_reference,
+        )?;
+        if self.pipelines_paired_by_name > 0
+            || self.piping_connectors_paired_by_name > 0
+            || self.fluid_system_reference_empty > 0
+        {
+            writeln!(
+                f,
+                "按名配对 {} 个 PIDPipeline，{} 条 PipingConnectors；参考为空、dump 有值的 FluidSystem {}",
+                self.pipelines_paired_by_name,
+                self.piping_connectors_paired_by_name,
+                self.fluid_system_reference_empty,
+            )?;
+        }
+        for finding in &self.findings {
+            writeln!(f, "{finding}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Objects, non-empty attribute values, and `<Rel>` elements in one `.pid` export.
+#[must_use]
+pub fn pid_publish_counts(xml: &str) -> (usize, usize, usize) {
+    let document = read_publish_document(xml);
+    let values = document
+        .objects
+        .values()
+        .map(|(_, values)| values.len())
+        .sum();
+    (document.objects.len(), values, document.rels.len())
+}
+
+/// Score `generated_xml` against `reference_xml` for a `.pid` export.
+///
+/// This is the gate [`PidExportDiff`] documents. The tag-count report from
+/// [`diff_publish_xml`] stays the database input's report: there, a class
+/// the reference has and we do not emit really is missing.
+pub fn diff_pid_export(generated_xml: &str, reference_xml: &str) -> PidExportDiff {
+    let generated = read_publish_document(generated_xml);
+    let reference = read_publish_document(reference_xml);
+    let mut diff = PidExportDiff::default();
+    let reference_pipelines = pipelines_by_name(&reference);
+    let generated_pipeline_names = pipeline_names(&generated);
+    let reference_pipeline_names = pipeline_names(&reference);
+    let reference_connectors = piping_connector_keys(&reference, &reference_pipeline_names);
+    let mut uids: Vec<&String> = generated.objects.keys().collect();
+    uids.sort();
+    for uid in uids {
+        let (class, values) = &generated.objects[uid];
+        diff.objects += 1;
+        if class == "PIDPipeline" {
+            let name = values.get("IObject.Name").cloned().unwrap_or_default();
+            let Some((reference_class, reference_values)) = reference_pipelines.get(&name) else {
+                diff.objects_not_in_reference += 1;
+                diff.findings
+                    .push(format!("extra {class} {uid} name {name:?}"));
+                continue;
+            };
+            diff.pipelines_paired_by_name += 1;
+            if class != reference_class.as_str() {
+                diff.objects_of_another_class += 1;
+                diff.findings
+                    .push(format!("class {class} {uid}: reference {reference_class}"));
+            }
+            compare_values(&mut diff, class, uid, values, reference_values, true);
+            continue;
+        }
+        let Some((reference_class, reference_values)) = reference.objects.get(uid) else {
+            diff.objects_not_in_reference += 1;
+            diff.findings.push(format!("extra {class} {uid}"));
+            continue;
+        };
+        if class != reference_class {
+            diff.objects_of_another_class += 1;
+            diff.findings
+                .push(format!("class {class} {uid}: reference {reference_class}"));
+        }
+        compare_values(&mut diff, class, uid, values, reference_values, false);
+    }
+    let mut rels: Vec<&(String, String, String, String)> = generated.rels.iter().collect();
+    rels.sort();
+    for rel in rels {
+        diff.rels += 1;
+        if rel.3 == "PipingConnectors" {
+            let name = generated_pipeline_names
+                .get(&rel.2)
+                .cloned()
+                .unwrap_or_default();
+            if reference_connectors.contains(&(rel.1.clone(), name)) {
+                diff.piping_connectors_paired_by_name += 1;
+            } else {
+                diff.rels_not_in_reference += 1;
+                diff.findings.push(format!("rel {rel:?}"));
+            }
+            continue;
+        }
+        if !reference.rels.contains(rel) {
+            diff.rels_not_in_reference += 1;
+            diff.findings.push(format!("rel {rel:?}"));
+        }
+    }
+    diff
+}
+
+fn pipelines_by_name(
+    document: &PublishBlocks,
+) -> HashMap<String, (String, BTreeMap<String, String>)> {
+    let mut by_name = HashMap::new();
+    for (class, values) in document.objects.values() {
+        if class != "PIDPipeline" {
+            continue;
+        }
+        let name = values.get("IObject.Name").cloned().unwrap_or_default();
+        by_name.insert(name, (class.clone(), values.clone()));
+    }
+    by_name
+}
+
+fn pipeline_names(document: &PublishBlocks) -> HashMap<String, String> {
+    document
+        .objects
+        .iter()
+        .filter(|(_, (class, _))| class == "PIDPipeline")
+        .map(|(uid, (_, values))| {
+            (
+                uid.clone(),
+                values.get("IObject.Name").cloned().unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
+fn piping_connector_keys(
+    document: &PublishBlocks,
+    names: &HashMap<String, String>,
+) -> HashSet<(String, String)> {
+    document
+        .rels
+        .iter()
+        .filter(|rel| rel.3 == "PipingConnectors")
+        .filter_map(|rel| {
+            let name = names.get(&rel.2)?.clone();
+            Some((rel.1.clone(), name))
+        })
+        .collect()
+}
+
+fn compare_values(
+    diff: &mut PidExportDiff,
+    class: &str,
+    uid: &str,
+    values: &BTreeMap<String, String>,
+    reference_values: &BTreeMap<String, String>,
+    excuse_empty_fluid: bool,
+) {
+    for (key, value) in values {
+        diff.values += 1;
+        match reference_values.get(key) {
+            Some(reference_value) if reference_value == value => {}
+            Some(reference_value) => {
+                diff.values_different += 1;
+                diff.findings.push(format!(
+                    "value {class} {uid} {key}: {value:?} reference {reference_value:?}"
+                ));
+            }
+            None if excuse_empty_fluid && key == "IFluidSystem.FluidSystem" => {
+                diff.fluid_system_reference_empty += 1;
+            }
+            None => {
+                diff.values_not_in_reference += 1;
+                diff.findings.push(format!(
+                    "value {class} {uid} {key}: {value:?} not in reference"
+                ));
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct PublishBlocks {
+    objects: HashMap<String, (String, BTreeMap<String, String>)>,
+    rels: HashSet<(String, String, String, String)>,
+}
+
+type InterfacePairs = Vec<(String, String)>;
+type InterfaceBlock = (String, Vec<(String, InterfacePairs)>);
+
+fn read_publish_document(xml: &str) -> PublishBlocks {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut document = PublishBlocks::default();
+    let mut depth = 0usize;
+    let mut block: Option<InterfaceBlock> = None;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(start)) => {
+                if depth == 1 {
+                    let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                    block = Some((tag, Vec::new()));
+                } else if depth == 2 {
+                    push_interface(&start, &mut block);
+                }
+                depth += 1;
+            }
+            Ok(Event::Empty(start)) => {
+                if depth == 2 {
+                    push_interface(&start, &mut block);
+                }
+            }
+            Ok(Event::End(_)) => {
+                depth = depth.saturating_sub(1);
+                if depth == 1 {
+                    if let Some((tag, interfaces)) = block.take() {
+                        finish_publish_block(&mut document, tag, interfaces);
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    document
+}
+
+fn push_interface(start: &BytesStart<'_>, block: &mut Option<InterfaceBlock>) {
+    let Some((_, interfaces)) = block.as_mut() else {
+        return;
+    };
+    let interface = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+    let pairs = start
+        .attributes()
+        .flatten()
+        .map(|attribute| {
+            (
+                String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
+                attribute
+                    .unescape_value()
+                    .map(std::borrow::Cow::into_owned)
+                    .unwrap_or_default(),
+            )
+        })
+        .collect();
+    interfaces.push((interface, pairs));
+}
+
+fn finish_publish_block(
+    document: &mut PublishBlocks,
+    tag: String,
+    interfaces: Vec<(String, InterfacePairs)>,
+) {
+    let mut values = BTreeMap::new();
+    for (interface, pairs) in &interfaces {
+        for (name, value) in pairs {
+            values.insert(format!("{interface}.{name}"), value.clone());
+        }
+    }
+    let Some(uid) = values.remove("IObject.UID") else {
+        return;
+    };
+    if tag == "Rel" {
+        let get = |key: &str| values.get(key).cloned().unwrap_or_default();
+        document
+            .rels
+            .insert((uid, get("IRel.UID1"), get("IRel.UID2"), get("IRel.DefUID")));
+    } else {
+        values.retain(|_, value| !value.is_empty());
+        document.objects.insert(uid, (tag, values));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pid_export_ignores_classes_it_does_not_publish_and_fails_a_wrong_value() {
+        let reference = r#"<Container>
+            <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+            <PIDPipeline><IObject UID="P" Name="L-1"/></PIDPipeline>
+            <Rel><IObject UID="R"/><IRel UID1="A" UID2="D" DefUID="DrawingItems"/></Rel>
+        </Container>"#;
+        let generated = r#"<Container>
+            <PIDInstrument><IObject UID="A" Name="PT-1"/></PIDInstrument>
+            <Rel><IObject UID="R"/><IRel UID1="A" UID2="D" DefUID="DrawingItems"/></Rel>
+        </Container>"#;
+        let clean = diff_pid_export(generated, reference);
+        assert!(clean.is_clean(), "{clean}");
+        assert_eq!(clean.objects, 1);
+        assert_eq!(clean.rels, 1);
+        assert_eq!(clean.values, 1);
+
+        let wrong = r#"<Container>
+            <PIDInstrument><IObject UID="A" Name="PT-2"/></PIDInstrument>
+        </Container>"#;
+        let dirty = diff_pid_export(wrong, reference);
+        assert!(!dirty.is_clean());
+        assert_eq!(dirty.values_different, 1);
+        assert!(dirty.findings[0].contains("PT-2"));
+
+        let extra = r#"<Container>
+            <PIDNote><IObject UID="N" Name="note"/></PIDNote>
+        </Container>"#;
+        let added = diff_pid_export(extra, reference);
+        assert_eq!(added.objects_not_in_reference, 1);
+    }
 
     #[test]
     fn parse_pid_tag_counts_handles_empty_input() {
@@ -1423,6 +1785,33 @@ mod tests {
             assert!(
                 tags.contains(&must_have),
                 "supported set missing {must_have}; got {tags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn supported_pid_tags_covers_what_the_pid_line_emits_too() {
+        // A `.pid`-line reference carries classes the database line
+        // never writes. Judging it against `db_tags` alone called our
+        // own output backlog; the union fixes that.
+        for tag in [
+            "PIDInstrument",
+            "PIDInlineInstrument",
+            "PIDProcessEquipment",
+            "PIDMechanicalEquipment",
+            "PIDHeatTransferEquipment",
+            "PIDSignalBranchPoint",
+        ] {
+            assert!(
+                supported_pid_tags().contains(&tag),
+                "{tag} is emitted by pid_writer but missing from the supported set"
+            );
+            let xml = format!("<{tag}></{tag}>");
+            let cov = coverage_against_reference(&xml);
+            assert!(
+                cov.is_complete(),
+                "{tag} must classify as covered; backlog={:?}",
+                cov.unsupported_in_reference
             );
         }
     }

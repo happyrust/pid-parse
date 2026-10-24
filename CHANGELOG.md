@@ -2,6 +2,593 @@
 
 ## [Unreleased]
 
+### 六个 CLI 的 `--help` 改走 stdout，用法错误仍留 stderr（2026-10-24）
+
+`--help` 是调用方要的输出，六个 binary 却一律用 `eprintln!` 当成旁白打出去：
+`pid_publish_xml --help > help.out` 得到 0 字节的文件，`--help | less` 什么都看不到。
+
+- **改法**：`print_usage` 从写死 stderr 的常量改成接收目标 writer。`--help` / `-h` 传 stdout，
+  参数错误传 stderr、紧跟那条诊断；用法正文一个字没改，退出码一个没动（help 全 0，
+  缺参数仍是 2 / 1）。
+- **两个 binary 顺手拆支**：`pid_backup_probe` / `pid_writer_validate` 原先把「无参数」和
+  `--help` 挤在同一个条件里、用 `i32::from(args.len() < 2)` 定退出码 —— 两项都拿同一个值，
+  现在写成两支：help 走 0，缺输入走各自原来的非零值。
+- **`pid_inspect` 原本没有 `--help` 分支**：flag 被当成文件路径送进解析器，报 `Parse error` 退 1。
+  现在在任何文件打开之前应答，复用文件里现成的 `USAGE`。
+- **测试**：四条 `--help` 断言从 stderr 改读 stdout，并补 `stderr.is_empty()` 钉住「只写一处」；
+  缺输入的用例补上镜像断言（正文在 stderr、stdout 干净）；新增 `tests/cli_help_streams.rs`
+  一次覆盖六个 binary，不需要任何 fixture。
+- **实测**：六个 binary 的 `--help` 全是 exit 0 / stdout 有正文 / stderr 0 字节。提交 `23fa36a`。
+
+### `igArc2d` 的尾字节就是方向位，五条画反的弧归位（2026-10-23）
+
+上一轮复核把最后那处可见差归成「方向在记录里读不出来」。这一轮用两件符号的字节把它读出来了：
+`0x0061` payload `+58` 与 `igEllipticalArc2d` 同义 —— `0` 顺时针、`1` 逆时针。
+
+- **同一对角度、相反的字节**：`FT-Ultrasonic Flowmeter.sym` 的 oid 27/28 都是 `90° → 270°`、
+  圆心镜像，尾字节一个 0 一个 1。按字节读是交叉 S 形声路（超声流量计的报号图形），一律取短弧
+  就画成同侧的「))」。缓存本体（`DWG-0201` @571103/@571168）逐项相同。
+- **补弧 > 180° 的那一条**：`Local Vent` 顶盖 `88.18° → 273.44°`，顺时针 174.74°、逆时针
+  185.26°，尾字节 1；参考图的墨在逆时针那一侧（另一侧多覆盖 0.72）。差 5.26°，短弧兜底自己
+  选不对。
+- **反证掉「字节 = 长弧标记」**：模板 `CPE-SQ-A0/A1.igr` 有 39 条字节 1、顺时针 250–330° 的弧，
+  参考只画短弧且覆盖率 0.999+；所以 1 不是「长」，是逆时针。
+- **云线自证**：`Remarks.sym` 四条弧首尾相接（端点误差 ≤ 0.008 mm），按字节闭合成
+  390.0 mm²、22 × 23 mm 的注释云；旧的一律短弧把 `217`（顺时针 333.16°）折成 26.84° 小钩，
+  整条轮廓缩成 11.6 mm²。
+- **实现**：`SymbolPrimitive::Arc` / `PidGraphicKind::Arc` / `PaperShape::Arc` 都带
+  `clockwise`，其值来自尾字节；`write::directed_arc` 按方向给出 `−(start−end) mod 2π` 或
+  `+(end−start) mod 2π`，**不再折叠到 minor 弧**；`model::arc_shape` 只做放置变换（镜像把方向
+  取反，非等比缩放按方向采样成折线）。嵌套 `DecodedIgArc2dRecord` 补 `flag`（`serde(default)`）。
+- **读数**：`I井场` 覆盖率 0.9993 → **0.9999**、多画 41.8 → **25.5 mm**，文字仍 546/546；
+  `probe_arc_sweep_side` 五张 289 条弧**零条**落在参考没画的一侧（改前 5 条）。其余四张读数不变。
+- **门禁**：几何金标无变化（金标语料没有图纸流 `igArc2d`）；`pid-plot` 78 项单测、五图比对、
+  所有 fixture 导出、整厂 53 张备份、`pid-parse` 46 个测试目标全绿；新增单测
+  `an_arc_carries_the_direction_its_trailing_byte_states`、`directed_arc_takes_the_side_the_record_names`、
+  `arc_shape_keeps_the_endpoints_and_the_records_direction`。
+- 分析：`docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`；
+  `2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md` 的「尾字节不是方向位」已就地更正。
+
+### 家具字号对上参考：字高本来就一致，差的是横向步进 0.78 em（2026-10-23）
+
+上一轮把一处没做的事记成「参考按记录字高 × 1.29 排家具、writer 按 × 1.47，字号大 12 %」。
+逐字量完两张参考图后，这个读数是错的：那 1.29 与 1.47 都不是字号，而是 PDF 阅读器把一行字的
+横向与纵向两个缩放合成一个 `size` 报出来的数。
+
+- **字高逐条相同**：同一批模板标签的字形墨高在参考与我方都是 4.74 / 5.08 / 5.93 / 6.60 /
+  4.40 mm（3.2 / 3.5 / 4.0 / 4.5 / 3.0 mm 字高），`plotted_size_pt` 那张表对家具同样成立。
+- **差的是字宽**：参考把模板文字压到 **0.78 em** 的横向步进（十二条标签 0.765–0.791，均值
+  0.779；1/0.779 = 1.284 就是上一稿那个 1.29），图纸自己的标签仍按 1.000。同一字高的标签共用
+  一个值、与内容无关，A0 与 A1 两份模板上逐条相同，所以不是「塞进格子」而是出图器规则。
+- **`.igr` 里没有这个字段**：34 条 `igTextBox` 全部没有格子宽（`text_box_width_m` 全 `0.0`），
+  `JStyleTextChar` 82 字节用尽（`+34` 色、`+42` 字高、`+68` 字数、`+70` 字体名），
+  `JStyleTextPara` 其余五个 double 全 `0.0`，尾部也没有 0.60–0.95 的比例（新探针
+  `probe_template_text_fields` 三处各排除一处）。
+- **实现**：`ShownText` 带上 `furniture`，家具的 run 在 `show_text` 里先乘
+  `PLATE_TEXT_ADVANCE = 0.78` 再走原有的「放不进纸就压到刚好放进」规则，`Tm` 第一列写
+  `0.78 × condense`，`Tf` 一个字不动。居中／右对齐按**压过之后**的宽度定位，这一点用参考
+  自己的锚点验算：`审  定` 参考起点 692.91 mm、我方改后 692.95（改前 691.39）。
+- **读数**（`一级闪蒸分离器B`，改前 → 改后 → 参考）：`审  定` 14.22 → 11.09 → 11.17，
+  `设计证书号` 25.40 → 19.81 → 20.08，`1 版` 8.81 → 6.87 → 6.78，`华北油田苏桥储气库群`
+  59.27 → 46.23 → 45.33，`中国石油…华北分公司` 125.59 → 108.17 → 107.46；字高一列三条同值。
+  公司名不再需要「压到纸里」那一步（0.78 之后终点 823.58，页宽 841）。
+- **门禁**：五张参考图重导后 `plot_compare` 全过，覆盖率与多画一字未动
+  （0.9993 / 0.9998 / 0.9997 / 0.9986 / 0.9993，41.8 / 22.6 / 1.5 / 37.9 / 24.6 mm），
+  文字配对 **546/546**（`I井场` 从 543 升满）、151/151、123/123、167/167、249/249，按类平均位移
+  都在门限内；`border_template` 新增五条标签的字宽/字高门禁，writer 新增单测
+  `furniture_lettering_is_condensed_horizontally_and_keeps_its_height`；`write_five_drawings`、
+  `export_every_fixture`、`export_plant_backup`（53 张）全过。
+- 分析：`docs/analysis/2026-10-23-the-furniture-text-height-already-matched.md`。
+
+### 链接的 `.igr` 图框模板画上纸：图框、标题栏、会签栏（2026-10-23）
+
+图纸家具不在 `.pid` 里：`igSmartFrame2d`（`0x003D`）把边框存成链接的 OLE 对象，内容在
+`Ref/Template Files/CPE-SQ-A0.igr` / `CPE-SQ-A1.igr` 里。上一轮体检把这件事量成了「剩下最大
+的一处可见差」，这一轮把模板真的画进页面。
+
+- **认模板**：记录只给三态、标志字与页幅，链接的 DOS 短名（`CPE-SQ~3.IGR`）没有进模型，
+  所以按「谁的大小正好是这张纸」认 —— `border_template_dirs` 找 `<corpus>/Ref/Template Files`
+  与 `Ref`（含语料父目录），`load_border_template` 逐个解析 `.igr`、量描边范围，误差 ≤ 2 mm
+  的候选里取最小。A2 图纸（`D06`、`DWG-0201`）没有对应模板就不画，而不是把 A1 缩上去。
+- **画模板**：`.igr` 是页面毫米、原点 (0,0)、y 向上的图档，173 条图元（104 线 / 17 折线 /
+  18 弧 / 34 文字）1:1 并进同一张 `PaperModel`，排在本图记录之前，内容盖在家具上；模板用
+  自己的文字／线／填充样式表。`PaperModel::template` 记下来源文件、自身范围与图元数。
+- **两处口径随家具放开**：① 「沿纸边、超过页长 90 % 的笔画」在模型与 writer 两处都会丢（那是
+  出图器的框），家具带 `furniture` 标记放行，读回来仍丢，比较因此两边对称；② `read.rs` 的
+  `draw_rect` 原来是空实现，而 hayro 把四角轴对齐的闭合填充认成矩形交给它 —— 标题栏里两个
+  实心小框（8 条边）从未进过任何比较，现在折成同一闭合路径计数；模型侧 `canonical_rect_chain`
+  把这种环存成读取器自己的角序，写出去与读回来逐段同序。
+- **读数**：`一级闪蒸分离器B` 的两条框 (0.00,0.00)–(841.00,594.00) 与 (25.00,10.00)–(831.00,584.00)，
+  参考 (0.00,0.15)–(840.91,594.00) 与 (25.06,10.14)–(830.92,584.01) —— 差 ≤ 0.15 mm，就是参考
+  那半格 1/300 英寸量化。遮罩区文字：`B` 参考 38 / 我方改前 4 → **38**（34 条家具 + 图纸自己的
+  4 条标题栏字段），`I井场` 参考 34 → **35**（多的一条是源图自己放进会签栏的井号标签）。
+- **顺手修掉出页的长标签**：公司名 21 个全角字在页宽 1189 mm 上本该排到 1202 mm，最后两个字
+  被纸边裁掉（MuPDF 只抽 19 个字）。`show_text` 新增「沿自身方向放不下的 run 压到放进纸里」
+  （`page_reach_mm` + `Tm` 第一列缩放，最多压一半，`Tf` 不动），公司名压到 0.906、末端 1189.00 mm，
+  21 个字全上纸。单测 `a_run_wider_than_the_page_is_condensed_until_it_fits` 钉住「一字不缺、
+  末端不出页、字高不变」。
+- **比较器**：覆盖率 0.9989 → **0.9993**（`I井场`）、0.9979 → **0.9997**（`B`），`A` 0.9998、
+  `低温A` 0.9986、`换热器CD` 0.9993 不变；多画 41.8 / 22.6 / 1.5 / 37.9 / 24.6 mm（`A` 与
+  `低温A` 各 +15 mm —— 那两张参考本来没有家具，同样的墨被记成多画，基线从 10 / 26 抬到 25 / 40，
+  理由写进 `BASELINES` 注释）；文字 546/546、151/151、123/123、167/167、249/249 不变。
+- **门禁**：新增 `pid-plot/tests/border_template.rs`（A1 纸画出两条框、12 条家具标签、
+  渲染后公司名与 `会 签 专 业` 回读；A2 的 `D06` 不画家具）；`write_five_drawings`（逐段回读 +
+  PyMuPDF 抽字）、`export_every_fixture`、`export_plant_backup`（53 张）、`paper_model`、
+  `plot_text_sources`、`read_reference_plots`、`plot_compare` 全过。
+- 分析：`docs/analysis/2026-10-23-the-border-template-draws-the-sheet-furniture.md`。
+
+### 出图全量体检：零长虚线不再写成非法 dash 数组，图框/标题栏整体未画（2026-10-23）
+
+把机器上能出图的全导一遍 —— 整厂备份 53 张 + `test-file/` 5 张 + 语料 `I井场`（与备份重复）：**59 次导出 / 58 张唯一图**，0 失败、0 非有限坐标、0 退化图元、0 被拒笔画、0 占位框，MuPDF 1.27 与 Poppler 25.07 双读逐页通过；五张参考图读数逐位未动（覆盖率 0.9989 / 0.9998 / 0.9979 / 0.9986 / 0.9993、多画 42 / 8 / 2 / 23 / 25 mm、文字 546/546 + 151/151 + 123/123 + 167/167 + 249/249）。
+
+- **修掉一处非法 PDF 状态**：`D04` 的样式声明了一段 `0.0 mm` 的虚线，`paint_primitive` 原来只要 `dash_mm` 非空就写 `d`，页面里于是落成 10 处 `[0] 0 d`（PDF 8.4.3.6 要求数组非负且不能全为 0）。新增 `write::dash_array`：空模式、全零模式、含非有限值的模式都不写 dash 状态，按该笔的实线画 —— 模型侧本来就是实线（`DashWalk` 的周期为 0 直接返回整段）。D04 内容流 `[0] 0 d` 10 → **0**、`[3.5 1.75]` 18 处不变、字节 179 241 → 179 220，其余 58 页逐位不变。单测 `a_zero_length_dash_pattern_is_written_solid` 钉住「零长虚线 = 实线、真虚线不同」。
+- **最大的一处没画：图纸家具**。对比器用 `template-masks.json` 把标题栏与会签栏整块 mask 掉，所以「文字全对上」量的是遮罩外的字。把两块矩形单独取出来比：`I井场` 参考 37 条 span、我方 **3** 条（30 条字符串没有），`一级闪蒸分离器B` 38 / **4**（30 条没有）；另外三张参考本来就没有这两块。缺的是公司名、`会 签 专 业`、`修改号`、`制 图`、`勘察证书号`、`CADD号`、图号与 `2012,05,15` 一类，加上参考那两道 8 009.1 / 8 304.0 mm 的双线图框。这些字符串在 `.pid` 里 0 命中 —— 它们在 `igSmartFrame2d` 指向的链接 OLE 模板（`Ref/Template Files/CPE-SQ-A0.igr` / `CPE-SQ-A1.igr`）里，解析器只读了 `0x003D` 的三态与页幅，没有去开文件。本轮记录在案，不在这一轮扩大范围。
+- **新探针 `pid-plot/examples/probe_page_defects`**：逐图报重复图元、退化图元、非有限坐标、文字高度、同位同字标签、run 分区覆盖、笔宽与虚线模式、缺符号、墨迹到页边的四边距；量到但没动的几处（N井场一条标签出页 1.55 mm、Q井场 10 mm 橙色高亮折成最粗笔、4 张未声明页幅落回 A0/A1/A2、字体没有 subset 前缀）都写在分析页里。
+- 分析：`docs/analysis/2026-10-23-what-a-page-still-gets-wrong.md`。
+
+### 多 run 标签逐段上纸：库侧分区 → 布局 → writer 切段（2026-10-23）
+
+一条 `.sym` 标签可以逐段换样式（`Filter Description.sym` 是 `9x1#23 1x1#25 4x1#23`，`Wastewater Pit.sym` 把一个 `*` 排成 3.175 mm 宋体），而 `PaperShape::Text` 一直只带一个字号与一个字体，所以上一轮接 run 接线时压平成「覆盖字符最多的那条」。这一轮把**分区本身**带到了纸上。
+
+- **数据链**：`SymbolLettering::spans`（库）与 `ResolvedTextStyle::spans`（绘图侧共用规则）→ `PaperTextSpan`（布局，字高已乘 `scale` 折成纸张毫米）→ `write::text_segments` 按 `(字号, 字体)` 切段，每段自己的 `Tf` + `Tj`。
+- **只切真的不一样的地方**：相邻 run 解出同一字号、同一字体时合回一段 —— 样式变化与记录自己重复一遍在纸上不可区分，也不给比较器的文字配对多塞 run（`spans_that_change_nothing_are_written_as_one_run`）。
+- **续行不自己算偏移**：`Tj` 本身推进文本位置，推进量按当前字号的字形宽度算，第二段正好接在第一段末尾（`a_span_at_its_own_size_continues_where_the_previous_one_ended`）。
+- **非 BMP 守卫**：run 长度数 UTF-16 单位、span 偏移数 `char`，含星形面字符的标签会把第二段切在半个字符上；`guarded_spans` 在这种情况下不给分区，`.sym` 与图纸缓存本体两条来源共用同一个守卫。
+- **图纸侧的 `igTextBox` 也接了同一份分区**：`push_entity` 的文字分支从 `ResolvedTextStyle::spans` 带上分区，`label_line_ranges` 给每行记下它在记录里的起始字符（`\r\n` 算一个断行、但两个字符都跳过），`line_spans` 把跨行的 run 按行切开并重定偏移；丢掉控制字符的行不再与记录对齐，整行不给分区。run 里的字体名（`宋体`）先过 `typeface_key` 再与 writer 嵌入的脸（`SimSun`）比，否则同一张脸两种写法会把标签切开 —— I井场 的 `SP:` 因此多花 2 字节，修好后逐位回到基线。
+- **库侧读数**（新探针 `probe_symbol_text_spans`，1262 个 `.sym` / 2404 条文字）：带分区 **165** 条，其中纯 `NULL` 占位 **129** 条；落墨的 36 条里，分段后仍同字号同字体 **33**、另一字体 **2**、另一字号兼另一字体 **1**。真会因此改变字样的是 3 条（`Pig Launcher & Receiver Description.sym` 两条、`Wastewater Pit.sym` 一条）。
+- **出图读数**：`probe_export_audit` 多一列 `partitions N (M letter differently)`，58 张图纸（5 张语料 + 53 张整厂备份）逐张：符号侧 **partitions 0**（那 3 条所在的符号不在这 58 张图上），图纸侧 **35 条**带分区（32 张各 1 条、一张 3 条），全部 **0 letter differently** —— 这些 run 与标签自己那一条同字号同字体，所以纸上一个字节也没变。五张参考图重导的 PDF 字节数与改前逐位相同（671405 / 449953 / 444540 / 524411 / 553973），`plot_text_sources`（546/546、151/151、123/123、167/167、249/249）、`plot_compare`、`export_every_fixture`、`export_plant_backup`（53 张）全过。
+- **换脸真上纸**：`prepare_fonts` 原本只按标签压平后的 `font` 装载，span 指名的另一张脸会静默退回主字体。现在它把 spans 的字体也收集进来，但按**可选**处理：文件在就装，不在或读不出就跳过（那一段用兵底脸，与读分区之前一致）；标签自己的字体仍必需、仍报错。两条单测用临时目录把 `INTER_REGULAR` 冒充成 `arial.ttf` / `simsun.ttf`，不依赖本机许可字体；把收集循环置空后第一条立刻失败。58 张图重导零字节变化（现有分区标签的 span 字体与标签同名）。
+- **端到端证明**：仓库自带的 `test-file/symbols-full/.../Descriptions new/Wastewater Pit.sym` 里有一条真混排标签（`NULL  NULL*NULL*NULL`，中间 `*` 是 3.175 mm 宋体，其余 2.822 mm Arial）。单测 `a_library_label_that_mixes_sizes_is_lettered_in_three_runs` 从 `.sym` 读到 PDF 再读回来：模型 3 段、读回 3 段且中间那段更高、文字一字不缺、每段接在上一段末尾；把 `text_segments` 改成永远 `plain()` 后同一条测试读回 1 段并失败，说明它真能拦住分区被丢掉的回归。
+- **测试**：`pid-plot` writer 新增三条（切段按时续行、只换字体的 span 也单独切段、同字号同字体不切）、model 新增四条（每行记下起始字符号、跨行 run 按行切、图纸标签把分区带到纸上、`Wastewater Pit.sym` 的端到端三段）；`symbol_library` 新增三条（分区按 `char` 偏移累积、单 run 无分区、非 BMP 撤分区）。
+- 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §九。
+
+### 库侧符号文字改读 run：1350 条标签的字高不再取段落默认（2026-10-23）
+
+`symbol_library::lettering_of` 一直只走记录 `+14` 的段落两跳（`JStyleTextPara` → `JStyleTextChar`），而 `igTextBox` 的格式化 run 才是逐字符生效的那份（`2026-08-22-run-beats-paragraph-default.md` 的定谳：run 覆盖全文，段落样式是默认值）。库侧 `Sheet*` 流上 2866 条 `0x004D` 里有 **1350 条（59.6 %）**的 run 字高与段落默认不同、828 条字体、279 条颜色 —— 这些标签一直按样式表上的标称毫米排版。
+
+- **一条规则，两处共用**：`style_link::resolve_text_style` 的入参从「一条 `DecodedIgTextBoxRecord`」收成它真正读的三个字段（`+14` 索引、字符数、runs），绘图侧与库侧从此调同一个函数：字高／颜色／字体取**覆盖字符最多的那条 run**（并列取标签起始那条），对齐与行距仍取段落；无 run、run 解析不出、或 selector-1 长度和不等于字符数时退回段落默认。
+- **库侧不再自己走一遍 run**：`symbol_library::text_runs` 调 `parsers::sheet_records::igtextbox_runs`（提为 `pub(crate)`），形状 2 的 `+22` 那条与形状 3 文本后的 `A + B` 条由同一个读者给出 —— 上一轮「同一个格式、两个读者」正是形状 3 被漏掉的原因。
+- **`SymbolLettering` 多一个 `run_style_id`**：记录这次是哪个字符样式赢的，`None` 表示段落默认在答。图内缓存本体（`SymbolLettering::from_decoded`）走同一条规则，两条路径不再各读一份。
+- **读数**（1262 个 `.sym` / 2866 条 `0x004D`，探针 `probe_sym_text_runs`）：由 run 上字的记录 **2227 / 2866**；与段落路线比，字高变 **1350**、字体 **828**、颜色 **279**；字高落在整半磅网格上的比例 **1220/2266 → 1504/2266**（run 侧带的是排版点值，段落侧是标称毫米）。按字高桶看：`2.469 mm`（7 pt）由 **0 → 906 条**，`3.175 mm` 标称桶 **1220 → 441**、`2.500 mm` **537 → 301**；新出现的还有 `4.410 mm`（12.5 pt）**14 → 55**、`2.117 mm`（6 pt）0 → 27、`2.822 mm`（8 pt）0 → 13、`1.411 mm`（4 pt）0 → 12、`3.528 mm`（10 pt）0 → 10、`1.058 mm`（3 pt）0 → 8。
+- **出图读数**（五张参考图重导后跑 `plot_text_sources`）：文字匹配 `546/546`（改前 `544/546`，差的两条都是符号标签）、`151/151`、`123/123`、`167/167`、`249/249`；覆盖率与多画长度逐位未动（0.9989 / 0.9998 / 0.9979 / 0.9986 / 0.9993）。`export_every_fixture`、`export_plant_backup`（53 张）、`plot_compare` 全过。
+- **测试**：`symbol_library` 新增四条（最宽 run 赢、run 解析不出退回段落、长度和不符退回段落、形状 2 的单条 run）；`a_symbols_lettering_comes_off_its_own_style_table` 的钉值改成 run 读数（`Title Block Label.sym` 出现 10 pt 3.528 mm、7 pt 2.469 mm 与 run 指定的宋体）。`plot_text_sources` 的「未匹配的字必须有出处」在**一条都没剩下**时是 `0 of 0`，改成只在有未匹配时断言，并补一条「匹配率不低于 99 %」。
+- 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §八；探针 `examples/probe_sym_text_runs`（新增 `--dump` 逐条对照段落与 run）。
+
+### 库侧文字审查收口：方向对把关计数、尾型校验长度、选表与回归（2026-10-22）
+
+`b45f937` 之后的审查（计划 `docs/plans/2026-10-22-library-text-review-follow-ups.md`，Plannotator 批准）发现：下一节「仍拒」里的「计数跑出 body」永不触发（三种形状的 body 都由计数算出）；尾巴放宽成「留得下」以后，库侧没有了绘图侧那道防计数多读的方向对检查；文字还会参与选表和 `bounds()`。先量，再收紧。
+
+- **三项测量**（S1，`src/` 未动）：方向对 2812 条单位向量 + 52 条按字高缩放，两样都不是的 **0** 条；尾型 `+20` 把尾后字节分得干干净净 —— kind 1 的 **2321** 条尾后 0 字节，kind 2 的 **543** 条是 32 字节文本框尾再加 0 / 8 / 16 / 24 字节（标志字位 24 / 25 / 27 / 29 各管一个 `f64`，543 / 543）；全库选表复现 `displayed_primitives` 1262 / 1262，「只数几何」与现行在 9 个符号上不同 —— 四个电磁阀的干净表 `Sheet6` 只剩显示层上的 `S`，现行选表只画一个 `S`、0 条本体，四个坡度标签只数几何却会丢 `SLOPE`，所以「只数几何」不是答案；`bounds()` 比显示范围大一倍以上的 94 个，其中 49 个全因文字；库普查「干净集画不出东西」431 不变、「管着空表」163 → 94。探针 `examples/probe_sym_text_shape_gap`（新增尾块一节）、`examples/probe_sym_pick_with_and_without_text`（新）；分析页 §六。
+- **解码收紧**（S2，D2 / D3）：`sheet_records` 新增 `igtextbox_letter_height`（单位向量 → 0，字高带内 → 字高，其余 `None`），绘图侧 `decode_igtextbox_payload` 改用它，行为不变；库侧 `decode_text` 读字之前先要求尾块方向对是方向，`lettering_of` 用同一函数取字高，「都不像就当 0.0」那一支去掉。`text_layout` 删掉永不触发的 `text_end > tail_start`，改按尾型校验尾后字节：kind 1 必须正好结束，kind 2 必须是 32 字节文本框尾再加整数个 8 字节字段，没见过的尾型仍只要求放得下；`IGTEXTBOX_TAIL_KIND_AT` / `IGTEXTBOX_TAIL_KIND_PLACEMENT` / `IGTEXTBOX_TAIL_KIND_BOX` / `IGTEXTBOX_TAIL_KIND2_LEN` 提为 `pub(crate)`，两侧共用。标志字与字节数的对应没有做成硬校验：位 26 / 28 语料里没见过，硬校验会把没见过的组合拒掉。库侧读数不变（2864 / 2866，`Text` 图元 2404）。`symbol_library` 单测 34 → 38：「尾后 48 字节 + 计数多读 8 字」被拒并断言光看布局拦不住、方向对不是方向被拒、kind 1 尾后多 8 字节被拒、kind 2 只认 32 + 8k、形状 3 截断扫描。`b45f937` 删掉的旧单测（payload 多一个字节就拒）守的正是这道防多读检查。分析页 §七。
+- **真实文件回归**（S5，`tests/symbol_library_text.rs`）：在 `test-file/symbols-full` 上钉住四条以前读不出来的标签 —— `Fail Action.sym` 的 `CSC NULL` 与 `Red Nominal Diameter.sym` 的 `1"x1"`（都在 `(0.10795, 0.1397)`）、`Nozzle NPD.sym` 的 `1"`、`Nozzle Rating.sym` 的 `TBD`；外加全库棘轮：`0x004D` 被拒不超过 2 条。
+- **选表：共享笔画留在正常视图那张表上**（S3，D4 选 (c)）：`read_symbol_geometry` 先读视图集干净的表、再读其余，跨表去重时两张表共有的笔画留在干净表上。以前按流名字面序读，孪生表（`Sheet46` 排在 `Sheet6` 前面）先把整份本体领走，干净表只剩自己的字，`displayed_primitives` 就只画那几个字。M2 的两种候选里，「只数几何」修好电磁阀却丢坡度标签的 `SLOPE`，这一条两边都对：四个电磁阀从只画一个 `S` 变成本体 9 / 12 / 18 / 13 笔 + `S`，坡度标签照旧 11 笔 + `SLOPE`；M2 里「画出的几何不同」的符号 9 → 1（只剩 `MOV-Electrically Operated Valve with Flange2.sym` 无正常视图时的打平，未动）。选表规则一条没动。53 张备份 1828 对本体：一致 1411 → **1439**、不一致 367 → **339**，20 张图各多 1–3 对、其余不变、没有一张变差；被显示规则丢掉的笔画 4441 → 4207，过半被滤的本体 343 → 253。新集成测试 `tests/symbol_library_sheet_pick.rs` 钉住电磁阀与坡度标签（改前电磁阀那条会失败）。分析页 §八。
+- **文档与清理**（S4，D5）：`decode_igtextboxes` 的校验规则按现行代码重写（下限 60、长度按形状在 `+22` / `+30` / `+26`、四个 `f64` 在尾块开头、方向对也收按字高缩放的）；`SheetIgTextBoxDecoded::anchor_code` 与 `SymbolLettering::anchor_code` 不再写 `(code & 0x0F) % 3`，改写成 10-19 定下、pid-plot 实际在用的读法（图纸：`0` 基线、`1` / `3` ascender、`2` 字框顶、带 `0x4` / `0x8` 的中线；符号标签：除 `% 3 == 1` 的顶类外都挂中线）；`displayed_primitives` 的文档与注释换成 S3 之后的库普查数（干净集画不出东西 431 → 206、管着空表 163 → 61），`fattest` 落空之后那四个怎么选都整体返回的分支收成一句「整体返回」，`unknown` / `alternate` 两个集合删掉，加一条「三张表都不显示时整体返回」的单测；`bounds()` 语义不变（D5），文档写明它计入隐藏层文字：全库 85 个本体比显示范围大一倍以上，49 个全因文字。行为不变。
+
+### 库侧文字按 `igTextBox` 三种形状读：606 条记录、83 个符号开始写字（2026-10-22）
+
+`symbol_library::decode_text` 一直是它自己从语料里反推的「试 `+30`、试 `+22`，哪个算得出正好 36 字节尾巴就信哪个」；Phase 40 从 `radsrvitem.dll` 读出的三种形状只落进了 `parsers::sheet_records`。同一个格式、两条读法，一条有形状表、一条没有 —— 库侧 `Sheet*` 流上 **2866** 条 `0x004D` 里就有 **606** 条读不出来。
+
+- **两个彼此独立的毛病**：其一，**形状 3 的布局从来没实现** —— 它的长度在 `+26`、文本在 `+28`、body 是 `6 + 2*count + 8*(A+B)`，`decode_text` 只试 `+30` 和 `+22`，**202 条全族一条也读不出**（其中 61 条 payload 长度其实完全对得上，只是长度字段不在它试的位置，`8*(A+B)` 那一项照样差着）。其二，**「36 字节尾巴必须正好落在 payload 末尾」过严** —— 另外 **404** 条（形状 1 的 95、形状 2 的 309）长度就在它试的偏移上、文本也读得通，只是记录在尾块之后还挂着 **32/40/48/56** 字节（8 的整数倍）可选字段，于是「正好等于」永不成立；绘图侧为这件事一直写着「留余量而不是正好贴合」。
+- **判定它们是真字**：**606/606** 在形状给出的 `22 + body_len` 处读出米级图纸坐标且跨文件复现（`(0.0, -2.7) mm` 110 次、`(0.0, 2.7) mm` 110 次、`(84.2, 129.2) mm` 19 次），而同一批记录把 `text_end` 当插入点念出来是 `2.75e-313` 这类次正规数；字符串 606/606 可读（`"TBD"`、`"CSC NULL"`、`"1\"x1\""`、`"设计条件\r"`、整段 `<intstgxml stream="Revision" …/>` 字段引用），无一条是二进制被念成字。上一轮那 14 条读数去重后是 7 个文件：**6 条形状 3 + 1 条形状 2**（`Nozzle Rating.sym` 的 `TBD`，长度就在 `+30`，只是尾块后多 48 字节），所以「第三种头宽度」是对的但不完整。
+- **改动**：`igtextbox_body_shape`、`IGTEXTBOX_BODY_START/TAIL_LEN` 从 `sheet_records` 提为 `pub(crate)`，库侧 `decode_text` 改问这张形状表（两侧共用一份，不再各写一套）；尾块从 `22 + body_len` 起算，判据从「正好贴合」放松到「留得下 36 字节」；插入点读 `tail_start` 而不是 `text_end`（形状 1/2 两者相同，形状 3 不同）；`lettering_of` 的方向对与锚点字节也跟着从 `tail_start` 读，不再假定尾块是 `payload_len - 36`。仍拒：不认识的判别位、放不下尾块、空文本、非坐标的插入点（原文还列了「计数跑出 body」，那条永不触发，已在上一节删掉并换成方向对与尾型两道检查）。
+- **读数**：读得出的记录 2260 → **2864**（只剩 2 条自称空文本的）；形状 3 **0/202 → 202/202**；库侧 `Text` 图元（跳表去重后）`2023 → 2404`；整份文字全被拒的符号 `83 → 0`；「一张干净视图集管着空表」`203 → 108` —— 那 203 条里 14 条「全是被拒收记录」直接清零，114 条「本体被孪生表认领」降到 33（81 个符号的「空表」原来挂着自己的标签，只是以前读不出来）。
+- **顺带定案：形状 3 的 `A`／`B` 是格式化 run 的条数，不是 double**（新探针 `examples/probe_sym_text_runs`）。每条 8 字节 `(len, selector, style_id)`：先 `A` 条选择子 1（`JStyleTextChar` 字符样式），再 `B` 条选择子 2（把记录自己的段落样式重述一遍）。库侧 2866 条记录上逐条量：run 总数 3113（选择子 `{1: 2911, 2: 202}`）、形状 3 的 `A` 为 `{2:47, 3:7, 4:134, 5:2, 8:2, 12:2, 14:8}`、`B` **全为 1**、「先 A 条选择子 1 再 B 条选择子 2」与「选择子 1 长度和 == 字符数」**0 条破例**、选择子 2 与记录自己的 `+14` 相等 **176/202**（差的那 26 条指向 `+14` 附近另一个段落 id，解析出的字高完全相同）、选择子 1 的样式 id 有 **2866 条落在符号自己的 `StyleCluster` 的 `JStyleTextChar` 上**（41 条未定义、1 条 `JStyleTextChar` 之外的段落、3 条其他）。这条其实早已定案（`2026-08-13-text-para-layout-and-justification.md` §五、`2026-08-22-igtextbox-tail-kind-2-and-formatting-runs.md` 的 `GetSize` 形状推导、`docs/pid-format-guide.md`），本文早先写的「counters 的 doubles」与 `igtextbox_body_shape` 里那句「Two counts of doubles trail the text」是陈的注释，均已改正。**下一件事**：库侧从来不读 run（`lettering_of` 只走 `+14` 的段落跳），2266 条可比记录里 **1350 条（59.6 %）run 说的字高与段落默认不同**、830 条字体、279 条颜色 —— 要接得先定「多 run 取哪条」。
+- **输出侧未动**：`probe_normal_view_too_wide` 十一条规则读数逐位不变（shipped 仍 159/172）、`probe_library_vs_cached_bodies` 的 190 对仍是 pair 190 / same 146 / mismatched 39 / 1518 笔画 / 464 被滤 —— 字没有把哪张表顶成「最肥」；`plot_compare`（五张参考图）、`export_every_fixture`、`export_plant_backup`（53 张，93.9 s）全过。
+- **验证**：`symbol_library` 单测 34 条（新增形状 3、带可选字段的记录、空文本、未知形状、计数越过 body 五类）；`cargo test --workspace --all-targets` 344 个测试二进制全 ok；缺少文档计数 0 = 基线。
+- 分析：`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md`；工具 `examples/probe_sym_text_shape_gap`（形状分类、退役规则与现行读法的对照、逐记录拒绝理由）。
+
+### 正常视图空转时不再当选：库侧选表的第二层（2026-10-22）
+
+上一轮改成「无正常视图 → 取笔画最多的表」之后，还留了一条反向读数：**在有正常视图的放置上，笔画最多的表反而更贴缓存**（88.1 % 对 65.6 %）。这一轮把它查到底：位图判据**没有**把本体误判成备用（0 例），失效的是它的**存在性** —— 文件里只要有一张表挂着「只有 `Default` 亮」的位图，就被当成「正常视图存在」，不管那张表是否托着本体。全库 1262 个符号里，1120 个有视图集、868 个有干净集，其中 **431 个（49.7 %）那张表在自己位图下一条笔画都画不出**，163 个管着一张没有笔画的表。
+
+- **两个典型**：`Insulation Joint.sym` 的 `Sheet6` 挂着标准 16 位图（列 `Label/HiddenObjects/Heat Trace/Default/Jacket`，只有 `Default` 亮），表上唯一一条线在 `Heat Trace` 号 7 —— 位是 0、名字又在隐藏名表里，两条规则各自否掉它；本体 16 条线在**没有视图集**的 `Sheet182` 上。修前选中 `Sheet6` 画出 0 条，兜底退回全体，把隐藏那条也带上，**17 条**。`Concentric Reducer.sym` 的 `Sheet39` 视图集全开被判成备用，但它 3 条笔画**全在 `Default`**、隐藏层一条都没有：那张表不是保温表示，是修过版的本体。
+- **改动**：`displayed_primitives` 的正常视图那一支加一道「至少画出一条笔画」的门槛，空转就落到「笔画最多的表」。同一批 **203** 个可判放置逐条比缓存体：修前 **178**（87.7 %）→ **189**（93.1 %），与「永远取最多」的 184 不同，多出的正是空转那 11 处；「更瘦就落」（184）和「存根就落」（182）都更低 —— 合法备用视图本来就肥，按薄厚分会抢错。两条新单测固定空转不选、以及更瘦但有笔画的正常视图仍当选。
+- **全量读数**（同一批 1828 对本体）：一致 1281 → **1411**、不一致 497 → **367**、过半被滤 411 → **343**、`library_only` 仍为 0。被滤镜丢的笔画 4206 → 4441 看上去变差，其实是兜底不再把隐藏层笔画当「留着」——`Insulation Joint` 那种 16+1 的情形过去报 17/17、现在报 16/17，多出的 235 条全是这类被兜底偷偷带上纸的隐藏笔画。页面不变：53 张备份导出闸门 81.1 s 通过。
+- **剩下 11 处：四种判据都试过，分不开**（7 存根 + 4 本体在他表）。同一批 203 个可判放置上的读数：「严格包含」（肥表包含正常表全部笔画）**190**（只修好 `Filter.sym` 1 处、0 处弄坏）、「笔画完全相同才算同一本体」184、「只按几何不算字比肥瘦」184、「全开但隐藏层无笔画即当干净表」**172**（明显反向）。原因在数据里：正常表画得出笔画、而另一张更肥时，两种结局都真实存在（`Remarks.sym` 3 对 11 昰缓存站正常表，`Concentric Reducer.sym` 1 对 3 昰缓存站肥表），包围盒比例也重叠（错的 1.00–3.00，对的 1.88）。因为 `library_only` 恒为 0（每处放置都自带缓存体），这 11 处一个像素不上纸，所以没有为 +1 给生产代码加一层笔画指纹。
+- **顺带量到的一件事**：418 张全开（「备用」）表里只有 **3** 张在隐藏名层上有几何（另 41 张隐藏层里只有 `Label` 文字）。代码注释里那个「保温/伴热备用视图」在语料里几乎不存在，但那 3 张足够让分支继续存在 —— 「全开即干净」会把 `Remarks` 这类标注符号的编辑框当成主体（172 那一条就是这么垮的）。
+- **「那些空表是不是被删空的」：不是**（新探针 `examples/probe_empty_sheet_view_sets`）。口径先更正：`163` 是「每张干净视图集都指向空表」的文件数，按视图集数是 **203 条**。逐条从字节拆开：**71** 条的流正好 8 字节（`magic` + 计数 0，就是 `Line.sym`/`Circle.sym` 这类符号的空白 `Sheet6`）、**114** 条其实**整份本体都还在**（被 `read_symbol_geometry` 的跨表去重丢掉，`package.streams` 是 `BTreeMap`，留下的永远是字面序在前的那份，114/114）、**14** 条只有一条计数对不上的文字、**4** 条是边界/多段线被孪生表先认领。删除的三项证据全为负：203/203 的 `0x0114 JSheet` 对象都活着且都有 `Sheet<N>` 流（0 条悬挂引用）、0 例簇头记录数多于链上条数、132/203 的表里仍放着本体。
+- **那 14 条读不出来的文字：是第三种 `igTextBox` 形状，但不全是它**（新探针 `examples/probe_sym_text_shape_gap`）。库侧 `Sheet*` 流共 **2866** 条 `0x004D`（形状判别位 `+18`：1 有 566、2 有 2098、3 有 **202**），`decode_text` 读出 2260、拒 **606**。原因两个、彼此独立：其一，**形状 3 的布局从来没实现**——它的长度在 `+26`、文本在 `+28`、body 是 `6 + 2*count + 8*(A+B)`，而 `decode_text` 只试 `+30` 和 `+22`，202 条全族一条也读不出（其中 61 条长度其实完全对得上，只是长度字段不在它试的位置，`8*(A+B)` 那一项照样差着）；其二，**「36 字节尾巴必须正好落在 payload 末尾」过严**——另外 404 条（形状 1 的 95、形状 2 的 309）长度就在它试的偏移上，只是记录在尾块之后还挂着 **32/40/48/56** 字节（8 的整数倍）可选字段，于是「正好等于」永不成立；绘图侧为这件事写着「留余量而不是正好贴合」，库侧没有。判定这 606 条是真字：**606/606** 在形状给出的 `22 + body_len` 处读出米级坐标且跨文件复现（`(0.0, -2.7)` 110 次、`(0.0, 2.7)` 110 次、`(84.2, 129.2) mm` 19 次），而同一批记录把 `text_end` 当插入点念出来是 `2.75e-313` 这类次正规数；字符串 606/606 可读（`"TBD"`、`"CSC NULL"`、`"1\"x1\""`、`"设计条件\r"`、整段 `<intstgxml>` 字段引用），无一条是二进制被念成字。代价：**332** 个符号至少一条字丢失，其中 **83** 个整份文字全被拒（`Text with Leader.sym`、`Fail Action.sym`、`Nozzle NPD.sym`、`Utility Connector.sym`、`Sum Funct TR.sym` …）——今天一个字母都不写。上一节那 14 条读数去重后是 7 个文件，**6 条形状 3 + 1 条形状 2**（`Nozzle Rating.sym` 的 `TBD`，形状 2、长度就在 `+30`，只是尾块后多 48 字节），所以「第三种头宽度」是对的但不完整。**次日已修**（见上一节）：读得出的记录 2260 → 2864、整份文字被拒的符号 83 → 0。
+- 分析：`docs/analysis/2026-10-22-the-normal-view-that-drew-nothing.md`（第七章为这次追查）、`docs/analysis/2026-10-22-the-symbol-library-never-got-the-third-text-shape.md`（那 606 条文字）；工具 `examples/probe_normal_view_too_wide`（放置打分 / 库普查 / 逐符号位与层明细）、`examples/probe_empty_sheet_view_sets`（空表逐条的流/链/簇头/JSheet 读数）、`examples/probe_sym_text_shape_gap`（库侧 `0x004D` 的形状分类与两侧读法对照）。
+
+### publish 两条线共用一份项目录：分类、标签集与覆盖报表计数都从 `PublishItemCatalog` 读（2026-10-22，A1–A4 收口）
+
+`src/publish/catalog.rs` 的十七行表把两条发布线需要的同一批事实收在一处，每行一个 `ItemTypeName`（含 `Instrument` ↔ `InstrFunction`、`Note` ↔ `ItemNote` 这类别名），记 DB 子表链、DB 写手、DB 标签、`.pid` 分类规则、`.pid` 标签及其角色、A01 序，以及 `provisional` / `dead` 两个登记位。A1 `60f1b25` 落表；A2 `7c79749` 把 `sqlite_load` 的子表链从 `subtables_for_item_type` 改查 `catalog_row`；A3 `4735be9` 让 `xml_writer` 的分派与 A01 排序走 `db_writer` / `a01_rank`；A4 `6881c18` 把 `diff::supported_pid_tags` 接到 `supported_db_tags`。本轮把 `.pid` 侧补齐，两条线这才真正同源。
+
+- **`.pid` 的分类不再有第二张表**：`pid_load` 的 `CLASS_OF_ITEM_TYPE`（11 行）与 `UNCLASSED_ITEM_TYPES` 删除，改查 `catalog_row(...).pid_class` —— `Fixed` 取 tag 原文，`InstrumentByEvidence` 保持「先 `SymbolAttr`、再 `Instrumentation\<family>` 目录」的顺序，没有分类规则的行（`OPC`，它的 `PIDBranchPoint` 由 exp 带出）保持不定类。旧表里 `OPC → PIDBranchPoint` 那条一直被 `UNCLASSED_ITEM_TYPES` 盖住，从未生效。
+- **一处口径错被修掉**：`diff::supported_pid_tags` 原先只有 `db_tags`（15 个），`coverage_against_reference` 因此把只有 `.pid` 线会写的 6 个类 —— `PIDInstrument` / `PIDInlineInstrument` / `PIDProcessEquipment` / `PIDMechanicalEquipment` / `PIDHeatTransferEquipment` / `PIDSignalBranchPoint` —— 判成「待补」。现在是两条线标签的并集（`.pid` 的 21 个已包含 DB 那 15 个），`supported_pid_line_tags()` 也从 `#[cfg(test)]` 提为生产代码；目录里已没有生产侧读者为零的列。
+- **`_Coverage.json` 的派生子项按角色计数**：`.pid` 标签从纯字符串变成「标签 + `PidTagRole`」（`Class` / `ProcessPoint` / `BranchPoint` / `Port` / `Document` / `Enrichment`），`pid_line_tag_roles()` 去重、排序并只算一次。`write_pid_coverage_json` 不再自己写着 `PIDProcessPoint` / 两个 branch point / 两个 port，而是按角色决定去哪张集合取数。`OPC` 的 `PIDBranchPoint` 记 `Enrichment`：它由 dump 提供，branch point 的计数只来自 `drawing.branch_points`。
+- **钉数**：DB 标签集（15）与 `.pid` 标签集（21）各有字面量对照测试，改目录必须是一次显式提交；`the_coverage_tally_is_the_five_derived_tags` 固定带计数角色的五个 tag；`the_report_tallies_exactly_the_tags_the_catalog_gives_a_tally_role` 固定一份带齐五类集合的图纸产出的 `classes` 键集合；`writer_rows_declare_their_tags` 还要求 `Fixed` 行的 `pid_class` 以 `Class` 角色出现在自己的 `pid_tags` 里。
+- **输出未变**：整包重发 `D:\work\cad\pid-test-data` 后逐文件比 SHA-256，160 个文件（53 `_Data.xml` / 53 `_Meta.xml` / 53 `_Coverage.json` / `_Index.json`）全部与改动前相同；对象 80 085、值 87 419、关系 106 705 一个数没动。
+- **验证**：`cargo test -p pid-parse --lib publish::` 251 过 / 0 败；`publish_from_pid` 9/9（含 53 张整包）、`publish_xml_cli` 20/20、`publish_meta_parity` 6/6、`publish_mdf_load` 3/3、`publish_writer_coverage` 2/2、`publish_backlog_inventory` 4/4；`cargo clippy -p pid-parse --lib --all-targets -- -D warnings` 退出 0；missing-docs 0 = 基线 0；`cargo rustdoc` 仍是既有的 4 条 private intra-doc link 错误，本次未新增。改动四个文件的 `rustfmt --check` 干净；全仓 `cargo fmt --all -- --check` 当前被另一会话新增的未跟踪探针 `pid-plot/examples/probe_library_vs_cached_bodies.rs` 挡住，与本改动无关。
+- 提交：`60f1b25` / `7c79749` / `4735be9` / `6881c18`（A1–A4）、`595ce19`（A3 的 clippy 收尾）、`da150a0`（两条线共用分类与标签集）、`7e31074`（报表按角色计数）、`6df3a03`（本条记录）。均已推到 `origin/codex/phase32c-bundle-closeout`。
+
+### 备份里的 53 张图全部出 PDF：字体只嵌子集，符号路径容忍前导空格（2026-10-21）
+
+把 `D:\work\plant-code\cad\pid-test-data` 的 `PlantData~2~711.zip`（一个装置 53 张图，文件名 GBK）拆出来逐张导出：**53/53 出页**，每页 **175–846 KB**（改前每页 6.6–7.1 MB，合计 366 MB → 25.7 MB），符号库里缺的 **82 处 → 18 处**（且这 18 处都靠图纸自带的内嵌本体画了出来，占位框 0）。五张参考图读数逐位未动（覆盖率 0.9989 / 0.9998 / 0.9979 / 0.9986 / 0.9993、多画 41.8 / 7.6 / 1.5 / 22.9 / 24.6 mm、文字 544/546 + 151/151 + 123/123 + 167/167 + 249/249）。
+
+- **空图不再被字体闸门挡住**：`D03` 有页幅（594.33 × 420.57）却 0 个图元（发 XML 那边也是 0 个对象），`prepare_fonts` 因此一个面都不载，`write_plot` 把空字体表当错误。现在只有「确实有字而没有面」才拒绝（`has_inked_text`），`D03` 出 722 字节的空白页；有字无面仍是硬错。
+- **字体只嵌子集**：`klippa` 把 `EBDT` / `EBLC` / `EBSC`（SimSun 合计 6.2 MB 的单色点阵）整段透传，于是 3 个字的子集也有 6.36 MB、每页 6.8 MB。`fonts::subset_face` 把这三张表放进 `drop_tables`（PDF 画轮廓，不画点阵 strike）：SimSun 18,314,228 → **150,632** 字节，NSimSun → **153,376**，FangSong → **73,652**，都通过 `validate` 且覆盖全部请求字符。新增探针 `pid-plot/examples/probe_font_subset` 与子集上限单测。
+- **符号路径容忍前导空格**：图纸里存的是 `\Symbols\Piping\Piping OPC's\ Off-Unit SQ.sym`（43 处）和 `\Symbols\…\Strainers\ Filter Type 2.sym`（21 处），厂商 `RefData~4~681.zip` 里这两个条目也带空格，解压到磁盘时被吃掉。`symbol_library::read_from_roots` 先照存法找，再把每段前导空格去掉重试（`symbol_candidates`）。
+- **门禁**：新增 `pid-plot/tests/export_plant_backup` —— 53 张逐个布局/写/读回，断言页幅、`off_sheet_primitives == 0`、无断行标签、库缺符号 ⊆ 三条白名单且 `missing_boxes` 为空（没有占位框）、每页 < 2 MiB；目录按 `PID_TEST_DATA_DIR` → 语料旁 → 两个 `pid-test-data` 依次找，找不到就软跳过（实测 70.7 s，`53 backup drawings exported, 4 faces embedded`）。`probe_export_audit` 全量跑：`53 drawings, 0 failed`。
+- 仍未闭合：18 处在符号库里不存在，但画面上不缺（图内缓存体）；真要补还是得拿到项目库。三条是 `Pulsation Damper.sym` 13、裸名 `Wellhead Christmas Tree.sym` 4、`Clone of TT-Temperature Transmitter(1).sym` 1；8 个 zip / 861 条目含包内嵌包、扩展名为空的 `RefData~4~703`，加上磁盘 `Ref`、`symbols-full` 均 0 命中，`Export.dmp` 里只有引用）；9 张自定义页幅（594.33 × 420.57 等）照图纸原样出页；其余 48 张没有参考出图，只有结构与审计。
+- **库 vs 图内本体**：新探针 `pid-plot/examples/probe_library_vs_cached_bodies` 把 53 张备份里 1828 对本体逐条比（7 张 fixture 另跑：68 对中 43 一致、19 不一致，结论相同）：一致 1069、参数化 50、不一致 709（多是差 1–3 条线）、库里没有 18，**只能靠库的放置 0**。`I井场`（参考图，覆盖率 0.9989）本身就含 `Wellhead Christmas Tree 02` 的不一致，说明纸上用的缓存本体才是对的。同时量出库侧 `displayed_primitives()` 会丢 5356 / 15316 条笔画、411 个本体过半（`Wellhead Christmas Tree 02` 84 → 1）。
+- **选表修正（同日收口）**：根因是「无正常视图」时兜底选 `Sheet6` —— 那份 `.sym` 只有一个全开的视图集、管的是 `Sheet374`（83 条笔画），`Sheet6` 只有 1 条。现在这一支改取「按自己视图集算笔画最多的表」：1828 对里一致 1069 → 1281（58.5 % → 70.1 %）、不一致 709 → 497、被滤镜丢的笔画 5356 → 4206；页面不变（每个放置都自带本体，`library_only` 仍为 0），五张参考图读数逐位未动。两条单测（合成 + 真文件软跳过），分析见 `docs/analysis/2026-10-22-the-sheet-pick-that-shrank-a-symbol.md`。
+- 分析：`docs/analysis/2026-10-21-the-plant-backup-exports-every-sheet.md`。
+
+### 七个 `.pid` 全部出成 PDF：多行标签拆行、符号库联合搜索、推断几何不上纸（2026-10-21）
+
+仓库里 7 个 `.pid` 现在都能导出并读回，而且出来的是这张图；改前 `DWG-0202GP06-01` 的两份**整页写不出**，`DWG-0201GP06-01` 还丢 3 个符号、并把 35 条推断出来的线画上纸（一条横穿整页的对角线）。五张语料图的读数一条未动（覆盖率 0.9989 / 0.9998 / 0.9979 / 0.9986 / 0.9993、多画 41.8 / 7.6 / 1.5 / 22.9 / 24.6 mm、文字 544/546 + 151/151 + 123/123 + 167/167 + 249/249）—— 它们没有多行标签，也没有推断图元。
+
+- **多行标签按 `+66` 拆行**：`pid-plot/src/model.rs` 新增 `label_lines`，`\r` / `\n` / `\u{0B}` / `\u{0C}` / `\u{85}` / `\u{2028}` / `\u{2029}` 都是断行（`\r\n` 算一次，`\t` 变空格，其余控制字符丢掉），每行一个 `PaperShape::Text`，沿**基线法向**下移 `字高 × 行距`；没有可用行距时按单倍。改前整串（含 `U+000D`）交给字体找字形，没有字体有 `\r`，`write_plot` 于是拒绝整页。实测 `DWG-0202` 注释两行 y 290.75 → 285.98（4.77 mm = 3.17 × 1.5），图签四行 3.81 mm 一段（2.54 × 1.5）。规则与 `2026-08-22-four-labels-have-a-second-line.md` 的普查及消费侧同一实现对齐。
+- **符号库改成联合搜索**：`symbol_library` 原来命中第一个 `Ref` 就返回，而语料 `Ref`（644 个 `.sym`）与仓库自带 `test-file/symbols-full`（618 个）互不包含 —— `Gauge Hatch.sym`、` Line2.sym`、`Cap2.sym`、`ElecTraceLine.sym` 只在后者，`I-P Converter.sym` 只在前者。现在按顺序收全部候选根（前面的优先，`PID_SYMBOL_LIBRARY` 仍独占）。`DWG-0201` 14/17 → **17/17**，`DWG-0202` → **11/11**。
+- **推断几何不上纸**：`EndpointPair` 记录只说了两个对象相连，把它的两个位置猜成一条线是读法在赌；`lay_out_drawing` 现在跳过这类实体（`PaperModel::skipped_endpoint_pairs`，`DWG-0201` 59 条 / `DWG-0202` 26 条），解析器侧照旧保留（`parse_real_files` 的 `inferred_lines >= 49` 地板钉的是证据）。另加 `beyond_the_sheet`：坐标非有限、包围盒跨度超过 4 倍页对角线、或整条笔画落在页外的都不画（`off_sheet_primitives`）—— `DWG-0202` 那三条端点跑到 143 km / 337 km 的线就是它挡的，其中一个端点就在原点，只看离页多远判不出来。`DWG-0201` 的 line 132 → **97**、推断图元 35 → **0**。
+- **门禁**：新增 `pid-plot/tests/export_every_fixture`，把 `test-file/` 下每个 `.pid` 导出并读回，断言有墨、有字、无控制字符进页、无被拒笔画，并把唯一的数据缺口（`工艺管道及仪表流程-1` 的三个 `XA …`）钉成 ratchet。新增探针 `pid-plot/examples/probe_export_audit`（布局 → 字体 → 写 → 读回，逐文件失败即退出 1）。
+- 仍未闭合：那三个 `XA` 文件全仓库 0 命中；`.sym` 符号体自身的换行尚未拆（语料无一例，断言会在首次出现时点名）；`EndpointPair` 记录里的两个 `field_x` 到底指向什么仍未定 —— 现在的结论是「不猜」，不是「读对了」。
+- 分析：`docs/analysis/2026-10-21-every-pid-exports-a-pdf.md`。
+
+### `0x007E` 的末字节是扫掠方向：隔膜执行器的拱终于画在参考那一侧（2026-10-20）
+
+五张图的多画合计 **147.3 → 98.4 mm**（−33%），覆盖率每张都升，`Diaphragm Actuator.sym` 从每张的残差表里消失；几何与文字的所有计数不变（文字仍是 544/546、151/151、123/123、167/167、249/249）。
+
+| 图 | 覆盖率 | 多画 mm |
+|---|---|---|
+| I井场 | 0.9985 → **0.9989** | 55.7 → **41.8** |
+| 一级闪蒸A | 0.9992 → **0.9998** | 14.6 → **7.6** |
+| 一级闪蒸B | 0.9973 → **0.9979** | 8.6 → **1.5** |
+| 低温分离器A | 0.9981 → **0.9986** | 29.7 → **22.9** |
+| 换热器CD | 0.9983 → **0.9993** | 38.7 → **24.6** |
+
+- **末字节读成方向**：`SheetIgEllipticalArc2dDecoded::flag`（`payload +74`）自该族落地以来只作审计用。现在它是扫掠方向：`0` 顺时针（原行为）、`1` 逆时针。两条独立读数支持这一读法 —— A01 四条封头全写 `0`，顺时针把弧顶放在本体矩形外侧（原有测试钉的外凸）；隔膜执行器的拱全写 `1`，只有逆时针把弧顶放在弦上 2.54 mm，即参考图的 `(899.16, 497.84)`。
+- **模型**：`DecodedIgEllipticalArc2dRecord` 新增 `flag: u8`（`serde(default)`，文档写了两条证据）；`bspline` 新增 `elliptical_arc_directed(..., clockwise)`，`elliptical_arc` 保留为顺时针包装，A01 与所有现有调用点行为不变。
+- **普查工具**：新增只读探针 `examples/probe_elliptical_arc_flags`（单文件或整目录扫描，打印每条记录的 flag 与几何）。644 个 `.sym` 里 14 个带 `0x007E`（flag 0 八条、flag 1 二十七条）；五张图纸各自的缓存里恰好各一条，都是这台执行器的 flag 1。
+- **白笔不刷黑**：参考每页的 2–16 条细白描边是出图器的擦除，`plot_ink` 对 `[255,255,255]` 原样保留（新增单测）。实测五张图的模型目前无白笔，所以这一条不改变任何一页的数。
+- **门限收紧**：`pid-plot/tests/plot_compare.rs` 五个基线 → 覆盖率 0.9985 / 0.9995 / 0.9977 / 0.9982 / 0.9990，多画 45 / 10 / 5 / 26 / 28 mm。
+- 分析：`docs/analysis/2026-10-20-the-actuator-dome-is-on-the-wrong-side.md` 顶部补了结论节（原推理保留）。
+
+### pid-plot 改走参考的单色三笔表：整页黑墨，宽度并成三档（2026-10-20）
+
+出图对比第一次量到**颜色**这一层：五张参考 PDF 的每一笔描边、每一处填充、每一个字都是 `0 0 0`，描边宽度只有 **0.48 / 0.96 / 1.92 pt**（0.169 / 0.339 / 0.678 mm）。我方原样照图纸样式画：I 图 1226 条橄榄 + 1018 条绿 + 295 条暗红描边、46 处蓝填充，宽度是 ISO 阶梯换算出的 0.369 / 0.51 / 0.992 / 1.984 pt 四条。改后五张图重出，颜色与宽度都与参考的表逐位一致；几何判据一条未动（覆盖率 0.9973–0.9992、多画 8.6–55.7 mm、文字 544/546 + 151/151 + 123/123 + 167/167 + 249/249）。
+
+- **一整页一支黑笔**：`pid-plot/src/write.rs` 新增 `PLOT_INK`，描边状态与填充都用它；模型的 `PaperStroke::rgb` / `Fill::rgb` 仍是解析结果，只是不上纸。
+- **声明的宽度并到三支笔**：新增 `pen_width_mm`，`≤0.30 → 0.169`、`≤0.55 → 0.339`、其余 `→ 0.678`，边界取 `2026-10-17-monochrome-plot-three-pen-table.md` 的三个实测锚点（0.25 mm 规则线印细笔、0.50 mm 符号描边印中笔、0.70 mm 工艺主线印粗笔）；非法或非正的宽度走中笔。
+- **门禁挪到真实出图上**：`pid-plot/tests/write_five_drawings.rs` 的 PyMuPDF 检查新增三项断言 —— 每一笔描边 / 每一处填充 / 每一个字必须黑，出现的宽度只能是 0.48 / 0.96 / 1.92 pt。新增两个单测：`declared_widths_snap_onto_the_three_plot_pens`、`the_page_is_plotted_in_the_three_pens`（0.13 与 0.70 mm 两条描边写回只剩 0.17 / 0.68 mm）。
+- 仍然不同的两处记在分析页上：两条电机 `M` 的 12.9 pt（文件里没有这个数，`0.0045508` / `0.0056602` / `12.9` 在 `.pid` 里 0 次），以及参考每页 2–16 条 0.48 pt 的白色小勾（我方不画）。
+- 分析：`docs/analysis/2026-10-20-the-page-is-plotted-through-one-black-pen.md`。
+
+### pid-plot 带框字段挂在框的对齐侧，标题栏三条 `DWG-…集…` 归位（2026-10-20）
+
+文字对上从 **1229 / 1236** 升到 **1234 / 1236**：一级闪蒸分离器 A 149 → **151 / 151**，低温分离器 A 165 → **167 / 167**。五张图的覆盖率与多画不变（0.9973–0.9992 ／ 8.6–55.7 mm）。
+
+- **带框记录按段落对齐挂边**：原来的规则是「带框的一律从框左边缘起画」，那让 55 条标题栏字段对上，但把另外 3 条右对齐的顶到了框左，整体偏左 17.6 mm。现在由插入点加锚点码还原框的左/中/右边缘，再由段落样式的水平对齐决定挂哪条边（`Left`/`Center`/`Right` → 左边缘/中线/右边缘），没写对齐时退回左边缘。58 条带框记录里恰有 3 条写 `Right`，正是三条残差；读数：参考的 `DWG-0000集05-07` 起点加推进 27.771 mm 落在框右边缘内 0.05 mm。新增单测 `a_right_aligned_boxed_record_ends_on_the_box_right_edge`；原 `a_boxed_record_letters_from_the_box_left_edge` 不变，它走的是「样式没写对齐」那条。
+- **不按参考的字号改符号体标签**（试过又撤回）：参考把正文的 7.2 pt 字高按 8.25 pt 排，本机给 `Arial` 找的替代字面比参考宽 14.6%，照 8.25 pt 画反而让 `symbol/Middle` 整类偏 0.075 个字高（门限 0.05）。`plotted_size_pt` 的注释记下了这条，仍按 7.2 pt 排，印刷长度与参考一致。
+- **拼接稿子先去掉两端的填充再来拼**：低温分离器 A 的两条 `0103501A` 相隔 13.22 mm、九字在本机字体下字宽 13.41 mm，相叠后被读取器并成一条 18 字符的 span；参考图是两个 run，各自带着字段的前导空格（`␣0103501A`）。`joined_text` 原来直接拼原串，那个内嵌空格让“拼紧”候选也对不上，两条残差挂了两轮。现在每段先 `trim()` 再拼；`a_padded_pair_fuses_without_its_pads` 固定这条。低温分离器 A 因此 165 → **167 / 167**。
+- 剩余两条参考文字都在 I 井场：两台电机的 `M` 我方 2.04 mm、参考 12.9 pt（4.55 mm），文件里没有字段解释这个倍数。
+- 探针：新增 `pid-plot/examples/probe_boxed_text_alignment`（每条带框记录的值、插入点、锚点码、框宽、解析到的对齐与字体）与 `examples/probe_sheet_texts_near`（纸面某点附近的图纸文字记录）。
+- 门限：`pid-plot/tests/plot_compare.rs` 543/149/123/165/249 → 544/151/123/167/249；五张图里四张把它数到的每一条参考文字都对上，只剩 I 井场那两条。
+- 分析：`docs/analysis/2026-10-20-a-field-hangs-from-its-box-edge.md`；`2026-10-19-title-block-cells-choose-the-side.md` 顶上补了「结论被更早一层取代」的注。
+- 验证：`cargo test -p pid-plot` 全绿（lib 51 项 + 六个集成测试，`write_five_drawings` 重出五张图后 `plot_compare` 在新门限下通过）。
+
+### 恢复 `clippy --workspace --all-targets -D warnings` 这条门禁（2026-10-20）
+
+AGENTS.md 的 pre-commit 门禁从「能过」退回「必红」已经有一段时间：14 个根 crate 探针 example 累积了 19 条告警，`--all-targets` 一律停在这批文件上。本轮只清这些欠账，`src/` 一行未动。
+
+- 三个 example 的 `.streams.iter().filter_map(|(s, _)| …)` 换成 `.keys().filter_map(|s| …)`（`probe_sym_info_cluster` / `probe_sym_no_sheet6` / `probe_sym_vfset_census`），迭代顺序与输出逐字不变。
+- 四处穷尽的 `SymbolPrimitive` / `PidGraphicKind` match 删掉不可达的 `_` 分支（`probe_scaled_placement` / `probe_scaled_defs` / `probe_instance_deltas` / `probe_logo`）；`probe_pump_body`、`probe_junction_symbols` 删掉未用的 `SymbolPrimitive as SP` 导入，`probe_librarian_34` 删掉未用的 `std::io::Read` 与两个从未调用的取字助手。
+- `probe_white_styles` 的兜底分支 `c => other += 1` 改成 `_ => other += 1`（计数口径不变），`probe_hydraulic_lines` 的根样式表存在性检查改绑 `_table`，`probe_sine_hunt` 的 `dref.clone()` 改成 `*dref`（`PidSymbolDefinitionRef` 是 `Copy`），`probe_pid_ole` 去掉比较两侧多余的引用并按 lint 建议把 `chunks_exact(2)` 换成 `as_chunks::<2>()`（截断行为相同）。
+- 验证：`cargo clippy --locked --workspace --all-targets -- -D warnings` 退出 0（改前 `--keep-going` 一次性报出 14 个 target / 19 条错误）；`cargo build --locked --workspace --all-targets` 退出 0；`cargo fmt --all -- --check` 干净；`probe_sym_no_sheet6`、`probe_sym_vfset_census` 在 `test-file/symbols` 上实跑，输出与改前一致（3 个 .sym、`sheet_ref` 6 ×3 / 63 ×1）。
+
+### pid-plot 文字落点：两端填充空格不再计宽，类别报告把「宽度差」与「锚点差」分开（2026-10-20）
+
+I 图 `Center/Middle` 的类别平均位移从 **−0.053 个字高**收到 **−0.026**（0.13 mm → 0.07 mm），其余四张图同在 −0.03…−0.04。原因不是居中规则：546 条配对里有 141 条带着图纸存下的填充空白（105 条前导、36 条尾随），上一轮只 `trim_end()`，前导空格仍被算进半宽，把整条 run 往左顶 0.41 mm。
+
+- `show_text` 改为两端 `trim()` 后再测宽、再画；trim 后为空的 run 一个字形都不写（`a_run_of_spaces_writes_no_text`）。图纸字段的填充本来就无墨，参考图排的也是可见字。
+- `TextOffsetClass` 新增 `mean_advance_heights`（我方推进 − 参考推进，按参考字高归一），两个对比入口都打印成 `width`：居中 run 的 `along` 里有一半就是这个宽度差，两个数并列才不会再被读成「规则错」。新增单测 `a_wider_run_reports_its_width_beside_its_shift`（+1 mm 推进 → `width +0.4`、`along −0.2`）。
+- 辅助探针 `pid-plot/examples/probe_center_anchor_width.rs`：按对比器的方式配对，输出每类 `along` 与「半个推进差」的对照，用来判断偏差是宽度还是锚点。
+- 门限收紧：`along` 单独一档 **0.05** 个字高（`down` 仍 0.10，`symbol/Middle` 实测 0.094）。收紧之前 I 图 `Center/Middle` 的 −0.053 会直接失败 —— 这条门限现在挡住的就是这一族错误。
+- 代价一条：L 图两条 `0103501A` 之间只隔 13.22 mm，去填充后每条占 13.32 mm，两条相接；本 crate 的读取器按距离合并，读成一条 18 字符 span，两条参考标签都配不上。参考图自己重叠 0.43 mm 仍分开，因为 PyMuPDF 按文本对象切分。基线因此记 165/167（其余四张不变：543/149/123/249），两条标签的实际落点与参考一致。
+- 剩余：`width` 仍 +0.03…+0.07 个字高（同字高下我方字面宽 1–2%，数字比字母明显 —— `NC` 只差 0.04%），实际锚点误差比这个小一个量级。下一轮要去比对参考图实际嵌入字体的每字推进。
+- 验证：`cargo test -p pid-plot` 全绿（lib 50 项 + 五个集成测试；重出五张图后 `plot_compare` 在新门限下通过）；`cargo clippy -p pid-plot --all-targets -- -D warnings` 零告警；`cargo fmt --all -- --check` 干净。
+- 分析：`docs/analysis/2026-10-20-a-pad-is-not-part-of-the-label.md`。
+
+### pid-plot 对比器跨 run 配对，图纸顶部锚点改挂 ascender 线（2026-10-19）
+
+五张对比图的「文字对上」从 1213 / 1238 抬到 **1231 / 1236**，三张图（B、低温 A、换热器 CD）各自 100%。参考残差只剩 5 条：两条电机 `M`、三条标题栏 `DWG-…集…`。
+
+- **切分标签配回来**：`TextSpan` 新增 `advance_mm`（沿书写方向的宽度）；`match_text` 在逐条配对之后加一遍「一条 ↔ 接续的若干条」，两个方向都试，拼接生成「紧贴」与「一个空格」两种候选，仍以字符串全等为准。接续判据方向点积 ≥ 0.99、横向 ≤ 0.35 字高、沿行间距**取绝对值** ≤ 0.6 字高（B 图的 `2-1/2"` + `LO` 重叠 1.43 mm = 0.40 字高，单侧下限会把它拒掉），最多 4 条。计数单位不变：`matched + 未对上 = text_reference`，而 `matched` 可以大于 `text_ours`（A 图 149 / 148，那一条正是参考拆开、我方合成）。新增三条单测（正反两个方向 + 拼错不许配）。
+- **图纸顶部锚点挂在 ascender 线上**：`probe_text_anchor_modes` 在 I 图重测，低半字节 `1` 的 58 条标签是 1.25–1.38 个字高而不是 1.0 —— 参考的「顶」是字体 ascender 线（Arial ascent 0.905 em / 字冠 0.688 em = 1.32），图纸记录里的 2.5 mm 是字冠高度。`TextLine` 因此新增 `Ascender`（1.32 字高），`0`→基线、`1`/`3`→ascender、`2`→字框顶（1.0，I 图的 `B5`/`E5`/`F9` 四条实测 2.5 mm）、`5`/`8`→中线。符号体标签仍走另一套读法，行为不变。这 58 条标签此前一直高 0.79 mm，只是被 1 mm 匹配窗盖住。
+- **带尾部空格的标签右对齐到最后一个有墨的字**：定宽字段写出的 `L=200mm ` 在右对齐时把空格也算进推进宽度，整条被顶回 0.69 mm；`show_text` 现在只用 `trim_end()` 后的宽度算锚点位移，字形照旧全画。`H=1200mm` 的 1.06 mm 差收到 0.4 mm 下。
+- 证据探针：`probe_text_anchor_modes` 增加 `DETAIL=1` 逐条输出；`read_reference_plot` 增加 `--json`（整页 `PlotInk`，含 origin / height / advance / direction）；新增只读探针 `probe_title_block_letters`（按前缀列记录，`--tail` 打 68 字节尾部与五个 dword）。
+- 标题栏剩下三条 `DWG-…集…` 的归属坐实了一半：右对齐与左对齐的两条记录**逐字节相同**（插入点、方向除外，锚点码都是 `0x48`，盒子都是 45.307 × 3.689，三个计数器都是 15/14/14），差别在他们各自的单元格 —— 参考从「盒子落在单元格内边距上的那一侧」起排，单元格的边框又画在同一个 `.pid` 里。实现需要模型里新增单元格一层，会对已对上的 55 条造成风险，本轮只做测量与记录，见 `docs/analysis/2026-10-19-title-block-cells-choose-the-side.md`。
+- 新增「按类别平均位移」报告：每配上一对就把「我方起点 − 参考起点」投到参考 run 自己的书写坐标系并除以字高，按字号规则（`Center/Middle`、`Left/Ascender`、`symbol/Middle` …）汇总成 `CompareReport::text_offsets`，两个对比入口都会打印。`plot_compare` 对样本 ≥ 10 条的类别断言 `|along| / |down| ≤ 0.10` 个字高；把常数临时收紧到 0.02 能复现失败（`Center/Middle along -0.053 over 437 labels`），说明门限不是空的。它第一次量出的东西是：居中标签整类左偏 0.053 个字高（≈0.14 mm），也就是「按推进宽度居中 vs 按墨迹居中」的旧账；`Left/Ascender` 则在 0.03 以内，证明上一轮的 ascender 修正确实站到了位。见 `docs/analysis/2026-10-19-mean-offset-per-lettering-class.md`。
+- 门限：`pid-plot/tests/plot_compare.rs` 537/143/119/165/249 → 543/149/123/167/249。
+- 分析：`docs/analysis/2026-10-19-split-labels-pair-across-runs.md`、`docs/analysis/2026-10-19-top-anchored-labels-sit-on-the-ascender-line.md`。
+- 验证：`cargo test -p pid-plot` 全绿（lib 46 项 + 五个集成测试，`write_five_drawings` 重出五张图后 `plot_compare` 在新门限下通过）；`cargo clippy -p pid-plot --all-targets -- -D warnings` 零告警；`cargo fmt --all -- --check` 干净。
+
+### pid-plot 对比器：纯空白 run 不再算标签，符号标签探针改为旋转感知（2026-10-19）
+
+I 图的参考文字残差从 15 条降到 9 条，其中 6 条原本是 `text` 为空串的纯空格 run；`matched` 合计从 1217 变成 1213，是四对「空串配空串」的幽灵匹配不再计数。两组数字与旧口径**不同量**，不能直接比：`matched` 掉了 4 条，参考总数掉了 10 条。
+
+- `pid-plot/src/compare.rs::match_text` 在参考侧与我方都先规范化，规范化后为空就直接跳过：不计入 `text_reference` / `text_ours`、不计入 `text_matched`、不进入未配对表。这与 `text_sources` 早已采用的「空值返回 `None`」一致。新增单测 `a_whitespace_only_run_is_not_a_label`。
+- 新口径五张图：537/546、143/151、119/123、165/169、249/249（换热器 CD 100%）。`pid-plot/tests/plot_compare.rs` 的 `min_text_matched` 重锁为 537/143/119/165/249，注释写明这是口径变化而不是回退。
+- `probe_symbol_label_offsets` 改为把基线差投影到参考 span 自己的书写坐标系（`along` 沿行向、`down` 沿降部方向），旋转标签也能量。重测结论：上一轮归为「旋转节流阀里没对上的两条 `M`」是误判 —— −90° 的 `M` 与 `S` 的 `down / 参考字高` 是 +0.07 和 +0.09…+0.11，与正立阀门的 +0.05…+0.10 同档，旧的 −2.12 mm / −4.02 mm 是纸面轴上的分解。真正的两条残差 `M` 在 `Electric Motor Type 1.sym`：我方 2.04 mm（`.sym` 样式 2.54 × 图纸放置缩放 0.804），参考 4.55 mm，是尺寸问题、与锚点无关，成因尚未坐实。
+- 证据探针新增两个只读入口：`pid-plot/examples/probe_lettering_heights.rs`（图纸 `igTextBox` 与 `.sym` 文字记录的尾部位高、样式位高、锚点并列）、`pid-plot/examples/probe_text_primitives.rs`（按文字与位置列出 `PaperShape::Text` 的值、字高、锚点与来源）。分析见 `docs/analysis/2026-10-19-blank-runs-are-not-labels.md`，旋转重测补进 `docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`。
+- 验证：`cargo test -p pid-plot` 全绿（lib 42 项，含新增单测；`plot_compare` 在新门限下通过），`cargo clippy -p pid-plot --all-targets -- -D warnings` 零告警，`cargo fmt --all -- --check` 干净。
+
+### publish 目录入口接上 SQL Server MTF 包：`Export.dmp`（MTF）→ MSDA → 临时 MDF → `T_Drawing` 逐图发布（2026-10-19，N12）
+
+`pid_publish_xml <备份目录> --out-dir DIR` 对 `Manifest.txt` 目录里 MTF 形态的 `Export.dmp` 不再退出 2：与 Oracle `exp` 分支同一套目录遍历和 `_Index.json` 口径，`PlantData` zip 只列目录不解压，`T_Drawing` 每行经 `sqlite_load::load_drawing_graph` + `write_{data,meta}_xml` 写 `<NAME>_Data.xml` / `_Meta.xml`。无 `backup-mdf` 的构建保持原退出 2 语义。
+
+- MTF → MDF 链路：`backup::mtf::msda_stream_body` 从 MTF 流里取出 `SqlData`（MSDA）体；`backup::mdf_page::detect_backup_stream_header_len`（原 `pid_backup_extract` 私有实现上提为库函数，按 16 字节栅格找两个连续合法 MDF 页头，已知 SQL Server 2008 R2 样本回落 `0x3F0`）剥掉备份流头；`mdf_load::open_mtf_dump_as_sqlite` 把 MDF 镜像落到临时文件（`oxidized-mdf` 只接受路径）后一次登台，用完即删。`PublishError` 新增 `Io` 变体承接临时文件写删失败。
+- `_Index.json` 与 `exp` 分支同构并新增：`export = "SqlServerMtf"`、`unmatched_pid_entries`（PlantData 里没有 `T_Drawing` 行的 `.pid` 条目，TEST02_p 的 11 个 `Template Files/*.pid` 模板全落这里）、`pipeline_uids = "database"`（MTF 数据自带管线，不做合成）。`BackupPublishReport` 增 `written` 字段，CLI 摘要改报真实写出数；逐图失败不拖垮整包，记入 `drawings[].error` 与 `problems`。
+- TEST02_p 实测：`drawing_rows 1`（`A01`，`D9635C3C…`）发布，对象 12 / 值 29 / 关系 15 / `PIDPipeline` 1 / `PipingConnectors` 1；包路径产物与 `pid_publish_xml Export.mdf --drawing` 直发逐字节相同。
+- 测试：`tests/publish_from_pid.rs::sql_server_mtf_directory_publishes_t_drawing_rows` 用 `test-file/backup-test/TEST02_p` 夹具（缺失则 soft-skip）断言 index 形状与三件齐全。
+- 验证：`cargo test --test publish_from_pid` 9/9（含 53 张 Oracle 整包回归）、`backup_mtf` 8/8、`publish_mdf_load` 3/3、`publish_xml_cli` 20/20；`cargo test --lib` 1223/1223、`--no-default-features --lib` 861/861；`cargo check` 在 `backup-mdf` 与 `backup-exp` 两种特性组合下均过；`cargo clippy --lib -D warnings` 零告警、`cargo fmt --check` 干净。
+
+### pid-plot 文字落点：带框记录从框左沿起排，竖直锚点的低半字节按两个标志位读（2026-10-19）
+
+五张对比图的「文字对上」从 1190 / 1252 抬到 1217 / 1252，未对上的我方 run 从 56 条降到 29 条；覆盖率、多画毫米和 fit 一个数没动。
+
+- 带框的 kind-2 `igTextBox`（标题栏那批，58 条，共用一个 45.307 × 3.689 mm 的框）现在从框的**左沿**起排：锚点码仍说插入点在框内哪一处，字符串却总从左沿开始，水平位移是 `框宽 × {左 0 / 中 ½ / 右 1}`。55 条因此对上，另外 3 条落在框右沿的记录留在分析页里。竖直不动 —— 带框记录仍按字形高度取锚点线。
+- 竖直锚点码的低半字节**不是一个 0–2 的索引**：`1` 与 `2` 都是字框顶（参考基线在插入点下方 1.0 个字高），`5` 与 `8` 都是字框中线（0.5 个字高），`0` 是基线。原先的 `(code & 0x0F) % 3` 把 `2` 当成中线，18 条位号因此高了半个字高，一直落在 1 mm 匹配窗之外。改为「高两位置位即中线，否则低两位有值即顶部」。符号库自带标签（`SymbolLettering`）用的是另一套读法，见下一条。
+- 符号体自带的标签（`.sym` 里的 `igTextBox`）用另一套读法：没有「基线」这一类，`0x10` 与 `0x12` 都挂在中线上，只有低半字节为 `1` 的顶类例外。索引读法把 `0x10` 当成基线，11 条阀门/电机标签（I 的 9 个 `M`，L 与 H 各 1 个 `S`）整条高了约半个字高。改后这 11 条对上 9 条；剩下两条当时记为「旋转的节流阀体」，后来重测证明是误判 —— 它们其实是电机符号里的 `M`，问题在字高不在锚点（见本条上方 2026-10-19 的对比器条目）。
+- 证据：`pid-plot/examples/probe_text_anchor_modes.rs` 按半字节报「参考基线 − 插入点 / 字高」的分布；`pid-plot/examples/probe_symbol_label_offsets.rs` 按 `.sym` 文件报符号标签的基线差。分析见 `docs/analysis/2026-10-19-igtextbox-box-is-where-the-text-starts.md`、`docs/analysis/2026-10-19-a-pair-of-flags-not-an-index.md` 与 `docs/analysis/2026-10-19-symbol-label-nibble-hangs-from-the-middle.md`；`pid-plot/tests/plot_compare.rs` 门限 525/141/116/159/249 → 537/144/119/167/250。
+
+### `backup` feature 按输入族拆为 `backup-exp` / `backup-mdf`，`T_DRAWING` 投影扩出图纸元数据（2026-10-16，#39 / #40）
+
+为 OpenCADStudio 备份数据包浏览（pid-cad#5，计划 `OpenCADStudio/docs/plans/2026-10-16-pid-backup-package.md`）拆依赖边界：纯 Oracle `exp` 目录路径的下游（OCS 桌面端）不再需要链接 GPL-3.0 的 vendored `oxidized-mdf` 和 bundled sqlite3。
+
+- `backup` 保持默认伞：`backup = ["backup-exp", "backup-mdf"]`，存量消费者行为不变。
+- `backup-exp`（`dep:zip`）：`backup` 模块的目录扫描 / manifest / MTF 嗅探 / zip 索引 / refdata / datamap / text_scan，加 `publish` 的 `oracle_exp`、`pid_load`、`pipeline`、`backup_package`、`diff`、`model`、`xml_writer`、`pid_writer`。纯 Rust。
+- `backup-mdf`（蕴含 `backup-exp`，外加 `dep:rusqlite` / `dep:oxidized-mdf` / `dep:sha2` / `dep:log` / `dep:env_logger`）：`backup` 模块里的 SQL Server 内部件（`boot_page` / `mdf_page` / `msci` / `syscatalog`）、`publish::{mdf_load, sqlite_load}`、`PublishError` 的两个 `From` impl、`export_bundle`（仍要求伞 `backup`）与 `pid_publish_xml` / `pid_backup_extract` / `pid_backup_probe` / `pid_msda_probe` 等二进制。MTF/MDF 探针二进制改签 `backup-mdf`；`pid_inspect` / `pid_publish_xml` 仍要伞。测试 `backup_folder_real_dir` / `backup_manifest_real_file` / `backup_refdata_real_dir` / `backup_zip_index_real_files` 改签 `backup-exp`，其余因 `tests/common` 无条件引 `load_drawing_graph_from_mdf` 或驱动 MDF 二进制而留在伞上。
+- `BackupDrawing` 扩出 15 个展示字段：`description` / `title` / `revision` / `version` / `document_type` / `document_category` / `item_status` / `template` / `design_phase` / `project_number` / `date_created` / `drawing_date` / `date_of_drawing` / `last_publish_time` / `last_archive_time`。连接面（`id` / `name` / `path` / `drawing_number` / `plant_group_id`）照旧必填；新列缺失或 NULL 投影为空 / `None`，不报错。
+- `Field` 新增 `Date`：`read_field_tolerant` 把 Oracle 7 字节 `DATE`（type 12）解码为 `YYYY/MM/DD HH:MM:SS`（`decode_oracle_date`，非 7 字节或越界回 `Unscaled`）；strict `read_field` 对 Date 仍报错（严格表的列不含日期）。
+- 新增 `read_backup_drawings(dump)`：只读 `T_DRAWING`（pin `APPLICATIONS` + `read_table_tolerant`），供"列图纸索引"的调用方使用。真实 `Export.dmp` 的 `T_PIPERUN` row 0 有非整数 NUMBER 单元格，走严格 `read_table` 的 `ExpTables::read` 会整读失败——OCS 的包索引原来因此静默降级成纯 zip 枚举。图纸投影抽成 `project_drawings`，`ExpTables::drawings` 与之共用。发布路径不受影响。
+- 验证：`cargo check --lib/--all-targets --no-default-features --features backup-exp` 退出 0，`cargo tree` 该特性下无 rusqlite / oxidized-mdf / sha2 / env_logger；默认伞 `cargo check --lib` 退出 0；`cargo test --no-default-features --features backup-exp` 的 4 个改签测试在真实夹具上全过（folder/manifest/refdata/zip_index）；`cargo test --lib publish::oracle_exp` 17 过 0 败（含新 `drawings_surface_optional_metadata_and_dates`、`oracle_date_decoding_rejects_noncanonical_cells`，及既有 `ijingchang_*` 真实 dump 用例）；OCS 侧 `io::plant_package` 夹具测试（`DWG-0202GP06-01_p`）经 `read_backup_drawings` 出 `OracleExp` 索引。本树另有他人未提交改动，`cargo clippy -D warnings` / rustdoc 全量门禁被 `src/parsers/cluster_header.rs:334`（doc backtick）与 `sheet_layers` / `view_filter_sets`（private intra-doc link）挡住，均为既有 WIP，本次改动自身零告警、rustfmt 干净。
+
+### publish 数据库线 `load_codelist_index` 按 `attribute_datatype = C<n>` 取选择表号（2026-10-14，#27）
+
+`publish::sqlite_load::load_codelist_index` 原先将 `attributes.attribute_codelisted` 当作选择表编号注册到 `CodelistIndex`，真实 SmartPlant 目录表里该列是 `'T'` / `'F'` 布尔标志，选择表编号在 `attribute_datatype` 列写成 `'C<n>'`（如 `EquipmentType → C22`、`NozzleType → C35`）。现改为当 `attribute_codelisted = 'T'` 且 `attribute_datatype` 形如 `'C<数字>'` 时剥掉 `'C'` 注册 `attribute_name → codelist_number`。同时将 `write_process_vessel` 的 `EqTypeDescription` 回退顺序定为符号路径词干优先（`derive_type_description_from_symbol` → `resolve_codelist_field` → 原值），保持 `A01_Data.xml` 的 `EqTypeDescription="Horizontal Drum"` 与参考零回归，无符号路径时才落到 `C22` 的 `codelist_text`。
+
+### publish `.pid` 的 `_Meta.xml` 补上版本、修订和文件（2026-10-14，N10）
+
+`write_pid_meta_xml` 改走 `write_meta_xml`。`DocumentVersion`、`DocumentRevision`、`File` 和三条 `Rel` 的 UID 用 `derive_meta_uid`（图纸 UID 加角色的 UUID v5），不跟参考里带 `AAAD` 的 UID 对齐。`DocVersionDate` 和 `FilePath` 留空。探针 `examples/probe_oracle_exp_drawing_meta.rs` 与分析页 `docs/analysis/n10-meta-rows.md` 实测确认：`T_DRAWING` 53 行的 `VERSION` / `REVISION` / `LASTPUBLISHTIME` / `SP_LASTEFPUBLISHTIME` 全 NULL，`T_DRAWINGVERSION` 15 行全为已删旧图的 `Created for Delete` 快照（现存 53 张图命中 0），`T_REVISION` 为空表，5 份参考 `_Meta.xml` 的 30 个随机 v4 UID、`DocVersionDate`、`FilePath` 在 `Export.dmp` 与 `.pid` 中全部 0 命中；Q5–Q7 批复保持 `4866b81` 现行口径。顺手清掉 `src/publish/pid_writer.rs` 与 `src/backup/datamap.rs` 的 3 条 clippy / rustdoc 告警。
+
+### publish 按 PipeLinePublisher 的口径合成管线（2026-10-14，N9-2）
+
+计划 `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-2。`T_PIPELINE` 仍是空表。对本图已发出的 `PIDPipingConnector`，`TAGSEQUENCENO` 非空才入线。名字是 `{公称直径}-{流体代码}-{顺序号}-{材料等级}[-{保温}]`。公称直径小于 5000 写成毫米，大于等于 5000 写成 32 分之一英寸的带分数。同名合并成一条 `PIDPipeline`。UID 是厂名加名字的 UUID v5。`FluidSystem` 从 `SPPIDDataMap.xml` 映射；不写 `OperFluidCode`。关系是 `PCN-{连接器}-{管线}`。`--diff-against` 按名字配对；参考里空着的 `FluidSystem` 单列，不算错。没有 `DrawingNo` 的空图不挂管线。`.pid` 模式不走这条。规则和数字在 `docs/analysis/n6-pipeline-rows.md`「合成」。
+
+- I井场钉数仍是对象 3 093、值 3 346、关系 4 107，按名 79 / 106，`FluidSystem` 多 23。本轮没重跑 `ijingchang_oracle_exp_matches_the_pinned_reference`。
+- 整包 `D:\work\cad\pid-test-data`：`pid_publish_xml` 退出 0。51 张合计对象 77 690 → 80 085、关系 103 577 → 106 705，另钉管线 2 395、`PipingConnectors` 3 128。值 87 419，测试没钉这一项。53 / 53、失败 0、空图 2，端口 9 557 / 22 021、连通 19 371、OPC 476、管口 372、注释 114 不动。D03 / D04 管线 0。
+- `cargo test --locked -p pid-parse --test publish_from_pid backup_directory_publishes_the_whole_package` 1 过，50.19 秒。同一测试里 I井场整包与单张 `--oracle-exp --datamap` 对照通过（`_Coverage.json` 去掉 `source`）。
+- 下面 N9-3 那一段里的 77 690 / 103 577 是没挂管线时的合计。交付目录 2026-10-14 01:57–01:58 已重写：`D:\work\cad\pid-test-data\publish\`（160 个文件，`_Index.json` 为上面这组数）；`D:\work\cad\PID自研软件验证\publish\` 只换 I井场三件，`_Data.xml` / `_Meta.xml` 与整包 SHA256 相同（`7653DF6B…` / `C1D4465F…`），`_Coverage.json` 只差 `source`。另外 4 张集注站三件仍是 2026-10-12 11:40:21。合成实现和 `tests/publish_from_pid.rs` 已提交并推送 `7f1d891`。
+
+### publish 从备份包目录一次发出全部图纸（2026-10-13，N9-3）
+
+计划 `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-3。`pid_publish_xml <目录> --out-dir DIR`：目录里有 `Manifest.txt` 就是备份包。`Export.dmp` 是 Oracle exp 时整包读一次 `ExpTables`，再逐个 `PlantData` zip 里的 `.pid` 在内存里装载；图名取 `T_DRAWING.NAME`。没有 `DrawingNo` 的图按 zip 路径对上 `T_DRAWING.PATH`，只写一张 `PIDDrawing`。`Export.dmp` 是 SQL Server MTF，或 `--diff-against`，退出 2。一张图失败记进 `_Index.json`，其余照写，最后退出 1。没有 dump 的目录仍按 `.pid` 单独发布。单张 `.pid` 的输出不改。管线合成（N9-2）还没做，所以整包计数是 N8 的口径。
+
+- `D:\work\cad\pid-test-data`：53 / 53 写出，配对 53，失败 0，其中 2 张没有 `DrawingNo`。51 张合计对象 77 690、关系 103 577、管道端口 9 557、信号端口 22 021、连通 19 371、OPC 476、设备↔管口 372、注释 114。I井场三件与单张 `--oracle-exp` 逐字节相同（`_Coverage.json` 去掉 `source`）。
+- 验证见同日 `task_plan.md` 当前阶段与 `docs/analysis/n9-backup-package-publish.md`。
+
+### publish 从 Oracle exp 一次读表、挂多张图（2026-10-13，N9-1）
+
+计划 `docs/plans/2026-10-13-n9-publish-the-whole-backup-package.md` N9-1（Q1–Q7 的批复在它的 §3.1）。只改 `src/publish/oracle_exp.rs`。行为不变：不给 `--oracle-exp` 时输出与原来逐字节相同，给了也与 N8（`353186a`）逐字节相同。N9-2 / N9-3 要的表这单只读进来，不用。
+
+- `ExpTables::read(dump)` 先钉 `APPLICATIONS`（钉不住回 `FormatUnpinned`，后面的表不读），再一次读入四个入口要的 11 张表：`T_PIPINGPOINT` / `T_SIGNALPOINT` / `T_CONNECTOR` / `T_REPRESENTATION` / `T_PIPERUN` / `T_SIGNALRUN` / `T_OPC` / `T_NOZZLE` / `T_NOTE` / `T_ITEMNOTE` / `T_MODELITEM`（N9 计划说的 12 张是连 `APPLICATIONS` 一起数的），外加第一份 `CODELISTS`（N9-2 要）和 `T_DRAWING`（N9-3 要；有日期列，走 `read_table_tolerant`）。四个入口搬到 `ExpTables` 上：`port_tables` / `connectivity_ends(drawing_uid)` / `composition_relations` / `opc_points(drawing_uid)`；另给 `codelist_row_count` / `drawing_row_count`。
+- 原来吃 `dump: &[u8]` 的 `read_port_tables` / `connectivity_ends_for_drawing` / `composition_relations` / `opc_points_for_drawing` 保留为薄封装：各自只读原来那几张表建一份部分 `ExpTables`，再调上面的同名方法，单张模式读的表没有变多。`pid_publish_xml` 单张调用没改。
+- 单测 10 → 13：`exp_tables_reads_the_backup_dump_once`（实包 `Export.dmp`：`T_DRAWING` 53 行，端口 9 628 / 22 057 与 `read_port_tables` 相等）、`one_exp_tables_serves_two_drawings`（手造片段，同一份 `ExpTables` 挂 `DRAW1` / `DRAW2`，连通各 1 条 `PipingEnd1Conn`）、`exp_tables_refuses_an_unpinned_dump_before_other_tables`。既有单测不动。
+- I井场 exp 模式：对象 3 014、值 3 188、关系 4 001 不动，错 0。`--oracle-exp --diff-against --plant P01` 退出 0；写到临时目录的三件与 `publish\` 现有三件 SHA256 相同（N9 §7），`publish\` 没改（I井场三件仍是 11:50:22，另外 4 张图三件仍是 11:40:21）。`.pid` 模式五组钉数不动。
+- 验证（2026-10-13 落地时实跑，N9 §7，全部退出 0）：`cargo test --locked -p pid-parse --lib --bins --tests`（`--lib` 1 203 过 / 0 败，`publish_from_pid` 6 过）；`--no-default-features` 同范围（`--lib` 850 过）；`cargo test --locked --workspace --lib --bins --tests`；clippy `-D warnings` 两种特性在 `-p pid-parse --lib --bins --tests` 零告警；rustfmt 干净；`cargo rustdoc --locked -p pid-parse --lib -- -W missing-docs` 0；wasm32 lib check 过；`--all-targets --no-run` 退出 0，探针不跑。提交前（2026-10-13 22:3x）复跑：`--lib publish::oracle_exp` 13 过 / 0 败、`--test publish_from_pid` 6 过 / 0 败，clippy 两种特性零告警，`cargo fmt --all -- --check` 干净，missing-docs 0 = 基线 0。
+
+### publish 用 `--oracle-exp` 发出 I井场的两个 OPC 分支点（2026-10-13，N8）
+
+`T_REPRESENTATION` 里画在本图、物项在 `T_OPC` 的，发出 `PIDBranchPoint`。UID 是这对 Id 里较小的那个（和连通端同一个）。`Name` 是画出那一侧的 `OPCTAG`，`Description` 是它的 `T_MODELITEM.DESCRIPTION`，`ToFromText` 是它的 `TOFROMTEXT`；画出那一侧空了才用另一侧。表示不在本 `.pid` 里的不发。不给 `--oracle-exp` 时 OPC 仍不分类，输出与原来逐字节相同。
+
+- I井场 2 个，与参考的 UID、名字、说明、`ToFromText`、表示都对得上，多 0 缺 0。跟着写出 2 条 `DrawingItems`（表示 → 分支点）。连通两端都在图里了，736 → 738，留下 0。
+- 对象 3 012 → 3 014，值 3 182 → 3 188（每个分支点 `Name`、`Description`、`ToFromText`），关系 3 997 → 4 001。错类 / 错值 / 多发 0。跟参考还差的是 79 个管线和 106 条 `PipingConnectors`，dump 里没有管线，仍不发。
+- `publish\` 的 I井场三件已重写。另外 4 张图三件未动（11:40:21）。
+- 验证（2026-10-13 实跑）：`pid_publish_xml --oracle-exp --diff-against --plant P01` 退出 0，clean 行 `3014 objects, 3188 values, 4001 rels`，stderr `738 pairs, 738 written, 0 left out` 和 `2 PIDBranchPoint written`。`cargo test --locked -p pid-parse --lib --bins --tests ijingchang` 6 过；OPC 写法单测和 `.pid` 模式钉数测试过。clippy `-D warnings` 两种特性零告警。rustfmt 干净。`cargo rustdoc --lib --locked -p pid-parse -- -W missing-docs` 0。全库 workspace 测试和 wasm32 这轮没跑。
+
+### publish 用 `--oracle-exp` 发出 I井场的管口组成和注释（2026-10-13，N8）
+
+分析页 `docs/analysis/n8-small-class-rows.md`。`load_publish_from_pid` 不变；不给 `--oracle-exp` 时输出与原来逐字节相同。两个 OPC 的 `PIDBranchPoint` 仍不发，所以那 2 条 `DrawingItems` 和 2 条连通仍留下。
+
+- `T_NOZZLE`：`SP_ID` 是管口、`SP_EQUIPMENTID` 是设备，写成 `EquipmentComponentComposition`（`EQC-{管口}-{设备}`，UID1 管口）。全库 377 对。I井场两端都已发出的是 7，与参考错 0、多 0。
+- `T_NOTE`：`SP_ITEMNOTEID` 是注释、`SP_MODELITEMID` 是被注释的物项，写成 `PBSItemNotes`（`ITN-{注释}-{物项}`）。物项自己也是 `T_ITEMNOTE` 的行不发：I井场有 5 条注释→注释，参考里没有对应的 `PBSItemNotes`。去掉这 125 行后全库 114 对。I井场两端都已发出的是 6，与参考错 0、多 0。
+- I井场 exp 模式：对象 3 012、值 3 182 不动，关系 3 984 → 3 997。错类 / 错值 / 多发 0。`.pid` 模式五组钉数不动。`publish\` 的 I井场三件已重写（11:34:40），另外 4 张图三件未动（11:40:21）。
+- 验证（2026-10-13 实跑）：`pid_publish_xml --oracle-exp --diff-against --plant P01` 退出 0，clean 行 `3012 objects, 3182 values, 3997 rels`，stderr `377 nozzle pairs, 7 EquipmentComponentComposition written; 114 note pairs, 6 PBSItemNotes written`，连通仍是 `738 pairs, 736 written, 2 left out`。`cargo test --locked -p pid-parse --lib --bins --tests ijingchang` 5 过；`--lib a_composition_rel_is_written` 过；`--test publish_from_pid the_pid_alone_export_matches` 过。clippy `-D warnings`：`-p pid-parse` 两种特性的 lib / bins / tests 零告警。改动的 `.rs` rustfmt 干净。`cargo rustdoc --lib --locked -p pid-parse -- -W missing-docs` 0。全库 `cargo test --workspace` 和 wasm32 本轮没跑。
+
+### publish 用 `--oracle-exp` 发出 I井场的六种连通关系（2026-10-13，N7）
+
+分析页 `docs/analysis/n7-connectivity-rows.md`（t-22 的「拼两端」加本次的「定 DefUID」）。探针 `examples/probe_oracle_exp_connectivity.rs` 多打一段 `rule=item_both_sides_is_tap`。`load_publish_from_pid` 不变；不给 `--oracle-exp` 时输出与原来逐字节相同。
+
+- 两端：`T_CONNECTOR` 行的表示在本图、物项在 `T_PIPERUN` / `T_SIGNALRUN` 的，段是 `UID2`；`SP_CONNECTITEM1ID` + `STARTOBJECT`（起始侧）和 `SP_CONNECTITEM2ID` + `ENDOBJECT`（结束侧）各拼一个符号端 `UID1`：点表里的端口 `父项.点号`、段上的表示 `表示.BPT`、OPC 取一对 Id 里字典序较小的。I井场 738 对，与参考多 0 缺 0。
+- 定义：按符号端的物项（端口的父项；`.BPT` 和 OPC 是自己）并同一段上的侧别。两侧都出现过的物项，它与该段的每一对都是 `PipingTapOrFitting` / `SignalTapOrFitting`；只在起始侧是 `*End1Conn`，只在结束侧是 `*End2Conn`；管道 / 信号按段的表。738 对的定义与参考逐条相同，错 0（`PTF` 369、`PE1` 129、`PE2` 143、`SE1` 38、`SE2` 46、`STF` 13）。这就是 `sub_5F5E7A80` 问连接对象要的那个端序号：段穿过的物项不在端点上（`0xFFFF`）取 Tap 名。
+- 写出：`pid_writer` 只写两端都是本图已发出对象的，`UID1` 符号端、`UID2` 段，UID 前缀按 `FillUpRelDefArray`（`SE1` / `SE2` / `STF` / `ITN` 补进 `defuid_prefix`）。I井场写出 736 条（`PE1` 128、`PE2` 142，其余同参考），留下 2 条 OPC 端的：那两个 `PIDBranchPoint` 本导出不发。覆盖报告 `relationships` 下按六种定义计数；`oracle_exp.connectivity_ends` 738、`connectivity_rels` 736、`connectivity_ends_left_out` 2。
+- I井场 exp 模式：对象 3 012、值 3 182、关系 3 248 → 3 984，错类 / 错值 / 多发 0。`.pid` 模式五组钉数不动。`publish\` 的 I井场三件已重写（01:18:31），另外 4 张图三件未动（11:40:21）。
+- 验证（2026-10-13 实跑）：`pid_publish_xml --oracle-exp --diff-against --plant P01` 退出 0，clean 行 `3012 objects, 3182 values, 3984 rels`，stderr `738 pairs, 736 written as <Rel>, 2 left out`。`cargo test --locked --workspace --lib --bins --tests` 退出 101（1 564 过 / 1 败 / 3 忽略，`--lib` 1 189，`publish_from_pid` 6 / 6）；那 1 败仍是别人未提交的 `pid-plot` `five_drawings_round_trip_through_pdf`，本单没改 pid-plot。`-p pid-parse --no-default-features --lib --bins --tests` 0 败（1 094 过 / 1 忽略，`--lib` 850）。clippy `-D warnings`：`-p pid-parse` 两种特性的 lib / bins / tests 零告警，探针 example 同样。改动的 7 个 `.rs` `rustfmt --check --edition 2021` 干净。`cargo rustdoc --lib --locked -p pid-parse -- -W missing-docs` 0。`cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown` 过。`--all-targets` 测试 NOT RUN：`--no-run` 退出 0（唯一告警是已提交的 `pid-plot/src/compare.rs:794`），example 是别的会话的文件，本单只跑了 N7 这一个探针。
+
+### publish 用 `--oracle-exp` 发出 I井场端口和 `PPC` / `SPC`（2026-10-12，N5-2）
+
+计划 `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-2（t-1967）。`load_publish_from_pid` 不变。`--oracle-exp <dump>` 把 N5-1 挑出的行挂上再写。不给这个参数时输出与原来逐字节相同。
+
+- 端口 UID 是父 UID 加 `.` 加点号，`IObject.Name` 是点号。管道端口的流向写成 `@{GUID}`（序号 1 和 5、2、3、4），空就不写。公称直径：小于 5000 是 `{代码} mm`，大于 5000 是 `(代码 − 5000) / 32` 英寸（`5032` → `1 in`，`5024` → `0.75 in`，`5384` → `12 in`），对不上参考写法的不写并计数。信号端口只有 `Name`。出处是 `PidValueSource::BackupRow { table, column }`，不记成 `DerivedByNativeRule`。
+- `PIDPipingPort` 的接口是 `IObject`、`IConnection`、`IPipingPort`、`IPipingConnection`、`IPort`、`IPipeCrossSectionItem`。`PIDSignalPort` 的接口是 `IObject`、`IConnection`、`ISignalConnection`、`ISignalPort`、`IPipingConnection`、`IFacilityPoint`、`IPIDTypical`。关系 `PPC-{端口}-{父}` / `SPC-{端口}-{父}`，`UID1` 是端口，`UID2` 是父。
+- I井场 exp 模式：对象 3 012、值 3 182、关系 3 248，错类 / 错值 / 多发 0。管道端口 362、信号端口 915，`PPC` / `SPC` 各 362 / 915。没换算出来的公称直径 0。`.pid` 模式五组钉数不动。另外 4 张图的 `publish\` 文件没有重写。
+- 验证（2026-10-12 实跑）：`pid_publish_xml --oracle-exp --diff-against --plant P01` 退出 0，clean 行 `3012 objects, 3182 values, 3248 rels`，extra / wrong class / different / not in reference 都是 0。`publish\` 的 I井场三件与临时目录输出 SHA256 相同（20:51:39）。另外 4 张图三件时间戳仍是 11:40:21。`cargo test --locked --workspace --lib --bins --tests` 退出 101（1 556 过 / 1 败 / 3 忽略，`--lib` 1 185，`publish_from_pid` 6 / 6）。那 1 败是别人未提交的 `pid-plot` `five_drawings_round_trip_through_pdf`（span 37 对 36），本单没改。`--no-default-features` 的 `-p pid-parse --lib --bins --tests` 0 败（1 094 过 / 1 忽略）。clippy `-D warnings`：`-p pid-parse` 两种特性零告警；`--workspace` 退出 101，告警是已提交的 `pid-plot/src/compare.rs:794`（`150ab41`）。改动的 `.rs` rustfmt 干净。`cargo rustdoc --lib --locked -p pid-parse -- -W missing-docs` 0。wasm32 lib check 过。`--all-targets` 测试 NOT RUN：`--no-run` 退出 0，example 是别的会话的文件，本单不跑。
+
+### publish 从 Oracle exp 读出端口行，还不写 XML（2026-10-12，N5-1）
+
+计划 `docs/plans/2026-10-12-n5-ports-from-oracle-exp.md` N5-1（t-1966）。`src/publish/oracle_exp.rs`。行格式同 `examples/probe_oracle_exp_rows.rs` 与 `docs/analysis/n5-exp-rows.md`。
+
+- `APPLICATIONS` 第一行必须是 `ID` 1、`SmartPlant PID`、`SPPID`，否则返回错误，不读后面的表。字符列是 UTF-16BE（字符集 2000）。NULL 是 `0xFFFE`，表尾是 `0xFFFF`。
+- `T_PIPINGPOINT` 9 628 行，`T_SIGNALPOINT` 22 057 行。管道点带 `SP_PLANTITEMID`、`PIPINGPOINTNUMBER`、可空的 `FLOWDIRECTION` 和 `NOMINALDIAMETER`；信号点带 `SP_PLANTITEMID`、`SIGNALPOINTNUMBER`。按本 `.pid` 已发出的物项挑 I井场：管道 362、信号 915。拼出的 UID 与参考错 0。父项已发、参考里却没有：0。
+- 不写 XML，不改 `pid_load` / `pid_writer` / CLI。`publish_from_pid` 的五组钉数不动。
+- 验证（2026-10-12 实跑）：`cargo test --locked --workspace --lib --bins --tests` 0 败（1 538 过 / 3 忽略，`--lib` 1 184，`publish_from_pid` 4 / 4，钉数不动）；`--no-default-features` 的 `--lib --bins --tests` 0 败（1 094 过 / 1 忽略，`--lib` 850，本测试在 `backup` 特性里所以不进这一档）。clippy `-D warnings` 两种特性在 lib / bins / tests 上零告警。改动的 `.rs` rustfmt 干净。`cargo rustdoc --lib --locked -- -W missing-docs` 0。`cargo check --lib --locked --no-default-features --target wasm32-unknown-unknown` 过。`--all-targets` 测试 NOT RUN：`cargo test --locked --workspace --all-targets --no-run` 退出 0，没有被未提交的 example 卡住；那些 example 仍是别的会话的文件，本单不跑。
+
+### publish 不发连通关系：`.pid` 里配不成对（2026-10-12，N4-4）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-4。提交 `7fdeae8`。探针 `examples/probe_connectivity_relationships.rs`。分析页 `docs/analysis/n2a-port-relation-filter.md`「N4-4 探针」。
+
+- `P&IDAttributes` 里 `ModelItemType = Relationship` 的行没有两端，`ModelID` 是 `Relationship.<guid>`。行数：I井场 946、分离器 A 191、分离器 B 153、低温分离器 A 200、换热器 CD 411。管口行和注释行也只有那七个身份字段。
+- Sheet 端点对解出的 `source_drawing_id` / `target_drawing_id` 在这五张图上都是空的：I井场 26、分离器 A 36、分离器 B 2、低温分离器 A 78、换热器 CD 412，`both_drawing_ids = 0`。
+- 八种定义和 `PipingConnectors` 都不进装载，从图纸配上的都是 0。参考 / 两端都已发出：`PipingEnd1Conn` 283 / 93，`PipingEnd2Conn` 279 / 117，`SignalEnd1Conn` 75 / 5，`SignalEnd2Conn` 83 / 12，`PipingTapOrFitting` 738 / 164，`SignalTapOrFitting` 35 / 15，`EquipmentComponentComposition` 36 / 36，`PBSItemNotes` 7 / 7，`PipingConnectors` 219 / 0。`tests/publish_from_pid.rs` 不在这笔提交里。cargo、clippy、`--diff-against`：未记录。
+
+### publish 发出分支点：点符号的 UID 是表示 Id 加 `.BPT`（2026-10-12，N4-3）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-3。提交 `cec947e`。探针 `examples/probe_branch_points_from_representations.rs`。分析页 `docs/analysis/n2a-port-relation-filter.md`「N4-3 探针」。
+
+- `DrawingItemType = Symbol` 且描述记录是 `igPoint2d`（`0x005E`）。`PipeRun` 发 `PIDPipingBranchPoint`，`SignalRun` 发 `PIDSignalBranchPoint`，UID = `DrawingID` & `.` & `BPT`（`ConstructUIDForBranchPoint`，`0x5F5CFC10`）。`DrawingItems` 是 `DRI-{DrawingID}-{DrawingID.BPT}`，表示在 `UID1`，分支点在 `UID2`。`PIDBranchPoint`（OPC）仍不发。Name 全空。
+- 五图 199 对 199，错 0、多 0、缺 0。管道 183（I井场 97、分离器 A 22、分离器 B 14、低温分离器 A 15、换热器 CD 35），信号 16（10 / 1 / 1 / 1 / 3）。关系 199 对 199。提交说明：对象和关系各加 199，值不动。
+- `tests/publish_from_pid.rs` 的 `EXPECTED`（对象 / 值 / 关系）：I井场 1 628 / 1 530 / 1 864 → 1 735 / 1 530 / 1 971，分离器A 330 / 326 / 374 → 353 / 326 / 397，分离器B 268 / 256 / 303 → 283 / 256 / 318，低温分离器A 358 / 347 / 399 → 374 / 347 / 415，换热器CD 675 / 636 / 790 → 713 / 636 / 828。cargo、clippy、`--diff-against`：未记录。
+
+### publish 发出公称直径：标签文本换成 `N in` / `N mm`（2026-10-12，N4-1）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-1（t-1490）。探针 `examples/probe_n4_nominal_diameter.rs`。
+
+- `_NominalDiameter` 不按原文发。`N"` / `a/b"` / `N-a/b"` → `N in`，`N MM` → `N mm`，裸数字 → `N mm`（5 图错 0）。挂 `IPipeCrossSectionItem.NominalDiameter`，出处 `DerivedByNativeRule`，分析页 `docs/analysis/n2a-name-diameter-codelist-meta.md`，地址 `0x5F52BDE0`（DLL 从整数码换算；`.pid` 里没有码，发的是测过的标签拼法）。
+- 5 图发出 273 条，错 0（管件 152、管段 101、直连仪表 20）。换不出来的计入 `attribute_values.nominal_diameter_not_emitted`，这 5 图是 0。值 2 822 → 3 095。对象和关系钉数不动：`b39ff7e` 的 `EXPECTED` 只改了值列。对象 2 918、关系 3 389 是 N4-2 之前的合计，不是这一笔。
+- 验证（2026-10-12 实跑）：`cargo test --locked --workspace --lib --bins --tests` 0 败（`--lib` 1 176，`publish_from_pid` 4 / 4，`publish_xml_cli` 20 / 20）；`--no-default-features` 的 `--lib --bins --tests` 0 败（`--lib` 850，本测试在 `backup` 特性里所以不进这一档）；clippy `-D warnings` 两种特性在 lib / bins / tests 上零告警，探针 example 同样零告警；改动的 `.rs` rustfmt 干净；`cargo rustdoc --lib --locked -- -W missing-docs` 0。`--all-targets` **NOT RUN**：别的会话未提交的 `examples/probe_ports_from_connect_points.rs`、`probe_dash_scale_field_candidates.rs` 编不过。5 图 `--diff-against` 都退出 0（`b39ff7e` 的 `EXPECTED`：分离器A 330 / 326 / 374，分离器B 268 / 256 / 303，换热器CD 675 / 636 / 790，低温分离器A 358 / 347 / 399，I井场 1 628 / 1 530 / 1 864），`derived_by_native_rule` 分别是 37 / 26 / 53 / 32 / 125（与这五张图的值列之差相同），`nominal_diameter_not_emitted` 都是 0。15 个文件重写到 `D:\work\cad\PID自研软件验证\publish\`。
+
+### publish 发出工艺点：已发布管段各一条 `PIDProcessPoint`（2026-10-12，N4-2）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-2。提交 `fa16824`。探针 `examples/probe_n4_ports_and_process_points.rs`。分析页 `docs/analysis/n2a-port-relation-filter.md`「N4-2 探针」。
+
+- 每个已发布的 `PIDPipingConnector`（管段 `ModelID`）拼 `UID.PPT`。关系是 `ProcessPointCollection`，UID `PRP-{工艺点 UID}-{管段 UID}`，`UID2` 是管段。规则 `ConstructUIDForProcessPoint`（`0x5F5CFD40`）和 `ConstructUIDForRelationship`（`0x5F5D0280`，前缀 `PRP`）。五图 341 对 341，多 0、缺 0，关系同样 341 对 341。参考里没有 `Name`，也没有 `ConnectionFlowDirection`。提交说明：no extra values。
+- 端口不发。五张 `.pid` 里 `PipingPointNumber`、`SignalPointNumber`、`FlowDirection`、`SignalPoint` 的 ASCII 和 UTF-16 都是 0 处。合计管道端口 718 发出 0、信号端口 1 725 发出 0、参考里有流向的管道端口 298（分图在分析页）。`PPC` / `SPC` 不发。
+- `tests/publish_from_pid.rs` 的 `EXPECTED`（对象 / 值 / 关系）：I井场 1 459 / 1 405 / 1 695 → 1 628 / 1 405 / 1 864，分离器A 291 / 289 / 335 → 330 / 289 / 374，分离器B 239 / 230 / 274 → 268 / 230 / 303，低温分离器A 317 / 315 / 358 → 358 / 315 / 399，换热器CD 612 / 583 / 727 → 675 / 583 / 790。值列不动。cargo、clippy、`--diff-against`：未记录。
+
+### publish 出处多一种「按原生规则算出」：`DerivedByNativeRule`，5 图新计数为 0（2026-10-12，N4-0）
+
+计划 `docs/plans/2026-10-11-publish-native-evidence-via-ida-bridge.md` N4-0（t-1489）。N2a 三页（t-1269 / t-1270 / t-1271）记入该计划 §7。
+
+- `PidValueSource::DerivedByNativeRule { analysis_page, address }`：由 `.pid` 里的值按 `EFAdapter.dll` 的原生规则确定地算出。N4-1 / N4-2 / N4-3 再用；本单没有值改挂这个变体，规则和发出的值都不改。
+- `_Coverage.json` 的 `attribute_values.derived_by_native_rule` 与标签值、`composed_names` 分开数（只数定了类的物项）。`pid_publish_xml` 的 stderr 同步「N derived by a native rule」。5 图此刻为 0。
+- 仪表 / 设备名仍是 `NameRule`。出处改口：5 图实测规则（236 / 13 错 0），写出器侧无拼接证据，见 `docs/analysis/n2a-name-diameter-codelist-meta.md`。
+- 验证（2026-10-12 实跑）：`cargo test --locked --workspace --lib --bins --tests` 全过（`--lib` 1 175，`publish_from_pid` 4 / 4，`publish_xml_cli` 20 / 20），`--no-default-features` 同样全过（`--lib` 850）；clippy `-D warnings` 两种特性在 lib / bins / tests 上零告警；三个改动的 `.rs` rustfmt 干净；`cargo rustdoc --lib --locked -- -W missing-docs` 0；wasm32 lib 检查过。`--all-targets` **NOT RUN**：别的会话正在写的 `examples/probe_ports_from_connect_points.rs`（未提交）此刻编不过，`examples/probe_dash_scale_field_candidates.rs`（未提交）clippy 不过，都不是本单的文件。5 图 `--diff-against` 都退出 0，钉数不变（分离器A 291 / 289 / 335，分离器B 239 / 230 / 274，换热器CD 612 / 583 / 727，低温分离器A 317 / 315 / 358，I井场 1 459 / 1 405 / 1 695）；5 图重新写入 `D:\work\cad\PID自研软件验证\publish\`（15 个文件），`derived_by_native_rule` 都是 0。
+
+### `.pid` 的 `_Meta.xml` 只留文件里有的 `DocUID` 和 `DocName`（2026-10-10）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` 的 ③。分析页「`_Meta.xml`」：版本 / 修订 / 文件三个对象的 UID、三条 `Rel` 的 UID、`DocVersionDate`、`FilePath` 都不在 `.pid` 里。
+
+- `write_pid_meta_xml` 改走 `write_meta_envelope`：容器上写 `DocUID`、`DocName`。不发 `DocumentVersion` / `DocumentRevision` / `File`，也不发那三条 `Rel`。数据库路的 `write_meta_xml` 仍发这三块（UID 照旧由 `derive_meta_uid` 合成）。
+- `.pid` 文件名在原始字节里，但 `File` 对象的 UID 不在，所以文件对象也不发。
+- 验证：`pid_writer` 单测一条（`DocUID` / `DocName` 在，上述对象和属性不在）。
+
+### `.pid` 的 `--diff-against` 不再把有意不发的类算成 `MISSING`（2026-10-10）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` 的 ②。数据库输入仍走原来的标签 / `DefUID` 计数报告（整类没有就是 `MISSING`，退出 1；`publish_xml_cli` 里三条 `--diff-against` 仍过）。
+
+- `.pid` 输入改走 `publish::diff::diff_pid_export`：发出的对象须在参考里同 UID 同类，每个值须相等，每条 `<Rel>` 须同 UID / 两端 / `DefUID`。错一个退出 1。参考里有、这个模式不发的对象不算。
+- 验证：单测一条（参考里多一个 `PIDPipeline` 仍干净，值写错或对象多发就不干净）；`tests/publish_from_pid.rs` 5 张图 `--diff-against` 各自的参考都退出 0。clippy `-D warnings`（默认特性，`--all-targets`）零告警。
+
+### 没有能定类的 `SymbolAttr` 的 68 个仪表，改按符号库目录归类：仪表 287 / 287，错 0（2026-10-10，Q2 (b)）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` 的小单（用户 2026-10-10 拍板：68 个按 Q2 (b) 用符号库路径推类）。分析 `docs/analysis/2026-10-10-an-instruments-library-folder-states-its-class.md`。
+
+- 探针 `examples/probe_instruments_without_symbol_attr.rs`（只读）：5 图 287 个仪表，每条 `igSymbol2d` 库路径只对上一个参考类。`Instrumentation` 的下一段：`In-Line` 66 + `Relief Devices` 6 → `PIDInlineInstrument`，`Off-Line` 116 + `Actuators` 11 → `PIDInstrument`，`System Functions` 88 → `PIDControlSystemFunction`。祖先目录混类（无行的 67 个里 `instrumentation` 是在线 56 + 执行机构 11）。预登记候选 `class_by_path` 没写 `Actuators` / `Off-Line` / `Relief Devices`，干跑错 0、未决 11 + 122；落成的不是这条候选。
+- **`publish::pid_load::instrument_class_by_library`**：`SymbolAttr` 定不了类时才用（没有行，或 `Type` / `Class` 定不了）。语料 68 个 = 67 个没有行 + I井场 `F91061AAA58349919216D6E6E579A3C5` 的空 `SymbolAttr`（`PV-Angle Throttle Control Valve.sym`，参考类在线仪表）。`pid_writer`「从不发」的仪表一句改成「既无有效 `SymbolAttr`、又不在这五个目录下」；`_Coverage.json` 加 `objects.instruments_classed_by_symbol_library`；`pid_publish_xml` 的 stderr 多这一计数。`jsite::extract_unc_or_path` 改为 `pub(crate)`。
+- 测试：`pid_load` 单测 +1。`tests/publish_from_pid.rs` 重钉且错类 / 错值 / 多发 = 0。五图对象 / 值 / 关系：I井场 1 459 / 1 405 / 1 695，分离器A 291 / 289 / 335，分离器B 239 / 230 / 274，低温分离器A 317 / 315 / 358，换热器CD 612 / 583 / 727。合计对象 **2 918 / 6 131（+68）**、值 **2 822（+75）**、关系 **3 389（+68）**。在线仪表 15 / 72 → **72 / 72**（名字 4 / 39 → 27 / 39），离线仪表 116 / 127 → **127 / 127**（名字 111 / 118 → 113 / 118），控制系统功能 88 / 88 不动。按库归类 31 + 2 + 2 + 5 + 28 = 68。没定类而不发的 58 个全是 OPC。
+- 交付：5 张图重新写入 `D:\work\cad\PID自研软件验证\publish\`（15 个文件）。`.pid` 的 `--diff-against` 和 `_Meta.xml` 口径见上面两条。
+- 验证：`cargo test --locked --workspace --all-targets` **1 535 过 / 0 败 / 3 忽略**（1 534 → 1 535：`--lib` 1 171 → 1 172，即 `an_instruments_library_folder_states_its_class`），`--no-default-features` **1 104 过 / 1 忽略**（不变，这条单测在 `backup` 特性后）；`clippy --workspace --all-targets -D warnings` 两种特性零告警（探针两处：`let-else` 改成 `?`，符号路径的两层 `if let` 并成一层，干跑输出与改前逐字相同）；`cargo fmt --all -- --check` 只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`；`cargo rustdoc --lib --locked -- -W missing-docs` 0（本单的模块文档不再链私有函数。`sheet_records.rs` 里 3 处文档原来链着私有常量 `IGRECTANGLE2D_MAX_EDGES` / `IGDIMENSION_WIDE_BLOCK_FLAG`，这条命令在 `22b3bcb` 上就会失败，改成普通代码字体）；`cargo check --lib --locked --no-default-features --target wasm32-unknown-unknown` 过。
+
+### `pid_publish_xml <file.pid> --out-dir DIR`：按 `<图名>_Data.xml` / `_Meta.xml` 交付，旁置覆盖报告 `<图名>_Coverage.json`（2026-10-10，计划 P5，Q1 (a)）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` §7 P5；在 `d1d502e`（P2–P4）之上。
+
+- CLI 新开关 `--out-dir DIR`（只对 `.pid` 输入）：往 `DIR`（不在就建）写 `<DocName>_Data.xml`、`<DocName>_Meta.xml`、`<DocName>_Coverage.json`，`DocName` 即图名，与 SmartPlant 自己发布的命名一致；与 `--out` / `--stdout` / `--meta-out` 互斥，非 `.pid` 输入报参数错（退出 2，不写文件）；`--diff-against` / `--plant` 照旧可搭。MDF 路一字不改（`publish_xml_cli` 20 / 20）。
+- `publish::pid_writer::write_pid_coverage_json(drawing, source)`：来源、图纸 UID / 名、两份文件名、对象计数（文件指名的物项 / 发出的 / 没定类的 / 表示）、关系计数、属性值计数（标签值 / 挂上 / 发出 / 拼的名字 / 因打架弃的）、`0x0089` 行解码 / 未解数、按类（对象 / 有名字 / 属性值）、没定类而不发的物项清单（UID + `ModelItemType`）、固定一段「本模式从不发什么」。`DrawingItems` 计数与写出器共用 `published_items` / `drawing_items`。
+- 测试：`pid_writer` 单测 +1；`tests/publish_from_pid.rs` +2（`--out-dir` 三个文件与库函数输出逐字节相同、报告可解析；旁有 `--out` 或输入是 `.mdf` 时退出 2 且目录不建）。
+- 验证：`cargo test --locked --workspace --all-targets` **1 534 过 / 0 败 / 3 忽略**（1 531 → 1 534：`--lib` 1 170 → 1 171、`publish_from_pid` 1 → 3），`--no-default-features` **1 104 过 / 1 忽略**（不变）；`clippy --workspace --all-targets -D warnings` 两种特性零告警；`cargo fmt --all --check` 只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`；missing-docs 0 = 基线 0。
+- 交付：5 张图跑进 `D:\work\cad\PID自研软件验证\publish\`（15 个文件），一行命令在分析页「导出器实测 → 交付」。待用户定的仍是 P2–P4 条目里的 ①–③。
+
+### 只凭 `.pid` 的 publish 导出器落地：5 图发出 2 850 个对象 / 2 747 个值 / 3 321 条关系，与参考逐值相同、错 0（2026-10-10，计划 P2–P4）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md` P2–P4（G1：做 P2，下游只要设备 / 仪表 / 管件清单和图上的表示；Q2 (a) 只发在文件里找得到出处的）；实测写在 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md`「导出器实测」一节。
+
+- **`parsers::attribute_rows`**（新，不需要 `backup`）：`decode_attribute_row` 正式解码顶层记录链里的 `0x0089` `FreeFormAttrSet` 行——`+0` 自身 oid、`+12` 所描述的记录、`+20` 集头（`0x0000` 框 + NUL 结尾 ASCII 类名，长度字须正好框住），其后 `0x8010` 文本（UTF-8 否则 GBK）/ `0x0003` i32 / `0x000B` 布尔三种字段到第一个不认识的框为止；`AttributeRow::text(name)` 取第一个同名文本字段。11 条合成字节单测（含逐字节截断不 panic），登记进 `parser_panic_safety`。
+- **`publish::pid_load`**（新，`backup`）：`load_publish_from_pid(path) -> PidPublishDrawing`。`P&IDAttributes` 的 `DrawingNo` → 图纸、`DrawingID` → 表示（`GraphicOID` = 行描述的记录）、`ModelID` + `ModelItemType` → 物项（11 种类型映射到发布类，`Instrument` 按图形上 `SymbolAttr` 的 `Type` / `Class` 分 `PIDInstrument` / `PIDControlSystemFunction` / `PIDInlineInstrument`，没有就不定类；`OPC` 故意不定类）；落在 `DependencyObject` 上的 `Symbol` 行不当表示（语料 518 / 518 未发布），落在点上的表示不连物项。标签值走 `igTextBox +4 → DependencyObject +22 / +16` 归属（两端不一致即弃），按类落到 (接口, 属性)，同一属性两值打架整个不发；`IObject.Name` 按用户批准的两条规则拼（仪表 `{MeasuredVariable}-{InstrTagSequenceNo}`、设备 `{EquipPrefix}-{EquipSeqNo}`），每个值带出处 `PidValueSource::{Label{row}, NameRule}`。5 条单测。
+- **`publish::pid_writer`**（新）+ **`pid_publish_xml <file.pid>`**：用户选了独立写出器——只发文件说了的：`IObject` + 有值的接口、表示的 `GraphicOID`、`DwgRepresentationComposition` / `DrawingItems` 两条关系（UID 按 `{前缀}-{UID1}-{UID2}`）；`_Meta.xml` 套 `write_meta_xml` 的信封。CLI 以 `.pid` 扩展名认输入，`--out` / `--stdout` / `--meta-out` / `--diff-against` / `--plant` 照旧，`--drawing` / `--style` / `--list-drawings` 对 `.pid` 报错；MDF 路的输出不变（`publish_xml_cli` 20 / 20）。`xml_writer` 只把 `defuid_prefix` / `escape_attr` 开成 `pub(crate)`。
+- **`tests/publish_from_pid.rs`**（新，`backup`；语料不在就 soft-skip）：生成的 `_Data.xml` 与参考逐块比——发出的对象须同 UID 同类、每个值须相等、每条 `<Rel>` 须同 UID / 两端 / `DefUID`——**错一个就红**，并钉每图发出数（对象 / 值 / 关系）：I井场 1 428 / 1 372 / 1 664、分离器A 289 / 286 / 333、分离器B 237 / 227 / 272、低温分离器A 312 / 309 / 353、换热器CD 584 / 553 / 699。
+- 结果（5 图合计）：对象 **2 850 / 6 131（46.5 %）**——表示 1 823 / 1 823、图纸 5 / 5、设备 23 / 23（名字 13 / 13）、仪表 219 / 287（名字 194 / 236）、管件 264 / 264、管段 341 / 341、信号段 83 / 83、管口 36 / 36、注释 56 / 56；OPC 0 / 58 与管线 / 端口 / 工艺点 / 分支点 0 / 3 155 有意不发。值 **2 747（错 0）** = `GraphicOID` 1 823 + 图名 5 + 拼的名字 207 + 标签值约 712（参考非空值 11 671）。关系 **3 321 / 8 185** = `DRC` 1 823 + `DrawingItems` 1 498。
+- 有意不发：68 个没有 `SymbolAttr` 的仪表（类定不了，连带其 `DrawingItems` 与标签值）；公称直径（写法不同）；代码表属性；`_Meta.xml` 里版本 / 修订 / 文件三个对象与三条 `Rel` 的 UID 由 `write_meta_xml` 合成、`DocVersionDate` / `FilePath` 空。`.pid` 模式下 `--diff-against` 的旧报告把整类缺席算 `MISSING`、退出 1，本模式的门是测试。
+- 验证：`cargo test --locked --workspace` 43 个二进制 **1532 过 / 3 忽略**（1513 → 1532：`--lib` 1152 → 1170、`publish_from_pid` +1）；`--all-targets` 1531 / 3；`--no-default-features` 17 个二进制 **1097 过 / 1 忽略**（1086 → 1097）；`clippy --workspace --all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 过；本单 5 个 `.rs` rustfmt 干净（`cargo fmt --all --check` 仍只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`）。CLI 在分离器B 上实跑：100 个物项（85 个有类）、151 个表示、406 个标签值 400 个挂上、61 条属性发出、0 条冲突。
+- 下一项：P5（Q1 (a)）`--out-dir` + `<DocName>_Data.xml` 命名 + 覆盖报告 JSON；68 个仪表的分类、`--diff-against` 口径、`_Meta.xml` 合成 UID 要用户定。
+
+### 标签值顺「文本框 → 依赖 → 物项属性行」挂到物项上：3 954 / 3 978，错挂 0（2026-10-10，计划 P2 第一步）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md`（G1：做 P2，下游只要设备 / 仪表 / 管件清单和图上的表示）；分析 `docs/analysis/2026-10-10-a-label-value-reaches-its-item-through-its-text-box.md`。
+
+- 结构：顶层 `0x0089` 行一行一个属性集，`+12` 是它描述的记录；标签自己的 `P&IDAttributes`（`LabelPersist`）`ModelID = 0`；值行描述 `igTextBox`，这些文本框在顶层空间映射里没有边。文本框 `+4` = 所属 `DependencyObject`，依赖 `+16` = 标签挂着的图形，`+22` = 被标注物项自己的 `P&IDAttributes` 行。
+- 探针 `examples/probe_label_values_reach_their_item.rs`（只读，不需要 `backup`）：5 图 3 978 个非空标签值挂上 3 954（99.4 %），两端打架 0，断的 24 个是图框图号 / 图名；物项发布了对应属性的全部相等（流水号 734、测量变量 438、等级 366、保温 158 …），公称直径 636 个写法不同（`2"` / `200 MM` 对 `2 in` / `200 mm`）；归属后能给出的发布值 822 / 11 671。
+- 仪表一对三：有 `SymbolAttr` 的 219 / 287 按 `Type` / `Class` 一一对应，68 个没有。名称规则只在参考 XML 上核：仪表 236 / 236 = `{MeasuredVariable}-{InstrTagSequenceNo}`，设备 13 / 13 = `{EquipPrefix}-{EquipSeqNo}`。
+- 更正 P1 页：端口 / 工艺点 / 分支点 3 155 个里 2 983 个的 UID 是「父对象 UID + 后缀」（`.1`、`.PPT`、`.BPT`），真不在文件里的是 172 条管线和 28 个 OPC。
+- 验证：探针在默认特性与 `--no-default-features` 下 clippy `-D warnings` 零告警，rustfmt 干净；5 张图约 1.4 s、80 行（全文附在分析页）。`src` 不动，测试数不变。
+
+### 只凭 `.pid` 能给回多少 publish：对象 UID 一半、表示全部、关系自己的 UID 0（2026-10-10，计划 P0–P1）
+
+计划 `docs/plans/2026-10-10-publish-from-the-pid-alone.md`（Plannotator 批准）；分析 `docs/analysis/2026-10-10-publish-from-the-pid-alone.md`。
+
+- 起因：「导出 publish 交服务」的 5 个用例（`D:\work\cad\PID自研软件验证`，P01）有 4 张不在手头的 SQPlant 备份里，而 `pid_publish_xml` 只会从库导出；先量只凭 `.pid` 能复原参考 `_Data.xml` / `_Meta.xml` 的多少。
+- 探针 `examples/probe_publish_from_the_pid_alone.rs`（只读，不需要 `backup`）的四种读法：原始字节、属性集字段与标签缓存、`P&IDAttributes` 指名、10-08 的表示 UID 连；`_Meta.xml` 逐项定位，属性另按「类 × 属性」出表。
+- 结果（5 图合计）：对象 UID 2 948 / 6 131（48.1 %）——14 类全在，信号 / 管道端口、工艺点、管道分支点、管线、信号分支点 6 类 3 155 个连原始字节都没有；表示 1 823 / 1 823 连上且全落在发布的 `GraphicOID`；关系两端都在 3 491 / 8 185（42.7 %），关系自己的 UID 0 条；
+  非空属性值在标签缓存 1 296 / 11 671（11.1 %），集中在等级 / 保温 / 测量变量 / 流水号 / 描述 / 去向 / 注释，代码表引用（`@NewConstruction`、`@EE690`、`@{GUID}`）、公称直径（`1 in` / `25 mm`）和拼接名称 0；`_Meta.xml` 只有 DocUID、DocName、`.pid` 文件名在。
+- 验证：探针在默认特性与 `--no-default-features` 下 clippy `-D warnings` 零告警，rustfmt 干净；debug 构建跑 5 张图约 40 s、输出 524 行（全文附在分析页）。`src` 不动，测试数不变。
+- 下一项：G1（用户按三档数字定导出器做不做、做到哪），之后 P2 装载器。
+
+### `JStyleOverride` 自带的宽 / 色 / 虚线位生效：0201 设备表格线从虚线变成 0.13 / 0.18 mm 实线（2026-10-10，计划 A0–A5）
+
+计划 `docs/plans/2026-10-10-an-override-applies-its-own-width-colour-and-dash.md`；依据 `docs/analysis/2026-10-10-an-override-repaints-width-colour-and-switches-the-dash-off.md`。
+
+- 起因：10-09 用 OCS 开 `DWG-0201GP06-01.pid` 与 SmartPlant 截图逐实体对比，设备表 14 条格线 OCS 画虚线、参考图是细实线；3 条坡度标记 OCS 粉红、参考图黑。14 条全经 `0x0030 JStyleOverride`（86 / 101 → 85 `Dashed`），而 `resolve_line_style` 只顺 `+22` 取基样式。
+- **native reader**（headless IDA 读 `style.dll`）：覆盖 `+30`（`this+96`）是属性掩码，合成例程 `sub_1002A080` 逐位把自己的字段叠到有效样式上——bit0 颜色 `+34`、bit1 线宽 `+42`、bit7 虚线类型 id `+78`（`this+188`，0 = 无；getter `sub_10027C10` 在 bit7 清时返回 NULL）、bit8 填充色 `+38`，另有 bit2–6 本 crate 不读的字段；颜色 `0x80000000` = 随层、无条件压过。
+- **`style_link`**：新常量 `OVERRIDE_MASK_OFFSET` 30 / `OVERRIDE_COLOUR_OFFSET` 34 / `OVERRIDE_WIDTH_OFFSET` 42 / `OVERRIDE_DASH_REFERENCE_OFFSET` 78 与 `OVERRIDE_STATES_COLOUR` / `_WIDTH` / `_DASH`；`StyleRecord` 新增 `override_mask` / `override_colour` / `override_width_m` / `override_dash_reference`（只在 `0x0030` 上填；颜色拒收高字节非零、`-2` 哨兵与随层字，宽度走 `read_symbology` 同一道闸且 0 不算）；
+  `resolve_line_style` 的覆盖分支按掩码逐位替换宽 / 色，bit7 时按 `+78` 取虚线（0 / 悬空 = 实线），否则沿用基样式的虚线；`marker` 仍取基样式。**`ResolvedLineStyle` 形状不变**（`style_id` 仍是基样式的，`hop` 仍是 `ViaOverride { override_id }`），OpenCADStudio 不改码。
+- 语料（探针 `examples/probe_override_applies_its_own_fields.rs`，5 图 53 条覆盖，全 90 字节）：掩码只见 `0x02` / `0x03` / `0x80` / `0x82`（线）与 `0x40000100`（填充 ×4，线几何不经过）；`+78` 只在 bit7 置位时非零，非零两条（0201 `/JSite329` 48、`/JSite396` 9）指向本表 `0x002F "Dash"`。
+  图纸级 638 条里 52 条换宽或色：0201 `0.350 #000000` 48→27、`#FE0060` 3→0、新增 0.13 ×21 / 0.18 ×3，虚线 15→1（只剩电信号线）；0202 59→38、`#FE0060` 3→0、新增 0.13 ×22 / 0.18 ×2、一个放置 `0.5 #0000FF` → `0.35 #800000`，虚线 9→1；工艺 6 条 0.35→0.13；A01 `/JSite204/Sheet6` 37 条管线 → 0.50、9 条 → 0.70；D06 不变。
+  缓存本体：09-20 P-E8 认定的 57 笔「可见虚线」（0202 阻火呼吸阀 8 + 污水池 1、工艺 `Xa` / `Xa chu` 45、关闭层伴热 9）全是 bit7 置位、`+78` = 0 的覆盖，按文件画实线；真正虚的只剩 0202 污水池直接点名 `Dashed` 的 3 条 + 0201 `/JSite396` 本体 119 的一条 0.01 mm 发丝线。本体调色盘也随覆盖变细（Cap `#00FFFF 0.5` → 黑 0.13 等）。
+- 测试：`style_link` 单测 +8（宽 + 关虚线、色 + 宽、开虚线、掩码没点名的字段不动、随层色保基色、不合理值保基值、悬空虚线 id 实线、只有覆盖读这些字段）；`symbol_library` 单测：`a_symbol_carries_the_dash_…` 改用 `Wastewater Pit.sym`（3 / 7 直接点名 `Dashed`），新增 `a_symbols_override_switches_off_the_dash_its_base_names`（RD 30 笔全实、全 0.13）；
+  `style_link_ratchet`：调色盘重钉（`0.130mm #000000` 182→231、新项 `0.180mm #000000` 5、`0.350mm #000000` 196→148、`0.350mm #800000` 21→22、`0.500mm #0000FF` 12→11、`0.350mm #FE0060` 删）、交叉 4→5 / 跨度 1→3、新增 `dwg0201s_table_rules_draw_thin_and_solid_through_their_overrides`（按 oid 钉 14 条格线 + 电信号线仍虚）；
+  `parse_real_files::a_cached_body_…` 重钉（0201 虚 0→1、0202 12→3、工艺 45→0，调色盘全 0.13；与库 `.sym` 的比对改为「缓存的每种 look 都是 `.sym` 自己 `StyleCluster` 定义得出的」——`Item Note & Label` 的缓存是 `PSMcluster0` 里的锚点十字，库读取器只走 `Sheet*`）。golden / `geometry_profile` / `render_gap_census` / `semantic_join` 不变。
+- 验证：`cargo test --workspace` 42 个二进制 **1513 过 / 3 忽略**（1503 → 1513：`--lib` 1143 → 1152、棘轮 17 → 18）；`--no-default-features` 17 个二进制 **1086 过 / 1 忽略**（1076 → 1086，`--lib` 838 → 839）；`clippy --workspace --all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 过；改动的文件 rustfmt 干净（`cargo fmt --all --check` 仍只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`）。
+  探针跑五张图 2 s；headless IDA 开的是 `style.dll.i64` 的 `%TEMP%` 副本，仓库里的 `dlls/` 一个字节没动。
+- 登记：0201 `/JSite396` 本体 119 那条 0.01 mm 虚线在 OCS 里会按放置线宽重涂成一条可见虚线（P-E1 备选该重议）；`0x80000000` 随层色以保基色近似；覆盖的填充位（bit8 / bit30）未应用到 `resolve_fill`；bit2–6 未读。
+- OCS 侧（`main` `b795b0f7`，OCS 代码不改）：`pid_import` 三处重钉（0201 调色盘 `35 #000000` 43→22、`#FE0060` 删、新增 0.13 ×21 / 0.18 ×3；图纸虚线只剩电信号线一条；缓存本体虚线 工艺 45 / 0202 12 / 0201 0 → 0 / 3 / 1）52 / 52，`--lib io::pid` 54 / 54；
+  批量基线六行 `dxf_sha256` 全变——`main` 的基线自 09-28 没再签过（上游合并后多写三个 `$*FRAME` 头变量、A01 `drawn` 122→124），改前→改后在同一棵树比：17 列不动、实体数不动，DXF 逐实体只有 `370` / `62` / `420` / `6` 变，D06 实体一字不变。GUI 复核进 `docs/evidence/2026-10-10-pid-table-rules-after-override-fix/`。
+  0201 的 14 条格线按 DXF 核：0.13 的 11 条是 10 横 + 中间竖线，0.18 的 3 条是三条竖线（不是「横 0.13、竖 0.18」）。`pid-web-open` 的 `pid_import` 待 X2 提交后同样重钉。
+
+### `pid_backup_probe` 认出 Oracle `exp` 导出，提示与 `pid_backup_extract` 相同（2026-10-09）
+
+- 起因：审计 SQPlant 备份（`D:\work\cad\pid-test-data`，Oracle 后端）时，`pid_backup_probe` 只报 `not an MTF stream: … (got tag ????)`，而 `pid_backup_extract` 早就认出是 Oracle `exp` 并给出处理建议。
+- **`backup::mtf::detect_non_mtf_dump_format`**（新公开函数，`backup` 也转出）：从 `pid_backup_extract` 原样挪进库，函数体、诊断文字和四个单测都不变；`pid_backup_extract` 改调库，输出逐字节不变。
+- `pid_backup_probe` 在 `MtfHeader::probe` 之前先问它，认出就打印 `error: <诊断>` 并以 1 退出，和 `pid_backup_extract` 一样；MTF 输入照旧。
+- 测试：`backup_mtf` 6 → 8——DWG-0202GP06-01 的 `Export.dmp` 头被认作 Oracle `exp`、`MtfHeader::probe` 报 `NotATapeStart`；两个命令对同一个 Oracle dump 都以 1 退出、stderr 逐字节相同。
+- 验证：`cargo test --workspace` 42 个二进制 1503 过 / 3 忽略（`--lib` 1139 → 1143，即挪进来的 4 个单测）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略，不变；`clippy --workspace --all-targets -D warnings` 两种特性都过；missing-docs 0；改动的文件 rustfmt 干净（`cargo fmt --all --check` 只报别的会话未跟踪的 `examples/probe_text_anchor_by_kind.rs`）。
+  手跑：SQPlant 的 `Export.dmp` 上两个命令 stderr 相同、都退出 1；TEST02 的 MTF 照旧走完 9 个描述块、退出 0。
+
+### D2：语义先按表示 UID 连、`GraphicOID` 兜底——A01 绘出实体 0 → 3 个连上（2026-10-08，OCS 计划 P-D32）
+
+OpenCADStudio 计划 `docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D2（P-D32）；依据 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
+
+- **`PidSemanticIndex::load_beside`** 读到 `_Data.xml` 时再开一次 `.pid`，收顶层各记录链里的活 `FreeFormAttrSet`（`0x0089`）行（类型字带 `0x8000` 的照 P-D12 不收；A01 的行都在 `/Unclustered Dynamic Attributes`，0202 有 5 个表示的行在别的顶层链里）。
+  表示 UID 以完整 ASCII 记号出现在哪些行（前后不粘字母数字、后面不粘 `.`，免得端口的 `<UID>.1` 冒充连接件）→ 顶层空间映射里以标签 190 列这些行的项 → 恰好一条记录才连，否则退回 `GraphicOID`；第二跳（DependencyObject）不变。嵌套存储（`/JSite…/`）的映射另有编号空间，不算。
+- **`PidSemanticObject::record_oid`**（新字段）：对象连在哪条记录上；`graphic_oid` 仍是 XML 原值（回查 `_Data.xml` 的键）。`resolve` 按 `record_oid` 查；`uid_joined()` / `stale_graphic_oids()` 交出 UID 连上几个、其中几个与 `GraphicOID` 不同。`from_xml` 不读行，照旧只按 `GraphicOID` 连。
+- 语料：A01 `uid_joined` 4、`stale_graphic_oids` 4，绘出实体连上 3 个——容器符号 184 → `PIDProcessVessel` `V 010121A`、管口符号 51 → `PIDNozzle`、管段 275 经 DependencyObject 417 → `PIDPipeline`，Full 与 Geometry 两种 profile 相同；0202 39 / 0，41 个实体的连接与只按 `GraphicOID` 时逐条相同。
+- 测试：`semantic_join` 的 A01 一条由「一条也不许连」改钉上面三条（两种 profile），并钉只按 `GraphicOID` 仍一条不连；0202 一条加 39 / 0 与逐条相同；`semantics` 单测 +5（UID 连上、无行时照旧、一个 UID 落两条记录时退回、粘连记号不算、链遍历与旗标行）。
+- 验证：`cargo test` 42 个二进制 1501 过 / 3 忽略（`--lib` 1134 → 1139）；`--no-default-features` 17 个二进制 1076 过 / 1 忽略；棘轮与 golden 不变；`clippy --all-targets -D warnings` 两种特性零告警；`cargo check --lib --no-default-features --target wasm32-unknown-unknown` 过；rustfmt 干净。
+  全量测试跑在 rustfmt 与一处 clippy 修整（`filter(|entry| entry.is_stream())` → `filter(::cfb::Entry::is_stream)`）之前，修整后重跑了 `semantics` 单测与 `semantic_join`；
+  提交后在 `fe42969` 的树上全部重跑，测试数与上面相同，两种特性的 clippy、wasm32 check、`cargo fmt --check` 也都过。
+- OCS 侧（`pid-web-open` `d8b2832d`，OCS 代码不改）：`pid_import` 54 → 55，A01 的 11 个实体挂上三个发布对象（容器放置 7、管口放置 3、管段 1）；批量基线只 A01 的 `dxf_sha256` 变（DXF 只多 82 行、一行没删），另五张不变。
+
+### D1 取证：A01 的语义要按表示 UID 连——`GraphicOID` 是发布时的旧号（2026-10-08，OCS 计划 P-D28 / P-D32）
+
+OpenCADStudio 计划 `docs/plans/2026-10-08-pid-integration-unblock-and-next-steps.md` D1（P-D28）与 `docs/plans/2026-10-08-pid-afternoon-review-uid-join-and-merge-handoff.md` D1′；分析 `docs/analysis/2026-10-08-a01-representation-uid-is-the-join.md`。
+
+- **探针 `examples/probe_a01_representation_uid_is_the_join.rs`**（只加示例，`src` 不动，不需要 `backup` 特性）：A01 发布的四个 `GraphicOID` 在现文件里都是顶层 `0x0089 FreeFormAttrSet`、不是图元，`PidSemanticIndex::resolve` 0 / 4；
+  每个表示 UID 以 ASCII 恰在一个顶层属性集里、该集以空间映射标签 190 挂在所述记录下——按这条连 A01 3 / 4 且全对（容器 → 184、管口 → 51、管线 → 管段 275），0202 对照 39 / 39 落在 `GraphicOID` 自己的记录上、与今天逐条相同；
+  「朴素一跳」（号改写成标签 190 项）4 / 4 但容器与管口互换，不可用。
+- 结论：可修，D2 在 `PidSemanticIndex` 的第一跳先按 UID、再按 `GraphicOID`（OCS P-D32 已批，排在 OCS 集成 M2 之后）。
+- 验证：探针 exit 0、入库前后两次输出逐字节相同；`cargo clippy --example probe_a01_representation_uid_is_the_join -- -D warnings` 默认与 `--no-default-features` 都过（入库前只把一处 `type_complexity` 拆成 `type Member`）；rustfmt 干净。
+
 ### 缓存本体画出椭圆弧：`0x007E igEllipticalArc2d` 解码并投成精确有理二次 B 样条（2026-09-30，OCS 小单 E-D1 – E-D5）
 
 OpenCADStudio 小单 `docs/plans/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md` 工作项 E1（起因：09-30 解析缺口盘点里 A01 的设备 `V 010121A` 画成直角方箱，两端的 2:1 椭圆封头没画）；分析 `docs/analysis/2026-09-30-a-cached-body-draws-its-elliptical-arcs.md`。

@@ -101,6 +101,32 @@ pub fn generate_report(doc: &PidDocument) -> String {
     writeln!(out, "Sheet streams: {}", doc.sheet_streams.len()).ok();
     writeln!(out, "Unknown streams: {}", doc.unknown_streams.len()).ok();
 
+    write_summary_section(doc, &mut out);
+    write_drawing_meta_section(doc, &mut out);
+    write_general_meta_section(doc, &mut out);
+    write_jsites_section(doc, &mut out);
+    write_clusters_section(doc, &mut out);
+    write_dynamic_attributes_section(doc, &mut out);
+    write_sheets_section(doc, &mut out);
+    write_psm_roots_section(doc, &mut out);
+    write_psm_cluster_table_section(doc, &mut out);
+    write_psm_segment_table_section(doc, &mut out);
+    write_version_history_section(doc, &mut out);
+    write_doc_version2_decoded_section(doc, &mut out);
+    write_app_object_registry_section(doc, &mut out);
+    write_tagged_storages_section(doc, &mut out);
+    write_doc_version2_raw_section(doc, &mut out);
+    write_object_graph_section(doc, &mut out);
+    write_coverage_section(doc, &mut out);
+    write_unidentified_streams_section(doc, &mut out);
+    write_object_inventory_section(doc, &mut out);
+    write_cross_reference_section(doc, &mut out);
+
+    out
+}
+
+/// Report section: `--- Summary ---`.
+fn write_summary_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref si) = doc.summary {
         writeln!(out, "\n--- Summary ---").ok();
         if let Some(ref v) = si.creating_application {
@@ -122,7 +148,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  {k}: {v}").ok();
         }
     }
+}
 
+/// Report section: `--- Drawing Meta ---`.
+fn write_drawing_meta_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref dm) = doc.drawing_meta {
         writeln!(out, "\n--- Drawing Meta ---").ok();
         if let Some(ref v) = dm.drawing_number {
@@ -138,7 +167,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  {k}: {v}").ok();
         }
     }
+}
 
+/// Report section: `--- General Meta ---`.
+fn write_general_meta_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref gm) = doc.general_meta {
         writeln!(out, "\n--- General Meta ---").ok();
         if let Some(ref v) = gm.file_path {
@@ -148,7 +180,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  FileSize: {v}").ok();
         }
     }
+}
 
+/// Report section: `--- JSites ---`.
+fn write_jsites_section(doc: &PidDocument, out: &mut String) {
     if !doc.jsites.is_empty() {
         writeln!(out, "\n--- JSites ---").ok();
         for js in &doc.jsites {
@@ -170,7 +205,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  Total GUIDs across JSites: {total_guids}").ok();
         }
     }
+}
 
+/// Report section: `--- Clusters ---`.
+fn write_clusters_section(doc: &PidDocument, out: &mut String) {
     if !doc.clusters.is_empty() {
         writeln!(out, "\n--- Clusters ---").ok();
         for c in &doc.clusters {
@@ -204,7 +242,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
+}
 
+/// Report section: `--- Dynamic Attributes ---`.
+fn write_dynamic_attributes_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref da) = doc.dynamic_attributes {
         writeln!(out, "\n--- Dynamic Attributes ---").ok();
         writeln!(out, "  Size: {} bytes", da.size).ok();
@@ -252,7 +293,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
+}
 
+/// Report section: `--- Sheets ---`.
+fn write_sheets_section(doc: &PidDocument, out: &mut String) {
     if !doc.sheet_streams.is_empty() {
         writeln!(out, "\n--- Sheets ---").ok();
         for sh in &doc.sheet_streams {
@@ -304,7 +348,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
+}
 
+/// Report section: `--- PSMroots ---`.
+fn write_psm_roots_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref r) = doc.psm_roots {
         writeln!(out, "\n--- PSMroots ({} bytes) ---", r.size).ok();
         for e in &r.entries {
@@ -314,7 +361,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  ({} trailing bytes)", r.trailing_bytes).ok();
         }
     }
+}
 
+/// Report section: `--- PSMclustertable ---`.
+fn write_psm_cluster_table_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref t) = doc.psm_cluster_table {
         writeln!(
             out,
@@ -398,7 +448,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  ({} trailing bytes)", t.trailing_bytes).ok();
         }
     }
+}
 
+/// Report section: `--- PSMsegmenttable ---`.
+fn write_psm_segment_table_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref t) = doc.psm_segment_table {
         writeln!(
             out,
@@ -445,7 +498,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  ({} trailing bytes)", t.trailing_bytes).ok();
         }
     }
+}
 
+/// Report section: `--- Version History ---`.
+fn write_version_history_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref vh) = doc.version_history {
         writeln!(
             out,
@@ -477,7 +533,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  ({} trailing bytes)", vh.trailing_bytes).ok();
         }
     }
+}
 
+/// Report section: `--- DocVersion2 (decoded) ---`.
+fn write_doc_version2_decoded_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref dv2) = doc.doc_version2_decoded {
         writeln!(
             out,
@@ -499,7 +558,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             .ok();
         }
     }
+}
 
+/// Report section: `--- App Object Registry ---`.
+fn write_app_object_registry_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref reg) = doc.app_object_registry {
         writeln!(
             out,
@@ -516,7 +578,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  ({} trailing bytes)", reg.trailing_bytes).ok();
         }
     }
+}
 
+/// Report section: `--- Tagged Text Storage List ---`.
+fn write_tagged_storages_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref t) = doc.tagged_storages {
         writeln!(out, "\n--- Tagged Text Storage List ({} bytes) ---", t.size).ok();
         writeln!(out, "  list: {}", t.list_name).ok();
@@ -524,7 +589,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "    -> {}", e.storage_name).ok();
         }
     }
+}
 
+/// Report section: `--- DocVersion2 (raw) ---`.
+fn write_doc_version2_raw_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref d2) = doc.doc_version2 {
         writeln!(
             out,
@@ -534,7 +602,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
         .ok();
         writeln!(out, "  hex: {}", d2.hex_preview).ok();
     }
+}
 
+/// Report section: `--- Object Graph ---`.
+fn write_object_graph_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref g) = doc.object_graph {
         writeln!(out, "\n--- Object Graph ---").ok();
         if let Some(ref p) = g.project_number {
@@ -599,7 +670,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
+}
 
+/// Report section: `--- Coverage ---`.
+fn write_coverage_section(doc: &PidDocument, out: &mut String) {
     // Phase 10a (v0.6.0): structured coverage inventory. Written BEFORE
     // the legacy "Top-level Unidentified Streams" section so readers see
     // the new categorical view first, and the two remain cross-linked
@@ -654,7 +728,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "  {tag} {}{}{}{}", entry.name, field, size, note).ok();
         }
     }
+}
 
+/// Report section: `--- Top-level Unidentified Streams ---`.
+fn write_unidentified_streams_section(doc: &PidDocument, out: &mut String) {
     let top_level_unidentified = crate::inspect::unidentified_top_level_streams(doc);
     if !top_level_unidentified.is_empty() {
         writeln!(out, "\n--- Top-level Unidentified Streams ---").ok();
@@ -673,7 +750,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, ")").ok();
         }
     }
+}
 
+/// Report section: `--- P&ID Object Inventory ---`.
+fn write_object_inventory_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref inv) = doc.object_inventory {
         writeln!(out, "\n--- P&ID Object Inventory ---").ok();
         if let Some(ref proj) = inv.project {
@@ -687,7 +767,10 @@ pub fn generate_report(doc: &PidDocument) -> String {
             writeln!(out, "    {item_type}: {count}").ok();
         }
     }
+}
 
+/// Report section: `--- Cross Reference ---`.
+fn write_cross_reference_section(doc: &PidDocument, out: &mut String) {
     if let Some(ref xr) = doc.cross_reference {
         writeln!(out, "\n--- Cross Reference ---").ok();
 
@@ -1005,10 +1088,7 @@ pub fn generate_report(doc: &PidDocument) -> String {
             }
         }
     }
-
-    out
 }
-
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
@@ -1064,7 +1144,8 @@ mod tests {
             entries: vec![],
             trailing_bytes: 0,
         });
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_coverage_section(&doc, &mut report);
         assert!(
             report.contains("--- Coverage ---"),
             "coverage section heading missing; full report:\n{report}"
@@ -1091,7 +1172,8 @@ mod tests {
     #[test]
     fn report_omits_coverage_section_when_document_has_no_streams() {
         let doc = PidDocument::default();
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_coverage_section(&doc, &mut report);
         assert!(
             !report.contains("--- Coverage ---"),
             "empty doc should not render coverage section; got:\n{report}"
@@ -1135,7 +1217,8 @@ mod tests {
             }),
             ..Default::default()
         };
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_version_history_section(&doc, &mut report);
         assert!(
             report.contains("[SaveAs 12/29/25 10:45]"),
             "SaveAs label missing; report:\n{report}"
@@ -1206,7 +1289,8 @@ mod tests {
             ..Default::default()
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_cross_reference_section(&doc, &mut report);
         assert!(report.contains("Cluster refs:"), "{report}");
         assert!(report.contains("declared entries: 1"), "{report}");
         assert!(
@@ -1238,7 +1322,8 @@ mod tests {
             ..Default::default()
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_cross_reference_section(&doc, &mut report);
         assert!(report.contains("Symbol refs:"), "{report}");
         assert!(
             report.contains(r"\\srv\sym\Valve.sym <- JSite0"),
@@ -1269,7 +1354,8 @@ mod tests {
             ..Default::default()
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_cross_reference_section(&doc, &mut report);
         assert!(report.contains("Attribute class refs:"), "{report}");
         assert!(report.contains("Instrument: 1 records"), "{report}");
         assert!(report.contains("attrs=3"), "{report}");
@@ -1303,7 +1389,8 @@ mod tests {
             ..Default::default()
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_cross_reference_section(&doc, &mut report);
         assert!(
             report.contains("Relationship endpoints: total=1 linked=1"),
             "{report}"
@@ -1351,7 +1438,8 @@ mod tests {
             ..Default::default()
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_cross_reference_section(&doc, &mut report);
         assert!(
             report.contains(
                 "Object sources: total=2 linked=1 missing_da_record=1 with_trailer_record_id=1"
@@ -1389,7 +1477,8 @@ mod tests {
             ..Default::default()
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_cross_reference_section(&doc, &mut report);
         assert!(
             report.contains("Provenance chain: total=4 has_field_x=3 sheet_linked=2 source_object_linked=2 target_object_linked=1 fully_traced=1"),
             "{report}"
@@ -1433,7 +1522,8 @@ mod tests {
             ..Default::default()
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_cross_reference_section(&doc, &mut report);
         assert!(
             report.contains(
                 "Sheet provenance: total=2 declared=1 orphan=1 with_endpoints=2 empty_declared=0"
@@ -1489,7 +1579,8 @@ mod tests {
             ..Default::default()
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_cross_reference_section(&doc, &mut report);
         assert!(
             report.contains(
                 "/Sheet6 endpoint_records=0 declared=true match_index=0 relationships=0 fully_traced=0 endpoint_error=\"failed to reopen sheet stream for endpoint records: missing\""
@@ -1522,7 +1613,8 @@ mod tests {
             trailing_bytes: 0,
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_psm_cluster_table_section(&doc, &mut report);
         assert!(
             report.contains("probe: first_u32_le=0x44332211 last_u32_le=0xDEADBEEF chars=11 trailer=[AA BB CC DD EE FF 00 00]"),
             "{report}"
@@ -1560,7 +1652,8 @@ mod tests {
             trailing_bytes: 0,
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_psm_cluster_table_section(&doc, &mut report);
         assert!(
             report.contains("decoded: confidence=medium name_bytes_with_nul=26 ordinal=1 non_sheet_marker=1 payload_index=1"),
             "{report}"
@@ -1598,7 +1691,8 @@ mod tests {
             trailing_bytes: 0,
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_psm_cluster_table_section(&doc, &mut report);
         assert!(
             report.contains("decoded consistency: consistent"),
             "{report}"
@@ -1669,7 +1763,8 @@ mod tests {
             trailing_bytes: 0,
         });
 
-        let report = generate_report(&doc);
+        let mut report = String::new();
+        write_psm_segment_table_section(&doc, &mut report);
 
         assert!(
             report.contains("probe: flag=01 window=[04 00 00 00 01 01 01] owner_hint=PSMcluster0"),
@@ -1699,6 +1794,62 @@ mod tests {
         assert_eq!(
             fourth_probe_line_count, 0,
             "only the first 3 entries should emit a probe line; report:\n{report}"
+        );
+    }
+
+    #[test]
+    fn section_renderers_emit_nothing_when_their_input_is_absent() {
+        // B2: every section renderer must be a no-op when the document
+        // carries no data for it — the empty-document report stays just
+        // the header + counts.
+        let doc = PidDocument::default();
+        let mut out = String::new();
+        for render in [
+            write_summary_section,
+            write_drawing_meta_section,
+            write_general_meta_section,
+            write_jsites_section,
+            write_clusters_section,
+            write_dynamic_attributes_section,
+            write_sheets_section,
+            write_psm_roots_section,
+            write_psm_cluster_table_section,
+            write_psm_segment_table_section,
+            write_version_history_section,
+            write_doc_version2_decoded_section,
+            write_app_object_registry_section,
+            write_tagged_storages_section,
+            write_doc_version2_raw_section,
+            write_object_graph_section,
+            write_coverage_section,
+            write_unidentified_streams_section,
+            write_object_inventory_section,
+            write_cross_reference_section,
+        ] {
+            render(&doc, &mut out);
+        }
+        assert!(
+            out.is_empty(),
+            "absent sections must emit nothing; got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn summary_section_renders_only_the_present_fields() {
+        // B2: a single-section renderer can be asserted in isolation —
+        // no need to build a whole report.
+        let mut doc = PidDocument::default();
+        doc.summary = Some(crate::model::SummaryInfo {
+            title: Some("Test Title".into()),
+            ..Default::default()
+        });
+        let mut out = String::new();
+        write_summary_section(&doc, &mut out);
+        assert!(out.contains("--- Summary ---"), "{out}");
+        assert!(out.contains("  Title: Test Title"), "{out}");
+        assert!(
+            !out.contains("Application:"),
+            "absent field must not render a line: {out}"
         );
     }
 }

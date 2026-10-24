@@ -31,12 +31,16 @@
 //! Exit codes: 0 = wrote document, 1 = I/O / format error, 2 =
 //! usage error.
 
+use pid_parse::publish::pid_writer::{
+    composition_rel_counts, connectivity_rel_counts, derived_by_native_rule_count,
+};
 use pid_parse::publish::sqlite_load::open_readonly;
 use pid_parse::publish::{
-    diff_publish_xml, diff_rel_defuids, load_drawing_graph, open_mdf_as_sqlite, write_data_xml,
-    write_meta_xml, PublishError, PublishStyle,
+    diff_pid_export, diff_publish_xml, diff_rel_defuids, load_drawing_graph, load_publish_from_pid,
+    open_mdf_as_sqlite, write_data_xml, write_meta_xml, write_pid_coverage_json,
+    write_pid_data_xml, write_pid_meta_xml, PublishError, PublishStyle,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 struct CliOptions {
@@ -50,6 +54,11 @@ struct CliOptions {
     /// would interleave two unrelated XML documents on the same
     /// stream.
     meta_output: Option<PathBuf>,
+    /// `.pid` input only: the directory the delivery goes to, as
+    /// `<DocName>_Data.xml`, `<DocName>_Meta.xml` and the coverage
+    /// report `<DocName>_Coverage.json`. Mutually exclusive with
+    /// `--out` / `--stdout` / `--meta-out`.
+    out_dir: Option<PathBuf>,
     /// Optional reference `_Data.xml` to diff the generated output
     /// against. When set, the binary prints a [`SemanticDiffReport`]
     /// to stdout and exits 0 if no differences (clean) or 1 if any
@@ -73,6 +82,12 @@ struct CliOptions {
     /// output to produce.
     list_drawings: bool,
     verbose: bool,
+    /// Oracle conventional `exp` dump. `.pid` input only. Ports whose
+    /// parent this file already publishes are emitted from it.
+    oracle_exp: Option<PathBuf>,
+    /// `SPPIDDataMap.xml`, or a zip that contains that exact entry.
+    /// With `--oracle-exp`, supplies pipeline `FluidSystem`.
+    datamap: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,20 +96,59 @@ enum OutputTarget {
     File(PathBuf),
 }
 
-fn print_usage() {
-    eprintln!(
+/// Print the usage body to `out`. `--help` passes stdout — the stream
+/// the caller asked for — and an argument error passes stderr, next to
+/// the diagnostic that explains the failure.
+fn print_usage<W: std::io::Write>(mut out: W) {
+    let _ = writeln!(
+        out,
         "Usage: pid_publish_xml <mdf> --drawing UID [--out FILE | --stdout]\n\
          \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
          \x20               [--style a01|dwg]\n\
-         \x20  pid_publish_xml <mdf> --list-drawings\n\n\
+         \x20  pid_publish_xml <mdf> --list-drawings\n\
+         \x20  pid_publish_xml <file.pid> [--out FILE | --stdout | --out-dir DIR]\n\
+         \x20               [--meta-out FILE] [--diff-against FILE] [--plant NAME]\n\
+         \x20               [--oracle-exp FILE] [--datamap FILE]\n\
+         \x20  pid_publish_xml <backup-dir> --out-dir DIR [--plant NAME]\n\n\
+         A .pid input is read on its own, with no plant database: it is one\n\
+         drawing, so --drawing / --style / --list-drawings do not apply, and\n\
+         only what the file states is written (no derived ports, pipelines or\n\
+         default attributes).\n\n\
+         A directory that contains Manifest.txt is a backup package. Every\n\
+         .pid entry in its PlantData zips is published into --out-dir, plus\n\
+         _Index.json. Export.dmp is read once when it is an Oracle exp. A\n\
+         SQL Server MTF dump is stripped to its MDF and every T_Drawing\n\
+         row publishes through the database path (backup-mdf feature;\n\
+         without it the input still exits 2). --diff-against does not\n\
+         apply. One drawing that fails is recorded; the rest are\n\
+         still written; the process then exits 1.\n\n\
          --drawing UID       T_Drawing.SP_ID of the drawing to emit.\n\
          --out FILE          write the _Data.xml document to FILE.\n\
          --stdout            write the _Data.xml document to stdout instead.\n\
          --meta-out FILE     write the companion _Meta.xml document to FILE.\n\
          \x20                   Requires --out (incompatible with --stdout).\n\
+         --out-dir DIR       .pid input only: write <DocName>_Data.xml,\n\
+         \x20                   <DocName>_Meta.xml and the coverage report\n\
+         \x20                   <DocName>_Coverage.json into DIR (created if\n\
+         \x20                   needed). Mutually exclusive with --out / --stdout\n\
+         \x20                   / --meta-out.\n\
          --diff-against FILE compare the generated _Data.xml against a reference\n\
-         \x20                   SmartPlant export and print a SemanticDiffReport\n\
-         \x20                   to stdout. Exits 1 when any tag varieties differ.\n\
+         \x20                   SmartPlant export. A database input prints the tag\n\
+         \x20                   and Rel-DefUID count report and exits 1 when any\n\
+         \x20                   variety differs. A .pid input scores emitted objects,\n\
+         \x20                   values and Rels: one the reference does not carry\n\
+         \x20                   exits 1. Classes this mode does not publish are not\n\
+         \x20                   MISSING. With --oracle-exp the clean line says\n\
+         \x20                   oracle-exp mode.\n\
+         --oracle-exp FILE   .pid input only: read piping and signal ports from\n\
+         \x20                   an Oracle exp dump and emit them for parents this\n\
+         \x20                   file already publishes. Pipe runs with a tag\n\
+         \x20                   sequence become PIDPipeline objects. Without it\n\
+         \x20                   the output is the .pid alone.\n\
+         --datamap FILE      .pid input with --oracle-exp: SPPIDDataMap.xml or\n\
+         \x20                   a zip that contains that entry. Supplies\n\
+         \x20                   FluidSystem. Without it pipelines have no\n\
+         \x20                   FluidSystem.\n\
          --plant NAME        Plant value for the <Container> root attribute\n\
          \x20                   (default: \"P01\" — override with the real plant).\n\
          --style a01|dwg     Pick the IObject attribute convention used in the\n\
@@ -113,8 +167,8 @@ fn print_usage() {
          \x20                   accepted during the transition, but MDF is the\n\
          \x20                   only public publish-fidelity baseline and `.sqlite`\n\
          \x20                   inputs print a deprecation warning at runtime.\n\n\
-         At least one of --out / --stdout / --diff-against / --list-drawings\n\
-         is required."
+         At least one of --out / --stdout / --out-dir / --diff-against /\n\
+         --list-drawings is required."
     );
 }
 
@@ -129,12 +183,15 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut drawing_uid: Option<String> = None;
     let mut out_path: Option<PathBuf> = None;
     let mut meta_out_path: Option<PathBuf> = None;
+    let mut out_dir: Option<PathBuf> = None;
     let mut diff_against: Option<PathBuf> = None;
     let mut stdout = false;
     let mut plant_name: Option<String> = None;
     let mut style: Option<PublishStyle> = None;
     let mut list_drawings = false;
     let mut verbose = false;
+    let mut oracle_exp: Option<PathBuf> = None;
+    let mut datamap: Option<PathBuf> = None;
 
     let mut i = 2;
     while i < args.len() {
@@ -158,6 +215,13 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     .get(i + 1)
                     .ok_or_else(|| "--meta-out requires a path".to_string())?;
                 meta_out_path = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--out-dir" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--out-dir requires a directory".to_string())?;
+                out_dir = Some(PathBuf::from(value));
                 i += 2;
             }
             "--diff-against" => {
@@ -202,6 +266,20 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 verbose = true;
                 i += 1;
             }
+            "--oracle-exp" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--oracle-exp requires a path".to_string())?;
+                oracle_exp = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--datamap" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--datamap requires a path".to_string())?;
+                datamap = Some(PathBuf::from(value));
+                i += 2;
+            }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
@@ -212,6 +290,65 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         (Some(_), true) => return Err("--out and --stdout are mutually exclusive".into()),
         (None, false) => None,
     };
+
+    let pid_input = is_pid_path(&input_path);
+    let package_input = input_path.is_dir();
+    if package_input {
+        if !input_path.join("Manifest.txt").is_file() {
+            return Err(
+                "a directory input is a backup package only when it contains Manifest.txt".into(),
+            );
+        }
+        if oracle_exp.is_some() {
+            return Err(
+                "a backup directory reads Export.dmp itself; --oracle-exp does not apply".into(),
+            );
+        }
+        if datamap.is_some() {
+            return Err(
+                "a backup directory reads RefData~4~804.zip itself; --datamap does not apply"
+                    .into(),
+            );
+        }
+        if list_drawings || drawing_uid.is_some() {
+            return Err(
+                "a backup directory publishes every .pid; --drawing and --list-drawings do not apply"
+                    .into(),
+            );
+        }
+        if diff_against.is_some() {
+            return Err("--diff-against does not apply to a backup directory".into());
+        }
+        if output.is_some() || meta_out_path.is_some() {
+            return Err("a backup directory writes with --out-dir only".into());
+        }
+        if out_dir.is_none() {
+            return Err("a backup directory requires --out-dir DIR".into());
+        }
+    }
+    if oracle_exp.is_some() && !pid_input {
+        return Err("--oracle-exp applies to a .pid input only".into());
+    }
+    if datamap.is_some() && oracle_exp.is_none() {
+        return Err("--datamap requires --oracle-exp".into());
+    }
+    if pid_input && (list_drawings || drawing_uid.is_some()) {
+        return Err(
+            "a .pid input is one drawing: --list-drawings and --drawing do not apply".into(),
+        );
+    }
+    if out_dir.is_some() {
+        if !pid_input && !package_input {
+            return Err("--out-dir applies to a .pid input only".into());
+        }
+        if output.is_some() || meta_out_path.is_some() {
+            return Err(
+                "--out-dir names every file itself: it is mutually exclusive with \
+                 --out / --stdout / --meta-out"
+                    .into(),
+            );
+        }
+    }
 
     if list_drawings {
         // --list-drawings is its own self-contained mode. It
@@ -234,12 +371,14 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
             return Err("--list-drawings is mutually exclusive with --meta-out".into());
         }
     } else {
-        if drawing_uid.is_none() {
+        if drawing_uid.is_none() && !pid_input && !package_input {
             return Err("--drawing UID is required (or use --list-drawings)".into());
         }
-        if output.is_none() && diff_against.is_none() {
+        if output.is_none() && diff_against.is_none() && out_dir.is_none() {
             return Err(
-                "at least one of --out FILE / --stdout / --diff-against FILE / --list-drawings is required".into(),
+                "at least one of --out FILE / --stdout / --diff-against FILE / --list-drawings \
+                 is required (or --out-dir DIR for a .pid input)"
+                    .into(),
             );
         }
     }
@@ -253,25 +392,28 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
         drawing_uid,
         output,
         meta_output: meta_out_path,
+        out_dir,
         diff_against,
         plant_name: plant_name.unwrap_or_else(|| "P01".to_string()),
         style: style.unwrap_or_default(),
         list_drawings,
         verbose,
+        oracle_exp,
+        datamap,
     })
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        print_usage();
+        print_usage(std::io::stdout());
         std::process::exit(0);
     }
     let options = match parse_args(&args) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("argument error: {e}");
-            print_usage();
+            print_usage(std::io::stderr());
             std::process::exit(2);
         }
     };
@@ -296,6 +438,12 @@ fn main() {
 ///   from the reference (used as a CI gate). Real I/O / `SQLite`
 ///   errors short-circuit through `Err(String)` instead.
 fn run(options: CliOptions) -> Result<i32, String> {
+    if options.input_path.is_dir() {
+        return run_package(&options);
+    }
+    if is_pid_path(&options.input_path) {
+        return run_pid(&options);
+    }
     warn_if_legacy_sqlite_input(&options.input_path);
     let conn = open_input_as_sqlite(&options.input_path)?;
 
@@ -340,17 +488,7 @@ fn run(options: CliOptions) -> Result<i32, String> {
         graph.relationships.len(),
     );
 
-    if let Some(target) = &options.output {
-        match target {
-            OutputTarget::Stdout => {
-                print!("{xml}");
-            }
-            OutputTarget::File(path) => {
-                write_file(path, &xml)?;
-                eprintln!("Wrote {} ({} bytes).", path.display(), xml.len());
-            }
-        }
-    }
+    emit_data(&options, &xml)?;
 
     if let Some(meta_path) = &options.meta_output {
         let meta_xml = write_meta_xml(&graph, &options.plant_name)
@@ -359,11 +497,237 @@ fn run(options: CliOptions) -> Result<i32, String> {
         eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
     }
 
+    match &options.diff_against {
+        Some(ref_path) => report_diff(ref_path, &xml),
+        None => Ok(0),
+    }
+}
+
+/// Backup directory: publish every `.pid` in the `PlantData` zips.
+fn run_package(options: &CliOptions) -> Result<i32, String> {
+    let out_dir = options
+        .out_dir
+        .as_ref()
+        .ok_or_else(|| "a backup directory requires --out-dir DIR".to_string())?;
+    match pid_parse::publish::backup_package::publish_backup_package(
+        &options.input_path,
+        out_dir,
+        &options.plant_name,
+    ) {
+        Ok(report) => {
+            eprintln!(
+                "Published {} drawings from {} ({} failed, {} without a DrawingNo). Wrote {}.",
+                report.written,
+                options.input_path.display(),
+                report.failed,
+                report.shells,
+                report.index_path.display(),
+            );
+            Ok(i32::from(report.failed > 0))
+        }
+        Err(pid_parse::publish::backup_package::BackupPublishError::Usage(detail)) => {
+            eprintln!("argument error: {detail}");
+            Ok(2)
+        }
+        Err(pid_parse::publish::backup_package::BackupPublishError::Io(detail)) => Err(detail),
+    }
+}
+
+/// `.pid` input: read the drawing from the file alone and write only what
+/// it states.
+fn run_pid(options: &CliOptions) -> Result<i32, String> {
+    let mut drawing = load_publish_from_pid(&options.input_path)
+        .map_err(|e| format!("read {}: {e}", options.input_path.display()))?;
+    if let Some(dump_path) = &options.oracle_exp {
+        let dump =
+            std::fs::read(dump_path).map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let exp_tables = pid_parse::publish::oracle_exp::ExpTables::read(&dump)
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let tables = exp_tables
+            .port_tables()
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        pid_parse::publish::oracle_exp::attach_oracle_ports(&mut drawing, &tables, dump_path);
+        drawing.connectivity_ends = exp_tables
+            .connectivity_ends(&drawing.drawing_uid)
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        drawing.exp_relations = exp_tables
+            .composition_relations()
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let mut opc_points = exp_tables
+            .opc_points(&drawing.drawing_uid)
+            .map_err(|e| format!("read {}: {e}", dump_path.display()))?;
+        let representations: std::collections::HashSet<&str> = drawing
+            .representations
+            .iter()
+            .map(|representation| representation.uid.as_str())
+            .collect();
+        opc_points.retain(|point| representations.contains(point.representation_uid.as_str()));
+        drawing.opc_points = opc_points;
+        let datamap = match &options.datamap {
+            Some(path) => Some(
+                pid_parse::backup::read_datamap(path)
+                    .map_err(|error| format!("read {}: {error}", path.display()))?,
+            ),
+            None => None,
+        };
+        pid_parse::publish::pipeline::attach_pipelines(
+            &mut drawing,
+            &exp_tables,
+            &options.plant_name,
+            datamap.as_ref(),
+        )
+        .map_err(|error| format!("read {}: {error}", dump_path.display()))?;
+        eprintln!(
+            "oracle-exp pipelines: {} PIDPipeline, {} PipingConnectors, {} FluidSystem, \
+             {} fluid codes missing, {} fluid systems unmapped",
+            drawing.pipelines.len(),
+            drawing
+                .pipelines
+                .iter()
+                .map(|pipeline| pipeline.connector_uids.len())
+                .sum::<usize>(),
+            drawing
+                .pipelines
+                .iter()
+                .filter(|pipeline| pipeline.fluid_system.is_some())
+                .count(),
+            drawing.pipeline_synthesis.fluid_code_missing,
+            drawing.pipeline_synthesis.fluid_system_unmapped,
+        );
+        let (written, left_out) = connectivity_rel_counts(&drawing);
+        eprintln!(
+            "oracle-exp connectivity: {} pairs, {written} written as <Rel>, \
+             {left_out} left out because an end is not a published object",
+            drawing.connectivity_ends.len()
+        );
+        let (nozzle_rows, nozzle_rels, note_rows, note_rels) = composition_rel_counts(&drawing);
+        eprintln!(
+            "oracle-exp compositions: {nozzle_rows} nozzle pairs, {nozzle_rels} \
+             EquipmentComponentComposition written; {note_rows} note pairs, \
+             {note_rels} PBSItemNotes written"
+        );
+        eprintln!(
+            "oracle-exp opc: {} PIDBranchPoint written",
+            drawing.opc_points.len()
+        );
+    }
+    let xml = write_pid_data_xml(&drawing, &options.plant_name);
+    let classified = drawing
+        .items
+        .iter()
+        .filter(|item| item.class.is_some())
+        .count();
+    let stats = drawing.stats;
+    let derived = derived_by_native_rule_count(&drawing);
+    eprintln!(
+        "Read drawing `{}` ({} UID) from the .pid alone: {} items ({} with a class, \
+         {} instruments classed by their symbol's library folder), {} representations; \
+         {} of {} label values reach an item, {} attributes published, \
+         {} derived by a native rule, \
+         {} nominal diameters left unconverted, \
+         {} left out on disagreeing labels",
+        drawing.drawing_name,
+        drawing.drawing_uid,
+        drawing.items.len(),
+        classified,
+        stats.instruments_classed_by_library,
+        drawing.representations.len(),
+        stats.label_values_reached,
+        stats.label_values,
+        stats.label_values_published,
+        derived,
+        stats.nominal_diameter_not_emitted,
+        stats.conflicting_attributes,
+    );
+    emit_data(options, &xml)?;
+    if let Some(meta_path) = &options.meta_output {
+        let meta_xml = write_pid_meta_xml(&drawing, &options.plant_name)
+            .map_err(|e| format!("render meta XML: {e}"))?;
+        write_file(meta_path, &meta_xml)?;
+        eprintln!("Wrote {} ({} bytes).", meta_path.display(), meta_xml.len());
+    }
+    if let Some(dir) = &options.out_dir {
+        // The delivery: the two documents under the names SmartPlant's
+        // own publish gives them, and the coverage report beside them.
+        let meta_xml = write_pid_meta_xml(&drawing, &options.plant_name)
+            .map_err(|e| format!("render meta XML: {e}"))?;
+        let report = write_pid_coverage_json(&drawing, &options.input_path);
+        for (suffix, contents) in [
+            ("_Data.xml", xml.as_str()),
+            ("_Meta.xml", meta_xml.as_str()),
+            ("_Coverage.json", report.as_str()),
+        ] {
+            let path = dir.join(format!("{}{suffix}", drawing.drawing_name));
+            write_file(&path, contents)?;
+            eprintln!("Wrote {} ({} bytes).", path.display(), contents.len());
+        }
+    }
+    match &options.diff_against {
+        Some(ref_path) => report_pid_diff(ref_path, &xml, options.oracle_exp.is_some()),
+        None => Ok(0),
+    }
+}
+
+/// Write the rendered `_Data.xml` to the requested target, if any.
+fn emit_data(options: &CliOptions, xml: &str) -> Result<(), String> {
+    if let Some(target) = &options.output {
+        match target {
+            OutputTarget::Stdout => {
+                print!("{xml}");
+            }
+            OutputTarget::File(path) => {
+                write_file(path, xml)?;
+                eprintln!("Wrote {} ({} bytes).", path.display(), xml.len());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Print the `.pid` export's object / value / rel score. Absence of a class
+/// this mode does not publish is not a finding; an emitted object, value or
+/// rel the reference does not carry exits 1.
+fn report_pid_diff(ref_path: &Path, xml: &str, oracle_exp: bool) -> Result<i32, String> {
+    let reference = std::fs::read_to_string(ref_path)
+        .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
+    let diff = diff_pid_export(xml, &reference);
+    print!("{diff}");
+    if diff.is_clean() {
+        let mode = if oracle_exp { "oracle-exp" } else { ".pid" };
+        eprintln!(
+            "Semantic diff against {} is clean in {mode} mode ({} objects, {} values, {} rels).",
+            ref_path.display(),
+            diff.objects,
+            diff.values,
+            diff.rels,
+        );
+        Ok(0)
+    } else {
+        eprintln!(
+            "Semantic diff against {} surfaced findings in .pid mode:\n  \
+             objects extra={} wrong_class={}\n  \
+             values different={} not_in_reference={}\n  \
+             rels not_in_reference={}\n\
+             exit 1.",
+            ref_path.display(),
+            diff.objects_not_in_reference,
+            diff.objects_of_another_class,
+            diff.values_different,
+            diff.values_not_in_reference,
+            diff.rels_not_in_reference,
+        );
+        Ok(1)
+    }
+}
+
+/// Print the semantic diff of `xml` against the reference at `ref_path`;
+/// the exit code is 1 when it surfaces findings.
+fn report_diff(ref_path: &Path, xml: &str) -> Result<i32, String> {
     let mut exit_code = 0;
-    if let Some(ref_path) = &options.diff_against {
+    {
         let reference = std::fs::read_to_string(ref_path)
             .map_err(|e| format!("read reference {}: {e}", ref_path.display()))?;
-        let tag_report = diff_publish_xml(&xml, &reference);
+        let tag_report = diff_publish_xml(xml, &reference);
         // Surface the report on stdout so it can be redirected to
         // a file or compared in tests; the "Loaded drawing..." line
         // stays on stderr.
@@ -374,7 +738,7 @@ fn run(options: CliOptions) -> Result<i32, String> {
         // Rel block answers the complementary question "are all
         // cross-references emitted?" A drawing can pass one and
         // fail the other — the combined report catches both.
-        let rel_report = diff_rel_defuids(&xml, &reference);
+        let rel_report = diff_rel_defuids(xml, &reference);
         println!();
         println!("{rel_report}");
 
@@ -421,6 +785,12 @@ fn is_mdf_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("mdf"))
+}
+
+fn is_pid_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pid"))
 }
 
 fn is_sqlite_path(path: &std::path::Path) -> bool {
