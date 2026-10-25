@@ -112,10 +112,11 @@ fn solve<const N: usize>(mut matrix: [[f64; N]; N], mut rhs: [f64; N]) -> Option
             matrix.swap(pivot, column);
             rhs.swap(pivot, column);
         }
+        let pivot_row = matrix[column];
         for row in (column + 1)..N {
-            let factor = matrix[row][column] / matrix[column][column];
-            for column_ in column..N {
-                matrix[row][column_] -= factor * matrix[column][column_];
+            let factor = matrix[row][column] / pivot_row[column];
+            for (target, source) in matrix[row][column..N].iter_mut().zip(&pivot_row[column..N]) {
+                *target -= factor * *source;
             }
             rhs[row] -= factor * rhs[column];
         }

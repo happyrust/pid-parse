@@ -667,7 +667,7 @@ fn solve_fit(pairs: &[([f64; 2], [f64; 2])]) -> Option<Fit> {
     )?;
     let scale = solution[0];
     let translation = [solution[1], solution[2]];
-    if !scale.is_finite() || scale < 0.5 || scale > 1.5 {
+    if !scale.is_finite() || !(0.5..=1.5).contains(&scale) {
         return None;
     }
     let shift = translation[0].hypot(translation[1]);
@@ -703,10 +703,11 @@ fn solve3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> Option<[f64; 3]> {
         a.swap(col, pivot);
         b.swap(col, pivot);
         let diag = a[col][col];
+        let pivot_row = a[col];
         for row in col + 1..3 {
             let factor = a[row][col] / diag;
-            for k in col..3 {
-                a[row][k] -= factor * a[col][k];
+            for (target, source) in a[row][col..3].iter_mut().zip(&pivot_row[col..3]) {
+                *target -= factor * *source;
             }
             b[row] -= factor * b[col];
         }
