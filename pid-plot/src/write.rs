@@ -140,7 +140,12 @@ pub fn write_plot(model: &PaperModel, fonts: &[PlotFont<'_>]) -> Result<Vec<u8>,
     if fonts.is_empty() && has_inked_text(model) {
         return Err(PlotWriteError::Font("no font was provided".into()));
     }
-    let [page_w, page_h] = resolved_page(model)?;
+    // The page is the model's own answer, not a second guess here: a drawing
+    // that states no sheet still has one number, and the gates read the same
+    // one to check the written page against.
+    let Some([page_w, page_h]) = model.resolved_page_mm() else {
+        return Err(PlotWriteError::NoPage);
+    };
 
     let mut doc = Document::new_empty();
     let mut font_resources = Dict::new();
@@ -965,64 +970,6 @@ pub(crate) fn directed_arc(start: f64, end: f64, clockwise: bool) -> (f64, f64) 
     }
 }
 
-fn resolved_page(model: &PaperModel) -> Result<[f64; 2], PlotWriteError> {
-    if let Some(page) = model.page_mm {
-        return Ok(page);
-    }
-    let mut max_x = 0.0_f64;
-    let mut max_y = 0.0_f64;
-    let mut any = false;
-    for primitive in &model.primitives {
-        for point in extent_points(&primitive.shape) {
-            if !finite(point) {
-                continue;
-            }
-            any = true;
-            max_x = max_x.max(point[0]);
-            max_y = max_y.max(point[1]);
-        }
-    }
-    if !any {
-        return Err(PlotWriteError::NoPage);
-    }
-    const SHEETS: [[f64; 2]; 5] = [
-        [297.0, 210.0],
-        [420.0, 297.0],
-        [594.0, 420.0],
-        [841.0, 594.0],
-        [1189.0, 841.0],
-    ];
-    for sheet in SHEETS {
-        for page in [sheet, [sheet[1], sheet[0]]] {
-            if max_x <= page[0] + 5.0 && max_y <= page[1] + 5.0 {
-                return Ok(page);
-            }
-        }
-    }
-    Ok([max_x.ceil().max(1.0), max_y.ceil().max(1.0)])
-}
-
-fn extent_points(shape: &PaperShape) -> Vec<[f64; 2]> {
-    match shape {
-        PaperShape::Line { start_mm, end_mm } => vec![*start_mm, *end_mm],
-        PaperShape::Polyline { points_mm, .. } => points_mm.clone(),
-        PaperShape::Arc {
-            center_mm,
-            radius_mm,
-            ..
-        }
-        | PaperShape::Circle {
-            center_mm,
-            radius_mm,
-        } => vec![
-            [center_mm[0] - radius_mm, center_mm[1] - radius_mm],
-            [center_mm[0] + radius_mm, center_mm[1] + radius_mm],
-        ],
-        PaperShape::Fill { chain_mm, .. } => chain_mm.clone(),
-        PaperShape::Text { origin_mm, .. } => vec![*origin_mm],
-    }
-}
-
 /// The reader's sheet-frame rule, in millimetres. A line this drops is not ink.
 fn reader_sheet_edge(start: [f64; 2], end: [f64; 2], page: [f64; 2]) -> bool {
     sheet_edge_mm(start, end, page)
@@ -1035,7 +982,7 @@ fn reader_sheet_edge(start: [f64; 2], end: [f64; 2], page: [f64; 2]) -> bool {
 /// reader takes, so a read-back matches this list endpoint for endpoint.
 #[must_use]
 pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
-    let Ok(page) = resolved_page(model) else {
+    let Some(page) = model.resolved_page_mm() else {
         return Vec::new();
     };
     let mut out = Vec::new();

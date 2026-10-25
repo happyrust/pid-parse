@@ -16,16 +16,20 @@
 //!   libraries lack is still drawn from the body the `.pid` carries itself
 //!   (`missing_boxes` is empty on all 53 — the 18 library gaps are drawn);
 //! - every library gap is one of the known ones below, and no gap grows;
-//! - the written page reads back with its declared size, and weighs what a
-//!   subset-embedded page weighs — after the `EBDT` fix each page is
-//!   175–846 KiB (an empty sheet is 722 B); before it, 6.6–7.1 MiB.
+//! - the written page reads back at the size the model resolved — the declared
+//!   sheet, or the standard sheet measured for the four drawings that state
+//!   none — and weighs what a subset-embedded page weighs: after the `EBDT`
+//!   fix each page is 175–846 KiB (an empty sheet is 722 B), before it
+//!   6.6–7.1 MiB;
 //!
 //! Soft-skips when the extracted backup is absent, which is the case on CI.
 
 use std::path::{Path, PathBuf};
 
 use pid_plot::fonts::{font_dirs, prepare_fonts};
-use pid_plot::model::{PaperModel, PaperShape, lay_out_drawing};
+use pid_plot::model::{
+    PaperModel, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource, lay_out_drawing,
+};
 use pid_plot::read::read_plot;
 use pid_plot::write::{PlotFont, write_plot};
 
@@ -92,6 +96,20 @@ const BACKUP_SHEETS: usize = 53;
 /// strike that used to ride along pushed each one past 6 MiB.
 const PAGE_CEILING: usize = 2 * 1024 * 1024;
 
+/// Sheets whose `.pid` states no page at all.
+///
+/// `D井场`, `Q井场`, `换热器CD` and `凝析油一级闪蒸分离器B气相出口改造` carry
+/// neither an `igSmartFrame2d` nor a template name, so
+/// [`PaperModel::resolved_page_mm`] measures one instead: A0, A1, A1 and A2
+/// respectively. Pinned as an equality, both ways round — a new drawing with no
+/// sheet fails here rather than quietly taking the ink's own box, and a sheet
+/// that starts stating its page lowers this number deliberately.
+const DERIVED_PAGES: usize = 4;
+
+/// Sheets that carry a border template. A floor for the same reason
+/// [`BACKUP_SHEETS`] is one: a fuller extraction only adds sheets.
+const TEMPLATED_SHEETS: usize = 31;
+
 #[test]
 fn every_backup_drawing_exports_a_readable_page() {
     let corpus = corpus_dir();
@@ -126,6 +144,67 @@ fn every_backup_drawing_exports_a_readable_page() {
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         models.push((path.clone(), model));
     }
+
+    // The furniture's symbol account, over the whole package. A sheet's border
+    // is a linked `.igr`, so the symbols its title block places are the
+    // template's own and are not in the drawing's `missing_symbols` — that is
+    // what keeps the one source gap (`BLFH.sym`, whose stored path is an
+    // absolute path on the authoring machine) out of the drawing's report and
+    // on the page's own ledger, where `--residual` reads it.
+    let mut templated = 0usize;
+    let mut placements = 0usize;
+    let mut gap_named = 0usize;
+    for (path, model) in &models {
+        let name = path.display();
+        assert!(
+            !model
+                .missing_symbols
+                .iter()
+                .any(|missing| missing.to_ascii_lowercase().ends_with("blfh.sym")),
+            "{name}: the template's own gap entered the drawing's report: {:?}",
+            model.missing_symbols
+        );
+        let Some(template) = model.template.as_ref() else {
+            continue;
+        };
+        templated += 1;
+        for symbol in &template.symbols {
+            placements += 1;
+            assert_eq!(
+                symbol.body,
+                SymbolBodySource::Cached,
+                "{name}: {} drew from the library; a template's own copy is the one",
+                symbol.key
+            );
+            assert!(
+                symbol.key.to_ascii_lowercase().ends_with("blfh.sym"),
+                "{name}: the template places {} instead of the 比例 cell's wave",
+                symbol.key
+            );
+            // The two halves of the account must agree: a name lookup that
+            // found nothing and a body that resolved cannot both be true.
+            assert_eq!(
+                symbol.library_available,
+                symbol.name_gap.is_none(),
+                "{name}: the ledger disagrees with the lookup for {:?}",
+                symbol
+            );
+            if symbol.name_gap.is_some() {
+                gap_named += 1;
+            }
+        }
+    }
+    assert!(
+        templated >= TEMPLATED_SHEETS,
+        "{templated} sheets drew furniture; {TEMPLATED_SHEETS} did when this ratchet was set"
+    );
+    assert_eq!(
+        placements, templated,
+        "{placements} furniture symbols over {templated} templated sheets; one per sheet is the corpus"
+    );
+    eprintln!(
+        "{templated} sheets drew furniture, {placements} placements, {gap_named} with a named gap"
+    );
     let refs: Vec<&PaperModel> = models.iter().map(|(_, model)| model).collect();
     let prepared = prepare_fonts(&refs, &dirs).unwrap_or_else(|error| panic!("fonts: {error}"));
     let fonts: Vec<PlotFont<'_>> = prepared
@@ -136,6 +215,7 @@ fn every_backup_drawing_exports_a_readable_page() {
         })
         .collect();
 
+    let mut derived = 0usize;
     for (path, model) in &models {
         let name = path.display();
         assert_eq!(
@@ -172,9 +252,28 @@ fn every_backup_drawing_exports_a_readable_page() {
             pdf.len()
         );
         let ink = read_plot(&pdf).unwrap_or_else(|error| panic!("{name}: read back: {error}"));
-        if let Some(page) = model.page_mm {
-            assert!((ink.page_mm[0] - page[0]).abs() < 0.05, "{name} width");
-            assert!((ink.page_mm[1] - page[1]).abs() < 0.05, "{name} height");
+        // The page the PDF got is the page the model promised, for every
+        // sheet — the ones that state a sheet and the ones measured for want
+        // of one. This used to be skipped when `page_mm` was `None`, which is
+        // exactly the case that needed watching: a measured page could drift
+        // to any box the ink reached and no gate would say so.
+        let page = model.resolved_page_mm().unwrap_or_else(|| {
+            panic!("{name}: the model resolved no page; the writer must have errored")
+        });
+        assert!((ink.page_mm[0] - page[0]).abs() < 0.05, "{name} width");
+        assert!((ink.page_mm[1] - page[1]).abs() < 0.05, "{name} height");
+        if model.page_mm.is_none() {
+            derived += 1;
+            let standard = STANDARD_SHEETS_MM.iter().any(|sheet| {
+                [*sheet, [sheet[1], sheet[0]]]
+                    .iter()
+                    .any(|paper| paper == &page)
+            });
+            assert!(
+                standard,
+                "{name}: a page the drawing never stated was measured as {page:?}, \
+                 which is not a standard sheet"
+            );
         }
         if model.primitives.is_empty() {
             // `D03` is an authored but empty sheet: a declared page with no
@@ -191,9 +290,14 @@ fn every_backup_drawing_exports_a_readable_page() {
             "{name}: the page carries no lettering at all"
         );
     }
+    assert_eq!(
+        derived, DERIVED_PAGES,
+        "{derived} sheets stated no page and were measured; {DERIVED_PAGES} did when this ratchet was set"
+    );
     eprintln!(
-        "{} backup drawings exported, {} faces embedded",
+        "{} backup drawings exported, {} of them on a measured page, {} faces embedded",
         models.len(),
+        derived,
         prepared.len()
     );
 }

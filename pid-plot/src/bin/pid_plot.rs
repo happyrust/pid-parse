@@ -72,11 +72,15 @@ fn main() -> ExitCode {
         eprintln!("write {out}: {error}");
         return ExitCode::from(1);
     }
+    // The page actually written. A drawing that states none is measured, and
+    // this is the number the PDF carries — reporting nothing here would say
+    // `0.00 0.00` about a page that was plotted on real paper.
+    let page = model.resolved_page_mm().unwrap_or([0.0, 0.0]);
     println!(
         "primitives {} segments_written_page_mm {:.2} {:.2} bytes {}",
         model.primitives.len(),
-        model.page_mm.map(|page| page[0]).unwrap_or(0.0),
-        model.page_mm.map(|page| page[1]).unwrap_or(0.0),
+        page[0],
+        page[1],
         pdf.len()
     );
     ExitCode::SUCCESS

@@ -88,8 +88,18 @@ fn every_fixture_drawing_exports_a_pdf() {
             "{name}: {} strokes were refused for not fitting the sheet",
             model.off_sheet_primitives
         );
+        // Every fixture states its own sheet, so none of them needs the
+        // measured page [`PaperModel::resolved_page_mm`] falls back to. Stated
+        // rather than assumed: a fixture that stops declaring a page is a
+        // decode regression, not a page to guess.
+        let page = model
+            .page_mm
+            .unwrap_or_else(|| panic!("{name}: the fixture states no page"));
         let pdf = write_plot(model, &fonts).unwrap_or_else(|error| panic!("{name}: {error}"));
         let ink = read_plot(&pdf).unwrap_or_else(|error| panic!("{name}: read back: {error}"));
+        assert!((ink.page_mm[0] - page[0]).abs() < 0.05, "{name} width");
+
+        assert!((ink.page_mm[1] - page[1]).abs() < 0.05, "{name} height");
         assert!(
             !ink.segments.is_empty(),
             "{name}: the page carries no ink at all"
