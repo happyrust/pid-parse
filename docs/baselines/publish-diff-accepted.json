@@ -29,7 +29,7 @@
   ],
   "figures": {
     "A01": {
-      "what": "The single-`.pid` publish of test-file/export-test/publish-data/A01/A01.pid against the reference A01_Data.xml. Exits 1 by design: the 25 items below are accepted and recorded, not suppressed.",
+      "what": "The single-`.pid` publish of test-file/export-test/publish-data/A01/A01.pid against the reference A01_Data.xml. Exits 1 by design: the 27 items below are accepted and recorded, not suppressed.",
       "command": "pid_publish_xml.exe test-file/export-test/publish-data/A01/A01.pid --diff-against test-file/export-test/publish-data/A01/A01_Data.xml --plant TEST02",
       "exit_code": 1,
       "summary": "pid export diff: objects 8 (extra 1, wrong class 1), values 10 (different 3, not in reference 6), rels 7 (not in reference 7)",

@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### publish 导出硬化：门禁强度、交付件保真与 N11 接口（2026-10-25）
+
+`pid_publish_xml` 的三条输入线（单张 `.pid` / `.pid` + Oracle `exp` / 整个备份包目录）在 2026-10-12 已全部跑通，但三处欠账都是实测出来的：**门禁会在输出错的时候报 clean**（`--diff-against` 是单向比较，参考里有而没发出去的永不成为 finding；解析错误被当成 EOF，一份被截断的输出会被当前缀比较；整包模式与 `_Meta.xml` 根本没有门禁）、**交付件本身不自洽**（全库计数当逐图写、汇总数与逐图之和对不上、语料里 4 份 `_Meta.xml` 是容器空壳）、**接口在骗人**（`--style` 被静默接受并忽略、`template` / `path` 从不写出、README 的 MTF 行为过时）。这一轮不加功能，只把已经发出去的东西变可信：门禁强度 G1–G6、交付件保真 D1–D4、N11 接口 I1–I4。
+
+- **G1 破损 / 截断输出必须失败**（`acb4b8e`）：`read_publish_document` 原本把任何 XML 解析错误当 EOF，一份被截断的生成件会被当成前缀比较、可能报 clean。现在解析错误返回 `MalformedPublishDocument { side, position, message }`，`Event::Eof` 时若还有未闭合元素合成 `MissingEndTag`；CLI 打印 `Semantic diff against <path> refused: … is not well-formed XML (byte N); exit 1.`，**不打任何 finding 行、不打 `is clean`**。`.pid` 线、包模式 exp 分支、包模式 MTF 分支三个调用点都非静默。实测 D06 的 7,974 B 生成件在 tail / 50% / 90% 三处截断后全部退出 1。
+- **G2 未发出的内容必须可见**（`cbb07e0`）：新模块 `src/publish/diff_exclusions.rs` 在生成侧比完之后**反过来走参考**，参考有而生成件没有的每个对象 / 值 / rel 都成为 `missing` finding，除非被**显式排除清单**覆盖（`catalog.rs::EXCLUDED_ATTRIBUTE_CLASSES`：8 个类 / 41 个 `(interface, attribute)` 对，每类带一句理由，成员是五份 vendor 参考与 A01 的实测并集）；`PIDPipeline` / `PipingConnectors` 按名配对并单列。非 clean 时先打 `reference-only: …` 记账行，clean 运行一行都不打。三条删除回归（删掉一个已发对象 / 一条值 / 一条关系）仍退出 1 并点名。
+- **G3 `FluidSystem` 豁免要有上界**（`a323ba6`）：整包 dump 比参考新，`FluidSystem` 多发 23 个值。上界落成数据 `diff::FLUID_SYSTEM_REFERENCE_EMPTY_ALLOWANCE = 23`（独立依据：I井场参考的 79 个 `IFluidSystem` 里 23 个为空），配对行打印「参考为空、dump 有值的 FluidSystem 23（登记上界 23）」，超界再打一行 `excused FluidSystem {n} exceeds the registered allowance 23` 并退出 1。
+- **G4 备份包模式接上门禁**（`96e9e19`）：`--out-dir` 原本对目录直接拒绝 `--diff-against` —— 产出 160 个文件的那次运行完全没有门禁。现在接受 `--diff-against <参考目录>`，逐图报 clean / dirty，任一 dirty 或 unpaired 退出非零。
+- **G5 `_Meta.xml` 门禁**（`94cf150`）：`.pid` 线 + 本轮写出 meta + 参考旁有兄弟 `<stem>_Meta.xml` 时，对照 13 个 `<Container>` 属性、六块顺序、3 条 `<Rel>` 的 `DefUID` 序列与角色接线、每份 meta 的 `DocUID` 对兄弟 `_Data.xml`；接受的差异只有 `DocVersionDate` / `FilePath` / 6 个派生 UUID v5。
+- **G6 逐字节相同的两份文档必须判 clean**（`79f8b7f`）：`PipingConnectors` 的配对键只认 exp 线朝向（`UID2` = pipeline），DB 线朝向相反，于是 MTF 包拿自己当参考也被判 dirty。`piping_connector_key` 现在两种朝向都接受（登记朝向优先，再试另一边），两侧都配不上仍是 finding；同一 MTF 包发两次、第二次拿第一次当参考 → 退出 0、`A01: clean (objects 12, values 29, rels 15)`。顺带修掉零对照分支把汇总写成字面量 `exit 1` 的问题。
+- **门禁引擎的四笔精确化**（`d43ece1` / `c831a15` / `63ae0c4` / `ea74926`）：参考侧排除记账改成逐实例精确；畸形属性不再被静默丢弃、改为拒绝；畸形文档在 tag-count diff 之前就被拒；meta 门禁在参考侧没有 `_Meta.xml` 时明说，不再静默不评分。
+- **D1 `_Coverage.json` 逐图与全库分列 + `classes` 完整普查**（`d2fc519`）：全库计数不再当逐图写 —— 顶层 `objects`（已分类物项）改名 `classified_items`，新增 `classes_total`，两个全库键改成 `dump_equipment_compositions` / `dump_item_notes`，与逐图的 `*_rels` 分列；`classes` 补上 `PIDBranchPoint` / `PIDDrawing` / `PIDPipeline` / `PIDRepresentation`（按非零插入，每张图 +4 键），兄弟 `_Data.xml` 的每个顶层 tag 都在里面，`Σ classes[*].objects == classes_total`。
+- **D2 `_Index.json` 汇总口径自洽**（`3fed0c9`）：汇总 `objects` 与 Σ 逐图差 2，正是两张 `T_DRAWING.PATH` 空图。现在顶层多一个机读声明 `excluded_from_totals`（规则 + 理由 + 两张图各自的对象 / 值 / 关系计数），exp 与 MTF 两个分支同形。
+- **D3 已接受差异基线**（`ef586a3`）：A01 对仓库自带参考设计上非零退出（18 条 finding / 5 类 + 9 条仅参考侧 = 27 条已登记项），I井场 恰好 1 处 `IObject.Name`（夹具的 8.3 短名，路径敏感）。这些编码进 `docs/baselines/publish-diff-accepted.json`，消费测试 `tests/publish_diff_accepted_baseline.rs` 把一次运行打印的每一行按 registered / disappeared / unregistered 分类：已登记项消失、或出现未登记项，都仍是 finding。
+- **D4 交付件重发与逐字节比对**：重发到新目录 `D:\work\cad\pid-test-data\publish-v2\`（160 件 + `_ByteCompare.json` 175 行 = 整包 160 + 语料 15），两个既有交付目录一字未动。整包 53 张的 `_Data.xml` / `_Meta.xml` **一个字节都没变**（只有 `_Coverage.json` / `_Index.json` 因 D1 / D2 变）；语料 4 份 418/418/434/424 B 的容器空壳 `_Meta.xml` 重发为完整文档（1,768/1,768/1,832/1,792 B）；118/118 份 `_Meta.xml` 都解析出 6 个顶层块、3 条 `<Rel>`、`DocUID` 等于兄弟 `_Data.xml`；确定性 160/160 与 15/15 重复运行逐字节相同。
+- **I1 `--style` 不再静默忽略 + README 纠正**（`ef7456a`）：`.pid` 输入与备份目录输入各加一条拒绝，退出 2 并点名（`a .pid input is one drawing: --style does not apply` / `a backup directory publishes every .pid; --style does not apply`）；README 补齐四个产出文件名、三条输入线、MTF 的真行为（`backup = backup-exp + backup-mdf` 是默认特性，`Export.dmp` 能发、退出 0）与 21 类 tag。
+- **I2 `template` / `path` 落地 + 模板分类 + 逐图文件集**（`51e76ec`）：`PublishDrawing.template` / `.path` 从数据库装载后从不写出，现在落进我们自己的 `_Coverage.json` / `_Index.json`（参考 `_Meta.xml` 里**没有**模板槽位，不得塞进去）；`Template Files` 目录下的 `.pid` 归入 `template_pid_entries` 而不发，TEST02_p 实测 12 个条目 = 1 配对 + 11 模板 + 0 未配对；每张图声明自己的文件集，并断言声明的文件都在盘上。
+- **I3 `CatalogIndex.xml` 驱动分类**（`434ecd8`）：`RefData~4~681.zip` 里的目录索引从未被打开。新增 `src/publish/catalog_index.rs` 解析（两份语料都是 UTF-16LE），并与 `PublishItemCatalog` 交叉核对：21 个 `ItemType` 块、17 个带 item、581 / 595 条 `.sym` 引用、264 / 265 个判别键；三组差异集（11 两边都有 / 6 只在 index / 6 只在 catalog）两份完全一致，`ItemNote` 经别名配上。
+- **I4 `EqTypeDescription` 口径定案**（`f0fc0b7`）：维持「符号路径词干 → `codelist_text` → 原值 `EquipmentType`」，`codelists.codelist_short_text` **有意不读**。证据：7 份 bundled 参考共 24 块带 `EqTypeDescription`，其中长文 ≠ 短文的 18 块**全部**等于长文（0/18 等于短文）；全盘找不到「没有符号路径的 `PIDProcessVessel`」；A01 的 `Horizontal Drum` 是「TEST02_p 的 `codelists` 没有编号 22」而不是「C22 输给词干」。无行为变化，只加两条单测与注释。
+- 证据：`docs/baselines/publish-diff-accepted.json`（D3 基线）、`tests/publish_diff_accepted_baseline.rs`（D3 消费测试）、`docs/analysis/2026-10-25-eqtypedescription-stays-on-the-long-codelist-text.md`（I4 定案）、`D:\work\cad\pid-test-data\publish-v2\_ByteCompare.json`（D4 重发与逐字节报告）。
+
 ### 多 run 标签逐段上纸：库侧分区 → 布局 → writer 切段（2026-10-23）
 
 一条 `.sym` 标签可以逐段换样式（`Filter Description.sym` 是 `9x1#23 1x1#25 4x1#23`，`Wastewater Pit.sym` 把一个 `*` 排成 3.175 mm 宋体），而 `PaperShape::Text` 一直只带一个字号与一个字体，所以上一轮接 run 接线时压平成「覆盖字符最多的那条」。这一轮把**分区本身**带到了纸上。
