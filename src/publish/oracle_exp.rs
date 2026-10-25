@@ -2588,7 +2588,7 @@ mod tests {
             match reader.read_event() {
                 Ok(quick_xml::events::Event::Start(start)) => {
                     if depth == 1 {
-                        tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                        tag = start.name().as_ref().to_string();
                         uid.clear();
                         name.clear();
                         description.clear();
@@ -2645,11 +2645,11 @@ mod tests {
         description: &mut String,
         to_from: &mut String,
     ) {
-        let interface = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+        let interface = start.name().as_ref().to_string();
         for attribute in start.attributes().flatten() {
-            let key = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
+            let key = attribute.key.as_ref().to_string();
             let value = attribute
-                .unescape_value()
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                 .map(std::borrow::Cow::into_owned)
                 .unwrap_or_default();
             match (interface.as_str(), key.as_str()) {
@@ -2675,7 +2675,7 @@ mod tests {
             match reader.read_event() {
                 Ok(quick_xml::events::Event::Start(start)) => {
                     if depth == 1 {
-                        tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                        tag = start.name().as_ref().to_string();
                         uid1.clear();
                         uid2.clear();
                         def.clear();
@@ -2709,13 +2709,13 @@ mod tests {
         uid2: &mut String,
         def: &mut String,
     ) {
-        if String::from_utf8_lossy(start.name().as_ref()) != "IRel" {
+        if start.name().as_ref() != "IRel" {
             return;
         }
         for attribute in start.attributes().flatten() {
-            let name = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
+            let name = attribute.key.as_ref().to_string();
             let value = attribute
-                .unescape_value()
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                 .map(std::borrow::Cow::into_owned)
                 .unwrap_or_default();
             match name.as_str() {
@@ -2758,7 +2758,7 @@ mod tests {
             match reader.read_event() {
                 Ok(Event::Start(start)) => {
                     if depth == 1 {
-                        tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                        tag = start.name().as_ref().to_string();
                         uid.clear();
                     } else if depth == 2 {
                         take_uid(&start, &mut uid);
@@ -2895,13 +2895,13 @@ mod tests {
     }
 
     fn take_uid(start: &quick_xml::events::BytesStart<'_>, uid: &mut String) {
-        if start.name().as_ref() != b"IObject" {
+        if start.name().as_ref() != "IObject" {
             return;
         }
         for attribute in start.attributes().flatten() {
-            if attribute.key.as_ref() == b"UID" {
+            if attribute.key.as_ref() == "UID" {
                 *uid = attribute
-                    .unescape_value()
+                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                     .map(std::borrow::Cow::into_owned)
                     .unwrap_or_default();
             }

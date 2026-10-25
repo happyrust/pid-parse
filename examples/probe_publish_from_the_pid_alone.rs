@@ -113,15 +113,12 @@ fn interface_of(start: &BytesStart<'_>) -> Interface {
         .flatten()
         .map(|attribute| {
             (
-                String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
-                unescaped(&attribute.value),
+                attribute.key.as_ref().to_string(),
+                unescaped(attribute.value.as_bytes()),
             )
         })
         .collect();
-    (
-        String::from_utf8_lossy(start.name().as_ref()).into_owned(),
-        attributes,
-    )
+    (start.name().as_ref().to_string(), attributes)
 }
 
 fn read_answer_key(xml: &str) -> (Vec<PublishedObject>, Vec<PublishedRel>) {
@@ -135,7 +132,7 @@ fn read_answer_key(xml: &str) -> (Vec<PublishedObject>, Vec<PublishedRel>) {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 if depth == 1 {
-                    let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                    let tag = start.name().as_ref().to_string();
                     block = Some((tag, Vec::new()));
                 } else if depth == 2 {
                     if let Some((_, interfaces)) = block.as_mut() {

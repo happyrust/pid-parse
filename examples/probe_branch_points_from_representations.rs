@@ -139,7 +139,7 @@ fn reference(xml: &str) -> Reference {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 if depth == 1 {
-                    block = Some(String::from_utf8_lossy(start.name().as_ref()).into_owned());
+                    block = Some(start.name().as_ref().to_string());
                     current = None;
                     rel_uid.clear();
                     rel_uid1.clear();
@@ -149,20 +149,20 @@ fn reference(xml: &str) -> Reference {
                 depth += 1;
             }
             Ok(Event::Empty(start)) => {
-                let name = String::from_utf8_lossy(start.name().as_ref()).into_owned();
-                let attr = |key: &[u8]| {
-                    start.attributes().flatten().find_map(|a| {
-                        (a.key.as_ref() == key)
-                            .then(|| String::from_utf8_lossy(&a.value).into_owned())
-                    })
+                let name = start.name().as_ref().to_string();
+                let attr = |key: &str| {
+                    start
+                        .attributes()
+                        .flatten()
+                        .find_map(|a| (a.key.as_ref() == key).then(|| a.value.to_string()))
                 };
                 if depth == 2 {
                     if let Some(class) = block.as_deref() {
                         if class == "PIDPipingBranchPoint" || class == "PIDSignalBranchPoint" {
                             if name == "IObject" {
                                 current = Some(RefObject {
-                                    uid: attr(b"UID").unwrap_or_default(),
-                                    name: attr(b"Name").unwrap_or_default(),
+                                    uid: attr("UID").unwrap_or_default(),
+                                    name: attr("Name").unwrap_or_default(),
                                     interfaces: BTreeSet::new(),
                                 });
                             } else if let Some(object) = current.as_mut() {
@@ -170,11 +170,11 @@ fn reference(xml: &str) -> Reference {
                             }
                         } else if class == "Rel" {
                             if name == "IObject" {
-                                rel_uid = attr(b"UID").unwrap_or_default();
+                                rel_uid = attr("UID").unwrap_or_default();
                             } else if name == "IRel" {
-                                rel_uid1 = attr(b"UID1").unwrap_or_default();
-                                rel_uid2 = attr(b"UID2").unwrap_or_default();
-                                rel_def = attr(b"DefUID").unwrap_or_default();
+                                rel_uid1 = attr("UID1").unwrap_or_default();
+                                rel_uid2 = attr("UID2").unwrap_or_default();
+                                rel_def = attr("DefUID").unwrap_or_default();
                             }
                         }
                     }

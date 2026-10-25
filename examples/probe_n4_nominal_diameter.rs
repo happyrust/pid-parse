@@ -204,7 +204,7 @@ fn read_reference(xml: &str) -> HashMap<String, RefValue> {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 if depth == 1 {
-                    class = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                    class = start.name().as_ref().to_string();
                     uid.clear();
                     nominal = None;
                 } else if depth == 2 {
@@ -246,11 +246,11 @@ fn take_nominal(
     uid: &mut String,
     nominal: &mut Option<(String, String)>,
 ) {
-    let interface = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+    let interface = start.name().as_ref().to_string();
     for attribute in start.attributes().flatten() {
-        let name = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
+        let name = attribute.key.as_ref().to_string();
         let value = attribute
-            .unescape_value()
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map(std::borrow::Cow::into_owned)
             .unwrap_or_default();
         if interface == "IObject" && name == "UID" {

@@ -1487,7 +1487,7 @@ fn read_publish_document(xml: &str) -> PublishBlocks {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 if depth == 1 {
-                    let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                    let tag = start.name().as_ref().to_string();
                     block = Some((tag, Vec::new()));
                 } else if depth == 2 {
                     push_interface(&start, &mut block);
@@ -1518,15 +1518,15 @@ fn push_interface(start: &BytesStart<'_>, block: &mut Option<InterfaceBlock>) {
     let Some((_, interfaces)) = block.as_mut() else {
         return;
     };
-    let interface = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+    let interface = start.name().as_ref().to_string();
     let pairs = start
         .attributes()
         .flatten()
         .map(|attribute| {
             (
-                String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
+                attribute.key.as_ref().to_string(),
                 attribute
-                    .unescape_value()
+                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                     .map(std::borrow::Cow::into_owned)
                     .unwrap_or_default(),
             )
