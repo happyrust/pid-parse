@@ -177,9 +177,13 @@ struct Report {
     outside: Vec<String>,
 }
 
-/// Left/bottom/right/top margins from the ink to the declared page edges.
+/// Left/bottom/right/top margins from the ink to the page edges.
+///
+/// The page is the one the PDF gets — stated, or measured for the four
+/// drawings that state none — so those four are measured against their paper
+/// rather than skipped.
 fn ink_margins(model: &PaperModel) -> Option<[f64; 4]> {
-    let [width, height] = model.page_mm?;
+    let [width, height] = model.resolved_page_mm()?;
     let mut min = [f64::MAX; 2];
     let mut max = [f64::MIN; 2];
     let mut grow = |point: [f64; 2]| {
@@ -369,7 +373,7 @@ fn audit(name: String, model: &PaperModel) -> Report {
             }
         }
     }
-    if let Some([width, height]) = model.page_mm {
+    if let Some([width, height]) = model.resolved_page_mm() {
         for primitive in &model.primitives {
             let points = shape_points(&primitive.shape);
             let over = points.iter().any(|point| {
@@ -414,7 +418,7 @@ fn audit(name: String, model: &PaperModel) -> Report {
     }
     Report {
         name,
-        page: model.page_mm,
+        page: model.resolved_page_mm(),
         primitives: model.primitives.len(),
         duplicates,
         duplicate_samples,

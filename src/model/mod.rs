@@ -2939,7 +2939,7 @@ fn default_sheet_record_schema_entries() -> Vec<SheetRecordSchemaEntry> {
             "primitive_arc",
             SheetRecordKind::PrimitiveArc,
             SheetRecordSchemaStatus::Typed,
-            "Decoded Sheet arc primitive with center, radius, and absolute start/end angles; flag 0 sweeps clockwise and flag 1 counter-clockwise (docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md).",
+            "Decoded Sheet arc primitive with center, radius, and absolute start/end angles; the arc sweeps clockwise start to end.",
             &["center", "radius", "start_angle", "end_angle"],
             &[SheetDecodedGeometryKind::Arc],
             false,

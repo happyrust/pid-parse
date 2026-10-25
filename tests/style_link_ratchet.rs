@@ -240,13 +240,28 @@ fn read_stream(cfb: &mut CompoundFile<std::fs::File>, path: &str) -> Option<Vec<
     Some(data)
 }
 
+/// A walked stream's path in the form this crate keys on.
+///
+/// `cfb::Entry::path()` joins with the platform separator, so a nested stream
+/// arrives as `/JSite145\StyleCluster` on Windows and
+/// `/JSite145/StyleCluster` elsewhere. Every path this crate builds by hand is
+/// `/`-separated — `streams::jsite` formats `/JSite<n>/StyleCluster` itself and
+/// [`storage_of_sheet`] splits on `/` — so a walk that kept the native form
+/// made the filters below platform-dependent. Splitting on `/` alone left a
+/// Windows nested stream whole, and a filter that means "every
+/// `StyleCluster`" quietly meant "the root one": the seven nested clusters
+/// and their 55 names were walked on Linux and skipped on Windows.
+fn stream_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 fn tally(path: &Path) -> Option<Tally> {
     let file = std::fs::File::open(path).ok()?;
     let mut cfb = CompoundFile::open(file).ok()?;
     let sheet_paths: Vec<String> = cfb
         .walk()
         .filter(cfb::Entry::is_stream)
-        .map(|e| e.path().to_string_lossy().into_owned())
+        .map(|e| stream_path(e.path()))
         .filter(|p| p.rsplit('/').next().unwrap_or("").starts_with("Sheet"))
         .collect();
 
@@ -606,7 +621,7 @@ fn a_second_line_and_a_widened_spacing_are_the_same_labels() {
         let sheet_paths: Vec<String> = cfb
             .walk()
             .filter(cfb::Entry::is_stream)
-            .map(|e| e.path().to_string_lossy().into_owned())
+            .map(|e| stream_path(e.path()))
             .filter(|p| p.rsplit('/').next().unwrap_or("").starts_with("Sheet"))
             .collect();
         for sheet_path in &sheet_paths {
@@ -774,7 +789,7 @@ fn no_key_is_shared_by_records_that_ask_for_different_styles() {
         let sheet_paths: Vec<String> = cfb
             .walk()
             .filter(cfb::Entry::is_stream)
-            .map(|e| e.path().to_string_lossy().into_owned())
+            .map(|e| stream_path(e.path()))
             .filter(|p| p.rsplit('/').next().unwrap_or("").starts_with("Sheet"))
             .collect();
         for sheet_path in &sheet_paths {
@@ -914,9 +929,20 @@ fn every_normalized_line_entity_finds_its_style_by_stream_and_oid() {
 /// that come with them (`Primary Piping - New`, `Electric Signal`, …) are the
 /// drawing's own words for what each line *is*, and they are pinned here so
 /// they cannot quietly stop resolving.
+///
+/// Two kinds of document are walked, and their names are counted apart. A
+/// drawing's own `/StyleCluster` is the table its sheets resolve against: the
+/// project standard's names, statuses and disciplines. A `/JSite<n>/`
+/// `StyleCluster` is a nested document whose styles govern the symbol bodies
+/// in its `PSMcluster0`, and it states the older librarian shape — `Styles.pid`
+/// and a plain palette (`Normal`, `Dashed`, `Dash Dot`, …) with no status and
+/// no discipline in it. The corpus is 92 and 55. Pooling them would let a walk
+/// that reached only the root clusters (which is what a `/`-only split of a
+/// Windows path does) pass as a drawing whose vocabulary had shrunk.
 #[test]
 fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
-    let mut named = 0usize;
+    let mut sheet_named = 0usize;
+    let mut nested_named = 0usize;
     let mut family_stated = 0usize;
     let mut statuses: BTreeMap<String, usize> = BTreeMap::new();
     let mut disciplines: BTreeMap<String, usize> = BTreeMap::new();
@@ -933,7 +959,7 @@ fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
         let cluster_paths: Vec<String> = cfb
             .walk()
             .filter(cfb::Entry::is_stream)
-            .map(|e| e.path().to_string_lossy().into_owned())
+            .map(|e| stream_path(e.path()))
             .filter(|p| p.rsplit('/').next().unwrap_or("") == "StyleCluster")
             .collect();
 
@@ -942,11 +968,16 @@ fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
                 continue;
             };
             let table = DocumentStyleTable::from_stylecluster_bytes(&bytes);
+            let named = if storage_of_sheet(cluster_path) == "/" {
+                &mut sheet_named
+            } else {
+                &mut nested_named
+            };
             for record in table.records() {
                 let Some(name) = record.name.as_deref() else {
                     continue;
                 };
-                named += 1;
+                *named += 1;
                 if let Some(family) = record.librarian_family {
                     family_stated += 1;
                     assert_eq!(
@@ -970,9 +1001,17 @@ fn the_librarian_names_every_style_it_reaches_without_crossing_families() {
         return;
     }
 
-    assert_eq!(named, 92, "styles the librarian names across the corpus");
     assert_eq!(
-        family_stated, named,
+        sheet_named, 92,
+        "styles the drawings' own librarians name across the corpus"
+    );
+    assert_eq!(
+        nested_named, 55,
+        "styles the nested documents' librarians name across the corpus"
+    );
+    assert_eq!(
+        family_stated,
+        sheet_named + nested_named,
         "every named style should carry the family its librarian entry states"
     );
     let status_names: Vec<&str> = statuses.keys().map(String::as_str).collect();
@@ -1030,13 +1069,22 @@ const EXPECTED_STYLE_LIBRARY: [(&str, &str); 4] = [
     ),
 ];
 
+/// The source a nested document's librarian states: version 1, the name alone.
+///
+/// A `/JSite<n>/` `StyleCluster` governs the symbol bodies in its
+/// `PSMcluster0`, not any sheet of its own, and every one of the seven on this
+/// corpus names `Styles.pid` with no path behind it.
+const NESTED_STYLE_LIBRARY: &str = "Styles.pid";
+
 /// A drawing says which standard it was drawn against.
 ///
-/// The librarian closes with an object that states its own version: a sheet's
-/// cluster states version 2, the name `Styles.pid` plus the `.SPP` file behind
-/// it, and this asserts the file. Every cluster in every fixture is checked,
-/// not just the first, so a reader that found the right text in the wrong
-/// place would have to be wrong the same way everywhere to stay green.
+/// The librarian closes with an object that states its own version: a
+/// drawing's own cluster states version 2 — the name `Styles.pid` plus the
+/// `.SPP` file behind it — and this asserts the file. A nested document's
+/// states version 1, which carries the name alone. Every cluster in every
+/// fixture is checked, not just the first, so a reader that found the right
+/// text in the wrong place would have to be wrong the same way everywhere to
+/// stay green.
 #[test]
 fn a_style_cluster_names_the_library_it_was_read_from() {
     let mut fixtures_seen = 0usize;
@@ -1052,7 +1100,7 @@ fn a_style_cluster_names_the_library_it_was_read_from() {
         let cluster_paths: Vec<String> = cfb
             .walk()
             .filter(cfb::Entry::is_stream)
-            .map(|e| e.path().to_string_lossy().into_owned())
+            .map(|e| stream_path(e.path()))
             .filter(|p| p.rsplit('/').next().unwrap_or("") == "StyleCluster")
             .collect();
 
@@ -1061,9 +1109,16 @@ fn a_style_cluster_names_the_library_it_was_read_from() {
                 continue;
             };
             let table = DocumentStyleTable::from_stylecluster_bytes(&bytes);
+            // The root cluster is the drawing's own; a `/JSite<n>/` one is a
+            // nested document, and its librarian states the older version.
+            let expected = if storage_of_sheet(cluster_path) == "/" {
+                *expected_source
+            } else {
+                NESTED_STYLE_LIBRARY
+            };
             assert_eq!(
                 table.style_library_source(),
-                Some(*expected_source),
+                Some(expected),
                 "{fixture} {cluster_path}"
             );
         }
@@ -1162,7 +1217,7 @@ fn the_file_level_name_index_answers_the_join_a_renderer_makes() {
         let sheet_paths: Vec<String> = cfb
             .walk()
             .filter(cfb::Entry::is_stream)
-            .map(|e| e.path().to_string_lossy().into_owned())
+            .map(|e| stream_path(e.path()))
             .filter(|p| p.rsplit('/').next().unwrap_or("").starts_with("Sheet"))
             .collect();
 
@@ -1273,7 +1328,7 @@ fn the_authored_name_cuts_the_drawing_where_width_and_colour_cannot() {
         let sheet_paths: Vec<String> = cfb
             .walk()
             .filter(cfb::Entry::is_stream)
-            .map(|e| e.path().to_string_lossy().into_owned())
+            .map(|e| stream_path(e.path()))
             .filter(|p| p.rsplit('/').next().unwrap_or("").starts_with("Sheet"))
             .collect();
 

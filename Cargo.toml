@@ -183,6 +183,10 @@ name = "backup_zip_index_real_files"
 required-features = ["backup-exp"]
 
 [[test]]
+name = "cli_help_streams"
+required-features = ["backup"]
+
+[[test]]
 name = "inspect_cli"
 required-features = ["backup"]
 

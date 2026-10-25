@@ -61,10 +61,14 @@ fn five_drawings_round_trip_through_pdf() {
         std::fs::write(&out, &pdf)
             .unwrap_or_else(|error| panic!("write {}: {error}", out.display()));
         let ink = read_plot(&pdf).unwrap_or_else(|error| panic!("{name}: {error}"));
-        if let Some(page) = model.page_mm {
-            assert!((ink.page_mm[0] - page[0]).abs() < 0.05, "{name} width");
-            assert!((ink.page_mm[1] - page[1]).abs() < 0.05, "{name} height");
-        }
+        // `换热器CD` states no page, so the model resolves one (A1, by the ink
+        // it carries). Either way this is the number the PDF must read back
+        // at; a drawing whose sheet is measured is not exempt from it.
+        let page = model
+            .resolved_page_mm()
+            .unwrap_or_else(|| panic!("{name}: the model resolved no page"));
+        assert!((ink.page_mm[0] - page[0]).abs() < 0.05, "{name} width");
+        assert!((ink.page_mm[1] - page[1]).abs() < 0.05, "{name} height");
         let expected = stroked_segments(model);
         assert_eq!(
             ink.segments.len(),

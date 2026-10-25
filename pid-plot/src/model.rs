@@ -18,9 +18,12 @@
 use std::path::{Path, PathBuf};
 
 use pid_parse::style_link::{
-    LineStyleIndex, ResolvedLineStyle, ResolvedTextStyle, TextAlignment, TextStyleIndex,
+    LineStyleIndex, MarkerStroke, ResolvedLineStyle, ResolvedTextStyle, TextAlignment,
+    TextStyleIndex,
 };
-use pid_parse::symbol_library::{PrimitiveStyle, SymbolLettering, SymbolLibrary, SymbolPrimitive};
+use pid_parse::symbol_library::{
+    NameMiss, PrimitiveStyle, SymbolLettering, SymbolLibrary, SymbolPrimitive,
+};
 use pid_parse::{
     NormalizedPidGeometry, PidDocument, PidGeometryConfidence, PidGraphicEntity, PidGraphicKind,
     PidParser, SheetRecordKind, build_normalized_geometry,
@@ -96,6 +99,197 @@ pub struct BorderTemplate {
     pub extent_mm: [f64; 2],
     /// How many primitives the template contributed, labels included.
     pub primitives: usize,
+    /// Every symbol the template places, with what drew it.
+    ///
+    /// The page keeps a tally of its own for the template's placements — a
+    /// template's missing `.sym` files are not the drawing's — so this is
+    /// where those misses are read. A placement drawn from
+    /// [`SymbolBodySource::Cached`] with
+    /// [`TemplateSymbol::library_available`] `false` is a symbol whose only
+    /// source is the template's own copy: leftover reference ink there is a
+    /// missing source, not a decoding error.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub symbols: Vec<TemplateSymbol>,
+}
+
+/// What a placement's strokes were drawn from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolBodySource {
+    /// The `.sym` the placement names, as the symbol library read it.
+    Library,
+    /// The body the file itself carries — the placement's own
+    /// `(JSheet, LdcSite)` pair, resolved against the file's definition cache.
+    Cached,
+    /// Neither body: nothing was drawn, and the page carries a box where the
+    /// placement stood.
+    Missing,
+}
+
+/// One symbol a page placed, and what drew it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TemplateSymbol {
+    /// Symbol path the placement names, spelled as the file stores it.
+    ///
+    /// Usually share-relative (`Temp\BLFH.sym`), but a title-block placement
+    /// authored on the engineer's own machine stores an absolute local path
+    /// (`c:\users\…\temp\blfh.sym`). The library has no root to address that
+    /// with, so such a path resolves by file name instead — a share holding
+    /// exactly one `<name>.sym` supplies the body — and misses when it holds
+    /// none or several — see [`SymbolBodySource`].
+    pub key: String,
+    /// Placement point, paper millimetres.
+    pub insertion_mm: [f64; 2],
+    /// Which body the strokes came from.
+    pub body: SymbolBodySource,
+    /// Whether the `.sym` the placement names also resolved in the library.
+    ///
+    /// `false` beside [`SymbolBodySource::Cached`] is the case worth an
+    /// account: the page draws the file's cache of a symbol whose library copy
+    /// is gone, so a difference from the reference plot there is a source the
+    /// corpus does not carry rather than a decoding error. (When both bodies
+    /// exist the cache is still the one drawn — see [`push_symbol_instance`] —
+    /// so `true` here does not mean the `.sym` was used.) A placement naming an
+    /// author-machine path counts as available only when a root holds one
+    /// `.sym` of that file name; several is a refusal, not a pick.
+    pub library_available: bool,
+    /// Extent the drawn strokes reach, paper millimetres; `None` when nothing
+    /// was drawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extent_mm: Option<[[f64; 2]; 2]>,
+    /// Why a placement that names no share got no body by file name, when the
+    /// file name is the reason.
+    ///
+    /// `NoSuchFile` is a source the corpus does not carry. `NotUnique` is not:
+    /// the library holds that file name more than once and refuses to pick, so
+    /// the ink is a refusal rather than a missing file. `None` beside
+    /// [`SymbolBodySource::Cached`] with
+    /// [`TemplateSymbol::library_available`] `false` is the remaining case — no
+    /// share in the path and no decoded body under that name either.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_gap: Option<NameMiss>,
+}
+
+/// Half-size of the box a placement that drew nothing leaves behind.
+const MISSING_BOX_HALF_MM: f64 = 15.0;
+
+/// The five ISO A-series sheets, portrait (short side first), millimetres.
+///
+/// A drawing that states no page falls back to one of these rather than to its
+/// ink's own box, so a page whose sheet the file never records still lands on
+/// paper a plotter has ([`PaperModel::resolved_page_mm`]).
+pub const STANDARD_SHEETS_MM: [[f64; 2]; 5] = [
+    [297.0, 210.0],
+    [420.0, 297.0],
+    [594.0, 420.0],
+    [841.0, 594.0],
+    [1189.0, 841.0],
+];
+
+/// How far past a standard sheet's edge ink may reach and still be called that
+/// sheet, millimetres.
+///
+/// The plant backup carries sheets whose stated frame is `594.33 × 420.57` or
+/// `841.15 × 594.40`; those state their own page, so this slack only ever
+/// matters for a drawing that states none.
+const SHEET_FIT_SLACK_MM: f64 = 5.0;
+
+impl PaperModel {
+    /// The border-template placement that owns `point_mm`, grown by
+    /// `slack_mm` on every side.
+    ///
+    /// A placement that drew owns the extent its strokes reach; one that drew
+    /// nothing owns the box the page puts where it stood, which is the same
+    /// 15 mm half-size [`MissingSymbolBox`] uses.
+    pub fn template_symbol_at(&self, point_mm: [f64; 2], slack_mm: f64) -> Option<&TemplateSymbol> {
+        self.template.as_ref()?.symbols.iter().find(|symbol| {
+            let [min, max] = symbol.extent_mm.unwrap_or_else(|| {
+                [
+                    [
+                        symbol.insertion_mm[0] - MISSING_BOX_HALF_MM,
+                        symbol.insertion_mm[1] - MISSING_BOX_HALF_MM,
+                    ],
+                    [
+                        symbol.insertion_mm[0] + MISSING_BOX_HALF_MM,
+                        symbol.insertion_mm[1] + MISSING_BOX_HALF_MM,
+                    ],
+                ]
+            });
+            point_mm[0] >= min[0] - slack_mm
+                && point_mm[0] <= max[0] + slack_mm
+                && point_mm[1] >= min[1] - slack_mm
+                && point_mm[1] <= max[1] + slack_mm
+        })
+    }
+
+    /// The page the PDF will be given.
+    ///
+    /// A drawing that states its sheet — a decoded `igSmartFrame2d` whose
+    /// extent is the page, or a template name — has that sheet here, exactly as
+    /// [`PaperModel::page_mm`] reports it. One that states none is measured
+    /// instead: the smallest [`STANDARD_SHEETS_MM`] sheet its ink fits, and only
+    /// when it fits none of them its ink's own box. Four drawings across the
+    /// plant backup and the five-drawing corpus take that path (their `.pid`
+    /// carries neither a frame nor a template name); the rule is stated once,
+    /// here, so the writer and every gate agree on the same number.
+    ///
+    /// `None` means the drawing states no page **and** has no ink to measure.
+    #[must_use]
+    pub fn resolved_page_mm(&self) -> Option<[f64; 2]> {
+        if let Some(page) = self.page_mm {
+            return Some(page);
+        }
+        let mut max_x = 0.0_f64;
+        let mut max_y = 0.0_f64;
+        let mut any = false;
+        for primitive in &self.primitives {
+            for point in extent_points(&primitive.shape) {
+                if !(point[0].is_finite() && point[1].is_finite()) {
+                    continue;
+                }
+                any = true;
+                max_x = max_x.max(point[0]);
+                max_y = max_y.max(point[1]);
+            }
+        }
+        if !any {
+            return None;
+        }
+        for sheet in STANDARD_SHEETS_MM {
+            for page in [sheet, [sheet[1], sheet[0]]] {
+                if max_x <= page[0] + SHEET_FIT_SLACK_MM && max_y <= page[1] + SHEET_FIT_SLACK_MM {
+                    return Some(page);
+                }
+            }
+        }
+        Some([max_x.ceil().max(1.0), max_y.ceil().max(1.0)])
+    }
+}
+
+/// Every point a primitive defines that can set the page's extent.
+///
+/// A circle or arc contributes its bounding box, not its centre: the ink runs
+/// to `center ± radius`. Text contributes its insertion point, which is the
+/// only position the shape carries.
+fn extent_points(shape: &PaperShape) -> Vec<[f64; 2]> {
+    match shape {
+        PaperShape::Line { start_mm, end_mm } => vec![*start_mm, *end_mm],
+        PaperShape::Polyline { points_mm, .. } => points_mm.clone(),
+        PaperShape::Arc {
+            center_mm,
+            radius_mm,
+            ..
+        }
+        | PaperShape::Circle {
+            center_mm,
+            radius_mm,
+        } => vec![
+            [center_mm[0] - radius_mm, center_mm[1] - radius_mm],
+            [center_mm[0] + radius_mm, center_mm[1] + radius_mm],
+        ],
+        PaperShape::Fill { chain_mm, .. } => chain_mm.clone(),
+        PaperShape::Text { origin_mm, .. } => vec![*origin_mm],
+    }
 }
 
 /// A 30 mm square around a symbol the library did not draw.
@@ -637,6 +831,24 @@ fn suppressed_from_plot(entity: &PidGraphicEntity) -> bool {
 /// ([`load_border_template`]). Its furniture goes onto the page before the
 /// drawing's own records, so content inks over the frame rather than under it.
 pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperModelError> {
+    let (roots, library) = symbol_library(corpus);
+    lay_out_with_symbol_roots(pid, corpus, roots, &library)
+}
+
+/// [`lay_out_drawing`], with where the symbol library lives stated instead of
+/// discovered.
+///
+/// The roots are normally found from the corpus (see `symbol_library`); a
+/// caller that knows them — a probe comparing two copies, or a test that must
+/// not depend on what happens to be installed — says so here. `library` is the
+/// label the page reports for those roots.
+pub fn lay_out_with_symbol_roots(
+    pid: &Path,
+    corpus: &Path,
+    roots: Vec<PathBuf>,
+    library: &[String],
+) -> Result<PaperModel, PaperModelError> {
+    let mut symbols = SymbolLibrary::with_roots(roots);
     let doc = PidParser::new()
         .parse_file(pid)
         .map_err(|error| PaperModelError {
@@ -646,16 +858,11 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
     let line_styles = pid_parse::style_link::line_styles_for_document(&doc);
     let fill_styles = pid_parse::style_link::fill_styles_for_document(&doc);
     let geometry = build_normalized_geometry(&doc);
-    let (roots, library) = symbol_library(corpus);
-    let mut symbols = SymbolLibrary::with_roots(roots);
     let page_mm = geometry
         .page_dimensions_mm
         .map(|(width, height)| [width, height]);
     let mut primitives = Vec::new();
-    let mut referenced = std::collections::BTreeSet::new();
-    let mut found = std::collections::BTreeSet::new();
-    let mut missing = std::collections::BTreeSet::new();
-    let mut missing_boxes = Vec::new();
+    let mut placements = SymbolPlacements::default();
     let mut seen_sheet_fills = std::collections::HashSet::new();
 
     // The sheet's furniture is not in the `.pid`: the border is a linked OLE
@@ -671,7 +878,28 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
         let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
         let template_fills = pid_parse::style_link::fill_styles_for_document(&furniture.doc);
         let before = primitives.len();
+        // One tally for the whole template, kept rather than dropped: which of
+        // its placements had to be drawn from the cache, and which found
+        // nothing at all, is the account this page carries.
+        let mut furniture_placements = SymbolPlacements::default();
         for entity in &furniture.geometry.entities {
+            // A template is a drawing, so a symbol it places draws like any
+            // other: the two `CPE-SQ` templates keep the `比例` value cell's
+            // 5 mm wave in a placement whose body is the `/JSite16` cache.
+            // A tally of its own keeps the template's own `.sym` misses out
+            // of the drawing's report — and out of its missing-symbol boxes.
+            if let PidGraphicKind::SymbolInstance { .. } = entity.kind {
+                push_symbol_instance(
+                    &mut primitives,
+                    entity,
+                    &furniture.geometry,
+                    &mut symbols,
+                    &template_lines,
+                    Some(page),
+                    &mut furniture_placements,
+                );
+                continue;
+            }
             push_furniture_entity(
                 &mut primitives,
                 entity,
@@ -692,6 +920,7 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
             path: furniture.path.display().to_string(),
             extent_mm: furniture.extent_mm,
             primitives: primitives.len() - before,
+            symbols: furniture_placements.placed,
         });
     }
 
@@ -715,76 +944,15 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
             continue;
         }
         match &entity.kind {
-            PidGraphicKind::SymbolInstance {
-                insertion,
-                symbol_path,
-                rotation,
-                scale,
-                definition,
-            } => {
-                let key = symbol_path.as_deref().map(symbol_key);
-                if let Some(key) = key.clone() {
-                    referenced.insert(key);
-                }
-                let body = symbol_path
-                    .as_ref()
-                    .and_then(|path| symbols.resolve(path).cloned());
-                if symbol_path.is_some()
-                    && body.is_some()
-                    && let Some(key) = key.clone()
-                {
-                    found.insert(key);
-                }
-                let placement = Placement {
-                    insertion: [insertion.x, insertion.y],
-                    rotation: *rotation,
-                    scale: *scale,
-                    symbol: symbol_path.clone(),
-                };
-                let placement_style = entity_style(entity, &line_styles);
-                if let Some(definition) =
-                    definition.and_then(|reference| geometry.symbol_definition(reference))
-                {
-                    if symbol_path.is_some()
-                        && body.is_none()
-                        && let Some(key) = key.clone()
-                    {
-                        missing.insert(key);
-                    }
-                    for (primitive, body_style, lettering) in definition.visible_styled() {
-                        push_symbol_primitive(
-                            &mut primitives,
-                            entity,
-                            &placement,
-                            SymbolItem {
-                                shape: primitive,
-                                style: body_style,
-                                lettering,
-                            },
-                            placement_style,
-                            page_mm,
-                        );
-                    }
-                } else if let Some(body) = body {
-                    for styled in body.displayed_primitives() {
-                        push_symbol_primitive(
-                            &mut primitives,
-                            entity,
-                            &placement,
-                            SymbolItem {
-                                shape: &styled.primitive,
-                                style: styled.style.as_ref(),
-                                lettering: styled.lettering.as_ref(),
-                            },
-                            placement_style,
-                            page_mm,
-                        );
-                    }
-                } else if let Some(key) = key {
-                    missing_boxes.push(missing_box(&key, [insertion.x, insertion.y]));
-                    missing.insert(key);
-                }
-            }
+            PidGraphicKind::SymbolInstance { .. } => push_symbol_instance(
+                &mut primitives,
+                entity,
+                &geometry,
+                &mut symbols,
+                &line_styles,
+                page_mm,
+                &mut placements,
+            ),
             _ => push_entity(
                 &mut primitives,
                 entity,
@@ -816,17 +984,222 @@ pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperMod
     }
 
     Ok(PaperModel {
-        library,
+        library: library.to_vec(),
         page_mm,
         template,
         primitives,
         off_sheet_primitives: off_sheet,
         skipped_endpoint_pairs,
-        missing_symbols: missing.into_iter().collect(),
-        missing_boxes,
-        symbols_found: found.len(),
-        symbols_referenced: referenced.len(),
+        missing_symbols: placements.missing.into_iter().collect(),
+        missing_boxes: placements.missing_boxes,
+        symbols_found: placements.found.len(),
+        symbols_referenced: placements.referenced.len(),
     })
+}
+
+/// What a page learns from the placements it expanded: which symbol files it
+/// named, which resolved, which did not, and where a square marks a miss.
+#[derive(Default)]
+struct SymbolPlacements {
+    referenced: std::collections::BTreeSet<String>,
+    found: std::collections::BTreeSet<String>,
+    missing: std::collections::BTreeSet<String>,
+    missing_boxes: Vec<MissingSymbolBox>,
+    /// One entry per placement expanded, in page order: what drew it and where
+    /// its strokes reached. Only a template's are read back
+    /// ([`BorderTemplate::symbols`]).
+    placed: Vec<TemplateSymbol>,
+}
+
+/// Expand one `SymbolInstance` into the strokes of its body.
+///
+/// Two sources, in order: the body embedded in the file — the placement's own
+/// `(definition JSheet, LdcSite)` pair, resolved against the drawing's
+/// definition caches, which is how a symbol survives its `.sym` being absent
+/// (the templates' `C:\…\Temp\BLFH.sym` is long gone) — then the `.sym` the
+/// placement names, from the symbol library. A placement that finds neither
+/// leaves a box where it stood rather than disappearing.
+fn push_symbol_instance(
+    out: &mut Vec<PaperPrimitive>,
+    entity: &PidGraphicEntity,
+    geometry: &NormalizedPidGeometry,
+    symbols: &mut SymbolLibrary,
+    line_styles: &LineStyleIndex,
+    page_mm: Option<[f64; 2]>,
+    tally: &mut SymbolPlacements,
+) {
+    let PidGraphicKind::SymbolInstance {
+        insertion,
+        symbol_path,
+        rotation,
+        scale,
+        definition,
+    } = &entity.kind
+    else {
+        return;
+    };
+    let key = symbol_path.as_deref().map(symbol_key);
+    if let Some(key) = key.clone() {
+        tally.referenced.insert(key);
+    }
+    let body = symbol_path
+        .as_ref()
+        .and_then(|path| symbols.resolve(path).cloned());
+    let name_gap = symbol_path
+        .as_deref()
+        .and_then(|path| symbols.name_miss(path));
+    if symbol_path.is_some()
+        && body.is_some()
+        && let Some(key) = key.clone()
+    {
+        tally.found.insert(key);
+    }
+    let placement = Placement {
+        insertion: [insertion.x, insertion.y],
+        rotation: *rotation,
+        scale: *scale,
+        symbol: symbol_path.clone(),
+    };
+    let placement_style = entity_style(entity, line_styles);
+    let library_available = body.is_some();
+    let before = out.len();
+    let source = if let Some(definition) =
+        definition.and_then(|reference| geometry.symbol_definition(reference))
+    {
+        if symbol_path.is_some()
+            && body.is_none()
+            && let Some(key) = key.clone()
+        {
+            tally.missing.insert(key);
+        }
+        for (primitive, body_style, lettering) in definition.visible_styled() {
+            push_symbol_primitive(
+                out,
+                entity,
+                &placement,
+                SymbolItem {
+                    shape: primitive,
+                    style: body_style,
+                    lettering,
+                },
+                placement_style,
+                page_mm,
+            );
+        }
+        SymbolBodySource::Cached
+    } else if let Some(body) = body {
+        for styled in body.displayed_primitives() {
+            push_symbol_primitive(
+                out,
+                entity,
+                &placement,
+                SymbolItem {
+                    shape: &styled.primitive,
+                    style: styled.style.as_ref(),
+                    lettering: styled.lettering.as_ref(),
+                },
+                placement_style,
+                page_mm,
+            );
+        }
+        SymbolBodySource::Library
+    } else {
+        if let Some(key) = key.clone() {
+            tally
+                .missing_boxes
+                .push(missing_box(&key, [insertion.x, insertion.y]));
+            tally.missing.insert(key);
+        }
+        SymbolBodySource::Missing
+    };
+    if let Some(key) = key {
+        tally.placed.push(TemplateSymbol {
+            key,
+            insertion_mm: [insertion.x * MM_PER_METRE, insertion.y * MM_PER_METRE],
+            body: source,
+            library_available,
+            extent_mm: extent_of(&out[before..]),
+            name_gap,
+        });
+    }
+}
+
+/// Ink extent of a run of page primitives, paper millimetres.
+///
+/// `None` when nothing in the run reaches a finite point — a placement that
+/// drew nothing has no extent, and [`PaperModel::template_symbol_at`] falls
+/// back to the box it left.
+fn extent_of(primitives: &[PaperPrimitive]) -> Option<[[f64; 2]; 2]> {
+    let mut min = [f64::MAX; 2];
+    let mut max = [f64::MIN; 2];
+    let mut seen = false;
+    for primitive in primitives {
+        for point in shape_points(&primitive.shape) {
+            if !finite(point) {
+                continue;
+            }
+            min = [min[0].min(point[0]), min[1].min(point[1])];
+            max = [max[0].max(point[0]), max[1].max(point[1])];
+            seen = true;
+        }
+    }
+    seen.then_some([min, max])
+}
+
+/// The points a shape's ink reaches.
+///
+/// An arc contributes its ends and every quadrant its sweep crosses, so the box
+/// is the ink's and not the whole circle's: a 5° arc is not as big as its
+/// radius.
+fn shape_points(shape: &PaperShape) -> Vec<[f64; 2]> {
+    match shape {
+        PaperShape::Line { start_mm, end_mm } => vec![*start_mm, *end_mm],
+        PaperShape::Arc {
+            center_mm,
+            radius_mm,
+            start_angle,
+            end_angle,
+            clockwise,
+        } => {
+            use std::f64::consts::{FRAC_PI_2, TAU};
+            let sweep = if *clockwise {
+                -(*start_angle - *end_angle).rem_euclid(TAU)
+            } else {
+                (*end_angle - *start_angle).rem_euclid(TAU)
+            };
+            let mut angles = vec![*start_angle, *end_angle];
+            for quarter in 0..4 {
+                let angle = quarter as f64 * FRAC_PI_2;
+                let travelled = if *clockwise {
+                    (*start_angle - angle).rem_euclid(TAU)
+                } else {
+                    (angle - *start_angle).rem_euclid(TAU)
+                };
+                if travelled <= sweep.abs() + 1e-12 {
+                    angles.push(angle);
+                }
+            }
+            angles
+                .into_iter()
+                .map(|angle| {
+                    [
+                        center_mm[0] + radius_mm * angle.cos(),
+                        center_mm[1] + radius_mm * angle.sin(),
+                    ]
+                })
+                .collect()
+        }
+        PaperShape::Circle {
+            center_mm,
+            radius_mm,
+        } => vec![
+            [center_mm[0] - radius_mm, center_mm[1] - radius_mm],
+            [center_mm[0] + radius_mm, center_mm[1] + radius_mm],
+        ],
+        PaperShape::Polyline { points_mm, .. } => points_mm.clone(),
+        PaperShape::Fill { chain_mm, .. } => chain_mm.clone(),
+        PaperShape::Text { origin_mm, .. } => vec![*origin_mm],
+    }
 }
 
 /// How many page diagonals a stroke's own extent may span.
@@ -849,27 +1222,13 @@ fn finite(point: [f64; 2]) -> bool {
 /// the writer clips it into a diagonal across the page that no plot has. Length
 /// is the tell, not position: a real line is at most a few page widths.
 fn beyond_the_sheet(shape: &PaperShape, page: [f64; 2]) -> bool {
-    let points: Vec<[f64; 2]> = match shape {
-        PaperShape::Line { start_mm, end_mm } => vec![*start_mm, *end_mm],
-        PaperShape::Arc {
-            center_mm,
-            radius_mm,
-            ..
-        }
-        | PaperShape::Circle {
-            center_mm,
-            radius_mm,
-        } => {
-            let (centre, radius) = (*center_mm, *radius_mm);
-            vec![
-                [centre[0] - radius, centre[1] - radius],
-                [centre[0] + radius, centre[1] + radius],
-            ]
-        }
-        PaperShape::Polyline { points_mm, .. } => points_mm.clone(),
-        PaperShape::Fill { chain_mm, .. } => chain_mm.clone(),
-        PaperShape::Text { origin_mm, .. } => return !finite(*origin_mm),
-    };
+    // A label's origin may sit past the edge and still letter onto the page —
+    // the anchor decides where the run lands — so only its finiteness is read
+    // here. Every other shape is judged by the ink it reaches.
+    if let PaperShape::Text { origin_mm, .. } = shape {
+        return !finite(*origin_mm);
+    }
+    let points = shape_points(shape);
     if points.iter().any(|point| !finite(*point)) {
         return true;
     }
@@ -1136,11 +1495,16 @@ fn load_border_template(corpus: &Path, page_mm: [f64; 2]) -> Option<BorderTempla
 
 fn missing_box(path: &str, insertion_m: [f64; 2]) -> MissingSymbolBox {
     let origin = [insertion_m[0] * MM_PER_METRE, insertion_m[1] * MM_PER_METRE];
-    const HALF_MM: f64 = 15.0;
     MissingSymbolBox {
         path: path.to_string(),
-        min_mm: [origin[0] - HALF_MM, origin[1] - HALF_MM],
-        max_mm: [origin[0] + HALF_MM, origin[1] + HALF_MM],
+        min_mm: [
+            origin[0] - MISSING_BOX_HALF_MM,
+            origin[1] - MISSING_BOX_HALF_MM,
+        ],
+        max_mm: [
+            origin[0] + MISSING_BOX_HALF_MM,
+            origin[1] + MISSING_BOX_HALF_MM,
+        ],
     }
 }
 
@@ -1616,9 +1980,13 @@ fn push_entity_with(
 
 /// Stamp one complex-dash glyph along `path` at the advance the style
 /// names — the W drawing's hydraulic pipes, which print a `└`/`⊢` mark
-/// once per fitted cell (`round(len / period)`), centred in the cell or at
-/// the segment end for a stub (`cells <= 1`), in an undirected frame so a
-/// reversed pipe run keeps the same tick orientation as a forward run.
+/// once per fitted cell, in an undirected frame so a reversed pipe run keeps
+/// the same tick orientation as a forward run.
+///
+/// Where the glyphs land is [`complex_dash_positions`]'s question: the advance
+/// is divided over the length left once one glyph has been reserved, not over
+/// the whole run, and a run that fits a single glyph keeps the pattern's own
+/// advance instead.
 fn stamp_complex_dash(
     out: &mut Vec<PaperPrimitive>,
     entity: &PidGraphicEntity,
@@ -1636,6 +2004,7 @@ fn stamp_complex_dash(
     if period <= 1e-6 || path_mm.len() < 2 {
         return;
     }
+    let glyph_span = complex_dash_glyph_span_mm(complex.strokes());
     let placement = Placement {
         insertion: [0.0, 0.0],
         rotation: 0.0,
@@ -1659,14 +2028,7 @@ fn stamp_complex_dash(
             dir_tangent
         };
         let left = [-frame_tangent[1], frame_tangent[0]];
-        let cells = (length / period).round() as usize;
-        let positions: Vec<f64> = if cells <= 1 {
-            vec![length]
-        } else {
-            let step = length / cells as f64;
-            (0..cells).map(|cell| (cell as f64 + 0.5) * step).collect()
-        };
-        for at in positions {
+        for at in complex_dash_positions(length, period, glyph_span) {
             let point = [
                 pair[0][0] + dir_tangent[0] * at,
                 pair[0][1] + dir_tangent[1] * at,
@@ -1694,6 +2056,69 @@ fn stamp_complex_dash(
             }
         }
     }
+}
+
+/// How far the glyph reaches along the run it stamps, in millimetres: the
+/// widest tangential extent of any stroke it is drawn from.
+///
+/// The glyph's local `x` is the run's tangent — [`stamp_complex_dash`] maps
+/// `local.0` onto `frame_tangent` — so this is the largest `|end.x − start.x|`
+/// over its non-degenerate strokes. The corpus's hydraulic mark is two parallel
+/// slanted strokes, each 2.5 mm along the run and 2.6 mm across it, so the
+/// glyph claims 2.5 mm — not the 3.6 mm of slash it draws.
+fn complex_dash_glyph_span_mm(strokes: &[MarkerStroke]) -> f64 {
+    strokes
+        .iter()
+        .filter(|mark| !mark.is_degenerate())
+        .map(|mark| (mark.end.0 - mark.start.0).abs() * MM_PER_METRE)
+        .fold(0.0_f64, f64::max)
+}
+
+/// How many copies of the glyph fit along a run of `length_mm`.
+///
+/// The advance is divided over the length that is left once one glyph has been
+/// reserved, so the last cell's mark cannot hang over the end of the run:
+/// `round((L − span) / period)`, never fewer than one. Reserving nothing
+/// (`span = 0`) is the plain `round(L / period)`.
+///
+/// The rule is measured, not assumed: the two corpus runs whose `L / period`
+/// sits just under `3.5` — 37.04 mm (`3.646`) and 36.50 mm (`3.593`) — each
+/// carry three marks on the reference plot, where `round(L / period)` stamps a
+/// fourth; the 28.13 mm run (`2.769`) carries three, where `floor(L / period)`
+/// stamps two. All eight multi-mark runs agree with this rule and no other
+/// candidate does (`docs/analysis/2026-10-24-the-45.8-mm-broken-down.md`).
+fn complex_dash_cells(length_mm: f64, period_mm: f64, glyph_span_mm: f64) -> usize {
+    if period_mm <= 1e-6 {
+        return 1;
+    }
+    let fitted = (length_mm - glyph_span_mm).max(0.0) / period_mm;
+    (fitted.round() as usize).max(1)
+}
+
+/// Where the glyphs land along a run of `length_mm`, measured from its start.
+///
+/// Two or more fitted cells divide the run between them and each glyph sits at
+/// its cell's centre, `(k + 0.5) · L / cells`. A run that fits a **single**
+/// glyph does not divide by one: it keeps the pattern's own advance, so the
+/// glyph sits half a period from the run's start rather than at its end.
+///
+/// That half period is measured, not assumed. The corpus's 10.16 mm advance
+/// stamps its one glyph on the 6.19 mm stubs at 5.08 mm and on the 6.54 mm
+/// stubs at 5.02 mm — `period / 2` within 0.07 mm, where the run's own end is
+/// 1.1–1.5 mm away, and the 13.2 mm the cells rule left over is the uncovered
+/// far half of exactly those ticks (`docs/analysis/2026-10-24-
+/// one-glyph-stubs-centre-a-half-period-in.md`).
+///
+/// The centre is held at or before the run's end: a run shorter than half an
+/// advance has no room for a mark placed a half advance in, and the corpus's
+/// 4.23 mm stub keeps its mark at the end it does reach.
+fn complex_dash_positions(length_mm: f64, period_mm: f64, glyph_span_mm: f64) -> Vec<f64> {
+    let cells = complex_dash_cells(length_mm, period_mm, glyph_span_mm);
+    if cells <= 1 {
+        return vec![(period_mm * 0.5).min(length_mm)];
+    }
+    let step = length_mm / cells as f64;
+    (0..cells).map(|cell| (cell as f64 + 0.5) * step).collect()
 }
 
 #[derive(Clone, Copy)]
@@ -2118,17 +2543,154 @@ fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{label_line_ranges, line_spans, sheet_text_spans};
-    use pid_parse::style_link::TextAlignment;
-    use pid_parse::symbol_library::{SymbolLettering, SymbolPrimitive};
+    use pid_parse::style_link::{MarkerStroke, TextAlignment};
+    use pid_parse::symbol_library::{NameMiss, SymbolLettering, SymbolPrimitive};
     use pid_parse::{
         PidCoordinateContext, PidGeometryConfidence, PidGraphicEntity, PidGraphicKind,
         PidGraphicProvenance, PidPoint, PidSourceLayer,
     };
 
     use super::{
-        PaperShape, PaperTextSpan, Placement, SymbolItem, TextAnchor, TextLine, arc_shape,
-        canonical_rect_chain, place_metres, push_entity, push_symbol_primitive,
+        BorderTemplate, PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, Placement,
+        SymbolBodySource, SymbolItem, TemplateSymbol, TextAnchor, TextLine, arc_shape,
+        canonical_rect_chain, complex_dash_cells, complex_dash_glyph_span_mm,
+        complex_dash_positions, place_metres, push_entity, push_symbol_primitive, shape_points,
     };
+
+    fn stroke(start: (f64, f64), end: (f64, f64)) -> MarkerStroke {
+        MarkerStroke { start, end }
+    }
+
+    /// The corpus's hydraulic glyph, as `probe_complex_dash` reads it off
+    /// `低温分离器A` / `换热器CD`: two parallel slanted strokes, each 2.5 mm
+    /// along the run and 2.6 mm across it.
+    fn hydraulic_glyph() -> [MarkerStroke; 2] {
+        [
+            stroke((-0.0019, -0.0013), (0.0006, 0.0013)),
+            stroke((-0.0006, -0.0013), (0.0019, 0.0013)),
+        ]
+    }
+
+    #[test]
+    fn a_complex_dash_glyph_claims_only_what_it_reaches_along_the_run() {
+        let glyph = hydraulic_glyph();
+        assert!((complex_dash_glyph_span_mm(&glyph) - 2.5).abs() < 1e-9);
+        // A stroke authored backwards reaches just as far.
+        let mirrored = [stroke((0.0019, -0.0013), (-0.0006, 0.0013))];
+        assert!((complex_dash_glyph_span_mm(&mirrored) - 2.5).abs() < 1e-9);
+        // What it does not claim is its own length: 3.6 mm of 45° slash
+        // projects to 2.5 mm of run, which is the room the layout reserves.
+        assert!(glyph[0].length_mm() > 3.5);
+        assert!(complex_dash_glyph_span_mm(&glyph) < glyph[0].length_mm());
+    }
+
+    #[test]
+    fn a_stroke_with_no_length_claims_no_room() {
+        assert_eq!(complex_dash_glyph_span_mm(&[]), 0.0);
+        assert_eq!(
+            complex_dash_glyph_span_mm(&[stroke((0.5, 0.5), (0.5, 0.5))]),
+            0.0
+        );
+    }
+
+    #[test]
+    fn a_run_that_fits_three_glyphs_stamps_three_not_four() {
+        // The two segments this rule was settled on: 37.04 mm (3.646 advances)
+        // and 36.50 mm (3.593) each carry three marks on the reference plot,
+        // where dividing the whole run rounds both up to a fourth.
+        let span = complex_dash_glyph_span_mm(&hydraulic_glyph());
+        for length in [37.04_f64, 36.50] {
+            assert_eq!((length / 10.16).round() as usize, 4);
+            assert_eq!(complex_dash_cells(length, 10.16, span), 3);
+        }
+        // The run just under three advances is why `floor` was the wrong
+        // answer instead: it drops a mark the reference plot carries.
+        assert_eq!((28.13_f64 / 10.16).floor().max(1.0) as usize, 2);
+        assert_eq!(complex_dash_cells(28.13, 10.16, span), 3);
+    }
+
+    #[test]
+    fn the_rest_of_the_multi_mark_runs_keep_their_count() {
+        // 20.052 / 2.212 / 3.405 / 5.322 / 5.107 advances: the reference plot
+        // inks the same count with and without the reserve.
+        let span = complex_dash_glyph_span_mm(&hydraulic_glyph());
+        for (length, cells) in [
+            (203.73_f64, 20_usize),
+            (22.47, 2),
+            (34.60, 3),
+            (54.07, 5),
+            (51.88, 5),
+        ] {
+            assert_eq!(complex_dash_cells(length, 10.16, span), cells);
+            assert_eq!((length / 10.16).round() as usize, cells);
+        }
+    }
+
+    #[test]
+    fn a_stub_shorter_than_one_advance_still_gets_its_single_mark() {
+        // The 6.19 / 5.17 / 4.2 / 3.8 mm stubs are each under one advance, so
+        // the rule reads zero fitted cells and one glyph is stamped.
+        let span = complex_dash_glyph_span_mm(&hydraulic_glyph());
+        for length in [6.19_f64, 5.17, 4.2, 3.8] {
+            assert_eq!(complex_dash_cells(length, 10.16, span), 1);
+        }
+        assert_eq!(complex_dash_cells(0.5, 10.16, span), 1);
+    }
+
+    #[test]
+    fn one_glyph_on_a_stub_sits_half_a_period_in_not_at_the_end() {
+        // `probe_complex_dash_marks` inks the 6.19 mm stubs' tick at 5.08 and
+        // the 6.54 mm stubs' at 5.02 — half the 10.16 mm advance, while the
+        // run's own end is 1.1-1.5 mm further on. The 7.62 mm advance's
+        // 3.83 mm stubs land at 3.81, the same half period, so it is the
+        // advance that anchors the mark and not the run.
+        let span = complex_dash_glyph_span_mm(&hydraulic_glyph());
+        for (length, period, expected) in [
+            (6.19_f64, 10.16_f64, 5.08_f64),
+            (6.54, 10.16, 5.08),
+            (5.17, 10.16, 5.08),
+            (3.83, 7.62, 3.81),
+        ] {
+            let positions = complex_dash_positions(length, period, span);
+            assert_eq!(positions.len(), 1);
+            assert!((positions[0] - expected).abs() < 1e-9);
+        }
+        // A run shorter than half an advance has no room for that, and the
+        // 4.23 mm stub keeps its mark at the end it does reach.
+        for length in [4.23_f64, 4.2, 3.8, 0.5] {
+            assert_eq!(complex_dash_positions(length, 10.16, span), vec![length]);
+        }
+    }
+
+    #[test]
+    fn more_than_one_cell_divides_the_run_between_them() {
+        // The cells stay where the reference inks them: 22.47 mm at 5.61 and
+        // 16.78, 34.60 at 5.81 / 17.41 / 28.92.
+        let span = complex_dash_glyph_span_mm(&hydraulic_glyph());
+        for (length, cells) in [(22.47_f64, 2_usize), (34.60, 3), (36.50, 3), (28.13, 3)] {
+            let step = length / cells as f64;
+            let expected: Vec<f64> = (0..cells).map(|cell| (cell as f64 + 0.5) * step).collect();
+            assert_eq!(complex_dash_positions(length, 10.16, span), expected);
+        }
+        // The longest run keeps one glyph per advance, the first at half of it.
+        let long = complex_dash_positions(203.73, 10.16, span);
+        assert_eq!(long.len(), 20);
+        assert!((long[0] - 5.09).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_glyph_with_no_tangent_extent_leaves_the_advance_alone() {
+        assert_eq!(complex_dash_cells(37.04, 10.16, 0.0), 4);
+    }
+
+    #[test]
+    fn a_zero_advance_never_divides() {
+        assert_eq!(complex_dash_cells(37.04, 0.0, 2.5), 1);
+        assert_eq!(complex_dash_cells(37.04, -1.0, 2.5), 1);
+        // A zero advance never reaches the layout: `stamp_complex_dash`
+        // returns before asking, and half of nothing is pinned to the start.
+        assert_eq!(complex_dash_positions(37.04, 0.0, 2.5), vec![0.0]);
+    }
 
     fn plain_item(shape: &SymbolPrimitive) -> SymbolItem<'_> {
         SymbolItem {
@@ -3210,6 +3772,106 @@ mod tests {
         assert!(!clockwise);
     }
 
+    #[test]
+    fn an_arc_reaches_only_the_quadrants_its_sweep_crosses() {
+        // 10° -> 100° crosses 90° and nothing else: the ink stops at the
+        // quadrant, not at the whole circle the arc belongs to.
+        let shape = PaperShape::Arc {
+            center_mm: [0.0, 0.0],
+            radius_mm: 2.0,
+            start_angle: 10.0_f64.to_radians(),
+            end_angle: 100.0_f64.to_radians(),
+            clockwise: false,
+        };
+        let points = shape_points(&shape);
+        let min = [
+            points.iter().map(|p| p[0]).fold(f64::MAX, f64::min),
+            points.iter().map(|p| p[1]).fold(f64::MAX, f64::min),
+        ];
+        let max = [
+            points.iter().map(|p| p[0]).fold(f64::MIN, f64::max),
+            points.iter().map(|p| p[1]).fold(f64::MIN, f64::max),
+        ];
+        assert!((min[0] + 0.3473).abs() < 0.002, "the 100° end: {min:?}");
+        assert!((min[1] - 0.3473).abs() < 0.002, "the 10° end: {min:?}");
+        assert!((max[0] - 1.9696).abs() < 0.002, "the 10° end: {max:?}");
+        assert!((max[1] - 2.0).abs() < 1e-9, "90° is crossed: {max:?}");
+
+        // A clockwise record takes the other side of the circle: −10° → −100°
+        // crosses −90°, so the ink reaches the bottom instead of the top.
+        let below = PaperShape::Arc {
+            center_mm: [0.0, 0.0],
+            radius_mm: 2.0,
+            start_angle: (-10.0_f64).to_radians(),
+            end_angle: (-100.0_f64).to_radians(),
+            clockwise: true,
+        };
+        let points = shape_points(&below);
+        let low = points.iter().map(|p| p[1]).fold(f64::MAX, f64::min);
+        let high = points.iter().map(|p| p[1]).fold(f64::MIN, f64::max);
+        assert!((low + 2.0).abs() < 1e-9, "the sweep crosses −90°: {low}");
+        assert!(
+            (high + 0.347).abs() < 0.002,
+            "the high end is the −10° end: {high}"
+        );
+    }
+
+    #[test]
+    fn a_cached_only_placement_owns_the_place_it_drew() {
+        // The title block's wave: two arcs of the file's own cache, drawn at
+        // (1100.69, 19.00) mm while the named `.sym` is absent. A residual
+        // inside the ink is the missing source's business, not a decoder's.
+        let model = PaperModel {
+            library: Vec::new(),
+            template: Some(BorderTemplate {
+                path: "CPE-SQ-A0.igr".to_string(),
+                extent_mm: [1189.0, 841.0],
+                primitives: 0,
+                symbols: vec![TemplateSymbol {
+                    key: "Temp\\BLFH.sym".to_string(),
+                    insertion_mm: [1100.6925, 19.0],
+                    body: SymbolBodySource::Cached,
+                    library_available: false,
+                    extent_mm: Some([[1098.39, 18.56], [1103.01, 19.41]]),
+                    name_gap: Some(NameMiss::NoSuchFile),
+                }],
+            }),
+            page_mm: Some([1189.0, 841.0]),
+            primitives: Vec::new(),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let owner = model
+            .template_symbol_at([1100.0, 19.0], 0.5)
+            .expect("inside the wave");
+        assert_eq!(owner.key, "Temp\\BLFH.sym");
+        assert_eq!(owner.body, SymbolBodySource::Cached);
+        assert!(!owner.library_available);
+        assert!(
+            model.template_symbol_at([1100.0, 21.0], 0.5).is_none(),
+            "the box is the ink's, not the whole page"
+        );
+
+        // A placement that drew nothing still owns the box the page leaves.
+        let mut undrawn = model.clone();
+        if let Some(template) = undrawn.template.as_mut() {
+            template.symbols = vec![TemplateSymbol {
+                key: "Gone.sym".to_string(),
+                insertion_mm: [100.0, 100.0],
+                body: SymbolBodySource::Missing,
+                library_available: false,
+                extent_mm: None,
+                name_gap: None,
+            }];
+        }
+        assert!(undrawn.template_symbol_at([112.0, 90.0], 0.0).is_some());
+        assert!(undrawn.template_symbol_at([120.0, 100.0], 0.0).is_none());
+    }
+
     const PI: f64 = std::f64::consts::PI;
 
     #[test]
@@ -3324,5 +3986,60 @@ mod tests {
         );
         assert_eq!(out.len(), 1);
         assert!(matches!(out[0].shape, PaperShape::Fill { .. }));
+    }
+
+    /// The page the PDF gets is the model's own answer: a stated sheet is
+    /// reported unchanged, and a drawing that states none is measured onto a
+    /// standard sheet rather than onto its ink's box.
+    #[test]
+    fn a_measured_page_is_a_standard_sheet_and_a_stated_one_is_reported_as_is() {
+        fn model(page_mm: Option<[f64; 2]>, lines: &[([f64; 2], [f64; 2])]) -> PaperModel {
+            PaperModel {
+                library: Vec::new(),
+                template: None,
+                page_mm,
+                primitives: lines
+                    .iter()
+                    .map(|(start, end)| PaperPrimitive {
+                        shape: PaperShape::Line {
+                            start_mm: *start,
+                            end_mm: *end,
+                        },
+                        stroke: None,
+                        symbol: None,
+                        confidence: "decoded",
+                        stream_path: None,
+                        byte_range: None,
+                        furniture: false,
+                    })
+                    .collect(),
+                off_sheet_primitives: 0,
+                skipped_endpoint_pairs: 0,
+                missing_symbols: Vec::new(),
+                missing_boxes: Vec::new(),
+                symbols_found: 0,
+                symbols_referenced: 0,
+            }
+        }
+
+        // A stated sheet wins even when the ink would fit a smaller one: the
+        // drawing is the authority on its own paper.
+        assert_eq!(
+            model(Some([841.0, 594.0]), &[([10.0, 10.0], [20.0, 20.0])]).resolved_page_mm(),
+            Some([841.0, 594.0])
+        );
+        // No stated sheet, ink that fits A4: A4 is the answer, not the 20 mm box.
+        assert_eq!(
+            model(None, &[([10.0, 10.0], [100.0, 50.0])]).resolved_page_mm(),
+            Some([297.0, 210.0])
+        );
+        // Ink too big for every standard sheet keeps its own box rather than
+        // being squeezed onto the largest one.
+        assert_eq!(
+            model(None, &[([0.0, 0.0], [2000.0, 1500.0])]).resolved_page_mm(),
+            Some([2000.0, 1500.0])
+        );
+        // Neither a sheet nor ink: nothing to put on paper.
+        assert_eq!(model(None, &[]).resolved_page_mm(), None);
     }
 }

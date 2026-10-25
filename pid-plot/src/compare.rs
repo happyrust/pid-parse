@@ -378,195 +378,6 @@ pub fn compare_plots_with_model(
     report
 }
 
-/// One symbol file's share of the extra ink.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ExtraSymbol {
-    /// Symbol file name, not the library path.
-    pub name: String,
-    /// Byte ranges of the strokes that contributed, up to a handful.
-    pub byte_ranges: Vec<[usize; 2]>,
-    /// Ranges past the ones kept in [`Self::byte_ranges`].
-    pub omitted_ranges: usize,
-    /// Millimetres of extra ink attributed to this symbol.
-    pub length_mm: f64,
-}
-
-/// Extra centreline length split into furniture, symbol bodies, and the
-/// sheet's own strokes.
-///
-/// The three lengths sum to [`Self::extra_mm`]. Points inside a template
-/// mask or a missing-symbol box are not extra, same as
-/// [`CompareReport::extra_length_mm`].
-#[derive(Clone, Debug, PartialEq)]
-pub struct ExtraInkPiles {
-    /// Our centreline outside the masks and farther than 0.5 mm from the reference.
-    pub extra_mm: f64,
-    /// Of that, the part whose nearest paper stroke is border furniture.
-    pub furniture_mm: f64,
-    /// Symbol bodies, longest first.
-    pub symbols: Vec<ExtraSymbol>,
-    /// Sheet strokes that are neither furniture nor a symbol body.
-    pub sheet_mm: f64,
-}
-
-/// Split the extra ink the comparison already measures.
-///
-/// Does not change what is drawn. A sample is furniture when the nearest
-/// paper stroke within 15 mm is marked furniture; a symbol when that stroke
-/// names one; otherwise it is the sheet's own line.
-#[must_use]
-pub fn extra_ink_piles(
-    reference: &PlotInk,
-    ours: &PlotInk,
-    template: &[MaskRect],
-    missing: &[MaskRect],
-    model: &PaperModel,
-) -> ExtraInkPiles {
-    let reference_lines = join_centerlines(&reference.segments);
-    let our_joined = join_centerlines(&ours.segments);
-    let fit = fit_lines(&reference_lines, &our_joined);
-    let our_lines: Vec<Line> = our_joined
-        .into_iter()
-        .map(|line| line.mapped(|point| into_reference(point, &fit)))
-        .collect();
-    let reference_index = Grid::new(&reference_lines);
-    let mut tagged: Vec<(Line, StrokeKind)> = Vec::new();
-    for_each_model_line(model, |line, primitive| {
-        tagged.push((line, StrokeKind::of(primitive)));
-    });
-    let stroke_lines: Vec<Line> = tagged.iter().map(|(line, _)| *line).collect();
-    let stroke_index = Grid::new(&stroke_lines);
-
-    let mut furniture_mm = 0.0;
-    let mut sheet_mm = 0.0;
-    let mut symbols: HashMap<String, SymbolBucket> = HashMap::new();
-    for line in &our_lines {
-        let length = line.length();
-        if length < 1e-6 {
-            continue;
-        }
-        let pieces = ((length / SAMPLE_MM).round() as usize).max(1);
-        let weight = length / pieces as f64;
-        for piece in 0..pieces {
-            let t = (piece as f64 + 0.5) / pieces as f64;
-            let point = [
-                line.a[0] + (line.b[0] - line.a[0]) * t,
-                line.a[1] + (line.b[1] - line.a[1]) * t,
-            ];
-            if template.iter().any(|mask| mask.contains(point)) {
-                continue;
-            }
-            let near = reference_index
-                .near(point, COVER_MM)
-                .into_iter()
-                .any(|index| {
-                    dist_point_seg(
-                        point,
-                        reference_index.lines[index].a,
-                        reference_index.lines[index].b,
-                    ) <= COVER_MM
-                });
-            if near || missing.iter().any(|mask| mask.contains(point)) {
-                continue;
-            }
-            match nearest_kind(point, &fit, &stroke_index, &tagged) {
-                StrokeKind::Furniture => furniture_mm += weight,
-                StrokeKind::Sheet => sheet_mm += weight,
-                StrokeKind::Symbol { name, byte_range } => {
-                    let bucket = symbols.entry(name).or_default();
-                    bucket.length_mm += weight;
-                    if let Some(range) = byte_range {
-                        if bucket.byte_ranges.contains(&range) {
-                            continue;
-                        }
-                        if bucket.byte_ranges.len() < 4 {
-                            bucket.byte_ranges.push(range);
-                        } else {
-                            bucket.omitted_ranges += 1;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let mut symbols: Vec<ExtraSymbol> = symbols
-        .into_iter()
-        .map(|(name, bucket)| ExtraSymbol {
-            name,
-            byte_ranges: bucket.byte_ranges,
-            omitted_ranges: bucket.omitted_ranges,
-            length_mm: bucket.length_mm,
-        })
-        .collect();
-    symbols.sort_by(|left, right| right.length_mm.total_cmp(&left.length_mm));
-    let symbol_mm: f64 = symbols.iter().map(|symbol| symbol.length_mm).sum();
-    ExtraInkPiles {
-        extra_mm: furniture_mm + symbol_mm + sheet_mm,
-        furniture_mm,
-        symbols,
-        sheet_mm,
-    }
-}
-
-#[derive(Clone, Default)]
-struct SymbolBucket {
-    length_mm: f64,
-    byte_ranges: Vec<[usize; 2]>,
-    omitted_ranges: usize,
-}
-
-#[derive(Clone)]
-enum StrokeKind {
-    Furniture,
-    Sheet,
-    Symbol {
-        name: String,
-        byte_range: Option<[usize; 2]>,
-    },
-}
-
-impl StrokeKind {
-    fn of(primitive: &PaperPrimitive) -> Self {
-        if primitive.furniture {
-            return Self::Furniture;
-        }
-        if let Some(symbol) = &primitive.symbol {
-            let name = symbol
-                .rsplit(['\\', '/'])
-                .next()
-                .unwrap_or(symbol)
-                .to_string();
-            return Self::Symbol {
-                name,
-                byte_range: primitive.byte_range,
-            };
-        }
-        Self::Sheet
-    }
-}
-
-fn nearest_kind(
-    point_in_ref: [f64; 2],
-    fit: &Fit,
-    stroke_index: &Grid,
-    strokes: &[(Line, StrokeKind)],
-) -> StrokeKind {
-    let point = [
-        fit.scale * point_in_ref[0] + fit.translation_mm[0],
-        fit.scale * point_in_ref[1] + fit.translation_mm[1],
-    ];
-    let mut best: Option<(f64, usize)> = None;
-    for index in stroke_index.near(point, ATTRIB_MM) {
-        let line = strokes[index].0;
-        let distance = dist_point_seg(point, line.a, line.b);
-        if distance <= ATTRIB_MM && best.is_none_or(|(best_distance, _)| distance < best_distance) {
-            best = Some((distance, index));
-        }
-    }
-    best.map(|(_, index)| strokes[index].1.clone())
-        .unwrap_or(StrokeKind::Sheet)
-}
-
 /// Lettering on `model`, in drawing order, including the fields a report can copy.
 #[must_use]
 pub fn text_sources(model: &PaperModel) -> Vec<TextSource> {
@@ -856,7 +667,7 @@ fn solve_fit(pairs: &[([f64; 2], [f64; 2])]) -> Option<Fit> {
     )?;
     let scale = solution[0];
     let translation = [solution[1], solution[2]];
-    if !scale.is_finite() || scale < 0.5 || scale > 1.5 {
+    if !scale.is_finite() || !(0.5..=1.5).contains(&scale) {
         return None;
     }
     let shift = translation[0].hypot(translation[1]);
@@ -892,10 +703,11 @@ fn solve3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> Option<[f64; 3]> {
         a.swap(col, pivot);
         b.swap(col, pivot);
         let diag = a[col][col];
+        let pivot_row = a[col];
         for row in col + 1..3 {
             let factor = a[row][col] / diag;
-            for k in col..3 {
-                a[row][k] -= factor * a[col][k];
+            for (target, source) in a[row][col..3].iter_mut().zip(&pivot_row[col..3]) {
+                *target -= factor * *source;
             }
             b[row] -= factor * b[col];
         }
@@ -1676,17 +1488,19 @@ fn top_groups(groups: HashMap<String, f64>) -> Vec<LengthGroup> {
     groups
 }
 
-fn for_each_model_line(model: &PaperModel, mut visit: impl FnMut(Line, &PaperPrimitive)) {
+fn model_strokes(model: &PaperModel) -> Vec<(Line, String)> {
+    let mut strokes = Vec::new();
     for primitive in &model.primitives {
+        let label = stroke_name(primitive);
         match &primitive.shape {
             PaperShape::Line { start_mm, end_mm } => {
-                visit(
+                strokes.push((
                     Line {
                         a: *start_mm,
                         b: *end_mm,
                     },
-                    primitive,
-                );
+                    label,
+                ));
             }
             PaperShape::Polyline { points_mm, closed } => {
                 let mut points = points_mm.clone();
@@ -1694,13 +1508,13 @@ fn for_each_model_line(model: &PaperModel, mut visit: impl FnMut(Line, &PaperPri
                     points.push(points[0]);
                 }
                 for pair in points.windows(2) {
-                    visit(
+                    strokes.push((
                         Line {
                             a: pair[0],
                             b: pair[1],
                         },
-                        primitive,
-                    );
+                        label.clone(),
+                    ));
                 }
             }
             PaperShape::Arc {
@@ -1718,13 +1532,13 @@ fn for_each_model_line(model: &PaperModel, mut visit: impl FnMut(Line, &PaperPri
                     *clockwise,
                 );
                 for pair in points.windows(2) {
-                    visit(
+                    strokes.push((
                         Line {
                             a: pair[0],
                             b: pair[1],
                         },
-                        primitive,
-                    );
+                        label.clone(),
+                    ));
                 }
             }
             PaperShape::Circle {
@@ -1733,13 +1547,13 @@ fn for_each_model_line(model: &PaperModel, mut visit: impl FnMut(Line, &PaperPri
             } => {
                 let points = crate::write::circle_outline(*center_mm, *radius_mm);
                 for pair in points.windows(2) {
-                    visit(
+                    strokes.push((
                         Line {
                             a: pair[0],
                             b: pair[1],
                         },
-                        primitive,
-                    );
+                        label.clone(),
+                    ));
                 }
             }
             PaperShape::Fill { chain_mm, .. } => {
@@ -1748,25 +1562,18 @@ fn for_each_model_line(model: &PaperModel, mut visit: impl FnMut(Line, &PaperPri
                     points.push(points[0]);
                 }
                 for pair in points.windows(2) {
-                    visit(
+                    strokes.push((
                         Line {
                             a: pair[0],
                             b: pair[1],
                         },
-                        primitive,
-                    );
+                        label.clone(),
+                    ));
                 }
             }
             _ => {}
         }
     }
-}
-
-fn model_strokes(model: &PaperModel) -> Vec<(Line, String)> {
-    let mut strokes = Vec::new();
-    for_each_model_line(model, |line, primitive| {
-        strokes.push((line, stroke_name(primitive)));
-    });
     strokes
 }
 

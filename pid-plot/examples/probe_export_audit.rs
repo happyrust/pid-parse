@@ -238,9 +238,22 @@ fn main() {
         bytes,
     ) in &rows
     {
-        let page = model.page_mm.map_or("none".to_string(), |page| {
-            format!("{:.2}x{:.2}", page[0], page[1])
-        });
+        // The page the PDF got, and whether the drawing stated it: four
+        // drawings in the package state none and are measured instead, which
+        // is a different fact from a page the `.pid` carries.
+        let page = match model.resolved_page_mm() {
+            Some(page) => format!(
+                "{:.2}x{:.2}{}",
+                page[0],
+                page[1],
+                if model.page_mm.is_some() {
+                    ""
+                } else {
+                    " (measured)"
+                }
+            ),
+            None => "none".to_string(),
+        };
         println!(
             "PASS {name}: {page} mm  line {} arc {} circle {} poly {} fill {} text {}  \
              controls {controls} off-sheet {} endpoint-pairs {} inferred {inferred}  \
@@ -265,8 +278,16 @@ fn main() {
         for missing in &model.missing_symbols {
             println!("     {name}: no library file for {missing}");
         }
-        if let (Some(page), Some((min, max))) = (model.page_mm, ink_extent(model)) {
-            let outside = min[0] < 0.0 || min[1] < 0.0 || max[0] > page[0] || max[1] > page[1];
+        if let (Some(page), Some((min, max))) = (model.resolved_page_mm(), ink_extent(model)) {
+            // A micrometre of slack: circle and arc extents are `center ±
+            // radius`, which lands within 3e-5 mm of the page edge on almost
+            // every sheet and would otherwise bury the one real overshoot
+            // (a vertical label 1.55 mm below the page).
+            const SLACK_MM: f64 = 1.0e-3;
+            let outside = min[0] < -SLACK_MM
+                || min[1] < -SLACK_MM
+                || max[0] > page[0] + SLACK_MM
+                || max[1] > page[1] + SLACK_MM;
             if outside {
                 println!("     {name}: ink {min:?}..{max:?} runs past the {page:?} page");
             }
