@@ -142,7 +142,7 @@ cargo run --bin pid_publish_xml -- <backup-dir> --out-dir <dir> --plant P01
 |---|---|---|---|
 | 单张 `.pid` | `pid_publish_xml <file.pid> --out-dir DIR` | `<图名>_Data.xml` + `<图名>_Meta.xml` + `<图名>_Coverage.json` | — |
 | `.pid` + Oracle exp | `pid_publish_xml <file.pid> --oracle-exp <dump> [--datamap <SPPIDDataMap.xml 或含该条目的 zip>] --out-dir DIR` | 同上三件 | — |
-| 备份包目录 | `pid_publish_xml <backup-dir> --out-dir DIR` | Oracle exp：三件；SQL Server MTF：`<图名>_Data.xml` + `<图名>_Meta.xml` 两件 | `_Index.json` |
+| 备份包目录 | `pid_publish_xml <backup-dir> --out-dir DIR` | 三件（Oracle exp 与 SQL Server MTF 同形：`<图名>_Data.xml` + `<图名>_Meta.xml` + `<图名>_Coverage.json`） | `_Index.json` |
 
 - **四个产出文件名**：`_Data.xml`（对象 / 值 / 关系）、`_Meta.xml`（容器与版本元数据）、`_Coverage.json`（逐图覆盖报表）、`_Index.json`（包级索引）。`.pid` 输入与 Oracle exp 备份包的每张图交付就是三件（`_Data.xml` + `_Meta.xml` + `_Coverage.json`）。
 - **SQL Server MTF 的 `Export.dmp`**：默认特性（`backup` ⊃ `backup-mdf`）下先把 MTF 头剥出 MDF，再按数据库线把每条 `T_Drawing` 行发布出来（退出 0）。
