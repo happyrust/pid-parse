@@ -27,18 +27,18 @@
 //! logic (lives behind `geometry.rs`'s `GeometryEmitter` /
 //! `EMITTERS`). The registry only owns cross-cutting wiring facts.
 //!
-//! `SheetRecordSchema` note: the schema contract additionally lists
-//! `primitive_circle` (`igCircle2d`, PSM `0x0059`) as a **planned**
-//! kind with no registry row — per ADR-0003 it only gains a decoder
-//! (and therefore a row here) once the Phase 35-B semantic evidence
-//! gate passes.
+//! `SheetRecordSchema` note: `primitive_circle` (`igCircle2d`, PSM
+//! `0x0059`) gained its registry row once real-sheet evidence landed —
+//! W's `Sheet6` draws its instrument balloons with 17 top-level
+//! `igCircle2d` records whose coordinates land in page space.
 
 use super::sheet::SheetGeometry;
 use crate::parsers::sheet_records::{
-    decode_attribute_fragments, decode_dependency_objects, decode_igboundaries, decode_igbspcurves,
-    decode_igdimensions, decode_iglines, decode_iglinestrings, decode_igpoints,
-    decode_igrectangles, decode_igsymbols, decode_igtextboxes, decode_jstyle_overrides,
-    decode_primitive_lines, decode_smartframes, decode_sub_records_0x0010,
+    decode_attribute_fragments, decode_dependency_objects, decode_igarcs, decode_igboundaries,
+    decode_igbspcurves, decode_igcircles, decode_igdimensions, decode_iglines,
+    decode_iglinestrings, decode_igpoints, decode_igrectangles, decode_igsymbols,
+    decode_igtextboxes, decode_jstyle_overrides, decode_primitive_lines, decode_smartframes,
+    decode_sub_records_0x0010,
 };
 
 /// Byte-audit claim class for a family's decoded byte envelopes.
@@ -209,6 +209,51 @@ pub const SHEET_RECORD_FAMILIES: &[SheetRecordFamily] = &[
         record_count: |geometry| geometry.decoded_igsymbols.len(),
         decoded_ranges: |data| {
             decode_igsymbols(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
+    SheetRecordFamily {
+        name: "igArc2d",
+        type_code: 0x0061,
+        // No drawing sheet of the corpus carries one; the linked border
+        // templates draw their logo and rounded corners with arcs, which
+        // is where the emitter's 18-record evidence comes from.
+        emits_geometry: true,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_igarcs",
+        model_dto: "DecodedIgArc2dRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_igarcs = decode_igarcs(data).into_iter().map(Into::into).collect();
+        },
+        record_count: |geometry| geometry.decoded_igarcs.len(),
+        decoded_ranges: |data| {
+            decode_igarcs(data)
+                .into_iter()
+                .map(|r| r.byte_range)
+                .collect()
+        },
+    },
+    // A sheet-level circle draws directly — a full circle is a leaf
+    // curve nothing else expresses. Sat decode-only until W's Sheet6
+    // proved the page transform applies to them (instrument balloons).
+    SheetRecordFamily {
+        name: "igCircle2d",
+        type_code: 0x0059,
+        emits_geometry: true,
+        trace_class: SheetFamilyTraceClass::Decoded,
+        geometry_field: "decoded_igcircles",
+        model_dto: "DecodedIgCircle2dRecord",
+        decode_into: |data, geometry| {
+            geometry.decoded_igcircles = decode_igcircles(data)
+                .into_iter()
+                .map(super::DecodedIgCircle2dRecord::from)
+                .collect();
+        },
+        record_count: |geometry| geometry.decoded_igcircles.len(),
+        decoded_ranges: |data| {
+            decode_igcircles(data)
                 .into_iter()
                 .map(|r| r.byte_range)
                 .collect()
@@ -467,8 +512,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_fifteen_rows_with_unique_fields() {
-        assert_eq!(SHEET_RECORD_FAMILIES.len(), 15);
+    fn registry_has_seventeen_rows_with_unique_fields() {
+        assert_eq!(SHEET_RECORD_FAMILIES.len(), 17);
         let mut fields: Vec<&str> = SHEET_RECORD_FAMILIES
             .iter()
             .map(|f| f.geometry_field)
@@ -477,7 +522,7 @@ mod tests {
         fields.dedup();
         assert_eq!(
             fields.len(),
-            15,
+            17,
             "every registry row must own a distinct SheetGeometry field"
         );
     }

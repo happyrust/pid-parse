@@ -351,9 +351,11 @@ fn prepare_optional<'conn>(
 ///
 /// Rows with NULL / empty `codelist_number` / `codelist_index` /
 /// `codelist_text` are filtered out to keep the index tight.
-/// Similarly `attribute_codelisted` values of `""` or `"0"` (the
-/// SPPID "no codelist" sentinels) do not register an
-/// attribute-name mapping.
+/// In `attributes`, `attribute_codelisted` is a `"T"` / `"F"` flag
+/// and `attribute_datatype` stores `"C<n>"` (e.g. `"C22"` for
+/// `EquipmentType`, `"C35"` for `NozzleType`); only rows with
+/// `attribute_codelisted = "T"` and a `"C<digits>"` datatype
+/// register an attribute-name mapping.
 pub fn load_codelist_index(conn: &Connection) -> Result<CodelistIndex, PublishError> {
     let mut idx = CodelistIndex::default();
 
@@ -379,24 +381,32 @@ pub fn load_codelist_index(conn: &Connection) -> Result<CodelistIndex, PublishEr
         }
     }
 
-    // attribute_name → codelist_number mapping. The SPPID metadata
-    // uses `attribute_codelisted = "0"` (or empty) to mean "this
-    // attribute is not backed by a codelist"; both sentinels are
-    // filtered out here so `lookup_by_attribute` can trust any
-    // registered mapping.
-    let attributes_sql = "SELECT attribute_name, attribute_codelisted \
+    // attribute_name → codelist_number mapping. In the SPPID metadata
+    // catalog, `attribute_codelisted` is `"T"` / `"F"` and the codelist
+    // number is encoded in `attribute_datatype` as `"C<n>"` (e.g. `"C22"`).
+    let attributes_sql = "SELECT attribute_name, attribute_codelisted, attribute_datatype \
                           FROM attributes";
     if let Some(mut stmt) = prepare_optional(conn, attributes_sql)? {
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let name: Option<String> = row.get(0)?;
-            let codelist_number: Option<String> = row.get(1)?;
-            let (Some(name), Some(codelist_number)) = (name, codelist_number) else {
+            let codelisted: Option<String> = row.get(1)?;
+            let datatype: Option<String> = row.get(2)?;
+            let (Some(name), Some(codelisted), Some(datatype)) = (name, codelisted, datatype)
+            else {
                 continue;
             };
-            if name.is_empty() || codelist_number.is_empty() || codelist_number == "0" {
+            if name.is_empty() || !codelisted.trim().eq_ignore_ascii_case("T") {
                 continue;
             }
+            let Some(codelist_number) = datatype
+                .trim()
+                .strip_prefix('C')
+                .or_else(|| datatype.trim().strip_prefix('c'))
+                .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            else {
+                continue;
+            };
             idx.insert_attribute_mapping(name, codelist_number);
         }
     }
@@ -457,45 +467,14 @@ fn attach_business_columns(
 /// live in both `T_Equipment` — general equipment attributes —
 /// and `T_Vessel` — vessel-specific dimensions), and later rows
 /// overwrite earlier ones on column name collision.
+///
+/// The chain itself lives in the publish item catalog
+/// ([`super::catalog`]); this is the A2 thin adapter keeping the
+/// loader's call sites and tests unchanged.
 pub(super) fn subtables_for_item_type(item_type_name: &str) -> &'static [&'static str] {
-    match item_type_name {
-        // A vessel is an equipment subtype: general equipment
-        // fields first, then vessel-specific fields.
-        "Vessel" => &[
-            "T_PlantItem",
-            "T_Equipment",
-            "T_ProcessEquipment",
-            "T_Vessel",
-        ],
-        "Nozzle" => &["T_PlantItem", "T_EquipComponent", "T_Nozzle"],
-        // `T_Pipeline` carries the line-level business fields
-        // (`OperFluidCode` / `FluidSystem` / `TagSequenceNo` /
-        // `TagSuffix`) that the PIDPipeline writer arm renders.
-        // SPPID stores them under the same `SP_ID` as the owning
-        // PipeRun, so the chain is just another column merge.
-        "PipeRun" => &["T_PlantItem", "T_Connector", "T_PipeRun", "T_Pipeline"],
-        "PipingPoint" => &["T_PipingPoint"],
-        "PipingComp" => &["T_PlantItem", "T_InlineComp", "T_PipingComp"],
-        "Instrument" | "InstrFunction" => &["T_PlantItem", "T_Instrument", "T_InstrFunction"],
-        "Note" | "ItemNote" => &["T_ItemNote"],
-        "Exchanger" => &["T_PlantItem", "T_Equipment", "T_Exchanger"],
-        "Mechanical" => &["T_PlantItem", "T_Equipment", "T_Mechanical"],
-        // A18: `SignalRun` is the signal-side counterpart of
-        // `PipeRun` — T_SignalRun stores the signal-specific
-        // attributes (SignalType / TagSequenceNo / TagSuffix)
-        // while T_Connector carries the standard connector
-        // geometry (start/end items, zero-length flag).
-        // Drives the `write_signal_connector` XML writer arm.
-        "SignalRun" => &["T_PlantItem", "T_Connector", "T_SignalRun"],
-        // Stage-4: branch point types appear in DWG-flavor
-        // plants. The exact subtable chain will be confirmed
-        // when the DWG Export.mdf fixture lands; for now
-        // we attach T_PlantItem (which carries Name) so the
-        // writer has the Name field available for IObject.
-        "BranchPoint" => &["T_PlantItem"],
-        "PipingBranchPoint" => &["T_PlantItem"],
-        _ => &[],
-    }
+    super::catalog::catalog_row(item_type_name)
+        .and_then(|row| row.db_subtables)
+        .unwrap_or(&[])
 }
 
 /// A34c — loader-side inference of each `PipeRun`'s two endpoint
@@ -809,7 +788,7 @@ mod tests {
         conn.execute(
             "CREATE TABLE attributes (\
                 attribute_number TEXT, attribute_name TEXT, \
-                attribute_codelisted TEXT)",
+                attribute_codelisted TEXT, attribute_datatype TEXT)",
             [],
         )
         .expect("create attributes");
@@ -833,25 +812,34 @@ mod tests {
         // Three codelist rows: one valid, one with NULL text,
         // one with empty codelist_number.
         conn.execute(
-            "INSERT INTO codelists VALUES ('28', '0', 'Horizontal Drum', 'HD')",
+            "INSERT INTO codelists VALUES ('22', '241', \
+             '1 diameter, 1 chamber, elliptical head horizontal drum', '1D 1C 2:1 H Drum')",
             [],
         )
         .unwrap();
-        conn.execute("INSERT INTO codelists VALUES ('28', '1', NULL, NULL)", [])
+        conn.execute("INSERT INTO codelists VALUES ('22', '1', NULL, NULL)", [])
             .unwrap();
         conn.execute("INSERT INTO codelists VALUES ('', '2', 'Ghost', 'G')", [])
             .unwrap();
-        // Three attribute rows: one codelisted, one empty sentinel,
-        // one zero sentinel.
+        // Four attribute rows: one codelisted (`T` + `C22`), one `F`
+        // sentinel, one `T` without `C<n>`, and one empty sentinel.
         conn.execute(
-            "INSERT INTO attributes VALUES ('1', 'EquipmentType', '28')",
+            "INSERT INTO attributes VALUES ('1', 'EquipmentType', 'T', 'C22')",
             [],
         )
         .unwrap();
-        conn.execute("INSERT INTO attributes VALUES ('2', 'TagPrefix', '')", [])
-            .unwrap();
         conn.execute(
-            "INSERT INTO attributes VALUES ('3', 'NominalDiameter', '0')",
+            "INSERT INTO attributes VALUES ('2', 'TagPrefix', 'F', 'A')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO attributes VALUES ('3', 'NominalDiameter', 'T', 'N')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO attributes VALUES ('4', 'EmptyFlag', '', 'C22')",
             [],
         )
         .unwrap();
@@ -859,14 +847,18 @@ mod tests {
         let idx = load_codelist_index(&conn).expect("load");
         assert_eq!(idx.entry_count(), 1);
         assert_eq!(idx.attribute_mapping_count(), 1);
-        assert_eq!(idx.lookup("28", "0"), Some("Horizontal Drum"));
         assert_eq!(
-            idx.lookup_by_attribute("EquipmentType", "0"),
-            Some("Horizontal Drum"),
+            idx.lookup("22", "241"),
+            Some("1 diameter, 1 chamber, elliptical head horizontal drum")
+        );
+        assert_eq!(
+            idx.lookup_by_attribute("EquipmentType", "241"),
+            Some("1 diameter, 1 chamber, elliptical head horizontal drum"),
         );
         // Filtered-out attributes did not register a mapping.
         assert!(idx.lookup_by_attribute("TagPrefix", "V").is_none());
         assert!(idx.lookup_by_attribute("NominalDiameter", "250").is_none());
+        assert!(idx.lookup_by_attribute("EmptyFlag", "241").is_none());
     }
 
     /// Seed an in-memory `SQLite` with the `T_PipingPoint` shape so
@@ -973,10 +965,10 @@ mod tests {
     fn load_codelist_index_populates_multiple_entries_in_order_agnostic_way() {
         let conn = setup_codelist_db();
         for (number, index, text) in [
-            ("28", "0", "Horizontal Drum"),
-            ("28", "1", "Vertical Drum"),
-            ("28", "2", "Reactor"),
-            ("14", "0", "Gate Valve"),
+            ("22", "0", "Horizontal Drum"),
+            ("22", "1", "Vertical Drum"),
+            ("22", "2", "Reactor"),
+            ("35", "38", "Flanged Nozzle"),
         ] {
             conn.execute(
                 "INSERT INTO codelists VALUES (?1, ?2, ?3, NULL)",
@@ -985,12 +977,15 @@ mod tests {
             .unwrap();
         }
         conn.execute(
-            "INSERT INTO attributes VALUES ('1', 'EquipmentType', '28')",
+            "INSERT INTO attributes VALUES ('1', 'EquipmentType', 'T', 'C22')",
             [],
         )
         .unwrap();
-        conn.execute("INSERT INTO attributes VALUES ('2', 'ValveType', '14')", [])
-            .unwrap();
+        conn.execute(
+            "INSERT INTO attributes VALUES ('2', 'NozzleType', 'T', 'C35')",
+            [],
+        )
+        .unwrap();
 
         let idx = load_codelist_index(&conn).expect("load");
         assert_eq!(idx.entry_count(), 4);
@@ -1000,8 +995,8 @@ mod tests {
             Some("Reactor"),
         );
         assert_eq!(
-            idx.lookup_by_attribute("ValveType", "0"),
-            Some("Gate Valve"),
+            idx.lookup_by_attribute("NozzleType", "38"),
+            Some("Flanged Nozzle"),
         );
     }
 

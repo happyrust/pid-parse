@@ -123,10 +123,15 @@ fn validate_help_flag_exits_zero_with_usage() {
         .output()
         .expect("spawn --help");
     assert!(output.status.success(), "--help should be exit 0");
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("Usage: pid_writer_validate"),
-        "expected usage text on stderr: {stderr}"
+        stdout.contains("Usage: pid_writer_validate"),
+        "expected usage text on stdout: {stdout}"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "--help is not a diagnostic and must not touch stderr; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

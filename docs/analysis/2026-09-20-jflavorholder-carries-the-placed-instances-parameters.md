@@ -99,3 +99,20 @@ cargo run --example probe_jflavorholder_carries_instance_parameters
 - 模板形为何也叫 flavour holder 而不带值：大概是「flavour = 一组参数值」的空壳，占位等实例化。反汇编 `symbol.dex` 的
   `JFlavorHolder::Load` 可以一次坐实两个变体的每个字段。
 - A01 Horizontal Drum 实例（159.459 × 51.917）未验（夹具不在本仓）。
+
+## 8. 缓存体已烘焙实例值（2026-10-16 补验）
+
+「渲染要不要用实例值重求体几何」这一问可以关掉：**嵌入缓存体本身就是按实例参数画好的**。
+`examples/probe_instance_deltas` 把五张参考图里 `instance_value_m` ≠ `value_m` 的实例连同体包围盒一起列出：
+
+| 实例 | 覆盖值 | 缓存体包围盒 |
+|---|---|---|
+| A `1to1Parametric V Drum` | Right 20.3→26.9, Top 114.3→104.1, Bottom →86.5 | 53.8 mm 宽 |
+| LT 同名 | Right 20.3→**34.2**（其余同 A） | **68.4 mm** 宽 |
+| LT `Parametric Black Box` | Left→0.1, Right→95.6, Top→128.0 | 95.7×140.7 mm（模板默认仅 12.7） |
+| W `Electric Motor Type 1` ×2 | Bottom 7.6→0.9 | 体随实例收窄 |
+
+同一 `V Drum` 模板在 A、LT 两图缓存出不同宽度的体——缓存跟着实例参数走，不是跟着模板走。
+渲染侧（`symbols.rs` 摆 `CachedBody`）因此天然正确，A/LT 封头弧、W 电机与参考逐点对齐。
+`instance_value_m` 的价值在**记录层**（OpenCADStudio 的 `PlacementMeasures` 把 `driving` 与
+`instance` 分两行写进 XDATA），不在几何层。

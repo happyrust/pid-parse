@@ -157,6 +157,17 @@ pub struct PidSymbolDefinition {
     /// (`OpenCADStudio/docs/plans/2026-09-20-a-cached-body-carries-its-own-stroke-styles.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub primitive_styles: Vec<Option<crate::symbol_library::PrimitiveStyle>>,
+    /// The lettering each [`crate::symbol_library::SymbolPrimitive::Text`]
+    /// draws with: parallel to [`Self::primitives`] — same length, same
+    /// order — each entry what the record's own tail states (its anchor byte,
+    /// its direction pair as rotation and any stated height) joined with
+    /// what its style index resolves to in this storage's own
+    /// `StyleCluster` (`doc.style_tables[JSite::path]`), the same vocabulary
+    /// a library body's [`crate::symbol_library::StyledPrimitive::lettering`]
+    /// carries. `None` for every non-text shape, and empty for a body read
+    /// back from before the field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub primitive_letterings: Vec<Option<crate::symbol_library::SymbolLettering>>,
     /// The driving dimensions that constrain this body, in on-disk order.
     /// Not primitives: a dimension is a value the parametric body is
     /// resized by, not a stroke of it, and the file keeps every one on a
@@ -245,6 +256,41 @@ impl PidSymbolDefinition {
                 (
                     primitive,
                     self.primitive_styles.get(index).and_then(Option::as_ref),
+                )
+            })
+    }
+
+    /// The displayed primitives with both symbology answers their own
+    /// storage states for them — the stroke style and, for a
+    /// [`crate::symbol_library::SymbolPrimitive::Text`], the lettering —
+    /// in [`Self::primitives`] order. This is [`Self::visible_strokes`]
+    /// plus the [`Self::primitive_letterings`] lane; a body read back from
+    /// before that field existed answers `None` the way a stroke with no
+    /// style does.
+    pub fn visible_styled(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &crate::symbol_library::SymbolPrimitive,
+            Option<&crate::symbol_library::PrimitiveStyle>,
+            Option<&crate::symbol_library::SymbolLettering>,
+        ),
+    > + '_ {
+        self.primitives
+            .iter()
+            .enumerate()
+            .filter(move |(index, _)| {
+                self.primitive_layers
+                    .get(*index)
+                    .is_none_or(|layer| self.layer_is_displayed(*layer))
+            })
+            .map(move |(index, primitive)| {
+                (
+                    primitive,
+                    self.primitive_styles.get(index).and_then(Option::as_ref),
+                    self.primitive_letterings
+                        .get(index)
+                        .and_then(Option::as_ref),
                 )
             })
     }
@@ -582,11 +628,14 @@ pub enum PidGraphicKind {
         /// Whether the last point connects back to the first.
         closed: bool,
     },
-    /// Circular arc in model space, swept **clockwise** from `start_angle`
-    /// to `end_angle` -- the `igArc2d` convention the cached and library
-    /// bodies prove (`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`);
-    /// no sheet of the corpus carries one directly, so this kind is the
-    /// same record read the same way rather than a measured case.
+    /// Circular arc in model space, from `start_angle` to `end_angle` in
+    /// the direction [`clockwise`](Self::Arc::clockwise) states.
+    ///
+    /// `igArc2d` stores two absolute angles and the direction that picks one
+    /// of the two arcs between them
+    /// (`docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`).
+    /// The two readings are complements: the same endpoints, the rest of the
+    /// circle.
     Arc {
         /// Arc centre point.
         center: PidPoint,
@@ -596,6 +645,10 @@ pub enum PidGraphicKind {
         start_angle: f64,
         /// End angle in radians, counter-clockwise from +X.
         end_angle: f64,
+        /// `true` when the arc runs clockwise from the start angle to the
+        /// end angle, `false` when it runs counter-clockwise. The record's
+        /// trailing byte states it: `0` clockwise, `1` counter-clockwise.
+        clockwise: bool,
     },
     /// Full circle in model space.
     Circle {
@@ -619,6 +672,24 @@ pub enum PidGraphicKind {
         height: f64,
         /// Rotation in radians.
         rotation: f64,
+        /// The record's own text-box anchor code (last byte of the
+        /// `igTextBox` placement trailer): `(code >> 4) % 3` names the
+        /// horizontal hot point the insertion sits at — `0` left, `1`
+        /// centre, `2` right — and `(code & 0x0F) % 3` the vertical one —
+        /// `0` bottom, `1` top, `2` middle. It overrides the paragraph
+        /// style's declared alignment. `0` where the record family does
+        /// not carry one.
+        #[serde(default)]
+        anchor_code: u8,
+        /// Width of the text box the record carries, in source drawing units
+        /// — `None` where it carries none.
+        ///
+        /// A boxed record letters from the box's left edge: `anchor_code`
+        /// still says where inside that box the insertion sits, but the run
+        /// starts at the box's left edge either way. Absent on every record
+        /// whose tail omits the box.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        text_box_width: Option<f64>,
     },
     /// Instance of a reusable `SmartPlant` symbol.
     SymbolInstance {
@@ -1428,7 +1499,7 @@ pub fn build_normalized_geometry(doc: &PidDocument) -> NormalizedPidGeometry {
 /// no elliptical primitive. Order within a body follows the storage: circles,
 /// arcs, lines, polylines, text, B-splines, then elliptical arcs.
 fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
-    use crate::symbol_library::SymbolPrimitive;
+    use crate::symbol_library::{PrimitiveFill, SymbolLettering, SymbolPrimitive};
 
     /// What pairing an instance with its template needs to know about a
     /// body besides the body itself.
@@ -1455,6 +1526,10 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
         // The storage's own layer table: the names and display bits of the
         // symbol-internal layers every body of this cache is drawn on.
         let layer_table = doc.sheet_layers.get(&site.path);
+        // The storage's own style table, as parsed under `/JSite<N>` by
+        // `parse_jsites`: what the text records' style indexes resolve
+        // lettering through.
+        let style_table = doc.style_tables.get(&site.path);
         for definition in &nested.definitions {
             let on_body = |layer: u32| definition.layers.binary_search(&layer).is_ok();
             let sheet_layers: Vec<PidSymbolSheetLayer> = definition
@@ -1470,18 +1545,26 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     }
                 })
                 .collect();
-            // Each primitive with the layer it sits on and the style its
-            // own storage states for it, kept in three parallel lists so
-            // `primitives` stays the slice a library body also is. The
-            // style is the record's `index` looked up in the storage's own
-            // table; lettering names a paragraph style, so it gets none.
+            // Each primitive with the layer it sits on, the style its own
+            // storage states for it, and — for lettering — the lettering
+            // the storage's own table joins to the record's tail, kept in
+            // four parallel lists so `primitives` stays the slice a library
+            // body also is. The style is the record's `index` looked up in
+            // the storage's own table; lettering names a paragraph style,
+            // so it gets none — the paragraph style is the lettering's
+            // own hop instead.
             let mut primitives = Vec::new();
             let mut primitive_layers = Vec::new();
             let mut primitive_styles = Vec::new();
-            let mut push = |primitive: SymbolPrimitive, layer: u32, style_id: Option<u32>| {
+            let mut primitive_letterings = Vec::new();
+            let mut push = |primitive: SymbolPrimitive,
+                            layer: u32,
+                            style_id: Option<u32>,
+                            lettering: Option<SymbolLettering>| {
                 primitives.push(primitive);
                 primitive_layers.push(layer);
                 primitive_styles.push(style_id.and_then(|id| site.stroke_styles.get(&id).cloned()));
+                primitive_letterings.push(lettering);
             };
             for circle in nested.circles.iter().filter(|c| on_body(c.sheet_layer_ref)) {
                 push(
@@ -1491,6 +1574,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     },
                     circle.sheet_layer_ref,
                     Some(circle.index),
+                    None,
                 );
             }
             for arc in nested.arcs.iter().filter(|a| on_body(a.sheet_layer_ref)) {
@@ -1500,9 +1584,11 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         radius: arc.radius,
                         start_angle: arc.start_angle,
                         end_angle: arc.end_angle,
+                        clockwise: arc.flag == 0,
                     },
                     arc.sheet_layer_ref,
                     Some(arc.index),
+                    None,
                 );
             }
             for line in nested.lines.iter().filter(|l| on_body(l.sheet_layer_ref)) {
@@ -1513,6 +1599,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     },
                     line.sheet_layer_ref,
                     Some(line.index),
+                    None,
                 );
             }
             for polyline in nested
@@ -1534,6 +1621,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         },
                         polyline.sheet_layer_ref,
                         Some(polyline.index),
+                        None,
                     );
                 }
             }
@@ -1546,6 +1634,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         },
                         text.sheet_layer_ref,
                         None,
+                        Some(SymbolLettering::from_decoded(text, style_table)),
                     );
                 }
             }
@@ -1564,6 +1653,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     },
                     curve.sheet_layer_ref,
                     Some(curve.index),
+                    None,
                 );
             }
             // Elliptical arcs last, so every body without one keeps its
@@ -1572,17 +1662,24 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
             // consumers), and none is needed: an elliptical arc is a conic,
             // which a rational quadratic B-spline draws exactly. A record
             // that sweeps nothing is left out.
+            //
+            // `flag` picks the half: `0` traverses the parameters clockwise,
+            // `1` counter-clockwise. Both readings are measured — see
+            // `bspline::elliptical_arc_directed`. Without it the diaphragm
+            // actuator's dome came out as the mirror of the one the reference
+            // plot draws, on all five corpus drawings.
             for arc in nested
                 .elliptical_arcs
                 .iter()
                 .filter(|a| on_body(a.sheet_layer_ref))
             {
-                if let Some((poles, weights, knots)) = crate::bspline::elliptical_arc(
+                if let Some((poles, weights, knots)) = crate::bspline::elliptical_arc_directed(
                     (arc.center_x, arc.center_y),
                     (arc.major_x, arc.major_y),
                     arc.ratio,
                     arc.sweep_start,
                     arc.sweep_end,
+                    arc.flag == 0,
                 ) {
                     push(
                         SymbolPrimitive::BSpline {
@@ -1592,8 +1689,62 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         },
                         arc.sheet_layer_ref,
                         Some(arc.index),
+                        None,
                     );
                 }
+            }
+            // Boundaries last, like elliptical arcs: every body without
+            // one keeps its primitive order. A boundary is a filled
+            // region over members that are strokes of the same body —
+            // the flange dots `SmartPlant` prints solid. Its `index`
+            // names a fill-family style, resolved through the storage's
+            // own table; a record whose index names no fill still rides
+            // along with `fill: None` — the region is what it is.
+            // Overlapping boundary records name the same member shapes —
+            // the plug-valve discs are claimed by two records each — and
+            // either fills them identically, so a member another record
+            // already claimed is dropped before the region goes out.
+            let mut seen_boundary_members: std::collections::HashSet<u64> =
+                std::collections::HashSet::new();
+            for boundary in nested
+                .boundaries
+                .iter()
+                .filter(|b| on_body(b.sheet_layer_ref))
+            {
+                let fill = style_table
+                    .and_then(|table| table.resolve_fill(boundary.index))
+                    .map(|resolved| PrimitiveFill::from_resolved(&resolved));
+                let members: Vec<SymbolPrimitive> = boundary
+                    .members
+                    .iter()
+                    .map(|member| match member {
+                        crate::model::IgSymBoundaryMember::Line { start, end } => {
+                            SymbolPrimitive::Line {
+                                start: *start,
+                                end: *end,
+                            }
+                        }
+                        crate::model::IgSymBoundaryMember::Circle { center, radius } => {
+                            SymbolPrimitive::Circle {
+                                center: *center,
+                                radius: *radius,
+                            }
+                        }
+                    })
+                    .filter(|member| {
+                        seen_boundary_members
+                            .insert(crate::symbol_library::boundary_member_key(member, fill))
+                    })
+                    .collect();
+                if members.is_empty() {
+                    continue;
+                }
+                push(
+                    SymbolPrimitive::Boundary { members, fill },
+                    boundary.sheet_layer_ref,
+                    None,
+                    None,
+                );
             }
             // Dimensions are not primitives: they constrain the body
             // rather than draw it. The measured line is looked up in the
@@ -1657,6 +1808,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                     primitives,
                     primitive_layers,
                     primitive_styles,
+                    primitive_letterings,
                     dimensions,
                     variables,
                     template: None,
@@ -2089,6 +2241,13 @@ const EMITTERS: &[&dyn GeometryEmitter] = &[
     // A leaf curve nothing else draws; appended after the historical block
     // so the earlier families keep their golden order.
     &IgBspCurve2dEmitter,
+    // A leaf curve nothing else draws either; appended for the same
+    // golden-order reason. Only the linked border templates carry arcs
+    // today (logo, rounded corners).
+    &IgArc2dEmitter,
+    // Same leaf-curve story: sheet-level circles draw directly. W's
+    // instrument balloons are the first real-sheet evidence.
+    &IgCircle2dEmitter,
     // Audit-only families: explicit no-op policy.
     &IgSmartFrame2dEmitter,
     &DependencyObjectEmitter,
@@ -2222,12 +2381,19 @@ impl GeometryEmitter for IgSymbol2dEmitter {
             ) else {
                 continue;
             };
-            let (rotation, scale) = decompose_placement([
+            let (rotation, mut scale) = decompose_placement([
                 record.transform_00,
                 record.transform_01,
                 record.transform_10,
                 record.transform_11,
             ]);
+            // The record's seventh double is the uniform factor the
+            // parametric body is resized by (`1.0` on nearly every
+            // placement; 0.37–5.63 on the corpus). It multiplies the
+            // linear matrix about the insertion point, so it folds into
+            // both axes — a mirrored scale keeps its sign.
+            scale[0] *= record.uniform_scale;
+            scale[1] *= record.uniform_scale;
             out.push(PidGraphicEntity {
                 id: format!("{}:igsymbol2d:{index}", sheet.path),
                 drawing_id: None,
@@ -2314,8 +2480,15 @@ impl GeometryEmitter for IgTextBoxEmitter {
                         y: record.trailing_double_2,
                     },
                     value: record.text.clone(),
-                    height: 0.0,
+                    // `letter_height_m` is the height the border templates
+                    // state by scaling their direction pair; a normalized
+                    // direction leaves `0.0` and the style join letters the
+                    // run as before.
+                    height: record.letter_height_m,
                     rotation: record.rotation_rad,
+                    anchor_code: record.anchor_code,
+                    text_box_width: (record.text_box_width_m > 0.0)
+                        .then_some(record.text_box_width_m),
                 },
                 coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
@@ -2339,6 +2512,135 @@ impl GeometryEmitter for IgTextBoxEmitter {
                         record.trailing_double_1,
                         record.trailing_double_2,
                         record.trailing_double_3,
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+    }
+}
+
+/// Emits `Decoded` [`PidGraphicKind::Arc`] entities for the
+/// `igArc2d` family (PSM `0x0061`).
+struct IgArc2dEmitter;
+
+impl GeometryEmitter for IgArc2dEmitter {
+    fn family(&self) -> &'static str {
+        "igArc2d"
+    }
+
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_igarcs.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            out.push(PidGraphicEntity {
+                id: format!("{}:igarc2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
+                kind: PidGraphicKind::Arc {
+                    center: PidPoint {
+                        x: record.center_x,
+                        y: record.center_y,
+                    },
+                    radius: record.radius,
+                    start_angle: record.start_angle,
+                    end_angle: record.end_angle,
+                    clockwise: record.flag == 0,
+                },
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igarc2d:{index}")),
+                    record_kind: Some(SheetRecordKind::PrimitiveArc),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igArc2d record (Intergraph Sigma standard arc, \
+                         type 0x0061, IGDS class tag 0x61); oid={} parent_ref={} \
+                         sub_type=0x{:04X} index={} center=({:.4}, {:.4}) \
+                         radius={:.4} start={:.4} end={:.4} direction={}",
+                        record.oid,
+                        record.parent_ref,
+                        record.sub_type_word,
+                        record.index,
+                        record.center_x,
+                        record.center_y,
+                        record.radius,
+                        record.start_angle,
+                        record.end_angle,
+                        if record.flag == 0 {
+                            "clockwise"
+                        } else {
+                            "counter-clockwise"
+                        }
+                    )),
+                },
+                confidence: PidGeometryConfidence::Decoded,
+            });
+        }
+    }
+}
+
+/// Emits `Decoded` [`PidGraphicKind::Circle`] entities for the
+/// `igCircle2d` family (PSM `0x0059`) — the instrument balloons and
+/// sensing-bulb dots W's sheet carries at top level.
+struct IgCircle2dEmitter;
+
+impl GeometryEmitter for IgCircle2dEmitter {
+    fn family(&self) -> &'static str {
+        "igCircle2d"
+    }
+
+    fn emit(&self, ctx: &EmitContext<'_>, sheet: &SheetStream, out: &mut Vec<PidGraphicEntity>) {
+        let Some(geometry) = &sheet.geometry else {
+            return;
+        };
+        for (index, record) in geometry.decoded_igcircles.iter().enumerate() {
+            let Some(byte_range) = source_range(
+                record.byte_start,
+                record.byte_end.saturating_sub(record.byte_start),
+                sheet.size,
+            ) else {
+                continue;
+            };
+            out.push(PidGraphicEntity {
+                id: format!("{}:igcircle2d:{index}", sheet.path),
+                drawing_id: None,
+                graphic_oid: Some(record.oid),
+                source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
+                kind: PidGraphicKind::Circle {
+                    center: PidPoint {
+                        x: record.center_x,
+                        y: record.center_y,
+                    },
+                    radius: record.radius,
+                },
+                coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
+                source: PidGraphicProvenance {
+                    stream_path: Some(sheet.path.clone()),
+                    byte_range: Some(byte_range),
+                    record_id: Some(format!("igcircle2d:{index}")),
+                    record_kind: Some(SheetRecordKind::PrimitiveCircle),
+                    field_x: None,
+                    note: Some(format!(
+                        "PSM igCircle2d record (Intergraph Sigma standard circle, \
+                         type 0x0059, IGDS class tag 0x59); oid={} parent_ref={} \
+                         index={} center=({:.4}, {:.4}) radius={:.4}",
+                        record.oid,
+                        record.parent_ref,
+                        record.index,
+                        record.center_x,
+                        record.center_y,
+                        record.radius,
                     )),
                 },
                 confidence: PidGeometryConfidence::Decoded,
@@ -2435,6 +2737,41 @@ impl GeometryEmitter for IgLineString2dEmitter {
                 .zip(record.vertex_ys.iter())
                 .map(|(x, y)| PidPoint { x: *x, y: *y })
                 .collect();
+            if record.total_length() == 0.0 {
+                // A record whose vertices all coincide is a position an
+                // annotation or symbol anchors to, not a stroke -- the
+                // native output draws nothing at it either (verified on the
+                // reference PDFs, `probe_real5_linestring_refusals`). Emit
+                // the point as evidence rather than a zero-length polyline.
+                let Some(position) = points.first().copied() else {
+                    continue;
+                };
+                out.push(PidGraphicEntity {
+                    id: format!("{}:iglinestring2d:{index}", sheet.path),
+                    drawing_id: None,
+                    graphic_oid: Some(record.oid),
+                    source_layer: ctx.source_layer(&sheet.path, record.sheet_layer_ref),
+                    kind: PidGraphicKind::Point { position },
+                    coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
+                    source: PidGraphicProvenance {
+                        stream_path: Some(sheet.path.clone()),
+                        byte_range: Some(byte_range),
+                        record_id: Some(format!("iglinestring2d:{index}")),
+                        record_kind: Some(SheetRecordKind::PrimitivePolyline),
+                        field_x: None,
+                        note: Some(format!(
+                            "PSM igLineString2d record (type 0x0084) whose {} vertices all \
+                             coincide -- a placement anchor, no stroke; oid={} form={} scope={}",
+                            record.vertex_count(),
+                            record.oid,
+                            record.form,
+                            record.scope,
+                        )),
+                    },
+                    confidence: PidGeometryConfidence::ProbeOnly,
+                });
+                continue;
+            }
             out.push(PidGraphicEntity {
                 id: format!("{}:iglinestring2d:{index}", sheet.path),
                 drawing_id: None,
@@ -3272,6 +3609,8 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igarcs: Vec::new(),
+                decoded_igcircles: Vec::new(),
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
@@ -3378,6 +3717,8 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igarcs: Vec::new(),
+                decoded_igcircles: Vec::new(),
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
@@ -3523,6 +3864,8 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igarcs: Vec::new(),
+                decoded_igcircles: Vec::new(),
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
@@ -3620,6 +3963,8 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igarcs: Vec::new(),
+                decoded_igcircles: Vec::new(),
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
@@ -3688,6 +4033,8 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igarcs: Vec::new(),
+                decoded_igcircles: Vec::new(),
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
@@ -3776,6 +4123,8 @@ mod tests {
                 decoded_iglinestrings: Vec::new(),
                 decoded_igpoints: Vec::new(),
                 decoded_igtextboxes: Vec::new(),
+                decoded_igarcs: Vec::new(),
+                decoded_igcircles: Vec::new(),
                 decoded_igsymbols: Vec::new(),
                 decoded_igboundaries: Vec::new(),
                 decoded_igsmartframes: Vec::new(),
@@ -3918,6 +4267,8 @@ mod tests {
                     value: "TAG".into(),
                     height: 2.5,
                     rotation: 0.0,
+                    anchor_code: 0,
+                    text_box_width: None,
                 },
                 SheetRecordKind::TextPlacementStyle,
             ),
@@ -3966,6 +4317,7 @@ mod tests {
                 radius: 4.0,
                 start_angle: 0.0,
                 end_angle: 1.0,
+                clockwise: true,
             }
             .decoded_sheet_record_kind(),
             None,

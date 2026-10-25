@@ -149,6 +149,40 @@ pub fn elliptical_arc(
     sweep_start: f64,
     sweep_end: f64,
 ) -> Option<(Vec<(f64, f64)>, Vec<f64>, Vec<f64>)> {
+    elliptical_arc_directed(center, major, ratio, sweep_start, sweep_end, true)
+}
+
+/// [`elliptical_arc`], with the traversal direction stated instead of assumed.
+///
+/// An `igEllipticalArc2d` record names two parameters and no direction: the
+/// half turned between them depends on whether the parameter runs up or down.
+/// The record's last byte says which — `0` is the clockwise traverse
+/// [`elliptical_arc`] makes, `1` is the counter-clockwise one, under which
+/// `sweep_start + n·Δ` replaces `sweep_start − n·Δ` and the sweep is
+/// `(end − start) mod 2π`.
+///
+/// Both readings are measured, not assumed:
+///
+/// * A01's four vessel heads (`/JSite121` oids 489/490, `/JSite39` 114/115)
+///   all carry `0`, and the clockwise reading puts each apex on the far side
+///   of the rectangle that closes the head — the outward bulge
+///   `tests/elliptical_arcs.rs` pins.
+/// * The diaphragm actuator's dome (every one of the corpus's five drawings
+///   caches exactly this one record) carries `1`, and only the
+///   counter-clockwise reading puts its apex at `y = 11.43 mm` under a chord
+///   at `8.89 mm` — which is where the reference plot draws it
+///   (`docs/analysis/2026-10-20-the-actuator-dome-is-on-the-wrong-side.md`).
+///
+/// `None` on every input [`elliptical_arc`] rejects.
+#[allow(clippy::type_complexity)]
+pub fn elliptical_arc_directed(
+    center: (f64, f64),
+    major: (f64, f64),
+    ratio: f64,
+    sweep_start: f64,
+    sweep_end: f64,
+    clockwise: bool,
+) -> Option<(Vec<(f64, f64)>, Vec<f64>, Vec<f64>)> {
     use std::f64::consts::{FRAC_PI_4, TAU};
 
     let inputs = [
@@ -169,7 +203,11 @@ pub fn elliptical_arc(
     }
     // Huge angles can overflow the difference; `rem_euclid` of an infinity
     // is NaN, and a NaN sweep has no segment count.
-    let mut sweep = (sweep_start - sweep_end).rem_euclid(TAU);
+    let mut sweep = if clockwise {
+        (sweep_start - sweep_end).rem_euclid(TAU)
+    } else {
+        (sweep_end - sweep_start).rem_euclid(TAU)
+    };
     if !sweep.is_finite() {
         return None;
     }
@@ -195,14 +233,15 @@ pub fn elliptical_arc(
     };
     let mut poles = Vec::with_capacity(2 * segments + 1);
     let mut weights = Vec::with_capacity(2 * segments + 1);
+    let sign = if clockwise { -1.0 } else { 1.0 };
     for k in 0..segments {
         let k = k as f64;
-        poles.push(point(sweep_start - k * step, 1.0));
+        poles.push(point(sweep_start + sign * k * step, 1.0));
         weights.push(1.0);
-        poles.push(point(sweep_start - (k + 0.5) * step, half_cos));
+        poles.push(point(sweep_start + sign * (k + 0.5) * step, half_cos));
         weights.push(half_cos);
     }
-    poles.push(point(sweep_start - segments as f64 * step, 1.0));
+    poles.push(point(sweep_start + sign * segments as f64 * step, 1.0));
     weights.push(1.0);
     if poles.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
         return None;
@@ -465,6 +504,47 @@ mod tests {
         // From the bottom end of the axis to the top one.
         assert!((points[0].1 - (0.0889 - 0.025_958_436_58)).abs() < 1e-12);
         assert!((points[32].1 - (0.0889 + 0.025_958_436_58)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_direction_flag_picks_the_half_between_two_ends() {
+        // The diaphragm actuator's dome: chord at y = 8.89 mm, semi-axes
+        // 3.175 / 2.54, stored π -> 2π with flag 1. The reference plot's
+        // apex is the counter-clockwise half's, 2.54 mm above the chord.
+        let center = (0.0, 0.008_89);
+        let major = (-0.003_175, 0.0);
+        let ys = |clockwise: bool| {
+            let (poles, weights, knots) =
+                elliptical_arc_directed(center, major, 0.8, PI, TAU, clockwise)
+                    .expect("a half ellipse");
+            let points = sample(&poles, &weights, &knots, SEGMENTS_PER_SPAN);
+            (
+                points.iter().map(|p| p.1).fold(f64::INFINITY, f64::min),
+                points.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max),
+            )
+        };
+        // Clockwise walks through π/2: the apex is the chord minus the minor
+        // semi-axis.
+        let (low, high) = ys(true);
+        assert!((low - 0.006_35).abs() < 1e-9, "clockwise low {low}");
+        assert!((high - center.1).abs() < 1e-9, "clockwise high {high}");
+        // Counter-clockwise walks through 3π/2: the apex is the chord plus it.
+        let (low, high) = ys(false);
+        assert!((low - center.1).abs() < 1e-9, "counter-clockwise low {low}");
+        assert!(
+            (high - 0.011_43).abs() < 1e-9,
+            "counter-clockwise high {high}"
+        );
+        // Both readings start and end on the same two ends.
+        for clockwise in [true, false] {
+            let (poles, _, _) = elliptical_arc_directed(center, major, 0.8, PI, TAU, clockwise)
+                .expect("a half ellipse");
+            let last = *poles.last().expect("poles");
+            assert!((poles[0].1 - center.1).abs() < 1e-12);
+            assert!((last.1 - center.1).abs() < 1e-12);
+            assert!((poles[0].0.abs() - 0.003_175).abs() < 1e-12);
+            assert!((last.0.abs() - 0.003_175).abs() < 1e-12);
+        }
     }
 
     #[test]

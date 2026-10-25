@@ -86,11 +86,13 @@
 //! missing, so `cargo run --example …` is safe on any checkout.
 
 pub mod api;
-// The plant-database side -- backup / MDF readers, the publish pipeline
-// and the export-bundle driver over them -- rides the `backup` feature
-// (on by default). Without it the crate is the `.pid` reader alone, which
-// is what a wasm32 consumer can compile.
-#[cfg(feature = "backup")]
+// The plant-database side -- backup readers and the publish pipeline --
+// rides `backup-exp` (Oracle `exp` dump path, pure Rust) plus
+// `backup-mdf` (SQL Server MDF side, links the GPL-3.0 vendored
+// `oxidized-mdf` and bundled sqlite3). The `backup` umbrella enables
+// both and stays the default. Without either the crate is the `.pid`
+// reader alone, which is what a wasm32 consumer can compile.
+#[cfg(feature = "backup-exp")]
 pub mod backup;
 pub mod bspline;
 pub mod byte_audit;
@@ -107,7 +109,7 @@ pub mod layout;
 pub mod model;
 pub mod package;
 pub mod parsers;
-#[cfg(feature = "backup")]
+#[cfg(feature = "backup-exp")]
 pub mod publish;
 pub mod schema;
 pub mod semantics;

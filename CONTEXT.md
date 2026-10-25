@@ -43,3 +43,15 @@ _Avoid_: Parser failure, ignored data
 **Controlled Fixture**:
 A source file produced by one known authoring action so that its byte-level difference can support or reject a specific semantic claim.
 _Avoid_: Representative sample, manually patched binary
+
+**Reference Plot** (参考出图):
+The PDF that SmartPlant P&ID printed for one drawing; the only visual ground truth for what that drawing shows on paper.
+_Avoid_: Reference image, 参考图, screenshot
+
+**Rendered Plot** (我方出图):
+The PDF this project draws for one drawing from its own parse of the drawing and of the reference data the drawing names.
+_Avoid_: Our PDF, export
+
+**Plot Comparison** (出图对比):
+Matching the line work and text of a Rendered Plot against its Reference Plot within a stated tolerance on paper.
+_Avoid_: Format comparison, 格式对比, visual diff

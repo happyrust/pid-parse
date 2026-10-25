@@ -21,11 +21,12 @@ use std::fmt;
 ///
 /// * `codelists(codelist_number, codelist_index, codelist_text, ...)`
 ///   — one row per enum entry.
-/// * `attributes(attribute_name, attribute_codelisted, ...)`
-///   — declares which codelist an attribute pulls from.
+/// * `attributes(attribute_name, attribute_codelisted, attribute_datatype, ...)`
+///   — `attribute_codelisted` is `"T"` / `"F"`, and `attribute_datatype`
+///   carries `"C<n>"` (e.g. `"C22"` → codelist `"22"`).
 ///
-/// Stage-1 A7 surfaces this to the XML writer so `EqTypeDescription`
-/// no longer has to rely solely on symbol-path parsing.
+/// Stage-1 A7 surfaces this to the XML writer so coded attributes
+/// can resolve against the plant catalog.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CodelistIndex {
     /// `(codelist_number, codelist_index) → codelist_text`.
@@ -33,10 +34,9 @@ pub struct CodelistIndex {
     /// stages them as TEXT regardless of the underlying SQL Server
     /// type.
     entries: BTreeMap<(String, String), String>,
-    /// `attribute_name → codelist_number`, sourced from the
-    /// `attributes` metadata table's `attribute_codelisted` column.
-    /// Empty / zero / null values are filtered out at load time —
-    /// they mean "this attribute is not codelisted".
+    /// `attribute_name → codelist_number`, sourced from rows in the
+    /// `attributes` metadata table where `attribute_codelisted = "T"`
+    /// and `attribute_datatype = "C<n>"` (with the leading `"C"` stripped).
     attribute_codelist: BTreeMap<String, String>,
 }
 
@@ -114,6 +114,8 @@ pub enum PublishError {
     Sqlite(String),
     /// MDF parser failure from the Rust MDF reader.
     Mdf(String),
+    /// File-system failure while materializing an extracted MDF.
+    Io(String),
     /// No drawing row matched the requested UID.
     DrawingNotFound {
         /// Drawing UID requested by the caller.
@@ -126,6 +128,7 @@ impl fmt::Display for PublishError {
         match self {
             Self::Sqlite(msg) => write!(f, "SQLite: {msg}"),
             Self::Mdf(msg) => write!(f, "MDF: {msg}"),
+            Self::Io(msg) => write!(f, "I/O: {msg}"),
             Self::DrawingNotFound { uid } => write!(f, "drawing UID `{uid}` not found"),
         }
     }
@@ -133,12 +136,14 @@ impl fmt::Display for PublishError {
 
 impl std::error::Error for PublishError {}
 
+#[cfg(feature = "backup-mdf")]
 impl From<rusqlite::Error> for PublishError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Sqlite(err.to_string())
     }
 }
 
+#[cfg(feature = "backup-mdf")]
 impl From<oxidized_mdf::error::Error> for PublishError {
     fn from(err: oxidized_mdf::error::Error) -> Self {
         Self::Mdf(err.to_string())

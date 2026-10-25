@@ -8,6 +8,13 @@
 > **2026-09-24 已接线**：pid-parse `886c431`（`DecodedIgTextBoxRecord::runs`、`style_link::text_styles_for_document`，§5 三个坑照原样处理——对齐 / 行距取段落、
 > 打架取覆盖字符最多的样式并计数、无 run 用段落默认；§3 那条注释已改）、OCS `fde369e8`（OpenCADStudio 计划 `2026-09-24-pid-import-status-and-next-steps.md` T2）。
 > 棘轮复现本文 §4 的表：155 条里会变 106（字高 103、字体 54、颜色 2），打架 11。
+> **2026-10-23 库侧（`.sym`）也已接线**：`symbol_library::lettering_of` 与
+> `SymbolLettering::from_decoded` 走**同一个** `style_link::resolve_text_style`（入参收成
+> `+14` 索引 / 字符数 / runs 三样），`SymbolLettering::run_style_id` 记下哪条 run 赢了。
+> 库侧 2866 条 `0x004D` 里由 run 上字 2227 条，与段落路线比字高变 **1350**、字体 828、
+> 颜色 279 —— 与本文 §4 的 155 条同族，只是样本大一个数量级。2026-10-23 又接了下游：
+> 分区本身（`SymbolLettering::spans`）也画到纸上，详见
+> `2026-10-22-the-symbol-library-never-got-the-third-text-shape.md` §八、§九。
 
 ## TL;DR
 

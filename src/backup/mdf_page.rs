@@ -298,6 +298,39 @@ impl MdfPageHeader {
     }
 }
 
+/// Locate the byte offset at which the first MDF page starts
+/// inside an MSDA stream body. Walks a 16-byte grid looking for a
+/// header whose `m_headerVersion == 0x01` and whose `m_type` is a
+/// canonical page type (1..=22), validating the hit by checking
+/// that the offset [`PAGE_SIZE`] bytes further also lands on a
+/// valid page header.
+///
+/// Falls back to the canonical `0x3F0` offset observed in SQL
+/// Server 2008 R2 `SmartPlant` fixtures if the scan yields nothing.
+#[must_use]
+pub fn detect_backup_stream_header_len(msda_body: &[u8]) -> usize {
+    const GRID: usize = 16;
+    // Stop scanning at 8 MiB — enough to skip any plausible
+    // backup-stream header without chewing through a 19 MB input
+    // on corrupt fixtures.
+    const SCAN_LIMIT: usize = 8 * 1024 * 1024;
+    let limit = msda_body.len().min(SCAN_LIMIT);
+    let mut offset = 0usize;
+    while offset + MIN_HEADER_BYTES <= limit {
+        if MdfPageHeader::probe(&msda_body[offset..]).is_some() {
+            let next = offset + PAGE_SIZE;
+            if next + MIN_HEADER_BYTES <= msda_body.len()
+                && MdfPageHeader::probe(&msda_body[next..]).is_some()
+            {
+                return offset;
+            }
+        }
+        offset += GRID;
+    }
+    // Fallback: SQL Server 2008 R2 fixture default.
+    0x3F0
+}
+
 /// Walk `data` at fixed `stride` from `base`, yielding one parsed
 /// header per candidate page. Pages where [`MdfPageHeader::probe`]
 /// rejects the bytes are skipped, but their index is still

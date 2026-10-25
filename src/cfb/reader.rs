@@ -796,6 +796,8 @@ mod tests {
                 decoded_iglinestrings: vec![],
                 decoded_igpoints: vec![],
                 decoded_igtextboxes: vec![],
+                decoded_igarcs: Vec::new(),
+                decoded_igcircles: Vec::new(),
                 decoded_igsymbols: vec![],
                 decoded_igboundaries: vec![],
                 decoded_igsmartframes: vec![],

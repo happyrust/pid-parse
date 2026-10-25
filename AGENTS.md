@@ -1,7 +1,12 @@
 # pid-parse Agent Guide
 
 Layered parser for SmartPlant / Smart P&ID `.pid` files with a
-publish XML pipeline (`Export.mdf → oxidized-mdf → drawing graph → _Data.xml / _Meta.xml`).
+publish XML pipeline producing `<DrawingName>_Data.xml` / `_Meta.xml`
+from four inputs: a `.pid` alone, `.pid` + Oracle `exp` dump
+(± `SPPIDDataMap.xml`), a whole backup-package directory
+(`PlantData` zips + `Export.dmp`, either Oracle `exp` or SQL Server
+MTF staged to a temp `.mdf`), or a single `Export.mdf` /
+legacy `Export_v2.sqlite`.
 
 ## Agent skills
 
@@ -22,10 +27,13 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | Layer | Path | Role |
 |---|---|---|
 | Vendored MDF parser | `vendor/oxidized-mdf/` | Reads SQL Server MDF files, GPL-3.0 |
-| Publish adapter | `src/publish/mdf_load.rs` | MDF → in-memory SQLite staging |
-| Publish loader | `src/publish/sqlite_load.rs` | SQLite → `PublishDrawing` DTO |
-| XML writer | `src/publish/xml_writer.rs` | DTO → `_Data.xml` / `_Meta.xml` |
-| CLI entry | `src/bin/pid_publish_xml.rs` | End-to-end CLI |
+| Publish `.pid` line | `src/publish/{pid_load,pid_writer}.rs` | `.pid` → `PidPublishDrawing` → `_Data.xml` / `_Meta.xml` |
+| Publish exp enrichment | `src/publish/{oracle_exp,pipeline}.rs` | `ExpTables` (one read) → ports / connectivity / compositions / notes / OPC; `T_PIPERUN` → synthesized `PIDPipeline` + `PipingConnectors` |
+| Publish package mode | `src/publish/backup_package.rs` | Backup dir → one `ExpTables` + `SPPIDDataMap.xml` → every `.pid` → 三件 + `_Index.json`; MTF dumps stage to a temp `.mdf` |
+| Publish DB line | `src/publish/{mdf_load,sqlite_load}.rs` | MDF → in-memory SQLite staging → `PublishDrawing` DTO |
+| Publish shared | `src/publish/{model,xml_writer,catalog,diff}.rs` | DTO + `PublishStyle`; `_Data.xml`/`_Meta.xml` writers; `PublishItemCatalog` — one row per item type feeding both lines (sqlite_load chains, xml_writer dispatch + a01 rank, pid_load class rule, diff tag inventory = DB ∪ `.pid`, `_Coverage.json` derived-class rows from the tag roles); `--diff-against` parity |
+| Inspect orchestration | `src/inspect/commands.rs` | `InspectCommand::run(&PidPackage) -> InspectOutput`; `src/bin/pid_inspect.rs` is arg-parse + print only |
+| CLI entry | `src/bin/pid_publish_xml.rs` | `<file.pid|backup dir> --out-dir DIR [--oracle-exp|--datamap|--plant|--diff-against]` / `<mdf> --drawing UID` |
 
 ## Vendored `oxidized-mdf` (key constraints)
 
@@ -43,9 +51,12 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 |---|---|---|
 | `vendor/oxidized-mdf` unit tests | Parser internals | Inline byte vectors |
 | `tests/publish_mdf_load.rs` | MDF → SQLite staging | `test-file/…/Export.mdf` |
+| `tests/publish_sqlite_load.rs` | SQLite → DTO business fields | TEST02_p fixture |
 | `tests/publish_xml_cli.rs` | End-to-end CLI | `test-file/…/Export.mdf` |
 | `tests/publish_meta_parity.rs` | Meta XML shape + DWG compare | A01 ref + optional DWG fixture |
 | `tests/publish_a01_raw_residual.rs` | Residual value scanning | `test-file/…/Export.mdf` |
+| `tests/publish_from_pid.rs` | `.pid` / `--oracle-exp` / whole-package publish pins | `D:\work\cad\PID自研软件验证` + `D:\work\cad\pid-test-data` (soft-skips absent) |
+| `tests/publish_{attribute,interface,rel,dwg_generated}_parity.rs` / `publish_writer_coverage.rs` / `publish_backlog_inventory.rs` / `publish_dwg_mirror.rs` | DB-line parity + writer coverage + backlog inventory | A01 ref + optional DWG fixture |
 | `tests/parse_real_files.rs::primitive_line_decoder_emits_decoded_lines_with_provenance` | Phase 14 GLine2d cross-fixture | `test-file/*.pid` |
 | `tests/parse_real_files.rs::jstyle_override_decoder_emits_audit_records_with_provenance` | Phase 16 JStyleOverride (PSM 0x0030) cross-fixture | `test-file/*.pid` |
 | `tests/parse_real_files.rs::iglines_decoder_emits_decoded_iglines_with_provenance` | Phase 14 Slice J igLine2d (PSM 0x0018) | `test-file/*.pid` |
@@ -55,6 +66,9 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::igsymbols_decoder_emits_decoded_symbols_with_provenance` | Phase 14 Slice N igSymbol2d (PSM 0x00CE) | `test-file/*.pid` |
 | `tests/parse_real_files.rs::igboundaries_decoder_emits_typed_audit_records_with_provenance` | Phase 34-D igBoundary2d (PSM 0x0013) exact-count ratchet | `test-file/*.pid` |
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
+| `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports a PDF, reads back, and names any symbol no library carries | every `test-file/**/*.pid` |
+| `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, known library gaps only | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
+| `pid-plot/tests/border_template.rs` | A0/A1 sheets draw the frame, title block and sign-off column their linked `.igr` carries (both frames, 12 furniture labels, rendered company name and `会 签 专 业` read back); an A2 sheet with no matching template draws none | the corpus `.pid` + `Ref/Template Files`; `test-file/D06.pid` (soft-skips when absent) |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
 
@@ -66,11 +80,14 @@ ratchets stream count, PSM tables, DA records, object graph (10 objects
 + 10 unresolved relationships), Sheet6 geometry, and normalized totals.
 Soft-skips when `test-file/D06.pid` is absent.
 
-## SmartPlant Sheet PSM decoders — 8 typed + 2 audit-only families
+## SmartPlant Sheet PSM decoders — registry-driven families
 
-`src/parsers/sheet_records.rs` ships typed PSM-record decoders for **8
-SmartPlant `Sheet*` stream record families** (plus audit-only
-`0x00FA DependencyObject` and `0x0010` sub-record collections):
+`src/parsers/sheet_records.rs` ships typed PSM-record decoders for the
+SmartPlant `Sheet*` stream record families; the authoritative list is
+the `SHEET_RECORD_FAMILIES` registry in `src/model/sheet_families.rs`
+(17 rows today: the eight below plus `igArc2d`, `igCircle2d`,
+`igRectangle2d`, `igBspCurve2d`, `igDimension2d`, `SmartFrame`,
+attribute fragments, and the audit-only `0x00FA`/`0x0010` rows).
 
 | Slice | PSM Type | Decoder | DTO | Sigma Class |
 |---|---|---|---|---|
@@ -81,6 +98,8 @@ SmartPlant `Sheet*` stream record families** (plus audit-only
 | L | `0x005E` | `decode_igpoints` | `SheetIgPoint2dDecoded` | `igPoint2d` (IGDS standard) |
 | M | `0x004D` | `decode_igtextboxes` | `SheetIgTextBoxDecoded` | `igTextBox` (IGDS, UTF-16LE) |
 | N | `0x00CE` | `decode_igsymbols` | `SheetIgSymbol2dDecoded` | `igSymbol2d` (IGDS, SmartPlant symbols) |
+| — | `0x0061` | `decode_igarcs` | `DecodedIgArc2dRecord` | `igArc2d` (IGDS standard; emits `Arc`) |
+| — | `0x0059` | `decode_igcircles` | `DecodedIgCircle2dRecord` | `igCircle2d` (IGDS standard; emits `Circle`) |
 | 34-D | `0x0013` | `decode_igboundaries` | `SheetIgBoundary2dDecoded` | `igBoundary2d` (IGDS standard; fully-typed **audit-only** association, no geometry emission) |
 
 Cross-fixture decoded geometry spans the GLine2d / igLine2d /
@@ -92,13 +111,14 @@ All decoders are panic-safe (validated via
 
 Decoded records flow through `streams/cluster.rs` →
 `model::SheetGeometry::decoded_{primitive_lines, jstyle_overrides,
-iglines, iglinestrings, igpoints, igtextboxes, igsymbols,
-igboundaries}` → `geometry::build_normalized_geometry` to emit
-`PidGraphicEntity { confidence: Decoded, kind: Line | Arc | Polyline
-| Point | Text | SymbolInstance, source: PidGraphicProvenance {
-stream_path, byte_range, record_kind, graphic_oid, note } }`. The
-`note` carries the byte-level evidence chain. (`decoded_igboundaries`
-stops at the `SheetGeometry` layer — see the `0x0013` caveat below.)
+iglines, iglinestrings, igpoints, igtextboxes, igsymbols, igarcs,
+igcircles, igboundaries, …}` → `geometry::build_normalized_geometry`
+to emit `PidGraphicEntity { confidence: Decoded, kind: Line | Arc |
+Circle | Polyline | Point | Text | SymbolInstance, source:
+PidGraphicProvenance { stream_path, byte_range, record_kind,
+graphic_oid, note } }`. The `note` carries the byte-level evidence
+chain. (`decoded_igboundaries` stops at the `SheetGeometry` layer —
+see the `0x0013` caveat below.)
 
 **Key insight (Slice J discovery)**: Intergraph Sigma uses its IGDS
 class tags directly as PSM type codes for standard primitives.
@@ -130,16 +150,27 @@ decompilation.
   the identity
   (`docs/analysis/2026-08-04-psm-type-code-registry.md`). It stays
   audit-only either way.
-- Standard IGDS `igCircle2d` (0x0059), `igRectangle2d` (0x0020) and
-  `igArc2d` (0x0061) have zero hits **in the top-level `Sheet*`
-  streams**, which is all the decoders scan — but they do exist in
-  the corpus: 12 circles, 12 arcs, 3 rectangles and one `0x005D`
-  BspCurve live in the `PSMcluster0` streams of nested `JSite`
-  storages, each sitting on a sheet layer. Nine `0x0013
-  igBoundary2d` records live there too and are additionally refused
-  by the `aux_hi == 12` gate. `igEllipticalArc2d` (0x007E) really is
-  absent. See
-  `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` §7.
+- Standard IGDS primitives are no longer sheet-absent: `igCircle2d`
+  (`0x0059`) has since been promoted to a full Sheet family after W's
+  `Sheet6` yielded 17 top-level records — the instrument balloons
+  (r = 6.35 mm) and sensing-bulb centre dots (r = 1.4 mm) — and
+  `igArc2d` (`0x0061`) is emitted because the linked `.igr` border
+  templates draw logo glyphs and rounded corners with it. An arc's
+  trailing byte (`payload +58`) is its direction — `0` clockwise,
+  `1` counter-clockwise — the same byte `igEllipticalArc2d` carries;
+  it is threaded through as `clockwise` and **never** folded to the
+  minor sweep (the fold was the old guess and it mis-drew
+  `FT-Ultrasonic`'s wave, `Local Vent`'s canopy and the `Remarks`
+  cloud). See
+  `docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`.
+  `igRectangle2d`
+  (`0x0020`) and `igBspCurve2d` (`0x005D`) also have Sheet family rows.
+  In the test-file corpus the remaining members (12 circles, 12 arcs,
+  3 rectangles, one BspCurve) still live in the `PSMcluster0` streams
+  of nested `JSite` storages, each sitting on a sheet layer; those are
+  symbol-body geometry and stay held back from page emission until a
+  transform is proven. `igEllipticalArc2d` (0x007E) really is absent.
+  See `docs/analysis/2026-08-27-aux-hi-is-the-sheet-layer.md` §7.
 - Payload `+8` (`aux_hi`, the high half of the PSM envelope's `aux`)
   is **the oid of the sheet layer the object sits on** — never a
   framing constant. Grouping a storage's objects by it reproduces
@@ -221,6 +252,23 @@ The geometry output conservation gate for any refactor in this area
 is `tests/geometry_golden_snapshot.rs`
 (`UPDATE_GEOMETRY_GOLDEN=1` to bless intentional changes).
 
+## Probe examples (`examples/`, `pid-plot/examples/`)
+
+A probe is a throwaway `main` that asks one local fixture a question
+and prints the answer — how a decoder question gets settled before it
+earns a test. The committed form is named for what it settles, not for
+what it reads: `examples/probe_<the question>.rs` (268 of the 276
+tracked root examples carry that prefix; the other eight predate the
+convention and keep their names).
+
+A `tmp_`-prefixed example is the same tool before its answer is worth
+anything: `examples/tmp_<subject>.rs` is gitignored, nothing cites it,
+and it disappears once the answer lands. When the numbers do turn
+out to matter, rename it to `probe_<the question>.rs` and commit it —
+that promotion is what lets a later session re-run the evidence.
+`pid-plot/examples/` follows the same naming; the ignore pattern covers
+only the root directory, so keep scratch there out of commits by hand.
+
 ## Common commands
 
 ```bash
@@ -240,6 +288,14 @@ cargo test  --locked --workspace --all-targets
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check        # apply with `cargo fmt --all`
 bash .github/scripts/check-missing-docs.sh   # rustdoc ratchet
+```
+
+`pid-plot` links pdfcraft, so these two stay on the parser crate and must
+not be widened to `--workspace`:
+
+```bash
+cargo test --locked -p pid-parse --no-default-features --lib
+cargo check --lib --locked -p pid-parse --no-default-features --target wasm32-unknown-unknown
 ```
 
 ### `missing_docs` ratchet

@@ -125,6 +125,10 @@ cargo run --bin pid_publish_xml -- Export.mdf \
 cargo run --bin pid_publish_xml -- Export.mdf \
     --drawing D9635C3C898840D1990B7E8BEE1D55DA \
     --plant TEST02 --diff-against reference/A01_Data.xml
+
+# 7. 备份包目录（目录里有 Manifest.txt）。Oracle exp 的 Export.dmp 读一次，
+#    PlantData zip 里每张 .pid 写出三件，另写 _Index.json。MTF 的 Export.dmp 退出 2。
+cargo run --bin pid_publish_xml -- <backup-dir> --out-dir <dir> --plant P01
 ```
 
 当前公开的 publish 正确性基线只承诺 `Export.mdf` 主链。

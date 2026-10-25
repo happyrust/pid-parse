@@ -5277,14 +5277,34 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
     fn tally<'a>(primitives: impl Iterator<Item = &'a SymbolPrimitive>) -> Tally {
         let mut tally = [0usize; 6];
         for primitive in primitives {
-            tally[match primitive {
-                SymbolPrimitive::Line { .. } => 0,
-                SymbolPrimitive::Arc { .. } => 1,
-                SymbolPrimitive::Circle { .. } => 2,
-                SymbolPrimitive::Polyline { .. } => 3,
-                SymbolPrimitive::Text { .. } => 4,
-                SymbolPrimitive::BSpline { .. } => 5,
-            }] += 1;
+            match primitive {
+                // A fill boundary's members are the shapes it paints; count
+                // each member under its own kind.
+                SymbolPrimitive::Boundary { members, .. } => {
+                    for member in members {
+                        tally[match member {
+                            SymbolPrimitive::Line { .. } => 0,
+                            SymbolPrimitive::Arc { .. } => 1,
+                            SymbolPrimitive::Circle { .. } => 2,
+                            SymbolPrimitive::Polyline { .. } => 3,
+                            SymbolPrimitive::Text { .. } => 4,
+                            SymbolPrimitive::BSpline { .. } => 5,
+                            SymbolPrimitive::Boundary { .. } => continue,
+                        }] += 1;
+                    }
+                }
+                _ => {
+                    tally[match primitive {
+                        SymbolPrimitive::Line { .. } => 0,
+                        SymbolPrimitive::Arc { .. } => 1,
+                        SymbolPrimitive::Circle { .. } => 2,
+                        SymbolPrimitive::Polyline { .. } => 3,
+                        SymbolPrimitive::Text { .. } => 4,
+                        SymbolPrimitive::BSpline { .. } => 5,
+                        SymbolPrimitive::Boundary { .. } => unreachable!(),
+                    }] += 1;
+                }
+            }
         }
         tally
     }
@@ -5312,7 +5332,9 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
             placed_bodies: 17,
             placed_bodies_with_hidden_strokes: 15,
             hidden_layers: &["Construction", "Heat Trace", "Jacket", "Label"],
-            strokes_over_placements: (112, 81),
+            // (112, 81) until a placed body's filled circle decoded as a
+            // one-member `Boundary` on `Default`.
+            strokes_over_placements: (113, 82),
             visible: &[
                 // The Parametric Manifold instance: its outline, without
                 // the four construction lines the body is built on.
@@ -5578,9 +5600,20 @@ fn a_cached_body_says_which_layer_each_stroke_is_on_and_which_are_hidden() {
 /// body and let the placement's own style win on top. On the corpus every
 /// displayed stroke of every placed body has one; it agrees with the `.sym`
 /// wherever the library has the symbol; and the one thing it says that the
-/// placement's style does not is the dash: 57 displayed strokes over 11
-/// placements, all 3.5 / 1.75 mm, on the breather valve and wastewater pit
-/// of DWG-0202 and the `Xa` / `Xa chu` off-page connectors of 工艺.
+/// placement's style does not is the dash.
+///
+/// Until plan 2026-10-10 that dash read as 57 displayed strokes over 11
+/// placements -- the breather valve and wastewater pit of DWG-0202, the
+/// `Xa` / `Xa chu` off-page connectors of 工艺. Every one of them reached a
+/// `Dashed` base through an override whose own fields state *no* dash
+/// (`+30` bit 7 set, `+78` zero), which `style.dll` honours and this crate
+/// now does too, so they draw solid. What dashes now is what the file says
+/// dashes: the pit's three lines that name `Dashed` outright, and one
+/// hairline of DWG-0201 whose override states a dash type over a solid base
+/// -- 4 strokes, all 3.5 / 1.75 mm. The widths moved the same way: a body
+/// stroke that reaches `Normal 0.35 mm` through an override stating 0.13 mm
+/// now reads 0.13 mm, which is why the palettes below are thinner than the
+/// `.sym` authors them (the override is the drawing's, not the library's).
 #[test]
 fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
     use pid_parse::symbol_library::{PrimitiveStyle, SymbolLibrary, SymbolPrimitive};
@@ -5631,28 +5664,38 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
     const EXPECTED: &[Expected] = &[
         Expected {
             fixture: "DWG-0201GP06-01.pid",
-            visible_over_placements: 81,
-            dashed_over_placements: 0,
-            dashed_bodies: &[],
+            // 81 until a placed body's filled circle decoded as a
+            // one-member `Boundary` on `Default`.
+            visible_over_placements: 82,
+            // 0 until overrides stated their dash: `/JSite396` override 9
+            // names the storage's `Dash` type over solid `Normal`.
+            dashed_over_placements: 1,
+            // A one-stroke body beside the Parametric Manifold: a 0.01 mm
+            // hairline the override dashes.
+            dashed_bodies: &[((396, 119), (1, 1))],
             palettes: &[
-                // Cap: cyan at 0.50, as `Cap.sym` authors it.
-                ((329, 285), &[("#00FFFF", 50)]),
-                // Off-Unit: five `#00FEA0` strokes and two black ones.
-                ((329, 453), &[("#000000", 35), ("#00FEA0", 50)]),
-                // The Parametric Manifold instance: black at 0.35.
-                ((396, 113), &[("#000000", 35)]),
+                // Cap: `Cap.sym` authors it cyan at 0.50; the drawing's
+                // override 20 states black at 0.13 over that.
+                ((329, 285), &[("#000000", 13)]),
+                // Off-Unit: `#00FEA0` 0.50 and black 0.35 as authored; the
+                // overrides state black 0.13 (six strokes) and 0.18 (one).
+                ((329, 453), &[("#000000", 13), ("#000000", 18)]),
+                // The Parametric Manifold instance: `Normal 0.35` through
+                // an override stating 0.13.
+                ((396, 113), &[("#000000", 13)]),
             ],
         },
         Expected {
             fixture: "DWG-0202GP06-01.pid",
             visible_over_placements: 120,
-            dashed_over_placements: 12,
+            // 12 until overrides stated their dash: the breather valve's
+            // eight and one of the pit's four reached `Dashed` through
+            // overrides stating none.
+            dashed_over_placements: 3,
             dashed_bodies: &[
-                // arrester breather valve(RD): seven lines and the B-spline
-                // lip, of 21 displayed strokes.
-                ((793, 2817), (8, 21)),
-                // Wastewater Pit: four of its seven lines.
-                ((793, 3934), (4, 7)),
+                // Wastewater Pit: the three of its seven lines that name
+                // `Dashed` outright.
+                ((793, 3934), (3, 7)),
             ],
             palettes: &[],
         },
@@ -5661,24 +5704,24 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
             visible_over_placements: 32,
             dashed_over_placements: 0,
             dashed_bodies: &[],
-            // Ball Valve Type 1: six lines at 0.13 and the one circle at
-            // 0.35, both reached through an override.
-            palettes: &[((145, 125), &[("#000000", 13), ("#000000", 35)])],
+            // Ball Valve Type 1: six lines and the one circle, all reached
+            // through overrides stating 0.13 (the circle's base is 0.35).
+            palettes: &[((145, 125), &[("#000000", 13)])],
         },
         Expected {
             fixture: "工艺管道及仪表流程-1.pid",
             // 237 over 58 placements until the 27 retired copies stopped
             // counting (type word 0x8000, `parse_live_psm_header`).
             visible_over_placements: 157,
-            dashed_over_placements: 45,
-            dashed_bodies: &[
-                // `Xa.sym` (placed 3 times) and `Xa chu.sym` (6): a dashed
-                // circle and four dashed lines each, beside four solid
-                // `#00FEA0` ones. The library has neither symbol.
-                ((7559, 155), (5, 9)),
-                ((7559, 219), (5, 9)),
-            ],
-            palettes: &[((7559, 155), &[("#000000", 35), ("#00FEA0", 50)])],
+            // 45 until overrides stated their dash: `Xa.sym` (placed 3
+            // times) and `Xa chu.sym` (6) reach `Dashed` for a circle and
+            // four lines each through overrides stating none.
+            dashed_over_placements: 0,
+            dashed_bodies: &[],
+            // `Xa`: black 0.35 and `#00FEA0` 0.50 as authored, black 0.13
+            // through the drawing's overrides. The library has neither
+            // symbol.
+            palettes: &[((7559, 155), &[("#000000", 13)])],
         },
         Expected {
             fixture: "export-test/publish-data/A01/A01.pid",
@@ -5691,7 +5734,8 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
             palettes: &[],
         },
     ];
-    /// The one dash pattern any cached stroke of the corpus draws with.
+    /// The one dash pattern any cached stroke of the corpus draws with --
+    /// still, now that four strokes dash rather than fifty-seven.
     const THE_DASH: &[i64] = &[350, 175];
 
     let library_root = std::path::Path::new("test-file/symbols-full");
@@ -5759,7 +5803,12 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
             );
             if placed.contains(&reference) {
                 for (primitive, style) in &strokes {
-                    if !matches!(primitive, SymbolPrimitive::Text { .. }) {
+                    // Text names a paragraph style; a boundary names a fill
+                    // style, carried on the primitive's own `fill` field.
+                    if !matches!(
+                        primitive,
+                        SymbolPrimitive::Text { .. } | SymbolPrimitive::Boundary { .. }
+                    ) {
                         assert!(
                             style.is_some(),
                             "{fixture} {reference:?}: a displayed stroke whose style id reaches \
@@ -5843,9 +5892,18 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
         // 5. Against the library: where the reference library has the
         //    symbol a placement names, every (#RRGGBB, width, dash) a
         //    cached body's displayed strokes draw with is one the `.sym`'s
-        //    own strokes draw with too. Containment, not equality: the
-        //    library merges every sheet of the `.sym`, the cache holds the
-        //    one flavour placed.
+        //    own `StyleCluster` defines -- the cache is a copy of the
+        //    flavour placed, styles included. Containment, not equality:
+        //    the `.sym` defines styles for every flavour, the cache holds
+        //    the one placed.
+        //
+        //    The `.sym`'s *drawn* strokes were the comparison until plan
+        //    2026-10-10 made the widths specific enough to tell apart: the
+        //    library reader walks the `Sheet*` streams, and a label's anchor
+        //    cross -- two 0.01 mm hairlines in the layer's colour, the
+        //    flavour `Item Note & Label` is placed as -- sits in the `.sym`'s
+        //    `PSMcluster0`, so it is in the cache and not in the library
+        //    body. Its style is in the `.sym`'s table all the same.
         let Some(library) = library.as_mut() else {
             eprintln!("{fixture}: skipping the library comparison: no test-file/symbols-full");
             continue;
@@ -5857,20 +5915,37 @@ fn a_cached_body_carries_the_stroke_styles_its_own_storage_states() {
                 .filter_map(|(_, style)| style.map(|style| (palette_key(style), dash_key(style))))
                 .collect();
             for path in paths {
-                let Some(body) = library.resolve(path) else {
+                if library.resolve(path).is_none() {
                     continue;
-                };
-                let in_library: BTreeSet<Look> = body
-                    .primitives
-                    .iter()
-                    .filter_map(|styled| styled.style.as_ref())
-                    .map(|style| (palette_key(style), dash_key(style)))
-                    .collect();
-                let missing: Vec<_> = cached.difference(&in_library).collect();
+                }
+                let relative = pid_parse::symbol_library::library_relative_path(path)
+                    .expect("the library resolved it, so it is library-relative")
+                    .replace('\\', "/");
+                let package = pid_parse::PidParser::new()
+                    .parse_package(library_root.join(&relative))
+                    .unwrap_or_else(|e| {
+                        panic!("{fixture} ({path}): the .sym the library read: {e}")
+                    });
+                let mut defined: BTreeSet<Look> = BTreeSet::new();
+                for (stream_path, raw) in &package.streams {
+                    if stream_path.rsplit('/').next() != Some("StyleCluster") {
+                        continue;
+                    }
+                    let table = pid_parse::style_link::DocumentStyleTable::from_stylecluster_bytes(
+                        &raw.data,
+                    );
+                    for record in table.records() {
+                        if let Some(resolved) = table.resolve_line_style(record.style_id) {
+                            let style = PrimitiveStyle::from_resolved(&resolved);
+                            defined.insert((palette_key(&style), dash_key(&style)));
+                        }
+                    }
+                }
+                let missing: Vec<_> = cached.difference(&defined).collect();
                 assert!(
                     missing.is_empty(),
                     "{fixture} {reference:?} ({path}): the cache draws with {missing:?}, \
-                     which no stroke of the .sym does"
+                     which no style of the .sym defines"
                 );
                 compared += 1;
             }
@@ -6026,6 +6101,7 @@ fn a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle() {
                     radius,
                     start_angle,
                     end_angle,
+                    ..
                 } = primitive
                 else {
                     continue;
@@ -6113,6 +6189,7 @@ fn a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle() {
                 radius,
                 start_angle,
                 end_angle,
+                ..
             } = &styled.primitive
             else {
                 continue;

@@ -2444,7 +2444,8 @@
       },
       "value": "V 010121A",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 72
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -2511,7 +2512,8 @@
       },
       "value": "PH- 0102102-DN250 mm-B5-P-40.000 in",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 64
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5408,7 +5410,8 @@
       },
       "value": "专业",
       "height": 0.0,
-      "rotation": 1.5707963267948966
+      "rotation": 1.5707963267948966,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5474,7 +5477,8 @@
       },
       "value": "日期",
       "height": 0.0,
-      "rotation": 1.5707963267948966
+      "rotation": 1.5707963267948966,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5540,7 +5544,8 @@
       },
       "value": "签署",
       "height": 0.0,
-      "rotation": 1.5707963267948966
+      "rotation": 1.5707963267948966,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5606,7 +5611,8 @@
       },
       "value": "专业",
       "height": 0.0,
-      "rotation": 1.5707963267948966
+      "rotation": 1.5707963267948966,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5672,7 +5678,8 @@
       },
       "value": "签署",
       "height": 0.0,
-      "rotation": 1.5707963267948966
+      "rotation": 1.5707963267948966,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5738,7 +5745,8 @@
       },
       "value": "日期",
       "height": 0.0,
-      "rotation": 1.5707963267948966
+      "rotation": 1.5707963267948966,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5804,7 +5812,8 @@
       },
       "value": "项目经理",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5870,7 +5879,8 @@
       },
       "value": "文件号",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -5936,7 +5946,8 @@
       },
       "value": "版  次",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6002,7 +6013,8 @@
       },
       "value": "阶  段",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6068,7 +6080,8 @@
       },
       "value": "日  期",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6134,7 +6147,8 @@
       },
       "value": "审  定",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6200,7 +6214,8 @@
       },
       "value": "设  计",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6266,7 +6281,8 @@
       },
       "value": "校  对",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6332,7 +6348,8 @@
       },
       "value": "日期",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6398,7 +6415,8 @@
       },
       "value": "修改",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6464,7 +6482,8 @@
       },
       "value": "审核",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6530,7 +6549,8 @@
       },
       "value": "校对",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6596,7 +6616,8 @@
       },
       "value": "审  核",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6662,7 +6683,8 @@
       },
       "value": "比  例",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6728,7 +6750,8 @@
       },
       "value": "版次",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6794,7 +6817,8 @@
       },
       "value": "审定",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6860,7 +6884,8 @@
       },
       "value": "核  准",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6926,7 +6951,8 @@
       },
       "value": "项目号",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",
@@ -6992,7 +7018,8 @@
       },
       "value": "说明",
       "height": 0.0,
-      "rotation": 0.0
+      "rotation": 0.0,
+      "anchor_code": 1
     },
     "coordinate_context": {
       "coordinate_space": "source_sheet",

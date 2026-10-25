@@ -14,6 +14,7 @@
 //! so internal crates and tests can reach the primitives directly.
 
 pub mod app_object;
+pub mod attribute_rows;
 pub mod cluster_header;
 pub mod doc_version;
 pub mod doc_version2;

@@ -126,16 +126,20 @@ impl std::fmt::Display for ValidateError {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 || args.iter().any(|a| a == "-h" || a == "--help") {
-        print_usage();
-        std::process::exit(i32::from(args.len() < 2));
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        print_usage(std::io::stdout());
+        std::process::exit(0);
+    }
+    if args.len() < 2 {
+        print_usage(std::io::stderr());
+        std::process::exit(1);
     }
 
     let options = match parse_args(&args) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("argument error: {e}");
-            print_usage();
+            print_usage(std::io::stderr());
             std::process::exit(1);
         }
     };
@@ -199,8 +203,12 @@ fn main() {
     std::process::exit(exit_code);
 }
 
-fn print_usage() {
-    eprintln!(
+/// Print the usage body to `out`. `--help` passes stdout — the stream
+/// the caller asked for — and an argument error passes stderr, next to
+/// the diagnostic that explains the failure.
+fn print_usage<W: std::io::Write>(mut out: W) {
+    let _ = writeln!(
+        out,
         "Usage: pid_writer_validate <input.pid> [--out <path>] [--keep] [--json] [--quiet]\n\
          \x20                       [--max-diff-bytes N]\n\
          \x20                       [--edit ATTR=VALUE]+ [--general-edit ELEMENT=VALUE]+\n\
