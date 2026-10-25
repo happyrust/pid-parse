@@ -117,6 +117,13 @@ const COORDINATE_LIMIT: f64 = 10.0;
 /// marker is what they agree on.
 const LIBRARY_MARKER: &str = r"\symbols\";
 
+/// Deepest `Symbols` subdirectory tree the name index walks.
+///
+/// The reference library is `Symbols\<Family>\<Group>\<Name>.sym` three or
+/// four deep at most; the bound only stops a directory loop in a hand-made
+/// share from walking forever.
+const NAME_INDEX_MAX_DEPTH: usize = 16;
+
 /// One drawable element of a symbol body, in the symbol's own coordinate
 /// space (source units, i.e. metres — the same unit the drawing uses).
 ///
@@ -1514,6 +1521,66 @@ pub fn library_relative_path(symbol_path: &str) -> Option<&str> {
     (tail < symbol_path.len()).then(|| symbol_path[tail..].trim())
 }
 
+/// The file name a placement's symbol path ends in, lowercased, when it names
+/// a `.sym` at all.
+///
+/// This is the whole of what a path stored on the authoring machine says about
+/// the library — see [`SymbolLibrary::relative_by_name`].
+fn symbol_file_name(symbol_path: &str) -> Option<String> {
+    let name = symbol_path.rsplit(['\\', '/']).next()?.trim();
+    if name.is_empty() || !name.to_ascii_lowercase().ends_with(".sym") {
+        return None;
+    }
+    Some(name.to_ascii_lowercase())
+}
+
+/// Why a placement that names no reference share found no body by file name.
+///
+/// Two outcomes a ledger has to keep apart: the library does not carry the file
+/// at all, or it carries it under one name twice and refuses to pick. The
+/// second is a source the corpus *does* have, so counting it as a missing file
+/// would send the next round looking for something already there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NameMiss {
+    /// No root holds a `.sym` of that file name.
+    NoSuchFile,
+    /// Every root holding the name holds more than one such file, so none is
+    /// chosen.
+    NotUnique,
+}
+
+/// Every `.sym` under `dir`, as `/`-separated paths relative to it.
+///
+/// Symbolic links are skipped in both directions — `file_type` does not follow
+/// them — which is what keeps a share that links a folder back to its parent
+/// from walking forever. The depth bound is the second guard, for a tree that
+/// really is that deep.
+fn collect_symbol_files(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<String>) {
+    if depth > NAME_INDEX_MAX_DEPTH {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let relative = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            collect_symbol_files(&entry.path(), &relative, depth + 1, out);
+        } else if file_type.is_file() && name.to_ascii_lowercase().ends_with(".sym") {
+            out.push(relative);
+        }
+    }
+}
+
 /// A local copy of a `SmartPlant` symbol library, resolving the UNC paths
 /// carried by placements to the bodies on disk.
 ///
@@ -1523,6 +1590,11 @@ pub fn library_relative_path(symbol_path: &str) -> Option<&str> {
 /// merged tree, so a single root leaves whichever project it did not come
 /// from undrawn.
 ///
+/// A placement may also name no share at all: a title block is often authored
+/// on the engineer's own machine, so its symbol path is a local absolute one
+/// (`C:\Users\…\Temp\BLFH.sym`). Those resolve by file name instead, against
+/// a name index of the roots — see `relative_by_name`.
+///
 /// Lookups are cached, including misses: a drawing places the same handful
 /// of symbols dozens of times, and a project that lacks a symbol lacks it
 /// for every placement.
@@ -1530,6 +1602,11 @@ pub fn library_relative_path(symbol_path: &str) -> Option<&str> {
 pub struct SymbolLibrary {
     roots: Vec<PathBuf>,
     cache: BTreeMap<String, Option<SymbolGeometry>>,
+    /// Every `.sym` name in the roots, mapped to the `(root, relative)` pairs
+    /// that carry it. Built on the first path that is not library-relative,
+    /// because walking 618 files is only worth it for the placements that have
+    /// no other way to be addressed.
+    by_name: Option<BTreeMap<String, Vec<(usize, String)>>>,
 }
 
 impl SymbolLibrary {
@@ -1539,6 +1616,7 @@ impl SymbolLibrary {
         Self {
             roots: vec![root.into()],
             cache: BTreeMap::new(),
+            by_name: None,
         }
     }
 
@@ -1547,6 +1625,7 @@ impl SymbolLibrary {
         Self {
             roots: roots.into_iter().map(Into::into).collect(),
             cache: BTreeMap::new(),
+            by_name: None,
         }
     }
 
@@ -1578,7 +1657,8 @@ impl SymbolLibrary {
     ///
     /// A miss is normally a symbol from a reference share the local copy was
     /// not taken from, not a decode failure — worth reporting so the gap is
-    /// visible.
+    /// visible. A path that names no share at all counts only when no root
+    /// holds a uniquely named `.sym` of that file name either.
     #[must_use]
     pub fn missing(&self) -> Vec<&str> {
         self.cache
@@ -1590,15 +1670,96 @@ impl SymbolLibrary {
 
     /// Resolve a placement's symbol path to its body.
     ///
-    /// Returns `None` when the path is not library-relative, or when no root
-    /// holds a readable copy. A symbol that reads but holds no geometry
+    /// Returns `None` when the path is not library-relative and does not name
+    /// a `.sym` a root holds uniquely, or when no root holds a readable copy
+    /// at the address it does give. A symbol that reads but holds no geometry
     /// resolves to an empty body, which callers can tell from a miss.
     pub fn resolve(&mut self, symbol_path: &str) -> Option<&SymbolGeometry> {
         if !self.cache.contains_key(symbol_path) {
+            if library_relative_path(symbol_path).is_none() {
+                self.index_by_name();
+            }
             let body = self.read_from_roots(symbol_path);
             self.cache.insert(symbol_path.to_owned(), body);
         }
         self.cache.get(symbol_path)?.as_ref()
+    }
+
+    /// Why the file name of a path that names no share gave no body.
+    ///
+    /// `None` when the path is library-relative (it was addressed, not named),
+    /// when a root holds exactly one `.sym` of that name (the body is there to
+    /// read, whether or not it decoded), and when the path does not end in
+    /// `.sym` at all.
+    ///
+    /// The index is built here if no lookup needed it yet.
+    pub fn name_miss(&mut self, symbol_path: &str) -> Option<NameMiss> {
+        if library_relative_path(symbol_path).is_some() {
+            return None;
+        }
+        let name = symbol_file_name(symbol_path)?;
+        self.index_by_name();
+        let Some(matches) = self.by_name.as_ref()?.get(&name) else {
+            return Some(NameMiss::NoSuchFile);
+        };
+        let unique = (0..self.roots.len()).any(|root_number| {
+            matches
+                .iter()
+                .filter(|(root, _)| *root == root_number)
+                .count()
+                == 1
+        });
+        (!unique).then_some(NameMiss::NotUnique)
+    }
+
+    /// Map every `.sym` in the roots by file name, once.
+    fn index_by_name(&mut self) {
+        if self.by_name.is_some() {
+            return;
+        }
+        let mut index: BTreeMap<String, Vec<(usize, String)>> = BTreeMap::new();
+        for (root_number, root) in self.roots.iter().enumerate() {
+            let mut files = Vec::new();
+            collect_symbol_files(root, "", 0, &mut files);
+            for relative in files {
+                let Some(name) = relative.rsplit('/').next() else {
+                    continue;
+                };
+                index
+                    .entry(name.to_ascii_lowercase())
+                    .or_default()
+                    .push((root_number, relative));
+            }
+        }
+        self.by_name = Some(index);
+    }
+
+    /// The library-relative path of the `.sym` a non-library path names.
+    ///
+    /// A title-block placement authored on an engineer's own machine stores
+    /// the path it was authored with — the corpus carries
+    /// `C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym` — which has no
+    /// `Symbols` component for [`library_relative_path`] to split on, so the
+    /// only thing left to go on is the file name. The first root holding
+    /// exactly one `.sym` of that name supplies the body.
+    ///
+    /// A name two folders of the same root both carry is refused rather than
+    /// guessed at: two different symbols can share a file name, and drawing
+    /// the wrong one is worse than drawing nothing.
+    fn relative_by_name(&self, symbol_path: &str) -> Option<String> {
+        let name = symbol_file_name(symbol_path)?;
+        let matches = self.by_name.as_ref()?.get(&name)?;
+        for root_number in 0..self.roots.len() {
+            let mut in_root = matches.iter().filter(|(root, _)| *root == root_number);
+            let Some(first) = in_root.next() else {
+                continue;
+            };
+            if in_root.next().is_some() {
+                continue;
+            }
+            return Some(first.1.clone());
+        }
+        None
     }
 
     /// Read a symbol from the first root that draws it.
@@ -1615,7 +1776,10 @@ impl SymbolLibrary {
     /// tried first, then the same path with each component's leading spaces
     /// trimmed.
     fn read_from_roots(&self, symbol_path: &str) -> Option<SymbolGeometry> {
-        let relative = library_relative_path(symbol_path)?.replace('\\', "/");
+        let relative = match library_relative_path(symbol_path) {
+            Some(relative) => relative.replace('\\', "/"),
+            None => self.relative_by_name(symbol_path)?,
+        };
         let mut empty = None;
         for candidate in symbol_candidates(&relative) {
             for root in &self.roots {
@@ -2349,6 +2513,154 @@ mod tests {
         assert_eq!(library.lookups(), 2);
         assert_eq!(library.resolved(), 1);
         assert_eq!(library.missing().len(), 1);
+    }
+
+    /// A title-block placement authored on the engineer's own machine names a
+    /// local absolute path, which no root can be addressed with — but the file
+    /// name is still the library's own. `BLFH.sym` (the `比例` cell's wave) is
+    /// drawn from the template's cache in the corpus only because its absolute
+    /// path used to be unaddressable; a share that holds a `BLFH.sym` now
+    /// supplies it.
+    #[test]
+    fn an_author_machine_path_finds_the_file_by_name() {
+        let Some(circle) = fixture(r"Design/Annotation/Graphics/Circle.sym") else {
+            return;
+        };
+        let root = scratch_root("by-name");
+        let temp = root.join("Temp");
+        std::fs::create_dir_all(&temp).expect("Temp under the share");
+        std::fs::copy(&circle, temp.join("BLFH.sym")).expect("copied body");
+
+        let mut library = SymbolLibrary::new(&root);
+        let stored = r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym";
+        let hit = library.resolve(stored).map(|body| body.primitives.len());
+        assert_eq!(hit, Some(1), "the share holds a body of that name");
+        assert!(
+            library.missing().is_empty(),
+            "a name the share carries is not a miss: {:?}",
+            library.missing()
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_name_no_root_holds_stays_a_miss() {
+        let root = scratch_root("by-name-miss");
+        std::fs::copy(
+            fixture(r"Design/Annotation/Graphics/Circle.sym").expect("fixture"),
+            root.join("Circle.sym"),
+        )
+        .expect("copied body");
+
+        let mut library = SymbolLibrary::new(&root);
+        assert!(library
+            .resolve(r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym")
+            .is_none());
+        assert_eq!(library.missing().len(), 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The two ways a name lookup can give nothing are not the same account:
+    /// one is a file the share lacks, the other a name it carries twice.
+    #[test]
+    fn a_name_miss_says_whether_the_file_is_absent_or_carried_twice() {
+        let Some(circle) = fixture(r"Design/Annotation/Graphics/Circle.sym") else {
+            return;
+        };
+        let empty = scratch_root("miss-kind-empty");
+        let mut library = SymbolLibrary::new(&empty);
+        let stored = r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym";
+        assert_eq!(library.name_miss(stored), Some(NameMiss::NoSuchFile));
+        std::fs::remove_dir_all(&empty).ok();
+
+        let twice = scratch_root("miss-kind-twice");
+        for folder in ["First", "Second"] {
+            let dir = twice.join(folder);
+            std::fs::create_dir_all(&dir).expect("folder");
+            std::fs::copy(&circle, dir.join("BLFH.sym")).expect("copied body");
+        }
+        let mut library = SymbolLibrary::new(&twice);
+        assert_eq!(library.name_miss(stored), Some(NameMiss::NotUnique));
+        // The same name in one folder of each of two roots is not an ambiguity.
+        let mut split = SymbolLibrary::with_roots([twice.join("First"), twice.join("Second")]);
+        assert_eq!(split.name_miss(stored), None);
+        std::fs::remove_dir_all(&twice).ok();
+    }
+
+    #[test]
+    fn a_name_miss_is_silent_when_the_body_is_there_or_the_path_is_addressed() {
+        let Some(circle) = fixture(r"Design/Annotation/Graphics/Circle.sym") else {
+            return;
+        };
+        let root = scratch_root("miss-kind-silent");
+        std::fs::copy(&circle, root.join("BLFH.sym")).expect("copied body");
+        let mut library = SymbolLibrary::new(&root);
+        let stored = r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym";
+        assert!(library.resolve(stored).is_some());
+        assert_eq!(library.name_miss(stored), None, "the name found its file");
+        assert_eq!(
+            library.name_miss(CIRCLE_UNC),
+            None,
+            "a share-relative path is addressed, not named"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_name_two_folders_of_one_root_hold_is_refused() {
+        // Two different symbols can share a file name. Guessing one of them
+        // would draw the wrong body, so the placement stays a miss.
+        let Some(circle) = fixture(r"Design/Annotation/Graphics/Circle.sym") else {
+            return;
+        };
+        let root = scratch_root("by-name-ambiguous");
+        for folder in ["First", "Second"] {
+            let dir = root.join(folder);
+            std::fs::create_dir_all(&dir).expect("folder");
+            std::fs::copy(&circle, dir.join("BLFH.sym")).expect("copied body");
+        }
+
+        let mut library = SymbolLibrary::new(&root);
+        assert!(library
+            .resolve(r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym")
+            .is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_first_root_holding_the_name_supplies_it() {
+        // Roots are partial copies of different shares, so the same name in
+        // two of them is the same symbol, not an ambiguity.
+        let Some(circle) = fixture(r"Design/Annotation/Graphics/Circle.sym") else {
+            return;
+        };
+        let first = scratch_root("by-name-first");
+        let second = scratch_root("by-name-second");
+        std::fs::copy(&circle, first.join("BLFH.sym")).expect("first body");
+        std::fs::write(second.join("BLFH.sym"), b"not a compound file").expect("bad copy");
+
+        let mut library = SymbolLibrary::with_roots([first.clone(), second.clone()]);
+        let hit = library
+            .resolve(r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym")
+            .map(|body| body.primitives.len());
+        assert_eq!(hit, Some(1), "the first root's readable copy is the one");
+        std::fs::remove_dir_all(&first).ok();
+        std::fs::remove_dir_all(&second).ok();
+    }
+
+    #[test]
+    fn symbol_file_name_needs_a_sym_ending() {
+        assert_eq!(
+            symbol_file_name(r"C:\Users\A\AppData\Local\Temp\BLFH.SYM"),
+            Some("blfh.sym".to_string())
+        );
+        assert_eq!(
+            symbol_file_name("Temp/Thing.sym"),
+            Some("thing.sym".to_string())
+        );
+        assert_eq!(symbol_file_name(r"C:\Temp\logo.png"), None);
+        assert_eq!(symbol_file_name("C:\\Temp\\"), None);
+        assert_eq!(symbol_file_name(""), None);
     }
 
     #[test]
