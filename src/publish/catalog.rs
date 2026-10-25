@@ -25,6 +25,7 @@
 //! and `"$derived"` owns `.pid`-line tags emitted by enrichment rather
 //! than by an item row (exp ports, synthesized `PIDPipeline`).
 
+use super::catalog_index;
 use super::model::{PublishDrawing, PublishError, PublishObject};
 use super::xml_writer;
 
@@ -696,6 +697,111 @@ pub(crate) fn excluded_attribute(
     })
 }
 
+/// The three-set reconciliation between a parsed `CatalogIndex.xml`
+/// ([`catalog_index::CatalogIndexDocument`]) and `PUBLISH_ITEM_CATALOG`.
+///
+/// The index side names an item type the way the plant spells it; the
+/// catalog side answers with the row that dispatches that name — either
+/// the row's own `item_type` or one of its `aliases` (`Note` answers for
+/// `ItemNote`, `Instrument` for `InstrFunction`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogIndexCrossCheck {
+    /// Index-side `ItemType`s some catalog row claims — the **index
+    /// spelling** (`ItemNote`, not the row's `Note`), sorted.
+    pub in_both: Vec<String>,
+    /// Index-side `ItemType`s no catalog row claims, sorted.
+    pub only_in_catalog_index: Vec<String>,
+    /// `item_type` of the catalog rows the index never names, sorted.
+    ///
+    /// `"*"` / `"$document"` / `"$derived"` are dispatch sentinels, not
+    /// item types, so they always land here against a real index — that
+    /// is expected, not a defect.
+    pub only_in_catalog: Vec<String>,
+    /// Members of `in_both` the catalog knows only through an `aliases`
+    /// entry, sorted (index spelling, e.g. `ItemNote`).
+    pub matched_through_an_alias: Vec<String>,
+    /// Every catalog row's `item_type`, sorted — the comparison base the
+    /// index names were checked against.
+    pub catalog_item_types: Vec<String>,
+    /// Every alias declared by the catalog, sorted.
+    pub catalog_aliases: Vec<String>,
+    /// Names of the difference sets that came back empty —
+    /// `"only_in_catalog_index"` and/or `"only_in_catalog"`. Registering
+    /// an empty set explicitly keeps "empty because the two sides agree"
+    /// from looking like "never computed". Empty when both differ.
+    pub empty_difference_sets: Vec<&'static str>,
+}
+
+/// Reconcile `document`'s item-bearing `ItemType`s against
+/// `PUBLISH_ITEM_CATALOG`: which index names the catalog can dispatch
+/// ([`CatalogIndexCrossCheck::in_both`]), which it cannot
+/// (`only_in_catalog_index`), and which catalog rows the index never
+/// exercises (`only_in_catalog`).
+///
+/// A row claims an index name when the name equals its `item_type` or one
+/// of its `aliases`; a row enters `only_in_catalog` only when **no**
+/// index name reaches it through either route.
+#[must_use]
+pub fn cross_check_catalog_index(
+    document: &catalog_index::CatalogIndexDocument,
+) -> CatalogIndexCrossCheck {
+    let index_names = document.item_bearing_item_types();
+    let index_set: std::collections::BTreeSet<&str> = index_names.iter().copied().collect();
+    let mut in_both = Vec::new();
+    let mut only_in_catalog_index = Vec::new();
+    let mut matched_through_an_alias = Vec::new();
+    for &name in &index_names {
+        match PUBLISH_ITEM_CATALOG
+            .iter()
+            .find(|row| row.item_type == name || row.aliases.contains(&name))
+        {
+            Some(row) => {
+                in_both.push(name.to_owned());
+                if row.item_type != name {
+                    matched_through_an_alias.push(name.to_owned());
+                }
+            }
+            None => only_in_catalog_index.push(name.to_owned()),
+        }
+    }
+    let mut only_in_catalog: Vec<String> = PUBLISH_ITEM_CATALOG
+        .iter()
+        .filter(|row| {
+            !index_set.contains(row.item_type)
+                && !row.aliases.iter().any(|alias| index_set.contains(alias))
+        })
+        .map(|row| row.item_type.to_owned())
+        .collect();
+    let mut catalog_item_types: Vec<String> = PUBLISH_ITEM_CATALOG
+        .iter()
+        .map(|row| row.item_type.to_owned())
+        .collect();
+    let mut catalog_aliases: Vec<String> = PUBLISH_ITEM_CATALOG
+        .iter()
+        .flat_map(|row| row.aliases.iter().copied())
+        .map(str::to_owned)
+        .collect();
+    only_in_catalog.sort_unstable();
+    catalog_item_types.sort_unstable();
+    catalog_aliases.sort_unstable();
+    let mut empty_difference_sets = Vec::new();
+    if only_in_catalog_index.is_empty() {
+        empty_difference_sets.push("only_in_catalog_index");
+    }
+    if only_in_catalog.is_empty() {
+        empty_difference_sets.push("only_in_catalog");
+    }
+    CatalogIndexCrossCheck {
+        in_both,
+        only_in_catalog_index,
+        only_in_catalog,
+        matched_through_an_alias,
+        catalog_item_types,
+        catalog_aliases,
+        empty_difference_sets,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -880,5 +986,82 @@ mod tests {
                 ".pid-line tag `{tag}` missing from catalog"
             );
         }
+    }
+
+    #[test]
+    fn catalog_index_cross_check_splits_the_three_sets() {
+        // `ItemNote` reaches the `Note` row through its alias;
+        // `ExtraItem` stays index-only; `Vessel` is a direct hit.
+        let xml = concat!(
+            "<?xml version=\"1.0\"?>",
+            "<XOMContainer>",
+            "<CICatalogItem ItemType=\"Vessel\" Class=\"0\" Subclass=\"0\" Type=\"1\" ",
+            "CatalogItem=\"a.sym\"/>",
+            "<CICatalogItem ItemType=\"ItemNote\" Class=\"0\" Subclass=\"0\" Type=\"2\" ",
+            "CatalogItem=\"b.sym\"/>",
+            "<CICatalogItem ItemType=\"ExtraItem\" Class=\"0\" Subclass=\"0\" Type=\"3\" ",
+            "CatalogItem=\"c.sym\"/>",
+            "</XOMContainer>",
+        );
+        let document = super::catalog_index::parse_catalog_index_document(xml.as_bytes()).unwrap();
+        let check = cross_check_catalog_index(&document);
+        assert_eq!(check.in_both, ["ItemNote", "Vessel"]);
+        assert_eq!(check.matched_through_an_alias, ["ItemNote"]);
+        assert_eq!(check.only_in_catalog_index, ["ExtraItem"]);
+        assert_eq!(check.only_in_catalog.len(), 15);
+        for sentinel in ["*", "$document", "$derived"] {
+            assert!(
+                check.only_in_catalog.iter().any(|row| row == sentinel),
+                "sentinel `{sentinel}` missing from only_in_catalog"
+            );
+        }
+        for claimed in ["Note", "Vessel"] {
+            assert!(
+                !check.only_in_catalog.iter().any(|row| row == claimed),
+                "`{claimed}` reached the index and must not be a difference"
+            );
+        }
+        assert!(check.empty_difference_sets.is_empty());
+    }
+
+    #[test]
+    fn catalog_index_cross_check_registers_empty_difference_sets() {
+        // An index naming every catalog `item_type` leaves both
+        // difference sets empty — and must say so explicitly.
+        let names = [
+            "*",
+            "$document",
+            "$derived",
+            "BranchPoint",
+            "EquipmentOther",
+            "Exchanger",
+            "Instrument",
+            "Mechanical",
+            "Note",
+            "Nozzle",
+            "OPC",
+            "PipeRun",
+            "PipingBranchPoint",
+            "PipingComp",
+            "PipingPoint",
+            "SignalRun",
+            "Vessel",
+        ];
+        let mut xml = String::from("<?xml version=\"1.0\"?><XOMContainer>");
+        for (index, name) in names.iter().enumerate() {
+            xml.push_str(&format!(
+                "<CICatalogItem ItemType=\"{name}\" Class=\"0\" Subclass=\"0\" ",
+            ));
+            xml.push_str(&format!("Type=\"{index}\" CatalogItem=\"x{index}.sym\"/>",));
+        }
+        xml.push_str("</XOMContainer>");
+        let document = super::catalog_index::parse_catalog_index_document(xml.as_bytes()).unwrap();
+        let check = cross_check_catalog_index(&document);
+        assert!(check.only_in_catalog_index.is_empty());
+        assert!(check.only_in_catalog.is_empty());
+        assert_eq!(
+            check.empty_difference_sets,
+            ["only_in_catalog_index", "only_in_catalog"]
+        );
     }
 }

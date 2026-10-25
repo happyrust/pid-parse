@@ -27,6 +27,9 @@
 //!
 //! * `catalog` — `PublishItemCatalog`, one row per publish item type for
 //!   both lines; the database line reads it (A2–A4).
+//! * [`catalog_index`] — the plant's own `CatalogIndex.xml` from
+//!   `RefData~*.zip`: `(ItemType, Class, Subclass, Type) → .sym`, and the
+//!   three-set cross-check against `catalog`'s rows.
 //! * [`model`] — object-graph DTO shared by the loader and the
 //!   writer. Includes the [`model::PublishStyle`] selector, which
 //!   is an **explicit** input per drawing — the writer never
@@ -80,6 +83,7 @@ pub mod backup_package;
 // unions the DB set with `supported_pid_line_tags`, and `pid_load`
 // classes an item through the row's `pid_class`.
 mod catalog;
+pub mod catalog_index;
 pub mod diff;
 #[cfg(feature = "backup-mdf")]
 pub mod mdf_load;
@@ -92,6 +96,7 @@ pub mod pipeline;
 pub mod sqlite_load;
 pub mod xml_writer;
 
+pub use catalog::{cross_check_catalog_index, CatalogIndexCrossCheck};
 pub use diff::{
     check_publish_document, coverage_against_reference, diff_pid_export, diff_publish_xml,
     diff_rel_defuids, parse_attrs_per_interface_per_tag, parse_interfaces_per_tag,

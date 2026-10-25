@@ -143,6 +143,10 @@ required-features = ["backup"]
 name = "publish_walkthrough"
 required-features = ["backup"]
 
+[[example]]
+name = "probe_catalog_index"
+required-features = ["backup"]
+
 # The integration tests that read the plant database, publish from it or
 # drive a binary that does; `cargo test --no-default-features` builds the
 # `.pid`-only tests and skips these.
