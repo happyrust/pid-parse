@@ -628,11 +628,14 @@ pub enum PidGraphicKind {
         /// Whether the last point connects back to the first.
         closed: bool,
     },
-    /// Circular arc in model space, swept **clockwise** from `start_angle`
-    /// to `end_angle` -- the `igArc2d` convention the cached and library
-    /// bodies prove (`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`);
-    /// no sheet of the corpus carries one directly, so this kind is the
-    /// same record read the same way rather than a measured case.
+    /// Circular arc in model space, from `start_angle` to `end_angle` in
+    /// the direction [`clockwise`](Self::Arc::clockwise) states.
+    ///
+    /// `igArc2d` stores two absolute angles and the direction that picks one
+    /// of the two arcs between them
+    /// (`docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`).
+    /// The two readings are complements: the same endpoints, the rest of the
+    /// circle.
     Arc {
         /// Arc centre point.
         center: PidPoint,
@@ -642,6 +645,10 @@ pub enum PidGraphicKind {
         start_angle: f64,
         /// End angle in radians, counter-clockwise from +X.
         end_angle: f64,
+        /// `true` when the arc runs clockwise from the start angle to the
+        /// end angle, `false` when it runs counter-clockwise. The record's
+        /// trailing byte states it: `0` clockwise, `1` counter-clockwise.
+        clockwise: bool,
     },
     /// Full circle in model space.
     Circle {
@@ -1577,6 +1584,7 @@ fn embedded_symbol_definitions(doc: &PidDocument) -> Vec<PidSymbolDefinition> {
                         radius: arc.radius,
                         start_angle: arc.start_angle,
                         end_angle: arc.end_angle,
+                        clockwise: arc.flag == 0,
                     },
                     arc.sheet_layer_ref,
                     Some(arc.index),
@@ -2546,6 +2554,7 @@ impl GeometryEmitter for IgArc2dEmitter {
                     radius: record.radius,
                     start_angle: record.start_angle,
                     end_angle: record.end_angle,
+                    clockwise: record.flag == 0,
                 },
                 coordinate_context: decoded_sheet_coordinate_context(&sheet.path, ctx.page),
                 source: PidGraphicProvenance {
@@ -2558,8 +2567,7 @@ impl GeometryEmitter for IgArc2dEmitter {
                         "PSM igArc2d record (Intergraph Sigma standard arc, \
                          type 0x0061, IGDS class tag 0x61); oid={} parent_ref={} \
                          sub_type=0x{:04X} index={} center=({:.4}, {:.4}) \
-                         radius={:.4} start={:.4} end={:.4}; arc sweeps \
-                         clockwise start to end",
+                         radius={:.4} start={:.4} end={:.4} direction={}",
                         record.oid,
                         record.parent_ref,
                         record.sub_type_word,
@@ -2569,6 +2577,11 @@ impl GeometryEmitter for IgArc2dEmitter {
                         record.radius,
                         record.start_angle,
                         record.end_angle,
+                        if record.flag == 0 {
+                            "clockwise"
+                        } else {
+                            "counter-clockwise"
+                        }
                     )),
                 },
                 confidence: PidGeometryConfidence::Decoded,
@@ -4304,6 +4317,7 @@ mod tests {
                 radius: 4.0,
                 start_angle: 0.0,
                 end_angle: 1.0,
+                clockwise: true,
             }
             .decoded_sheet_record_kind(),
             None,

@@ -1147,11 +1147,22 @@ pub struct DecodedIgArc2dRecord {
     /// Radius, same units.
     pub radius: f64,
     /// Absolute start angle, radians counter-clockwise from +X; the arc
-    /// runs **clockwise** from here to `end_angle`
-    /// (`docs/analysis/2026-09-19-igarc2d-sweeps-clockwise-from-start-to-end.md`).
+    /// leaves it in the direction [`Self::flag`] names.
     pub start_angle: f64,
     /// Absolute end angle, radians counter-clockwise from +X.
     pub end_angle: f64,
+    /// The record's trailing byte, `payload +58`: the traversal direction,
+    /// `0` clockwise from `start_angle` and `1` counter-clockwise. The two
+    /// readings are complements that reach the same end.
+    ///
+    /// Read as a direction for the first time on the wave of
+    /// `FT-Ultrasonic Flowmeter.sym` (its two identical `90° -> 270°`
+    /// records carry `0` and `1` and bulge opposite ways) and on `Local
+    /// Vent.sym`'s 174.7° canopy, whose reference ink is the 185.3° side
+    /// only the counter-clockwise reading draws. See
+    /// `docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`.
+    #[serde(default)]
+    pub flag: u8,
 }
 
 impl From<crate::parsers::sheet_records::SheetIgArc2dDecoded> for DecodedIgArc2dRecord {
@@ -1168,6 +1179,7 @@ impl From<crate::parsers::sheet_records::SheetIgArc2dDecoded> for DecodedIgArc2d
             radius: record.radius,
             start_angle: record.start_angle,
             end_angle: record.end_angle,
+            flag: record.flag,
         }
     }
 }

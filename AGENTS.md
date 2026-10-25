@@ -69,6 +69,7 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 | `tests/parse_real_files.rs::dwg0201_emits_decoded_primitive_lines_without_inferred_regression` | Phase 14 Slice E AC8 guard | `DWG-0201GP06-01.pid` |
 | `pid-plot/tests/export_every_fixture.rs` | Every fixture `.pid` exports a PDF, reads back, and names any symbol no library carries | every `test-file/**/*.pid` |
 | `pid-plot/tests/export_plant_backup.rs` | 53-sheet plant backup exports, page size / off-sheet / page-weight ratchets, known library gaps only | `backup-plant-data/**/*.pid` under `PID_TEST_DATA_DIR`, the corpus, or either `pid-test-data` (soft-skips when absent) |
+| `pid-plot/tests/border_template.rs` | A0/A1 sheets draw the frame, title block and sign-off column their linked `.igr` carries (both frames, 12 furniture labels, rendered company name and `会 签 专 业` read back); an A2 sheet with no matching template draws none | the corpus `.pid` + `Ref/Template Files`; `test-file/D06.pid` (soft-skips when absent) |
 
 DWG-specific tests soft-skip when `test-file/backup-test/DWG-0202GP06-01_p/extracted/Export.mdf` is absent.
 
@@ -155,10 +156,15 @@ decompilation.
   `Sheet6` yielded 17 top-level records — the instrument balloons
   (r = 6.35 mm) and sensing-bulb centre dots (r = 1.4 mm) — and
   `igArc2d` (`0x0061`) is emitted because the linked `.igr` border
-  templates draw logo glyphs and rounded corners with it. Sheet arcs
-  normalize to the minor sweep (≤ π; a direct `start → end` reading
-  that exceeds π swaps endpoints) — the same rule verified against the
-  cached-body CW convention and the `.igr` logo arcs. `igRectangle2d`
+  templates draw logo glyphs and rounded corners with it. An arc's
+  trailing byte (`payload +58`) is its direction — `0` clockwise,
+  `1` counter-clockwise — the same byte `igEllipticalArc2d` carries;
+  it is threaded through as `clockwise` and **never** folded to the
+  minor sweep (the fold was the old guess and it mis-drew
+  `FT-Ultrasonic`'s wave, `Local Vent`'s canopy and the `Remarks`
+  cloud). See
+  `docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`.
+  `igRectangle2d`
   (`0x0020`) and `igBspCurve2d` (`0x005D`) also have Sheet family rows.
   In the test-file corpus the remaining members (12 circles, 12 arcs,
   3 rectangles, one BspCurve) still live in the `PSMcluster0` streams

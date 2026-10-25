@@ -53,8 +53,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 radius,
                 start_angle,
                 end_angle,
+                clockwise,
             } => format!(
-                "Arc c=({:.1},{:.1}) r={:.1} a={:.0}..{:.0}",
+                "Arc c=({:.1},{:.1}) r={:.1} a={:.0}..{:.0} cw={clockwise}",
                 center.x * 1000.0,
                 center.y * 1000.0,
                 radius * 1000.0,

@@ -105,6 +105,18 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // section). Extra ink 147.3 → 98.4 mm across the five pages, coverage up on
 // every one of them, and the `Diaphragm Actuator.sym` group is gone from every
 // residual list.
+//
+// The current move is the border template
+// (`docs/analysis/2026-10-23-the-border-template-draws-the-sheet-furniture.md`):
+// all four A0/A1 sheets now carry the frame, title block and sign-off column
+// their linked `.igr` states. `I` and `B`'s reference plots carry the same
+// furniture, and their coverage rises (0.9989 → 0.9993, 0.9979 → 0.9997) as
+// the parts of it that fall outside the two mask rectangles start matching.
+// `A` and `低温分离器A`'s references were plotted without any furniture at all,
+// so the same ink is charged as extra — 15 mm each, which is what moves their
+// ceilings (7.6 → 22.6 and 22.9 → 37.9 mm). That is a real difference between
+// those two reference pages and every drawing in the set, not a regression:
+// their `.pid` states the same linked A1 frame as `B`'s.
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
@@ -115,7 +127,7 @@ const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
         min_coverage: 0.9995,
-        max_extra_mm: 10.0,
+        max_extra_mm: 25.0,
         min_text_matched: 151,
     },
     Baseline {
@@ -127,7 +139,7 @@ const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
         min_coverage: 0.9982,
-        max_extra_mm: 26.0,
+        max_extra_mm: 40.0,
         min_text_matched: 167,
     },
     Baseline {

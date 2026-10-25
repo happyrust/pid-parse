@@ -166,7 +166,27 @@ impl<'a> Device<'a> for InkDevice {
     fn pop_transparency_group(&mut self) {}
     fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {}
 
-    fn draw_rect(&mut self, _: &Rect, _: Affine, _: &Paint<'a>, _: &PathDrawMode) {}
+    /// A `re` path is a rectangle, and hayro hands it over as one rather than
+    /// as four `l` operators, so a four-point axis-aligned fill never reaches
+    /// [`Self::draw_path`]. Reading it as nothing lost the `.igr` title block's
+    /// two small filled boxes — 8 edges, invisible to every comparison. The
+    /// rectangle becomes the same closed path and folds in there, so its edges
+    /// count like any other path's.
+    fn draw_rect(
+        &mut self,
+        rect: &Rect,
+        transform: Affine,
+        paint: &Paint<'a>,
+        draw_mode: &PathDrawMode,
+    ) {
+        let mut path = BezPath::new();
+        path.move_to((rect.x0, rect.y0));
+        path.line_to((rect.x1, rect.y0));
+        path.line_to((rect.x1, rect.y1));
+        path.line_to((rect.x0, rect.y1));
+        path.close_path();
+        self.draw_path(&path, transform, paint, draw_mode);
+    }
 
     fn draw_path(
         &mut self,

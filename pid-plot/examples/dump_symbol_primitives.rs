@@ -64,8 +64,9 @@ fn render(shape: &PaperShape) -> String {
             radius_mm,
             start_angle,
             end_angle,
+            clockwise,
         } => format!(
-            "  arc  center ({:9.3},{:9.3}) r {:8.3} {:8.4} -> {:8.4}\n",
+            "  arc  center ({:9.3},{:9.3}) r {:8.3} {:8.4} -> {:8.4} cw={clockwise}\n",
             center_mm[0], center_mm[1], radius_mm, start_angle, end_angle
         ),
         PaperShape::Circle {

@@ -100,18 +100,14 @@ fn pieces(shape: &PaperShape) -> Vec<([f64; 2], [f64; 2])> {
             radius_mm,
             start_angle,
             end_angle,
+            clockwise,
         } => {
-            let (mut s, mut e) = (*start_angle, *end_angle);
-            let cw = (s - e).rem_euclid(std::f64::consts::TAU);
-            if cw > std::f64::consts::PI + 1e-9 {
-                std::mem::swap(&mut s, &mut e);
-            }
-            arc(
-                *center_mm,
-                *radius_mm,
-                s,
-                -((s - e).rem_euclid(std::f64::consts::TAU)),
-            )
+            let sweep = if *clockwise {
+                -(*start_angle - *end_angle).rem_euclid(std::f64::consts::TAU)
+            } else {
+                (*end_angle - *start_angle).rem_euclid(std::f64::consts::TAU)
+            };
+            arc(*center_mm, *radius_mm, *start_angle, sweep)
         }
         PaperShape::Text { .. } => Vec::new(),
     }

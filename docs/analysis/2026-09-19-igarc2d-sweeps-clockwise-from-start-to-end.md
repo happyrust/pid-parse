@@ -64,6 +64,26 @@ Cap / Cap2 的半圆（弦在 x = 0.0019）与 DCS 盒的两个半圆（0° → 
 `sweep > PI + 1e-9`（`OpenCADStudio/src/io/pid/{symbols.rs,build.rs}`），A/B/LT 三图封头与
 参考一致。
 
+## 更正（2026-10-23）：尾字节**是**方向位，minor 弧归一化已撤掉
+
+本文开头「尾字节 `+58` 不是方向位：Manifold 两条弧为 0、Cap 与 DCS 盒为 1，走向全一样」
+这一句作废。那几处恰好都是**两种读法同一片墨**的地方：Manifold 端帽与 Cap 是半圆（配对后
+拼成整圆），所以字节在那里裁不出来——不是它没有语义。
+
+`2026-10-23-the-arc-trailing-byte-is-the-direction.md` 用两件符号的字节把它定死：
+`FT-Ultrasonic Flowmeter.sym` 的两条记录角度完全相同（`90° → 270°`）、只有字节相反，
+参考图画的是交叉 S；`Local Vent` 顶盖 174.74° / 185.26° 两读只差 5.26°，参考画的是长的那边。
+同文还量到 `Remarks.sym` 的四条弧只有按字节读才闭合成 22 mm 的云（390.0 mm²），
+旧的一律短弧把 `217` 折成 26.84° 的小钩（11.6 mm²）。
+
+因此：
+
+- 「顺时针」是**字节 0** 的读法，不是无条件的约定；字节 1 是逆时针。
+- 「归一化到 ≤ π 的 minor 弧」这条兜底规则撤掉。它当年能过四个实测点，是因为那四点的方向
+  字节恰好都指向短边；`Local Vent` 的 185.26° 与云线的 333.16° 是它的反例。
+- `SymbolPrimitive::Arc` / `PidGraphicKind::Arc` / `PaperShape::Arc` 都带上 `clockwise`，
+  本篇裁剪出的「顺时针」证据（Manifold 端帽、构造线）对应两条端帽记录都是字节 0，与结论一致。
+
 ## 复现
 
 `tests/parse_real_files.rs::a_cached_arc_sweeps_clockwise_from_its_start_angle_to_its_end_angle`：

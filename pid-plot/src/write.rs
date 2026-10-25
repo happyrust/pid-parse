@@ -328,7 +328,9 @@ fn push_layer(
                     anchor: *anchor,
                     line: *line,
                     spans,
+                    furniture: primitive.furniture,
                 },
+                page,
             )?;
         }
     }
@@ -390,23 +392,43 @@ fn paint_primitive(ops: &mut Vec<Op>, primitive: &crate::model::PaperPrimitive, 
         "w",
         vec![Object::Real(pen_width_mm(pen.width_mm) * PT_PER_MM)],
     ));
-    if !pen.dash_mm.is_empty() {
-        let dash: Vec<Object> = pen
-            .dash_mm
-            .iter()
-            .map(|segment| Object::Real(segment.abs() * PT_PER_MM))
-            .collect();
+    if let Some(dash) = dash_array(&pen) {
         ops.push(Op::new("d", vec![Object::Array(dash), Object::Real(0.0)]));
     }
-    if paint_shape(ops, &primitive.shape, page) {
+    if paint_shape(ops, &primitive.shape, page, primitive.furniture) {
         ops.push(Op::new("S", Vec::new()));
     }
     ops.push(Op::new("Q", Vec::new()));
 }
 
-fn paint_shape(ops: &mut Vec<Op>, shape: &PaperShape, page: [f64; 2]) -> bool {
+/// The dash state a pen asks for, or `None` when its pattern inks no dash.
+///
+/// A PDF dash array's numbers have to be non-negative and **not all zero**.
+/// The model keeps a pattern exactly as the record states it, and the D04
+/// fixture's own style declares one zero-length segment — a walk over that
+/// pattern is solid (`DashWalk` treats a zero period as no dash at all), so
+/// the page has to draw it that way too instead of writing the invalid
+/// `[0] 0 d` state a stricter viewer than MuPDF may refuse.
+fn dash_array(pen: &PaperStroke) -> Option<Vec<Object>> {
+    let steps: Vec<f64> = pen
+        .dash_mm
+        .iter()
+        .map(|segment| segment.abs() * PT_PER_MM)
+        .collect();
+    if steps.iter().any(|step| !step.is_finite()) || steps.iter().all(|step| *step <= 0.0) {
+        return None;
+    }
+    Some(steps.into_iter().map(Object::Real).collect())
+}
+
+fn paint_shape(
+    ops: &mut Vec<Op>,
+    shape: &PaperShape,
+    page: [f64; 2],
+    keep_sheet_edge: bool,
+) -> bool {
     let mut any = false;
-    for run in stroke_runs(&shape_chain(shape), page) {
+    for run in stroke_runs(&shape_chain(shape), page, keep_sheet_edge) {
         ops.push(Op::new("m", vec![pt(run[0][0]), pt(run[0][1])]));
         for point in &run[1..] {
             ops.push(Op::new("l", vec![pt(point[0]), pt(point[1])]));
@@ -432,8 +454,9 @@ fn shape_chain(shape: &PaperShape) -> Vec<[f64; 2]> {
             radius_mm,
             start_angle,
             end_angle,
+            clockwise,
         } => {
-            let (start, sweep) = minor_clockwise_arc(*start_angle, *end_angle);
+            let (start, sweep) = directed_arc(*start_angle, *end_angle, *clockwise);
             arc_points(*center_mm, *radius_mm, start, sweep)
         }
         PaperShape::Circle {
@@ -449,7 +472,7 @@ fn shape_chain(shape: &PaperShape) -> Vec<[f64; 2]> {
 ///
 /// One run becomes one subpath, so a dash pattern flows along a whole polyline
 /// instead of restarting at every vertex.
-fn stroke_runs(points: &[[f64; 2]], page: [f64; 2]) -> Vec<Vec<[f64; 2]>> {
+fn stroke_runs(points: &[[f64; 2]], page: [f64; 2], keep_sheet_edge: bool) -> Vec<Vec<[f64; 2]>> {
     let mut runs = Vec::new();
     let mut run: Vec<[f64; 2]> = Vec::new();
     for pair in points.windows(2) {
@@ -457,7 +480,7 @@ fn stroke_runs(points: &[[f64; 2]], page: [f64; 2]) -> Vec<Vec<[f64; 2]>> {
         let prints = finite(start)
             && finite(end)
             && hypot(start, end) >= 1e-4
-            && !sheet_edge_mm(start, end, page);
+            && (keep_sheet_edge || !sheet_edge_mm(start, end, page));
         if !prints {
             if run.len() >= 2 {
                 runs.push(std::mem::take(&mut run));
@@ -532,6 +555,9 @@ struct ShownText<'a> {
     anchor: TextAnchor,
     line: TextLine,
     spans: &'a [PaperTextSpan],
+    /// Whether this run is the sheet's furniture — the lettering a linked
+    /// `.igr` border template carries, rather than the drawing's own.
+    furniture: bool,
 }
 
 /// One stretch of a label that letters at its own size in its own face.
@@ -613,10 +639,75 @@ fn text_segments<'a>(text: &ShownText<'a>, inked: &str, height_mm: f64) -> Vec<T
     segments
 }
 
+/// How far a run may advance from `start` along `direction` before it leaves
+/// the page, in millimetres.
+///
+/// `0` when the start is already outside the sheet, and `f64::INFINITY` only
+/// for a zero direction.
+fn page_reach_mm(start: [f64; 2], direction: [f64; 2], page: [f64; 2]) -> f64 {
+    let mut reach = f64::INFINITY;
+    for axis in 0..2 {
+        let step = direction[axis];
+        if step.abs() < 1e-9 {
+            continue;
+        }
+        let left = if step > 0.0 {
+            page[axis] - start[axis]
+        } else {
+            start[axis]
+        };
+        reach = reach.min(left / step.abs());
+    }
+    if reach.is_finite() {
+        reach.max(0.0)
+    } else {
+        reach
+    }
+}
+
+/// The smallest a run is squeezed to before it is left to the page clip.
+///
+/// A label the sheet cannot hold is condensed along its own direction until it
+/// fits, which is what keeps every glyph on the page; a run that would have to
+/// be squashed to half its width is not a label any more, so it keeps its size
+/// and loses its tail the way it always did.
+const MIN_CONDENSE: f64 = 0.5;
+
+/// Advance a border template's lettering is drawn at, as a fraction of the em
+/// its run is set in.
+///
+/// A sheet's linked `.igr` border letters its labels in the full em the
+/// drawing uses (宋体 at 1000 units per glyph), but the reference plot draws
+/// them one 0.78 em apart: measured on the two corpus sheets that carry
+/// furniture, every template label's per-character advance lands in
+/// 0.765..0.791 of its em — `审  定` 0.785, `设计证书号` 0.791, `A111001641`
+/// 0.784, `CPENC-DD11008` 0.774, `中国石油…华北分公司` 0.775, `华北油田苏桥储气库群`
+/// 0.765, `1 版` 0.770, `会 签 专 业` 0.770 — and every label of a given
+/// letter height shares it, on both sheets, while the drawing's own labels are
+/// drawn at 1.0.
+///
+/// **This is not a font size.** The two sides' glyph *heights* already agree
+/// exactly (4.74 / 5.08 / 5.93 / 6.60 mm for the template's 3.2 / 3.5 / 4.0 /
+/// 4.5 mm styles on both sheets); what differs is only the horizontal advance.
+/// A PDF library that reports one `size` per run multiplies the two scales
+/// together and lands 1.29 against this crate's 1.47, which is where the
+/// "furniture lettering is 12 % larger" reading came from — the run is
+/// condensed, not shrunk. Nothing in the `.igr` states the ratio: its
+/// `igTextBox` records carry no box width (all 34 are `0.0`), the
+/// `JStyleTextChar` payload is accounted for byte for byte (height at `+42`,
+/// colour at `+34`, name from `+68`), and `JStyleTextPara`'s other spacing
+/// doubles are `0.0`. So it stays a measured constant, like
+/// [`plotted_size_pt`]'s table.
+///
+/// See
+/// `docs/analysis/2026-10-23-the-furniture-text-height-already-matched.md`.
+const PLATE_TEXT_ADVANCE: f64 = 0.78;
+
 fn show_text(
     ops: &mut Vec<Op>,
     faces: &[ReadyFace<'_>],
     text: ShownText<'_>,
+    page: [f64; 2],
 ) -> Result<(), PlotWriteError> {
     if text.value.is_empty() || !text.rotation.is_finite() || !finite(text.origin_mm) {
         return Ok(());
@@ -648,21 +739,55 @@ fn show_text(
             emitted.push((segment.size_pt, face, bytes));
         }
     }
+    let (sin, cos) = text.rotation.sin_cos();
+    // The reference plot letters a border template's text one glyph narrower
+    // than the em it sets it in, and letters the sheet's own text at the full
+    // em. Height is *not* touched by this: the two sides' glyph boxes are the
+    // same 4.74 / 5.08 / 5.93 / 6.60 mm for the 3.2 / 3.5 / 4.0 / 4.5 mm
+    // template styles on both sheets. See [`PLATE_TEXT_ADVANCE`].
+    let plate = if text.furniture {
+        PLATE_TEXT_ADVANCE
+    } else {
+        1.0
+    };
+    let laid_out_mm = width_mm * plate;
+    // A run the page still cannot hold loses its tail to the page box, so it
+    // is condensed along its own direction until it fits: the template states
+    // the label and the page states its edge, and keeping every glyph on the
+    // sheet beats inventing a smaller size for the letters. Furniture reaches
+    // this rule only if it overflows even at [`PLATE_TEXT_ADVANCE`] — the I
+    // drawing's 21-glyph company name did, back when it was drawn at the full
+    // em and lost its last two characters to the sheet edge.
+    let mut condense = 1.0;
+    if laid_out_mm > 0.0 && laid_out_mm.is_finite() {
+        let start = baseline_origin(
+            text.origin_mm,
+            text.rotation,
+            laid_out_mm,
+            height_mm,
+            text.anchor,
+            text.line,
+        );
+        let reach = page_reach_mm(start, [cos, sin], page);
+        if reach > 0.0 && laid_out_mm > reach {
+            condense = (reach / laid_out_mm).clamp(MIN_CONDENSE, 1.0);
+        }
+    }
+    let scale = plate * condense;
     let origin_mm = baseline_origin(
         text.origin_mm,
         text.rotation,
-        width_mm,
+        width_mm * scale,
         height_mm,
         text.anchor,
         text.line,
     );
-    let (sin, cos) = text.rotation.sin_cos();
     ops.push(Op::new("BT", Vec::new()));
     ops.push(Op::new(
         "Tm",
         vec![
-            Object::Real(cos),
-            Object::Real(sin),
+            Object::Real(cos * scale),
+            Object::Real(sin * scale),
             Object::Real(-sin),
             Object::Real(cos),
             pt(origin_mm[0]),
@@ -775,8 +900,9 @@ pub(crate) fn arc_chain(
     radius_mm: f64,
     start_angle: f64,
     end_angle: f64,
+    clockwise: bool,
 ) -> Vec<[f64; 2]> {
-    let (start, sweep) = minor_clockwise_arc(start_angle, end_angle);
+    let (start, sweep) = directed_arc(start_angle, end_angle, clockwise);
     arc_points(center_mm, radius_mm, start, sweep)
 }
 
@@ -819,16 +945,24 @@ fn arc_points(center: [f64; 2], radius: f64, start: f64, sweep: f64) -> Vec<[f64
     points
 }
 
-pub(crate) fn minor_clockwise_arc(start: f64, end: f64) -> (f64, f64) {
-    let mut s = start;
-    let mut e = end;
-    let cw = (s - e).rem_euclid(TAU);
-    if cw > std::f64::consts::PI + 1e-9 {
-        std::mem::swap(&mut s, &mut e);
+/// The sweep one arc states: `(start, sweep)` with `sweep` signed the way
+/// [`kurbo::Arc`] wants it -- negative clockwise.
+///
+/// `clockwise` is the source record's own trailing byte. The two readings are
+/// complements that reach the same end angle; an arc the record means the long
+/// way round must not be folded back to the short one, which is what a
+/// minor-sweep normalisation did before the byte was read.
+pub(crate) fn directed_arc(start: f64, end: f64, clockwise: bool) -> (f64, f64) {
+    let sweep = if clockwise {
+        -(start - end).rem_euclid(TAU)
+    } else {
+        (end - start).rem_euclid(TAU)
+    };
+    if sweep.abs() < 1e-12 {
+        (start, 0.0)
+    } else {
+        (start, sweep)
     }
-    let ccw = (e - s).rem_euclid(TAU);
-    let sweep = if ccw < 1e-12 { 0.0 } else { ccw - TAU };
-    (s, sweep)
 }
 
 fn resolved_page(model: &PaperModel) -> Result<[f64; 2], PlotWriteError> {
@@ -925,7 +1059,7 @@ pub fn stroked_segments(model: &PaperModel) -> Vec<([f64; 2], [f64; 2])> {
                 .map(|pen| pen.dash_mm.clone())
                 .unwrap_or_default();
             let mut walk = DashWalk::new(&dash, 0.0);
-            for run in stroke_runs(&shape_chain(&primitive.shape), page) {
+            for run in stroke_runs(&shape_chain(&primitive.shape), page, false) {
                 walk.restart();
                 for pair in run.windows(2) {
                     for (start, end) in walk.split(pair[0], pair[1]) {
@@ -1036,6 +1170,7 @@ mod tests {
             symbol: None,
             stroke: None,
             shape,
+            furniture: false,
         }
     }
 
@@ -1123,6 +1258,7 @@ mod tests {
         });
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1151,6 +1287,49 @@ mod tests {
         assert_eq!(widths, vec![0.17, 0.68], "the pens are not snapped");
     }
 
+    /// A style can state a dash whose only segment is zero — the plant
+    /// backup's `D04` does. A PDF dash array may not be all zero, and a
+    /// zero-period pattern inks solid, so the page has to carry no dash state
+    /// at all: `[0] 0 d` is invalid PDF that a stricter viewer than MuPDF may
+    /// refuse to draw.
+    #[test]
+    fn a_zero_length_dash_pattern_is_written_solid() {
+        let page = |dash_mm: Vec<f64>| {
+            let mut line = primitive(
+                "decoded",
+                PaperShape::Line {
+                    start_mm: [10.0, 20.0],
+                    end_mm: [80.0, 20.0],
+                },
+            );
+            line.stroke = Some(super::PaperStroke {
+                rgb: [0, 0, 0],
+                width_mm: 0.35,
+                dash_mm,
+            });
+            PaperModel {
+                library: Vec::new(),
+                template: None,
+                page_mm: Some([200.0, 100.0]),
+                off_sheet_primitives: 0,
+                skipped_endpoint_pairs: 0,
+                primitives: vec![line],
+                missing_symbols: Vec::new(),
+                missing_boxes: Vec::new(),
+                symbols_found: 0,
+                symbols_referenced: 0,
+            }
+        };
+        let solid = write_plot(&page(Vec::new()), &[]).expect("solid");
+        let zero = write_plot(&page(vec![0.0]), &[]).expect("zero-period dash");
+        assert_eq!(
+            zero, solid,
+            "a zero-period dash has to draw the solid pen's page"
+        );
+        let dashed = write_plot(&page(vec![3.5, 1.75]), &[]).expect("dashed");
+        assert_ne!(dashed, solid, "a real dash still reaches the page");
+    }
+
     /// `D03` in the plant backup is a drawing with a declared sheet and no
     /// content at all: `prepare_fonts` loads no face for it, and the page used
     /// to be refused with `no font was provided`.
@@ -1158,6 +1337,7 @@ mod tests {
     fn a_drawing_with_no_ink_at_all_still_writes_its_declared_sheet() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([594.33, 420.57]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1180,6 +1360,7 @@ mod tests {
     fn lettering_without_a_face_is_refused() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1208,6 +1389,7 @@ mod tests {
     fn a_line_and_a_word_read_back_on_their_layers() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1398,6 +1580,146 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_page_reach_follows_the_run_direction() {
+        let page = [100.0, 50.0];
+        assert!((super::page_reach_mm([20.0, 10.0], [1.0, 0.0], page) - 80.0).abs() < 1e-9);
+        assert!((super::page_reach_mm([20.0, 10.0], [-1.0, 0.0], page) - 20.0).abs() < 1e-9);
+        assert!((super::page_reach_mm([20.0, 10.0], [0.0, 1.0], page) - 40.0).abs() < 1e-9);
+        // A run that starts off the sheet has nowhere to go.
+        assert_eq!(super::page_reach_mm([120.0, 10.0], [1.0, 0.0], page), 0.0);
+    }
+
+    /// A run the sheet cannot hold is condensed along its own direction rather
+    /// than running off the page.
+    ///
+    /// The I drawing's title-block company name is 21 full-width glyphs at the
+    /// height its `.igr` template states, and the face this writer embeds
+    /// advances them 13 % wider than the reference plot's face did: the last
+    /// two characters fell past the sheet edge and MuPDF extracted 19 of them.
+    #[test]
+    fn a_run_wider_than_the_page_is_condensed_until_it_fits() {
+        let page = [100.0, 40.0];
+        let value = "A".repeat(60);
+        let model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some(page),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![primitive(
+                "decoded",
+                PaperShape::Text {
+                    origin_mm: [10.0, 10.0],
+                    height_mm: Some(4.0),
+                    rotation: 0.0,
+                    value: value.clone(),
+                    font: None,
+                    anchor: TextAnchor::Left,
+                    line: TextLine::Bottom,
+                    spans: Vec::new(),
+                },
+            )],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        let read: String = ink.spans.iter().map(|span| span.text.as_str()).collect();
+        assert_eq!(read, value, "every glyph stayed on the page");
+        let end = ink
+            .spans
+            .iter()
+            .map(|span| span.origin_mm[0] + span.advance_mm)
+            .fold(f64::MIN, f64::max);
+        assert!(
+            end <= page[0] + 0.05,
+            "the run ends {end:.2} mm along a {} mm page",
+            page[0]
+        );
+        assert!(
+            ink.spans[0].height_mm > 3.9,
+            "condensing is horizontal; the body stays {}",
+            ink.spans[0].height_mm
+        );
+    }
+
+    /// A template's lettering is drawn one narrower glyph than the sheet's
+    /// own, at the same height.
+    ///
+    /// The reference plots the two the same way: its `.igr` labels advance
+    /// 0.78 of their em while the drawing's labels advance the full em, and
+    /// neither moves the body size. The two runs here are the same character
+    /// at the same height, so only the horizontal scale can separate them.
+    #[test]
+    fn furniture_lettering_is_condensed_horizontally_and_keeps_its_height() {
+        let value = "ABCD";
+        let shape = |y: f64| PaperShape::Text {
+            origin_mm: [20.0, y],
+            height_mm: Some(3.0),
+            rotation: 0.0,
+            value: value.to_string(),
+            font: None,
+            anchor: TextAnchor::Left,
+            line: TextLine::Bottom,
+            spans: Vec::new(),
+        };
+        let mut model = PaperModel {
+            library: Vec::new(),
+            template: None,
+            page_mm: Some([841.0, 594.0]),
+            off_sheet_primitives: 0,
+            skipped_endpoint_pairs: 0,
+            primitives: vec![
+                primitive("decoded", shape(40.0)),
+                primitive("decoded", shape(50.0)),
+            ],
+            missing_symbols: Vec::new(),
+            missing_boxes: Vec::new(),
+            symbols_found: 0,
+            symbols_referenced: 0,
+        };
+        model.primitives[1].furniture = true;
+        let pdf = write_plot(
+            &model,
+            &[PlotFont {
+                key: "",
+                bytes: pdfcraft_fonts::INTER_REGULAR,
+            }],
+        )
+        .expect("write");
+        let ink = read_plot(&pdf).expect("read");
+        assert_eq!(ink.spans.len(), 2, "two labels, two runs: {:?}", ink.spans);
+        let at = |y: f64| {
+            ink.spans
+                .iter()
+                .find(|span| (span.origin_mm[1] - y).abs() < 0.01)
+                .unwrap_or_else(|| panic!("no run at y = {y}: {:?}", ink.spans))
+        };
+        let sheet = at(40.0);
+        let plate = at(50.0);
+        let ratio = plate.advance_mm / sheet.advance_mm;
+        assert!(
+            (ratio - 0.78).abs() < 0.01,
+            "furniture letters at {ratio:.3} of the sheet's advance"
+        );
+        assert!(
+            (plate.height_mm - sheet.height_mm).abs() < 0.01,
+            "the body size is not what is condensed: {} vs {}",
+            plate.height_mm,
+            sheet.height_mm
+        );
+    }
+
     /// A symbol label that letters one character at another size is cut where
     /// the size changes, and the pieces continue along one baseline: `Tj`
     /// advances by the glyph width at the size in force, so the second piece
@@ -1406,6 +1728,7 @@ mod tests {
     fn a_span_at_its_own_size_continues_where_the_previous_one_ended() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1492,6 +1815,7 @@ mod tests {
             anchor: TextAnchor::Left,
             line: TextLine::Bottom,
             spans: &spans,
+            furniture: false,
         };
         let segments = text_segments(&text, "NULL*NUL", 2.822);
         let shape: Vec<(&str, &str)> = segments
@@ -1519,6 +1843,7 @@ mod tests {
     fn spans_that_change_nothing_are_written_as_one_run() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1571,6 +1896,7 @@ mod tests {
     fn a_run_of_spaces_writes_no_text() {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1625,6 +1951,7 @@ mod tests {
     ) -> [f64; 2] {
         let model = PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 140.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -1668,14 +1995,39 @@ mod tests {
     }
 
     #[test]
-    fn minor_clockwise_arc_flips_a_major_sweep_and_keeps_a_pi_ulp_semicircle() {
-        use super::minor_clockwise_arc;
-        let (s, sweep) = minor_clockwise_arc(1.1659, 1.4273);
-        assert!((s - 1.4273).abs() < 1e-6);
-        assert!((sweep + (1.4273 - 1.1659)).abs() < 1e-6);
+    fn directed_arc_takes_the_side_the_record_names() {
+        use super::{TAU, directed_arc};
+        // Counter-clockwise is the short way here: 0.2614 rad, leaves the
+        // start unchanged.
+        let (s, sweep) = directed_arc(1.1659, 1.4273, false);
+        assert!((s - 1.1659).abs() < 1e-12);
+        assert!((sweep - (1.4273 - 1.1659)).abs() < 1e-6);
+        // Clockwise is the rest of the circle, not a folded-back complement.
+        let (s_cw, sweep_cw) = directed_arc(1.1659, 1.4273, true);
+        assert!((s_cw - 1.1659).abs() < 1e-12);
+        assert!((sweep_cw + TAU - (1.4273 - 1.1659)).abs() < 1e-6);
 
+        // Both readings of a semicircle end on the same two ends and differ
+        // only in which half is drawn -- the ultrasonic wave's two records.
+        let (_, cw_half) = directed_arc(
+            std::f64::consts::FRAC_PI_2,
+            3.0 * std::f64::consts::FRAC_PI_2,
+            true,
+        );
+        let (_, ccw_half) = directed_arc(
+            std::f64::consts::FRAC_PI_2,
+            3.0 * std::f64::consts::FRAC_PI_2,
+            false,
+        );
+        assert!((cw_half + std::f64::consts::PI).abs() < 1e-9);
+        assert!((ccw_half - std::f64::consts::PI).abs() < 1e-9);
+
+        // A zero sweep is still no ink, and a pi-ulp semicircle is not a full
+        // turn.
+        assert_eq!(directed_arc(1.0, 1.0, true).1, 0.0);
+        assert_eq!(directed_arc(1.0, 1.0, false).1, 0.0);
         let pi_plus_ulp = 3.141_592_653_589_794;
-        let (s_pi, sweep_pi) = minor_clockwise_arc(pi_plus_ulp, 0.0);
+        let (s_pi, sweep_pi) = directed_arc(pi_plus_ulp, 0.0, true);
         assert!((s_pi - pi_plus_ulp).abs() < 1e-12);
         assert!((sweep_pi + std::f64::consts::PI).abs() < 1e-9);
     }

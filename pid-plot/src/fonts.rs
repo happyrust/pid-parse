@@ -397,6 +397,7 @@ mod tests {
     fn labelled(spans: Vec<PaperTextSpan>) -> PaperModel {
         PaperModel {
             library: Vec::new(),
+            template: None,
             page_mm: Some([200.0, 100.0]),
             off_sheet_primitives: 0,
             skipped_endpoint_pairs: 0,
@@ -416,6 +417,7 @@ mod tests {
                 byte_range: None,
                 symbol: None,
                 stroke: None,
+                furniture: false,
             }],
             missing_symbols: Vec::new(),
             missing_boxes: Vec::new(),
