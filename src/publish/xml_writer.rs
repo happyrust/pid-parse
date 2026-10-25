@@ -470,16 +470,25 @@ pub(super) fn write_process_vessel(
     let item_tag = canonical_vessel_item_tag(obj, drawing.style);
     let description = obj.description.as_deref().unwrap_or("");
     // Three-tier fallback for the SmartPlant `EqTypeDescription`
-    // attribute (#27):
+    // attribute (#27); caliber settled 2026-10-25 — see
+    // `docs/analysis/2026-10-25-eqtypedescription-stays-on-the-long-codelist-text.md`:
     //   1. Symbol-path stem (`Horizontal Drum.sym` → `"Horizontal Drum"`).
     //      On TEST02 A01 (`T_Equipment.EquipmentType = 241`), `C22`
     //      maps `241` to `"1 diameter, 1 chamber, elliptical head
     //      horizontal drum"`, whereas SmartPlant's reference
     //      `A01_Data.xml` emits the symbol stem `"Horizontal Drum"`.
+    //      That fixture ships no `C22` rows at all, so the stem is
+    //      what remains rather than the codelist losing to it.
     //   2. `CodelistIndex` lookup (`EquipmentType` → `C22` →
-    //      `codelist_text`) when the vessel has no symbol path.
+    //      `codelist_text`, the long text) when the vessel has no
+    //      symbol path.
     //   3. Raw `EquipmentType` enum ID so the attribute is never
     //      silently blank.
+    // `codelists.codelist_short_text` (`1D 1C 2:1 H Drum`) is
+    // deliberately NOT consulted: in every reference block whose C22
+    // long and short texts differ (18 of them) the reference emits the
+    // long text, and none emits the short one. Pinned by
+    // `vessel_eq_type_ignores_codelist_short_text`.
     let eq_type_description = derive_type_description_from_symbol(drawing, &obj.uid)
         .or_else(|| resolve_codelist_field(drawing, obj, "EquipmentType"))
         .unwrap_or_else(|| obj.fields.get("EquipmentType").cloned().unwrap_or_default());
@@ -2917,6 +2926,38 @@ mod tests {
         assert!(
             out.contains(r#"<IEquipment EqTypeDescription="Reactor"/>"#),
             "codelist-resolved description should be used when no symbol path is present; out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn vessel_eq_type_ignores_codelist_short_text() {
+        // Caliber settled 2026-10-25
+        // (`docs/analysis/2026-10-25-eqtypedescription-stays-on-the-long-codelist-text.md`):
+        // the codelist tier resolves through `codelist_text` only. The
+        // `codelists.codelist_short_text` column of the same C22 row
+        // (`EquipmentType = 241` -> "1D 1C 2:1 H Drum") is never
+        // consulted, so a vessel with no symbol path emits the long
+        // text. Changing this needs new reference evidence.
+        let mut d = example_drawing();
+        d.representations.clear();
+        let vessel = d
+            .objects
+            .iter_mut()
+            .find(|o| o.item_type_name == "Vessel")
+            .expect("vessel in fixture");
+        vessel.fields.insert("EquipmentType".into(), "241".into());
+        d.codelist.insert_attribute_mapping("EquipmentType", "22");
+        let long = "1 diameter, 1 chamber, elliptical head horizontal drum";
+        d.codelist.insert_entry("22", "241", long);
+
+        let out = write_data_xml(&d, "TEST02").expect("write");
+        assert!(
+            out.contains(&format!(r#"<IEquipment EqTypeDescription="{long}"/>"#)),
+            "the C22 long text is the only codelist source; out:\n{out}"
+        );
+        assert!(
+            !out.contains("1D 1C 2:1 H Drum"),
+            "`codelist_short_text` is not a source; out:\n{out}"
         );
     }
 

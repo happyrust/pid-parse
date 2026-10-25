@@ -861,6 +861,32 @@ mod tests {
         assert!(idx.lookup_by_attribute("EmptyFlag", "241").is_none());
     }
 
+    /// Caliber settled 2026-10-25
+    /// (`docs/analysis/2026-10-25-eqtypedescription-stays-on-the-long-codelist-text.md`):
+    /// the `EqTypeDescription` codelist tier reads `codelist_text` only.
+    /// `codelists.codelist_short_text` ("1D 1C 2:1 H Drum") is not a
+    /// source, so a `C22` row that ships only a short text registers
+    /// nothing and the writer falls through to the raw code instead of
+    /// inventing a value from an unobserved column.
+    #[test]
+    fn load_codelist_index_ignores_codelist_short_text() {
+        let conn = setup_codelist_db();
+        conn.execute(
+            "INSERT INTO codelists VALUES ('22', '241', '', '1D 1C 2:1 H Drum')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO attributes VALUES ('1', 'EquipmentType', 'T', 'C22')",
+            [],
+        )
+        .unwrap();
+
+        let idx = load_codelist_index(&conn).expect("load");
+        assert_eq!(idx.entry_count(), 0);
+        assert!(idx.lookup_by_attribute("EquipmentType", "241").is_none());
+    }
+
     /// Seed an in-memory `SQLite` with the `T_PipingPoint` shape so
     /// A9 loader tests can insert their own rows. Returns the
     /// connection to the caller.
