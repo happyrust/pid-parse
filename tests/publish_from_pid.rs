@@ -41,9 +41,9 @@ fn attributes_of(start: &BytesStart<'_>) -> Vec<(String, String)> {
         .flatten()
         .map(|attribute| {
             (
-                String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
+                attribute.key.as_ref().to_string(),
                 attribute
-                    .unescape_value()
+                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                     .map(std::borrow::Cow::into_owned)
                     .unwrap_or_default(),
             )
@@ -64,7 +64,7 @@ fn read_document(xml: &str) -> Document {
     let mut block: Block = None;
     let add = |start: &BytesStart<'_>, block: &mut Block| {
         if let Some((_, interfaces)) = block.as_mut() {
-            let interface = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+            let interface = start.name().as_ref().to_string();
             interfaces.push((interface, attributes_of(start)));
         }
     };
@@ -72,7 +72,7 @@ fn read_document(xml: &str) -> Document {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 if depth == 1 {
-                    let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                    let tag = start.name().as_ref().to_string();
                     block = Some((tag, Vec::new()));
                 } else if depth == 2 {
                     add(&start, &mut block);

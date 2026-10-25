@@ -106,27 +106,27 @@ fn parse_datamap_xml(bytes: &[u8]) -> Result<DataMap, DataMapError> {
             Ok(Event::Start(start)) => {
                 let qname = start.name();
                 let name = local_name(qname.as_ref());
-                if name == b"SPMapEnumListDef" {
+                if name == "SPMapEnumListDef" {
                     in_list = true;
-                } else if name == b"IObject" && in_list {
+                } else if name == "IObject" && in_list {
                     remember_list(&mut map, &start);
-                } else if name == b"IRel" {
+                } else if name == "IRel" {
                     remember_enum(&mut map, &start);
                 }
             }
             Ok(Event::Empty(start)) => {
                 let qname = start.name();
                 let name = local_name(qname.as_ref());
-                if name == b"SPMapEnumListDef" {
+                if name == "SPMapEnumListDef" {
                     // A list with no child is not a name we can keep.
-                } else if name == b"IObject" && in_list {
+                } else if name == "IObject" && in_list {
                     remember_list(&mut map, &start);
-                } else if name == b"IRel" {
+                } else if name == "IRel" {
                     remember_enum(&mut map, &start);
                 }
             }
             Ok(Event::End(end)) => {
-                if local_name(end.name().as_ref()) == b"SPMapEnumListDef" {
+                if local_name(end.name().as_ref()) == "SPMapEnumListDef" {
                     in_list = false;
                 }
             }
@@ -138,38 +138,38 @@ fn parse_datamap_xml(bytes: &[u8]) -> Result<DataMap, DataMapError> {
     Ok(map)
 }
 
-fn local_name(name: &[u8]) -> &[u8] {
-    name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
+fn local_name(name: &str) -> &str {
+    name.rsplit(':').next().unwrap_or(name)
 }
 
 fn remember_list(map: &mut DataMap, start: &quick_xml::events::BytesStart<'_>) {
-    let Some(uid) = attr(start, b"UID") else {
+    let Some(uid) = attr(start, "UID") else {
         return;
     };
-    let Some(name) = attr(start, b"Name") else {
+    let Some(name) = attr(start, "Name") else {
         return;
     };
     map.enum_list_names.insert(uid, name);
 }
 
 fn remember_enum(map: &mut DataMap, start: &quick_xml::events::BytesStart<'_>) {
-    if attr(start, b"DefUID").as_deref() != Some("MapEnumToEnum") {
+    if attr(start, "DefUID").as_deref() != Some("MapEnumToEnum") {
         return;
     }
-    let Some(uid1) = attr(start, b"UID1") else {
+    let Some(uid1) = attr(start, "UID1") else {
         return;
     };
-    let Some(uid2) = attr(start, b"UID2") else {
+    let Some(uid2) = attr(start, "UID2") else {
         return;
     };
     map.enum_to_enum.insert(uid1, publish_guid(&uid2));
 }
 
-fn attr(start: &quick_xml::events::BytesStart<'_>, key: &[u8]) -> Option<String> {
+fn attr(start: &quick_xml::events::BytesStart<'_>, key: &str) -> Option<String> {
     start.attributes().flatten().find_map(|attribute| {
         if attribute.key.as_ref() == key {
             attribute
-                .unescape_value()
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                 .ok()
                 .map(std::borrow::Cow::into_owned)
         } else {
@@ -178,7 +178,7 @@ fn attr(start: &quick_xml::events::BytesStart<'_>, key: &[u8]) -> Option<String>
     })
 }
 
-fn decode_zip_name(raw: &[u8]) -> String {
+pub(crate) fn decode_zip_name(raw: &[u8]) -> String {
     if let Ok(utf8) = std::str::from_utf8(raw) {
         return utf8.to_string();
     }

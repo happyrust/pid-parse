@@ -1382,7 +1382,7 @@ fn reference_side(xml: &str) -> RefSide {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 if depth == 1 {
-                    class = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                    class = start.name().as_ref().to_string();
                     uid.clear();
                     name.clear();
                     flow.clear();
@@ -1458,7 +1458,7 @@ fn reference_side(xml: &str) -> RefSide {
 
 #[allow(clippy::too_many_arguments)]
 fn capture(
-    tag: &[u8],
+    tag: &str,
     start: &quick_xml::events::BytesStart<'_>,
     uid: &mut String,
     name: &mut String,
@@ -1467,30 +1467,31 @@ fn capture(
     uid2: &mut String,
     def_uid: &mut String,
 ) {
-    let attr = |key: &[u8]| {
-        start.attributes().flatten().find_map(|a| {
-            (a.key.as_ref() == key).then(|| String::from_utf8_lossy(&a.value).into_owned())
-        })
+    let attr = |key: &str| {
+        start
+            .attributes()
+            .flatten()
+            .find_map(|a| (a.key.as_ref() == key).then(|| a.value.to_string()))
     };
-    if tag == b"IObject" {
-        if let Some(value) = attr(b"UID") {
+    if tag == "IObject" {
+        if let Some(value) = attr("UID") {
             *uid = value;
         }
-        if let Some(value) = attr(b"Name") {
+        if let Some(value) = attr("Name") {
             *name = value;
         }
-    } else if tag == b"IConnection" {
-        if let Some(value) = attr(b"ConnectionFlowDirection") {
+    } else if tag == "IConnection" {
+        if let Some(value) = attr("ConnectionFlowDirection") {
             *flow = value;
         }
-    } else if tag == b"IRel" {
-        if let Some(value) = attr(b"UID1") {
+    } else if tag == "IRel" {
+        if let Some(value) = attr("UID1") {
             *uid1 = value;
         }
-        if let Some(value) = attr(b"UID2") {
+        if let Some(value) = attr("UID2") {
             *uid2 = value;
         }
-        if let Some(value) = attr(b"DefUID") {
+        if let Some(value) = attr("DefUID") {
             *def_uid = value;
         }
     }

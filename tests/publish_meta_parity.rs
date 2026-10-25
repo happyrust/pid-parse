@@ -90,15 +90,13 @@ struct CanonicalMetaSummary {
     rel_edges: Vec<(String, String, String)>,
 }
 
-fn attr_map(e: &BytesStart<'_>, reader: &Reader<&[u8]>) -> BTreeMap<String, String> {
+fn attr_map(e: &BytesStart<'_>) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for attr in e.attributes().with_checks(false) {
         let attr = attr.expect("valid xml attribute");
-        let key = std::str::from_utf8(attr.key.as_ref())
-            .expect("utf-8 attr key")
-            .to_string();
+        let key = attr.key.as_ref().to_string();
         let value = attr
-            .decode_and_unescape_value(reader.decoder())
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .expect("decode attr value")
             .into_owned();
         out.insert(key, value);
@@ -122,12 +120,10 @@ fn parse_meta_xml(xml: &str) -> ParsedMeta {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .expect("utf-8 tag")
-                    .to_string();
+                let name = e.name().as_ref().to_string();
                 match name {
                     ref tag if tag == "Container" => {
-                        container = attr_map(&e, &reader);
+                        container = attr_map(&e);
                     }
                     ref tag
                         if matches!(
@@ -142,10 +138,8 @@ fn parse_meta_xml(xml: &str) -> ParsedMeta {
                 }
             }
             Ok(Event::Empty(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .expect("utf-8 empty tag")
-                    .to_string();
-                let attrs = attr_map(&e, &reader);
+                let name = e.name().as_ref().to_string();
+                let attrs = attr_map(&e);
                 match (current_block.as_deref(), name.as_str()) {
                     (Some("DocumentVersion"), "IObject") => {
                         let uid = attrs.get("UID").cloned().unwrap_or_default();
@@ -212,9 +206,7 @@ fn parse_meta_xml(xml: &str) -> ParsedMeta {
                 }
             }
             Ok(Event::End(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .expect("utf-8 end tag")
-                    .to_string();
+                let name = e.name().as_ref().to_string();
                 if matches!(
                     name.as_str(),
                     "DocumentVersion" | "DocumentRevision" | "File" | "Rel"

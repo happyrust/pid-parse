@@ -90,18 +90,18 @@ fn reference_classes(xml: &str) -> HashMap<String, String> {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 if depth == 1 {
-                    block = Some(String::from_utf8_lossy(start.name().as_ref()).into_owned());
+                    block = Some(start.name().as_ref().to_string());
                 }
                 depth += 1;
             }
             Ok(Event::Empty(start)) => {
-                if depth == 2 && start.name().as_ref() == b"IObject" {
+                if depth == 2 && start.name().as_ref() == "IObject" {
                     if let (Some(class), Some(uid)) = (
                         block.as_ref(),
-                        start.attributes().flatten().find_map(|a| {
-                            (a.key.as_ref() == b"UID")
-                                .then(|| String::from_utf8_lossy(&a.value).into_owned())
-                        }),
+                        start
+                            .attributes()
+                            .flatten()
+                            .find_map(|a| (a.key.as_ref() == "UID").then(|| a.value.to_string())),
                     ) {
                         classes.insert(uid, class.clone());
                     }
