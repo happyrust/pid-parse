@@ -26,6 +26,10 @@ enum Render {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        std::process::exit(0);
+    }
     if args.len() < 2 {
         eprintln!("{USAGE}");
         std::process::exit(1);

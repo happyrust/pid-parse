@@ -12,6 +12,12 @@ debug.log
 .factory/
 .commit_msg.txt
 
+# A `tmp_`-prefixed example is a one-off question asked of a local fixture,
+# not a shared tool. When its answer is worth keeping, promote it to
+# `examples/probe_<the question>.rs`, which is committed and named for what
+# it settles.
+examples/tmp_*.rs
+
 # Local SuperDesign plugin scratch (HTML/markdown design notes that
 # do not belong in the shared repository).
 .superdesign/

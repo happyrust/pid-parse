@@ -23,6 +23,24 @@
 - **I4 `EqTypeDescription` 口径定案**（`f0fc0b7`）：维持「符号路径词干 → `codelist_text` → 原值 `EquipmentType`」，`codelists.codelist_short_text` **有意不读**。证据：7 份 bundled 参考共 24 块带 `EqTypeDescription`，其中长文 ≠ 短文的 18 块**全部**等于长文（0/18 等于短文）；全盘找不到「没有符号路径的 `PIDProcessVessel`」；A01 的 `Horizontal Drum` 是「TEST02_p 的 `codelists` 没有编号 22」而不是「C22 输给词干」。无行为变化，只加两条单测与注释。
 - 证据：`docs/baselines/publish-diff-accepted.json`（D3 基线）、`tests/publish_diff_accepted_baseline.rs`（D3 消费测试）、`docs/analysis/2026-10-25-eqtypedescription-stays-on-the-long-codelist-text.md`（I4 定案）、`D:\work\cad\pid-test-data\publish-v2\_ByteCompare.json`（D4 重发与逐字节报告）。
 
+### 六个 CLI 的 `--help` 改走 stdout，用法错误仍留 stderr（2026-10-24）
+
+`--help` 是调用方要的输出，六个 binary 却一律用 `eprintln!` 当成旁白打出去：
+`pid_publish_xml --help > help.out` 得到 0 字节的文件，`--help | less` 什么都看不到。
+
+- **改法**：`print_usage` 从写死 stderr 的常量改成接收目标 writer。`--help` / `-h` 传 stdout，
+  参数错误传 stderr、紧跟那条诊断；用法正文一个字没改，退出码一个没动（help 全 0，
+  缺参数仍是 2 / 1）。
+- **两个 binary 顺手拆支**：`pid_backup_probe` / `pid_writer_validate` 原先把「无参数」和
+  `--help` 挤在同一个条件里、用 `i32::from(args.len() < 2)` 定退出码 —— 两项都拿同一个值，
+  现在写成两支：help 走 0，缺输入走各自原来的非零值。
+- **`pid_inspect` 原本没有 `--help` 分支**：flag 被当成文件路径送进解析器，报 `Parse error` 退 1。
+  现在在任何文件打开之前应答，复用文件里现成的 `USAGE`。
+- **测试**：四条 `--help` 断言从 stderr 改读 stdout，并补 `stderr.is_empty()` 钉住「只写一处」；
+  缺输入的用例补上镜像断言（正文在 stderr、stdout 干净）；新增 `tests/cli_help_streams.rs`
+  一次覆盖六个 binary，不需要任何 fixture。
+- **实测**：六个 binary 的 `--help` 全是 exit 0 / stdout 有正文 / stderr 0 字节。提交 `23fa36a`。
+
 ### `igArc2d` 的尾字节就是方向位，五条画反的弧归位（2026-10-23）
 
 上一轮复核把最后那处可见差归成「方向在记录里读不出来」。这一轮用两件符号的字节把它读出来了：
@@ -203,7 +221,7 @@
 - **钉数**：DB 标签集（15）与 `.pid` 标签集（21）各有字面量对照测试，改目录必须是一次显式提交；`the_coverage_tally_is_the_five_derived_tags` 固定带计数角色的五个 tag；`the_report_tallies_exactly_the_tags_the_catalog_gives_a_tally_role` 固定一份带齐五类集合的图纸产出的 `classes` 键集合；`writer_rows_declare_their_tags` 还要求 `Fixed` 行的 `pid_class` 以 `Class` 角色出现在自己的 `pid_tags` 里。
 - **输出未变**：整包重发 `D:\work\cad\pid-test-data` 后逐文件比 SHA-256，160 个文件（53 `_Data.xml` / 53 `_Meta.xml` / 53 `_Coverage.json` / `_Index.json`）全部与改动前相同；对象 80 085、值 87 419、关系 106 705 一个数没动。
 - **验证**：`cargo test -p pid-parse --lib publish::` 251 过 / 0 败；`publish_from_pid` 9/9（含 53 张整包）、`publish_xml_cli` 20/20、`publish_meta_parity` 6/6、`publish_mdf_load` 3/3、`publish_writer_coverage` 2/2、`publish_backlog_inventory` 4/4；`cargo clippy -p pid-parse --lib --all-targets -- -D warnings` 退出 0；missing-docs 0 = 基线 0；`cargo rustdoc` 仍是既有的 4 条 private intra-doc link 错误，本次未新增。改动四个文件的 `rustfmt --check` 干净；全仓 `cargo fmt --all -- --check` 当前被另一会话新增的未跟踪探针 `pid-plot/examples/probe_library_vs_cached_bodies.rs` 挡住，与本改动无关。
-- 提交：`60f1b25` / `7c79749` / `4735be9` / `6881c18`（A1–A4）、`595ce19`（A3 的 clippy 收尾）、`da150a0`（两条线共用分类与标签集）、`7e31074`（报表按角色计数）。均未推。
+- 提交：`60f1b25` / `7c79749` / `4735be9` / `6881c18`（A1–A4）、`595ce19`（A3 的 clippy 收尾）、`da150a0`（两条线共用分类与标签集）、`7e31074`（报表按角色计数）、`6df3a03`（本条记录）。均已推到 `origin/codex/phase32c-bundle-closeout`。
 
 ### 备份里的 53 张图全部出 PDF：字体只嵌子集，符号路径容忍前导空格（2026-10-21）
 

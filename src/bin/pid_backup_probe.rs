@@ -80,8 +80,12 @@ struct ProbeReport {
     msci: Option<MsciSummary>,
 }
 
-fn print_usage() {
-    eprintln!(
+/// Print the usage body to `out`. `--help` passes stdout — the stream
+/// the caller asked for — and an argument error passes stderr, next to
+/// the diagnostic that explains the failure.
+fn print_usage<W: std::io::Write>(mut out: W) {
+    let _ = writeln!(
+        out,
         "Usage: pid_backup_probe <Export.dmp> [--json] [--preview N]\n\n\
          --json     emit a single JSON document instead of text\n\
          --preview  cap the per-block list at N entries (default 20, use 0 for all)"
@@ -90,9 +94,13 @@ fn print_usage() {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 || args.iter().any(|a| a == "-h" || a == "--help") {
-        print_usage();
-        std::process::exit(i32::from(args.len() < 2));
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        print_usage(std::io::stdout());
+        std::process::exit(0);
+    }
+    if args.len() < 2 {
+        print_usage(std::io::stderr());
+        std::process::exit(1);
     }
 
     let input = PathBuf::from(&args[1]);
@@ -124,7 +132,7 @@ fn main() {
             }
             other => {
                 eprintln!("unknown flag: {other}");
-                print_usage();
+                print_usage(std::io::stderr());
                 std::process::exit(1);
             }
         }

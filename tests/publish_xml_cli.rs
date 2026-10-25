@@ -76,18 +76,23 @@ fn cli_help_flag_exits_zero_with_usage_text() {
         .output()
         .expect("spawn pid_publish_xml --help");
     assert!(out.status.success(), "--help should exit 0; got {out:?}");
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stderr.contains("Usage: pid_publish_xml"),
-        "--help should print usage; stderr:\n{stderr}"
+        stdout.contains("Usage: pid_publish_xml"),
+        "--help should print usage to stdout; stdout:\n{stdout}"
     );
     assert!(
-        stderr.contains("--meta-out"),
-        "--help should advertise the new --meta-out flag; stderr:\n{stderr}"
+        stdout.contains("--meta-out"),
+        "--help should advertise the new --meta-out flag; stdout:\n{stdout}"
     );
     assert!(
-        stderr.contains("Legacy compatibility"),
-        "--help should explain the MDF-first / SQLite-legacy contract; stderr:\n{stderr}"
+        stdout.contains("Legacy compatibility"),
+        "--help should explain the MDF-first / SQLite-legacy contract; stdout:\n{stdout}"
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "--help is not a diagnostic and must not touch stderr; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 
@@ -105,6 +110,18 @@ fn cli_missing_input_argument_exits_two() {
     assert!(
         stderr.contains("missing <mdf> argument"),
         "stderr should explain the missing argument; got:\n{stderr}"
+    );
+    // The usage body follows the diagnostic on stderr — the mirror of
+    // `--help`, which writes the same body to stdout. A failure never
+    // claims stdout.
+    assert!(
+        stderr.contains("Usage: pid_publish_xml"),
+        "a usage error should carry the usage body on stderr; got:\n{stderr}"
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "a usage error must leave stdout untouched; stdout:\n{}",
+        String::from_utf8_lossy(&out.stdout)
     );
 }
 
@@ -308,10 +325,10 @@ fn cli_help_advertises_diff_against_flag() {
         .output()
         .expect("spawn pid_publish_xml --help");
     assert!(out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stderr.contains("--diff-against"),
-        "--help should advertise --diff-against; got:\n{stderr}"
+        stdout.contains("--diff-against"),
+        "--help should advertise --diff-against; got:\n{stdout}"
     );
 }
 
@@ -534,14 +551,14 @@ fn cli_help_documents_style_flag_and_choices() {
         .output()
         .expect("spawn pid_publish_xml --help");
     assert!(out.status.success(), "--help should exit 0; got {out:?}");
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stderr.contains("--style a01|dwg"),
-        "--help should document the --style flag; stderr:\n{stderr}"
+        stdout.contains("--style a01|dwg"),
+        "--help should document the --style flag; stdout:\n{stdout}"
     );
     assert!(
-        stderr.contains("DWG export shape"),
-        "--help should explain the DWG branch; stderr:\n{stderr}"
+        stdout.contains("DWG export shape"),
+        "--help should explain the DWG branch; stdout:\n{stdout}"
     );
 }
 
@@ -839,14 +856,14 @@ fn cli_help_documents_list_drawings_flag() {
         .output()
         .expect("spawn pid_publish_xml --help");
     assert!(out.status.success(), "--help should exit 0; got {out:?}");
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stderr.contains("--list-drawings"),
-        "--help should advertise the --list-drawings flag; stderr:\n{stderr}"
+        stdout.contains("--list-drawings"),
+        "--help should advertise the --list-drawings flag; stdout:\n{stdout}"
     );
     assert!(
-        stderr.contains("Print every T_Drawing row"),
-        "--help should describe what --list-drawings does; stderr:\n{stderr}"
+        stdout.contains("Print every T_Drawing row"),
+        "--help should describe what --list-drawings does; stdout:\n{stdout}"
     );
 }
 

@@ -253,6 +253,23 @@ The geometry output conservation gate for any refactor in this area
 is `tests/geometry_golden_snapshot.rs`
 (`UPDATE_GEOMETRY_GOLDEN=1` to bless intentional changes).
 
+## Probe examples (`examples/`, `pid-plot/examples/`)
+
+A probe is a throwaway `main` that asks one local fixture a question
+and prints the answer — how a decoder question gets settled before it
+earns a test. The committed form is named for what it settles, not for
+what it reads: `examples/probe_<the question>.rs` (268 of the 276
+tracked root examples carry that prefix; the other eight predate the
+convention and keep their names).
+
+A `tmp_`-prefixed example is the same tool before its answer is worth
+anything: `examples/tmp_<subject>.rs` is gitignored, nothing cites it,
+and it disappears once the answer lands. When the numbers do turn
+out to matter, rename it to `probe_<the question>.rs` and commit it —
+that promotion is what lets a later session re-run the evidence.
+`pid-plot/examples/` follows the same naming; the ignore pattern covers
+only the root directory, so keep scratch there out of commits by hand.
+
 ## Common commands
 
 ```bash

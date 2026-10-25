@@ -916,6 +916,54 @@ fn cli_smoke_no_flags_still_produces_full_report_including_coverage_section() {
 }
 
 #[test]
+fn cli_help_flag_prints_usage_to_stdout_and_exits_zero() {
+    // `-h` / `--help` used to be swallowed as an input path and die in
+    // the parser; the flag is now answered before any file is opened.
+    for flag in ["-h", "--help"] {
+        let output = Command::new(binary_path())
+            .arg(flag)
+            .output()
+            .expect("spawn pid_inspect --help");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{flag} should exit 0; got {:?}",
+            output.status.code()
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("Usage: pid_inspect"),
+            "{flag} should print usage to stdout; stdout:\n{stdout}"
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{flag} is not a diagnostic and must not touch stderr; stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn cli_no_args_still_reports_usage_on_stderr() {
+    // The other half of the split: a missing input is a failure, so its
+    // usage goes to stderr and stdout stays clean.
+    let output = Command::new(binary_path())
+        .output()
+        .expect("spawn pid_inspect with no args");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Usage: pid_inspect"),
+        "a missing input should carry the usage body on stderr; got:\n{stderr}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "a missing input must leave stdout untouched; stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
 fn cli_smoke_export_bundle_publish_requires_drawing_uid() {
     // Flag-combination validation lives in the adapter (the binary
     // exits 2 before any command runs) — this is the one behaviour
