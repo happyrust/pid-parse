@@ -2532,14 +2532,25 @@ pub(crate) fn igtextbox_letter_height(cos: f64, sin: f64) -> Option<f64> {
 /// instantiations (equipment, instruments, valves).
 pub const PSM_TYPE_CODE_IGSYMBOL2D: u16 = 0x00CE;
 
-/// Minimum byte length of one PSM `igSymbol2d` payload. Real
-/// fixtures show 113-byte (most common) and 121-byte variants, and the
-/// real-drawing corpus carries a 111-byte variant -- identical layout
-/// (matrix tag at +35, identity transform, tail definition pair), two
-/// bytes short somewhere in the optional tail fields
-/// (`examples/probe_real5_jsymbol_refusals.rs`). The tail pair reads from
-/// the payload's end, so the shorter tail loses nothing the decoder needs.
-pub const IGSYMBOL2D_MIN_PAYLOAD_LEN: usize = 111;
+/// Minimum byte length of one PSM `igSymbol2d` payload: what the shortest
+/// readable record can hold, which is the matrix tag as early as it can sit
+/// (a 4-byte `JSite` id in front of it) plus [`IGSYMBOL2D_MATRIX_AND_TAIL_LEN`.
+///
+/// This is a bound on the record, not a corpus histogram. The known shapes
+/// run 109 (the two title-block templates' placements) through 123 bytes, and
+/// the tail's optional members make the length vary without touching a byte
+/// the decoder reads. What a record must actually hold is checked per record
+/// against the matrix the tag anchors — see [`IGSYMBOL2D_MATRIX_AND_TAIL_LEN`].
+pub const IGSYMBOL2D_MIN_PAYLOAD_LEN: usize = 8 + IGSYMBOL2D_MATRIX_AND_TAIL_LEN;
+
+/// What an `igSymbol2d` payload must hold from its matrix tag on: the 2×2
+/// placement matrix (32 bytes), the insertion pair (16), the uniform scale
+/// (8), the flag word (4) and the two `u32`s that name the body (8).
+///
+/// `matrix_at + this` is the decoder's real size gate. Both corpus edges sit
+/// on it exactly: the templates' 109-byte record has `matrix_at = 37`
+/// (37 + 72 = 109), and one byte less cannot carry what the reader looks at.
+const IGSYMBOL2D_MATRIX_AND_TAIL_LEN: usize = 72;
 
 /// Maximum byte length we'll accept on a decoded `igSymbol2d`.
 const IGSYMBOL2D_MAX_PAYLOAD_LEN: usize = 200;
@@ -4154,10 +4165,12 @@ pub struct SheetIgSymbol2dDecoded {
 ///
 /// Validation:
 /// 1. `type_code == 0x00CE`;
-/// 2. `bytes_to_follow ∈ [113, 200]`;
+/// 2. `bytes_to_follow ∈ [IGSYMBOL2D_MIN_PAYLOAD_LEN, 200]`;
 /// 3. `IGSYMBOL2D_MATRIX_TAG` occurs within the first
 ///    `IGSYMBOL2D_TAG_SEARCH_END` payload bytes;
-/// 4. the 6 doubles following it are finite + in domain.
+/// 4. the payload holds everything from that tag on
+///    (`matrix_at + IGSYMBOL2D_MATRIX_AND_TAIL_LEN`);
+/// 5. the 6 doubles following it are finite + in domain.
 ///
 /// Thin wrapper over [`IgSymbol2dDecoder`]'s shared
 /// [`PsmRecordDecoder::scan`].
@@ -4243,6 +4256,11 @@ fn decode_igsymbol_payload(
         .windows(IGSYMBOL2D_MATRIX_TAG.len())
         .position(|w| w == IGSYMBOL2D_MATRIX_TAG)?;
     let matrix_at = tag_at + IGSYMBOL2D_MATRIX_TAG.len();
+    // The gate the family's real shapes sit on: the matrix and the tail that
+    // names the body have to fit, or the scale would read over the tail.
+    if payload.len() < matrix_at.checked_add(IGSYMBOL2D_MATRIX_AND_TAIL_LEN)? {
+        return None;
+    }
 
     // The u32 immediately before the matrix tag is the `JSite<id>`
     // storage id of the placed symbol (Phase 35-C, 132/132 records; the
@@ -4290,18 +4308,14 @@ fn decode_igsymbol_payload(
     // `u32 has_membassy`, `u32 0`, an optional `(membassy oid, 0)` pair when
     // that flag is set, and finally the two words that name the body --
     // `(definition JSheet oid, LdcSite id)`. Reading them from the end is
-    // what makes the optional pair irrelevant. Payloads shorter than the
-    // matrix plus this tail cannot occur under the 113-byte floor above, but
-    // a synthetic one reads as "no definition" rather than as garbage.
+    // what makes the optional pair irrelevant, and it is why the size gate
+    // above is stated from `matrix_at` rather than as one payload length: the
+    // 109- to 123-byte shapes all end on these two words.
     let tail_end = payload.len();
-    let (definition_sheet_ref, definition_site_ref) = if tail_end >= matrix_at + 48 + 8 {
-        (
-            u32_le(payload, tail_end - 8).unwrap_or_default(),
-            u32_le(payload, tail_end - 4).unwrap_or_default(),
-        )
-    } else {
-        (0, 0)
-    };
+    let (definition_sheet_ref, definition_site_ref) = (
+        u32_le(payload, tail_end - 8).unwrap_or_default(),
+        u32_le(payload, tail_end - 4).unwrap_or_default(),
+    );
 
     Some(SheetIgSymbol2dDecoded {
         byte_range: offset..payload_end,
@@ -11016,6 +11030,47 @@ mod tests {
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].definition_sheet_ref, 93);
         assert_eq!(decoded[0].definition_site_ref, 145);
+    }
+
+    /// The two title-block templates' placement (`CPE-SQ-A0.igr` /
+    /// `CPE-SQ-A1.igr` `/Sheet6`): 109 bytes, tag at 33, so the matrix starts
+    /// at 37 and the 72 bytes it needs land exactly on the payload's end.
+    ///
+    /// The floor used to be a corpus-derived 111, which refused this record
+    /// whole — and with it the 5 mm wave the templates place in the `比例`
+    /// value cell, the last 14.2 mm no page explained
+    /// (`docs/analysis/2026-10-24-the-wave-is-a-symbol-in-the-title-block.md`).
+    #[test]
+    fn igsymbol2d_decodes_the_109_byte_title_block_placement() {
+        let mut record =
+            build_synthetic_igsymbol2d_record(181, 6, 18, [1.0, 0.0, 0.0, 1.0], (1100.692, 19.0));
+        record.truncate(PSM_ENVELOPE_LEN + 109);
+        record[2..6].copy_from_slice(&109u32.to_le_bytes());
+        let tail = PSM_ENVELOPE_LEN + 109;
+        record[tail - 8..tail - 4].copy_from_slice(&29u32.to_le_bytes());
+        record[tail - 4..].copy_from_slice(&16u32.to_le_bytes());
+
+        let decoded = decode_igsymbols(&record);
+        assert_eq!(
+            decoded.len(),
+            1,
+            "a placement that holds its own tail decodes"
+        );
+        assert_eq!(decoded[0].bytes_to_follow, 109);
+        assert_eq!(decoded[0].insertion, (1100.692, 19.0));
+        assert_eq!(decoded[0].definition_sheet_ref, 29);
+        assert_eq!(decoded[0].definition_site_ref, 16);
+    }
+
+    /// One byte less than the matrix plus its tail and the record is refused:
+    /// the scale would read over the field that names the body.
+    #[test]
+    fn igsymbol2d_rejects_a_payload_one_byte_short_of_the_matrix_and_tail() {
+        let mut record =
+            build_synthetic_igsymbol2d_record(181, 6, 18, [1.0, 0.0, 0.0, 1.0], (1100.692, 19.0));
+        record.truncate(PSM_ENVELOPE_LEN + 108);
+        record[2..6].copy_from_slice(&108u32.to_le_bytes());
+        assert!(decode_igsymbols(&record).is_empty());
     }
 
     #[test]
