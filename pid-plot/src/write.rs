@@ -2031,4 +2031,21 @@ mod tests {
         assert!((s_pi - pi_plus_ulp).abs() < 1e-12);
         assert!((sweep_pi + std::f64::consts::PI).abs() < 1e-9);
     }
+
+    #[test]
+    fn directed_arc_collapses_an_exact_full_turn_to_a_zero_sweep() {
+        use super::{TAU, directed_arc};
+        // `rem_euclid` of a span of exactly one turn is 0, and the
+        // zero-sweep guard keeps that 0. A full circle is a `Circle`,
+        // not this function. This locks the current behaviour: a record
+        // whose ends differ by exactly 2π draws nothing here.
+        for clockwise in [true, false] {
+            let (start, sweep) = directed_arc(0.0, TAU, clockwise);
+            assert!(start.abs() < 1e-12);
+            assert_eq!(sweep, 0.0, "clockwise={clockwise}");
+            let (start, sweep) = directed_arc(TAU, 0.0, clockwise);
+            assert!((start - TAU).abs() < 1e-12);
+            assert_eq!(sweep, 0.0, "clockwise={clockwise}");
+        }
+    }
 }

@@ -735,8 +735,10 @@ pub struct DecodedIgArc2dRecord {
     pub center_y: f64,
     /// Radius, sheet units.
     pub radius: f64,
-    /// Absolute start angle, radians counter-clockwise from +X; the arc
-    /// leaves it **clockwise** towards `end_angle`.
+    /// Absolute start angle, radians counter-clockwise from +X. Which way
+    /// the arc leaves it is [`Self::flag`]: `0` clockwise, `1`
+    /// counter-clockwise. See
+    /// `docs/analysis/2026-10-23-the-arc-trailing-byte-is-the-direction.md`.
     pub start_angle: f64,
     /// Absolute end angle, radians counter-clockwise from +X.
     pub end_angle: f64,
