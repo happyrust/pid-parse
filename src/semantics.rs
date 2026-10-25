@@ -307,11 +307,11 @@ struct ScannedXml {
     owner_of: BTreeMap<String, String>,
 }
 
-fn attr(start: &BytesStart<'_>, name: &[u8]) -> Option<String> {
-    start.attributes().flatten().find_map(|attribute| {
-        (attribute.key.as_ref() == name)
-            .then(|| String::from_utf8_lossy(&attribute.value).into_owned())
-    })
+fn attr(start: &BytesStart<'_>, name: &str) -> Option<String> {
+    start
+        .attributes()
+        .flatten()
+        .find_map(|attribute| (attribute.key.as_ref() == name).then(|| attribute.value.to_string()))
 }
 
 /// One streaming pass over the published XML.
@@ -347,22 +347,22 @@ fn scan_published_xml(xml: &str) -> ScannedXml {
             return;
         };
         match start.name().as_ref() {
-            b"IObject" => {
-                block.uid = attr(start, b"UID").or(block.uid.take());
-                block.item_tag = attr(start, b"ItemTag").or(block.item_tag.take());
-                block.name = attr(start, b"Name").or(block.name.take());
-                block.description = attr(start, b"Description").or(block.description.take());
+            "IObject" => {
+                block.uid = attr(start, "UID").or(block.uid.take());
+                block.item_tag = attr(start, "ItemTag").or(block.item_tag.take());
+                block.name = attr(start, "Name").or(block.name.take());
+                block.description = attr(start, "Description").or(block.description.take());
             }
-            b"IDrawingRepresentation" => {
-                block.graphic_oid = attr(start, b"GraphicOID")
+            "IDrawingRepresentation" => {
+                block.graphic_oid = attr(start, "GraphicOID")
                     .and_then(|value| value.parse::<u32>().ok())
                     .or(block.graphic_oid.take());
             }
-            b"IRel" => {
+            "IRel" => {
                 if let (Some(uid1), Some(uid2), Some(def_uid)) = (
-                    attr(start, b"UID1"),
-                    attr(start, b"UID2"),
-                    attr(start, b"DefUID"),
+                    attr(start, "UID1"),
+                    attr(start, "UID2"),
+                    attr(start, "DefUID"),
                 ) {
                     block.rel = Some((uid1, uid2, def_uid));
                 }
@@ -376,7 +376,7 @@ fn scan_published_xml(xml: &str) -> ScannedXml {
             Ok(Event::Start(start)) => {
                 if depth == 1 && block.is_none() {
                     block = Some(Block {
-                        tag: String::from_utf8_lossy(start.name().as_ref()).into_owned(),
+                        tag: start.name().as_ref().to_string(),
                         uid: None,
                         item_tag: None,
                         name: None,

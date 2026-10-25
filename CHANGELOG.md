@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### 依赖清掉六条公告：`zip` 9 / `quick-xml` 0.42，`rkyv` 随 `rust_decimal` 离场（2026-10-25）
+
+CI 的 `cargo audit` job 一直红着，六条公告全部来自锁文件而不是这棵树：`quick-xml` 0.39.2
+（RUSTSEC-2026-0194 / -0195）、`zip` 8.5.1（RUSTSEC-2026-0367 / -0368 / -0369）、`rkyv` 0.7.46
+（RUSTSEC-2026-0235）。三条各自处理完，`cargo audit` 现在扫 277 个依赖、零告警。
+
+- **`zip` 8.5.1 → 9.1.0**：`entry.name()` 现在返回 `Result<Cow<'_, str>>`。中央目录索引不去猜它为什么拒绝一个名字，
+  而是像我方其余两处一样直接读字节：`entry.name_raw()` 交给 `backup::datamap::decode_zip_name`
+  （UTF-8 优先、失败落 GBK，本来就是 `SPPIDDataMap.xml` 与整厂包的读法），为此把它从私有改为 `pub(crate)`。
+  `SmartPlant` 档案里的中文条目名正是 GBK，交给 `name()` 的拒绝路径会把整份清单读失败。
+- **`quick-xml` 0.39.2 → 0.42.0**：这是这轮的主要工作量，API 从字节换到 `str` ——
+  名字与属性键是 `&str` / `Cow<'_, str>`（不再有字节视图），同一个 helper 的参数从 `&[u8]` 改成 `&str`、
+  比较从 `b"IObject"` 改成 `"IObject"`；`Reader::decoder()` 已删，`Attribute::unescape_value()` 已废弃，
+  取值改用 `normalized_value(quick_xml::XmlVersion::Implicit1_0)`（这些文档都是 XML 1.0）。
+  改动涉及 `backup::datamap`、`backup::zip_index`、`publish::diff`、`publish::oracle_exp`、`semantics`
+  五处源码，加 14 个探针与 2 个测试（`publish_from_pid` / `publish_meta_parity`）的解析 helper，全部是
+  签名与调用点的机械改动，没有一处判据被放宽。
+- **`rkyv` 0.7.46 不是直接依赖**，它在锁文件里只因为 `rust_decimal` 的可选 `rkyv` feature；把
+  `rust_decimal` 1.41.0 → 1.43.0 之后整个子树从锁文件消失（`rkyv` / `rkyv_derive` / `bytecheck` /
+  `bytecheck_derive` / `rend` / `ptr_meta` / `ptr_meta_derive` / `seahash` / `ahash` / `hashbrown 0.12` /
+  `simdutf8` / `syn 1.0` / `version_check`），不需要 `cargo audit` 的 ignore 条目。
+- **验证**：`cargo build --locked --workspace --all-targets` 干净、零告警；
+  `cargo test --locked --workspace --all-targets` **1762 过 / 0 败 / 3 跳过**（361 个测试二进制的
+  `test result` 全是 ok，跳过的是三个 `#[ignore]` 手动/发布期探针）；
+  真正吃 ZIP 的门禁在真实档案上过：`backup_zip_index_real_files`（703 条符号目录、OOXML 布局）、
+  `backup_folder_real_dir` / `backup_refdata_real_dir`、`publish_from_pid` 的 9 个用例（整厂包发布、
+  Oracle `exp` 与参考逐字比较、MTF 目录）；`fmt` / `clippy -D warnings` / `missing_docs`（0/0）
+  以及 `--no-default-features` 的 lib 测试（905）与 wasm32 检查都过。
+- **`cargo audit` 的复现方式**：本机 `~/.cargo/advisory-db` 的缓存报 `failed to find origin remote`，
+  所以改用它自己的 `--db` 指向一份新克隆（`git clone --depth 1` → `cargo audit --db <dir>`）。
+- **锁文件另一侧的新增**：`zip` 9 与 `rust_decimal` 1.43 带进 `rand` 0.9 / `rand_chacha` / `rand_core` /
+  `getrandom` / `r-efi` / `nix` / `wasip2` / `wit-bindgen`，都是传递依赖，没有新增直接依赖。
+
 ### 页幅只剩一个答案：65 张全出图，4 张「没声明页」的也落在整张 A 幅上（2026-10-25）
 
 「所有 PDF 一致导出」原来差在一处**没人看着的兜底**：写入器自己按内容猜页幅

@@ -92,7 +92,10 @@ pub fn list_zip_entries_from_reader<R: io::Read + io::Seek>(
     for i in 0..archive.len() {
         let entry = archive.by_index(i)?;
         out.push(ZipEntry {
-            name: entry.name().to_string(),
+            // Entry names are read as bytes and decoded here rather than through
+            // `entry.name()`: a `SmartPlant` archive stores GBK names, and the
+            // name accessor's own decoding refuses those.
+            name: crate::backup::datamap::decode_zip_name(entry.name_raw()),
             size: entry.size(),
             compressed_size: entry.compressed_size(),
             is_dir: entry.is_dir(),
