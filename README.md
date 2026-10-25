@@ -148,6 +148,14 @@ cargo run --bin pid_publish_xml -- <backup-dir> --out-dir <dir> --plant P01
 - **SQL Server MTF 的 `Export.dmp`**：默认特性（`backup` ⊃ `backup-mdf`）下先把 MTF 头剥出 MDF，再按数据库线把每条 `T_Drawing` 行发布出来（退出 0）。
 - **`--style a01|dwg` 只对数据库输入**（`Export.mdf` / legacy `Export_v2.sqlite`）有效：`.pid` 输入与备份包目录都会拒绝它（退出 2 并点名 `--style`），不再静默忽略。
 
+### 备份包与 `_Meta.xml` 的 publish 门禁
+- **整包 `--diff-against <参考目录>`**：备份包目录现在也接受 `--diff-against`，逐张图对照 `<DIR>/<图名>_Data.xml`，每张打印一行 `clean` / `dirty` / `unpaired` 判词。
+- 某张图 dirty、或在该目录里没有参考文件，进程退出 1：失败的图会被记账，其余图照常写出，全部写完后退出 1。
+- **`_Meta.xml` 伴随门禁**：本轮写出的 `_Meta.xml`（`--out-dir` 或 `--meta-out`）还会与参考 `<图名>_Data.xml` 旁的 `<图名>_Meta.xml` 对照，比 13 个 `<Container>` 属性、顶层块顺序、三条 `Rel` 的 DefUID 及角色接线，以及兄弟 `_Data.xml` 的 DocUID。
+- 参考旁没有兄弟 meta 时，meta diff 明确报告它没有运行，而不是静默判过。
+- **已接受差异是数据，不是断言**：`docs/baselines/publish-diff-accepted.json` 由 `tests/publish_diff_accepted_baseline.rs` 消费，把一次 `--diff-against` 运行打印的每一行归为 registered / disappeared / unregistered。
+- A01 仍按设计退出 1 —— 基线是逐项记录，不是抑制机制。
+
 当前公开的 publish 正确性基线只承诺 `Export.mdf` 主链。
 历史 `Export_v2.sqlite` mirror 仍可作为 legacy 兼容输入喂给
 `pid_publish_xml`，但不再承担 publish fidelity 验收角色；CLI
