@@ -90,6 +90,15 @@ impl MaskRect {
 /// bottom-left, y up. A page that matches neither sheet size gets an empty
 /// list. How the clusters were measured is written up in
 /// `docs/analysis/2026-10-12-template-mask-samples.md`.
+///
+/// The left column's right edge is not a text origin: it is the rail of a
+/// 50 × 10 mm box the linked `.igr` hangs from the top frame at `x 25..75`
+/// (`y 574..584` on A1, `y 821..831` on A0). The rectangle reaches that
+/// rail's own as-drawn edge — `74.999970` mm plus half its 0.25 mm stroke,
+/// 75.125 mm — so the box is masked on every sheet whether or not that
+/// sheet's reference plot drew it. At a round 75 the fitted ink (scale
+/// 1.0001) landed 3.6 µm outside and 10 mm of furniture stayed charged as
+/// extra on A and 低温分离器A.
 #[must_use]
 pub fn template_masks(page_mm: [f64; 2]) -> Vec<MaskRect> {
     let Some(sheet) = surveyed_sheet(page_mm) else {
@@ -2007,6 +2016,15 @@ mod tests {
         assert!(!a1.iter().any(|mask| mask.contains([77.22, 532.38])));
         assert!(!a1.iter().any(|mask| mask.contains([81.96, 408.77])));
         assert!(!a1.iter().any(|mask| mask.contains([679.70, 110.24])));
+
+        // The column's right edge is the template's own rail: a 50 × 10 mm box
+        // hangs from the top frame at x 25..75 on both sheets, and its ink
+        // stops at 74.999970 + 0.125. A point a tenth of a millimetre past
+        // that is content, not furniture.
+        assert!(a0.iter().any(|mask| mask.contains([75.00, 821.00])));
+        assert!(a1.iter().any(|mask| mask.contains([75.00, 574.00])));
+        assert!(!a0.iter().any(|mask| mask.contains([75.20, 821.00])));
+        assert!(!a1.iter().any(|mask| mask.contains([75.20, 574.00])));
 
         assert!(super::template_masks([200.0, 100.0]).is_empty());
     }

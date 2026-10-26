@@ -116,7 +116,9 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // so the same ink is charged as extra — 15 mm each, which is what moves their
 // ceilings (7.6 → 22.6 and 22.9 → 37.9 mm). That is a real difference between
 // those two reference pages and every drawing in the set, not a regression:
-// their `.pid` states the same linked A1 frame as `B`'s.
+// their `.pid` states the same linked A1 frame as `B`'s. That charge is gone as
+// of the mask move below: the furniture is masked on every sheet now, whether
+// or not that page's reference drew it.
 //
 // Today's move is the coverage figure's own sampling bug, the mirror of the
 // extra one. It was measured on the centre lines `join_centerlines` merges out
@@ -145,10 +147,27 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // its circle, so 1.5 mm of empty paper became ink on every valve: 8 joins per
 // valve type on `I`, 4 on `A` and `低温分离器A`. Sampling the drawn segments
 // instead (`docs/analysis/2026-10-26-the-extra-ink-was-a-join-across-a-blank.md`)
-// reads 0.30 / 15.00 / 0.00 / 18.08 / 8.72 mm, and everything left is the
-// furniture `A` and `低温分离器A`'s reference pages never plotted. The ceilings
-// follow at one bridge's worth of slack above the reading — 1 / 15.5 / 0.5 /
-// 18.6 / 9.2 mm — so a single symbol body leaking back in fails the gate.
+// reads 0.30 / 15.00 / 0.00 / 18.08 / 8.72 mm. Almost all of that was still not
+// ink of ours that the reference lacks, but the mask's own right edge: the left
+// rectangle stopped at `x = 70` (A1) / `72` (A0) while the template's 50 × 10 mm
+// sign-off-column box reaches `x = 75.125` — `74.999970` mm of rail plus half
+// its 0.25 mm stroke. Widening the rectangle to that rail
+// (`pid-plot/assets/template-masks.json`) drops the furniture on every sheet,
+// and the five read **0.30 / 0.00 / 0.00 / 3.08 / 8.72 mm**. No reference content
+// was hidden by the wider rectangle: `A`, `低温分离器A` and `换热器CD` lose
+// nothing from their reference length (`masked_reference_length_mm` stays 0.000
+// mm on all three), and on `I` and `B` the 12.99 / 14.99 mm the rectangle takes
+// in is the box itself, ink for ink the same as ours — coverage holds at
+// 0.9995 / 0.9997 / 0.9996 / 0.9996 / 0.9990.
+//
+// What is left is the complex-dash 45° ticks: one on `低温分离器A` (3.08 mm of
+// its 3.59 mm tick) and four on `换热器CD` (8.72 mm, two 2.05 mm ticks per
+// marking), plus `I`'s two 0.015 mm slivers on `Wellhead Christmas Tree 02`.
+// Each tick is charged in whole 0.51 mm samples, less any sample that lands
+// within 0.5 mm of reference ink — one of 低温分离器A's seven does.
+// The ceilings follow at one bridge's worth of slack above the reading —
+// **1 / 0.5 / 0.5 / 3.6 / 9.2 mm** — so a single symbol body leaking back in
+// fails the gate.
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
@@ -159,7 +178,7 @@ const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
         min_coverage: 0.9995,
-        max_extra_mm: 15.5,
+        max_extra_mm: 0.5,
         min_text_matched: 151,
     },
     Baseline {
@@ -171,7 +190,7 @@ const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
         min_coverage: 0.9995,
-        max_extra_mm: 18.6,
+        max_extra_mm: 3.6,
         min_text_matched: 167,
     },
     Baseline {
