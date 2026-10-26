@@ -83,6 +83,12 @@ EXTRA 1.50 mm  run (207.71,367.26) -> (207.26,366.36)
 > 五张读数是 **0.30 / 0.00 / 0.00 / 3.08 / 8.72 mm**，`A` 归零，`低温分离器A` 只剩复式虚线的一处 45° 斜线标记。
 > 见 `docs/analysis/2026-10-12-template-mask-samples.md` 的「2026-10-26 补」与
 > `pid-plot/examples/probe_template_furniture_rails.rs`。
+>
+> **同日晚些的补充二：最后那 11.80 mm 也是我们多画。** 三处字形都盖在短于半个周期的管段末端，
+> 参考在那些管段上只画管身；`complex_dash_positions` 改为 `L < period / 2` 时不落字形后，
+> 五张多画 **12.11 → 0.305 mm**（只剩 `I井场` 的阈值碎墨），覆盖率逐位未变 —— 这一段也是判定的
+> 关键：拿掉 11.8 mm 的墨没有碰到任何参考墨。见
+> `docs/analysis/2026-10-26-the-hydraulic-glyph-comes-off-sub-half-period-stubs.md`。
 
 ## 复现
 

@@ -2109,13 +2109,23 @@ fn complex_dash_cells(length_mm: f64, period_mm: f64, glyph_span_mm: f64) -> usi
 /// far half of exactly those ticks (`docs/analysis/2026-10-24-
 /// one-glyph-stubs-centre-a-half-period-in.md`).
 ///
-/// The centre is held at or before the run's end: a run shorter than half an
-/// advance has no room for a mark placed a half advance in, and the corpus's
-/// 4.23 mm stub keeps its mark at the end it does reach.
+/// A run shorter than half an advance carries **no** glyph at all. The centre
+/// is not pulled back to the run's end: the reference inks only the rail on
+/// those runs. Its nearest glyph on either side of them is 40.3–40.8 mm away,
+/// and the walls of the three stubs carry rail pieces we draw to 0.06 mm —
+/// the corpus's 4.23 mm vertical stub prints `0.169 + 4.233 mm` of rail and no
+/// mark, its 1.32 and 3.81 mm stubs the same. The 3.83 mm run on the 7.62 mm
+/// advance sits 0.02 mm over half that advance and does keep the mark the
+/// reference inks there, so the boundary is the half advance, not the run list
+/// (`docs/analysis/2026-10-26-the-hydraulic-glyph-comes-off-sub-half-period-stubs.md`).
 fn complex_dash_positions(length_mm: f64, period_mm: f64, glyph_span_mm: f64) -> Vec<f64> {
     let cells = complex_dash_cells(length_mm, period_mm, glyph_span_mm);
     if cells <= 1 {
-        return vec![(period_mm * 0.5).min(length_mm)];
+        let half = period_mm * 0.5;
+        if length_mm < half {
+            return Vec::new();
+        }
+        return vec![half];
     }
     let step = length_mm / cells as f64;
     (0..cells).map(|cell| (cell as f64 + 0.5) * step).collect()
@@ -2655,10 +2665,16 @@ mod tests {
             assert_eq!(positions.len(), 1);
             assert!((positions[0] - expected).abs() < 1e-9);
         }
-        // A run shorter than half an advance has no room for that, and the
-        // 4.23 mm stub keeps its mark at the end it does reach.
-        for length in [4.23_f64, 4.2, 3.8, 0.5] {
-            assert_eq!(complex_dash_positions(length, 10.16, span), vec![length]);
+        // A run shorter than half an advance gets no glyph: the reference
+        // inks only the rail there, so there is no mark to pull back to the
+        // end. `probe_complex_dash_marks` reads the 4.23 mm stub's walls as
+        // `0.169 + 4.233 mm` of rail with no mark, and the nearest reference
+        // glyph 40 mm away.
+        for length in [5.07_f64, 4.23, 4.2, 3.81, 1.32, 0.5] {
+            assert!(
+                complex_dash_positions(length, 10.16, span).is_empty(),
+                "{length} mm is under the 5.08 mm half advance"
+            );
         }
     }
 

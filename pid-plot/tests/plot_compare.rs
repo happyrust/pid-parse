@@ -163,13 +163,22 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // in is the box itself, ink for ink the same as ours — coverage holds at
 // 0.9995 / 0.9997 / 0.9996 / 0.9996 / 0.9990.
 //
-// What is left is the complex-dash 45° ticks: one on `低温分离器A` (3.08 mm of
-// its 3.59 mm tick) and four on `换热器CD` (8.72 mm, two 2.05 mm ticks per
-// marking), plus `I`'s two 0.015 mm slivers on `Wellhead Christmas Tree 02`.
-// Each tick is charged in whole 0.51 mm samples, less any sample that lands
-// within 0.5 mm of reference ink — one of 低温分离器A's seven does.
-// The ceilings follow at one bridge's worth of slack above the reading —
-// **1 / 0.5 / 0.5 / 3.6 / 9.2 mm** — so a single symbol body leaking back in
+// What was left after that was the complex-dash 45° ticks, and they were ours:
+// one glyph on `低温分离器A` (3.08 mm) and two on `换热器CD` (8.72 mm). All
+// three sat on runs shorter than half the pattern's 10.16 mm advance — 1.32,
+// 3.81 and 4.23 mm — where `complex_dash_positions` used to pull the single
+// glyph back to the run's end. The reference inks only the rail on those runs,
+// with its nearest glyph 40.3–40.8 mm away, and the clamp was never measured:
+// taking the glyph off them drops `低温分离器A` to 0.00 and `换热器CD` to 0.00
+// with both coverages bit-identical, which is what says the 11.8 mm was ink the
+// reference never had and not a phase
+// (`docs/analysis/2026-10-26-the-hydraulic-glyph-comes-off-sub-half-period-stubs.md`).
+//
+// What is left is `I`'s 0.31 mm: sixteen fragments of our arc chain on
+// `Wellhead Christmas Tree 02`, 0.011–0.093 mm each, every one of them
+// 0.501–0.550 mm from the reference's nearest ink — threshold crossings, not
+// geometry. The ceilings follow one bridge's worth of slack above the reading —
+// **1 / 0.5 / 0.5 / 0.5 / 0.5 mm** — so a single symbol body leaking back in
 // fails the gate.
 const BASELINES: [Baseline; 5] = [
     Baseline {
@@ -193,13 +202,13 @@ const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
         min_coverage: 0.9995,
-        max_extra_mm: 3.6,
+        max_extra_mm: 0.5,
         min_text_matched: 167,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
         min_coverage: 0.9989,
-        max_extra_mm: 9.2,
+        max_extra_mm: 0.5,
         min_text_matched: 249,
     },
 ];

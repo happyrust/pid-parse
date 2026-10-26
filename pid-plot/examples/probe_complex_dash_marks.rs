@@ -163,8 +163,14 @@ fn main() {
                     .join(" "),
                 if fitted <= 1 {
                     // A stub that fits one glyph keeps the pattern's own
-                    // advance, so its mark sits half a period in.
-                    format!("{:6.2}", (period * 0.5).min(run))
+                    // advance, so its mark sits half a period in — unless the
+                    // run stops short of that, in which case no glyph is
+                    // stamped at all.
+                    if run < period * 0.5 {
+                        "none".to_string()
+                    } else {
+                        format!("{:6.2}", period * 0.5)
+                    }
                 } else {
                     let step = run / fitted as f64;
                     (0..fitted)
