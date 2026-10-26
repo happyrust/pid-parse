@@ -7,9 +7,18 @@
 //!
 //! A `JStyleSimpleDashType` in its complex form stamps a glyph once per fitted
 //! cell of its advance; `model::stamp_complex_dash` owns that layout. This probe
-//! reads the glyph back off the reference plot — a 3–4 mm 45° stroke is a mark,
-//! its pair is the glyph — and prints, per run, the run's length, the cell count
-//! three candidate rules give, and the mark centres the reference inks.
+//! reads the glyph back off the reference plot — a 2.5–5 mm stroke that meets
+//! the run at 45° is a mark, its pair is the glyph — and prints, per run, the
+//! run's length, the cell count three candidate rules give, and the mark centres
+//! the reference inks.
+//!
+//! The filter asks the glyph the run carries, not a fixed length or angle: the
+//! CD sheets' glyph is a pair of 3.592 mm slashes at 45° to the run, `I井场`'s
+//! is an L of two 2.540 mm arms, one along the run and one across it. A band
+//! that held one held neither — the CD sheets' wall stroke measures 4.233 mm
+//! against their 3.592 mm glyph, 0.03 mm of margin, and the band that admits
+//! `I井场`'s glyph also admits the symbol-body diagonals that are not marks
+//! (`docs/analysis/2026-10-27-the-slash-surplus-was-the-probes-own-band.md`).
 //!
 //! The `our centres` line reports where the current layout stamps: one per
 //! fitted cell, centred in it, except that a run fitting a single glyph keeps
@@ -22,7 +31,7 @@
 
 use std::path::Path;
 
-use pid_parse::style_link::line_styles_for_document;
+use pid_parse::style_link::{ComplexDash, line_styles_for_document};
 use pid_parse::{PidGraphicKind, PidParser, build_normalized_geometry};
 use pid_plot::read::read_plot;
 
@@ -41,6 +50,68 @@ fn side(point: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
         return 0.0;
     }
     ((point[0] - a[0]) * dy - (point[1] - a[1]) * dx) / square.sqrt()
+}
+
+/// The glyph's arms in the page's own frame, with their lengths in mm.
+///
+/// A glyph is stored in its own frame — +x along the run, +y across it — so an
+/// arm has to be rotated by the run's direction before its direction can be
+/// compared with a stroke on the page. The CD sheets' pair reads (2.5, 2.6) mm
+/// locally and prints at 135° on this sheet's vertical runs, not at 46°.
+fn arms_in_page(complex: &ComplexDash, a: [f64; 2], b: [f64; 2]) -> Vec<([f64; 2], f64)> {
+    let run = b[0] - a[0];
+    let rise = b[1] - a[1];
+    let run_len = run.hypot(rise);
+    if run_len <= 1e-9 {
+        return Vec::new();
+    }
+    let u = [run / run_len, rise / run_len];
+    let n = [-u[1], u[0]];
+    complex
+        .strokes()
+        .iter()
+        .filter(|mark| !mark.is_degenerate())
+        .map(|mark| {
+            let (dx, dy) = (mark.end.0 - mark.start.0, mark.end.1 - mark.start.1);
+            (
+                [dx * u[0] + dy * n[0], dx * u[1] + dy * n[1]],
+                dx.hypot(dy) * 1000.0,
+            )
+        })
+        .collect()
+}
+
+/// Whether a reference stroke is one of the glyph's own arms.
+///
+/// Asked of the glyph the run actually carries, because the two complex-dash
+/// styles in this package ink different glyphs: the CD sheets' is a pair of
+/// 3.61 mm slashes at 45° to the run, `I井场`'s is an L of two 2.6 mm arms,
+/// one along the run and one across it. A length band cannot serve both — and
+/// on the CD sheets it only held the glyph by 0.03 mm against the wall stroke
+/// it had to drop, while on `I井场` the band that admitted the reference's
+/// 4.19 mm diagonals also admitted symbol-body diagonals that are not marks.
+///
+/// The length window is the glyph's own size class rather than a tolerance: an
+/// arm of a mark cannot be much longer than the arm that drew it, and the
+/// window has to start well below 1 because the reader cuts a stroke where
+/// another line crosses it.
+fn matches_an_arm(stroke: &Stroke, arms: &[([f64; 2], f64)]) -> bool {
+    let ink = [stroke.1[0] - stroke.0[0], stroke.1[1] - stroke.0[1]];
+    let ink_len = ink[0].hypot(ink[1]);
+    if ink_len <= 1e-9 {
+        return false;
+    }
+    arms.iter().any(|(arm, arm_len_mm)| {
+        if *arm_len_mm <= 1e-9 || !(0.7..=1.3).contains(&(ink_len / arm_len_mm)) {
+            return false;
+        }
+        let arm_len = arm[0].hypot(arm[1]);
+        if arm_len <= 1e-9 {
+            return false;
+        }
+        let cosine = ((arm[0] * ink[0] + arm[1] * ink[1]) / (arm_len * ink_len)).abs();
+        cosine.min(1.0).acos().to_degrees() <= 8.0
+    })
 }
 
 /// A run's own marks, as the centres of the glyph's stroke pairs.
@@ -74,8 +145,10 @@ fn main() {
     let marks: Vec<Stroke> = plot
         .segments
         .iter()
-        .map(|segment| (segment.start_mm, segment.end_mm))
-        .filter(|(a, b)| (3.0..=4.2).contains(&length(*a, *b)))
+        .map(|segment| (segment.start_mm, segment.end_mm)) // Loose enough for every glyph in the package and tight enough to
+        // leave the 2.032 mm dashes out; which of these crosses the run at
+        // 45° is asked per run, below.
+        .filter(|(a, b)| (2.5..=5.0).contains(&length(*a, *b)))
         .collect();
 
     for entity in &geometry.entities {
@@ -119,7 +192,8 @@ fn main() {
                 .fold(0.0_f64, f64::max);
             let u = [(b[0] - a[0]) / run, (b[1] - a[1]) / run];
             let mut theirs: Vec<f64> = Vec::new();
-            for (c, d) in &marks {
+            let arms = arms_in_page(complex, a, b);
+            for (c, d) in marks.iter().filter(|s| matches_an_arm(s, &arms)) {
                 let mid = [(c[0] + d[0]) / 2.0, (c[1] + d[1]) / 2.0];
                 // The run's own wall only: the glyph half-width is 1.8 mm, so a
                 // mark of the neighbouring wall sits ~3.8 mm out.

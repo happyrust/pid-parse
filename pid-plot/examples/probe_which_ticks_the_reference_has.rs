@@ -18,6 +18,11 @@
 //! The pairing accepts both diagonals: the 45° filter alone would report a
 //! vertical run's glyph as missing when the reference draws it at 135°
 //! (`docs/analysis/2026-10-26-the-hydraulic-glyph-comes-off-sub-half-period-stubs.md`).
+//! It runs both ways round on purpose — our slashes with no counterpart are
+//! ink we added, the reference's with no counterpart are ink we are missing —
+//! and prints, for each, the nearest stroke of the other side whether or not
+//! it is a slash, because a "missing" slash within 0.2 mm of a stroke of the
+//! same length is one stroke cut at a crossing rather than a glyph.
 
 use std::path::PathBuf;
 
@@ -42,11 +47,19 @@ fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
 
-/// The glyph's slashes on one page: 3.0–4.2 mm, on either diagonal.
+/// The glyph's slashes on one page: 2.8–4.4 mm, on either diagonal.
+///
+/// The band has to clear both sides' spelling of the same stroke. This package
+/// inks a hydraulic glyph's slash at 3.021 mm (I) / 3.592 mm (the CD sheets)
+/// against the reference's 2.996 / 3.57, and a symbol-body diagonal at our
+/// 4.245 against its 4.192: the fit's ~1% length difference straddles a band
+/// edge that sits on a glyph, so 3.0–4.2 counted the reference's 4.192 strokes
+/// and dropped our 4.245 copies of exactly those strokes, reporting 22 of them
+/// as missing glyphs.
 fn glyph_slashes(strokes: &[Stroke]) -> Vec<Stroke> {
     strokes
         .iter()
-        .filter(|s| (3.0..=4.2).contains(&len(s)))
+        .filter(|s| (2.8..=4.4).contains(&len(s)))
         .filter(|s| {
             let a = angle(s);
             (a - 45.0).abs() <= 6.0 || (a - 135.0).abs() <= 6.0
@@ -106,43 +119,56 @@ fn main() {
         reference.len(),
         ref_slashes.len()
     );
+    report("ours", &ours_slashes, &ref_slashes, &reference);
+    report("reference", &ref_slashes, &ours_slashes, &ours);
+}
+
+/// Print one side's slashes the other side has nothing within 0.6 mm of.
+///
+/// Both directions, because they answer different questions: a slash of ours
+/// with no counterpart is ink we added, a reference slash with no counterpart
+/// is ink we are missing — which is the one that has to reach the report's
+/// uncovered column if the missing-glyph reading is right.
+///
+/// `other_strokes` is every stroke of the other side, slash or not. A slash
+/// that pairs with a longer stroke is not a glyph at all but the same stroke
+/// cut at a crossing, and the length next to the distance is what says which:
+/// a counterpart within 0.2 mm whose length matches is the same stroke, one
+/// 40 mm away is not.
+fn report(tag: &str, slashes: &[Stroke], other_slashes: &[Stroke], other_strokes: &[Stroke]) {
     let mut paired = 0;
     let mut alone: Vec<(f64, Stroke)> = Vec::new();
-    for t in &ours_slashes {
-        let d = ref_slashes
+    for s in slashes {
+        let d = other_slashes
             .iter()
-            .map(|r| dist(mid(t), mid(r)))
+            .map(|o| dist(mid(s), mid(o)))
             .fold(f64::INFINITY, f64::min);
         if d <= 0.6 {
             paired += 1;
         } else {
-            alone.push((d, *t));
+            alone.push((d, *s));
         }
     }
-    println!("ours paired with a reference slash within 0.6 mm: {paired}");
+    println!("{tag} paired with a slash of the other side within 0.6 mm: {paired}");
     alone.sort_by(|l, r| r.0.total_cmp(&l.0));
-    println!("ours with no reference slash ({}):", alone.len());
-    for (d, t) in &alone {
-        let m = mid(t);
-        let nearest =
-            reference
-                .iter()
-                .map(|r| (dist(m, mid(r)), *r))
-                .fold(
-                    (f64::INFINITY, *t),
-                    |best, c| {
-                        if c.0 < best.0 { c } else { best }
-                    },
-                );
+    println!("{tag} with no such slash ({}):", alone.len());
+    for (d, s) in &alone {
+        let m = mid(s);
+        let nearest = other_strokes.iter().map(|o| (dist(m, mid(o)), *o)).fold(
+            (f64::INFINITY, *s),
+            |best, c| {
+                if c.0 < best.0 { c } else { best }
+            },
+        );
         println!(
-            "  ours ({:7.3},{:7.3}) -> ({:7.3},{:7.3})  len {:5.3} ang {:5.1}  nearest reference \
-             slash {d:6.3} mm; nearest reference stroke {:.3} mm len {:.3} ang {:.1}",
-            t.0[0],
-            t.0[1],
-            t.1[0],
-            t.1[1],
-            len(t),
-            angle(t),
+            "  {tag} ({:7.3},{:7.3}) -> ({:7.3},{:7.3})  len {:5.3} ang {:5.1}  nearest \
+             {tag} slash {d:6.3} mm; nearest other stroke {:.3} mm len {:.3} ang {:.1}",
+            s.0[0],
+            s.0[1],
+            s.1[0],
+            s.1[1],
+            len(s),
+            angle(s),
             nearest.0,
             len(&nearest.1),
             angle(&nearest.1)
