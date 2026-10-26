@@ -256,7 +256,10 @@ pub struct CompareReport {
     pub covered_length_mm: f64,
     /// Covered length over reference length. 0 when the reference length is 0.
     pub coverage: f64,
-    /// Our centerline length outside the masks and farther than 0.5 mm from the reference.
+    /// Our drawn length outside the masks and farther than 0.5 mm from the reference.
+    ///
+    /// Measured on the strokes as they were laid, not on the centre lines
+    /// [`join_centerlines`] merges them into — see [`drawn_lines`].
     pub extra_length_mm: f64,
     /// Reference text runs outside the masks, blanks excluded.
     ///
@@ -324,7 +327,12 @@ pub fn compare_plots_with_sources(
     let our_index = Grid::new(&our_in_ref);
     let (reference_length, covered, masked_reference) =
         cover(&reference_lines, &our_index, masks, true);
-    let (_, extra, _) = cover(&our_in_ref, &reference_index, masks, false);
+    let (_, extra, _) = cover(
+        &drawn_lines(&ours.segments, &fit),
+        &reference_index,
+        masks,
+        false,
+    );
     let text = match_text(&reference.spans, &ours.spans, &fit, masks, sources);
     let coverage = if reference_length > 0.0 {
         covered / reference_length
@@ -498,6 +506,24 @@ impl Line {
             b: map(self.b),
         }
     }
+}
+
+/// Our ink as the page carries it, mapped into reference space.
+///
+/// [`join_centerlines`] merges pieces that sit within [`JOIN_GAP_MM`] on one
+/// line, which is what coverage needs to see a chained or dashed stroke whole.
+/// Extra ink must not use those merges: a bridge spans paper the plot leaves
+/// blank on purpose — a ball valve's diagonals stop at its circle — so a
+/// sample taken on the bridge is ink the PDF never laid down.
+fn drawn_lines(segments: &[InkSegment], fit: &Fit) -> Vec<Line> {
+    segments
+        .iter()
+        .filter(|segment| hypot(segment.start_mm, segment.end_mm) >= 1e-4)
+        .map(|segment| Line {
+            a: into_reference(segment.start_mm, fit),
+            b: into_reference(segment.end_mm, fit),
+        })
+        .collect()
 }
 
 fn join_centerlines(segments: &[InkSegment]) -> Vec<Line> {
@@ -1378,7 +1404,7 @@ fn group_lengths(
     let stroke_lines: Vec<Line> = strokes.iter().map(|(line, _)| *line).collect();
     let stroke_index = Grid::new(&stroke_lines);
     let (extra_inside, extra_outside, mut extra_groups) = split_extra(
-        &our_lines,
+        &drawn_lines(&ours.segments, fit),
         &reference_index,
         template,
         missing,
@@ -1425,8 +1451,12 @@ fn group_lengths(
     }
 }
 
+/// Split our extra ink on the missing-symbol boxes and name each group.
+///
+/// `our_strokes` are the drawn segments ([`drawn_lines`]), never the merged
+/// centre lines: a merge across a symbol's blank would be counted as ink.
 fn split_extra(
-    our_lines: &[Line],
+    our_strokes: &[Line],
     reference_index: &Grid,
     template: &[MaskRect],
     missing: &[MaskRect],
@@ -1436,7 +1466,7 @@ fn split_extra(
 ) -> (f64, f64, Vec<LengthGroup>) {
     let mut inside = 0.0;
     let mut outside = HashMap::<String, f64>::new();
-    for line in our_lines {
+    for line in our_strokes {
         let length = line.length();
         if length < 1e-6 {
             continue;
@@ -1629,7 +1659,7 @@ fn stroke_label_at(
 
 #[cfg(test)]
 mod tests {
-    use super::compare_plots;
+    use super::{compare_plots, join_centerlines};
     use crate::read::{InkSegment, PlotInk, TextSpan};
 
     fn ink(segments: Vec<InkSegment>, spans: Vec<TextSpan>) -> PlotInk {
@@ -1679,6 +1709,33 @@ mod tests {
         assert!(report.extra_length_mm < 0.2, "{}", report.extra_length_mm);
         assert_eq!(report.text_matched, 1);
         assert!(report.fit.within_threshold, "{:?}", report.fit);
+    }
+
+    #[test]
+    fn a_join_across_a_blank_is_not_ink() {
+        // A ball valve body: two collinear sides stop at the circle, leaving
+        // 1.8 mm of blank inside it. `join_centerlines` bridges a gap that
+        // small (it has to, for a dashed stroke), so sampling the merged
+        // centre line would report the blank as ink the page never laid —
+        // 1.5 mm per valve, which is how 8 valves came to look like 12 mm.
+        let body = vec![
+            line([10.0, 10.0], [20.0, 10.0]),
+            line([21.8, 10.0], [31.8, 10.0]),
+        ];
+        let plot = ink(body, vec![]);
+        let joined = join_centerlines(&plot.segments);
+        assert_eq!(joined.len(), 1, "the pair merges into one centre line");
+        assert!(
+            (joined[0].length() - 21.8).abs() < 1e-6,
+            "{}",
+            joined[0].length()
+        );
+        let report = compare_plots(&plot, &plot, &[]);
+        assert!(
+            report.extra_length_mm < 0.2,
+            "the blank counted {} mm",
+            report.extra_length_mm
+        );
     }
 
     #[test]
