@@ -118,6 +118,26 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // those two reference pages and every drawing in the set, not a regression:
 // their `.pid` states the same linked A1 frame as `B`'s.
 //
+// Today's move is the coverage figure's own sampling bug, the mirror of the
+// extra one. It was measured on the centre lines `join_centerlines` merges out
+// of the reference's strokes, and that merge bridges every blank under 3 mm —
+// the sheets' dashed lines leave 1.0–1.2 mm between dashes, so the merge
+// filled their gaps with reference ink, and our dashes (phase-shifted, their
+// own 1.905 / 1.270 mm against the reference's 2.032 + 0.169 dash and 1.0 mm
+// gap) covered the filled blanks. Four of the five sheets therefore read
+// exactly 1.0000 and a missing dashed line could not move the number. Sampled
+// on the strokes as drawn, on both sides, the five read 0.9995 / 0.9997 /
+// 0.9996 / 0.9996 / 0.9990. Everything left uncovered is dash ends — 0.17 to
+// 0.31 mm each, collinear to 0.05 mm, our ink 0.55–0.65 mm away inside the
+// neighbouring blank, measured by
+// `pid-plot/examples/probe_which_reference_ink_is_uncovered.rs`. Nothing on any
+// page is missing geometry: no run has our ink more than 1 mm away.
+//
+// The coverage floors follow that reading minus 0.0001, which is 1 mm on an A1
+// sheet and 3 mm on the A0: a lost symbol body (tens of millimetres) fails at
+// once, a single dash end does not, and the old floors — 0.9977 to 0.9995
+// against readings then reported as 1.0000 — could not see either.
+//
 // The ceilings are re-locked again today because the extra figure itself was
 // wrong: it used to be sampled on the centre lines `join_centerlines` merges
 // out of the drawn strokes, and that merge closes any gap under 3 mm —
@@ -132,7 +152,7 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
-        min_coverage: 0.9985,
+        min_coverage: 0.9993,
         max_extra_mm: 1.0,
         min_text_matched: 544,
     },
@@ -144,19 +164,19 @@ const BASELINES: [Baseline; 5] = [
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
-        min_coverage: 0.9977,
+        min_coverage: 0.9995,
         max_extra_mm: 0.5,
         min_text_matched: 123,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
-        min_coverage: 0.9982,
+        min_coverage: 0.9995,
         max_extra_mm: 18.6,
         min_text_matched: 167,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
-        min_coverage: 0.9990,
+        min_coverage: 0.9989,
         max_extra_mm: 9.2,
         min_text_matched: 249,
     },

@@ -250,11 +250,19 @@ pub struct CompareReport {
     pub page_mm: [f64; 2],
     /// How our plot sits on the reference.
     pub fit: Fit,
-    /// Reference centerline length outside the masks.
+    /// Reference drawn length outside the masks.
+    ///
+    /// Measured on the reference's strokes as they were laid, not on the
+    /// centre lines [`join_centerlines`] merges them into — see [`strokes`].
     pub reference_length_mm: f64,
     /// Of that length, the part within 0.5 mm of our ink.
     pub covered_length_mm: f64,
     /// Covered length over reference length. 0 when the reference length is 0.
+    ///
+    /// Both sides are sampled as drawn, so a dash's blank is blank on both:
+    /// a page whose dashes are a dash-dot with a 1.0 mm gap cannot be credited
+    /// for ink inside that gap. Before this held, the merge filled every gap
+    /// under 3 mm and four of the five sheets read exactly 1.0000.
     pub coverage: f64,
     /// Our drawn length outside the masks and farther than 0.5 mm from the reference.
     ///
@@ -318,15 +326,13 @@ pub fn compare_plots_with_sources(
 ) -> CompareReport {
     let reference_lines = join_centerlines(&reference.segments);
     let our_lines = join_centerlines(&ours.segments);
+    // The fit pairs long lines, so it wants the merges: a dashed route is one
+    // line to fit, not twenty dashes to refuse for being under `LONG_MM`.
     let fit = fit_lines(&reference_lines, &our_lines);
-    let our_in_ref: Vec<Line> = our_lines
-        .iter()
-        .map(|line| line.mapped(|point| into_reference(point, &fit)))
-        .collect();
     let reference_index = Grid::new(&reference_lines);
-    let our_index = Grid::new(&our_in_ref);
+    let our_index = Grid::new(&drawn_lines(&ours.segments, &fit));
     let (reference_length, covered, masked_reference) =
-        cover(&reference_lines, &our_index, masks, true);
+        cover(&strokes(&reference.segments), &our_index, masks, true);
     let (_, extra, _) = cover(
         &drawn_lines(&ours.segments, &fit),
         &reference_index,
@@ -508,21 +514,30 @@ impl Line {
     }
 }
 
-/// Our ink as the page carries it, mapped into reference space.
+/// Ink as the page carries it: one line per segment, nothing joined.
 ///
-/// [`join_centerlines`] merges pieces that sit within [`JOIN_GAP_MM`] on one
-/// line, which is what coverage needs to see a chained or dashed stroke whole.
-/// Extra ink must not use those merges: a bridge spans paper the plot leaves
-/// blank on purpose — a ball valve's diagonals stop at its circle — so a
-/// sample taken on the bridge is ink the PDF never laid down.
-fn drawn_lines(segments: &[InkSegment], fit: &Fit) -> Vec<Line> {
+/// Both sides of the comparison sample this, never [`join_centerlines`]. A
+/// merge spans paper the plot leaves blank on purpose — a ball valve's
+/// diagonals stop at its circle, a dashed stroke is a dash and a gap — so a
+/// sample taken on a merge is ink no page laid down. Merging is kept for the
+/// two questions it can still answer: which long lines pair for the fit, and
+/// which paper-table stroke our extra ink is nearest.
+fn strokes(segments: &[InkSegment]) -> Vec<Line> {
     segments
         .iter()
         .filter(|segment| hypot(segment.start_mm, segment.end_mm) >= 1e-4)
         .map(|segment| Line {
-            a: into_reference(segment.start_mm, fit),
-            b: into_reference(segment.end_mm, fit),
+            a: segment.start_mm,
+            b: segment.end_mm,
         })
+        .collect()
+}
+
+/// Our ink as the page carries it, mapped into reference space.
+fn drawn_lines(segments: &[InkSegment], fit: &Fit) -> Vec<Line> {
+    strokes(segments)
+        .into_iter()
+        .map(|line| line.mapped(|point| into_reference(point, fit)))
         .collect()
 }
 
@@ -1394,17 +1409,15 @@ fn group_lengths(
     model: &PaperModel,
 ) -> GroupedLengths {
     let reference_lines = join_centerlines(&reference.segments);
-    let our_lines = join_centerlines(&ours.segments)
-        .into_iter()
-        .map(|line| line.mapped(|point| into_reference(point, fit)))
-        .collect::<Vec<_>>();
+    let reference_strokes = strokes(&reference.segments);
+    let our_strokes = drawn_lines(&ours.segments, fit);
     let reference_index = Grid::new(&reference_lines);
-    let our_index = Grid::new(&our_lines);
+    let our_index = Grid::new(&our_strokes);
     let strokes = model_strokes(model);
     let stroke_lines: Vec<Line> = strokes.iter().map(|(line, _)| *line).collect();
     let stroke_index = Grid::new(&stroke_lines);
     let (extra_inside, extra_outside, mut extra_groups) = split_extra(
-        &drawn_lines(&ours.segments, fit),
+        &our_strokes,
         &reference_index,
         template,
         missing,
@@ -1413,7 +1426,7 @@ fn group_lengths(
         &strokes,
     );
     let mut uncovered = HashMap::<String, f64>::new();
-    for line in &reference_lines {
+    for line in &reference_strokes {
         let length = line.length();
         if length < 1e-6 {
             continue;
@@ -1735,6 +1748,46 @@ mod tests {
             report.extra_length_mm < 0.2,
             "the blank counted {} mm",
             report.extra_length_mm
+        );
+    }
+
+    #[test]
+    fn a_reference_dash_gap_is_not_reference_ink() {
+        // Two 1 mm reference dashes, 2.4 mm apart: inside the join's 3 mm
+        // bridge, so the merged centre line reads as one 4.4 mm stroke. The
+        // drawing fills only the blank between them. Sampling the merge would
+        // credit the blank with our ink and call the page 78% covered; the
+        // dashes' own ink is what the denominator has to count, and only the
+        // two ends of it are within reach — half.
+        let reference = ink(
+            vec![
+                line([10.0, 10.0], [11.0, 10.0]),
+                line([13.4, 10.0], [14.4, 10.0]),
+            ],
+            vec![],
+        );
+        let ours = ink(vec![line([10.9, 10.0], [13.5, 10.0])], vec![]);
+        let joined = join_centerlines(&reference.segments);
+        assert_eq!(
+            joined.len(),
+            1,
+            "the dashes still merge into one centre line"
+        );
+        assert!(
+            (joined[0].length() - 4.4).abs() < 1e-6,
+            "{}",
+            joined[0].length()
+        );
+        let report = compare_plots(&reference, &ours, &[]);
+        assert!(
+            (report.reference_length_mm - 2.0).abs() < 1e-6,
+            "the 2.4 mm blank counted as reference ink: {} mm",
+            report.reference_length_mm
+        );
+        assert!(
+            (report.coverage - 0.5).abs() < 1e-6,
+            "coverage {} — only the two dash ends carry our ink",
+            report.coverage
         );
     }
 
