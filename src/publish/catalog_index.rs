@@ -379,7 +379,7 @@ pub fn parse_catalog_index_document(raw: &[u8]) -> Result<CatalogIndexDocument, 
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 read_element(&start, reader.buffer_position(), &mut blocks, &mut items)?;
-                open_tags.push(String::from_utf8_lossy(start.name().as_ref()).into_owned());
+                open_tags.push(start.name().as_ref().to_string());
             }
             Ok(Event::Empty(start)) => {
                 read_element(&start, reader.buffer_position(), &mut blocks, &mut items)?;
@@ -433,7 +433,7 @@ pub fn read_catalog_index_from_zip(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_owned();
+        let name = crate::backup::datamap::decode_zip_name(entry.name_raw());
         if name != "CatalogIndex.xml" && !name.ends_with("/CatalogIndex.xml") {
             continue;
         }
@@ -471,11 +471,11 @@ fn read_element(
     items: &mut Vec<CatalogIndexItem>,
 ) -> Result<(), CatalogIndexError> {
     match start.local_name().as_ref() {
-        b"CICatalogItems" => {
+        "CICatalogItems" => {
             let item_type = required_attribute(start, "CICatalogItems", "ItemType", position)?;
             blocks.push(CatalogIndexBlock { item_type });
         }
-        b"CICatalogItem" => {
+        "CICatalogItem" => {
             let item_type = required_attribute(start, "CICatalogItem", "ItemType", position)?;
             let class = required_u32_attribute(start, "Class", position)?;
             let subclass = required_u32_attribute(start, "Subclass", position)?;
@@ -506,7 +506,7 @@ fn attribute_value(
 ) -> Result<Option<String>, CatalogIndexError> {
     match start.try_get_attribute(attribute) {
         Ok(Some(attr)) => attr
-            .unescape_value()
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map(|value| Some(value.into_owned()))
             .map_err(|error| CatalogIndexError::Xml {
                 position,

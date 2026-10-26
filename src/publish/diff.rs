@@ -1655,7 +1655,7 @@ fn read_publish_document(
     loop {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
-                let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                let tag = start.name().as_ref().to_string();
                 let pairs = checked_attributes(&start, side, reader.buffer_position())?;
                 if open_tags.len() == 1 {
                     block = Some((tag.clone(), Vec::new()));
@@ -1667,7 +1667,7 @@ fn read_publish_document(
             Ok(Event::Empty(start)) => {
                 let pairs = checked_attributes(&start, side, reader.buffer_position())?;
                 if open_tags.len() == 2 {
-                    let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                    let tag = start.name().as_ref().to_string();
                     push_interface(tag, pairs, &mut block);
                 }
             }
@@ -1722,8 +1722,11 @@ fn checked_attributes(
         .attributes()
         .map(|attribute| {
             let attribute = attribute.map_err(|error| refuse(error.into()))?;
-            let key = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
-            let value = attribute.unescape_value().map_err(refuse)?.into_owned();
+            let key = attribute.key.as_ref().to_string();
+            let value = attribute
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .map_err(refuse)?
+                .into_owned();
             Ok((key, value))
         })
         .collect()
@@ -1948,7 +1951,7 @@ fn read_meta_document(
     loop {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
-                let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                let tag = start.name().as_ref().to_string();
                 let attributes = meta_attributes(&start, side, reader.buffer_position())?;
                 match open_tags.len() {
                     0 => document.container = attributes,
@@ -1964,7 +1967,7 @@ fn read_meta_document(
                 open_tags.push(tag);
             }
             Ok(Event::Empty(start)) => {
-                let tag = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+                let tag = start.name().as_ref().to_string();
                 let attributes = meta_attributes(&start, side, reader.buffer_position())?;
                 match open_tags.len() {
                     // A self-closing root still carries the container
@@ -2114,7 +2117,11 @@ fn publish_container_doc_uid(xml: &str) -> Option<String> {
                     .try_get_attribute("DocUID")
                     .ok()
                     .flatten()
-                    .and_then(|attribute| attribute.unescape_value().ok())
+                    .and_then(|attribute| {
+                        attribute
+                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                            .ok()
+                    })
                     .map(std::borrow::Cow::into_owned);
             }
             Ok(Event::Eof) | Err(_) => return None,
