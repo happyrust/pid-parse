@@ -117,35 +117,47 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // ceilings (7.6 → 22.6 and 22.9 → 37.9 mm). That is a real difference between
 // those two reference pages and every drawing in the set, not a regression:
 // their `.pid` states the same linked A1 frame as `B`'s.
+//
+// The ceilings are re-locked again today because the extra figure itself was
+// wrong: it used to be sampled on the centre lines `join_centerlines` merges
+// out of the drawn strokes, and that merge closes any gap under 3 mm —
+// including the blank inside a symbol body. A ball valve's diagonals stop at
+// its circle, so 1.5 mm of empty paper became ink on every valve: 8 joins per
+// valve type on `I`, 4 on `A` and `低温分离器A`. Sampling the drawn segments
+// instead (`docs/analysis/2026-10-26-the-extra-ink-was-a-join-across-a-blank.md`)
+// reads 0.30 / 15.00 / 0.00 / 18.08 / 8.72 mm, and everything left is the
+// furniture `A` and `低温分离器A`'s reference pages never plotted. The ceilings
+// follow at one bridge's worth of slack above the reading — 1 / 15.5 / 0.5 /
+// 18.6 / 9.2 mm — so a single symbol body leaking back in fails the gate.
 const BASELINES: [Baseline; 5] = [
     Baseline {
         name: "I井场 注采阀组工艺及自控流程图",
         min_coverage: 0.9985,
-        max_extra_mm: 45.0,
+        max_extra_mm: 1.0,
         min_text_matched: 544,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器A工艺及自控流程图",
         min_coverage: 0.9995,
-        max_extra_mm: 25.0,
+        max_extra_mm: 15.5,
         min_text_matched: 151,
     },
     Baseline {
         name: "集注站 凝析油闪蒸单元 一级闪蒸分离器B工艺及自控流程图",
         min_coverage: 0.9977,
-        max_extra_mm: 5.0,
+        max_extra_mm: 0.5,
         min_text_matched: 123,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（一） 低温分离器A工艺及自控流程图",
         min_coverage: 0.9982,
-        max_extra_mm: 40.0,
+        max_extra_mm: 18.6,
         min_text_matched: 167,
     },
     Baseline {
         name: "集注站 烃水露点控制单元（二） 换热器CD及外输阀组工艺及自控流程图",
         min_coverage: 0.9990,
-        max_extra_mm: 28.0,
+        max_extra_mm: 9.2,
         min_text_matched: 249,
     },
 ];
