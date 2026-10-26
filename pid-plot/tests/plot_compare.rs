@@ -129,11 +129,14 @@ const CLASS_RATCHET_ALONG_HEIGHTS: f64 = 0.05;
 // gap) covered the filled blanks. Four of the five sheets therefore read
 // exactly 1.0000 and a missing dashed line could not move the number. Sampled
 // on the strokes as drawn, on both sides, the five read 0.9995 / 0.9997 /
-// 0.9996 / 0.9996 / 0.9990. Everything left uncovered is dash ends — 0.17 to
-// 0.31 mm each, collinear to 0.05 mm, our ink 0.55–0.65 mm away inside the
-// neighbouring blank, measured by
-// `pid-plot/examples/probe_which_reference_ink_is_uncovered.rs`. Nothing on any
-// page is missing geometry: no run has our ink more than 1 mm away.
+// 0.9996 / 0.9996 / 0.9990. Nearly everything left uncovered is dash ends —
+// 0.17 to 0.31 mm each, collinear to 0.05 mm, our ink 0.55–0.65 mm away inside
+// the neighbouring blank, measured by
+// `pid-plot/examples/probe_which_reference_ink_is_uncovered.rs`: 73 of `I`'s
+// 75 runs, 15.53 of its 15.62 mm. The two left over total 0.085 mm — an
+// uncovered sample on a 0.169 mm reference sliver at the page edge `x = 0`,
+// whose nearest ink is 10.1 mm away, plus a zero-length reference stroke. No
+// page is missing geometry: no uncovered run is longer than 0.31 mm.
 //
 // The coverage floors follow that reading minus 0.0001, which is 1 mm on an A1
 // sheet and 3 mm on the A0: a lost symbol body (tens of millimetres) fails at
