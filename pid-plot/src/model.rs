@@ -827,7 +827,8 @@ fn suppressed_from_plot(entity: &PidGraphicEntity) -> bool {
 ///
 /// The sheet's border template comes from `<corpus>/Ref/Template Files` and
 /// `<corpus>/Ref` (or the corpus's parent): the `.igr` whose own extent is the
-/// sheet, which is how a linked OLE frame record is resolved to a file
+/// sheet — and, when two of them are the same size, the one the sheet's link
+/// record names — which is how a linked OLE frame record is resolved to a file
 /// ([`load_border_template`]). Its furniture goes onto the page before the
 /// drawing's own records, so content inks over the frame rather than under it.
 pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperModelError> {
@@ -871,8 +872,16 @@ pub fn lay_out_with_symbol_roots(
     // authored in page millimetres from the page's own origin — the corpus A1
     // template runs `(0, 0)` to `(841, 594)`, exactly the sheet B states.
     let mut template: Option<BorderTemplate> = None;
+    // What the sheet's own frames point at, kept for the pick: a record's path
+    // does not resolve here, but its file name still says which template the
+    // sheet was drawn on when two of them are the same size.
+    let linked_templates: Vec<String> = doc
+        .jsites
+        .iter()
+        .flat_map(|site| site.ole_links.iter().cloned())
+        .collect();
     if let Some(page) = page_mm
-        && let Some(furniture) = load_border_template(corpus, page)
+        && let Some(furniture) = load_border_template(corpus, page, &linked_templates)
     {
         let template_styles = pid_parse::style_link::text_styles_for_document(&furniture.doc);
         let template_lines = pid_parse::style_link::line_styles_for_document(&furniture.doc);
@@ -1341,6 +1350,18 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
 /// ISO size and the next, so a near miss can only mean the same sheet.
 const TEMPLATE_EXTENT_TOLERANCE_MM: f64 = 2.0;
 
+/// How close two extents must be before their difference is the same reading.
+///
+/// A sheet states its size in `f64` metres and carries noise of its own
+/// (`841.0000500894253` for an A1), and two templates authored for one size
+/// differ only in the last bits of theirs (`841.0000000000001` against
+/// `841.0000000003785`). Compared exactly, whichever noise happens to lean the
+/// sheet's way wins — at 4e-10 mm, a difference nothing measured. A micrometre
+/// is 150× finer than the closest two templates of *different* sizes come
+/// (841.00 against 841.15), so quantizing the error here costs no distinction
+/// and stops the noise from outvoting the name.
+const TEMPLATE_EXTENT_QUANTUM_MM: f64 = 1e-3;
+
 /// Directories that can hold `.igr` border templates, in search order.
 ///
 /// A project keeps them in `<corpus>/Ref/Template Files` — both the five-drawing
@@ -1449,17 +1470,80 @@ struct BorderTemplateDocument {
     geometry: NormalizedPidGeometry,
 }
 
+/// The file-name stem a sheet's link record spells, as one a template's own
+/// file name can begin with.
+///
+/// The record stores an authoring-machine path, usually through Windows' 8.3
+/// short name — `C:\PID_SQ~1\SQPlant\Ref\TEMPLA~1\CPE-SQ~2.IGR` names the file
+/// this machine has as `CPE-SQ-A1.igr`. Only the last component is the file
+/// name (the directories carry `~` of their own); cutting it at the `~` leaves
+/// the six characters Windows kept (`CPE-SQ`). A record authored on a share that
+/// kept long names spells the whole stem (`\CPECCHB-SQ-A2.igr`). Either way the
+/// stem is a prefix of the file it names — `CPE-SQ` is not a prefix of
+/// `CPECCHB-SQ-A1` — which is what lets it decide what an extent cannot.
+fn linked_template_prefix(link: &str) -> Option<String> {
+    let file_name = link.rsplit(['\\', '/']).next().unwrap_or(link);
+    let (stem, extension) = file_name.rsplit_once('.')?;
+    if !extension.eq_ignore_ascii_case("igr") {
+        return None;
+    }
+    let prefix = stem.split('~').next().unwrap_or(stem);
+    (!prefix.is_empty()).then(|| prefix.to_ascii_uppercase())
+}
+
+/// Whether `path`'s own name is the one a link record's stem spells.
+fn template_named_by(path: &Path, prefixes: &[String]) -> bool {
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let stem = stem.to_ascii_uppercase();
+    prefixes
+        .iter()
+        .any(|prefix| stem.starts_with(prefix.as_str()))
+}
+
+/// How one eligible template ranks against another, smallest first: the ones a
+/// sheet names, then the closer extent, then the name it has on disk.
+///
+/// The last key is reached only by templates the sheet names none of and whose
+/// extents agree to [`TEMPLATE_EXTENT_QUANTUM_MM`], where the choice is
+/// evidence-free and only has to be the same one twice.
+fn template_rank(path: &Path, error: f64, prefixes: &[String]) -> (bool, f64, String) {
+    (
+        !template_named_by(path, prefixes),
+        (error / TEMPLATE_EXTENT_QUANTUM_MM).round(),
+        path.to_string_lossy().to_ascii_lowercase(),
+    )
+}
+
 /// The template authored for `page_mm`, if the corpus ships one.
 ///
-/// The link record only says the frame is an external OLE document; it does not
-/// surface the stored short path (`CPE-SQ~3.IGR`), which no filesystem resolves.
-/// So the file is picked by the one thing both sides state independently: the
-/// extent. Every `.igr` under the corpus's template directories is parsed, its
-/// stroked extent is measured, and the template whose extent is the sheet is the
-/// one the sheet was drawn on. A page with no such file gets no furniture rather
-/// than a scaled-up guess from another size.
-fn load_border_template(corpus: &Path, page_mm: [f64; 2]) -> Option<BorderTemplateDocument> {
-    let mut best: Option<(f64, BorderTemplateDocument)> = None;
+/// Every `.igr` under the corpus's template directories is parsed and its
+/// stroked extent measured; the file whose extent is the sheet is the one the
+/// sheet was drawn on. That equality is the primary evidence, because it is the
+/// one thing the sheet's geometry and the template state independently.
+///
+/// It is not the only evidence, and on its own it is not always enough. A
+/// project can hold two templates of the same size — `CPE-SQ-A1.igr` and
+/// `CPECCHB-SQ-A1.igr` are both authored for A1 — and then the two extents
+/// differ only in the last bits of their `f64` metres (`841.0000000000001`
+/// against `841.0000000003785`), so which one is closer to the sheet's own
+/// noise (a page states `841.0000500894253`) is a 4e-10 mm accident, not a
+/// reading. The link record breaks that tie: its stem is a prefix of the name
+/// it points at, so a template the sheet names wins over a stranger of the same
+/// size. A page that names nothing still falls back to the extent, and a page
+/// with no template within [`TEMPLATE_EXTENT_TOLERANCE_MM`] gets no furniture
+/// rather than a scaled-up guess from another size.
+fn load_border_template(
+    corpus: &Path,
+    page_mm: [f64; 2],
+    links: &[String],
+) -> Option<BorderTemplateDocument> {
+    let prefixes: Vec<String> = links
+        .iter()
+        .filter_map(|link| linked_template_prefix(link))
+        .collect();
+    let mut best: Option<((bool, f64, String), BorderTemplateDocument)> = None;
     for path in border_template_files(corpus) {
         let Ok(doc) = PidParser::new().parse_file(&path) else {
             continue;
@@ -1474,21 +1558,20 @@ fn load_border_template(corpus: &Path, page_mm: [f64; 2]) -> Option<BorderTempla
         if error > TEMPLATE_EXTENT_TOLERANCE_MM {
             continue;
         }
+        let document = BorderTemplateDocument {
+            path,
+            extent_mm,
+            doc,
+            geometry,
+        };
+        let rank = template_rank(&document.path, error, &prefixes);
         if best
             .as_ref()
-            .is_some_and(|(best_error, _)| *best_error <= error)
+            .is_some_and(|(best_rank, _)| *best_rank <= rank)
         {
             continue;
         }
-        best = Some((
-            error,
-            BorderTemplateDocument {
-                path,
-                extent_mm,
-                doc,
-                geometry,
-            },
-        ));
+        best = Some((rank, document));
     }
     best.map(|(_, template)| template)
 }
@@ -4057,5 +4140,90 @@ mod tests {
         );
         // Neither a sheet nor ink: nothing to put on paper.
         assert_eq!(model(None, &[]).resolved_page_mm(), None);
+    }
+
+    #[test]
+    fn a_link_spells_the_template_stem_it_points_at() {
+        use std::path::PathBuf;
+
+        use super::{linked_template_prefix, template_named_by};
+
+        // A record written through Windows' 8.3 name keeps six characters of
+        // it. The `~` in the *directories* is not the file's.
+        assert_eq!(
+            linked_template_prefix(r"C:\PID_SQ~1\SQPlant\Ref\TEMPLA~1\CPE-SQ~2.IGR").as_deref(),
+            Some("CPE-SQ")
+        );
+        // A record authored on a share that kept long names spells the whole
+        // stem, and one on the authoring machine spells its own path.
+        assert_eq!(
+            linked_template_prefix(r"\CPECCHB-SQ-A2.igr").as_deref(),
+            Some("CPECCHB-SQ-A2")
+        );
+        assert_eq!(
+            linked_template_prefix(r"Ref\Template Files\CPECCHB-SQ-A1.igr").as_deref(),
+            Some("CPECCHB-SQ-A1")
+        );
+        // Anything that is not a template names no template.
+        assert_eq!(linked_template_prefix(r"Ref\Symbols\Gate Valve.sym"), None);
+        assert_eq!(linked_template_prefix("CPE-SQ~2"), None);
+
+        let prefixes = vec!["CPE-SQ".to_string()];
+        assert!(template_named_by(
+            &PathBuf::from("CPE-SQ-A1.igr"),
+            &prefixes
+        ));
+        assert!(template_named_by(
+            &PathBuf::from("CPE-SQ-A0.igr"),
+            &prefixes
+        ));
+        // `CPE-SQ` is not a prefix of `CPECCHB-SQ-A1`: another family's A1 of
+        // the same size stays a stranger.
+        assert!(!template_named_by(
+            &PathBuf::from("CPECCHB-SQ-A1.igr"),
+            &prefixes
+        ));
+    }
+
+    #[test]
+    fn the_named_template_beats_a_stranger_of_the_same_size() {
+        use std::path::PathBuf;
+
+        use super::template_rank;
+
+        // Twenty A1 sheets say `CPE-SQ~2.IGR`. `CPECCHB-SQ-A1.igr` is the same
+        // size, and its own float noise sits 3.8e-10 mm closer to the sheet's
+        // — closer by less than an atom, and enough to have decided it before
+        // the name was read.
+        let prefixes = vec!["CPE-SQ".to_string()];
+        let named = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 4.0e-10, &prefixes);
+        let stranger = template_rank(&PathBuf::from("CPECCHB-SQ-A1.igr"), 0.0, &prefixes);
+        assert!(named < stranger, "named {named:?} vs stranger {stranger:?}");
+    }
+
+    #[test]
+    fn an_error_a_micrometre_apart_is_the_same_error() {
+        use std::path::PathBuf;
+
+        use super::template_rank;
+
+        // The sheet that names nothing (`600td`, 842.54 x 595.54 mm) is 1.54 mm
+        // off both A1 templates, and the two errors differ by the same 3.8e-10:
+        // with no name to go on, the rule still has to answer the same way
+        // twice, so the name on disk decides.
+        let cpe = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 1.54, &[]);
+        let cchb = template_rank(&PathBuf::from("CPECCHB-SQ-A1.igr"), 1.5399999, &[]);
+        assert_eq!(cpe.1, cchb.1, "the two errors are one error");
+        assert!(
+            cpe < cchb,
+            "the name on disk breaks it: {cpe:?} vs {cchb:?}"
+        );
+
+        // A tenth of a millimetre is a reading, not noise: the closer extent
+        // still wins over the same name's order.
+        let close = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 0.0, &[]);
+        let far = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 0.15, &[]);
+        assert!(close < far, "0.15 mm is not quantized away");
+        assert!(close.1 < far.1, "the quantized errors still differ");
     }
 }

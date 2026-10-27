@@ -107,8 +107,43 @@ const PAGE_CEILING: usize = 2 * 1024 * 1024;
 const DERIVED_PAGES: usize = 4;
 
 /// Sheets that carry a border template. A floor for the same reason
-/// [`BACKUP_SHEETS`] is one: a fuller extraction only adds sheets.
-const TEMPLATED_SHEETS: usize = 31;
+/// [`BACKUP_SHEETS`] is one: a fuller extraction only adds sheets — the 16 that
+/// sat on none until the backup's own `RefData~4~682.zip`, whose templates the
+/// corpus now carries, gave them their frames.
+const TEMPLATED_SHEETS: usize = 47;
+
+/// What a sheet's template places, by the template's own file name: the file
+/// name each placement records, sorted.
+///
+/// The `CPE-SQ` family keeps the `比例` value cell's 5 mm wave in one placement,
+/// whose stored path is the authoring machine's own
+/// `C:\Users\ADMINI~1.WIN\AppData\Local\Temp\BLFH.sym`; no share in this corpus
+/// carries that file, so the body is the template's own cache. `CPECCHB-SQ-A1`
+/// places nothing at all — its title block has no `比例` cell. `CPECCHB-SQ-A2`
+/// places three: the wave under another authoring-machine temp name, and the two
+/// sign-off cells' `HQZ.sym`.
+///
+/// Pinned per sheet rather than per package, so the numbers are the template's
+/// and not the extraction's — a fuller backup moves nothing here, while a
+/// template that starts placing something else fails.
+const TEMPLATE_PLACEMENTS: [(&str, &[&str]); 5] = [
+    ("CPE-SQ-A0.igr", &["blfh.sym"]),
+    ("CPE-SQ-A1.igr", &["blfh.sym"]),
+    ("CPE-SQ-A2.igr", &["blfh.sym"]),
+    ("CPECCHB-SQ-A1.igr", &[]),
+    (
+        "CPECCHB-SQ-A2.igr",
+        &["a$c40d91a4b.sym", "hqz.sym", "hqz.sym"],
+    ),
+];
+
+/// The file name a placement's stored path ends in, lowercased.
+fn leaf_name(path: &str) -> String {
+    path.rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase()
+}
 
 #[test]
 fn every_backup_drawing_exports_a_readable_page() {
@@ -148,9 +183,9 @@ fn every_backup_drawing_exports_a_readable_page() {
     // The furniture's symbol account, over the whole package. A sheet's border
     // is a linked `.igr`, so the symbols its title block places are the
     // template's own and are not in the drawing's `missing_symbols` — that is
-    // what keeps the one source gap (`BLFH.sym`, whose stored path is an
-    // absolute path on the authoring machine) out of the drawing's report and
-    // on the page's own ledger, where `--residual` reads it.
+    // what keeps the source gaps (`BLFH.sym` and `HQZ.sym`, whose stored paths
+    // are absolute paths on the authoring machine) out of the drawing's report
+    // and on the page's own ledger, where `--residual` reads it.
     let mut templated = 0usize;
     let mut placements = 0usize;
     let mut gap_named = 0usize;
@@ -168,17 +203,22 @@ fn every_backup_drawing_exports_a_readable_page() {
             continue;
         };
         templated += 1;
+        let Some((_, wanted)) = TEMPLATE_PLACEMENTS
+            .iter()
+            .find(|(file, _)| template.path.ends_with(file))
+        else {
+            panic!(
+                "{name}: {} drew furniture; no pin says what it places",
+                template.path
+            );
+        };
+        let mut drawn: Vec<String> = Vec::new();
         for symbol in &template.symbols {
             placements += 1;
             assert_eq!(
                 symbol.body,
                 SymbolBodySource::Cached,
                 "{name}: {} drew from the library; a template's own copy is the one",
-                symbol.key
-            );
-            assert!(
-                symbol.key.to_ascii_lowercase().ends_with("blfh.sym"),
-                "{name}: the template places {} instead of the 比例 cell's wave",
                 symbol.key
             );
             // The two halves of the account must agree: a name lookup that
@@ -192,16 +232,19 @@ fn every_backup_drawing_exports_a_readable_page() {
             if symbol.name_gap.is_some() {
                 gap_named += 1;
             }
+            drawn.push(leaf_name(&symbol.key));
         }
+        drawn.sort();
+        assert_eq!(drawn, *wanted, "{name}: {} places {drawn:?}", template.path);
     }
     assert!(
         templated >= TEMPLATED_SHEETS,
         "{templated} sheets drew furniture; {TEMPLATED_SHEETS} did when this ratchet was set"
     );
-    assert_eq!(
-        placements, templated,
-        "{placements} furniture symbols over {templated} templated sheets; one per sheet is the corpus"
-    );
+    // No "one placement per sheet" equality: it held of the two templates the
+    // corpus had and not of the six it has now — `CPECCHB-SQ-A1` places none
+    // and `CPECCHB-SQ-A2` places three. What each template places is pinned
+    // above, per sheet, which is where that fact belongs.
     eprintln!(
         "{templated} sheets drew furniture, {placements} placements, {gap_named} with a named gap"
     );
