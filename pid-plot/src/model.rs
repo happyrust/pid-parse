@@ -33,6 +33,8 @@ use pid_parse::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::write::carries_a_pen;
+
 const MM_PER_METRE: f64 = 1000.0;
 
 /// Line pitch of a label whose paragraph states no usable multiple.
@@ -1738,6 +1740,15 @@ fn stroke_of(style: &ResolvedLineStyle) -> PaperStroke {
 /// whole body on `SmartPlant`'s screen, so its colour and width win over
 /// the body's own; the dash falls back to the body's when the placement
 /// draws solid — the same rule OpenCADStudio applies.
+///
+/// The one exception is a placement width no pen could carry, which is a
+/// validation mark rather than a pen: `Q井场`'s globe valve is placed under
+/// `BandAid`, the 10 mm band `SmartPlant` paints over an object an engineer has
+/// flagged, and it sits in the style table beside `lsOk` and `lsWarning`. That
+/// width repainted the valve's 0.13 mm outline with the page's thickest pen — a
+/// black blob where every other valve on the sheet is a hairline. The body's
+/// own width stands instead; the colour still comes from the placement, which
+/// the plot's monochrome table inks black anyway.
 fn body_stroke(
     body_style: Option<&PrimitiveStyle>,
     placement_style: Option<&ResolvedLineStyle>,
@@ -1750,10 +1761,12 @@ fn body_stroke(
             || body_style.map_or([0, 0, 0], |style| style.rgb),
             |style| style.symbology.rgb(),
         ),
-        width_mm: placement_style.map_or_else(
-            || body_style.map_or(0.25, |style| style.width_mm),
-            |style| style.symbology.width_mm(),
-        ),
+        width_mm: placement_style
+            .filter(|style| carries_a_pen(style.symbology.width_mm()))
+            .map_or_else(
+                || body_style.map_or(0.25, |style| style.width_mm),
+                |style| style.symbology.width_mm(),
+            ),
         dash_mm: placement_style
             .and_then(|style| style.dash.as_ref())
             .map(|dash| {
@@ -2728,7 +2741,7 @@ fn confidence_name(confidence: PidGeometryConfidence) -> &'static str {
 mod tests {
     use super::{label_line_ranges, line_spans, sheet_text_spans};
     use pid_parse::style_link::{MarkerStroke, TextAlignment};
-    use pid_parse::symbol_library::{NameMiss, SymbolLettering, SymbolPrimitive};
+    use pid_parse::symbol_library::{NameMiss, PrimitiveStyle, SymbolLettering, SymbolPrimitive};
     use pid_parse::{
         PidCoordinateContext, PidGeometryConfidence, PidGraphicEntity, PidGraphicKind,
         PidGraphicProvenance, PidPoint, PidSourceLayer,
@@ -2736,7 +2749,7 @@ mod tests {
 
     use super::{
         BorderTemplate, PaperModel, PaperPrimitive, PaperShape, PaperTextSpan, Placement,
-        SymbolBodySource, SymbolItem, TemplateSymbol, TextAnchor, TextLine, arc_shape,
+        SymbolBodySource, SymbolItem, TemplateSymbol, TextAnchor, TextLine, arc_shape, body_stroke,
         canonical_rect_chain, complex_dash_cells, complex_dash_glyph_span_mm,
         complex_dash_positions, place_metres, push_entity, push_symbol_primitive, shape_points,
     };
@@ -4290,6 +4303,58 @@ mod tests {
         let named = template_rank(&PathBuf::from("CPE-SQ-A1.igr"), 4.0e-10, &prefixes);
         let stranger = template_rank(&PathBuf::from("CPECCHB-SQ-A1.igr"), 0.0, &prefixes);
         assert!(named < stranger, "named {named:?} vs stranger {stranger:?}");
+    }
+
+    /// One of `Q井场`'s placement styles, at the width asked for.
+    ///
+    /// `style_id 92` and the salmon colour are that drawing's `BandAid` entry;
+    /// the same shape serves for an ordinary pen simply by stating its width.
+    fn placement_style(width_mm: f64) -> pid_parse::style_link::ResolvedLineStyle {
+        pid_parse::style_link::ResolvedLineStyle {
+            style_id: 92,
+            symbology: pid_parse::style_link::LineSymbology {
+                width_m: width_mm / 1000.0,
+                colour: 0x0077_A7FF,
+            },
+            dash: None,
+            marker: None,
+            complex_dash: None,
+            hop: pid_parse::style_link::StyleHop::Direct,
+        }
+    }
+
+    #[test]
+    fn a_placement_pen_still_paints_the_body_and_a_validation_band_does_not() {
+        let body = PrimitiveStyle {
+            rgb: [0, 0, 0],
+            width_mm: 0.13,
+            dash_mm: Vec::new(),
+        };
+        // The valve's own pen: nothing placed, and every pen a placement can
+        // carry, keeps the body's outline as the body draws it.
+        let plain = body_stroke(Some(&body), None).expect("a pen");
+        assert!((plain.width_mm - 0.13).abs() < 1e-9);
+        for pen in [0.13, 0.35, 0.70] {
+            let styled = body_stroke(Some(&body), Some(&placement_style(pen))).expect("a pen");
+            assert!(
+                (styled.width_mm - pen).abs() < 1e-9,
+                "a placement's {pen} mm pen paints the body, not {} mm",
+                styled.width_mm
+            );
+            assert_eq!(styled.rgb, [255, 167, 119], "the placement's colour stands");
+        }
+        // `Q井场`'s globe valve is placed under `BandAid`: 10 mm of validation
+        // band, which used to repaint a hairline valve with the thick pen.
+        let band_aid = body_stroke(Some(&body), Some(&placement_style(10.0))).expect("a pen");
+        assert!(
+            (band_aid.width_mm - 0.13).abs() < 1e-9,
+            "the band's 10 mm is a mark, so the body keeps its own pen ({}) mm",
+            band_aid.width_mm
+        );
+        // A body that states nothing falls back the same way a bare placement
+        // does, so the mark still leaves a drawable pen behind it.
+        let bare = body_stroke(None, Some(&placement_style(10.0))).expect("a pen");
+        assert!((bare.width_mm - 0.25).abs() < 1e-9, "{} mm", bare.width_mm);
     }
 
     #[test]

@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### 一条 10 mm 的「笔」其实是 `BandAid` 校验带（2026-10-27 续）
+
+整包出图时 `Q井场` 的笔宽直方图里有一条无法解释的读数：9 条 10.000 mm，而 53 张图里最宽的正经笔
+是 0.70 mm。查清了：那是图纸样式表里的 `style 92 "BandAid"`（宽 10 mm、色 `[255,167,119]`），
+只画 1 个实体 —— `2 Way Globe Type 3.sym` 那个放置。同一张表里还有 `lsOk`（0.1 mm 黑）与
+`lsWarning`（0.1 mm 蓝），就是 `style_link` 记过的那批校验样式；10 mm 是那条带子的屏幕宽度。
+符号体自己没错：`dump_symbol_geometry` 显示那份 `.sym` 的 11 条线全是 `@000000:13`（0.13 mm）。
+错在 `body_stroke` 的「放置的笔宽盖过体的笔宽」 —— 它把一个 0.13 mm 的阀门轮廓改写成 10 mm。
+
+- 新增 `pid-plot/src/write.rs` 的 `WIDEST_PEN_MM`（1.0 mm）与 `carries_a_pen`：超过最宽笔的
+  宽度不是笔。`body_stroke` 只在放置的宽度 `carries_a_pen` 时才用它，否则用体自己的；颜色仍随
+  放置（单色笔表反正着黑）。
+- 读数：`Q井场` 的 `10.000:9` 消失，9 条回到 `0.130`（180→189）；PDF 672876→672868 B；整包
+  47 挂框 / 63 放置 / 63 命名缺口不变。
+- 新断言：`export_plant_backup` 要求任何图纸自己的墨都不宽于最宽笔（家具不在范围内）。
+- 新探针 `probe_which_style_paints_a_wide_pen` 按笔宽列出图纸样式表（宽到细，带名字与实体数），
+  这条问题以后可一句话复查。详见
+  `docs/analysis/2026-10-27-a-validation-band-is-not-a-pen.md`。
+
 ### 出图侧直接读备份包的 `RefData~*.zip`，不必再手工解压（2026-10-27 续）
 
 上一轮那份 A2 模板是**手工解压**出来的（`unzip -n RefData~4~682.zip …`，见下一条）。本轮把这一步

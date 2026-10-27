@@ -31,7 +31,7 @@ use pid_plot::model::{
     PaperModel, PaperShape, STANDARD_SHEETS_MM, SymbolBodySource, lay_out_drawing,
 };
 use pid_plot::read::read_plot;
-use pid_plot::write::{PlotFont, write_plot};
+use pid_plot::write::{PlotFont, WIDEST_PEN_MM, write_plot};
 
 /// The reference share this machine keeps the licensed faces in.
 fn corpus_dir() -> PathBuf {
@@ -271,6 +271,21 @@ fn every_backup_drawing_exports_a_readable_page() {
                 assert!(
                     !value.contains(['\r', '\n', '\t']),
                     "{name}: a label reached the page with a line break in it: {value:?}"
+                );
+            }
+            // A drawing's own ink never carries a width no pen carries. The one
+            // that did is `Q井场`'s globe valve, placed under `BandAid` — the
+            // 10 mm band SmartPlant paints over a flagged object — which the
+            // model now treats as a mark rather than a pen. Furniture is out of
+            // scope: a template's strokes are its own, drawn from its own body.
+            if !primitive.furniture
+                && let Some(stroke) = &primitive.stroke
+            {
+                assert!(
+                    stroke.width_mm <= WIDEST_PEN_MM,
+                    "{name}: a {:?} paints at {} mm, past the widest pen",
+                    primitive.shape,
+                    stroke.width_mm
                 );
             }
         }
