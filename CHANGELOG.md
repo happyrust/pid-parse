@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+### 出图侧直接读备份包的 `RefData~*.zip`，不必再手工解压（2026-10-27 续）
+
+上一轮那份 A2 模板是**手工解压**出来的（`unzip -n RefData~4~682.zip …`，见下一条）。本轮把这一步
+去掉：`pid-plot` 自己读备份包的参考数据压缩包 —— `.igr` 边框模板与 `.sym` 符号体。
+
+- **新模块 `src/refdata_archive.rs`，新特性 `refdata-archive`**（`zip` 依赖本身）。三个入口：
+  `refdata_archives(dir)` 列出目录里的 `RefData*.zip`、`archive_members(archive, ext)` 按扩展名
+  列成员（只走中央目录、不解压）、`read_archive_member(archive, name)` 真取字节。`pid-plot` 只骑
+  这一个特性（`default-features = false` + `refdata-archive`），所以「画一张图」不链接 publish
+  管线，也不链接 rusqlite / 仓库里的 GPL MDF 解析器。`backup-exp` 改为经由它启用 `dep:zip`，
+  `pid-parse` 的 `--no-default-features` / wasm32 门禁照旧不含归档读端。
+- **归档条目的名字带 BOM，这是本轮第一个坑。** `RefData~4~682.zip` 里每个条目名都是
+  `\u{feff}CPECCHBA2.igr`（目录条目也是），于是 `Path::file_name` 拿到的名字与
+  `ends_with("CPECCHBA2.igr")` 全都不匹配。`member_name` 归一化处理：去 BOM、统一 `/`、
+  去掉尾分隔符；名字仍可能是 GBK（既有 `decode_zip_name` 的职责，已从 `backup::datamap` 移到
+  这一模块），所以取成员一律**按索引**走条目、与归一化名比较，不用 `ZipArchive::by_name`
+  ——它按 `zip` crate 自己的解码匹配，遇到 GBK 名字会拒。
+- **符号库：归档即根。** `RefData~4~681.zip` 的成员就是 `Design/… Piping/… Equipment/…`
+  那棵树本身，所以 `SymbolLibrary::with_archives(…)` 把归档当成一种根，**每个目录根都搜完之后**
+  才搜归档 —— 于是解压与否不改变任何一张图的读数（解出来的目录仍然赢）。按名索引（标题栏那种
+  没有盘符的绝对路径）也把归档成员一起建进去；`read_symbol_geometry_from_bytes`
+  （`PidPackage::from_bytes`，不落临时文件）是同一份 `.sym` 解码的字节入口，
+  `read_symbol_geometry` 改为它的一层外壳。
+- **模板：归档成员与磁盘文件共用一套判据。** 成员以 `<zip 路径>\<成员名>` 作 label
+  （`ArchiveFile::label`），于是 `Path::ends_with`、`file_stem`、链名前缀、误差量化全部照常工作
+  —— 判据里不需要知道「这份模板是从哪来的」。目录源仍排在归档源之前。
+- **仓库里本来就带着整包夹具，而且其中两份「待索要」的模板就在里面。**
+  `test-file/backup-test/DWG-0202GP06-01_p/{RefData~4~681.zip,~682.zip}`（616 `.sym` / 11 `.igr`）。
+  新闸门 `pid-plot/tests/refdata_archive_corpus.rs` 的读数：
+  * `test-file/DWG-0202GP06-01.pid`（593.75 × 419.63）→ **`CPECCHBA2.igr`**，归档成员，墨迹
+    594.00 × 420.00、101 图元、2 个放置（两个都只有模板自带缓存体）—— 正是清单 §2 第 5 项；
+  * `test-file/D06.pid`（594.33 × 420.57）→ 同一份 `CPECCHBA2.igr`：它的链名短名
+    `CPECCH~2.IGR` 切出前缀 `CPECCH`，而 `CPECCHBA2` 以它开头，**点名优先**在这一包上也生效；
+  * 对照：同一批图在 `test-file`（无可达归档）下**一张都不挂** —— 所以上面两条是归档的功劳；
+  * 符号：根全部置空、只给 `~681.zip`，`DWG-0202GP06-01` 的符号**仍然解析出来了**。
+- **§2 第 6 项查出相反的结果。** `test-file/DWG-0201GP06-01.pid`（594.31 × 420.31）链的
+  `XIONGANA2.igr` **就在** `~682.zip` 里，但选不到：该文件读出来只有 6 个实体
+  （2 `Other` / 1 `Symbol` / 3 `Text` —— 「核准」「校对」「储运工艺」，会签栏），`Sheet6` 是
+  **653 字节的空声明**（`pid_inspect`：Sheet streams 1、`empty_declared=1`），一条框线都没有，
+  于是范围判据无从测量。它自己的摘要把身份说清了：`SmartSketch Application`、模板
+  `TransAcad.igr`、`ACAD_GLOBALS.FileName = C:\Users\sp3d\Desktop\xionganA2.dwg`、
+  `File Version: SmartSketch(R) 6.*/RAD 4.2.` —— 一张 `.dwg` 经 SmartSketch 转出来的图，
+  不是 SmartPlant 的边框。结果这张图穿的是**没点名**的 `A2-W - New.igr`（墨迹同样
+  594.00 × 420.00、误差 0.31）—— 也就是说「要拿 `XIONGANA2.igr`」这件事**已经有答案**
+  （文件就在仓库里），但仍然**满足不了**，原因在文件自身而不在语料缺件。
+- **没动的**：`border_template` 那条「A2 没有匹配模板就不画」的用例没改 —— 它的语料是项目语料，
+  那底下仍无可达归档，所以它按原样绿；五张参考图（`plot_compare`）里没有 A2，读数不变；
+  备份包 53 张的读数不变（该闸门用的语料是项目语料）。
+- **复现**：`PID_PARSE_SELF_CHECK_DIR=<备份包目录> cargo run -p pid-plot --example probe_which_template_each_sheet_wore -- <图纸…>`；
+  该探针现在先打印语料里找到的归档及其 `.igr`/`.sym` 成员数，并在每张图后面标出模板来自归档
+  还是磁盘。
+
 ### A2 模板就在备份包里；解出来先撞上一处「浮点噪声判据」（2026-10-27）
 
 上一轮把 A2 图框记成「要向对方索要」。**不必了** —— 用户点出的 `D:\work\cad\pid-test-data` 是完整

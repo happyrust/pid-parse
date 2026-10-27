@@ -111,6 +111,12 @@ pub mod package;
 pub mod parsers;
 #[cfg(feature = "backup-exp")]
 pub mod publish;
+// The reference-data side of a backup that a *reader* needs: the `.igr`
+// templates and `.sym` symbol bodies inside `RefData~*.zip`. It rides
+// `refdata-archive` (the ZIP reader alone), not the `backup` umbrella,
+// so drawing a drawing from a backup package links no plant database.
+#[cfg(feature = "refdata-archive")]
+pub mod refdata_archive;
 pub mod schema;
 pub mod semantics;
 pub mod stream_paths;

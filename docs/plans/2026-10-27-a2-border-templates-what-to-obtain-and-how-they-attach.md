@@ -31,6 +31,23 @@ unzip -n RefData~4~682.zip CPE-SQ-A2.igr CPECCHB-SQ-A1.igr CPECCHB-SQ-A2.igr \
 
 下文保留当日下午的原样记录（「要拿什么」），已取得的项在 §2 表里标 ✅。
 
+## 零之二、当日再晚一点：出图侧自己读压缩包了，不必手工解压
+
+上一节那一步是手工的。本轮把它去掉了：`pid-plot` 直接读备份包的 `RefData~*.zip`
+（pid-parse 新模块 `src/refdata_archive.rs`，特性 `refdata-archive`），模板与符号体一样。
+于是下面的实测都不再需要 `unzip`：
+
+```text
+PID_PARSE_SELF_CHECK_DIR=<备份包目录> cargo run -p pid-plot \
+    --example probe_which_template_each_sheet_wore -- <图纸…>
+cargo test -p pid-plot --test refdata_archive_corpus
+```
+
+仓库里就带着一个整包夹具（`test-file/backup-test/DWG-0202GP06-01_p/`），其中两份「待索要」的
+模板就在它的 `~682.zip` 里 —— 这改变了下表第 5、6 项的结论，也带出一条相反的结果（第 6 项
+的文件在，但它里面没有框）。详见
+`docs/analysis/2026-10-27-a-backup-archive-is-its-own-reference-data.md`。
+
 ## 一、磁盘上没有 A2 模板，但名字在记录里
 
 整棵可达目录树里只有两份 `.igr`，是同一份内容的两个副本：
@@ -66,14 +83,14 @@ D:\work\plant-code\cad\pid-parse\test-file\Ref\Template Files\{CPE-SQ-A0.igr,CPE
 | 2 | ✅ `CPECCHB-SQ-A2.igr` | 另一族（华北分公司版），记录里长名明写 | 备份 **9 张**（`00/02` 三张改造图 + `test/U01` 的 `D01`、`D03`、`D04`、`D06`、`D07`、`TESTDWG-0002TP03-01`，页幅 594.33 × 420.57）；`test-file/D06.pid` 同一份 |
 | 3 | ✅ `CPECCHB-SQ-A1.igr` | 第 2 份的 A1 兄弟 | 备份 2 张（`O井场`、`P井场`，页幅 841.15 × 594.40） |
 | 4 | `XA-A1.igr`（`\SPID\XaLNG\P&ID Reference Data\Template Files\`） | 熊安项目的 A1 | `test-file/工艺管道及仪表流程-1.pid`（841.00 × 594.00） |
-| 5 | `CPECCHBA2.igr`（无连字符） | 第三种拼法 | `test-file/DWG-0202GP06-01.pid`（593.75 × 419.63，仓库内两份副本） |
-| 6 | `XIONGANA2.igr` | 熊安项目的 A2 | `test-file/DWG-0201GP06-01.pid`（594.31 × 420.31） |
+| 5 | ✅ `CPECCHBA2.igr`（无连字符） | 第三种拼法 | `test-file/DWG-0202GP06-01.pid`（593.75 × 419.63）—— 在仓库自带的备份夹具 `test-file/backup-test/DWG-0202GP06-01_p/RefData~4~682.zip` 里，出图侧现在直接读它 |
+| 6 | ⚠️ `XIONGANA2.igr` | 熊安项目的 A2 | 同一夹具的 `~682.zip` 里**也有**，但该文件读不出框线（见 §零之二），所以 `test-file/DWG-0201GP06-01.pid`（594.31 × 420.31）仍穿不上它，改穿 `A2-W - New.igr` |
 | 7 | `CPECCH` 的 A0（记录里只有短名 `CPECCH~3.IGR`） | 待定 | `Q井场` 链它，但这张图**没有声明页幅**，先不动（见 §4.3） |
 
 第 1、2 份落定，`53` 张里的挂模板数从 **31 → 47**。第 3 份**不动这个计数**：`O井场`、`P井场` 现在就在画家具（穿的是 CPE-SQ 的 A1），它改的是那两张「画对了没有」—— 取得后确实换成了 CCHB 自己的 A1，那两张的族盲替换因此消掉（见 §4.1）。
 
-第 1–3 项已从 `RefData~4~682.zip` 取得（§零）；第 4–7 项（`XA-A1.igr`、`CPECCHBA2.igr`、
-`XIONGANA2.igr`、`CPECCH` 的 A0）磁盘上仍没有，也因此仍在族盲替换，或先不动。
+第 1–3 项与第 5 项已可用（§零与 §零之二）；第 6 项文件在手却用不上；第 4、7 项
+（`XA-A1.igr`、`CPECCH` 的 A0）磁盘上仍没有，也因此仍在族盲替换，或先不动。
 
 ## 三、挂上的判据：现成的规则，一行代码都不用改
 
@@ -171,6 +188,10 @@ cargo run --example probe_igr_template -- "<语料>/Ref/Template Files"
 
 # 2) 谁挂上了、穿的哪一份、放了什么：31 张 → 47 张 / 63 个放置
 cargo run -p pid-plot --example probe_which_template_each_sheet_wore -- <备份目录>
+#    探针现在先打印语料里的归档及成员数，再逐张标出模板来自归档还是磁盘
+
+# 2b) 归档这条路自己的闸门（仓库夹具，不需要本机语料）
+cargo test -p pid-plot --test refdata_archive_corpus -- --nocapture
 
 # 3) 重钉三条闸门
 cargo test -p pid-plot --test export_plant_backup -- --nocapture
@@ -197,6 +218,10 @@ cargo run --example probe_which_template_the_a2_sheets_link -- <a.pid|dir> ...
 cargo run --example probe_ole_links -- <a.pid>
 cargo run --bin pid_inspect -- <a.pid> --coverage
 find "<语料>" "<备份>" -iname "*.igr"
+
+# 归档读端的单测：名字带 BOM、扩展名过滤、按名取字节与两条错误路径
+cargo test -p pid-parse --lib refdata_archive
+cargo test -p pid-parse --lib symbol_library
 ```
 
 `probe_which_template_the_a2_sheets_link` 的输出每行是

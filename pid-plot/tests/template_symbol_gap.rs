@@ -79,10 +79,19 @@ fn the_gap_tells_a_missing_file_from_a_name_the_library_carries_twice() {
         return;
     }
 
+    // No archive roots: this case is about what a directory says, and the
+    // corpus's own `RefData~*.zip` files would answer for names the root under
+    // test deliberately does not carry.
     let lay_out = |root: &Path| {
         let label = vec![root.display().to_string()];
-        lay_out_with_symbol_roots(&drawing, &corpus, vec![root.to_path_buf()], &label)
-            .unwrap_or_else(|error| panic!("layout: {error}"))
+        lay_out_with_symbol_roots(
+            &drawing,
+            &corpus,
+            vec![root.to_path_buf()],
+            Vec::new(),
+            &label,
+        )
+        .unwrap_or_else(|error| panic!("layout: {error}"))
     };
 
     // A root that holds nothing: the name is simply not in the library.

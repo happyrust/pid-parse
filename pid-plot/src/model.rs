@@ -17,6 +17,9 @@
 
 use std::path::{Path, PathBuf};
 
+use pid_parse::refdata_archive::{
+    ArchiveFile, archive_members, read_archive_file, refdata_archives,
+};
 use pid_parse::style_link::{
     LineStyleIndex, MarkerStroke, ResolvedLineStyle, ResolvedTextStyle, TextAlignment,
     TextStyleIndex,
@@ -90,7 +93,9 @@ pub struct PaperModel {
 /// One `.igr` border template, as drawn.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct BorderTemplate {
-    /// Template file the furniture came from, as found on disk.
+    /// Template file the furniture came from, as found on disk or — when the
+    /// corpus carries none, and a backup package's `RefData~*.zip` does — as
+    /// the archive path with the member's own name on the end.
     pub path: String,
     /// The template's own ink extent, paper millimetres.
     ///
@@ -823,33 +828,38 @@ fn suppressed_from_plot(entity: &PidGraphicEntity) -> bool {
 ///
 /// The symbol library is the first of: `PID_SYMBOL_LIBRARY`, a directory
 /// under `<corpus>/Ref` or `<corpus>/../Ref` whose name contains `symbol`,
-/// then `test-file/symbols-full`.
+/// then `test-file/symbols-full` — and, after every directory, the
+/// `RefData~*.zip` a backup package keeps beside them, which carries the same
+/// trees without being unpacked.
 ///
 /// The sheet's border template comes from `<corpus>/Ref/Template Files` and
-/// `<corpus>/Ref` (or the corpus's parent): the `.igr` whose own extent is the
-/// sheet — and, when two of them are the same size, the one the sheet's link
-/// record names — which is how a linked OLE frame record is resolved to a file
+/// `<corpus>/Ref` (or the corpus's parent), or from a `RefData~*.zip` in the
+/// corpus or beside it: the `.igr` whose own extent is the sheet — and, when
+/// two of them are the same size, the one the sheet's link record names —
+/// which is how a linked OLE frame record is resolved to a file
 /// ([`load_border_template`]). Its furniture goes onto the page before the
 /// drawing's own records, so content inks over the frame rather than under it.
 pub fn lay_out_drawing(pid: &Path, corpus: &Path) -> Result<PaperModel, PaperModelError> {
-    let (roots, library) = symbol_library(corpus);
-    lay_out_with_symbol_roots(pid, corpus, roots, &library)
+    let (roots, archives, library) = symbol_library(corpus);
+    lay_out_with_symbol_roots(pid, corpus, roots, archives, &library)
 }
 
 /// [`lay_out_drawing`], with where the symbol library lives stated instead of
 /// discovered.
 ///
-/// The roots are normally found from the corpus (see `symbol_library`); a
-/// caller that knows them — a probe comparing two copies, or a test that must
-/// not depend on what happens to be installed — says so here. `library` is the
-/// label the page reports for those roots.
+/// The roots — and the `RefData~*.zip` archives searched after them — are
+/// normally found from the corpus (see `symbol_library`); a caller that knows
+/// them — a probe comparing two copies, or a test that must not depend on what
+/// happens to be installed — says so here. `library` is the label the page
+/// reports for those sources.
 pub fn lay_out_with_symbol_roots(
     pid: &Path,
     corpus: &Path,
     roots: Vec<PathBuf>,
+    archives: Vec<PathBuf>,
     library: &[String],
 ) -> Result<PaperModel, PaperModelError> {
-    let mut symbols = SymbolLibrary::with_roots(roots);
+    let mut symbols = SymbolLibrary::with_roots(roots).with_archives(archives);
     let doc = PidParser::new()
         .parse_file(pid)
         .map_err(|error| PaperModelError {
@@ -1265,7 +1275,8 @@ struct Placement {
     symbol: Option<String>,
 }
 
-/// The symbol-library roots searched, in order.
+/// The symbol-library sources searched, in order: the directory roots, the
+/// `RefData~*.zip` archives after them, and the label naming both.
 ///
 /// `PID_SYMBOL_LIBRARY` replaces the search outright. Otherwise the corpus's
 /// own `Ref` directory comes first, then the library bundled with this
@@ -1281,17 +1292,30 @@ struct Placement {
 /// A path found in an earlier root still wins, so a project's own library
 /// keeps deciding what its drawings look like; the later roots only answer
 /// for names the earlier ones do not carry.
-fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
+///
+/// A backup package keeps its library inside `RefData~*.zip` rather than
+/// exploded on a share, so the archives in the corpus and beside it are
+/// returned as further sources (see [`SymbolLibrary::with_archives`]).
+/// Directories are still searched first, so unpacking a backup stays optional
+/// and cannot change a page.
+fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<String>) {
     if let Some(list) = std::env::var_os("PID_SYMBOL_LIBRARY") {
-        let roots: Vec<PathBuf> = std::env::split_paths(&list)
+        // A listed path is a root, unless it is an archive — the override
+        // replaces the search outright, and a backup's library is a file.
+        let listed: Vec<PathBuf> = std::env::split_paths(&list).collect();
+        let roots: Vec<PathBuf> = listed
+            .iter()
             .filter(|path| path.is_dir())
+            .cloned()
             .collect();
-        if !roots.is_empty() {
+        let archives: Vec<PathBuf> = listed.into_iter().filter(|path| path.is_file()).collect();
+        if !roots.is_empty() || !archives.is_empty() {
             let label = roots
                 .iter()
+                .chain(archives.iter())
                 .map(|path| path.display().to_string())
                 .collect();
-            return (roots, label);
+            return (roots, archives, label);
         }
     }
     let mut roots: Vec<PathBuf> = Vec::new();
@@ -1328,17 +1352,20 @@ fn symbol_library(corpus: &Path) -> (Vec<PathBuf>, Vec<String>) {
     if bundled.is_dir() && !roots.iter().any(|seen| seen == &bundled) {
         roots.push(bundled.clone());
     }
-    if roots.is_empty() {
-        // Nothing on disk to search: the bundled path is still the name to
-        // report, and the reader will refuse every symbol by name.
+    let archives = refdata_archive_files(corpus);
+    if roots.is_empty() && archives.is_empty() {
+        // Nothing on disk or in an archive to search: the bundled path is
+        // still the name to report, and the reader will refuse every symbol
+        // by name.
         let label = vec![bundled.display().to_string()];
-        return (roots, label);
+        return (roots, archives, label);
     }
     let label = roots
         .iter()
+        .chain(archives.iter())
         .map(|path| path.display().to_string())
         .collect();
-    (roots, label)
+    (roots, archives, label)
 }
 
 /// How far a template's own ink may sit from the sheet it borders, in
@@ -1388,9 +1415,32 @@ fn border_template_dirs(corpus: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-/// Every `.igr` file under the corpus's template directories, path-sorted.
-fn border_template_files(corpus: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = Vec::new();
+/// One file a sheet's border could have come from.
+///
+/// A corpus carries templates either exploded under `Ref/Template Files` or
+/// inside the `RefData~*.zip` a backup package keeps at its own root, and the
+/// pick has to read both the same way. A member is named by
+/// [`ArchiveFile::label`], which is the archive path with the member's own
+/// name on the end, so everything downstream — the extent error, the link-name
+/// prefix, the reported path — reads it as the file it is.
+enum TemplateSource {
+    /// A `.igr` under one of the corpus's template directories.
+    File(PathBuf),
+    /// A `.igr` member of a `RefData~*.zip` in the corpus or beside it.
+    Member(ArchiveFile),
+}
+
+/// Every `.igr` a sheet's furniture could come from: the corpus's template
+/// directories first, then the `RefData~*.zip` archives in the corpus and its
+/// parent.
+///
+/// Directories come first so an extracted tree still decides, which keeps
+/// unpacking a backup optional and stops it from changing any page: the two
+/// sources hold the same files, and the pick's remaining keys are equal for
+/// them.
+fn border_template_sources(corpus: &Path) -> Vec<TemplateSource> {
+    let mut sources: Vec<TemplateSource> = Vec::new();
+    let mut seen: Vec<PathBuf> = Vec::new();
     for dir in border_template_dirs(corpus) {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -1407,12 +1457,39 @@ fn border_template_files(corpus: &Path) -> Vec<PathBuf> {
             .collect();
         found.sort();
         for path in found {
-            if !files.iter().any(|seen| seen == &path) {
-                files.push(path);
+            if !seen.contains(&path) {
+                seen.push(path.clone());
+                sources.push(TemplateSource::File(path));
             }
         }
     }
-    files
+    for archive in refdata_archive_files(corpus) {
+        let Ok(members) = archive_members(&archive, "igr") else {
+            continue;
+        };
+        sources.extend(members.into_iter().map(TemplateSource::Member));
+    }
+    sources
+}
+
+/// The `RefData~*.zip` archives a corpus keeps its reference data in, in
+/// search order: the corpus's own directory, then its parent's.
+///
+/// A backup package holds them beside `Manifest.txt`, so a drawing laid out
+/// with the package directory as its corpus finds them, and one laid out with
+/// a subdirectory of the package (a plant's extracted drawing folder) finds
+/// them one level up. A project corpus has none, which is the usual case and
+/// why an empty list is not a problem.
+fn refdata_archive_files(corpus: &Path) -> Vec<PathBuf> {
+    let mut archives: Vec<PathBuf> = Vec::new();
+    for dir in [Some(corpus), corpus.parent()].into_iter().flatten() {
+        for archive in refdata_archives(dir) {
+            if !archives.contains(&archive) {
+                archives.push(archive);
+            }
+        }
+    }
+    archives
 }
 
 /// The extent of a document's stroked geometry, paper millimetres.
@@ -1544,9 +1621,23 @@ fn load_border_template(
         .filter_map(|link| linked_template_prefix(link))
         .collect();
     let mut best: Option<((bool, f64, String), BorderTemplateDocument)> = None;
-    for path in border_template_files(corpus) {
-        let Ok(doc) = PidParser::new().parse_file(&path) else {
-            continue;
+    for source in border_template_sources(corpus) {
+        let (path, doc) = match source {
+            TemplateSource::File(path) => {
+                let Ok(doc) = PidParser::new().parse_file(&path) else {
+                    continue;
+                };
+                (path, doc)
+            }
+            TemplateSource::Member(file) => {
+                let Ok(bytes) = read_archive_file(&file) else {
+                    continue;
+                };
+                let Ok(doc) = PidParser::new().parse_reader(std::io::Cursor::new(bytes)) else {
+                    continue;
+                };
+                (file.label(), doc)
+            }
         };
         let geometry = build_normalized_geometry(&doc);
         let Some(extent_mm) = ink_extent_mm(&geometry) else {

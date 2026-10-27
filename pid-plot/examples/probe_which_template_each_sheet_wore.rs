@@ -53,6 +53,29 @@ fn leaf_name(path: &str) -> &str {
     path.rsplit(['\\', '/']).next().unwrap_or(path)
 }
 
+/// The template's file name, and the archive it is a member of when it came
+/// out of one rather than off the disk.
+///
+/// The field this reads is the label the plot side reports for whichever
+/// source won the pick, so a directory file and an archive member are told
+/// apart here by whether the component above the file ends in `.zip`.
+fn template_origin(label: &str) -> String {
+    let leaf = leaf_name(label);
+    let above = label
+        .rsplit(['\\', '/'])
+        .nth(1)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if above.ends_with(".zip") {
+        format!(
+            "{leaf} in {}",
+            &label[..label.rfind(['\\', '/']).unwrap_or(label.len())]
+        )
+    } else {
+        leaf.to_string()
+    }
+}
+
 fn main() {
     let corpus = corpus_dir();
     let mut files: Vec<PathBuf> = Vec::new();
@@ -67,6 +90,37 @@ fn main() {
     if files.is_empty() {
         eprintln!("usage: probe_which_template_each_sheet_wore <a.pid|dir> [more ...]");
         std::process::exit(2);
+    }
+
+    // What the corpus offers, before any sheet is read: a backup package's
+    // templates and symbol bodies live inside these archives, so their absence
+    // and their emptiness are the first two things a reading can differ by.
+    println!("corpus {}", corpus.display());
+    let mut archives: Vec<std::path::PathBuf> = Vec::new();
+    for dir in [Some(corpus.as_path()), corpus.parent()]
+        .into_iter()
+        .flatten()
+    {
+        for archive in pid_parse::refdata_archive::refdata_archives(dir) {
+            if !archives.contains(&archive) {
+                archives.push(archive);
+            }
+        }
+    }
+    for archive in &archives {
+        let igr = pid_parse::refdata_archive::archive_members(archive, "igr")
+            .map(|members| members.len())
+            .unwrap_or(0);
+        let sym = pid_parse::refdata_archive::archive_members(archive, "sym")
+            .map(|members| members.len())
+            .unwrap_or(0);
+        println!(
+            "  archive {}: {igr} .igr, {sym} .sym",
+            archive.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
+    if archives.is_empty() {
+        println!("  archive none: templates and bodies come from directories only");
     }
 
     let mut templated = 0usize;
@@ -94,7 +148,7 @@ fn main() {
             page[0],
             page[1],
             name,
-            leaf_name(&template.path),
+            template_origin(&template.path),
             template.extent_mm[0],
             template.extent_mm[1],
             template.primitives

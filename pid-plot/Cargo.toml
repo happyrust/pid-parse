@@ -8,8 +8,13 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-# The reader only. Plant-database features stay out of the plot crate.
-pid-parse = { path = "..", default-features = false }
+# The reader only. Plant-database features stay out of the plot crate —
+# `refdata-archive` is the reference-data ZIP reader (the `.igr` border
+# templates and `.sym` bodies a backup keeps inside `RefData~*.zip`),
+# which is what lets a backup package directory be plotted without a
+# manual unpacking step. It is the `zip` dependency alone: no publish
+# pipeline, no rusqlite, no vendored MDF parser.
+pid-parse = { path = "..", default-features = false, features = ["refdata-archive"] }
 # Pinned together so one `cargo update` cannot mix commits.
 pdfcraft-cos = { git = "https://github.com/storytold/pdfcraft", rev = "0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e" }
 pdfcraft-content = { git = "https://github.com/storytold/pdfcraft", rev = "0e55d07b5fcc7d36747c7c56a6b98b1aabb9ce3e" }

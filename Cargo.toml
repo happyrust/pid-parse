@@ -71,15 +71,17 @@ log = { version = "0.4", optional = true }
 env_logger = { version = "0.11", optional = true }
 schemars = { version = "1.2.1", features = ["preserve_order"] }
 uuid = { version = "1", features = ["serde", "v5"] }
-# `zip` is gated to the central-directory reader only — we list
-# `RefData~SCHEMA~ID(.zip)?` entry metadata, never decompressing
-# payload bytes ourselves. We still need `deflate` enabled because
-# `ZipArchive::by_index` constructs a decoder for each entry up
-# front (the `zip` crate only validates compression-method support
-# when the entry is opened, not when bytes are read), and every
-# `SmartPlant`-produced archive observed in the wild uses the
-# stored / deflate methods. The other heavy default features
-# (aes-crypto / bzip2 / xz / lzma / zstd) stay off to keep the
+# `zip` is enabled with `deflate` only. Two readers ride it: the
+# central-directory index (`backup::zip_index`, which lists
+# `RefData~SCHEMA~ID(.zip)?` entry metadata without decompressing) and
+# the reference-data archive reader (`refdata_archive`, which does
+# inflate the `.igr` templates and `.sym` symbol bodies a backup
+# ships — see that module). `deflate` is needed for both: `ZipArchive::by_index`
+# constructs a decoder for each entry up front (the `zip` crate only
+# validates compression-method support when the entry is opened, not
+# when bytes are read), and every `SmartPlant`-produced archive observed
+# in the wild uses the stored / deflate methods. The other heavy default
+# features (aes-crypto / bzip2 / xz / lzma / zstd) stay off to keep the
 # CVE surface and build time small.
 zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
 sha2 = { version = "0.11.0", optional = true }
@@ -101,7 +103,16 @@ backup = ["backup-exp", "backup-mdf"]
 # (`oracle_exp`, `pid_load`, `pipeline`, `backup_package`, `diff`,
 # `xml_writer`, `pid_writer`). Pure Rust — no rusqlite, no
 # oxidized-mdf.
-backup-exp = ["dep:zip"]
+backup-exp = ["refdata-archive"]
+# The reference-data archive reader: the `.igr` border templates and
+# `.sym` symbol bodies a backup package keeps inside its
+# `RefData~*.zip`, read straight out of the archive. It is the `zip`
+# dependency without the publish pipeline or any plant database, so a
+# consumer that only *draws* a drawing can read a backup's own
+# reference data — `pid-plot` rides this feature alone, and a backup
+# package directory then needs no manual unpacking step.
+refdata-archive = ["dep:zip"]
+
 # SQL Server side on top of `backup-exp`: MTF→MDF extraction probes
 # and the MDF/SQLite loaders (`mdf_load`, `sqlite_load`), the
 # export-bundle driver (`export_bundle`) and the publish CLI. This is

@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::PidParser;
 use crate::error::PidError;
+use crate::package::PidPackage;
 use crate::parsers::sheet_records::{
     igtextbox_body_shape, igtextbox_letter_height, igtextbox_runs, IGTEXTBOX_BODY_START,
     IGTEXTBOX_TAIL_KIND2_LEN, IGTEXTBOX_TAIL_KIND_AT, IGTEXTBOX_TAIL_KIND_BOX,
@@ -1395,6 +1396,26 @@ fn parent_storage(stream_path: &str) -> &str {
 /// is a real thing in the library.
 pub fn read_symbol_geometry(path: &Path) -> Result<SymbolGeometry, PidError> {
     let package = PidParser::new().parse_package(path)?;
+    symbol_geometry_from_package(&package)
+}
+
+/// Read a `.sym` body from bytes already in memory.
+///
+/// The same body as [`read_symbol_geometry`], for a caller holding the bytes
+/// rather than a path: a backup package keeps its symbol library inside
+/// `RefData~*.zip`, and [`crate::refdata_archive`] hands those members over
+/// without unpacking them.
+///
+/// # Errors
+///
+/// As [`read_symbol_geometry`].
+pub fn read_symbol_geometry_from_bytes(bytes: &[u8]) -> Result<SymbolGeometry, PidError> {
+    let package = PidPackage::from_bytes(bytes)?;
+    symbol_geometry_from_package(&package)
+}
+
+/// The drawable body of a parsed `.sym`.
+fn symbol_geometry_from_package(package: &PidPackage) -> Result<SymbolGeometry, PidError> {
     // Styles are scoped to the storage they sit in, the same rule
     // `style_link` applies to a drawing: a sheet is resolved against its own
     // document's table and never against another's.
@@ -1595,12 +1616,22 @@ fn collect_symbol_files(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<St
 /// (`C:\Users\…\Temp\BLFH.sym`). Those resolve by file name instead, against
 /// a name index of the roots — see `relative_by_name`.
 ///
+/// A backup package keeps its whole library inside `RefData~*.zip` rather than
+/// exploded on a share, and an archive holds the same tree a root does, so
+/// [`Self::with_archives`] takes those too. Directories are searched first, so
+/// a project that has both still reads the copy on disk.
+///
 /// Lookups are cached, including misses: a drawing places the same handful
 /// of symbols dozens of times, and a project that lacks a symbol lacks it
 /// for every placement.
 #[derive(Debug)]
 pub struct SymbolLibrary {
     roots: Vec<PathBuf>,
+    /// The `RefData~*.zip` archives searched after the roots. Only a build
+    /// with the `refdata-archive` feature can hold any (see
+    /// [`Self::with_archives`]).
+    #[cfg(feature = "refdata-archive")]
+    archives: Vec<PathBuf>,
     cache: BTreeMap<String, Option<SymbolGeometry>>,
     /// Every `.sym` name in the roots, mapped to the `(root, relative)` pairs
     /// that carry it. Built on the first path that is not library-relative,
@@ -1615,6 +1646,8 @@ impl SymbolLibrary {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             roots: vec![root.into()],
+            #[cfg(feature = "refdata-archive")]
+            archives: Vec::new(),
             cache: BTreeMap::new(),
             by_name: None,
         }
@@ -1624,9 +1657,33 @@ impl SymbolLibrary {
     pub fn with_roots<P: Into<PathBuf>>(roots: impl IntoIterator<Item = P>) -> Self {
         Self {
             roots: roots.into_iter().map(Into::into).collect(),
+            #[cfg(feature = "refdata-archive")]
+            archives: Vec::new(),
             cache: BTreeMap::new(),
             by_name: None,
         }
+    }
+
+    /// Add `RefData~*.zip` archives as further places a body can be found.
+    ///
+    /// A backup package keeps its symbol library inside
+    /// `RefData~4~681.zip`, whose members are the same `Design/…`, `Piping/…`,
+    /// `Equipment/…` tree a root directory holds — so an archive is a root
+    /// whose files are members, and a package can be drawn from without being
+    /// unpacked first.
+    ///
+    /// Archives are searched after **every** directory root: a corpus that has
+    /// both the archive and an extracted tree reads the extracted tree, so
+    /// unpacking stays optional and changes nothing. An archive that cannot be
+    /// read, or that holds no such member, is a miss like any other.
+    #[cfg(feature = "refdata-archive")]
+    #[must_use]
+    pub fn with_archives<P: Into<PathBuf>>(
+        mut self,
+        archives: impl IntoIterator<Item = P>,
+    ) -> Self {
+        self.archives.extend(archives.into_iter().map(Into::into));
+        self
     }
 
     /// Build a library from a `PATH`-style list of roots — `;` separated on
@@ -1639,6 +1696,29 @@ impl SymbolLibrary {
     #[must_use]
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
+    }
+
+    /// The `RefData~*.zip` archives this library reads from, in search order.
+    ///
+    /// Empty unless [`Self::with_archives`] was called.
+    #[cfg(feature = "refdata-archive")]
+    #[must_use]
+    pub fn archives(&self) -> &[PathBuf] {
+        &self.archives
+    }
+
+    /// The archive sources this build can read, in search order.
+    fn archived_roots(&self) -> &[PathBuf] {
+        #[cfg(feature = "refdata-archive")]
+        let archives: &[PathBuf] = &self.archives;
+        #[cfg(not(feature = "refdata-archive"))]
+        let archives: &[PathBuf] = &[];
+        archives
+    }
+
+    /// How many sources there are: directories first, archives after.
+    fn root_count(&self) -> usize {
+        self.roots.len() + self.archived_roots().len()
     }
 
     /// Number of distinct symbol paths looked up so far, resolved or not.
@@ -1702,7 +1782,7 @@ impl SymbolLibrary {
         let Some(matches) = self.by_name.as_ref()?.get(&name) else {
             return Some(NameMiss::NoSuchFile);
         };
-        let unique = (0..self.roots.len()).any(|root_number| {
+        let unique = (0..self.root_count()).any(|root_number| {
             matches
                 .iter()
                 .filter(|(root, _)| *root == root_number)
@@ -1712,7 +1792,13 @@ impl SymbolLibrary {
         (!unique).then_some(NameMiss::NotUnique)
     }
 
-    /// Map every `.sym` in the roots by file name, once.
+    /// Map every `.sym` in the roots and archives by file name, once.
+    ///
+    /// Archives are indexed after the directories, so a name a directory and
+    /// an archive both carry is not ambiguous — the directory is simply the
+    /// first source that has it. Only members are listed here, never inflated:
+    /// asking an archive what it holds is cheap, and the bodies are read only
+    /// for the placements that need them.
     fn index_by_name(&mut self) {
         if self.by_name.is_some() {
             return;
@@ -1729,6 +1815,21 @@ impl SymbolLibrary {
                     .entry(name.to_ascii_lowercase())
                     .or_default()
                     .push((root_number, relative));
+            }
+        }
+        let first_archive = self.roots.len();
+        for (offset, archive) in self.archived_roots().iter().enumerate() {
+            let Some(members) = archive_symbol_members(archive) else {
+                continue;
+            };
+            for relative in members {
+                let Some(name) = relative.rsplit('/').next() else {
+                    continue;
+                };
+                index
+                    .entry(name.to_ascii_lowercase())
+                    .or_default()
+                    .push((first_archive + offset, relative));
             }
         }
         self.by_name = Some(index);
@@ -1749,7 +1850,7 @@ impl SymbolLibrary {
     fn relative_by_name(&self, symbol_path: &str) -> Option<String> {
         let name = symbol_file_name(symbol_path)?;
         let matches = self.by_name.as_ref()?.get(&name)?;
-        for root_number in 0..self.roots.len() {
+        for root_number in 0..self.root_count() {
             let mut in_root = matches.iter().filter(|(root, _)| *root == root_number);
             let Some(first) = in_root.next() else {
                 continue;
@@ -1795,9 +1896,56 @@ impl SymbolLibrary {
                 }
                 empty.get_or_insert(body);
             }
+            for archive in self.archived_roots() {
+                let Some(body) = archived_symbol_body(archive, &candidate) else {
+                    continue;
+                };
+                if !body.primitives.is_empty() {
+                    return Some(body);
+                }
+                empty.get_or_insert(body);
+            }
         }
         empty
     }
+}
+
+/// Every `.sym` an archive holds, as `/`-separated member names.
+///
+/// `None` when the archive cannot be read as a ZIP, or in a build without the
+/// `refdata-archive` feature — where no archive is a source to begin with.
+#[cfg(feature = "refdata-archive")]
+fn archive_symbol_members(archive: &Path) -> Option<Vec<String>> {
+    let members = crate::refdata_archive::archive_members(archive, "sym").ok()?;
+    Some(
+        members
+            .into_iter()
+            .map(|member| member.name().to_string())
+            .collect(),
+    )
+}
+
+/// [`archive_symbol_members`] in a build with no archive reader.
+#[cfg(not(feature = "refdata-archive"))]
+fn archive_symbol_members(_archive: &Path) -> Option<Vec<String>> {
+    None
+}
+
+/// The body an archive holds at a library-relative path.
+///
+/// A `.sym` that reads but decodes to nothing is `None` here, the same as a
+/// miss: the caller keeps an empty body only when it has nothing better, and
+/// it must be able to tell the two apart from the candidates it still has.
+#[cfg(feature = "refdata-archive")]
+fn archived_symbol_body(archive: &Path, relative: &str) -> Option<SymbolGeometry> {
+    let bytes = crate::refdata_archive::read_archive_member(archive, relative).ok()?;
+    read_symbol_geometry_from_bytes(&bytes).ok()
+}
+
+/// [`archived_symbol_body`] in a build with no archive reader.
+#[cfg(not(feature = "refdata-archive"))]
+fn archived_symbol_body(_archive: &Path, _relative: &str) -> Option<SymbolGeometry> {
+    None
 }
 
 /// The library-relative spellings a stored symbol path may have on disk.
@@ -3243,5 +3391,133 @@ mod tests {
         assert_eq!(library.roots().len(), 2);
         assert!(library.roots()[0].ends_with("first"));
         assert!(library.roots()[1].ends_with("second"));
+    }
+
+    /// A `RefData~*.zip` holding members built here.
+    ///
+    /// Real bodies are read out of the bundled library and carried as members
+    /// under the names a backup uses, BOM included, because that is the shape
+    /// the archive reader has to get right.
+    #[cfg(feature = "refdata-archive")]
+    fn archive_root(tag: &str, members: &[(&str, Vec<u8>)]) -> PathBuf {
+        use std::io::Write;
+
+        let dir = scratch_root(tag);
+        let path = dir.join("RefData~4~681.zip");
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut buffer);
+            let options: zip::write::FileOptions<'_, '_, ()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            for (name, bytes) in members {
+                writer.start_file(*name, options).expect("start member");
+                writer.write_all(bytes).expect("member bytes");
+            }
+            writer.finish().expect("finish archive");
+        }
+        std::fs::write(&path, buffer.into_inner()).expect("archive written");
+        path
+    }
+
+    /// The bytes of a bundled `.sym`, for an archive to carry as a member.
+    #[cfg(feature = "refdata-archive")]
+    fn symbol_bytes(relative: &str) -> Vec<u8> {
+        let Some(path) = fixture(relative) else {
+            return Vec::new();
+        };
+        std::fs::read(path).expect("fixture bytes")
+    }
+
+    #[cfg(feature = "refdata-archive")]
+    #[test]
+    fn an_archive_supplies_the_body_a_share_path_names() {
+        let bytes = symbol_bytes("Design/Annotation/Graphics/Circle.sym");
+        if bytes.is_empty() {
+            return;
+        }
+        let archive = archive_root(
+            "archive-only",
+            &[(
+                "\u{feff}Design/Annotation/Graphics/Circle.sym",
+                bytes.clone(),
+            )],
+        );
+
+        // Nothing on disk: the archive is the only source, and it answers the
+        // same UNC path the directory root would.
+        let mut library =
+            SymbolLibrary::with_roots(Vec::<PathBuf>::new()).with_archives([archive.clone()]);
+        let body = library.resolve(CIRCLE_UNC).expect("the archive's member");
+        assert_eq!(
+            body.primitives.len(),
+            1,
+            "the annotation Circle: {:?}",
+            body.primitives
+        );
+        assert!(library.missing().is_empty(), "{:?}", library.missing());
+        assert_eq!(
+            library.roots().len(),
+            0,
+            "the archive is not a directory root"
+        );
+        assert_eq!(library.archives().len(), 1);
+
+        // A stored path that names no share resolves by file name through the
+        // same index a directory is indexed by.
+        let mut by_name = SymbolLibrary::with_roots(Vec::<PathBuf>::new()).with_archives([archive]);
+        assert!(
+            by_name
+                .resolve(r"C:\Users\ADMINI~1.WIN\AppData\Local\Temp\Circle.sym")
+                .is_some(),
+            "a title block's own temp path resolves against the archive: {:?}",
+            by_name.missing()
+        );
+    }
+
+    #[cfg(feature = "refdata-archive")]
+    #[test]
+    fn a_directory_still_decides_when_an_archive_carries_the_same_name() {
+        let Some(circle) = fixture("Design/Annotation/Graphics/Circle.sym") else {
+            return;
+        };
+        let root = scratch_root("dir-wins");
+        let nested = root.join("Design").join("Annotation").join("Graphics");
+        std::fs::create_dir_all(&nested).expect("nested root");
+        std::fs::copy(&circle, nested.join("Circle.sym")).expect("copied body");
+        // The archive holds the same name with a body that cannot be read, so
+        // reading it instead of the directory would show up as a miss.
+        let archive = archive_root(
+            "dir-wins-archive",
+            &[(
+                "Design/Annotation/Graphics/Circle.sym",
+                b"not a compound file".to_vec(),
+            )],
+        );
+
+        let mut library = SymbolLibrary::with_roots([root.clone()]).with_archives([archive]);
+        let body = library.resolve(CIRCLE_UNC).expect("the directory's copy");
+        assert_eq!(body.primitives.len(), 1, "{:?}", body.primitives);
+        assert_eq!(library.archives().len(), 1, "the archive is still searched");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(feature = "refdata-archive")]
+    #[test]
+    fn an_unreadable_archive_is_a_miss_like_any_other() {
+        let dir = scratch_root("bad-archive");
+        let archive = dir.join("RefData~4~681.zip");
+        std::fs::write(&archive, b"not a zip at all").expect("placeholder archive");
+        let mut library = SymbolLibrary::with_roots(Vec::<PathBuf>::new()).with_archives([archive]);
+        assert!(library.resolve(CIRCLE_UNC).is_none());
+        assert_eq!(library.missing(), vec![CIRCLE_UNC]);
+        // A name-only path fails the same way, and says why.
+        let mut by_name = SymbolLibrary::with_roots(Vec::<PathBuf>::new());
+        by_name = by_name.with_archives([dir.join("RefData~4~681.zip")]);
+        assert!(by_name.resolve(r"C:\Temp\Circle.sym").is_none());
+        assert_eq!(
+            by_name.name_miss(r"C:\Temp\Circle.sym"),
+            Some(NameMiss::NoSuchFile)
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
