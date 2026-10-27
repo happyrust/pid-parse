@@ -23,6 +23,9 @@
 //!   6.6–7.1 MiB;
 //!
 //! Soft-skips when the extracted backup is absent, which is the case on CI.
+//! It does not soft-skip once the backup is there and no face directory is:
+//! the written-page pins cannot be read without a face, and reporting them
+//! unread is not the same as reading them — see [`require_faces`].
 
 use std::path::{Path, PathBuf};
 
@@ -126,16 +129,122 @@ const TEMPLATED_SHEETS: usize = 47;
 /// Pinned per sheet rather than per package, so the numbers are the template's
 /// and not the extraction's — a fuller backup moves nothing here, while a
 /// template that starts placing something else fails.
-const TEMPLATE_PLACEMENTS: [(&str, &[&str]); 5] = [
-    ("CPE-SQ-A0.igr", &["blfh.sym"]),
-    ("CPE-SQ-A1.igr", &["blfh.sym"]),
-    ("CPE-SQ-A2.igr", &["blfh.sym"]),
-    ("CPECCHB-SQ-A1.igr", &[]),
+///
+/// Two of the seven only reach a page when the corpus can read the backup's own
+/// `RefData~*.zip` (`A0-W - New.igr` on `A井场`, `A1-W - New.igr` on `稳定塔
+/// (600td)`): same extent as their `CPE-SQ` siblings, so the pick's last key —
+/// the file name on disk — decides, and the archive offers both. Neither title
+/// block places a symbol; the two are pinned so the gate holds whichever corpus
+/// it is run against — `PID_PARSE_SELF_CHECK_DIR` at a share (`Ref/Template
+/// Files` first) or at a backup package, whose templates then come out of its
+/// own `RefData~4~682.zip`. A backup package is not a share: it carries no
+/// `fonts/`, so that run also has to name the share's faces in `PID_PLOT_FONTS`
+/// — otherwise the gate refuses to pass for want of a face (see
+/// [`require_faces`]) instead of reporting these two pins unread.
+///
+/// The second number is `BorderTemplate::extent_mm` — the template's own ink
+/// box, the size its outer frame spans. The pick already refuses a template
+/// more than 2 mm off the sheet (`TEMPLATE_EXTENT_TOLERANCE_MM` in the model),
+/// so this pins the exact size rather than "close enough": a template that
+/// loses a millimetre to a scale slip still gets picked, and only this says so.
+/// It cannot see a *translation* — `extent_mm` is a width and a height, with no
+/// origin — which is why the strokes are measured on the page as well, below.
+///
+/// The third number is `BorderTemplate::primitives` — every stroke the
+/// template contributed, labels included. It is the same file whether the
+/// corpus found it on disk or inside the backup's own archive, so the count is
+/// the template's and not the extraction's; a title block that gains a cell
+/// table line or loses a piece of its frame fails here even when it places no
+/// symbol. (`CPECCHB-SQ-A1`'s 96 against `CPE-SQ-A1`'s 175 is the sign-off
+/// column plus the `比例` cell it does not have.)
+///
+/// The extent is the template's, not the sheet's: `CPECCHB-SQ-A2` is authored
+/// 593.939 mm wide on a 594.3 mm page, and `A1-W - New.igr` is 841 × 594 on the
+/// `600td` sheet's 842.54 × 595.54 page — both inside the pick's tolerance, so
+/// pinning the sheet here instead would be pinning the wrong number.
+const TEMPLATE_PLACEMENTS: [(&str, [f64; 2], usize, &[&str]); 7] = [
+    ("CPE-SQ-A0.igr", [1189.0, 841.0], 175, &["blfh.sym"]),
+    ("CPE-SQ-A1.igr", [841.0, 594.0], 175, &["blfh.sym"]),
+    ("CPE-SQ-A2.igr", [594.0, 420.0], 175, &["blfh.sym"]),
+    ("CPECCHB-SQ-A1.igr", [841.0, 594.0], 96, &[]),
     (
         "CPECCHB-SQ-A2.igr",
+        [593.939, 420.0],
+        116,
         &["a$c40d91a4b.sym", "hqz.sym", "hqz.sym"],
     ),
+    ("A0-W - New.igr", [1189.0, 841.0], 105, &[]),
+    ("A1-W - New.igr", [841.0, 594.0], 101, &[]),
 ];
+
+/// How far a pinned extent may drift before the gate speaks, in millimetres.
+///
+/// Two hundredths of a millimetre: a hundred times tighter than the pick's own
+/// 2 mm tolerance, so a scale slip the pick waves through still fails here,
+/// while the float noise in a template's authored size (`593.9393939…`) is far
+/// inside it. It is deliberately below what a plotter resolves — this is a pin
+/// on the file, not on the printed sheet.
+const TEMPLATE_EXTENT_SLACK_MM: f64 = 0.02;
+
+/// Where a page's furniture ink reaches, paper millimetres.
+///
+/// Not the same measure as `BorderTemplate::extent_mm`: that one is taken
+/// from the `.igr` before it is drawn, so it is blind to where the template
+/// was put. This one is the box the template's *strokes* cover once they are on
+/// the page, which is what moves when a template is translated and what shrinks
+/// when it is scaled. Labels are left out, as the template's own measure leaves
+/// them out.
+fn furniture_extent_mm(model: &PaperModel) -> Option<[[f64; 2]; 2]> {
+    let mut min = [f64::INFINITY; 2];
+    let mut max = [f64::NEG_INFINITY; 2];
+    let mut seen = false;
+    for primitive in model
+        .primitives
+        .iter()
+        .filter(|primitive| primitive.furniture)
+    {
+        let mut take = |point: [f64; 2]| {
+            seen = true;
+            for axis in 0..2 {
+                min[axis] = min[axis].min(point[axis]);
+                max[axis] = max[axis].max(point[axis]);
+            }
+        };
+        match &primitive.shape {
+            PaperShape::Line { start_mm, end_mm } => {
+                take(*start_mm);
+                take(*end_mm);
+            }
+            PaperShape::Polyline { points_mm, .. } => {
+                for point in points_mm {
+                    take(*point);
+                }
+            }
+            PaperShape::Fill { chain_mm, .. } => {
+                for point in chain_mm {
+                    take(*point);
+                }
+            }
+            // A circle's box is its whole circle, as the model measures an
+            // arc when it picks the template; a template's arcs are small
+            // corner rounds, so this overstates by at most the round.
+            PaperShape::Arc {
+                center_mm,
+                radius_mm,
+                ..
+            }
+            | PaperShape::Circle {
+                center_mm,
+                radius_mm,
+            } => {
+                take([center_mm[0] - radius_mm, center_mm[1] - radius_mm]);
+                take([center_mm[0] + radius_mm, center_mm[1] + radius_mm]);
+            }
+            PaperShape::Text { .. } => {}
+        }
+    }
+    seen.then_some([min, max])
+}
 
 /// The file name a placement's stored path ends in, lowercased.
 fn leaf_name(path: &str) -> String {
@@ -143,6 +252,80 @@ fn leaf_name(path: &str) -> String {
         .next()
         .unwrap_or(path)
         .to_ascii_lowercase()
+}
+
+/// Whether a template's path names a `RefData~*.zip` member rather than a file
+/// exploded on a share.
+///
+/// A member is labelled as the archive path with the member's own name on the
+/// end (`…\RefData~4~682.zip\CPE-SQ-A1.igr`), so the `.zip` component is what
+/// tells the two corpora apart.
+fn from_archive(path: &str) -> bool {
+    Path::new(path).components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with(".zip")
+    })
+}
+
+/// The corpus this run is reading, one line per source.
+///
+/// A passing gate has to say what it read. The archive-template run — the
+/// corpus pointed at a backup package instead of the share — once took 85 s and
+/// reported ok while touching no pin at all, and nothing in its output would
+/// have said which corpus that `ok` was about.
+fn describe_sources(corpus: &Path, backup: &Path, drawings: usize, dirs: &[PathBuf]) -> String {
+    let origin = if std::env::var_os("PID_PARSE_SELF_CHECK_DIR").is_some() {
+        "PID_PARSE_SELF_CHECK_DIR"
+    } else {
+        "built-in default"
+    };
+    let faces: Vec<String> = dirs
+        .iter()
+        .filter(|dir| dir.is_dir())
+        .map(|dir| dir.display().to_string())
+        .collect();
+    format!(
+        "corpus {} ({origin}); backup {} ({drawings} drawings); faces {}",
+        corpus.display(),
+        backup.display(),
+        if faces.is_empty() {
+            "none present".to_string()
+        } else {
+            faces.join(", ")
+        }
+    )
+}
+
+/// Refuse to pass for want of a face, naming what the page pins never saw.
+///
+/// A backup package keeps its templates in `RefData~*.zip` but not the
+/// licensed faces, so the archive configuration has no `fonts/` under its
+/// corpus. The layout pins all read without one — how many sheets drew
+/// furniture, which template, its extent, its strokes, what it placed — but
+/// every pin that needs a written PDF does not, and this used to be an
+/// `eprintln!` and a `return`, which the harness reports as a pass. It did, for
+/// one run.
+fn require_faces(corpus: &Path, dirs: &[PathBuf], drawings: usize) {
+    if dirs.iter().any(|dir| dir.is_dir()) {
+        return;
+    }
+    let searched = dirs
+        .iter()
+        .map(|dir| dir.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    panic!(
+        "no font directory is present, so the written-page pins were not read for {drawings} \
+         drawings: each PDF's page, its weight, its ink and its lettering, and the \
+         {DERIVED_PAGES}-sheet measured-page ratchet.\n  \
+         searched: {searched}\n  \
+         corpus: {} — a backup package carries no `fonts/`; set PID_PLOT_FONTS to the \
+         share's fonts, or point PID_PARSE_SELF_CHECK_DIR at the share",
+        corpus.display()
+    );
 }
 
 #[test]
@@ -168,10 +351,8 @@ fn every_backup_drawing_exports_a_readable_page() {
         backup.display()
     );
     let dirs = font_dirs(Some(&corpus));
-    if !dirs.iter().any(|dir| dir.is_dir()) {
-        eprintln!("skipping the backup export; no font directory is present");
-        return;
-    }
+    let sources = describe_sources(&corpus, &backup, drawings.len(), &dirs);
+    eprintln!("{sources}");
 
     let mut models: Vec<(PathBuf, PaperModel)> = Vec::new();
     for path in &drawings {
@@ -189,6 +370,7 @@ fn every_backup_drawing_exports_a_readable_page() {
     let mut templated = 0usize;
     let mut placements = 0usize;
     let mut gap_named = 0usize;
+    let mut templated_from_archive = 0usize;
     for (path, model) in &models {
         let name = path.display();
         assert!(
@@ -203,15 +385,55 @@ fn every_backup_drawing_exports_a_readable_page() {
             continue;
         };
         templated += 1;
-        let Some((_, wanted)) = TEMPLATE_PLACEMENTS
+        if from_archive(&template.path) {
+            templated_from_archive += 1;
+        }
+        let Some((_, extent, primitives, wanted)) = TEMPLATE_PLACEMENTS
             .iter()
-            .find(|(file, _)| template.path.ends_with(file))
+            .find(|(file, ..)| template.path.ends_with(file))
         else {
             panic!(
                 "{name}: {} drew furniture; no pin says what it places",
                 template.path
             );
         };
+        for axis in 0..2 {
+            assert!(
+                (template.extent_mm[axis] - extent[axis]).abs() < TEMPLATE_EXTENT_SLACK_MM,
+                "{name}: {} measures {:?} mm, not the {extent:?} mm it is pinned at",
+                template.path,
+                template.extent_mm
+            );
+        }
+        assert_eq!(
+            template.primitives, *primitives,
+            "{name}: {} contributed {} strokes",
+            template.path, template.primitives
+        );
+        // The template states its own box; the page has to carry it from the
+        // page's origin, because a template is authored in page millimetres and
+        // laid out at 1:1. Measuring the strokes — not reusing `extent_mm` — is
+        // what makes a translation visible: move the ink 2 mm and the box moves
+        // with it while `extent_mm` does not budge.
+        let Some([ink_min, ink_max]) = furniture_extent_mm(model) else {
+            panic!(
+                "{name}: {} is on the page but not one stroke of it landed",
+                template.path
+            );
+        };
+        for axis in 0..2 {
+            assert!(
+                ink_min[axis].abs() < TEMPLATE_EXTENT_SLACK_MM,
+                "{name}: {}'s furniture starts at {ink_min:?} mm instead of the page origin",
+                template.path
+            );
+            assert!(
+                (ink_max[axis] - extent[axis]).abs() < TEMPLATE_EXTENT_SLACK_MM,
+                "{name}: {}'s furniture reaches {ink_max:?} mm, not the {extent:?} mm box \
+                 the template states",
+                template.path
+            );
+        }
         let mut drawn: Vec<String> = Vec::new();
         for symbol in &template.symbols {
             placements += 1;
@@ -246,8 +468,15 @@ fn every_backup_drawing_exports_a_readable_page() {
     // and `CPECCHB-SQ-A2` places three. What each template places is pinned
     // above, per sheet, which is where that fact belongs.
     eprintln!(
-        "{templated} sheets drew furniture, {placements} placements, {gap_named} with a named gap"
+        "{templated} sheets drew furniture ({} disk, {} from RefData archives), \
+         {placements} placements, {gap_named} with a named gap",
+        templated - templated_from_archive,
+        templated_from_archive
     );
+    // Last, because every pin above reads without a face and should speak
+    // first: a template that moved is worth knowing about before a missing
+    // face.
+    require_faces(&corpus, &dirs, drawings.len());
     let refs: Vec<&PaperModel> = models.iter().map(|(_, model)| model).collect();
     let prepared = prepare_fonts(&refs, &dirs).unwrap_or_else(|error| panic!("fonts: {error}"));
     let fonts: Vec<PlotFont<'_>> = prepared
