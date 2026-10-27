@@ -16,6 +16,10 @@
 //!   libraries lack is still drawn from the body the `.pid` carries itself
 //!   (`missing_boxes` is empty on all 53 — the 18 library gaps are drawn);
 //! - every library gap is one of the known ones below, and no gap grows;
+//! - every sheet wearing a border template wears the `.igr` it links at the size
+//!   and stroke count that file states, its strokes start at the page origin,
+//!   and each symbol its title block places sits at the point the `.igr` states
+//!   — on every sheet wearing it, since a placement is the template's;
 //! - the written page reads back at the size the model resolved — the declared
 //!   sheet, or the standard sheet measured for the four drawings that state
 //!   none — and weighs what a subset-embedded page weighs: after the `EBDT`
@@ -27,6 +31,7 @@
 //! the written-page pins cannot be read without a face, and reporting them
 //! unread is not the same as reading them — see [`require_faces`].
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use pid_plot::fonts::{font_dirs, prepare_fonts};
@@ -115,6 +120,14 @@ const DERIVED_PAGES: usize = 4;
 /// corpus now carries, gave them their frames.
 const TEMPLATED_SHEETS: usize = 47;
 
+/// One symbol a pinned template places, as the `.igr` states it: the file name
+/// the placement stores and the point it sits at, in paper millimetres.
+type PinnedPlacement = (&'static str, [f64; 2]);
+
+/// One pinned template: the file name, the extent and stroke count its `.igr`
+/// states, and what that `.igr` places.
+type PinnedTemplate = (&'static str, [f64; 2], usize, &'static [PinnedPlacement]);
+
 /// What a sheet's template places, by the template's own file name: the file
 /// name each placement records, sorted.
 ///
@@ -162,20 +175,56 @@ const TEMPLATED_SHEETS: usize = 47;
 /// 593.939 mm wide on a 594.3 mm page, and `A1-W - New.igr` is 841 × 594 on the
 /// `600td` sheet's 842.54 × 595.54 page — both inside the pick's tolerance, so
 /// pinning the sheet here instead would be pinning the wrong number.
-const TEMPLATE_PLACEMENTS: [(&str, [f64; 2], usize, &[&str]); 7] = [
-    ("CPE-SQ-A0.igr", [1189.0, 841.0], 175, &["blfh.sym"]),
-    ("CPE-SQ-A1.igr", [841.0, 594.0], 175, &["blfh.sym"]),
-    ("CPE-SQ-A2.igr", [594.0, 420.0], 175, &["blfh.sym"]),
+///
+/// The fourth number is where each placement sits, in paper millimetres, paired
+/// with the symbol's file name and sorted by it. It belongs to the template the
+/// same way its extent does: the `.igr` states its placements, the sheet only
+/// says which `.igr` it wears, so every one of the twenty-one A1 sheets that
+/// wear `CPE-SQ-A1` carries its 比例 wave at the same point. A title block whose
+/// cell moved — a re-authored template, a nibble read one field off — shows up
+/// here and nowhere else, because the placement list alone still matches.
+const TEMPLATE_PLACEMENTS: [PinnedTemplate; 7] = [
+    (
+        "CPE-SQ-A0.igr",
+        [1189.0, 841.0],
+        175,
+        &[("blfh.sym", [1100.6925, 19.0])],
+    ),
+    (
+        "CPE-SQ-A1.igr",
+        [841.0, 594.0],
+        175,
+        &[("blfh.sym", [752.6925, 19.0])],
+    ),
+    (
+        "CPE-SQ-A2.igr",
+        [594.0, 420.0],
+        175,
+        &[("blfh.sym", [505.6925, 19.0])],
+    ),
     ("CPECCHB-SQ-A1.igr", [841.0, 594.0], 96, &[]),
     (
         "CPECCHB-SQ-A2.igr",
         [593.939, 420.0],
         116,
-        &["a$c40d91a4b.sym", "hqz.sym", "hqz.sym"],
+        &[
+            ("a$c40d91a4b.sym", [0.0, 59.0404]),
+            ("hqz.sym", [35.3536, 412.9293]),
+            ("hqz.sym", [35.3536, 306.8687]),
+        ],
     ),
     ("A0-W - New.igr", [1189.0, 841.0], 105, &[]),
     ("A1-W - New.igr", [841.0, 594.0], 101, &[]),
 ];
+
+/// How far a pinned placement point may drift before the gate speaks, in
+/// millimetres.
+///
+/// A ten-thousandth of a millimetre: a micrometre is two orders below what a
+/// plotter resolves and orders below the float noise in a metre-to-millimetre
+/// conversion, so it holds the point exactly while still tolerating the last
+/// bits of `insertion.x * 1000.0`.
+const PLACEMENT_SLACK_MM: f64 = 0.0001;
 
 /// How far a pinned extent may drift before the gate speaks, in millimetres.
 ///
@@ -268,6 +317,42 @@ fn from_archive(path: &str) -> bool {
             .to_ascii_lowercase()
             .ends_with(".zip")
     })
+}
+
+/// One symbol a template places: the file name it stores, lowercased, and the
+/// point it sits at on the page.
+type Placement = (String, [f64; 2]);
+
+/// What one template placed, over every sheet wearing it: the placements of the
+/// first such sheet, and how many sheets those were.
+type TemplateAccount = (Vec<Placement>, usize);
+
+/// One template's placements as text, for a failure that names them.
+fn format_placements(placements: &[Placement]) -> String {
+    placements
+        .iter()
+        .map(|(name, point)| format!("{name}@({:.4}, {:.4})", point[0], point[1]))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Whether two placement lists agree: the same names in the same order, each at
+/// the same point within [`PLACEMENT_SLACK_MM`].
+///
+/// The order is part of the answer. A template that places two `HQZ.sym`s in
+/// its sign-off column states which cell comes first, and a decoder that begins
+/// reading that column from the other side has changed the file the page came
+/// from even though both points are still in the list.
+fn same_placements(measured: &[Placement], pinned: &[Placement]) -> bool {
+    measured.len() == pinned.len()
+        && measured
+            .iter()
+            .zip(pinned)
+            .all(|((name, point), (want_name, want_point))| {
+                name == want_name
+                    && (point[0] - want_point[0]).abs() < PLACEMENT_SLACK_MM
+                    && (point[1] - want_point[1]).abs() < PLACEMENT_SLACK_MM
+            })
 }
 
 /// The corpus this run is reading, one line per source.
@@ -371,6 +456,14 @@ fn every_backup_drawing_exports_a_readable_page() {
     let mut placements = 0usize;
     let mut gap_named = 0usize;
     let mut templated_from_archive = 0usize;
+    // What each template placed, as the first sheet wearing it drew it, and how
+    // many sheets wore it. Keyed by the template's own file name, because a
+    // placement is the template's and not the sheet's.
+    let mut by_template: BTreeMap<String, TemplateAccount> = BTreeMap::new();
+    // Collected rather than asserted per sheet, and keyed by template: one run
+    // should report every template that moved, once each, instead of stopping
+    // at the first or repeating itself once per sheet wearing it.
+    let mut moved: BTreeMap<String, String> = BTreeMap::new();
     for (path, model) in &models {
         let name = path.display();
         assert!(
@@ -388,7 +481,7 @@ fn every_backup_drawing_exports_a_readable_page() {
         if from_archive(&template.path) {
             templated_from_archive += 1;
         }
-        let Some((_, extent, primitives, wanted)) = TEMPLATE_PLACEMENTS
+        let Some((file, extent, primitives, wanted)) = TEMPLATE_PLACEMENTS
             .iter()
             .find(|(file, ..)| template.path.ends_with(file))
         else {
@@ -434,7 +527,7 @@ fn every_backup_drawing_exports_a_readable_page() {
                 template.path
             );
         }
-        let mut drawn: Vec<String> = Vec::new();
+        let mut drawn: Vec<Placement> = Vec::new();
         for symbol in &template.symbols {
             placements += 1;
             assert_eq!(
@@ -454,10 +547,49 @@ fn every_backup_drawing_exports_a_readable_page() {
             if symbol.name_gap.is_some() {
                 gap_named += 1;
             }
-            drawn.push(leaf_name(&symbol.key));
+            drawn.push((leaf_name(&symbol.key), symbol.insertion_mm));
         }
-        drawn.sort();
-        assert_eq!(drawn, *wanted, "{name}: {} places {drawn:?}", template.path);
+        // Stable, so the two `HQZ.sym` placements a sign-off column makes keep
+        // the template's own order rather than an arbitrary one.
+        drawn.sort_by(|a, b| a.0.cmp(&b.0));
+        let pinned: Vec<Placement> = wanted
+            .iter()
+            .map(|(symbol, point)| ((*symbol).to_string(), *point))
+            .collect();
+        if !same_placements(&drawn, &pinned) {
+            moved.entry((*file).to_string()).or_insert_with(|| {
+                format!(
+                    "  {file} (on {}): places {}, pinned {}",
+                    template.path,
+                    format_placements(&drawn),
+                    format_placements(&pinned)
+                )
+            });
+            continue;
+        }
+        // The pin is per template, so the sheets that wear one have to agree
+        // with each other as well: a per-sheet offset would otherwise hide
+        // inside "the template places these" until one sheet wore it alone.
+        let seen = by_template
+            .entry((*file).to_string())
+            .or_insert_with(|| (drawn.clone(), 0));
+        assert!(
+            same_placements(&seen.0, &drawn),
+            "{name}: {} places {} here and {} on the first sheet wearing it",
+            template.path,
+            format_placements(&drawn),
+            format_placements(&seen.0)
+        );
+        seen.1 += 1;
+    }
+    assert!(
+        moved.is_empty(),
+        "{} template(s) place their symbols somewhere other than the pin says:\n{}",
+        moved.len(),
+        moved.values().cloned().collect::<Vec<_>>().join("\n")
+    );
+    for (file, (measured, sheets)) in &by_template {
+        eprintln!("  {file}: {sheets} sheets, {}", format_placements(measured));
     }
     assert!(
         templated >= TEMPLATED_SHEETS,
